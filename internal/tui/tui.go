@@ -1,7 +1,6 @@
 // Package tui implements the terminal user interface using Bubbletea.
-// coverage-ignore-package: TUI code is unreasonable to unit test - requires interactive terminal,
-// user input simulation, and screen rendering validation. TUI behavior is validated through
-// manual testing and integration tests.
+// Core TUI components (browser, detail, search screens) have unit tests.
+// Full app integration and lifecycle methods remain untestable without interactive terminal.
 package tui
 
 import (
