@@ -35,6 +35,11 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []error {
 			continue
 		}
 
+		// Skip empty strings for required properties - already reported as missing
+		if propDef.Required && val == "" {
+			continue
+		}
+
 		if err := m.ValidatePropertyValue(propName, &propDef, val); err != nil {
 			errs = append(errs, err)
 		}
@@ -76,8 +81,9 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 		if !ok {
 			return fmt.Errorf("property %s must be a date string", propName)
 		}
-		format := propDef.GetDateFormat()
-		if _, err := time.Parse(format, s); err != nil {
+		// Use ParseDateValue to validate - it accepts the configured format plus common fallbacks
+		if _, err := ParseDateValue(s, propDef); err != nil {
+			format := propDef.GetDateFormat()
 			return fmt.Errorf("invalid date %q for property %s (expected format: %s)", s, propName, format)
 		}
 

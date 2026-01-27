@@ -298,6 +298,141 @@ func TestMatchNilValue(t *testing.T) {
 	}
 }
 
+// TestMatchMissingProperty tests that entities with missing properties do not match
+// any filter on that property (neither = nor !=), except when explicitly checking for empty.
+// This is TICKET-003: Missing/nil properties should NOT match != filter for non-empty values.
+func TestMatchMissingProperty(t *testing.T) {
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name    string
+		propDef *metamodel.PropertyDef
+		filter  string
+		want    bool
+		wantErr bool
+	}{
+		// String property tests
+		{
+			name:    "missing string property should not match =value",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeString},
+			filter:  "title=hello",
+			want:    false,
+		},
+		{
+			name:    "missing string property should not match !=value (TICKET-003)",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeString},
+			filter:  "title!=hello",
+			want:    false, // Bug: currently returns true
+		},
+		{
+			name:    "missing string property should match = (empty)",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeString},
+			filter:  "title=",
+			want:    true,
+		},
+		{
+			name:    "missing string property should not match != (empty)",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeString},
+			filter:  "title!=",
+			want:    false,
+		},
+		// Integer property tests
+		{
+			name:    "missing integer property should not match =0",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			filter:  "lines_of_code=0",
+			want:    false,
+		},
+		{
+			name:    "missing integer property should not match !=0 (TICKET-003)",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			filter:  "lines_of_code!=0",
+			want:    false, // Bug: currently returns true
+		},
+		{
+			name:    "missing integer property should not match >0",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			filter:  "lines_of_code>0",
+			want:    false,
+		},
+		{
+			name:    "missing integer property should not match <100",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			filter:  "lines_of_code<100",
+			want:    false,
+		},
+		// Boolean property tests
+		{
+			name:    "missing boolean property should not match =true",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean},
+			filter:  "archived=true",
+			want:    false,
+		},
+		{
+			name:    "missing boolean property should not match !=true (TICKET-003)",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean},
+			filter:  "archived!=true",
+			want:    false, // Bug: currently returns true
+		},
+		// Enum property tests
+		{
+			name:    "missing enum property should not match =value",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeEnum, Values: []string{"high", "medium", "low"}},
+			filter:  "priority=high",
+			want:    false,
+		},
+		{
+			name:    "missing enum property should not match !=value (TICKET-003)",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeEnum, Values: []string{"high", "medium", "low"}},
+			filter:  "priority!=high",
+			want:    false, // Bug: currently returns true
+		},
+		// Date property tests
+		{
+			name:    "missing date property should not match =date",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate, Format: "2006-01-02"},
+			filter:  "due_date=2025-01-01",
+			want:    false,
+		},
+		{
+			name:    "missing date property should not match !=date (TICKET-003)",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate, Format: "2006-01-02"},
+			filter:  "due_date!=2025-01-01",
+			want:    false, // Bug: currently returns true
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Entity with no properties set (missing property)
+			entity := &model.Entity{
+				ID:         "TEST-001",
+				Type:       "test",
+				Properties: map[string]interface{}{},
+			}
+
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+
+			got, err := Match(entity, f, tt.propDef, mm)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatchAllAND(t *testing.T) {
 	mm := &metamodel.Metamodel{}
 	entityDef := &metamodel.EntityDef{

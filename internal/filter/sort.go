@@ -7,8 +7,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
-// Sort sorts entities by a property with type-aware comparison
-func Sort(entities []*model.Entity, propName string, propDef *metamodel.PropertyDef, descending bool) {
+// Sort sorts entities by a property with type-aware comparison.
+// The meta parameter is optional but required for proper enum/custom type ordering.
+func Sort(entities []*model.Entity, propName string, propDef *metamodel.PropertyDef, meta *metamodel.Metamodel, descending bool) {
+	// Build enum value index map for efficient lookup
+	enumIndex := buildEnumIndex(propDef, meta)
+
 	sort.SliceStable(entities, func(i, j int) bool {
 		valI := entities[i].Properties[propName]
 		valJ := entities[j].Properties[propName]
@@ -32,9 +36,17 @@ func Sort(entities []*model.Entity, propName string, propDef *metamodel.Property
 			less = compareIntegers(valI, valJ)
 		case metamodel.PropertyTypeBoolean:
 			less = compareBooleans(valI, valJ)
+		case metamodel.PropertyTypeEnum:
+			// Inline enum with values defined in property
+			less = compareEnums(valI, valJ, enumIndex)
 		default:
-			// String, enum, and custom types - lexicographic comparison
-			less = compareStrings(valI, valJ)
+			// Check if this is a custom type (not a built-in type)
+			if enumIndex != nil {
+				less = compareEnums(valI, valJ, enumIndex)
+			} else {
+				// Fall back to string comparison for unknown types
+				less = compareStrings(valI, valJ)
+			}
 		}
 
 		if descending {
@@ -42,6 +54,62 @@ func Sort(entities []*model.Entity, propName string, propDef *metamodel.Property
 		}
 		return less
 	})
+}
+
+// buildEnumIndex creates a map from enum value to its index position.
+// Returns nil if no enum values are found.
+func buildEnumIndex(propDef *metamodel.PropertyDef, meta *metamodel.Metamodel) map[string]int {
+	var values []string
+
+	// First check for inline enum values in the property definition
+	if len(propDef.Values) > 0 {
+		values = propDef.Values
+	} else if meta != nil && !metamodel.IsBuiltinType(propDef.Type) {
+		// Look up custom type in metamodel
+		if customType, ok := meta.Types[propDef.Type]; ok {
+			values = customType.Values
+		}
+	}
+
+	if len(values) == 0 {
+		return nil
+	}
+
+	// Build index map for O(1) lookup
+	index := make(map[string]int, len(values))
+	for i, v := range values {
+		index[v] = i
+	}
+	return index
+}
+
+// compareEnums compares two enum values by their index position.
+// Unknown values are sorted after known values, then alphabetically among themselves.
+func compareEnums(valI, valJ interface{}, enumIndex map[string]int) bool {
+	sI, okI := valI.(string)
+	sJ, okJ := valJ.(string)
+	if !okI || !okJ {
+		return false
+	}
+
+	idxI, knownI := enumIndex[sI]
+	idxJ, knownJ := enumIndex[sJ]
+
+	// Both known: compare by index
+	if knownI && knownJ {
+		return idxI < idxJ
+	}
+
+	// Known values come before unknown values
+	if knownI && !knownJ {
+		return true
+	}
+	if !knownI && knownJ {
+		return false
+	}
+
+	// Both unknown: fall back to string comparison
+	return sI < sJ
 }
 
 // SortByID sorts entities by their ID (default sort)
