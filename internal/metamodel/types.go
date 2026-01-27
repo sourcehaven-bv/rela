@@ -99,6 +99,13 @@ const (
 	IDTypeString     = "string"     // IDs are manually specified strings (e.g., auth-module)
 )
 
+// ReservedPropertyNames contains property names that cannot be used in metamodel definitions
+// because they conflict with built-in entity fields.
+var ReservedPropertyNames = map[string]bool{
+	"id":   true, // Entity.ID
+	"type": true, // Entity.Type
+}
+
 // DefaultDateFormat is the default format for date properties (ISO 8601)
 const DefaultDateFormat = "2006-01-02"
 
@@ -395,6 +402,25 @@ type InvalidIDTypeError struct {
 
 func (e *InvalidIDTypeError) Error() string {
 	return "invalid id_type for entity " + e.EntityType + ": " + e.IDType + " (must be 'sequential' or 'string')"
+}
+
+type ReservedPropertyError struct {
+	EntityType   string
+	PropertyName string
+}
+
+func (e *ReservedPropertyError) Error() string {
+	return "entity " + e.EntityType + ": property \"" + e.PropertyName + "\" is reserved and cannot be used"
+}
+
+// WhitespacePropertyError is returned when a property name has leading or trailing whitespace
+type WhitespacePropertyError struct {
+	EntityType   string
+	PropertyName string
+}
+
+func (e *WhitespacePropertyError) Error() string {
+	return "entity " + e.EntityType + ": property name \"" + e.PropertyName + "\" has leading or trailing whitespace"
 }
 
 // Schema output interface methods for Metamodel
