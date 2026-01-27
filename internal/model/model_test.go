@@ -7,14 +7,18 @@ import (
 // TestNewEntity tests entity creation
 func TestNewEntity(t *testing.T) {
 	e := NewEntity("REQ-001", "requirement")
-	if e.ID != "REQ-001" {
-		t.Errorf("expected ID REQ-001, got %s", e.ID)
-	}
-	if e.Type != "requirement" {
-		t.Errorf("expected Type requirement, got %s", e.Type)
-	}
+	assertEqual(t, e.ID, "REQ-001")
+	assertEqual(t, e.Type, "requirement")
 	if e.Properties == nil {
 		t.Error("expected Properties to be initialized")
+	}
+}
+
+// Test helpers to avoid import cycle
+func assertEqual(t *testing.T, got, want interface{}) {
+	t.Helper()
+	if got != want {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
@@ -23,21 +27,15 @@ func TestEntityGetString(t *testing.T) {
 	e := NewEntity("REQ-001", "requirement")
 
 	// Test missing property
-	if got := e.GetString("missing"); got != "" {
-		t.Errorf("expected empty string for missing property, got %s", got)
-	}
+	assertEqual(t, e.GetString("missing"), "")
 
 	// Test existing property
 	e.Properties["title"] = "Test Title"
-	if got := e.GetString("title"); got != "Test Title" {
-		t.Errorf("expected 'Test Title', got %s", got)
-	}
+	assertEqual(t, e.GetString("title"), "Test Title")
 
 	// Test non-string property
 	e.Properties["number"] = 42
-	if got := e.GetString("number"); got != "" {
-		t.Errorf("expected empty string for non-string property, got %s", got)
-	}
+	assertEqual(t, e.GetString("number"), "")
 }
 
 // TestEntitySetString tests setting string properties
@@ -45,9 +43,7 @@ func TestEntitySetString(t *testing.T) {
 	e := NewEntity("REQ-001", "requirement")
 
 	e.SetString("title", "Test Title")
-	if got := e.GetString("title"); got != "Test Title" {
-		t.Errorf("expected 'Test Title', got %s", got)
-	}
+	assertEqual(t, e.GetString("title"), "Test Title")
 
 	// Test setting on nil Properties
 	e2 := &Entity{}
@@ -55,9 +51,7 @@ func TestEntitySetString(t *testing.T) {
 	if e2.Properties == nil {
 		t.Error("expected Properties to be initialized")
 	}
-	if got := e2.GetString("title"); got != "Test" {
-		t.Errorf("expected 'Test', got %s", got)
-	}
+	assertEqual(t, e2.GetString("title"), "Test")
 }
 
 // TestEntityTitle tests the Title helper method
@@ -65,9 +59,7 @@ func TestEntityTitle(t *testing.T) {
 	e := NewEntity("REQ-001", "requirement")
 	e.Properties["title"] = "My Title"
 
-	if got := e.Title(); got != "My Title" {
-		t.Errorf("expected 'My Title', got %s", got)
-	}
+	assertEqual(t, e.Title(), "My Title")
 }
 
 // TestEntityStatus tests the Status helper method
@@ -75,15 +67,11 @@ func TestEntityStatus(t *testing.T) {
 	e := NewEntity("REQ-001", "requirement")
 	e.Properties["status"] = "accepted"
 
-	if got := e.Status(); got != StatusAccepted {
-		t.Errorf("expected StatusAccepted, got %s", got)
-	}
+	assertEqual(t, e.Status(), StatusAccepted)
 
 	// Test empty status
 	e2 := NewEntity("REQ-002", "requirement")
-	if got := e2.Status(); got != "" {
-		t.Errorf("expected empty status, got %s", got)
-	}
+	assertEqual(t, e2.Status(), Status(""))
 }
 
 // TestEntityDescription tests the Description helper method
@@ -91,32 +79,21 @@ func TestEntityDescription(t *testing.T) {
 	e := NewEntity("REQ-001", "requirement")
 	e.Properties["description"] = "My Description"
 
-	if got := e.Description(); got != "My Description" {
-		t.Errorf("expected 'My Description', got %s", got)
-	}
+	assertEqual(t, e.Description(), "My Description")
 }
 
 // TestNewRelation tests relation creation
 func TestNewRelation(t *testing.T) {
 	r := NewRelation("REQ-001", "implements", "DEC-001")
-	if r.From != "REQ-001" {
-		t.Errorf("expected From REQ-001, got %s", r.From)
-	}
-	if r.Type != "implements" {
-		t.Errorf("expected Type implements, got %s", r.Type)
-	}
-	if r.To != "DEC-001" {
-		t.Errorf("expected To DEC-001, got %s", r.To)
-	}
+	assertEqual(t, r.From, "REQ-001")
+	assertEqual(t, r.Type, "implements")
+	assertEqual(t, r.To, "DEC-001")
 }
 
 // TestRelationKey tests relation key generation
 func TestRelationKey(t *testing.T) {
 	r := NewRelation("REQ-001", "implements", "DEC-001")
-	expected := "REQ-001--implements--DEC-001"
-	if got := r.Key(); got != expected {
-		t.Errorf("expected %s, got %s", expected, got)
-	}
+	assertEqual(t, r.Key(), "REQ-001--implements--DEC-001")
 }
 
 // TestEntityIDString tests String method with various scenarios

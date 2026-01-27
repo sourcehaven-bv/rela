@@ -3,8 +3,42 @@ package metamodel
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 )
+
+// Test helpers to avoid import cycle
+func assertEqual(t *testing.T, got, want interface{}) {
+	t.Helper()
+	if got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func assertNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func assertError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
+func createFile(t *testing.T, path, content string) {
+	t.Helper()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create directory %s: %v", dir, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write file %s: %v", path, err)
+	}
+}
 
 func TestParse_ReservedPropertyNames(t *testing.T) {
 	tests := []struct {
@@ -345,7 +379,7 @@ func extractPropertyName(t *testing.T, err error) string {
 func TestLoad(t *testing.T) {
 	// Create a temporary file with valid YAML
 	tmpDir := t.TempDir()
-	tmpFile := tmpDir + "/metamodel.yaml"
+	tmpFile := filepath.Join(tmpDir, "metamodel.yaml")
 
 	validYAML := `version: "1.0"
 entities:
@@ -358,23 +392,17 @@ entities:
         required: true
 `
 
-	if err := os.WriteFile(tmpFile, []byte(validYAML), 0644); err != nil {
-		t.Fatalf("failed to write temp file: %v", err)
-	}
+	createFile(t, tmpFile, validYAML)
 
 	// Test successful load
 	meta, err := Load(tmpFile)
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
+	assertNoError(t, err)
 
 	if meta == nil {
 		t.Fatal("expected metamodel, got nil")
 	}
 
-	if meta.Version != "1.0" {
-		t.Errorf("Version = %q, want %q", meta.Version, "1.0")
-	}
+	assertEqual(t, meta.Version, "1.0")
 
 	if _, ok := meta.Entities["task"]; !ok {
 		t.Error("expected task entity to exist")
@@ -383,28 +411,22 @@ entities:
 
 func TestLoad_NonExistentFile(t *testing.T) {
 	_, err := Load("/nonexistent/metamodel.yaml")
-	if err == nil {
-		t.Error("expected error for nonexistent file")
-	}
+	assertError(t, err)
 }
 
 func TestLoad_InvalidYAML(t *testing.T) {
 	tmpDir := t.TempDir()
-	tmpFile := tmpDir + "/invalid.yaml"
+	tmpFile := filepath.Join(tmpDir, "invalid.yaml")
 
 	invalidYAML := `version: "1.0"
 entities:
   invalid yaml [
 `
 
-	if err := os.WriteFile(tmpFile, []byte(invalidYAML), 0644); err != nil {
-		t.Fatalf("failed to write temp file: %v", err)
-	}
+	createFile(t, tmpFile, invalidYAML)
 
 	_, err := Load(tmpFile)
-	if err == nil {
-		t.Error("expected error for invalid YAML")
-	}
+	assertError(t, err)
 }
 
 func TestParse_InvalidIDType(t *testing.T) {
@@ -419,9 +441,7 @@ entities:
 `
 
 	_, err := Parse([]byte(yaml))
-	if err == nil {
-		t.Error("expected error for invalid id_type")
-	}
+	assertError(t, err)
 
 	var idTypeErr *InvalidIDTypeError
 	if !errors.As(err, &idTypeErr) {
@@ -441,13 +461,9 @@ entities:
 `
 
 	meta, err := Parse([]byte(yaml))
-	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
-	}
+	assertNoError(t, err)
 
-	if meta.Entities["task"].IDType != IDTypeSequential {
-		t.Errorf("IDType = %q, want %q", meta.Entities["task"].IDType, IDTypeSequential)
-	}
+	assertEqual(t, meta.Entities["task"].IDType, IDTypeSequential)
 }
 
 func TestParse_StringIDType(t *testing.T) {
@@ -462,13 +478,9 @@ entities:
 `
 
 	meta, err := Parse([]byte(yaml))
-	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
-	}
+	assertNoError(t, err)
 
-	if meta.Entities["task"].IDType != IDTypeString {
-		t.Errorf("IDType = %q, want %q", meta.Entities["task"].IDType, IDTypeString)
-	}
+	assertEqual(t, meta.Entities["task"].IDType, IDTypeString)
 }
 
 func TestParse_AliasMap(t *testing.T) {
@@ -489,24 +501,14 @@ entities:
 `
 
 	meta, err := Parse([]byte(yaml))
-	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
-	}
+	assertNoError(t, err)
 
 	// Check aliasMap is built correctly
 	// (it's private, but we can test via ResolveAlias method)
-	if resolved := meta.ResolveAlias("req"); resolved != "requirement" {
-		t.Errorf("ResolveAlias(req) = %q, want %q", resolved, "requirement")
-	}
-	if resolved := meta.ResolveAlias("reqs"); resolved != "requirement" {
-		t.Errorf("ResolveAlias(reqs) = %q, want %q", resolved, "requirement")
-	}
-	if resolved := meta.ResolveAlias("dec"); resolved != "decision" {
-		t.Errorf("ResolveAlias(dec) = %q, want %q", resolved, "decision")
-	}
-	if resolved := meta.ResolveAlias("requirement"); resolved != "requirement" {
-		t.Errorf("ResolveAlias(requirement) = %q, want %q", resolved, "requirement")
-	}
+	assertEqual(t, meta.ResolveAlias("req"), "requirement")
+	assertEqual(t, meta.ResolveAlias("reqs"), "requirement")
+	assertEqual(t, meta.ResolveAlias("dec"), "decision")
+	assertEqual(t, meta.ResolveAlias("requirement"), "requirement")
 }
 
 func TestDefaultMetamodel(t *testing.T) {
@@ -516,9 +518,7 @@ func TestDefaultMetamodel(t *testing.T) {
 		t.Fatal("DefaultMetamodel returned nil")
 	}
 
-	if meta.Version != "1.0" {
-		t.Errorf("Version = %q, want %q", meta.Version, "1.0")
-	}
+	assertEqual(t, meta.Version, "1.0")
 
 	// Check expected entities exist
 	expectedEntities := []string{"requirement", "decision", "solution", "component"}
@@ -554,14 +554,10 @@ func TestDefaultMetamodelYAML(t *testing.T) {
 
 	// Verify it can be parsed
 	meta, err := Parse([]byte(yaml))
-	if err != nil {
-		t.Fatalf("DefaultMetamodelYAML produces invalid YAML: %v", err)
-	}
+	assertNoError(t, err)
 
 	// Verify basic structure
-	if meta.Version != "1.0" {
-		t.Errorf("Version = %q, want %q", meta.Version, "1.0")
-	}
+	assertEqual(t, meta.Version, "1.0")
 
 	if len(meta.Entities) == 0 {
 		t.Error("expected entities in default metamodel")

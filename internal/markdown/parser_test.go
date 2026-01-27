@@ -3,6 +3,8 @@ package markdown
 import (
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 func TestParseDocument(t *testing.T) {
@@ -21,35 +23,21 @@ This is a test requirement.
 `
 
 	doc, err := ParseDocument(content)
-	if err != nil {
-		t.Fatalf("ParseDocument failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	if doc.Frontmatter == nil {
 		t.Fatal("frontmatter should not be nil")
 	}
 
-	if doc.GetString("id") != "REQ-001" {
-		t.Errorf("id = %q, want %q", doc.GetString("id"), "REQ-001")
-	}
-	if doc.GetString("type") != "requirement" {
-		t.Errorf("type = %q, want %q", doc.GetString("type"), "requirement")
-	}
-	if doc.GetString("title") != "Test Requirement" {
-		t.Errorf("title = %q, want %q", doc.GetString("title"), "Test Requirement")
-	}
+	testutil.AssertEqual(t, doc.GetString("id"), "REQ-001")
+	testutil.AssertEqual(t, doc.GetString("type"), "requirement")
+	testutil.AssertEqual(t, doc.GetString("title"), "Test Requirement")
 
 	tags := doc.GetStringSlice("tags")
-	if len(tags) != 2 {
-		t.Errorf("got %d tags, want 2", len(tags))
-	}
+	testutil.AssertEqual(t, len(tags), 2)
 
-	if !strings.Contains(doc.Content, "# Description") {
-		t.Error("content should contain heading")
-	}
-	if !strings.Contains(doc.Content, "This is a test requirement") {
-		t.Error("content should contain text")
-	}
+	testutil.AssertStringContains(t, doc.Content, "# Description")
+	testutil.AssertStringContains(t, doc.Content, "This is a test requirement")
 }
 
 func TestParseDocument_NoFrontmatter(t *testing.T) {
@@ -59,17 +47,11 @@ Some content without frontmatter.
 `
 
 	doc, err := ParseDocument(content)
-	if err != nil {
-		t.Fatalf("ParseDocument failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
-	if len(doc.Frontmatter) > 0 {
-		t.Errorf("frontmatter should be empty, got %+v", doc.Frontmatter)
-	}
+	testutil.AssertEqual(t, len(doc.Frontmatter), 0)
 
-	if !strings.Contains(doc.Content, "# Just a heading") {
-		t.Error("content should contain heading")
-	}
+	testutil.AssertStringContains(t, doc.Content, "# Just a heading")
 }
 
 func TestParseDocument_EmptyFrontmatter(t *testing.T) {
@@ -80,17 +62,11 @@ Content after empty frontmatter.
 `
 
 	doc, err := ParseDocument(content)
-	if err != nil {
-		t.Fatalf("ParseDocument failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
-	if len(doc.Frontmatter) > 0 {
-		t.Errorf("frontmatter should be empty, got %+v", doc.Frontmatter)
-	}
+	testutil.AssertEqual(t, len(doc.Frontmatter), 0)
 
-	if !strings.Contains(doc.Content, "Content after empty frontmatter") {
-		t.Error("content should be present")
-	}
+	testutil.AssertStringContains(t, doc.Content, "Content after empty frontmatter")
 }
 
 func TestParseDocument_InvalidYAML(t *testing.T) {
@@ -103,9 +79,7 @@ Content here.
 `
 
 	_, err := ParseDocument(content)
-	if err == nil {
-		t.Error("expected error for invalid YAML")
-	}
+	testutil.AssertError(t, err)
 }
 
 func TestParseDocument_FrontmatterOnly(t *testing.T) {
@@ -116,17 +90,10 @@ type: requirement
 `
 
 	doc, err := ParseDocument(content)
-	if err != nil {
-		t.Fatalf("ParseDocument failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
-	if doc.GetString("id") != "REQ-001" {
-		t.Errorf("id = %q, want %q", doc.GetString("id"), "REQ-001")
-	}
-
-	if doc.Content != "" {
-		t.Errorf("content = %q, want empty string", doc.Content)
-	}
+	testutil.AssertEqual(t, doc.GetString("id"), "REQ-001")
+	testutil.AssertEqual(t, doc.Content, "")
 }
 
 func TestParseDocument_UnclosedFrontmatter(t *testing.T) {
@@ -160,31 +127,19 @@ func TestFormatDocument(t *testing.T) {
 	content := "# Description\n\nThis is the content."
 
 	formatted, err := FormatDocument(frontmatter, content)
-	if err != nil {
-		t.Fatalf("FormatDocument failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	if !strings.HasPrefix(formatted, "---\n") {
 		t.Error("formatted document should start with ---")
 	}
-	if !strings.Contains(formatted, "id: REQ-001") {
-		t.Error("formatted document should contain id")
-	}
-	if !strings.Contains(formatted, "type: requirement") {
-		t.Error("formatted document should contain type")
-	}
-	if !strings.Contains(formatted, "# Description") {
-		t.Error("formatted document should contain content")
-	}
+	testutil.AssertStringContains(t, formatted, "id: REQ-001")
+	testutil.AssertStringContains(t, formatted, "type: requirement")
+	testutil.AssertStringContains(t, formatted, "# Description")
 
 	// Verify it can be parsed back
 	doc, err := ParseDocument(formatted)
-	if err != nil {
-		t.Fatalf("failed to parse formatted document: %v", err)
-	}
-	if doc.GetString("id") != "REQ-001" {
-		t.Errorf("id = %q, want %q", doc.GetString("id"), "REQ-001")
-	}
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqual(t, doc.GetString("id"), "REQ-001")
 }
 
 func TestFormatDocument_EmptyFrontmatter(t *testing.T) {
@@ -192,16 +147,12 @@ func TestFormatDocument_EmptyFrontmatter(t *testing.T) {
 	content := "Just content without frontmatter."
 
 	formatted, err := FormatDocument(frontmatter, content)
-	if err != nil {
-		t.Fatalf("FormatDocument failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	if strings.HasPrefix(formatted, "---") {
 		t.Error("formatted document should not have frontmatter delimiters")
 	}
-	if !strings.Contains(formatted, "Just content") {
-		t.Error("formatted document should contain content")
-	}
+	testutil.AssertStringContains(t, formatted, "Just content")
 }
 
 func TestFormatDocument_NoContent(t *testing.T) {
@@ -212,16 +163,12 @@ func TestFormatDocument_NoContent(t *testing.T) {
 	content := ""
 
 	formatted, err := FormatDocument(frontmatter, content)
-	if err != nil {
-		t.Fatalf("FormatDocument failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	if !strings.HasPrefix(formatted, "---\n") {
 		t.Error("formatted document should start with ---")
 	}
-	if !strings.Contains(formatted, "id: REQ-001") {
-		t.Error("formatted document should contain id")
-	}
+	testutil.AssertStringContains(t, formatted, "id: REQ-001")
 
 	// Should not have extra content after closing ---
 	lines := strings.Split(formatted, "\n")
@@ -258,9 +205,7 @@ func TestFormatDocument_ContentWithoutTrailingNewline(t *testing.T) {
 	content := "Content without newline"
 
 	formatted, err := FormatDocument(frontmatter, content)
-	if err != nil {
-		t.Fatalf("FormatDocument failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	if !strings.HasSuffix(formatted, "\n") {
 		t.Error("formatted document should end with newline")
@@ -277,19 +222,13 @@ func TestDocumentGetString(t *testing.T) {
 	}
 
 	// Test existing string field
-	if got := doc.GetString("string_field"); got != "value" {
-		t.Errorf("GetString(string_field) = %q, want %q", got, "value")
-	}
+	testutil.AssertEqual(t, doc.GetString("string_field"), "value")
 
 	// Test non-existent field
-	if got := doc.GetString("nonexistent"); got != "" {
-		t.Errorf("GetString(nonexistent) = %q, want empty string", got)
-	}
+	testutil.AssertEqual(t, doc.GetString("nonexistent"), "")
 
 	// Test non-string field
-	if got := doc.GetString("int_field"); got != "" {
-		t.Errorf("GetString(int_field) = %q, want empty string for non-string", got)
-	}
+	testutil.AssertEqual(t, doc.GetString("int_field"), "")
 }
 
 func TestDocumentGetString_NilFrontmatter(t *testing.T) {
@@ -297,9 +236,7 @@ func TestDocumentGetString_NilFrontmatter(t *testing.T) {
 		Frontmatter: nil,
 	}
 
-	if got := doc.GetString("any_field"); got != "" {
-		t.Errorf("GetString with nil frontmatter = %q, want empty string", got)
-	}
+	testutil.AssertEqual(t, doc.GetString("any_field"), "")
 }
 
 func TestDocumentGetStringSlice(t *testing.T) {
@@ -368,28 +305,16 @@ Content here.
 `
 
 	frontmatter, body, err := splitFrontmatter(content)
-	if err != nil {
-		t.Fatalf("splitFrontmatter failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
-	if !strings.Contains(frontmatter, "id: REQ-001") {
-		t.Error("frontmatter should contain id")
-	}
-	if !strings.Contains(frontmatter, "type: requirement") {
-		t.Error("frontmatter should contain type")
-	}
+	testutil.AssertStringContains(t, frontmatter, "id: REQ-001")
+	testutil.AssertStringContains(t, frontmatter, "type: requirement")
 
-	if !strings.Contains(body, "# Heading") {
-		t.Error("body should contain heading")
-	}
-	if !strings.Contains(body, "Content here") {
-		t.Error("body should contain content")
-	}
+	testutil.AssertStringContains(t, body, "# Heading")
+	testutil.AssertStringContains(t, body, "Content here")
 
 	// Body should not contain frontmatter delimiters
-	if strings.Contains(body, "---") {
-		t.Error("body should not contain frontmatter delimiters")
-	}
+	testutil.AssertStringNotContains(t, body, "---")
 }
 
 func TestSplitFrontmatter_NoFrontmatter(t *testing.T) {
@@ -399,33 +324,21 @@ Some content.
 `
 
 	frontmatter, body, err := splitFrontmatter(content)
-	if err != nil {
-		t.Fatalf("splitFrontmatter failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
-	if frontmatter != "" {
-		t.Errorf("frontmatter = %q, want empty string", frontmatter)
-	}
+	testutil.AssertEqual(t, frontmatter, "")
 
-	if !strings.Contains(body, "# Just a heading") {
-		t.Error("body should contain all content")
-	}
+	testutil.AssertStringContains(t, body, "# Just a heading")
 }
 
 func TestSplitFrontmatter_EmptyContent(t *testing.T) {
 	content := ""
 
 	frontmatter, body, err := splitFrontmatter(content)
-	if err != nil {
-		t.Fatalf("splitFrontmatter failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
-	if frontmatter != "" {
-		t.Errorf("frontmatter = %q, want empty", frontmatter)
-	}
-	if body != "" {
-		t.Errorf("body = %q, want empty", body)
-	}
+	testutil.AssertEqual(t, frontmatter, "")
+	testutil.AssertEqual(t, body, "")
 }
 
 func TestSplitFrontmatter_OnlyFrontmatter(t *testing.T) {
@@ -435,17 +348,11 @@ id: REQ-001
 `
 
 	frontmatter, body, err := splitFrontmatter(content)
-	if err != nil {
-		t.Fatalf("splitFrontmatter failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
-	if !strings.Contains(frontmatter, "id: REQ-001") {
-		t.Error("frontmatter should contain id")
-	}
+	testutil.AssertStringContains(t, frontmatter, "id: REQ-001")
 
-	if body != "" {
-		t.Errorf("body = %q, want empty", body)
-	}
+	testutil.AssertEqual(t, body, "")
 }
 
 func TestRoundTrip(t *testing.T) {
@@ -470,42 +377,24 @@ More content here.
 
 	// Parse
 	doc, err := ParseDocument(original)
-	if err != nil {
-		t.Fatalf("ParseDocument failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	// Format back
 	formatted, err := FormatDocument(doc.Frontmatter, doc.Content)
-	if err != nil {
-		t.Fatalf("FormatDocument failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	// Parse again
 	doc2, err := ParseDocument(formatted)
-	if err != nil {
-		t.Fatalf("ParseDocument (second) failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	// Verify key fields are preserved
-	if doc2.GetString("id") != "REQ-001" {
-		t.Errorf("id = %q, want %q", doc2.GetString("id"), "REQ-001")
-	}
-	if doc2.GetString("type") != "requirement" {
-		t.Errorf("type = %q, want %q", doc2.GetString("type"), "requirement")
-	}
-	if doc2.GetString("title") != "Test Requirement" {
-		t.Errorf("title = %q, want %q", doc2.GetString("title"), "Test Requirement")
-	}
+	testutil.AssertEqual(t, doc2.GetString("id"), "REQ-001")
+	testutil.AssertEqual(t, doc2.GetString("type"), "requirement")
+	testutil.AssertEqual(t, doc2.GetString("title"), "Test Requirement")
 
 	tags := doc2.GetStringSlice("tags")
-	if len(tags) != 2 {
-		t.Errorf("got %d tags, want 2", len(tags))
-	}
+	testutil.AssertEqual(t, len(tags), 2)
 
-	if !strings.Contains(doc2.Content, "# Description") {
-		t.Error("content should contain heading")
-	}
-	if !strings.Contains(doc2.Content, "More content here") {
-		t.Error("content should be preserved")
-	}
+	testutil.AssertStringContains(t, doc2.Content, "# Description")
+	testutil.AssertStringContains(t, doc2.Content, "More content here")
 }
