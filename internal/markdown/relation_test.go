@@ -98,7 +98,7 @@ func TestWriteRelation(t *testing.T) {
 	}
 
 	// Verify file exists
-	if _, err := os.Stat(relationPath); os.IsNotExist(err) {
+	if _, statErr := os.Stat(relationPath); os.IsNotExist(statErr) {
 		t.Error("relation file should exist")
 	}
 

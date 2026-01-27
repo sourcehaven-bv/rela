@@ -63,7 +63,7 @@ Some content without frontmatter.
 		t.Fatalf("ParseDocument failed: %v", err)
 	}
 
-	if doc.Frontmatter != nil && len(doc.Frontmatter) > 0 {
+	if len(doc.Frontmatter) > 0 {
 		t.Errorf("frontmatter should be empty, got %+v", doc.Frontmatter)
 	}
 
@@ -84,7 +84,7 @@ Content after empty frontmatter.
 		t.Fatalf("ParseDocument failed: %v", err)
 	}
 
-	if doc.Frontmatter != nil && len(doc.Frontmatter) > 0 {
+	if len(doc.Frontmatter) > 0 {
 		t.Errorf("frontmatter should be empty, got %+v", doc.Frontmatter)
 	}
 
@@ -228,12 +228,13 @@ func TestFormatDocument_NoContent(t *testing.T) {
 	var foundClosing bool
 	var afterClosing []string
 	for _, line := range lines {
-		if foundClosing {
+		switch {
+		case foundClosing:
 			afterClosing = append(afterClosing, line)
-		} else if strings.TrimSpace(line) == "---" && len(afterClosing) == 0 {
+		case strings.TrimSpace(line) == "---" && len(afterClosing) == 0:
 			// First --- is opening
 			continue
-		} else if strings.TrimSpace(line) == "---" {
+		case strings.TrimSpace(line) == "---":
 			foundClosing = true
 		}
 	}

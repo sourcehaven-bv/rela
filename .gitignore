@@ -1,5 +1,7 @@
 bin/
 coverage.out
+coverage.txt
+coverage.html
 test-logs/
 *.log
 
@@ -8,5 +10,4 @@ QA-SUMMARY-*.md
 test-tui*.sh
 tickets/
 other-ci.yml
-CLAUDE.md
 .claude/

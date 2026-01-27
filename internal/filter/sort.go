@@ -10,8 +10,11 @@ import (
 // Sort sorts entities by a property with type-aware comparison.
 // The meta parameter is optional but required for proper enum/custom type ordering.
 func Sort(
-	entities []*model.Entity, propName string, propDef *metamodel.PropertyDef,
-	meta *metamodel.Metamodel, descending bool,
+	entities []*model.Entity,
+	propName string,
+	propDef *metamodel.PropertyDef,
+	meta *metamodel.Metamodel,
+	descending bool,
 ) {
 	// Build enum value index map for efficient lookup
 	enumIndex := buildEnumIndex(propDef, meta)
