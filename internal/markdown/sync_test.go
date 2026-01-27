@@ -9,118 +9,59 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 func TestSyncFromFiles(t *testing.T) {
-	tmpDir := t.TempDir()
+	// Build test project with entities and relations
+	entity1 := testutil.NewEntity("REQ-001", "requirement").
+		WithTitle("Requirement 1").
+		Build()
+	entity2 := testutil.NewEntity("REQ-002", "requirement").
+		WithTitle("Requirement 2").
+		Build()
+	entity3 := testutil.NewEntity("DEC-001", "decision").
+		WithTitle("Decision 1").
+		Build()
+
+	rel1 := testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build()
+	rel2 := testutil.NewRelation("DEC-001", "addresses", "REQ-002").Build()
+
+	meta := testutil.NewMetamodel().
+		WithEntity("requirement", "Requirement", []string{"REQ-"}).
+		WithEntity("decision", "Decision", []string{"DEC-"}).
+		WithRelation("addresses", "Addresses", []string{"decision"}, []string{"requirement"}).
+		Build()
+
+	testCtx, _, g := testutil.NewProject(t).
+		WithMetamodel(meta).
+		WithEntity(entity1).
+		WithEntity(entity2).
+		WithEntity(entity3).
+		WithRelation(rel1).
+		WithRelation(rel2).
+		Build()
+
+	// Convert to project.Context
 	ctx := &project.Context{
-		Root:         tmpDir,
-		EntitiesDir:  filepath.Join(tmpDir, "entities"),
-		RelationsDir: filepath.Join(tmpDir, "relations"),
-	}
-
-	// Create entity directories
-	reqDir := filepath.Join(ctx.EntitiesDir, "requirement")
-	decDir := filepath.Join(ctx.EntitiesDir, "decision")
-	if err := os.MkdirAll(reqDir, 0755); err != nil {
-		t.Fatalf("failed to create requirement dir: %v", err)
-	}
-	if err := os.MkdirAll(decDir, 0755); err != nil {
-		t.Fatalf("failed to create decision dir: %v", err)
-	}
-	if err := os.MkdirAll(ctx.RelationsDir, 0755); err != nil {
-		t.Fatalf("failed to create relations dir: %v", err)
-	}
-
-	// Create test entities
-	entities := map[string]string{
-		"REQ-001": `---
-id: REQ-001
-type: requirement
-title: Requirement 1
----
-`,
-		"REQ-002": `---
-id: REQ-002
-type: requirement
-title: Requirement 2
----
-`,
-		"DEC-001": `---
-id: DEC-001
-type: decision
-title: Decision 1
----
-`,
-	}
-
-	for id, content := range entities {
-		var dir string
-		if id[0] == 'R' {
-			dir = reqDir
-		} else {
-			dir = decDir
-		}
-		path := filepath.Join(dir, id+".md")
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("failed to create entity %s: %v", id, err)
-		}
-	}
-
-	// Create test relations
-	relations := []struct {
-		from, relType, to string
-	}{
-		{"DEC-001", "addresses", "REQ-001"},
-		{"DEC-001", "addresses", "REQ-002"},
-	}
-
-	for _, rel := range relations {
-		content := `---
-from: ` + rel.from + `
-relation: ` + rel.relType + `
-to: ` + rel.to + `
----
-`
-		filename := RelationFilename(rel.from, rel.relType, rel.to)
-		path := filepath.Join(ctx.RelationsDir, filename)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("failed to create relation: %v", err)
-		}
+		Root:         testCtx.Root,
+		EntitiesDir:  testCtx.EntitiesDir,
+		RelationsDir: testCtx.RelationsDir,
+		CacheDir:     testCtx.CacheDir,
 	}
 
 	// Sync
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"requirement": {Label: "Requirement"},
-			"decision":    {Label: "Decision"},
-		},
-	}
-	g := graph.New()
-
 	result, err := SyncFromFiles(ctx, meta, g)
-	if err != nil {
-		t.Fatalf("SyncFromFiles failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	// Verify results
-	if result.EntitiesLoaded != 3 {
-		t.Errorf("EntitiesLoaded = %d, want 3", result.EntitiesLoaded)
-	}
-	if result.RelationsLoaded != 2 {
-		t.Errorf("RelationsLoaded = %d, want 2", result.RelationsLoaded)
-	}
-	if len(result.Errors) != 0 {
-		t.Errorf("got %d errors, want 0: %v", len(result.Errors), result.Errors)
-	}
+	testutil.AssertEqual(t, result.EntitiesLoaded, 3)
+	testutil.AssertEqual(t, result.RelationsLoaded, 2)
+	testutil.AssertLengthEqual(t, result.Errors, 0)
 
 	// Verify graph state
-	if g.NodeCount() != 3 {
-		t.Errorf("graph has %d nodes, want 3", g.NodeCount())
-	}
-	if g.EdgeCount() != 2 {
-		t.Errorf("graph has %d edges, want 2", g.EdgeCount())
-	}
+	testutil.AssertEqual(t, g.NodeCount(), 3)
+	testutil.AssertEqual(t, g.EdgeCount(), 2)
 
 	// Verify specific entities exist
 	if _, ok := g.GetNode("REQ-001"); !ok {
@@ -269,38 +210,22 @@ to: REQ-999
 }
 
 func TestSyncFromFiles_EmptyDirectories(t *testing.T) {
-	tmpDir := t.TempDir()
+	testCtx, meta, g := testutil.NewProject(t).Build()
+
+	// Convert to project.Context
 	ctx := &project.Context{
-		Root:         tmpDir,
-		EntitiesDir:  filepath.Join(tmpDir, "entities"),
-		RelationsDir: filepath.Join(tmpDir, "relations"),
+		Root:         testCtx.Root,
+		EntitiesDir:  testCtx.EntitiesDir,
+		RelationsDir: testCtx.RelationsDir,
+		CacheDir:     testCtx.CacheDir,
 	}
-
-	// Create empty directories
-	if err := os.MkdirAll(ctx.EntitiesDir, 0755); err != nil {
-		t.Fatalf("failed to create entities dir: %v", err)
-	}
-	if err := os.MkdirAll(ctx.RelationsDir, 0755); err != nil {
-		t.Fatalf("failed to create relations dir: %v", err)
-	}
-
-	meta := &metamodel.Metamodel{}
-	g := graph.New()
 
 	result, err := SyncFromFiles(ctx, meta, g)
-	if err != nil {
-		t.Fatalf("SyncFromFiles failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
-	if result.EntitiesLoaded != 0 {
-		t.Errorf("EntitiesLoaded = %d, want 0", result.EntitiesLoaded)
-	}
-	if result.RelationsLoaded != 0 {
-		t.Errorf("RelationsLoaded = %d, want 0", result.RelationsLoaded)
-	}
-	if len(result.Errors) != 0 {
-		t.Errorf("got %d errors, want 0", len(result.Errors))
-	}
+	testutil.AssertEqual(t, result.EntitiesLoaded, 0)
+	testutil.AssertEqual(t, result.RelationsLoaded, 0)
+	testutil.AssertLengthEqual(t, result.Errors, 0)
 }
 
 func TestSyncFromFiles_ClearsExistingGraph(t *testing.T) {

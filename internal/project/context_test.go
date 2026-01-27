@@ -7,95 +7,61 @@ import (
 	"testing"
 
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 func TestDiscover(t *testing.T) {
 	t.Run("finds project by metamodel.yaml", func(t *testing.T) {
 		// Create a temporary directory structure
-		tmpDir := t.TempDir()
+		tmpDir := testutil.TempDirWithCleanup(t)
 		subDir := filepath.Join(tmpDir, "subdir", "nested")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CreateDir(t, subDir)
 
 		// Create metamodel.yaml in root
 		metamodelPath := filepath.Join(tmpDir, MetamodelFile)
-		if err := os.WriteFile(metamodelPath, []byte("version: 1.0\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CreateFile(t, metamodelPath, "version: 1.0\n")
 
 		// Discover from nested directory
 		ctx, err := Discover(subDir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if ctx.Root != tmpDir {
-			t.Errorf("expected root %s, got %s", tmpDir, ctx.Root)
-		}
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, ctx.Root, tmpDir)
 	})
 
 	t.Run("finds project by .rela directory", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := testutil.TempDirWithCleanup(t)
 		subDir := filepath.Join(tmpDir, "subdir")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CreateDir(t, subDir)
 
 		// Create .rela directory in root
 		relaDir := filepath.Join(tmpDir, CacheDir)
-		if err := os.MkdirAll(relaDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CreateDir(t, relaDir)
 
 		ctx, err := Discover(subDir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if ctx.Root != tmpDir {
-			t.Errorf("expected root %s, got %s", tmpDir, ctx.Root)
-		}
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, ctx.Root, tmpDir)
 	})
 
 	t.Run("uses current directory when startDir is empty", func(t *testing.T) {
-		// Save current directory
-		originalWd, err := os.Getwd()
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer os.Chdir(originalWd)
-
 		// Create temp directory with metamodel
-		tmpDir := t.TempDir()
-		// Resolve symlinks (important on macOS where /tmp -> /private/tmp)
-		tmpDir, evalErr := filepath.EvalSymlinks(tmpDir)
-		if evalErr != nil {
-			t.Fatal(evalErr)
-		}
-
+		tmpDir := testutil.TempDirWithCleanup(t)
 		metamodelPath := filepath.Join(tmpDir, MetamodelFile)
-		if writeErr := os.WriteFile(metamodelPath, []byte("version: 1.0\n"), 0644); writeErr != nil {
-			t.Fatal(writeErr)
-		}
+		testutil.CreateFile(t, metamodelPath, "version: 1.0\n")
 
 		// Change to temp directory
-		if chdirErr := os.Chdir(tmpDir); chdirErr != nil {
-			t.Fatal(chdirErr)
-		}
+		cleanup := testutil.ChangeDir(t, tmpDir)
+		defer cleanup()
+
+		// Resolve symlinks (important on macOS where /tmp -> /private/tmp)
+		tmpDir, evalErr := filepath.EvalSymlinks(tmpDir)
+		testutil.AssertNoError(t, evalErr)
 
 		ctx, err := Discover("")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if ctx.Root != tmpDir {
-			t.Errorf("expected root %s, got %s", tmpDir, ctx.Root)
-		}
+		testutil.AssertNoError(t, err)
+		testutil.AssertEqual(t, ctx.Root, tmpDir)
 	})
 
 	t.Run("returns error when no project found", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := testutil.TempDirWithCleanup(t)
 
 		_, err := Discover(tmpDir)
 		if !errors.Is(err, relaerrors.ErrNoProject) {
@@ -143,22 +109,16 @@ func TestNewContext(t *testing.T) {
 
 func TestContextInitialize(t *testing.T) {
 	t.Run("creates directories successfully", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := testutil.TempDirWithCleanup(t)
 		ctx := newContext(tmpDir)
 
-		if err := ctx.Initialize(); err != nil {
-			t.Fatalf("Initialize failed: %v", err)
-		}
+		err := ctx.Initialize()
+		testutil.AssertNoError(t, err)
 
 		// Check that directories were created
 		dirs := []string{ctx.CacheDir, ctx.EntitiesDir, ctx.RelationsDir}
 		for _, dir := range dirs {
-			info, err := os.Stat(dir)
-			if err != nil {
-				t.Errorf("directory %s not created: %v", dir, err)
-			} else if !info.IsDir() {
-				t.Errorf("%s is not a directory", dir)
-			}
+			testutil.AssertIsDir(t, dir)
 		}
 	})
 
@@ -179,46 +139,32 @@ func TestContextInitialize(t *testing.T) {
 	})
 
 	t.Run("handles error when creating entities directory", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := testutil.TempDirWithCleanup(t)
 		ctx := newContext(tmpDir)
 
 		// Create .rela successfully first
-		if err := os.MkdirAll(ctx.CacheDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CreateDir(t, ctx.CacheDir)
 
 		// Create entities as a file (not directory) to cause error
-		if err := os.WriteFile(ctx.EntitiesDir, []byte("test"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CreateFile(t, ctx.EntitiesDir, "test")
 
 		err := ctx.Initialize()
-		if err == nil {
-			t.Error("expected error when entities path is a file")
-		}
+		testutil.AssertError(t, err)
 	})
 
 	t.Run("handles error when creating relations directory", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := testutil.TempDirWithCleanup(t)
 		ctx := newContext(tmpDir)
 
 		// Create .rela and entities successfully
-		if err := os.MkdirAll(ctx.CacheDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(ctx.EntitiesDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CreateDir(t, ctx.CacheDir)
+		testutil.CreateDir(t, ctx.EntitiesDir)
 
 		// Create relations as a file (not directory) to cause error
-		if err := os.WriteFile(ctx.RelationsDir, []byte("test"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CreateFile(t, ctx.RelationsDir, "test")
 
 		err := ctx.Initialize()
-		if err == nil {
-			t.Error("expected error when relations path is a file")
-		}
+		testutil.AssertError(t, err)
 	})
 }
 
@@ -276,13 +222,11 @@ func TestContextRelationFilePath(t *testing.T) {
 
 func TestContextExists(t *testing.T) {
 	t.Run("returns true when metamodel exists", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := testutil.TempDirWithCleanup(t)
 		ctx := newContext(tmpDir)
 
 		// Create metamodel.yaml
-		if err := os.WriteFile(ctx.MetamodelPath, []byte("version: 1.0\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CreateFile(t, ctx.MetamodelPath, "version: 1.0\n")
 
 		if !ctx.Exists() {
 			t.Error("expected Exists() to return true")
@@ -290,7 +234,7 @@ func TestContextExists(t *testing.T) {
 	})
 
 	t.Run("returns false when metamodel does not exist", func(t *testing.T) {
-		tmpDir := t.TempDir()
+		tmpDir := testutil.TempDirWithCleanup(t)
 		ctx := newContext(tmpDir)
 
 		if ctx.Exists() {

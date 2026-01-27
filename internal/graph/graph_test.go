@@ -6,6 +6,22 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
+// Test helpers to avoid import cycle
+func assertEqual(t *testing.T, got, want interface{}) {
+	t.Helper()
+	if got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func newEntity(id, entityType string) *model.Entity {
+	return model.NewEntity(id, entityType)
+}
+
+func newRelation(from, relationType, to string) *model.Relation {
+	return model.NewRelation(from, relationType, to)
+}
+
 func TestNew(t *testing.T) {
 	g := New()
 	if g == nil {
@@ -18,43 +34,39 @@ func TestNew(t *testing.T) {
 
 func TestAddNode(t *testing.T) {
 	g := New()
-	e := &model.Entity{ID: "TEST-001", Type: "test"}
+	e := newEntity("TEST-001", "test")
 
 	g.AddNode(e)
 
-	if g.NodeCount() != 1 {
-		t.Errorf("expected 1 node, got %d", g.NodeCount())
-	}
+	assertEqual(t, g.NodeCount(), 1)
 
 	retrieved, ok := g.GetNode("TEST-001")
 	if !ok {
 		t.Error("expected to find added node")
 	}
-	if retrieved.ID != "TEST-001" {
-		t.Errorf("expected ID TEST-001, got %s", retrieved.ID)
-	}
+	assertEqual(t, retrieved.ID, "TEST-001")
 }
 
 func TestUpdateNode(t *testing.T) {
 	g := New()
-	e := &model.Entity{ID: "TEST-001", Type: "test", Properties: map[string]interface{}{"title": "Original"}}
+	e := newEntity("TEST-001", "test")
+	e.Properties["title"] = "Original"
 
 	g.AddNode(e)
 
 	// Update existing node
-	e2 := &model.Entity{ID: "TEST-001", Type: "test", Properties: map[string]interface{}{"title": "Updated"}}
+	e2 := newEntity("TEST-001", "test")
+	e2.Properties["title"] = "Updated"
 	ok := g.UpdateNode(e2)
 	if !ok {
 		t.Error("expected UpdateNode to succeed for existing node")
 	}
 
 	retrieved, _ := g.GetNode("TEST-001")
-	if retrieved.Properties["title"] != "Updated" {
-		t.Error("expected node properties to be updated")
-	}
+	assertEqual(t, retrieved.Properties["title"], "Updated")
 
 	// Try to update non-existent node
-	e3 := &model.Entity{ID: "NONEXISTENT", Type: "test"}
+	e3 := newEntity("NONEXISTENT", "test")
 	ok = g.UpdateNode(e3)
 	if ok {
 		t.Error("expected UpdateNode to fail for non-existent node")
@@ -63,7 +75,7 @@ func TestUpdateNode(t *testing.T) {
 
 func TestGetNode(t *testing.T) {
 	g := New()
-	e := &model.Entity{ID: "TEST-001", Type: "test"}
+	e := newEntity("TEST-001", "test")
 	g.AddNode(e)
 
 	// Get existing node
@@ -71,9 +83,7 @@ func TestGetNode(t *testing.T) {
 	if !ok {
 		t.Error("expected to find node")
 	}
-	if retrieved.ID != "TEST-001" {
-		t.Error("expected correct node ID")
-	}
+	assertEqual(t, retrieved.ID, "TEST-001")
 
 	// Get non-existent node
 	_, ok = g.GetNode("NONEXISTENT")
@@ -84,12 +94,12 @@ func TestGetNode(t *testing.T) {
 
 func TestRemoveNode(t *testing.T) {
 	g := New()
-	e1 := &model.Entity{ID: "TEST-001", Type: "test"}
-	e2 := &model.Entity{ID: "TEST-002", Type: "test"}
+	e1 := newEntity("TEST-001", "test")
+	e2 := newEntity("TEST-002", "test")
 	g.AddNode(e1)
 	g.AddNode(e2)
 
-	r := &model.Relation{From: "TEST-001", Type: "links_to", To: "TEST-002"}
+	r := newRelation("TEST-001", "links_to", "TEST-002")
 	g.AddEdge(r)
 
 	// Remove node
@@ -98,14 +108,10 @@ func TestRemoveNode(t *testing.T) {
 		t.Error("expected RemoveNode to succeed")
 	}
 
-	if g.NodeCount() != 1 {
-		t.Errorf("expected 1 node after removal, got %d", g.NodeCount())
-	}
+	assertEqual(t, g.NodeCount(), 1)
 
 	// Relations should be removed too
-	if g.EdgeCount() != 0 {
-		t.Errorf("expected 0 edges after node removal, got %d", g.EdgeCount())
-	}
+	assertEqual(t, g.EdgeCount(), 0)
 
 	// Try to remove non-existent node
 	ok = g.RemoveNode("NONEXISTENT")
@@ -116,28 +122,22 @@ func TestRemoveNode(t *testing.T) {
 
 func TestAddEdge(t *testing.T) {
 	g := New()
-	r := &model.Relation{From: "TEST-001", Type: "links_to", To: "TEST-002"}
+	r := newRelation("TEST-001", "links_to", "TEST-002")
 
 	g.AddEdge(r)
 
-	if g.EdgeCount() != 1 {
-		t.Errorf("expected 1 edge, got %d", g.EdgeCount())
-	}
+	assertEqual(t, g.EdgeCount(), 1)
 
 	edges := g.OutgoingEdges("TEST-001")
-	if len(edges) != 1 {
-		t.Errorf("expected 1 outgoing edge, got %d", len(edges))
-	}
+	assertEqual(t, len(edges), 1)
 
 	edges = g.IncomingEdges("TEST-002")
-	if len(edges) != 1 {
-		t.Errorf("expected 1 incoming edge, got %d", len(edges))
-	}
+	assertEqual(t, len(edges), 1)
 }
 
 func TestRemoveEdge(t *testing.T) {
 	g := New()
-	r := &model.Relation{From: "TEST-001", Type: "links_to", To: "TEST-002"}
+	r := newRelation("TEST-001", "links_to", "TEST-002")
 	g.AddEdge(r)
 
 	// Remove existing edge
@@ -146,9 +146,7 @@ func TestRemoveEdge(t *testing.T) {
 		t.Error("expected RemoveEdge to succeed")
 	}
 
-	if g.EdgeCount() != 0 {
-		t.Errorf("expected 0 edges after removal, got %d", g.EdgeCount())
-	}
+	assertEqual(t, g.EdgeCount(), 0)
 
 	// Try to remove non-existent edge
 	ok = g.RemoveEdge("NONEXISTENT", "links_to", "TEST-002")
@@ -159,7 +157,7 @@ func TestRemoveEdge(t *testing.T) {
 
 func TestGetEdge(t *testing.T) {
 	g := New()
-	r := &model.Relation{From: "TEST-001", Type: "links_to", To: "TEST-002"}
+	r := newRelation("TEST-001", "links_to", "TEST-002")
 	g.AddEdge(r)
 
 	// Get existing edge
@@ -167,9 +165,7 @@ func TestGetEdge(t *testing.T) {
 	if !ok {
 		t.Error("expected to find edge")
 	}
-	if edge.From != "TEST-001" {
-		t.Error("expected correct edge")
-	}
+	assertEqual(t, edge.From, "TEST-001")
 
 	// Get non-existent edge
 	_, ok = g.GetEdge("NONEXISTENT", "links_to", "TEST-002")
@@ -180,127 +176,99 @@ func TestGetEdge(t *testing.T) {
 
 func TestOutgoingEdges(t *testing.T) {
 	g := New()
-	r1 := &model.Relation{From: "TEST-001", Type: "links_to", To: "TEST-002"}
-	r2 := &model.Relation{From: "TEST-001", Type: "links_to", To: "TEST-003"}
+	r1 := newRelation("TEST-001", "links_to", "TEST-002")
+	r2 := newRelation("TEST-001", "links_to", "TEST-003")
 	g.AddEdge(r1)
 	g.AddEdge(r2)
 
 	edges := g.OutgoingEdges("TEST-001")
-	if len(edges) != 2 {
-		t.Errorf("expected 2 outgoing edges, got %d", len(edges))
-	}
+	assertEqual(t, len(edges), 2)
 
 	// Non-existent node
 	edges = g.OutgoingEdges("NONEXISTENT")
-	if len(edges) != 0 {
-		t.Errorf("expected 0 outgoing edges for non-existent node, got %d", len(edges))
-	}
+	assertEqual(t, len(edges), 0)
 }
 
 func TestIncomingEdges(t *testing.T) {
 	g := New()
-	r1 := &model.Relation{From: "TEST-001", Type: "links_to", To: "TEST-003"}
-	r2 := &model.Relation{From: "TEST-002", Type: "links_to", To: "TEST-003"}
+	r1 := newRelation("TEST-001", "links_to", "TEST-003")
+	r2 := newRelation("TEST-002", "links_to", "TEST-003")
 	g.AddEdge(r1)
 	g.AddEdge(r2)
 
 	edges := g.IncomingEdges("TEST-003")
-	if len(edges) != 2 {
-		t.Errorf("expected 2 incoming edges, got %d", len(edges))
-	}
+	assertEqual(t, len(edges), 2)
 
 	// Non-existent node
 	edges = g.IncomingEdges("NONEXISTENT")
-	if len(edges) != 0 {
-		t.Errorf("expected 0 incoming edges for non-existent node, got %d", len(edges))
-	}
+	assertEqual(t, len(edges), 0)
 }
 
 func TestAllNodes(t *testing.T) {
 	g := New()
-	e1 := &model.Entity{ID: "TEST-001", Type: "test"}
-	e2 := &model.Entity{ID: "TEST-002", Type: "test"}
+	e1 := newEntity("TEST-001", "test")
+	e2 := newEntity("TEST-002", "test")
 	g.AddNode(e1)
 	g.AddNode(e2)
 
 	nodes := g.AllNodes()
-	if len(nodes) != 2 {
-		t.Errorf("expected 2 nodes, got %d", len(nodes))
-	}
+	assertEqual(t, len(nodes), 2)
 }
 
 func TestAllEdges(t *testing.T) {
 	g := New()
-	r1 := &model.Relation{From: "TEST-001", Type: "links_to", To: "TEST-002"}
-	r2 := &model.Relation{From: "TEST-002", Type: "links_to", To: "TEST-003"}
+	r1 := newRelation("TEST-001", "links_to", "TEST-002")
+	r2 := newRelation("TEST-002", "links_to", "TEST-003")
 	g.AddEdge(r1)
 	g.AddEdge(r2)
 
 	edges := g.AllEdges()
-	if len(edges) != 2 {
-		t.Errorf("expected 2 edges, got %d", len(edges))
-	}
+	assertEqual(t, len(edges), 2)
 }
 
 func TestNodesByType(t *testing.T) {
 	g := New()
-	e1 := &model.Entity{ID: "REQ-001", Type: "requirement"}
-	e2 := &model.Entity{ID: "REQ-002", Type: "requirement"}
-	e3 := &model.Entity{ID: "DEC-001", Type: "decision"}
+	e1 := newEntity("REQ-001", "requirement")
+	e2 := newEntity("REQ-002", "requirement")
+	e3 := newEntity("DEC-001", "decision")
 	g.AddNode(e1)
 	g.AddNode(e2)
 	g.AddNode(e3)
 
 	reqs := g.NodesByType("requirement")
-	if len(reqs) != 2 {
-		t.Errorf("expected 2 requirements, got %d", len(reqs))
-	}
+	assertEqual(t, len(reqs), 2)
 
 	decs := g.NodesByType("decision")
-	if len(decs) != 1 {
-		t.Errorf("expected 1 decision, got %d", len(decs))
-	}
+	assertEqual(t, len(decs), 1)
 
 	// Non-existent type
 	none := g.NodesByType("nonexistent")
-	if len(none) != 0 {
-		t.Errorf("expected 0 nodes for non-existent type, got %d", len(none))
-	}
+	assertEqual(t, len(none), 0)
 }
 
 func TestNodeCount(t *testing.T) {
 	g := New()
-	if g.NodeCount() != 0 {
-		t.Error("expected 0 nodes initially")
-	}
+	assertEqual(t, g.NodeCount(), 0)
 
-	g.AddNode(&model.Entity{ID: "TEST-001", Type: "test"})
-	if g.NodeCount() != 1 {
-		t.Error("expected 1 node after adding")
-	}
+	g.AddNode(newEntity("TEST-001", "test"))
+	assertEqual(t, g.NodeCount(), 1)
 }
 
 func TestEdgeCount(t *testing.T) {
 	g := New()
-	if g.EdgeCount() != 0 {
-		t.Error("expected 0 edges initially")
-	}
+	assertEqual(t, g.EdgeCount(), 0)
 
-	g.AddEdge(&model.Relation{From: "TEST-001", Type: "links_to", To: "TEST-002"})
-	if g.EdgeCount() != 1 {
-		t.Error("expected 1 edge after adding")
-	}
+	g.AddEdge(newRelation("TEST-001", "links_to", "TEST-002"))
+	assertEqual(t, g.EdgeCount(), 1)
 }
 
 func TestAllIDs(t *testing.T) {
 	g := New()
-	g.AddNode(&model.Entity{ID: "TEST-001", Type: "test"})
-	g.AddNode(&model.Entity{ID: "TEST-002", Type: "test"})
+	g.AddNode(newEntity("TEST-001", "test"))
+	g.AddNode(newEntity("TEST-002", "test"))
 
 	ids := g.AllIDs()
-	if len(ids) != 2 {
-		t.Errorf("expected 2 IDs, got %d", len(ids))
-	}
+	assertEqual(t, len(ids), 2)
 
 	found1, found2 := false, false
 	for _, id := range ids {
@@ -318,52 +286,49 @@ func TestAllIDs(t *testing.T) {
 
 func TestIDsByType(t *testing.T) {
 	g := New()
-	g.AddNode(&model.Entity{ID: "REQ-001", Type: "requirement"})
-	g.AddNode(&model.Entity{ID: "REQ-002", Type: "requirement"})
-	g.AddNode(&model.Entity{ID: "DEC-001", Type: "decision"})
+	g.AddNode(newEntity("REQ-001", "requirement"))
+	g.AddNode(newEntity("REQ-002", "requirement"))
+	g.AddNode(newEntity("DEC-001", "decision"))
 
 	reqIDs := g.IDsByType("requirement")
-	if len(reqIDs) != 2 {
-		t.Errorf("expected 2 requirement IDs, got %d", len(reqIDs))
-	}
+	assertEqual(t, len(reqIDs), 2)
 
 	decIDs := g.IDsByType("decision")
-	if len(decIDs) != 1 {
-		t.Errorf("expected 1 decision ID, got %d", len(decIDs))
-	}
+	assertEqual(t, len(decIDs), 1)
 }
 
 func TestClear(t *testing.T) {
 	g := New()
-	g.AddNode(&model.Entity{ID: "TEST-001", Type: "test"})
-	g.AddEdge(&model.Relation{From: "TEST-001", Type: "links_to", To: "TEST-002"})
+	g.AddNode(newEntity("TEST-001", "test"))
+	g.AddEdge(newRelation("TEST-001", "links_to", "TEST-002"))
 
 	g.Clear()
 
-	if g.NodeCount() != 0 {
-		t.Error("expected 0 nodes after clear")
-	}
-	if g.EdgeCount() != 0 {
-		t.Error("expected 0 edges after clear")
-	}
+	assertEqual(t, g.NodeCount(), 0)
+	assertEqual(t, g.EdgeCount(), 0)
 }
 
 func TestTraceTo(t *testing.T) {
 	g := New()
-	g.AddNode(&model.Entity{ID: "A", Type: "test", Properties: map[string]interface{}{"title": "A"}})
-	g.AddNode(&model.Entity{ID: "B", Type: "test", Properties: map[string]interface{}{"title": "B"}})
-	g.AddNode(&model.Entity{ID: "C", Type: "test", Properties: map[string]interface{}{"title": "C"}})
+	a := newEntity("A", "test")
+	a.Properties["title"] = "A"
+	b := newEntity("B", "test")
+	b.Properties["title"] = "B"
+	c := newEntity("C", "test")
+	c.Properties["title"] = "C"
 
-	g.AddEdge(&model.Relation{From: "A", Type: "links_to", To: "B"})
-	g.AddEdge(&model.Relation{From: "B", Type: "links_to", To: "C"})
+	g.AddNode(a)
+	g.AddNode(b)
+	g.AddNode(c)
+
+	g.AddEdge(newRelation("A", "links_to", "B"))
+	g.AddEdge(newRelation("B", "links_to", "C"))
 
 	result := g.TraceTo("C", 10)
 	if result == nil {
 		t.Fatal("expected trace result")
 	}
-	if result.ID != "C" {
-		t.Errorf("expected root to be C, got %s", result.ID)
-	}
+	assertEqual(t, result.ID, "C")
 	if len(result.Children) == 0 {
 		t.Error("expected trace to have children")
 	}
@@ -371,9 +336,9 @@ func TestTraceTo(t *testing.T) {
 
 func TestFindOrphans(t *testing.T) {
 	g := New()
-	g.AddNode(&model.Entity{ID: "ORPHAN", Type: "test"})
-	g.AddNode(&model.Entity{ID: "CONNECTED", Type: "test"})
-	g.AddEdge(&model.Relation{From: "CONNECTED", Type: "links_to", To: "OTHER"})
+	g.AddNode(newEntity("ORPHAN", "test"))
+	g.AddNode(newEntity("CONNECTED", "test"))
+	g.AddEdge(newRelation("CONNECTED", "links_to", "OTHER"))
 
 	orphans := g.FindOrphans()
 	if len(orphans) == 0 {
@@ -393,33 +358,31 @@ func TestFindOrphans(t *testing.T) {
 
 func TestFindClusters(t *testing.T) {
 	g := New()
-	g.AddNode(&model.Entity{ID: "A", Type: "test"})
-	g.AddNode(&model.Entity{ID: "B", Type: "test"})
-	g.AddNode(&model.Entity{ID: "C", Type: "test"})
-	g.AddNode(&model.Entity{ID: "D", Type: "test"})
+	g.AddNode(newEntity("A", "test"))
+	g.AddNode(newEntity("B", "test"))
+	g.AddNode(newEntity("C", "test"))
+	g.AddNode(newEntity("D", "test"))
 
 	// Cluster 1: A-B
-	g.AddEdge(&model.Relation{From: "A", Type: "links_to", To: "B"})
+	g.AddEdge(newRelation("A", "links_to", "B"))
 
 	// Cluster 2: C-D
-	g.AddEdge(&model.Relation{From: "C", Type: "links_to", To: "D"})
+	g.AddEdge(newRelation("C", "links_to", "D"))
 
 	clusters := g.FindClusters()
-	if len(clusters) != 2 {
-		t.Errorf("expected 2 clusters, got %d", len(clusters))
-	}
+	assertEqual(t, len(clusters), 2)
 }
 
 func TestHasCycle(t *testing.T) {
 	g := New()
-	g.AddNode(&model.Entity{ID: "A", Type: "test"})
-	g.AddNode(&model.Entity{ID: "B", Type: "test"})
-	g.AddNode(&model.Entity{ID: "C", Type: "test"})
+	g.AddNode(newEntity("A", "test"))
+	g.AddNode(newEntity("B", "test"))
+	g.AddNode(newEntity("C", "test"))
 
 	// Create cycle: A -> B -> C -> A
-	g.AddEdge(&model.Relation{From: "A", Type: "links_to", To: "B"})
-	g.AddEdge(&model.Relation{From: "B", Type: "links_to", To: "C"})
-	g.AddEdge(&model.Relation{From: "C", Type: "links_to", To: "A"})
+	g.AddEdge(newRelation("A", "links_to", "B"))
+	g.AddEdge(newRelation("B", "links_to", "C"))
+	g.AddEdge(newRelation("C", "links_to", "A"))
 
 	hasCycle := g.HasCycle("A")
 	if !hasCycle {
@@ -428,9 +391,9 @@ func TestHasCycle(t *testing.T) {
 
 	// No cycle graph
 	g2 := New()
-	g2.AddNode(&model.Entity{ID: "X", Type: "test"})
-	g2.AddNode(&model.Entity{ID: "Y", Type: "test"})
-	g2.AddEdge(&model.Relation{From: "X", Type: "links_to", To: "Y"})
+	g2.AddNode(newEntity("X", "test"))
+	g2.AddNode(newEntity("Y", "test"))
+	g2.AddEdge(newRelation("X", "links_to", "Y"))
 
 	hasCycle2 := g2.HasCycle("X")
 	if hasCycle2 {
@@ -440,17 +403,13 @@ func TestHasCycle(t *testing.T) {
 
 func TestRelationsOfType(t *testing.T) {
 	g := New()
-	g.AddEdge(&model.Relation{From: "A", Type: "implements", To: "B"})
-	g.AddEdge(&model.Relation{From: "C", Type: "depends_on", To: "D"})
-	g.AddEdge(&model.Relation{From: "E", Type: "implements", To: "F"})
+	g.AddEdge(newRelation("A", "implements", "B"))
+	g.AddEdge(newRelation("C", "depends_on", "D"))
+	g.AddEdge(newRelation("E", "implements", "F"))
 
 	implements := g.RelationsOfType("implements")
-	if len(implements) != 2 {
-		t.Errorf("expected 2 'implements' relations, got %d", len(implements))
-	}
+	assertEqual(t, len(implements), 2)
 
 	dependsOn := g.RelationsOfType("depends_on")
-	if len(dependsOn) != 1 {
-		t.Errorf("expected 1 'depends_on' relation, got %d", len(dependsOn))
-	}
+	assertEqual(t, len(dependsOn), 1)
 }

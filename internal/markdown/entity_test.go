@@ -8,10 +8,11 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 func TestReadEntity(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.TempDirWithCleanup(t)
 
 	entityContent := `---
 id: REQ-001
@@ -30,44 +31,27 @@ This is a test requirement.
 `
 
 	entityPath := filepath.Join(tmpDir, "REQ-001.md")
-	if err := os.WriteFile(entityPath, []byte(entityContent), 0644); err != nil {
-		t.Fatalf("failed to write test entity: %v", err)
-	}
+	testutil.CreateFile(t, entityPath, entityContent)
 
 	// Test without metamodel
 	entity, err := ReadEntity(entityPath, nil)
-	if err != nil {
-		t.Fatalf("ReadEntity failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
-	if entity.ID != "REQ-001" {
-		t.Errorf("ID = %q, want %q", entity.ID, "REQ-001")
-	}
-	if entity.Type != "requirement" {
-		t.Errorf("Type = %q, want %q", entity.Type, "requirement")
-	}
-	if entity.GetString("title") != "Test Requirement" {
-		t.Errorf("title = %q, want %q", entity.GetString("title"), "Test Requirement")
-	}
-	if entity.GetString("status") != "draft" {
-		t.Errorf("status = %q, want %q", entity.GetString("status"), "draft")
-	}
-	if entity.GetString("priority") != "high" {
-		t.Errorf("priority = %q, want %q", entity.GetString("priority"), "high")
-	}
-	if !strings.Contains(entity.Content, "This is a test requirement") {
-		t.Errorf("content doesn't contain expected text: %q", entity.Content)
-	}
-	if entity.FilePath != entityPath {
-		t.Errorf("FilePath = %q, want %q", entity.FilePath, entityPath)
-	}
+	testutil.AssertEqual(t, entity.ID, "REQ-001")
+	testutil.AssertEqual(t, entity.Type, "requirement")
+	testutil.AssertEqual(t, entity.GetString("title"), "Test Requirement")
+	testutil.AssertEqual(t, entity.GetString("status"), "draft")
+	testutil.AssertEqual(t, entity.GetString("priority"), "high")
+	testutil.AssertStringContains(t, entity.Content, "This is a test requirement")
+	testutil.AssertEqual(t, entity.FilePath, entityPath)
+
 	if entity.ModTime.IsZero() {
 		t.Error("ModTime should not be zero")
 	}
 }
 
 func TestReadEntity_TypeInference(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.TempDirWithCleanup(t)
 
 	// Entity without type field
 	entityContent := `---
@@ -79,31 +63,18 @@ Content here.
 `
 
 	entityPath := filepath.Join(tmpDir, "REQ-001.md")
-	if err := os.WriteFile(entityPath, []byte(entityContent), 0644); err != nil {
-		t.Fatalf("failed to write test entity: %v", err)
-	}
+	testutil.CreateFile(t, entityPath, entityContent)
 
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"requirement": {
-				Label: "Requirement",
-				IDPatterns: []string{
-					"^REQ-\\d+$",
-				},
-			},
-		},
-	}
+	meta := testutil.NewMetamodel().
+		WithEntity("requirement", "Requirement", []string{"^REQ-\\d+$"}).
+		Build()
 
 	entity, err := ReadEntity(entityPath, meta)
-	if err != nil {
-		t.Fatalf("ReadEntity failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	// Type inference depends on MatchesID which needs HasPattern to be implemented
 	// This test verifies the code path is executed without error
-	if entity.ID != "REQ-001" {
-		t.Errorf("ID = %q, want %q", entity.ID, "REQ-001")
-	}
+	testutil.AssertEqual(t, entity.ID, "REQ-001")
 }
 
 func TestReadEntity_AliasResolution(t *testing.T) {
@@ -170,49 +141,31 @@ type: [invalid
 }
 
 func TestWriteEntity(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.TempDirWithCleanup(t)
 
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.SetString("title", "Test Requirement")
-	entity.SetString("status", "draft")
-	entity.SetString("priority", "high")
-	entity.Properties["custom_field"] = "custom value"
-	entity.Content = "# Description\n\nThis is the content."
+	entity := testutil.NewEntity("REQ-001", "requirement").
+		WithTitle("Test Requirement").
+		WithStatus(model.StatusDraft).
+		WithPriority(model.PriorityHigh).
+		WithProperty("custom_field", "custom value").
+		WithContent("# Description\n\nThis is the content.").
+		Build()
 
 	entityPath := filepath.Join(tmpDir, "entities", "requirement", "REQ-001.md")
 
 	err := WriteEntity(entity, entityPath)
-	if err != nil {
-		t.Fatalf("WriteEntity failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
 	// Verify file exists
-	if _, statErr := os.Stat(entityPath); os.IsNotExist(statErr) {
-		t.Error("entity file should exist")
-	}
+	testutil.AssertFileExists(t, entityPath)
 
 	// Read back and verify
-	content, err := os.ReadFile(entityPath)
-	if err != nil {
-		t.Fatalf("failed to read entity file: %v", err)
-	}
-
-	contentStr := string(content)
-	if !strings.Contains(contentStr, "id: REQ-001") {
-		t.Error("content should contain id")
-	}
-	if !strings.Contains(contentStr, "type: requirement") {
-		t.Error("content should contain type")
-	}
-	if !strings.Contains(contentStr, "title: Test Requirement") {
-		t.Error("content should contain title")
-	}
-	if !strings.Contains(contentStr, "status: draft") {
-		t.Error("content should contain status")
-	}
-	if !strings.Contains(contentStr, "This is the content") {
-		t.Error("content should contain body")
-	}
+	content := testutil.ReadFile(t, entityPath)
+	testutil.AssertStringContains(t, content, "id: REQ-001")
+	testutil.AssertStringContains(t, content, "type: requirement")
+	testutil.AssertStringContains(t, content, "title: Test Requirement")
+	testutil.AssertStringContains(t, content, "status: draft")
+	testutil.AssertStringContains(t, content, "This is the content")
 }
 
 func TestWriteEntity_PropertyOrdering(t *testing.T) {
@@ -250,21 +203,15 @@ func TestWriteEntity_PropertyOrdering(t *testing.T) {
 }
 
 func TestDeleteEntity(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.TempDirWithCleanup(t)
 
 	entityPath := filepath.Join(tmpDir, "REQ-001.md")
-	if err := os.WriteFile(entityPath, []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
+	testutil.CreateFile(t, entityPath, "test")
 
 	err := DeleteEntity(entityPath)
-	if err != nil {
-		t.Fatalf("DeleteEntity failed: %v", err)
-	}
+	testutil.AssertNoError(t, err)
 
-	if _, err := os.Stat(entityPath); !os.IsNotExist(err) {
-		t.Error("entity file should be deleted")
-	}
+	testutil.AssertFileNotExists(t, entityPath)
 }
 
 func TestDeleteEntity_NonExistent(t *testing.T) {
@@ -275,18 +222,14 @@ func TestDeleteEntity_NonExistent(t *testing.T) {
 }
 
 func TestListEntityFiles(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := testutil.TempDirWithCleanup(t)
 	entitiesDir := filepath.Join(tmpDir, "entities")
 
 	// Create directory structure with entities
 	requirementDir := filepath.Join(entitiesDir, "requirement")
 	decisionDir := filepath.Join(entitiesDir, "decision")
-	if err := os.MkdirAll(requirementDir, 0755); err != nil {
-		t.Fatalf("failed to create requirement dir: %v", err)
-	}
-	if err := os.MkdirAll(decisionDir, 0755); err != nil {
-		t.Fatalf("failed to create decision dir: %v", err)
-	}
+	testutil.CreateDir(t, requirementDir)
+	testutil.CreateDir(t, decisionDir)
 
 	// Create some entity files
 	entities := []string{
@@ -295,24 +238,15 @@ func TestListEntityFiles(t *testing.T) {
 		filepath.Join(decisionDir, "DEC-001.md"),
 	}
 	for _, path := range entities {
-		if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
-			t.Fatalf("failed to create entity: %v", err)
-		}
+		testutil.CreateFile(t, path, "test")
 	}
 
 	// Create a non-markdown file (should be ignored)
-	if err := os.WriteFile(filepath.Join(requirementDir, "README.txt"), []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create non-md file: %v", err)
-	}
+	testutil.CreateFile(t, filepath.Join(requirementDir, "README.txt"), "test")
 
 	files, err := ListEntityFiles(entitiesDir)
-	if err != nil {
-		t.Fatalf("ListEntityFiles failed: %v", err)
-	}
-
-	if len(files) != 3 {
-		t.Errorf("got %d files, want 3", len(files))
-	}
+	testutil.AssertNoError(t, err)
+	testutil.AssertLengthEqual(t, files, 3)
 
 	// Verify all expected files are present
 	fileMap := make(map[string]bool)
