@@ -32,6 +32,21 @@ func Parse(data []byte) (*Metamodel, error) {
 			return nil, &InvalidIDTypeError{EntityType: name, IDType: def.IDType}
 		}
 
+		// Validate property names
+		for propName := range def.Properties {
+			// Reject property names with leading or trailing whitespace
+			// This prevents bypassing reserved name checks with " id" or "type " etc.
+			trimmedName := strings.TrimSpace(propName)
+			if trimmedName != propName {
+				return nil, &WhitespacePropertyError{EntityType: name, PropertyName: propName}
+			}
+
+			// Check for reserved property names
+			if ReservedPropertyNames[propName] {
+				return nil, &ReservedPropertyError{EntityType: name, PropertyName: propName}
+			}
+		}
+
 		// Add lowercase name as self-reference
 		m.aliasMap[strings.ToLower(name)] = name
 		// Add all aliases
