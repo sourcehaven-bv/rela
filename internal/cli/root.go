@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -121,12 +122,28 @@ func saveCache() error {
 	return nil
 }
 
-// resolveEntityType resolves an entity type name (handling aliases)
+// resolveEntityType resolves an entity type name (handling aliases and plurals)
 func resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
+	// First try to resolve directly (handles exact matches and aliases)
 	resolved := meta.ResolveAlias(typeName)
-	def, ok := meta.GetEntityDef(resolved)
-	if !ok {
-		return "", nil, fmt.Errorf("unknown entity type: %s", typeName)
+	if def, ok := meta.GetEntityDef(resolved); ok {
+		return resolved, def, nil
 	}
-	return resolved, def, nil
+
+	// If that failed, try stripping plural suffixes and resolve again
+	// Try common plural endings in order of specificity
+	pluralSuffixes := []string{"ies", "es", "s"}
+	singularReplacements := []string{"y", "", ""}
+
+	for i, suffix := range pluralSuffixes {
+		if strings.HasSuffix(typeName, suffix) {
+			singular := strings.TrimSuffix(typeName, suffix) + singularReplacements[i]
+			resolved = meta.ResolveAlias(singular)
+			if def, ok := meta.GetEntityDef(resolved); ok {
+				return resolved, def, nil
+			}
+		}
+	}
+
+	return "", nil, fmt.Errorf("unknown entity type: %s", typeName)
 }

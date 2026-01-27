@@ -14,12 +14,16 @@ func Match(entity *model.Entity, filter *Filter, propDef *metamodel.PropertyDef,
 	val := entity.Properties[filter.Property]
 
 	// Handle nil/missing values
+	// Semantic: missing properties do NOT match any filter, except when
+	// explicitly checking for empty values with "property=" (OpEqual with empty string).
+	// This means:
+	//   - property=value  -> false (missing is not equal to value)
+	//   - property!=value -> false (missing should not match "not equal to value")
+	//   - property=       -> true  (missing matches "is empty")
+	//   - property!=      -> false (missing should not match "is not empty")
 	if val == nil {
-		// Only match if explicitly comparing to empty
+		// Only match if explicitly comparing to empty with = operator
 		if filter.Operator == OpEqual && filter.Value == "" {
-			return true, nil
-		}
-		if filter.Operator == OpNotEqual && filter.Value != "" {
 			return true, nil
 		}
 		return false, nil

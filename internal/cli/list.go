@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -47,11 +46,8 @@ Examples:
 		var entityTypeName string
 
 		if len(args) > 0 {
-			// Filter by type
+			// Filter by type (resolveEntityType handles aliases and plural forms)
 			typeName := args[0]
-
-			// Handle plural form (e.g., "requirements" -> "requirement")
-			typeName = strings.TrimSuffix(typeName, "s")
 
 			resolvedType, _, err := resolveEntityType(typeName)
 			if err != nil {
@@ -125,7 +121,7 @@ Examples:
 					return fmt.Errorf("unknown property %q for entity type %q", listSort, entityTypeName)
 				}
 
-				filter.Sort(entities, listSort, &propDef, listDesc)
+				filter.Sort(entities, listSort, &propDef, meta, listDesc)
 			}
 		} else {
 			// Default sort by ID

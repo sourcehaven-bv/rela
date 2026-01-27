@@ -451,6 +451,43 @@ func (w *Writer) WriteFooterSummary(text string) {
 	fmt.Fprintf(w.Out, "  %s\n", color.HiBlackString(text))
 }
 
+// Analysis output methods for JSON format
+
+// PropertyValidationResult represents validation errors for JSON output
+type PropertyValidationResult struct {
+	EntityID   string   `json:"entity_id"`
+	EntityType string   `json:"entity_type"`
+	Errors     []string `json:"errors"`
+}
+
+// AnalysisResult represents the result of an analysis command for JSON output
+type AnalysisResult struct {
+	Status  string      `json:"status"` // "success", "warning", "error"
+	Message string      `json:"message"`
+	Count   int         `json:"count,omitempty"`
+	Details interface{} `json:"details,omitempty"`
+}
+
+// WriteAnalysisResult outputs an analysis result in the appropriate format
+func (w *Writer) WriteAnalysisResult(result AnalysisResult) error {
+	if w.Format == FormatJSON {
+		return w.writeJSON(result)
+	}
+
+	// Text format based on status
+	switch result.Status {
+	case "success":
+		w.WriteSuccess(result.Message)
+	case "warning":
+		w.WriteWarning(result.Message)
+	case "error":
+		w.WriteError(result.Message)
+	default:
+		w.WriteMessage(result.Message)
+	}
+	return nil
+}
+
 // Schema output methods for JSON format
 
 // WriteSchemaOverview outputs the metamodel overview as JSON

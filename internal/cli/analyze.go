@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
 var analyzeCmd = &cobra.Command{
@@ -22,6 +23,7 @@ Subcommands:
   duplicates  - Find entities with similar titles
   gaps        - Find gaps in ID sequences
   cardinality - Check relation cardinality constraints
+  properties  - Validate entity property values against metamodel
   validations - Run custom validation rules from metamodel
   all         - Run all analyses`,
 }
@@ -261,6 +263,102 @@ var analyzeCardinalityCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+var analyzePropertiesCmd = &cobra.Command{
+	Use:   "properties",
+	Short: "Validate entity property values against metamodel",
+	Long: `Validates all entity property values against the metamodel schema.
+
+Checks for:
+  - Invalid enum values (not in allowed list)
+  - Invalid custom type values
+  - Invalid date formats
+  - Invalid integer/boolean values
+  - Missing required properties
+  - Entity IDs not matching configured patterns
+
+This catches issues in manually-edited markdown files that bypass CLI validation.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runPropertyValidation()
+	},
+}
+
+// runPropertyValidation validates all entity properties against the metamodel
+func runPropertyValidation() error {
+	entities := g.AllNodes()
+	errorCount := 0
+
+	// Group errors by entity for cleaner output
+	type entityErrors struct {
+		entity *model.Entity
+		errs   []error
+	}
+	var allErrors []entityErrors
+
+	for _, entity := range entities {
+		errs := meta.ValidateEntity(entity)
+		if len(errs) > 0 {
+			allErrors = append(allErrors, entityErrors{entity: entity, errs: errs})
+			errorCount += len(errs)
+		}
+	}
+
+	// Handle JSON output format
+	if out.Format == "json" {
+		var results []output.PropertyValidationResult
+		for _, ee := range allErrors {
+			errStrings := make([]string, len(ee.errs))
+			for i, err := range ee.errs {
+				errStrings[i] = err.Error()
+			}
+			results = append(results, output.PropertyValidationResult{
+				EntityID:   ee.entity.ID,
+				EntityType: ee.entity.Type,
+				Errors:     errStrings,
+			})
+		}
+
+		status := "success"
+		message := "All entity properties are valid"
+		if errorCount > 0 {
+			status = "error"
+			message = fmt.Sprintf("Found %d property errors across %d entities", errorCount, len(allErrors))
+		}
+
+		return out.WriteAnalysisResult(output.AnalysisResult{
+			Status:  status,
+			Message: message,
+			Count:   errorCount,
+			Details: results,
+		})
+	}
+
+	// Text output format
+	if errorCount == 0 {
+		out.WriteSuccess("All entity properties are valid")
+		return nil
+	}
+
+	out.WriteError("Found %d property errors across %d entities:", errorCount, len(allErrors))
+	for _, ee := range allErrors {
+		out.WriteMessage("")
+		out.WriteMessage("  %s (%s):", ee.entity.ID, ee.entity.Type)
+		for _, err := range ee.errs {
+			out.WriteMessage("    - %s", err.Error())
+		}
+	}
+
+	return nil
+}
+
+// countPropertyErrors counts property validation errors across all entities
+func countPropertyErrors() int {
+	count := 0
+	for _, entity := range g.AllNodes() {
+		count += len(meta.ValidateEntity(entity))
+	}
+	return count
 }
 
 var analyzeValidationsCmd = &cobra.Command{
@@ -563,6 +661,9 @@ var analyzeAllCmd = &cobra.Command{
 			}
 		}
 
+		// Count property errors
+		propertyErrorCount := countPropertyErrors()
+
 		// Count validation issues
 		validationErrors, validationWarnings := countValidationIssues()
 
@@ -572,6 +673,7 @@ var analyzeAllCmd = &cobra.Command{
 			fmt.Sprintf("Cardinality: %d", cardinalityCount),
 			fmt.Sprintf("Duplicates: %d", duplicateCount),
 			fmt.Sprintf("Gaps: %d", gapCount),
+			fmt.Sprintf("Properties: %d", propertyErrorCount),
 		}
 		if len(meta.Validations) > 0 {
 			summaryItems = append(summaryItems, fmt.Sprintf("Validation Errors: %d", validationErrors))
@@ -594,6 +696,10 @@ var analyzeAllCmd = &cobra.Command{
 		out.WriteMessage("")
 		out.WriteSectionHeader("Cardinality Analysis")
 		_ = analyzeCardinalityCmd.RunE(cmd, args)
+
+		out.WriteMessage("")
+		out.WriteSectionHeader("Property Validation")
+		_ = runPropertyValidation()
 
 		if len(meta.Validations) > 0 {
 			out.WriteMessage("")
@@ -618,6 +724,7 @@ func init() {
 	analyzeCmd.AddCommand(analyzeDuplicatesCmd)
 	analyzeCmd.AddCommand(analyzeGapsCmd)
 	analyzeCmd.AddCommand(analyzeCardinalityCmd)
+	analyzeCmd.AddCommand(analyzePropertiesCmd)
 	analyzeCmd.AddCommand(analyzeValidationsCmd)
 	analyzeCmd.AddCommand(analyzeAllCmd)
 
