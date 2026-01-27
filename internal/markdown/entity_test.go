@@ -187,7 +187,7 @@ func TestWriteEntity(t *testing.T) {
 	}
 
 	// Verify file exists
-	if _, err := os.Stat(entityPath); os.IsNotExist(err) {
+	if _, statErr := os.Stat(entityPath); os.IsNotExist(statErr) {
 		t.Error("entity file should exist")
 	}
 

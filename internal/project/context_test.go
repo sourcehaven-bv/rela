@@ -1,11 +1,12 @@
 package project
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/errors"
+	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 )
 
 func TestDiscover(t *testing.T) {
@@ -68,19 +69,19 @@ func TestDiscover(t *testing.T) {
 		// Create temp directory with metamodel
 		tmpDir := t.TempDir()
 		// Resolve symlinks (important on macOS where /tmp -> /private/tmp)
-		tmpDir, err = filepath.EvalSymlinks(tmpDir)
-		if err != nil {
-			t.Fatal(err)
+		tmpDir, evalErr := filepath.EvalSymlinks(tmpDir)
+		if evalErr != nil {
+			t.Fatal(evalErr)
 		}
 
 		metamodelPath := filepath.Join(tmpDir, MetamodelFile)
-		if err := os.WriteFile(metamodelPath, []byte("version: 1.0\n"), 0644); err != nil {
-			t.Fatal(err)
+		if writeErr := os.WriteFile(metamodelPath, []byte("version: 1.0\n"), 0644); writeErr != nil {
+			t.Fatal(writeErr)
 		}
 
 		// Change to temp directory
-		if err := os.Chdir(tmpDir); err != nil {
-			t.Fatal(err)
+		if chdirErr := os.Chdir(tmpDir); chdirErr != nil {
+			t.Fatal(chdirErr)
 		}
 
 		ctx, err := Discover("")
@@ -97,7 +98,7 @@ func TestDiscover(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		_, err := Discover(tmpDir)
-		if err != errors.ErrNoProject {
+		if !errors.Is(err, relaerrors.ErrNoProject) {
 			t.Errorf("expected ErrNoProject, got %v", err)
 		}
 	})
@@ -226,7 +227,7 @@ func TestContextEntityTypeDir(t *testing.T) {
 
 	t.Run("simple pluralization", func(t *testing.T) {
 		got := ctx.EntityTypeDir("requirement")
-		want := filepath.Join("/test", EntitiesDir, "requirements")
+		want := "/test/" + EntitiesDir + "/requirements"
 		if got != want {
 			t.Errorf("expected %s, got %s", want, got)
 		}
@@ -237,7 +238,7 @@ func TestContextEntityTypeDirWithPlural(t *testing.T) {
 	ctx := newContext("/test")
 
 	got := ctx.EntityTypeDirWithPlural("decisions")
-	want := filepath.Join("/test", EntitiesDir, "decisions")
+	want := "/test/" + EntitiesDir + "/decisions"
 	if got != want {
 		t.Errorf("expected %s, got %s", want, got)
 	}
@@ -247,7 +248,7 @@ func TestContextEntityFilePath(t *testing.T) {
 	ctx := newContext("/test")
 
 	got := ctx.EntityFilePath("requirement", "REQ-001")
-	want := filepath.Join("/test", EntitiesDir, "requirements", "REQ-001.md")
+	want := "/test/" + EntitiesDir + "/requirements/REQ-001.md"
 	if got != want {
 		t.Errorf("expected %s, got %s", want, got)
 	}
@@ -257,7 +258,7 @@ func TestContextEntityFilePathWithPlural(t *testing.T) {
 	ctx := newContext("/test")
 
 	got := ctx.EntityFilePathWithPlural("requirements", "REQ-001")
-	want := filepath.Join("/test", EntitiesDir, "requirements", "REQ-001.md")
+	want := "/test/" + EntitiesDir + "/requirements/REQ-001.md"
 	if got != want {
 		t.Errorf("expected %s, got %s", want, got)
 	}
@@ -267,7 +268,7 @@ func TestContextRelationFilePath(t *testing.T) {
 	ctx := newContext("/test")
 
 	got := ctx.RelationFilePath("REQ-001", "satisfies", "DEC-001")
-	want := filepath.Join("/test", RelationsDir, "REQ-001--satisfies--DEC-001.md")
+	want := "/test/" + RelationsDir + "/REQ-001--satisfies--DEC-001.md"
 	if got != want {
 		t.Errorf("expected %s, got %s", want, got)
 	}
@@ -302,7 +303,7 @@ func TestContextEntityTemplatePath(t *testing.T) {
 	ctx := newContext("/test")
 
 	got := ctx.EntityTemplatePath("requirement")
-	want := filepath.Join("/test", TemplatesDir, EntityTemplatesDir, "requirement.md")
+	want := "/test/" + TemplatesDir + "/" + EntityTemplatesDir + "/requirement.md"
 	if got != want {
 		t.Errorf("expected %s, got %s", want, got)
 	}
@@ -312,7 +313,7 @@ func TestContextRelationTemplatePath(t *testing.T) {
 	ctx := newContext("/test")
 
 	got := ctx.RelationTemplatePath("satisfies")
-	want := filepath.Join("/test", TemplatesDir, RelationTemplatesDir, "satisfies.md")
+	want := "/test/" + TemplatesDir + "/" + RelationTemplatesDir + "/satisfies.md"
 	if got != want {
 		t.Errorf("expected %s, got %s", want, got)
 	}

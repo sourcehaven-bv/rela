@@ -873,21 +873,21 @@ func TestWriteAnalysisResultJSON(t *testing.T) {
 // Mock types for schema testing
 type mockMetamodel struct{}
 
-func (m *mockMetamodel) GetVersion() string          { return "1.0" }
-func (m *mockMetamodel) GetNamespace() string        { return "test" }
-func (m *mockMetamodel) GetEntities() interface{}    { return map[string]interface{}{} }
-func (m *mockMetamodel) GetRelations() interface{}   { return map[string]interface{}{} }
-func (m *mockMetamodel) GetTypes() interface{}       { return map[string]interface{}{} }
+func (m *mockMetamodel) GetVersion() string        { return "1.0" }
+func (m *mockMetamodel) GetNamespace() string      { return "test" }
+func (m *mockMetamodel) GetEntities() interface{}  { return map[string]interface{}{} }
+func (m *mockMetamodel) GetRelations() interface{} { return map[string]interface{}{} }
+func (m *mockMetamodel) GetTypes() interface{}     { return map[string]interface{}{} }
 
 type mockEntityDef struct{}
 
-func (e *mockEntityDef) GetLabel() string            { return "Test Entity" }
-func (e *mockEntityDef) GetAliases() []string        { return []string{"test"} }
-func (e *mockEntityDef) GetIDPatterns() []string     { return []string{"TEST-*"} }
-func (e *mockEntityDef) GetProperties() interface{}  { return map[string]interface{}{} }
-func (e *mockEntityDef) GetRDFType() string          { return "test:Entity" }
-func (e *mockEntityDef) GetColor() string            { return "#FF0000" }
-func (e *mockEntityDef) GetBorderColor() string      { return "#000000" }
+func (e *mockEntityDef) GetLabel() string           { return "Test Entity" }
+func (e *mockEntityDef) GetAliases() []string       { return []string{"test"} }
+func (e *mockEntityDef) GetIDPatterns() []string    { return []string{"TEST-*"} }
+func (e *mockEntityDef) GetProperties() interface{} { return map[string]interface{}{} }
+func (e *mockEntityDef) GetRDFType() string         { return "test:Entity" }
+func (e *mockEntityDef) GetColor() string           { return "#FF0000" }
+func (e *mockEntityDef) GetBorderColor() string     { return "#000000" }
 
 type mockRelationDef struct {
 	symmetric bool
@@ -899,21 +899,21 @@ type mockRelationDef struct {
 	tgtMax    *int
 }
 
-func (r *mockRelationDef) GetLabel() string          { return "Test Relation" }
-func (r *mockRelationDef) GetFrom() []string         { return []string{"Entity1"} }
-func (r *mockRelationDef) GetTo() []string           { return []string{"Entity2"} }
-func (r *mockRelationDef) GetDescription() string    {
+func (r *mockRelationDef) GetLabel() string  { return "Test Relation" }
+func (r *mockRelationDef) GetFrom() []string { return []string{"Entity1"} }
+func (r *mockRelationDef) GetTo() []string   { return []string{"Entity2"} }
+func (r *mockRelationDef) GetDescription() string {
 	if r.desc != "" {
 		return r.desc
 	}
 	return ""
 }
-func (r *mockRelationDef) GetInverse() interface{}   { return r.inverse }
-func (r *mockRelationDef) IsSymmetric() bool         { return r.symmetric }
-func (r *mockRelationDef) GetSourceMin() *int        { return r.srcMin }
-func (r *mockRelationDef) GetSourceMax() *int        { return r.srcMax }
-func (r *mockRelationDef) GetTargetMin() *int        { return r.tgtMin }
-func (r *mockRelationDef) GetTargetMax() *int        { return r.tgtMax }
+func (r *mockRelationDef) GetInverse() interface{} { return r.inverse }
+func (r *mockRelationDef) IsSymmetric() bool       { return r.symmetric }
+func (r *mockRelationDef) GetSourceMin() *int      { return r.srcMin }
+func (r *mockRelationDef) GetSourceMax() *int      { return r.srcMax }
+func (r *mockRelationDef) GetTargetMin() *int      { return r.tgtMin }
+func (r *mockRelationDef) GetTargetMax() *int      { return r.tgtMax }
 
 // TestWriteSchemaOverview tests schema overview output
 func TestWriteSchemaOverview(t *testing.T) {
@@ -1019,8 +1019,8 @@ func TestWriteSchemaRelationDetail(t *testing.T) {
 	}
 
 	var result map[string]interface{}
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("failed to parse JSON output: %v", err)
+	if unmarshalErr := json.Unmarshal(buf.Bytes(), &result); unmarshalErr != nil {
+		t.Fatalf("failed to parse JSON output: %v", unmarshalErr)
 	}
 	if result["name"] != "test_relation" {
 		t.Error("expected name in output")
