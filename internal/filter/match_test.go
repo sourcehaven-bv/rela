@@ -534,3 +534,364 @@ func TestOperatorValidation(t *testing.T) {
 		})
 	}
 }
+
+// TestMatchEnumLegacy tests the matchEnumLegacy function for status and priority types
+func TestMatchEnumLegacy(t *testing.T) {
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name     string
+		propType string
+		value    interface{}
+		filter   string
+		want     bool
+		wantErr  bool
+	}{
+		// Status type tests
+		{"status draft match", "status", "draft", "status=draft", true, false},
+		{"status draft no match", "status", "draft", "status=accepted", false, false},
+		{"status not equal", "status", "draft", "status!=accepted", true, false},
+		{"status invalid value", "status", "draft", "status=invalid", false, true},
+		// Priority type tests
+		{"priority high match", "priority", "high", "priority=high", true, false},
+		{"priority high no match", "priority", "high", "priority=low", false, false},
+		{"priority not equal", "priority", "high", "priority!=low", true, false},
+		{"priority invalid value", "priority", "high", "priority=invalid", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entity := &model.Entity{
+				ID:         "TEST-001",
+				Type:       "test",
+				Properties: map[string]interface{}{tt.propType: tt.value},
+			}
+
+			propDef := &metamodel.PropertyDef{Type: tt.propType}
+
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+
+			got, err := Match(entity, f, propDef, mm)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMatchEnumLegacyWithCustomType tests that custom type overrides work for legacy types
+func TestMatchEnumLegacyWithCustomType(t *testing.T) {
+	mm := &metamodel.Metamodel{
+		Types: map[string]metamodel.CustomType{
+			"status": {
+				Values: []string{"open", "closed", "pending"},
+			},
+		},
+	}
+
+	entity := &model.Entity{
+		ID:         "TEST-001",
+		Type:       "test",
+		Properties: map[string]interface{}{"status": "open"},
+	}
+
+	propDef := &metamodel.PropertyDef{Type: "status"}
+
+	// Should match with custom type value
+	f, _ := Parse("status=open")
+	got, err := Match(entity, f, propDef, mm)
+	if err != nil {
+		t.Fatalf("Match error: %v", err)
+	}
+	if !got {
+		t.Error("Expected custom status value to match")
+	}
+
+	// Should reject old status values
+	f, _ = Parse("status=draft")
+	_, err = Match(entity, f, propDef, mm)
+	if err == nil {
+		t.Error("Expected error for value not in custom type")
+	}
+}
+
+// TestMatchStringEdgeCases tests additional edge cases for matchString
+func TestMatchStringEdgeCases(t *testing.T) {
+	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name    string
+		value   interface{}
+		filter  string
+		want    bool
+		wantErr bool
+	}{
+		// Type error cases
+		{"wrong type int", 123, "title=123", false, true},
+		{"wrong type bool", true, "title=true", false, true},
+		// Glob edge cases with not equal
+		{"glob not equal match", "B.10.1", "title!=A.9.*", true, false},
+		// Unsupported operator error
+		{"unsupported operator less", "hello", "title<world", false, true},
+		{"unsupported operator greater", "hello", "title>world", false, true},
+		{"unsupported operator less equal", "hello", "title<=world", false, true},
+		{"unsupported operator greater equal", "hello", "title>=world", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entity := &model.Entity{
+				ID:         "TEST-001",
+				Type:       "test",
+				Properties: map[string]interface{}{"title": tt.value},
+			}
+
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+
+			got, err := Match(entity, f, propDef, mm)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMatchBooleanEdgeCases tests additional edge cases for matchBoolean
+func TestMatchBooleanEdgeCases(t *testing.T) {
+	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean}
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name    string
+		value   interface{}
+		filter  string
+		want    bool
+		wantErr bool
+	}{
+		// Error cases - invalid value types
+		{"invalid value type int", 123, "archived=true", false, true},
+		{"invalid value type string", "not-a-bool", "archived=true", false, true},
+		// Error cases - invalid filter values
+		{"invalid filter value", true, "archived=yes", false, true},
+		{"invalid filter value int", true, "archived=1", false, true},
+		// Unsupported operator error
+		{"unsupported operator less", true, "archived<true", false, true},
+		{"unsupported operator regex", true, "archived=~true", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entity := &model.Entity{
+				ID:         "TEST-001",
+				Type:       "test",
+				Properties: map[string]interface{}{"archived": tt.value},
+			}
+
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+
+			got, err := Match(entity, f, propDef, mm)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMatchEnumEdgeCases tests additional edge cases for matchEnum
+func TestMatchEnumEdgeCases(t *testing.T) {
+	propDef := &metamodel.PropertyDef{
+		Type:   metamodel.PropertyTypeEnum,
+		Values: []string{"draft", "proposed", "accepted"},
+	}
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name    string
+		value   interface{}
+		filter  string
+		want    bool
+		wantErr bool
+	}{
+		// Empty value tests
+		{"empty filter equal to empty value", "", "status=", true, false},
+		{"empty filter equal to non-empty value", "draft", "status=", false, false},
+		{"empty filter not equal to empty value", "", "status!=", false, false},
+		{"empty filter not equal to non-empty value", "draft", "status!=", true, false},
+		// Type error cases
+		{"wrong type int", 123, "status=draft", false, true},
+		{"wrong type bool", true, "status=draft", false, true},
+		// Unsupported operator for enum
+		{"unsupported operator less", "draft", "status<accepted", false, true},
+		{"unsupported operator regex", "draft", "status=~draft.*", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entity := &model.Entity{
+				ID:         "TEST-001",
+				Type:       "test",
+				Properties: map[string]interface{}{"status": tt.value},
+			}
+
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+
+			got, err := Match(entity, f, propDef, mm)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMatchCustomType tests that custom types are properly matched
+func TestMatchCustomType(t *testing.T) {
+	mm := &metamodel.Metamodel{
+		Types: map[string]metamodel.CustomType{
+			"risk_level": {
+				Values: []string{"critical", "high", "medium", "low"},
+			},
+		},
+	}
+
+	entity := &model.Entity{
+		ID:         "TEST-001",
+		Type:       "test",
+		Properties: map[string]interface{}{"risk": "high"},
+	}
+
+	propDef := &metamodel.PropertyDef{Type: "risk_level"}
+
+	// Should match with custom type value
+	f, _ := Parse("risk=high")
+	got, err := Match(entity, f, propDef, mm)
+	if err != nil {
+		t.Fatalf("Match error: %v", err)
+	}
+	if !got {
+		t.Error("Expected custom type value to match")
+	}
+
+	// Should not match different value
+	f, _ = Parse("risk=low")
+	got, err = Match(entity, f, propDef, mm)
+	if err != nil {
+		t.Fatalf("Match error: %v", err)
+	}
+	if got {
+		t.Error("Expected custom type value to not match")
+	}
+
+	// Should reject invalid values
+	f, _ = Parse("risk=invalid")
+	_, err = Match(entity, f, propDef, mm)
+	if err == nil {
+		t.Error("Expected error for invalid custom type value")
+	}
+}
+
+// TestMatchUnknownTypeFallback tests that unknown types fall back to string matching
+func TestMatchUnknownTypeFallback(t *testing.T) {
+	mm := &metamodel.Metamodel{}
+
+	entity := &model.Entity{
+		ID:         "TEST-001",
+		Type:       "test",
+		Properties: map[string]interface{}{"unknown_prop": "some value"},
+	}
+
+	propDef := &metamodel.PropertyDef{Type: "unknown_type"}
+
+	// Should fall back to string matching
+	f, _ := Parse("unknown_prop=some value")
+	got, err := Match(entity, f, propDef, mm)
+	if err != nil {
+		t.Fatalf("Match error: %v", err)
+	}
+	if !got {
+		t.Error("Expected unknown type to fall back to string matching")
+	}
+
+	// Test with regex
+	f, _ = Parse("unknown_prop=~some.*")
+	got, err = Match(entity, f, propDef, mm)
+	if err != nil {
+		t.Fatalf("Match error: %v", err)
+	}
+	if !got {
+		t.Error("Expected unknown type to support regex via string fallback")
+	}
+}
+
+// TestMatchAllUnknownProperty tests MatchAll with unknown property error
+func TestMatchAllUnknownProperty(t *testing.T) {
+	mm := &metamodel.Metamodel{}
+	entityDef := &metamodel.EntityDef{
+		Properties: map[string]metamodel.PropertyDef{
+			"status": {Type: metamodel.PropertyTypeEnum, Values: []string{"draft", "accepted"}},
+		},
+	}
+
+	entity := &model.Entity{
+		ID:   "TEST-001",
+		Type: "test",
+		Properties: map[string]interface{}{
+			"status": "accepted",
+		},
+	}
+
+	// Test with unknown property
+	filters, _ := ParseAll([]string{"unknown_prop=value"})
+	_, err := MatchAll(entity, filters, entityDef, mm)
+	if err == nil {
+		t.Error("Expected error for unknown property")
+	}
+}
