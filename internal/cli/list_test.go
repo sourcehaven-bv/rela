@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -280,5 +281,82 @@ types:
 				t.Errorf("resolveEntityType(%q) = %q, want %q", tt.input, resolved, tt.wantType)
 			}
 		})
+	}
+}
+
+func TestListAllEntities(t *testing.T) {
+	setupListTestEnv()
+
+	meta = metamodel.DefaultMetamodel()
+
+	// Add entities of different types
+	req := model.NewEntity("REQ-001", "requirement")
+	req.Properties["title"] = "Test Requirement"
+	g.AddNode(req)
+
+	dec := model.NewEntity("DEC-001", "decision")
+	dec.Properties["title"] = "Test Decision"
+	g.AddNode(dec)
+
+	// List all entities (no type filter)
+	entities := g.AllNodes()
+	if len(entities) != 2 {
+		t.Errorf("AllNodes() = %d entities, want 2", len(entities))
+	}
+}
+
+func TestListEmptyGraph(t *testing.T) {
+	setupListTestEnv()
+	meta = metamodel.DefaultMetamodel()
+
+	// Empty graph
+	entities := g.AllNodes()
+	if len(entities) != 0 {
+		t.Errorf("AllNodes() = %d entities, want 0", len(entities))
+	}
+}
+
+func TestListByType(t *testing.T) {
+	setupListTestEnv()
+	meta = metamodel.DefaultMetamodel()
+
+	// Add entities
+	req1 := model.NewEntity("REQ-001", "requirement")
+	req1.Properties["title"] = "Req 1"
+	g.AddNode(req1)
+
+	req2 := model.NewEntity("REQ-002", "requirement")
+	req2.Properties["title"] = "Req 2"
+	g.AddNode(req2)
+
+	dec := model.NewEntity("DEC-001", "decision")
+	dec.Properties["title"] = "Dec 1"
+	g.AddNode(dec)
+
+	// List only requirements
+	entities := g.NodesByType("requirement")
+	if len(entities) != 2 {
+		t.Errorf("NodesByType(requirement) = %d entities, want 2", len(entities))
+	}
+
+	// Verify they are requirements
+	for _, e := range entities {
+		if e.Type != "requirement" {
+			t.Errorf("expected type 'requirement', got %s", e.Type)
+		}
+	}
+}
+
+func TestListCommandWithUnknownType(t *testing.T) {
+	setupListTestEnv()
+	meta = metamodel.DefaultMetamodel()
+
+	_, _, err := resolveEntityType("nonexistent")
+	if err == nil {
+		t.Error("expected error for unknown entity type")
+	}
+
+	if !strings.Contains(err.Error(), "unknown entity type") {
+		t.Errorf("expected 'unknown entity type' in error, got: %v", err)
 	}
 }

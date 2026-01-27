@@ -154,6 +154,7 @@ func escapeLabel(s string) string {
 	return s
 }
 
+// coverage-ignore: requires external graphviz installation - tested manually
 func renderWithGraphviz(dot, outputPath, format string) error {
 	// Check if dot command is available
 	_, err := exec.LookPath("dot")

@@ -92,6 +92,7 @@ and maintain semantic relationships between them.`,
 }
 
 // Execute runs the root command
+// coverage-ignore: CLI entry point - tested via integration tests
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
