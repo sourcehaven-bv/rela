@@ -20,23 +20,23 @@ func TestCreateModel_GetRequiredProperties(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
 			},
 			"stakeholder": {
-				Label:      "Stakeholder",
-				IDPatterns: []string{"STK-"},
+				Label:    "Stakeholder",
+				IDPrefix: "STK-",
 				Properties: map[string]metamodel.PropertyDef{
 					"name": {Type: "string", Required: true},
 					"role": {Type: "string", Required: false},
 				},
 			},
 			"asset": {
-				Label:      "Asset",
-				IDPatterns: []string{"AST-"},
+				Label:    "Asset",
+				IDPrefix: "AST-",
 				Properties: map[string]metamodel.PropertyDef{
 					"name":        {Type: "string", Required: true},
 					"description": {Type: "string", Required: true},
@@ -125,8 +125,8 @@ func TestCreateModel_InputCapture(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
@@ -172,8 +172,8 @@ func TestCreateModel_ViewShowsCorrectLabel(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"stakeholder": {
-				Label:      "Stakeholder",
-				IDPatterns: []string{"STK-"},
+				Label:    "Stakeholder",
+				IDPrefix: "STK-",
 				Properties: map[string]metamodel.PropertyDef{
 					"name": {Type: "string", Required: true},
 				},

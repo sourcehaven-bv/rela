@@ -117,8 +117,8 @@ func TestCreateEntityWithPrimaryPropertyName(t *testing.T) {
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"stakeholder": {
-				Label:      "Stakeholder",
-				IDPatterns: []string{"SH-"},
+				Label:    "Stakeholder",
+				IDPrefix: "SH-",
 				Properties: map[string]metamodel.PropertyDef{
 					"name":   {Type: "string", Required: true},
 					"role":   {Type: "string"},
@@ -126,9 +126,9 @@ func TestCreateEntityWithPrimaryPropertyName(t *testing.T) {
 				},
 			},
 			"requirement": {
-				Label:      "Requirement",
-				Aliases:    []string{"req"},
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				Aliases:  []string{"req"},
+				IDPrefix: "REQ-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":       {Type: "string", Required: true},
 					"description": {Type: "string"},
@@ -163,8 +163,8 @@ func TestCreateEntityWithMultipleProperties(t *testing.T) {
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"control": {
-				Label:      "Control",
-				IDPatterns: []string{"CTRL-"},
+				Label:    "Control",
+				IDPrefix: "CTRL-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":    {Type: "string", Required: true},
 					"iso27001": {Type: "string"},
@@ -195,8 +195,8 @@ func TestCreateEntityTypeWithLabelProperty(t *testing.T) {
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"tag": {
-				Label:      "Tag",
-				IDPatterns: []string{"TAG-"},
+				Label:    "Tag",
+				IDPrefix: "TAG-",
 				Properties: map[string]metamodel.PropertyDef{
 					"label":       {Type: "string", Required: true},
 					"description": {Type: "string"},
@@ -219,8 +219,8 @@ func TestCreateEntityNoPrimaryProperty(t *testing.T) {
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"marker": {
-				Label:      "Marker",
-				IDPatterns: []string{"MRK-"},
+				Label:    "Marker",
+				IDPrefix: "MRK-",
 				Properties: map[string]metamodel.PropertyDef{
 					"status": {Type: "status", Required: true},
 				},

@@ -40,42 +40,42 @@ Each entity type defines:
 |-------|-------------|
 | `label` | Display name |
 | `aliases` | Alternative names for CLI (e.g., `req` for `requirement`) |
-| `id_type` | `sequential` (default) or `string` - controls ID generation |
+| `id_type` | `auto` (default) or `manual` - controls ID generation |
 | `id_patterns` | ID prefixes (e.g., `REQ-`, `ADR-`) |
 | `properties` | Property definitions |
 
 ### ID Types
 
-Entity IDs can be either sequential or string-based:
+Entity IDs can be either auto-generated or manually specified:
 
 | Type | Description | Example IDs |
 |------|-------------|-------------|
-| `sequential` | Auto-generated numeric IDs (default) | `REQ-001`, `REQ-002`, `DEC-003` |
-| `string` | Manually specified string IDs | `auth-module`, `user-service` |
+| `auto` | Auto-generated numeric IDs (default) | `REQ-001`, `REQ-002`, `DEC-003` |
+| `manual` | Manually specified string IDs | `auth-module`, `user-service` |
 
-**Sequential IDs** (default):
+**Auto IDs** (default):
 - Automatically generated when creating entities
 - Format: `PREFIX-NNN` (e.g., `REQ-001`)
 - Gap analysis detects missing numbers in sequences
 
-**String IDs**:
+**Manual IDs**:
 - Require `--id` flag when creating entities
 - No automatic generation
 - Excluded from gap analysis
 
 ```yaml
 entities:
-  # Sequential IDs (default behavior)
+  # Auto IDs (default behavior)
   requirement:
     label: Requirement
     id_patterns: ["REQ-"]
-    # id_type: sequential  # This is the default
+    # id_type: auto  # This is the default
 
-  # String IDs for components/modules
+  # Manual IDs for components/modules
   component:
     label: Component
-    id_type: string
-    id_patterns: []  # Patterns are optional for string IDs
+    id_type: manual
+    id_patterns: []  # Patterns are optional for manual IDs
     properties:
       name:
         type: string
@@ -198,7 +198,7 @@ Relations define how entity types can be connected:
 | `description` | Explanation of the relation's meaning |
 | `from` | Source entity types (list) |
 | `to` | Target entity types (list) |
-| `inverse` | Inverse relation definition |
+| `inverse` | Inverse relation definition (string or object) |
 | `symmetric` | `true` if relation is bidirectional |
 | `source_min` | Minimum outgoing relations per source entity |
 | `source_max` | Maximum outgoing relations per source entity |
@@ -215,9 +215,26 @@ relations:
     from: [decision]
     to: [requirement]
     source_min: 1    # Each decision must address at least one requirement
-    inverse:
-      name: addressedBy
-      label: addressed by
+    inverse: addressedBy  # Simple form - label auto-derived as "addressed by"
+```
+
+### Inverse Relations
+
+The `inverse` field can be specified in two forms:
+
+**Simple form** (recommended for most cases):
+```yaml
+inverse: addressedBy  # Label auto-derived from ID
+```
+The label is automatically derived by converting camelCase to space-separated lowercase:
+- `addressedBy` → `addressed by`
+- `implementedBy` → `implemented by`
+
+**Expanded form** (when custom label needed):
+```yaml
+inverse:
+  id: addressedBy
+  label: "is addressed by"  # Custom label
 ```
 
 ### Cardinality Constraints
@@ -328,35 +345,27 @@ relations:
     description: A decision addresses a requirement
     from: [decision]
     to: [requirement]
-    inverse:
-      name: addressedBy
-      label: addressed by
+    inverse: addressedBy
 
   implements:
     label: implements
     description: A solution implements a decision
     from: [solution]
     to: [decision]
-    inverse:
-      name: implementedBy
-      label: implemented by
+    inverse: implementedBy
 
   realizes:
     label: realizes
     description: A component realizes a solution
     from: [component]
     to: [solution]
-    inverse:
-      name: realizedBy
-      label: realized by
+    inverse: realizedBy
 
   dependsOn:
     label: depends on
     from: [component, solution, decision]
     to: [component, solution, decision]
-    inverse:
-      name: dependencyOf
-      label: dependency of
+    inverse: dependencyOf
 ```
 
 ## Customization Examples
@@ -384,9 +393,7 @@ relations:
     label: mitigates
     from: [decision, solution]
     to: [risk]
-    inverse:
-      name: mitigatedBy
-      label: mitigated by
+    inverse: mitigatedBy
 ```
 
 ### Adding a Stakeholder Type
@@ -409,9 +416,7 @@ relations:
     label: owned by
     from: [requirement, decision, component]
     to: [stakeholder]
-    inverse:
-      name: owns
-      label: owns
+    inverse: owns
 ```
 
 ### Multiple ID Patterns
@@ -538,9 +543,9 @@ validations:
   - name: rule-identifier        # Unique name for the rule
     description: "Human-readable description shown in output"
     entity_type: requirement     # Optional: limit to specific type
-    match:                       # Optional: conditions to select entities
+    when:                        # Optional: IF these conditions match...
       - "status=accepted"
-    require:                     # Required: conditions entities must satisfy
+    then:                        # THEN these must be true
       - "priority!="
     severity: error              # Optional: "error" or "warning" (default)
 ```
@@ -548,9 +553,9 @@ validations:
 ### How Validation Rules Work
 
 1. **Select entities**: If `entity_type` is specified, only those entities are checked
-2. **Apply match filter**: If `match` is specified, only entities satisfying ALL match conditions are subject to the rule
-3. **Check requirements**: Matched entities must satisfy ALL `require` conditions
-4. **Report violations**: Entities that match but don't satisfy requirements are reported
+2. **Apply when filter**: If `when` is specified, only entities satisfying ALL when conditions are subject to the rule
+3. **Check then conditions**: Matched entities must satisfy ALL `then` conditions
+4. **Report violations**: Entities that match `when` but don't satisfy `then` are reported
 
 ### Example Validation Rules
 
@@ -560,17 +565,17 @@ validations:
   - name: accepted-needs-priority
     description: "Accepted requirements must have a priority assigned"
     entity_type: requirement
-    match:
+    when:
       - "status=accepted"
-    require:
+    then:
       - "priority!="
     severity: error
 
-  # All decisions should have a rationale
+  # All decisions should have a rationale (no 'when' = applies to all)
   - name: decisions-need-rationale
     description: "Decisions should have a rationale documented"
     entity_type: decision
-    require:
+    then:
       - "rationale!="
     severity: warning
 
@@ -578,9 +583,9 @@ validations:
   - name: high-priority-needs-description
     description: "High priority requirements need detailed descriptions"
     entity_type: requirement
-    match:
+    when:
       - "priority=high"
-    require:
+    then:
       - "description!="
     severity: warning
 
@@ -588,7 +593,7 @@ validations:
   - name: adr-naming-convention
     description: "ADRs should follow the ADR-NNN naming pattern"
     entity_type: decision
-    require:
+    then:
       - "title=~^ADR-\\d+:"
     severity: warning
 ```

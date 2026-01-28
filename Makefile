@@ -11,7 +11,7 @@ GOLANGCI_LINT_VERSION := v1.62.2
 LDFLAGS := -s -w
 GOFLAGS := -trimpath
 
-.PHONY: all build clean test lint lint-fix fmt vet install-tools help fuzz fuzz-short lint-md lint-md-fix fmt-md
+.PHONY: all build clean test test-coverage coverage coverage-check coverage-html lint lint-fix fmt vet install-tools install-hooks help fuzz fuzz-short lint-md lint-md-fix fmt-md
 
 # Default target
 all: lint test build
@@ -37,6 +37,27 @@ test:
 test-verbose:
 	@echo "Running tests (verbose)..."
 	$(GO) test -race -cover -v ./...
+
+# Run tests with coverage report
+test-coverage:
+	@echo "Running tests with coverage..."
+	$(GO) test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+# Generate coverage report
+coverage: test-coverage
+	@echo "Generating coverage report..."
+	$(GO) tool cover -func=coverage.out
+
+# Check coverage thresholds
+coverage-check: test-coverage
+	@echo "Checking coverage thresholds..."
+	@./scripts/check-coverage.sh
+
+# Generate HTML coverage report
+coverage-html: test-coverage
+	@echo "Generating HTML coverage report..."
+	$(GO) tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
 
 # Run fuzz tests (30 seconds each)
 fuzz:
@@ -104,6 +125,14 @@ install-tools:
 	$(GO) install golang.org/x/tools/cmd/goimports@latest
 	@echo "Done!"
 
+# Install git hooks
+install-hooks:
+	@echo "Installing git hooks..."
+	@mkdir -p .git/hooks
+	@cp scripts/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "Git hooks installed!"
+
 # Check if tools are installed
 check-tools:
 	@echo "Checking development tools..."
@@ -114,7 +143,7 @@ check-tools:
 check: lint lint-md test
 
 # Run all checks and build
-ci: check build
+ci: check coverage-check build
 
 # Tidy go modules
 tidy:
@@ -129,24 +158,29 @@ deps:
 # Show help
 help:
 	@echo "Available targets:"
-	@echo "  all          - Run lint, test, and build (default)"
-	@echo "  build        - Build the binary"
-	@echo "  clean        - Remove build artifacts"
-	@echo "  test         - Run tests"
-	@echo "  test-verbose - Run tests with verbose output"
-	@echo "  lint         - Run golangci-lint"
-	@echo "  lint-fix     - Run golangci-lint with auto-fix"
-	@echo "  lint-md      - Lint markdown files"
-	@echo "  lint-md-fix  - Lint and fix markdown files"
-	@echo "  fmt          - Format code with gofmt and goimports"
-	@echo "  fmt-md       - Format markdown files with prettier"
-	@echo "  vet          - Run go vet"
-	@echo "  install-tools- Install development tools (golangci-lint, goimports)"
-	@echo "  check-tools  - Verify development tools are installed"
-	@echo "  check        - Run lint, lint-md, and test"
-	@echo "  ci           - Run all checks and build (for CI pipelines)"
-	@echo "  tidy         - Run go mod tidy"
-	@echo "  deps         - Download dependencies"
-	@echo "  fuzz         - Run fuzz tests (30s each)"
-	@echo "  fuzz-short   - Run quick fuzz tests (5s each)"
-	@echo "  help         - Show this help message"
+	@echo "  all            - Run lint, test, and build (default)"
+	@echo "  build          - Build the binary"
+	@echo "  clean          - Remove build artifacts"
+	@echo "  test           - Run tests"
+	@echo "  test-verbose   - Run tests with verbose output"
+	@echo "  test-coverage  - Run tests with coverage report"
+	@echo "  coverage       - Generate and display coverage report"
+	@echo "  coverage-check - Check coverage meets minimum thresholds"
+	@echo "  coverage-html  - Generate HTML coverage report"
+	@echo "  lint           - Run golangci-lint"
+	@echo "  lint-fix       - Run golangci-lint with auto-fix"
+	@echo "  lint-md        - Lint markdown files"
+	@echo "  lint-md-fix    - Lint and fix markdown files"
+	@echo "  fmt            - Format code with gofmt and goimports"
+	@echo "  fmt-md         - Format markdown files with prettier"
+	@echo "  vet            - Run go vet"
+	@echo "  install-tools  - Install development tools (golangci-lint, goimports)"
+	@echo "  install-hooks  - Install git pre-commit hooks"
+	@echo "  check-tools    - Verify development tools are installed"
+	@echo "  check          - Run lint, lint-md, and test"
+	@echo "  ci             - Run all checks including coverage (for CI pipelines)"
+	@echo "  tidy           - Run go mod tidy"
+	@echo "  deps           - Download dependencies"
+	@echo "  fuzz           - Run fuzz tests (30s each)"
+	@echo "  fuzz-short     - Run quick fuzz tests (5s each)"
+	@echo "  help           - Show this help message"

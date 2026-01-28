@@ -17,8 +17,8 @@ func testMetamodel() *metamodel.Metamodel {
 		Version: "1.0",
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {
 						Type:     "string",
@@ -35,8 +35,8 @@ func testMetamodel() *metamodel.Metamodel {
 				},
 			},
 			"decision": {
-				Label:      "Decision",
-				IDPatterns: []string{"DEC-"},
+				Label:    "Decision",
+				IDPrefix: "DEC-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {
 						Type:     "string",
