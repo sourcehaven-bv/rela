@@ -40,42 +40,42 @@ Each entity type defines:
 |-------|-------------|
 | `label` | Display name |
 | `aliases` | Alternative names for CLI (e.g., `req` for `requirement`) |
-| `id_type` | `sequential` (default) or `string` - controls ID generation |
+| `id_type` | `auto` (default) or `manual` - controls ID generation |
 | `id_patterns` | ID prefixes (e.g., `REQ-`, `ADR-`) |
 | `properties` | Property definitions |
 
 ### ID Types
 
-Entity IDs can be either sequential or string-based:
+Entity IDs can be either auto-generated or manually specified:
 
 | Type | Description | Example IDs |
 |------|-------------|-------------|
-| `sequential` | Auto-generated numeric IDs (default) | `REQ-001`, `REQ-002`, `DEC-003` |
-| `string` | Manually specified string IDs | `auth-module`, `user-service` |
+| `auto` | Auto-generated numeric IDs (default) | `REQ-001`, `REQ-002`, `DEC-003` |
+| `manual` | Manually specified string IDs | `auth-module`, `user-service` |
 
-**Sequential IDs** (default):
+**Auto IDs** (default):
 - Automatically generated when creating entities
 - Format: `PREFIX-NNN` (e.g., `REQ-001`)
 - Gap analysis detects missing numbers in sequences
 
-**String IDs**:
+**Manual IDs**:
 - Require `--id` flag when creating entities
 - No automatic generation
 - Excluded from gap analysis
 
 ```yaml
 entities:
-  # Sequential IDs (default behavior)
+  # Auto IDs (default behavior)
   requirement:
     label: Requirement
     id_patterns: ["REQ-"]
-    # id_type: sequential  # This is the default
+    # id_type: auto  # This is the default
 
-  # String IDs for components/modules
+  # Manual IDs for components/modules
   component:
     label: Component
-    id_type: string
-    id_patterns: []  # Patterns are optional for string IDs
+    id_type: manual
+    id_patterns: []  # Patterns are optional for manual IDs
     properties:
       name:
         type: string
