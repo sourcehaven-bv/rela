@@ -230,9 +230,7 @@ relations:
     description: A risk threatens an asset
     from: [risk]
     to: [asset]
-    inverse:
-      name: threatenedBy
-      label: threatened by
+    inverse: threatenedBy
 
   treatedBy:
     label: treated by
@@ -240,54 +238,42 @@ relations:
     from: [risk]
     to: [control]
     source_min: 1
-    inverse:
-      name: treats
-      label: treats
+    inverse: treats
 
   implementedBy:
     label: implemented by
     description: A control is implemented by a procedure
     from: [control]
     to: [procedure]
-    inverse:
-      name: implements
-      label: implements
+    inverse: implements
 
   mandatedBy:
     label: mandated by
     description: A procedure is mandated by a policy
     from: [procedure]
     to: [policy]
-    inverse:
-      name: mandates
-      label: mandates
+    inverse: mandates
 
   evidences:
     label: evidences
     description: Evidence demonstrates control effectiveness
     from: [evidence]
     to: [control]
-    inverse:
-      name: evidencedBy
-      label: evidenced by
+    inverse: evidencedBy
 
   supportsProc:
     label: supports
     description: Evidence supports procedure execution
     from: [evidence]
     to: [procedure]
-    inverse:
-      name: supportedBy
-      label: supported by
+    inverse: supportedBy
 
   affects:
     label: affects
     description: A nonconformity affects a control
     from: [nonconformity]
     to: [control]
-    inverse:
-      name: affectedBy
-      label: affected by
+    inverse: affectedBy
 
   addressedBy:
     label: addressed by
@@ -295,9 +281,7 @@ relations:
     from: [nonconformity]
     to: [corrective_action]
     source_min: 1
-    inverse:
-      name: addresses
-      label: addresses
+    inverse: addresses
 
   relatesTo:
     label: relates to

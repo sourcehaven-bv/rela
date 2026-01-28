@@ -93,13 +93,13 @@ var analyzeGapsCmd = &cobra.Command{
 Entity types configured with id_type: string are excluded from gap analysis
 since they use manually-specified IDs that are not expected to be sequential.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Build a set of prefixes that belong to string ID types (should be skipped)
+		// Build a set of prefixes that belong to manual ID types (should be skipped)
 		stringIDPrefixes := make(map[string]bool)
 		for _, entityDef := range meta.Entities {
-			if entityDef.IsStringID() {
-				for _, pattern := range entityDef.IDPatterns {
+			if entityDef.IsManualID() {
+				for _, idPrefix := range entityDef.GetIDPrefixes() {
 					// Normalize prefix (remove trailing dash if present)
-					prefix := strings.TrimSuffix(pattern, "-")
+					prefix := strings.TrimSuffix(idPrefix, "-")
 					stringIDPrefixes[prefix] = true
 				}
 			}
@@ -218,8 +218,8 @@ var analyzeCardinalityCmd = &cobra.Command{
 						if count < *relDef.TargetMin {
 							// Get the inverse relation name for the message if available
 							relLabel := relName
-							if relDef.Inverse != nil && relDef.Inverse.Name != "" {
-								relLabel = relDef.Inverse.Name
+							if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
+								relLabel = relDef.Inverse.GetID()
 							}
 							out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
 								e.ID, *relDef.TargetMin, relLabel, count)
@@ -243,8 +243,8 @@ var analyzeCardinalityCmd = &cobra.Command{
 						if count > *relDef.TargetMax {
 							// Get the inverse relation name for the message if available
 							relLabel := relName
-							if relDef.Inverse != nil && relDef.Inverse.Name != "" {
-								relLabel = relDef.Inverse.Name
+							if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
+								relLabel = relDef.Inverse.GetID()
 							}
 							out.WriteWarning("%s has more than %d '%s' relation(s): %d",
 								e.ID, *relDef.TargetMax, relLabel, count)
@@ -368,8 +368,8 @@ var analyzeValidationsCmd = &cobra.Command{
 
 Each validation rule can:
   - Target a specific entity type (or all types if not specified)
-  - Match entities using filter conditions (same syntax as --where)
-  - Require matched entities to satisfy additional conditions
+  - Use 'when' conditions to select which entities the rule applies to
+  - Use 'then' conditions that matched entities must satisfy
   - Have a severity of 'error' or 'warning'
 
 Example metamodel configuration:
@@ -377,9 +377,9 @@ Example metamodel configuration:
     - name: accepted-needs-priority
       description: "Accepted requirements must have priority"
       entity_type: requirement
-      match:
+      when:
         - "status=accepted"
-      require:
+      then:
         - "priority!="
       severity: error`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -434,17 +434,17 @@ func runValidations() error {
 func checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
 	var violations []*model.Entity
 
-	// Parse match filters
-	matchFilters, err := filter.ParseAll(rule.Match)
+	// Parse when filters (conditions that select which entities to check)
+	whenFilters, err := filter.ParseAll(rule.When)
 	if err != nil {
-		out.WriteError("Invalid match filter in rule %q: %v", rule.Name, err)
+		out.WriteError("Invalid 'when' filter in rule %q: %v", rule.Name, err)
 		return nil
 	}
 
-	// Parse require filters
-	requireFilters, err := filter.ParseAll(rule.Require)
+	// Parse then filters (conditions that matched entities must satisfy)
+	thenFilters, err := filter.ParseAll(rule.Then)
 	if err != nil {
-		out.WriteError("Invalid require filter in rule %q: %v", rule.Name, err)
+		out.WriteError("Invalid 'then' filter in rule %q: %v", rule.Name, err)
 		return nil
 	}
 
@@ -463,9 +463,9 @@ func checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
 			continue
 		}
 
-		// Check if entity matches the 'match' conditions
-		if len(matchFilters) > 0 {
-			matches, err := filter.MatchAll(entity, matchFilters, entityDef, meta)
+		// Check if entity matches the 'when' conditions
+		if len(whenFilters) > 0 {
+			matches, err := filter.MatchAll(entity, whenFilters, entityDef, meta)
 			if err != nil {
 				// Skip entities where filter can't be evaluated (e.g., missing property)
 				continue
@@ -476,10 +476,10 @@ func checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
 			}
 		}
 
-		// Entity matches - now check if it satisfies the 'require' conditions
-		satisfies, err := filter.MatchAll(entity, requireFilters, entityDef, meta)
+		// Entity matches - now check if it satisfies the 'then' conditions
+		satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, meta)
 		if err != nil {
-			// If we can't evaluate the require filter, treat as violation
+			// If we can't evaluate the then filter, treat as violation
 			violations = append(violations, entity)
 			continue
 		}
@@ -629,13 +629,13 @@ var analyzeAllCmd = &cobra.Command{
 			}
 		}
 
-		// Count gap sequences with gaps (only for sequential ID types)
+		// Count gap sequences with gaps (only for auto ID types)
 		gapCount := 0
 		stringIDPrefixes := make(map[string]bool)
 		for _, entityDef := range meta.Entities {
-			if entityDef.IsStringID() {
-				for _, pattern := range entityDef.IDPatterns {
-					prefix := strings.TrimSuffix(pattern, "-")
+			if entityDef.IsManualID() {
+				for _, idPrefix := range entityDef.GetIDPrefixes() {
+					prefix := strings.TrimSuffix(idPrefix, "-")
 					stringIDPrefixes[prefix] = true
 				}
 			}

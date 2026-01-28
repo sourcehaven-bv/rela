@@ -21,16 +21,16 @@ func setupTestGraph() {
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"control": {
-				Label:      "Control",
-				IDPatterns: []string{"CTRL-"},
+				Label:    "Control",
+				IDPrefix: "CTRL-",
 			},
 			"risk": {
-				Label:      "Risk",
-				IDPatterns: []string{"RISK-"},
+				Label:    "Risk",
+				IDPrefix: "RISK-",
 			},
 			"evidence": {
-				Label:      "Evidence",
-				IDPatterns: []string{"EV-"},
+				Label:    "Evidence",
+				IDPrefix: "EV-",
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{
@@ -95,12 +95,12 @@ func TestExportEntitiesJSON(t *testing.T) {
 
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
-	output := buf.String()
+	jsonOutput := buf.String()
 
 	// Parse JSON
 	var entities []ExportEntity
-	if err := json.Unmarshal([]byte(output), &entities); err != nil {
-		t.Fatalf("Failed to parse JSON output: %v\nOutput was: %s", err, output)
+	if err := json.Unmarshal([]byte(jsonOutput), &entities); err != nil {
+		t.Fatalf("Failed to parse JSON output: %v\nOutput was: %s", err, jsonOutput)
 	}
 
 	if len(entities) != 2 {
@@ -138,10 +138,10 @@ func TestExportEntitiesWithRelations(t *testing.T) {
 
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
-	output := buf.String()
+	jsonOutput := buf.String()
 
 	var entities []ExportEntity
-	if err := json.Unmarshal([]byte(output), &entities); err != nil {
+	if err := json.Unmarshal([]byte(jsonOutput), &entities); err != nil {
 		t.Fatalf("Failed to parse JSON output: %v", err)
 	}
 
@@ -207,10 +207,10 @@ func TestExportEntitiesCSV(t *testing.T) {
 
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
-	output := buf.String()
+	csvOutput := buf.String()
 
 	// Parse CSV
-	reader := csv.NewReader(strings.NewReader(output))
+	reader := csv.NewReader(strings.NewReader(csvOutput))
 	records, err := reader.ReadAll()
 	if err != nil {
 		t.Fatalf("Failed to parse CSV: %v", err)
@@ -261,12 +261,12 @@ func TestExportEntitiesYAML(t *testing.T) {
 
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
-	output := buf.String()
+	yamlOutput := buf.String()
 
 	// Parse YAML
 	var entities []ExportEntity
-	if err := yaml.Unmarshal([]byte(output), &entities); err != nil {
-		t.Fatalf("Failed to parse YAML output: %v\nOutput was: %s", err, output)
+	if err := yaml.Unmarshal([]byte(yamlOutput), &entities); err != nil {
+		t.Fatalf("Failed to parse YAML output: %v\nOutput was: %s", err, yamlOutput)
 	}
 
 	if len(entities) != 2 {
@@ -294,10 +294,10 @@ func TestExportAllData(t *testing.T) {
 
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
-	output := buf.String()
+	jsonOutput := buf.String()
 
 	var fullExport FullExport
-	if err := json.Unmarshal([]byte(output), &fullExport); err != nil {
+	if err := json.Unmarshal([]byte(jsonOutput), &fullExport); err != nil {
 		t.Fatalf("Failed to parse JSON output: %v", err)
 	}
 
@@ -324,8 +324,8 @@ func TestExportEmptyResult(t *testing.T) {
 	// Export a type that exists in metamodel but has no entities
 	// We need to add the type to metamodel first
 	meta.Entities["procedure"] = metamodel.EntityDef{
-		Label:      "Procedure",
-		IDPatterns: []string{"PROC-"},
+		Label:    "Procedure",
+		IDPrefix: "PROC-",
 	}
 
 	err := exportEntities("procedure")
@@ -338,10 +338,10 @@ func TestExportEmptyResult(t *testing.T) {
 
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
-	output := strings.TrimSpace(buf.String())
+	jsonOutput := strings.TrimSpace(buf.String())
 
-	if output != "[]" {
-		t.Errorf("Expected empty array '[]', got: %s", output)
+	if jsonOutput != "[]" {
+		t.Errorf("Expected empty array '[]', got: %s", jsonOutput)
 	}
 }
 

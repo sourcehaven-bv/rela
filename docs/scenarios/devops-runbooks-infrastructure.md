@@ -280,18 +280,14 @@ relations:
     description: A component depends on another component
     from: [service, database, queue]
     to: [service, database, queue, cluster]
-    inverse:
-      name: dependencyOf
-      label: dependency of
+    inverse: dependencyOf
 
   runsOn:
     label: runs on
     description: A component runs on a cluster/platform
     from: [service, database, queue]
     to: [cluster]
-    inverse:
-      name: hosts
-      label: hosts
+    inverse: hosts
 
   # Failure mode relationships
   hasFailureMode:
@@ -299,18 +295,14 @@ relations:
     description: A component can fail in this way
     from: [service, database, queue, cluster]
     to: [failure_mode]
-    inverse:
-      name: affectsComponent
-      label: affects component
+    inverse: affectsComponent
 
   triggers:
     label: triggers
     description: A failure mode triggers an alert
     from: [failure_mode]
     to: [alert]
-    inverse:
-      name: detects
-      label: detects
+    inverse: detects
 
   # Runbook relationships
   remediates:
@@ -319,9 +311,7 @@ relations:
     from: [runbook]
     to: [failure_mode]
     source_min: 1  # Every runbook must address at least one failure mode
-    inverse:
-      name: remediatedBy
-      label: remediated by
+    inverse: remediatedBy
 
   linkedToAlert:
     label: linked to alert
@@ -329,18 +319,14 @@ relations:
     from: [alert]
     to: [runbook]
     source_min: 1  # Every alert should have a runbook
-    inverse:
-      name: triggeredBy
-      label: triggered by
+    inverse: triggeredBy
 
   operatesOn:
     label: operates on
     description: A runbook operates on a component
     from: [runbook]
     to: [service, database, queue, cluster]
-    inverse:
-      name: operatedBy
-      label: operated by
+    inverse: operatedBy
 
   # Playbook relationships
   includes:
@@ -348,18 +334,14 @@ relations:
     description: A playbook includes runbooks as steps
     from: [playbook]
     to: [runbook]
-    inverse:
-      name: partOf
-      label: part of
+    inverse: partOf
 
   coversScenarioFor:
     label: covers scenario for
     description: A playbook covers a failure scenario for components
     from: [playbook]
     to: [service, cluster]
-    inverse:
-      name: hasPlaybook
-      label: has playbook
+    inverse: hasPlaybook
 
   # SLO relationships
   hasSLO:
@@ -367,18 +349,14 @@ relations:
     description: A service has an SLO
     from: [service]
     to: [slo]
-    inverse:
-      name: appliesTo
-      label: applies to
+    inverse: appliesTo
 
   violationIndicates:
     label: violation indicates
     description: An alert indicates potential SLO violation
     from: [alert]
     to: [slo]
-    inverse:
-      name: monitoredBy
-      label: monitored by
+    inverse: monitoredBy
 
   # Post-mortem relationships
   investigates:
@@ -386,36 +364,28 @@ relations:
     description: A post-mortem investigates a failure mode
     from: [postmortem]
     to: [failure_mode]
-    inverse:
-      name: investigatedIn
-      label: investigated in
+    inverse: investigatedIn
 
   involves:
     label: involves
     description: A post-mortem involves components
     from: [postmortem]
     to: [service, database, queue, cluster]
-    inverse:
-      name: involvedIn
-      label: involved in
+    inverse: involvedIn
 
   produces:
     label: produces
     description: A post-mortem produces action items
     from: [postmortem]
     to: [action_item]
-    inverse:
-      name: producedBy
-      label: produced by
+    inverse: producedBy
 
   improves:
     label: improves
     description: An action item improves a runbook/component
     from: [action_item]
     to: [runbook, service, database, queue, cluster, playbook]
-    inverse:
-      name: improvedBy
-      label: improved by
+    inverse: improvedBy
 ```
 
 ## Example Traceability Chains

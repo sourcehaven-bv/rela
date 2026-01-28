@@ -477,13 +477,13 @@ func (w *Writer) WriteAnalysisResult(result AnalysisResult) error {
 	// Text format based on status
 	switch result.Status {
 	case "success":
-		w.WriteSuccess(result.Message)
+		w.WriteSuccess("%s", result.Message)
 	case "warning":
-		w.WriteWarning(result.Message)
+		w.WriteWarning("%s", result.Message)
 	case "error":
-		w.WriteError(result.Message)
+		w.WriteError("%s", result.Message)
 	default:
-		w.WriteMessage(result.Message)
+		w.WriteMessage("%s", result.Message)
 	}
 	return nil
 }

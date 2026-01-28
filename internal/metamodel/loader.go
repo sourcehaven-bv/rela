@@ -5,13 +5,28 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 )
 
-// Load reads and parses a metamodel from a YAML file
+// Load reads and parses a metamodel from a YAML file.
+// Returns a MigrationError if the file contains deprecated syntax that needs migration.
 func Load(path string) (*Metamodel, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
+	}
+
+	// Check for deprecated syntax that needs migration
+	detections, err := migration.Detect(path, migration.FileTypeMetamodel)
+	if err != nil {
+		return nil, err
+	}
+	if len(detections) > 0 {
+		return nil, &migration.Error{
+			FilePath:   path,
+			Detections: detections,
+		}
 	}
 
 	return Parse(data)
@@ -28,8 +43,28 @@ func Parse(data []byte) (*Metamodel, error) {
 	m.aliasMap = make(map[string]string)
 	for name, def := range m.Entities {
 		// Validate id_type if specified
-		if def.IDType != "" && def.IDType != IDTypeSequential && def.IDType != IDTypeString {
+		if def.IDType != "" && def.IDType != IDTypeAuto && def.IDType != IDTypeManual {
 			return nil, &InvalidIDTypeError{EntityType: name, IDType: def.IDType}
+		}
+
+		// Validate property names
+		for propName := range def.Properties {
+			// Reject property names with leading or trailing whitespace
+			// This prevents bypassing reserved name checks with " id" or "type " etc.
+			trimmedName := strings.TrimSpace(propName)
+			if trimmedName != propName {
+				return nil, &WhitespacePropertyError{EntityType: name, PropertyName: propName}
+			}
+
+			// Check for reserved property names
+			if ReservedPropertyNames[propName] {
+				return nil, &ReservedPropertyError{EntityType: name, PropertyName: propName}
+			}
+		}
+
+		// Validate id_prefix/id_prefixes are not both specified
+		if def.IDPrefix != "" && len(def.IDPrefixes) > 0 {
+			return nil, &ConflictingIDPrefixError{EntityType: name}
 		}
 
 		// Add lowercase name as self-reference
@@ -59,9 +94,9 @@ func DefaultMetamodel() *Metamodel {
 		},
 		Entities: map[string]EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				Aliases:    []string{"req"},
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				Aliases:  []string{"req"},
+				IDPrefix: "REQ-",
 				Properties: map[string]PropertyDef{
 					"title":       {Type: "string", Required: true},
 					"description": {Type: "string"},
@@ -72,7 +107,7 @@ func DefaultMetamodel() *Metamodel {
 			"decision": {
 				Label:      "Decision",
 				Aliases:    []string{"dec", "adr"},
-				IDPatterns: []string{"DEC-", "ADR-"},
+				IDPrefixes: []string{"DEC-", "ADR-"},
 				Properties: map[string]PropertyDef{
 					"title":     {Type: "string", Required: true},
 					"rationale": {Type: "string"},
@@ -80,9 +115,9 @@ func DefaultMetamodel() *Metamodel {
 				},
 			},
 			"solution": {
-				Label:      "Solution",
-				Aliases:    []string{"sol"},
-				IDPatterns: []string{"SOL-"},
+				Label:    "Solution",
+				Aliases:  []string{"sol"},
+				IDPrefix: "SOL-",
 				Properties: map[string]PropertyDef{
 					"title":       {Type: "string", Required: true},
 					"description": {Type: "string"},
@@ -92,7 +127,7 @@ func DefaultMetamodel() *Metamodel {
 			"component": {
 				Label:      "Component",
 				Aliases:    []string{"comp"},
-				IDPatterns: []string{"COMP-", "AC-", "TC-"},
+				IDPrefixes: []string{"COMP-", "AC-", "TC-"},
 				Properties: map[string]PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
@@ -104,27 +139,27 @@ func DefaultMetamodel() *Metamodel {
 				Description: "A decision addresses a requirement",
 				From:        []string{"decision"},
 				To:          []string{"requirement"},
-				Inverse:     &InverseDef{Name: "addressedBy", Label: "addressed by"},
+				Inverse:     &InverseDef{ID: "addressedBy"},
 			},
 			"implements": {
 				Label:       "implements",
 				Description: "A solution implements a decision",
 				From:        []string{"solution"},
 				To:          []string{"decision"},
-				Inverse:     &InverseDef{Name: "implementedBy", Label: "implemented by"},
+				Inverse:     &InverseDef{ID: "implementedBy"},
 			},
 			"realizes": {
 				Label:       "realizes",
 				Description: "A component realizes a solution",
 				From:        []string{"component"},
 				To:          []string{"solution"},
-				Inverse:     &InverseDef{Name: "realizedBy", Label: "realized by"},
+				Inverse:     &InverseDef{ID: "realizedBy"},
 			},
 			"dependsOn": {
 				Label:   "depends on",
 				From:    []string{"component", "solution", "decision"},
 				To:      []string{"component", "solution", "decision"},
-				Inverse: &InverseDef{Name: "dependencyOf", Label: "dependency of"},
+				Inverse: &InverseDef{ID: "dependencyOf"},
 			},
 		},
 		aliasMap: make(map[string]string),
@@ -153,7 +188,7 @@ entities:
   requirement:
     label: Requirement
     aliases: [req]
-    id_patterns: ["REQ-"]
+    id_prefix: "REQ-"
     properties:
       title:
         type: string
@@ -169,7 +204,7 @@ entities:
   decision:
     label: Decision
     aliases: [dec, adr]
-    id_patterns: ["DEC-", "ADR-"]
+    id_prefixes: ["DEC-", "ADR-"]
     properties:
       title:
         type: string
@@ -183,7 +218,7 @@ entities:
   solution:
     label: Solution
     aliases: [sol]
-    id_patterns: ["SOL-"]
+    id_prefix: "SOL-"
     properties:
       title:
         type: string
@@ -196,7 +231,7 @@ entities:
   component:
     label: Component
     aliases: [comp]
-    id_patterns: ["COMP-", "AC-", "TC-"]
+    id_prefixes: ["COMP-", "AC-", "TC-"]
     properties:
       title:
         type: string
@@ -209,35 +244,27 @@ relations:
     description: A decision addresses a requirement
     from: [decision]
     to: [requirement]
-    inverse:
-      name: addressedBy
-      label: addressed by
+    inverse: addressedBy
 
   implements:
     label: implements
     description: A solution implements a decision
     from: [solution]
     to: [decision]
-    inverse:
-      name: implementedBy
-      label: implemented by
+    inverse: implementedBy
 
   realizes:
     label: realizes
     description: A component realizes a solution
     from: [component]
     to: [solution]
-    inverse:
-      name: realizedBy
-      label: realized by
+    inverse: realizedBy
 
   dependsOn:
     label: depends on
     from: [component, solution, decision]
     to: [component, solution, decision]
-    inverse:
-      name: dependencyOf
-      label: dependency of
+    inverse: dependencyOf
 
 # Custom validation rules (optional)
 # Define rules to check entity properties using filter expressions.
@@ -247,16 +274,16 @@ relations:
 #   - name: accepted-requirements-need-priority
 #     description: "Accepted requirements must have a priority assigned"
 #     entity_type: requirement
-#     match:
+#     when:                        # IF these conditions match...
 #       - "status=accepted"
-#     require:
+#     then:                        # THEN these must be true
 #       - "priority!="
 #     severity: error
 #
 #   - name: decisions-need-rationale
 #     description: "All decisions should have a rationale"
 #     entity_type: decision
-#     require:
+#     then:
 #       - "rationale!="
 #     severity: warning
 `

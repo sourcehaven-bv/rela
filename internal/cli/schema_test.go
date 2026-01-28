@@ -101,8 +101,8 @@ func TestSchemaEntities(t *testing.T) {
 	}
 
 	// Check for entity details
-	if !strings.Contains(result, "ID Patterns") {
-		t.Errorf("expected 'ID Patterns' in output, got: %s", result)
+	if !strings.Contains(result, "ID Prefixes") {
+		t.Errorf("expected 'ID Prefixes' in output, got: %s", result)
 	}
 	if !strings.Contains(result, "Properties") {
 		t.Errorf("expected 'Properties' in output, got: %s", result)
@@ -560,8 +560,8 @@ func TestSchemaWithCardinality(t *testing.T) {
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{
-			"entity1": {Label: "Entity1", IDPatterns: []string{"E1-"}},
-			"entity2": {Label: "Entity2", IDPatterns: []string{"E2-"}},
+			"entity1": {Label: "Entity1", IDPrefix: "E1-"},
+			"entity2": {Label: "Entity2", IDPrefix: "E2-"},
 		},
 		Relations: map[string]metamodel.RelationDef{
 			"links": {
@@ -611,7 +611,7 @@ func TestSchemaWithSymmetricRelation(t *testing.T) {
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{
-			"entity1": {Label: "Entity1", IDPatterns: []string{"E1-"}},
+			"entity1": {Label: "Entity1", IDPrefix: "E1-"},
 		},
 		Relations: map[string]metamodel.RelationDef{
 			"relates": {
@@ -731,8 +731,8 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{
-			"source": {Label: "Source", IDPatterns: []string{"SRC-"}},
-			"target": {Label: "Target", IDPatterns: []string{"TGT-"}},
+			"source": {Label: "Source", IDPrefix: "SRC-"},
+			"target": {Label: "Target", IDPrefix: "TGT-"},
 		},
 		Relations: map[string]metamodel.RelationDef{
 			"links": {
@@ -782,7 +782,7 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{
 			"colored": {
 				Label:       "Colored Entity",
-				IDPatterns:  []string{"COL-"},
+				IDPrefix:    "COL-",
 				Color:       "#ffcccc",
 				BorderColor: "#ff0000",
 			},
@@ -824,9 +824,9 @@ func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{
-			"a": {Label: "A", IDPatterns: []string{"A-"}},
-			"b": {Label: "B", IDPatterns: []string{"B-"}},
-			"c": {Label: "C", IDPatterns: []string{"C-"}},
+			"a": {Label: "A", IDPrefix: "A-"},
+			"b": {Label: "B", IDPrefix: "B-"},
+			"c": {Label: "C", IDPrefix: "C-"},
 		},
 		Relations: map[string]metamodel.RelationDef{
 			"connects": {

@@ -11,8 +11,8 @@ func TestValidateEntity_EmptyRequiredProperty(t *testing.T) {
 	meta := &Metamodel{
 		Entities: map[string]EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]PropertyDef{
 					"title": {
 						Type:     PropertyTypeString,
@@ -55,8 +55,8 @@ func TestValidateEntity_DateValidation_RFC3339(t *testing.T) {
 	meta := &Metamodel{
 		Entities: map[string]EntityDef{
 			"task": {
-				Label:      "Task",
-				IDPatterns: []string{"TASK-"},
+				Label:    "Task",
+				IDPrefix: "TASK-",
 				Properties: map[string]PropertyDef{
 					"title": {
 						Type:     PropertyTypeString,
@@ -165,8 +165,8 @@ func TestValidateEntity_IDPatternValidation(t *testing.T) {
 	meta := &Metamodel{
 		Entities: map[string]EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]PropertyDef{
 					"title": {
 						Type:     PropertyTypeString,
@@ -208,17 +208,227 @@ func TestValidateEntity_IDPatternValidation(t *testing.T) {
 
 			hasIDError := false
 			for _, err := range errs {
-				if err.Error() == "entity ID TASK-001 does not match any pattern for type requirement: [REQ-]" {
+				if err.Error() == "entity ID TASK-001 does not match any prefix for type requirement: [REQ-]" {
 					hasIDError = true
 				}
 			}
 
 			if tt.wantErr && !hasIDError {
-				t.Errorf("expected ID pattern validation error, got: %v", errs)
+				t.Errorf("expected ID prefix validation error, got: %v", errs)
 			}
 			if !tt.wantErr && hasIDError {
-				t.Errorf("unexpected ID pattern validation error: %v", errs)
+				t.Errorf("unexpected ID prefix validation error: %v", errs)
 			}
 		})
+	}
+}
+
+func TestValidateRelationEntities(t *testing.T) {
+	meta := &Metamodel{
+		Relations: map[string]RelationDef{
+			"addresses": {
+				From: []string{"decision"},
+				To:   []string{"requirement"},
+			},
+		},
+	}
+
+	from := &model.Entity{ID: "DEC-001", Type: "decision"}
+	to := &model.Entity{ID: "REQ-001", Type: "requirement"}
+
+	err := meta.ValidateRelationEntities("addresses", from, to)
+	if err != nil {
+		t.Errorf("ValidateRelationEntities failed: %v", err)
+	}
+
+	// Invalid from type
+	invalidFrom := &model.Entity{ID: "REQ-001", Type: "requirement"}
+	err = meta.ValidateRelationEntities("addresses", invalidFrom, to)
+	if err == nil {
+		t.Error("expected error for invalid from type")
+	}
+}
+
+func TestParseIntegerValue(t *testing.T) {
+	tests := []struct {
+		name      string
+		val       interface{}
+		expected  int
+		expectErr bool
+	}{
+		{"int", 42, 42, false},
+		{"int64", int64(123), 123, false},
+		{"float64", 99.0, 99, false},
+		{"string", "456", 456, false},
+		{"invalid string", "not a number", 0, true},
+		{"bool", true, 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseIntegerValue(tt.val)
+			if tt.expectErr {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if got != tt.expected {
+					t.Errorf("ParseIntegerValue(%v) = %d, want %d", tt.val, got, tt.expected)
+				}
+			}
+		})
+	}
+}
+
+func TestParseBooleanValue(t *testing.T) {
+	tests := []struct {
+		name      string
+		val       interface{}
+		expected  bool
+		expectErr bool
+	}{
+		{"bool true", true, true, false},
+		{"bool false", false, false, false},
+		{"string true", "true", true, false},
+		{"string false", "false", false, false},
+		{"invalid string", "yes", false, true},
+		{"int", 1, false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseBooleanValue(tt.val)
+			if tt.expectErr {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if got != tt.expected {
+					t.Errorf("ParseBooleanValue(%v) = %v, want %v", tt.val, got, tt.expected)
+				}
+			}
+		})
+	}
+}
+
+func TestValidatePropertyValue_Boolean(t *testing.T) {
+	meta := &Metamodel{}
+	propDef := &PropertyDef{Type: PropertyTypeBoolean}
+
+	// Valid boolean
+	err := meta.ValidatePropertyValue("enabled", propDef, true)
+	if err != nil {
+		t.Errorf("unexpected error for bool: %v", err)
+	}
+
+	// Valid string boolean
+	err = meta.ValidatePropertyValue("enabled", propDef, "true")
+	if err != nil {
+		t.Errorf("unexpected error for string bool: %v", err)
+	}
+
+	// Invalid string
+	err = meta.ValidatePropertyValue("enabled", propDef, "yes")
+	if err == nil {
+		t.Error("expected error for invalid bool string")
+	}
+
+	// Invalid type
+	err = meta.ValidatePropertyValue("enabled", propDef, 123)
+	if err == nil {
+		t.Error("expected error for invalid type")
+	}
+}
+
+func TestValidatePropertyValue_Integer(t *testing.T) {
+	meta := &Metamodel{}
+	propDef := &PropertyDef{Type: PropertyTypeInteger}
+
+	// Valid int types
+	validValues := []interface{}{42, int64(123), 99.0}
+	for _, val := range validValues {
+		err := meta.ValidatePropertyValue("count", propDef, val)
+		if err != nil {
+			t.Errorf("unexpected error for %T: %v", val, err)
+		}
+	}
+
+	// Valid string
+	err := meta.ValidatePropertyValue("count", propDef, "456")
+	if err != nil {
+		t.Errorf("unexpected error for string int: %v", err)
+	}
+
+	// Invalid string
+	err = meta.ValidatePropertyValue("count", propDef, "not a number")
+	if err == nil {
+		t.Error("expected error for invalid int string")
+	}
+
+	// Invalid type
+	err = meta.ValidatePropertyValue("count", propDef, true)
+	if err == nil {
+		t.Error("expected error for invalid type")
+	}
+}
+
+func TestValidatePropertyValue_Enum(t *testing.T) {
+	meta := &Metamodel{}
+	propDef := &PropertyDef{
+		Type:   PropertyTypeEnum,
+		Values: []string{"small", "medium", "large"},
+	}
+
+	// Valid value
+	err := meta.ValidatePropertyValue("size", propDef, "medium")
+	if err != nil {
+		t.Errorf("unexpected error for valid enum: %v", err)
+	}
+
+	// Invalid value
+	err = meta.ValidatePropertyValue("size", propDef, "extra-large")
+	if err == nil {
+		t.Error("expected error for invalid enum value")
+	}
+
+	// Invalid type
+	err = meta.ValidatePropertyValue("size", propDef, 123)
+	if err == nil {
+		t.Error("expected error for non-string enum")
+	}
+}
+
+func TestValidatePropertyValue_CustomType(t *testing.T) {
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"severity": {
+				Values: []string{"low", "medium", "high", "critical"},
+			},
+		},
+	}
+	propDef := &PropertyDef{Type: "severity"}
+
+	// Valid value
+	err := meta.ValidatePropertyValue("severity", propDef, "high")
+	if err != nil {
+		t.Errorf("unexpected error for valid custom type: %v", err)
+	}
+
+	// Invalid value
+	err = meta.ValidatePropertyValue("severity", propDef, "extreme")
+	if err == nil {
+		t.Error("expected error for invalid custom type value")
+	}
+
+	// Invalid type
+	err = meta.ValidatePropertyValue("severity", propDef, 123)
+	if err == nil {
+		t.Error("expected error for non-string custom type")
 	}
 }

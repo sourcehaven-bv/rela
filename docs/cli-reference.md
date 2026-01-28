@@ -642,7 +642,7 @@ Find gaps in ID sequences for entity types with sequential IDs.
 rela analyze gaps
 ```
 
-Entity types configured with `id_type: string` are excluded from gap analysis since they use manually-specified IDs that are not expected to be sequential.
+Entity types configured with `id_type: manual` are excluded from gap analysis since they use manually-specified IDs that are not expected to be sequential.
 
 #### rela analyze cardinality
 
@@ -818,6 +818,56 @@ rela template init requirement
 # New entities will use the template
 rela create requirement --title "My Requirement"
 ```
+
+---
+
+### rela migrate
+
+Migrate project files to the current schema format.
+
+```bash
+rela migrate [flags]
+```
+
+**Flags:**
+| Flag | Description |
+|------|-------------|
+| `--check` | Check for pending migrations without applying (useful for CI) |
+
+This command detects deprecated syntax patterns in your project files (e.g., `metamodel.yaml`) and transforms them to the current format while preserving comments and formatting.
+
+**When to use:**
+
+If you see an error like this when running any rela command:
+
+```
+metamodel.yaml uses deprecated syntax:
+  - Rename id_type values: "sequential" → "auto", "string" → "manual"
+
+Run 'rela migrate' to update your project files.
+```
+
+Run `rela migrate` to automatically update your files.
+
+**Examples:**
+
+```bash
+# Apply all pending migrations
+rela migrate
+
+# Check for migrations without applying (for CI pipelines)
+rela migrate --check
+```
+
+**CI Integration:**
+
+Add to your CI pipeline to ensure project files are up-to-date:
+
+```yaml
+- run: rela migrate --check
+```
+
+This will exit with code 1 if migrations are needed.
 
 ---
 

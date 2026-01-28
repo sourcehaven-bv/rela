@@ -48,7 +48,7 @@ and maintain semantic relationships between them.`,
 		cmdName := cmd.Name()
 		parent := cmd.Parent()
 		isRootChild := parent == nil || parent.Name() == "rela"
-		if isRootChild && (cmdName == "init" || cmdName == "version" || cmdName == "help" || cmdName == "completion" || cmdName == "tui") {
+		if isRootChild && (cmdName == "init" || cmdName == "version" || cmdName == "help" || cmdName == "completion" || cmdName == "tui" || cmdName == "migrate") {
 			out = output.New(output.Format(outputFormat))
 			return nil
 		}
@@ -92,6 +92,7 @@ and maintain semantic relationships between them.`,
 }
 
 // Execute runs the root command
+// coverage-ignore: CLI entry point - tested via integration tests
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

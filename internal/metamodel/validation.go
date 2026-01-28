@@ -45,18 +45,19 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []error {
 		}
 	}
 
-	// Validate ID matches pattern
-	if len(def.IDPatterns) > 0 {
+	// Validate ID matches prefix
+	prefixes := def.GetIDPrefixes()
+	if len(prefixes) > 0 {
 		matched := false
-		for _, pattern := range def.IDPatterns {
-			if len(entity.ID) >= len(pattern) && entity.ID[:len(pattern)] == pattern {
+		for _, prefix := range prefixes {
+			if len(entity.ID) >= len(prefix) && entity.ID[:len(prefix)] == prefix {
 				matched = true
 				break
 			}
 		}
 		if !matched {
-			errs = append(errs, fmt.Errorf("entity ID %s does not match any pattern for type %s: %v",
-				entity.ID, entity.Type, def.IDPatterns))
+			errs = append(errs, fmt.Errorf("entity ID %s does not match any prefix for type %s: %v",
+				entity.ID, entity.Type, prefixes))
 		}
 	}
 
