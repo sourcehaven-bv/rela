@@ -229,11 +229,18 @@ func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			s.updateSuggestions(app)
 			return app, s.triggerSearch()
 		}
-		// Otherwise, open selected result
+		// Otherwise, open selected result (single item, no scope)
 		if len(s.results) > 0 {
 			entity := s.results[s.resultIndex]
 			app.detail = NewDetailModel(app, entity.ID)
 			return app, app.pushScreen(ScreenDetail)
+		}
+		return app, nil
+
+	case "b":
+		// Browse all results with scope navigation
+		if !s.showSuggestions && len(s.results) > 0 {
+			return s.enterBrowseMode(app)
 		}
 		return app, nil
 
@@ -760,12 +767,54 @@ func (s *SearchModel) highlightSyntax(text string) string {
 	return result.String()
 }
 
+// enterBrowseMode creates a browse scope from search results and enters detail view
+func (s *SearchModel) enterBrowseMode(app *App) (tea.Model, tea.Cmd) {
+	if len(s.results) == 0 {
+		return app, nil
+	}
+
+	// Collect entity IDs from results
+	ids := make([]string, len(s.results))
+	for i, entity := range s.results {
+		ids[i] = entity.ID
+	}
+
+	// Create scope label
+	label := fmt.Sprintf("%d search results", len(ids))
+	if s.lastQuery != "" {
+		// Truncate long queries
+		query := s.lastQuery
+		if len(query) > 30 {
+			query = query[:27] + "..."
+		}
+		label = fmt.Sprintf("%d results for \"%s\"", len(ids), query)
+	}
+
+	// Create browse scope starting at the currently selected result
+	scope := NewBrowseScope(ids, label, ScreenSearch)
+	if scope == nil {
+		return app, nil
+	}
+
+	// Set scope to currently selected item
+	scope.SetIndex(s.resultIndex)
+
+	// Create detail model with scope
+	app.detail = NewDetailModelWithScope(app, scope)
+	if app.detail == nil {
+		return app, SetMessage("Failed to open entity", true)
+	}
+
+	return app, app.pushScreen(ScreenDetail)
+}
+
 // Help returns help items
 func (s *SearchModel) Help() [][2]string {
 	if len(s.results) > 0 {
 		return [][2]string{
 			{"↑/↓", "navigate"},
 			{"enter", "open"},
+			{"b", "browse all"},
 			{"ctrl+u", "clear"},
 			{"esc", "back"},
 		}

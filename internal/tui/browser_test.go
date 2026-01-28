@@ -474,7 +474,7 @@ func TestBrowserModel_Help(t *testing.T) {
 	foundView := false
 	foundBack := false
 	for _, item := range help {
-		if item[1] == "view" {
+		if item[1] == "browse" {
 			foundView = true
 		}
 		if item[1] == "back" {
@@ -482,7 +482,7 @@ func TestBrowserModel_Help(t *testing.T) {
 		}
 	}
 	if !foundView {
-		t.Error("Help should contain 'view'")
+		t.Error("Help should contain 'browse'")
 	}
 	if !foundBack {
 		t.Error("Help should contain 'back'")

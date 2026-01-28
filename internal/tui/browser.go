@@ -137,11 +137,8 @@ func (b *BrowserModel) updateEntities(app *App, msg tea.KeyMsg) (tea.Model, tea.
 			b.entityIndex--
 		}
 	case "enter":
-		if b.entityIndex < len(b.entities) {
-			entity := b.entities[b.entityIndex]
-			app.detail = NewDetailModel(app, entity.ID)
-			return app, app.pushScreen(ScreenDetail)
-		}
+		// Browse all entities of this type with scope navigation
+		return b.enterBrowseMode(app)
 	case "backspace", "h", "left":
 		b.level = LevelTypes
 		b.entities = nil
@@ -174,6 +171,46 @@ func (b *BrowserModel) updateEntities(app *App, msg tea.KeyMsg) (tea.Model, tea.
 		return app, SetMessage("Refreshed from disk", false)
 	}
 	return app, nil
+}
+
+// enterBrowseMode creates a browse scope from the current entity list and enters detail view
+func (b *BrowserModel) enterBrowseMode(app *App) (tea.Model, tea.Cmd) {
+	if len(b.entities) == 0 {
+		return app, nil
+	}
+
+	// Collect entity IDs
+	ids := make([]string, len(b.entities))
+	for i, entity := range b.entities {
+		ids[i] = entity.ID
+	}
+
+	// Create scope label using the type label
+	typeLabel := b.selectedType
+	for _, t := range b.types {
+		if t.name == b.selectedType {
+			typeLabel = t.label
+			break
+		}
+	}
+	label := fmt.Sprintf("%d %ss", len(ids), typeLabel)
+
+	// Create browse scope starting at the currently selected entity
+	scope := NewBrowseScope(ids, label, ScreenBrowser)
+	if scope == nil {
+		return app, nil
+	}
+
+	// Set scope to currently selected item
+	scope.SetIndex(b.entityIndex)
+
+	// Create detail model with scope
+	app.detail = NewDetailModelWithScope(app, scope)
+	if app.detail == nil {
+		return app, SetMessage("Failed to open entity", true)
+	}
+
+	return app, app.pushScreen(ScreenDetail)
 }
 
 // View renders the browser
@@ -328,11 +365,10 @@ func (b *BrowserModel) Help() [][2]string {
 	case LevelEntities:
 		return [][2]string{
 			{"↑/↓", "navigate"},
-			{"enter", "view"},
+			{"enter", "browse"},
 			{"←", "back"},
 			{"c", "create"},
 			{"l", "link"},
-			{"r", "refresh"},
 		}
 	}
 	return nil
