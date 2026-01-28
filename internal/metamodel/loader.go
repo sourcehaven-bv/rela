@@ -2,6 +2,7 @@ package metamodel
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -10,6 +11,9 @@ import (
 )
 
 // Load reads and parses a metamodel from a YAML file.
+// If the metamodel contains an `includes:` key, included files are recursively
+// loaded and merged. Include paths are resolved relative to the directory
+// containing the metamodel file.
 // Returns a MigrationError if the file contains deprecated syntax that needs migration.
 func Load(path string) (*Metamodel, error) {
 	data, err := os.ReadFile(path)
@@ -29,7 +33,20 @@ func Load(path string) (*Metamodel, error) {
 		}
 	}
 
-	return Parse(data)
+	m, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// If includes are present, resolve and merge them
+	if len(m.Includes) > 0 {
+		rootDir := filepath.Dir(path)
+		if err := loadWithIncludes(m, path, rootDir); err != nil {
+			return nil, err
+		}
+	}
+
+	return m, nil
 }
 
 // Parse parses metamodel YAML content
