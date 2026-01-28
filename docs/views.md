@@ -117,7 +117,18 @@ traverse:
 | `max_depth` | int | Maximum recursion depth (default: 10) |
 | `where` | string | Property filter expression |
 
-**Important:** Entities can appear multiple times if reached via different paths. This preserves path information.
+**Type-Based Collection Filtering:**
+
+When `collect_as` specifies multiple collection names (e.g., `[functions, usecases, scenarios]`), entities are automatically filtered by type:
+- Collection name matches entity type (singular or plural)
+- `functions` collection only gets entities of type `function`
+- `usecases` collection only gets entities of type `usecase`
+
+This prevents mixed entity types in collections. For generic collection names (not matching any entity type), all entities are included.
+
+**Multi-Pass Traversal:**
+
+The view engine runs traverse rules in multiple passes (up to 10) until no new entities are found. This ensures that entities reachable via indirect paths are discovered, even if intermediate collections aren't fully populated on the first pass.
 
 ### Filters
 
@@ -135,7 +146,22 @@ filters:
   components:
     # Single condition
     where: "status=active"
+
+  # Expand mode: add entities from graph matching criteria
+  requirements_by_prefix:
+    expand: true                      # Query graph for matching entities
+    id_prefix: ["LRZA-", "GF-"]       # Find all entities with these prefixes
 ```
+
+**Filter Options:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `via_traversal` | bool | Include entities reached via traverse rules |
+| `id_prefix` | []string | Match entities with ID starting with prefix |
+| `where` | string | Property filter expression |
+| `match_any` | []Filter | Match any of the sub-filters (OR logic) |
+| `expand` | bool | **NEW:** Query graph for entities matching criteria, not just filter existing collection |
 
 **Filter Operators:**
 - `=` - Equal
@@ -145,6 +171,20 @@ filters:
 - `>` - Greater than
 - `>=` - Greater than or equal
 - `=~` - Regex match
+
+**Expand Mode:**
+
+By default, filters only filter entities already in a collection. With `expand: true`, the filter queries the entire graph and adds matching entities to the collection:
+
+```yaml
+filters:
+  requirements:
+    expand: true
+    id_prefix: ["LRZA-", "GF-"]
+    where: "status=accepted"
+```
+
+This is useful for including entities based on naming conventions or properties rather than graph connectivity.
 
 ### Derived Collections
 

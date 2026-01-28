@@ -86,6 +86,7 @@ type Filter struct {
 	IDPrefix     []string `yaml:"id_prefix,omitempty"`
 	Where        string   `yaml:"where,omitempty"`
 	MatchAny     []Filter `yaml:"match_any,omitempty"`
+	Expand       bool     `yaml:"expand,omitempty"` // If true, add entities from graph matching criteria
 }
 
 // Derived defines a derived collection (group_by, where, embed)
