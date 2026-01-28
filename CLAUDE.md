@@ -269,3 +269,15 @@ The metamodel loader (`internal/metamodel/loader.go`) checks for migrations on l
 3. The error message tells users to run `rela migrate`
 
 Commands that don't need the metamodel (init, migrate, version, etc.) are excluded from this check in `internal/cli/root.go`.
+
+## Working Documents
+
+Place temporary working documents in the `.ignored/` directory:
+
+- Design documents
+- Bug/ticket tracking files
+- QA reports
+- Test reports
+- Scratch notes
+
+This directory is gitignored. Never commit design docs, tickets, or reports to the repository.

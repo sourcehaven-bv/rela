@@ -27,12 +27,28 @@ type DetailModel struct {
 	// Delete confirmation state
 	confirmDelete       bool
 	confirmDeleteEntity bool // true = delete entity, false = delete relation
+
+	// Browse scope for sequential navigation through a set of entities
+	scope *BrowseScope
 }
 
 // NewDetailModel creates a new detail view
 func NewDetailModel(app *App, entityID string) *DetailModel {
 	d := &DetailModel{
 		entityID: entityID,
+	}
+	d.load(app)
+	return d
+}
+
+// NewDetailModelWithScope creates a new detail view with browse scope
+func NewDetailModelWithScope(app *App, scope *BrowseScope) *DetailModel {
+	if scope == nil || scope.Current() == "" {
+		return nil
+	}
+	d := &DetailModel{
+		entityID: scope.Current(),
+		scope:    scope,
 	}
 	d.load(app)
 	return d
@@ -73,6 +89,26 @@ func (d *DetailModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Handle browse scope navigation (when in scope mode)
+	if d.scope != nil {
+		switch msg.String() {
+		case "n", "right":
+			// Next entity in scope
+			if d.scope.HasNext() {
+				d.scope.Next()
+				return d.navigateToCurrentScope(app)
+			}
+			return app, SetMessage("At last item", false)
+		case "p", "left":
+			// Previous entity in scope
+			if d.scope.HasPrev() {
+				d.scope.Prev()
+				return d.navigateToCurrentScope(app)
+			}
+			return app, SetMessage("At first item", false)
+		}
+	}
+
 	switch msg.String() {
 	case "j", "down":
 		if d.relMode {
@@ -102,10 +138,18 @@ func (d *DetailModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if rel.To == d.entityID {
 				targetID = rel.From
 			}
+			// When following a relation, leave scope mode (push new detail without scope)
 			app.detail = NewDetailModel(app, targetID)
 			return app, app.pushScreen(ScreenDetail)
 		}
 	case "l":
+		// Don't conflict with scope navigation - only handle 'l' for link when NOT in scope mode
+		if d.scope == nil {
+			app.link = NewLinkModel(app, d.entityID)
+			return app, app.pushScreen(ScreenLink)
+		}
+	case "L":
+		// Capital L for link (available in both scope and non-scope mode)
 		app.link = NewLinkModel(app, d.entityID)
 		return app, app.pushScreen(ScreenLink)
 	case "g":
@@ -137,6 +181,34 @@ func (d *DetailModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			d.confirmDeleteEntity = true
 		}
 	}
+	return app, nil
+}
+
+// navigateToCurrentScope updates the detail view to show the current scope item
+func (d *DetailModel) navigateToCurrentScope(app *App) (tea.Model, tea.Cmd) {
+	entityID := d.scope.Current()
+	if entityID == "" {
+		return app, SetMessage("Entity not found in scope", true)
+	}
+
+	// Check if entity exists
+	entity, ok := app.graph.GetNode(entityID)
+	if !ok {
+		return app, SetMessage(fmt.Sprintf("Entity %s not found", entityID), true)
+	}
+
+	// Update detail model to show new entity
+	d.entityID = entityID
+	d.entity = entity
+	d.scrollPos = 0
+	d.relMode = false
+	d.relIndex = 0
+	d.allRels = nil
+	d.incoming = app.graph.IncomingEdges(entityID)
+	d.outgoing = app.graph.OutgoingEdges(entityID)
+	d.allRels = append(d.allRels, d.incoming...)
+	d.allRels = append(d.allRels, d.outgoing...)
+
 	return app, nil
 }
 
@@ -395,10 +467,30 @@ func (d *DetailModel) View(_, height int) string {
 		Bold(true)
 
 	// Build all lines first
-	lines := []string{
-		idStyle.Render(d.entity.ID) + labelStyle.Render(fmt.Sprintf(" (%s)", d.entity.Type)),
-		headerStyle.Render(d.entity.Title()),
-		"",
+	// Show progress indicator if in browse scope
+	progressLine := ""
+	if d.scope != nil {
+		progressStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("39")).
+			Bold(true)
+		scopeLabelStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240"))
+		progressLine = progressStyle.Render(d.scope.Progress()) + " " + scopeLabelStyle.Render(d.scope.Label)
+	}
+
+	var lines []string
+	if progressLine != "" {
+		lines = append(lines, progressLine,
+			idStyle.Render(d.entity.ID)+labelStyle.Render(fmt.Sprintf(" (%s)", d.entity.Type)),
+			headerStyle.Render(d.entity.Title()),
+			"",
+		)
+	} else {
+		lines = append(lines,
+			idStyle.Render(d.entity.ID)+labelStyle.Render(fmt.Sprintf(" (%s)", d.entity.Type)),
+			headerStyle.Render(d.entity.Title()),
+			"",
+		)
 	}
 
 	// Properties
@@ -533,6 +625,30 @@ func (d *DetailModel) Help() [][2]string {
 			{"n/esc", "cancel"},
 		}
 	}
+
+	// In browse scope mode, show navigation help
+	if d.scope != nil {
+		if d.relMode {
+			return [][2]string{
+				{"n/→", "next"},
+				{"p/←", "prev"},
+				{"↑/↓", "navigate"},
+				{"tab", "scroll mode"},
+				{"enter", "follow"},
+				{"e", "edit"},
+			}
+		}
+		return [][2]string{
+			{"n/→", "next"},
+			{"p/←", "prev"},
+			{"↑/↓", "scroll"},
+			{"tab", "rel mode"},
+			{"e", "edit"},
+			{"g", "graph"},
+		}
+	}
+
+	// Normal detail mode (no browse scope)
 	if d.relMode {
 		return [][2]string{
 			{"↑/↓", "navigate"},
