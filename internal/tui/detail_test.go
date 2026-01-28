@@ -16,8 +16,8 @@ func createTestAppWithRelations() *App {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":       {Type: "string", Required: true},
 					"status":      {Type: "string", Required: false},
@@ -26,8 +26,8 @@ func createTestAppWithRelations() *App {
 				},
 			},
 			"decision": {
-				Label:      "Decision",
-				IDPatterns: []string{"DEC-"},
+				Label:    "Decision",
+				IDPrefix: "DEC-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":  {Type: "string", Required: true},
 					"status": {Type: "string", Required: false},
@@ -324,8 +324,8 @@ func TestDetailModel_ViewWithoutRelations(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},

@@ -62,6 +62,11 @@ func Parse(data []byte) (*Metamodel, error) {
 			}
 		}
 
+		// Validate id_prefix/id_prefixes are not both specified
+		if def.IDPrefix != "" && len(def.IDPrefixes) > 0 {
+			return nil, &ConflictingIDPrefixError{EntityType: name}
+		}
+
 		// Add lowercase name as self-reference
 		m.aliasMap[strings.ToLower(name)] = name
 		// Add all aliases
@@ -89,9 +94,9 @@ func DefaultMetamodel() *Metamodel {
 		},
 		Entities: map[string]EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				Aliases:    []string{"req"},
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				Aliases:  []string{"req"},
+				IDPrefix: "REQ-",
 				Properties: map[string]PropertyDef{
 					"title":       {Type: "string", Required: true},
 					"description": {Type: "string"},
@@ -102,7 +107,7 @@ func DefaultMetamodel() *Metamodel {
 			"decision": {
 				Label:      "Decision",
 				Aliases:    []string{"dec", "adr"},
-				IDPatterns: []string{"DEC-", "ADR-"},
+				IDPrefixes: []string{"DEC-", "ADR-"},
 				Properties: map[string]PropertyDef{
 					"title":     {Type: "string", Required: true},
 					"rationale": {Type: "string"},
@@ -110,9 +115,9 @@ func DefaultMetamodel() *Metamodel {
 				},
 			},
 			"solution": {
-				Label:      "Solution",
-				Aliases:    []string{"sol"},
-				IDPatterns: []string{"SOL-"},
+				Label:    "Solution",
+				Aliases:  []string{"sol"},
+				IDPrefix: "SOL-",
 				Properties: map[string]PropertyDef{
 					"title":       {Type: "string", Required: true},
 					"description": {Type: "string"},
@@ -122,7 +127,7 @@ func DefaultMetamodel() *Metamodel {
 			"component": {
 				Label:      "Component",
 				Aliases:    []string{"comp"},
-				IDPatterns: []string{"COMP-", "AC-", "TC-"},
+				IDPrefixes: []string{"COMP-", "AC-", "TC-"},
 				Properties: map[string]PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
@@ -183,7 +188,7 @@ entities:
   requirement:
     label: Requirement
     aliases: [req]
-    id_patterns: ["REQ-"]
+    id_prefix: "REQ-"
     properties:
       title:
         type: string
@@ -199,7 +204,7 @@ entities:
   decision:
     label: Decision
     aliases: [dec, adr]
-    id_patterns: ["DEC-", "ADR-"]
+    id_prefixes: ["DEC-", "ADR-"]
     properties:
       title:
         type: string
@@ -213,7 +218,7 @@ entities:
   solution:
     label: Solution
     aliases: [sol]
-    id_patterns: ["SOL-"]
+    id_prefix: "SOL-"
     properties:
       title:
         type: string
@@ -226,7 +231,7 @@ entities:
   component:
     label: Component
     aliases: [comp]
-    id_patterns: ["COMP-", "AC-", "TC-"]
+    id_prefixes: ["COMP-", "AC-", "TC-"]
     properties:
       title:
         type: string

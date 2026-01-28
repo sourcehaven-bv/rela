@@ -70,10 +70,11 @@ Examples:
 			if entityDef.IsStringID() {
 				return fmt.Errorf("entity type %s uses string IDs; --id is required", resolvedType)
 			}
-			if len(entityDef.IDPatterns) == 0 {
-				return fmt.Errorf("no ID patterns defined for type %s", resolvedType)
+			prefixes := entityDef.GetIDPrefixes()
+			if len(prefixes) == 0 {
+				return fmt.Errorf("no ID prefixes defined for type %s", resolvedType)
 			}
-			prefix := entityDef.IDPatterns[0]
+			prefix := prefixes[0]
 			existingIDs := g.AllIDs()
 			entityID = model.GenerateNextID(existingIDs, prefix)
 		}

@@ -21,16 +21,16 @@ func setupTestGraph() {
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"control": {
-				Label:      "Control",
-				IDPatterns: []string{"CTRL-"},
+				Label:    "Control",
+				IDPrefix: "CTRL-",
 			},
 			"risk": {
-				Label:      "Risk",
-				IDPatterns: []string{"RISK-"},
+				Label:    "Risk",
+				IDPrefix: "RISK-",
 			},
 			"evidence": {
-				Label:      "Evidence",
-				IDPatterns: []string{"EV-"},
+				Label:    "Evidence",
+				IDPrefix: "EV-",
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{
@@ -324,8 +324,8 @@ func TestExportEmptyResult(t *testing.T) {
 	// Export a type that exists in metamodel but has no entities
 	// We need to add the type to metamodel first
 	meta.Entities["procedure"] = metamodel.EntityDef{
-		Label:      "Procedure",
-		IDPatterns: []string{"PROC-"},
+		Label:    "Procedure",
+		IDPrefix: "PROC-",
 	}
 
 	err := exportEntities("procedure")

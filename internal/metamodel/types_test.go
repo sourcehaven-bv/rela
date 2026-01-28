@@ -492,6 +492,151 @@ func TestEntityDef_IsStringID(t *testing.T) {
 	}
 }
 
+func TestEntityDef_GetIDPrefixes(t *testing.T) {
+	tests := []struct {
+		name string
+		def  EntityDef
+		want []string
+	}{
+		{
+			name: "id_prefix returns single-element slice",
+			def:  EntityDef{IDPrefix: "REQ-"},
+			want: []string{"REQ-"},
+		},
+		{
+			name: "id_prefixes returns as-is",
+			def:  EntityDef{IDPrefixes: []string{"DEC-", "ADR-"}},
+			want: []string{"DEC-", "ADR-"},
+		},
+		{
+			name: "empty returns nil",
+			def:  EntityDef{},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.def.GetIDPrefixes()
+			if len(got) != len(tt.want) {
+				t.Errorf("GetIDPrefixes() = %v, want %v", got, tt.want)
+				return
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("GetIDPrefixes()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestEntityDef_MatchesID_WithNewPrefixes(t *testing.T) {
+	tests := []struct {
+		name string
+		def  EntityDef
+		id   string
+		want bool
+	}{
+		{
+			name: "matches id_prefix",
+			def:  EntityDef{IDPrefix: "REQ-"},
+			id:   "REQ-001",
+			want: true,
+		},
+		{
+			name: "does not match id_prefix",
+			def:  EntityDef{IDPrefix: "REQ-"},
+			id:   "DEC-001",
+			want: false,
+		},
+		{
+			name: "matches one of id_prefixes",
+			def:  EntityDef{IDPrefixes: []string{"DEC-", "ADR-"}},
+			id:   "ADR-001",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.def.MatchesID(tt.id)
+			if got != tt.want {
+				t.Errorf("MatchesID(%q) = %v, want %v", tt.id, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParse_IDPrefixValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+		errType error
+	}{
+		{
+			name: "valid id_prefix",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+`,
+			wantErr: false,
+		},
+		{
+			name: "valid id_prefixes",
+			yaml: `
+version: "1.0"
+entities:
+  decision:
+    label: Decision
+    id_prefixes: ["DEC-", "ADR-"]
+`,
+			wantErr: false,
+		},
+		{
+			name: "conflict: both id_prefix and id_prefixes",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    id_prefixes: ["REQ-", "FR-"]
+`,
+			wantErr: true,
+			errType: &ConflictingIDPrefixError{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.yaml))
+			if !tt.wantErr {
+				if err != nil {
+					t.Errorf("Parse() unexpected error: %v", err)
+				}
+				return
+			}
+			// wantErr is true
+			if err == nil {
+				t.Errorf("Parse() expected error, got nil")
+				return
+			}
+			if tt.errType == nil {
+				return
+			}
+			var conflictErr *ConflictingIDPrefixError
+			if !errors.As(err, &conflictErr) {
+				t.Errorf("Parse() error type = %T, want %T", err, tt.errType)
+			}
+		})
+	}
+}
+
 func TestParse_IDTypeValidation(t *testing.T) {
 	tests := []struct {
 		name    string
