@@ -449,12 +449,12 @@ entities:
 	}
 }
 
-func TestParse_SequentialIDType(t *testing.T) {
+func TestParse_AutoIDType(t *testing.T) {
 	yaml := `version: "1.0"
 entities:
   task:
     label: Task
-    id_type: sequential
+    id_type: auto
     properties:
       title:
         type: string
@@ -463,15 +463,15 @@ entities:
 	meta, err := Parse([]byte(yaml))
 	assertNoError(t, err)
 
-	assertEqual(t, meta.Entities["task"].IDType, IDTypeSequential)
+	assertEqual(t, meta.Entities["task"].IDType, IDTypeAuto)
 }
 
-func TestParse_StringIDType(t *testing.T) {
+func TestParse_ManualIDType(t *testing.T) {
 	yaml := `version: "1.0"
 entities:
   task:
     label: Task
-    id_type: string
+    id_type: manual
     properties:
       title:
         type: string
@@ -480,7 +480,7 @@ entities:
 	meta, err := Parse([]byte(yaml))
 	assertNoError(t, err)
 
-	assertEqual(t, meta.Entities["task"].IDType, IDTypeString)
+	assertEqual(t, meta.Entities["task"].IDType, IDTypeManual)
 }
 
 func TestParse_AliasMap(t *testing.T) {

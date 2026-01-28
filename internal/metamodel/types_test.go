@@ -284,78 +284,6 @@ func TestGetPrimaryPropertyDeterministic(t *testing.T) {
 	}
 }
 
-func TestNormalizeIDType(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{name: "empty defaults to auto", input: "", want: IDTypeAuto},
-		{name: "auto returns auto", input: "auto", want: IDTypeAuto},
-		{name: "manual returns manual", input: "manual", want: IDTypeManual},
-		{name: "deprecated sequential normalizes to auto", input: "sequential", want: IDTypeAuto},
-		{name: "deprecated string normalizes to manual", input: "string", want: IDTypeManual},
-		{name: "invalid returns as-is", input: "invalid", want: "invalid"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := NormalizeIDType(tt.input)
-			if got != tt.want {
-				t.Errorf("NormalizeIDType(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsValidIDType(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  bool
-	}{
-		{name: "empty is valid", input: "", want: true},
-		{name: "auto is valid", input: "auto", want: true},
-		{name: "manual is valid", input: "manual", want: true},
-		{name: "deprecated sequential is valid", input: "sequential", want: true},
-		{name: "deprecated string is valid", input: "string", want: true},
-		{name: "invalid is not valid", input: "invalid", want: false},
-		{name: "uuid is not valid", input: "uuid", want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := IsValidIDType(tt.input)
-			if got != tt.want {
-				t.Errorf("IsValidIDType(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsDeprecatedIDType(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  bool
-	}{
-		{name: "empty is not deprecated", input: "", want: false},
-		{name: "auto is not deprecated", input: "auto", want: false},
-		{name: "manual is not deprecated", input: "manual", want: false},
-		{name: "sequential is deprecated", input: "sequential", want: true},
-		{name: "string is deprecated", input: "string", want: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := IsDeprecatedIDType(tt.input)
-			if got != tt.want {
-				t.Errorf("IsDeprecatedIDType(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestEntityDef_GetIDType(t *testing.T) {
 	tests := []struct {
 		name string
@@ -375,16 +303,6 @@ func TestEntityDef_GetIDType(t *testing.T) {
 		{
 			name: "explicit manual",
 			def:  EntityDef{IDType: IDTypeManual},
-			want: IDTypeManual,
-		},
-		{
-			name: "deprecated sequential normalizes to auto",
-			def:  EntityDef{IDType: IDTypeSequential},
-			want: IDTypeAuto,
-		},
-		{
-			name: "deprecated string normalizes to manual",
-			def:  EntityDef{IDType: IDTypeString},
 			want: IDTypeManual,
 		},
 	}
@@ -408,8 +326,6 @@ func TestEntityDef_IsAutoID(t *testing.T) {
 		{name: "empty is auto", def: EntityDef{}, want: true},
 		{name: "explicit auto", def: EntityDef{IDType: IDTypeAuto}, want: true},
 		{name: "manual is not auto", def: EntityDef{IDType: IDTypeManual}, want: false},
-		{name: "deprecated sequential is auto", def: EntityDef{IDType: IDTypeSequential}, want: true},
-		{name: "deprecated string is not auto", def: EntityDef{IDType: IDTypeString}, want: false},
 	}
 
 	for _, tt := range tests {
@@ -431,8 +347,6 @@ func TestEntityDef_IsManualID(t *testing.T) {
 		{name: "empty is not manual", def: EntityDef{}, want: false},
 		{name: "auto is not manual", def: EntityDef{IDType: IDTypeAuto}, want: false},
 		{name: "explicit manual", def: EntityDef{IDType: IDTypeManual}, want: true},
-		{name: "deprecated sequential is not manual", def: EntityDef{IDType: IDTypeSequential}, want: false},
-		{name: "deprecated string is manual", def: EntityDef{IDType: IDTypeString}, want: true},
 	}
 
 	for _, tt := range tests {
@@ -440,198 +354,6 @@ func TestEntityDef_IsManualID(t *testing.T) {
 			got := tt.def.IsManualID()
 			if got != tt.want {
 				t.Errorf("IsManualID() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-// Test that deprecated methods still work correctly (they delegate to new methods)
-func TestEntityDef_IsSequentialID(t *testing.T) {
-	tests := []struct {
-		name string
-		def  EntityDef
-		want bool
-	}{
-		{name: "empty is sequential", def: EntityDef{}, want: true},
-		{name: "auto is sequential", def: EntityDef{IDType: IDTypeAuto}, want: true},
-		{name: "manual is not sequential", def: EntityDef{IDType: IDTypeManual}, want: false},
-		{name: "deprecated sequential is sequential", def: EntityDef{IDType: IDTypeSequential}, want: true},
-		{name: "deprecated string is not sequential", def: EntityDef{IDType: IDTypeString}, want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.def.IsSequentialID()
-			if got != tt.want {
-				t.Errorf("IsSequentialID() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestEntityDef_IsStringID(t *testing.T) {
-	tests := []struct {
-		name string
-		def  EntityDef
-		want bool
-	}{
-		{name: "empty is not string", def: EntityDef{}, want: false},
-		{name: "auto is not string", def: EntityDef{IDType: IDTypeAuto}, want: false},
-		{name: "manual is string", def: EntityDef{IDType: IDTypeManual}, want: true},
-		{name: "deprecated sequential is not string", def: EntityDef{IDType: IDTypeSequential}, want: false},
-		{name: "deprecated string is string", def: EntityDef{IDType: IDTypeString}, want: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.def.IsStringID()
-			if got != tt.want {
-				t.Errorf("IsStringID() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestEntityDef_GetIDPrefixes(t *testing.T) {
-	tests := []struct {
-		name string
-		def  EntityDef
-		want []string
-	}{
-		{
-			name: "id_prefix returns single-element slice",
-			def:  EntityDef{IDPrefix: "REQ-"},
-			want: []string{"REQ-"},
-		},
-		{
-			name: "id_prefixes returns as-is",
-			def:  EntityDef{IDPrefixes: []string{"DEC-", "ADR-"}},
-			want: []string{"DEC-", "ADR-"},
-		},
-		{
-			name: "empty returns nil",
-			def:  EntityDef{},
-			want: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.def.GetIDPrefixes()
-			if len(got) != len(tt.want) {
-				t.Errorf("GetIDPrefixes() = %v, want %v", got, tt.want)
-				return
-			}
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("GetIDPrefixes()[%d] = %q, want %q", i, got[i], tt.want[i])
-				}
-			}
-		})
-	}
-}
-
-func TestEntityDef_MatchesID_WithNewPrefixes(t *testing.T) {
-	tests := []struct {
-		name string
-		def  EntityDef
-		id   string
-		want bool
-	}{
-		{
-			name: "matches id_prefix",
-			def:  EntityDef{IDPrefix: "REQ-"},
-			id:   "REQ-001",
-			want: true,
-		},
-		{
-			name: "does not match id_prefix",
-			def:  EntityDef{IDPrefix: "REQ-"},
-			id:   "DEC-001",
-			want: false,
-		},
-		{
-			name: "matches one of id_prefixes",
-			def:  EntityDef{IDPrefixes: []string{"DEC-", "ADR-"}},
-			id:   "ADR-001",
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.def.MatchesID(tt.id)
-			if got != tt.want {
-				t.Errorf("MatchesID(%q) = %v, want %v", tt.id, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestParse_IDPrefixValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		yaml    string
-		wantErr bool
-		errType error
-	}{
-		{
-			name: "valid id_prefix",
-			yaml: `
-version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    id_prefix: "REQ-"
-`,
-			wantErr: false,
-		},
-		{
-			name: "valid id_prefixes",
-			yaml: `
-version: "1.0"
-entities:
-  decision:
-    label: Decision
-    id_prefixes: ["DEC-", "ADR-"]
-`,
-			wantErr: false,
-		},
-		{
-			name: "conflict: both id_prefix and id_prefixes",
-			yaml: `
-version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    id_prefix: "REQ-"
-    id_prefixes: ["REQ-", "FR-"]
-`,
-			wantErr: true,
-			errType: &ConflictingIDPrefixError{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Parse([]byte(tt.yaml))
-			if !tt.wantErr {
-				if err != nil {
-					t.Errorf("Parse() unexpected error: %v", err)
-				}
-				return
-			}
-			// wantErr is true
-			if err == nil {
-				t.Errorf("Parse() expected error, got nil")
-				return
-			}
-			if tt.errType == nil {
-				return
-			}
-			var conflictErr *ConflictingIDPrefixError
-			if !errors.As(err, &conflictErr) {
-				t.Errorf("Parse() error type = %T, want %T", err, tt.errType)
 			}
 		})
 	}
@@ -652,7 +374,7 @@ entities:
   requirement:
     label: Requirement
     id_type: auto
-    id_patterns: ["REQ-"]
+    id_prefixes: ["REQ-"]
 `,
 			wantErr: false,
 		},
@@ -668,36 +390,13 @@ entities:
 			wantErr: false,
 		},
 		{
-			name: "deprecated sequential id_type still valid",
-			yaml: `
-version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    id_type: sequential
-    id_patterns: ["REQ-"]
-`,
-			wantErr: false,
-		},
-		{
-			name: "deprecated string id_type still valid",
-			yaml: `
-version: "1.0"
-entities:
-  component:
-    label: Component
-    id_type: string
-`,
-			wantErr: false,
-		},
-		{
 			name: "empty id_type is valid (defaults to auto)",
 			yaml: `
 version: "1.0"
 entities:
   requirement:
     label: Requirement
-    id_patterns: ["REQ-"]
+    id_prefixes: ["REQ-"]
 `,
 			wantErr: false,
 		},
@@ -709,7 +408,7 @@ entities:
   requirement:
     label: Requirement
     id_type: invalid
-    id_patterns: ["REQ-"]
+    id_prefixes: ["REQ-"]
 `,
 			wantErr: true,
 			errType: &InvalidIDTypeError{},
@@ -741,27 +440,343 @@ entities:
 	}
 }
 
-func TestCamelCaseToSpaced(t *testing.T) {
+func TestIsBuiltinType(t *testing.T) {
 	tests := []struct {
-		input    string
-		expected string
+		name string
+		typ  string
+		want bool
 	}{
-		{"addressedBy", "addressed by"},
-		{"implementedBy", "implemented by"},
-		{"dependencyOf", "dependency of"},
-		{"realizedBy", "realized by"},
-		{"", ""},
-		{"simple", "simple"},
-		{"PascalCase", "pascal case"},
-		{"HTTPServer", "h t t p server"}, // Edge case with consecutive capitals
-		{"oneTwo", "one two"},
+		{name: "string is builtin", typ: PropertyTypeString, want: true},
+		{name: "date is builtin", typ: PropertyTypeDate, want: true},
+		{name: "integer is builtin", typ: PropertyTypeInteger, want: true},
+		{name: "boolean is builtin", typ: PropertyTypeBoolean, want: true},
+		{name: "enum is builtin", typ: PropertyTypeEnum, want: true},
+		{name: "custom type is not builtin", typ: "priority", want: false},
+		{name: "empty is not builtin", typ: "", want: false},
+		{name: "unknown is not builtin", typ: "unknown", want: false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := camelCaseToSpaced(tt.input)
-			if result != tt.expected {
-				t.Errorf("camelCaseToSpaced(%q) = %q, want %q", tt.input, result, tt.expected)
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsBuiltinType(tt.typ)
+			if got != tt.want {
+				t.Errorf("IsBuiltinType(%q) = %v, want %v", tt.typ, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPropertyDef_GetDateFormat(t *testing.T) {
+	tests := []struct {
+		name string
+		prop PropertyDef
+		want string
+	}{
+		{
+			name: "default format",
+			prop: PropertyDef{Type: PropertyTypeDate},
+			want: DefaultDateFormat,
+		},
+		{
+			name: "custom format",
+			prop: PropertyDef{Type: PropertyTypeDate, Format: "2006-01-02 15:04:05"},
+			want: "2006-01-02 15:04:05",
+		},
+		{
+			name: "empty format uses default",
+			prop: PropertyDef{Type: PropertyTypeDate, Format: ""},
+			want: DefaultDateFormat,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.prop.GetDateFormat()
+			if got != tt.want {
+				t.Errorf("GetDateFormat() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEntityDef_GetPlural(t *testing.T) {
+	tests := []struct {
+		name string
+		def  EntityDef
+		want string
+	}{
+		{
+			name: "explicit label_plural",
+			def:  EntityDef{Label: "Policy", LabelPlural: "Policies"},
+			want: "Policies",
+		},
+		{
+			name: "no label_plural uses label + s",
+			def:  EntityDef{Label: "Requirement"},
+			want: "Requirements",
+		},
+		{
+			name: "empty label",
+			def:  EntityDef{Label: ""},
+			want: "s",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.def.GetPlural()
+			if got != tt.want {
+				t.Errorf("GetPlural() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEntityDef_HasPattern(t *testing.T) {
+	tests := []struct {
+		name    string
+		def     EntityDef
+		pattern string
+		want    bool
+	}{
+		{
+			name:    "matches single prefix",
+			def:     EntityDef{IDPrefix: "REQ-"},
+			pattern: "REQ-",
+			want:    true,
+		},
+		{
+			name:    "no match single prefix",
+			def:     EntityDef{IDPrefix: "REQ-"},
+			pattern: "DES-",
+			want:    false,
+		},
+		{
+			name:    "matches one of multiple prefixes",
+			def:     EntityDef{IDPrefixes: []string{"REQ-", "RQ-"}},
+			pattern: "RQ-",
+			want:    true,
+		},
+		{
+			name:    "no match multiple prefixes",
+			def:     EntityDef{IDPrefixes: []string{"REQ-", "RQ-"}},
+			pattern: "DES-",
+			want:    false,
+		},
+		{
+			name:    "no prefixes",
+			def:     EntityDef{},
+			pattern: "REQ-",
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.def.HasPattern(tt.pattern)
+			if got != tt.want {
+				t.Errorf("HasPattern(%q) = %v, want %v", tt.pattern, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEntityDef_MatchesID(t *testing.T) {
+	tests := []struct {
+		name string
+		def  EntityDef
+		id   string
+		want bool
+	}{
+		{
+			name: "matches single prefix",
+			def:  EntityDef{IDPrefix: "REQ-"},
+			id:   "REQ-001",
+			want: true,
+		},
+		{
+			name: "no match single prefix",
+			def:  EntityDef{IDPrefix: "REQ-"},
+			id:   "DES-001",
+			want: false,
+		},
+		{
+			name: "matches one of multiple prefixes",
+			def:  EntityDef{IDPrefixes: []string{"REQ-", "RQ-"}},
+			id:   "RQ-42",
+			want: true,
+		},
+		{
+			name: "no match multiple prefixes",
+			def:  EntityDef{IDPrefixes: []string{"REQ-", "RQ-"}},
+			id:   "DES-001",
+			want: false,
+		},
+		{
+			name: "no prefixes",
+			def:  EntityDef{},
+			id:   "REQ-001",
+			want: false,
+		},
+		{
+			name: "id shorter than prefix",
+			def:  EntityDef{IDPrefix: "REQ-"},
+			id:   "RE",
+			want: false,
+		},
+		{
+			name: "exact prefix match",
+			def:  EntityDef{IDPrefix: "REQ-"},
+			id:   "REQ-",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.def.MatchesID(tt.id)
+			if got != tt.want {
+				t.Errorf("MatchesID(%q) = %v, want %v", tt.id, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMetamodel_InferEntityType(t *testing.T) {
+	meta := &Metamodel{
+		Entities: map[string]EntityDef{
+			"requirement": {IDPrefix: "REQ-"},
+			"design":      {IDPrefix: "DES-"},
+			"component":   {IDPrefixes: []string{"COMP-", "C-"}},
+		},
+	}
+
+	tests := []struct {
+		name string
+		id   string
+		want string
+	}{
+		{name: "infers requirement", id: "REQ-001", want: "requirement"},
+		{name: "infers design", id: "DES-042", want: "design"},
+		{name: "infers component from first prefix", id: "COMP-alpha", want: "component"},
+		{name: "infers component from second prefix", id: "C-beta", want: "component"},
+		{name: "no match returns empty", id: "UNKNOWN-123", want: ""},
+		{name: "empty id returns empty", id: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := meta.InferEntityType(tt.id)
+			if got != tt.want {
+				t.Errorf("InferEntityType(%q) = %q, want %q", tt.id, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMetamodel_EntityTypes(t *testing.T) {
+	meta := &Metamodel{
+		Entities: map[string]EntityDef{
+			"requirement": {Label: "Requirement"},
+			"design":      {Label: "Design"},
+			"component":   {Label: "Component"},
+		},
+	}
+
+	got := meta.EntityTypes()
+	if len(got) != 3 {
+		t.Errorf("EntityTypes() returned %d types, want 3", len(got))
+	}
+
+	// Check all expected types are present
+	expected := map[string]bool{"requirement": true, "design": true, "component": true}
+	for _, typ := range got {
+		if !expected[typ] {
+			t.Errorf("EntityTypes() contains unexpected type %q", typ)
+		}
+		delete(expected, typ)
+	}
+	if len(expected) > 0 {
+		t.Errorf("EntityTypes() missing types: %v", expected)
+	}
+}
+
+func TestMetamodel_RelationTypes(t *testing.T) {
+	meta := &Metamodel{
+		Relations: map[string]RelationDef{
+			"implements":  {Label: "implements"},
+			"dependsOn":   {Label: "depends on"},
+			"allocatedTo": {Label: "allocated to"},
+		},
+	}
+
+	got := meta.RelationTypes()
+	if len(got) != 3 {
+		t.Errorf("RelationTypes() returned %d types, want 3", len(got))
+	}
+
+	// Check all expected types are present
+	expected := map[string]bool{"implements": true, "dependsOn": true, "allocatedTo": true}
+	for _, typ := range got {
+		if !expected[typ] {
+			t.Errorf("RelationTypes() contains unexpected type %q", typ)
+		}
+		delete(expected, typ)
+	}
+	if len(expected) > 0 {
+		t.Errorf("RelationTypes() missing types: %v", expected)
+	}
+}
+
+func TestValidationRule_GetSeverity(t *testing.T) {
+	tests := []struct {
+		name string
+		rule ValidationRule
+		want string
+	}{
+		{
+			name: "explicit error severity",
+			rule: ValidationRule{Severity: "error"},
+			want: "error",
+		},
+		{
+			name: "explicit warning severity",
+			rule: ValidationRule{Severity: "warning"},
+			want: "warning",
+		},
+		{
+			name: "empty defaults to warning",
+			rule: ValidationRule{},
+			want: "warning",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.rule.GetSeverity()
+			if got != tt.want {
+				t.Errorf("GetSeverity() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidationRule_IsError(t *testing.T) {
+	tests := []struct {
+		name string
+		rule ValidationRule
+		want bool
+	}{
+		{name: "error severity is error", rule: ValidationRule{Severity: "error"}, want: true},
+		{name: "warning severity is not error", rule: ValidationRule{Severity: "warning"}, want: false},
+		{name: "empty defaults to warning is not error", rule: ValidationRule{}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.rule.IsError()
+			if got != tt.want {
+				t.Errorf("IsError() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -769,27 +784,19 @@ func TestCamelCaseToSpaced(t *testing.T) {
 
 func TestInverseDef_GetID(t *testing.T) {
 	tests := []struct {
-		name     string
-		def      InverseDef
-		expected string
+		name string
+		inv  InverseDef
+		want string
 	}{
-		{
-			name:     "returns ID",
-			def:      InverseDef{ID: "addressedBy"},
-			expected: "addressedBy",
-		},
-		{
-			name:     "empty when ID empty",
-			def:      InverseDef{},
-			expected: "",
-		},
+		{name: "with ID", inv: InverseDef{ID: "addressedBy"}, want: "addressedBy"},
+		{name: "empty ID", inv: InverseDef{}, want: ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.def.GetID()
-			if result != tt.expected {
-				t.Errorf("GetID() = %q, want %q", result, tt.expected)
+			got := tt.inv.GetID()
+			if got != tt.want {
+				t.Errorf("GetID() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -797,115 +804,309 @@ func TestInverseDef_GetID(t *testing.T) {
 
 func TestInverseDef_GetLabel(t *testing.T) {
 	tests := []struct {
-		name     string
-		def      InverseDef
-		expected string
+		name string
+		inv  InverseDef
+		want string
 	}{
 		{
-			name:     "explicit label used",
-			def:      InverseDef{ID: "addressedBy", Label: "is addressed by"},
-			expected: "is addressed by",
+			name: "explicit label",
+			inv:  InverseDef{ID: "addressedBy", Label: "is addressed by"},
+			want: "is addressed by",
 		},
 		{
-			name:     "auto-derived from ID",
-			def:      InverseDef{ID: "addressedBy"},
-			expected: "addressed by",
+			name: "auto-derived from camelCase",
+			inv:  InverseDef{ID: "addressedBy"},
+			want: "addressed by",
 		},
 		{
-			name:     "empty when no ID",
-			def:      InverseDef{},
-			expected: "",
+			name: "auto-derived from PascalCase",
+			inv:  InverseDef{ID: "ImplementedBy"},
+			want: "implemented by",
+		},
+		{
+			name: "empty ID returns empty",
+			inv:  InverseDef{},
+			want: "",
+		},
+		{
+			name: "single word",
+			inv:  InverseDef{ID: "inverse"},
+			want: "inverse",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.def.GetLabel()
-			if result != tt.expected {
-				t.Errorf("GetLabel() = %q, want %q", result, tt.expected)
+			got := tt.inv.GetLabel()
+			if got != tt.want {
+				t.Errorf("GetLabel() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestParse_InverseSimpleForm(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities:
-  decision:
-    label: Decision
-    id_patterns: ["DEC-"]
-  requirement:
-    label: Requirement
-    id_patterns: ["REQ-"]
-relations:
-  addresses:
-    label: addresses
-    from: [decision]
-    to: [requirement]
-    inverse: addressedBy
-`
-	m, err := Parse([]byte(yaml))
-	if err != nil {
-		t.Fatalf("Parse() error: %v", err)
+func TestMetamodel_GetterMethods(t *testing.T) {
+	meta := &Metamodel{
+		Version:   "1.0",
+		Namespace: "test",
+		Types: map[string]CustomType{
+			"priority": {Values: []string{"high", "medium", "low"}},
+		},
+		Entities: map[string]EntityDef{
+			"requirement": {Label: "Requirement"},
+		},
+		Relations: map[string]RelationDef{
+			"implements": {Label: "implements"},
+		},
 	}
 
-	rel, ok := m.Relations["addresses"]
-	if !ok {
-		t.Fatal("expected 'addresses' relation")
-	}
+	t.Run("GetVersion", func(t *testing.T) {
+		if got := meta.GetVersion(); got != "1.0" {
+			t.Errorf("GetVersion() = %q, want %q", got, "1.0")
+		}
+	})
 
-	if rel.Inverse == nil {
-		t.Fatal("expected inverse to be set")
-	}
+	t.Run("GetNamespace", func(t *testing.T) {
+		if got := meta.GetNamespace(); got != "test" {
+			t.Errorf("GetNamespace() = %q, want %q", got, "test")
+		}
+	})
 
-	if rel.Inverse.GetID() != "addressedBy" {
-		t.Errorf("GetID() = %q, want %q", rel.Inverse.GetID(), "addressedBy")
-	}
+	t.Run("GetEntities", func(t *testing.T) {
+		got := meta.GetEntities()
+		if got == nil {
+			t.Error("GetEntities() returned nil")
+		}
+	})
 
-	if rel.Inverse.GetLabel() != "addressed by" {
-		t.Errorf("GetLabel() = %q, want %q (auto-derived)", rel.Inverse.GetLabel(), "addressed by")
-	}
+	t.Run("GetRelations", func(t *testing.T) {
+		got := meta.GetRelations()
+		if got == nil {
+			t.Error("GetRelations() returned nil")
+		}
+	})
+
+	t.Run("GetTypes", func(t *testing.T) {
+		got := meta.GetTypes()
+		if got == nil {
+			t.Error("GetTypes() returned nil")
+		}
+	})
 }
 
-func TestParse_InverseExpandedFormWithID(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities:
-  decision:
-    label: Decision
-    id_patterns: ["DEC-"]
-  requirement:
-    label: Requirement
-    id_patterns: ["REQ-"]
-relations:
-  addresses:
-    label: addresses
-    from: [decision]
-    to: [requirement]
-    inverse:
-      id: addressedBy
-      label: "is addressed by"
-`
-	m, err := Parse([]byte(yaml))
-	if err != nil {
-		t.Fatalf("Parse() error: %v", err)
+func TestEntityDef_GetterMethods(t *testing.T) {
+	def := EntityDef{
+		Label:       "Requirement",
+		Aliases:     []string{"req", "r"},
+		RDFType:     "rela:Requirement",
+		Color:       "#FF0000",
+		BorderColor: "#AA0000",
+		Properties: map[string]PropertyDef{
+			"title": {Type: "string", Required: true},
+		},
 	}
 
-	rel, ok := m.Relations["addresses"]
-	if !ok {
-		t.Fatal("expected 'addresses' relation")
+	t.Run("GetLabel", func(t *testing.T) {
+		if got := def.GetLabel(); got != "Requirement" {
+			t.Errorf("GetLabel() = %q, want %q", got, "Requirement")
+		}
+	})
+
+	t.Run("GetAliases", func(t *testing.T) {
+		got := def.GetAliases()
+		if len(got) != 2 {
+			t.Errorf("GetAliases() returned %d aliases, want 2", len(got))
+		}
+	})
+
+	t.Run("GetIDPatterns", func(t *testing.T) {
+		defWithPrefixes := EntityDef{IDPrefixes: []string{"REQ-", "R-"}}
+		got := defWithPrefixes.GetIDPatterns()
+		if len(got) != 2 {
+			t.Errorf("GetIDPatterns() returned %d patterns, want 2", len(got))
+		}
+	})
+
+	t.Run("GetProperties", func(t *testing.T) {
+		got := def.GetProperties()
+		if got == nil {
+			t.Error("GetProperties() returned nil")
+		}
+	})
+
+	t.Run("GetRDFType", func(t *testing.T) {
+		if got := def.GetRDFType(); got != "rela:Requirement" {
+			t.Errorf("GetRDFType() = %q, want %q", got, "rela:Requirement")
+		}
+	})
+
+	t.Run("GetColor", func(t *testing.T) {
+		if got := def.GetColor(); got != "#FF0000" {
+			t.Errorf("GetColor() = %q, want %q", got, "#FF0000")
+		}
+	})
+
+	t.Run("GetBorderColor", func(t *testing.T) {
+		if got := def.GetBorderColor(); got != "#AA0000" {
+			t.Errorf("GetBorderColor() = %q, want %q", got, "#AA0000")
+		}
+	})
+}
+
+func TestRelationDef_GetterMethods(t *testing.T) {
+	minOne := 1
+	maxFive := 5
+	rel := RelationDef{
+		Label:       "implements",
+		Description: "Implementation relationship",
+		From:        []string{"design"},
+		To:          []string{"requirement"},
+		Symmetric:   false,
+		SourceMin:   &minOne,
+		SourceMax:   &maxFive,
+		TargetMin:   &minOne,
+		TargetMax:   &maxFive,
+		Inverse:     &InverseDef{ID: "implementedBy"},
 	}
 
-	if rel.Inverse == nil {
-		t.Fatal("expected inverse to be set")
-	}
+	t.Run("GetLabel", func(t *testing.T) {
+		if got := rel.GetLabel(); got != "implements" {
+			t.Errorf("GetLabel() = %q, want %q", got, "implements")
+		}
+	})
 
-	if rel.Inverse.GetID() != "addressedBy" {
-		t.Errorf("GetID() = %q, want %q", rel.Inverse.GetID(), "addressedBy")
-	}
+	t.Run("GetDescription", func(t *testing.T) {
+		if got := rel.GetDescription(); got != "Implementation relationship" {
+			t.Errorf("GetDescription() = %q, want %q", got, "Implementation relationship")
+		}
+	})
 
-	if rel.Inverse.GetLabel() != "is addressed by" {
-		t.Errorf("GetLabel() = %q, want %q", rel.Inverse.GetLabel(), "is addressed by")
-	}
+	t.Run("GetFrom", func(t *testing.T) {
+		got := rel.GetFrom()
+		if len(got) != 1 || got[0] != "design" {
+			t.Errorf("GetFrom() = %v, want [design]", got)
+		}
+	})
+
+	t.Run("GetTo", func(t *testing.T) {
+		got := rel.GetTo()
+		if len(got) != 1 || got[0] != "requirement" {
+			t.Errorf("GetTo() = %v, want [requirement]", got)
+		}
+	})
+
+	t.Run("IsSymmetric", func(t *testing.T) {
+		if got := rel.IsSymmetric(); got != false {
+			t.Errorf("IsSymmetric() = %v, want false", got)
+		}
+	})
+
+	t.Run("GetSourceMin", func(t *testing.T) {
+		got := rel.GetSourceMin()
+		if got == nil || *got != 1 {
+			t.Errorf("GetSourceMin() = %v, want 1", got)
+		}
+	})
+
+	t.Run("GetSourceMax", func(t *testing.T) {
+		got := rel.GetSourceMax()
+		if got == nil || *got != 5 {
+			t.Errorf("GetSourceMax() = %v, want 5", got)
+		}
+	})
+
+	t.Run("GetTargetMin", func(t *testing.T) {
+		got := rel.GetTargetMin()
+		if got == nil || *got != 1 {
+			t.Errorf("GetTargetMin() = %v, want 1", got)
+		}
+	})
+
+	t.Run("GetTargetMax", func(t *testing.T) {
+		got := rel.GetTargetMax()
+		if got == nil || *got != 5 {
+			t.Errorf("GetTargetMax() = %v, want 5", got)
+		}
+	})
+
+	t.Run("GetInverse", func(t *testing.T) {
+		got := rel.GetInverse()
+		if got == nil {
+			t.Error("GetInverse() returned nil")
+		}
+	})
+
+	t.Run("GetInverse nil", func(t *testing.T) {
+		relNoInverse := RelationDef{Label: "test"}
+		got := relNoInverse.GetInverse()
+		if got != nil {
+			t.Errorf("GetInverse() = %v, want nil", got)
+		}
+	})
+}
+
+func TestErrorTypes(t *testing.T) {
+	t.Run("RelationNotFoundError", func(t *testing.T) {
+		err := &RelationNotFoundError{Name: "unknown"}
+		want := "unknown relation: unknown"
+		if got := err.Error(); got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("InvalidRelationError", func(t *testing.T) {
+		err := &InvalidRelationError{
+			Relation: "implements",
+			From:     "component",
+			To:       "design",
+			Message:  "target entity type not allowed",
+		}
+		want := "invalid relation implements from component to design: target entity type not allowed"
+		if got := err.Error(); got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("InvalidIDTypeError", func(t *testing.T) {
+		err := &InvalidIDTypeError{
+			EntityType: "requirement",
+			IDType:     "invalid",
+		}
+		want := "invalid id_type for entity requirement: invalid (must be 'auto' or 'manual')"
+		if got := err.Error(); got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("ReservedPropertyError", func(t *testing.T) {
+		err := &ReservedPropertyError{
+			EntityType:   "requirement",
+			PropertyName: "id",
+		}
+		want := `entity requirement: property "id" is reserved and cannot be used`
+		if got := err.Error(); got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("WhitespacePropertyError", func(t *testing.T) {
+		err := &WhitespacePropertyError{
+			EntityType:   "requirement",
+			PropertyName: " title ",
+		}
+		want := `entity requirement: property name " title " has leading or trailing whitespace`
+		if got := err.Error(); got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("ConflictingIDPrefixError", func(t *testing.T) {
+		err := &ConflictingIDPrefixError{
+			EntityType: "requirement",
+		}
+		want := "entity requirement specifies both id_prefix and id_prefixes; use only one"
+		if got := err.Error(); got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
+	})
 }

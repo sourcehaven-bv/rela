@@ -43,7 +43,7 @@ func Parse(data []byte) (*Metamodel, error) {
 	m.aliasMap = make(map[string]string)
 	for name, def := range m.Entities {
 		// Validate id_type if specified
-		if !IsValidIDType(def.IDType) {
+		if def.IDType != "" && def.IDType != IDTypeAuto && def.IDType != IDTypeManual {
 			return nil, &InvalidIDTypeError{EntityType: name, IDType: def.IDType}
 		}
 

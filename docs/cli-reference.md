@@ -642,7 +642,7 @@ Find gaps in ID sequences for entity types with sequential IDs.
 rela analyze gaps
 ```
 
-Entity types configured with `id_type: string` are excluded from gap analysis since they use manually-specified IDs that are not expected to be sequential.
+Entity types configured with `id_type: manual` are excluded from gap analysis since they use manually-specified IDs that are not expected to be sequential.
 
 #### rela analyze cardinality
 

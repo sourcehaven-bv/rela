@@ -93,10 +93,10 @@ var analyzeGapsCmd = &cobra.Command{
 Entity types configured with id_type: string are excluded from gap analysis
 since they use manually-specified IDs that are not expected to be sequential.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Build a set of prefixes that belong to string ID types (should be skipped)
+		// Build a set of prefixes that belong to manual ID types (should be skipped)
 		stringIDPrefixes := make(map[string]bool)
 		for _, entityDef := range meta.Entities {
-			if entityDef.IsStringID() {
+			if entityDef.IsManualID() {
 				for _, idPrefix := range entityDef.GetIDPrefixes() {
 					// Normalize prefix (remove trailing dash if present)
 					prefix := strings.TrimSuffix(idPrefix, "-")
@@ -629,11 +629,11 @@ var analyzeAllCmd = &cobra.Command{
 			}
 		}
 
-		// Count gap sequences with gaps (only for sequential ID types)
+		// Count gap sequences with gaps (only for auto ID types)
 		gapCount := 0
 		stringIDPrefixes := make(map[string]bool)
 		for _, entityDef := range meta.Entities {
-			if entityDef.IsStringID() {
+			if entityDef.IsManualID() {
 				for _, idPrefix := range entityDef.GetIDPrefixes() {
 					prefix := strings.TrimSuffix(idPrefix, "-")
 					stringIDPrefixes[prefix] = true
