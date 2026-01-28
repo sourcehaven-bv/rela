@@ -40,11 +40,13 @@ Combined tool for capturing tmux pane screenshots and deduplicating them.
 **Demo Recording Workflow:**
 
 1. Start your tmux session:
+
    ```bash
    tmux new -s rela-demo
    ```
 
 2. In another terminal, start capturing:
+
    ```bash
    ./utils/tmux-capture both
    ```
@@ -67,11 +69,13 @@ If you already have screenshots and just want to deduplicate:
 
 Screenshots are saved as `screendumps/screen_NNNN.txt` with sequential numbering.
 
-After deduplication, only unique screenshots are kept, significantly reducing the file count while preserving all unique states.
+After deduplication, only unique screenshots are kept, significantly reducing the file count while
+preserving all unique states.
 
 ## Migration from Legacy Scripts
 
 The old separate scripts have been combined:
+
 - `capture-tmux.sh` → `utils/tmux-capture capture`
 - `dedupe-screendumps.sh` → `utils/tmux-capture dedupe`
 
