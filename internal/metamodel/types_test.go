@@ -764,4 +764,3 @@ relations:
 		t.Errorf("GetLabel() = %q, want %q", rel.Inverse.GetLabel(), "is addressed by")
 	}
 }
-
