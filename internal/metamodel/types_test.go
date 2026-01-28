@@ -284,6 +284,78 @@ func TestGetPrimaryPropertyDeterministic(t *testing.T) {
 	}
 }
 
+func TestNormalizeIDType(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "empty defaults to auto", input: "", want: IDTypeAuto},
+		{name: "auto returns auto", input: "auto", want: IDTypeAuto},
+		{name: "manual returns manual", input: "manual", want: IDTypeManual},
+		{name: "deprecated sequential normalizes to auto", input: "sequential", want: IDTypeAuto},
+		{name: "deprecated string normalizes to manual", input: "string", want: IDTypeManual},
+		{name: "invalid returns as-is", input: "invalid", want: "invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NormalizeIDType(tt.input)
+			if got != tt.want {
+				t.Errorf("NormalizeIDType(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsValidIDType(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{name: "empty is valid", input: "", want: true},
+		{name: "auto is valid", input: "auto", want: true},
+		{name: "manual is valid", input: "manual", want: true},
+		{name: "deprecated sequential is valid", input: "sequential", want: true},
+		{name: "deprecated string is valid", input: "string", want: true},
+		{name: "invalid is not valid", input: "invalid", want: false},
+		{name: "uuid is not valid", input: "uuid", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsValidIDType(tt.input)
+			if got != tt.want {
+				t.Errorf("IsValidIDType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsDeprecatedIDType(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{name: "empty is not deprecated", input: "", want: false},
+		{name: "auto is not deprecated", input: "auto", want: false},
+		{name: "manual is not deprecated", input: "manual", want: false},
+		{name: "sequential is deprecated", input: "sequential", want: true},
+		{name: "string is deprecated", input: "string", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsDeprecatedIDType(tt.input)
+			if got != tt.want {
+				t.Errorf("IsDeprecatedIDType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEntityDef_GetIDType(t *testing.T) {
 	tests := []struct {
 		name string
@@ -291,19 +363,29 @@ func TestEntityDef_GetIDType(t *testing.T) {
 		want string
 	}{
 		{
-			name: "empty defaults to sequential",
+			name: "empty defaults to auto",
 			def:  EntityDef{},
-			want: IDTypeSequential,
+			want: IDTypeAuto,
 		},
 		{
-			name: "explicit sequential",
+			name: "explicit auto",
+			def:  EntityDef{IDType: IDTypeAuto},
+			want: IDTypeAuto,
+		},
+		{
+			name: "explicit manual",
+			def:  EntityDef{IDType: IDTypeManual},
+			want: IDTypeManual,
+		},
+		{
+			name: "deprecated sequential normalizes to auto",
 			def:  EntityDef{IDType: IDTypeSequential},
-			want: IDTypeSequential,
+			want: IDTypeAuto,
 		},
 		{
-			name: "explicit string",
+			name: "deprecated string normalizes to manual",
 			def:  EntityDef{IDType: IDTypeString},
-			want: IDTypeString,
+			want: IDTypeManual,
 		},
 	}
 
@@ -317,27 +399,64 @@ func TestEntityDef_GetIDType(t *testing.T) {
 	}
 }
 
+func TestEntityDef_IsAutoID(t *testing.T) {
+	tests := []struct {
+		name string
+		def  EntityDef
+		want bool
+	}{
+		{name: "empty is auto", def: EntityDef{}, want: true},
+		{name: "explicit auto", def: EntityDef{IDType: IDTypeAuto}, want: true},
+		{name: "manual is not auto", def: EntityDef{IDType: IDTypeManual}, want: false},
+		{name: "deprecated sequential is auto", def: EntityDef{IDType: IDTypeSequential}, want: true},
+		{name: "deprecated string is not auto", def: EntityDef{IDType: IDTypeString}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.def.IsAutoID()
+			if got != tt.want {
+				t.Errorf("IsAutoID() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEntityDef_IsManualID(t *testing.T) {
+	tests := []struct {
+		name string
+		def  EntityDef
+		want bool
+	}{
+		{name: "empty is not manual", def: EntityDef{}, want: false},
+		{name: "auto is not manual", def: EntityDef{IDType: IDTypeAuto}, want: false},
+		{name: "explicit manual", def: EntityDef{IDType: IDTypeManual}, want: true},
+		{name: "deprecated sequential is not manual", def: EntityDef{IDType: IDTypeSequential}, want: false},
+		{name: "deprecated string is manual", def: EntityDef{IDType: IDTypeString}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.def.IsManualID()
+			if got != tt.want {
+				t.Errorf("IsManualID() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Test that deprecated methods still work correctly (they delegate to new methods)
 func TestEntityDef_IsSequentialID(t *testing.T) {
 	tests := []struct {
 		name string
 		def  EntityDef
 		want bool
 	}{
-		{
-			name: "empty is sequential",
-			def:  EntityDef{},
-			want: true,
-		},
-		{
-			name: "explicit sequential",
-			def:  EntityDef{IDType: IDTypeSequential},
-			want: true,
-		},
-		{
-			name: "string is not sequential",
-			def:  EntityDef{IDType: IDTypeString},
-			want: false,
-		},
+		{name: "empty is sequential", def: EntityDef{}, want: true},
+		{name: "auto is sequential", def: EntityDef{IDType: IDTypeAuto}, want: true},
+		{name: "manual is not sequential", def: EntityDef{IDType: IDTypeManual}, want: false},
+		{name: "deprecated sequential is sequential", def: EntityDef{IDType: IDTypeSequential}, want: true},
+		{name: "deprecated string is not sequential", def: EntityDef{IDType: IDTypeString}, want: false},
 	}
 
 	for _, tt := range tests {
@@ -356,21 +475,11 @@ func TestEntityDef_IsStringID(t *testing.T) {
 		def  EntityDef
 		want bool
 	}{
-		{
-			name: "empty is not string",
-			def:  EntityDef{},
-			want: false,
-		},
-		{
-			name: "sequential is not string",
-			def:  EntityDef{IDType: IDTypeSequential},
-			want: false,
-		},
-		{
-			name: "string is string",
-			def:  EntityDef{IDType: IDTypeString},
-			want: true,
-		},
+		{name: "empty is not string", def: EntityDef{}, want: false},
+		{name: "auto is not string", def: EntityDef{IDType: IDTypeAuto}, want: false},
+		{name: "manual is string", def: EntityDef{IDType: IDTypeManual}, want: true},
+		{name: "deprecated sequential is not string", def: EntityDef{IDType: IDTypeSequential}, want: false},
+		{name: "deprecated string is string", def: EntityDef{IDType: IDTypeString}, want: true},
 	}
 
 	for _, tt := range tests {
@@ -391,7 +500,30 @@ func TestParse_IDTypeValidation(t *testing.T) {
 		errType error
 	}{
 		{
-			name: "valid sequential id_type",
+			name: "valid auto id_type",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_type: auto
+    id_patterns: ["REQ-"]
+`,
+			wantErr: false,
+		},
+		{
+			name: "valid manual id_type",
+			yaml: `
+version: "1.0"
+entities:
+  component:
+    label: Component
+    id_type: manual
+`,
+			wantErr: false,
+		},
+		{
+			name: "deprecated sequential id_type still valid",
 			yaml: `
 version: "1.0"
 entities:
@@ -403,7 +535,7 @@ entities:
 			wantErr: false,
 		},
 		{
-			name: "valid string id_type",
+			name: "deprecated string id_type still valid",
 			yaml: `
 version: "1.0"
 entities:
@@ -414,7 +546,7 @@ entities:
 			wantErr: false,
 		},
 		{
-			name: "empty id_type is valid (defaults to sequential)",
+			name: "empty id_type is valid (defaults to auto)",
 			yaml: `
 version: "1.0"
 entities:
