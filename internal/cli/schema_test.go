@@ -588,11 +588,11 @@ func TestSchemaWithCardinality(t *testing.T) {
 	if !strings.Contains(result, "Cardinality:") {
 		t.Errorf("expected 'Cardinality:' in output, got: %s", result)
 	}
-	if !strings.Contains(result, "source_min=1") {
-		t.Errorf("expected 'source_min=1' in output, got: %s", result)
+	if !strings.Contains(result, "from_min=1") {
+		t.Errorf("expected 'from_min=1' in output, got: %s", result)
 	}
-	if !strings.Contains(result, "source_max=5") {
-		t.Errorf("expected 'source_max=5' in output, got: %s", result)
+	if !strings.Contains(result, "from_max=5") {
+		t.Errorf("expected 'from_max=5' in output, got: %s", result)
 	}
 }
 
@@ -758,11 +758,11 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 	})
 
 	// Check for cardinality in label
-	if !strings.Contains(result, "src:1..*") {
-		t.Errorf("expected 'src:1..*' cardinality in output, got: %s", result)
+	if !strings.Contains(result, "from:1..*") {
+		t.Errorf("expected 'from:1..*' cardinality in output, got: %s", result)
 	}
-	if !strings.Contains(result, "tgt:0..1") {
-		t.Errorf("expected 'tgt:0..1' cardinality in output, got: %s", result)
+	if !strings.Contains(result, "to:0..1") {
+		t.Errorf("expected 'to:0..1' cardinality in output, got: %s", result)
 	}
 }
 
@@ -879,29 +879,29 @@ func TestFormatCardinality(t *testing.T) {
 		{
 			name:      "source min only",
 			sourceMin: intPtr(1),
-			expected:  "src:1..*",
+			expected:  "from:1..*",
 		},
 		{
 			name:      "source max only",
 			sourceMax: intPtr(5),
-			expected:  "src:0..5",
+			expected:  "from:0..5",
 		},
 		{
 			name:      "source min and max same",
 			sourceMin: intPtr(1),
 			sourceMax: intPtr(1),
-			expected:  "src:1",
+			expected:  "from:1",
 		},
 		{
 			name:      "target min only",
 			targetMin: intPtr(1),
-			expected:  "tgt:1..*",
+			expected:  "to:1..*",
 		},
 		{
 			name:      "both source and target",
 			sourceMin: intPtr(1),
 			targetMax: intPtr(1),
-			expected:  "src:1..* tgt:0..1",
+			expected:  "from:1..* to:0..1",
 		},
 	}
 

@@ -55,7 +55,51 @@ func Parse(data []byte) (*Metamodel, error) {
 		}
 	}
 
+	// Validate relation definitions
+	for name, def := range m.Relations {
+		// Check for conflicting cardinality specification
+		hasOldStyle := def.SourceMin != nil || def.SourceMax != nil ||
+			def.TargetMin != nil || def.TargetMax != nil
+		hasNewStyle := def.Cardinality != nil
+
+		if hasOldStyle && hasNewStyle {
+			return nil, &ConflictingCardinalityError{RelationType: name}
+		}
+
+		// Validate cardinality notation if present
+		if def.Cardinality != nil {
+			if err := validateCardinalityDef(name, def.Cardinality); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	return &m, nil
+}
+
+// validateCardinalityDef validates the cardinality notation in a CardinalityDef
+func validateCardinalityDef(relName string, card *CardinalityDef) error {
+	if card.From != "" {
+		if err := ValidateCardinalityNotation(card.From); err != nil {
+			return &InvalidCardinalityError{
+				RelationType: relName,
+				Side:         "from",
+				Notation:     card.From,
+				Message:      err.Error(),
+			}
+		}
+	}
+	if card.To != "" {
+		if err := ValidateCardinalityNotation(card.To); err != nil {
+			return &InvalidCardinalityError{
+				RelationType: relName,
+				Side:         "to",
+				Notation:     card.To,
+				Message:      err.Error(),
+			}
+		}
+	}
+	return nil
 }
 
 // DefaultMetamodel returns a minimal default metamodel

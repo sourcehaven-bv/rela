@@ -200,6 +200,27 @@ Relations define how entity types can be connected:
 | `to` | Target entity types (list) |
 | `inverse` | Inverse relation definition |
 | `symmetric` | `true` if relation is bidirectional |
+| `cardinality` | Cardinality constraints using UML notation (preferred) |
+
+#### Cardinality Options
+
+The `cardinality` field uses UML-style notation:
+
+| Field | Description | Examples |
+|-------|-------------|----------|
+| `cardinality.from` | Constraints on the "from" (source) side | `"1"`, `"0..1"`, `"1..*"`, `"0..*"`, `"*"` |
+| `cardinality.to` | Constraints on the "to" (target) side | `"1"`, `"0..1"`, `"1..*"`, `"0..*"`, `"*"` |
+
+Common cardinality notations:
+- `"1"` - exactly one
+- `"0..1"` - zero or one (optional)
+- `"1..*"` - one or more (required, unbounded)
+- `"0..*"` or `"*"` - zero or more (optional, unbounded)
+- `"2..5"` - between 2 and 5
+
+**Deprecated**: The following fields are deprecated but still supported for backwards compatibility:
+| Field | Description |
+|-------|-------------|
 | `source_min` | Minimum outgoing relations per source entity |
 | `source_max` | Maximum outgoing relations per source entity |
 | `target_min` | Minimum incoming relations per target entity |
@@ -214,7 +235,8 @@ relations:
     description: A decision addresses a requirement
     from: [decision]
     to: [requirement]
-    source_min: 1    # Each decision must address at least one requirement
+    cardinality:
+      from: "1..*"   # Each decision must address at least one requirement
     inverse:
       name: addressedBy
       label: addressed by
@@ -230,8 +252,9 @@ relations:
     label: implements
     from: [solution]
     to: [decision]
-    source_min: 1    # Every solution must implement at least one decision
-    target_max: 1    # Each decision can only be implemented by one solution
+    cardinality:
+      from: "1..*"   # Every solution must implement at least one decision
+      to: "0..1"     # Each decision can only be implemented by one solution
 ```
 
 Check violations with:

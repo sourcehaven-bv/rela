@@ -128,16 +128,26 @@ func (p *PropertyDef) GetDateFormat() string {
 
 // RelationDef defines a relation type in the metamodel
 type RelationDef struct {
-	Label       string      `yaml:"label"`
-	Description string      `yaml:"description,omitempty"`
-	From        []string    `yaml:"from"`
-	To          []string    `yaml:"to"`
-	Inverse     *InverseDef `yaml:"inverse,omitempty"`
-	Symmetric   bool        `yaml:"symmetric,omitempty"`
-	SourceMin   *int        `yaml:"source_min,omitempty"`
-	SourceMax   *int        `yaml:"source_max,omitempty"`
-	TargetMin   *int        `yaml:"target_min,omitempty"`
-	TargetMax   *int        `yaml:"target_max,omitempty"`
+	Label       string          `yaml:"label"`
+	Description string          `yaml:"description,omitempty"`
+	From        []string        `yaml:"from"`
+	To          []string        `yaml:"to"`
+	Inverse     *InverseDef     `yaml:"inverse,omitempty"`
+	Symmetric   bool            `yaml:"symmetric,omitempty"`
+	Cardinality *CardinalityDef `yaml:"cardinality,omitempty"` // New: nested cardinality with UML notation
+
+	// Deprecated: use Cardinality instead
+	SourceMin *int `yaml:"source_min,omitempty"`
+	SourceMax *int `yaml:"source_max,omitempty"`
+	TargetMin *int `yaml:"target_min,omitempty"`
+	TargetMax *int `yaml:"target_max,omitempty"`
+}
+
+// CardinalityDef defines cardinality constraints using UML notation
+// Examples: "1", "0..1", "1..*", "0..*", "*", "2..5"
+type CardinalityDef struct {
+	From string `yaml:"from,omitempty"` // Cardinality on the "from" side
+	To   string `yaml:"to,omitempty"`   // Cardinality on the "to" side
 }
 
 // InverseDef defines the inverse of a relation
@@ -423,6 +433,75 @@ func (e *WhitespacePropertyError) Error() string {
 	return "entity " + e.EntityType + ": property name \"" + e.PropertyName + "\" has leading or trailing whitespace"
 }
 
+// ConflictingCardinalityError is returned when both old and new cardinality syntax are used
+type ConflictingCardinalityError struct {
+	RelationType string
+}
+
+func (e *ConflictingCardinalityError) Error() string {
+	return "relation " + e.RelationType +
+		" uses both 'cardinality' and 'source_min/source_max/target_min/target_max'; use only one style"
+}
+
+// InvalidCardinalityError is returned when cardinality notation is invalid
+type InvalidCardinalityError struct {
+	RelationType string
+	Side         string // "from" or "to"
+	Notation     string
+	Message      string
+}
+
+func (e *InvalidCardinalityError) Error() string {
+	return "invalid cardinality for relation " + e.RelationType + " " + e.Side + ": " +
+		e.Notation + " (" + e.Message + ")"
+}
+
+// ValidateCardinalityNotation validates UML cardinality notation.
+// Valid formats: "1", "0..1", "1..*", "0..*", "*", "2..5"
+func ValidateCardinalityNotation(notation string) error {
+	if notation == "" || notation == "*" {
+		return nil
+	}
+
+	idx := findDoubleDot(notation)
+	if idx > 0 {
+		// Range format "min..max"
+		minStr := notation[:idx]
+		maxStr := notation[idx+2:]
+
+		if parseInt(minStr) == nil {
+			return &cardinalityParseError{msg: "invalid minimum value"}
+		}
+		if maxStr != "*" && parseInt(maxStr) == nil {
+			return &cardinalityParseError{msg: "invalid maximum value"}
+		}
+
+		// Validate min <= max if both are numbers
+		if maxStr != "*" {
+			minVal := parseInt(minStr)
+			maxVal := parseInt(maxStr)
+			if minVal != nil && maxVal != nil && *minVal > *maxVal {
+				return &cardinalityParseError{msg: "minimum cannot exceed maximum"}
+			}
+		}
+		return nil
+	}
+
+	// Single value
+	if parseInt(notation) == nil {
+		return &cardinalityParseError{msg: "invalid format, expected number or range (e.g., '1', '0..1', '1..*')"}
+	}
+	return nil
+}
+
+type cardinalityParseError struct {
+	msg string
+}
+
+func (e *cardinalityParseError) Error() string {
+	return e.msg
+}
+
 // Schema output interface methods for Metamodel
 
 // GetVersion returns the metamodel version
@@ -522,22 +601,177 @@ func (r *RelationDef) IsSymmetric() bool {
 	return r.Symmetric
 }
 
-// GetSourceMin returns the source minimum cardinality
-func (r *RelationDef) GetSourceMin() *int {
+// GetFromMin returns the minimum cardinality on the "from" side.
+// Checks new Cardinality.From first, then falls back to deprecated SourceMin.
+func (r *RelationDef) GetFromMin() *int {
+	if r.Cardinality != nil && r.Cardinality.From != "" {
+		minVal, _ := ParseCardinality(r.Cardinality.From)
+		return minVal
+	}
 	return r.SourceMin
 }
 
-// GetSourceMax returns the source maximum cardinality
-func (r *RelationDef) GetSourceMax() *int {
+// GetFromMax returns the maximum cardinality on the "from" side.
+// Checks new Cardinality.From first, then falls back to deprecated SourceMax.
+func (r *RelationDef) GetFromMax() *int {
+	if r.Cardinality != nil && r.Cardinality.From != "" {
+		_, maxVal := ParseCardinality(r.Cardinality.From)
+		return maxVal
+	}
 	return r.SourceMax
 }
 
-// GetTargetMin returns the target minimum cardinality
-func (r *RelationDef) GetTargetMin() *int {
+// GetToMin returns the minimum cardinality on the "to" side.
+// Checks new Cardinality.To first, then falls back to deprecated TargetMin.
+func (r *RelationDef) GetToMin() *int {
+	if r.Cardinality != nil && r.Cardinality.To != "" {
+		minVal, _ := ParseCardinality(r.Cardinality.To)
+		return minVal
+	}
 	return r.TargetMin
 }
 
-// GetTargetMax returns the target maximum cardinality
-func (r *RelationDef) GetTargetMax() *int {
+// GetToMax returns the maximum cardinality on the "to" side.
+// Checks new Cardinality.To first, then falls back to deprecated TargetMax.
+func (r *RelationDef) GetToMax() *int {
+	if r.Cardinality != nil && r.Cardinality.To != "" {
+		_, maxVal := ParseCardinality(r.Cardinality.To)
+		return maxVal
+	}
 	return r.TargetMax
+}
+
+// GetSourceMin returns the source minimum cardinality.
+// Deprecated: Use GetFromMin instead.
+func (r *RelationDef) GetSourceMin() *int {
+	return r.GetFromMin()
+}
+
+// GetSourceMax returns the source maximum cardinality.
+// Deprecated: Use GetFromMax instead.
+func (r *RelationDef) GetSourceMax() *int {
+	return r.GetFromMax()
+}
+
+// GetTargetMin returns the target minimum cardinality.
+// Deprecated: Use GetToMin instead.
+func (r *RelationDef) GetTargetMin() *int {
+	return r.GetToMin()
+}
+
+// GetTargetMax returns the target maximum cardinality.
+// Deprecated: Use GetToMax instead.
+func (r *RelationDef) GetTargetMax() *int {
+	return r.GetToMax()
+}
+
+// ParseCardinality parses UML-style cardinality notation.
+// Supported formats: "1", "0..1", "1..*", "0..*", "*", "2..5"
+// Returns (minVal, maxVal) where nil maxVal means unbounded.
+func ParseCardinality(notation string) (minVal, maxVal *int) {
+	if notation == "" {
+		return nil, nil
+	}
+
+	// Handle "*" as shorthand for "0..*"
+	if notation == "*" {
+		zero := 0
+		return &zero, nil
+	}
+
+	// Check for range notation "min..max"
+	if idx := findDoubleDot(notation); idx > 0 {
+		minStr := notation[:idx]
+		maxStr := notation[idx+2:]
+
+		minVal := parseInt(minStr)
+		if minVal == nil {
+			return nil, nil // Invalid format
+		}
+
+		var maxVal *int
+		if maxStr != "*" {
+			maxVal = parseInt(maxStr)
+			if maxVal == nil {
+				return nil, nil // Invalid format
+			}
+		}
+		// maxStr == "*" means unbounded (nil)
+
+		return minVal, maxVal
+	}
+
+	// Single value means exactly that number
+	val := parseInt(notation)
+	if val == nil {
+		return nil, nil
+	}
+	return val, val
+}
+
+// findDoubleDot finds the index of ".." in a string, returns -1 if not found
+func findDoubleDot(s string) int {
+	for i := 0; i < len(s)-1; i++ {
+		if s[i] == '.' && s[i+1] == '.' {
+			return i
+		}
+	}
+	return -1
+}
+
+// parseInt parses a string to an int pointer, returns nil on error
+func parseInt(s string) *int {
+	val := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return nil
+		}
+		val = val*10 + int(c-'0')
+	}
+	result := val
+	return &result
+}
+
+// FormatCardinality converts min/max integers to UML notation string.
+func FormatCardinality(minPtr, maxPtr *int) string {
+	if minPtr == nil && maxPtr == nil {
+		return ""
+	}
+
+	minVal := 0
+	if minPtr != nil {
+		minVal = *minPtr
+	}
+
+	if maxPtr == nil {
+		// Unbounded
+		if minVal == 0 {
+			return "*"
+		}
+		return intToString(minVal) + "..*"
+	}
+
+	maxVal := *maxPtr
+	if minVal == maxVal {
+		return intToString(minVal)
+	}
+
+	return intToString(minVal) + ".." + intToString(maxVal)
+}
+
+// intToString converts an int to a string without using strconv
+func intToString(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	digits := make([]byte, 0, 10)
+	for n > 0 {
+		digits = append(digits, byte('0'+n%10))
+		n /= 10
+	}
+	// Reverse
+	for i, j := 0, len(digits)-1; i < j; i, j = i+1, j-1 {
+		digits[i], digits[j] = digits[j], digits[i]
+	}
+	return string(digits)
 }

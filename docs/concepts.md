@@ -197,7 +197,8 @@ relations:
   addresses:
     from: [decision]
     to: [requirement]
-    target_min: 1  # Every requirement must be addressed by at least one decision
+    cardinality:
+      to: "1..*"  # Every requirement must be addressed by at least one decision
 ```
 
 Check constraints with:
@@ -206,8 +207,8 @@ Check constraints with:
 rela analyze cardinality
 ```
 
-This checks all `source_min`, `source_max`, `target_min`, and `target_max`
-constraints defined on relations.
+This checks all cardinality constraints defined on relations using UML notation
+(e.g., `"1"`, `"0..1"`, `"1..*"`, `"0..*"`).
 
 ### Orphan Detection
 
@@ -264,7 +265,7 @@ entity should have:
 rela analyze cardinality
 ```
 
-For example, if the metamodel specifies `source_min: 1` for `addresses`, every
+For example, if the metamodel specifies `cardinality.from: "1..*"` for `addresses`, every
 decision must address at least one requirement.
 
 ## Best Practices

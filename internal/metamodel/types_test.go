@@ -463,3 +463,283 @@ entities:
 		})
 	}
 }
+
+func TestParseCardinality(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantMin *int
+		wantMax *int
+	}{
+		{name: "empty", input: "", wantMin: nil, wantMax: nil},
+		{name: "star", input: "*", wantMin: intPtr(0), wantMax: nil},
+		{name: "single 1", input: "1", wantMin: intPtr(1), wantMax: intPtr(1)},
+		{name: "single 0", input: "0", wantMin: intPtr(0), wantMax: intPtr(0)},
+		{name: "range 0..1", input: "0..1", wantMin: intPtr(0), wantMax: intPtr(1)},
+		{name: "range 1..*", input: "1..*", wantMin: intPtr(1), wantMax: nil},
+		{name: "range 0..*", input: "0..*", wantMin: intPtr(0), wantMax: nil},
+		{name: "range 2..5", input: "2..5", wantMin: intPtr(2), wantMax: intPtr(5)},
+		{name: "invalid", input: "abc", wantMin: nil, wantMax: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotMin, gotMax := ParseCardinality(tt.input)
+			if !intPtrEqual(gotMin, tt.wantMin) {
+				t.Errorf("ParseCardinality(%q) min = %v, want %v", tt.input, intPtrVal(gotMin), intPtrVal(tt.wantMin))
+			}
+			if !intPtrEqual(gotMax, tt.wantMax) {
+				t.Errorf("ParseCardinality(%q) max = %v, want %v", tt.input, intPtrVal(gotMax), intPtrVal(tt.wantMax))
+			}
+		})
+	}
+}
+
+func TestFormatCardinality(t *testing.T) {
+	tests := []struct {
+		name string
+		min  *int
+		max  *int
+		want string
+	}{
+		{name: "nil nil", min: nil, max: nil, want: ""},
+		{name: "0 nil", min: intPtr(0), max: nil, want: "*"},
+		{name: "1 nil", min: intPtr(1), max: nil, want: "1..*"},
+		{name: "1 1", min: intPtr(1), max: intPtr(1), want: "1"},
+		{name: "0 1", min: intPtr(0), max: intPtr(1), want: "0..1"},
+		{name: "2 5", min: intPtr(2), max: intPtr(5), want: "2..5"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatCardinality(tt.min, tt.max)
+			if got != tt.want {
+				t.Errorf("FormatCardinality(%v, %v) = %q, want %q",
+					intPtrVal(tt.min), intPtrVal(tt.max), got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateCardinalityNotation(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{name: "empty", input: "", wantErr: false},
+		{name: "star", input: "*", wantErr: false},
+		{name: "single digit", input: "1", wantErr: false},
+		{name: "range 0..1", input: "0..1", wantErr: false},
+		{name: "range 1..*", input: "1..*", wantErr: false},
+		{name: "range 0..*", input: "0..*", wantErr: false},
+		{name: "range 2..5", input: "2..5", wantErr: false},
+		{name: "invalid text", input: "many", wantErr: true},
+		{name: "invalid min", input: "a..5", wantErr: true},
+		{name: "invalid max", input: "1..b", wantErr: true},
+		{name: "min > max", input: "5..2", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCardinalityNotation(tt.input)
+			if tt.wantErr && err == nil {
+				t.Errorf("ValidateCardinalityNotation(%q) expected error, got nil", tt.input)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("ValidateCardinalityNotation(%q) unexpected error: %v", tt.input, err)
+			}
+		})
+	}
+}
+
+func TestRelationDef_GetFromToCardinality(t *testing.T) {
+	// Test new cardinality syntax takes precedence
+	rel := RelationDef{
+		Cardinality: &CardinalityDef{
+			From: "1..*",
+			To:   "0..1",
+		},
+		SourceMin: intPtr(99), // Should be ignored
+		TargetMax: intPtr(99), // Should be ignored
+	}
+
+	// GetFromMin should return 1 (from "1..*")
+	if fromMin := rel.GetFromMin(); fromMin == nil || *fromMin != 1 {
+		t.Errorf("GetFromMin() = %v, want 1", intPtrVal(fromMin))
+	}
+
+	// GetFromMax should return nil (unbounded from "1..*")
+	if fromMax := rel.GetFromMax(); fromMax != nil {
+		t.Errorf("GetFromMax() = %v, want nil", *fromMax)
+	}
+
+	// GetToMin should return 0 (from "0..1")
+	if toMin := rel.GetToMin(); toMin == nil || *toMin != 0 {
+		t.Errorf("GetToMin() = %v, want 0", intPtrVal(toMin))
+	}
+
+	// GetToMax should return 1 (from "0..1")
+	if toMax := rel.GetToMax(); toMax == nil || *toMax != 1 {
+		t.Errorf("GetToMax() = %v, want 1", intPtrVal(toMax))
+	}
+}
+
+func TestRelationDef_GetFromToCardinality_Fallback(t *testing.T) {
+	// Test fallback to deprecated fields
+	rel := RelationDef{
+		SourceMin: intPtr(1),
+		SourceMax: intPtr(5),
+		TargetMin: intPtr(0),
+		TargetMax: intPtr(1),
+	}
+
+	if fromMin := rel.GetFromMin(); fromMin == nil || *fromMin != 1 {
+		t.Errorf("GetFromMin() = %v, want 1", intPtrVal(fromMin))
+	}
+	if fromMax := rel.GetFromMax(); fromMax == nil || *fromMax != 5 {
+		t.Errorf("GetFromMax() = %v, want 5", intPtrVal(fromMax))
+	}
+	if toMin := rel.GetToMin(); toMin == nil || *toMin != 0 {
+		t.Errorf("GetToMin() = %v, want 0", intPtrVal(toMin))
+	}
+	if toMax := rel.GetToMax(); toMax == nil || *toMax != 1 {
+		t.Errorf("GetToMax() = %v, want 1", intPtrVal(toMax))
+	}
+}
+
+func TestParse_CardinalityValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+		errType string // "conflict" or "invalid"
+	}{
+		{
+			name: "valid new cardinality",
+			yaml: `
+version: "1.0"
+relations:
+  addresses:
+    label: addresses
+    from: [decision]
+    to: [requirement]
+    cardinality:
+      from: "1..*"
+      to: "0..1"
+`,
+			wantErr: false,
+		},
+		{
+			name: "valid deprecated cardinality",
+			yaml: `
+version: "1.0"
+relations:
+  addresses:
+    label: addresses
+    from: [decision]
+    to: [requirement]
+    source_min: 1
+    target_max: 1
+`,
+			wantErr: false,
+		},
+		{
+			name: "conflict: both styles",
+			yaml: `
+version: "1.0"
+relations:
+  addresses:
+    label: addresses
+    from: [decision]
+    to: [requirement]
+    cardinality:
+      from: "1..*"
+    source_min: 1
+`,
+			wantErr: true,
+			errType: "conflict",
+		},
+		{
+			name: "invalid from notation",
+			yaml: `
+version: "1.0"
+relations:
+  addresses:
+    label: addresses
+    from: [decision]
+    to: [requirement]
+    cardinality:
+      from: "invalid"
+`,
+			wantErr: true,
+			errType: "invalid",
+		},
+		{
+			name: "invalid to notation",
+			yaml: `
+version: "1.0"
+relations:
+  addresses:
+    label: addresses
+    from: [decision]
+    to: [requirement]
+    cardinality:
+      to: "5..2"
+`,
+			wantErr: true,
+			errType: "invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.yaml))
+			if !tt.wantErr {
+				if err != nil {
+					t.Errorf("Parse() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Errorf("Parse() expected error, got nil")
+				return
+			}
+
+			switch tt.errType {
+			case "conflict":
+				var conflictErr *ConflictingCardinalityError
+				if !errors.As(err, &conflictErr) {
+					t.Errorf("Parse() error type = %T, want *ConflictingCardinalityError", err)
+				}
+			case "invalid":
+				var invalidErr *InvalidCardinalityError
+				if !errors.As(err, &invalidErr) {
+					t.Errorf("Parse() error type = %T, want *InvalidCardinalityError", err)
+				}
+			}
+		})
+	}
+}
+
+// Helper functions
+func intPtr(i int) *int {
+	return &i
+}
+
+func intPtrEqual(a, b *int) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func intPtrVal(p *int) string {
+	if p == nil {
+		return "nil"
+	}
+	return intToString(*p)
+}

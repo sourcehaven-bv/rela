@@ -162,9 +162,10 @@ var analyzeCardinalityCmd = &cobra.Command{
 		violations := 0
 
 		for relName, relDef := range meta.Relations {
-			// Check source_min constraint
-			if relDef.SourceMin != nil && *relDef.SourceMin > 0 {
-				// For each entity type in From, check they have at least SourceMin outgoing relations
+			// Check from_min constraint (source_min)
+			fromMin := relDef.GetFromMin()
+			if fromMin != nil && *fromMin > 0 {
+				// For each entity type in From, check they have at least FromMin outgoing relations
 				for _, sourceType := range relDef.From {
 					entities := g.NodesByType(sourceType)
 					for _, e := range entities {
@@ -174,17 +175,18 @@ var analyzeCardinalityCmd = &cobra.Command{
 								count++
 							}
 						}
-						if count < *relDef.SourceMin {
+						if count < *fromMin {
 							out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
-								e.ID, *relDef.SourceMin, relName, count)
+								e.ID, *fromMin, relName, count)
 							violations++
 						}
 					}
 				}
 			}
 
-			// Check source_max constraint
-			if relDef.SourceMax != nil {
+			// Check from_max constraint (source_max)
+			fromMax := relDef.GetFromMax()
+			if fromMax != nil {
 				for _, sourceType := range relDef.From {
 					entities := g.NodesByType(sourceType)
 					for _, e := range entities {
@@ -194,18 +196,19 @@ var analyzeCardinalityCmd = &cobra.Command{
 								count++
 							}
 						}
-						if count > *relDef.SourceMax {
+						if count > *fromMax {
 							out.WriteWarning("%s has more than %d '%s' relation(s): %d",
-								e.ID, *relDef.SourceMax, relName, count)
+								e.ID, *fromMax, relName, count)
 							violations++
 						}
 					}
 				}
 			}
 
-			// Check target_min constraint
-			// For each entity type in To, check they have at least TargetMin incoming relations of this type
-			if relDef.TargetMin != nil && *relDef.TargetMin > 0 {
+			// Check to_min constraint (target_min)
+			// For each entity type in To, check they have at least ToMin incoming relations of this type
+			toMin := relDef.GetToMin()
+			if toMin != nil && *toMin > 0 {
 				for _, targetType := range relDef.To {
 					entities := g.NodesByType(targetType)
 					for _, e := range entities {
@@ -215,22 +218,23 @@ var analyzeCardinalityCmd = &cobra.Command{
 								count++
 							}
 						}
-						if count < *relDef.TargetMin {
+						if count < *toMin {
 							// Get the inverse relation name for the message if available
 							relLabel := relName
 							if relDef.Inverse != nil && relDef.Inverse.Name != "" {
 								relLabel = relDef.Inverse.Name
 							}
 							out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
-								e.ID, *relDef.TargetMin, relLabel, count)
+								e.ID, *toMin, relLabel, count)
 							violations++
 						}
 					}
 				}
 			}
 
-			// Check target_max constraint
-			if relDef.TargetMax != nil {
+			// Check to_max constraint (target_max)
+			toMax := relDef.GetToMax()
+			if toMax != nil {
 				for _, targetType := range relDef.To {
 					entities := g.NodesByType(targetType)
 					for _, e := range entities {
@@ -240,14 +244,14 @@ var analyzeCardinalityCmd = &cobra.Command{
 								count++
 							}
 						}
-						if count > *relDef.TargetMax {
+						if count > *toMax {
 							// Get the inverse relation name for the message if available
 							relLabel := relName
 							if relDef.Inverse != nil && relDef.Inverse.Name != "" {
 								relLabel = relDef.Inverse.Name
 							}
 							out.WriteWarning("%s has more than %d '%s' relation(s): %d",
-								e.ID, *relDef.TargetMax, relLabel, count)
+								e.ID, *toMax, relLabel, count)
 							violations++
 						}
 					}
@@ -517,15 +521,16 @@ func countCardinalityViolations() int {
 	return violations
 }
 
-// countSourceMinViolations checks source_min constraint violations
+// countSourceMinViolations checks from_min (source_min) constraint violations
 func countSourceMinViolations(relName string, relDef metamodel.RelationDef) int {
-	if relDef.SourceMin == nil || *relDef.SourceMin == 0 {
+	fromMin := relDef.GetFromMin()
+	if fromMin == nil || *fromMin == 0 {
 		return 0
 	}
 	violations := 0
 	for _, sourceType := range relDef.From {
 		for _, e := range g.NodesByType(sourceType) {
-			if countOutgoingByType(e.ID, relName) < *relDef.SourceMin {
+			if countOutgoingByType(e.ID, relName) < *fromMin {
 				violations++
 			}
 		}
@@ -533,15 +538,16 @@ func countSourceMinViolations(relName string, relDef metamodel.RelationDef) int 
 	return violations
 }
 
-// countSourceMaxViolations checks source_max constraint violations
+// countSourceMaxViolations checks from_max (source_max) constraint violations
 func countSourceMaxViolations(relName string, relDef metamodel.RelationDef) int {
-	if relDef.SourceMax == nil {
+	fromMax := relDef.GetFromMax()
+	if fromMax == nil {
 		return 0
 	}
 	violations := 0
 	for _, sourceType := range relDef.From {
 		for _, e := range g.NodesByType(sourceType) {
-			if countOutgoingByType(e.ID, relName) > *relDef.SourceMax {
+			if countOutgoingByType(e.ID, relName) > *fromMax {
 				violations++
 			}
 		}
@@ -549,15 +555,16 @@ func countSourceMaxViolations(relName string, relDef metamodel.RelationDef) int 
 	return violations
 }
 
-// countTargetMinViolations checks target_min constraint violations
+// countTargetMinViolations checks to_min (target_min) constraint violations
 func countTargetMinViolations(relName string, relDef metamodel.RelationDef) int {
-	if relDef.TargetMin == nil || *relDef.TargetMin == 0 {
+	toMin := relDef.GetToMin()
+	if toMin == nil || *toMin == 0 {
 		return 0
 	}
 	violations := 0
 	for _, targetType := range relDef.To {
 		for _, e := range g.NodesByType(targetType) {
-			if countIncomingByType(e.ID, relName) < *relDef.TargetMin {
+			if countIncomingByType(e.ID, relName) < *toMin {
 				violations++
 			}
 		}
@@ -565,15 +572,16 @@ func countTargetMinViolations(relName string, relDef metamodel.RelationDef) int 
 	return violations
 }
 
-// countTargetMaxViolations checks target_max constraint violations
+// countTargetMaxViolations checks to_max (target_max) constraint violations
 func countTargetMaxViolations(relName string, relDef metamodel.RelationDef) int {
-	if relDef.TargetMax == nil {
+	toMax := relDef.GetToMax()
+	if toMax == nil {
 		return 0
 	}
 	violations := 0
 	for _, targetType := range relDef.To {
 		for _, e := range g.NodesByType(targetType) {
-			if countIncomingByType(e.ID, relName) > *relDef.TargetMax {
+			if countIncomingByType(e.ID, relName) > *toMax {
 				violations++
 			}
 		}
