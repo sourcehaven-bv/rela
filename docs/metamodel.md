@@ -543,9 +543,9 @@ validations:
   - name: rule-identifier        # Unique name for the rule
     description: "Human-readable description shown in output"
     entity_type: requirement     # Optional: limit to specific type
-    match:                       # Optional: conditions to select entities
+    when:                        # Optional: IF these conditions match...
       - "status=accepted"
-    require:                     # Required: conditions entities must satisfy
+    then:                        # THEN these must be true
       - "priority!="
     severity: error              # Optional: "error" or "warning" (default)
 ```
@@ -553,9 +553,9 @@ validations:
 ### How Validation Rules Work
 
 1. **Select entities**: If `entity_type` is specified, only those entities are checked
-2. **Apply match filter**: If `match` is specified, only entities satisfying ALL match conditions are subject to the rule
-3. **Check requirements**: Matched entities must satisfy ALL `require` conditions
-4. **Report violations**: Entities that match but don't satisfy requirements are reported
+2. **Apply when filter**: If `when` is specified, only entities satisfying ALL when conditions are subject to the rule
+3. **Check then conditions**: Matched entities must satisfy ALL `then` conditions
+4. **Report violations**: Entities that match `when` but don't satisfy `then` are reported
 
 ### Example Validation Rules
 
@@ -565,17 +565,17 @@ validations:
   - name: accepted-needs-priority
     description: "Accepted requirements must have a priority assigned"
     entity_type: requirement
-    match:
+    when:
       - "status=accepted"
-    require:
+    then:
       - "priority!="
     severity: error
 
-  # All decisions should have a rationale
+  # All decisions should have a rationale (no 'when' = applies to all)
   - name: decisions-need-rationale
     description: "Decisions should have a rationale documented"
     entity_type: decision
-    require:
+    then:
       - "rationale!="
     severity: warning
 
@@ -583,9 +583,9 @@ validations:
   - name: high-priority-needs-description
     description: "High priority requirements need detailed descriptions"
     entity_type: requirement
-    match:
+    when:
       - "priority=high"
-    require:
+    then:
       - "description!="
     severity: warning
 
@@ -593,7 +593,7 @@ validations:
   - name: adr-naming-convention
     description: "ADRs should follow the ADR-NNN naming pattern"
     entity_type: decision
-    require:
+    then:
       - "title=~^ADR-\\d+:"
     severity: warning
 ```

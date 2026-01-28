@@ -25,16 +25,16 @@ type ValidationRule struct {
 	// If empty, the validation applies to all entity types
 	EntityType string `yaml:"entity_type,omitempty"`
 
-	// Match specifies filter conditions that select which entities this rule applies to
+	// When specifies filter conditions that select which entities this rule applies to
 	// Uses the same syntax as --where filters (e.g., "status=approved")
 	// Multiple conditions are ANDed together
 	// If empty, the rule applies to all entities (of the specified type)
-	Match []string `yaml:"match,omitempty"`
+	When []string `yaml:"when,omitempty"`
 
-	// Require specifies filter conditions that matching entities must satisfy
+	// Then specifies filter conditions that matching entities must satisfy
 	// Uses the same syntax as --where filters (e.g., "owner!=")
 	// Multiple conditions are ANDed together
-	Require []string `yaml:"require"`
+	Then []string `yaml:"then"`
 
 	// Severity is the severity level of violations: "error" or "warning"
 	// Defaults to "warning" if not specified
