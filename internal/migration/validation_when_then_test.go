@@ -104,12 +104,12 @@ validations: []
 
 func TestValidationWhenThenMigration_Apply(t *testing.T) {
 	tests := []struct {
-		name         string
-		yaml         string
-		wantWhen     bool
-		wantThen     bool
-		wantNoMatch  bool
-		wantNoReq    bool
+		name        string
+		yaml        string
+		wantWhen    bool
+		wantThen    bool
+		wantNoMatch bool
+		wantNoReq   bool
 	}{
 		{
 			name: "renames match to when",
