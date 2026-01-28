@@ -2,11 +2,19 @@
 
 ## Background
 
-Modern DevOps and SRE teams manage complex, distributed systems where operational knowledge is critical but often tribal. Runbooks exist as wiki pages, procedures live in team members' heads, and the connection between infrastructure components, their failure modes, and the procedures to handle them is implicit at best.
+Modern DevOps and SRE teams manage complex, distributed systems where operational knowledge is
+critical but often tribal. Runbooks exist as wiki pages, procedures live in team members' heads,
+and the connection between infrastructure components, their failure modes, and the procedures to
+handle them is implicit at best.
 
-When incidents occur, engineers scramble to find the right runbook, discover it's outdated, or realize no runbook exists. Post-mortems identify documentation gaps, but the fixes rarely stick because there's no systematic way to ensure every service has runbooks, every runbook is current, and every alert links to its procedure.
+When incidents occur, engineers scramble to find the right runbook, discover it's outdated, or
+realize no runbook exists. Post-mortems identify documentation gaps, but the fixes rarely stick
+because there's no systematic way to ensure every service has runbooks, every runbook is current,
+and every alert links to its procedure.
 
-The "you build it, you run it" DevOps philosophy means development teams own both code and operations—but without structured operational documentation, this ownership becomes a liability when team members leave or rotate.
+The "you build it, you run it" DevOps philosophy means development teams own both code and
+operations—but without structured operational documentation, this ownership becomes a liability
+when team members leave or rotate.
 
 ## Context
 
@@ -21,6 +29,7 @@ A DevOps/SRE documentation system needs to capture:
 7. **SLOs/SLIs** - Service level objectives and indicators that define "healthy"
 
 The key relationships:
+
 - Components have failure modes
 - Failure modes trigger alerts
 - Alerts link to runbooks
@@ -39,10 +48,10 @@ The key relationships:
 
 ### Secondary Goals
 
-5. **On-call Onboarding** - New team members can explore the operational landscape
-6. **Post-mortem Actions** - Link improvement items to the components/runbooks they improve
-7. **Change Impact** - Before deploying, understand what operational docs need updating
-8. **SRE Metrics** - Track operational maturity: % services with runbooks, % alerts with procedures
+1. **On-call Onboarding** - New team members can explore the operational landscape
+2. **Post-mortem Actions** - Link improvement items to the components/runbooks they improve
+3. **Change Impact** - Before deploying, understand what operational docs need updating
+4. **SRE Metrics** - Track operational maturity: % services with runbooks, % alerts with procedures
 
 ## Proposed Metamodel
 
@@ -59,7 +68,7 @@ types:
     values: [critical, major, minor, warning, info]
 
   tier:
-    values: [tier0, tier1, tier2, tier3]  # tier0 = most critical
+    values: [tier0, tier1, tier2, tier3] # tier0 = most critical
 
   runbook_status:
     values: [current, needs_review, outdated, missing]
@@ -99,7 +108,8 @@ entities:
         required: true
       engine:
         type: enum
-        values: [postgresql, mysql, mongodb, redis, elasticsearch, dynamodb, other]
+        values:
+          [postgresql, mysql, mongodb, redis, elasticsearch, dynamodb, other]
       tier:
         type: tier
       environment:
@@ -163,7 +173,7 @@ entities:
         type: string
         required: true
       query:
-        type: string  # The actual alert query/expression
+        type: string # The actual alert query/expression
       threshold:
         type: string
       severity:
@@ -186,9 +196,9 @@ entities:
       summary:
         type: string
       estimated_time:
-        type: string  # e.g., "5-10 minutes"
+        type: string # e.g., "5-10 minutes"
       requires_access:
-        type: string  # e.g., "production SSH, AWS console"
+        type: string # e.g., "production SSH, AWS console"
       last_reviewed:
         type: string
       review_status:
@@ -207,7 +217,16 @@ entities:
         required: true
       scenario:
         type: enum
-        values: [incident_response, disaster_recovery, security_breach, capacity_planning, maintenance_window, rollback, other]
+        values:
+          [
+            incident_response,
+            disaster_recovery,
+            security_breach,
+            capacity_planning,
+            maintenance_window,
+            rollback,
+            other,
+          ]
       scope:
         type: string
       last_tested:
@@ -225,11 +244,11 @@ entities:
         type: string
         required: true
       indicator:
-        type: string  # e.g., "availability", "latency p99"
+        type: string # e.g., "availability", "latency p99"
       target:
-        type: string  # e.g., "99.9%", "< 200ms"
+        type: string # e.g., "99.9%", "< 200ms"
       window:
-        type: string  # e.g., "30 days rolling"
+        type: string # e.g., "30 days rolling"
       error_budget_policy:
         type: string
 
@@ -310,7 +329,7 @@ relations:
     description: A runbook remediates a failure mode
     from: [runbook]
     to: [failure_mode]
-    source_min: 1  # Every runbook must address at least one failure mode
+    source_min: 1 # Every runbook must address at least one failure mode
     inverse: remediatedBy
 
   linkedToAlert:
@@ -318,7 +337,7 @@ relations:
     description: An alert links to a runbook
     from: [alert]
     to: [runbook]
-    source_min: 1  # Every alert should have a runbook
+    source_min: 1 # Every alert should have a runbook
     inverse: triggeredBy
 
   operatesOn:
@@ -391,7 +410,8 @@ relations:
 ## Example Traceability Chains
 
 ### Alert to Resolution
-```
+
+```text
 Alert: High API latency (ALT-023)
     ↓ linkedToAlert
 Runbook: Investigate API latency (RB-015)
@@ -402,7 +422,8 @@ Database: User DB (DB-003)
 ```
 
 ### Failure Mode Coverage
-```
+
+```text
 Service: Payment Service (SVC-007)
     ↓ hasFailureMode
 Failure Mode: Connection pool exhausted (FM-012)
@@ -413,7 +434,8 @@ Runbook: Scale payment DB connections (RB-033)
 ```
 
 ### Post-mortem to Improvement
-```
+
+```text
 Post-mortem: Black Friday outage 2024 (PM-008)
     ↓ produces
 Action Item: Add circuit breaker to payment flow (AI-023)
@@ -435,16 +457,16 @@ Essential operational questions this enables:
 
 ## Value Proposition
 
-| Traditional Approach | With Rela |
-|---------------------|-----------|
-| Wiki pages with broken links | Structured relations between all artifacts |
-| "Ask Sarah, she knows" | Explicit ownership and linked knowledge |
-| Runbooks found mid-incident | Alerts link directly to runbooks |
-| Unknown coverage gaps | Analysis shows exactly what's missing |
-| Stale docs discovered in crisis | Review dates and staleness tracking |
-| Post-mortem actions forgotten | Actions linked to what they improve |
-| Manual dependency diagrams | Auto-generated from relations |
-| Onboarding takes months | Navigable operational knowledge graph |
+| Traditional Approach            | With Rela                                  |
+| ------------------------------- | ------------------------------------------ |
+| Wiki pages with broken links    | Structured relations between all artifacts |
+| "Ask Sarah, she knows"          | Explicit ownership and linked knowledge    |
+| Runbooks found mid-incident     | Alerts link directly to runbooks           |
+| Unknown coverage gaps           | Analysis shows exactly what's missing      |
+| Stale docs discovered in crisis | Review dates and staleness tracking        |
+| Post-mortem actions forgotten   | Actions linked to what they improve        |
+| Manual dependency diagrams      | Auto-generated from relations              |
+| Onboarding takes months         | Navigable operational knowledge graph      |
 
 ## Integration Points
 

@@ -11,7 +11,7 @@ GOLANGCI_LINT_VERSION := v1.62.2
 LDFLAGS := -s -w
 GOFLAGS := -trimpath
 
-.PHONY: all build clean test test-coverage coverage coverage-check coverage-html lint lint-fix fmt vet install-tools install-hooks help fuzz fuzz-short
+.PHONY: all build clean test test-coverage coverage coverage-check coverage-html lint lint-fix fmt vet install-tools install-hooks help fuzz fuzz-short lint-md lint-md-fix fmt-md
 
 # Default target
 all: lint test build
@@ -75,10 +75,25 @@ fuzz-short:
 	$(GO) test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=5s ./internal/model/
 	$(GO) test -run='^$$' -fuzz='^FuzzParseRelationFilename$$' -fuzztime=5s ./internal/markdown/
 
-# Run linter
+# Run linter (Go)
 lint:
-	@echo "Running linter..."
+	@echo "Running Go linter..."
 	$(GOLANGCI_LINT) run
+
+# Lint markdown files
+lint-md:
+	@echo "Linting markdown files..."
+	npx markdownlint-cli2 "**/*.md" "#node_modules"
+
+# Lint and fix markdown files
+lint-md-fix:
+	@echo "Linting and fixing markdown files..."
+	npx markdownlint-cli2 --fix "**/*.md" "#node_modules"
+
+# Format markdown files with prettier
+fmt-md:
+	@echo "Formatting markdown files..."
+	npx prettier --write "**/*.md" --ignore-path .gitignore
 
 # Run linter with auto-fix
 lint-fix:
@@ -125,7 +140,7 @@ check-tools:
 	@echo "All tools installed!"
 
 # Run all checks (lint + test)
-check: lint test
+check: lint lint-md test
 
 # Run all checks and build
 ci: check coverage-check build
@@ -154,12 +169,15 @@ help:
 	@echo "  coverage-html  - Generate HTML coverage report"
 	@echo "  lint           - Run golangci-lint"
 	@echo "  lint-fix       - Run golangci-lint with auto-fix"
+	@echo "  lint-md        - Lint markdown files"
+	@echo "  lint-md-fix    - Lint and fix markdown files"
 	@echo "  fmt            - Format code with gofmt and goimports"
+	@echo "  fmt-md         - Format markdown files with prettier"
 	@echo "  vet            - Run go vet"
 	@echo "  install-tools  - Install development tools (golangci-lint, goimports)"
 	@echo "  install-hooks  - Install git pre-commit hooks"
 	@echo "  check-tools    - Verify development tools are installed"
-	@echo "  check          - Run lint and test"
+	@echo "  check          - Run lint, lint-md, and test"
 	@echo "  ci             - Run all checks including coverage (for CI pipelines)"
 	@echo "  tidy           - Run go mod tidy"
 	@echo "  deps           - Download dependencies"

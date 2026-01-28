@@ -6,12 +6,12 @@ Complete reference for all rela commands.
 
 These options work with any command:
 
-| Option | Description |
-|--------|-------------|
-| `-o, --output` | Output format: `table` (default) or `json` |
-| `-v, --verbose` | Enable verbose output |
-| `-q, --quiet` | Suppress non-essential output |
-| `-h, --help` | Show help for any command |
+| Option          | Description                                |
+| --------------- | ------------------------------------------ |
+| `-o, --output`  | Output format: `table` (default) or `json` |
+| `-v, --verbose` | Enable verbose output                      |
+| `-q, --quiet`   | Suppress non-essential output              |
+| `-h, --help`    | Show help for any command                  |
 
 ## Commands
 
@@ -24,6 +24,7 @@ rela init
 ```
 
 Creates:
+
 - `metamodel.yaml` - Default configuration
 - `entities/` - Entity storage directory
 - `relations/` - Relation storage directory
@@ -40,22 +41,26 @@ rela create <type> [flags]
 ```
 
 **Arguments:**
+
 - `type` - Entity type (e.g., `requirement`, `decision`, `solution`, `component`)
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `-t, --title` | Entity title (required) |
-| `-s, --status` | Entity status (default: `draft`) |
-| `-p, --priority` | Entity priority |
-| `--id` | Custom entity ID (required for string ID types, auto-generated for sequential) |
-| `-P, --property` | Set a property (format: key=value, can be repeated) |
-| `-b, --body` | Markdown body content for the entity |
-| `-B, --body-file` | Read body content from file (use `-` for stdin) |
+
+| Flag              | Description                                                                    |
+| ----------------- | ------------------------------------------------------------------------------ |
+| `-t, --title`     | Entity title (required)                                                        |
+| `-s, --status`    | Entity status (default: `draft`)                                               |
+| `-p, --priority`  | Entity priority                                                                |
+| `--id`            | Custom entity ID (required for string ID types, auto-generated for sequential) |
+| `-P, --property`  | Set a property (format: key=value, can be repeated)                            |
+| `-b, --body`      | Markdown body content for the entity                                           |
+| `-B, --body-file` | Read body content from file (use `-` for stdin)                                |
 
 **Templates:**
 
-If a template exists at `templates/entities/<type>.md`, its frontmatter values are used as defaults and its content is applied to the new entity. CLI flags override template defaults. See [rela template](#rela-template) for creating templates.
+If a template exists at `templates/entities/<type>.md`, its frontmatter values are used as defaults
+and its content is applied to the new entity. CLI flags override template defaults.
+See [rela template](#rela-template) for creating templates.
 
 **ID Types:**
 
@@ -110,12 +115,14 @@ rela list [type] [flags]
 ```
 
 **Arguments:**
+
 - `type` - Entity type to filter by (optional, shows all if omitted)
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `--status` | Filter by status |
+
+| Flag         | Description        |
+| ------------ | ------------------ |
+| `--status`   | Filter by status   |
 | `--priority` | Filter by priority |
 
 **Examples:**
@@ -150,6 +157,7 @@ rela show <id>
 ```
 
 **Arguments:**
+
 - `id` - Entity ID to show
 
 Shows the entity's properties plus all incoming and outgoing relations.
@@ -172,14 +180,16 @@ rela update <id> [flags]
 ```
 
 **Arguments:**
+
 - `id` - Entity ID to update
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `-t, --title` | New title |
-| `-s, --status` | New status |
-| `-p, --priority` | New priority |
+
+| Flag                | Description     |
+| ------------------- | --------------- |
+| `-t, --title`       | New title       |
+| `-s, --status`      | New status      |
+| `-p, --priority`    | New priority    |
 | `-d, --description` | New description |
 
 At least one flag is required.
@@ -208,13 +218,15 @@ rela delete <id> [flags]
 ```
 
 **Arguments:**
+
 - `id` - Entity ID to delete
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `-f, --force` | Skip confirmation prompt |
-| `--cascade` | Also delete related links |
+
+| Flag          | Description               |
+| ------------- | ------------------------- |
+| `-f, --force` | Skip confirmation prompt  |
+| `--cascade`   | Also delete related links |
 
 Without `--cascade`, deletion fails if the entity has relations.
 
@@ -242,6 +254,7 @@ rela link <from> <relation> <to>
 ```
 
 **Arguments:**
+
 - `from` - Source entity ID
 - `relation` - Relation type name
 - `to` - Target entity ID
@@ -250,7 +263,8 @@ Both entities must exist. The relation type is validated against the metamodel.
 
 **Templates:**
 
-If a template exists at `templates/relations/<type>.md`, its frontmatter values are used as defaults for relation properties. See [rela template](#rela-template) for creating templates.
+If a template exists at `templates/relations/<type>.md`, its frontmatter values are used as defaults
+for relation properties. See [rela template](#rela-template) for creating templates.
 
 **Examples:**
 
@@ -272,6 +286,7 @@ rela unlink <from> <relation> <to>
 ```
 
 **Arguments:**
+
 - `from` - Source entity ID
 - `relation` - Relation type name
 - `to` - Target entity ID
@@ -293,8 +308,9 @@ rela sync [flags]
 ```
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
+
+| Flag      | Description        |
+| --------- | ------------------ |
 | `--force` | Force full rebuild |
 
 Use after manually editing markdown files to update the cache.
@@ -321,8 +337,9 @@ rela trace from <id> [flags]
 ```
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
+
+| Flag      | Description                   |
+| --------- | ----------------------------- |
 | `--depth` | Maximum depth (0 = unlimited) |
 
 **Examples:**
@@ -341,8 +358,9 @@ rela trace to <id> [flags]
 ```
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
+
+| Flag      | Description                   |
+| --------- | ----------------------------- |
 | `--depth` | Maximum depth (0 = unlimited) |
 
 **Examples:**
@@ -377,12 +395,13 @@ rela graph [flags]
 ```
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `-o, --output` | Output file (stdout if not specified) |
-| `-f, --format` | Output format: `dot`, `png`, `svg`, `pdf` |
-| `--direction` | Graph direction: `tb` (top-bottom) or `lr` (left-right) |
-| `--types` | Filter by entity types (comma-separated) |
+
+| Flag           | Description                                             |
+| -------------- | ------------------------------------------------------- |
+| `-o, --output` | Output file (stdout if not specified)                   |
+| `-f, --format` | Output format: `dot`, `png`, `svg`, `pdf`               |
+| `--direction`  | Graph direction: `tb` (top-bottom) or `lr` (left-right) |
+| `--types`      | Filter by entity types (comma-separated)                |
 
 Rendering to PNG/SVG/PDF requires Graphviz (`dot` command).
 
@@ -416,14 +435,16 @@ rela export [type] [flags]
 ```
 
 **Arguments:**
+
 - `type` - Entity type to export (required unless using `--all`)
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `-f, --format` | Output format: `json` (default), `csv`, or `yaml` |
-| `--with-relations` | Include relation data in export |
-| `--all` | Export all entities and relations |
+
+| Flag               | Description                                       |
+| ------------------ | ------------------------------------------------- |
+| `-f, --format`     | Output format: `json` (default), `csv`, or `yaml` |
+| `--with-relations` | Include relation data in export                   |
+| `--all`            | Export all entities and relations                 |
 
 **Output Formats:**
 
@@ -508,16 +529,18 @@ rela import <file> [flags]
 ```
 
 **Arguments:**
+
 - `file` - Path to the import file (JSON, YAML, or CSV)
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `-f, --format` | Input format: `json`, `yaml`, or `csv`. Auto-detected from extension if not specified |
-| `-n, --dry-run` | Validate without creating files |
-| `-u, --update` | Replace existing entities instead of failing on duplicates |
-| `--skip-errors` | Continue importing on validation errors |
-| `-r, --relations` | Path to relations CSV file (for CSV imports) |
+
+| Flag              | Description                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| `-f, --format`    | Input format: `json`, `yaml`, or `csv`. Auto-detected from extension if not specified |
+| `-n, --dry-run`   | Validate without creating files                                                       |
+| `-u, --update`    | Replace existing entities instead of failing on duplicates                            |
+| `--skip-errors`   | Continue importing on validation errors                                               |
+| `-r, --relations` | Path to relations CSV file (for CSV imports)                                          |
 
 **Input Formats:**
 
@@ -526,12 +549,18 @@ rela import <file> [flags]
 ```json
 {
   "entities": [
-    {"id": "REQ-001", "type": "requirement", "properties": {"title": "User login", "status": "draft"}},
-    {"id": "DEC-001", "type": "decision", "properties": {"title": "Use JWT", "status": "accepted"}}
+    {
+      "id": "REQ-001",
+      "type": "requirement",
+      "properties": { "title": "User login", "status": "draft" }
+    },
+    {
+      "id": "DEC-001",
+      "type": "decision",
+      "properties": { "title": "Use JWT", "status": "accepted" }
+    }
   ],
-  "relations": [
-    {"from": "DEC-001", "relation": "addresses", "to": "REQ-001"}
-  ]
+  "relations": [{ "from": "DEC-001", "relation": "addresses", "to": "REQ-001" }]
 }
 ```
 
@@ -642,7 +671,8 @@ Find gaps in ID sequences for entity types with sequential IDs.
 rela analyze gaps
 ```
 
-Entity types configured with `id_type: manual` are excluded from gap analysis since they use manually-specified IDs that are not expected to be sequential.
+Entity types configured with `id_type: manual` are excluded from gap analysis since they use
+manually-specified IDs that are not expected to be sequential.
 
 #### rela analyze cardinality
 
@@ -660,11 +690,12 @@ Run custom validation rules defined in the metamodel.
 rela analyze validations
 ```
 
-Validation rules check entity properties against custom conditions. See [Metamodel Reference - Custom Validation Rules](metamodel.md#custom-validation-rules) for details on defining rules.
+Validation rules check entity properties against custom conditions.
+See [Metamodel Reference - Custom Validation Rules](metamodel.md#custom-validation-rules) for details.
 
 **Example output:**
 
-```
+```text
 $ rela analyze validations
 ✗ Accepted requirements must have a priority assigned (2):
   REQ-003: User authentication
@@ -707,6 +738,7 @@ rela completion <shell>
 ```
 
 **Arguments:**
+
 - `shell` - Target shell: `bash`, `zsh`, `fish`, or `powershell`
 
 **Examples:**
@@ -728,7 +760,9 @@ rela completion fish > ~/.config/fish/completions/rela.fish
 
 Manage templates for creating entities and relations.
 
-Templates provide default frontmatter values and markdown body content when creating new entities or relations. They are stored in:
+Templates provide default frontmatter values and markdown body content when creating new entities or
+relations. They are stored in:
+
 - `templates/entities/<type>.md` - Entity templates
 - `templates/relations/<type>.md` - Relation templates
 
@@ -741,14 +775,16 @@ rela template init [type...] [flags]
 ```
 
 **Arguments:**
+
 - `type...` - Optional: specific entity or relation types to generate templates for
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `--entities` | Only generate entity templates |
+
+| Flag          | Description                      |
+| ------------- | -------------------------------- |
+| `--entities`  | Only generate entity templates   |
 | `--relations` | Only generate relation templates |
-| `--force` | Overwrite existing templates |
+| `--force`     | Overwrite existing templates     |
 
 Without arguments, generates templates for all entity and relation types defined in the metamodel.
 
@@ -806,7 +842,8 @@ Explain why this addresses relation exists.
 
 **Using Templates:**
 
-Once templates are created, they are automatically applied when using `rela create` or `rela link`. CLI flags override template defaults.
+Once templates are created, they are automatically applied when using `rela create` or `rela link`.
+CLI flags override template defaults.
 
 ```bash
 # Create a template
@@ -830,17 +867,19 @@ rela migrate [flags]
 ```
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
+
+| Flag      | Description                                                   |
+| --------- | ------------------------------------------------------------- |
 | `--check` | Check for pending migrations without applying (useful for CI) |
 
-This command detects deprecated syntax patterns in your project files (e.g., `metamodel.yaml`) and transforms them to the current format while preserving comments and formatting.
+This command detects deprecated syntax patterns in your project files (e.g., `metamodel.yaml`) and
+transforms them to the current format while preserving comments and formatting.
 
 **When to use:**
 
 If you see an error like this when running any rela command:
 
-```
+```text
 metamodel.yaml uses deprecated syntax:
   - Rename id_type values: "sequential" → "auto", "string" → "manual"
 

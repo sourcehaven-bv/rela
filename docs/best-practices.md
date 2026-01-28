@@ -189,7 +189,7 @@ When something changes, follow the trace:
 
 A typical entity lifecycle:
 
-```
+```text
 draft → proposed → accepted → [retired|deprecated]
                            ↘ rejected
 ```

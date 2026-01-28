@@ -27,6 +27,7 @@ rela export control --format json
 ```
 
 Output:
+
 ```json
 [
   {
@@ -50,6 +51,7 @@ rela export control --format csv
 ```
 
 Output:
+
 ```csv
 id,type,title,status,iso27001
 CTRL-001,control,Access Control Policy,implemented,A.5.15
@@ -65,6 +67,7 @@ rela export control --format yaml
 ```
 
 Output:
+
 ```yaml
 - id: CTRL-001
   type: control
@@ -123,6 +126,7 @@ rela export --all --format json
 ```
 
 Output structure:
+
 ```json
 {
   "entities": [
@@ -278,7 +282,8 @@ echo "All compliance checks passed"
 
 ## Importing Data
 
-The `rela import` command is the inverse of export, allowing you to bulk-create entities and relations from JSON, YAML, or CSV files.
+The `rela import` command is the inverse of export, allowing you to bulk-create entities and
+relations from JSON, YAML, or CSV files.
 
 ### Round-Trip: Backup and Restore
 
@@ -308,11 +313,13 @@ Convert your existing data to rela's JSON format:
 ```json
 {
   "entities": [
-    {"id": "REQ-001", "type": "requirement", "properties": {"title": "...", "status": "draft"}}
+    {
+      "id": "REQ-001",
+      "type": "requirement",
+      "properties": { "title": "...", "status": "draft" }
+    }
   ],
-  "relations": [
-    {"from": "DEC-001", "relation": "addresses", "to": "REQ-001"}
-  ]
+  "relations": [{ "from": "DEC-001", "relation": "addresses", "to": "REQ-001" }]
 }
 ```
 
@@ -328,12 +335,12 @@ rela import migration.json
 
 ### Import Options
 
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Validate without creating files |
-| `--update` | Replace existing entities |
-| `--skip-errors` | Continue on validation errors |
-| `--relations` | Separate relations CSV file |
+| Flag            | Description                     |
+| --------------- | ------------------------------- |
+| `--dry-run`     | Validate without creating files |
+| `--update`      | Replace existing entities       |
+| `--skip-errors` | Continue on validation errors   |
+| `--relations`   | Separate relations CSV file     |
 
 See [CLI Reference](cli-reference.md#rela-import) for full details.
 
@@ -346,16 +353,19 @@ See [CLI Reference](cli-reference.md#rela-import) for full details.
 2. **Use `--format csv` with `mlr`** for quick tabular analysis and spreadsheet export.
 
 3. **Pipe to file** when working with large datasets:
+
    ```bash
    rela export --all --format json > full-export.json
    ```
 
 4. **Combine with `watch`** for live monitoring:
+
    ```bash
    watch -n 5 'rela export control --format json | jq "[.[] | select(.properties.status == \"draft\")] | length"'
    ```
 
 5. **Use relation data** for traceability reports:
+
    ```bash
    # Controls with the most risks mitigated
    rela export control --with-relations --format json | \
@@ -363,6 +373,7 @@ See [CLI Reference](cli-reference.md#rela-import) for full details.
    ```
 
 6. **Use export/import for project backup**:
+
    ```bash
    rela export --all -f json > "backup-$(date +%Y%m%d).json"
    ```

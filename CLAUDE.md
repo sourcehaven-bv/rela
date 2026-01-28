@@ -49,11 +49,12 @@ make ci                       # lint + test + coverage-check + build
 
 ## Architecture Overview
 
-rela is a traceability CLI that manages entities and their relationships. Common use cases include requirements, decisions, solutions, and components. Data is stored as markdown files with YAML frontmatter.
+rela is a traceability CLI that manages entities and their relationships. Common use cases include
+requirements, decisions, solutions, and components. Data is stored as markdown files with YAML frontmatter.
 
 ### Core Data Flow
 
-```
+```text
 metamodel.yaml → Metamodel (defines entity types, relations, properties)
                      ↓
 entities/*.md  → Entity → Graph (in-memory)
@@ -63,19 +64,19 @@ relations/*.md → Relation ↗      ↓
 
 ### Package Structure
 
-| Package | Purpose |
-|---------|---------|
-| `cmd/rela` | Entry point |
-| `internal/cli` | Cobra commands (create, link, analyze, export, etc.) |
-| `internal/tui` | Bubbletea TUI screens (browser, detail, search, etc.) |
-| `internal/model` | Core types: `Entity`, `Relation`, `Status` |
-| `internal/graph` | In-memory graph with adjacency lists, tracing, analysis |
-| `internal/metamodel` | Schema loading, validation, custom types |
-| `internal/markdown` | Parse/write entities and relations from markdown files |
-| `internal/project` | Project discovery, paths (`Context`) |
-| `internal/output` | CLI output formatting (table, JSON) |
-| `internal/filter` | Entity filtering by properties |
-| `internal/migration` | Schema migration system for project files |
+| Package              | Purpose                                                 |
+| -------------------- | ------------------------------------------------------- |
+| `cmd/rela`           | Entry point                                             |
+| `internal/cli`       | Cobra commands (create, link, analyze, export, etc.)    |
+| `internal/tui`       | Bubbletea TUI screens (browser, detail, search, etc.)   |
+| `internal/model`     | Core types: `Entity`, `Relation`, `Status`              |
+| `internal/graph`     | In-memory graph with adjacency lists, tracing, analysis |
+| `internal/metamodel` | Schema loading, validation, custom types                |
+| `internal/markdown`  | Parse/write entities and relations from markdown files  |
+| `internal/project`   | Project discovery, paths (`Context`)                    |
+| `internal/output`    | CLI output formatting (table, JSON)                     |
+| `internal/filter`    | Entity filtering by properties                          |
+| `internal/migration` | Schema migration system for project files               |
 
 ### Key Types
 
@@ -88,6 +89,7 @@ relations/*.md → Relation ↗      ↓
 ### TUI Architecture
 
 The TUI uses Bubbletea with a central `App` struct containing screen-specific models:
+
 - `Screen` enum controls which view is active
 - Each screen (browser, detail, search, etc.) has its own model file
 - Navigation uses a screen stack for back navigation
@@ -95,6 +97,7 @@ The TUI uses Bubbletea with a central `App` struct containing screen-specific mo
 ### CLI State Initialization
 
 `internal/cli/root.go` sets up shared state in `PersistentPreRunE`:
+
 1. Discover project root (find `metamodel.yaml`)
 2. Load metamodel
 3. Initialize graph (from cache or by syncing markdown files)
@@ -134,6 +137,7 @@ func renderWithGraphviz() error {
 ```
 
 Valid reasons for `coverage-ignore`:
+
 - Main/entry point functions (better tested via integration tests)
 - Interactive TUI code (requires terminal simulation)
 - External tool dependencies (graphviz, etc.)
@@ -155,6 +159,7 @@ make install-hooks
 ## Lint Configuration
 
 The project uses golangci-lint with extensive rules. Key exclusions:
+
 - TUI code is exempt from complexity checks (funlen, gocognit, nestif)
 - Test files exempt from dupl, funlen, magic numbers
 - Cobra `cmd`/`args` unused parameters are allowed
@@ -162,7 +167,7 @@ The project uses golangci-lint with extensive rules. Key exclusions:
 
 ## Project Files
 
-```
+```text
 metamodel.yaml              # Entity/relation schema
 entities/<type>/            # Markdown entity files by type
 relations/                  # Markdown relation files (FROM--type--TO.md)
@@ -173,11 +178,12 @@ templates/relations/<type>.md # Optional: relation templates for defaults
 
 ## Migration System
 
-The migration system (`internal/migration/`) handles schema evolution for project files like `metamodel.yaml`. It uses AST-level YAML transformations to preserve comments and formatting.
+The migration system (`internal/migration/`) handles schema evolution for project files like
+`metamodel.yaml`. It uses AST-level YAML transformations to preserve comments and formatting.
 
 ### Architecture
 
-```
+```text
 Migration Interface
        ↓
    Registry (ordered list of migrations)
@@ -238,21 +244,21 @@ func (m *MyMigration) Apply(doc *yaml.Node) error {
 }
 ```
 
-3. Add tests in `internal/migration/my_migration_test.go`
+1. Add tests in `internal/migration/my_migration_test.go`
 
 ### yaml.Node Helpers
 
 `yaml_util.go` provides helpers for safe AST manipulation:
 
-| Function | Purpose |
-|----------|---------|
-| `GetDocumentRoot(doc)` | Get root mapping from document node |
-| `GetMapValue(node, key)` | Get value node by key |
-| `SetMapValue(node, key, val)` | Set/add value in mapping |
-| `RenameMapKey(node, old, new)` | Rename a key |
-| `FindMapEntriesByKey(node, key)` | Find all entries with key |
-| `ReplaceMapValueByKey(node, key, old, new)` | Replace values by key |
-| `WalkMappings(node, fn)` | Walk all mapping nodes |
+| Function                                    | Purpose                             |
+| ------------------------------------------- | ----------------------------------- |
+| `GetDocumentRoot(doc)`                      | Get root mapping from document node |
+| `GetMapValue(node, key)`                    | Get value node by key               |
+| `SetMapValue(node, key, val)`               | Set/add value in mapping            |
+| `RenameMapKey(node, old, new)`              | Rename a key                        |
+| `FindMapEntriesByKey(node, key)`            | Find all entries with key           |
+| `ReplaceMapValueByKey(node, key, old, new)` | Replace values by key               |
+| `WalkMappings(node, fn)`                    | Walk all mapping nodes              |
 
 ### Integration with Loader
 

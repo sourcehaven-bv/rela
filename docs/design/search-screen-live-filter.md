@@ -6,7 +6,8 @@
 
 ## Overview
 
-Enhance the search screen with live search (no need to press Enter) and advanced filtering syntax to enable powerful entity discovery and filtering.
+Enhance the search screen with live search (no need to press Enter) and advanced filtering syntax
+to enable powerful entity discovery and filtering.
 
 ## Goals
 
@@ -37,7 +38,7 @@ Enhance the search screen with live search (no need to press Enter) and advanced
 
 ### Syntax Components
 
-```
+```text
 [type_filter] [free_text] [property_filter]... [special_filter]...
 ```
 
@@ -47,7 +48,7 @@ All components are **space-separated** and can appear in any order.
 
 **Prefix:** `type:`
 
-```
+```text
 type:requirement           # only requirements
 type:decision,solution     # multiple types (comma-separated)
 ```
@@ -58,7 +59,7 @@ type:decision,solution     # multiple types (comma-separated)
 
 **Logic:** Multiple words use **AND** - all words must be present.
 
-```
+```text
 authentication api         # entities containing both "authentication" AND "api"
 "multi word phrase"        # exact phrase match (quoted strings)
 auth "REST API"            # contains "auth" AND exact phrase "REST API"
@@ -70,7 +71,7 @@ auth "REST API"            # contains "auth" AND exact phrase "REST API"
 
 Uses existing `internal/filter` package operators:
 
-```
+```text
 prop:state=published       # exact match
 prop:state!=draft          # not equal
 prop:priority>3            # greater than
@@ -83,7 +84,7 @@ prop:desc=~^[A-Z].*        # regex match (existing support)
 
 Multiple property filters are combined with AND logic:
 
-```
+```text
 prop:state=published prop:priority>=2
 ```
 
@@ -91,14 +92,14 @@ prop:state=published prop:priority>=2
 
 **Status shortcut:** `status:` maps to `prop:status=`
 
-```
+```text
 status:draft               # equivalent to prop:status=draft
 status:published           # equivalent to prop:status=published
 ```
 
 **Tag search (future):** `@tag` searches for tags in properties
 
-```
+```text
 @security                  # entities tagged with "security"
 ```
 
@@ -143,7 +144,7 @@ authentication "OAuth 2.0" security
 
 ### Concurrency Model
 
-```
+```text
 User Input → Debouncer (200ms) → Search Goroutine → Results Channel → Update UI
 ```
 
@@ -244,7 +245,7 @@ for _, entity := range entities {
 
 ### Search Input Box
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │ type:requirement prop:state=published auth_         │
 └─────────────────────────────────────────────────────┘
@@ -253,7 +254,7 @@ Type to search (live), ↑/↓ to navigate, Enter to open
 
 With syntax error:
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │ prop:state published auth_                          │
 └─────────────────────────────────────────────────────┘
@@ -264,7 +265,7 @@ With syntax error:
 
 Results are **lazily rendered** - only visible items are rendered, allowing infinite scrolling through large result sets.
 
-```
+```text
 Found 1,523 results:
 
 ►  REQ-001      Authentication Requirements    (requirement)
@@ -291,7 +292,7 @@ case "/":
 
 Status bar should show:
 
-```
+```text
 [/] search  [c] create  [g] graph  [a] analyze  [q] quit  [?] help
 ```
 
@@ -366,7 +367,8 @@ Status bar should show:
      - After `prop:` → list property names from metamodel
      - After `prop:name=` → suggest values if enum type
    - Display format:
-     ```
+
+     ```text
      ┌─────────────────────────────────────┐
      │ type:_                              │
      └─────────────────────────────────────┘
@@ -401,6 +403,7 @@ Status bar should show:
 5. **Accept with Tab or Enter**: Insert suggestion at cursor, return to search mode
 
 **State management:**
+
 ```go
 type SearchModel struct {
     query           string
@@ -416,6 +419,7 @@ type SearchModel struct {
 ```
 
 **When to show suggestions:**
+
 - User types `type:` → show entity types from metamodel
 - User types `prop:` → show property names from metamodel
 - User types `prop:priority=` → show enum values (if applicable)
@@ -468,9 +472,9 @@ Add to project settings (future):
 ```yaml
 # .rela/config.yaml
 search:
-  debounce_ms: 200        # debounce delay
-  max_results: 100        # result limit
-  live_search: true       # enable/disable live search
+  debounce_ms: 200 # debounce delay
+  max_results: 100 # result limit
+  live_search: true # enable/disable live search
 ```
 
 ## Documentation Updates

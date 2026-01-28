@@ -1,6 +1,7 @@
 # Metamodel Reference
 
-The metamodel defines your project's entity types, properties, and relations. It's stored in `metamodel.yaml` at your project root.
+The metamodel defines your project's entity types, properties, and relations.
+It's stored in `metamodel.yaml` at your project root.
 
 ## Structure
 
@@ -36,29 +37,31 @@ types:
 
 Each entity type defines:
 
-| Field | Description |
-|-------|-------------|
-| `label` | Display name |
-| `aliases` | Alternative names for CLI (e.g., `req` for `requirement`) |
-| `id_type` | `auto` (default) or `manual` - controls ID generation |
-| `id_patterns` | ID prefixes (e.g., `REQ-`, `ADR-`) |
-| `properties` | Property definitions |
+| Field         | Description                                               |
+| ------------- | --------------------------------------------------------- |
+| `label`       | Display name                                              |
+| `aliases`     | Alternative names for CLI (e.g., `req` for `requirement`) |
+| `id_type`     | `auto` (default) or `manual` - controls ID generation     |
+| `id_patterns` | ID prefixes (e.g., `REQ-`, `ADR-`)                        |
+| `properties`  | Property definitions                                      |
 
 ### ID Types
 
 Entity IDs can be either auto-generated or manually specified:
 
-| Type | Description | Example IDs |
-|------|-------------|-------------|
-| `auto` | Auto-generated numeric IDs (default) | `REQ-001`, `REQ-002`, `DEC-003` |
-| `manual` | Manually specified string IDs | `auth-module`, `user-service` |
+| Type     | Description                          | Example IDs                     |
+| -------- | ------------------------------------ | ------------------------------- |
+| `auto`   | Auto-generated numeric IDs (default) | `REQ-001`, `REQ-002`, `DEC-003` |
+| `manual` | Manually specified string IDs        | `auth-module`, `user-service`   |
 
 **Auto IDs** (default):
+
 - Automatically generated when creating entities
 - Format: `PREFIX-NNN` (e.g., `REQ-001`)
 - Gap analysis detects missing numbers in sequences
 
 **Manual IDs**:
+
 - Require `--id` flag when creating entities
 - No automatic generation
 - Excluded from gap analysis
@@ -75,7 +78,7 @@ entities:
   component:
     label: Component
     id_type: manual
-    id_patterns: []  # Patterns are optional for manual IDs
+    id_patterns: [] # Patterns are optional for manual IDs
     properties:
       name:
         type: string
@@ -109,7 +112,7 @@ entities:
       description:
         type: string
       status:
-        type: status      # References custom type above
+        type: status # References custom type above
         required: true
       priority:
         type: priority
@@ -117,22 +120,22 @@ entities:
 
 ### Property Types
 
-| Type | Description | Filter Operators |
-|------|-------------|------------------|
-| `string` | Free-form text | `=`, `!=`, `=~` (regex), glob (`*`) |
-| `date` | Date value (ISO 8601 by default) | `=`, `!=`, `<`, `<=`, `>`, `>=` |
-| `integer` | Whole number | `=`, `!=`, `<`, `<=`, `>`, `>=` |
-| `boolean` | True or false | `=`, `!=` |
-| `enum` | Inline enum with `values` | `=`, `!=` |
-| `<custom>` | Reference to a type defined in `types:` | `=`, `!=` |
+| Type       | Description                             | Filter Operators                    |
+| ---------- | --------------------------------------- | ----------------------------------- |
+| `string`   | Free-form text                          | `=`, `!=`, `=~` (regex), glob (`*`) |
+| `date`     | Date value (ISO 8601 by default)        | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
+| `integer`  | Whole number                            | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
+| `boolean`  | True or false                           | `=`, `!=`                           |
+| `enum`     | Inline enum with `values`               | `=`, `!=`                           |
+| `<custom>` | Reference to a type defined in `types:` | `=`, `!=`                           |
 
 ### Property Options
 
-| Option | Description |
-|--------|-------------|
-| `required: true` | Property must be provided |
-| `format` | Date format (Go layout string, e.g., `2006-01-02`) |
-| `description` | Documentation for the property |
+| Option           | Description                                        |
+| ---------------- | -------------------------------------------------- |
+| `required: true` | Property must be provided                          |
+| `format`         | Date format (Go layout string, e.g., `2006-01-02`) |
+| `description`    | Documentation for the property                     |
 
 ### Date Formats
 
@@ -142,16 +145,17 @@ For `date` properties, specify the format using Go layout strings:
 properties:
   valid_until:
     type: date
-    format: "2006-01-02"  # YYYY-MM-DD (ISO 8601, default)
+    format: "2006-01-02" # YYYY-MM-DD (ISO 8601, default)
 ```
 
 Common formats:
-| Format | Example | Go Layout |
-|--------|---------|-----------|
+
+| Format   | Example      | Go Layout              |
+| -------- | ------------ | ---------------------- |
 | ISO 8601 | `2025-02-01` | `2006-01-02` (default) |
-| European | `01/02/2025` | `02/01/2006` |
-| US | `02/01/2025` | `01/02/2006` |
-| Long | `1 Feb 2025` | `2 Jan 2006` |
+| European | `01/02/2025` | `02/01/2006`           |
+| US       | `02/01/2025` | `01/02/2006`           |
+| Long     | `1 Feb 2025` | `2 Jan 2006`           |
 
 ### Property Type Examples
 
@@ -192,18 +196,18 @@ properties:
 
 Relations define how entity types can be connected:
 
-| Field | Description |
-|-------|-------------|
-| `label` | Display name |
-| `description` | Explanation of the relation's meaning |
-| `from` | Source entity types (list) |
-| `to` | Target entity types (list) |
-| `inverse` | Inverse relation definition (string or object) |
-| `symmetric` | `true` if relation is bidirectional |
-| `source_min` | Minimum outgoing relations per source entity |
-| `source_max` | Maximum outgoing relations per source entity |
-| `target_min` | Minimum incoming relations per target entity |
-| `target_max` | Maximum incoming relations per target entity |
+| Field         | Description                                    |
+| ------------- | ---------------------------------------------- |
+| `label`       | Display name                                   |
+| `description` | Explanation of the relation's meaning          |
+| `from`        | Source entity types (list)                     |
+| `to`          | Target entity types (list)                     |
+| `inverse`     | Inverse relation definition (string or object) |
+| `symmetric`   | `true` if relation is bidirectional            |
+| `source_min`  | Minimum outgoing relations per source entity   |
+| `source_max`  | Maximum outgoing relations per source entity   |
+| `target_min`  | Minimum incoming relations per target entity   |
+| `target_max`  | Maximum incoming relations per target entity   |
 
 ### Example Relation
 
@@ -214,8 +218,8 @@ relations:
     description: A decision addresses a requirement
     from: [decision]
     to: [requirement]
-    source_min: 1    # Each decision must address at least one requirement
-    inverse: addressedBy  # Simple form - label auto-derived as "addressed by"
+    source_min: 1 # Each decision must address at least one requirement
+    inverse: addressedBy # Simple form - label auto-derived as "addressed by"
 ```
 
 ### Inverse Relations
@@ -223,18 +227,22 @@ relations:
 The `inverse` field can be specified in two forms:
 
 **Simple form** (recommended for most cases):
+
 ```yaml
-inverse: addressedBy  # Label auto-derived from ID
+inverse: addressedBy # Label auto-derived from ID
 ```
+
 The label is automatically derived by converting camelCase to space-separated lowercase:
+
 - `addressedBy` → `addressed by`
 - `implementedBy` → `implemented by`
 
 **Expanded form** (when custom label needed):
+
 ```yaml
 inverse:
   id: addressedBy
-  label: "is addressed by"  # Custom label
+  label: "is addressed by" # Custom label
 ```
 
 ### Cardinality Constraints
@@ -247,8 +255,8 @@ relations:
     label: implements
     from: [solution]
     to: [decision]
-    source_min: 1    # Every solution must implement at least one decision
-    target_max: 1    # Each decision can only be implemented by one solution
+    source_min: 1 # Every solution must implement at least one decision
+    target_max: 1 # Each decision can only be implemented by one solution
 ```
 
 Check violations with:
@@ -428,7 +436,7 @@ entities:
   requirement:
     label: Requirement
     aliases: [req]
-    id_patterns: ["REQ-", "FR-", "NFR-"]  # Functional and non-functional
+    id_patterns: ["REQ-", "FR-", "NFR-"] # Functional and non-functional
 ```
 
 ## After Modifying the Metamodel
@@ -477,15 +485,15 @@ rela list control --where "status=implemented" --where "applicability=applicable
 
 ### Filter Operators
 
-| Operator | Description | Supported Types |
-|----------|-------------|-----------------|
-| `=` | Equal (exact match or glob) | All types |
-| `!=` | Not equal | All types |
-| `<` | Less than | `date`, `integer` |
-| `<=` | Less than or equal | `date`, `integer` |
-| `>` | Greater than | `date`, `integer` |
-| `>=` | Greater than or equal | `date`, `integer` |
-| `=~` | Regex match | `string` |
+| Operator | Description                 | Supported Types   |
+| -------- | --------------------------- | ----------------- |
+| `=`      | Equal (exact match or glob) | All types         |
+| `!=`     | Not equal                   | All types         |
+| `<`      | Less than                   | `date`, `integer` |
+| `<=`     | Less than or equal          | `date`, `integer` |
+| `>`      | Greater than                | `date`, `integer` |
+| `>=`     | Greater than or equal       | `date`, `integer` |
+| `=~`     | Regex match                 | `string`          |
 
 ### Error Handling
 
@@ -525,6 +533,7 @@ rela list control --sort id
 ```
 
 Sorting is type-aware:
+
 - `string`, `enum`: Lexicographic (alphabetical)
 - `date`: Chronological
 - `integer`: Numeric
@@ -534,20 +543,21 @@ Entities with missing values for the sort property are placed at the end.
 
 ## Custom Validation Rules
 
-Define validation rules to enforce business constraints on your entities. Validation rules use the same filter syntax as `--where` filters.
+Define validation rules to enforce business constraints on your entities.
+Validation rules use the same filter syntax as `--where` filters.
 
 ### Validation Rule Structure
 
 ```yaml
 validations:
-  - name: rule-identifier        # Unique name for the rule
+  - name: rule-identifier # Unique name for the rule
     description: "Human-readable description shown in output"
-    entity_type: requirement     # Optional: limit to specific type
-    when:                        # Optional: IF these conditions match...
+    entity_type: requirement # Optional: limit to specific type
+    when: # Optional: IF these conditions match...
       - "status=accepted"
-    then:                        # THEN these must be true
+    then: # THEN these must be true
       - "priority!="
-    severity: error              # Optional: "error" or "warning" (default)
+    severity: error # Optional: "error" or "warning" (default)
 ```
 
 ### How Validation Rules Work
@@ -602,15 +612,15 @@ validations:
 
 Validation rules support all the same operators as `--where` filters:
 
-| Operator | Example | Description |
-|----------|---------|-------------|
-| `=` | `status=accepted` | Equals (supports glob patterns with `*`) |
-| `!=` | `owner!=` | Not equals (use empty value to check "has value") |
-| `<` | `risk_score<5` | Less than (dates, integers) |
-| `<=` | `deadline<=2025-12-31` | Less than or equal |
-| `>` | `priority>low` | Greater than |
-| `>=` | `created>=2025-01-01` | Greater than or equal |
-| `=~` | `title=~^ADR-\\d+` | Regex match (strings) |
+| Operator | Example                | Description                                       |
+| -------- | ---------------------- | ------------------------------------------------- |
+| `=`      | `status=accepted`      | Equals (supports glob patterns with `*`)          |
+| `!=`     | `owner!=`              | Not equals (use empty value to check "has value") |
+| `<`      | `risk_score<5`         | Less than (dates, integers)                       |
+| `<=`     | `deadline<=2025-12-31` | Less than or equal                                |
+| `>`      | `priority>low`         | Greater than                                      |
+| `>=`     | `created>=2025-01-01`  | Greater than or equal                             |
+| `=~`     | `title=~^ADR-\\d+`     | Regex match (strings)                             |
 
 ### Running Validations
 
@@ -624,7 +634,7 @@ rela analyze all
 
 ### Validation Output
 
-```
+```text
 $ rela analyze validations
 ✗ Accepted requirements must have a priority assigned (2):
   REQ-003: User authentication
