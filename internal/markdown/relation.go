@@ -27,6 +27,7 @@ func ReadRelation(path string) (*model.Relation, error) {
 		From:     doc.GetString("from"),
 		Type:     doc.GetString("relation"),
 		To:       doc.GetString("to"),
+		Content:  doc.Content,
 		FilePath: path,
 	}
 
@@ -59,7 +60,7 @@ func WriteRelation(relation *model.Relation, path string) error {
 		frontmatter[key] = value
 	}
 
-	content, err := FormatDocument(frontmatter, "")
+	content, err := FormatDocument(frontmatter, relation.Content)
 	if err != nil {
 		return err
 	}
