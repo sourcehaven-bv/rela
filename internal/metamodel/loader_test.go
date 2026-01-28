@@ -54,7 +54,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       title:
         type: string
@@ -71,7 +71,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       id:
         type: string
@@ -88,7 +88,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       type:
         type: string
@@ -105,13 +105,13 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       title:
         type: string
   requirement:
     label: Requirement
-    id_patterns: ["REQ-"]
+    id_prefix: "REQ-"
     properties:
       id:
         type: string
@@ -204,7 +204,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       " id":
         type: string
@@ -221,7 +221,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       "id ":
         type: string
@@ -238,7 +238,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       " id ":
         type: string
@@ -255,7 +255,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       " type":
         type: string
@@ -272,7 +272,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       "type ":
         type: string
@@ -289,7 +289,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       "   ":
         type: string
@@ -306,7 +306,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       "some property":
         type: string
@@ -322,7 +322,7 @@ version: "1.0"
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       "	id":
         type: string
@@ -385,7 +385,7 @@ func TestLoad(t *testing.T) {
 entities:
   task:
     label: Task
-    id_patterns: ["TASK-"]
+    id_prefix: "TASK-"
     properties:
       title:
         type: string

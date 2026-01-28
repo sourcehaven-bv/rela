@@ -16,16 +16,16 @@ func createTestApp() *App {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":  {Type: "string", Required: true},
 					"status": {Type: "string", Required: false},
 				},
 			},
 			"decision": {
-				Label:      "Decision",
-				IDPatterns: []string{"DEC-"},
+				Label:    "Decision",
+				IDPrefix: "DEC-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":  {Type: "string", Required: true},
 					"status": {Type: "string", Required: false},
@@ -411,8 +411,8 @@ func TestBrowserModel_ViewEntitiesEmpty(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 			},
 		},
 	}

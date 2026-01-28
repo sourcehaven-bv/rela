@@ -253,11 +253,12 @@ func (c *CreateModel) createEntity(app *App) (tea.Model, tea.Cmd) {
 	}
 
 	// Generate ID
-	if len(entityDef.IDPatterns) == 0 {
-		return app, SetMessage("No ID patterns for type", true)
+	prefixes := entityDef.GetIDPrefixes()
+	if len(prefixes) == 0 {
+		return app, SetMessage("No ID prefixes for type", true)
 	}
 
-	prefix := entityDef.IDPatterns[0]
+	prefix := prefixes[0]
 	existingIDs := app.graph.AllIDs()
 	entityID := mdmodel.GenerateNextID(existingIDs, prefix)
 
