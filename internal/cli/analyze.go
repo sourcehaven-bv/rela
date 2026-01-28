@@ -97,9 +97,9 @@ since they use manually-specified IDs that are not expected to be sequential.`,
 		stringIDPrefixes := make(map[string]bool)
 		for _, entityDef := range meta.Entities {
 			if entityDef.IsStringID() {
-				for _, pattern := range entityDef.IDPatterns {
+				for _, idPrefix := range entityDef.GetIDPrefixes() {
 					// Normalize prefix (remove trailing dash if present)
-					prefix := strings.TrimSuffix(pattern, "-")
+					prefix := strings.TrimSuffix(idPrefix, "-")
 					stringIDPrefixes[prefix] = true
 				}
 			}
@@ -218,8 +218,8 @@ var analyzeCardinalityCmd = &cobra.Command{
 						if count < *relDef.TargetMin {
 							// Get the inverse relation name for the message if available
 							relLabel := relName
-							if relDef.Inverse != nil && relDef.Inverse.Name != "" {
-								relLabel = relDef.Inverse.Name
+							if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
+								relLabel = relDef.Inverse.GetID()
 							}
 							out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
 								e.ID, *relDef.TargetMin, relLabel, count)
@@ -243,8 +243,8 @@ var analyzeCardinalityCmd = &cobra.Command{
 						if count > *relDef.TargetMax {
 							// Get the inverse relation name for the message if available
 							relLabel := relName
-							if relDef.Inverse != nil && relDef.Inverse.Name != "" {
-								relLabel = relDef.Inverse.Name
+							if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
+								relLabel = relDef.Inverse.GetID()
 							}
 							out.WriteWarning("%s has more than %d '%s' relation(s): %d",
 								e.ID, *relDef.TargetMax, relLabel, count)
@@ -634,8 +634,8 @@ var analyzeAllCmd = &cobra.Command{
 		stringIDPrefixes := make(map[string]bool)
 		for _, entityDef := range meta.Entities {
 			if entityDef.IsStringID() {
-				for _, pattern := range entityDef.IDPatterns {
-					prefix := strings.TrimSuffix(pattern, "-")
+				for _, idPrefix := range entityDef.GetIDPrefixes() {
+					prefix := strings.TrimSuffix(idPrefix, "-")
 					stringIDPrefixes[prefix] = true
 				}
 			}

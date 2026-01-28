@@ -71,7 +71,7 @@ func (m *MetamodelModel) load(app *App) {
 		m.entityTypes = append(m.entityTypes, entityTypeInfo{
 			name:       name,
 			label:      def.Label,
-			idPatterns: def.IDPatterns,
+			idPatterns: def.GetIDPrefixes(),
 			aliases:    def.Aliases,
 			properties: props,
 		})
@@ -85,7 +85,7 @@ func (m *MetamodelModel) load(app *App) {
 	for name, def := range app.metamodel.Relations {
 		inverse := ""
 		if def.Inverse != nil {
-			inverse = def.Inverse.Name
+			inverse = def.Inverse.GetID()
 		}
 
 		m.relations = append(m.relations, relationInfo{
@@ -207,7 +207,7 @@ func (m *MetamodelModel) View(_, _ int) string {
 			// Show details if selected
 			if i == m.entityIndex {
 				sb.WriteString(fmt.Sprintf("    %s: %s\n",
-					labelStyle.Render("ID Patterns"),
+					labelStyle.Render("ID Prefixes"),
 					detailStyle.Render(strings.Join(et.idPatterns, ", "))))
 
 				if len(et.aliases) > 0 {

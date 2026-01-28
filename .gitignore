@@ -1,6 +1,8 @@
 bin/
 /rela
 coverage.out
+coverage.txt
+coverage.html
 test-logs/
 *.log
 
@@ -11,5 +13,4 @@ BUG-FIX-*.md
 test-tui*.sh
 tickets/
 other-ci.yml
-CLAUDE.md
 .claude/

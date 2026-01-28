@@ -14,19 +14,19 @@ func TestIssue1_CollectAsTypeFiltering(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{
 			"bouwblok": {
 				Label:      "Bouwblok",
-				IDPatterns: []string{"BB-"},
+				IDPrefixes: []string{"BB-"},
 			},
 			"function": {
 				Label:      "Function",
-				IDPatterns: []string{"FUNC-"},
+				IDPrefixes: []string{"FUNC-"},
 			},
 			"usecase": {
 				Label:      "Use Case",
-				IDPatterns: []string{"UC-"},
+				IDPrefixes: []string{"UC-"},
 			},
 			"scenario": {
 				Label:      "Scenario",
-				IDPatterns: []string{"SC-"},
+				IDPrefixes: []string{"SC-"},
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{
@@ -133,11 +133,11 @@ func TestIssue2_FilterExpand(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
 				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				IDPrefixes: []string{"REQ-"},
 			},
 			"document": {
 				Label:      "Document",
-				IDPatterns: []string{"DOC-"},
+				IDPrefixes: []string{"DOC-"},
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{
@@ -241,15 +241,15 @@ func TestIssue3_MultiPassTraversal(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{
 			"persona": {
 				Label:      "Persona",
-				IDPatterns: []string{"PER-"},
+				IDPrefixes: []string{"PER-"},
 			},
 			"function": {
 				Label:      "Function",
-				IDPatterns: []string{"FUNC-"},
+				IDPrefixes: []string{"FUNC-"},
 			},
 			"component": {
 				Label:      "Component",
-				IDPatterns: []string{"COMP-"},
+				IDPrefixes: []string{"COMP-"},
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{

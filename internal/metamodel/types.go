@@ -66,8 +66,9 @@ type EntityDef struct {
 	LabelPlural string                 `yaml:"label_plural,omitempty"`
 	Plural      string                 `yaml:"plural,omitempty"` // Used for directory names (e.g., "policies" for "policy")
 	Aliases     []string               `yaml:"aliases,omitempty"`
-	IDType      string                 `yaml:"id_type,omitempty"` // "sequential" (default) or "string"
-	IDPatterns  []string               `yaml:"id_patterns"`
+	IDType      string                 `yaml:"id_type,omitempty"`     // "auto" (default) or "manual"
+	IDPrefix    string                 `yaml:"id_prefix,omitempty"`   // Single ID prefix (sugar for single-element id_prefixes)
+	IDPrefixes  []string               `yaml:"id_prefixes,omitempty"` // Multiple ID prefixes
 	RDFType     string                 `yaml:"rdf_type,omitempty"`
 	Properties  map[string]PropertyDef `yaml:"properties"`
 	Color       string                 `yaml:"color,omitempty"`
@@ -95,9 +96,49 @@ const (
 
 // ID types for entities
 const (
-	IDTypeSequential = "sequential" // IDs are auto-generated with numeric suffix (e.g., REQ-001)
-	IDTypeString     = "string"     // IDs are manually specified strings (e.g., auth-module)
+	// New canonical values
+	IDTypeAuto   = "auto"   // IDs are auto-generated with numeric suffix (e.g., REQ-001)
+	IDTypeManual = "manual" // IDs are manually specified strings (e.g., auth-module)
+
+	// Deprecated aliases (still accepted for backwards compatibility, but will trigger migration warning)
+	IDTypeSequential = "sequential" // Deprecated: use "auto" instead
+	IDTypeString     = "string"     // Deprecated: use "manual" instead
 )
+
+// IsValidIDType returns true if the given id_type value is valid.
+// Accepts both new values (auto, manual) and deprecated aliases (sequential, string).
+func IsValidIDType(idType string) bool {
+	switch idType {
+	case IDTypeAuto, IDTypeManual, IDTypeSequential, IDTypeString, "":
+		return true
+	}
+	return false
+}
+
+// IsDeprecatedIDType returns true if the id_type uses deprecated syntax.
+func IsDeprecatedIDType(idType string) bool {
+	return idType == IDTypeSequential || idType == IDTypeString
+}
+
+// NormalizeIDType converts an id_type value to its canonical form.
+// Maps deprecated values to their new equivalents.
+func NormalizeIDType(idType string) string {
+	switch idType {
+	case IDTypeManual, IDTypeString:
+		return IDTypeManual
+	case IDTypeAuto, IDTypeSequential, "":
+		return IDTypeAuto
+	default:
+		return idType // Return as-is for invalid values (caught by validation)
+	}
+}
+
+// ReservedPropertyNames contains property names that cannot be used in metamodel definitions
+// because they conflict with built-in entity fields.
+var ReservedPropertyNames = map[string]bool{
+	"id":   true, // Entity.ID
+	"type": true, // Entity.Type
+}
 
 // DefaultDateFormat is the default format for date properties (ISO 8601)
 const DefaultDateFormat = "2006-01-02"
@@ -133,10 +174,84 @@ type RelationDef struct {
 	TargetMax   *int        `yaml:"target_max,omitempty"`
 }
 
-// InverseDef defines the inverse of a relation
+// InverseDef defines the inverse of a relation.
+// Can be unmarshaled from either a simple string (inverse identifier only)
+// or an object with id and label fields.
 type InverseDef struct {
-	Name  string `yaml:"name"`
-	Label string `yaml:"label"`
+	// ID is the identifier for the inverse relation (e.g., "addressedBy")
+	ID string `yaml:"id,omitempty"`
+
+	// Label is the display label for the inverse relation (e.g., "addressed by")
+	// If not specified, it's auto-derived from ID by converting camelCase to space-separated.
+	Label string `yaml:"label,omitempty"`
+}
+
+// GetID returns the inverse relation identifier
+func (i *InverseDef) GetID() string {
+	return i.ID
+}
+
+// GetLabel returns the display label, auto-deriving from ID if not specified
+func (i *InverseDef) GetLabel() string {
+	if i.Label != "" {
+		return i.Label
+	}
+	// Auto-derive from ID by converting camelCase to space-separated lowercase
+	if i.ID == "" {
+		return ""
+	}
+	return camelCaseToSpaced(i.ID)
+}
+
+// camelCaseToSpaced converts camelCase/PascalCase to space-separated lowercase.
+// Examples: "addressedBy" → "addressed by", "implementedBy" → "implemented by"
+func camelCaseToSpaced(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	const asciiCaseOffset = 'a' - 'A'   // 32, but as a named constant
+	result := make([]byte, 0, len(s)+4) // Extra space for inserted spaces
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		isUpper := c >= 'A' && c <= 'Z'
+
+		switch {
+		case i > 0 && isUpper:
+			// Insert space before uppercase letters (except at start) and convert to lowercase
+			result = append(result, ' ', c+asciiCaseOffset)
+		case isUpper:
+			// First character - just convert to lowercase
+			result = append(result, c+asciiCaseOffset)
+		default:
+			result = append(result, c)
+		}
+	}
+	return string(result)
+}
+
+// UnmarshalYAML allows InverseDef to be unmarshaled from either a string or an object.
+// String form: "addressedBy" (ID only, label auto-derived)
+// Object form: { id: "addressedBy", label: "addressed by" }
+func (i *InverseDef) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// First try to unmarshal as a string (simple form)
+	var simpleForm string
+	if err := unmarshal(&simpleForm); err == nil {
+		i.ID = simpleForm
+		// Label will be auto-derived by GetLabel()
+		return nil
+	}
+
+	// Try to unmarshal as an object (expanded form)
+	type inverseDefAlias InverseDef // Alias to avoid infinite recursion
+	var objectForm inverseDefAlias
+	if err := unmarshal(&objectForm); err != nil {
+		return err
+	}
+
+	*i = InverseDef(objectForm)
+	return nil
 }
 
 // GetPlural returns the plural label for an entity type
@@ -226,27 +341,48 @@ func (e *EntityDef) GetPrimaryProperty() string {
 	return ""
 }
 
-// GetIDType returns the ID type for this entity, defaulting to "sequential"
+// GetIDType returns the normalized ID type for this entity, defaulting to "auto".
+// Always returns the canonical value ("auto" or "manual"), even if deprecated syntax was used.
 func (e *EntityDef) GetIDType() string {
-	if e.IDType == "" {
-		return IDTypeSequential
-	}
-	return e.IDType
+	return NormalizeIDType(e.IDType)
 }
 
-// IsSequentialID returns true if this entity type uses sequential IDs
+// IsAutoID returns true if this entity type uses auto-generated IDs.
+func (e *EntityDef) IsAutoID() bool {
+	return e.GetIDType() == IDTypeAuto
+}
+
+// IsManualID returns true if this entity type uses manually-specified IDs.
+func (e *EntityDef) IsManualID() bool {
+	return e.GetIDType() == IDTypeManual
+}
+
+// IsSequentialID returns true if this entity type uses sequential IDs.
+// Deprecated: Use IsAutoID instead.
 func (e *EntityDef) IsSequentialID() bool {
-	return e.GetIDType() == IDTypeSequential
+	return e.IsAutoID()
 }
 
-// IsStringID returns true if this entity type uses string IDs
+// IsStringID returns true if this entity type uses string IDs.
+// Deprecated: Use IsManualID instead.
 func (e *EntityDef) IsStringID() bool {
-	return e.GetIDType() == IDTypeString
+	return e.IsManualID()
+}
+
+// GetIDPrefixes returns the effective ID prefixes for this entity type.
+// It normalizes id_prefix (singular) and id_prefixes (plural) into a single list.
+func (e *EntityDef) GetIDPrefixes() []string {
+	// If id_prefix is set (singular), return it as a single-element slice
+	if e.IDPrefix != "" {
+		return []string{e.IDPrefix}
+	}
+	// If id_prefixes is set (plural), return it
+	return e.IDPrefixes
 }
 
 // HasPattern checks if the entity type matches a given ID pattern
 func (e *EntityDef) HasPattern(pattern string) bool {
-	for _, p := range e.IDPatterns {
+	for _, p := range e.GetIDPrefixes() {
 		if p == pattern {
 			return true
 		}
@@ -254,10 +390,10 @@ func (e *EntityDef) HasPattern(pattern string) bool {
 	return false
 }
 
-// MatchesID checks if an ID matches any of this entity type's patterns
+// MatchesID checks if an ID matches any of this entity type's prefixes
 func (e *EntityDef) MatchesID(id string) bool {
-	for _, pattern := range e.IDPatterns {
-		if len(id) >= len(pattern) && id[:len(pattern)] == pattern {
+	for _, prefix := range e.GetIDPrefixes() {
+		if len(id) >= len(prefix) && id[:len(prefix)] == prefix {
 			return true
 		}
 	}
@@ -394,7 +530,35 @@ type InvalidIDTypeError struct {
 }
 
 func (e *InvalidIDTypeError) Error() string {
-	return "invalid id_type for entity " + e.EntityType + ": " + e.IDType + " (must be 'sequential' or 'string')"
+	return "invalid id_type for entity " + e.EntityType + ": " + e.IDType + " (must be 'auto' or 'manual')"
+}
+
+type ReservedPropertyError struct {
+	EntityType   string
+	PropertyName string
+}
+
+func (e *ReservedPropertyError) Error() string {
+	return "entity " + e.EntityType + ": property \"" + e.PropertyName + "\" is reserved and cannot be used"
+}
+
+// WhitespacePropertyError is returned when a property name has leading or trailing whitespace
+type WhitespacePropertyError struct {
+	EntityType   string
+	PropertyName string
+}
+
+func (e *WhitespacePropertyError) Error() string {
+	return "entity " + e.EntityType + ": property name \"" + e.PropertyName + "\" has leading or trailing whitespace"
+}
+
+// ConflictingIDPrefixError is returned when both id_prefix and id_prefixes are specified
+type ConflictingIDPrefixError struct {
+	EntityType string
+}
+
+func (e *ConflictingIDPrefixError) Error() string {
+	return "entity " + e.EntityType + " specifies both id_prefix and id_prefixes; use only one"
 }
 
 // Schema output interface methods for Metamodel
@@ -436,9 +600,10 @@ func (e *EntityDef) GetAliases() []string {
 	return e.Aliases
 }
 
-// GetIDPatterns returns the entity ID patterns
+// GetIDPatterns returns the entity ID prefixes.
+// Deprecated: Use GetIDPrefixes instead.
 func (e *EntityDef) GetIDPatterns() []string {
-	return e.IDPatterns
+	return e.GetIDPrefixes()
 }
 
 // GetProperties returns the entity properties for JSON output

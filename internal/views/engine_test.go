@@ -14,14 +14,14 @@ func TestEngineExecute(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{
 			"document": {
 				Label:      "Document",
-				IDPatterns: []string{"DOC-"},
+				IDPrefixes: []string{"DOC-"},
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
 			},
 			"section": {
 				Label:      "Section",
-				IDPatterns: []string{"SEC-"},
+				IDPrefixes: []string{"SEC-"},
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
@@ -138,7 +138,7 @@ func TestEngineTraverseRecursive(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{
 			"component": {
 				Label:      "Component",
-				IDPatterns: []string{"COMP-"},
+				IDPrefixes: []string{"COMP-"},
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
@@ -228,7 +228,7 @@ func TestViewDefValidation(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{
 			"document": {
 				Label:      "Document",
-				IDPatterns: []string{"DOC-"},
+				IDPrefixes: []string{"DOC-"},
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{
