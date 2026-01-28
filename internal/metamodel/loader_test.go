@@ -574,7 +574,7 @@ func TestInvalidIDTypeError_Error(t *testing.T) {
 		IDType:     "invalid",
 	}
 
-	expected := `invalid id_type for entity task: invalid (must be 'sequential' or 'string')`
+	expected := `invalid id_type for entity task: invalid (must be 'auto' or 'manual')`
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
