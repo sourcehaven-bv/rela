@@ -121,8 +121,20 @@ func (h *HelpModel) View(_, height int) string {
 		{
 			title: "Search",
 			items: [][2]string{
-				{"Enter", "Search / Open result"},
+				{"type", "Live search (auto-updates)"},
+				{"Enter", "Open selected result"},
 				{"Ctrl+U", "Clear search"},
+				{"↑/↓", "Navigate results"},
+			},
+		},
+		{
+			title: "Search Syntax",
+			items: [][2]string{
+				{"type:req", "Filter by entity type"},
+				{"prop:status=draft", "Property filter (=, !=, <, <=, >, >=)"},
+				{"status:published", "Status shortcut"},
+				{"\"exact phrase\"", "Exact phrase match"},
+				{"word1 word2", "Free text (AND logic)"},
 			},
 		},
 		{

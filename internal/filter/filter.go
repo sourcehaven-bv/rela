@@ -152,3 +152,67 @@ func GlobToRegex(glob string) string {
 	result.WriteString("$")
 	return result.String()
 }
+
+// MatchValue checks if a value matches the filter
+func MatchValue(value interface{}, f *Filter) bool {
+	// Convert value to string for comparison
+	var strValue string
+	switch v := value.(type) {
+	case string:
+		strValue = v
+	case int, int32, int64:
+		strValue = fmt.Sprintf("%d", v)
+	case float32, float64:
+		strValue = fmt.Sprintf("%f", v)
+	case bool:
+		strValue = fmt.Sprintf("%t", v)
+	default:
+		strValue = fmt.Sprintf("%v", v)
+	}
+
+	switch f.Operator {
+	case OpEqual:
+		if f.IsGlob {
+			// Convert glob to regex and match
+			pattern := GlobToRegex(f.Value)
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				return false
+			}
+			return re.MatchString(strValue)
+		}
+		return strValue == f.Value
+
+	case OpNotEqual:
+		if f.IsGlob {
+			pattern := GlobToRegex(f.Value)
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				return false
+			}
+			return !re.MatchString(strValue)
+		}
+		return strValue != f.Value
+
+	case OpLess:
+		return strValue < f.Value
+
+	case OpLessEqual:
+		return strValue <= f.Value
+
+	case OpGreater:
+		return strValue > f.Value
+
+	case OpGreaterEqual:
+		return strValue >= f.Value
+
+	case OpRegex:
+		if f.Regex == nil {
+			return false
+		}
+		return f.Regex.MatchString(strValue)
+
+	default:
+		return false
+	}
+}

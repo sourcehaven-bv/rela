@@ -1,0 +1,40 @@
+ RELA  │  Search                                                                                                     /tmp/rela-test-project
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Search
+
+
+╭──────────────────────────────────────────────────────────────────────╮
+│ type:requirement _                                                   │
+╰──────────────────────────────────────────────────────────────────────╯
+Type to search (live)
+
+Found 36 results:
+
+► REQ-011 Requirement 11: ultrasanguine interst... (requirement)
+  REQ-010 Requirement 10: aitch overembellishme... (requirement)
+  REQ-024 Requirement 24: misstep branchiae und... (requirement)
+  REQ-026 Requirement 26: tarantulated Zionite ... (requirement)
+  REQ-018 Requirement 18: nightfall lachrymosit... (requirement)
+  REQ-029 Requirement 29: nonliability lighting... (requirement)
+  REQ-001 User Authentication (requirement)
+  REQ-003 Database Performance (requirement)
+  REQ-034 Requirement 34: neurobiotaxis covetou... (requirement)
+  REQ-007 Requirement 7: bullan induciae scruti... (requirement)
+  REQ-014 Requirement 14: Magnus Deuteromycetes... (requirement)
+  REQ-023 Requirement 23: abraxas outshower nol... (requirement)
+  REQ-002 REST API Implementation (requirement)
+  REQ-020 Requirement 20: pinguefaction sulfoca... (requirement)
+  REQ-022 Requirement 22: counterjumper quadrup... (requirement)
+  REQ-027 Requirement 27: utriculosaccular dere... (requirement)
+  REQ-028 Requirement 28: yttria scrapped heads... (requirement)
+  REQ-012 Requirement 12: afunctional cervicisp... (requirement)
+  REQ-032 Requirement 32: Cellfalcicula Uncinul... (requirement)
+  REQ-005 Requirement 5: prefer heapy flopover (requirement)
+  REQ-031 Requirement 31: suavastika compresbyt... (requirement)
+  REQ-015 Requirement 15: upbuoyance elfland Lu... (requirement)
+
+[1/36]
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ [↑/↓] navigate  [enter] open  [ctrl+u] clear  [esc] back  [q] quit  [?] help
+
+

@@ -220,3 +220,98 @@ func TestOperatorString(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		value interface{}
+		op    Operator
+		want  string
+		match bool
+	}{
+		{
+			name:  "string equality",
+			value: "draft",
+			op:    OpEqual,
+			want:  "draft",
+			match: true,
+		},
+		{
+			name:  "string not equal - match",
+			value: "draft",
+			op:    OpNotEqual,
+			want:  "published",
+			match: true,
+		},
+		{
+			name:  "string not equal - no match",
+			value: "draft",
+			op:    OpNotEqual,
+			want:  "draft",
+			match: false,
+		},
+		{
+			name:  "integer equality",
+			value: 42,
+			op:    OpEqual,
+			want:  "42",
+			match: true,
+		},
+		{
+			name:  "bool equality",
+			value: true,
+			op:    OpEqual,
+			want:  "true",
+			match: true,
+		},
+		{
+			name:  "float equality",
+			value: 3.14,
+			op:    OpEqual,
+			want:  "3.140000",
+			match: true,
+		},
+		{
+			name:  "string less than",
+			value: "aaa",
+			op:    OpLess,
+			want:  "bbb",
+			match: true,
+		},
+		{
+			name:  "string greater than",
+			value: "bbb",
+			op:    OpGreater,
+			want:  "aaa",
+			match: true,
+		},
+		{
+			name:  "string less than or equal",
+			value: "aaa",
+			op:    OpLessEqual,
+			want:  "aaa",
+			match: true,
+		},
+		{
+			name:  "string greater than or equal",
+			value: "bbb",
+			op:    OpGreaterEqual,
+			want:  "bbb",
+			match: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &Filter{
+				Property: "test",
+				Operator: tt.op,
+				Value:    tt.want,
+			}
+			got := MatchValue(tt.value, f)
+			if got != tt.match {
+				t.Errorf("MatchValue() = %v, want %v", got, tt.match)
+			}
+		})
+	}
+}

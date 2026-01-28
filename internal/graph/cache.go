@@ -84,6 +84,12 @@ func (g *Graph) LoadCache(path string) error {
 		g.incoming[edge.To] = append(g.incoming[edge.To], edge)
 	}
 
+	// Rebuild property index from loaded nodes
+	g.propertyIndex = make(map[string]map[string]int)
+	for _, node := range g.nodes {
+		g.indexEntityProperties(node)
+	}
+
 	return nil
 }
 

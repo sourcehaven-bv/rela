@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -8,20 +9,22 @@ import (
 
 // Graph represents an in-memory graph of entities and relations
 type Graph struct {
-	nodes    map[string]*model.Entity     // ID -> Entity
-	edges    []*model.Relation            // All relations
-	outgoing map[string][]*model.Relation // sourceID -> outgoing relations
-	incoming map[string][]*model.Relation // targetID -> incoming relations
-	mu       sync.RWMutex
+	nodes         map[string]*model.Entity     // ID -> Entity
+	edges         []*model.Relation            // All relations
+	outgoing      map[string][]*model.Relation // sourceID -> outgoing relations
+	incoming      map[string][]*model.Relation // targetID -> incoming relations
+	propertyIndex map[string]map[string]int    // propertyName -> value -> count
+	mu            sync.RWMutex
 }
 
 // New creates a new empty graph
 func New() *Graph {
 	return &Graph{
-		nodes:    make(map[string]*model.Entity),
-		edges:    make([]*model.Relation, 0),
-		outgoing: make(map[string][]*model.Relation),
-		incoming: make(map[string][]*model.Relation),
+		nodes:         make(map[string]*model.Entity),
+		edges:         make([]*model.Relation, 0),
+		outgoing:      make(map[string][]*model.Relation),
+		incoming:      make(map[string][]*model.Relation),
+		propertyIndex: make(map[string]map[string]int),
 	}
 }
 
@@ -30,6 +33,71 @@ func (g *Graph) AddNode(entity *model.Entity) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.nodes[entity.ID] = entity
+	g.indexEntityProperties(entity)
+}
+
+// indexEntityProperties adds entity property values to the property index
+func (g *Graph) indexEntityProperties(entity *model.Entity) {
+	for propName, value := range entity.Properties {
+		strValue := g.valueToString(value)
+		if strValue == "" {
+			continue
+		}
+
+		// Initialize map for this property if needed
+		if g.propertyIndex[propName] == nil {
+			g.propertyIndex[propName] = make(map[string]int)
+		}
+
+		// Increment count for this value
+		g.propertyIndex[propName][strValue]++
+	}
+}
+
+// unindexEntityProperties removes entity property values from the property index
+func (g *Graph) unindexEntityProperties(entity *model.Entity) {
+	for propName, value := range entity.Properties {
+		strValue := g.valueToString(value)
+		if strValue == "" {
+			continue
+		}
+
+		valMap, ok := g.propertyIndex[propName]
+		if !ok {
+			continue
+		}
+
+		count, exists := valMap[strValue]
+		if !exists {
+			continue
+		}
+
+		if count <= 1 {
+			delete(valMap, strValue)
+			// Clean up empty maps
+			if len(valMap) == 0 {
+				delete(g.propertyIndex, propName)
+			}
+		} else {
+			valMap[strValue]--
+		}
+	}
+}
+
+// valueToString converts a property value to string
+func (g *Graph) valueToString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case int, int32, int64:
+		return fmt.Sprintf("%d", v)
+	case float32, float64:
+		return fmt.Sprintf("%f", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // UpdateNode updates an existing entity in the graph without affecting its relations.
@@ -37,10 +105,20 @@ func (g *Graph) AddNode(entity *model.Entity) {
 func (g *Graph) UpdateNode(entity *model.Entity) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if _, ok := g.nodes[entity.ID]; !ok {
+	oldEntity, ok := g.nodes[entity.ID]
+	if !ok {
 		return false
 	}
+
+	// Remove old property values from index
+	g.unindexEntityProperties(oldEntity)
+
+	// Update node
 	g.nodes[entity.ID] = entity
+
+	// Add new property values to index
+	g.indexEntityProperties(entity)
+
 	return true
 }
 
@@ -57,9 +135,13 @@ func (g *Graph) RemoveNode(id string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if _, ok := g.nodes[id]; !ok {
+	entity, ok := g.nodes[id]
+	if !ok {
 		return false
 	}
+
+	// Remove property values from index
+	g.unindexEntityProperties(entity)
 
 	delete(g.nodes, id)
 
@@ -235,4 +317,50 @@ func (g *Graph) rebuildAdjacency() {
 		g.outgoing[edge.From] = append(g.outgoing[edge.From], edge)
 		g.incoming[edge.To] = append(g.incoming[edge.To], edge)
 	}
+}
+
+// PropertyValuesByFrequency holds a property value and its frequency
+type PropertyValuesByFrequency struct {
+	Value string
+	Count int
+}
+
+// GetPropertyValues returns property values sorted by frequency (most common first)
+func (g *Graph) GetPropertyValues(propertyName string, limit int) []string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	values, ok := g.propertyIndex[propertyName]
+	if !ok || len(values) == 0 {
+		return nil
+	}
+
+	// Convert map to slice for sorting
+	type valueCount struct {
+		value string
+		count int
+	}
+	sorted := make([]valueCount, 0, len(values))
+	for val, count := range values {
+		sorted = append(sorted, valueCount{value: val, count: count})
+	}
+
+	// Sort by count descending, then by value alphabetically
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j].count > sorted[i].count ||
+				(sorted[j].count == sorted[i].count && sorted[j].value < sorted[i].value) {
+
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	// Extract values up to limit
+	result := make([]string, 0, limit)
+	for i := 0; i < len(sorted) && i < limit; i++ {
+		result = append(result, sorted[i].value)
+	}
+
+	return result
 }
