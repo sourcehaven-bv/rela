@@ -344,6 +344,7 @@ func (g *Graph) GetPropertyValues(propertyName string, limit int) []string {
 		for j := i + 1; j < len(sorted); j++ {
 			if sorted[j].count > sorted[i].count ||
 				(sorted[j].count == sorted[i].count && sorted[j].value < sorted[i].value) {
+
 				sorted[i], sorted[j] = sorted[j], sorted[i]
 			}
 		}
