@@ -19,6 +19,9 @@ const (
 	LevelEntities
 )
 
+// pageSize is the number of items to jump for PageUp/PageDown
+const pageSize = 10
+
 // BrowserModel is the main entity browser screen
 type BrowserModel struct {
 	level        BrowserLevel
@@ -90,6 +93,16 @@ func (b *BrowserModel) updateTypes(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd
 		if b.typeIndex > 0 {
 			b.typeIndex--
 		}
+	case "pgdown", "ctrl+d":
+		b.typeIndex += pageSize
+		if b.typeIndex > len(b.types)-1 {
+			b.typeIndex = len(b.types) - 1
+		}
+	case "pgup", "ctrl+u":
+		b.typeIndex -= pageSize
+		if b.typeIndex < 0 {
+			b.typeIndex = 0
+		}
 	case "enter":
 		if b.typeIndex < len(b.types) {
 			b.loadEntities(app, b.types[b.typeIndex].name)
@@ -135,6 +148,16 @@ func (b *BrowserModel) updateEntities(app *App, msg tea.KeyMsg) (tea.Model, tea.
 	case "k", "up":
 		if b.entityIndex > 0 {
 			b.entityIndex--
+		}
+	case "pgdown", "ctrl+d":
+		b.entityIndex += pageSize
+		if b.entityIndex > len(b.entities)-1 {
+			b.entityIndex = len(b.entities) - 1
+		}
+	case "pgup", "ctrl+u":
+		b.entityIndex -= pageSize
+		if b.entityIndex < 0 {
+			b.entityIndex = 0
 		}
 	case "enter":
 		// Browse all entities of this type with scope navigation
@@ -224,7 +247,7 @@ func (b *BrowserModel) View(width, height int) string {
 	return ""
 }
 
-func (b *BrowserModel) viewTypes(_, _ int) string {
+func (b *BrowserModel) viewTypes(_, height int) string {
 	var sb strings.Builder
 
 	titleStyle := lipgloss.NewStyle().
@@ -245,7 +268,30 @@ func (b *BrowserModel) viewTypes(_, _ int) string {
 	sb.WriteString(titleStyle.Render("Entity Types"))
 	sb.WriteString("\n\n")
 
-	for i, t := range b.types {
+	// Calculate visible range for scrolling
+	// Header takes ~3 lines (title + margin + blank), scroll indicator takes 2 lines
+	headerLines := 3
+	scrollIndicatorLines := 2
+	needsScroll := len(b.types) > height-headerLines
+	visibleCount := height - headerLines
+	if needsScroll {
+		visibleCount -= scrollIndicatorLines
+	}
+	if visibleCount < 1 {
+		visibleCount = 1
+	}
+
+	startIdx := 0
+	if b.typeIndex >= visibleCount {
+		startIdx = b.typeIndex - visibleCount + 1
+	}
+	endIdx := startIdx + visibleCount
+	if endIdx > len(b.types) {
+		endIdx = len(b.types)
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		t := b.types[i]
 		marker := "  "
 		style := normalStyle
 		if i == b.typeIndex {
@@ -256,6 +302,14 @@ func (b *BrowserModel) viewTypes(_, _ int) string {
 		line := fmt.Sprintf("%s%-20s", marker, t.label)
 		count := countStyle.Render(fmt.Sprintf("(%d)", t.count))
 		sb.WriteString(style.Render(line) + " " + count + "\n")
+	}
+
+	// Show scroll indicator
+	if needsScroll {
+		scrollInfo := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Render(fmt.Sprintf("\n[%d/%d]", b.typeIndex+1, len(b.types)))
+		sb.WriteString(scrollInfo)
 	}
 
 	return sb.String()
@@ -300,7 +354,14 @@ func (b *BrowserModel) viewEntities(_, height int) string {
 	}
 
 	// Calculate visible range for scrolling
-	visibleCount := height - 4
+	// Header takes ~3 lines (title + margin + blank), scroll indicator takes 2 lines
+	headerLines := 3
+	scrollIndicatorLines := 2
+	needsScroll := len(b.entities) > height-headerLines
+	visibleCount := height - headerLines
+	if needsScroll {
+		visibleCount -= scrollIndicatorLines
+	}
 	if visibleCount < 1 {
 		visibleCount = 1
 	}
@@ -340,7 +401,7 @@ func (b *BrowserModel) viewEntities(_, height int) string {
 	}
 
 	// Show scroll indicator
-	if len(b.entities) > visibleCount {
+	if needsScroll {
 		scrollInfo := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Render(fmt.Sprintf("\n[%d/%d]", b.entityIndex+1, len(b.entities)))
@@ -356,6 +417,7 @@ func (b *BrowserModel) Help() [][2]string {
 	case LevelTypes:
 		return [][2]string{
 			{"↑/↓", "navigate"},
+			{"PgUp/PgDn", "page"},
 			{"enter", "select"},
 			{"c", "create"},
 			{"/", "search"},
@@ -365,6 +427,7 @@ func (b *BrowserModel) Help() [][2]string {
 	case LevelEntities:
 		return [][2]string{
 			{"↑/↓", "navigate"},
+			{"PgUp/PgDn", "page"},
 			{"enter", "browse"},
 			{"←", "back"},
 			{"c", "create"},
