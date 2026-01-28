@@ -1110,3 +1110,48 @@ func TestErrorTypes(t *testing.T) {
 		}
 	})
 }
+
+func TestParse_ValidationWhenThen(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_patterns: ["REQ-"]
+    properties:
+      status:
+        type: string
+      priority:
+        type: string
+validations:
+  - name: accepted-needs-priority
+    description: "Accepted requirements must have priority"
+    entity_type: requirement
+    when:
+      - "status=accepted"
+    then:
+      - "priority!="
+    severity: error
+`
+	m, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	if len(m.Validations) != 1 {
+		t.Fatalf("expected 1 validation, got %d", len(m.Validations))
+	}
+
+	rule := m.Validations[0]
+	if rule.Name != "accepted-needs-priority" {
+		t.Errorf("Name = %q, want %q", rule.Name, "accepted-needs-priority")
+	}
+
+	if len(rule.When) != 1 || rule.When[0] != "status=accepted" {
+		t.Errorf("When = %v, want [\"status=accepted\"]", rule.When)
+	}
+
+	if len(rule.Then) != 1 || rule.Then[0] != "priority!=" {
+		t.Errorf("Then = %v, want [\"priority!=\"]", rule.Then)
+	}
+}

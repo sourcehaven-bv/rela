@@ -274,16 +274,16 @@ relations:
 #   - name: accepted-requirements-need-priority
 #     description: "Accepted requirements must have a priority assigned"
 #     entity_type: requirement
-#     match:
+#     when:                        # IF these conditions match...
 #       - "status=accepted"
-#     require:
+#     then:                        # THEN these must be true
 #       - "priority!="
 #     severity: error
 #
 #   - name: decisions-need-rationale
 #     description: "All decisions should have a rationale"
 #     entity_type: decision
-#     require:
+#     then:
 #       - "rationale!="
 #     severity: warning
 `
