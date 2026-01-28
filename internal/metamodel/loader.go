@@ -1,13 +1,33 @@
 package metamodel
 
 import (
+	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 )
+
+// validTopLevelKeys are the recognized top-level keys in a metamodel YAML file.
+var validTopLevelKeys = map[string]bool{
+	"version":     true,
+	"namespace":   true,
+	"types":       true,
+	"entities":    true,
+	"relations":   true,
+	"validations": true,
+}
+
+// knownTypos maps common misspellings to the correct key name.
+var knownTypos = map[string]string{
+	"entity":     "entities",
+	"type":       "types",
+	"relation":   "relations",
+	"validation": "validations",
+}
 
 // Load reads and parses a metamodel from a YAML file.
 // Returns a MigrationError if the file contains deprecated syntax that needs migration.
@@ -36,6 +56,11 @@ func Load(path string) (*Metamodel, error) {
 func Parse(data []byte) (*Metamodel, error) {
 	var m Metamodel
 	if err := yaml.Unmarshal(data, &m); err != nil {
+		return nil, humanizeYAMLError(err)
+	}
+
+	// Check for unknown/misspelled top-level keys
+	if err := checkUnknownKeys(data); err != nil {
 		return nil, err
 	}
 
@@ -46,43 +71,186 @@ func Parse(data []byte) (*Metamodel, error) {
 		}
 	}
 
-	// Build alias map and validate entity definitions
+	// Validate entity definitions (returns hard errors for structural issues)
+	if err := validateEntityStructure(&m); err != nil {
+		return nil, err
+	}
+
+	// Collect semantic validation errors so users see all problems at once
+	var validationErrors []string
+
+	if len(m.Entities) == 0 {
+		validationErrors = append(validationErrors, "metamodel has no entity types defined")
+	}
+
+	validationErrors = append(validationErrors, validateEntitySemantics(&m)...)
+	validationErrors = append(validationErrors, validateRelationReferences(&m)...)
+
+	if len(validationErrors) > 0 {
+		return nil, &SchemaValidationError{Errors: validationErrors}
+	}
+
+	return &m, nil
+}
+
+// validateEntityStructure checks for hard structural errors in entity definitions
+// (reserved names, whitespace, conflicting IDs) and builds the alias map.
+// Returns immediately on the first error found.
+func validateEntityStructure(m *Metamodel) error {
 	m.aliasMap = make(map[string]string)
+
 	for name, def := range m.Entities {
-		// Validate id_type if specified
 		if def.IDType != "" && def.IDType != IDTypeAuto && def.IDType != IDTypeManual {
-			return nil, &InvalidIDTypeError{EntityType: name, IDType: def.IDType}
+			return &InvalidIDTypeError{EntityType: name, IDType: def.IDType}
 		}
 
-		// Validate property names
 		for propName := range def.Properties {
-			// Reject property names with leading or trailing whitespace
-			// This prevents bypassing reserved name checks with " id" or "type " etc.
 			trimmedName := strings.TrimSpace(propName)
 			if trimmedName != propName {
-				return nil, &WhitespacePropertyError{EntityType: name, PropertyName: propName}
+				return &WhitespacePropertyError{EntityType: name, PropertyName: propName}
 			}
-
-			// Check for reserved property names
 			if ReservedPropertyNames[propName] {
-				return nil, &ReservedPropertyError{EntityType: name, PropertyName: propName}
+				return &ReservedPropertyError{EntityType: name, PropertyName: propName}
 			}
 		}
 
-		// Validate id_prefix/id_prefixes are not both specified
 		if def.IDPrefix != "" && len(def.IDPrefixes) > 0 {
-			return nil, &ConflictingIDPrefixError{EntityType: name}
+			return &ConflictingIDPrefixError{EntityType: name}
 		}
 
-		// Add lowercase name as self-reference
 		m.aliasMap[strings.ToLower(name)] = name
-		// Add all aliases
 		for _, alias := range def.Aliases {
 			m.aliasMap[strings.ToLower(alias)] = name
 		}
 	}
 
-	return &m, nil
+	return nil
+}
+
+// validateEntitySemantics collects semantic warnings/errors about entity definitions
+// (missing labels, properties, ID prefixes, unknown types).
+func validateEntitySemantics(m *Metamodel) []string {
+	var errs []string
+
+	entityNames := sortedKeys(m.Entities)
+	for _, name := range entityNames {
+		def := m.Entities[name]
+
+		if def.Label == "" {
+			errs = append(errs, fmt.Sprintf("entity %q: missing 'label'", name))
+		}
+		if len(def.Properties) == 0 {
+			errs = append(errs, fmt.Sprintf("entity %q: no properties defined", name))
+		}
+		if def.GetIDType() == IDTypeAuto && def.IDPrefix == "" && len(def.IDPrefixes) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: no ID prefix defined (set 'id_prefix' or 'id_prefixes', or use 'id_type: manual')", name))
+		}
+
+		for propName, propDef := range def.Properties {
+			if propDef.Type == "" {
+				errs = append(errs, fmt.Sprintf("entity %q: property %q has no type specified", name, propName))
+				continue
+			}
+			if !isKnownPropertyType(propDef.Type, m) {
+				errs = append(errs, fmt.Sprintf(
+					"entity %q: property %q has unknown type %q (not a built-in type and not defined in 'types')",
+					name, propName, propDef.Type))
+			}
+			if propDef.Type == PropertyTypeEnum && len(propDef.Values) == 0 {
+				errs = append(errs, fmt.Sprintf(
+					"entity %q: property %q is type \"enum\" but has no 'values' list", name, propName))
+			}
+		}
+	}
+
+	return errs
+}
+
+// validateRelationReferences checks that all entity types referenced in relations exist.
+func validateRelationReferences(m *Metamodel) []string {
+	var errs []string
+
+	relNames := sortedKeys(m.Relations)
+	for _, name := range relNames {
+		rel := m.Relations[name]
+		for _, fromType := range rel.From {
+			if _, ok := m.Entities[fromType]; !ok {
+				errs = append(errs, fmt.Sprintf(
+					"relation %q: references unknown entity type %q in 'from'", name, fromType))
+			}
+		}
+		for _, toType := range rel.To {
+			if _, ok := m.Entities[toType]; !ok {
+				errs = append(errs, fmt.Sprintf(
+					"relation %q: references unknown entity type %q in 'to'", name, toType))
+			}
+		}
+	}
+
+	return errs
+}
+
+// sortedKeys returns the keys of a map sorted alphabetically.
+// Works with any map type using a generic constraint would be ideal,
+// but we use interface{} maps here.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// isKnownPropertyType checks if a property type is valid (built-in, legacy, or custom).
+func isKnownPropertyType(typeName string, m *Metamodel) bool {
+	if IsBuiltinType(typeName) {
+		return true
+	}
+	// Legacy built-in types
+	if typeName == "status" || typeName == "priority" {
+		return true
+	}
+	// Custom types
+	_, ok := m.Types[typeName]
+	return ok
+}
+
+// checkUnknownKeys detects unknown top-level keys in the metamodel YAML.
+// This catches common typos like "entity" instead of "entities".
+func checkUnknownKeys(data []byte) error {
+	var raw map[string]interface{}
+	if unmarshalErr := yaml.Unmarshal(data, &raw); unmarshalErr != nil {
+		// If we can't unmarshal as a map, the struct unmarshal already failed
+		// with a better error, so skip this check
+		return nil //nolint:nilerr // intentional: struct unmarshal error is better
+	}
+
+	var unknownKeyErrors []string
+	for key := range raw {
+		if validTopLevelKeys[key] {
+			continue
+		}
+		if suggestion, ok := knownTypos[key]; ok {
+			unknownKeyErrors = append(unknownKeyErrors,
+				fmt.Sprintf("unknown key %q (did you mean %q?)", key, suggestion))
+		} else {
+			keys := make([]string, 0, len(validTopLevelKeys))
+			for k := range validTopLevelKeys {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			unknownKeyErrors = append(unknownKeyErrors,
+				fmt.Sprintf("unknown key %q (valid keys: %s)", key, strings.Join(keys, ", ")))
+		}
+	}
+
+	if len(unknownKeyErrors) > 0 {
+		sort.Strings(unknownKeyErrors)
+		return &SchemaValidationError{Errors: unknownKeyErrors}
+	}
+	return nil
 }
 
 // DefaultMetamodel returns a minimal default metamodel

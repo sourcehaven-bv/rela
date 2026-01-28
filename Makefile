@@ -66,6 +66,8 @@ fuzz:
 	$(GO) test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=30s ./internal/model/
 	$(GO) test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=30s ./internal/model/
 	$(GO) test -run='^$$' -fuzz='^FuzzParseRelationFilename$$' -fuzztime=30s ./internal/markdown/
+	$(GO) test -run='^$$' -fuzz='^FuzzParse$$' -fuzztime=30s ./internal/metamodel/
+	$(GO) test -run='^$$' -fuzz='^FuzzParseErrorQuality$$' -fuzztime=30s ./internal/metamodel/
 
 # Run quick fuzz tests (5 seconds each)
 fuzz-short:
@@ -74,6 +76,8 @@ fuzz-short:
 	$(GO) test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=5s ./internal/model/
 	$(GO) test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=5s ./internal/model/
 	$(GO) test -run='^$$' -fuzz='^FuzzParseRelationFilename$$' -fuzztime=5s ./internal/markdown/
+	$(GO) test -run='^$$' -fuzz='^FuzzParse$$' -fuzztime=5s ./internal/metamodel/
+	$(GO) test -run='^$$' -fuzz='^FuzzParseErrorQuality$$' -fuzztime=5s ./internal/metamodel/
 
 # Run linter (Go)
 lint:

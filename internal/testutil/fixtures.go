@@ -345,7 +345,7 @@ func SimpleMetamodelYAML() string {
 entities:
   requirement:
     label: Requirement
-    id_patterns: ["REQ-"]
+    id_prefix: "REQ-"
     properties:
       title:
         type: string
@@ -354,7 +354,7 @@ entities:
         type: status
   decision:
     label: Decision
-    id_patterns: ["DEC-"]
+    id_prefix: "DEC-"
     properties:
       title:
         type: string

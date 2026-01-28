@@ -34,7 +34,7 @@ entities:
   requirement:
     label: Requirement
     aliases: [req]
-    id_patterns: ["REQ-"]
+    id_prefix: "REQ-"
     properties:
       title:
         type: string
@@ -45,7 +45,7 @@ entities:
   control:
     label: Control
     aliases: [ctrl]
-    id_patterns: ["CTRL-"]
+    id_prefix: "CTRL-"
     properties:
       title:
         type: string
@@ -130,7 +130,7 @@ entities:
   requirement:
     label: Requirement
     aliases: [req]
-    id_patterns: ["REQ-"]
+    id_prefix: "REQ-"
     properties:
       title:
         type: string
@@ -191,7 +191,7 @@ entities:
   requirement:
     label: Requirement
     aliases: [req]
-    id_patterns: ["REQ-"]
+    id_prefix: "REQ-"
     properties:
       title:
         type: string
@@ -202,7 +202,7 @@ entities:
   bus:
     label: Bus
     aliases: [autobus]
-    id_patterns: ["BUS-"]
+    id_prefix: "BUS-"
     properties:
       title:
         type: string
