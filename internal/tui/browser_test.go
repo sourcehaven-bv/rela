@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -512,6 +513,232 @@ func TestBrowserModel_Refresh(t *testing.T) {
 				t.Errorf("after refresh, requirement count = %d, want 3", typ.count)
 			}
 		}
+	}
+}
+
+// createTestAppWithManyEntities creates a test app with many entities for scrolling tests.
+func createTestAppWithManyEntities(count int) (*App, *BrowserModel) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"requirement": {
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":  {Type: "string", Required: true},
+					"status": {Type: "string", Required: false},
+				},
+			},
+		},
+	}
+
+	g := graph.New()
+	for i := 1; i <= count; i++ {
+		g.AddNode(&model.Entity{
+			ID:   fmt.Sprintf("REQ-%03d", i),
+			Type: "requirement",
+			Properties: map[string]interface{}{
+				"title":  fmt.Sprintf("Requirement %d", i),
+				"status": "draft",
+			},
+		})
+	}
+
+	app := &App{
+		metamodel: meta,
+		graph:     g,
+		project:   &project.Context{Root: "/tmp/test"},
+	}
+
+	browser := NewBrowserModel(app)
+	browser.loadEntities(app, "requirement")
+	browser.level = LevelEntities
+
+	return app, browser
+}
+
+// createTestAppWithManyTypes creates a test app with many entity types for scrolling tests.
+func createTestAppWithManyTypes(count int) (*App, *BrowserModel) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{},
+	}
+	for i := 1; i <= count; i++ {
+		name := fmt.Sprintf("type%02d", i)
+		meta.Entities[name] = metamodel.EntityDef{
+			Label:    fmt.Sprintf("Type %02d", i),
+			IDPrefix: fmt.Sprintf("T%02d-", i),
+		}
+	}
+
+	app := &App{
+		metamodel: meta,
+		graph:     graph.New(),
+		project:   &project.Context{Root: "/tmp/test"},
+	}
+
+	browser := NewBrowserModel(app)
+	return app, browser
+}
+
+func TestBrowserModel_PageDownEntities(t *testing.T) {
+	app, browser := createTestAppWithManyEntities(30)
+
+	// Start at 0
+	if browser.entityIndex != 0 {
+		t.Fatalf("entityIndex should start at 0, got %d", browser.entityIndex)
+	}
+
+	// Page down
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	if browser.entityIndex != 10 {
+		t.Errorf("after pgdown, entityIndex = %d, want 10", browser.entityIndex)
+	}
+
+	// Page down again
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	if browser.entityIndex != 20 {
+		t.Errorf("after second pgdown, entityIndex = %d, want 20", browser.entityIndex)
+	}
+
+	// Page down past the end should clamp
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	if browser.entityIndex != 29 {
+		t.Errorf("after pgdown past end, entityIndex = %d, want 29", browser.entityIndex)
+	}
+}
+
+func TestBrowserModel_PageUpEntities(t *testing.T) {
+	app, browser := createTestAppWithManyEntities(30)
+
+	// Move to end first
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyEnd})
+	if browser.entityIndex != 29 {
+		t.Fatalf("entityIndex should be 29 after End, got %d", browser.entityIndex)
+	}
+
+	// Page up
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgUp})
+	if browser.entityIndex != 19 {
+		t.Errorf("after pgup, entityIndex = %d, want 19", browser.entityIndex)
+	}
+
+	// Page up again
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgUp})
+	if browser.entityIndex != 9 {
+		t.Errorf("after second pgup, entityIndex = %d, want 9", browser.entityIndex)
+	}
+
+	// Page up past the beginning should clamp
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgUp})
+	if browser.entityIndex != 0 {
+		t.Errorf("after pgup past start, entityIndex = %d, want 0", browser.entityIndex)
+	}
+}
+
+func TestBrowserModel_CtrlD_CtrlU_Entities(t *testing.T) {
+	app, browser := createTestAppWithManyEntities(30)
+
+	// Ctrl+D (page down)
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyCtrlD})
+	if browser.entityIndex != 10 {
+		t.Errorf("after ctrl+d, entityIndex = %d, want 10", browser.entityIndex)
+	}
+
+	// Ctrl+U (page up)
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyCtrlU})
+	if browser.entityIndex != 0 {
+		t.Errorf("after ctrl+u, entityIndex = %d, want 0", browser.entityIndex)
+	}
+}
+
+func TestBrowserModel_PageDownTypes(t *testing.T) {
+	app, browser := createTestAppWithManyTypes(25)
+
+	// Start at 0
+	if browser.typeIndex != 0 {
+		t.Fatalf("typeIndex should start at 0, got %d", browser.typeIndex)
+	}
+
+	// Page down
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	if browser.typeIndex != 10 {
+		t.Errorf("after pgdown, typeIndex = %d, want 10", browser.typeIndex)
+	}
+
+	// Page down again
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	if browser.typeIndex != 20 {
+		t.Errorf("after second pgdown, typeIndex = %d, want 20", browser.typeIndex)
+	}
+
+	// Page down past end should clamp
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	if browser.typeIndex != 24 {
+		t.Errorf("after pgdown past end, typeIndex = %d, want 24", browser.typeIndex)
+	}
+}
+
+func TestBrowserModel_PageUpTypes(t *testing.T) {
+	app, browser := createTestAppWithManyTypes(25)
+
+	// Move to end
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyEnd})
+	if browser.typeIndex != 24 {
+		t.Fatalf("typeIndex should be 24 after End, got %d", browser.typeIndex)
+	}
+
+	// Page up
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgUp})
+	if browser.typeIndex != 14 {
+		t.Errorf("after pgup, typeIndex = %d, want 14", browser.typeIndex)
+	}
+
+	// Page up past start should clamp
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgUp})
+	if browser.typeIndex != 4 {
+		t.Errorf("after second pgup, typeIndex = %d, want 4", browser.typeIndex)
+	}
+
+	browser.Update(app, tea.KeyMsg{Type: tea.KeyPgUp})
+	if browser.typeIndex != 0 {
+		t.Errorf("after pgup past start, typeIndex = %d, want 0", browser.typeIndex)
+	}
+}
+
+func TestBrowserModel_ViewTypesScrolling(t *testing.T) {
+	_, browser := createTestAppWithManyTypes(25)
+
+	// Render with small height — only some types should be visible
+	view := browser.View(80, 10)
+
+	// Should show scroll indicator since there are more types than fit
+	if !contains(view, "[1/25]") {
+		t.Errorf("View should contain scroll indicator '[1/25]', got:\n%s", view)
+	}
+
+	// Move to item 20 and check indicator
+	browser.typeIndex = 19
+	view = browser.View(80, 10)
+	if !contains(view, "[20/25]") {
+		t.Errorf("View should contain '[20/25]', got:\n%s", view)
+	}
+}
+
+func TestBrowserModel_ViewEntitiesScrolling(t *testing.T) {
+	_, browser := createTestAppWithManyEntities(30)
+
+	// Render with small height
+	view := browser.View(80, 10)
+
+	// Should show scroll indicator
+	if !contains(view, "[1/30]") {
+		t.Errorf("View should contain '[1/30]', got:\n%s", view)
+	}
+
+	// Move cursor to entity 15
+	browser.entityIndex = 14
+	view = browser.View(80, 10)
+	if !contains(view, "[15/30]") {
+		t.Errorf("View should contain '[15/30]', got:\n%s", view)
 	}
 }
 
