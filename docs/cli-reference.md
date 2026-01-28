@@ -821,6 +821,56 @@ rela create requirement --title "My Requirement"
 
 ---
 
+### rela migrate
+
+Migrate project files to the current schema format.
+
+```bash
+rela migrate [flags]
+```
+
+**Flags:**
+| Flag | Description |
+|------|-------------|
+| `--check` | Check for pending migrations without applying (useful for CI) |
+
+This command detects deprecated syntax patterns in your project files (e.g., `metamodel.yaml`) and transforms them to the current format while preserving comments and formatting.
+
+**When to use:**
+
+If you see an error like this when running any rela command:
+
+```
+metamodel.yaml uses deprecated syntax:
+  - Rename id_type values: "sequential" → "auto", "string" → "manual"
+
+Run 'rela migrate' to update your project files.
+```
+
+Run `rela migrate` to automatically update your files.
+
+**Examples:**
+
+```bash
+# Apply all pending migrations
+rela migrate
+
+# Check for migrations without applying (for CI pipelines)
+rela migrate --check
+```
+
+**CI Integration:**
+
+Add to your CI pipeline to ensure project files are up-to-date:
+
+```yaml
+- run: rela migrate --check
+```
+
+This will exit with code 1 if migrations are needed.
+
+---
+
 ### rela version
 
 Print version information.

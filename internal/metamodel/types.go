@@ -66,7 +66,7 @@ type EntityDef struct {
 	LabelPlural string                 `yaml:"label_plural,omitempty"`
 	Plural      string                 `yaml:"plural,omitempty"` // Used for directory names (e.g., "policies" for "policy")
 	Aliases     []string               `yaml:"aliases,omitempty"`
-	IDType      string                 `yaml:"id_type,omitempty"` // "sequential" (default) or "string"
+	IDType      string                 `yaml:"id_type,omitempty"` // "auto" (default) or "manual"
 	IDPatterns  []string               `yaml:"id_patterns"`
 	RDFType     string                 `yaml:"rdf_type,omitempty"`
 	Properties  map[string]PropertyDef `yaml:"properties"`
@@ -95,9 +95,42 @@ const (
 
 // ID types for entities
 const (
-	IDTypeSequential = "sequential" // IDs are auto-generated with numeric suffix (e.g., REQ-001)
-	IDTypeString     = "string"     // IDs are manually specified strings (e.g., auth-module)
+	// New canonical values
+	IDTypeAuto   = "auto"   // IDs are auto-generated with numeric suffix (e.g., REQ-001)
+	IDTypeManual = "manual" // IDs are manually specified strings (e.g., auth-module)
+
+	// Deprecated aliases (still accepted for backwards compatibility, but will trigger migration warning)
+	IDTypeSequential = "sequential" // Deprecated: use "auto" instead
+	IDTypeString     = "string"     // Deprecated: use "manual" instead
 )
+
+// IsValidIDType returns true if the given id_type value is valid.
+// Accepts both new values (auto, manual) and deprecated aliases (sequential, string).
+func IsValidIDType(idType string) bool {
+	switch idType {
+	case IDTypeAuto, IDTypeManual, IDTypeSequential, IDTypeString, "":
+		return true
+	}
+	return false
+}
+
+// IsDeprecatedIDType returns true if the id_type uses deprecated syntax.
+func IsDeprecatedIDType(idType string) bool {
+	return idType == IDTypeSequential || idType == IDTypeString
+}
+
+// NormalizeIDType converts an id_type value to its canonical form.
+// Maps deprecated values to their new equivalents.
+func NormalizeIDType(idType string) string {
+	switch idType {
+	case IDTypeManual, IDTypeString:
+		return IDTypeManual
+	case IDTypeAuto, IDTypeSequential, "":
+		return IDTypeAuto
+	default:
+		return idType // Return as-is for invalid values (caught by validation)
+	}
+}
 
 // ReservedPropertyNames contains property names that cannot be used in metamodel definitions
 // because they conflict with built-in entity fields.
@@ -233,22 +266,32 @@ func (e *EntityDef) GetPrimaryProperty() string {
 	return ""
 }
 
-// GetIDType returns the ID type for this entity, defaulting to "sequential"
+// GetIDType returns the normalized ID type for this entity, defaulting to "auto".
+// Always returns the canonical value ("auto" or "manual"), even if deprecated syntax was used.
 func (e *EntityDef) GetIDType() string {
-	if e.IDType == "" {
-		return IDTypeSequential
-	}
-	return e.IDType
+	return NormalizeIDType(e.IDType)
 }
 
-// IsSequentialID returns true if this entity type uses sequential IDs
+// IsAutoID returns true if this entity type uses auto-generated IDs.
+func (e *EntityDef) IsAutoID() bool {
+	return e.GetIDType() == IDTypeAuto
+}
+
+// IsManualID returns true if this entity type uses manually-specified IDs.
+func (e *EntityDef) IsManualID() bool {
+	return e.GetIDType() == IDTypeManual
+}
+
+// IsSequentialID returns true if this entity type uses sequential IDs.
+// Deprecated: Use IsAutoID instead.
 func (e *EntityDef) IsSequentialID() bool {
-	return e.GetIDType() == IDTypeSequential
+	return e.IsAutoID()
 }
 
-// IsStringID returns true if this entity type uses string IDs
+// IsStringID returns true if this entity type uses string IDs.
+// Deprecated: Use IsManualID instead.
 func (e *EntityDef) IsStringID() bool {
-	return e.GetIDType() == IDTypeString
+	return e.IsManualID()
 }
 
 // HasPattern checks if the entity type matches a given ID pattern
@@ -401,7 +444,7 @@ type InvalidIDTypeError struct {
 }
 
 func (e *InvalidIDTypeError) Error() string {
-	return "invalid id_type for entity " + e.EntityType + ": " + e.IDType + " (must be 'sequential' or 'string')"
+	return "invalid id_type for entity " + e.EntityType + ": " + e.IDType + " (must be 'auto' or 'manual')"
 }
 
 type ReservedPropertyError struct {

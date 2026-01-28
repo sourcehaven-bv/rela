@@ -75,6 +75,7 @@ relations/*.md → Relation ↗      ↓
 | `internal/project` | Project discovery, paths (`Context`) |
 | `internal/output` | CLI output formatting (table, JSON) |
 | `internal/filter` | Entity filtering by properties |
+| `internal/migration` | Schema migration system for project files |
 
 ### Key Types
 
@@ -169,3 +170,96 @@ templates/entities/<type>.md  # Optional: entity templates for defaults
 templates/relations/<type>.md # Optional: relation templates for defaults
 .rela/cache.json            # Graph cache (gitignored)
 ```
+
+## Migration System
+
+The migration system (`internal/migration/`) handles schema evolution for project files like `metamodel.yaml`. It uses AST-level YAML transformations to preserve comments and formatting.
+
+### Architecture
+
+```
+Migration Interface
+       ↓
+   Registry (ordered list of migrations)
+       ↓
+   Runner (detect → apply → write)
+       ↓
+   yaml.Node helpers (AST manipulation)
+```
+
+### Key Types
+
+- **Migration** (`migration.go`): Interface for schema migrations
+- **FileType** (`migration.go`): Enum for file types (`metamodel`, `views`, etc.)
+- **Result** (`runner.go`): Result of applying a single migration
+- **FileResult** (`runner.go`): Result of migrating a file
+
+### Adding a New Migration
+
+1. Create a new file in `internal/migration/` (e.g., `my_migration.go`)
+
+2. Implement the `Migration` interface:
+
+```go
+package migration
+
+import "gopkg.in/yaml.v3"
+
+func init() {
+    Register(&MyMigration{})
+}
+
+type MyMigration struct{}
+
+func (m *MyMigration) Name() string {
+    return "my-migration"
+}
+
+func (m *MyMigration) Description() string {
+    return "Description shown to users"
+}
+
+func (m *MyMigration) FileTypes() []FileType {
+    return []FileType{FileTypeMetamodel}
+}
+
+func (m *MyMigration) Detect(doc *yaml.Node) bool {
+    // Return true if this migration should be applied
+    root := GetDocumentRoot(doc)
+    // Use yaml_util.go helpers to inspect the document
+    return false
+}
+
+func (m *MyMigration) Apply(doc *yaml.Node) error {
+    // Transform the document in-place
+    root := GetDocumentRoot(doc)
+    // Use yaml_util.go helpers to modify the document
+    return nil
+}
+```
+
+3. Add tests in `internal/migration/my_migration_test.go`
+
+### yaml.Node Helpers
+
+`yaml_util.go` provides helpers for safe AST manipulation:
+
+| Function | Purpose |
+|----------|---------|
+| `GetDocumentRoot(doc)` | Get root mapping from document node |
+| `GetMapValue(node, key)` | Get value node by key |
+| `SetMapValue(node, key, val)` | Set/add value in mapping |
+| `RenameMapKey(node, old, new)` | Rename a key |
+| `FindMapEntriesByKey(node, key)` | Find all entries with key |
+| `ReplaceMapValueByKey(node, key, old, new)` | Replace values by key |
+| `WalkMappings(node, fn)` | Walk all mapping nodes |
+
+### Integration with Loader
+
+The metamodel loader (`internal/metamodel/loader.go`) checks for migrations on load:
+
+1. Before parsing, it runs `migration.Detect()` on the file
+2. If migrations are detected, it returns a `migration.Error`
+3. The error message tells users to run `rela migrate`
+
+Commands that don't need the metamodel (init, migrate, version, etc.) are excluded from this check in `internal/cli/root.go`.
