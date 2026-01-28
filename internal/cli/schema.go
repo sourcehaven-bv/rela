@@ -194,7 +194,7 @@ func runSchemaEntities() error {
 		if len(def.Aliases) > 0 {
 			out.WriteMessage("  Aliases: %s", strings.Join(def.Aliases, ", "))
 		}
-		out.WriteMessage("  ID Patterns: %s", strings.Join(def.IDPatterns, ", "))
+		out.WriteMessage("  ID Prefixes: %s", strings.Join(def.GetIDPrefixes(), ", "))
 
 		propCount := len(def.Properties)
 		requiredCount := 0
@@ -326,7 +326,7 @@ func writeEntityBasicInfo(resolved string, def *metamodel.EntityDef) {
 	if len(def.Aliases) > 0 {
 		out.WriteMessage("Aliases: %s", strings.Join(def.Aliases, ", "))
 	}
-	out.WriteMessage("ID Patterns: %s", strings.Join(def.IDPatterns, ", "))
+	out.WriteMessage("ID Prefixes: %s", strings.Join(def.GetIDPrefixes(), ", "))
 
 	if def.RDFType != "" {
 		out.WriteMessage("RDF Type: %s", def.RDFType)

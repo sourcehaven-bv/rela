@@ -11,8 +11,8 @@ func TestValidateEntity_EmptyRequiredProperty(t *testing.T) {
 	meta := &Metamodel{
 		Entities: map[string]EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]PropertyDef{
 					"title": {
 						Type:     PropertyTypeString,
@@ -55,8 +55,8 @@ func TestValidateEntity_DateValidation_RFC3339(t *testing.T) {
 	meta := &Metamodel{
 		Entities: map[string]EntityDef{
 			"task": {
-				Label:      "Task",
-				IDPatterns: []string{"TASK-"},
+				Label:    "Task",
+				IDPrefix: "TASK-",
 				Properties: map[string]PropertyDef{
 					"title": {
 						Type:     PropertyTypeString,
@@ -165,8 +165,8 @@ func TestValidateEntity_IDPatternValidation(t *testing.T) {
 	meta := &Metamodel{
 		Entities: map[string]EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]PropertyDef{
 					"title": {
 						Type:     PropertyTypeString,
@@ -208,16 +208,16 @@ func TestValidateEntity_IDPatternValidation(t *testing.T) {
 
 			hasIDError := false
 			for _, err := range errs {
-				if err.Error() == "entity ID TASK-001 does not match any pattern for type requirement: [REQ-]" {
+				if err.Error() == "entity ID TASK-001 does not match any prefix for type requirement: [REQ-]" {
 					hasIDError = true
 				}
 			}
 
 			if tt.wantErr && !hasIDError {
-				t.Errorf("expected ID pattern validation error, got: %v", errs)
+				t.Errorf("expected ID prefix validation error, got: %v", errs)
 			}
 			if !tt.wantErr && hasIDError {
-				t.Errorf("unexpected ID pattern validation error: %v", errs)
+				t.Errorf("unexpected ID prefix validation error: %v", errs)
 			}
 		})
 	}

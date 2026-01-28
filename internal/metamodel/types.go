@@ -66,8 +66,9 @@ type EntityDef struct {
 	LabelPlural string                 `yaml:"label_plural,omitempty"`
 	Plural      string                 `yaml:"plural,omitempty"` // Used for directory names (e.g., "policies" for "policy")
 	Aliases     []string               `yaml:"aliases,omitempty"`
-	IDType      string                 `yaml:"id_type,omitempty"` // "auto" (default) or "manual"
-	IDPatterns  []string               `yaml:"id_patterns"`
+	IDType      string                 `yaml:"id_type,omitempty"`     // "auto" (default) or "manual"
+	IDPrefix    string                 `yaml:"id_prefix,omitempty"`   // Single ID prefix (sugar for single-element id_prefixes)
+	IDPrefixes  []string               `yaml:"id_prefixes,omitempty"` // Multiple ID prefixes
 	RDFType     string                 `yaml:"rdf_type,omitempty"`
 	Properties  map[string]PropertyDef `yaml:"properties"`
 	Color       string                 `yaml:"color,omitempty"`
@@ -294,9 +295,20 @@ func (e *EntityDef) IsStringID() bool {
 	return e.IsManualID()
 }
 
+// GetIDPrefixes returns the effective ID prefixes for this entity type.
+// It normalizes id_prefix (singular) and id_prefixes (plural) into a single list.
+func (e *EntityDef) GetIDPrefixes() []string {
+	// If id_prefix is set (singular), return it as a single-element slice
+	if e.IDPrefix != "" {
+		return []string{e.IDPrefix}
+	}
+	// If id_prefixes is set (plural), return it
+	return e.IDPrefixes
+}
+
 // HasPattern checks if the entity type matches a given ID pattern
 func (e *EntityDef) HasPattern(pattern string) bool {
-	for _, p := range e.IDPatterns {
+	for _, p := range e.GetIDPrefixes() {
 		if p == pattern {
 			return true
 		}
@@ -304,10 +316,10 @@ func (e *EntityDef) HasPattern(pattern string) bool {
 	return false
 }
 
-// MatchesID checks if an ID matches any of this entity type's patterns
+// MatchesID checks if an ID matches any of this entity type's prefixes
 func (e *EntityDef) MatchesID(id string) bool {
-	for _, pattern := range e.IDPatterns {
-		if len(id) >= len(pattern) && id[:len(pattern)] == pattern {
+	for _, prefix := range e.GetIDPrefixes() {
+		if len(id) >= len(prefix) && id[:len(prefix)] == prefix {
 			return true
 		}
 	}
@@ -466,6 +478,15 @@ func (e *WhitespacePropertyError) Error() string {
 	return "entity " + e.EntityType + ": property name \"" + e.PropertyName + "\" has leading or trailing whitespace"
 }
 
+// ConflictingIDPrefixError is returned when both id_prefix and id_prefixes are specified
+type ConflictingIDPrefixError struct {
+	EntityType string
+}
+
+func (e *ConflictingIDPrefixError) Error() string {
+	return "entity " + e.EntityType + " specifies both id_prefix and id_prefixes; use only one"
+}
+
 // Schema output interface methods for Metamodel
 
 // GetVersion returns the metamodel version
@@ -505,9 +526,10 @@ func (e *EntityDef) GetAliases() []string {
 	return e.Aliases
 }
 
-// GetIDPatterns returns the entity ID patterns
+// GetIDPatterns returns the entity ID prefixes.
+// Deprecated: Use GetIDPrefixes instead.
 func (e *EntityDef) GetIDPatterns() []string {
-	return e.IDPatterns
+	return e.GetIDPrefixes()
 }
 
 // GetProperties returns the entity properties for JSON output

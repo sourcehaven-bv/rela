@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
@@ -70,6 +71,12 @@ func TestDiscover(t *testing.T) {
 	})
 
 	t.Run("handles invalid path", func(t *testing.T) {
+		// Note: The null byte test only works reliably on Linux.
+		// On macOS, filepath.Abs doesn't fail with null bytes in the path.
+		// We skip this test on non-Linux platforms for reliability.
+		if runtime.GOOS != "linux" {
+			t.Skip("null byte path handling differs by platform")
+		}
 		// Test with path that contains null byte - this should fail in Abs()
 		_, err := Discover("/tmp/\x00invalid")
 		if err == nil {

@@ -16,16 +16,16 @@ func createTestAppForSearch() *App {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":       {Type: "string", Required: true},
 					"description": {Type: "string", Required: false},
 				},
 			},
 			"decision": {
-				Label:      "Decision",
-				IDPatterns: []string{"DEC-"},
+				Label:    "Decision",
+				IDPrefix: "DEC-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
@@ -626,8 +626,8 @@ func TestSearchModel_SearchLimit(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
-				Label:      "Requirement",
-				IDPatterns: []string{"REQ-"},
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},

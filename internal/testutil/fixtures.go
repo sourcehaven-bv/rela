@@ -103,11 +103,17 @@ func NewMetamodel() *MetamodelBuilder {
 
 // WithEntity adds an entity definition to the metamodel.
 func (b *MetamodelBuilder) WithEntity(name, label string, idPatterns []string) *MetamodelBuilder {
-	b.meta.Entities[name] = metamodel.EntityDef{
+	def := metamodel.EntityDef{
 		Label:      label,
-		IDPatterns: idPatterns,
 		Properties: make(map[string]metamodel.PropertyDef),
 	}
+	// Convert idPatterns to id_prefix or id_prefixes based on length
+	if len(idPatterns) == 1 {
+		def.IDPrefix = idPatterns[0]
+	} else if len(idPatterns) > 1 {
+		def.IDPrefixes = idPatterns
+	}
+	b.meta.Entities[name] = def
 	return b
 }
 

@@ -97,9 +97,9 @@ since they use manually-specified IDs that are not expected to be sequential.`,
 		stringIDPrefixes := make(map[string]bool)
 		for _, entityDef := range meta.Entities {
 			if entityDef.IsStringID() {
-				for _, pattern := range entityDef.IDPatterns {
+				for _, idPrefix := range entityDef.GetIDPrefixes() {
 					// Normalize prefix (remove trailing dash if present)
-					prefix := strings.TrimSuffix(pattern, "-")
+					prefix := strings.TrimSuffix(idPrefix, "-")
 					stringIDPrefixes[prefix] = true
 				}
 			}
@@ -634,8 +634,8 @@ var analyzeAllCmd = &cobra.Command{
 		stringIDPrefixes := make(map[string]bool)
 		for _, entityDef := range meta.Entities {
 			if entityDef.IsStringID() {
-				for _, pattern := range entityDef.IDPatterns {
-					prefix := strings.TrimSuffix(pattern, "-")
+				for _, idPrefix := range entityDef.GetIDPrefixes() {
+					prefix := strings.TrimSuffix(idPrefix, "-")
 					stringIDPrefixes[prefix] = true
 				}
 			}

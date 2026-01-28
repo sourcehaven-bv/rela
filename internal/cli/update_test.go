@@ -23,8 +23,8 @@ func setupUpdateTestEnv() {
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"control": {
-				Label:      "Control",
-				IDPatterns: []string{"CTRL-"},
+				Label:    "Control",
+				IDPrefix: "CTRL-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":         {Type: "string", Required: true},
 					"iso27001":      {Type: "string"},
@@ -36,7 +36,7 @@ func setupUpdateTestEnv() {
 			"requirement": {
 				Label:      "Requirement",
 				Aliases:    []string{"req"},
-				IDPatterns: []string{"REQ-", "RB-"},
+				IDPrefixes: []string{"REQ-", "RB-"},
 				Properties: map[string]metamodel.PropertyDef{
 					"title":         {Type: "string", Required: true},
 					"description":   {Type: "string"},
