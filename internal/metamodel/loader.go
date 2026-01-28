@@ -5,13 +5,28 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 )
 
-// Load reads and parses a metamodel from a YAML file
+// Load reads and parses a metamodel from a YAML file.
+// Returns a MigrationError if the file contains deprecated syntax that needs migration.
 func Load(path string) (*Metamodel, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
+	}
+
+	// Check for deprecated syntax that needs migration
+	detections, err := migration.Detect(path, migration.FileTypeMetamodel)
+	if err != nil {
+		return nil, err
+	}
+	if len(detections) > 0 {
+		return nil, &migration.Error{
+			FilePath:   path,
+			Detections: detections,
+		}
 	}
 
 	return Parse(data)
@@ -28,7 +43,7 @@ func Parse(data []byte) (*Metamodel, error) {
 	m.aliasMap = make(map[string]string)
 	for name, def := range m.Entities {
 		// Validate id_type if specified
-		if def.IDType != "" && def.IDType != IDTypeSequential && def.IDType != IDTypeString {
+		if !IsValidIDType(def.IDType) {
 			return nil, &InvalidIDTypeError{EntityType: name, IDType: def.IDType}
 		}
 
