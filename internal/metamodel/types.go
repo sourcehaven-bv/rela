@@ -100,38 +100,10 @@ const (
 	IDTypeAuto   = "auto"   // IDs are auto-generated with numeric suffix (e.g., REQ-001)
 	IDTypeManual = "manual" // IDs are manually specified strings (e.g., auth-module)
 
-	// Deprecated aliases (still accepted for backwards compatibility, but will trigger migration warning)
+	// Deprecated aliases (still accepted for backwards compatibility)
 	IDTypeSequential = "sequential" // Deprecated: use "auto" instead
 	IDTypeString     = "string"     // Deprecated: use "manual" instead
 )
-
-// IsValidIDType returns true if the given id_type value is valid.
-// Accepts both new values (auto, manual) and deprecated aliases (sequential, string).
-func IsValidIDType(idType string) bool {
-	switch idType {
-	case IDTypeAuto, IDTypeManual, IDTypeSequential, IDTypeString, "":
-		return true
-	}
-	return false
-}
-
-// IsDeprecatedIDType returns true if the id_type uses deprecated syntax.
-func IsDeprecatedIDType(idType string) bool {
-	return idType == IDTypeSequential || idType == IDTypeString
-}
-
-// NormalizeIDType converts an id_type value to its canonical form.
-// Maps deprecated values to their new equivalents.
-func NormalizeIDType(idType string) string {
-	switch idType {
-	case IDTypeManual, IDTypeString:
-		return IDTypeManual
-	case IDTypeAuto, IDTypeSequential, "":
-		return IDTypeAuto
-	default:
-		return idType // Return as-is for invalid values (caught by validation)
-	}
-}
 
 // ReservedPropertyNames contains property names that cannot be used in metamodel definitions
 // because they conflict with built-in entity fields.
@@ -341,18 +313,41 @@ func (e *EntityDef) GetPrimaryProperty() string {
 	return ""
 }
 
-// GetIDType returns the normalized ID type for this entity, defaulting to "auto".
-// Always returns the canonical value ("auto" or "manual"), even if deprecated syntax was used.
+// GetIDType returns the ID type for this entity, defaulting to "auto".
+// Returns the normalized value ("auto" or "manual"), even if deprecated aliases were used.
 func (e *EntityDef) GetIDType() string {
 	return NormalizeIDType(e.IDType)
 }
 
-// IsAutoID returns true if this entity type uses auto-generated IDs.
+// NormalizeIDType converts an id_type value to its canonical form.
+// Handles both new values (auto, manual) and deprecated aliases (sequential, string).
+// Returns "auto" for empty string (default).
+func NormalizeIDType(idType string) string {
+	switch idType {
+	case IDTypeManual, IDTypeString:
+		return IDTypeManual
+	case IDTypeAuto, IDTypeSequential, "":
+		return IDTypeAuto
+	default:
+		return idType // Return as-is for invalid values (will be caught by validation)
+	}
+}
+
+// IsValidIDType returns true if the given id_type value is valid (including deprecated aliases)
+func IsValidIDType(idType string) bool {
+	switch idType {
+	case IDTypeAuto, IDTypeManual, IDTypeSequential, IDTypeString, "":
+		return true
+	}
+	return false
+}
+
+// IsAutoID returns true if this entity type uses auto-generated IDs
 func (e *EntityDef) IsAutoID() bool {
 	return e.GetIDType() == IDTypeAuto
 }
 
-// IsManualID returns true if this entity type uses manually-specified IDs.
+// IsManualID returns true if this entity type uses manually-specified IDs
 func (e *EntityDef) IsManualID() bool {
 	return e.GetIDType() == IDTypeManual
 }

@@ -238,8 +238,8 @@ could indicate:
 - Deleted entities
 - Numbering mistakes
 
-**Note:** Gap analysis only applies to entity types with sequential IDs (the default).
-Entity types configured with `id_type: string` in the metamodel are excluded since
+**Note:** Gap analysis only applies to entity types with auto-generated IDs (the default).
+Entity types configured with `id_type: manual` in the metamodel are excluded since
 they use manually-specified IDs that aren't expected to follow a numeric sequence.
 
 ### Duplicate Detection
@@ -286,9 +286,9 @@ Configure ID patterns that make sense:
 - `NFR-` for non-functional requirements
 - `ADR-` for architecture decision records
 
-For some entity types like components or modules, consider using string IDs
-(`id_type: string` in metamodel) with descriptive names like `auth-service` or
-`payment-gateway` instead of sequential numbers.
+For some entity types like components or modules, consider using manual IDs
+(`id_type: manual` in metamodel) with descriptive names like `auth-service` or
+`payment-gateway` instead of auto-generated numbers.
 
 ### Run Analysis Regularly
 

@@ -293,8 +293,8 @@ func TestNormalizeIDType(t *testing.T) {
 		{name: "empty defaults to auto", input: "", want: IDTypeAuto},
 		{name: "auto returns auto", input: "auto", want: IDTypeAuto},
 		{name: "manual returns manual", input: "manual", want: IDTypeManual},
-		{name: "deprecated sequential normalizes to auto", input: "sequential", want: IDTypeAuto},
-		{name: "deprecated string normalizes to manual", input: "string", want: IDTypeManual},
+		{name: "deprecated sequential returns auto", input: "sequential", want: IDTypeAuto},
+		{name: "deprecated string returns manual", input: "string", want: IDTypeManual},
 		{name: "invalid returns as-is", input: "invalid", want: "invalid"},
 	}
 
@@ -328,29 +328,6 @@ func TestIsValidIDType(t *testing.T) {
 			got := IsValidIDType(tt.input)
 			if got != tt.want {
 				t.Errorf("IsValidIDType(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsDeprecatedIDType(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  bool
-	}{
-		{name: "empty is not deprecated", input: "", want: false},
-		{name: "auto is not deprecated", input: "auto", want: false},
-		{name: "manual is not deprecated", input: "manual", want: false},
-		{name: "sequential is deprecated", input: "sequential", want: true},
-		{name: "string is deprecated", input: "string", want: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := IsDeprecatedIDType(tt.input)
-			if got != tt.want {
-				t.Errorf("IsDeprecatedIDType(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -445,7 +422,7 @@ func TestEntityDef_IsManualID(t *testing.T) {
 	}
 }
 
-// Test that deprecated methods still work correctly (they delegate to new methods)
+// Test deprecated methods still work correctly
 func TestEntityDef_IsSequentialID(t *testing.T) {
 	tests := []struct {
 		name string
