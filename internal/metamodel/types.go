@@ -314,32 +314,11 @@ func (e *EntityDef) GetPrimaryProperty() string {
 }
 
 // GetIDType returns the ID type for this entity, defaulting to "auto".
-// Returns the normalized value ("auto" or "manual"), even if deprecated aliases were used.
 func (e *EntityDef) GetIDType() string {
-	return NormalizeIDType(e.IDType)
-}
-
-// NormalizeIDType converts an id_type value to its canonical form.
-// Handles both new values (auto, manual) and deprecated aliases (sequential, string).
-// Returns "auto" for empty string (default).
-func NormalizeIDType(idType string) string {
-	switch idType {
-	case IDTypeManual, IDTypeString:
-		return IDTypeManual
-	case IDTypeAuto, IDTypeSequential, "":
+	if e.IDType == "" {
 		return IDTypeAuto
-	default:
-		return idType // Return as-is for invalid values (will be caught by validation)
 	}
-}
-
-// IsValidIDType returns true if the given id_type value is valid (including deprecated aliases)
-func IsValidIDType(idType string) bool {
-	switch idType {
-	case IDTypeAuto, IDTypeManual, IDTypeSequential, IDTypeString, "":
-		return true
-	}
-	return false
+	return e.IDType
 }
 
 // IsAutoID returns true if this entity type uses auto-generated IDs
@@ -350,18 +329,6 @@ func (e *EntityDef) IsAutoID() bool {
 // IsManualID returns true if this entity type uses manually-specified IDs
 func (e *EntityDef) IsManualID() bool {
 	return e.GetIDType() == IDTypeManual
-}
-
-// IsSequentialID returns true if this entity type uses sequential IDs.
-// Deprecated: Use IsAutoID instead.
-func (e *EntityDef) IsSequentialID() bool {
-	return e.IsAutoID()
-}
-
-// IsStringID returns true if this entity type uses string IDs.
-// Deprecated: Use IsManualID instead.
-func (e *EntityDef) IsStringID() bool {
-	return e.IsManualID()
 }
 
 // GetIDPrefixes returns the effective ID prefixes for this entity type.

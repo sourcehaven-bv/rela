@@ -53,8 +53,6 @@ Entity IDs can be either auto-generated or manually specified:
 | `auto` | Auto-generated numeric IDs (default) | `REQ-001`, `REQ-002`, `DEC-003` |
 | `manual` | Manually specified string IDs | `auth-module`, `user-service` |
 
-> **Note:** The deprecated values `sequential` and `string` are still accepted for backwards compatibility.
-
 **Auto IDs** (default):
 - Automatically generated when creating entities
 - Format: `PREFIX-NNN` (e.g., `REQ-001`)

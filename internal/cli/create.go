@@ -66,9 +66,9 @@ Examples:
 			}
 			entityID = createID
 		} else {
-			// Auto-generate ID (only for sequential ID types)
-			if entityDef.IsStringID() {
-				return fmt.Errorf("entity type %s uses string IDs; --id is required", resolvedType)
+			// Auto-generate ID (only for auto ID types)
+			if entityDef.IsManualID() {
+				return fmt.Errorf("entity type %s uses manual IDs; --id is required", resolvedType)
 			}
 			prefixes := entityDef.GetIDPrefixes()
 			if len(prefixes) == 0 {
