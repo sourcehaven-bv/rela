@@ -117,26 +117,36 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.message = ""
 		a.messageErr = false
 
-		// Global keys
+		// Check if we're on an input-focused screen
+		// On these screens, regular characters (including q, /, ?) are input
+		isInputScreen := a.screen == ScreenSearch || a.screen == ScreenCreate || a.screen == ScreenLink
+
+		// Global keys that ALWAYS work (ctrl+c and esc)
 		switch msg.String() {
 		case "ctrl+c":
-			return a, tea.Quit
-		case "q":
-			if len(a.screenStack) > 1 {
-				return a, a.popScreen()
-			}
 			return a, tea.Quit
 		case "esc":
 			if len(a.screenStack) > 1 {
 				return a, a.popScreen()
 			}
-		case "?":
-			if a.screen != ScreenHelp {
-				return a, a.pushScreen(ScreenHelp)
-			}
-		case "/":
-			if a.screen != ScreenSearch {
-				return a, a.pushScreen(ScreenSearch)
+		}
+
+		// Only process other global keys if NOT on an input screen
+		if !isInputScreen {
+			switch msg.String() {
+			case "q":
+				if len(a.screenStack) > 1 {
+					return a, a.popScreen()
+				}
+				return a, tea.Quit
+			case "?":
+				if a.screen != ScreenHelp {
+					return a, a.pushScreen(ScreenHelp)
+				}
+			case "/":
+				if a.screen != ScreenSearch {
+					return a, a.pushScreen(ScreenSearch)
+				}
 			}
 		}
 
@@ -199,6 +209,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.message = "Metamodel updated"
 			a.messageErr = false
+		}
+		return a, nil
+
+	case searchQueryMsg:
+		// Handle search query (after debounce)
+		if a.search != nil {
+			return a, a.search.HandleSearchQuery(a, msg)
+		}
+
+	case searchResultsMsg:
+		// Handle search results
+		if a.search != nil {
+			a.search.HandleSearchResults(msg)
 		}
 		return a, nil
 	}

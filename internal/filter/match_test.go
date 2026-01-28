@@ -534,3 +534,67 @@ func TestOperatorValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    interface{}
+		filter   string
+		expected bool
+	}{
+		// Equal operator
+		{"equal string match", "published", "status=published", true},
+		{"equal string no match", "draft", "status=published", false},
+		{"equal int match", 5, "priority=5", true},
+		{"equal int no match", 3, "priority=5", false},
+
+		// Not equal operator
+		{"not equal match", "draft", "status!=published", true},
+		{"not equal no match", "published", "status!=published", false},
+
+		// Less than
+		{"less than true", "2", "priority<3", true},
+		{"less than false", "5", "priority<3", false},
+		{"less than equal", "3", "priority<3", false},
+
+		// Less or equal
+		{"less or equal true", "3", "priority<=3", true},
+		{"less or equal false", "5", "priority<=3", false},
+
+		// Greater than
+		{"greater than true", "5", "priority>3", true},
+		{"greater than false", "2", "priority>3", false},
+		{"greater than equal", "3", "priority>3", false},
+
+		// Greater or equal
+		{"greater or equal true", "3", "priority>=3", true},
+		{"greater or equal false", "2", "priority>=3", false},
+
+		// Glob patterns
+		{"glob match", "authentication", "title=*auth*", true},
+		{"glob no match", "login", "title=*auth*", false},
+
+		// Regex patterns
+		{"regex match", "Authentication", "title=~^[A-Z].*", true},
+		{"regex no match", "authentication", "title=~^[A-Z].*", false},
+
+		// Type conversions
+		{"int to string", 42, "value=42", true},
+		{"bool to string", true, "flag=true", true},
+		{"bool false to string", false, "flag=false", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+
+			result := MatchValue(tt.value, f)
+			if result != tt.expected {
+				t.Errorf("MatchValue(%v, %v): expected %v, got %v", tt.value, tt.filter, tt.expected, result)
+			}
+		})
+	}
+}
