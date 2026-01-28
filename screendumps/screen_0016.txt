@@ -4,19 +4,19 @@ Search
 
 
 ╭──────────────────────────────────────────────────────────────────────╮
-│ _                                                                    │
+│ type:requirement_                                                    │
 ╰──────────────────────────────────────────────────────────────────────╯
 Type to search (live)
 
-Search syntax examples:
+Suggestions:
 
-  type:requirement              - filter by entity type
-  prop:status=published         - filter by property
-  authentication                - free text search
-  "exact phrase"                - exact phrase match
+► requirement
 
-  type:requirement prop:priority>3 auth
-  type:decision,solution "REST API"
+[Tab] to accept, [↑/↓] to navigate
+
+
+
+
 
 
 
@@ -35,6 +35,6 @@ Search syntax examples:
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- [type] search  [ctrl+u] clear  [esc] back  [q] quit  [?] help
+ [↑/↓] navigate  [enter] open  [ctrl+u] clear  [esc] back  [q] quit  [?] help
 
 

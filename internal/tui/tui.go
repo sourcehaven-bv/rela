@@ -58,6 +58,9 @@ type App struct {
 
 	// Navigation stack
 	screenStack []Screen
+
+	// Global monotonic counters for preventing stale updates
+	searchVersionCounter int // Incremented each time search screen is opened
 }
 
 // NewApp creates a new TUI application
@@ -544,6 +547,7 @@ func (a *App) pushScreen(screen Screen) tea.Cmd {
 	// Initialize screen-specific models
 	switch screen {
 	case ScreenSearch:
+		a.searchVersionCounter++
 		a.search = NewSearchModel(a)
 	case ScreenCreate:
 		a.create = NewCreateModel(a)

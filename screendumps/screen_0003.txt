@@ -1,14 +1,14 @@
- RELA  │  Browser                                                                                                    /tmp/rela-test-project
+ RELA  │  Search                                                                                                     /tmp/rela-test-project
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Entity Types
+Search
 
 
-► Decision             (25)
-  Requirement          (36)
-  Solution             (30)
+╭──────────────────────────────────────────────────────────────────────╮
+│ prop:status=verified ty_                                             │
+╰──────────────────────────────────────────────────────────────────────╯
+Type to search (live)
 
-
-
+No results found
 
 
 
@@ -35,6 +35,6 @@ Entity Types
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- [↑/↓] navigate  [enter] select  [c] create  [/] search  [a] analyze  [r] refresh  [q] quit  [?] help
+ [type] search  [ctrl+u] clear  [esc] back  [q] quit  [?] help
 
 

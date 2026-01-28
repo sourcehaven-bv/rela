@@ -4,17 +4,17 @@ Search
 
 
 ╭──────────────────────────────────────────────────────────────────────╮
-│ type:re_                                                             │
+│ type:_                                                               │
 ╰──────────────────────────────────────────────────────────────────────╯
-Searching...
+Type to search (live)
 
+Suggestions:
 
+► requirement
+  decision
+  solution
 
-
-
-
-
-
+[Tab] to accept, [↑/↓] to navigate
 
 
 

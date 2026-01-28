@@ -1,18 +1,18 @@
- RELA  │  Browser                                                                                                    /tmp/rela-test-project
+ RELA  │  Search                                                                                                     /tmp/rela-test-project
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Entity Types
+Search
 
 
-► Decision             (25)
-  Requirement          (36)
-  Solution             (30)
+╭──────────────────────────────────────────────────────────────────────╮
+│ type:requireme_                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+Type to search (live)
 
+Suggestions:
 
+► requirement
 
-
-
-
-
+[Tab] to accept, [↑/↓] to navigate
 
 
 
@@ -35,6 +35,6 @@ Entity Types
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- [↑/↓] navigate  [enter] select  [c] create  [/] search  [a] analyze  [r] refresh  [q] quit  [?] help
+ [↑/↓] navigate  [enter] open  [ctrl+u] clear  [esc] back  [q] quit  [?] help
 
 

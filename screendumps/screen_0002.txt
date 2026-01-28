@@ -1,4 +1,24 @@
-Space:rela-test-project jeroen$ /Users/jeroen/worktrees/rela/advanced-tui-search/bin/rela tui
+ RELA  │  Search                                                                                                     /tmp/rela-test-project
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Search
+
+
+╭──────────────────────────────────────────────────────────────────────╮
+│ prop:status=verified t_                                              │
+╰──────────────────────────────────────────────────────────────────────╯
+Type to search (live)
+
+Found 9 results:
+
+► SOL-003 Solution 3: fascination affirm want (solution)
+  SOL-020 Solution 20: nondissolution Sassanid ... (solution)
+  SOL-026 Solution 26: opinion somnolently unwo... (solution)
+  SOL-025 Solution 25: expostulatively Spermato... (solution)
+  SOL-008 Solution 8: cuneocuboid leucophane Pl... (solution)
+  SOL-023 Solution 23: thiocarbimide orrery cir... (solution)
+  SOL-029 Solution 29: counterwork redetect Cha... (solution)
+  SOL-024 Solution 24: peakishness Ctenodipteri... (solution)
+  SOL-005 Solution 5: Xanthoxalis grangerizer b... (solution)
 
 
 
@@ -14,27 +34,7 @@ Space:rela-test-project jeroen$ /Users/jeroen/worktrees/rela/advanced-tui-search
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ [↑/↓] navigate  [enter] open  [ctrl+u] clear  [esc] back  [q] quit  [?] help
 
 

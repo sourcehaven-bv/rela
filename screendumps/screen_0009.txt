@@ -4,24 +4,24 @@ Search
 
 
 ╭──────────────────────────────────────────────────────────────────────╮
-│ type_                                                                │
+│ prop:status=_                                                        │
 ╰──────────────────────────────────────────────────────────────────────╯
 Type to search (live)
 
-No results found
+Suggestions:
 
+► draft
+  implemented
+  deprecated
+  verified
+  accepted
+  published
+  proposed
+  superseded
+  rejected
+  review
 
-
-
-
-
-
-
-
-
-
-
-
+[Tab] to accept, [↑/↓] to navigate
 
 
 

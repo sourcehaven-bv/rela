@@ -4,18 +4,18 @@ Search
 
 
 ╭──────────────────────────────────────────────────────────────────────╮
-│ ty_                                                                  │
+│ prop:status=verified type:_                                          │
 ╰──────────────────────────────────────────────────────────────────────╯
 Type to search (live)
+⚠ type: filter requires a value
 
-Found 6 results:
+No results found
 
-► REQ-018 Requirement 18: nightfall lachrymosit... (requirement)
-  DEC-001 Use PostgreSQL Database (decision)
-  REQ-002 REST API Implementation (requirement)
-  REQ-004 Security Audit Logging (requirement)
-  REQ-029 Requirement 29: nonliability lighting... (requirement)
-  REQ-001 User Authentication (requirement)
+
+
+
+
+
 
 
 
@@ -35,6 +35,6 @@ Found 6 results:
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- [↑/↓] navigate  [enter] open  [ctrl+u] clear  [esc] back  [q] quit  [?] help
+ [type] search  [ctrl+u] clear  [esc] back  [q] quit  [?] help
 
 

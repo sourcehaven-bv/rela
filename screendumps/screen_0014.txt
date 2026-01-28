@@ -4,18 +4,18 @@ Search
 
 
 ╭──────────────────────────────────────────────────────────────────────╮
-│ type:re_                                                             │
+│ type:_                                                               │
 ╰──────────────────────────────────────────────────────────────────────╯
 Type to search (live)
+⚠ type: filter requires a value
 
-No results found
+Suggestions:
 
+► requirement
+  decision
+  solution
 
-
-
-
-
-
+[Tab] to accept, [↑/↓] to navigate
 
 
 

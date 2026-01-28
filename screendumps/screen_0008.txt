@@ -4,15 +4,15 @@ Search
 
 
 ╭──────────────────────────────────────────────────────────────────────╮
-│ typ_                                                                 │
+│ prop:status=verifie_                                                 │
 ╰──────────────────────────────────────────────────────────────────────╯
 Type to search (live)
 
-No results found
+Suggestions:
 
+► verified
 
-
-
+[Tab] to accept, [↑/↓] to navigate
 
 
 

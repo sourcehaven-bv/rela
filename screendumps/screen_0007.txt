@@ -4,11 +4,11 @@ Search
 
 
 ╭──────────────────────────────────────────────────────────────────────╮
-│ typ_                                                                 │
+│ prop:status=verified type_                                           │
 ╰──────────────────────────────────────────────────────────────────────╯
-Searching...
+Type to search (live)
 
-
+No results found
 
 
 
@@ -35,6 +35,6 @@ Searching...
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- [↑/↓] navigate  [enter] open  [ctrl+u] clear  [esc] back  [q] quit  [?] help
+ [type] search  [ctrl+u] clear  [esc] back  [q] quit  [?] help
 
 

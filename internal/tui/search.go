@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,7 +21,8 @@ type SearchModel struct {
 	results       []*model.Entity
 	resultIndex   int
 	searching     bool
-	searchVersion int // Track search version to ignore stale results
+	searchVersion int // Incremented per keystroke to ignore stale results
+	baseVersion   int // Base version from app counter at creation time
 	lastQuery     string
 	parseErrors   []string
 
@@ -34,21 +36,99 @@ type SearchModel struct {
 
 // searchQueryMsg is sent when user types (debounced)
 type searchQueryMsg struct {
-	query   string
-	version int
+	query       string
+	version     int
+	baseVersion int // App-level base version
 }
 
 // searchResultsMsg is sent when search completes
 type searchResultsMsg struct {
-	results []*model.Entity
-	query   string
-	version int
-	errors  []string
+	results     []*model.Entity
+	query       string
+	version     int
+	baseVersion int // App-level base version
+	errors      []string
+}
+
+// Constants for search behavior
+const (
+	searchDebounceDelay = 200 * time.Millisecond
+	maxQueryLength      = 1000
+	maxSuggestions      = 10
+)
+
+// valueCount tracks property value frequency for autocomplete ranking
+type valueCount struct {
+	val   string
+	count int
 }
 
 // NewSearchModel creates a new search screen
-func NewSearchModel(_ *App) *SearchModel {
-	return &SearchModel{}
+func NewSearchModel(app *App) *SearchModel {
+	return &SearchModel{
+		baseVersion: app.searchVersionCounter,
+	}
+}
+
+// getPropertyValueSuggestions returns autocomplete suggestions for property values
+// ranked by frequency in current results, or from global index if no results yet
+func (s *SearchModel) getPropertyValueSuggestions(app *App, propertyName, prefix string) []string {
+	suggestions := []string{}
+
+	// Strategy 1: If we have search results, extract values from them and rank by frequency
+	if len(s.results) > 0 {
+		valueMap := make(map[string]int)
+		for _, entity := range s.results {
+			if val, ok := entity.Properties[propertyName]; ok {
+				strVal := s.valueToString(val)
+				if strVal != "" && strings.HasPrefix(strings.ToLower(strVal), strings.ToLower(prefix)) {
+					valueMap[strVal]++
+				}
+			}
+		}
+
+		// Convert to slice and sort by frequency (descending), then alphabetically
+		sorted := make([]valueCount, 0, len(valueMap))
+		for v, c := range valueMap {
+			sorted = append(sorted, valueCount{v, c})
+		}
+		sort.Slice(sorted, func(i, j int) bool {
+			if sorted[i].count != sorted[j].count {
+				return sorted[i].count > sorted[j].count // Higher count first
+			}
+			return sorted[i].val < sorted[j].val // Alphabetical for same count
+		})
+
+		// Take top N suggestions
+		for i := 0; i < len(sorted) && i < maxSuggestions; i++ {
+			suggestions = append(suggestions, sorted[i].val)
+		}
+	} else {
+		// Strategy 2: No results yet - use global property index from graph
+		allValues := app.graph.GetPropertyValues(propertyName, 100)
+		for _, val := range allValues {
+			if strings.HasPrefix(strings.ToLower(val), strings.ToLower(prefix)) {
+				suggestions = append(suggestions, val)
+				if len(suggestions) >= maxSuggestions {
+					break
+				}
+			}
+		}
+	}
+
+	return suggestions
+}
+
+// updateParseErrors validates the query and updates parse errors immediately
+func (s *SearchModel) updateParseErrors() {
+	if s.query == "" {
+		s.parseErrors = nil
+		return
+	}
+
+	// Parse query to get immediate validation errors
+	sq := searchparser.ParseQuery(s.query)
+	s.parseErrors = sq.ParseErrors
 }
 
 // updateSuggestions generates autocomplete suggestions based on cursor position
@@ -100,99 +180,13 @@ func (s *SearchModel) updateSuggestions(app *App) {
 		s.showSuggestions = len(s.suggestions) > 0
 
 	case "propvalue":
-		// Get property values from current search results or global index
-		s.suggestions = []string{}
-
-		// Strategy 1: If we have search results, extract values from them
-		if len(s.results) > 0 {
-			valueMap := make(map[string]int)
-			for _, entity := range s.results {
-				if val, ok := entity.Properties[ctx.PropertyName]; ok {
-					strVal := s.valueToString(val)
-					if strVal != "" && strings.HasPrefix(strings.ToLower(strVal), strings.ToLower(ctx.Prefix)) {
-						valueMap[strVal]++
-					}
-				}
-			}
-			// Sort by frequency
-			type valueCount struct {
-				val   string
-				count int
-			}
-			sorted := []valueCount{}
-			for v, c := range valueMap {
-				sorted = append(sorted, valueCount{v, c})
-			}
-			// Simple bubble sort by count descending
-			for i := 0; i < len(sorted); i++ {
-				for j := i + 1; j < len(sorted); j++ {
-					if sorted[j].count > sorted[i].count {
-						sorted[i], sorted[j] = sorted[j], sorted[i]
-					}
-				}
-			}
-			for i := 0; i < len(sorted) && i < 10; i++ {
-				s.suggestions = append(s.suggestions, sorted[i].val)
-			}
-		} else {
-			// Strategy 2: No results yet - use global property index from graph
-			allValues := app.graph.GetPropertyValues(ctx.PropertyName, 100)
-			for _, val := range allValues {
-				if strings.HasPrefix(strings.ToLower(val), strings.ToLower(ctx.Prefix)) {
-					s.suggestions = append(s.suggestions, val)
-					if len(s.suggestions) >= 10 {
-						break
-					}
-				}
-			}
-		}
+		// Get property values ranked by frequency
+		s.suggestions = s.getPropertyValueSuggestions(app, ctx.PropertyName, ctx.Prefix)
 		s.showSuggestions = len(s.suggestions) > 0
 
 	case "status":
-		// Status is a common property, treat like propvalue
-		ctx.PropertyName = "status"
-		ctx.Type = "propvalue"
-		// Recursively call updateSuggestions won't work, so inline it
-		s.suggestions = []string{}
-		if len(s.results) > 0 {
-			valueMap := make(map[string]int)
-			for _, entity := range s.results {
-				if val, ok := entity.Properties["status"]; ok {
-					strVal := s.valueToString(val)
-					if strVal != "" && strings.HasPrefix(strings.ToLower(strVal), strings.ToLower(ctx.Prefix)) {
-						valueMap[strVal]++
-					}
-				}
-			}
-			type valueCount struct {
-				val   string
-				count int
-			}
-			sorted := []valueCount{}
-			for v, c := range valueMap {
-				sorted = append(sorted, valueCount{v, c})
-			}
-			for i := 0; i < len(sorted); i++ {
-				for j := i + 1; j < len(sorted); j++ {
-					if sorted[j].count > sorted[i].count {
-						sorted[i], sorted[j] = sorted[j], sorted[i]
-					}
-				}
-			}
-			for i := 0; i < len(sorted) && i < 10; i++ {
-				s.suggestions = append(s.suggestions, sorted[i].val)
-			}
-		} else {
-			allValues := app.graph.GetPropertyValues("status", 100)
-			for _, val := range allValues {
-				if strings.HasPrefix(strings.ToLower(val), strings.ToLower(ctx.Prefix)) {
-					s.suggestions = append(s.suggestions, val)
-					if len(s.suggestions) >= 10 {
-						break
-					}
-				}
-			}
-		}
+		// Status is a common property shortcut, use same logic as propvalue
+		s.suggestions = s.getPropertyValueSuggestions(app, "status", ctx.Prefix)
 		s.showSuggestions = len(s.suggestions) > 0
 
 	default:
@@ -247,6 +241,7 @@ func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if s.cursorPos > 0 && s.query != "" {
 			s.query = s.query[:s.cursorPos-1] + s.query[s.cursorPos:]
 			s.cursorPos--
+			s.updateParseErrors()
 			s.updateSuggestions(app)
 			// Trigger live search
 			return app, s.triggerSearch()
@@ -291,22 +286,34 @@ func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		s.parseErrors = nil
 		s.searching = false
 		s.lastQuery = ""
+		s.showSuggestions = false
+		s.suggestions = nil
 
 	default:
 		// Insert character
 		if msg.Type == tea.KeyRunes {
 			chars := string(msg.Runes)
-			s.query = s.query[:s.cursorPos] + chars + s.query[s.cursorPos:]
-			s.cursorPos += len(msg.Runes)
-			s.updateSuggestions(app)
-			// Trigger live search
-			return app, s.triggerSearch()
+			newQuery := s.query[:s.cursorPos] + chars + s.query[s.cursorPos:]
+			// Enforce max query length
+			if len(newQuery) <= maxQueryLength {
+				s.query = newQuery
+				s.cursorPos += len(msg.Runes)
+				s.updateParseErrors()
+				s.updateSuggestions(app)
+				// Trigger live search
+				return app, s.triggerSearch()
+			}
 		} else if msg.Type == tea.KeySpace {
-			s.query = s.query[:s.cursorPos] + " " + s.query[s.cursorPos:]
-			s.cursorPos++
-			s.updateSuggestions(app)
-			// Trigger live search
-			return app, s.triggerSearch()
+			newQuery := s.query[:s.cursorPos] + " " + s.query[s.cursorPos:]
+			// Enforce max query length
+			if len(newQuery) <= maxQueryLength {
+				s.query = newQuery
+				s.cursorPos++
+				s.updateParseErrors()
+				s.updateSuggestions(app)
+				// Trigger live search
+				return app, s.triggerSearch()
+			}
 		}
 	}
 	return app, nil
@@ -316,6 +323,14 @@ func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (s *SearchModel) acceptSuggestion() {
 	if !s.showSuggestions || len(s.suggestions) == 0 {
 		return
+	}
+
+	// Defensive: ensure cursor is within bounds
+	if s.cursorPos > len(s.query) {
+		s.cursorPos = len(s.query)
+	}
+	if s.cursorPos < 0 {
+		s.cursorPos = 0
 	}
 
 	suggestion := s.suggestions[s.suggestionIndex]
@@ -343,21 +358,39 @@ func (s *SearchModel) acceptSuggestion() {
 	case "propvalue":
 		// Find the operator position in the current token
 		currentToken := s.query[tokenStart:s.cursorPos]
-		opPos := strings.Index(currentToken, "=")
+		opPos := -1
+		opLen := 0
+
+		// Check multi-char operators first to avoid matching "=" in "=~"
+		for _, op := range []string{"!=", "<=", ">=", "=~"} {
+			if idx := strings.Index(currentToken, op); idx != -1 {
+				opPos = idx
+				opLen = len(op)
+				break
+			}
+		}
+
+		// Then check single-char operators
 		if opPos == -1 {
-			// Try other operators
-			for _, op := range []string{"!=", "<=", ">=", "=~", "<", ">"} {
+			for _, op := range []string{"=", "<", ">"} {
 				if idx := strings.Index(currentToken, op); idx != -1 {
-					opPos = idx + len(op) - 1 // Point to last char of operator
+					opPos = idx
+					opLen = len(op)
 					break
 				}
 			}
 		}
+
 		// Replace everything after the operator
 		if opPos != -1 {
-			beforeOp := s.query[:tokenStart] + currentToken[:opPos+1]
+			beforeOp := s.query[:tokenStart] + currentToken[:opPos+opLen]
 			s.query = beforeOp + suggestion + " " + suffix
 			s.cursorPos = len(beforeOp) + len(suggestion) + 1
+		} else {
+			// Defensive: if no operator found (shouldn't happen), just append to property
+			// This handles C2 - the silent failure case
+			s.query = prefix + "prop:" + ctx.PropertyName + "=" + suggestion + " " + suffix
+			s.cursorPos = len(prefix) + len("prop:") + len(ctx.PropertyName) + 1 + len(suggestion) + 1
 		}
 	case "status":
 		s.query = prefix + "status:" + suggestion + " " + suffix
@@ -374,22 +407,24 @@ func (s *SearchModel) triggerSearch() tea.Cmd {
 	s.searching = true
 	s.searchVersion++
 	version := s.searchVersion
+	baseVersion := s.baseVersion
 	query := s.query
 
 	return func() tea.Msg {
-		// Debounce: wait 200ms
-		time.Sleep(200 * time.Millisecond)
+		// Debounce to avoid excessive search triggers
+		time.Sleep(searchDebounceDelay)
 		return searchQueryMsg{
-			query:   query,
-			version: version,
+			query:       query,
+			version:     version,
+			baseVersion: baseVersion,
 		}
 	}
 }
 
 // HandleSearchQuery processes a search query message (after debounce)
 func (s *SearchModel) HandleSearchQuery(app *App, msg searchQueryMsg) tea.Cmd {
-	// Ignore if this is a stale search
-	if msg.version != s.searchVersion {
+	// Ignore if this is a stale search (from old keystroke or old screen instance)
+	if msg.version != s.searchVersion || msg.baseVersion != s.baseVersion {
 		return nil
 	}
 
@@ -397,18 +432,19 @@ func (s *SearchModel) HandleSearchQuery(app *App, msg searchQueryMsg) tea.Cmd {
 	return func() tea.Msg {
 		results, errors := s.performSearch(app, msg.query)
 		return searchResultsMsg{
-			results: results,
-			query:   msg.query,
-			version: msg.version,
-			errors:  errors,
+			results:     results,
+			query:       msg.query,
+			version:     msg.version,
+			baseVersion: msg.baseVersion,
+			errors:      errors,
 		}
 	}
 }
 
 // HandleSearchResults processes search results
 func (s *SearchModel) HandleSearchResults(msg searchResultsMsg) {
-	// Ignore if this is a stale result
-	if msg.version != s.searchVersion {
+	// Ignore if this is a stale result (from old keystroke or old screen instance)
+	if msg.version != s.searchVersion || msg.baseVersion != s.baseVersion {
 		return
 	}
 
@@ -553,15 +589,8 @@ func (s *SearchModel) View(_, height int) string {
 	sb.WriteString(labelStyle.Render(helpText))
 	sb.WriteString("\n")
 
-	// Show parse errors
-	if len(s.parseErrors) > 0 {
-		sb.WriteString(errorStyle.Render("⚠ " + strings.Join(s.parseErrors, "; ")))
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString("\n")
-
 	// Show autocomplete suggestions if available
+	// Don't show parse errors when suggestions are available - user is mid-typing
 	if s.showSuggestions && len(s.suggestions) > 0 {
 		suggestionStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("242"))
@@ -593,6 +622,13 @@ func (s *SearchModel) View(_, height int) string {
 		}
 		sb.WriteString("\n")
 		sb.WriteString(labelStyle.Render("[Tab] to accept, [↑/↓] to navigate"))
+		sb.WriteString("\n")
+	} else {
+		// Show parse errors only when NOT showing suggestions
+		if len(s.parseErrors) > 0 {
+			sb.WriteString(errorStyle.Render("⚠ " + strings.Join(s.parseErrors, "; ")))
+			sb.WriteString("\n")
+		}
 		sb.WriteString("\n")
 	}
 
@@ -666,41 +702,62 @@ func (s *SearchModel) View(_, height int) string {
 
 // highlightSyntax applies basic syntax highlighting to the query
 func (s *SearchModel) highlightSyntax(text string) string {
+	if text == "" {
+		return text
+	}
+
 	typeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))   // blue
 	propStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))   // green
 	quoteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")) // yellow
 
-	// Simple highlighting - check prefixes
-	if strings.HasPrefix(text, "type:") {
-		return typeStyle.Render(text)
-	}
-	if strings.HasPrefix(text, "prop:") {
-		return propStyle.Render(text)
-	}
-	if strings.HasPrefix(text, "status:") {
-		return propStyle.Render(text)
-	}
-	if strings.HasPrefix(text, "\"") {
-		return quoteStyle.Render(text)
-	}
+	// Parse text to handle quoted strings correctly
+	var result strings.Builder
+	i := 0
+	for i < len(text) {
+		// Skip whitespace
+		if text[i] == ' ' || text[i] == '\t' {
+			result.WriteByte(text[i])
+			i++
+			continue
+		}
 
-	// Highlight individual tokens
-	tokens := strings.Fields(text)
-	var highlighted []string
-	for _, token := range tokens {
+		// Check for quoted string
+		if text[i] == '"' {
+			start := i
+			i++ // Skip opening quote
+			// Find closing quote
+			for i < len(text) && text[i] != '"' {
+				if text[i] == '\\' && i+1 < len(text) {
+					i++ // Skip escaped character
+				}
+				i++
+			}
+			if i < len(text) {
+				i++ // Skip closing quote
+			}
+			result.WriteString(quoteStyle.Render(text[start:i]))
+			continue
+		}
+
+		// Regular token - find end
+		start := i
+		for i < len(text) && text[i] != ' ' && text[i] != '\t' && text[i] != '"' {
+			i++
+		}
+		token := text[start:i]
+
+		// Apply highlighting based on token type
 		switch {
 		case strings.HasPrefix(token, "type:"):
-			highlighted = append(highlighted, typeStyle.Render(token))
+			result.WriteString(typeStyle.Render(token))
 		case strings.HasPrefix(token, "prop:"), strings.HasPrefix(token, "status:"):
-			highlighted = append(highlighted, propStyle.Render(token))
-		case strings.HasPrefix(token, "\""):
-			highlighted = append(highlighted, quoteStyle.Render(token))
+			result.WriteString(propStyle.Render(token))
 		default:
-			highlighted = append(highlighted, token)
+			result.WriteString(token)
 		}
 	}
 
-	return strings.Join(highlighted, " ")
+	return result.String()
 }
 
 // Help returns help items
