@@ -41,3 +41,11 @@ code-block-style:
 # Use backticks for code fences
 code-fence-style:
   style: backtick
+
+# MD036 - No emphasis as heading
+# Disable because we use bold text for step labels in guides
+no-emphasis-as-heading: false
+
+# MD060 - Table column style
+# Disable as it's too strict for existing docs
+table-column-style: false

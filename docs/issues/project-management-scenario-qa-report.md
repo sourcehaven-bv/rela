@@ -79,7 +79,7 @@ fail validation or have incorrect data.
 # Created STK-001.md
 id: STK-001
 status: draft
-title: ' '  # Should be "name: John Smith"
+title: " " # Should be "name: John Smith"
 type: stakeholder
 ```
 
@@ -110,7 +110,7 @@ The created entity has whitespace instead of the entered text.
 # GOAL-002.md
 id: GOAL-002
 status: draft
-title: '   '  # Should be "Reduce time-to-market by 20%"
+title: "   " # Should be "Reduce time-to-market by 20%"
 type: goal
 ```
 
@@ -281,14 +281,14 @@ their ID with no title.
 
 ### Medium Priority
 
-6. Make coverage analysis configurable for custom metamodels
-7. Add create confirmation in TUI
-8. Add property editing support in TUI
+1. Make coverage analysis configurable for custom metamodels
+2. Add create confirmation in TUI
+3. Add property editing support in TUI
 
 ### Low Priority
 
-9. Improve TUI stability when rapidly pressing keys
-10. Add visual feedback for successful operations in TUI
+1. Improve TUI stability when rapidly pressing keys
+2. Add visual feedback for successful operations in TUI
 
 ## Test Data Created
 

@@ -9,7 +9,7 @@ Traceability is the ability to track relationships between
 different levels of artifacts—from high-level requirements down to
 implementation components.
 
-```
+```text
 Why?          What?           How?              Where?
   │             │               │                  │
   ▼             ▼               ▼                  ▼
@@ -78,7 +78,7 @@ Relations create the traceability chain by connecting entities.
 
 ### Core Traceability Relations
 
-```
+```text
            addresses           implements          realizes
 Decision ──────────→ Requirement    Solution ──────────→ Decision    Component ──────────→ Solution
          ←──────────              ←──────────            ←──────────
@@ -142,7 +142,7 @@ details.
 
 Entities are stored as Markdown files with YAML frontmatter:
 
-```
+```text
 entities/
 ├── requirements/
 │   └── REQ-001.md
@@ -174,7 +174,7 @@ All users must authenticate before accessing protected resources.
 
 Relations are also stored as Markdown:
 
-```
+```text
 relations/
 └── DEC-001--addresses--REQ-001.md
 ```
@@ -320,7 +320,7 @@ The Markdown-based storage is designed for Git:
 
 Large requirements can be broken down:
 
-```
+```text
 REQ-001 (Parent requirement)
 ├── REQ-002 (Sub-requirement)
 ├── REQ-003 (Sub-requirement)

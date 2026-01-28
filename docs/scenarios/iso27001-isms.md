@@ -52,13 +52,13 @@ The relationships between these are crucial:
 
 ### Secondary Goals
 
-5. **Statement of Applicability (SoA)** - Auto-generate the SoA from control
+1. **Statement of Applicability (SoA)** - Auto-generate the SoA from control
    entities and their applicability status
-6. **Risk Treatment Plan** - Generate risk treatment views from risk-control
+2. **Risk Treatment Plan** - Generate risk treatment views from risk-control
    relationships
-7. **Management Reporting** - Dashboards showing ISMS health, outstanding
+3. **Management Reporting** - Dashboards showing ISMS health, outstanding
    actions, coverage metrics
-8. **Version History** - Git-based audit trail showing who changed what, when,
+4. **Version History** - Git-based audit trail showing who changed what, when,
    and why
 
 ## Proposed Metamodel
@@ -129,7 +129,7 @@ entities:
   control:
     label: Control
     aliases: [ctrl]
-    id_patterns: ["A.", "CTRL-"]  # A.5.1 for Annex A, CTRL- for custom
+    id_patterns: ["A.", "CTRL-"] # A.5.1 for Annex A, CTRL- for custom
     properties:
       title:
         type: string
@@ -139,7 +139,7 @@ entities:
       applicability:
         type: control_applicability
       justification:
-        type: string  # Required when not_applicable
+        type: string # Required when not_applicable
       implementation_status:
         type: enum
         values: [not_started, in_progress, implemented, not_applicable]
@@ -193,7 +193,7 @@ entities:
       valid_until:
         type: string
       location:
-        type: string  # Path, URL, or reference to external system
+        type: string # Path, URL, or reference to external system
 
   # Continual Improvement
   nonconformity:
@@ -210,7 +210,14 @@ entities:
         type: string
       source:
         type: enum
-        values: [internal_audit, external_audit, incident, management_review, observation]
+        values:
+          [
+            internal_audit,
+            external_audit,
+            incident,
+            management_review,
+            observation,
+          ]
       severity:
         type: enum
         values: [major, minor, observation]
@@ -250,7 +257,7 @@ relations:
     description: A risk is treated by a control
     from: [risk]
     to: [control]
-    source_min: 1  # Every risk must have at least one treatment
+    source_min: 1 # Every risk must have at least one treatment
     inverse: treats
 
   # Control relationships
@@ -296,7 +303,7 @@ relations:
     description: A nonconformity is addressed by a corrective action
     from: [nonconformity]
     to: [corrective_action]
-    source_min: 1  # Every NC must have at least one CA
+    source_min: 1 # Every NC must have at least one CA
     inverse: addresses
 
   # Cross-references
@@ -309,7 +316,7 @@ relations:
 
 ## Example Traceability Chain
 
-```
+```text
 Asset: Customer Database (AST-001)
     ↑ threatens
 Risk: Unauthorized data access (RSK-012)

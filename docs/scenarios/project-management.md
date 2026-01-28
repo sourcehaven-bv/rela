@@ -2,11 +2,19 @@
 
 ## Background
 
-Project management documentation sprawls across multiple tools: requirements in Jira, decisions in Confluence, risks in spreadsheets, stakeholder info in email threads, and meeting notes in Google Docs. Each tool optimizes for its narrow purpose but none provides the connections between artifacts that project managers desperately need.
+Project management documentation sprawls across multiple tools: requirements in Jira, decisions in
+Confluence, risks in spreadsheets, stakeholder info in email threads, and meeting notes in Google
+Docs. Each tool optimizes for its narrow purpose but none provides the connections between
+artifacts that project managers desperately need.
 
-When a stakeholder asks "why did we decide to delay feature X?", the PM must hunt through meeting notes, Jira tickets, and Slack history. When priorities shift, there's no systematic way to assess impact on dependent work. When projects end, institutional knowledge evaporates.
+When a stakeholder asks "why did we decide to delay feature X?", the PM must hunt through meeting
+notes, Jira tickets, and Slack history. When priorities shift, there's no systematic way to assess
+impact on dependent work. When projects end, institutional knowledge evaporates.
 
-Modern projects rarely follow pure methodologies. Teams blend agile ceremonies with traditional planning, use Kanban for operations while running sprints for features, and adapt their process to project phase and team maturity. Documentation tools should support this pragmatic reality, not force artificial methodology purity.
+Modern projects rarely follow pure methodologies. Teams blend agile ceremonies with traditional
+planning, use Kanban for operations while running sprints for features, and adapt their process to
+project phase and team maturity. Documentation tools should support this pragmatic reality, not
+force artificial methodology purity.
 
 ## Context
 
@@ -21,6 +29,7 @@ A pragmatic project management documentation system needs:
 7. **Knowledge Layer** - Learnings, retrospective outcomes, process improvements
 
 The critical relationships:
+
 - Goals decompose into features
 - Features are blocked by risks
 - Decisions affect features
@@ -40,10 +49,10 @@ The critical relationships:
 
 ### Secondary Goals
 
-5. **Status Reporting** - Generate status from actual work state, not manual updates
-6. **Impact Assessment** - When goals change, see what features/tasks are affected
-7. **Retrospective Follow-through** - Improvement actions tracked to completion
-8. **Knowledge Preservation** - Project learnings survive team transitions
+1. **Status Reporting** - Generate status from actual work state, not manual updates
+2. **Impact Assessment** - When goals change, see what features/tasks are affected
+3. **Retrospective Follow-through** - Improvement actions tracked to completion
+4. **Knowledge Preservation** - Project learnings survive team transitions
 
 ## Proposed Metamodel
 
@@ -135,7 +144,7 @@ entities:
       priority:
         type: priority
       estimate:
-        type: string  # Story points, t-shirt size, or time
+        type: string # Story points, t-shirt size, or time
 
   milestone:
     label: Milestone
@@ -234,7 +243,7 @@ entities:
       impact:
         type: impact
       exposure:
-        type: priority  # Calculated from likelihood × impact
+        type: priority # Calculated from likelihood × impact
       mitigation_strategy:
         type: string
       contingency_plan:
@@ -307,7 +316,8 @@ entities:
         type: string
       meeting_type:
         type: enum
-        values: [standup, planning, review, retrospective, steering, workshop, ad_hoc]
+        values:
+          [standup, planning, review, retrospective, steering, workshop, ad_hoc]
 
   retrospective:
     label: Retrospective
@@ -462,7 +472,7 @@ relations:
     description: A goal or feature is owned by a stakeholder
     from: [goal, feature, epic]
     to: [stakeholder]
-    target_max: 1  # Each item has one owner
+    target_max: 1 # Each item has one owner
     inverse: owns
 
   interestedIn:
@@ -506,14 +516,15 @@ relations:
     label: improves process
     description: An improvement enhances how we work
     from: [improvement]
-    to: [goal]  # Meta: improving toward process goals
+    to: [goal] # Meta: improving toward process goals
     inverse: improvedBy
 ```
 
 ## Example Traceability Chains
 
 ### Goal to Task
-```
+
+```text
 Goal: Increase customer retention by 15% (GOAL-001)
     ↑ contributesTo
 Epic: Self-service account management (EPIC-003)
@@ -524,7 +535,8 @@ Task: Implement email verification (TASK-045)
 ```
 
 ### Risk to Resolution
-```
+
+```text
 Risk: Third-party API deprecation (RISK-007)
     ↓ threatens
 Feature: Payment processing (FEAT-008)
@@ -535,7 +547,8 @@ Task: Migrate to Stripe API v3 (TASK-089)
 ```
 
 ### Decision Context
-```
+
+```text
 Decision: Use GraphQL over REST (DEC-015)
     ↓ affects
 Feature: Mobile API (FEAT-022)
@@ -546,7 +559,8 @@ Stakeholder: Mobile team lead (STK-004)
 ```
 
 ### Retrospective to Improvement
-```
+
+```text
 Retrospective: Sprint 23 retro (RETRO-023)
     ↓ produces
 Improvement: Add definition of done checklist (IMP-008)
@@ -569,16 +583,16 @@ Questions project managers can answer:
 
 ## Value Proposition
 
-| Traditional Approach | With Rela |
-|---------------------|-----------|
-| Requirements in Jira, decisions in Confluence | Unified model with explicit relationships |
-| "Why did we decide X?" - hunt through history | Decisions linked to context and rationale |
-| Manual status roll-up | Status computed from actual work state |
-| Risk register in spreadsheet, disconnected | Risks linked to what they threaten |
-| Stakeholder list outdated | Stakeholders linked to what they care about |
-| Retro actions forgotten | Improvements tracked to completion |
-| Impact analysis is guesswork | Trace dependencies to assess change impact |
-| Project knowledge leaves with people | Structured knowledge preserved in docs |
+| Traditional Approach                          | With Rela                                   |
+| --------------------------------------------- | ------------------------------------------- |
+| Requirements in Jira, decisions in Confluence | Unified model with explicit relationships   |
+| "Why did we decide X?" - hunt through history | Decisions linked to context and rationale   |
+| Manual status roll-up                         | Status computed from actual work state      |
+| Risk register in spreadsheet, disconnected    | Risks linked to what they threaten          |
+| Stakeholder list outdated                     | Stakeholders linked to what they care about |
+| Retro actions forgotten                       | Improvements tracked to completion          |
+| Impact analysis is guesswork                  | Trace dependencies to assess change impact  |
+| Project knowledge leaves with people          | Structured knowledge preserved in docs      |
 
 ## Workflow Integration
 
