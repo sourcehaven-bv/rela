@@ -490,11 +490,9 @@ func (e *Engine) countEntities(collections map[string][]*model.Entity) int {
 
 // expandCollection queries the graph for entities matching the filter criteria
 func (e *Engine) expandCollection(collectionName string, filterDef Filter) ([]*model.Entity, error) {
-	var expanded []*model.Entity
-	seen := make(map[string]bool)
-
-	// Get all nodes from the graph
 	allNodes := e.graph.AllNodes()
+	expanded := make([]*model.Entity, 0, len(allNodes))
+	seen := make(map[string]bool)
 
 	for _, entity := range allNodes {
 		// Skip if already seen
@@ -551,20 +549,18 @@ func (e *Engine) matchesCollectionType(collectionName, entityType string) bool {
 	// Check if collection name is plural of entity type
 	if entityDef, ok := e.meta.GetEntityDef(entityType); ok {
 		// Check label plural (e.g., "Functions" or "functions")
-		plural := strings.ToLower(entityDef.GetPlural())
-		if strings.ToLower(collectionName) == plural {
+		if strings.EqualFold(collectionName, entityDef.GetPlural()) {
 			return true
 		}
 
 		// Check directory plural (e.g., "functions")
-		dirPlural := strings.ToLower(entityDef.GetDirPlural(entityType))
-		if strings.ToLower(collectionName) == dirPlural {
+		if strings.EqualFold(collectionName, entityDef.GetDirPlural(entityType)) {
 			return true
 		}
 	}
 
 	// Check simple pluralization (entityType + "s")
-	if strings.ToLower(collectionName) == strings.ToLower(entityType+"s") {
+	if strings.EqualFold(collectionName, entityType+"s") {
 		return true
 	}
 
@@ -580,19 +576,17 @@ func (e *Engine) matchesCollectionType(collectionName, entityType string) bool {
 // looksLikeEntityType checks if a collection name appears to be an entity type
 // by checking if it matches any known entity type (singular or plural)
 func (e *Engine) looksLikeEntityType(collectionName string) bool {
-	lower := strings.ToLower(collectionName)
-
 	for entityType, entityDef := range e.meta.Entities {
-		if strings.ToLower(entityType) == lower {
+		if strings.EqualFold(entityType, collectionName) {
 			return true
 		}
-		if strings.ToLower(entityDef.GetPlural()) == lower {
+		if strings.EqualFold(entityDef.GetPlural(), collectionName) {
 			return true
 		}
-		if strings.ToLower(entityDef.GetDirPlural(entityType)) == lower {
+		if strings.EqualFold(entityDef.GetDirPlural(entityType), collectionName) {
 			return true
 		}
-		if strings.ToLower(entityType+"s") == lower {
+		if strings.EqualFold(entityType+"s", collectionName) {
 			return true
 		}
 	}

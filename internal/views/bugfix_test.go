@@ -156,7 +156,7 @@ func TestIssue2_FilterExpand(t *testing.T) {
 	g.AddNode(doc)
 
 	// Create requirements with different prefixes
-	req1 := &model.Entity{ID: "REQ-001", Type: "requirement"} // Not connected
+	req1 := &model.Entity{ID: "REQ-001", Type: "requirement"}  // Not connected
 	req2 := &model.Entity{ID: "LRZA-001", Type: "requirement"} // Connected
 	req3 := &model.Entity{ID: "LRZA-002", Type: "requirement"} // Not connected
 	req4 := &model.Entity{ID: "GF-001", Type: "requirement"}   // Not connected

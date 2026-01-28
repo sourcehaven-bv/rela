@@ -1,10 +1,13 @@
 bin/
+/rela
 coverage.out
 test-logs/
 *.log
 
 # QA/Test artifacts
 QA-SUMMARY-*.md
+BUG-FIX-*.md
+*-BUGFIXES.md
 test-tui*.sh
 tickets/
 other-ci.yml
