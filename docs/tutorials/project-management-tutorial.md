@@ -298,7 +298,8 @@ entities:
         type: string
       meeting_type:
         type: enum
-        values: [standup, planning, review, retrospective, steering, workshop, ad_hoc]
+        values:
+          [standup, planning, review, retrospective, steering, workshop, ad_hoc]
 
   retrospective:
     label: Retrospective
@@ -1117,6 +1118,7 @@ rela tui
 ### TUI Workflows
 
 **Daily Standup:**
+
 1. Open TUI
 2. Navigate to Tasks
 3. Filter by `status=in_progress`
@@ -1124,6 +1126,7 @@ rela tui
 5. Check for blocked items
 
 **Sprint Planning:**
+
 1. Navigate to Features
 2. Filter by `status=backlog`
 3. Review each feature
@@ -1131,6 +1134,7 @@ rela tui
 5. Link tasks to features
 
 **Risk Review:**
+
 1. Navigate to Risks
 2. Filter by `status=identified` or `exposure=high`
 3. Review each risk
@@ -1160,6 +1164,7 @@ rationale. Future you will thank present you.
 ### 5. Use Analysis Before Meetings
 
 Before steering committees or planning sessions:
+
 ```bash
 rela analyze orphans
 rela list risk --filter "exposure=high"
@@ -1169,6 +1174,7 @@ rela trace from GOAL-001
 ### 7. Export for Stakeholders
 
 Non-technical stakeholders may prefer spreadsheets:
+
 ```bash
 rela export csv --output weekly-report.csv
 ```
@@ -1176,29 +1182,34 @@ rela export csv --output weekly-report.csv
 ## Common Queries
 
 **What's blocking the milestone?**
+
 ```bash
 rela trace to MS-002
 rela list feature --filter "status=blocked"
 ```
 
 **Who cares about this feature?**
+
 ```bash
 rela show FEAT-001
 # Look at "has stakeholder" relationships
 ```
 
 **What decisions affect this epic?**
+
 ```bash
 rela show EPIC-002
 # Look at "affected by" relationships
 ```
 
 **What risks threaten our timeline?**
+
 ```bash
 rela list risk --filter "status!=resolved"
 ```
 
 **What came out of the last retro?**
+
 ```bash
 rela show RETRO-001
 rela list improvement --filter "status!=done"
@@ -1214,6 +1225,7 @@ You now have a fully functional project management system. Consider:
 4. **Export data** to dashboards or reporting tools
 
 For more information, see:
+
 - [Metamodel Reference](../reference/metamodel.md)
 - [CLI Reference](../reference/cli.md)
 - [Analysis Commands](../reference/analysis.md)

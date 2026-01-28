@@ -196,7 +196,14 @@ entities:
         format: "2006-01-02"
       source:
         type: enum
-        values: [internal_audit, external_audit, incident, management_review, observation]
+        values:
+          [
+            internal_audit,
+            external_audit,
+            incident,
+            management_review,
+            observation,
+          ]
       severity:
         type: enum
         values: [major, minor, observation]
@@ -345,7 +352,7 @@ rela list policy
 
 Expected output:
 
-```
+```text
 ID       TYPE     TITLE                        STATUS
 POL-001  policy   Information Security Policy  active
 POL-002  policy   Access Control Policy        draft
@@ -669,7 +676,7 @@ rela list control --where "implementation_status=not_started"
 
 For any given risk, you should be able to trace through to evidence:
 
-```
+```text
 Risk → Control → Procedure → Evidence
 ```
 
@@ -923,7 +930,7 @@ You've built a complete ISMS with:
 
 ### Key Traceability Chains
 
-```
+```text
 Asset ← threatens ← Risk → treatedBy → Control → implementedBy → Procedure ← mandatedBy ← Policy
                                            ↑
                                       evidencedBy
@@ -931,7 +938,7 @@ Asset ← threatens ← Risk → treatedBy → Control → implementedBy → Pro
                                        Evidence
 ```
 
-```
+```text
 Control ← affects ← Nonconformity → addressedBy → Corrective Action
 ```
 

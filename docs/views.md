@@ -1,10 +1,12 @@
 # Views - Declarative Context Generation
 
-Views provide a declarative way to generate complete context from your rela graph by defining traversal patterns, filters, and derived collections.
+Views provide a declarative way to generate complete context from your rela graph by defining
+traversal patterns, filters, and derived collections.
 
 ## Overview
 
-Instead of writing custom scripts to traverse relationships and gather related entities, you can define views in `views.yaml` that declaratively specify:
+Instead of writing custom scripts to traverse relationships and gather related entities, you can
+define views in `views.yaml` that declaratively specify:
 
 - **Entry point** - The entity type to start from
 - **Traversal rules** - How to follow relationships (including recursive)
@@ -52,17 +54,17 @@ Specifies the starting entity type:
 
 ```yaml
 entry:
-  type: document        # Entity type
-  parameter: doc_id     # Parameter name (documentation only)
+  type: document # Entity type
+  parameter: doc_id # Parameter name (documentation only)
 ```
 
 ### Output Options
 
 ```yaml
 output:
-  include_content: true           # Include entity/relation markdown content
-  resolve_relation_titles: true   # Resolve IDs to {id, title} objects
-  include_entry: true              # Include entry entity in output (default: true)
+  include_content: true # Include entity/relation markdown content
+  resolve_relation_titles: true # Resolve IDs to {id, title} objects
+  include_entry: true # Include entry entity in output (default: true)
 ```
 
 ### Traverse Rules
@@ -107,28 +109,33 @@ traverse:
 
 **Traverse Fields:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `from` | string or list | Source collection(s), `"entry"` for entry entity, `"*"` for all |
-| `follow` | string | Outgoing relation type to follow |
-| `follow_incoming` | string | Incoming relation type (reverse direction) |
-| `collect_as` | string or list | Target collection name(s) |
-| `recursive` | bool | Follow relation transitively |
-| `max_depth` | int | Maximum recursion depth (default: 10) |
-| `where` | string | Property filter expression |
+| Field             | Type           | Description                                                     |
+| ----------------- | -------------- | --------------------------------------------------------------- |
+| `from`            | string or list | Source collection(s), `"entry"` for entry entity, `"*"` for all |
+| `follow`          | string         | Outgoing relation type to follow                                |
+| `follow_incoming` | string         | Incoming relation type (reverse direction)                      |
+| `collect_as`      | string or list | Target collection name(s)                                       |
+| `recursive`       | bool           | Follow relation transitively                                    |
+| `max_depth`       | int            | Maximum recursion depth (default: 10)                           |
+| `where`           | string         | Property filter expression                                      |
 
 **Type-Based Collection Filtering:**
 
-When `collect_as` specifies multiple collection names (e.g., `[functions, usecases, scenarios]`), entities are automatically filtered by type:
+When `collect_as` specifies multiple collection names (e.g., `[functions, usecases, scenarios]`),
+entities are automatically filtered by type:
+
 - Collection name matches entity type (singular or plural)
 - `functions` collection only gets entities of type `function`
 - `usecases` collection only gets entities of type `usecase`
 
-This prevents mixed entity types in collections. For generic collection names (not matching any entity type), all entities are included.
+This prevents mixed entity types in collections. For generic collection names (not matching any
+entity type), all entities are included.
 
 **Multi-Pass Traversal:**
 
-The view engine runs traverse rules in multiple passes (up to 10) until no new entities are found. This ensures that entities reachable via indirect paths are discovered, even if intermediate collections aren't fully populated on the first pass.
+The view engine runs traverse rules in multiple passes (up to 10) until no new entities are found.
+This ensures that entities reachable via indirect paths are discovered, even if intermediate
+collections aren't fully populated on the first pass.
 
 ### Filters
 
@@ -139,9 +146,9 @@ filters:
   requirements:
     # Match any of these conditions
     match_any:
-      - via_traversal: true           # Reached via traverse rules
-      - id_prefix: ["REQ-", "LRZA-"]  # ID starts with prefix
-      - where: "priority=high"        # Property expression
+      - via_traversal: true # Reached via traverse rules
+      - id_prefix: ["REQ-", "LRZA-"] # ID starts with prefix
+      - where: "priority=high" # Property expression
 
   components:
     # Single condition
@@ -149,21 +156,22 @@ filters:
 
   # Expand mode: add entities from graph matching criteria
   requirements_by_prefix:
-    expand: true                      # Query graph for matching entities
-    id_prefix: ["LRZA-", "GF-"]       # Find all entities with these prefixes
+    expand: true # Query graph for matching entities
+    id_prefix: ["LRZA-", "GF-"] # Find all entities with these prefixes
 ```
 
 **Filter Options:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `via_traversal` | bool | Include entities reached via traverse rules |
-| `id_prefix` | []string | Match entities with ID starting with prefix |
-| `where` | string | Property filter expression |
-| `match_any` | []Filter | Match any of the sub-filters (OR logic) |
-| `expand` | bool | **NEW:** Query graph for entities matching criteria, not just filter existing collection |
+| Field           | Type     | Description                                                                              |
+| --------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `via_traversal` | bool     | Include entities reached via traverse rules                                              |
+| `id_prefix`     | []string | Match entities with ID starting with prefix                                              |
+| `where`         | string   | Property filter expression                                                               |
+| `match_any`     | []Filter | Match any of the sub-filters (OR logic)                                                  |
+| `expand`        | bool     | **NEW:** Query graph for entities matching criteria, not just filter existing collection |
 
 **Filter Operators:**
+
 - `=` - Equal
 - `!=` - Not equal
 - `<` - Less than
@@ -174,7 +182,8 @@ filters:
 
 **Expand Mode:**
 
-By default, filters only filter entities already in a collection. With `expand: true`, the filter queries the entire graph and adds matching entities to the collection:
+By default, filters only filter entities already in a collection. With `expand: true`, the filter
+queries the entire graph and adds matching entities to the collection:
 
 ```yaml
 filters:
@@ -310,6 +319,7 @@ views:
 ```
 
 **Usage:**
+
 ```bash
 rela view document_publish DOC-001 -o yaml > context.yaml
 ```
@@ -391,7 +401,7 @@ Views are validated against your metamodel when executed:
 
 Validation errors provide clear feedback:
 
-```
+```text
 view document_publish: traverse[0]: unknown relation type: unknownRelation
 ```
 
@@ -416,25 +426,32 @@ The following features are planned for future releases:
 ## Troubleshooting
 
 **View not found:**
-```
+
+```text
 Error: view not found: my_view
 ```
+
 → Check that the view name matches exactly in `views.yaml`
 
 **Entry entity not found:**
-```
+
+```text
 Error: entry entity not found: DOC-999
 ```
+
 → Verify the entity ID exists in your project
 
 **Validation error:**
-```
+
+```text
 Error: view validation failed: entry.type: unknown entity type: doc
 ```
+
 → Check that entity types match your metamodel definitions
 
 **Empty collections:**
 If expected entities don't appear:
+
 - Verify traverse rules use correct relation types
 - Check direction (`follow` vs `follow_incoming`)
 - Ensure entities are connected by the specified relations
