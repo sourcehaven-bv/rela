@@ -62,18 +62,24 @@ func (g *Graph) unindexEntityProperties(entity *model.Entity) {
 			continue
 		}
 
-		if valMap, ok := g.propertyIndex[propName]; ok {
-			if count, exists := valMap[strValue]; exists {
-				if count <= 1 {
-					delete(valMap, strValue)
-					// Clean up empty maps
-					if len(valMap) == 0 {
-						delete(g.propertyIndex, propName)
-					}
-				} else {
-					valMap[strValue]--
-				}
+		valMap, ok := g.propertyIndex[propName]
+		if !ok {
+			continue
+		}
+
+		count, exists := valMap[strValue]
+		if !exists {
+			continue
+		}
+
+		if count <= 1 {
+			delete(valMap, strValue)
+			// Clean up empty maps
+			if len(valMap) == 0 {
+				delete(g.propertyIndex, propName)
 			}
+		} else {
+			valMap[strValue]--
 		}
 	}
 }

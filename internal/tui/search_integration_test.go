@@ -375,12 +375,13 @@ func BenchmarkSearch(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		sq := searchparser.ParseQuery(query)
 		allEntities := g.AllNodes()
-		var results []*model.Entity
+		results := make([]*model.Entity, 0)
 		for _, entity := range allEntities {
 			if matchesSearchFilters(entity, sq) {
 				results = append(results, entity)
 			}
 		}
+		_ = results // Use the results to avoid SA4010
 	}
 }
 
