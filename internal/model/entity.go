@@ -60,6 +60,7 @@ type Relation struct {
 	Type       string                 `json:"relation" yaml:"relation"`
 	To         string                 `json:"to" yaml:"to"`
 	Properties map[string]interface{} `json:"properties,omitempty" yaml:"properties,omitempty"`
+	Content    string                 `json:"content,omitempty" yaml:"-"`
 	FilePath   string                 `json:"filePath,omitempty" yaml:"-"`
 	ModTime    time.Time              `json:"modTime,omitempty" yaml:"-"`
 }
