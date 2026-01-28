@@ -440,6 +440,132 @@ entities:
 	}
 }
 
+func TestParse_ReservedTypeNameValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		yaml         string
+		wantErr      bool
+		wantTypeName string
+	}{
+		{
+			name: "custom type with non-reserved name is valid",
+			yaml: `
+version: "1.0"
+types:
+  status:
+    values: [draft, approved]
+entities:
+  requirement:
+    label: Requirement
+`,
+			wantErr: false,
+		},
+		{
+			name: "custom type named 'string' is rejected",
+			yaml: `
+version: "1.0"
+types:
+  string:
+    values: [foo, bar]
+`,
+			wantErr:      true,
+			wantTypeName: "string",
+		},
+		{
+			name: "custom type named 'date' is rejected",
+			yaml: `
+version: "1.0"
+types:
+  date:
+    values: [today, tomorrow]
+`,
+			wantErr:      true,
+			wantTypeName: "date",
+		},
+		{
+			name: "custom type named 'integer' is rejected",
+			yaml: `
+version: "1.0"
+types:
+  integer:
+    values: [one, two]
+`,
+			wantErr:      true,
+			wantTypeName: "integer",
+		},
+		{
+			name: "custom type named 'boolean' is rejected",
+			yaml: `
+version: "1.0"
+types:
+  boolean:
+    values: [yes, no]
+`,
+			wantErr:      true,
+			wantTypeName: "boolean",
+		},
+		{
+			name: "custom type named 'enum' is rejected",
+			yaml: `
+version: "1.0"
+types:
+  enum:
+    values: [a, b]
+`,
+			wantErr:      true,
+			wantTypeName: "enum",
+		},
+		{
+			name: "multiple custom types with one reserved name",
+			yaml: `
+version: "1.0"
+types:
+  status:
+    values: [draft, approved]
+  string:
+    values: [foo, bar]
+  priority:
+    values: [high, low]
+`,
+			wantErr:      true,
+			wantTypeName: "string",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.yaml))
+			if !tt.wantErr {
+				if err != nil {
+					t.Errorf("Parse() unexpected error: %v", err)
+				}
+				return
+			}
+			// wantErr is true
+			if err == nil {
+				t.Errorf("Parse() expected error, got nil")
+				return
+			}
+			var reservedErr *ReservedTypeNameError
+			if !errors.As(err, &reservedErr) {
+				t.Errorf("Parse() error type = %T, want *ReservedTypeNameError", err)
+				return
+			}
+			if reservedErr.TypeName != tt.wantTypeName {
+				t.Errorf("ReservedTypeNameError.TypeName = %q, want %q", reservedErr.TypeName, tt.wantTypeName)
+			}
+		})
+	}
+}
+
+func TestReservedTypeNameError_Error(t *testing.T) {
+	err := &ReservedTypeNameError{TypeName: "string"}
+	want := `cannot define custom type "string": name is reserved for built-in type (reserved: string, date, integer, boolean, enum)`
+	if got := err.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
 func TestIsBuiltinType(t *testing.T) {
 	tests := []struct {
 		name string
