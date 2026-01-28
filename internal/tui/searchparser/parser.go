@@ -177,3 +177,65 @@ func (sq *SearchQuery) ErrorString() string {
 	}
 	return strings.Join(sq.ParseErrors, "; ")
 }
+
+// AutocompleteContext represents the context for autocomplete at cursor position
+type AutocompleteContext struct {
+	Type   string // "type", "prop", "status", or ""
+	Prefix string // The partial text after the colon
+}
+
+// GetAutocompleteContext analyzes the query at cursor position for autocomplete
+func GetAutocompleteContext(query string, cursorPos int) *AutocompleteContext {
+	if cursorPos > len(query) {
+		cursorPos = len(query)
+	}
+
+	// Get text up to cursor
+	textToCursor := query[:cursorPos]
+
+	// Find the last token before cursor
+	// We need to handle spaces and find the current incomplete token
+	lastSpace := strings.LastIndexAny(textToCursor, " \t")
+	var currentToken string
+	if lastSpace == -1 {
+		currentToken = textToCursor
+	} else {
+		currentToken = textToCursor[lastSpace+1:]
+	}
+
+	// Check if we're in the middle of a type: filter
+	if strings.HasPrefix(currentToken, "type:") {
+		prefix := strings.TrimPrefix(currentToken, "type:")
+		return &AutocompleteContext{
+			Type:   "type",
+			Prefix: prefix,
+		}
+	}
+
+	// Check if we're in the middle of a prop: filter
+	if strings.HasPrefix(currentToken, "prop:") {
+		propPart := strings.TrimPrefix(currentToken, "prop:")
+		// Check if there's already an operator (=, !=, <, etc.)
+		// If so, we don't autocomplete (they're typing the value)
+		for _, op := range []string{"!=", "<=", ">=", "=~", "=", "<", ">"} {
+			if strings.Contains(propPart, op) {
+				return &AutocompleteContext{Type: "", Prefix: ""}
+			}
+		}
+		return &AutocompleteContext{
+			Type:   "prop",
+			Prefix: propPart,
+		}
+	}
+
+	// Check if we're in the middle of a status: filter
+	if strings.HasPrefix(currentToken, "status:") {
+		prefix := strings.TrimPrefix(currentToken, "status:")
+		return &AutocompleteContext{
+			Type:   "status",
+			Prefix: prefix,
+		}
+	}
+
+	return &AutocompleteContext{Type: "", Prefix: ""}
+}

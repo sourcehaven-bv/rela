@@ -23,6 +23,13 @@ type SearchModel struct {
 	searchVersion int // Track search version to ignore stale results
 	lastQuery     string
 	parseErrors   []string
+
+	// Autocomplete state
+	suggestions       []string
+	suggestionIndex   int
+	showSuggestions   bool
+	autocompleteType  string // "type", "prop", or ""
+	autocompleteQuery string // The query when suggestions were generated
 }
 
 // searchQueryMsg is sent when user types (debounced)
@@ -44,12 +51,95 @@ func NewSearchModel(_ *App) *SearchModel {
 	return &SearchModel{}
 }
 
+// updateSuggestions generates autocomplete suggestions based on cursor position
+func (s *SearchModel) updateSuggestions(app *App) {
+	ctx := searchparser.GetAutocompleteContext(s.query, s.cursorPos)
+
+	// Clear suggestions if not in autocomplete context
+	if ctx.Type == "" {
+		s.showSuggestions = false
+		s.suggestions = nil
+		return
+	}
+
+	// Don't regenerate if query hasn't changed
+	if s.autocompleteQuery == s.query && s.autocompleteType == ctx.Type {
+		return
+	}
+
+	s.autocompleteQuery = s.query
+	s.autocompleteType = ctx.Type
+	s.suggestionIndex = 0
+
+	switch ctx.Type {
+	case "type":
+		// Get all entity types from metamodel
+		s.suggestions = []string{}
+		for typeName := range app.metamodel.Entities {
+			// Filter by prefix
+			if strings.HasPrefix(strings.ToLower(typeName), strings.ToLower(ctx.Prefix)) {
+				s.suggestions = append(s.suggestions, typeName)
+			}
+		}
+		s.showSuggestions = len(s.suggestions) > 0
+
+	case "prop":
+		// Get all property names from all entity types
+		propMap := make(map[string]bool)
+		for _, entityDef := range app.metamodel.Entities {
+			for propName := range entityDef.Properties {
+				if strings.HasPrefix(strings.ToLower(propName), strings.ToLower(ctx.Prefix)) {
+					propMap[propName] = true
+				}
+			}
+		}
+		s.suggestions = []string{}
+		for propName := range propMap {
+			s.suggestions = append(s.suggestions, propName)
+		}
+		s.showSuggestions = len(s.suggestions) > 0
+
+	case "status":
+		// Status is a common property, get its values if it's an enum
+		s.suggestions = []string{}
+		for _, entityDef := range app.metamodel.Entities {
+			if statusProp, ok := entityDef.Properties["status"]; ok {
+				for _, val := range statusProp.Values {
+					if strings.HasPrefix(strings.ToLower(val), strings.ToLower(ctx.Prefix)) {
+						s.suggestions = append(s.suggestions, val)
+					}
+				}
+				break // Assume status values are same across types
+			}
+		}
+		s.showSuggestions = len(s.suggestions) > 0
+
+	default:
+		s.showSuggestions = false
+		s.suggestions = nil
+	}
+}
+
 // Update handles key events
 func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "tab":
+		// Accept autocomplete suggestion
+		if s.showSuggestions && len(s.suggestions) > 0 {
+			s.acceptSuggestion()
+			s.updateSuggestions(app)
+			return app, s.triggerSearch()
+		}
+
 	case "enter":
+		// If showing suggestions, accept the selected suggestion
+		if s.showSuggestions && len(s.suggestions) > 0 {
+			s.acceptSuggestion()
+			s.updateSuggestions(app)
+			return app, s.triggerSearch()
+		}
+		// Otherwise, open selected result
 		if len(s.results) > 0 {
-			// Open selected result
 			entity := s.results[s.resultIndex]
 			app.detail = NewDetailModel(app, entity.ID)
 			return app, app.pushScreen(ScreenDetail)
@@ -60,28 +150,41 @@ func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if s.cursorPos > 0 && s.query != "" {
 			s.query = s.query[:s.cursorPos-1] + s.query[s.cursorPos:]
 			s.cursorPos--
+			s.updateSuggestions(app)
 			// Trigger live search
 			return app, s.triggerSearch()
 		}
 
 	case "j", "down":
-		if s.resultIndex < len(s.results)-1 {
+		// If showing suggestions, navigate suggestions
+		if s.showSuggestions {
+			if s.suggestionIndex < len(s.suggestions)-1 {
+				s.suggestionIndex++
+			}
+		} else if s.resultIndex < len(s.results)-1 {
 			s.resultIndex++
 		}
 
 	case "k", "up":
-		if s.resultIndex > 0 {
+		// If showing suggestions, navigate suggestions
+		if s.showSuggestions {
+			if s.suggestionIndex > 0 {
+				s.suggestionIndex--
+			}
+		} else if s.resultIndex > 0 {
 			s.resultIndex--
 		}
 
 	case "left":
 		if s.cursorPos > 0 {
 			s.cursorPos--
+			s.updateSuggestions(app)
 		}
 
 	case "right":
 		if s.cursorPos < len(s.query) {
 			s.cursorPos++
+			s.updateSuggestions(app)
 		}
 
 	case "ctrl+u":
@@ -98,16 +201,56 @@ func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			chars := string(msg.Runes)
 			s.query = s.query[:s.cursorPos] + chars + s.query[s.cursorPos:]
 			s.cursorPos += len(msg.Runes)
+			s.updateSuggestions(app)
 			// Trigger live search
 			return app, s.triggerSearch()
 		} else if msg.Type == tea.KeySpace {
 			s.query = s.query[:s.cursorPos] + " " + s.query[s.cursorPos:]
 			s.cursorPos++
+			s.updateSuggestions(app)
 			// Trigger live search
 			return app, s.triggerSearch()
 		}
 	}
 	return app, nil
+}
+
+// acceptSuggestion inserts the selected suggestion into the query
+func (s *SearchModel) acceptSuggestion() {
+	if !s.showSuggestions || len(s.suggestions) == 0 {
+		return
+	}
+
+	suggestion := s.suggestions[s.suggestionIndex]
+	ctx := searchparser.GetAutocompleteContext(s.query, s.cursorPos)
+
+	// Find where the current token starts
+	textToCursor := s.query[:s.cursorPos]
+	lastSpace := strings.LastIndexAny(textToCursor, " \t")
+	tokenStart := 0
+	if lastSpace != -1 {
+		tokenStart = lastSpace + 1
+	}
+
+	// Replace the incomplete token with the suggestion
+	prefix := s.query[:tokenStart]
+	suffix := s.query[s.cursorPos:]
+
+	switch ctx.Type {
+	case "type":
+		s.query = prefix + "type:" + suggestion + " " + suffix
+		s.cursorPos = len(prefix) + len("type:") + len(suggestion) + 1
+	case "prop":
+		s.query = prefix + "prop:" + suggestion + "=" + suffix
+		s.cursorPos = len(prefix) + len("prop:") + len(suggestion) + 1
+	case "status":
+		s.query = prefix + "status:" + suggestion + " " + suffix
+		s.cursorPos = len(prefix) + len("status:") + len(suggestion) + 1
+	}
+
+	// Hide suggestions after accepting
+	s.showSuggestions = false
+	s.suggestions = nil
 }
 
 // triggerSearch creates a debounced search command
@@ -194,7 +337,9 @@ func (s *SearchModel) matchesFilters(entity *model.Entity, sq *searchparser.Sear
 	if len(sq.EntityTypes) > 0 {
 		found := false
 		for _, t := range sq.EntityTypes {
-			if strings.EqualFold(entity.Type, t) {
+			// Support prefix matching (case-insensitive)
+			// e.g., "req" matches "requirement", "dec" matches "decision"
+			if strings.HasPrefix(strings.ToLower(entity.Type), strings.ToLower(t)) {
 				found = true
 				break
 			}
@@ -300,8 +445,43 @@ func (s *SearchModel) View(_, height int) string {
 
 	sb.WriteString("\n")
 
+	// Show autocomplete suggestions if available
+	if s.showSuggestions && len(s.suggestions) > 0 {
+		suggestionStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("242"))
+		selectedSuggStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("39")).
+			Bold(true)
+
+		sb.WriteString(labelStyle.Render("Suggestions:"))
+		sb.WriteString("\n\n")
+
+		// Show up to 10 suggestions
+		maxSugg := len(s.suggestions)
+		if maxSugg > 10 {
+			maxSugg = 10
+		}
+
+		for i := 0; i < maxSugg; i++ {
+			marker := "  "
+			style := suggestionStyle
+			if i == s.suggestionIndex {
+				marker = "► "
+				style = selectedSuggStyle
+			}
+			sb.WriteString(marker + style.Render(s.suggestions[i]) + "\n")
+		}
+
+		if len(s.suggestions) > 10 {
+			sb.WriteString(labelStyle.Render(fmt.Sprintf("\n  ... and %d more", len(s.suggestions)-10)))
+		}
+		sb.WriteString("\n")
+		sb.WriteString(labelStyle.Render("[Tab] to accept, [↑/↓] to navigate"))
+		sb.WriteString("\n")
+	}
+
 	// Results
-	if s.lastQuery != "" {
+	if !s.showSuggestions && s.lastQuery != "" {
 		if len(s.results) == 0 {
 			sb.WriteString(labelStyle.Render("No results found"))
 		} else {
@@ -352,7 +532,7 @@ func (s *SearchModel) View(_, height int) string {
 				sb.WriteString(labelStyle.Render(fmt.Sprintf("\n[%d/%d]", s.resultIndex+1, len(s.results))))
 			}
 		}
-	} else if s.query == "" {
+	} else if !s.showSuggestions && s.query == "" {
 		// Show help when empty
 		sb.WriteString(labelStyle.Render("Search syntax examples:"))
 		sb.WriteString("\n\n")
