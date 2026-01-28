@@ -39,6 +39,13 @@ func Parse(data []byte) (*Metamodel, error) {
 		return nil, err
 	}
 
+	// Validate custom type names don't conflict with built-in types
+	for typeName := range m.Types {
+		if IsBuiltinType(typeName) {
+			return nil, &ReservedTypeNameError{TypeName: typeName}
+		}
+	}
+
 	// Build alias map and validate entity definitions
 	m.aliasMap = make(map[string]string)
 	for name, def := range m.Entities {

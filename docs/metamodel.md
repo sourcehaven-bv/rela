@@ -33,6 +33,22 @@ types:
     values: [critical, high, medium, low]
 ```
 
+### Reserved Type Names
+
+The following names are reserved for built-in property types and cannot be used as custom type names:
+
+- `string` - Free-form text
+- `date` - Date values
+- `integer` - Whole numbers
+- `boolean` - True/false values
+- `enum` - Inline enumeration (use `values:` directly in property definition)
+
+Attempting to define a custom type with a reserved name will produce an error:
+
+```text
+cannot define custom type "string": name is reserved for built-in type
+```
+
 ## Entity Types
 
 Each entity type defines:

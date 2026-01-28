@@ -523,6 +523,16 @@ func (e *ConflictingIDPrefixError) Error() string {
 	return "entity " + e.EntityType + " specifies both id_prefix and id_prefixes; use only one"
 }
 
+// ReservedTypeNameError is returned when a custom type name conflicts with a built-in type
+type ReservedTypeNameError struct {
+	TypeName string
+}
+
+func (e *ReservedTypeNameError) Error() string {
+	return "cannot define custom type \"" + e.TypeName +
+		"\": name is reserved for built-in type (reserved: string, date, integer, boolean, enum)"
+}
+
 // Schema output interface methods for Metamodel
 
 // GetVersion returns the metamodel version
