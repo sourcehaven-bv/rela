@@ -14,3 +14,4 @@ test-tui*.sh
 tickets/
 other-ci.yml
 .claude/
+.ignored/
