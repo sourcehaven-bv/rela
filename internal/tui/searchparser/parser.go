@@ -180,8 +180,9 @@ func (sq *SearchQuery) ErrorString() string {
 
 // AutocompleteContext represents the context for autocomplete at cursor position
 type AutocompleteContext struct {
-	Type   string // "type", "prop", "status", or ""
-	Prefix string // The partial text after the colon
+	Type         string // "type", "prop", "propvalue", "status", or ""
+	Prefix       string // The partial text after the colon or operator
+	PropertyName string // For "propvalue", the property name being completed
 }
 
 // GetAutocompleteContext analyzes the query at cursor position for autocomplete
@@ -215,13 +216,20 @@ func GetAutocompleteContext(query string, cursorPos int) *AutocompleteContext {
 	// Check if we're in the middle of a prop: filter
 	if strings.HasPrefix(currentToken, "prop:") {
 		propPart := strings.TrimPrefix(currentToken, "prop:")
-		// Check if there's already an operator (=, !=, <, etc.)
-		// If so, we don't autocomplete (they're typing the value)
+		// Check if there's an operator and we're typing the value
 		for _, op := range []string{"!=", "<=", ">=", "=~", "=", "<", ">"} {
-			if strings.Contains(propPart, op) {
-				return &AutocompleteContext{Type: "", Prefix: ""}
+			if idx := strings.Index(propPart, op); idx > 0 {
+				// Found operator - we're completing the value
+				propName := propPart[:idx]
+				valuePrefix := propPart[idx+len(op):]
+				return &AutocompleteContext{
+					Type:         "propvalue",
+					PropertyName: propName,
+					Prefix:       valuePrefix,
+				}
 			}
 		}
+		// No operator yet - completing property name
 		return &AutocompleteContext{
 			Type:   "prop",
 			Prefix: propPart,

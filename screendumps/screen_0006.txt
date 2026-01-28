@@ -1,0 +1,40 @@
+ RELA  │  Search                                                                                                     /tmp/rela-test-project
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Search
+
+
+╭──────────────────────────────────────────────────────────────────────╮
+│ ty_                                                                  │
+╰──────────────────────────────────────────────────────────────────────╯
+Type to search (live)
+
+Found 6 results:
+
+► REQ-018 Requirement 18: nightfall lachrymosit... (requirement)
+  DEC-001 Use PostgreSQL Database (decision)
+  REQ-002 REST API Implementation (requirement)
+  REQ-004 Security Audit Logging (requirement)
+  REQ-029 Requirement 29: nonliability lighting... (requirement)
+  REQ-001 User Authentication (requirement)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ [↑/↓] navigate  [enter] open  [ctrl+u] clear  [esc] back  [q] quit  [?] help
+
+

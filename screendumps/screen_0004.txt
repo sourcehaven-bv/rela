@@ -1,0 +1,40 @@
+ RELA  │  Search                                                                                                     /tmp/rela-test-project
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Search
+
+
+╭──────────────────────────────────────────────────────────────────────╮
+│ _                                                                    │
+╰──────────────────────────────────────────────────────────────────────╯
+Type to search (live)
+
+Search syntax examples:
+
+  type:requirement              - filter by entity type
+  prop:status=published         - filter by property
+  authentication                - free text search
+  "exact phrase"                - exact phrase match
+
+  type:requirement prop:priority>3 auth
+  type:decision,solution "REST API"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ [type] search  [ctrl+u] clear  [esc] back  [q] quit  [?] help
+
+

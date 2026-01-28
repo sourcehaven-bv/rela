@@ -99,17 +99,98 @@ func (s *SearchModel) updateSuggestions(app *App) {
 		}
 		s.showSuggestions = len(s.suggestions) > 0
 
-	case "status":
-		// Status is a common property, get its values if it's an enum
+	case "propvalue":
+		// Get property values from current search results or global index
 		s.suggestions = []string{}
-		for _, entityDef := range app.metamodel.Entities {
-			if statusProp, ok := entityDef.Properties["status"]; ok {
-				for _, val := range statusProp.Values {
-					if strings.HasPrefix(strings.ToLower(val), strings.ToLower(ctx.Prefix)) {
-						s.suggestions = append(s.suggestions, val)
+
+		// Strategy 1: If we have search results, extract values from them
+		if len(s.results) > 0 {
+			valueMap := make(map[string]int)
+			for _, entity := range s.results {
+				if val, ok := entity.Properties[ctx.PropertyName]; ok {
+					strVal := s.valueToString(val)
+					if strVal != "" && strings.HasPrefix(strings.ToLower(strVal), strings.ToLower(ctx.Prefix)) {
+						valueMap[strVal]++
 					}
 				}
-				break // Assume status values are same across types
+			}
+			// Sort by frequency
+			type valueCount struct {
+				val   string
+				count int
+			}
+			sorted := []valueCount{}
+			for v, c := range valueMap {
+				sorted = append(sorted, valueCount{v, c})
+			}
+			// Simple bubble sort by count descending
+			for i := 0; i < len(sorted); i++ {
+				for j := i + 1; j < len(sorted); j++ {
+					if sorted[j].count > sorted[i].count {
+						sorted[i], sorted[j] = sorted[j], sorted[i]
+					}
+				}
+			}
+			for i := 0; i < len(sorted) && i < 10; i++ {
+				s.suggestions = append(s.suggestions, sorted[i].val)
+			}
+		} else {
+			// Strategy 2: No results yet - use global property index from graph
+			allValues := app.graph.GetPropertyValues(ctx.PropertyName, 100)
+			for _, val := range allValues {
+				if strings.HasPrefix(strings.ToLower(val), strings.ToLower(ctx.Prefix)) {
+					s.suggestions = append(s.suggestions, val)
+					if len(s.suggestions) >= 10 {
+						break
+					}
+				}
+			}
+		}
+		s.showSuggestions = len(s.suggestions) > 0
+
+	case "status":
+		// Status is a common property, treat like propvalue
+		ctx.PropertyName = "status"
+		ctx.Type = "propvalue"
+		// Recursively call updateSuggestions won't work, so inline it
+		s.suggestions = []string{}
+		if len(s.results) > 0 {
+			valueMap := make(map[string]int)
+			for _, entity := range s.results {
+				if val, ok := entity.Properties["status"]; ok {
+					strVal := s.valueToString(val)
+					if strVal != "" && strings.HasPrefix(strings.ToLower(strVal), strings.ToLower(ctx.Prefix)) {
+						valueMap[strVal]++
+					}
+				}
+			}
+			type valueCount struct {
+				val   string
+				count int
+			}
+			sorted := []valueCount{}
+			for v, c := range valueMap {
+				sorted = append(sorted, valueCount{v, c})
+			}
+			for i := 0; i < len(sorted); i++ {
+				for j := i + 1; j < len(sorted); j++ {
+					if sorted[j].count > sorted[i].count {
+						sorted[i], sorted[j] = sorted[j], sorted[i]
+					}
+				}
+			}
+			for i := 0; i < len(sorted) && i < 10; i++ {
+				s.suggestions = append(s.suggestions, sorted[i].val)
+			}
+		} else {
+			allValues := app.graph.GetPropertyValues("status", 100)
+			for _, val := range allValues {
+				if strings.HasPrefix(strings.ToLower(val), strings.ToLower(ctx.Prefix)) {
+					s.suggestions = append(s.suggestions, val)
+					if len(s.suggestions) >= 10 {
+						break
+					}
+				}
 			}
 		}
 		s.showSuggestions = len(s.suggestions) > 0
@@ -117,6 +198,22 @@ func (s *SearchModel) updateSuggestions(app *App) {
 	default:
 		s.showSuggestions = false
 		s.suggestions = nil
+	}
+}
+
+// valueToString converts a property value to string
+func (s *SearchModel) valueToString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case int, int32, int64:
+		return fmt.Sprintf("%d", v)
+	case float32, float64:
+		return fmt.Sprintf("%f", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	default:
+		return fmt.Sprintf("%v", v)
 	}
 }
 
@@ -243,6 +340,25 @@ func (s *SearchModel) acceptSuggestion() {
 	case "prop":
 		s.query = prefix + "prop:" + suggestion + "=" + suffix
 		s.cursorPos = len(prefix) + len("prop:") + len(suggestion) + 1
+	case "propvalue":
+		// Find the operator position in the current token
+		currentToken := s.query[tokenStart:s.cursorPos]
+		opPos := strings.Index(currentToken, "=")
+		if opPos == -1 {
+			// Try other operators
+			for _, op := range []string{"!=", "<=", ">=", "=~", "<", ">"} {
+				if idx := strings.Index(currentToken, op); idx != -1 {
+					opPos = idx + len(op) - 1 // Point to last char of operator
+					break
+				}
+			}
+		}
+		// Replace everything after the operator
+		if opPos != -1 {
+			beforeOp := s.query[:tokenStart] + currentToken[:opPos+1]
+			s.query = beforeOp + suggestion + " " + suffix
+			s.cursorPos = len(beforeOp) + len(suggestion) + 1
+		}
 	case "status":
 		s.query = prefix + "status:" + suggestion + " " + suffix
 		s.cursorPos = len(prefix) + len("status:") + len(suggestion) + 1
