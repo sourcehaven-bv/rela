@@ -134,27 +134,27 @@ func DefaultMetamodel() *Metamodel {
 				Description: "A decision addresses a requirement",
 				From:        []string{"decision"},
 				To:          []string{"requirement"},
-				Inverse:     &InverseDef{Name: "addressedBy", Label: "addressed by"},
+				Inverse:     &InverseDef{ID: "addressedBy"},
 			},
 			"implements": {
 				Label:       "implements",
 				Description: "A solution implements a decision",
 				From:        []string{"solution"},
 				To:          []string{"decision"},
-				Inverse:     &InverseDef{Name: "implementedBy", Label: "implemented by"},
+				Inverse:     &InverseDef{ID: "implementedBy"},
 			},
 			"realizes": {
 				Label:       "realizes",
 				Description: "A component realizes a solution",
 				From:        []string{"component"},
 				To:          []string{"solution"},
-				Inverse:     &InverseDef{Name: "realizedBy", Label: "realized by"},
+				Inverse:     &InverseDef{ID: "realizedBy"},
 			},
 			"dependsOn": {
 				Label:   "depends on",
 				From:    []string{"component", "solution", "decision"},
 				To:      []string{"component", "solution", "decision"},
-				Inverse: &InverseDef{Name: "dependencyOf", Label: "dependency of"},
+				Inverse: &InverseDef{ID: "dependencyOf"},
 			},
 		},
 		aliasMap: make(map[string]string),
@@ -239,35 +239,27 @@ relations:
     description: A decision addresses a requirement
     from: [decision]
     to: [requirement]
-    inverse:
-      name: addressedBy
-      label: addressed by
+    inverse: addressedBy
 
   implements:
     label: implements
     description: A solution implements a decision
     from: [solution]
     to: [decision]
-    inverse:
-      name: implementedBy
-      label: implemented by
+    inverse: implementedBy
 
   realizes:
     label: realizes
     description: A component realizes a solution
     from: [component]
     to: [solution]
-    inverse:
-      name: realizedBy
-      label: realized by
+    inverse: realizedBy
 
   dependsOn:
     label: depends on
     from: [component, solution, decision]
     to: [component, solution, decision]
-    inverse:
-      name: dependencyOf
-      label: dependency of
+    inverse: dependencyOf
 
 # Custom validation rules (optional)
 # Define rules to check entity properties using filter expressions.

@@ -173,10 +173,92 @@ type RelationDef struct {
 	TargetMax   *int        `yaml:"target_max,omitempty"`
 }
 
-// InverseDef defines the inverse of a relation
+// InverseDef defines the inverse of a relation.
+// Can be unmarshaled from either a simple string (inverse identifier only)
+// or an object with id and label fields.
 type InverseDef struct {
-	Name  string `yaml:"name"`
-	Label string `yaml:"label"`
+	// ID is the identifier for the inverse relation (e.g., "addressedBy")
+	ID string `yaml:"id,omitempty"`
+
+	// Label is the display label for the inverse relation (e.g., "addressed by")
+	// If not specified, it's auto-derived from ID by converting camelCase to space-separated.
+	Label string `yaml:"label,omitempty"`
+
+	// Name is deprecated, use ID instead. Kept for backwards compatibility.
+	// Deprecated: use ID instead
+	Name string `yaml:"name,omitempty"`
+}
+
+// GetID returns the inverse relation identifier, preferring ID over deprecated Name
+func (i *InverseDef) GetID() string {
+	if i.ID != "" {
+		return i.ID
+	}
+	return i.Name
+}
+
+// GetLabel returns the display label, auto-deriving from ID if not specified
+func (i *InverseDef) GetLabel() string {
+	if i.Label != "" {
+		return i.Label
+	}
+	// Auto-derive from ID by converting camelCase to space-separated lowercase
+	id := i.GetID()
+	if id == "" {
+		return ""
+	}
+	return camelCaseToSpaced(id)
+}
+
+// camelCaseToSpaced converts camelCase/PascalCase to space-separated lowercase.
+// Examples: "addressedBy" → "addressed by", "implementedBy" → "implemented by"
+func camelCaseToSpaced(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	const asciiCaseOffset = 'a' - 'A'   // 32, but as a named constant
+	result := make([]byte, 0, len(s)+4) // Extra space for inserted spaces
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		isUpper := c >= 'A' && c <= 'Z'
+
+		switch {
+		case i > 0 && isUpper:
+			// Insert space before uppercase letters (except at start) and convert to lowercase
+			result = append(result, ' ', c+asciiCaseOffset)
+		case isUpper:
+			// First character - just convert to lowercase
+			result = append(result, c+asciiCaseOffset)
+		default:
+			result = append(result, c)
+		}
+	}
+	return string(result)
+}
+
+// UnmarshalYAML allows InverseDef to be unmarshaled from either a string or an object.
+// String form: "addressedBy" (ID only, label auto-derived)
+// Object form: { id: "addressedBy", label: "addressed by" }
+func (i *InverseDef) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// First try to unmarshal as a string (simple form)
+	var simpleForm string
+	if err := unmarshal(&simpleForm); err == nil {
+		i.ID = simpleForm
+		// Label will be auto-derived by GetLabel()
+		return nil
+	}
+
+	// Try to unmarshal as an object (expanded form)
+	type inverseDefAlias InverseDef // Alias to avoid infinite recursion
+	var objectForm inverseDefAlias
+	if err := unmarshal(&objectForm); err != nil {
+		return err
+	}
+
+	*i = InverseDef(objectForm)
+	return nil
 }
 
 // GetPlural returns the plural label for an entity type

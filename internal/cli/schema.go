@@ -230,8 +230,8 @@ func runSchemaRelations() error {
 		out.WriteMessage("%s (%s)", def.Label, name)
 		out.WriteMessage("  From: [%s] -> To: [%s]", strings.Join(def.From, ", "), strings.Join(def.To, ", "))
 
-		if def.Inverse != nil && def.Inverse.Name != "" {
-			out.WriteMessage("  Inverse: %s (%s)", def.Inverse.Label, def.Inverse.Name)
+		if def.Inverse != nil && def.Inverse.GetID() != "" {
+			out.WriteMessage("  Inverse: %s (%s)", def.Inverse.GetLabel(), def.Inverse.GetID())
 		}
 
 		if def.Description != "" {
@@ -407,8 +407,8 @@ func writeEntityRelations(resolved string) {
 		if isTarget {
 			hasRelations = true
 			inverseName := relName
-			if relDef.Inverse != nil && relDef.Inverse.Name != "" {
-				inverseName = relDef.Inverse.Name
+			if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
+				inverseName = relDef.Inverse.GetID()
 			}
 			out.WriteMessage("  <- %s <- [%s]", inverseName, strings.Join(relDef.From, ", "))
 		}
@@ -437,11 +437,11 @@ func runSchemaRelation(name string) error {
 	out.WriteMessage("From: [%s]", strings.Join(def.From, ", "))
 	out.WriteMessage("To: [%s]", strings.Join(def.To, ", "))
 
-	if def.Inverse != nil && def.Inverse.Name != "" {
+	if def.Inverse != nil && def.Inverse.GetID() != "" {
 		out.WriteMessage("")
 		out.WriteMessage("Inverse:")
-		out.WriteMessage("  Name: %s", def.Inverse.Name)
-		out.WriteMessage("  Label: %s", def.Inverse.Label)
+		out.WriteMessage("  ID: %s", def.Inverse.GetID())
+		out.WriteMessage("  Label: %s", def.Inverse.GetLabel())
 	}
 
 	if def.Description != "" {

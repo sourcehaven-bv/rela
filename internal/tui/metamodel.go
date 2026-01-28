@@ -85,7 +85,7 @@ func (m *MetamodelModel) load(app *App) {
 	for name, def := range app.metamodel.Relations {
 		inverse := ""
 		if def.Inverse != nil {
-			inverse = def.Inverse.Name
+			inverse = def.Inverse.GetID()
 		}
 
 		m.relations = append(m.relations, relationInfo{
