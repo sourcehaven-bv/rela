@@ -198,7 +198,7 @@ Relations define how entity types can be connected:
 | `description` | Explanation of the relation's meaning |
 | `from` | Source entity types (list) |
 | `to` | Target entity types (list) |
-| `inverse` | Inverse relation definition |
+| `inverse` | Inverse relation definition (string or object) |
 | `symmetric` | `true` if relation is bidirectional |
 | `source_min` | Minimum outgoing relations per source entity |
 | `source_max` | Maximum outgoing relations per source entity |
@@ -215,9 +215,26 @@ relations:
     from: [decision]
     to: [requirement]
     source_min: 1    # Each decision must address at least one requirement
-    inverse:
-      name: addressedBy
-      label: addressed by
+    inverse: addressedBy  # Simple form - label auto-derived as "addressed by"
+```
+
+### Inverse Relations
+
+The `inverse` field can be specified in two forms:
+
+**Simple form** (recommended for most cases):
+```yaml
+inverse: addressedBy  # Label auto-derived from ID
+```
+The label is automatically derived by converting camelCase to space-separated lowercase:
+- `addressedBy` → `addressed by`
+- `implementedBy` → `implemented by`
+
+**Expanded form** (when custom label needed):
+```yaml
+inverse:
+  id: addressedBy
+  label: "is addressed by"  # Custom label
 ```
 
 ### Cardinality Constraints
@@ -328,35 +345,27 @@ relations:
     description: A decision addresses a requirement
     from: [decision]
     to: [requirement]
-    inverse:
-      name: addressedBy
-      label: addressed by
+    inverse: addressedBy
 
   implements:
     label: implements
     description: A solution implements a decision
     from: [solution]
     to: [decision]
-    inverse:
-      name: implementedBy
-      label: implemented by
+    inverse: implementedBy
 
   realizes:
     label: realizes
     description: A component realizes a solution
     from: [component]
     to: [solution]
-    inverse:
-      name: realizedBy
-      label: realized by
+    inverse: realizedBy
 
   dependsOn:
     label: depends on
     from: [component, solution, decision]
     to: [component, solution, decision]
-    inverse:
-      name: dependencyOf
-      label: dependency of
+    inverse: dependencyOf
 ```
 
 ## Customization Examples
@@ -384,9 +393,7 @@ relations:
     label: mitigates
     from: [decision, solution]
     to: [risk]
-    inverse:
-      name: mitigatedBy
-      label: mitigated by
+    inverse: mitigatedBy
 ```
 
 ### Adding a Stakeholder Type
@@ -409,9 +416,7 @@ relations:
     label: owned by
     from: [requirement, decision, component]
     to: [stakeholder]
-    inverse:
-      name: owns
-      label: owns
+    inverse: owns
 ```
 
 ### Multiple ID Patterns

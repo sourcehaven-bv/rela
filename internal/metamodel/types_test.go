@@ -740,3 +740,172 @@ entities:
 		})
 	}
 }
+
+func TestCamelCaseToSpaced(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"addressedBy", "addressed by"},
+		{"implementedBy", "implemented by"},
+		{"dependencyOf", "dependency of"},
+		{"realizedBy", "realized by"},
+		{"", ""},
+		{"simple", "simple"},
+		{"PascalCase", "pascal case"},
+		{"HTTPServer", "h t t p server"}, // Edge case with consecutive capitals
+		{"oneTwo", "one two"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := camelCaseToSpaced(tt.input)
+			if result != tt.expected {
+				t.Errorf("camelCaseToSpaced(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestInverseDef_GetID(t *testing.T) {
+	tests := []struct {
+		name     string
+		def      InverseDef
+		expected string
+	}{
+		{
+			name:     "returns ID",
+			def:      InverseDef{ID: "addressedBy"},
+			expected: "addressedBy",
+		},
+		{
+			name:     "empty when ID empty",
+			def:      InverseDef{},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.def.GetID()
+			if result != tt.expected {
+				t.Errorf("GetID() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestInverseDef_GetLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		def      InverseDef
+		expected string
+	}{
+		{
+			name:     "explicit label used",
+			def:      InverseDef{ID: "addressedBy", Label: "is addressed by"},
+			expected: "is addressed by",
+		},
+		{
+			name:     "auto-derived from ID",
+			def:      InverseDef{ID: "addressedBy"},
+			expected: "addressed by",
+		},
+		{
+			name:     "empty when no ID",
+			def:      InverseDef{},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.def.GetLabel()
+			if result != tt.expected {
+				t.Errorf("GetLabel() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParse_InverseSimpleForm(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  decision:
+    label: Decision
+    id_patterns: ["DEC-"]
+  requirement:
+    label: Requirement
+    id_patterns: ["REQ-"]
+relations:
+  addresses:
+    label: addresses
+    from: [decision]
+    to: [requirement]
+    inverse: addressedBy
+`
+	m, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	rel, ok := m.Relations["addresses"]
+	if !ok {
+		t.Fatal("expected 'addresses' relation")
+	}
+
+	if rel.Inverse == nil {
+		t.Fatal("expected inverse to be set")
+	}
+
+	if rel.Inverse.GetID() != "addressedBy" {
+		t.Errorf("GetID() = %q, want %q", rel.Inverse.GetID(), "addressedBy")
+	}
+
+	if rel.Inverse.GetLabel() != "addressed by" {
+		t.Errorf("GetLabel() = %q, want %q (auto-derived)", rel.Inverse.GetLabel(), "addressed by")
+	}
+}
+
+func TestParse_InverseExpandedFormWithID(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  decision:
+    label: Decision
+    id_patterns: ["DEC-"]
+  requirement:
+    label: Requirement
+    id_patterns: ["REQ-"]
+relations:
+  addresses:
+    label: addresses
+    from: [decision]
+    to: [requirement]
+    inverse:
+      id: addressedBy
+      label: "is addressed by"
+`
+	m, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	rel, ok := m.Relations["addresses"]
+	if !ok {
+		t.Fatal("expected 'addresses' relation")
+	}
+
+	if rel.Inverse == nil {
+		t.Fatal("expected inverse to be set")
+	}
+
+	if rel.Inverse.GetID() != "addressedBy" {
+		t.Errorf("GetID() = %q, want %q", rel.Inverse.GetID(), "addressedBy")
+	}
+
+	if rel.Inverse.GetLabel() != "is addressed by" {
+		t.Errorf("GetLabel() = %q, want %q", rel.Inverse.GetLabel(), "is addressed by")
+	}
+}

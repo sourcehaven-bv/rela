@@ -350,18 +350,14 @@ relations:
     description: Lower-level items contribute to higher-level goals
     from: [epic, feature]
     to: [goal]
-    inverse:
-      name: achievedThrough
-      label: achieved through
+    inverse: achievedThrough
 
   partOfEpic:
     label: part of epic
     description: A feature belongs to an epic
     from: [feature]
     to: [epic]
-    inverse:
-      name: contains
-      label: contains
+    inverse: contains
 
   # Task relationships
   implementedBy:
@@ -369,27 +365,21 @@ relations:
     description: A feature is implemented by tasks
     from: [feature]
     to: [task]
-    inverse:
-      name: implements
-      label: implements
+    inverse: implements
 
   subtaskOf:
     label: subtask of
     description: A task is a subtask of another
     from: [task]
     to: [task]
-    inverse:
-      name: hasSubtask
-      label: has subtask
+    inverse: hasSubtask
 
   fixes:
     label: fixes
     description: A task fixes a bug
     from: [task]
     to: [bug]
-    inverse:
-      name: fixedBy
-      label: fixed by
+    inverse: fixedBy
 
   # Dependency relationships
   blockedBy:
@@ -397,18 +387,14 @@ relations:
     description: Work is blocked by other work or issues
     from: [task, feature, epic]
     to: [task, feature, issue, risk]
-    inverse:
-      name: blocks
-      label: blocks
+    inverse: blocks
 
   dependsOn:
     label: depends on
     description: Work depends on other work being completed
     from: [task, feature, epic]
     to: [task, feature]
-    inverse:
-      name: dependencyOf
-      label: dependency of
+    inverse: dependencyOf
 
   # Milestone relationships
   targetedFor:
@@ -416,9 +402,7 @@ relations:
     description: Work is targeted for a milestone
     from: [feature, epic]
     to: [milestone]
-    inverse:
-      name: includes
-      label: includes
+    inverse: includes
 
   # Decision relationships
   affects:
@@ -426,27 +410,21 @@ relations:
     description: A decision affects work items
     from: [decision]
     to: [feature, epic, task]
-    inverse:
-      name: affectedBy
-      label: affected by
+    inverse: affectedBy
 
   decidedIn:
     label: decided in
     description: A decision was made in a meeting
     from: [decision]
     to: [meeting]
-    inverse:
-      name: produced
-      label: produced
+    inverse: produced
 
   supersedes:
     label: supersedes
     description: A decision supersedes a previous decision
     from: [decision]
     to: [decision]
-    inverse:
-      name: supersededBy
-      label: superseded by
+    inverse: supersededBy
 
   # Risk relationships
   threatens:
@@ -454,27 +432,21 @@ relations:
     description: A risk threatens a goal, feature, or milestone
     from: [risk]
     to: [goal, feature, milestone]
-    inverse:
-      name: threatenedBy
-      label: threatened by
+    inverse: threatenedBy
 
   mitigatedBy:
     label: mitigated by
     description: A risk is mitigated by a task or decision
     from: [risk]
     to: [task, decision]
-    inverse:
-      name: mitigates
-      label: mitigates
+    inverse: mitigates
 
   becameIssue:
     label: became issue
     description: A risk materialized into an issue
     from: [risk]
     to: [issue]
-    inverse:
-      name: originatedFrom
-      label: originated from
+    inverse: originatedFrom
 
   # Issue relationships
   resolvedBy:
@@ -482,9 +454,7 @@ relations:
     description: An issue is resolved by a task or decision
     from: [issue]
     to: [task, decision]
-    inverse:
-      name: resolves
-      label: resolves
+    inverse: resolves
 
   # Stakeholder relationships
   ownedBy:
@@ -493,27 +463,21 @@ relations:
     from: [goal, feature, epic]
     to: [stakeholder]
     target_max: 1  # Each item has one owner
-    inverse:
-      name: owns
-      label: owns
+    inverse: owns
 
   interestedIn:
     label: interested in
     description: A stakeholder is interested in items
     from: [stakeholder]
     to: [goal, feature, milestone]
-    inverse:
-      name: hasStakeholder
-      label: has stakeholder
+    inverse: hasStakeholder
 
   consulted:
     label: consulted
     description: A stakeholder was consulted for a decision
     from: [decision]
     to: [stakeholder]
-    inverse:
-      name: consultedFor
-      label: consulted for
+    inverse: consultedFor
 
   # Meeting relationships
   attended:
@@ -521,18 +485,14 @@ relations:
     description: A stakeholder attended a meeting
     from: [stakeholder]
     to: [meeting]
-    inverse:
-      name: attendedBy
-      label: attended by
+    inverse: attendedBy
 
   discussed:
     label: discussed
     description: A meeting discussed items
     from: [meeting]
     to: [feature, risk, issue, decision]
-    inverse:
-      name: discussedIn
-      label: discussed in
+    inverse: discussedIn
 
   # Retrospective relationships
   produces:
@@ -540,18 +500,14 @@ relations:
     description: A retrospective produces improvements
     from: [retrospective]
     to: [improvement]
-    inverse:
-      name: identifiedIn
-      label: identified in
+    inverse: identifiedIn
 
   improvesProcess:
     label: improves process
     description: An improvement enhances how we work
     from: [improvement]
     to: [goal]  # Meta: improving toward process goals
-    inverse:
-      name: improvedBy
-      label: improved by
+    inverse: improvedBy
 ```
 
 ## Example Traceability Chains
