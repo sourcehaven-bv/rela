@@ -629,17 +629,12 @@ func TestInverseDef_GetID(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "ID field takes precedence",
-			def:      InverseDef{ID: "newId", Name: "oldName"},
-			expected: "newId",
+			name:     "returns ID",
+			def:      InverseDef{ID: "addressedBy"},
+			expected: "addressedBy",
 		},
 		{
-			name:     "falls back to deprecated Name",
-			def:      InverseDef{Name: "oldName"},
-			expected: "oldName",
-		},
-		{
-			name:     "empty when both empty",
+			name:     "empty when ID empty",
 			def:      InverseDef{},
 			expected: "",
 		},
@@ -672,12 +667,7 @@ func TestInverseDef_GetLabel(t *testing.T) {
 			expected: "addressed by",
 		},
 		{
-			name:     "auto-derived from deprecated Name",
-			def:      InverseDef{Name: "implementedBy"},
-			expected: "implemented by",
-		},
-		{
-			name:     "empty when no ID or Name",
+			name:     "empty when no ID",
 			def:      InverseDef{},
 			expected: "",
 		},
@@ -775,45 +765,3 @@ relations:
 	}
 }
 
-func TestParse_InverseExpandedFormWithDeprecatedName(t *testing.T) {
-	yaml := `
-version: "1.0"
-entities:
-  decision:
-    label: Decision
-    id_patterns: ["DEC-"]
-  requirement:
-    label: Requirement
-    id_patterns: ["REQ-"]
-relations:
-  addresses:
-    label: addresses
-    from: [decision]
-    to: [requirement]
-    inverse:
-      name: addressedBy
-      label: "addressed by"
-`
-	m, err := Parse([]byte(yaml))
-	if err != nil {
-		t.Fatalf("Parse() error: %v", err)
-	}
-
-	rel, ok := m.Relations["addresses"]
-	if !ok {
-		t.Fatal("expected 'addresses' relation")
-	}
-
-	if rel.Inverse == nil {
-		t.Fatal("expected inverse to be set")
-	}
-
-	// Should still work with deprecated Name field
-	if rel.Inverse.GetID() != "addressedBy" {
-		t.Errorf("GetID() = %q, want %q", rel.Inverse.GetID(), "addressedBy")
-	}
-
-	if rel.Inverse.GetLabel() != "addressed by" {
-		t.Errorf("GetLabel() = %q, want %q", rel.Inverse.GetLabel(), "addressed by")
-	}
-}

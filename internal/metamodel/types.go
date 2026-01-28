@@ -183,18 +183,11 @@ type InverseDef struct {
 	// Label is the display label for the inverse relation (e.g., "addressed by")
 	// If not specified, it's auto-derived from ID by converting camelCase to space-separated.
 	Label string `yaml:"label,omitempty"`
-
-	// Name is deprecated, use ID instead. Kept for backwards compatibility.
-	// Deprecated: use ID instead
-	Name string `yaml:"name,omitempty"`
 }
 
-// GetID returns the inverse relation identifier, preferring ID over deprecated Name
+// GetID returns the inverse relation identifier
 func (i *InverseDef) GetID() string {
-	if i.ID != "" {
-		return i.ID
-	}
-	return i.Name
+	return i.ID
 }
 
 // GetLabel returns the display label, auto-deriving from ID if not specified
@@ -203,11 +196,10 @@ func (i *InverseDef) GetLabel() string {
 		return i.Label
 	}
 	// Auto-derive from ID by converting camelCase to space-separated lowercase
-	id := i.GetID()
-	if id == "" {
+	if i.ID == "" {
 		return ""
 	}
-	return camelCaseToSpaced(id)
+	return camelCaseToSpaced(i.ID)
 }
 
 // camelCaseToSpaced converts camelCase/PascalCase to space-separated lowercase.
