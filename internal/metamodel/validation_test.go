@@ -1,6 +1,7 @@
 package metamodel
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -430,5 +431,26 @@ func TestValidatePropertyValue_CustomType(t *testing.T) {
 	err = meta.ValidatePropertyValue("severity", propDef, 123)
 	if err == nil {
 		t.Error("expected error for non-string custom type")
+	}
+}
+
+func TestValidatePropertyValue_UnknownType(t *testing.T) {
+	// Previously, unknown types were silently accepted (no validation).
+	// Now they should return an error.
+	meta := &Metamodel{
+		Types: map[string]CustomType{}, // no custom types defined
+	}
+	propDef := &PropertyDef{Type: "nonexistent"}
+
+	err := meta.ValidatePropertyValue("myprop", propDef, "any value")
+	if err == nil {
+		t.Fatal("expected error for unknown property type, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "unknown type") {
+		t.Errorf("expected 'unknown type' in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("expected 'nonexistent' in error, got: %v", err)
 	}
 }

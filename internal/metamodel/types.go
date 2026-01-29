@@ -548,6 +548,18 @@ func (e *ReservedTypeNameError) Error() string {
 		"\": name is reserved for built-in type (reserved: string, date, integer, boolean, enum)"
 }
 
+// SchemaValidationError collects multiple validation issues found in a metamodel.
+type SchemaValidationError struct {
+	Errors []string
+}
+
+func (e *SchemaValidationError) Error() string {
+	if len(e.Errors) == 1 {
+		return e.Errors[0]
+	}
+	return "metamodel validation errors:\n  - " + strings.Join(e.Errors, "\n  - ")
+}
+
 // DuplicateDefinitionError is returned when the same name is defined in multiple included files
 type DuplicateDefinitionError struct {
 	Kind  string // "type", "entity", "relation", or "validation"

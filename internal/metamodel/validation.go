@@ -163,6 +163,8 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 			if !valid {
 				return fmt.Errorf("invalid value for %s: %s (allowed: %v)", propName, s, customType.Values)
 			}
+		} else {
+			return fmt.Errorf("property %s has unknown type %q", propName, propDef.Type)
 		}
 	}
 

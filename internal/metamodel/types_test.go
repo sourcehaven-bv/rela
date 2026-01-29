@@ -375,6 +375,9 @@ entities:
     label: Requirement
     id_type: auto
     id_prefixes: ["REQ-"]
+    properties:
+      title:
+        type: string
 `,
 			wantErr: false,
 		},
@@ -386,6 +389,9 @@ entities:
   component:
     label: Component
     id_type: manual
+    properties:
+      title:
+        type: string
 `,
 			wantErr: false,
 		},
@@ -397,6 +403,9 @@ entities:
   requirement:
     label: Requirement
     id_prefixes: ["REQ-"]
+    properties:
+      title:
+        type: string
 `,
 			wantErr: false,
 		},
@@ -457,6 +466,10 @@ types:
 entities:
   requirement:
     label: Requirement
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
 `,
 			wantErr: false,
 		},
@@ -1243,7 +1256,7 @@ version: "1.0"
 entities:
   requirement:
     label: Requirement
-    id_patterns: ["REQ-"]
+    id_prefix: "REQ-"
     properties:
       status:
         type: string
