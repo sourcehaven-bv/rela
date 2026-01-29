@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -455,6 +456,7 @@ entities:
   task:
     label: Task
     id_type: auto
+    id_prefix: "TASK-"
     properties:
       title:
         type: string
@@ -489,12 +491,14 @@ entities:
   requirement:
     label: Requirement
     aliases: [req, reqs]
+    id_prefix: "REQ-"
     properties:
       title:
         type: string
   decision:
     label: Decision
     aliases: [dec]
+    id_prefix: "DEC-"
     properties:
       title:
         type: string
@@ -578,4 +582,385 @@ func TestInvalidIDTypeError_Error(t *testing.T) {
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
+}
+
+func TestParse_UnknownTopLevelKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "entity instead of entities",
+			yaml: `
+version: "1.0"
+entity:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
+types: {}
+relations: {}
+`,
+			wantErr: `unknown key "entity" (did you mean "entities"?)`,
+		},
+		{
+			name: "type instead of types",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
+type:
+  status:
+    values: [draft]
+relations: {}
+`,
+			wantErr: `unknown key "type" (did you mean "types"?)`,
+		},
+		{
+			name: "relation instead of relations",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
+types: {}
+relation:
+  addresses:
+    label: addresses
+`,
+			wantErr: `unknown key "relation" (did you mean "relations"?)`,
+		},
+		{
+			name: "completely unknown key",
+			yaml: `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
+types: {}
+relations: {}
+widgets:
+  fancy: true
+`,
+			wantErr: `unknown key "widgets"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.yaml))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+
+			var validationErr *SchemaValidationError
+			if !errors.As(err, &validationErr) {
+				t.Fatalf("expected SchemaValidationError, got %T: %v", err, err)
+			}
+
+			found := false
+			for _, e := range validationErr.Errors {
+				if strings.Contains(e, tt.wantErr) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected error containing %q, got: %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestParse_UnknownPropertyType(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
+        required: true
+      priority:
+        type: mypriority
+types: {}
+relations: {}
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	if !strings.Contains(err.Error(), "unknown type") {
+		t.Errorf("expected 'unknown type' in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "mypriority") {
+		t.Errorf("expected 'mypriority' in error, got: %v", err)
+	}
+}
+
+func TestParse_EnumWithoutValues(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
+        required: true
+      priority:
+        type: enum
+types: {}
+relations: {}
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	if !strings.Contains(err.Error(), "enum") {
+		t.Errorf("expected 'enum' in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "values") {
+		t.Errorf("expected 'values' in error, got: %v", err)
+	}
+}
+
+func TestParse_RelationReferencesUnknownEntityType(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
+types: {}
+relations:
+  addresses:
+    label: addresses
+    from: [nonexistent]
+    to: [requirement]
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	if !strings.Contains(err.Error(), "unknown entity type") {
+		t.Errorf("expected 'unknown entity type' in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("expected 'nonexistent' in error, got: %v", err)
+	}
+}
+
+func TestParse_EmptyEntities(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities: {}
+types: {}
+relations: {}
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	if !strings.Contains(err.Error(), "no entity types defined") {
+		t.Errorf("expected 'no entity types defined' in error, got: %v", err)
+	}
+}
+
+func TestParse_MissingEntityLabel(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
+types: {}
+relations: {}
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	if !strings.Contains(err.Error(), "missing 'label'") {
+		t.Errorf("expected \"missing 'label'\" in error, got: %v", err)
+	}
+}
+
+func TestParse_MissingEntityProperties(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+types: {}
+relations: {}
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	if !strings.Contains(err.Error(), "no properties defined") {
+		t.Errorf("expected 'no properties defined' in error, got: %v", err)
+	}
+}
+
+func TestParse_MissingIDPrefix(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    properties:
+      title:
+        type: string
+types: {}
+relations: {}
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	if !strings.Contains(err.Error(), "no ID prefix defined") {
+		t.Errorf("expected 'no ID prefix defined' in error, got: %v", err)
+	}
+}
+
+func TestParse_MissingIDPrefixManualIDTypeOK(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_type: manual
+    properties:
+      title:
+        type: string
+types: {}
+relations: {}
+`
+	_, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+}
+
+func TestParse_EmptyPropertyType(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
+      notes:
+        type:
+types: {}
+relations: {}
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	if !strings.Contains(err.Error(), "no type specified") {
+		t.Errorf("expected 'no type specified' in error, got: %v", err)
+	}
+}
+
+func TestParse_MultipleValidationErrors(t *testing.T) {
+	// Multiple issues should all be reported at once
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    id_prefix: "REQ-"
+  decision:
+    id_prefix: "DEC-"
+types: {}
+relations: {}
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	var validationErr *SchemaValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("expected SchemaValidationError, got %T: %v", err, err)
+	}
+
+	// Should have multiple errors (missing label, missing properties for both entities)
+	if len(validationErr.Errors) < 2 {
+		t.Errorf("expected multiple validation errors, got %d: %v", len(validationErr.Errors), validationErr.Errors)
+	}
+}
+
+func TestParse_ValidMetamodel(t *testing.T) {
+	// Ensure a fully valid metamodel still passes
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/test#"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: status
+  decision:
+    label: Decision
+    id_prefix: "DEC-"
+    properties:
+      title:
+        type: string
+        required: true
+types:
+  status:
+    values: [draft, accepted]
+relations:
+  addresses:
+    label: addresses
+    from: [decision]
+    to: [requirement]
+`
+	meta, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+
+	if meta == nil {
+		t.Fatal("expected metamodel, got nil")
+	}
+	assertEqual(t, len(meta.Entities), 2)
+	assertEqual(t, len(meta.Relations), 1)
+}
+
+func TestSchemaValidationError_SingleError(t *testing.T) {
+	err := &SchemaValidationError{
+		Errors: []string{"something is wrong"},
+	}
+	assertEqual(t, err.Error(), "something is wrong")
+}
+
+func TestSchemaValidationError_MultipleErrors(t *testing.T) {
+	err := &SchemaValidationError{
+		Errors: []string{"first problem", "second problem"},
+	}
+	expected := "metamodel validation errors:\n  - first problem\n  - second problem"
+	assertEqual(t, err.Error(), expected)
 }

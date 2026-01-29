@@ -1,5 +1,7 @@
 package metamodel
 
+import "strings"
+
 // Metamodel represents the full metamodel configuration
 type Metamodel struct {
 	Version     string                 `yaml:"version"`
@@ -531,6 +533,18 @@ type ReservedTypeNameError struct {
 func (e *ReservedTypeNameError) Error() string {
 	return "cannot define custom type \"" + e.TypeName +
 		"\": name is reserved for built-in type (reserved: string, date, integer, boolean, enum)"
+}
+
+// SchemaValidationError collects multiple validation issues found in a metamodel.
+type SchemaValidationError struct {
+	Errors []string
+}
+
+func (e *SchemaValidationError) Error() string {
+	if len(e.Errors) == 1 {
+		return e.Errors[0]
+	}
+	return "metamodel validation errors:\n  - " + strings.Join(e.Errors, "\n  - ")
 }
 
 // Schema output interface methods for Metamodel
