@@ -42,6 +42,7 @@ rela tui
 - **Quality Analysis** - Find orphans, check coverage, detect gaps
 - **Graph Export** - Export to Graphviz DOT format
 - **Interactive TUI** - Full-featured terminal interface
+- **MCP Server** - Expose rela to AI assistants via Model Context Protocol
 - **Markdown Storage** - Human-readable, version-controllable files
 
 ## Installation
@@ -67,6 +68,7 @@ go build -o rela ./cmd/rela
 | [TUI Guide](docs/tui-guide.md)             | Interactive terminal interface             |
 | [Metamodel](docs/metamodel.md)             | Configure entity types and relations       |
 | [Concepts](docs/concepts.md)               | Architecture traceability fundamentals     |
+| [MCP Server](docs/mcp-server.md)           | AI assistant integration via MCP           |
 
 ## Project Structure
 

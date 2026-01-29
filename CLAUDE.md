@@ -76,6 +76,7 @@ relations/*.md → Relation ↗      ↓
 | `internal/project`   | Project discovery, paths (`Context`)                    |
 | `internal/output`    | CLI output formatting (table, JSON)                     |
 | `internal/filter`    | Entity filtering by properties                          |
+| `internal/mcp`       | MCP server: tools, resources, prompts, file watcher     |
 | `internal/migration` | Schema migration system for project files               |
 
 ### Key Types
@@ -85,6 +86,20 @@ relations/*.md → Relation ↗      ↓
 - **Graph** (`internal/graph/graph.go`): Thread-safe graph with nodes/edges and adjacency maps
 - **Metamodel** (`internal/metamodel/types.go`): Schema defining entity types, relations, and property types
 - **Context** (`internal/project/context.go`): Project paths (root, entities/, relations/, templates/, .rela/)
+- **Server** (`internal/mcp/server.go`): MCP server wrapping graph, metamodel, and project context
+
+### MCP Server
+
+The `rela mcp` command starts a Model Context Protocol server over stdio, exposing rela's
+capabilities to AI assistants (Claude Code, Cursor, etc.):
+
+- **22 tools**: Entity/relation CRUD, graph tracing, analysis, schema introspection, export
+- **3 resources**: `rela://metamodel`, `rela://entity/{type}/{id}`, `rela://relation/{from}/{type}/{to}`
+- **4 prompts**: `analyze-traceability`, `review-orphans`, `summarize-project`, `review-entity`
+- **File watcher**: Watches entities/, relations/, and metamodel.yaml with 200ms debounce
+
+The `rela mcp` command handles its own initialization (project discovery, metamodel loading, graph
+sync) independently from the standard CLI state setup in `PersistentPreRunE`.
 
 ### TUI Architecture
 
@@ -268,7 +283,7 @@ The metamodel loader (`internal/metamodel/loader.go`) checks for migrations on l
 2. If migrations are detected, it returns a `migration.Error`
 3. The error message tells users to run `rela migrate`
 
-Commands that don't need the metamodel (init, migrate, version, etc.) are excluded from this check in `internal/cli/root.go`.
+Commands that don't need the metamodel (init, migrate, mcp, version, etc.) are excluded from this check in `internal/cli/root.go`.
 
 ## Working Documents
 

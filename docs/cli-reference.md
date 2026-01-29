@@ -717,6 +717,41 @@ Runs orphans, duplicates, gaps, cardinality, and (if defined) custom validations
 
 ---
 
+### rela mcp
+
+Start the MCP (Model Context Protocol) server over stdio.
+
+```bash
+rela mcp
+```
+
+Exposes rela's capabilities to AI assistants like Claude Code, Cursor, and other MCP-compatible
+clients. The server runs on stdin/stdout using JSON-RPC and provides:
+
+- **22 tools** for entity/relation CRUD, graph tracing, analysis, and export
+- **3 resources** for reading entities, relations, and the metamodel by URI
+- **4 prompts** for common AI-assisted workflows
+- **File watching** with automatic graph sync on changes
+
+**Client Configuration (Claude Code):**
+
+Add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "rela": {
+      "command": "rela",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+See [MCP Server Guide](mcp-server.md) for the full tool/resource/prompt reference.
+
+---
+
 ### rela tui
 
 Launch the interactive terminal UI.
