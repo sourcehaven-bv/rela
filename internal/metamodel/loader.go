@@ -3,6 +3,7 @@ package metamodel
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -19,6 +20,7 @@ var validTopLevelKeys = map[string]bool{
 	"entities":    true,
 	"relations":   true,
 	"validations": true,
+	"includes":    true,
 }
 
 // knownTypos maps common misspellings to the correct key name.
@@ -30,6 +32,9 @@ var knownTypos = map[string]string{
 }
 
 // Load reads and parses a metamodel from a YAML file.
+// If the metamodel contains an `includes:` key, included files are recursively
+// loaded and merged. Include paths are resolved relative to the directory
+// containing the metamodel file.
 // Returns a MigrationError if the file contains deprecated syntax that needs migration.
 func Load(path string) (*Metamodel, error) {
 	data, err := os.ReadFile(path)
@@ -49,11 +54,48 @@ func Load(path string) (*Metamodel, error) {
 		}
 	}
 
-	return Parse(data)
+	// When includes are present, parse without full validation first,
+	// resolve includes, then validate the merged result.
+	m, err := parseRaw(data)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(m.Includes) > 0 {
+		rootDir := filepath.Dir(path)
+		if err := loadWithIncludes(m, path, rootDir); err != nil {
+			return nil, err
+		}
+		// Validate the fully merged metamodel
+		if err := validate(m); err != nil {
+			return nil, err
+		}
+		return m, nil
+	}
+
+	// No includes: validate immediately
+	if err := validate(m); err != nil {
+		return nil, err
+	}
+
+	return m, nil
 }
 
-// Parse parses metamodel YAML content
+// Parse parses and validates metamodel YAML content.
 func Parse(data []byte) (*Metamodel, error) {
+	m, err := parseRaw(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := validate(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// parseRaw parses metamodel YAML content without semantic validation.
+// It performs only structural checks (YAML syntax, unknown keys, reserved types).
+func parseRaw(data []byte) (*Metamodel, error) {
 	var m Metamodel
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, humanizeYAMLError(err)
@@ -71,9 +113,14 @@ func Parse(data []byte) (*Metamodel, error) {
 		}
 	}
 
+	return &m, nil
+}
+
+// validate performs structural and semantic validation on a fully assembled metamodel.
+func validate(m *Metamodel) error {
 	// Validate entity definitions (returns hard errors for structural issues)
-	if err := validateEntityStructure(&m); err != nil {
-		return nil, err
+	if err := validateEntityStructure(m); err != nil {
+		return err
 	}
 
 	// Collect semantic validation errors so users see all problems at once
@@ -83,14 +130,14 @@ func Parse(data []byte) (*Metamodel, error) {
 		validationErrors = append(validationErrors, "metamodel has no entity types defined")
 	}
 
-	validationErrors = append(validationErrors, validateEntitySemantics(&m)...)
-	validationErrors = append(validationErrors, validateRelationReferences(&m)...)
+	validationErrors = append(validationErrors, validateEntitySemantics(m)...)
+	validationErrors = append(validationErrors, validateRelationReferences(m)...)
 
 	if len(validationErrors) > 0 {
-		return nil, &SchemaValidationError{Errors: validationErrors}
+		return &SchemaValidationError{Errors: validationErrors}
 	}
 
-	return &m, nil
+	return nil
 }
 
 // validateEntityStructure checks for hard structural errors in entity definitions

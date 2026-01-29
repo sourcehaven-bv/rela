@@ -6,6 +6,7 @@ import "strings"
 type Metamodel struct {
 	Version     string                 `yaml:"version"`
 	Namespace   string                 `yaml:"namespace"`
+	Includes    []string               `yaml:"includes,omitempty"`
 	Types       map[string]CustomType  `yaml:"types"`
 	Entities    map[string]EntityDef   `yaml:"entities"`
 	Relations   map[string]RelationDef `yaml:"relations"`
@@ -364,6 +365,18 @@ func (e *EntityDef) MatchesID(id string) bool {
 	return false
 }
 
+// rebuildAliasMap rebuilds the alias map from all entity definitions.
+// Called after merging includes to ensure aliases from included files are registered.
+func (m *Metamodel) rebuildAliasMap() {
+	m.aliasMap = make(map[string]string)
+	for name, def := range m.Entities {
+		m.aliasMap[strings.ToLower(name)] = name
+		for _, alias := range def.Aliases {
+			m.aliasMap[strings.ToLower(alias)] = name
+		}
+	}
+}
+
 // ResolveAlias returns the canonical entity type name for an alias
 func (m *Metamodel) ResolveAlias(alias string) string {
 	if m.aliasMap == nil {
@@ -545,6 +558,48 @@ func (e *SchemaValidationError) Error() string {
 		return e.Errors[0]
 	}
 	return "metamodel validation errors:\n  - " + strings.Join(e.Errors, "\n  - ")
+}
+
+// DuplicateDefinitionError is returned when the same name is defined in multiple included files
+type DuplicateDefinitionError struct {
+	Kind  string // "type", "entity", "relation", or "validation"
+	Name  string
+	File1 string
+	File2 string
+}
+
+func (e *DuplicateDefinitionError) Error() string {
+	return "duplicate " + e.Kind + " \"" + e.Name + "\": defined in both " + e.File1 + " and " + e.File2
+}
+
+// CircularIncludeError is returned when a circular include chain is detected
+type CircularIncludeError struct {
+	Chain []string // e.g., ["a.yaml", "b.yaml", "a.yaml"]
+}
+
+func (e *CircularIncludeError) Error() string {
+	return "circular include detected: " + strings.Join(e.Chain, " → ")
+}
+
+// IncludeNotFoundError is returned when an included file does not exist
+type IncludeNotFoundError struct {
+	Path         string
+	IncludedFrom string
+}
+
+func (e *IncludeNotFoundError) Error() string {
+	return "include file not found: " + e.Path + " (included from " + e.IncludedFrom + ")"
+}
+
+// IncludeHasRootFieldError is returned when an included file contains version or namespace
+type IncludeHasRootFieldError struct {
+	Path  string
+	Field string
+}
+
+func (e *IncludeHasRootFieldError) Error() string {
+	return "included file " + e.Path + " must not contain \"" + e.Field +
+		"\" (only allowed in root metamodel.yaml)"
 }
 
 // Schema output interface methods for Metamodel

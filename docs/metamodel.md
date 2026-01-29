@@ -19,6 +19,131 @@ relations:
   # Relation definitions
 ```
 
+## Including Partial Metamodels
+
+For larger projects, you can split your metamodel across multiple files using the
+`includes:` key. This keeps each domain's definitions in a focused, manageable file.
+
+### Syntax
+
+```yaml
+# metamodel.yaml
+version: "1.0"
+namespace: "https://example.org/ontology/architecture#"
+
+includes:
+  - compliance/controls.yaml
+  - risk.yaml
+
+types:
+  status:
+    values: [draft, proposed, accepted, deprecated]
+    default: draft
+
+entities:
+  requirement:
+    label: Requirement
+    id_patterns: ["REQ-"]
+    properties:
+      title:
+        type: string
+        required: true
+```
+
+The `includes:` key is always a YAML list of file paths, resolved relative to the
+project root (where `metamodel.yaml` lives).
+
+### Included File Format
+
+Each included file is a partial metamodel. It can contain any combination of
+`types:`, `entities:`, `relations:`, and `validations:` — but **must not** contain
+`version:` or `namespace:` (these are only allowed in the root `metamodel.yaml`).
+
+```yaml
+# compliance/controls.yaml
+types:
+  applicability:
+    values: [applicable, not_applicable, partial]
+
+entities:
+  control:
+    label: Control
+    id_patterns: ["CTL-"]
+    properties:
+      title:
+        type: string
+        required: true
+      applicability:
+        type: applicability
+
+relations:
+  implements_control:
+    label: implements
+    from: [requirement]
+    to: [control]
+    inverse: implementedBy
+
+validations:
+  - name: controls-need-applicability
+    description: "Controls must have applicability set"
+    entity_type: control
+    then:
+      - "applicability!="
+    severity: warning
+```
+
+### Nested Includes
+
+Included files can themselves include other files:
+
+```yaml
+# compliance/controls.yaml
+includes:
+  - shared/audit-types.yaml
+
+entities:
+  control:
+    # ...
+```
+
+Circular includes are detected and produce a clear error:
+
+```text
+circular include detected: metamodel.yaml → compliance/controls.yaml → shared/audit-types.yaml → compliance/controls.yaml
+```
+
+### Diamond Includes
+
+If the same file is reachable from multiple include paths (a "diamond" pattern),
+it is loaded only once. This is not an error.
+
+```yaml
+# metamodel.yaml
+includes:
+  - a.yaml    # includes shared.yaml
+  - b.yaml    # also includes shared.yaml — loaded once, no conflict
+```
+
+### Conflict Handling
+
+If the same type, entity, relation, or validation name is defined in more than
+one file, loading fails with an error identifying both files:
+
+```text
+duplicate entity "control": defined in both compliance/controls.yaml and risk.yaml
+```
+
+To resolve conflicts, rename one of the definitions or move it to a shared file.
+
+### Error Messages
+
+| Situation | Error |
+| --- | --- |
+| Duplicate definition | `duplicate entity "control": defined in both a.yaml and b.yaml` |
+| Circular include | `circular include detected: a.yaml → b.yaml → a.yaml` |
+| File not found | `include file not found: missing.yaml (included from metamodel.yaml)` |
+| Root-only field | `included file a.yaml must not contain "version" (only allowed in root metamodel.yaml)` |
+
 ## Custom Types
 
 Define reusable enum types that can be used in entity properties:
