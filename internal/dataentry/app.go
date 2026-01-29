@@ -193,8 +193,15 @@ func (a *App) activeListFromReferer(r *http.Request) string {
 }
 
 // resolveActiveList returns the best active list for the sidebar.
-// It first tries matching by entity type, then falls back to the Referer header.
+// It first checks for an explicit "from" query parameter (set when navigating
+// from a list), then tries matching by entity type, then falls back to the
+// Referer header.
 func (a *App) resolveActiveList(entityType string, r *http.Request) string {
+	if from := r.URL.Query().Get("from"); from != "" {
+		if _, ok := a.Cfg.Lists[from]; ok {
+			return from
+		}
+	}
 	if active := a.activeListForEntityType(entityType); active != "" {
 		return active
 	}

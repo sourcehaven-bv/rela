@@ -214,6 +214,15 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     });
     return;
   }
+  // Explicit source list: ?from={listID}
+  var params = new URLSearchParams(window.location.search);
+  var fromList = params.get('from');
+  if (fromList) {
+    links.forEach(function(a) {
+      a.classList.toggle('active', a.getAttribute('href') === '/list/' + fromList);
+    });
+    return;
+  }
   // Entity type match: /entity/{type}/{id}
   var m = path.match(/^\/entity\/([^/]+)\//);
   if (m) {
@@ -303,8 +312,8 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
           {{ $dlp := $.DetailLinkPrefix }}
           {{ range .Cells }}
           <td>
-            {{ if .Link }}<a href="{{ $dlp }}{{ .EntityID }}" class="cell-link"
-               hx-get="{{ $dlp }}{{ .EntityID }}" hx-target="#content" hx-push-url="true">{{ .Value }}</a>
+            {{ if .Link }}<a href="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}" class="cell-link"
+               hx-get="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}" hx-target="#content" hx-push-url="true">{{ .Value }}</a>
             {{ else if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
             {{ else }}{{ if .Value }}{{ .Value }}{{ else }}&mdash;{{ end }}{{ end }}
           </td>
@@ -624,7 +633,7 @@ function submitInlineCreate() {
   {{ if .Entity.Content }}
   <div class="detail-section">
     <h3>Content</h3>
-    <div style="padding:12px;background:#f8fafc;border-radius:6px;font-size:14px;white-space:pre-wrap;font-family:var(--font-mono);">{{ .Entity.Content }}</div>
+    <div class="markdown-body" style="padding:12px;background:#f8fafc;border-radius:6px;font-size:14px;">{{ renderMarkdown .Entity.Content }}</div>
   </div>
   {{ end }}
 </div>

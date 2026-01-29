@@ -144,6 +144,18 @@ func NewSyncManager(projectRoot string, opts SyncOptions) *SyncManager {
 	}
 	s.repoRoot = strings.TrimSpace(root)
 
+	// Verify the git repo root is the project root. If the project is a
+	// subdirectory of a larger repo, sync would operate on the entire repo
+	// (git add -A, branch switches, etc.) which is destructive.
+	absProject, _ := filepath.Abs(projectRoot)
+	absProject, _ = filepath.EvalSymlinks(absProject)
+	resolvedRoot, _ := filepath.EvalSymlinks(s.repoRoot)
+	if absProject != resolvedRoot {
+		s.message = "Project is nested in a larger git repo"
+		log.Printf("Sync: disabled — project root %s differs from git root %s", absProject, s.repoRoot)
+		return s
+	}
+
 	// Check for remote
 	remotes, err := s.git(s.repoRoot, "remote")
 	if err != nil || strings.TrimSpace(remotes) == "" {
