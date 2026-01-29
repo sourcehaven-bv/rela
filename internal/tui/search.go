@@ -237,12 +237,11 @@ func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return app, nil
 
-	case "b":
-		// Browse all results with scope navigation
+	case "ctrl+b":
+		// Browse all results with scope navigation (ctrl+b since 'b' is text input)
 		if !s.showSuggestions && len(s.results) > 0 {
 			return s.enterBrowseMode(app)
 		}
-		return app, nil
 
 	case "backspace":
 		if s.cursorPos > 0 && s.query != "" {
@@ -254,8 +253,8 @@ func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return app, s.triggerSearch()
 		}
 
-	case "j", "down":
-		// If showing suggestions, navigate suggestions
+	case "down":
+		// Navigate suggestions or results (arrow keys only — j/k are text input on search screen)
 		if s.showSuggestions {
 			if s.suggestionIndex < len(s.suggestions)-1 {
 				s.suggestionIndex++
@@ -264,8 +263,8 @@ func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			s.resultIndex++
 		}
 
-	case "k", "up":
-		// If showing suggestions, navigate suggestions
+	case "up":
+		// Navigate suggestions or results (arrow keys only — j/k are text input on search screen)
 		if s.showSuggestions {
 			if s.suggestionIndex > 0 {
 				s.suggestionIndex--
@@ -290,6 +289,7 @@ func (s *SearchModel) Update(app *App, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		s.query = ""
 		s.cursorPos = 0
 		s.results = nil
+		s.resultIndex = 0
 		s.parseErrors = nil
 		s.searching = false
 		s.lastQuery = ""
@@ -814,7 +814,7 @@ func (s *SearchModel) Help() [][2]string {
 		return [][2]string{
 			{"↑/↓", "navigate"},
 			{"enter", "open"},
-			{"b", "browse all"},
+			{"ctrl+b", "browse all"},
 			{"ctrl+u", "clear"},
 			{"esc", "back"},
 		}
