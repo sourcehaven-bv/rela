@@ -1,0 +1,463 @@
+version: "1.0"
+
+app:
+  name: "Support Tickets"
+  description: "Internal ticket management system"
+
+# Colors for enum/custom type values from the metamodel.
+# Referenced by type name — applies everywhere that value appears.
+styles:
+  ticket_status:
+    open: blue
+    in-progress: purple
+    resolved: green
+    closed: gray
+
+  priority:
+    critical: red
+    high: orange
+    medium: yellow
+    low: green
+
+forms:
+  create_ticket:
+    entity_type: ticket
+    title: "New Ticket"
+    description: "Submit a new support ticket"
+    body: true
+
+    fields:
+      - property: title
+        label: "Title"
+        placeholder: "Brief summary of the issue..."
+        help: "A short, descriptive title for the ticket"
+        required: true
+
+      - property: description
+        label: "Description"
+        widget: textarea
+        help: "Detailed description of the issue"
+
+      - property: priority
+        label: "Priority"
+        default: medium
+
+      - property: reporter
+        label: "Reported by"
+        placeholder: "your.name"
+
+      - property: assignee
+        label: "Assign to"
+        placeholder: "assignee.name"
+
+      - property: due_date
+        label: "Due Date"
+        widget: date
+
+      - property: estimated_hours
+        label: "Estimated Hours"
+        widget: number
+
+      - property: status
+        hidden: true
+        default: open
+
+    relations:
+      - relation: belongs-to
+        direction: outgoing
+        target_type: category
+        label: "Category"
+        required: true
+        widget: select
+        allow_create: true
+        create_form: create_category
+
+      - relation: tagged
+        direction: outgoing
+        target_type: label
+        label: "Labels"
+        widget: multi-select
+        allow_create: true
+        create_form: create_label
+
+  edit_ticket:
+    entity_type: ticket
+    title: "Edit Ticket"
+    mode: edit
+    body: true
+
+    fields:
+      - property: title
+        label: "Title"
+
+      - property: description
+        label: "Description"
+        widget: textarea
+
+      - property: priority
+        label: "Priority"
+
+      - property: status
+        label: "Status"
+        transitions:
+          open: [in-progress, closed]
+          in-progress: [open, resolved]
+          resolved: [closed, in-progress]
+          closed: [open]
+
+      - property: assignee
+        label: "Assign to"
+
+      - property: reporter
+        label: "Reported by"
+
+      - property: due_date
+        label: "Due Date"
+        widget: date
+
+      - property: estimated_hours
+        label: "Estimated Hours"
+        widget: number
+
+      - property: is_blocked
+        label: "Blocked"
+        widget: checkbox
+
+    relations:
+      - relation: belongs-to
+        direction: outgoing
+        target_type: category
+        label: "Category"
+        required: true
+        widget: select
+        allow_create: true
+        create_form: create_category
+
+      - relation: tagged
+        direction: outgoing
+        target_type: label
+        label: "Labels"
+        widget: multi-select
+        allow_create: true
+        create_form: create_label
+
+      - relation: blocks
+        direction: outgoing
+        target_type: ticket
+        label: "Blocks"
+        widget: search
+        properties:
+          - property: reason
+            label: "Block Reason"
+            widget: text
+
+  create_category:
+    entity_type: category
+    title: "New Category"
+    description: "Create a ticket category"
+
+    fields:
+      - property: name
+        label: "Category Name"
+        required: true
+        placeholder: "e.g., Backend, Frontend, DevOps"
+
+      - property: description
+        label: "Description"
+        widget: textarea
+
+      - property: color
+        label: "Color"
+        placeholder: "#3b82f6"
+        help: "Hex color code for visual identification"
+
+  create_label:
+    entity_type: label
+    title: "New Label"
+    description: "Create a ticket label"
+
+    fields:
+      - property: name
+        label: "Label Name"
+        required: true
+        placeholder: "e.g., bug, enhancement, urgent"
+
+lists:
+  all_tickets:
+    entity_type: ticket
+    title: "All Tickets"
+    description: "View all tickets"
+
+    columns:
+      - property: title
+        label: "Title"
+        sortable: true
+        link: true
+
+      - property: status
+        label: "Status"
+        sortable: true
+
+      - property: priority
+        label: "Priority"
+        sortable: true
+
+      - property: assignee
+        label: "Assignee"
+        sortable: true
+
+      - property: reporter
+        label: "Reporter"
+        sortable: true
+
+      - property: due_date
+        label: "Due"
+        sortable: true
+
+    sort:
+      property: priority
+      direction: asc
+
+    filter_controls:
+      - property: status
+        widget: multi-select
+      - property: priority
+        widget: select
+      - property: assignee
+        widget: search
+
+    create_form: create_ticket
+    edit_form: edit_ticket
+    detail_view: ticket_report
+    page_size: 25
+
+  open_tickets:
+    entity_type: ticket
+    title: "Open Tickets"
+
+    columns:
+      - property: title
+        label: "Title"
+        sortable: true
+        link: true
+      - property: priority
+        label: "Priority"
+        sortable: true
+      - property: assignee
+        label: "Assignee"
+        sortable: true
+      - property: due_date
+        label: "Due"
+        sortable: true
+
+    filters:
+      - property: status
+        operator: "="
+        value: open
+
+    sort:
+      property: priority
+      direction: asc
+
+    create_form: create_ticket
+    edit_form: edit_ticket
+    page_size: 25
+
+  my_tickets:
+    entity_type: ticket
+    title: "My Tickets"
+
+    columns:
+      - property: title
+        link: true
+        sortable: true
+      - property: status
+        sortable: true
+      - property: priority
+        sortable: true
+      - property: due_date
+        label: "Due"
+        sortable: true
+
+    filters:
+      - property: assignee
+        operator: "="
+        value: "$USER"
+
+    sort:
+      property: due_date
+      direction: asc
+
+    create_form: create_ticket
+    edit_form: edit_ticket
+    page_size: 25
+
+  categories:
+    entity_type: category
+    title: "Categories"
+
+    columns:
+      - property: name
+        label: "Name"
+        sortable: true
+        link: true
+      - property: description
+        label: "Description"
+
+    sort:
+      property: name
+      direction: asc
+
+    create_form: create_category
+    detail_view: category_report
+    page_size: 50
+
+# ──────────────────────────────────────────────
+# Views: read-only detail views with graph traversal
+# ──────────────────────────────────────────────
+views:
+  category_report:
+    title: "Category Report"
+    entry:
+      type: category
+
+    traverse:
+      # Pull in all tickets that belong to this category (incoming relation)
+      - from: entry
+        follow_incoming: belongs-to
+        collect_as: tickets
+
+      # From those tickets, find what they block
+      - from: tickets
+        follow: blocks
+        collect_as: blocked_tickets
+
+      # From those tickets, find their labels
+      - from: tickets
+        follow: tagged
+        collect_as: labels
+
+    sections:
+      # Category properties
+      - heading: "Category"
+        source: entry
+        display: properties
+        fields:
+          - property: name
+            label: "Name"
+          - property: description
+            label: "Description"
+
+      # All tickets as full content cards
+      - heading: "Tickets"
+        source: tickets
+        display: content
+        fields:
+          - property: status
+          - property: priority
+          - property: assignee
+          - property: due_date
+            label: "Due"
+        empty_message: "No tickets in this category"
+
+      # Blocked tickets as a table
+      - heading: "Blocked Tickets"
+        source: blocked_tickets
+        display: table
+        columns:
+          - property: title
+            label: "Title"
+            link: true
+          - property: status
+            label: "Status"
+          - property: priority
+            label: "Priority"
+          - property: assignee
+            label: "Assignee"
+        empty_message: "No blocking relationships"
+
+      # Labels used by tickets in this category
+      - heading: "Labels Used"
+        source: labels
+        display: list
+        fields:
+          - property: name
+        empty_message: "No labels applied"
+
+  ticket_report:
+    title: "Ticket Report"
+    entry:
+      type: ticket
+
+    traverse:
+      # What tickets does this block?
+      - from: entry
+        follow: blocks
+        collect_as: blocks
+
+      # What tickets block this one?
+      - from: entry
+        follow_incoming: blocks
+        collect_as: blocked_by
+
+      # Labels on this ticket
+      - from: entry
+        follow: tagged
+        collect_as: labels
+
+    sections:
+      # Ticket properties
+      - heading: "Ticket"
+        source: entry
+        display: properties
+        fields:
+          - property: status
+          - property: priority
+          - property: assignee
+          - property: reporter
+          - property: due_date
+            label: "Due Date"
+          - property: estimated_hours
+            label: "Estimated Hours"
+
+      # Ticket body (markdown content)
+      - source: entry
+        display: content
+
+      # What this ticket blocks
+      - heading: "Blocks"
+        source: blocks
+        display: content
+        fields:
+          - property: status
+          - property: priority
+          - property: assignee
+        empty_message: "This ticket does not block any others"
+
+      # What blocks this ticket
+      - heading: "Blocked By"
+        source: blocked_by
+        display: cards
+        fields:
+          - property: status
+          - property: priority
+          - property: assignee
+        empty_message: "This ticket is not blocked"
+
+      # Labels
+      - heading: "Labels"
+        source: labels
+        display: list
+        fields:
+          - property: name
+        empty_message: "No labels"
+
+navigation:
+  - label: "My Tickets"
+    list: my_tickets
+  - label: "Open Tickets"
+    list: open_tickets
+  - label: "All Tickets"
+    list: all_tickets
+  - label: "Categories"
+    list: categories

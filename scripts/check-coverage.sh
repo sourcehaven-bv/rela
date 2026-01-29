@@ -8,7 +8,7 @@ COVERAGE_FILE="${1:-coverage.out}"
 
 if [ ! -f "$COVERAGE_FILE" ]; then
     echo "❌ Coverage file not found: $COVERAGE_FILE"
-    echo "Run 'make test-coverage' first"
+    echo "Run 'just test-coverage' first"
     exit 1
 fi
 
@@ -80,7 +80,7 @@ if [ $FAILED -eq 1 ]; then
     echo "❌ One or more packages failed coverage thresholds"
     echo ""
     echo "To see detailed coverage:"
-    echo "  make coverage-html"
+    echo "  just coverage-html"
     echo ""
     exit 1
 fi

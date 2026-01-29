@@ -298,6 +298,16 @@ issues:
         - exhaustive    # Switch statements on screen types are intentionally partial
         - unparam       # Width/height params needed for interface consistency
 
+    # Data entry web handlers have similar patterns to TUI code
+    - path: internal/dataentry/.*\.go
+      linters:
+        - funlen        # HTTP handlers with template data are inherently long
+        - gocognit      # View section building has complex control flow
+        - gocyclo       # Handler functions are inherently complex
+        - mnd           # HTTP status codes and limits
+        - nestif        # View/section logic has nested conditionals
+        - lll           # Template strings are long by design
+
     # Gocritic evalOrder is often false positive with method calls returning commands
     - linters:
         - gocritic
@@ -324,6 +334,7 @@ issues:
     - third_party
     - testdata
     - legacy-reference
+    - prototypes
 
   max-issues-per-linter: 0
   max-same-issues: 0

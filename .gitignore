@@ -1,5 +1,7 @@
 bin/
 /rela
+/rela-server
+/rela-desktop
 coverage.out
 coverage.txt
 coverage.html

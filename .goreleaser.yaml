@@ -26,6 +26,23 @@ builds:
     flags:
       - -trimpath
 
+  - id: rela-server
+    main: ./cmd/rela-server
+    binary: rela-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    flags:
+      - -trimpath
+
 archives:
   - id: default
     format: tar.gz
