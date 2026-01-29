@@ -47,6 +47,12 @@ func NewWatcher(s *Server) (*Watcher, error) {
 		s.logger.Printf("Warning: could not watch metamodel: %v", err)
 	}
 
+	// Watch views file
+	viewsPath := filepath.Join(s.projectCtx.Root, "views.yaml")
+	if err := fsw.Add(viewsPath); err != nil {
+		s.logger.Printf("Warning: could not watch views file: %v", err)
+	}
+
 	return w, nil
 }
 

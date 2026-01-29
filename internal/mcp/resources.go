@@ -98,11 +98,14 @@ func (s *Server) handleReadEntity(
 	if len(segments) != 2 {
 		return nil, fmt.Errorf("invalid entity URI: %s", uri)
 	}
-	id := segments[1]
+	entityType, id := segments[0], segments[1]
 
 	entity, ok := s.graph.GetNode(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
+	}
+	if entity.Type != entityType {
+		return nil, fmt.Errorf("entity %s is type %s, not %s", id, entity.Type, entityType)
 	}
 
 	text, err := convertEntity(entity, s.graph, true)
