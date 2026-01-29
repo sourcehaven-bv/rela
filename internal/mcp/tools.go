@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 func (s *Server) registerTools() {
@@ -47,6 +49,10 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolGetMetamodel(), s.handleGetMetamodel)
 	s.mcp.AddTool(toolListEntityTypes(), s.handleListEntityTypes)
 	s.mcp.AddTool(toolListRelationTypes(), s.handleListRelationTypes)
+
+	// View tools
+	s.mcp.AddTool(toolListViews(), s.handleListViews)
+	s.mcp.AddTool(toolExecuteView(), s.handleExecuteView)
 
 	// Utility tools
 	s.mcp.AddTool(toolRefresh(), s.handleRefresh)
@@ -201,6 +207,25 @@ func toolListEntityTypes() mcp.Tool {
 func toolListRelationTypes() mcp.Tool {
 	return mcp.NewTool("list_relation_types",
 		mcp.WithDescription("List available relation types with their constraints"),
+	)
+}
+
+func toolListViews() mcp.Tool {
+	return mcp.NewTool("list_views",
+		mcp.WithDescription("List available view definitions from views.yaml"),
+	)
+}
+
+func toolExecuteView() mcp.Tool {
+	return mcp.NewTool("execute_view",
+		mcp.WithDescription(
+			"Execute a view definition to generate complete context for an entity. "+
+				"Views are declarative graph traversals defined in views.yaml that efficiently "+
+				"gather all related entities and their relationships around a starting entity."),
+		mcp.WithString("name", mcp.Required(), mcp.Description("View name (as defined in views.yaml)")),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Entry entity ID")),
+		mcp.WithString("format", mcp.Description("Output format: json (default) or yaml"),
+			mcp.Enum("json", "yaml")),
 	)
 }
 
@@ -1063,6 +1088,95 @@ func (s *Server) handleListRelationTypes(
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return mcp.NewToolResultText(text), nil
+}
+
+func (s *Server) handleListViews(
+	_ context.Context, _ mcp.CallToolRequest,
+) (*mcp.CallToolResult, error) {
+	viewsFile, err := s.loadViews()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load views: %v", err)), nil
+	}
+
+	names := viewsFile.ViewNames()
+	sort.Strings(names)
+
+	if len(names) == 0 {
+		return mcp.NewToolResultText("No views defined (views.yaml not found or empty)"), nil
+	}
+
+	type viewInfo struct {
+		Name        string `json:"name"`
+		Description string `json:"description,omitempty"`
+		EntryType   string `json:"entry_type"`
+		Parameter   string `json:"parameter"`
+	}
+
+	result := make([]viewInfo, 0, len(names))
+	for _, name := range names {
+		viewDef, _ := viewsFile.GetView(name)
+		result = append(result, viewInfo{
+			Name:        name,
+			Description: viewDef.Description,
+			EntryType:   viewDef.Entry.Type,
+			Parameter:   viewDef.Entry.Parameter,
+		})
+	}
+
+	text, err := marshalJSON(result)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(text), nil
+}
+
+func (s *Server) handleExecuteView(
+	_ context.Context, request mcp.CallToolRequest,
+) (*mcp.CallToolResult, error) {
+	viewName, err := request.RequireString("name")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	entryID, err := request.RequireString("id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	format := request.GetString("format", "json")
+
+	viewsFile, loadErr := s.loadViews()
+	if loadErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load views: %v", loadErr)), nil
+	}
+
+	viewDef, ok := viewsFile.GetView(viewName)
+	if !ok {
+		names := viewsFile.ViewNames()
+		sort.Strings(names)
+		return mcp.NewToolResultError(
+			fmt.Sprintf("view not found: %s (available: %s)", viewName, strings.Join(names, ", "))), nil
+	}
+
+	if validationErr := viewDef.Validate(s.meta, viewName); validationErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("view validation failed: %v", validationErr)), nil
+	}
+
+	engine := views.NewEngine(s.graph, s.meta)
+	result, execErr := engine.Execute(viewDef, entryID)
+	if execErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("view execution failed: %v", execErr)), nil
+	}
+
+	output, fmtErr := views.Format(result, format, s.graph, s.meta)
+	if fmtErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to format output: %v", fmtErr)), nil
+	}
+
+	return mcp.NewToolResultText(output), nil
+}
+
+func (s *Server) loadViews() (*views.File, error) {
+	viewsPath := filepath.Join(s.projectCtx.Root, "views.yaml")
+	return views.Load(viewsPath)
 }
 
 func (s *Server) handleRefresh(

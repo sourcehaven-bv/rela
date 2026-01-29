@@ -1,14 +1,19 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
 // makeToolRequest creates a CallToolRequest with the given arguments.
@@ -841,5 +846,166 @@ func TestExtractProperties_UnsupportedType(t *testing.T) {
 	props := s.extractProperties(req)
 	if props != nil {
 		t.Error("expected nil properties for unsupported type")
+	}
+}
+
+// --- View tool tests ---
+
+func makeTestServerWithViews(t *testing.T, viewsYAML string) *Server {
+	t.Helper()
+	tmpDir := t.TempDir()
+	if viewsYAML != "" {
+		err := os.WriteFile(filepath.Join(tmpDir, "views.yaml"), []byte(viewsYAML), 0644)
+		if err != nil {
+			t.Fatalf("failed to write views.yaml: %v", err)
+		}
+	}
+	return &Server{
+		projectCtx: &project.Context{Root: tmpDir},
+		graph:      graph.New(),
+		meta:       &metamodel.Metamodel{},
+	}
+}
+
+func TestHandleListViews_Empty(t *testing.T) {
+	s := makeTestServerWithViews(t, "")
+	result, err := s.handleListViews(context.Background(), mcp.CallToolRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "No views defined") {
+		t.Errorf("expected 'No views defined' message, got %s", text)
+	}
+}
+
+func TestHandleListViews_WithViews(t *testing.T) {
+	yaml := `views:
+  context:
+    description: "Full context for a requirement"
+    entry:
+      type: requirement
+      parameter: id
+    traverse:
+      - from: entry
+        follow: addresses
+        collect_as: decisions
+`
+	s := makeTestServerWithViews(t, yaml)
+	result, err := s.handleListViews(context.Background(), mcp.CallToolRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var views []map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &views); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("expected 1 view, got %d", len(views))
+	}
+	if views[0]["name"] != "context" {
+		t.Errorf("expected view name 'context', got %v", views[0]["name"])
+	}
+	if views[0]["entry_type"] != "requirement" {
+		t.Errorf("expected entry_type 'requirement', got %v", views[0]["entry_type"])
+	}
+}
+
+func TestHandleExecuteView_MissingName(t *testing.T) {
+	s := makeTestServerWithViews(t, "")
+	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
+	result, err := s.handleExecuteView(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "name") {
+		t.Errorf("expected error about missing name, got %s", text)
+	}
+}
+
+func TestHandleExecuteView_MissingID(t *testing.T) {
+	s := makeTestServerWithViews(t, "")
+	req := makeToolRequest(map[string]interface{}{"name": "context"})
+	result, err := s.handleExecuteView(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "id") {
+		t.Errorf("expected error about missing id, got %s", text)
+	}
+}
+
+func TestHandleExecuteView_ViewNotFound(t *testing.T) {
+	s := makeTestServerWithViews(t, "views: {}")
+	req := makeToolRequest(map[string]interface{}{"name": "nonexistent", "id": "REQ-001"})
+	result, err := s.handleExecuteView(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "view not found") {
+		t.Errorf("expected 'view not found' error, got %s", text)
+	}
+}
+
+func TestHandleReadView_InvalidURI(t *testing.T) {
+	s := makeTestServerWithViews(t, "")
+	req := mcp.ReadResourceRequest{}
+	req.Params.URI = "rela://view/onlyone"
+	_, err := s.handleReadView(context.Background(), req)
+	if err == nil {
+		t.Error("expected error for invalid URI")
+	}
+	if !strings.Contains(err.Error(), "invalid view URI") {
+		t.Errorf("expected 'invalid view URI' error, got %v", err)
+	}
+}
+
+func TestHandleReadView_ViewNotFound(t *testing.T) {
+	s := makeTestServerWithViews(t, "views: {}")
+	req := mcp.ReadResourceRequest{}
+	req.Params.URI = "rela://view/nonexistent/REQ-001"
+	_, err := s.handleReadView(context.Background(), req)
+	if err == nil {
+		t.Error("expected error for non-existent view")
+	}
+	if !strings.Contains(err.Error(), "view not found") {
+		t.Errorf("expected 'view not found' error, got %v", err)
+	}
+}
+
+func TestLoadViews_NoFile(t *testing.T) {
+	s := makeTestServerWithViews(t, "")
+	viewsFile, err := s.loadViews()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(viewsFile.ViewNames()) != 0 {
+		t.Error("expected empty views when no file exists")
+	}
+}
+
+func TestLoadViews_WithFile(t *testing.T) {
+	yaml := `views:
+  test-view:
+    entry:
+      type: requirement
+      parameter: id
+`
+	s := makeTestServerWithViews(t, yaml)
+	viewsFile, err := s.loadViews()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := viewsFile.ViewNames()
+	if len(names) != 1 {
+		t.Fatalf("expected 1 view, got %d", len(names))
+	}
+	if names[0] != "test-view" {
+		t.Errorf("expected view name 'test-view', got %s", names[0])
 	}
 }

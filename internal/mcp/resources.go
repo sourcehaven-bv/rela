@@ -4,9 +4,13 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 func (s *Server) registerResources() {
@@ -41,6 +45,17 @@ func (s *Server) registerResources() {
 			mcp.WithTemplateMIMEType("application/json"),
 		),
 		s.handleReadRelation,
+	)
+
+	// Dynamic resource template: views
+	s.mcp.AddResourceTemplate(
+		mcp.NewResourceTemplate(
+			"rela://view/{name}/{id}",
+			"View",
+			mcp.WithTemplateDescription("Execute a view and return the result for a specific entity"),
+			mcp.WithTemplateMIMEType("application/json"),
+		),
+		s.handleReadView,
 	)
 }
 
@@ -100,6 +115,56 @@ func (s *Server) handleReadEntity(
 			URI:      uri,
 			MIMEType: "application/json",
 			Text:     text,
+		},
+	}, nil
+}
+
+func (s *Server) handleReadView(
+	_ context.Context, request mcp.ReadResourceRequest,
+) ([]mcp.ResourceContents, error) {
+	uri := request.Params.URI
+
+	// Parse URI: rela://view/{name}/{id}
+	parts := strings.TrimPrefix(uri, "rela://view/")
+	segments := strings.SplitN(parts, "/", 2)
+	if len(segments) != 2 {
+		return nil, fmt.Errorf("invalid view URI: %s", uri)
+	}
+	viewName, entryID := segments[0], segments[1]
+
+	viewsPath := filepath.Join(s.projectCtx.Root, "views.yaml")
+	viewsFile, err := views.Load(viewsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load views: %w", err)
+	}
+
+	viewDef, ok := viewsFile.GetView(viewName)
+	if !ok {
+		names := viewsFile.ViewNames()
+		sort.Strings(names)
+		return nil, fmt.Errorf("view not found: %s (available: %s)", viewName, strings.Join(names, ", "))
+	}
+
+	if validationErr := viewDef.Validate(s.meta, viewName); validationErr != nil {
+		return nil, fmt.Errorf("view validation failed: %w", validationErr)
+	}
+
+	engine := views.NewEngine(s.graph, s.meta)
+	result, execErr := engine.Execute(viewDef, entryID)
+	if execErr != nil {
+		return nil, fmt.Errorf("view execution failed: %w", execErr)
+	}
+
+	output, fmtErr := views.Format(result, "json", s.graph, s.meta)
+	if fmtErr != nil {
+		return nil, fmt.Errorf("failed to format view output: %w", fmtErr)
+	}
+
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      uri,
+			MIMEType: "application/json",
+			Text:     output,
 		},
 	}, nil
 }
