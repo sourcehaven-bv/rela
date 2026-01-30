@@ -9,6 +9,8 @@ const allTemplates = `
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 <link rel="stylesheet" href="https://unpkg.com/easymde@2.18.0/dist/easymde.min.css">
 <script src="https://unpkg.com/easymde@2.18.0/dist/easymde.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/slim-select@2.9.2/dist/slimselect.css">
+<script src="https://unpkg.com/slim-select@2.9.2/dist/slimselect.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -155,7 +157,52 @@ tbody tr:last-child td { border-bottom: none; }
 .markdown-body strong { font-weight: 600; }
 .markdown-body em { font-style: italic; }
 
+/* SlimSelect theme overrides */
+:root {
+  --ss-primary-color: var(--primary);
+  --ss-bg-color: var(--bg-card);
+  --ss-font-color: var(--text);
+  --ss-font-placeholder-color: var(--text-muted);
+  --ss-border-color: var(--border);
+  --ss-highlight-color: var(--primary-light);
+  --ss-border-radius: 6px;
+  --ss-spacing-s: 4px;
+  --ss-spacing-m: 8px;
+  --ss-spacing-l: 12px;
+  --ss-animation-timing: 0.15s;
+  --ss-font-size: 14px;
+}
+.ss-main { font-family: var(--font); min-height: 38px; }
+.ss-main:focus { box-shadow: 0 0 0 3px var(--primary-light); }
+.ss-main .ss-values .ss-value { background-color: var(--primary); }
+.ss-content { font-family: var(--font); }
+.filter-bar .ss-main { min-height: 32px; --ss-font-size: 13px; min-width: 140px; }
+
 </style>
+<script>
+// SlimSelect progressive enhancement
+function enhanceSelects(root) {
+  if (typeof SlimSelect === 'undefined') return;
+  (root || document).querySelectorAll('select:not([data-ssid])').forEach(function(sel) {
+    var settings = {
+      select: sel,
+      settings: {
+        showSearch: sel.options.length > 6,
+        allowDeselect: !sel.required && !sel.multiple,
+        placeholderText: '',
+        searchHighlight: true,
+        closeOnSelect: !sel.multiple
+      }
+    };
+    try {
+      var instance = new SlimSelect(settings);
+      sel._slimSelect = instance;
+    } catch(e) { /* skip if SlimSelect fails on this element */ }
+  });
+}
+document.addEventListener('DOMContentLoaded', function() { enhanceSelects(); });
+document.body.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt.detail.target); });
+</script>
 {{- end -}}
 
 {{- define "sidebar" -}}
@@ -541,6 +588,12 @@ function submitInlineCreate() {
         opt.textContent = data.title;
         opt.selected = true;
         sel.appendChild(opt);
+        // Refresh SlimSelect instance if present
+        if (sel._slimSelect) {
+          sel._slimSelect.destroy();
+          var wrap = sel.closest('.rel-select-wrap') || sel.parentNode;
+          enhanceSelects(wrap);
+        }
       }
       closeInlineCreate();
     })
