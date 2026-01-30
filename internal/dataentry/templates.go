@@ -51,6 +51,8 @@ tbody tr:hover { background: var(--primary-light); }
 tbody tr:last-child td { border-bottom: none; }
 .cell-link { color: var(--primary); text-decoration: none; font-weight: 500; }
 .cell-link:hover { text-decoration: underline; }
+.edit-icon { color: var(--text-muted); text-decoration: none; font-size: 14px; opacity: 0.6; transition: opacity 0.15s; }
+.edit-icon:hover { opacity: 1; color: var(--primary); }
 
 .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .badge-blue { background: #dbeafe; color: #1e40af; }
@@ -331,6 +333,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
         hx-swap="none">
     <input type="hidden" name="_form_id" value="{{ .FormID }}">
     <input type="hidden" name="_entity_id" value="{{ .EntityID }}">
+    {{ if .ReturnTo }}<input type="hidden" name="_return_to" value="{{ .ReturnTo }}">{{ end }}
 
     {{ range .Fields }}
     {{ if .Hidden }}
@@ -630,7 +633,13 @@ function submitInlineCreate() {
     <h2>{{ .EntryTitle }}</h2>
     <p style="font-family:var(--font-mono);font-size:13px;color:var(--text-muted);">{{ .Entry.ID }} &middot; {{ .Entry.Type }} &middot; {{ .View.Title }}</p>
   </div>
-  <a href="javascript:history.back()" class="btn btn-secondary btn-sm">&larr; Back</a>
+  <div style="display:flex;gap:8px;">
+    {{ if .EditFormID }}
+    <a href="/form/{{ .EditFormID }}/{{ .Entry.ID }}?return_to={{ urlquery .ReturnTo }}" class="btn btn-primary btn-sm"
+       hx-get="/form/{{ .EditFormID }}/{{ .Entry.ID }}?return_to={{ urlquery .ReturnTo }}" hx-target="#content" hx-push-url="true">Edit</a>
+    {{ end }}
+    <a href="javascript:history.back()" class="btn btn-secondary btn-sm">&larr; Back</a>
+  </div>
 </div>
 
 {{ range .Sections }}
@@ -667,12 +676,15 @@ function submitInlineCreate() {
     {{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}
   </div>
   {{ else }}
+  {{ $returnTo := $.ReturnTo }}
   {{ range .Entities }}
   <div class="card view-content-entity" style="padding:20px;margin-bottom:12px;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
       <a href="/entity/{{ .Type }}/{{ .ID }}" class="cell-link" style="font-size:16px;font-weight:600;"
          hx-get="/entity/{{ .Type }}/{{ .ID }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
       <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted);background:#f1f5f9;padding:1px 6px;border-radius:3px;">{{ .ID }}</span>
+      {{ if .EditFormID }}<a href="/form/{{ .EditFormID }}/{{ .ID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
+         hx-get="/form/{{ .EditFormID }}/{{ .ID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a>{{ end }}
     </div>
     {{ if .Fields }}
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
@@ -704,6 +716,7 @@ function submitInlineCreate() {
     {{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}
   </div>
   {{ else if .IsGrouped }}
+  {{ $returnTo := $.ReturnTo }}
   {{ range .Groups }}
   <h4 style="font-size:13px;font-weight:600;color:var(--text-muted);margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.04em;">{{ .GroupName }}</h4>
   <div class="card" style="margin-bottom:12px;">
@@ -720,6 +733,8 @@ function submitInlineCreate() {
               {{ else }}{{ if .Value }}{{ .Value }}{{ else }}&mdash;{{ end }}{{ end }}
             </td>
             {{ end }}
+            {{ if .EditFormID }}<td style="width:1%;white-space:nowrap;"><a href="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
+               hx-get="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a></td>{{ end }}
           </tr>
           {{ end }}
         </tbody>
@@ -728,6 +743,7 @@ function submitInlineCreate() {
   </div>
   {{ end }}
   {{ else }}
+  {{ $returnTo := $.ReturnTo }}
   <div class="card">
     <div style="overflow-x:auto;">
       <table>
@@ -736,6 +752,7 @@ function submitInlineCreate() {
             {{ range .Columns }}
             <th>{{ if .Label }}{{ .Label }}{{ else }}{{ .Property }}{{ end }}</th>
             {{ end }}
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -749,6 +766,9 @@ function submitInlineCreate() {
               {{ else }}{{ if .Value }}{{ .Value }}{{ else }}&mdash;{{ end }}{{ end }}
             </td>
             {{ end }}
+            {{ if .EditFormID }}<td style="width:1%;white-space:nowrap;"><a href="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
+               hx-get="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a></td>
+            {{ else }}<td></td>{{ end }}
           </tr>
           {{ end }}
         </tbody>
@@ -765,13 +785,16 @@ function submitInlineCreate() {
     {{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}
   </div>
   {{ else }}
+  {{ $returnTo := $.ReturnTo }}
   <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:12px;">
     {{ range .Entities }}
     <div class="card" style="padding:16px;">
-      <div style="margin-bottom:8px;">
+      <div style="margin-bottom:8px;display:flex;align-items:center;gap:6px;">
         <a href="/entity/{{ .Type }}/{{ .ID }}" class="cell-link" style="font-size:14px;font-weight:600;"
            hx-get="/entity/{{ .Type }}/{{ .ID }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
-        <span style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);margin-left:6px;">{{ .ID }}</span>
+        <span style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);">{{ .ID }}</span>
+        {{ if .EditFormID }}<a href="/form/{{ .EditFormID }}/{{ .ID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
+           hx-get="/form/{{ .EditFormID }}/{{ .ID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a>{{ end }}
       </div>
       {{ range .Fields }}
       {{ if .Value }}
@@ -800,12 +823,15 @@ function submitInlineCreate() {
     {{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}
   </div>
   {{ else }}
+  {{ $returnTo := $.ReturnTo }}
   <div class="card" style="padding:12px 20px;">
     <ul class="rel-list">
       {{ range .Entities }}
       <li>
         <a href="/entity/{{ .Type }}/{{ .ID }}" class="cell-link"
            hx-get="/entity/{{ .Type }}/{{ .ID }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
+        {{ if .EditFormID }}<a href="/form/{{ .EditFormID }}/{{ .ID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
+           hx-get="/form/{{ .EditFormID }}/{{ .ID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a>{{ end }}
         {{ range .Fields }}
         {{ if .Value }}
         {{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>

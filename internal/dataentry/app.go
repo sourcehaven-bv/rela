@@ -118,6 +118,17 @@ func (a *App) navItems() []NavItem {
 	return items
 }
 
+// editFormForType returns the first edit form ID configured for the given entity type,
+// or "" if no edit form is found.
+func (a *App) editFormForType(entityType string) string {
+	for id, f := range a.Cfg.Forms {
+		if f.EntityType == entityType && (f.Mode == "edit" || f.Mode == "") {
+			return id
+		}
+	}
+	return ""
+}
+
 // entityDisplayTitle returns the display title for an entity using the metamodel's primary property.
 func (a *App) entityDisplayTitle(e *model.Entity) string {
 	entDef, ok := a.meta.GetEntityDef(e.Type)

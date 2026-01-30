@@ -319,6 +319,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		"EntityType": form.EntityType,
 		"ShowBody":   showBody,
 		"Body":       bodyContent,
+		"ReturnTo":   r.URL.Query().Get("return_to"),
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
 	}
 
@@ -360,12 +361,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 
 	entDef, _ := a.meta.GetEntityDef(entity.Type)
 
-	var editFormID string
-	for id, f := range a.Cfg.Forms {
-		if f.EntityType == entity.Type && (f.Mode == "edit" || f.Mode == "") {
-			editFormID = id
-		}
-	}
+	editFormID := a.editFormForType(entity.Type)
 
 	outgoing := a.g.OutgoingEdges(entityID)
 	incoming := a.g.IncomingEdges(entityID)
@@ -469,6 +465,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		ID         string
 		Title      string
 		Type       string
+		EditFormID string
 		Fields     []SectionFieldData
 		Content    string
 		HasContent bool
@@ -483,6 +480,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 	type SectionRowData struct {
 		EntityID   string
 		EntityType string
+		EditFormID string
 		Cells      []SectionColumnData
 		Content    string
 	}
@@ -575,7 +573,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 						gd := GroupData{GroupName: gName}
 						for _, e := range groups[gName] {
 							eDef, _ := a.meta.GetEntityDef(e.Type)
-							row := SectionRowData{EntityID: e.ID, EntityType: e.Type}
+							row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
 							for _, col := range sec.Columns {
 								val := ""
 								if v := e.Properties[col.Property]; v != nil {
@@ -598,7 +596,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 				} else {
 					for _, e := range entities {
 						eDef, _ := a.meta.GetEntityDef(e.Type)
-						row := SectionRowData{EntityID: e.ID, EntityType: e.Type}
+						row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
 						for _, col := range sec.Columns {
 							val := ""
 							if v := e.Properties[col.Property]; v != nil {
@@ -625,6 +623,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 						ID:         e.ID,
 						Title:      a.entityDisplayTitle(e),
 						Type:       e.Type,
+						EditFormID: a.editFormForType(e.Type),
 						Content:    e.Content,
 						HasContent: e.Content != "",
 					}
@@ -654,9 +653,10 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 				for _, e := range entities {
 					eDef, _ := a.meta.GetEntityDef(e.Type)
 					sed := SectionEntityData{
-						ID:    e.ID,
-						Title: a.entityDisplayTitle(e),
-						Type:  e.Type,
+						ID:         e.ID,
+						Title:      a.entityDisplayTitle(e),
+						Type:       e.Type,
+						EditFormID: a.editFormForType(e.Type),
 					}
 					for _, f := range sec.Fields {
 						val := ""
@@ -685,6 +685,12 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		sections = append(sections, sd)
 	}
 
+	// Build the return URL for edit links to redirect back to this view
+	returnTo := r.URL.Path
+	if r.URL.RawQuery != "" {
+		returnTo += "?" + r.URL.RawQuery
+	}
+
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
 		"Navigation": a.navItems(),
@@ -694,6 +700,8 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		"EntityID":   entityID,
 		"Entry":      result.Entry,
 		"EntryTitle": a.entityDisplayTitle(result.Entry),
+		"EditFormID": a.editFormForType(result.Entry.Type),
+		"ReturnTo":   returnTo,
 		"Sections":   sections,
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
 	}
@@ -791,7 +799,11 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Created %s %s", form.EntityType, entityID)
 
-	w.Header().Set("HX-Redirect", "/entity/"+form.EntityType+"/"+entityID)
+	redirect := "/entity/" + form.EntityType + "/" + entityID
+	if returnTo := r.FormValue("_return_to"); returnTo != "" {
+		redirect = returnTo
+	}
+	w.Header().Set("HX-Redirect", redirect)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -866,7 +878,11 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Updated %s", entityID)
 
-	w.Header().Set("HX-Redirect", "/entity/"+entity.Type+"/"+entityID)
+	redirect := "/entity/" + entity.Type + "/" + entityID
+	if returnTo := r.FormValue("_return_to"); returnTo != "" {
+		redirect = returnTo
+	}
+	w.Header().Set("HX-Redirect", redirect)
 	w.WriteHeader(http.StatusOK)
 }
 
