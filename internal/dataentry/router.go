@@ -1,10 +1,15 @@
 package dataentry
 
-import "net/http"
+import (
+	"io/fs"
+	"net/http"
+)
 
 // NewRouter returns an http.Handler with all data entry routes registered.
 func (a *App) NewRouter() http.Handler {
 	mux := http.NewServeMux()
+	staticFS, _ := fs.Sub(staticFiles, "static")
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("/", a.handleIndex)
 	mux.HandleFunc("/search", a.handleSearch)
 	mux.HandleFunc("/list/", a.handleList)

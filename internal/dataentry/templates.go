@@ -6,11 +6,13 @@ const allTemplates = `
 {{- define "head" -}}
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="https://unpkg.com/htmx.org@2.0.4"></script>
-<link rel="stylesheet" href="https://unpkg.com/easymde@2.18.0/dist/easymde.min.css">
-<script src="https://unpkg.com/easymde@2.18.0/dist/easymde.min.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/slim-select@2.9.2/dist/slimselect.css">
-<script src="https://unpkg.com/slim-select@2.9.2/dist/slimselect.min.js"></script>
+<script src="/static/htmx.min.js"></script>
+<link rel="stylesheet" href="/static/easymde.min.css">
+<script src="/static/easymde.min.js"></script>
+<link rel="stylesheet" href="/static/slimselect.css">
+<script src="/static/slimselect.min.js"></script>
+<link rel="stylesheet" href="/static/tagify.css">
+<script src="/static/tagify.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -1051,12 +1053,23 @@ function submitInlineCreate() {
   </div>
 </div>
 
+<style>
+.search-tagify .tagify { --tags-border-color: var(--border); --tag-pad: 0.2em 0.5em; --tag-text-color--edit: var(--text); border-radius: 6px; min-height: 44px; font-family: var(--font); font-size: 14px; width: 100%; }
+.search-tagify .tagify__tag { border-radius: 9999px; }
+.search-tagify .tagify__tag > div { padding: 0.2em 0.5em; }
+.search-tagify .tagify__tag__removeBtn { margin-left: 2px; }
+.search-tagify .tagify__input { min-width: 120px; }
+.search-tagify .tagify__input::before { color: var(--text-muted); }
+.search-tagify .tagify__dropdown { border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.search-tagify .tagify__dropdown__item { padding: 6px 12px; font-size: 13px; }
+.search-tagify .tagify__dropdown__item--active { background: var(--primary-light); color: var(--primary); }
+</style>
+
 <div class="card" style="padding:20px;margin-bottom:20px;">
-  <input type="text" name="q" value="{{ .Query }}" placeholder="Search entities..."
-         autofocus autocomplete="off"
-         hx-get="/search" hx-target="#search-results" hx-push-url="true"
-         hx-trigger="keyup changed delay:300ms, search"
-         style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:6px;font-size:15px;font-family:var(--font);background:var(--bg-card);color:var(--text);">
+  <div class="search-tagify">
+    <input id="search-input" name="q" value="" data-query="{{ .Query }}" placeholder="Type to search or filter..."
+           autocomplete="off">
+  </div>
   <div style="margin-top:10px;font-size:12px;color:var(--text-muted);line-height:1.8;">
     <strong>Syntax:</strong>
     <code>type:ticket</code> filter by entity type &middot;
@@ -1076,6 +1089,112 @@ function submitInlineCreate() {
 <div id="search-results">
 {{ template "search-results" . }}
 </div>
+
+<script>
+(function() {
+  var input = document.getElementById('search-input');
+  if (!input || input._tagify) return;
+
+  var suggestions = {{ .SuggestionsJSON }};
+  var catStyles = {
+    type:     {bg:'#dbeafe', color:'#1e40af'},
+    status:   {bg:'#dcfce7', color:'#166534'},
+    property: {bg:'#e9d5ff', color:'#6b21a8'}
+  };
+
+  function isFilter(val) {
+    return /^(type|status|prop):/.test(val);
+  }
+
+  function detectCategory(val) {
+    if (val.lastIndexOf('type:', 0) === 0) return 'type';
+    if (val.lastIndexOf('status:', 0) === 0) return 'status';
+    if (val.lastIndexOf('prop:', 0) === 0) return 'property';
+    return '';
+  }
+
+  var tagify = new Tagify(input, {
+    whitelist: suggestions,
+    enforceWhitelist: false,
+    tagTextProp: 'value',
+    delimiters: null,
+    dropdown: {
+      maxItems: 20,
+      enabled: 1,
+      closeOnSelect: true,
+      searchKeys: ['value'],
+      highlightFirst: true
+    },
+    transformTag: function(tagData) {
+      var cat = tagData.category || detectCategory(tagData.value);
+      var s = catStyles[cat];
+      if (s) {
+        tagData.category = cat;
+        tagData.style = '--tag-bg:' + s.bg + ';--tag-text-color:' + s.color + ';--tag-remove-bg:transparent;--tag-remove-btn-color:' + s.color;
+      }
+    },
+    hooks: {
+      beforeCreateTag: function(tags) {
+        return new Promise(function(resolve, reject) {
+          var valid = tags.filter(function(t) { return isFilter(t.value); });
+          if (valid.length === 0) reject();
+          else {
+            tags.length = 0;
+            for (var i = 0; i < valid.length; i++) tags.push(valid[i]);
+            resolve();
+          }
+        });
+      }
+    }
+  });
+
+  input._tagify = tagify;
+
+  // Parse initial query: filters become tags, text stays in input
+  var rawQuery = input.getAttribute('data-query') || '';
+  if (rawQuery.trim()) {
+    var tokens = rawQuery.match(/"[^"]*"|\S+/g) || [];
+    var textParts = [];
+    for (var i = 0; i < tokens.length; i++) {
+      var t = tokens[i];
+      if (isFilter(t)) {
+        tagify.addTags([{value: t, category: detectCategory(t)}]);
+      } else {
+        textParts.push(t);
+      }
+    }
+    if (textParts.length) {
+      tagify.DOM.input.textContent = textParts.join(' ');
+    }
+  }
+
+  var searchTimer = null;
+  function doSearch() {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(function() {
+      var tags = tagify.value || [];
+      var parts = [];
+      for (var i = 0; i < tags.length; i++) {
+        parts.push(tags[i].value);
+      }
+      // Include free text from the input area
+      var freeText = (tagify.DOM.input.textContent || '').trim();
+      if (freeText) parts.push(freeText);
+      var q = parts.join(' ');
+      var url = '/search?q=' + encodeURIComponent(q);
+      htmx.ajax('GET', url, {target: '#search-results', swap: 'innerHTML'});
+      history.replaceState(null, '', url);
+    }, 300);
+  }
+
+  tagify.on('add', doSearch);
+  tagify.on('remove', doSearch);
+  tagify.on('input', doSearch);
+
+  // Focus the tagify input
+  setTimeout(function() { tagify.DOM.input.focus(); }, 50);
+})();
+</script>
 {{- end -}}
 
 {{- define "search-results" -}}

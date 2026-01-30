@@ -3,6 +3,7 @@ package dataentry
 import (
 	"encoding/json"
 	"fmt"
+	htmltemplate "html/template"
 	"log"
 	"net/http"
 	"net/url"
@@ -1366,16 +1367,61 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Build search suggestions from metamodel for Tagify autocomplete
+	type searchSuggestion struct {
+		Value    string `json:"value"`
+		Category string `json:"category"`
+	}
+	suggestions := make([]searchSuggestion, 0, len(a.meta.EntityTypes()))
+	for _, et := range a.meta.EntityTypes() {
+		suggestions = append(suggestions, searchSuggestion{Value: "type:" + et, Category: "type"})
+	}
+	seen := make(map[string]bool)
+	for _, entityTypeName := range a.meta.EntityTypes() {
+		entDef, ok := a.meta.GetEntityDef(entityTypeName)
+		if !ok {
+			continue
+		}
+		for propName, propDef := range entDef.Properties {
+			var values []string
+			if len(propDef.Values) > 0 {
+				values = propDef.Values
+			} else if ct, ok := a.meta.Types[propDef.Type]; ok {
+				values = ct.Values
+			}
+			if len(values) == 0 {
+				continue
+			}
+			for _, v := range values {
+				var key string
+				var cat string
+				if propName == "status" {
+					key = "status:" + v
+					cat = "status"
+				} else {
+					key = "prop:" + propName + "=" + v
+					cat = "property"
+				}
+				if !seen[key] {
+					suggestions = append(suggestions, searchSuggestion{Value: key, Category: cat})
+					seen[key] = true
+				}
+			}
+		}
+	}
+	suggestionsJSON, _ := json.Marshal(suggestions)
+
 	data := map[string]interface{}{
-		"App":         a.Cfg.App,
-		"Navigation":  a.navItems(),
-		"ActiveList":  "",
-		"Query":       query,
-		"Results":     results,
-		"ResultCount": len(results),
-		"HasQuery":    query != "",
-		"ParseErrors": parseErrors,
-		"IsHTMX":      r.Header.Get("HX-Request") == "true",
+		"App":             a.Cfg.App,
+		"Navigation":      a.navItems(),
+		"ActiveList":      "",
+		"Query":           query,
+		"Results":         results,
+		"ResultCount":     len(results),
+		"HasQuery":        query != "",
+		"ParseErrors":     parseErrors,
+		"IsHTMX":          r.Header.Get("HX-Request") == "true",
+		"SuggestionsJSON": htmltemplate.JS(suggestionsJSON), //nolint:gosec // controlled data from metamodel
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
