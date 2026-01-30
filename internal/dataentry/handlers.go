@@ -143,7 +143,6 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"App":              a.Cfg.App,
 		"Navigation":       a.navItems(),
-		"SyncStatus":       a.sync.Status(),
 		"ActiveList":       listID,
 		"List":             list,
 		"ListID":           listID,
@@ -310,7 +309,6 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
 		"Navigation": a.navItems(),
-		"SyncStatus": a.sync.Status(),
 		"ActiveList": a.resolveActiveList(form.EntityType, r),
 		"FormID":     formID,
 		"Form":       form,
@@ -424,7 +422,6 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
 		"Navigation": a.navItems(),
-		"SyncStatus": a.sync.Status(),
 		"ActiveList": a.resolveActiveList(entity.Type, r),
 		"Entity":     entity,
 		"EntityDef":  entDef,
@@ -691,7 +688,6 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
 		"Navigation": a.navItems(),
-		"SyncStatus": a.sync.Status(),
 		"ActiveList": a.resolveActiveList(result.Entry.Type, r),
 		"View":       view,
 		"ViewID":     viewID,
@@ -795,10 +791,6 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Created %s %s", form.EntityType, entityID)
 
-	// Auto-commit (async with debounce)
-	title := entity.GetString(a.entityPrimaryProperty(form.EntityType))
-	a.sync.CommitAsync(CommitMessageCreate(entityID, title))
-
 	w.Header().Set("HX-Redirect", "/entity/"+form.EntityType+"/"+entityID)
 	w.WriteHeader(http.StatusOK)
 }
@@ -874,15 +866,6 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Updated %s", entityID)
 
-	// Auto-commit (async with debounce)
-	var changedFields []string
-	for _, f := range form.Fields {
-		if r.FormValue(f.Property) != "" {
-			changedFields = append(changedFields, f.Property)
-		}
-	}
-	a.sync.CommitAsync(CommitMessageUpdate(entityID, changedFields))
-
 	w.Header().Set("HX-Redirect", "/entity/"+entity.Type+"/"+entityID)
 	w.WriteHeader(http.StatusOK)
 }
@@ -921,9 +904,6 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 	a.g.RemoveNode(entityID)
 
 	log.Printf("Deleted %s", entityID)
-
-	// Auto-commit (async with debounce)
-	a.sync.CommitAsync(CommitMessageDelete(entityID))
 
 	w.Header().Set("HX-Redirect", "/")
 	w.WriteHeader(http.StatusOK)
@@ -992,10 +972,6 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 	a.g.AddNode(entity)
 
 	log.Printf("Inline-created %s %s", form.EntityType, entityID)
-
-	// Auto-commit (async with debounce)
-	title := entity.GetString(a.entityPrimaryProperty(form.EntityType))
-	a.sync.CommitAsync(CommitMessageCreate(entityID, title))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck // best-effort JSON response

@@ -33,10 +33,6 @@ type App struct {
 	styleMap map[string]map[string]string
 	// styledTypes: set of property type names that have style entries
 	styledTypes map[string]bool
-	// conflicts holds the current set of merge conflicts (nil when clean).
-	conflicts *ConflictSet
-	// sync manages git operations (auto-commit, branches, status).
-	sync *SyncManager
 }
 
 // NewApp creates and initializes an App from a project directory.
@@ -92,23 +88,7 @@ func NewApp(projectDir string) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing templates: %w", err)
 	}
-	if _, err = tmpl.Parse(conflictTemplates); err != nil {
-		return nil, fmt.Errorf("parsing conflict templates: %w", err)
-	}
-	if _, err = tmpl.Parse(syncTemplates); err != nil {
-		return nil, fmt.Errorf("parsing sync templates: %w", err)
-	}
-
-	// Initialize git backend and sync manager
-	backend, backendErr := NewGitBackend(projCtx.Root)
-	if backendErr != nil {
-		log.Printf("Sync: git backend unavailable: %v", backendErr)
-	}
-	syncMgr := NewSyncManager(backend, SyncOptions{
-		ProtectedBranches: cfg.Git.RequirePR,
-	})
-
-	app := &App{
+	return &App{
 		Cfg:         &cfg,
 		meta:        meta,
 		g:           g,
@@ -116,17 +96,7 @@ func NewApp(projectDir string) (*App, error) {
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
-		sync:        syncMgr,
-	}
-
-	// Set the OnPull callback now that the App instance exists
-	syncMgr.SetOnPull(func() {
-		if err := app.rebuildGraph(); err != nil {
-			log.Printf("Warning: graph rebuild after pull failed: %v", err)
-		}
-	})
-
-	return app, nil
+	}, nil
 }
 
 // NavItem is an enriched navigation entry that includes the entity type for client-side matching.
@@ -210,15 +180,6 @@ func (a *App) resolveActiveList(entityType string, r *http.Request) string {
 		return active
 	}
 	return a.activeListFromReferer(r)
-}
-
-// entityPrimaryProperty returns the primary property name for an entity type, or "".
-func (a *App) entityPrimaryProperty(entityType string) string {
-	entDef, ok := a.meta.GetEntityDef(entityType)
-	if !ok {
-		return ""
-	}
-	return entDef.GetPrimaryProperty()
 }
 
 // colorToCSSClass maps a color name from config to a CSS class.

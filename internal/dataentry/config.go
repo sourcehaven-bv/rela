@@ -8,17 +8,11 @@ package dataentry
 type Config struct {
 	Version    string                       `yaml:"version"`
 	App        AppConfig                    `yaml:"app"`
-	Git        GitConfig                    `yaml:"git"`
 	Styles     map[string]map[string]string `yaml:"styles"`
 	Forms      map[string]Form              `yaml:"forms"`
 	Lists      map[string]List              `yaml:"lists"`
 	Views      map[string]ViewConfig        `yaml:"views"`
 	Navigation []NavigationEntry            `yaml:"navigation"`
-}
-
-// GitConfig holds git synchronization settings.
-type GitConfig struct {
-	RequirePR []string `yaml:"require_pr"`
 }
 
 // AppConfig holds display metadata for the application.

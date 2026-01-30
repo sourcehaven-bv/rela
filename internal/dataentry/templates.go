@@ -147,36 +147,6 @@ tbody tr:last-child td { border-bottom: none; }
 .markdown-body strong { font-weight: 600; }
 .markdown-body em { font-style: italic; }
 
-.sidebar-footer { padding: 12px 16px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: auto; position: relative; }
-.sync-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-sidebar); }
-.sync-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.sync-clean .sync-dot { background: #22c55e; }
-.sync-ahead .sync-dot { background: #3b82f6; }
-.sync-disabled .sync-dot { background: #64748b; }
-.sync-syncing .sync-dot { background: #f59e0b; animation: sync-pulse 1.5s ease-in-out infinite; }
-.sync-error .sync-dot { background: #ef4444; }
-.sync-conflict .sync-dot { background: #f97316; }
-.sync-offline .sync-dot { background: #94a3b8; animation: sync-pulse 2s ease-in-out infinite; }
-@keyframes sync-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-.sync-lock { font-size: 12px; flex-shrink: 0; }
-.sync-retry-btn { background: none; border: 1px solid rgba(255,255,255,0.3); color: #ef4444; padding: 1px 6px; border-radius: 4px; font-size: 14px; cursor: pointer; flex-shrink: 0; }
-.sync-retry-btn:hover { background: rgba(239,68,68,0.2); color: #fff; }
-.sync-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sync-branch-btn { background: none; border: 1px solid rgba(255,255,255,0.2); color: var(--text-sidebar); padding: 2px 8px; border-radius: 4px; font-size: 12px; font-family: var(--font-mono); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
-.sync-branch-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
-
-.branch-dropdown { position: absolute; bottom: 100%; left: 8px; right: 8px; background: #1e293b; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; box-shadow: 0 -4px 12px rgba(0,0,0,0.3); max-height: 300px; overflow-y: auto; z-index: 200; }
-.branch-dropdown-header { padding: 8px 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; border-bottom: 1px solid rgba(255,255,255,0.1); }
-.branch-item { display: flex; align-items: center; gap: 6px; padding: 6px 12px; color: #cbd5e1; text-decoration: none; font-size: 13px; cursor: pointer; }
-.branch-item:hover { background: #334155; color: #fff; }
-.branch-current { color: #22c55e; font-weight: 600; cursor: default; }
-.branch-current:hover { background: transparent; color: #22c55e; }
-.branch-check { font-size: 11px; }
-.branch-separator { padding: 4px 12px; font-size: 11px; color: #64748b; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 2px; }
-.branch-dropdown-footer { padding: 8px 12px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; gap: 6px; }
-.branch-input { flex: 1; padding: 4px 8px; background: #0f172a; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; color: #fff; font-size: 12px; font-family: var(--font-mono); }
-.branch-input:focus { outline: none; border-color: var(--primary); }
-.branch-loading { padding: 12px; color: #64748b; font-size: 13px; text-align: center; }
 </style>
 {{- end -}}
 
@@ -195,7 +165,6 @@ tbody tr:last-child td { border-bottom: none; }
     </a>
     {{ end }}
   </nav>
-  {{ template "sync-indicator" . }}
 </aside>
 <script>
 document.body.addEventListener('htmx:pushedIntoHistory', function() {
