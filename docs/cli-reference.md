@@ -735,7 +735,13 @@ clients. The server runs on stdin/stdout using JSON-RPC and provides:
 
 **Client Configuration (Claude Code):**
 
-Add to your project's `.mcp.json`:
+Setup with `claude mcp add` (recommended):
+
+```bash
+claude mcp add rela -s local -- /path/to/rela mcp
+```
+
+Setup with `.mcp.json` (for sharing via git):
 
 ```json
 {
