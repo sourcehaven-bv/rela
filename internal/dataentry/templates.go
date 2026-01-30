@@ -201,7 +201,7 @@ function enhanceSelects(root) {
   });
 }
 document.addEventListener('DOMContentLoaded', function() { enhanceSelects(); });
-document.body.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt.detail.target); });
+document.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt.detail.target); });
 </script>
 {{- end -}}
 
