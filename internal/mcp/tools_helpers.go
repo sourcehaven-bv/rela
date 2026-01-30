@@ -13,8 +13,9 @@ import (
 )
 
 func (s *Server) resolveType(typeName string) string {
-	resolved := s.meta.ResolveAlias(typeName)
-	if _, ok := s.meta.GetEntityDef(resolved); ok {
+	meta := s.getMeta()
+	resolved := meta.ResolveAlias(typeName)
+	if _, ok := meta.GetEntityDef(resolved); ok {
 		return resolved
 	}
 	// Try stripping plural
@@ -22,8 +23,8 @@ func (s *Server) resolveType(typeName string) string {
 		replacements := map[string]string{"ies": "y", "es": "", "s": ""}
 		if strings.HasSuffix(typeName, suffix) {
 			singular := strings.TrimSuffix(typeName, suffix) + replacements[suffix]
-			resolved = s.meta.ResolveAlias(singular)
-			if _, ok := s.meta.GetEntityDef(resolved); ok {
+			resolved = meta.ResolveAlias(singular)
+			if _, ok := meta.GetEntityDef(resolved); ok {
 				return resolved
 			}
 		}
@@ -33,7 +34,7 @@ func (s *Server) resolveType(typeName string) string {
 
 func (s *Server) resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
 	resolved := s.resolveType(typeName)
-	def, ok := s.meta.GetEntityDef(resolved)
+	def, ok := s.getMeta().GetEntityDef(resolved)
 	if !ok {
 		return "", nil, fmt.Errorf("unknown entity type: %s", typeName)
 	}
@@ -61,7 +62,7 @@ func (s *Server) extractProperties(request mcp.CallToolRequest) map[string]inter
 }
 
 func (s *Server) validateEntity(entity *model.Entity) *mcp.CallToolResult {
-	errs := s.meta.ValidateEntity(entity)
+	errs := s.getMeta().ValidateEntity(entity)
 	if len(errs) == 0 {
 		return nil
 	}
@@ -97,21 +98,22 @@ func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Ent
 		entities = s.graph.AllNodes()
 	}
 
+	meta := s.getMeta()
 	var violations []*model.Entity
 	for _, entity := range entities {
-		entityDef, ok := s.meta.GetEntityDef(entity.Type)
+		entityDef, ok := meta.GetEntityDef(entity.Type)
 		if !ok {
 			continue
 		}
 
 		if len(whenFilters) > 0 {
-			matches, matchErr := filter.MatchAll(entity, whenFilters, entityDef, s.meta)
+			matches, matchErr := filter.MatchAll(entity, whenFilters, entityDef, meta)
 			if matchErr != nil || !matches {
 				continue
 			}
 		}
 
-		satisfies, matchErr := filter.MatchAll(entity, thenFilters, entityDef, s.meta)
+		satisfies, matchErr := filter.MatchAll(entity, thenFilters, entityDef, meta)
 		if matchErr != nil || !satisfies {
 			violations = append(violations, entity)
 		}

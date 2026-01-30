@@ -170,7 +170,7 @@ func (s *Server) handleCreateEntity(
 
 	// Set default status if not provided
 	if entity.GetString("status") == "" {
-		entity.SetString("status", entityDef.GetDefaultStatus(s.meta))
+		entity.SetString("status", entityDef.GetDefaultStatus(s.getMeta()))
 	}
 
 	entity.Content = content
@@ -234,7 +234,7 @@ func (s *Server) handleUpdateEntity(
 	// Write to file
 	filePath := entity.FilePath
 	if filePath == "" {
-		entityDef, _ := s.meta.GetEntityDef(entity.Type)
+		entityDef, _ := s.getMeta().GetEntityDef(entity.Type)
 		if entityDef != nil {
 			plural := entityDef.GetDirPlural(entity.Type)
 			filePath = s.projectCtx.EntityFilePathWithPlural(plural, id)
@@ -300,7 +300,7 @@ func (s *Server) handleDeleteEntity(
 	// Delete entity file
 	filePath := entity.FilePath
 	if filePath == "" {
-		entityDef, _ := s.meta.GetEntityDef(entity.Type)
+		entityDef, _ := s.getMeta().GetEntityDef(entity.Type)
 		if entityDef != nil {
 			plural := entityDef.GetDirPlural(entity.Type)
 			filePath = s.projectCtx.EntityFilePathWithPlural(plural, id)

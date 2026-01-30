@@ -10,6 +10,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 )
 
 // Watcher watches entity and relation files for changes and notifies MCP clients.
@@ -107,7 +109,19 @@ func (w *Watcher) Stop() {
 }
 
 func (w *Watcher) syncAndNotify() {
-	_, err := markdown.SyncFromFiles(w.server.projectCtx, w.server.meta, w.server.graph)
+	// Reload metamodel in case it changed
+	newMeta, err := metamodel.Load(w.server.projectCtx.MetamodelPath)
+	if err != nil {
+		if migration.IsMigrationError(err) {
+			w.server.logger.Printf("Metamodel needs migration, skipping reload: run 'rela migrate'")
+		} else {
+			w.server.logger.Printf("Metamodel reload error (keeping previous version): %v", err)
+		}
+	} else {
+		w.server.setMeta(newMeta)
+	}
+
+	_, err = markdown.SyncFromFiles(w.server.projectCtx, w.server.getMeta(), w.server.graph)
 	if err != nil {
 		w.server.logger.Printf("Sync error: %v", err)
 		return

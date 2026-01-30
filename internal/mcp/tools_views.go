@@ -79,17 +79,18 @@ func (s *Server) handleExecuteView(
 			fmt.Sprintf("view not found: %s (available: %s)", viewName, strings.Join(names, ", "))), nil
 	}
 
-	if validationErr := viewDef.Validate(s.meta, viewName); validationErr != nil {
+	meta := s.getMeta()
+	if validationErr := viewDef.Validate(meta, viewName); validationErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("view validation failed: %v", validationErr)), nil
 	}
 
-	engine := views.NewEngine(s.graph, s.meta)
+	engine := views.NewEngine(s.graph, meta)
 	result, execErr := engine.Execute(viewDef, entryID)
 	if execErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("view execution failed: %v", execErr)), nil
 	}
 
-	output, fmtErr := views.Format(result, format, s.graph, s.meta)
+	output, fmtErr := views.Format(result, format, s.graph, meta)
 	if fmtErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to format output: %v", fmtErr)), nil
 	}
