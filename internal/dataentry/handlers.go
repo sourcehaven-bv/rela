@@ -301,9 +301,11 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		relations = append(relations, rr)
 	}
 
-	mode := coalesce(form.Mode, "create")
+	var mode string
 	if entityID != "" {
 		mode = "edit"
+	} else {
+		mode = "create"
 	}
 
 	data := map[string]interface{}{
@@ -567,6 +569,30 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 			sd.IsEmpty = len(entities) == 0
 
 			switch sec.Display {
+			case "properties":
+				if len(entities) > 0 {
+					e := entities[0]
+					entDef, _ := a.meta.GetEntityDef(e.Type)
+					for _, f := range sec.Fields {
+						val := ""
+						if v := e.Properties[f.Property]; v != nil {
+							val = fmt.Sprintf("%v", v)
+						}
+						propType := ""
+						if entDef != nil {
+							if pd, ok := entDef.Properties[f.Property]; ok {
+								propType = pd.Type
+							}
+						}
+						label := f.Label
+						if label == "" {
+							label = titleCase(f.Property)
+						}
+						sd.Fields = append(sd.Fields, SectionFieldData{
+							Label: label, Value: val, PropType: propType,
+						})
+					}
+				}
 			case "table":
 				sd.Columns = sec.Columns
 				if sec.GroupBy != "" {
