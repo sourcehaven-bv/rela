@@ -705,14 +705,14 @@ function submitInlineCreate() {
 </div>
 
 {{ range .Sections }}
-<div class="view-section" style="margin-bottom:24px;">
+<div class="view-section" id="{{ .SectionID }}" style="margin-bottom:24px;">
 
   {{ if .Heading }}
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
     <h3 class="view-section-heading" style="margin-bottom:0;">{{ .Heading }}</h3>
     {{ if .AddInfo }}
     {{ $info := .AddInfo }}
-    {{ $returnTo := $.ReturnTo }}
+    {{ $returnTo := printf "%s#%s" $.ReturnTo .SectionID }}
     {{ if eq (len $info.Targets) 1 }}
     {{ $t := index $info.Targets 0 }}
     <a href="/form/{{ $t.FormID }}?return_to={{ urlquery $returnTo }}&link_relation={{ $info.Relation }}&link_peer={{ $info.PeerID }}&link_as={{ $info.LinkAs }}"
@@ -744,7 +744,7 @@ function submitInlineCreate() {
     {{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}
   </div>
   {{ else }}
-  {{ $returnTo := $.ReturnTo }}
+  {{ $returnTo := printf "%s#%s" $.ReturnTo .SectionID }}
   {{ range .Entities }}
   <div class="card" style="padding:20px;margin-bottom:12px;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
@@ -796,7 +796,7 @@ function submitInlineCreate() {
     {{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}
   </div>
   {{ else }}
-  {{ $returnTo := $.ReturnTo }}
+  {{ $returnTo := printf "%s#%s" $.ReturnTo .SectionID }}
   {{ range .Entities }}
   <div class="card view-content-entity" style="padding:20px;margin-bottom:12px;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
@@ -836,7 +836,7 @@ function submitInlineCreate() {
     {{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}
   </div>
   {{ else if .IsGrouped }}
-  {{ $returnTo := $.ReturnTo }}
+  {{ $returnTo := printf "%s#%s" $.ReturnTo .SectionID }}
   {{ range .Groups }}
   <h4 style="font-size:13px;font-weight:600;color:var(--text-muted);margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.04em;">{{ .GroupName }}</h4>
   <div class="card" style="margin-bottom:12px;">
@@ -863,7 +863,7 @@ function submitInlineCreate() {
   </div>
   {{ end }}
   {{ else }}
-  {{ $returnTo := $.ReturnTo }}
+  {{ $returnTo := printf "%s#%s" $.ReturnTo .SectionID }}
   <div class="card">
     <div style="overflow-x:auto;">
       <table>
@@ -905,7 +905,7 @@ function submitInlineCreate() {
     {{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}
   </div>
   {{ else }}
-  {{ $returnTo := $.ReturnTo }}
+  {{ $returnTo := printf "%s#%s" $.ReturnTo .SectionID }}
   <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:12px;">
     {{ range .Entities }}
     <div class="card" style="padding:16px;">
@@ -943,7 +943,7 @@ function submitInlineCreate() {
     {{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}
   </div>
   {{ else }}
-  {{ $returnTo := $.ReturnTo }}
+  {{ $returnTo := printf "%s#%s" $.ReturnTo .SectionID }}
   <div class="card" style="padding:12px 20px;">
     <ul class="rel-list">
       {{ range .Entities }}

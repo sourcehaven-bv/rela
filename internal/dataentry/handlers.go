@@ -507,6 +507,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 	}
 	type SectionData struct {
 		Heading      string
+		SectionID    string
 		Display      string
 		Fields       []SectionFieldData
 		Entities     []SectionEntityData
@@ -527,6 +528,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 	for _, sec := range view.Sections {
 		sd := SectionData{
 			Heading:      sec.Heading,
+			SectionID:    slugify(sec.Heading),
 			Display:      sec.Display,
 			EmptyMessage: sec.EmptyMessage,
 			Link:         sec.Link,

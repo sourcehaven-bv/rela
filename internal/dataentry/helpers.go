@@ -124,6 +124,24 @@ func coalesce(vals ...string) string {
 	return ""
 }
 
+// slugify converts a string to a URL-safe slug (lowercase, hyphens, no special chars).
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	prev := byte('-')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
+			b.WriteByte(c)
+			prev = c
+		} else if prev != '-' {
+			b.WriteByte('-')
+			prev = '-'
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 // titleCase converts snake_case/kebab-case to Title Case.
 func titleCase(s string) string {
 	s = strings.ReplaceAll(s, "_", " ")
