@@ -99,8 +99,12 @@ func NewApp(projectDir string) (*App, error) {
 		return nil, fmt.Errorf("parsing sync templates: %w", err)
 	}
 
-	// Initialize git sync manager
-	syncMgr := NewSyncManager(projCtx.Root, SyncOptions{
+	// Initialize git backend and sync manager
+	backend, backendErr := NewGitBackend(projCtx.Root)
+	if backendErr != nil {
+		log.Printf("Sync: git backend unavailable: %v", backendErr)
+	}
+	syncMgr := NewSyncManager(backend, SyncOptions{
 		ProtectedBranches: cfg.Git.RequirePR,
 	})
 

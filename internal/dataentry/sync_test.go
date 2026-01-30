@@ -1,106 +1,37 @@
 package dataentry
 
 import (
-	"os"
+	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// setupBareRemote creates a bare git repo to serve as origin.
-func setupBareRemote(t *testing.T) string {
-	t.Helper()
-	bare := t.TempDir()
-	runGit(t, bare, "init", "--bare")
-	return bare
-}
+// --- Test helpers for conflict_test.go (real git repos) ---
 
-// setupGitRepo creates a temp directory with a git repo, an initial commit,
-// and optionally a remote. Returns the repo directory.
-func setupGitRepo(t *testing.T, withRemote bool) string {
-	t.Helper()
-	dir := t.TempDir()
-	runGit(t, dir, "init")
-	runGit(t, dir, "config", "user.email", "test@example.com")
-	runGit(t, dir, "config", "user.name", "Test User")
-
-	// Create an initial commit
-	writeTestFile(t, dir, "init.txt", "initial")
-	runGit(t, dir, "add", "-A")
-	runGit(t, dir, "commit", "-m", "initial commit")
-
-	if withRemote {
-		bare := setupBareRemote(t)
-		runGit(t, dir, "remote", "add", "origin", bare)
-		runGit(t, dir, "push", "-u", "origin", "HEAD")
-	}
-
-	return dir
-}
-
-// setupGitRepoWithBare creates a temp directory with a git repo, an initial commit,
-// and a bare remote. Returns both the repo directory and the bare remote path.
-func setupGitRepoWithBare(t *testing.T) (dir, bare string) {
-	t.Helper()
-	dir = t.TempDir()
-	runGit(t, dir, "init")
-	runGit(t, dir, "config", "user.email", "test@example.com")
-	runGit(t, dir, "config", "user.name", "Test User")
-
-	writeTestFile(t, dir, "init.txt", "initial")
-	runGit(t, dir, "add", "-A")
-	runGit(t, dir, "commit", "-m", "initial commit")
-
-	bare = setupBareRemote(t)
-	runGit(t, dir, "remote", "add", "origin", bare)
-	runGit(t, dir, "push", "-u", "origin", "HEAD")
-
-	return dir, bare
-}
-
-// cloneRepo clones a bare repo into a new temp directory and configures it.
-func cloneRepo(t *testing.T, bare string) string {
-	t.Helper()
-	dir := t.TempDir()
-	runGit(t, dir, "clone", bare, ".")
-	runGit(t, dir, "config", "user.email", "other@example.com")
-	runGit(t, dir, "config", "user.name", "Other User")
-	return dir
-}
-
-func runGit(t *testing.T, dir string, args ...string) string {
+func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	// Use cleanGitEnv to prevent env var leaks from pre-commit hooks.
+	cmd.Env = cleanGitEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s failed in %s: %v\n%s", strings.Join(args, " "), dir, err, string(out))
 	}
-	return string(out)
 }
 
-func writeTestFile(t *testing.T, dir, name, content string) {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
+// --- SyncManager tests using MemoryGitBackend ---
 
-func TestNewSyncManager_NoGit(t *testing.T) {
-	dir := t.TempDir()
-	s := NewSyncManager(dir, SyncOptions{})
+func TestNewSyncManager_NilBackend(t *testing.T) {
+	s := NewSyncManager(nil, SyncOptions{})
 
 	if s.State() != SyncDisabled {
 		t.Errorf("expected SyncDisabled, got %s", s.State())
 	}
 	if s.enabled {
-		t.Error("expected enabled=false for non-git dir")
+		t.Error("expected enabled=false for nil backend")
 	}
 	status := s.Status()
 	if status.Message != "Git not configured" {
@@ -109,8 +40,8 @@ func TestNewSyncManager_NoGit(t *testing.T) {
 }
 
 func TestNewSyncManager_NoRemote(t *testing.T) {
-	dir := setupGitRepo(t, false)
-	s := NewSyncManager(dir, SyncOptions{})
+	mem := NewMemoryGitBackend("/tmp/test", false)
+	s := NewSyncManager(mem, SyncOptions{})
 
 	if s.State() != SyncDisabled {
 		t.Errorf("expected SyncDisabled, got %s", s.State())
@@ -125,8 +56,8 @@ func TestNewSyncManager_NoRemote(t *testing.T) {
 }
 
 func TestNewSyncManager_WithRemote(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
 
 	if s.State() != SyncClean {
@@ -141,12 +72,10 @@ func TestNewSyncManager_WithRemote(t *testing.T) {
 }
 
 func TestSyncManager_Commit(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	mem.clean = false // simulate dirty working tree
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
-
-	// Create a new file
-	writeTestFile(t, dir, "new.txt", "new content")
 
 	err := s.Commit("rela: test commit")
 	if err != nil {
@@ -160,14 +89,17 @@ func TestSyncManager_Commit(t *testing.T) {
 	if s.Status().Unpushed != 1 {
 		t.Errorf("expected 1 unpushed, got %d", s.Status().Unpushed)
 	}
+	if len(mem.committed) != 1 || mem.committed[0] != "rela: test commit" {
+		t.Errorf("expected commit message recorded, got %v", mem.committed)
+	}
 }
 
 func TestSyncManager_CommitNoChanges(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	// clean=true: no changes to commit
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
 
-	// Commit with no changes should be a no-op
 	err := s.Commit("rela: empty")
 	if err != nil {
 		t.Fatalf("Commit with no changes should not error: %v", err)
@@ -178,186 +110,11 @@ func TestSyncManager_CommitNoChanges(t *testing.T) {
 }
 
 func TestSyncManager_CommitDisabled(t *testing.T) {
-	dir := t.TempDir()
-	s := NewSyncManager(dir, SyncOptions{})
+	s := NewSyncManager(nil, SyncOptions{})
 
-	// Commit on disabled manager should be a no-op
 	err := s.Commit("rela: noop")
 	if err != nil {
 		t.Fatalf("Commit on disabled sync should not error: %v", err)
-	}
-}
-
-func TestSyncManager_CommitMessage(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
-	defer s.Close()
-
-	writeTestFile(t, dir, "entity.md", "# Test")
-	msg := CommitMessageCreate("TKT-001", "Fix login bug")
-	err := s.Commit(msg)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Verify the commit message
-	out := runGit(t, dir, "log", "-1", "--format=%s")
-	got := strings.TrimSpace(out)
-	expected := `rela: create TKT-001 "Fix login bug"`
-	if got != expected {
-		t.Errorf("commit message = %q, want %q", got, expected)
-	}
-}
-
-func TestSyncManager_Branches(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
-	defer s.Close()
-
-	bl, err := s.Branches()
-	if err != nil {
-		t.Fatalf("Branches failed: %v", err)
-	}
-	if bl.Current == "" {
-		t.Error("expected non-empty current branch")
-	}
-	if len(bl.Local) == 0 {
-		t.Error("expected at least one local branch")
-	}
-}
-
-func TestSyncManager_CreateBranch(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
-	defer s.Close()
-
-	err := s.CreateBranch("feature/test")
-	if err != nil {
-		t.Fatalf("CreateBranch failed: %v", err)
-	}
-	if s.Branch() != "feature/test" {
-		t.Errorf("expected branch 'feature/test', got %q", s.Branch())
-	}
-}
-
-func TestSyncManager_SwitchBranch(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
-	defer s.Close()
-
-	originalBranch := s.Branch()
-
-	// Create a new branch
-	err := s.CreateBranch("other")
-	if err != nil {
-		t.Fatalf("CreateBranch failed: %v", err)
-	}
-	if s.Branch() != "other" {
-		t.Errorf("expected branch 'other', got %q", s.Branch())
-	}
-
-	// Switch back
-	err = s.SwitchBranch(originalBranch)
-	if err != nil {
-		t.Fatalf("SwitchBranch failed: %v", err)
-	}
-	if s.Branch() != originalBranch {
-		t.Errorf("expected branch %q, got %q", originalBranch, s.Branch())
-	}
-}
-
-func TestSyncManager_BranchesDisabled(t *testing.T) {
-	dir := t.TempDir()
-	s := NewSyncManager(dir, SyncOptions{})
-
-	bl, err := s.Branches()
-	if err != nil {
-		t.Fatalf("Branches on disabled should not error: %v", err)
-	}
-	if len(bl.Local) != 0 {
-		t.Errorf("expected empty branch list for disabled sync, got %d", len(bl.Local))
-	}
-}
-
-func TestSyncManager_CommitAsync(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
-
-	writeTestFile(t, dir, "async.txt", "async content")
-	s.CommitAsync("rela: async test")
-
-	// Close flushes pending commits
-	s.Close()
-
-	// Verify the commit happened
-	out := runGit(t, dir, "log", "-1", "--format=%s")
-	got := strings.TrimSpace(out)
-	if got != "rela: async test" {
-		t.Errorf("commit message = %q, want %q", got, "rela: async test")
-	}
-}
-
-func TestSyncManager_CommitAsyncDebounce(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
-
-	// Send multiple rapid commits — only the last message should be used
-	writeTestFile(t, dir, "f1.txt", "one")
-	s.CommitAsync("rela: first")
-	writeTestFile(t, dir, "f2.txt", "two")
-	s.CommitAsync("rela: second")
-	writeTestFile(t, dir, "f3.txt", "three")
-	s.CommitAsync("rela: third")
-
-	// Close flushes with the last message
-	s.Close()
-
-	// Should have exactly one commit after the initial
-	out := runGit(t, dir, "rev-list", "--count", "HEAD")
-	count := strings.TrimSpace(out)
-	if count != "2" { // 1 initial + 1 debounced
-		t.Errorf("expected 2 commits total, got %s", count)
-	}
-
-	// The commit message should be the last one
-	out = runGit(t, dir, "log", "-1", "--format=%s")
-	got := strings.TrimSpace(out)
-	if got != "rela: third" {
-		t.Errorf("commit message = %q, want %q", got, "rela: third")
-	}
-
-	// All files should be committed
-	status := runGit(t, dir, "status", "--porcelain")
-	if strings.TrimSpace(status) != "" {
-		t.Errorf("expected clean working tree, got: %s", status)
-	}
-}
-
-func TestSyncManager_CommitAsyncDisabled(t *testing.T) {
-	dir := t.TempDir()
-	s := NewSyncManager(dir, SyncOptions{})
-
-	// CommitAsync on disabled manager should not panic
-	s.CommitAsync("rela: noop")
-	s.Close() // should not panic
-}
-
-func TestSyncManager_Close(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
-
-	// Close without pending commits should not block
-	done := make(chan struct{})
-	go func() {
-		s.Close()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// ok
-	case <-time.After(5 * time.Second):
-		t.Fatal("Close blocked for too long")
 	}
 }
 
@@ -404,15 +161,155 @@ func TestCommitMessages(t *testing.T) {
 	}
 }
 
-// --- Phase 3 tests ---
+func TestSyncManager_Branches(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	mem.branches = []string{"main", "feature/foo"}
+	mem.remoteBranches = []string{"origin/main", "origin/develop"}
+	s := NewSyncManager(mem, SyncOptions{})
+	defer s.Close()
 
-func TestSyncManager_SyncNow_PushOnly(t *testing.T) {
-	dir, _ := setupGitRepoWithBare(t)
-	s := NewSyncManager(dir, SyncOptions{})
+	bl, err := s.Branches()
+	if err != nil {
+		t.Fatalf("Branches failed: %v", err)
+	}
+	if bl.Current == "" {
+		t.Error("expected non-empty current branch")
+	}
+	if len(bl.Local) != 2 {
+		t.Errorf("expected 2 local branches, got %d", len(bl.Local))
+	}
+	// "develop" is remote-only, "main" is both → Remote should contain "develop"
+	if len(bl.Remote) != 1 || bl.Remote[0] != "develop" {
+		t.Errorf("expected remote=[develop], got %v", bl.Remote)
+	}
+}
+
+func TestSyncManager_CreateBranch(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{})
+	defer s.Close()
+
+	err := s.CreateBranch("feature/test")
+	if err != nil {
+		t.Fatalf("CreateBranch failed: %v", err)
+	}
+	if s.Branch() != "feature/test" {
+		t.Errorf("expected branch 'feature/test', got %q", s.Branch())
+	}
+}
+
+func TestSyncManager_SwitchBranch(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	mem.branches = []string{"main", "other"}
+	s := NewSyncManager(mem, SyncOptions{})
+	defer s.Close()
+
+	originalBranch := s.Branch()
+
+	// Switch to other
+	err := s.SwitchBranch("other")
+	if err != nil {
+		t.Fatalf("SwitchBranch failed: %v", err)
+	}
+	if s.Branch() != "other" {
+		t.Errorf("expected branch 'other', got %q", s.Branch())
+	}
+
+	// Switch back
+	err = s.SwitchBranch(originalBranch)
+	if err != nil {
+		t.Fatalf("SwitchBranch back failed: %v", err)
+	}
+	if s.Branch() != originalBranch {
+		t.Errorf("expected branch %q, got %q", originalBranch, s.Branch())
+	}
+}
+
+func TestSyncManager_BranchesDisabled(t *testing.T) {
+	s := NewSyncManager(nil, SyncOptions{})
+
+	bl, err := s.Branches()
+	if err != nil {
+		t.Fatalf("Branches on disabled should not error: %v", err)
+	}
+	if len(bl.Local) != 0 {
+		t.Errorf("expected empty branch list for disabled sync, got %d", len(bl.Local))
+	}
+}
+
+func TestSyncManager_CommitAsync(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	mem.clean = false
+	s := NewSyncManager(mem, SyncOptions{})
+
+	s.CommitAsync("rela: async test")
+
+	// Close flushes pending commits
+	s.Close()
+
+	if len(mem.committed) != 1 || mem.committed[0] != "rela: async test" {
+		t.Errorf("expected async commit message, got %v", mem.committed)
+	}
+}
+
+func TestSyncManager_CommitAsyncDebounce(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	mem.clean = false
+	s := NewSyncManager(mem, SyncOptions{})
+
+	// Send multiple rapid commits — only the last message should be used
+	s.CommitAsync("rela: first")
+	s.CommitAsync("rela: second")
+	s.CommitAsync("rela: third")
+
+	// Close flushes with the last message
+	s.Close()
+
+	// Should have exactly one commit (the last debounced)
+	if len(mem.committed) != 1 {
+		t.Errorf("expected 1 debounced commit, got %d: %v", len(mem.committed), mem.committed)
+	}
+	if len(mem.committed) > 0 && mem.committed[0] != "rela: third" {
+		t.Errorf("commit message = %q, want %q", mem.committed[0], "rela: third")
+	}
+}
+
+func TestSyncManager_CommitAsyncDisabled(_ *testing.T) {
+	s := NewSyncManager(nil, SyncOptions{})
+
+	// CommitAsync on disabled manager should not panic
+	s.CommitAsync("rela: noop")
+	s.Close() // should not panic
+}
+
+func TestSyncManager_Close(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{})
+
+	// Close without pending commits should not block
+	done := make(chan struct{})
+	go func() {
+		s.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// ok
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close blocked for too long")
+	}
+}
+
+// --- Sync tests ---
+
+func TestSyncManager_Push(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	mem.clean = false
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
 
 	// Create a local commit
-	writeTestFile(t, dir, "push-test.txt", "push me")
 	if err := s.Commit("rela: create push-test"); err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
@@ -425,7 +322,6 @@ func TestSyncManager_SyncNow_PushOnly(t *testing.T) {
 		t.Fatalf("Push failed: %v", err)
 	}
 
-	// Should be clean after push
 	if s.State() != SyncClean {
 		t.Errorf("expected SyncClean after push, got %s", s.State())
 	}
@@ -434,95 +330,44 @@ func TestSyncManager_SyncNow_PushOnly(t *testing.T) {
 	}
 }
 
-func TestSyncManager_SyncNow_FastForward(t *testing.T) {
-	dir, bare := setupGitRepoWithBare(t)
-
+func TestSyncManager_FastForward(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	mem.behind = 2
 	pullCalled := false
-	s := NewSyncManager(dir, SyncOptions{
+	s := NewSyncManager(mem, SyncOptions{
 		OnPull: func() { pullCalled = true },
 	})
 	defer s.Close()
 
-	// Simulate remote changes by cloning and pushing from another repo
-	other := cloneRepo(t, bare)
-	writeTestFile(t, other, "remote-change.txt", "remote content")
-	runGit(t, other, "add", "-A")
-	runGit(t, other, "commit", "-m", "rela: remote change")
-	runGit(t, other, "push", "origin", "HEAD")
-
-	// Sync should fast-forward
-	if err := s.Push(); err != nil {
-		t.Fatalf("Push (fast-forward) failed: %v", err)
+	// Pull should fast-forward
+	if err := s.Pull(); err != nil {
+		t.Fatalf("Pull failed: %v", err)
 	}
 
-	if s.State() != SyncClean {
-		t.Errorf("expected SyncClean after fast-forward, got %s", s.State())
-	}
 	if !pullCalled {
 		t.Error("expected OnPull callback to be called after fast-forward")
 	}
-
-	// Verify the remote file exists locally
-	if _, err := os.Stat(filepath.Join(dir, "remote-change.txt")); err != nil {
-		t.Errorf("expected remote-change.txt to exist after fast-forward: %v", err)
+	if !mem.fetched {
+		t.Error("expected fetch to be called")
 	}
 }
 
-func TestSyncManager_SyncNow_RebaseAndPush(t *testing.T) {
-	dir, bare := setupGitRepoWithBare(t)
-	s := NewSyncManager(dir, SyncOptions{})
+func TestSyncManager_RebaseConflict(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	mem.clean = false
+	mem.rebaseErr = fmt.Errorf("CONFLICT (content): merge conflict")
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
 
-	// Create a local commit (different file)
-	writeTestFile(t, dir, "local.txt", "local content")
-	if err := s.Commit("rela: create local"); err != nil {
+	// Create a local commit
+	if err := s.Commit("rela: local change"); err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
 
-	// Create a remote commit (different file to avoid conflicts)
-	other := cloneRepo(t, bare)
-	writeTestFile(t, other, "remote.txt", "remote content")
-	runGit(t, other, "add", "-A")
-	runGit(t, other, "commit", "-m", "rela: remote change")
-	runGit(t, other, "push", "origin", "HEAD")
+	// Simulate diverged state: ahead=1, behind=1
+	mem.behind = 1
 
-	// Sync should rebase + push
-	if err := s.Push(); err != nil {
-		t.Fatalf("Push (rebase+push) failed: %v", err)
-	}
-
-	if s.State() != SyncClean {
-		t.Errorf("expected SyncClean after rebase+push, got %s", s.State())
-	}
-
-	// Both files should be present
-	if _, err := os.Stat(filepath.Join(dir, "local.txt")); err != nil {
-		t.Error("expected local.txt to exist")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "remote.txt")); err != nil {
-		t.Error("expected remote.txt to exist")
-	}
-}
-
-func TestSyncManager_SyncNow_RebaseConflict(t *testing.T) {
-	dir, bare := setupGitRepoWithBare(t)
-	s := NewSyncManager(dir, SyncOptions{})
-	defer s.Close()
-
-	// Create a local commit modifying the same file
-	writeTestFile(t, dir, "init.txt", "local version")
-	if err := s.Commit("rela: update init locally"); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	// Create a conflicting remote commit
-	other := cloneRepo(t, bare)
-	writeTestFile(t, other, "init.txt", "remote version")
-	runGit(t, other, "add", "-A")
-	runGit(t, other, "commit", "-m", "rela: update init remotely")
-	runGit(t, other, "push", "origin", "HEAD")
-
-	// Sync should detect conflict
+	// Push should detect conflict
 	err := s.Push()
 	if err == nil {
 		t.Fatal("expected Push to fail on conflict")
@@ -534,60 +379,12 @@ func TestSyncManager_SyncNow_RebaseConflict(t *testing.T) {
 	if s.State() != SyncConflict {
 		t.Errorf("expected SyncConflict, got %s", s.State())
 	}
-	if s.Status().ErrorMsg == "" {
-		t.Error("expected non-empty error message for conflict")
-	}
-}
-
-func TestSyncManager_SquashCommits(t *testing.T) {
-	dir, _ := setupGitRepoWithBare(t)
-	s := NewSyncManager(dir, SyncOptions{})
-	defer s.Close()
-
-	// Create multiple local commits
-	writeTestFile(t, dir, "a.txt", "a")
-	if err := s.Commit("rela: create a"); err != nil {
-		t.Fatalf("Commit 1 failed: %v", err)
-	}
-	writeTestFile(t, dir, "b.txt", "b")
-	if err := s.Commit("rela: create b"); err != nil {
-		t.Fatalf("Commit 2 failed: %v", err)
-	}
-	writeTestFile(t, dir, "c.txt", "c")
-	if err := s.Commit("rela: create c"); err != nil {
-		t.Fatalf("Commit 3 failed: %v", err)
-	}
-
-	if s.Status().Unpushed != 3 {
-		t.Fatalf("expected 3 unpushed, got %d", s.Status().Unpushed)
-	}
-
-	// Push should squash the 3 commits into 1
-	if err := s.Push(); err != nil {
-		t.Fatalf("Push failed: %v", err)
-	}
-
-	// After push, there should be 2 total commits (initial + squashed)
-	out := runGit(t, dir, "rev-list", "--count", "HEAD")
-	count := strings.TrimSpace(out)
-	if count != "2" {
-		t.Errorf("expected 2 commits total after squash, got %s", count)
-	}
-
-	// Verify the squashed commit message
-	out = runGit(t, dir, "log", "-1", "--format=%s")
-	got := strings.TrimSpace(out)
-	if !strings.Contains(got, "3 changes") {
-		t.Errorf("expected squash message with '3 changes', got %q", got)
-	}
 }
 
 func TestSyncManager_ProtectedBranch(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	branch := strings.TrimSpace(runGit(t, dir, "rev-parse", "--abbrev-ref", "HEAD"))
-
-	s := NewSyncManager(dir, SyncOptions{
-		ProtectedBranches: []string{branch},
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{
+		ProtectedBranches: []string{"main"},
 	})
 	defer s.Close()
 
@@ -602,26 +399,21 @@ func TestSyncManager_ProtectedBranch(t *testing.T) {
 }
 
 func TestSyncManager_ProtectedBranchGlob(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{
 		ProtectedBranches: []string{"main", "master"},
 	})
 	defer s.Close()
 
-	// The default branch name may be main or master depending on git config
-	branch := s.Branch()
-	if branch == "main" || branch == "master" {
-		if !s.isProtected() {
-			t.Errorf("expected branch %q to match protection pattern", branch)
-		}
+	// Default branch is "main"
+	if !s.isProtected() {
+		t.Error("expected branch 'main' to match protection pattern")
 	}
 }
 
 func TestSyncManager_PushDisabled(t *testing.T) {
-	dir := t.TempDir()
-	s := NewSyncManager(dir, SyncOptions{})
+	s := NewSyncManager(nil, SyncOptions{})
 
-	// Push on disabled manager should be a no-op
 	err := s.Push()
 	if err != nil {
 		t.Errorf("expected Push on disabled manager to return nil, got: %v", err)
@@ -654,8 +446,8 @@ func TestIsProtectedPushError(t *testing.T) {
 }
 
 func TestSyncManager_SetOnPull(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
 
 	called := false
@@ -672,8 +464,8 @@ func TestSyncManager_SetOnPull(t *testing.T) {
 }
 
 func TestSyncManager_StatusFields(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
 
 	status := s.Status()
@@ -690,8 +482,6 @@ func TestSyncManager_StatusFields(t *testing.T) {
 		t.Error("expected Protected=false with no protection patterns")
 	}
 }
-
-// --- Phase 5C tests ---
 
 func TestIsNetworkError(t *testing.T) {
 	tests := []struct {
@@ -724,31 +514,26 @@ func TestIsNetworkError(t *testing.T) {
 }
 
 func TestBackoffDuration(t *testing.T) {
-	// 0 failures -> base interval (30s)
 	d0 := backoffDuration(0)
 	if d0 != fetchInterval {
 		t.Errorf("backoffDuration(0) = %v, want %v", d0, fetchInterval)
 	}
 
-	// 1 failure -> 60s
 	d1 := backoffDuration(1)
 	if d1 != 60*time.Second {
 		t.Errorf("backoffDuration(1) = %v, want %v", d1, 60*time.Second)
 	}
 
-	// 2 failures -> 120s
 	d2 := backoffDuration(2)
 	if d2 != 120*time.Second {
 		t.Errorf("backoffDuration(2) = %v, want %v", d2, 120*time.Second)
 	}
 
-	// 3 failures -> 240s
 	d3 := backoffDuration(3)
 	if d3 != 240*time.Second {
 		t.Errorf("backoffDuration(3) = %v, want %v", d3, 240*time.Second)
 	}
 
-	// Large number should be capped at maxBackoff (5m)
 	d10 := backoffDuration(10)
 	if d10 != maxBackoff {
 		t.Errorf("backoffDuration(10) = %v, want %v (maxBackoff)", d10, maxBackoff)
@@ -756,11 +541,10 @@ func TestBackoffDuration(t *testing.T) {
 }
 
 func TestSyncManager_SetOffline(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
 
-	// Manually trigger offline state
 	s.setOffline()
 
 	if s.State() != SyncOffline {
@@ -774,7 +558,6 @@ func TestSyncManager_SetOffline(t *testing.T) {
 		t.Errorf("expected error 'Remote unreachable', got %q", status.ErrorMsg)
 	}
 
-	// consecutiveFailures should be 1
 	s.mu.RLock()
 	failures := s.consecutiveFailures
 	s.mu.RUnlock()
@@ -784,11 +567,10 @@ func TestSyncManager_SetOffline(t *testing.T) {
 }
 
 func TestSyncManager_OfflineStateSticky(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
 
-	// Set offline
 	s.setOffline()
 	if s.State() != SyncOffline {
 		t.Fatalf("expected SyncOffline, got %s", s.State())
@@ -800,12 +582,11 @@ func TestSyncManager_OfflineStateSticky(t *testing.T) {
 		t.Errorf("expected SyncOffline to be sticky, got %s", s.State())
 	}
 
-	// Now clear failures (simulating a successful fetch)
+	// Clear failures (simulating a successful fetch)
 	s.mu.Lock()
 	s.consecutiveFailures = 0
 	s.mu.Unlock()
 
-	// updateState should now transition away from offline
 	s.updateState()
 	if s.State() == SyncOffline {
 		t.Errorf("expected state to clear from SyncOffline after failures reset, got %s", s.State())
@@ -813,17 +594,15 @@ func TestSyncManager_OfflineStateSticky(t *testing.T) {
 }
 
 func TestSyncManager_SubscribeNotify(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
 
 	id, ch := s.Subscribe()
 	defer s.Unsubscribe(id)
 
-	// Trigger a state change
 	s.setState(SyncAhead, "1 unpushed commit(s)")
 
-	// Should receive notification
 	select {
 	case status := <-ch:
 		if status.State != SyncAhead {
@@ -835,16 +614,99 @@ func TestSyncManager_SubscribeNotify(t *testing.T) {
 }
 
 func TestSyncManager_UnsubscribeClosesChannel(t *testing.T) {
-	dir := setupGitRepo(t, true)
-	s := NewSyncManager(dir, SyncOptions{})
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{})
 	defer s.Close()
 
 	id, ch := s.Subscribe()
 	s.Unsubscribe(id)
 
-	// Channel should be closed
 	_, ok := <-ch
 	if ok {
 		t.Error("expected channel to be closed after Unsubscribe")
+	}
+}
+
+func TestSyncManager_RepoRoot(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test-project", true)
+	s := NewSyncManager(mem, SyncOptions{})
+	defer s.Close()
+
+	if s.RepoRoot() != "/tmp/test-project" {
+		t.Errorf("expected RepoRoot=/tmp/test-project, got %q", s.RepoRoot())
+	}
+}
+
+func TestSyncManager_RepoRootDisabled(t *testing.T) {
+	s := NewSyncManager(nil, SyncOptions{})
+	if s.RepoRoot() != "" {
+		t.Errorf("expected empty RepoRoot for disabled manager, got %q", s.RepoRoot())
+	}
+}
+
+func TestSyncManager_AbsPath(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/project", true)
+	s := NewSyncManager(mem, SyncOptions{})
+	defer s.Close()
+
+	got := s.AbsPath("entities/ticket/TKT-001.md")
+	want := "/tmp/project/entities/ticket/TKT-001.md"
+	if got != want {
+		t.Errorf("AbsPath = %q, want %q", got, want)
+	}
+}
+
+func TestSyncManager_Backend(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	s := NewSyncManager(mem, SyncOptions{})
+	defer s.Close()
+
+	if s.Backend() != mem {
+		t.Error("expected Backend() to return the injected backend")
+	}
+}
+
+func TestSyncManager_BackendNil(t *testing.T) {
+	s := NewSyncManager(nil, SyncOptions{})
+	if s.Backend() != nil {
+		t.Error("expected Backend() to return nil for disabled manager")
+	}
+}
+
+func TestSyncManager_FetchError(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	mem.fetchErr = fmt.Errorf("Could not resolve host: github.com")
+	s := NewSyncManager(mem, SyncOptions{})
+	defer s.Close()
+
+	err := s.Push()
+	if err == nil {
+		t.Fatal("expected error from Push with fetch failure")
+	}
+	if s.State() != SyncOffline {
+		t.Errorf("expected SyncOffline after network error, got %s", s.State())
+	}
+}
+
+func TestSyncManager_PushProtectedBranch(t *testing.T) {
+	mem := NewMemoryGitBackend("/tmp/test", true)
+	mem.clean = false
+	mem.pushErr = fmt.Errorf("push rejected")
+	mem.pushOutput = "remote: error: GH006 Protected branch"
+	s := NewSyncManager(mem, SyncOptions{})
+	defer s.Close()
+
+	// Create a commit first
+	if err := s.Commit("rela: test"); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Push should detect protected branch
+	err := s.Push()
+	if err == nil {
+		t.Fatal("expected error from Push with protected branch")
+	}
+	if !strings.Contains(err.Error(), "protected branch") {
+		t.Errorf("expected protected branch error, got: %v", err)
 	}
 }

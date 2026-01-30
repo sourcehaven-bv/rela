@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -717,26 +716,26 @@ func (bc *BodyConflict) CountConflictHunks() int {
 // BuildConflictSetFromGit creates a ConflictSet by examining the diff between
 // HEAD (ours) and the upstream branch (theirs), using the merge-base as the
 // common ancestor. Only markdown files (.md) are considered.
-func BuildConflictSetFromGit(repoRoot, branch string) (*ConflictSet, error) {
+func BuildConflictSetFromGit(backend GitBackend, branch string) (*ConflictSet, error) {
 	upstream := "origin/" + branch
 
 	// 1. Find the merge base
-	mergeBase, err := gitOutput(repoRoot, "merge-base", "HEAD", upstream)
+	mergeBaseOut, err := backend.Git("merge-base", "HEAD", upstream)
 	if err != nil {
 		return nil, fmt.Errorf("finding merge-base: %w", err)
 	}
-	mergeBase = strings.TrimSpace(mergeBase)
+	mergeBase := strings.TrimSpace(mergeBaseOut)
 	if mergeBase == "" {
 		return nil, fmt.Errorf("no merge-base between HEAD and %s", upstream)
 	}
 
 	// 2. Find files that differ between ours vs base AND theirs vs base
 	//    (files changed on both sides are potential conflicts)
-	oursChanged, err := gitOutput(repoRoot, "diff", "--name-only", mergeBase, "HEAD")
+	oursChanged, err := backend.Git("diff", "--name-only", mergeBase, "HEAD")
 	if err != nil {
 		return nil, fmt.Errorf("diff ours: %w", err)
 	}
-	theirsChanged, err := gitOutput(repoRoot, "diff", "--name-only", mergeBase, upstream)
+	theirsChanged, err := backend.Git("diff", "--name-only", mergeBase, upstream)
 	if err != nil {
 		return nil, fmt.Errorf("diff theirs: %w", err)
 	}
@@ -764,7 +763,7 @@ func BuildConflictSetFromGit(repoRoot, branch string) (*ConflictSet, error) {
 	// 3. For each conflicting file, extract the three versions
 	var files []*ConflictFile
 	for _, path := range conflictPaths {
-		cf, err := buildConflictFile(repoRoot, mergeBase, upstream, path)
+		cf, err := buildConflictFileFromBackend(backend, mergeBase, upstream, path)
 		if err != nil {
 			// Skip files we can't parse (binary files, etc.)
 			continue
@@ -778,12 +777,12 @@ func BuildConflictSetFromGit(repoRoot, branch string) (*ConflictSet, error) {
 	return &ConflictSet{Files: files}, nil
 }
 
-// buildConflictFile extracts three versions of a file and builds a ConflictFile.
-func buildConflictFile(repoRoot, mergeBase, upstream, path string) (*ConflictFile, error) {
+// buildConflictFileFromBackend extracts three versions of a file and builds a ConflictFile.
+func buildConflictFileFromBackend(backend GitBackend, mergeBase, upstream, path string) (*ConflictFile, error) {
 	// Extract three versions
-	baseContent, baseErr := gitOutput(repoRoot, "show", mergeBase+":"+path)
-	oursContent, oursErr := gitOutput(repoRoot, "show", "HEAD:"+path)
-	theirsContent, theirsErr := gitOutput(repoRoot, "show", upstream+":"+path)
+	baseContent, baseErr := backend.Git("show", mergeBase+":"+path)
+	oursContent, oursErr := backend.Git("show", "HEAD:"+path)
+	theirsContent, theirsErr := backend.Git("show", upstream+":"+path)
 
 	// At least ours and theirs must exist
 	if oursErr != nil && theirsErr != nil {
@@ -913,14 +912,6 @@ func parseFileList(output string) []string {
 		}
 	}
 	return files
-}
-
-// gitOutput runs a git command and returns its stdout.
-func gitOutput(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	return string(out), err
 }
 
 // FormatResolvedDocument creates a markdown document from resolved properties and body.

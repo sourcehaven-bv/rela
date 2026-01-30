@@ -677,24 +677,26 @@ func TestFormatResolvedDocument(t *testing.T) {
 	}
 }
 
-func TestGitOutput(t *testing.T) {
-	// Test gitOutput with a simple git command
+func TestExecGitBackend_Git(t *testing.T) {
+	// Test the Git escape hatch via ExecGitBackend
 	dir := t.TempDir()
 	runGit(t, dir, "init")
 
-	out, err := gitOutput(dir, "rev-parse", "--show-toplevel")
+	backend := &ExecGitBackend{repoRoot: dir}
+	out, err := backend.Git("rev-parse", "--show-toplevel")
 	if err != nil {
-		t.Fatalf("gitOutput failed: %v", err)
+		t.Fatalf("Git() failed: %v", err)
 	}
 	if strings.TrimSpace(out) == "" {
 		t.Error("expected non-empty output")
 	}
 }
 
-func TestGitOutput_Error(t *testing.T) {
+func TestExecGitBackend_Git_Error(t *testing.T) {
 	dir := t.TempDir()
 	// No git repo — should fail
-	_, err := gitOutput(dir, "rev-parse", "--show-toplevel")
+	backend := &ExecGitBackend{repoRoot: dir}
+	_, err := backend.Git("rev-parse", "--show-toplevel")
 	if err == nil {
 		t.Error("expected error for non-git directory")
 	}
@@ -754,7 +756,8 @@ func TestBuildConflictSetFromGit(t *testing.T) {
 	runGit(t, dir, "fetch", "origin")
 
 	// Now build conflicts
-	cs, err := BuildConflictSetFromGit(dir, "main")
+	backend := &ExecGitBackend{repoRoot: dir}
+	cs, err := BuildConflictSetFromGit(backend, "main")
 	if err != nil {
 		t.Fatalf("BuildConflictSetFromGit failed: %v", err)
 	}
@@ -842,7 +845,8 @@ func TestBuildConflictSetFromGit_NoConflicts(t *testing.T) {
 	runGit(t, dir, "commit", "-m", "ours")
 	runGit(t, dir, "fetch", "origin")
 
-	cs, err := BuildConflictSetFromGit(dir, "main")
+	backend := &ExecGitBackend{repoRoot: dir}
+	cs, err := BuildConflictSetFromGit(backend, "main")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

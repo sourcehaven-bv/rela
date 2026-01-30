@@ -1,13 +1,10 @@
 package dataentry
 
 import (
-	"errors"
 	"fmt"
 	"log"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,13 +88,14 @@ type workItem struct {
 
 // SyncManager manages git operations for a rela project.
 type SyncManager struct {
-	mu        sync.RWMutex
-	state     SyncState
-	branch    string
-	repoRoot  string
-	unpushed  int
-	behind    int
-	enabled   bool
+	mu       sync.RWMutex
+	state    SyncState
+	branch   string
+	backend  GitBackend
+	unpushed int
+	behind   int
+	enabled  bool
+	// protected indicates the current branch is protected (e.g. main/master).
 	protected bool
 	message   string
 	lastSync  time.Time
@@ -124,43 +122,29 @@ type SyncManager struct {
 	subs  map[int]chan SyncStatus
 }
 
-// NewSyncManager creates a SyncManager for the given project directory.
-// It detects whether git is available and configured.
-func NewSyncManager(projectRoot string, opts SyncOptions) *SyncManager {
+// NewSyncManager creates a SyncManager with the given GitBackend.
+// If backend is nil, the manager starts in disabled state.
+// The backend should be created via NewGitBackend (which checks for nested
+// projects, git availability, etc.).
+func NewSyncManager(backend GitBackend, opts SyncOptions) *SyncManager {
 	s := &SyncManager{
 		state:             SyncDisabled,
+		backend:           backend,
 		protectedPatterns: opts.ProtectedBranches,
 		protectedCache:    make(map[string]bool),
 		onPull:            opts.OnPull,
 		subs:              make(map[int]chan SyncStatus),
 	}
 
-	// Find git repo root (supports worktrees)
-	root, err := s.git(projectRoot, "rev-parse", "--show-toplevel")
-	if err != nil {
+	if backend == nil {
 		s.message = "Git not configured"
-		log.Printf("Sync: git not available in %s: %v", projectRoot, err)
-		return s
-	}
-	s.repoRoot = strings.TrimSpace(root)
-
-	// Verify the git repo root is the project root. If the project is a
-	// subdirectory of a larger repo, sync would operate on the entire repo
-	// (git add -A, branch switches, etc.) which is destructive.
-	absProject, _ := filepath.Abs(projectRoot)
-	absProject, _ = filepath.EvalSymlinks(absProject)
-	resolvedRoot, _ := filepath.EvalSymlinks(s.repoRoot)
-	if absProject != resolvedRoot {
-		s.message = "Project is nested in a larger git repo"
-		log.Printf("Sync: disabled — project root %s differs from git root %s", absProject, s.repoRoot)
 		return s
 	}
 
 	// Check for remote
-	remotes, err := s.git(s.repoRoot, "remote")
-	if err != nil || strings.TrimSpace(remotes) == "" {
+	if !backend.HasRemote() {
 		s.message = "No remote configured"
-		log.Printf("Sync: no git remote in %s", s.repoRoot)
+		log.Printf("Sync: no git remote in %s", backend.RepoRoot())
 		return s
 	}
 
@@ -169,7 +153,7 @@ func NewSyncManager(projectRoot string, opts SyncOptions) *SyncManager {
 	s.done = make(chan struct{})
 	s.refreshState()
 	go s.workLoop()
-	log.Printf("Sync: enabled on branch %q in %s", s.branch, s.repoRoot)
+	log.Printf("Sync: enabled on branch %q in %s", s.branch, backend.RepoRoot())
 	return s
 }
 
@@ -222,18 +206,21 @@ func (s *SyncManager) Commit(message string) error {
 // commitNow performs the actual git add + commit. Must only be called from workLoop.
 func (s *SyncManager) commitNow(message string) error {
 	// Stage all changes
-	if _, err := s.git(s.repoRoot, "add", "-A"); err != nil {
+	if err := s.backend.StageAll(); err != nil {
 		return fmt.Errorf("git add: %w", err)
 	}
 
 	// Check if there are staged changes
-	status, _ := s.git(s.repoRoot, "status", "--porcelain")
-	if strings.TrimSpace(status) == "" {
+	clean, err := s.backend.IsClean()
+	if err != nil {
+		return fmt.Errorf("checking status: %w", err)
+	}
+	if clean {
 		return nil // nothing to commit
 	}
 
 	// Commit
-	if _, err := s.git(s.repoRoot, "commit", "-m", message); err != nil {
+	if err := s.backend.Commit(message); err != nil {
 		return fmt.Errorf("git commit: %w", err)
 	}
 
@@ -291,16 +278,16 @@ func (s *SyncManager) MoveToBranch(name string) error {
 // Must only be called from workLoop.
 func (s *SyncManager) moveToBranchNow(name string) error {
 	// Create new branch from current HEAD
-	if _, err := s.git(s.repoRoot, "checkout", "-b", name); err != nil {
+	if err := s.backend.CheckoutNewBranch(name); err != nil {
 		return fmt.Errorf("creating branch %q: %w", name, err)
 	}
 
 	// Push with upstream tracking
-	if _, err := s.git(s.repoRoot, "push", "-u", "origin", name); err != nil {
+	if err := s.backend.PushNewBranch(name); err != nil {
 		// Revert to original branch on push failure
 		origBranch := s.readBranch()
-		_, _ = s.git(s.repoRoot, "checkout", origBranch)
-		_, _ = s.git(s.repoRoot, "branch", "-D", name)
+		_ = s.backend.Checkout(origBranch)
+		_ = s.backend.DeleteBranch(name)
 		return fmt.Errorf("pushing branch %q: %w", name, err)
 	}
 
@@ -314,7 +301,7 @@ func (s *SyncManager) syncNow() error {
 	s.setState(SyncSyncing, "Syncing...")
 
 	// Fetch
-	if _, err := s.git(s.repoRoot, "fetch", "origin"); err != nil {
+	if err := s.backend.Fetch(); err != nil {
 		errMsg := err.Error()
 		if isNetworkError(errMsg) {
 			s.setOffline()
@@ -353,9 +340,9 @@ func (s *SyncManager) syncNow() error {
 			s.setError("Squash failed")
 			return err
 		}
-		if _, err := s.git(s.repoRoot, "rebase", upstream); err != nil {
+		if err := s.backend.Rebase(upstream); err != nil {
 			// Rebase failed — abort and enter conflict state
-			_, _ = s.git(s.repoRoot, "rebase", "--abort")
+			_ = s.backend.AbortRebase()
 			s.setConflict()
 			return fmt.Errorf("rebase conflict on %s", branch)
 		}
@@ -365,7 +352,7 @@ func (s *SyncManager) syncNow() error {
 
 	case ahead == 0 && behind > 0:
 		// Behind only: fast-forward
-		if _, err := s.git(s.repoRoot, "merge", "--ff-only", upstream); err != nil {
+		if err := s.backend.FastForwardMerge(upstream); err != nil {
 			s.setError("Fast-forward failed")
 			return fmt.Errorf("git merge --ff-only: %w", err)
 		}
@@ -395,16 +382,9 @@ func (s *SyncManager) squashCommits(branch string) error {
 	upstream := "origin/" + branch
 
 	// Collect commit messages from unpushed commits
-	msgOut, err := s.git(s.repoRoot, "log", "--format=%s", upstream+"..HEAD")
+	messages, err := s.backend.LogMessages(upstream + "..HEAD")
 	if err != nil {
 		return fmt.Errorf("collecting commit messages: %w", err)
-	}
-
-	messages := []string{}
-	for _, line := range strings.Split(strings.TrimSpace(msgOut), "\n") {
-		if l := strings.TrimSpace(line); l != "" {
-			messages = append(messages, l)
-		}
 	}
 
 	if len(messages) <= 1 {
@@ -421,12 +401,12 @@ func (s *SyncManager) squashCommits(branch string) error {
 	}
 
 	// Soft reset to upstream
-	if _, err := s.git(s.repoRoot, "reset", "--soft", upstream); err != nil {
+	if err := s.backend.SoftReset(upstream); err != nil {
 		return fmt.Errorf("git reset --soft: %w", err)
 	}
 
 	// Create single squashed commit
-	if _, err := s.git(s.repoRoot, "commit", "-m", sb.String()); err != nil {
+	if err := s.backend.Commit(sb.String()); err != nil {
 		return fmt.Errorf("squash commit: %w", err)
 	}
 
@@ -438,13 +418,10 @@ func (s *SyncManager) squashCommits(branch string) error {
 func (s *SyncManager) pushNow() error {
 	branch := s.readBranch()
 
-	cmd := exec.Command("git", "push", "origin", branch)
-	cmd.Dir = s.repoRoot
-	out, err := cmd.CombinedOutput()
+	output, err := s.backend.Push(branch)
 	if err != nil {
-		stderr := string(out)
 		// Check for branch protection
-		if isProtectedPushError(stderr) {
+		if isProtectedPushError(output) {
 			s.mu.Lock()
 			s.protectedCache[branch] = true
 			s.protected = true
@@ -584,7 +561,7 @@ func (s *SyncManager) workLoop() {
 	triggerSync := func() {
 		if s.isProtected() {
 			// On protected branches, still fetch to show behind count
-			if _, err := s.git(s.repoRoot, "fetch", "origin"); err != nil {
+			if err := s.backend.Fetch(); err != nil {
 				if isNetworkError(err.Error()) {
 					s.setOffline()
 				} else {
@@ -723,41 +700,28 @@ func (s *SyncManager) Branches() (BranchList, error) {
 		Current: currentBranch,
 	}
 
-	// Local branches
-	out, err := s.git(s.repoRoot, "branch", "--format=%(refname:short)")
+	local, remote, err := s.backend.ListBranches()
 	if err != nil {
-		return bl, fmt.Errorf("listing local branches: %w", err)
+		return bl, err
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if b := strings.TrimSpace(line); b != "" {
-			bl.Local = append(bl.Local, b)
-		}
-	}
+	bl.Local = local
 	sort.Strings(bl.Local)
 
-	// Remote branches (excluding HEAD) — failure is non-fatal
-	out, err = s.git(s.repoRoot, "branch", "-r", "--format=%(refname:short)")
-	if err != nil {
-		return bl, nil //nolint:nilerr // remote branches are optional
+	// Filter remote branches: strip "origin/" prefix, exclude those already local
+	localSet := make(map[string]bool, len(local))
+	for _, lb := range local {
+		localSet[lb] = true
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		b := strings.TrimSpace(line)
-		if b == "" || strings.HasSuffix(b, "/HEAD") {
+	for _, rb := range remote {
+		if strings.HasSuffix(rb, "/HEAD") {
 			continue
 		}
-		// Strip "origin/" prefix for display
-		if strings.Contains(b, "/") {
-			shortName := b[strings.Index(b, "/")+1:]
-			isLocal := false
-			for _, lb := range bl.Local {
-				if lb == shortName {
-					isLocal = true
-					break
-				}
-			}
-			if !isLocal {
-				bl.Remote = append(bl.Remote, shortName)
-			}
+		shortName := rb
+		if strings.Contains(rb, "/") {
+			shortName = rb[strings.Index(rb, "/")+1:]
+		}
+		if !localSet[shortName] {
+			bl.Remote = append(bl.Remote, shortName)
 		}
 	}
 	sort.Strings(bl.Remote)
@@ -778,9 +742,9 @@ func (s *SyncManager) SwitchBranch(name string) error {
 // switchBranchNow performs the actual branch switch. Must only be called from workLoop.
 func (s *SyncManager) switchBranchNow(name string) error {
 	// Try local checkout first
-	if _, err := s.git(s.repoRoot, "checkout", name); err != nil {
+	if err := s.backend.Checkout(name); err != nil {
 		// Try checking out a remote tracking branch
-		if _, err2 := s.git(s.repoRoot, "checkout", "-b", name, "origin/"+name); err2 != nil {
+		if err2 := s.backend.CheckoutNewBranchFrom(name, "origin/"+name); err2 != nil {
 			return fmt.Errorf("switching to branch %q: %w", name, err)
 		}
 	}
@@ -801,7 +765,7 @@ func (s *SyncManager) CreateBranch(name string) error {
 
 // createBranchNow performs the actual branch creation. Must only be called from workLoop.
 func (s *SyncManager) createBranchNow(name string) error {
-	if _, err := s.git(s.repoRoot, "checkout", "-b", name); err != nil {
+	if err := s.backend.CheckoutNewBranch(name); err != nil {
 		return fmt.Errorf("creating branch %q: %w", name, err)
 	}
 
@@ -813,7 +777,10 @@ func (s *SyncManager) createBranchNow(name string) error {
 func (s *SyncManager) RepoRoot() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.repoRoot
+	if s.backend == nil {
+		return ""
+	}
+	return s.backend.RepoRoot()
 }
 
 // refreshState updates branch, unpushed count, and state during initialization.
@@ -934,7 +901,7 @@ func (s *SyncManager) setConflict() {
 	branch := s.readBranch()
 
 	// Try to build a structured conflict set from git
-	cs, err := BuildConflictSetFromGit(s.repoRoot, branch)
+	cs, err := BuildConflictSetFromGit(s.backend, branch)
 	if err != nil {
 		log.Printf("Sync: failed to build conflict set: %v", err)
 	}
@@ -980,12 +947,12 @@ func (s *SyncManager) CompleteMerge() error {
 	upstream := "origin/" + branch
 
 	// Stage any remaining changes
-	if _, err := s.git(s.repoRoot, "add", "-A"); err != nil {
+	if err := s.backend.StageAll(); err != nil {
 		return fmt.Errorf("git add: %w", err)
 	}
 
 	// Create the merge commit
-	if _, err := s.git(s.repoRoot, "commit", "-m", "rela: resolve merge conflicts"); err != nil {
+	if err := s.backend.Commit("rela: resolve merge conflicts"); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 
@@ -997,8 +964,8 @@ func (s *SyncManager) CompleteMerge() error {
 	behind := s.countRevs("HEAD.." + upstream)
 	if behind > 0 {
 		// Rebase our resolution commit on top of upstream
-		if _, err := s.git(s.repoRoot, "rebase", upstream); err != nil {
-			_, _ = s.git(s.repoRoot, "rebase", "--abort")
+		if err := s.backend.Rebase(upstream); err != nil {
+			_ = s.backend.AbortRebase()
 			s.setConflict()
 			return fmt.Errorf("rebase after merge: %w", err)
 		}
@@ -1020,36 +987,28 @@ func (s *SyncManager) CompleteMerge() error {
 
 // readBranch reads the current branch name from git.
 func (s *SyncManager) readBranch() string {
-	branch, err := s.git(s.repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	branch, err := s.backend.CurrentBranch()
 	if err != nil {
 		return "unknown"
 	}
-	return strings.TrimSpace(branch)
+	return branch
 }
 
 // countRevs counts revisions in a rev-list range (e.g. "A..B").
 func (s *SyncManager) countRevs(revRange string) int {
-	out, err := s.git(s.repoRoot, "rev-list", "--count", revRange)
+	n, err := s.backend.RevCount(revRange)
 	if err != nil {
 		return 0
 	}
-	n, _ := strconv.Atoi(strings.TrimSpace(out))
 	return n
 }
 
-// git executes a git command in the given directory and returns its stdout.
-func (s *SyncManager) git(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return "", fmt.Errorf("%w: %s", err, string(exitErr.Stderr))
-		}
-		return "", err
-	}
-	return string(out), nil
+// Backend returns the underlying GitBackend (for conflict resolution and other
+// code that needs direct git access).
+func (s *SyncManager) Backend() GitBackend {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.backend
 }
 
 // CommitMessage builds a structured commit message for an entity operation.
@@ -1094,5 +1053,8 @@ func (s *SyncManager) SetOnPull(fn func()) {
 func (s *SyncManager) AbsPath(relPath string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return filepath.Join(s.repoRoot, relPath)
+	if s.backend == nil {
+		return relPath
+	}
+	return filepath.Join(s.backend.RepoRoot(), relPath)
 }

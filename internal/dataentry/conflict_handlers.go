@@ -209,8 +209,10 @@ func (a *App) handleConflictSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stage the resolved file
-	if _, gitErr := gitOutput(a.sync.RepoRoot(), "add", cf.FilePath); gitErr != nil {
-		log.Printf("Warning: git add failed for %s: %v", cf.FilePath, gitErr)
+	if backend := a.sync.Backend(); backend != nil {
+		if _, gitErr := backend.Git("add", cf.FilePath); gitErr != nil {
+			log.Printf("Warning: git add failed for %s: %v", cf.FilePath, gitErr)
+		}
 	}
 
 	// Redirect back to conflicts list
