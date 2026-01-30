@@ -307,20 +307,23 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"App":        a.Cfg.App,
-		"Navigation": a.navItems(),
-		"ActiveList": a.resolveActiveList(form.EntityType, r),
-		"FormID":     formID,
-		"Form":       form,
-		"Fields":     fields,
-		"Relations":  relations,
-		"Mode":       mode,
-		"EntityID":   entityID,
-		"EntityType": form.EntityType,
-		"ShowBody":   showBody,
-		"Body":       bodyContent,
-		"ReturnTo":   r.URL.Query().Get("return_to"),
-		"IsHTMX":     r.Header.Get("HX-Request") == "true",
+		"App":          a.Cfg.App,
+		"Navigation":   a.navItems(),
+		"ActiveList":   a.resolveActiveList(form.EntityType, r),
+		"FormID":       formID,
+		"Form":         form,
+		"Fields":       fields,
+		"Relations":    relations,
+		"Mode":         mode,
+		"EntityID":     entityID,
+		"EntityType":   form.EntityType,
+		"ShowBody":     showBody,
+		"Body":         bodyContent,
+		"ReturnTo":     r.URL.Query().Get("return_to"),
+		"LinkRelation": r.URL.Query().Get("link_relation"),
+		"LinkPeer":     r.URL.Query().Get("link_peer"),
+		"LinkAs":       r.URL.Query().Get("link_as"),
+		"IsHTMX":       r.Header.Get("HX-Request") == "true",
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
@@ -489,6 +492,17 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		Rows      []SectionRowData
 		Entities  []SectionEntityData
 	}
+	type SectionAddTarget struct {
+		EntityType string
+		FormID     string
+		Label      string
+	}
+	type SectionAddInfo struct {
+		Relation string
+		LinkAs   string // "from" or "to" — role of the new entity in the relation
+		PeerID   string // entry entity ID
+		Targets  []SectionAddTarget
+	}
 	type SectionData struct {
 		Heading      string
 		Display      string
@@ -503,6 +517,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		Link         bool
 		Content      string
 		HasContent   bool
+		AddInfo      *SectionAddInfo
 	}
 
 	sections := make([]SectionData, 0, len(view.Sections))
@@ -682,6 +697,56 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Resolve add info: for sections populated by a traverse from "entry",
+		// determine which entity types can be created and linked.
+		if sec.Source != "entry" {
+			for _, rule := range view.Traverse {
+				if rule.CollectAs != sec.Source || rule.From != "entry" {
+					continue
+				}
+				relName := rule.Follow
+				linkAs := "to" // new entity is the target (outgoing from entry)
+				if rule.FollowIncoming != "" {
+					relName = rule.FollowIncoming
+					linkAs = "from" // new entity is the source (incoming to entry)
+				}
+				relDef, ok := a.meta.GetRelationDef(relName)
+				if !ok {
+					break
+				}
+				// Determine valid target types for creation
+				var candidateTypes []string
+				if linkAs == "to" {
+					candidateTypes = relDef.To
+				} else {
+					candidateTypes = relDef.From
+				}
+				var targets []SectionAddTarget
+				for _, et := range candidateTypes {
+					formID := a.createFormForType(et)
+					if formID == "" {
+						continue
+					}
+					label := et
+					if ed, ok := a.meta.GetEntityDef(et); ok && ed.Label != "" {
+						label = ed.Label
+					}
+					targets = append(targets, SectionAddTarget{
+						EntityType: et, FormID: formID, Label: label,
+					})
+				}
+				if len(targets) > 0 {
+					sd.AddInfo = &SectionAddInfo{
+						Relation: relName,
+						LinkAs:   linkAs,
+						PeerID:   result.Entry.ID,
+						Targets:  targets,
+					}
+				}
+				break
+			}
+		}
+
 		sections = append(sections, sd)
 	}
 
@@ -794,6 +859,28 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 			}
 			relation.FilePath = relPath
 			a.g.AddEdge(relation)
+		}
+	}
+
+	// Create a relation to the peer entity if requested (from view "Add" button)
+	if linkRelation := r.FormValue("_link_relation"); linkRelation != "" {
+		linkPeer := r.FormValue("_link_peer")
+		linkAs := r.FormValue("_link_as")
+		if linkPeer != "" {
+			var fromID, toID string
+			if linkAs == "from" {
+				fromID, toID = entityID, linkPeer
+			} else {
+				fromID, toID = linkPeer, entityID
+			}
+			relation := model.NewRelation(fromID, linkRelation, toID)
+			relPath := a.projCtx.RelationFilePath(fromID, linkRelation, toID)
+			if err := markdown.WriteRelation(relation, relPath); err != nil {
+				log.Printf("Failed to write link relation: %v", err)
+			} else {
+				relation.FilePath = relPath
+				a.g.AddEdge(relation)
+			}
 		}
 	}
 

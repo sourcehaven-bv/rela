@@ -129,6 +129,17 @@ func (a *App) editFormForType(entityType string) string {
 	return ""
 }
 
+// createFormForType returns the first create form ID configured for the given entity type,
+// or "" if no create form is found. It matches forms with mode "create" or unset (default).
+func (a *App) createFormForType(entityType string) string {
+	for id, f := range a.Cfg.Forms {
+		if f.EntityType == entityType && f.Mode != "edit" {
+			return id
+		}
+	}
+	return ""
+}
+
 // entityDisplayTitle returns the display title for an entity using the metamodel's primary property.
 func (a *App) entityDisplayTitle(e *model.Entity) string {
 	entDef, ok := a.meta.GetEntityDef(e.Type)

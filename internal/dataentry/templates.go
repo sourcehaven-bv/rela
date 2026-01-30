@@ -53,6 +53,12 @@ tbody tr:last-child td { border-bottom: none; }
 .cell-link:hover { text-decoration: underline; }
 .edit-icon { color: var(--text-muted); text-decoration: none; font-size: 14px; opacity: 0.6; transition: opacity 0.15s; }
 .edit-icon:hover { opacity: 1; color: var(--primary); }
+.add-dropdown { position: relative; }
+.add-dropdown summary { list-style: none; cursor: pointer; }
+.add-dropdown summary::-webkit-details-marker { display: none; }
+.add-dropdown-menu { position: absolute; right: 0; top: 100%; margin-top: 4px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 10; min-width: 160px; padding: 4px 0; }
+.add-dropdown-menu a { display: block; padding: 8px 16px; font-size: 13px; color: var(--text); text-decoration: none; }
+.add-dropdown-menu a:hover { background: var(--primary-light); color: var(--primary); }
 
 .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .badge-blue { background: #dbeafe; color: #1e40af; }
@@ -334,6 +340,9 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     <input type="hidden" name="_form_id" value="{{ .FormID }}">
     <input type="hidden" name="_entity_id" value="{{ .EntityID }}">
     {{ if .ReturnTo }}<input type="hidden" name="_return_to" value="{{ .ReturnTo }}">{{ end }}
+    {{ if .LinkRelation }}<input type="hidden" name="_link_relation" value="{{ .LinkRelation }}">
+    <input type="hidden" name="_link_peer" value="{{ .LinkPeer }}">
+    <input type="hidden" name="_link_as" value="{{ .LinkAs }}">{{ end }}
 
     {{ range .Fields }}
     {{ if .Hidden }}
@@ -645,7 +654,33 @@ function submitInlineCreate() {
 {{ range .Sections }}
 <div class="view-section" style="margin-bottom:24px;">
 
-  {{ if .Heading }}<h3 class="view-section-heading">{{ .Heading }}</h3>{{ end }}
+  {{ if .Heading }}
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <h3 class="view-section-heading" style="margin-bottom:0;">{{ .Heading }}</h3>
+    {{ if .AddInfo }}
+    {{ $info := .AddInfo }}
+    {{ $returnTo := $.ReturnTo }}
+    {{ if eq (len $info.Targets) 1 }}
+    {{ $t := index $info.Targets 0 }}
+    <a href="/form/{{ $t.FormID }}?return_to={{ urlquery $returnTo }}&link_relation={{ $info.Relation }}&link_peer={{ $info.PeerID }}&link_as={{ $info.LinkAs }}"
+       class="btn btn-secondary btn-sm"
+       hx-get="/form/{{ $t.FormID }}?return_to={{ urlquery $returnTo }}&link_relation={{ $info.Relation }}&link_peer={{ $info.PeerID }}&link_as={{ $info.LinkAs }}"
+       hx-target="#content" hx-push-url="true">+ Add {{ $t.Label }}</a>
+    {{ else }}
+    <details class="add-dropdown">
+      <summary class="btn btn-secondary btn-sm">+ Add&hellip;</summary>
+      <div class="add-dropdown-menu">
+        {{ range $info.Targets }}
+        <a href="/form/{{ .FormID }}?return_to={{ urlquery $returnTo }}&link_relation={{ $info.Relation }}&link_peer={{ $info.PeerID }}&link_as={{ $info.LinkAs }}"
+           hx-get="/form/{{ .FormID }}?return_to={{ urlquery $returnTo }}&link_relation={{ $info.Relation }}&link_peer={{ $info.PeerID }}&link_as={{ $info.LinkAs }}"
+           hx-target="#content" hx-push-url="true">{{ .Label }}</a>
+        {{ end }}
+      </div>
+    </details>
+    {{ end }}
+    {{ end }}
+  </div>
+  {{ end }}
 
   {{/* display: properties */}}
   {{ if eq .Display "properties" }}
