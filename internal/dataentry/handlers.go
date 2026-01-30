@@ -569,18 +569,23 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 			sd.IsEmpty = len(entities) == 0
 
 			switch sec.Display {
-			case "properties":
-				if len(entities) > 0 {
-					e := entities[0]
-					entDef, _ := a.meta.GetEntityDef(e.Type)
+			case "properties", "list":
+				for _, e := range entities {
+					eDef, _ := a.meta.GetEntityDef(e.Type)
+					sed := SectionEntityData{
+						ID:         e.ID,
+						Title:      a.entityDisplayTitle(e),
+						Type:       e.Type,
+						EditFormID: a.editFormForType(e.Type),
+					}
 					for _, f := range sec.Fields {
 						val := ""
 						if v := e.Properties[f.Property]; v != nil {
 							val = fmt.Sprintf("%v", v)
 						}
 						propType := ""
-						if entDef != nil {
-							if pd, ok := entDef.Properties[f.Property]; ok {
+						if eDef != nil {
+							if pd, ok := eDef.Properties[f.Property]; ok {
 								propType = pd.Type
 							}
 						}
@@ -588,10 +593,11 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 						if label == "" {
 							label = titleCase(f.Property)
 						}
-						sd.Fields = append(sd.Fields, SectionFieldData{
+						sed.Fields = append(sed.Fields, SectionFieldData{
 							Label: label, Value: val, PropType: propType,
 						})
 					}
+					sd.Entities = append(sd.Entities, sed)
 				}
 			case "table":
 				sd.Columns = sec.Columns
@@ -667,37 +673,6 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 						EditFormID: a.editFormForType(e.Type),
 						Content:    e.Content,
 						HasContent: e.Content != "",
-					}
-					for _, f := range sec.Fields {
-						val := ""
-						if v := e.Properties[f.Property]; v != nil {
-							val = fmt.Sprintf("%v", v)
-						}
-						propType := ""
-						if eDef != nil {
-							if pd, ok := eDef.Properties[f.Property]; ok {
-								propType = pd.Type
-							}
-						}
-						label := f.Label
-						if label == "" {
-							label = titleCase(f.Property)
-						}
-						sed.Fields = append(sed.Fields, SectionFieldData{
-							Label: label, Value: val, PropType: propType,
-						})
-					}
-					sd.Entities = append(sd.Entities, sed)
-				}
-
-			case "list":
-				for _, e := range entities {
-					eDef, _ := a.meta.GetEntityDef(e.Type)
-					sed := SectionEntityData{
-						ID:         e.ID,
-						Title:      a.entityDisplayTitle(e),
-						Type:       e.Type,
-						EditFormID: a.editFormForType(e.Type),
 					}
 					for _, f := range sec.Fields {
 						val := ""

@@ -684,6 +684,37 @@ function submitInlineCreate() {
 
   {{/* display: properties */}}
   {{ if eq .Display "properties" }}
+  {{ if or .Entities .IsEmpty }}
+  {{/* Collection source: render each entity as a card with header */}}
+  {{ if .IsEmpty }}
+  <div class="card" style="padding:24px;text-align:center;color:var(--text-muted);">
+    {{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}
+  </div>
+  {{ else }}
+  {{ $returnTo := $.ReturnTo }}
+  {{ range .Entities }}
+  <div class="card" style="padding:20px;margin-bottom:12px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <a href="/entity/{{ .Type }}/{{ .ID }}" class="cell-link" style="font-size:16px;font-weight:600;"
+         hx-get="/entity/{{ .Type }}/{{ .ID }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
+      <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted);background:#f1f5f9;padding:1px 6px;border-radius:3px;">{{ .ID }}</span>
+      {{ if .EditFormID }}<a href="/form/{{ .EditFormID }}/{{ .ID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
+         hx-get="/form/{{ .EditFormID }}/{{ .ID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a>{{ end }}
+    </div>
+    <div class="detail-grid">
+      {{ range .Fields }}
+      <div class="detail-label">{{ .Label }}</div>
+      <div class="detail-value">
+        {{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+        {{ else }}{{ if .Value }}{{ formatValue .Value }}{{ else }}&mdash;{{ end }}{{ end }}
+      </div>
+      {{ end }}
+    </div>
+  </div>
+  {{ end }}
+  {{ end }}
+  {{ else }}
+  {{/* Entry source: single card */}}
   <div class="card" style="padding:20px;">
     <div class="detail-grid">
       {{ range .Fields }}
@@ -695,6 +726,7 @@ function submitInlineCreate() {
       {{ end }}
     </div>
   </div>
+  {{ end }}
   {{ end }}
 
   {{/* display: content (entry) */}}
