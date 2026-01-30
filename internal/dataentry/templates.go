@@ -241,6 +241,11 @@ document.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt
     {{ if .App.Description }}<p>{{ .App.Description }}</p>{{ end }}
   </div>
   <nav>
+    <a href="/search"{{ if eq $.ActiveList "_search" }} class="active"{{ end }}
+       hx-get="/search" hx-target="#content" hx-push-url="true"
+       style="border-bottom:1px solid rgba(255,255,255,0.1);margin-bottom:4px;">
+      &#128269; Search
+    </a>
     {{ range .Navigation }}
     <a href="/list/{{ .List }}"{{ if eq .List $.ActiveList }} class="active"{{ end }}
        data-entity-type="{{ .EntityType }}"
@@ -1019,6 +1024,87 @@ function submitInlineCreate() {
   {{ end }}
 
 </div>
+{{ end }}
+{{- end -}}
+
+{{- define "search-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - Search</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+<main class="main" id="content">
+{{ template "search-content" . }}
+</main>
+</body>
+</html>
+{{- end -}}
+
+{{- define "search-content" -}}
+<div class="page-header">
+  <div>
+    <h2>Search</h2>
+    <p>Search across all entities by text, type, or property filters</p>
+  </div>
+</div>
+
+<div class="card" style="padding:20px;margin-bottom:20px;">
+  <input type="text" name="q" value="{{ .Query }}" placeholder="Search entities..."
+         autofocus autocomplete="off"
+         hx-get="/search" hx-target="#search-results" hx-push-url="true"
+         hx-trigger="keyup changed delay:300ms, search"
+         style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:6px;font-size:15px;font-family:var(--font);background:var(--bg-card);color:var(--text);">
+  <div style="margin-top:10px;font-size:12px;color:var(--text-muted);line-height:1.8;">
+    <strong>Syntax:</strong>
+    <code>type:ticket</code> filter by entity type &middot;
+    <code>status:open</code> filter by status &middot;
+    <code>prop:priority=high</code> filter by property &middot;
+    <code>"exact phrase"</code> exact match &middot;
+    plain words (AND logic)
+  </div>
+</div>
+
+{{ if .ParseErrors }}
+<div style="padding:10px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;margin-bottom:16px;font-size:13px;color:#991b1b;">
+  {{ .ParseErrors }}
+</div>
+{{ end }}
+
+<div id="search-results">
+{{ template "search-results" . }}
+</div>
+{{- end -}}
+
+{{- define "search-results" -}}
+{{ if .HasQuery }}
+<div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">{{ .ResultCount }} results</div>
+{{ range .Results }}
+<div class="card" style="padding:16px;margin-bottom:8px;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+    <a href="/entity/{{ .EntityType }}/{{ .ID }}" class="cell-link" style="font-size:15px;font-weight:600;"
+       hx-get="/entity/{{ .EntityType }}/{{ .ID }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
+    <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted);background:#f1f5f9;padding:1px 6px;border-radius:3px;">{{ .ID }}</span>
+    <span class="badge badge-blue" style="font-size:10px;">{{ .EntityType }}</span>
+  </div>
+  {{ if .Properties }}
+  <div style="display:flex;gap:12px;flex-wrap:wrap;">
+    {{ range .Properties }}
+    <span style="font-size:12px;color:var(--text-muted);">
+      {{ .Key }}:
+      {{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+      {{ else }}<strong>{{ formatValue .Value }}</strong>{{ end }}
+    </span>
+    {{ end }}
+  </div>
+  {{ end }}
+</div>
+{{ end }}
+{{ if not .Results }}
+<div class="card" style="padding:32px;text-align:center;color:var(--text-muted);">No results found</div>
+{{ end }}
 {{ end }}
 {{- end -}}
 `

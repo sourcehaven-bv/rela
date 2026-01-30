@@ -11,9 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
 
 func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -1255,6 +1257,136 @@ func (a *App) handleInlineForm(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(sb.String())) //nolint:errcheck // best-effort HTTP response
+}
+
+func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	sq := searchparser.ParseQuery(query)
+
+	type SearchResult struct {
+		ID         string
+		Title      string
+		EntityType string
+		PropType   string // metamodel type for badge
+		Properties []struct{ Key, Value, PropType string }
+	}
+
+	var results []SearchResult
+	var parseErrors string
+	if errStr := sq.ErrorString(); errStr != "" {
+		parseErrors = errStr
+	}
+
+	if !sq.IsEmpty() {
+		// Collect candidate entities
+		var candidates []*model.Entity
+		if len(sq.EntityTypes) > 0 {
+			for _, t := range sq.EntityTypes {
+				candidates = append(candidates, a.g.NodesByType(t)...)
+			}
+		} else {
+			candidates = a.g.AllNodes()
+		}
+
+		const maxResults = 100
+		for _, e := range candidates {
+			if len(results) >= maxResults {
+				break
+			}
+
+			// Apply property filters
+			if len(sq.PropertyFilters) > 0 {
+				entDef, ok := a.meta.GetEntityDef(e.Type)
+				if !ok {
+					continue
+				}
+				matched, err := filter.MatchAll(e, sq.PropertyFilters, entDef, a.meta)
+				if err != nil || !matched {
+					continue
+				}
+			}
+
+			// Apply free text search
+			if sq.HasFreeText() {
+				searchText := strings.ToLower(e.ID + " " + a.entityDisplayTitle(e) + " " + e.Content)
+				for _, v := range e.Properties {
+					searchText += " " + strings.ToLower(fmt.Sprintf("%v", v))
+				}
+
+				match := true
+				for _, word := range sq.FreeTextWords {
+					if !strings.Contains(searchText, strings.ToLower(word)) {
+						match = false
+						break
+					}
+				}
+				if match {
+					for _, phrase := range sq.FreeTextPhrases {
+						if !strings.Contains(searchText, strings.ToLower(phrase)) {
+							match = false
+							break
+						}
+					}
+				}
+				if !match {
+					continue
+				}
+			}
+
+			// Build result
+			sr := SearchResult{
+				ID:         e.ID,
+				Title:      a.entityDisplayTitle(e),
+				EntityType: e.Type,
+			}
+
+			// Include key properties (first few from the entity definition)
+			entDef, _ := a.meta.GetEntityDef(e.Type)
+			if entDef != nil {
+				count := 0
+				for propName, propDef := range entDef.Properties {
+					if count >= 3 {
+						break
+					}
+					if v := e.Properties[propName]; v != nil {
+						val := fmt.Sprintf("%v", v)
+						if val != "" {
+							sr.Properties = append(sr.Properties, struct{ Key, Value, PropType string }{
+								Key:      titleCase(propName),
+								Value:    val,
+								PropType: propDef.Type,
+							})
+							count++
+						}
+					}
+				}
+			}
+
+			results = append(results, sr)
+		}
+	}
+
+	data := map[string]interface{}{
+		"App":         a.Cfg.App,
+		"Navigation":  a.navItems(),
+		"ActiveList":  "",
+		"Query":       query,
+		"Results":     results,
+		"ResultCount": len(results),
+		"HasQuery":    query != "",
+		"ParseErrors": parseErrors,
+		"IsHTMX":      r.Header.Get("HX-Request") == "true",
+	}
+
+	if r.Header.Get("HX-Request") == "true" {
+		if r.Header.Get("HX-Target") == "search-results" {
+			a.tmpl.ExecuteTemplate(w, "search-results", data) //nolint:errcheck // template errors logged by http
+		} else {
+			a.tmpl.ExecuteTemplate(w, "search-content", data) //nolint:errcheck // template errors logged by http
+		}
+	} else {
+		a.tmpl.ExecuteTemplate(w, "search-page", data) //nolint:errcheck // template errors logged by http
+	}
 }
 
 // appendToastParam appends a _toast query parameter to a redirect URL,

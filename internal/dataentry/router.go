@@ -6,6 +6,7 @@ import "net/http"
 func (a *App) NewRouter() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", a.handleIndex)
+	mux.HandleFunc("/search", a.handleSearch)
 	mux.HandleFunc("/list/", a.handleList)
 	mux.HandleFunc("/form/", a.handleForm)
 	mux.HandleFunc("/entity/", a.handleEntity)
