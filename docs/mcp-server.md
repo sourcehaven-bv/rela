@@ -6,13 +6,23 @@ and other MCP-compatible clients to query, create, and analyze entities and rela
 
 ## Quick Start
 
-Start the server:
+Start the server manually (for testing):
 
 ```bash
 rela mcp
 ```
 
-Configure Claude Code by adding to your project's `.mcp.json`:
+### Claude Code Setup
+
+**Option 1: `claude mcp add` (recommended)**
+
+```bash
+claude mcp add rela -s local -- /path/to/rela mcp
+```
+
+This stores the server configuration privately per-user per-project in `~/.claude.json`.
+
+**Option 2: `.mcp.json` (for sharing via git)**
 
 ```json
 {
@@ -24,6 +34,13 @@ Configure Claude Code by adding to your project's `.mcp.json`:
   }
 }
 ```
+
+Project-scoped servers defined in `.mcp.json` require interactive approval on first use.
+
+> **Notes:**
+> - Claude Code launches MCP servers with the project directory as cwd, so `rela mcp` finds
+>   `metamodel.yaml` automatically — no cwd configuration is needed (or supported).
+> - If both a local server and `.mcp.json` define `rela`, the local server takes priority.
 
 The server communicates over stdio using JSON-RPC. It automatically discovers the project root
 (by finding `metamodel.yaml`), loads the metamodel, and syncs the graph from markdown files.

@@ -21,16 +21,21 @@ var mcpCmd = &cobra.Command{
 The MCP server exposes rela's capabilities to AI assistants and other MCP clients.
 It provides tools for entity/relation management, graph analysis, and tracing.
 
-Configuration for Claude Code (.claude.json):
+Setup with claude mcp add (recommended):
+  claude mcp add rela -s local -- /path/to/rela mcp
+
+Setup with .mcp.json (for sharing via git):
   {
     "mcpServers": {
       "rela": {
         "command": "rela",
-        "args": ["mcp"],
-        "cwd": "/path/to/project"
+        "args": ["mcp"]
       }
     }
   }
+
+Claude Code launches MCP servers with the project directory as cwd,
+so rela mcp finds metamodel.yaml automatically.
 
 The server communicates via JSON-RPC over stdin/stdout.
 Logs are written to stderr.`,
