@@ -104,6 +104,7 @@ type NavItem struct {
 	Label      string
 	List       string
 	EntityType string
+	Count      int
 }
 
 // navItems returns enriched navigation entries with entity types resolved from list config.
@@ -113,6 +114,9 @@ func (a *App) navItems() []NavItem {
 		items[i] = NavItem{Label: nav.Label, List: nav.List}
 		if list, ok := a.Cfg.Lists[nav.List]; ok {
 			items[i].EntityType = list.EntityType
+			entities := a.g.NodesByType(list.EntityType)
+			entities = applyFilters(entities, list.Filters)
+			items[i].Count = len(entities)
 		}
 	}
 	return items

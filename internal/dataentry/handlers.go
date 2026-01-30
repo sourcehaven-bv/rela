@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,7 +56,48 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sortEntities(entities, list.Sort)
+	// Resolve effective sort (query params override config default)
+	sortProp := r.URL.Query().Get("sort")
+	sortDir := r.URL.Query().Get("sort_dir")
+	if sortProp != "" {
+		sortEntities(entities, &SortConfig{Property: sortProp, Direction: sortDir})
+	} else {
+		sortEntities(entities, list.Sort)
+		if list.Sort != nil {
+			sortProp = list.Sort.Property
+			sortDir = list.Sort.Direction
+		}
+	}
+
+	// Pagination
+	totalCount := len(entities)
+	page := 1
+	totalPages := 1
+	pageSize := list.PageSize
+	if pageSize > 0 {
+		if p := r.URL.Query().Get("page"); p != "" {
+			if pn, err := strconv.Atoi(p); err == nil && pn > 0 {
+				page = pn
+			}
+		}
+		totalPages = (totalCount + pageSize - 1) / pageSize
+		if totalPages == 0 {
+			totalPages = 1
+		}
+		if page > totalPages {
+			page = totalPages
+		}
+		start := (page - 1) * pageSize
+		end := start + pageSize
+		if end > totalCount {
+			end = totalCount
+		}
+		if start < totalCount {
+			entities = entities[start:end]
+		} else {
+			entities = nil
+		}
+	}
 
 	// Resolve columns with values
 	type CellData struct {
@@ -140,20 +183,72 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		detailLinkPrefix = "/view/" + list.DetailView + "/"
 	}
 
+	// Resolve columns with sort state
+	type ResolvedColumn struct {
+		Property string
+		Label    string
+		Sortable bool
+		Link     bool
+		SortURL  string
+		IsSorted bool
+		SortDir  string
+	}
+	resolvedColumns := make([]ResolvedColumn, len(list.Columns))
+	for i, col := range list.Columns {
+		rc := ResolvedColumn{
+			Property: col.Property,
+			Label:    col.Label,
+			Sortable: col.Sortable,
+			Link:     col.Link,
+		}
+		if col.Sortable {
+			newDir := "asc"
+			if sortProp == col.Property && sortDir != "desc" {
+				newDir = "desc"
+			}
+			rc.SortURL = fmt.Sprintf("/list/%s?sort=%s&sort_dir=%s", listID, url.QueryEscape(col.Property), newDir)
+			rc.IsSorted = sortProp == col.Property
+			rc.SortDir = sortDir
+		}
+		resolvedColumns[i] = rc
+	}
+
+	// Build pagination URLs
+	var prevPageURL, nextPageURL string
+	if pageSize > 0 && totalPages > 1 {
+		sortParams := ""
+		if sortProp != "" {
+			sortParams = "&sort=" + url.QueryEscape(sortProp) + "&sort_dir=" + url.QueryEscape(sortDir)
+		}
+		if page > 1 {
+			prevPageURL = fmt.Sprintf("/list/%s?page=%d%s", listID, page-1, sortParams)
+		}
+		if page < totalPages {
+			nextPageURL = fmt.Sprintf("/list/%s?page=%d%s", listID, page+1, sortParams)
+		}
+	}
+
 	data := map[string]interface{}{
 		"App":              a.Cfg.App,
 		"Navigation":       a.navItems(),
 		"ActiveList":       listID,
 		"List":             list,
 		"ListID":           listID,
-		"Columns":          list.Columns,
+		"Columns":          resolvedColumns,
 		"Rows":             rows,
 		"FilterControls":   filterControls,
 		"EntityRelations":  entityRelations,
-		"TotalCount":       len(entities),
+		"TotalCount":       totalCount,
 		"EditForm":         list.EditForm,
 		"DetailLinkPrefix": detailLinkPrefix,
 		"IsHTMX":           r.Header.Get("HX-Request") == "true",
+		"SortProperty":     sortProp,
+		"SortDirection":    sortDir,
+		"Page":             page,
+		"TotalPages":       totalPages,
+		"PrevPageURL":      prevPageURL,
+		"NextPageURL":      nextPageURL,
+		"HasPagination":    pageSize > 0 && totalPages > 1,
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
@@ -893,7 +988,7 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if returnTo := r.FormValue("_return_to"); returnTo != "" {
 		redirect = returnTo
 	}
-	w.Header().Set("HX-Redirect", redirect)
+	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Created "+entityID))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -972,7 +1067,7 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if returnTo := r.FormValue("_return_to"); returnTo != "" {
 		redirect = returnTo
 	}
-	w.Header().Set("HX-Redirect", redirect)
+	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Saved "+entityID))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1011,7 +1106,7 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Deleted %s", entityID)
 
-	w.Header().Set("HX-Redirect", "/")
+	w.Header().Set("HX-Redirect", appendToastParam("/", "Deleted "+entityID))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1160,4 +1255,19 @@ func (a *App) handleInlineForm(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(sb.String())) //nolint:errcheck // best-effort HTTP response
+}
+
+// appendToastParam appends a _toast query parameter to a redirect URL,
+// preserving any existing query string and fragment.
+func appendToastParam(redirectURL, message string) string {
+	base, fragment, hasFragment := strings.Cut(redirectURL, "#")
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	base += sep + "_toast=" + url.QueryEscape(message)
+	if hasFragment {
+		base += "#" + fragment
+	}
+	return base
 }

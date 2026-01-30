@@ -119,8 +119,8 @@ tbody tr:last-child td { border-bottom: none; }
 
 .pagination { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-muted); }
 
-.toast { position: fixed; top: 16px; right: 16px; padding: 12px 20px; background: #166534; color: #fff; border-radius: 8px; font-size: 14px; z-index: 999; animation: fadeIn 0.2s; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+.toast { position: fixed; top: 16px; right: 16px; padding: 12px 20px; background: #166534; color: #fff; border-radius: 8px; font-size: 14px; font-weight: 500; z-index: 999; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: toastIn 0.3s; }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.15s; }
 .modal { background: var(--bg-card); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.2); width: 480px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
@@ -178,6 +178,14 @@ tbody tr:last-child td { border-bottom: none; }
 .ss-content { font-family: var(--font); }
 .filter-bar .ss-main { min-height: 32px; --ss-font-size: 13px; min-width: 140px; }
 
+html { scroll-behavior: smooth; }
+thead th.sortable { user-select: none; }
+.sort-indicator { font-size: 10px; margin-left: 2px; opacity: 0.7; }
+.jump-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 20px; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); }
+.jump-link { font-size: 13px; color: var(--primary); text-decoration: none; padding: 2px 10px; border-radius: 9999px; transition: all 0.15s; }
+.jump-link:hover { background: var(--primary-light); }
+.nav-count { margin-left: auto; font-size: 11px; color: rgba(255,255,255,0.4); font-weight: 400; }
+
 </style>
 <script>
 // SlimSelect progressive enhancement
@@ -200,7 +208,28 @@ function enhanceSelects(root) {
     } catch(e) { /* skip if SlimSelect fails on this element */ }
   });
 }
-document.addEventListener('DOMContentLoaded', function() { enhanceSelects(); });
+document.addEventListener('DOMContentLoaded', function() {
+  enhanceSelects();
+  var params = new URLSearchParams(window.location.search);
+  var toast = params.get('_toast');
+  if (toast) {
+    var div = document.createElement('div');
+    div.className = 'toast';
+    div.textContent = toast;
+    document.body.appendChild(div);
+    setTimeout(function() {
+      div.style.opacity = '0';
+      div.style.transition = 'opacity 0.3s';
+      setTimeout(function() { div.remove(); }, 300);
+    }, 2700);
+    params.delete('_toast');
+    var clean = window.location.pathname;
+    var remaining = params.toString();
+    if (remaining) clean += '?' + remaining;
+    if (window.location.hash) clean += window.location.hash;
+    history.replaceState(null, '', clean);
+  }
+});
 document.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt.detail.target); });
 </script>
 {{- end -}}
@@ -216,7 +245,7 @@ document.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt
     <a href="/list/{{ .List }}"{{ if eq .List $.ActiveList }} class="active"{{ end }}
        data-entity-type="{{ .EntityType }}"
        hx-get="/list/{{ .List }}" hx-target="#content" hx-push-url="true">
-      {{ .Label }}
+      {{ .Label }}<span class="nav-count">{{ .Count }}</span>
     </a>
     {{ end }}
   </nav>
@@ -327,7 +356,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     <table>
       <thead>
         <tr>
-          {{ range .Columns }}<th{{ if .Sortable }} class="sortable"{{ end }}>{{ if .Label }}{{ .Label }}{{ else }}{{ .Property }}{{ end }}</th>{{ end }}
+          {{ range .Columns }}<th{{ if .Sortable }} class="sortable" hx-get="{{ .SortURL }}" hx-target="#content" hx-push-url="true" hx-include=".filter-bar select, .filter-bar input"{{ end }}>{{ if .Label }}{{ .Label }}{{ else }}{{ .Property }}{{ end }}{{ if .IsSorted }}<span class="sort-indicator">{{ if eq .SortDir "desc" }}&#9660;{{ else }}&#9650;{{ end }}</span>{{ end }}</th>{{ end }}
         </tr>
       </thead>
       <tbody>
@@ -351,7 +380,19 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     </table>
   </div>
   <div class="pagination">
-    <span>{{ .TotalCount }} items</span>
+    <span>{{ .TotalCount }} items{{ if .HasPagination }} &middot; Page {{ .Page }} of {{ .TotalPages }}{{ end }}</span>
+    {{ if .HasPagination }}
+    <div style="display:flex;gap:6px;">
+      {{ if .PrevPageURL }}<a href="{{ .PrevPageURL }}" class="btn btn-secondary btn-sm"
+         hx-get="{{ .PrevPageURL }}" hx-target="#content" hx-push-url="true"
+         hx-include=".filter-bar select, .filter-bar input">&larr; Prev</a>
+      {{ else }}<span class="btn btn-secondary btn-sm" style="opacity:0.4;pointer-events:none;">&larr; Prev</span>{{ end }}
+      {{ if .NextPageURL }}<a href="{{ .NextPageURL }}" class="btn btn-secondary btn-sm"
+         hx-get="{{ .NextPageURL }}" hx-target="#content" hx-push-url="true"
+         hx-include=".filter-bar select, .filter-bar input">Next &rarr;</a>
+      {{ else }}<span class="btn btn-secondary btn-sm" style="opacity:0.4;pointer-events:none;">Next &rarr;</span>{{ end }}
+    </div>
+    {{ end }}
   </div>
 </div>
 {{- end -}}
@@ -633,8 +674,14 @@ function submitInlineCreate() {
   </div>
 </div>
 
+<div class="jump-bar">
+  <a href="#properties" class="jump-link">Properties</a>
+  {{ if .Relations }}<a href="#relations" class="jump-link">Relations ({{ len .Relations }})</a>{{ end }}
+  {{ if .Entity.Content }}<a href="#content" class="jump-link">Content</a>{{ end }}
+</div>
+
 <div class="card" style="padding:24px;">
-  <div class="detail-grid">
+  <div id="properties" class="detail-grid">
     {{ $propTypes := .PropTypes }}
     {{ range $key, $val := .Entity.Properties }}
     {{ $ptype := index $propTypes $key }}
@@ -647,7 +694,7 @@ function submitInlineCreate() {
   </div>
 
   {{ if .Relations }}
-  <div class="detail-section">
+  <div id="relations" class="detail-section">
     <h3>Relations</h3>
     <ul class="rel-list">
       {{ range .Relations }}
@@ -665,7 +712,7 @@ function submitInlineCreate() {
   {{ end }}
 
   {{ if .Entity.Content }}
-  <div class="detail-section">
+  <div id="entity-content" class="detail-section">
     <h3>Content</h3>
     <div class="markdown-body" style="padding:12px;background:#f8fafc;border-radius:6px;font-size:14px;">{{ renderMarkdown .Entity.Content }}</div>
   </div>
@@ -703,6 +750,12 @@ function submitInlineCreate() {
     <a href="javascript:history.back()" class="btn btn-secondary btn-sm">&larr; Back</a>
   </div>
 </div>
+
+{{ if .Sections }}
+<div class="jump-bar">
+  {{ range .Sections }}{{ if .Heading }}<a href="#{{ .SectionID }}" class="jump-link">{{ .Heading }}</a>{{ end }}{{ end }}
+</div>
+{{ end }}
 
 {{ range .Sections }}
 <div class="view-section" id="{{ .SectionID }}" style="margin-bottom:24px;">
