@@ -85,7 +85,7 @@ func (s *Server) handleCreateRelation(
 	}
 
 	// Validate relation
-	if valErr := s.meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); valErr != nil {
+	if valErr := s.getMeta().ValidateRelation(relType, fromEntity.Type, toEntity.Type); valErr != nil {
 		return mcp.NewToolResultError(valErr.Error()), nil
 	}
 
