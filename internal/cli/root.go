@@ -29,7 +29,7 @@ var (
 	meta       *metamodel.Metamodel
 	g          *graph.Graph
 	out        *output.Writer
-	cliFS      storage.FS = storage.NewOsFS()
+	cliFS      storage.FS = storage.NewSafeFS(storage.NewOsFS())
 )
 
 // rootCmd represents the base command
