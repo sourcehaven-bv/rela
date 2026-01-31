@@ -38,6 +38,7 @@ This stores the server configuration privately per-user per-project in `~/.claud
 Project-scoped servers defined in `.mcp.json` require interactive approval on first use.
 
 > **Notes:**
+>
 > - Claude Code launches MCP servers with the project directory as cwd, so `rela mcp` finds
 >   `metamodel.yaml` automatically — no cwd configuration is needed (or supported).
 > - If both a local server and `.mcp.json` define `rela`, the local server takes priority.
