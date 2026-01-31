@@ -266,7 +266,7 @@ func (c *CreateModel) createEntity(app *App) (tea.Model, tea.Cmd) {
 	entity := mdmodel.NewEntity(entityID, typeName)
 
 	// Load and apply template defaults first (if template exists)
-	template, err := markdown.LoadEntityTemplate(app.project, typeName)
+	template, err := app.repo.LoadEntityTemplate(typeName)
 	if err == nil && template != nil {
 		markdown.ApplyEntityTemplate(entity, template)
 	}
@@ -282,19 +282,16 @@ func (c *CreateModel) createEntity(app *App) (tea.Model, tea.Cmd) {
 		entity.SetString("status", defaultStatus)
 	}
 
-	// Write file using proper plural from metamodel
-	plural := entityDef.GetDirPlural(typeName)
-	filePath := app.project.EntityFilePathWithPlural(plural, entityID)
-	if err := markdown.WriteEntity(entity, filePath); err != nil {
+	// Write file
+	if err := app.repo.WriteEntity(entity, app.metamodel); err != nil {
 		return app, SetMessage(fmt.Sprintf("Failed to create: %v", err), true)
 	}
 
 	// Add to graph
-	entity.FilePath = filePath
 	app.graph.AddNode(entity)
 
 	// Save cache
-	_ = app.graph.SaveCache(app.project.CachePath)
+	_ = app.repo.SaveCache(app.graph)
 
 	// Refresh browser
 	app.browser.Refresh(app)

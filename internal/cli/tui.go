@@ -69,7 +69,7 @@ Keyboard shortcuts:
 			}
 		}
 
-		return tui.Run(ctx, mm, gr)
+		return tui.Run(mm, gr, tuiRepo)
 	},
 }
 
