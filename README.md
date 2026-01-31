@@ -61,14 +61,17 @@ go build -o rela ./cmd/rela
 
 ## Documentation
 
-| Document                                   | Description                                |
-| ------------------------------------------ | ------------------------------------------ |
-| [Getting Started](docs/getting-started.md) | Installation, first project, core workflow |
-| [CLI Reference](docs/cli-reference.md)     | Complete command reference                 |
-| [TUI Guide](docs/tui-guide.md)             | Interactive terminal interface             |
-| [Metamodel](docs/metamodel.md)             | Configure entity types and relations       |
-| [Concepts](docs/concepts.md)               | Architecture traceability fundamentals     |
-| [MCP Server](docs/mcp-server.md)           | AI assistant integration via MCP           |
+| Document                                   | Description                                  |
+| ------------------------------------------ | -------------------------------------------- |
+| [Getting Started](docs/getting-started.md) | Installation, first project, core workflow   |
+| [CLI Reference](docs/cli-reference.md)     | Complete command reference                   |
+| [TUI Guide](docs/tui-guide.md)             | Interactive terminal interface               |
+| [Metamodel](docs/metamodel.md)             | Configure entity types and relations         |
+| [Views](docs/views.md)                     | Declarative views, CI integration            |
+| [Export Guide](docs/export-guide.md)       | Export, import, and data integration         |
+| [Best Practices](docs/best-practices.md)   | Maintenance tips and team workflows          |
+| [Concepts](docs/concepts.md)               | Architecture traceability fundamentals       |
+| [MCP Server](docs/mcp-server.md)           | AI assistant integration via MCP             |
 
 ## Project Structure
 

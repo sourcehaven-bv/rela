@@ -520,6 +520,124 @@ When using `--all`, the output includes both entities and relations:
 
 ---
 
+### rela view
+
+Execute a view definition to generate context for an entity.
+
+```bash
+rela view <view-name> <entry-id> [flags]
+```
+
+**Arguments:**
+
+- `view-name` - Name of the view defined in `views.yaml`
+- `entry-id` - ID of the entry entity
+
+**Flags:**
+
+| Flag           | Description                     |
+| -------------- | ------------------------------- |
+| `-o, --output` | Output format: `yaml` or `json` |
+
+Views are defined in `views.yaml` and specify declarative graph traversals, filters, and derived
+collections. See [Views](views.md) for the full view definition reference.
+
+**Examples:**
+
+```bash
+rela view document_publish DOC-001 -o yaml
+rela view document_publish DOC-001 -o json
+```
+
+#### rela view deps
+
+List all entity IDs used when executing a view. Useful for determining which entities contribute to
+a document or context.
+
+```bash
+rela view deps <view-name> [flags]
+```
+
+**Arguments:**
+
+- `view-name` - Name of the view defined in `views.yaml`
+
+**Flags:**
+
+| Flag      | Description                                                              |
+| --------- | ------------------------------------------------------------------------ |
+| `--roots` | Comma-separated root entity IDs (default: all entities of entry type)    |
+| `--files` | Output file paths instead of entity IDs                                  |
+
+Output is one entity ID (or file path) per line, sorted and deduplicated.
+
+**Examples:**
+
+```bash
+# List all entities used across all documents
+rela view deps document_publish
+
+# List entities for specific documents
+rela view deps document_publish --roots DOC-001,DOC-002
+
+# Output file paths (useful for comparing with git diff)
+rela view deps document_publish --files
+```
+
+#### rela view affected
+
+Find which document roots are affected by changes to specific entities. Given a set of changed
+entity IDs (or file paths), executes the view for each root and reports which roots include any of
+the changed entities.
+
+```bash
+rela view affected <view-name> [flags]
+```
+
+**Arguments:**
+
+- `view-name` - Name of the view defined in `views.yaml`
+
+**Flags:**
+
+| Flag              | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| `--changed`       | Comma-separated changed entity IDs                                          |
+| `--changed-files` | Comma-separated changed file paths, or `-` to read from stdin               |
+| `--roots`         | Comma-separated root entity IDs (default: all entities of entry type)       |
+
+At least one of `--changed` or `--changed-files` is required. Output is one affected root entity ID
+per line.
+
+**Examples:**
+
+```bash
+# Find documents affected by entity changes
+rela view affected document_publish --changed REQ-001,COMP-003
+
+# Using file paths
+rela view affected document_publish --changed-files entities/requirement/REQ-001.md
+
+# Pipe git diff output via stdin
+git diff --name-only HEAD~1 | rela view affected document_publish --changed-files -
+
+# Restrict to specific document roots
+rela view affected document_publish --changed REQ-001 --roots DOC-001,DOC-002
+```
+
+**CI Integration:**
+
+Only rebuild PDFs for documents affected by recent changes:
+
+```bash
+affected=$(git diff --name-only HEAD~1 | rela view affected document_publish --changed-files -)
+for doc in $affected; do
+  build_pdf "$doc"
+done
+```
+
+---
+
 ### rela import
 
 Import entities and relations from structured files.
@@ -735,7 +853,13 @@ clients. The server runs on stdin/stdout using JSON-RPC and provides:
 
 **Client Configuration (Claude Code):**
 
-Add to your project's `.mcp.json`:
+Setup with `claude mcp add` (recommended):
+
+```bash
+claude mcp add rela -s local -- /path/to/rela mcp
+```
+
+Setup with `.mcp.json` (for sharing via git):
 
 ```json
 {

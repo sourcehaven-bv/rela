@@ -145,11 +145,12 @@ func (s *Server) handleReviewOrphansPrompt(
 	}
 
 	// Get available relation types
-	relTypes := s.meta.RelationTypes()
+	meta := s.getMeta()
+	relTypes := meta.RelationTypes()
 	sort.Strings(relTypes)
 	var relInfo strings.Builder
 	for _, name := range relTypes {
-		def, _ := s.meta.GetRelationDef(name)
+		def, _ := meta.GetRelationDef(name)
 		if def == nil {
 			continue
 		}
@@ -189,14 +190,15 @@ func (s *Server) handleSummarizeProjectPrompt(
 	_ context.Context, _ mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	// Entity counts by type
-	entityTypes := s.meta.EntityTypes()
+	meta := s.getMeta()
+	entityTypes := meta.EntityTypes()
 	sort.Strings(entityTypes)
 	var entityCounts strings.Builder
 	totalEntities := 0
 	for _, t := range entityTypes {
 		count := len(s.graph.NodesByType(t))
 		totalEntities += count
-		def, _ := s.meta.GetEntityDef(t)
+		def, _ := meta.GetEntityDef(t)
 		label := t
 		if def != nil {
 			label = def.GetLabel()
@@ -205,7 +207,7 @@ func (s *Server) handleSummarizeProjectPrompt(
 	}
 
 	// Relation counts by type
-	relTypes := s.meta.RelationTypes()
+	relTypes := meta.RelationTypes()
 	sort.Strings(relTypes)
 	var relCounts strings.Builder
 	totalRelations := 0
@@ -245,7 +247,7 @@ Please provide:
 4. Recommendations for improving the project's traceability`,
 		totalEntities, totalRelations, orphanCount,
 		entityCounts.String(), relCounts.String(),
-		s.meta.GetVersion(), s.meta.GetNamespace(),
+		meta.GetVersion(), meta.GetNamespace(),
 		len(entityTypes), len(relTypes))
 
 	return &mcp.GetPromptResult{
@@ -275,7 +277,8 @@ func (s *Server) handleReviewEntityPrompt(
 	}
 
 	// Get entity type schema
-	def, _ := s.meta.GetEntityDef(entity.Type)
+	meta := s.getMeta()
+	def, _ := meta.GetEntityDef(entity.Type)
 	var schemaText string
 	if def != nil {
 		schemaJSON, _ := marshalJSON(def.Properties)
@@ -285,7 +288,7 @@ func (s *Server) handleReviewEntityPrompt(
 	}
 
 	// Run validations for this entity
-	errs := s.meta.ValidateEntity(entity)
+	errs := meta.ValidateEntity(entity)
 	var validationText string
 	if len(errs) == 0 {
 		validationText = "All validations passed"

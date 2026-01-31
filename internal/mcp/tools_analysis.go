@@ -52,7 +52,7 @@ func (s *Server) handleAnalyzeCardinality(
 ) (*mcp.CallToolResult, error) {
 	var violations []cardinalityViolation
 
-	for relName, relDef := range s.meta.Relations {
+	for relName, relDef := range s.getMeta().Relations {
 		violations = append(violations, s.checkCardinalityForRelation(relName, relDef)...)
 	}
 
@@ -135,7 +135,7 @@ func (s *Server) handleAnalyzeProperties(
 
 	var allErrors []entityErrors
 	for _, entity := range s.graph.AllNodes() {
-		errs := s.meta.ValidateEntity(entity)
+		errs := s.getMeta().ValidateEntity(entity)
 		if len(errs) > 0 {
 			errStrings := make([]string, len(errs))
 			for i, e := range errs {
@@ -169,7 +169,7 @@ func (s *Server) handleAnalyzeProperties(
 func (s *Server) handleAnalyzeValidations(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	rules := s.meta.Validations
+	rules := s.getMeta().Validations
 	if len(rules) == 0 {
 		return mcp.NewToolResultText("No custom validation rules defined in metamodel"), nil
 	}

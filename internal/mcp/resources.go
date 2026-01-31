@@ -62,15 +62,16 @@ func (s *Server) registerResources() {
 func (s *Server) handleReadMetamodel(
 	_ context.Context, _ mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
+	meta := s.getMeta()
 	result := map[string]interface{}{
-		"version":   s.meta.GetVersion(),
-		"namespace": s.meta.GetNamespace(),
-		"entities":  s.meta.GetEntities(),
-		"relations": s.meta.GetRelations(),
-		"types":     s.meta.GetTypes(),
+		"version":   meta.GetVersion(),
+		"namespace": meta.GetNamespace(),
+		"entities":  meta.GetEntities(),
+		"relations": meta.GetRelations(),
+		"types":     meta.GetTypes(),
 	}
-	if len(s.meta.Validations) > 0 {
-		result["validations"] = s.meta.Validations
+	if len(meta.Validations) > 0 {
+		result["validations"] = meta.Validations
 	}
 
 	text, err := marshalJSON(result)
@@ -148,17 +149,18 @@ func (s *Server) handleReadView(
 		return nil, fmt.Errorf("view not found: %s (available: %s)", viewName, strings.Join(names, ", "))
 	}
 
-	if validationErr := viewDef.Validate(s.meta, viewName); validationErr != nil {
+	meta := s.getMeta()
+	if validationErr := viewDef.Validate(meta, viewName); validationErr != nil {
 		return nil, fmt.Errorf("view validation failed: %w", validationErr)
 	}
 
-	engine := views.NewEngine(s.graph, s.meta)
+	engine := views.NewEngine(s.graph, meta)
 	result, execErr := engine.Execute(viewDef, entryID)
 	if execErr != nil {
 		return nil, fmt.Errorf("view execution failed: %w", execErr)
 	}
 
-	output, fmtErr := views.Format(result, "json", s.graph, s.meta)
+	output, fmtErr := views.Format(result, "json", s.graph, meta)
 	if fmtErr != nil {
 		return nil, fmt.Errorf("failed to format view output: %w", fmtErr)
 	}

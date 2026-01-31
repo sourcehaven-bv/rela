@@ -4,6 +4,7 @@ package mcp
 import (
 	"log"
 	"os"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/server"
 
@@ -17,9 +18,24 @@ type Server struct {
 	mcp        *server.MCPServer
 	graph      *graph.Graph
 	meta       *metamodel.Metamodel
+	metaMu     sync.RWMutex // protects meta
 	projectCtx *project.Context
 	watcher    *Watcher
 	logger     *log.Logger
+}
+
+// getMeta returns the current metamodel, safe for concurrent access.
+func (s *Server) getMeta() *metamodel.Metamodel {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
+	return s.meta
+}
+
+// setMeta replaces the current metamodel, safe for concurrent access.
+func (s *Server) setMeta(m *metamodel.Metamodel) {
+	s.metaMu.Lock()
+	defer s.metaMu.Unlock()
+	s.meta = m
 }
 
 // NewServer creates a new MCP server for a rela project.
