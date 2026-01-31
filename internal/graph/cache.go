@@ -2,11 +2,11 @@ package graph
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // CacheData represents the serialized graph cache
@@ -19,8 +19,31 @@ type CacheData struct {
 
 const CacheVersion = "1.0"
 
-// SaveCache saves the graph to a JSON cache file
+// defaultCacheFS is the filesystem used by the old free functions.
+var defaultCacheFS storage.FS = storage.NewOsFS()
+
+// SaveCache saves the graph to a JSON cache file.
 func (g *Graph) SaveCache(path string) error {
+	return g.SaveCacheFS(path, defaultCacheFS)
+}
+
+// LoadCache loads the graph from a JSON cache file.
+func (g *Graph) LoadCache(path string) error {
+	return g.LoadCacheFS(path, defaultCacheFS)
+}
+
+// CacheExists checks if a cache file exists.
+func CacheExists(path string) bool {
+	return CacheExistsFS(path, defaultCacheFS)
+}
+
+// CacheTimestamp returns the timestamp of the cache file.
+func CacheTimestamp(path string) (time.Time, error) {
+	return CacheTimestampFS(path, defaultCacheFS)
+}
+
+// SaveCacheFS saves the graph to a JSON cache file using the given filesystem.
+func (g *Graph) SaveCacheFS(path string, fs storage.FS) error {
 	g.mu.RLock()
 	nodes := make([]*model.Entity, 0, len(g.nodes))
 	for _, node := range g.nodes {
@@ -44,16 +67,16 @@ func (g *Graph) SaveCache(path string) error {
 
 	// Ensure directory exists
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := fs.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	return os.WriteFile(path, jsonData, 0644)
+	return fs.WriteFile(path, jsonData, 0644)
 }
 
-// LoadCache loads the graph from a JSON cache file
-func (g *Graph) LoadCache(path string) error {
-	jsonData, err := os.ReadFile(path)
+// LoadCacheFS loads the graph from a JSON cache file using the given filesystem.
+func (g *Graph) LoadCacheFS(path string, fs storage.FS) error {
+	jsonData, err := fs.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -93,15 +116,15 @@ func (g *Graph) LoadCache(path string) error {
 	return nil
 }
 
-// CacheExists checks if a cache file exists
-func CacheExists(path string) bool {
-	_, err := os.Stat(path)
+// CacheExistsFS checks if a cache file exists using the given filesystem.
+func CacheExistsFS(path string, fs storage.FS) bool {
+	_, err := fs.Stat(path)
 	return err == nil
 }
 
-// CacheTimestamp returns the timestamp of the cache file
-func CacheTimestamp(path string) (time.Time, error) {
-	info, err := os.Stat(path)
+// CacheTimestampFS returns the timestamp of the cache file using the given filesystem.
+func CacheTimestampFS(path string, fs storage.FS) (time.Time, error) {
+	info, err := fs.Stat(path)
 	if err != nil {
 		return time.Time{}, err
 	}
