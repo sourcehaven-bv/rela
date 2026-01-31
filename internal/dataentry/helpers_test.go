@@ -16,9 +16,9 @@ func TestApplyFilters(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		filters  []FilterConfig
-		wantIDs  []string
+		name    string
+		filters []FilterConfig
+		wantIDs []string
 	}{
 		{
 			name:    "no filters returns all",
@@ -36,7 +36,7 @@ func TestApplyFilters(t *testing.T) {
 			wantIDs: []string{"E-001", "E-003"},
 		},
 		{
-			name:    "multiple filters (AND)",
+			name: "multiple filters (AND)",
 			filters: []FilterConfig{
 				{Property: "status", Operator: "=", Value: "open"},
 				{Property: "priority", Operator: "=", Value: "high"},
@@ -488,10 +488,10 @@ func TestTemplateFuncs(t *testing.T) {
 
 func TestAppendToastParam(t *testing.T) {
 	tests := []struct {
-		name     string
-		url      string
-		message  string
-		want     string
+		name    string
+		url     string
+		message string
+		want    string
 	}{
 		{
 			"simple path",
