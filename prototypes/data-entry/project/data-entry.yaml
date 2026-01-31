@@ -517,3 +517,5 @@ navigation:
     list: all_tickets
   - label: "Categories"
     list: categories
+  - label: "Graph Explorer"
+    graph: true

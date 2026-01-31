@@ -89,6 +89,10 @@ func NewApp(projectDir string) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing templates: %w", err)
 	}
+	tmpl, err = tmpl.Parse(graphTemplates)
+	if err != nil {
+		return nil, fmt.Errorf("parsing graph templates: %w", err)
+	}
 	return &App{
 		Cfg:         &cfg,
 		meta:        meta,
@@ -105,6 +109,7 @@ type NavItem struct {
 	Label      string
 	List       string
 	Dashboard  bool
+	Graph      bool
 	EntityType string
 	Count      int
 }
@@ -113,8 +118,8 @@ type NavItem struct {
 func (a *App) navItems() []NavItem {
 	items := make([]NavItem, len(a.Cfg.Navigation))
 	for i, nav := range a.Cfg.Navigation {
-		items[i] = NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard}
-		if nav.Dashboard {
+		items[i] = NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard, Graph: nav.Graph}
+		if nav.Dashboard || nav.Graph {
 			continue
 		}
 		if list, ok := a.Cfg.Lists[nav.List]; ok {

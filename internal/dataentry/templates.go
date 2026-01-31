@@ -252,6 +252,10 @@ document.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt
        hx-get="/dashboard" hx-target="#content" hx-push-url="true">
       {{ .Label }}
     </a>
+    {{ else if .Graph }}
+    <a href="/graph"{{ if eq "_graph" $.ActiveList }} class="active"{{ end }}>
+      {{ .Label }}
+    </a>
     {{ else }}
     <a href="/list/{{ .List }}"{{ if eq .List $.ActiveList }} class="active"{{ end }}
        data-entity-type="{{ .EntityType }}"

@@ -190,6 +190,7 @@ vendor-js:
     curl -sfL -o internal/dataentry/static/slimselect.css      "https://unpkg.com/slim-select@2.9.2/dist/slimselect.css"
     curl -sfL -o internal/dataentry/static/tagify.min.js       "https://unpkg.com/@yaireo/tagify@4.31.3/dist/tagify.min.js"
     curl -sfL -o internal/dataentry/static/tagify.css          "https://unpkg.com/@yaireo/tagify@4.31.3/dist/tagify.css"
+    curl -sfL -o internal/dataentry/static/cytoscape.min.js    "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"
     @echo "Done! Review changes with 'git diff' and commit."
 
 # ── Dev Server ──

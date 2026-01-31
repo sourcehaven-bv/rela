@@ -25,5 +25,7 @@ func (a *App) NewRouter() http.Handler {
 	mux.HandleFunc("/api/delete", a.handleDelete)
 	mux.HandleFunc("/api/inline-create", a.handleInlineCreate)
 	mux.HandleFunc("/api/inline-form/", a.handleInlineForm)
+	mux.HandleFunc("/graph", a.handleGraph)
+	mux.HandleFunc("/api/graph-data", a.handleGraphData)
 	return mux
 }
