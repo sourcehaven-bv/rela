@@ -13,10 +13,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -89,12 +88,9 @@ type RelationData struct {
 	Properties map[string]interface{} `json:"properties,omitempty" yaml:"properties,omitempty"`
 }
 
-// defaultImporterFS is the filesystem used by the old free functions.
-var defaultImporterFS storage.FS = storage.NewOsFS()
-
 // Importer handles importing data into a rela project
 type Importer struct {
-	ctx  *project.Context
+	repo *repository.Repository
 	meta *metamodel.Metamodel
 	g    *graph.Graph
 	opts Options
@@ -102,14 +98,16 @@ type Importer struct {
 }
 
 // New creates a new Importer
-func New(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph, opts Options) *Importer {
-	return NewFS(ctx, meta, g, opts, defaultImporterFS)
+func New(repo *repository.Repository, meta *metamodel.Metamodel, g *graph.Graph, opts Options) *Importer {
+	return NewFS(repo, meta, g, opts, repo.FS())
 }
 
-// NewFS creates a new Importer using the given filesystem.
-func NewFS(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph, opts Options, fs storage.FS) *Importer {
+// NewFS creates a new Importer using the given filesystem for reading input files.
+func NewFS(
+	repo *repository.Repository, meta *metamodel.Metamodel, g *graph.Graph, opts Options, fs storage.FS,
+) *Importer {
 	return &Importer{
-		ctx:  ctx,
+		repo: repo,
 		meta: meta,
 		g:    g,
 		opts: opts,
@@ -401,26 +399,15 @@ func (imp *Importer) importEntity(ed *EntityData) (created bool, err error) {
 		}
 	}
 
-	// Determine file path
-	plural := entityDef.GetDirPlural(ed.Type)
-	filePath := imp.ctx.EntityFilePathWithPlural(plural, ed.ID)
-
 	// Check if updating
-	existingNode, exists := imp.g.GetNode(ed.ID)
-	if exists {
-		// Keep old file path if updating
-		if existingNode.FilePath != "" {
-			filePath = existingNode.FilePath
-		}
-	}
+	_, exists := imp.g.GetNode(ed.ID)
 
-	// Write to file
-	if err := markdown.WriteEntity(entity, filePath); err != nil {
+	// Write to file (repo computes canonical path and sets entity.FilePath)
+	if err := imp.repo.WriteEntity(entity, imp.meta); err != nil {
 		return false, fmt.Errorf("failed to write entity: %w", err)
 	}
 
 	// Add/update in graph
-	entity.FilePath = filePath
 	if exists {
 		// Use UpdateNode to preserve relations
 		imp.g.UpdateNode(entity)
@@ -442,16 +429,12 @@ func (imp *Importer) importRelation(rd *RelationData) (created bool, err error) 
 	relation := model.NewRelation(rd.From, rd.Relation, rd.To)
 	relation.Properties = rd.Properties
 
-	// Determine file path
-	filePath := imp.ctx.RelationFilePath(rd.From, rd.Relation, rd.To)
-
-	// Write to file
-	if err := markdown.WriteRelation(relation, filePath); err != nil {
+	// Write to file (repo computes canonical path and sets relation.FilePath)
+	if err := imp.repo.WriteRelation(relation); err != nil {
 		return false, fmt.Errorf("failed to write relation: %w", err)
 	}
 
 	// Add to graph
-	relation.FilePath = filePath
 	imp.g.AddEdge(relation)
 
 	return true, nil
