@@ -149,3 +149,35 @@ jobs:
         with:
           name: rela-linux
           path: bin/rela
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build rela
+        run: go build -o bin/rela ./cmd/rela
+
+      - name: Install mdcomp
+        run: pip install mdcomp
+
+      - name: Generate docs
+        run: ./scripts/generate-docs.sh
+
+      - name: Check docs are up to date
+        run: |
+          git diff --exit-code docs/ README.md || \
+            (echo "" && \
+             echo "ERROR: docs/ or README.md is out of date with docs-project/ entities." && \
+             echo "Run 'just docs' locally and commit the changes." && \
+             echo "" && \
+             echo "Changed files:" && \
+             git diff --name-only docs/ README.md && \
+             exit 1)

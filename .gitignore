@@ -9,6 +9,10 @@ coverage.html
 test-logs/
 *.log
 
+# Rela cache (both main project and docs-project)
+.rela/
+docs-project/.rela/
+
 # QA/Test artifacts
 QA-SUMMARY-*.md
 BUG-FIX-*.md

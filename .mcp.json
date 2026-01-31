@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "rela-docs": {
+      "command": "bash",
+      "args": ["-c", "cd docs-project && exec rela mcp"]
+    }
+  }
+}

@@ -1,4 +1,12 @@
-# Getting Started
+---
+id: GUIDE-getting-started
+type: guide
+title: "Getting Started"
+status: published
+order: 1
+audience: beginner
+summary: "Installation, first project, core workflow"
+---
 
 This guide walks you through installing rela and creating your first project.
 

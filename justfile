@@ -128,8 +128,21 @@ vet:
 # Run all checks (lint + lint-md + test)
 check: lint lint-md test
 
-# Run full CI pipeline (check + coverage + build)
-ci: check coverage-check build
+# Generate docs from rela entities via mdcomp
+docs: build-cli
+    @echo "Generating documentation..."
+    @./scripts/generate-docs.sh
+
+# Check that committed docs are up to date with entities
+docs-check: docs
+    @echo "Checking docs are up to date..."
+    git diff --exit-code docs/ README.md || \
+        (echo "" && echo "ERROR: docs/ or README.md is out of date." && \
+         echo "Run 'just docs' and commit the changes." && exit 1)
+    @echo "✓ Docs are up to date."
+
+# Run full CI pipeline (check + coverage + build + docs)
+ci: check coverage-check build docs-check
 
 # ── Dependencies & Tools ──
 
@@ -148,7 +161,9 @@ install-hooks:
     @mkdir -p .git/hooks
     @cp scripts/pre-commit .git/hooks/pre-commit
     @chmod +x .git/hooks/pre-commit
-    @echo "Git hooks installed!"
+    @cp scripts/pre-push .git/hooks/pre-push
+    @chmod +x .git/hooks/pre-push
+    @echo "Git hooks installed (pre-commit + pre-push)!"
 
 # Tidy go modules
 tidy:
