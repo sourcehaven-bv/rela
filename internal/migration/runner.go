@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // DetectionResult holds information about a detected migration need.
@@ -32,10 +33,31 @@ type FileResult struct {
 	Error      error
 }
 
+// defaultMigrationFS is the filesystem used by the old free functions.
+var defaultMigrationFS storage.FS = storage.NewOsFS()
+
 // Detect checks a YAML file for migrations that need to be applied.
 // Returns a list of migrations that detected deprecated patterns.
 func Detect(path string, ft FileType) ([]DetectionResult, error) {
-	data, err := os.ReadFile(path)
+	return DetectFS(path, ft, defaultMigrationFS)
+}
+
+// Apply runs all applicable migrations on a file.
+// Returns results for each migration attempted.
+func Apply(path string, ft FileType) (*FileResult, error) {
+	return ApplyFS(path, ft, defaultMigrationFS)
+}
+
+// CheckOnly runs detection without applying changes.
+// Useful for CI or pre-flight checks.
+func CheckOnly(path string, ft FileType) (*FileResult, error) {
+	return CheckOnlyFS(path, ft, defaultMigrationFS)
+}
+
+// DetectFS checks a YAML file for migrations that need to be applied
+// using the given filesystem.
+func DetectFS(path string, ft FileType, fs storage.FS) ([]DetectionResult, error) {
+	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
 	}
@@ -65,10 +87,10 @@ func DetectFromNode(doc *yaml.Node, ft FileType) []DetectionResult {
 	return results
 }
 
-// Apply runs all applicable migrations on a file.
+// ApplyFS runs all applicable migrations on a file using the given filesystem.
 // Returns results for each migration attempted.
-func Apply(path string, ft FileType) (*FileResult, error) {
-	data, err := os.ReadFile(path)
+func ApplyFS(path string, ft FileType, fs storage.FS) (*FileResult, error) {
+	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
 	}
@@ -124,7 +146,7 @@ func Apply(path string, ft FileType) (*FileResult, error) {
 		return result, nil
 	}
 
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := fs.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		result.Error = fmt.Errorf("writing file: %w", err)
 		return result, nil
 	}
@@ -132,10 +154,10 @@ func Apply(path string, ft FileType) (*FileResult, error) {
 	return result, nil
 }
 
-// CheckOnly runs detection without applying changes.
+// CheckOnlyFS runs detection without applying changes using the given filesystem.
 // Useful for CI or pre-flight checks.
-func CheckOnly(path string, ft FileType) (*FileResult, error) {
-	detections, err := Detect(path, ft)
+func CheckOnlyFS(path string, ft FileType, fs storage.FS) (*FileResult, error) {
+	detections, err := DetectFS(path, ft, fs)
 	if err != nil {
 		return nil, err
 	}
