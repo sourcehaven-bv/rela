@@ -73,7 +73,7 @@ func runMCPServer() error {
 		}
 	}
 
-	srv := relamcp.NewServer(gr, m, ctx, Version)
+	srv := relamcp.NewServer(gr, m, mcpRepo, Version)
 	return srv.Serve()
 }
 

@@ -155,7 +155,7 @@ func (s *Server) handleCreateEntity(
 	entity := model.NewEntity(entityID, resolvedType)
 
 	// Load and apply template defaults
-	template, templateErr := markdown.LoadEntityTemplate(s.projectCtx, resolvedType)
+	template, templateErr := s.repo.LoadEntityTemplate(resolvedType)
 	if templateErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to load template: %v", templateErr)), nil
 	}
@@ -181,13 +181,10 @@ func (s *Server) handleCreateEntity(
 	}
 
 	// Write to file
-	plural := entityDef.GetDirPlural(resolvedType)
-	filePath := s.projectCtx.EntityFilePathWithPlural(plural, entityID)
-	if writeErr := markdown.WriteEntity(entity, filePath); writeErr != nil {
+	if writeErr := s.repo.WriteEntity(entity, s.getMeta()); writeErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to write entity: %v", writeErr)), nil
 	}
 
-	entity.FilePath = filePath
 	s.graph.AddNode(entity)
 	s.saveCache()
 
@@ -232,22 +229,10 @@ func (s *Server) handleUpdateEntity(
 	}
 
 	// Write to file
-	filePath := entity.FilePath
-	if filePath == "" {
-		entityDef, _ := s.getMeta().GetEntityDef(entity.Type)
-		if entityDef != nil {
-			plural := entityDef.GetDirPlural(entity.Type)
-			filePath = s.projectCtx.EntityFilePathWithPlural(plural, id)
-		} else {
-			filePath = s.projectCtx.EntityFilePath(entity.Type, id)
-		}
-	}
-
-	if writeErr := markdown.WriteEntity(entity, filePath); writeErr != nil {
+	if writeErr := s.repo.WriteEntity(entity, s.getMeta()); writeErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to write entity: %v", writeErr)), nil
 	}
 
-	entity.FilePath = filePath
 	s.graph.AddNode(entity)
 	s.saveCache()
 
@@ -284,32 +269,22 @@ func (s *Server) handleDeleteEntity(
 	// Delete relations
 	if cascade {
 		for _, rel := range incoming {
-			if delErr := markdown.DeleteRelation(rel.FilePath); delErr != nil {
-				s.logger.Printf("Warning: failed to delete relation file %s: %v", rel.FilePath, delErr)
+			if delErr := s.repo.DeleteRelation(rel.From, rel.Type, rel.To); delErr != nil {
+				s.logger.Printf("Warning: failed to delete relation file: %v", delErr)
 			}
 			s.graph.RemoveEdge(rel.From, rel.Type, rel.To)
 		}
 		for _, rel := range outgoing {
-			if delErr := markdown.DeleteRelation(rel.FilePath); delErr != nil {
-				s.logger.Printf("Warning: failed to delete relation file %s: %v", rel.FilePath, delErr)
+			if delErr := s.repo.DeleteRelation(rel.From, rel.Type, rel.To); delErr != nil {
+				s.logger.Printf("Warning: failed to delete relation file: %v", delErr)
 			}
 			s.graph.RemoveEdge(rel.From, rel.Type, rel.To)
 		}
 	}
 
 	// Delete entity file
-	filePath := entity.FilePath
-	if filePath == "" {
-		entityDef, _ := s.getMeta().GetEntityDef(entity.Type)
-		if entityDef != nil {
-			plural := entityDef.GetDirPlural(entity.Type)
-			filePath = s.projectCtx.EntityFilePathWithPlural(plural, id)
-		} else {
-			filePath = s.projectCtx.EntityFilePath(entity.Type, id)
-		}
-	}
-	if delErr := markdown.DeleteEntity(filePath); delErr != nil {
-		s.logger.Printf("Warning: failed to delete entity file %s: %v", filePath, delErr)
+	if delErr := s.repo.DeleteEntity(entity.Type, id, s.getMeta()); delErr != nil {
+		s.logger.Printf("Warning: failed to delete entity file: %v", delErr)
 	}
 
 	s.graph.RemoveNode(id)

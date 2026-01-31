@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
 
 // Server wraps the MCP server with rela-specific state.
@@ -20,6 +21,7 @@ type Server struct {
 	meta       *metamodel.Metamodel
 	metaMu     sync.RWMutex // protects meta
 	projectCtx *project.Context
+	repo       *repository.Repository
 	watcher    *Watcher
 	logger     *log.Logger
 }
@@ -39,13 +41,14 @@ func (s *Server) setMeta(m *metamodel.Metamodel) {
 }
 
 // NewServer creates a new MCP server for a rela project.
-func NewServer(g *graph.Graph, meta *metamodel.Metamodel, projectCtx *project.Context, version string) *Server {
+func NewServer(g *graph.Graph, meta *metamodel.Metamodel, repo *repository.Repository, version string) *Server {
 	logger := log.New(os.Stderr, "[rela-mcp] ", log.LstdFlags)
 
 	s := &Server{
 		graph:      g,
 		meta:       meta,
-		projectCtx: projectCtx,
+		projectCtx: repo.Paths(),
+		repo:       repo,
 		logger:     logger,
 	}
 

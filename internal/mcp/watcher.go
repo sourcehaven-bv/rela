@@ -7,8 +7,6 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -57,7 +55,7 @@ func (w *Watcher) Stop() {
 
 func (w *Watcher) syncAndNotify() {
 	// Reload metamodel in case it changed
-	newMeta, err := metamodel.Load(w.server.projectCtx.MetamodelPath)
+	newMeta, err := w.server.repo.LoadMetamodel()
 	if err != nil {
 		if migration.IsMigrationError(err) {
 			w.server.logger.Printf("Metamodel needs migration, skipping reload: run 'rela migrate'")
@@ -68,7 +66,7 @@ func (w *Watcher) syncAndNotify() {
 		w.server.setMeta(newMeta)
 	}
 
-	_, err = markdown.SyncFromFiles(w.server.projectCtx, w.server.getMeta(), w.server.graph)
+	_, err = w.server.repo.Sync(w.server.getMeta(), w.server.graph)
 	if err != nil {
 		w.server.logger.Printf("Sync error: %v", err)
 		return

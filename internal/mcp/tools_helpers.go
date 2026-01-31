@@ -74,8 +74,8 @@ func (s *Server) validateEntity(entity *model.Entity) *mcp.CallToolResult {
 }
 
 func (s *Server) saveCache() {
-	if s.projectCtx != nil && s.graph != nil {
-		if err := s.graph.SaveCache(s.projectCtx.CachePath); err != nil {
+	if s.repo != nil && s.graph != nil {
+		if err := s.repo.SaveCache(s.graph); err != nil {
 			s.logger.Printf("Warning: failed to save cache: %v", err)
 		}
 	}
