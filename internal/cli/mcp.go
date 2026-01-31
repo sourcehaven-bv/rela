@@ -6,10 +6,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
 
 // coverage-ignore: MCP command - requires stdio server
@@ -54,20 +53,22 @@ func runMCPServer() error {
 		return fmt.Errorf("no project found: run 'rela init' to create one")
 	}
 
-	m, err := metamodel.Load(ctx.MetamodelPath)
+	mcpRepo := repository.New(cliFS, ctx)
+
+	m, err := mcpRepo.LoadMetamodel()
 	if err != nil {
 		return fmt.Errorf("failed to load metamodel: %w", err)
 	}
 
 	gr := graph.New()
-	if graph.CacheExists(ctx.CachePath) {
-		if cacheErr := gr.LoadCache(ctx.CachePath); cacheErr != nil {
-			if _, syncErr := markdown.SyncFromFiles(ctx, m, gr); syncErr != nil {
+	if mcpRepo.CacheExists() {
+		if cacheErr := mcpRepo.LoadCache(gr); cacheErr != nil {
+			if _, syncErr := mcpRepo.Sync(m, gr); syncErr != nil {
 				return fmt.Errorf("failed to sync: %w", syncErr)
 			}
 		}
 	} else {
-		if _, syncErr := markdown.SyncFromFiles(ctx, m, gr); syncErr != nil {
+		if _, syncErr := mcpRepo.Sync(m, gr); syncErr != nil {
 			return fmt.Errorf("failed to sync: %w", syncErr)
 		}
 	}

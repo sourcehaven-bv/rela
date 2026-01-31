@@ -2,8 +2,6 @@ package cli
 
 import (
 	"github.com/spf13/cobra"
-
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
 
 var (
@@ -24,7 +22,7 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		out.WriteMessage("Syncing from markdown files...")
 
-		result, err := markdown.SyncFromFiles(projectCtx, meta, g)
+		result, err := repo.Sync(meta, g)
 		if err != nil {
 			return err
 		}

@@ -49,7 +49,7 @@ Examples:
 		relation := model.NewRelation(fromID, relationType, toID)
 
 		// Load and apply template defaults (if template exists)
-		template, err := markdown.LoadRelationTemplate(projectCtx, relationType)
+		template, err := repo.LoadRelationTemplate(relationType)
 		if err != nil {
 			return fmt.Errorf("failed to load template: %w", err)
 		}
@@ -57,16 +57,12 @@ Examples:
 			markdown.ApplyRelationTemplate(relation, template)
 		}
 
-		// Determine file path
-		filePath := projectCtx.RelationFilePath(fromID, relationType, toID)
-
-		// Write to file
-		if err := markdown.WriteRelation(relation, filePath); err != nil {
+		// Write to file (repo computes path and sets relation.FilePath)
+		if err := repo.WriteRelation(relation); err != nil {
 			return fmt.Errorf("failed to write relation: %w", err)
 		}
 
 		// Add to graph
-		relation.FilePath = filePath
 		g.AddEdge(relation)
 
 		// Save cache
