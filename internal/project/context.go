@@ -31,10 +31,10 @@ type Context struct {
 	RelationTemplatesDir string // Path to templates/relations directory
 }
 
-// DiscoverFS finds the project root by searching for metamodel.yaml
+// Discover finds the project root by searching for metamodel.yaml
 // using the given filesystem.
 // It starts from the given directory and walks up the tree.
-func DiscoverFS(startDir string, fs storage.FS) (*Context, error) {
+func Discover(startDir string, fs storage.FS) (*Context, error) {
 	if startDir == "" {
 		var err error
 		startDir, err = fs.Getwd()
@@ -88,8 +88,8 @@ func newContext(root string) *Context {
 	}
 }
 
-// InitializeFS creates the project structure using the given filesystem.
-func (c *Context) InitializeFS(fs storage.FS) error {
+// Initialize creates the project structure using the given filesystem.
+func (c *Context) Initialize(fs storage.FS) error {
 	// Create .rela directory
 	if err := fs.MkdirAll(c.CacheDir, 0755); err != nil {
 		return err
@@ -135,8 +135,8 @@ func (c *Context) RelationFilePath(from, relationType, to string) string {
 	return filepath.Join(c.RelationsDir, filename)
 }
 
-// ExistsFS checks if the project has been initialized using the given filesystem.
-func (c *Context) ExistsFS(fs storage.FS) bool {
+// Exists checks if the project has been initialized using the given filesystem.
+func (c *Context) Exists(fs storage.FS) bool {
 	_, err := fs.Stat(c.MetamodelPath)
 	return err == nil
 }

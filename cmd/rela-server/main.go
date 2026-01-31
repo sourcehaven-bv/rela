@@ -21,7 +21,7 @@ func main() {
 	port := flag.String("port", "8080", "HTTP port to listen on")
 	flag.Parse()
 
-	app, err := dataentry.NewAppFS(*projectDir, storage.NewSafeFS(storage.NewOsFS()))
+	app, err := dataentry.NewApp(*projectDir, storage.NewSafeFS(storage.NewOsFS()))
 	if err != nil {
 		log.Fatalf("Failed to initialize: %v", err)
 	}

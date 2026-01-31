@@ -9,8 +9,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-// LoadFS reads and parses a views file from a YAML file using the given filesystem.
-func LoadFS(path string, fs storage.FS) (*File, error) {
+// Load reads and parses a views file from a YAML file using the given filesystem.
+func Load(path string, fs storage.FS) (*File, error) {
 	// Check if file exists
 	if _, err := fs.Stat(path); os.IsNotExist(err) {
 		// Views file is optional, return empty views

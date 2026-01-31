@@ -269,7 +269,7 @@ entities:
 		t.Fatalf("failed to write temp file: %v", err)
 	}
 
-	detections, err := DetectFS(tmpFile, FileTypeMetamodel, testMigrationFS)
+	detections, err := Detect(tmpFile, FileTypeMetamodel, testMigrationFS)
 	if err != nil {
 		t.Fatalf("Detect() error = %v", err)
 	}
@@ -301,7 +301,7 @@ entities:
 		t.Fatalf("failed to write temp file: %v", err)
 	}
 
-	result, err := ApplyFS(tmpFile, FileTypeMetamodel, testMigrationFS)
+	result, err := Apply(tmpFile, FileTypeMetamodel, testMigrationFS)
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
@@ -354,7 +354,7 @@ entities:
 		t.Fatalf("failed to write temp file: %v", err)
 	}
 
-	result, err := CheckOnlyFS(tmpFile, FileTypeMetamodel, testMigrationFS)
+	result, err := CheckOnly(tmpFile, FileTypeMetamodel, testMigrationFS)
 	if err != nil {
 		t.Fatalf("CheckOnly() error = %v", err)
 	}

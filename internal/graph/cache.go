@@ -19,8 +19,8 @@ type CacheData struct {
 
 const CacheVersion = "1.0"
 
-// SaveCacheFS saves the graph to a JSON cache file using the given filesystem.
-func (g *Graph) SaveCacheFS(path string, fs storage.FS) error {
+// SaveCache saves the graph to a JSON cache file using the given filesystem.
+func (g *Graph) SaveCache(path string, fs storage.FS) error {
 	g.mu.RLock()
 	nodes := make([]*model.Entity, 0, len(g.nodes))
 	for _, node := range g.nodes {
@@ -51,8 +51,8 @@ func (g *Graph) SaveCacheFS(path string, fs storage.FS) error {
 	return fs.WriteFile(path, jsonData, 0644)
 }
 
-// LoadCacheFS loads the graph from a JSON cache file using the given filesystem.
-func (g *Graph) LoadCacheFS(path string, fs storage.FS) error {
+// LoadCache loads the graph from a JSON cache file using the given filesystem.
+func (g *Graph) LoadCache(path string, fs storage.FS) error {
 	jsonData, err := fs.ReadFile(path)
 	if err != nil {
 		return err
@@ -93,14 +93,14 @@ func (g *Graph) LoadCacheFS(path string, fs storage.FS) error {
 	return nil
 }
 
-// CacheExistsFS checks if a cache file exists using the given filesystem.
-func CacheExistsFS(path string, fs storage.FS) bool {
+// CacheExists checks if a cache file exists using the given filesystem.
+func CacheExists(path string, fs storage.FS) bool {
 	_, err := fs.Stat(path)
 	return err == nil
 }
 
-// CacheTimestampFS returns the timestamp of the cache file using the given filesystem.
-func CacheTimestampFS(path string, fs storage.FS) (time.Time, error) {
+// CacheTimestamp returns the timestamp of the cache file using the given filesystem.
+func CacheTimestamp(path string, fs storage.FS) (time.Time, error) {
 	info, err := fs.Stat(path)
 	if err != nil {
 		return time.Time{}, err

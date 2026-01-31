@@ -35,7 +35,7 @@ entities:
         required: true
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	if _, ok := meta.Entities["requirement"]; !ok {
@@ -96,7 +96,7 @@ relations:
     inverse: mitigatedBy
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	// Types from types.yaml
@@ -156,7 +156,7 @@ entities:
         type: string
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	if _, ok := meta.Entities["root_entity"]; !ok {
@@ -203,7 +203,7 @@ entities:
         type: string
 `)
 
-	_, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	_, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
 
 	var circularErr *CircularIncludeError
@@ -221,7 +221,7 @@ includes:
   - metamodel.yaml
 `)
 
-	_, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	_, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
 
 	var circularErr *CircularIncludeError
@@ -260,7 +260,7 @@ entities:
         type: string
 `)
 
-	_, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	_, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
 
 	var dupErr *DuplicateDefinitionError
@@ -291,7 +291,7 @@ types:
     values: [low, high, critical]
 `)
 
-	_, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	_, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
 
 	var dupErr *DuplicateDefinitionError
@@ -328,7 +328,7 @@ relations:
     to: [risk]
 `)
 
-	_, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	_, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
 
 	var dupErr *DuplicateDefinitionError
@@ -361,7 +361,7 @@ validations:
       - "title!="
 `)
 
-	_, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	_, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
 
 	var dupErr *DuplicateDefinitionError
@@ -381,7 +381,7 @@ includes:
   - nonexistent.yaml
 `)
 
-	_, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	_, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
 
 	var notFoundErr *IncludeNotFoundError
@@ -411,7 +411,7 @@ entities:
         type: string
 `)
 
-	_, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	_, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
 
 	var rootFieldErr *IncludeHasRootFieldError
@@ -441,7 +441,7 @@ entities:
         type: string
 `)
 
-	_, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	_, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
 
 	var rootFieldErr *IncludeHasRootFieldError
@@ -467,7 +467,7 @@ entities:
         required: true
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	if _, ok := meta.Entities["requirement"]; !ok {
@@ -501,7 +501,7 @@ types:
     values: [low, medium, high, critical]
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	// Verify cross-file reference works: entity uses type from included file
@@ -556,7 +556,7 @@ relations:
     inverse: mitigatedBy
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	// Verify relation references entities from another included file
@@ -614,7 +614,7 @@ types:
     values: [a, b, c]
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	// All entities should be present
@@ -658,7 +658,7 @@ entities:
         required: true
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	if _, ok := meta.Entities["control"]; !ok {
@@ -694,7 +694,7 @@ entities:
         type: string
 `)
 
-	_, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	_, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertError(t, err)
 
 	var dupErr *DuplicateDefinitionError
@@ -739,7 +739,7 @@ validations:
     severity: warning
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	if len(meta.Validations) != 2 {
@@ -788,7 +788,7 @@ entities:
         required: true
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	// Aliases from root
@@ -815,7 +815,7 @@ entities:
         required: true
 `)
 
-	meta, err := LoadFS(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	meta, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
 	assertNoError(t, err)
 
 	if _, ok := meta.Entities["requirement"]; !ok {

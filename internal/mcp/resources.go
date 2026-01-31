@@ -137,7 +137,7 @@ func (s *Server) handleReadView(
 	viewName, entryID := segments[0], segments[1]
 
 	viewsPath := filepath.Join(s.projectCtx.Root, "views.yaml")
-	viewsFile, err := views.LoadFS(viewsPath, s.repo.FS())
+	viewsFile, err := views.Load(viewsPath, s.repo.FS())
 	if err != nil {
 		return nil, fmt.Errorf("failed to load views: %w", err)
 	}

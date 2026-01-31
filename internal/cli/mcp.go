@@ -48,7 +48,7 @@ Logs are written to stderr.`,
 func runMCPServer() error {
 	// Discover project (standalone initialization because mcp is excluded
 	// from the root PersistentPreRunE skip list)
-	ctx, err := project.DiscoverFS("", cliFS)
+	ctx, err := project.Discover("", cliFS)
 	if err != nil {
 		return fmt.Errorf("no project found: run 'rela init' to create one")
 	}

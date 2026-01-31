@@ -35,12 +35,12 @@ func TestSearchIntegration(t *testing.T) {
 		t.Skipf("Test project not found at %s - run setup first", projectDir)
 	}
 
-	ctx, err := project.DiscoverFS(projectDir, storage.NewOsFS())
+	ctx, err := project.Discover(projectDir, storage.NewOsFS())
 	if err != nil {
 		t.Fatalf("Failed to discover project: %v", err)
 	}
 
-	meta, err := metamodel.LoadFS(ctx.MetamodelPath, storage.NewOsFS())
+	meta, err := metamodel.Load(ctx.MetamodelPath, storage.NewOsFS())
 	if err != nil {
 		// Skip if using deprecated syntax (needs migration)
 		if strings.Contains(err.Error(), "deprecated syntax") {
@@ -370,8 +370,8 @@ func BenchmarkSearch(b *testing.B) {
 		b.Skipf("Test project not found at %s", projectDir)
 	}
 
-	ctx, _ := project.DiscoverFS(projectDir, storage.NewOsFS())
-	meta, _ := metamodel.LoadFS(ctx.MetamodelPath, storage.NewOsFS())
+	ctx, _ := project.Discover(projectDir, storage.NewOsFS())
+	meta, _ := metamodel.Load(ctx.MetamodelPath, storage.NewOsFS())
 	g := graph.New()
 	benchRepo := repository.New(storage.NewOsFS(), ctx)
 	_, _ = benchRepo.Sync(meta, g)
@@ -396,13 +396,13 @@ func BenchmarkSearch(b *testing.B) {
 func RunManualSearchTests() {
 	projectDir := "/tmp/rela-test-project"
 
-	ctx, err := project.DiscoverFS(projectDir, storage.NewOsFS())
+	ctx, err := project.Discover(projectDir, storage.NewOsFS())
 	if err != nil {
 		fmt.Printf("❌ Failed to discover project: %v\n", err)
 		return
 	}
 
-	meta, err := metamodel.LoadFS(ctx.MetamodelPath, storage.NewOsFS())
+	meta, err := metamodel.Load(ctx.MetamodelPath, storage.NewOsFS())
 	if err != nil {
 		fmt.Printf("❌ Failed to load metamodel: %v\n", err)
 		return

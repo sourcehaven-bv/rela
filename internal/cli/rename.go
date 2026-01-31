@@ -164,7 +164,7 @@ func confirmRename() (bool, error) {
 }
 
 func applyRenameEntity(info *renameEntityInfo) error {
-	renameErr := metamodel.RenameEntityTypeFS(projectCtx.MetamodelPath, info.resolvedOld, info.newType, cliFS)
+	renameErr := metamodel.RenameEntityType(projectCtx.MetamodelPath, info.resolvedOld, info.newType, cliFS)
 	if renameErr != nil {
 		return fmt.Errorf("failed to update metamodel: %w", renameErr)
 	}

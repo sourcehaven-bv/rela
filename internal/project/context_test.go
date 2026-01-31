@@ -26,7 +26,7 @@ func TestDiscover(t *testing.T) {
 		testutil.CreateFile(t, metamodelPath, "version: 1.0\n")
 
 		// Discover from nested directory
-		ctx, err := DiscoverFS(subDir, testProjectFS)
+		ctx, err := Discover(subDir, testProjectFS)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, ctx.Root, tmpDir)
 	})
@@ -40,7 +40,7 @@ func TestDiscover(t *testing.T) {
 		relaDir := filepath.Join(tmpDir, CacheDir)
 		testutil.CreateDir(t, relaDir)
 
-		ctx, err := DiscoverFS(subDir, testProjectFS)
+		ctx, err := Discover(subDir, testProjectFS)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, ctx.Root, tmpDir)
 	})
@@ -59,7 +59,7 @@ func TestDiscover(t *testing.T) {
 		tmpDir, evalErr := filepath.EvalSymlinks(tmpDir)
 		testutil.AssertNoError(t, evalErr)
 
-		ctx, err := DiscoverFS("", testProjectFS)
+		ctx, err := Discover("", testProjectFS)
 		testutil.AssertNoError(t, err)
 		testutil.AssertEqual(t, ctx.Root, tmpDir)
 	})
@@ -67,7 +67,7 @@ func TestDiscover(t *testing.T) {
 	t.Run("returns error when no project found", func(t *testing.T) {
 		tmpDir := testutil.TempDirWithCleanup(t)
 
-		_, err := DiscoverFS(tmpDir, testProjectFS)
+		_, err := Discover(tmpDir, testProjectFS)
 		if !errors.Is(err, relaerrors.ErrNoProject) {
 			t.Errorf("expected ErrNoProject, got %v", err)
 		}
@@ -81,7 +81,7 @@ func TestDiscover(t *testing.T) {
 			t.Skip("null byte path handling differs by platform")
 		}
 		// Test with path that contains null byte - this should fail in Abs()
-		_, err := DiscoverFS("/tmp/\x00invalid", testProjectFS)
+		_, err := Discover("/tmp/\x00invalid", testProjectFS)
 		if err == nil {
 			t.Error("expected error for invalid path")
 		}
@@ -122,7 +122,7 @@ func TestContextInitialize(t *testing.T) {
 		tmpDir := testutil.TempDirWithCleanup(t)
 		ctx := newContext(tmpDir)
 
-		err := ctx.InitializeFS(testProjectFS)
+		err := ctx.Initialize(testProjectFS)
 		testutil.AssertNoError(t, err)
 
 		// Check that directories were created
@@ -142,7 +142,7 @@ func TestContextInitialize(t *testing.T) {
 		defer os.Remove(tmpFile.Name())
 
 		ctx := newContext(tmpFile.Name())
-		err = ctx.InitializeFS(testProjectFS)
+		err = ctx.Initialize(testProjectFS)
 		if err == nil {
 			t.Error("expected error when creating directories under a file")
 		}
@@ -158,7 +158,7 @@ func TestContextInitialize(t *testing.T) {
 		// Create entities as a file (not directory) to cause error
 		testutil.CreateFile(t, ctx.EntitiesDir, "test")
 
-		err := ctx.InitializeFS(testProjectFS)
+		err := ctx.Initialize(testProjectFS)
 		testutil.AssertError(t, err)
 	})
 
@@ -173,7 +173,7 @@ func TestContextInitialize(t *testing.T) {
 		// Create relations as a file (not directory) to cause error
 		testutil.CreateFile(t, ctx.RelationsDir, "test")
 
-		err := ctx.InitializeFS(testProjectFS)
+		err := ctx.Initialize(testProjectFS)
 		testutil.AssertError(t, err)
 	})
 }
@@ -238,7 +238,7 @@ func TestContextExists(t *testing.T) {
 		// Create metamodel.yaml
 		testutil.CreateFile(t, ctx.MetamodelPath, "version: 1.0\n")
 
-		if !ctx.ExistsFS(testProjectFS) {
+		if !ctx.Exists(testProjectFS) {
 			t.Error("expected Exists() to return true")
 		}
 	})
@@ -247,7 +247,7 @@ func TestContextExists(t *testing.T) {
 		tmpDir := testutil.TempDirWithCleanup(t)
 		ctx := newContext(tmpDir)
 
-		if ctx.ExistsFS(testProjectFS) {
+		if ctx.Exists(testProjectFS) {
 			t.Error("expected Exists() to return false")
 		}
 	})

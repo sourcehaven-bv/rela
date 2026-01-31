@@ -31,19 +31,19 @@ var knownTypos = map[string]string{
 	"validation": "validations",
 }
 
-// LoadFS reads and parses a metamodel from a YAML file using the given filesystem.
+// Load reads and parses a metamodel from a YAML file using the given filesystem.
 // If the metamodel contains an `includes:` key, included files are recursively
 // loaded and merged. Include paths are resolved relative to the directory
 // containing the metamodel file.
 // Returns a MigrationError if the file contains deprecated syntax that needs migration.
-func LoadFS(path string, fs storage.FS) (*Metamodel, error) {
+func Load(path string, fs storage.FS) (*Metamodel, error) {
 	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
 	// Check for deprecated syntax that needs migration
-	detections, err := migration.DetectFS(path, migration.FileTypeMetamodel, fs)
+	detections, err := migration.Detect(path, migration.FileTypeMetamodel, fs)
 	if err != nil {
 		return nil, err
 	}

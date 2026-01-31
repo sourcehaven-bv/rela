@@ -58,7 +58,7 @@ and maintain semantic relationships between them.`,
 
 		// Discover project
 		var err error
-		projectCtx, err = project.DiscoverFS("", cliFS)
+		projectCtx, err = project.Discover("", cliFS)
 		if err != nil {
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}

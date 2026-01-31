@@ -400,7 +400,7 @@ entities:
 	createFile(t, tmpFile, validYAML)
 
 	// Test successful load
-	meta, err := LoadFS(tmpFile, testMetaFS)
+	meta, err := Load(tmpFile, testMetaFS)
 	assertNoError(t, err)
 
 	if meta == nil {
@@ -415,7 +415,7 @@ entities:
 }
 
 func TestLoad_NonExistentFile(t *testing.T) {
-	_, err := LoadFS("/nonexistent/metamodel.yaml", testMetaFS)
+	_, err := Load("/nonexistent/metamodel.yaml", testMetaFS)
 	assertError(t, err)
 }
 
@@ -430,7 +430,7 @@ entities:
 
 	createFile(t, tmpFile, invalidYAML)
 
-	_, err := LoadFS(tmpFile, testMetaFS)
+	_, err := Load(tmpFile, testMetaFS)
 	assertError(t, err)
 }
 

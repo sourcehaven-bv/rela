@@ -33,9 +33,9 @@ type FileResult struct {
 	Error      error
 }
 
-// DetectFS checks a YAML file for migrations that need to be applied
+// Detect checks a YAML file for migrations that need to be applied
 // using the given filesystem.
-func DetectFS(path string, ft FileType, fs storage.FS) ([]DetectionResult, error) {
+func Detect(path string, ft FileType, fs storage.FS) ([]DetectionResult, error) {
 	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
@@ -66,9 +66,9 @@ func DetectFromNode(doc *yaml.Node, ft FileType) []DetectionResult {
 	return results
 }
 
-// ApplyFS runs all applicable migrations on a file using the given filesystem.
+// Apply runs all applicable migrations on a file using the given filesystem.
 // Returns results for each migration attempted.
-func ApplyFS(path string, ft FileType, fs storage.FS) (*FileResult, error) {
+func Apply(path string, ft FileType, fs storage.FS) (*FileResult, error) {
 	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
@@ -133,10 +133,10 @@ func ApplyFS(path string, ft FileType, fs storage.FS) (*FileResult, error) {
 	return result, nil
 }
 
-// CheckOnlyFS runs detection without applying changes using the given filesystem.
+// CheckOnly runs detection without applying changes using the given filesystem.
 // Useful for CI or pre-flight checks.
-func CheckOnlyFS(path string, ft FileType, fs storage.FS) (*FileResult, error) {
-	detections, err := DetectFS(path, ft, fs)
+func CheckOnly(path string, ft FileType, fs storage.FS) (*FileResult, error) {
+	detections, err := Detect(path, ft, fs)
 	if err != nil {
 		return nil, err
 	}

@@ -23,7 +23,7 @@ func BenchmarkSaveCache(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				err := g.SaveCacheFS(cachePath, testCacheFS)
+				err := g.SaveCache(cachePath, testCacheFS)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -41,7 +41,7 @@ func BenchmarkLoadCache(b *testing.B) {
 			tmpDir := b.TempDir()
 			cachePath := filepath.Join(tmpDir, "cache.json")
 
-			if err := g.SaveCacheFS(cachePath, testCacheFS); err != nil {
+			if err := g.SaveCache(cachePath, testCacheFS); err != nil {
 				b.Fatal(err)
 			}
 
@@ -50,7 +50,7 @@ func BenchmarkLoadCache(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				newGraph := New()
-				err := newGraph.LoadCacheFS(cachePath, testCacheFS)
+				err := newGraph.LoadCache(cachePath, testCacheFS)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -68,7 +68,7 @@ func BenchmarkSaveCacheVsSyncFromFiles(b *testing.B) {
 			tmpDir := b.TempDir()
 			cachePath := filepath.Join(tmpDir, "cache.json")
 
-			if err := g.SaveCacheFS(cachePath, testCacheFS); err != nil {
+			if err := g.SaveCache(cachePath, testCacheFS); err != nil {
 				b.Fatal(err)
 			}
 
@@ -77,7 +77,7 @@ func BenchmarkSaveCacheVsSyncFromFiles(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				newGraph := New()
-				_ = newGraph.LoadCacheFS(cachePath, testCacheFS)
+				_ = newGraph.LoadCache(cachePath, testCacheFS)
 			}
 		})
 	}
@@ -112,9 +112,9 @@ func BenchmarkCacheWithLargeProperties(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				_ = g.SaveCacheFS(cachePath, testCacheFS)
+				_ = g.SaveCache(cachePath, testCacheFS)
 				newGraph := New()
-				_ = newGraph.LoadCacheFS(cachePath, testCacheFS)
+				_ = newGraph.LoadCache(cachePath, testCacheFS)
 			}
 		})
 	}
@@ -146,7 +146,7 @@ func BenchmarkCacheRebuildAdjacency(b *testing.B) {
 			tmpDir := b.TempDir()
 			cachePath := filepath.Join(tmpDir, "cache.json")
 
-			if err := g.SaveCacheFS(cachePath, testCacheFS); err != nil {
+			if err := g.SaveCache(cachePath, testCacheFS); err != nil {
 				b.Fatal(err)
 			}
 
@@ -155,7 +155,7 @@ func BenchmarkCacheRebuildAdjacency(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				newGraph := New()
-				_ = newGraph.LoadCacheFS(cachePath, testCacheFS)
+				_ = newGraph.LoadCache(cachePath, testCacheFS)
 			}
 		})
 	}

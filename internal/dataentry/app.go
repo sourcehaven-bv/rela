@@ -36,14 +36,14 @@ type App struct {
 	styledTypes map[string]bool
 }
 
-// NewAppFS creates and initializes an App using the given filesystem.
-func NewAppFS(projectDir string, fs storage.FS) (*App, error) {
+// NewApp creates and initializes an App using the given filesystem.
+func NewApp(projectDir string, fs storage.FS) (*App, error) {
 	// Discover rela project
 	absDir, err := filepath.Abs(projectDir)
 	if err != nil {
 		return nil, err
 	}
-	projCtx, err := project.DiscoverFS(absDir, fs)
+	projCtx, err := project.Discover(absDir, fs)
 	if err != nil {
 		return nil, fmt.Errorf("discovering project: %w", err)
 	}

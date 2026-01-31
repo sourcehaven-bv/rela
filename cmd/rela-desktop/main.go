@@ -22,7 +22,7 @@ func main() {
 	projectDir := flag.String("project", ".", "Path to the rela project directory")
 	flag.Parse()
 
-	app, err := dataentry.NewAppFS(*projectDir, storage.NewSafeFS(storage.NewOsFS()))
+	app, err := dataentry.NewApp(*projectDir, storage.NewSafeFS(storage.NewOsFS()))
 	if err != nil {
 		log.Fatalf("Failed to initialize: %v", err)
 	}

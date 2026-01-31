@@ -38,7 +38,7 @@ var initCmd = &cobra.Command{
 		}
 
 		// Create directories
-		if err := ctx.InitializeFS(cliFS); err != nil {
+		if err := ctx.Initialize(cliFS); err != nil {
 			return fmt.Errorf("failed to create directories: %w", err)
 		}
 

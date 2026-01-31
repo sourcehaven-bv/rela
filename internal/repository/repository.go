@@ -122,24 +122,24 @@ func (r *Repository) Sync(meta *metamodel.Metamodel, g *graph.Graph) (*markdown.
 
 // SaveCache writes the graph cache to the project's cache file.
 func (r *Repository) SaveCache(g *graph.Graph) error {
-	return g.SaveCacheFS(r.paths.CachePath, r.fs)
+	return g.SaveCache(r.paths.CachePath, r.fs)
 }
 
 // LoadCache reads the graph cache from the project's cache file.
 func (r *Repository) LoadCache(g *graph.Graph) error {
-	return g.LoadCacheFS(r.paths.CachePath, r.fs)
+	return g.LoadCache(r.paths.CachePath, r.fs)
 }
 
 // CacheExists returns true if the graph cache file exists.
 func (r *Repository) CacheExists() bool {
-	return graph.CacheExistsFS(r.paths.CachePath, r.fs)
+	return graph.CacheExists(r.paths.CachePath, r.fs)
 }
 
 // --- Metamodel ---
 
 // LoadMetamodel loads and parses the metamodel from the project's metamodel file.
 func (r *Repository) LoadMetamodel() (*metamodel.Metamodel, error) {
-	return metamodel.LoadFS(r.paths.MetamodelPath, r.fs)
+	return metamodel.Load(r.paths.MetamodelPath, r.fs)
 }
 
 // --- Templates ---

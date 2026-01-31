@@ -150,7 +150,7 @@ func (m *InitModel) initProject(app *App) (tea.Model, tea.Cmd) {
 	}
 
 	// Create directories
-	if err := ctx.InitializeFS(storage.NewOsFS()); err != nil {
+	if err := ctx.Initialize(storage.NewOsFS()); err != nil {
 		m.errorMsg = fmt.Sprintf("Failed to create directories: %v", err)
 		return app, nil
 	}
@@ -175,7 +175,7 @@ func (m *InitModel) initProject(app *App) (tea.Model, tea.Cmd) {
 	}
 
 	// Load the metamodel we just created
-	meta, err := metamodel.LoadFS(metamodelPath, storage.NewOsFS())
+	meta, err := metamodel.Load(metamodelPath, storage.NewOsFS())
 	if err != nil {
 		m.errorMsg = fmt.Sprintf("Failed to load metamodel: %v", err)
 		return app, nil
