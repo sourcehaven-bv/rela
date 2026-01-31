@@ -23,10 +23,11 @@ internal/cli/update.go;22;8
 internal/cli/view.go;3;3
 internal/cli/view_affected.go;62;3
 internal/cli/view_deps.go;2;2
-internal/dataentry/app.go;131;101
-internal/dataentry/handlers.go;776;403
+internal/dataentry/app.go;134;101
+internal/dataentry/handlers.go;779;406
+internal/dataentry/handlers_graph.go;112;109
 internal/dataentry/helpers.go;237;226
-internal/dataentry/router.go;18;0
+internal/dataentry/router.go;20;0
 internal/dataentry/views.go;69;69
 internal/dataentry/watcher.go;46;0
 internal/errors/errors.go;8;8
@@ -86,7 +87,7 @@ internal/tui/help.go;41;0
 internal/tui/init.go;124;0
 internal/tui/link.go;140;0
 internal/tui/metamodel.go;98;0
-internal/tui/search.go;370;293
+internal/tui/search.go;370;294
 internal/tui/searchparser/parser.go;103;94
 internal/tui/templates.go;240;0
 internal/tui/tui.go;250;2
