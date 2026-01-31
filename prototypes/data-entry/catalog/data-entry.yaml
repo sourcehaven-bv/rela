@@ -1,0 +1,299 @@
+version: "1.0"
+
+app:
+  name: "Product Catalog"
+  description: "Inventory and product management"
+
+styles:
+  availability:
+    in-stock: green
+    low-stock: orange
+    out-of-stock: red
+    discontinued: gray
+
+  condition:
+    new: blue
+    refurbished: yellow
+    used: gray
+
+forms:
+  add_product:
+    entity_type: product
+    title: "Add Product"
+    description: "Add a new product to the catalog"
+    body: true
+
+    fields:
+      - property: name
+        label: "Product Name"
+        placeholder: "e.g., Wireless Keyboard MK-500"
+        required: true
+
+      - property: sku
+        label: "SKU"
+        placeholder: "e.g., WK-MK500-BLK"
+        help: "Unique stock keeping unit identifier"
+
+      - property: description
+        label: "Description"
+        widget: textarea
+
+      - property: price
+        label: "Price (cents)"
+        widget: number
+        placeholder: "4999"
+        help: "Price in cents, e.g., 4999 = $49.99"
+
+      - property: availability
+        label: "Availability"
+        default: in-stock
+
+      - property: condition
+        label: "Condition"
+        default: new
+
+      - property: weight_grams
+        label: "Weight (g)"
+        widget: number
+
+      - property: release_date
+        label: "Release Date"
+        widget: date
+
+      - property: featured
+        label: "Featured Product"
+        widget: checkbox
+
+    relations:
+      - relation: made-by
+        direction: outgoing
+        target_type: brand
+        label: "Brand"
+        required: true
+        widget: select
+        allow_create: true
+        create_form: add_brand
+
+      - relation: tagged
+        direction: outgoing
+        target_type: tag
+        label: "Tags"
+        widget: multi-select
+        allow_create: true
+        create_form: add_tag
+
+  edit_product:
+    entity_type: product
+    title: "Edit Product"
+    mode: edit
+    body: true
+
+    fields:
+      - property: name
+        label: "Product Name"
+
+      - property: sku
+        label: "SKU"
+
+      - property: description
+        label: "Description"
+        widget: textarea
+
+      - property: price
+        label: "Price (cents)"
+        widget: number
+
+      - property: availability
+        label: "Availability"
+
+      - property: condition
+        label: "Condition"
+
+      - property: weight_grams
+        label: "Weight (g)"
+        widget: number
+
+      - property: release_date
+        label: "Release Date"
+        widget: date
+
+      - property: featured
+        label: "Featured Product"
+        widget: checkbox
+
+    relations:
+      - relation: made-by
+        direction: outgoing
+        target_type: brand
+        label: "Brand"
+        required: true
+        widget: select
+        allow_create: true
+        create_form: add_brand
+
+      - relation: tagged
+        direction: outgoing
+        target_type: tag
+        label: "Tags"
+        widget: multi-select
+        allow_create: true
+        create_form: add_tag
+
+      - relation: accessory-for
+        direction: outgoing
+        target_type: product
+        label: "Accessory For"
+        widget: search
+
+  add_brand:
+    entity_type: brand
+    title: "Add Brand"
+
+    fields:
+      - property: name
+        label: "Brand Name"
+        required: true
+        placeholder: "e.g., Logitech"
+
+      - property: website
+        label: "Website"
+        placeholder: "https://..."
+
+      - property: country
+        label: "Country"
+        placeholder: "e.g., Switzerland"
+
+  add_tag:
+    entity_type: tag
+    title: "Add Tag"
+
+    fields:
+      - property: name
+        label: "Tag Name"
+        required: true
+        placeholder: "e.g., wireless, ergonomic, gaming"
+
+lists:
+  all_products:
+    entity_type: product
+    title: "All Products"
+    description: "Complete product catalog"
+
+    columns:
+      - property: name
+        label: "Product"
+        sortable: true
+        link: true
+
+      - property: sku
+        label: "SKU"
+        sortable: true
+
+      - property: price
+        label: "Price"
+        sortable: true
+
+      - property: availability
+        label: "Availability"
+        sortable: true
+
+      - property: condition
+        label: "Condition"
+        sortable: true
+
+    sort:
+      property: name
+      direction: asc
+
+    filter_controls:
+      - property: availability
+        widget: select
+      - property: condition
+        widget: select
+
+    create_form: add_product
+    edit_form: edit_product
+    page_size: 50
+
+  in_stock:
+    entity_type: product
+    title: "In Stock"
+
+    columns:
+      - property: name
+        link: true
+        sortable: true
+      - property: sku
+      - property: price
+        sortable: true
+      - property: condition
+
+    filters:
+      - property: availability
+        operator: "="
+        value: in-stock
+
+    sort:
+      property: name
+      direction: asc
+
+    create_form: add_product
+    edit_form: edit_product
+    page_size: 50
+
+  low_stock:
+    entity_type: product
+    title: "Low & Out of Stock"
+
+    columns:
+      - property: name
+        link: true
+        sortable: true
+      - property: sku
+      - property: availability
+        sortable: true
+      - property: price
+
+    filters:
+      - property: availability
+        operator: "!="
+        value: in-stock
+
+    sort:
+      property: availability
+      direction: asc
+
+    edit_form: edit_product
+    page_size: 25
+
+  brands:
+    entity_type: brand
+    title: "Brands"
+
+    columns:
+      - property: name
+        label: "Brand"
+        sortable: true
+        link: true
+      - property: country
+        label: "Country"
+        sortable: true
+      - property: website
+        label: "Website"
+
+    sort:
+      property: name
+      direction: asc
+
+    create_form: add_brand
+    page_size: 50
+
+navigation:
+  - label: "All Products"
+    list: all_products
+  - label: "In Stock"
+    list: in_stock
+  - label: "Low / Out of Stock"
+    list: low_stock
+  - label: "Brands"
+    list: brands

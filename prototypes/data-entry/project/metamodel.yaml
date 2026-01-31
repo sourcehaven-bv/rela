@@ -1,0 +1,78 @@
+version: "1.0"
+
+types:
+  ticket_status:
+    values: [open, in-progress, resolved, closed]
+    default: open
+
+  priority:
+    values: [critical, high, medium, low]
+    default: medium
+
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    properties:
+      title:
+        type: string
+        required: true
+      description:
+        type: string
+      status:
+        type: ticket_status
+        required: true
+      priority:
+        type: priority
+        required: true
+      assignee:
+        type: string
+      reporter:
+        type: string
+        required: true
+      due_date:
+        type: date
+      estimated_hours:
+        type: integer
+      is_blocked:
+        type: boolean
+
+  category:
+    label: Category
+    plural: categories
+    id_type: manual
+    properties:
+      name:
+        type: string
+        required: true
+      description:
+        type: string
+      color:
+        type: string
+
+  label:
+    label: Label
+    id_type: manual
+    properties:
+      name:
+        type: string
+        required: true
+
+relations:
+  belongs-to:
+    label: belongs to
+    from: [ticket]
+    to: [category]
+    inverse: contains
+
+  tagged:
+    label: tagged
+    from: [ticket]
+    to: [label]
+    inverse: appliedTo
+
+  blocks:
+    label: blocks
+    from: [ticket]
+    to: [ticket]
+    inverse: blockedBy

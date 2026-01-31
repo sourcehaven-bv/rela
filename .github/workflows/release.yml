@@ -45,3 +45,80 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  desktop:
+    name: Desktop (${{ matrix.os_name }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            os_name: darwin
+            arch: arm64
+            goarch: arm64
+            ext: ""
+            archive_ext: tar.gz
+            cgo_ldflags: "-framework UniformTypeIdentifiers"
+          - runner: macos-latest
+            os_name: darwin
+            arch: amd64
+            goarch: amd64
+            ext: ""
+            archive_ext: tar.gz
+            cgo_ldflags: "-framework UniformTypeIdentifiers"
+          - runner: ubuntu-latest
+            os_name: linux
+            arch: amd64
+            goarch: amd64
+            ext: ""
+            archive_ext: tar.gz
+            cgo_ldflags: ""
+          - runner: windows-latest
+            os_name: windows
+            arch: amd64
+            goarch: amd64
+            ext: ".exe"
+            archive_ext: zip
+            cgo_ldflags: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Install Linux dependencies
+        if: matrix.os_name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+          CGO_LDFLAGS: ${{ matrix.cgo_ldflags }}
+        run: go build -tags desktop,production -trimpath -ldflags "-s -w" -o rela-desktop${{ matrix.ext }} ./cmd/rela-desktop
+
+      - name: Extract version
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Package (Unix)
+        if: matrix.os_name != 'windows'
+        run: tar czf rela-desktop_${{ steps.version.outputs.version }}_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz rela-desktop
+
+      - name: Package (Windows)
+        if: matrix.os_name == 'windows'
+        shell: pwsh
+        run: Compress-Archive -Path rela-desktop.exe -DestinationPath rela-desktop_${{ steps.version.outputs.version }}_windows_amd64.zip
+
+      - name: Upload to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload ${{ github.ref_name }} rela-desktop_${{ steps.version.outputs.version }}_${{ matrix.os_name }}_${{ matrix.arch }}.${{ matrix.archive_ext }}

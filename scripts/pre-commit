@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Pre-commit hook to check code quality before committing
-# Install with: make install-hooks
+# Install with: just install-hooks
 
 set -e
 
@@ -33,7 +33,7 @@ echo ""
 echo "2️⃣  Running linter..."
 if ! golangci-lint run --timeout=5m; then
     echo -e "${RED}❌ Linter found issues${NC}"
-    echo "Run 'make lint-fix' to auto-fix some issues"
+    echo "Run 'just lint-fix' to auto-fix some issues"
     FAILED=1
 else
     echo -e "${GREEN}✅ Linter passed${NC}"
@@ -44,7 +44,7 @@ echo ""
 echo "3️⃣  Running tests..."
 if ! go test -race -coverprofile=coverage.out -covermode=atomic ./... > /dev/null 2>&1; then
     echo -e "${RED}❌ Tests failed${NC}"
-    echo "Run 'make test' to see details"
+    echo "Run 'just test' to see details"
     FAILED=1
 else
     echo -e "${GREEN}✅ Tests passed${NC}"
@@ -56,7 +56,7 @@ echo "4️⃣  Checking coverage thresholds..."
 if [ -f coverage.out ]; then
     if ! ./scripts/check-coverage.sh coverage.out > /dev/null 2>&1; then
         echo -e "${YELLOW}⚠️  Coverage thresholds not met${NC}"
-        echo "Run 'make coverage-check' to see details"
+        echo "Run 'just coverage-check' to see details"
         echo -e "${YELLOW}Note: This is a warning, commit will proceed${NC}"
         # Don't fail on coverage - just warn
     else

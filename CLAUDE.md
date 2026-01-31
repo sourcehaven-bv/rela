@@ -6,15 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Build
-make build                    # Build binary to bin/rela
+just build                    # Build all binaries (CLI + server + desktop)
+just build-cli                # Build CLI binary to bin/rela
+just build-server             # Build data entry server to bin/rela-server
+just build-desktop            # Build Wails desktop app to bin/rela-desktop
 go build -o rela ./cmd/rela   # Quick build to current directory
 
 # Test
-make test                     # Run tests with race detection
-make test-coverage            # Run tests with coverage report
-make coverage                 # Generate and display coverage report
-make coverage-check           # Check coverage meets minimum thresholds
-make coverage-html            # Generate HTML coverage report
+just test                     # Run tests with race detection
+just test-coverage            # Run tests with coverage report
+just coverage                 # Generate and display coverage report
+just coverage-check           # Check coverage meets minimum thresholds
+just coverage-html            # Generate HTML coverage report
 go test ./...                 # Quick test
 go test -v ./internal/graph/  # Single package with verbose output
 go test -run TestName ./...   # Single test by name
@@ -30,21 +33,28 @@ go test -run TestName ./...   # Single test by name
 # - internal/graph: ≥75.0%
 # - internal/metamodel: ≥65.0%
 # - internal/importer: ≥65.0%
+# - internal/dataentry: ≥60.0%
+# - internal/tui: ≥15.0% (interactive TUI code)
+# - All other tested packages: ≥30.0% (general minimum)
 
 # Lint
-make lint                     # Run golangci-lint
-make lint-fix                 # Auto-fix lint issues
-make fmt                      # Format code (gofmt + goimports)
+just lint                     # Run golangci-lint
+just lint-fix                 # Auto-fix lint issues
+just fmt                      # Format code (gofmt + goimports)
 
 # Fuzz testing
-make fuzz-short               # Quick fuzz tests (5s each)
-make fuzz                     # Full fuzz tests (30s each)
+just fuzz-short               # Quick fuzz tests (5s each)
+just fuzz                     # Full fuzz tests (30s each)
 
 # Git hooks
-make install-hooks            # Install pre-commit hook (runs lint, test, coverage)
+just install-hooks            # Install pre-commit hook (runs lint, test, coverage)
 
 # All checks (CI)
-make ci                       # lint + test + coverage-check + build
+just ci                       # lint + test + coverage-check + build
+
+# Dev server
+just dev                      # Run data entry server (ticketing example on :8080)
+just dev-catalog              # Run catalog example on :8282
 ```
 
 ## Architecture Overview
@@ -66,9 +76,12 @@ relations/*.md → Relation ↗      ↓
 
 | Package              | Purpose                                                 |
 | -------------------- | ------------------------------------------------------- |
-| `cmd/rela`           | Entry point                                             |
+| `cmd/rela`           | CLI entry point                                         |
+| `cmd/rela-server`    | Data entry HTTP server entry point                      |
+| `cmd/rela-desktop`   | Wails desktop app entry point                           |
 | `internal/cli`       | Cobra commands (create, link, analyze, export, etc.)    |
 | `internal/tui`       | Bubbletea TUI screens (browser, detail, search, etc.)   |
+| `internal/dataentry` | Config-driven data entry web app (HTMX, handlers, views)|
 | `internal/model`     | Core types: `Entity`, `Relation`, `Status`              |
 | `internal/graph`     | In-memory graph with adjacency lists, tracing, analysis |
 | `internal/metamodel` | Schema loading, validation, custom types                |
@@ -162,13 +175,13 @@ Valid reasons for `coverage-ignore`:
 
 ```bash
 # Check if your changes meet coverage requirements
-make coverage-check
+just coverage-check
 
 # See detailed coverage report
-make coverage-html
+just coverage-html
 
 # Install pre-commit hook to check before commit
-make install-hooks
+just install-hooks
 ```
 
 ## Lint Configuration
