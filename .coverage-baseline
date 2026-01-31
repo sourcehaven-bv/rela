@@ -87,7 +87,7 @@ internal/tui/help.go;41;0
 internal/tui/init.go;124;0
 internal/tui/link.go;140;0
 internal/tui/metamodel.go;98;0
-internal/tui/search.go;370;294
+internal/tui/search.go;370;293
 internal/tui/searchparser/parser.go;103;94
 internal/tui/templates.go;240;0
 internal/tui/tui.go;250;2
