@@ -9,10 +9,11 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
 
@@ -49,7 +50,8 @@ func TestSearchIntegration(t *testing.T) {
 	}
 
 	g := graph.New()
-	if _, err := markdown.SyncFromFiles(ctx, meta, g); err != nil {
+	testRepo := repository.New(storage.NewOsFS(), ctx)
+	if _, err := testRepo.Sync(meta, g); err != nil {
 		t.Fatalf("Failed to sync entities: %v", err)
 	}
 
@@ -371,7 +373,8 @@ func BenchmarkSearch(b *testing.B) {
 	ctx, _ := project.Discover(projectDir)
 	meta, _ := metamodel.Load(ctx.MetamodelPath)
 	g := graph.New()
-	_, _ = markdown.SyncFromFiles(ctx, meta, g)
+	benchRepo := repository.New(storage.NewOsFS(), ctx)
+	_, _ = benchRepo.Sync(meta, g)
 
 	query := "type:requirement prop:status=published authentication"
 
@@ -406,7 +409,8 @@ func RunManualSearchTests() {
 	}
 
 	g := graph.New()
-	if _, err := markdown.SyncFromFiles(ctx, meta, g); err != nil {
+	manualRepo := repository.New(storage.NewOsFS(), ctx)
+	if _, err := manualRepo.Sync(meta, g); err != nil {
 		fmt.Printf("❌ Failed to sync entities: %v\n", err)
 		return
 	}

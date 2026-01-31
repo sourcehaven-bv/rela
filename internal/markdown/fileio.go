@@ -14,6 +14,3 @@ type FileIO struct {
 func NewFileIO(fs storage.FS) *FileIO {
 	return &FileIO{FS: fs}
 }
-
-// defaultFS is the filesystem used by package-level free functions.
-var defaultFS storage.FS = storage.NewOsFS()

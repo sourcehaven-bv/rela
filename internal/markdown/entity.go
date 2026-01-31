@@ -13,36 +13,6 @@ import (
 )
 
 // ReadEntity reads an entity from a markdown file.
-func ReadEntity(path string, meta *metamodel.Metamodel) (*model.Entity, error) {
-	return NewFileIO(defaultFS).ReadEntity(path, meta)
-}
-
-// WriteEntity writes an entity to a markdown file.
-func WriteEntity(entity *model.Entity, path string) error {
-	return NewFileIO(defaultFS).WriteEntity(entity, path)
-}
-
-// DeleteEntity removes an entity file.
-func DeleteEntity(path string) error {
-	return NewFileIO(defaultFS).DeleteEntity(path)
-}
-
-// ListEntityFiles returns all entity markdown files in the entities directory.
-func ListEntityFiles(entitiesDir string) ([]string, error) {
-	return NewFileIO(defaultFS).ListEntityFiles(entitiesDir)
-}
-
-// LoadAllEntities loads all entities from the entities directory using parallel I/O.
-func LoadAllEntities(entitiesDir string, meta *metamodel.Metamodel) ([]*model.Entity, error) {
-	return NewFileIO(defaultFS).LoadAllEntities(entitiesDir, meta)
-}
-
-// EntityFileModTime returns the modification time of an entity file.
-func EntityFileModTime(path string) (time.Time, error) {
-	return NewFileIO(defaultFS).EntityFileModTime(path)
-}
-
-// ReadEntity reads an entity from a markdown file.
 func (f *FileIO) ReadEntity(path string, meta *metamodel.Metamodel) (*model.Entity, error) {
 	content, err := f.FS.ReadFile(path)
 	if err != nil {

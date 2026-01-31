@@ -12,31 +12,6 @@ import (
 )
 
 // ReadRelation reads a relation from a markdown file.
-func ReadRelation(path string) (*model.Relation, error) {
-	return NewFileIO(defaultFS).ReadRelation(path)
-}
-
-// WriteRelation writes a relation to a markdown file.
-func WriteRelation(relation *model.Relation, path string) error {
-	return NewFileIO(defaultFS).WriteRelation(relation, path)
-}
-
-// DeleteRelation removes a relation file.
-func DeleteRelation(path string) error {
-	return NewFileIO(defaultFS).DeleteRelation(path)
-}
-
-// ListRelationFiles returns all relation markdown files in the relations directory.
-func ListRelationFiles(relationsDir string) ([]string, error) {
-	return NewFileIO(defaultFS).ListRelationFiles(relationsDir)
-}
-
-// LoadAllRelations loads all relations from the relations directory using parallel I/O.
-func LoadAllRelations(relationsDir string) ([]*model.Relation, error) {
-	return NewFileIO(defaultFS).LoadAllRelations(relationsDir)
-}
-
-// ReadRelation reads a relation from a markdown file.
 func (f *FileIO) ReadRelation(path string) (*model.Relation, error) {
 	content, err := f.FS.ReadFile(path)
 	if err != nil {

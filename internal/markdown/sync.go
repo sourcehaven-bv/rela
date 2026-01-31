@@ -14,11 +14,6 @@ type SyncResult struct {
 }
 
 // SyncFromFiles rebuilds the graph from markdown files.
-func SyncFromFiles(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph) (*SyncResult, error) {
-	return NewFileIO(defaultFS).SyncFromFiles(ctx, meta, g)
-}
-
-// SyncFromFiles rebuilds the graph from markdown files.
 func (f *FileIO) SyncFromFiles(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph) (*SyncResult, error) {
 	result := &SyncResult{}
 

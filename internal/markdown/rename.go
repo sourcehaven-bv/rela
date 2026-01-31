@@ -10,17 +10,6 @@ import (
 )
 
 // UpdateEntityType reads an entity file, updates the type field, and writes it back.
-func UpdateEntityType(path, newType string, meta *metamodel.Metamodel) error {
-	return NewFileIO(defaultFS).UpdateEntityType(path, newType, meta)
-}
-
-// UpdateEntityTypesInDir updates the `type` field in all entity markdown files in a directory.
-// Returns the number of files updated and any error encountered.
-func UpdateEntityTypesInDir(dir, newType string, meta *metamodel.Metamodel) (int, error) {
-	return NewFileIO(defaultFS).UpdateEntityTypesInDir(dir, newType, meta)
-}
-
-// UpdateEntityType reads an entity file, updates the type field, and writes it back.
 func (f *FileIO) UpdateEntityType(path, newType string, meta *metamodel.Metamodel) error {
 	entity, err := f.ReadEntity(path, meta)
 	if err != nil {

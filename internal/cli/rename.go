@@ -176,7 +176,7 @@ func applyRenameEntity(info *renameEntityInfo) error {
 	}
 
 	if _, err := cliFS.Stat(info.newDir); err == nil {
-		count, updateErr := markdown.UpdateEntityTypesInDir(info.newDir, info.newType, meta)
+		count, updateErr := markdown.NewFileIO(cliFS).UpdateEntityTypesInDir(info.newDir, info.newType, meta)
 		if updateErr != nil {
 			return fmt.Errorf("failed to update entity files: %w", updateErr)
 		}

@@ -13,40 +13,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
-// LoadEntityTemplate reads an entity template file and returns the parsed document.
-// Returns nil and ErrTemplateNotFound if the template file does not exist.
-func LoadEntityTemplate(ctx *project.Context, entityType string) (*Document, error) {
-	return NewFileIO(defaultFS).LoadEntityTemplate(ctx, entityType)
-}
-
-// LoadRelationTemplate reads a relation template file and returns the parsed document.
-// Returns nil and ErrTemplateNotFound if the template file does not exist.
-func LoadRelationTemplate(ctx *project.Context, relationType string) (*Document, error) {
-	return NewFileIO(defaultFS).LoadRelationTemplate(ctx, relationType)
-}
-
-// GenerateEntityTemplate creates a template file for an entity type.
-// Returns true if the file was created, false if it already existed (and force is false).
-func GenerateEntityTemplate(
-	ctx *project.Context,
-	meta *metamodel.Metamodel,
-	entityType string,
-	force bool,
-) (bool, error) {
-	return NewFileIO(defaultFS).GenerateEntityTemplate(ctx, meta, entityType, force)
-}
-
-// GenerateRelationTemplate creates a template file for a relation type.
-// Returns true if the file was created, false if it already existed (and force is false).
-func GenerateRelationTemplate(
-	ctx *project.Context,
-	meta *metamodel.Metamodel,
-	relationType string,
-	force bool,
-) (bool, error) {
-	return NewFileIO(defaultFS).GenerateRelationTemplate(ctx, meta, relationType, force)
-}
-
 // ErrTemplateNotFound is returned when a template file does not exist.
 var ErrTemplateNotFound = fmt.Errorf("template not found")
 
