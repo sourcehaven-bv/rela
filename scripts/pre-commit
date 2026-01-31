@@ -42,29 +42,12 @@ echo ""
 
 # Check 3: Run tests
 echo "3️⃣  Running tests..."
-if ! go test -race -coverprofile=coverage.out -covermode=atomic ./... > /dev/null 2>&1; then
+if ! go test -race ./... > /dev/null 2>&1; then
     echo -e "${RED}❌ Tests failed${NC}"
     echo "Run 'just test' to see details"
     FAILED=1
 else
     echo -e "${GREEN}✅ Tests passed${NC}"
-fi
-echo ""
-
-# Check 4: Check coverage
-echo "4️⃣  Checking coverage thresholds..."
-if [ -f coverage.out ]; then
-    if ! ./scripts/check-coverage.sh coverage.out > /dev/null 2>&1; then
-        echo -e "${YELLOW}⚠️  Coverage thresholds not met${NC}"
-        echo "Run 'just coverage-check' to see details"
-        echo -e "${YELLOW}Note: This is a warning, commit will proceed${NC}"
-        # Don't fail on coverage - just warn
-    else
-        echo -e "${GREEN}✅ Coverage thresholds met${NC}"
-    fi
-    rm -f coverage.out coverage.txt
-else
-    echo -e "${YELLOW}⚠️  No coverage data found${NC}"
 fi
 echo ""
 
