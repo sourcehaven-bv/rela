@@ -2,7 +2,6 @@ package metamodel
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/migration"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // validTopLevelKeys are the recognized top-level keys in a metamodel YAML file.
@@ -31,13 +31,25 @@ var knownTypos = map[string]string{
 	"validation": "validations",
 }
 
+// defaultMetaFS is the filesystem used by the old free functions.
+var defaultMetaFS storage.FS = storage.NewOsFS()
+
 // Load reads and parses a metamodel from a YAML file.
 // If the metamodel contains an `includes:` key, included files are recursively
 // loaded and merged. Include paths are resolved relative to the directory
 // containing the metamodel file.
 // Returns a MigrationError if the file contains deprecated syntax that needs migration.
 func Load(path string) (*Metamodel, error) {
-	data, err := os.ReadFile(path)
+	return LoadFS(path, defaultMetaFS)
+}
+
+// LoadFS reads and parses a metamodel from a YAML file using the given filesystem.
+// If the metamodel contains an `includes:` key, included files are recursively
+// loaded and merged. Include paths are resolved relative to the directory
+// containing the metamodel file.
+// Returns a MigrationError if the file contains deprecated syntax that needs migration.
+func LoadFS(path string, fs storage.FS) (*Metamodel, error) {
+	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +75,7 @@ func Load(path string) (*Metamodel, error) {
 
 	if len(m.Includes) > 0 {
 		rootDir := filepath.Dir(path)
-		if err := loadWithIncludes(m, path, rootDir); err != nil {
+		if err := loadWithIncludes(m, path, rootDir, fs); err != nil {
 			return nil, err
 		}
 		// Validate the fully merged metamodel

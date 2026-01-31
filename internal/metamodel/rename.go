@@ -2,9 +2,10 @@ package metamodel
 
 import (
 	"fmt"
-	"os"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // RenameEntityType performs an AST-level rename of an entity type in a metamodel YAML file.
@@ -15,7 +16,18 @@ import (
 //   - All references in `relations:` `from:` and `to:` arrays
 //   - All references in `validations:` `entity_type:` fields
 func RenameEntityType(path, oldType, newType string) error {
-	data, err := os.ReadFile(path)
+	return RenameEntityTypeFS(path, oldType, newType, defaultMetaFS)
+}
+
+// RenameEntityTypeFS performs an AST-level rename of an entity type in a metamodel YAML file
+// using the given filesystem. It preserves comments, formatting, and key ordering.
+//
+// Updates:
+//   - The entity key under `entities:`
+//   - All references in `relations:` `from:` and `to:` arrays
+//   - All references in `validations:` `entity_type:` fields
+func RenameEntityTypeFS(path, oldType, newType string, fs storage.FS) error {
+	data, err := fs.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read metamodel: %w", err)
 	}
@@ -84,12 +96,12 @@ func RenameEntityType(path, oldType, newType string) error {
 		return fmt.Errorf("failed to marshal metamodel: %w", err)
 	}
 
-	info, err := os.Stat(path)
+	info, err := fs.Stat(path)
 	if err != nil {
 		return fmt.Errorf("failed to stat metamodel: %w", err)
 	}
 
-	if err := os.WriteFile(path, out, info.Mode()); err != nil {
+	if err := fs.WriteFile(path, out, info.Mode()); err != nil {
 		return fmt.Errorf("failed to write metamodel: %w", err)
 	}
 

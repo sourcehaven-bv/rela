@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // partialMetamodel holds the parsed content of an included file
@@ -34,7 +36,7 @@ type includeState struct {
 // loadWithIncludes loads a metamodel and recursively resolves all includes.
 // rootDir is the project root directory (where the root metamodel.yaml lives).
 // All include paths are resolved relative to rootDir.
-func loadWithIncludes(root *Metamodel, rootPath, rootDir string) error {
+func loadWithIncludes(root *Metamodel, rootPath, rootDir string, fs storage.FS) error {
 	if len(root.Includes) == 0 {
 		return nil
 	}
@@ -52,7 +54,7 @@ func loadWithIncludes(root *Metamodel, rootPath, rootDir string) error {
 	// Collect all partials in depth-first order
 	var partials []*partialMetamodel
 	for _, inc := range root.Includes {
-		collected, err := resolveIncludes(rootDir, inc, rootPath, state, []string{rootPath})
+		collected, err := resolveIncludes(rootDir, inc, rootPath, state, []string{rootPath}, fs)
 		if err != nil {
 			return err
 		}
@@ -74,7 +76,7 @@ func loadWithIncludes(root *Metamodel, rootPath, rootDir string) error {
 // Returns a flat list of partials in depth-first order.
 func resolveIncludes(
 	rootDir, includePath, includedFrom string,
-	state *includeState, chain []string,
+	state *includeState, chain []string, fs storage.FS,
 ) ([]*partialMetamodel, error) {
 	// Resolve path relative to the project root
 	fullPath := filepath.Join(rootDir, includePath)
@@ -97,7 +99,7 @@ func resolveIncludes(
 	}
 
 	// Check file exists
-	data, err := os.ReadFile(fullPath)
+	data, err := fs.ReadFile(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &IncludeNotFoundError{
@@ -130,7 +132,7 @@ func resolveIncludes(
 	var partials []*partialMetamodel
 	newChain := append(chain, includePath) //nolint:gocritic // intentional append to new slice
 	for _, nestedInc := range partial.Includes {
-		collected, err := resolveIncludes(rootDir, nestedInc, includePath, state, newChain)
+		collected, err := resolveIncludes(rootDir, nestedInc, includePath, state, newChain, fs)
 		if err != nil {
 			return nil, err
 		}
