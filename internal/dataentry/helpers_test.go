@@ -341,7 +341,7 @@ func TestSimpleMarkdownToHTML(t *testing.T) {
 		{"italic", "Some *italic* text", "<p>Some <em>italic</em> text</p>"},
 		{"inline code", "Use `code` here", "<p>Use <code>code</code> here</p>"},
 		{"unordered list", "- item one\n- item two", "<ul>\n<li>item one</li>\n<li>item two</li>\n</ul>"},
-		{"ordered list", "1. first\n2. second", "<ol>\n<li>first</li>\n<li>second</li>\n</ul>"},  // Note: implementation uses </ul> for ordered lists too
+		{"ordered list", "1. first\n2. second", "<ol>\n<li>first</li>\n<li>second</li>\n</ol>"},
 		{"code block", "```\nfoo\nbar\n```", "<pre><code>\nfoo\nbar\n</code></pre>"},
 		{
 			"unclosed code block",

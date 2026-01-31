@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -129,7 +130,13 @@ func (a *App) navItems() []NavItem {
 // editFormForType returns the first edit form ID configured for the given entity type,
 // or "" if no edit form is found.
 func (a *App) editFormForType(entityType string) string {
-	for id, f := range a.Cfg.Forms {
+	ids := make([]string, 0, len(a.Cfg.Forms))
+	for id := range a.Cfg.Forms {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		f := a.Cfg.Forms[id]
 		if f.EntityType == entityType && (f.Mode == "edit" || f.Mode == "") {
 			return id
 		}
@@ -141,8 +148,14 @@ func (a *App) editFormForType(entityType string) string {
 // of the given type. It prefers forms with mode "create" or unset, but falls back
 // to edit-mode forms (which work for creation when no entity ID is provided).
 func (a *App) createFormForType(entityType string) string {
+	ids := make([]string, 0, len(a.Cfg.Forms))
+	for id := range a.Cfg.Forms {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	fallback := ""
-	for id, f := range a.Cfg.Forms {
+	for _, id := range ids {
+		f := a.Cfg.Forms[id]
 		if f.EntityType != entityType {
 			continue
 		}

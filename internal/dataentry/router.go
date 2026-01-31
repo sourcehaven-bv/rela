@@ -8,7 +8,10 @@ import (
 // NewRouter returns an http.Handler with all data entry routes registered.
 func (a *App) NewRouter() http.Handler {
 	mux := http.NewServeMux()
-	staticFS, _ := fs.Sub(staticFiles, "static")
+	staticFS, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		panic("embedded static filesystem: " + err.Error())
+	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("/", a.handleIndex)
 	mux.HandleFunc("/dashboard", a.handleDashboard)

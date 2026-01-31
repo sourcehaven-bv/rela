@@ -3,11 +3,13 @@ package dataentry
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	htmltemplate "html/template"
 	"log"
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +63,14 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 				Operator: "=",
 				Value:    val,
 			}})
+		}
+	}
+
+	// Build active filter query params for URL construction
+	var filterParams string
+	for _, fc := range list.FilterControls {
+		if val := r.URL.Query().Get("filter_" + fc.Property); val != "" {
+			filterParams += "&filter_" + url.QueryEscape(fc.Property) + "=" + url.QueryEscape(val)
 		}
 	}
 
@@ -214,7 +224,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 			if sortProp == col.Property && sortDir != "desc" {
 				newDir = "desc"
 			}
-			rc.SortURL = fmt.Sprintf("/list/%s?sort=%s&sort_dir=%s", listID, url.QueryEscape(col.Property), newDir)
+			rc.SortURL = fmt.Sprintf("/list/%s?sort=%s&sort_dir=%s%s", listID, url.QueryEscape(col.Property), newDir, filterParams)
 			rc.IsSorted = sortProp == col.Property
 			rc.SortDir = sortDir
 		}
@@ -229,10 +239,10 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 			sortParams = "&sort=" + url.QueryEscape(sortProp) + "&sort_dir=" + url.QueryEscape(sortDir)
 		}
 		if page > 1 {
-			prevPageURL = fmt.Sprintf("/list/%s?page=%d%s", listID, page-1, sortParams)
+			prevPageURL = fmt.Sprintf("/list/%s?page=%d%s%s", listID, page-1, sortParams, filterParams)
 		}
 		if page < totalPages {
-			nextPageURL = fmt.Sprintf("/list/%s?page=%d%s", listID, page+1, sortParams)
+			nextPageURL = fmt.Sprintf("/list/%s?page=%d%s%s", listID, page+1, sortParams, filterParams)
 		}
 	}
 
@@ -916,6 +926,11 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 		entityID = model.GenerateNextID(a.g.IDsByType(form.EntityType), prefix)
 	}
 
+	if _, exists := a.g.GetNode(entityID); exists {
+		http.Error(w, fmt.Sprintf("Entity %s already exists", entityID), http.StatusConflict)
+		return
+	}
+
 	entity := model.NewEntity(entityID, form.EntityType)
 
 	for _, f := range form.Fields {
@@ -972,7 +987,9 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if linkRelation := r.FormValue("_link_relation"); linkRelation != "" {
 		linkPeer := r.FormValue("_link_peer")
 		linkAs := r.FormValue("_link_as")
-		if linkPeer != "" {
+		_, relOK := a.meta.GetRelationDef(linkRelation)
+		_, peerOK := a.g.GetNode(linkPeer)
+		if linkPeer != "" && (linkAs == "from" || linkAs == "to") && relOK && peerOK {
 			var fromID, toID string
 			if linkAs == "from" {
 				fromID, toID = entityID, linkPeer
@@ -993,7 +1010,7 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Created %s %s", form.EntityType, entityID)
 
 	redirect := "/entity/" + form.EntityType + "/" + entityID
-	if returnTo := r.FormValue("_return_to"); returnTo != "" {
+	if returnTo := r.FormValue("_return_to"); returnTo != "" && strings.HasPrefix(returnTo, "/") {
 		redirect = returnTo
 	}
 	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Created "+entityID))
@@ -1022,10 +1039,19 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	entDef, _ := a.meta.GetEntityDef(form.EntityType)
 	for _, f := range form.Fields {
 		val := r.FormValue(f.Property)
 		if val != "" {
 			entity.Properties[f.Property] = val
+		} else if entDef != nil {
+			prop := entDef.Properties[f.Property]
+			widget := resolveWidget(f.Widget, prop, a.meta)
+			if widget == "checkbox" {
+				entity.Properties[f.Property] = "false"
+			} else {
+				delete(entity.Properties, f.Property)
+			}
 		}
 	}
 
@@ -1072,7 +1098,7 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Updated %s", entityID)
 
 	redirect := "/entity/" + entity.Type + "/" + entityID
-	if returnTo := r.FormValue("_return_to"); returnTo != "" {
+	if returnTo := r.FormValue("_return_to"); returnTo != "" && strings.HasPrefix(returnTo, "/") {
 		redirect = returnTo
 	}
 	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Saved "+entityID))
@@ -1156,6 +1182,13 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 		entityID = model.GenerateNextID(a.g.IDsByType(form.EntityType), prefix)
 	}
 
+	if _, exists := a.g.GetNode(entityID); exists {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Entity with this ID already exists"}) //nolint:errcheck // best-effort JSON response
+		return
+	}
+
 	entity := model.NewEntity(entityID, form.EntityType)
 
 	for _, f := range form.Fields {
@@ -1200,6 +1233,7 @@ func (a *App) handleInlineForm(w http.ResponseWriter, r *http.Request) {
 	entDef, _ := a.meta.GetEntityDef(form.EntityType)
 
 	var sb strings.Builder
+	esc := html.EscapeString
 
 	// Manual ID field
 	if entDef.GetIDType() == metamodel.IDTypeManual {
@@ -1211,7 +1245,7 @@ func (a *App) handleInlineForm(w http.ResponseWriter, r *http.Request) {
 
 	for _, f := range form.Fields {
 		if f.Hidden {
-			sb.WriteString(fmt.Sprintf(`<input type="hidden" name="%s" value="%s">`, f.Property, f.Default))
+			sb.WriteString(fmt.Sprintf(`<input type="hidden" name="%s" value="%s">`, esc(f.Property), esc(f.Default)))
 			continue
 		}
 		prop := entDef.Properties[f.Property]
@@ -1230,32 +1264,32 @@ func (a *App) handleInlineForm(w http.ResponseWriter, r *http.Request) {
 
 		switch {
 		case widget == "checkbox":
-			sb.WriteString(fmt.Sprintf(`<div class="form-row-checkbox"><input type="checkbox" name="%s" value="true" id="ic-%s"><label for="ic-%s">%s</label></div>`, f.Property, f.Property, f.Property, label))
+			sb.WriteString(fmt.Sprintf(`<div class="form-row-checkbox"><input type="checkbox" name="%s" value="true" id="ic-%s"><label for="ic-%s">%s</label></div>`, esc(f.Property), esc(f.Property), esc(f.Property), esc(label)))
 		case widget == "textarea":
-			sb.WriteString(fmt.Sprintf(`<label for="ic-%s">%s%s</label>`, f.Property, label, reqMark))
-			sb.WriteString(fmt.Sprintf(`<textarea name="%s" id="ic-%s" placeholder="%s" style="min-height:60px;"></textarea>`, f.Property, f.Property, f.Placeholder))
+			sb.WriteString(fmt.Sprintf(`<label for="ic-%s">%s%s</label>`, esc(f.Property), esc(label), reqMark))
+			sb.WriteString(fmt.Sprintf(`<textarea name="%s" id="ic-%s" placeholder="%s" style="min-height:60px;"></textarea>`, esc(f.Property), esc(f.Property), esc(f.Placeholder)))
 		case widget == "select" || widget == "multi-select":
-			sb.WriteString(fmt.Sprintf(`<label for="ic-%s">%s%s</label>`, f.Property, label, reqMark))
+			sb.WriteString(fmt.Sprintf(`<label for="ic-%s">%s%s</label>`, esc(f.Property), esc(label), reqMark))
 			vals := resolvePropertyValues(prop, a.meta)
 			defaultVal := coalesce(f.Default, prop.Default)
-			sb.WriteString(fmt.Sprintf(`<select name="%s" id="ic-%s">`, f.Property, f.Property))
+			sb.WriteString(fmt.Sprintf(`<select name="%s" id="ic-%s">`, esc(f.Property), esc(f.Property)))
 			sb.WriteString(`<option value="">Select...</option>`)
 			for _, v := range vals {
 				sel := ""
 				if v == defaultVal {
 					sel = " selected"
 				}
-				sb.WriteString(fmt.Sprintf(`<option value="%s"%s>%s</option>`, v, sel, v))
+				sb.WriteString(fmt.Sprintf(`<option value="%s"%s>%s</option>`, esc(v), sel, esc(v)))
 			}
 			sb.WriteString(`</select>`)
 		default:
 			inputType := widgetToInputType(widget)
-			sb.WriteString(fmt.Sprintf(`<label for="ic-%s">%s%s</label>`, f.Property, label, reqMark))
+			sb.WriteString(fmt.Sprintf(`<label for="ic-%s">%s%s</label>`, esc(f.Property), esc(label), reqMark))
 			reqAttr := ""
 			if required {
 				reqAttr = " required"
 			}
-			sb.WriteString(fmt.Sprintf(`<input type="%s" name="%s" id="ic-%s" placeholder="%s"%s>`, inputType, f.Property, f.Property, f.Placeholder, reqAttr))
+			sb.WriteString(fmt.Sprintf(`<input type="%s" name="%s" id="ic-%s" placeholder="%s"%s>`, inputType, esc(f.Property), esc(f.Property), esc(f.Placeholder), reqAttr))
 		}
 
 		sb.WriteString(`</div>`)
@@ -1299,11 +1333,17 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 			entDef, _ := a.meta.GetEntityDef(e.Type)
 			if entDef != nil {
+				propNames := make([]string, 0, len(entDef.Properties))
+				for pn := range entDef.Properties {
+					propNames = append(propNames, pn)
+				}
+				sort.Strings(propNames)
 				count := 0
-				for propName, propDef := range entDef.Properties {
+				for _, propName := range propNames {
 					if count >= 3 {
 						break
 					}
+					propDef := entDef.Properties[propName]
 					if v := e.Properties[propName]; v != nil {
 						val := fmt.Sprintf("%v", v)
 						if val != "" {

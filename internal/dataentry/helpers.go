@@ -178,7 +178,7 @@ func simpleMarkdownToHTML(md string) template.HTML {
 	lines := strings.Split(md, "\n")
 	var out []string
 	inCodeBlock := false
-	inList := false
+	listTag := "" // "", "ul", or "ol"
 	paragraph := make([]string, 0, len(lines))
 
 	flushParagraph := func() {
@@ -187,6 +187,13 @@ func simpleMarkdownToHTML(md string) template.HTML {
 			text = inlineFormat(text)
 			out = append(out, "<p>"+text+"</p>")
 			paragraph = nil
+		}
+	}
+
+	closeList := func() {
+		if listTag != "" {
+			out = append(out, "</"+listTag+">")
+			listTag = ""
 		}
 	}
 
@@ -200,10 +207,7 @@ func simpleMarkdownToHTML(md string) template.HTML {
 				inCodeBlock = false
 			} else {
 				flushParagraph()
-				if inList {
-					out = append(out, "</ul>")
-					inList = false
-				}
+				closeList()
 				out = append(out, "<pre><code>")
 				inCodeBlock = true
 			}
@@ -217,10 +221,7 @@ func simpleMarkdownToHTML(md string) template.HTML {
 		// Empty line
 		if trimmed == "" {
 			flushParagraph()
-			if inList {
-				out = append(out, "</ul>")
-				inList = false
-			}
+			closeList()
 			continue
 		}
 
@@ -244,9 +245,12 @@ func simpleMarkdownToHTML(md string) template.HTML {
 		// Unordered list
 		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
 			flushParagraph()
-			if !inList {
+			if listTag != "" && listTag != "ul" {
+				closeList()
+			}
+			if listTag == "" {
 				out = append(out, "<ul>")
-				inList = true
+				listTag = "ul"
 			}
 			out = append(out, "<li>"+inlineFormat(trimmed[2:])+"</li>")
 			continue
@@ -256,9 +260,12 @@ func simpleMarkdownToHTML(md string) template.HTML {
 		if len(trimmed) > 2 && trimmed[0] >= '0' && trimmed[0] <= '9' {
 			if idx := strings.Index(trimmed, ". "); idx > 0 && idx < 4 {
 				flushParagraph()
-				if !inList {
+				if listTag != "" && listTag != "ol" {
+					closeList()
+				}
+				if listTag == "" {
 					out = append(out, "<ol>")
-					inList = true
+					listTag = "ol"
 				}
 				out = append(out, "<li>"+inlineFormat(trimmed[idx+2:])+"</li>")
 				continue
@@ -266,17 +273,12 @@ func simpleMarkdownToHTML(md string) template.HTML {
 		}
 
 		// Regular text
-		if inList {
-			out = append(out, "</ul>")
-			inList = false
-		}
+		closeList()
 		paragraph = append(paragraph, trimmed)
 	}
 
 	flushParagraph()
-	if inList {
-		out = append(out, "</ul>")
-	}
+	closeList()
 	if inCodeBlock {
 		out = append(out, "</code></pre>")
 	}
