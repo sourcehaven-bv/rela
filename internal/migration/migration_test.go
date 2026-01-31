@@ -7,7 +7,11 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
+
+var testMigrationFS = storage.NewOsFS()
 
 func TestIDTypeRenameMigration_Detect(t *testing.T) {
 	tests := []struct {
@@ -265,7 +269,7 @@ entities:
 		t.Fatalf("failed to write temp file: %v", err)
 	}
 
-	detections, err := Detect(tmpFile, FileTypeMetamodel)
+	detections, err := DetectFS(tmpFile, FileTypeMetamodel, testMigrationFS)
 	if err != nil {
 		t.Fatalf("Detect() error = %v", err)
 	}
@@ -297,7 +301,7 @@ entities:
 		t.Fatalf("failed to write temp file: %v", err)
 	}
 
-	result, err := Apply(tmpFile, FileTypeMetamodel)
+	result, err := ApplyFS(tmpFile, FileTypeMetamodel, testMigrationFS)
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
@@ -350,7 +354,7 @@ entities:
 		t.Fatalf("failed to write temp file: %v", err)
 	}
 
-	result, err := CheckOnly(tmpFile, FileTypeMetamodel)
+	result, err := CheckOnlyFS(tmpFile, FileTypeMetamodel, testMigrationFS)
 	if err != nil {
 		t.Fatalf("CheckOnly() error = %v", err)
 	}

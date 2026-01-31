@@ -33,27 +33,6 @@ type FileResult struct {
 	Error      error
 }
 
-// defaultMigrationFS is the filesystem used by the old free functions.
-var defaultMigrationFS storage.FS = storage.NewOsFS()
-
-// Detect checks a YAML file for migrations that need to be applied.
-// Returns a list of migrations that detected deprecated patterns.
-func Detect(path string, ft FileType) ([]DetectionResult, error) {
-	return DetectFS(path, ft, defaultMigrationFS)
-}
-
-// Apply runs all applicable migrations on a file.
-// Returns results for each migration attempted.
-func Apply(path string, ft FileType) (*FileResult, error) {
-	return ApplyFS(path, ft, defaultMigrationFS)
-}
-
-// CheckOnly runs detection without applying changes.
-// Useful for CI or pre-flight checks.
-func CheckOnly(path string, ft FileType) (*FileResult, error) {
-	return CheckOnlyFS(path, ft, defaultMigrationFS)
-}
-
 // DetectFS checks a YAML file for migrations that need to be applied
 // using the given filesystem.
 func DetectFS(path string, ft FileType, fs storage.FS) ([]DetectionResult, error) {

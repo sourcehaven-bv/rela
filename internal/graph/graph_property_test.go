@@ -386,13 +386,13 @@ func TestPropertyIndexCacheSurvival(t *testing.T) {
 
 			// Save and reload from cache
 			tmpFile := t.TempDir() + "/cache.json"
-			if err := g.SaveCache(tmpFile); err != nil {
+			if err := g.SaveCacheFS(tmpFile, testCacheFS); err != nil {
 				t.Logf("Failed to save cache: %v", err)
 				return false
 			}
 
 			g2 := New()
-			if err := g2.LoadCache(tmpFile); err != nil {
+			if err := g2.LoadCacheFS(tmpFile, testCacheFS); err != nil {
 				t.Logf("Failed to load cache: %v", err)
 				return false
 			}

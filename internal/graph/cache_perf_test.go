@@ -6,7 +6,10 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
+
+var testCacheFS = storage.NewOsFS()
 
 // BenchmarkSaveCache benchmarks saving the graph to cache
 func BenchmarkSaveCache(b *testing.B) {
@@ -20,7 +23,7 @@ func BenchmarkSaveCache(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				err := g.SaveCache(cachePath)
+				err := g.SaveCacheFS(cachePath, testCacheFS)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -38,7 +41,7 @@ func BenchmarkLoadCache(b *testing.B) {
 			tmpDir := b.TempDir()
 			cachePath := filepath.Join(tmpDir, "cache.json")
 
-			if err := g.SaveCache(cachePath); err != nil {
+			if err := g.SaveCacheFS(cachePath, testCacheFS); err != nil {
 				b.Fatal(err)
 			}
 
@@ -47,7 +50,7 @@ func BenchmarkLoadCache(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				newGraph := New()
-				err := newGraph.LoadCache(cachePath)
+				err := newGraph.LoadCacheFS(cachePath, testCacheFS)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -65,7 +68,7 @@ func BenchmarkSaveCacheVsSyncFromFiles(b *testing.B) {
 			tmpDir := b.TempDir()
 			cachePath := filepath.Join(tmpDir, "cache.json")
 
-			if err := g.SaveCache(cachePath); err != nil {
+			if err := g.SaveCacheFS(cachePath, testCacheFS); err != nil {
 				b.Fatal(err)
 			}
 
@@ -74,7 +77,7 @@ func BenchmarkSaveCacheVsSyncFromFiles(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				newGraph := New()
-				_ = newGraph.LoadCache(cachePath)
+				_ = newGraph.LoadCacheFS(cachePath, testCacheFS)
 			}
 		})
 	}
@@ -109,9 +112,9 @@ func BenchmarkCacheWithLargeProperties(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				_ = g.SaveCache(cachePath)
+				_ = g.SaveCacheFS(cachePath, testCacheFS)
 				newGraph := New()
-				_ = newGraph.LoadCache(cachePath)
+				_ = newGraph.LoadCacheFS(cachePath, testCacheFS)
 			}
 		})
 	}
@@ -143,7 +146,7 @@ func BenchmarkCacheRebuildAdjacency(b *testing.B) {
 			tmpDir := b.TempDir()
 			cachePath := filepath.Join(tmpDir, "cache.json")
 
-			if err := g.SaveCache(cachePath); err != nil {
+			if err := g.SaveCacheFS(cachePath, testCacheFS); err != nil {
 				b.Fatal(err)
 			}
 
@@ -152,7 +155,7 @@ func BenchmarkCacheRebuildAdjacency(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				newGraph := New()
-				_ = newGraph.LoadCache(cachePath)
+				_ = newGraph.LoadCacheFS(cachePath, testCacheFS)
 			}
 		})
 	}

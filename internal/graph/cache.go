@@ -19,29 +19,6 @@ type CacheData struct {
 
 const CacheVersion = "1.0"
 
-// defaultCacheFS is the filesystem used by the old free functions.
-var defaultCacheFS storage.FS = storage.NewOsFS()
-
-// SaveCache saves the graph to a JSON cache file.
-func (g *Graph) SaveCache(path string) error {
-	return g.SaveCacheFS(path, defaultCacheFS)
-}
-
-// LoadCache loads the graph from a JSON cache file.
-func (g *Graph) LoadCache(path string) error {
-	return g.LoadCacheFS(path, defaultCacheFS)
-}
-
-// CacheExists checks if a cache file exists.
-func CacheExists(path string) bool {
-	return CacheExistsFS(path, defaultCacheFS)
-}
-
-// CacheTimestamp returns the timestamp of the cache file.
-func CacheTimestamp(path string) (time.Time, error) {
-	return CacheTimestampFS(path, defaultCacheFS)
-}
-
 // SaveCacheFS saves the graph to a JSON cache file using the given filesystem.
 func (g *Graph) SaveCacheFS(path string, fs storage.FS) error {
 	g.mu.RLock()

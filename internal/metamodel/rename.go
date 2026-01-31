@@ -8,17 +8,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-// RenameEntityType performs an AST-level rename of an entity type in a metamodel YAML file.
-// It preserves comments, formatting, and key ordering.
-//
-// Updates:
-//   - The entity key under `entities:`
-//   - All references in `relations:` `from:` and `to:` arrays
-//   - All references in `validations:` `entity_type:` fields
-func RenameEntityType(path, oldType, newType string) error {
-	return RenameEntityTypeFS(path, oldType, newType, defaultMetaFS)
-}
-
 // RenameEntityTypeFS performs an AST-level rename of an entity type in a metamodel YAML file
 // using the given filesystem. It preserves comments, formatting, and key ordering.
 //

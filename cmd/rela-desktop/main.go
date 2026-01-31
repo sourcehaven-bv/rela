@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // coverage-ignore: main function - entry point
@@ -21,7 +22,7 @@ func main() {
 	projectDir := flag.String("project", ".", "Path to the rela project directory")
 	flag.Parse()
 
-	app, err := dataentry.NewApp(*projectDir)
+	app, err := dataentry.NewAppFS(*projectDir, storage.NewSafeFS(storage.NewOsFS()))
 	if err != nil {
 		log.Fatalf("Failed to initialize: %v", err)
 	}

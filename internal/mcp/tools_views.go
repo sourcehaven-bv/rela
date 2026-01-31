@@ -100,5 +100,5 @@ func (s *Server) handleExecuteView(
 
 func (s *Server) loadViews() (*views.File, error) {
 	viewsPath := filepath.Join(s.projectCtx.Root, "views.yaml")
-	return views.Load(viewsPath)
+	return views.LoadFS(viewsPath, s.repo.FS())
 }

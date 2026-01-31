@@ -36,15 +36,6 @@ type App struct {
 	styledTypes map[string]bool
 }
 
-// defaultAppFS is the filesystem used by NewApp.
-var defaultAppFS storage.FS = storage.NewOsFS()
-
-// NewApp creates and initializes an App from a project directory.
-// It discovers the rela project and loads data-entry.yaml from the project root.
-func NewApp(projectDir string) (*App, error) {
-	return NewAppFS(projectDir, defaultAppFS)
-}
-
 // NewAppFS creates and initializes an App using the given filesystem.
 func NewAppFS(projectDir string, fs storage.FS) (*App, error) {
 	// Discover rela project
@@ -52,7 +43,7 @@ func NewAppFS(projectDir string, fs storage.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	projCtx, err := project.Discover(absDir)
+	projCtx, err := project.DiscoverFS(absDir, fs)
 	if err != nil {
 		return nil, fmt.Errorf("discovering project: %w", err)
 	}

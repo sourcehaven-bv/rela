@@ -27,7 +27,7 @@ Examples:
 
 		// Load views file
 		viewsPath := filepath.Join(projectCtx.Root, "views.yaml")
-		viewsFile, err := views.Load(viewsPath)
+		viewsFile, err := views.LoadFS(viewsPath, cliFS)
 		if err != nil {
 			return fmt.Errorf("failed to load views file: %w", err)
 		}

@@ -9,14 +9,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-// defaultViewsFS is the filesystem used by the old free functions.
-var defaultViewsFS storage.FS = storage.NewOsFS()
-
-// Load reads and parses a views file from a YAML file
-func Load(path string) (*File, error) {
-	return LoadFS(path, defaultViewsFS)
-}
-
 // LoadFS reads and parses a views file from a YAML file using the given filesystem.
 func LoadFS(path string, fs storage.FS) (*File, error) {
 	// Check if file exists

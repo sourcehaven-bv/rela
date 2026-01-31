@@ -31,18 +31,6 @@ var knownTypos = map[string]string{
 	"validation": "validations",
 }
 
-// defaultMetaFS is the filesystem used by the old free functions.
-var defaultMetaFS storage.FS = storage.NewOsFS()
-
-// Load reads and parses a metamodel from a YAML file.
-// If the metamodel contains an `includes:` key, included files are recursively
-// loaded and merged. Include paths are resolved relative to the directory
-// containing the metamodel file.
-// Returns a MigrationError if the file contains deprecated syntax that needs migration.
-func Load(path string) (*Metamodel, error) {
-	return LoadFS(path, defaultMetaFS)
-}
-
 // LoadFS reads and parses a metamodel from a YAML file using the given filesystem.
 // If the metamodel contains an `includes:` key, included files are recursively
 // loaded and merged. Include paths are resolved relative to the directory

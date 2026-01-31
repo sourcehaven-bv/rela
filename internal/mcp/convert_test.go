@@ -14,6 +14,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // makeToolRequest creates a CallToolRequest with the given arguments.
@@ -860,10 +862,12 @@ func makeTestServerWithViews(t *testing.T, viewsYAML string) *Server {
 			t.Fatalf("failed to write views.yaml: %v", err)
 		}
 	}
+	testFS := storage.NewOsFS()
 	return &Server{
 		projectCtx: &project.Context{Root: tmpDir},
 		graph:      graph.New(),
 		meta:       &metamodel.Metamodel{},
+		repo:       repository.New(testFS, &project.Context{Root: tmpDir}),
 	}
 }
 

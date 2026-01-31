@@ -31,15 +31,6 @@ type Context struct {
 	RelationTemplatesDir string // Path to templates/relations directory
 }
 
-// defaultProjectFS is the filesystem used by the old free functions.
-var defaultProjectFS storage.FS = storage.NewOsFS()
-
-// Discover finds the project root by searching for metamodel.yaml
-// It starts from the given directory and walks up the tree
-func Discover(startDir string) (*Context, error) {
-	return DiscoverFS(startDir, defaultProjectFS)
-}
-
 // DiscoverFS finds the project root by searching for metamodel.yaml
 // using the given filesystem.
 // It starts from the given directory and walks up the tree.
@@ -97,11 +88,6 @@ func newContext(root string) *Context {
 	}
 }
 
-// Initialize creates the project structure
-func (c *Context) Initialize() error {
-	return c.InitializeFS(defaultProjectFS)
-}
-
 // InitializeFS creates the project structure using the given filesystem.
 func (c *Context) InitializeFS(fs storage.FS) error {
 	// Create .rela directory
@@ -147,11 +133,6 @@ func (c *Context) EntityFilePathWithPlural(plural, id string) string {
 func (c *Context) RelationFilePath(from, relationType, to string) string {
 	filename := from + "--" + relationType + "--" + to + ".md"
 	return filepath.Join(c.RelationsDir, filename)
-}
-
-// Exists checks if the project has been initialized
-func (c *Context) Exists() bool {
-	return c.ExistsFS(defaultProjectFS)
 }
 
 // ExistsFS checks if the project has been initialized using the given filesystem.

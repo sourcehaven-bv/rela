@@ -32,7 +32,7 @@ Keyboard shortcuts:
   Esc - Go back`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Try to discover project
-		ctx, err := project.Discover("")
+		ctx, err := project.DiscoverFS("", cliFS)
 		if err != nil {
 			// No project found - launch TUI in init mode
 			cwd, cwdErr := os.Getwd()
