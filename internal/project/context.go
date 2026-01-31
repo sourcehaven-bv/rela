@@ -1,10 +1,10 @@
 package project
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/errors"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 const (
@@ -31,12 +31,22 @@ type Context struct {
 	RelationTemplatesDir string // Path to templates/relations directory
 }
 
+// defaultProjectFS is the filesystem used by the old free functions.
+var defaultProjectFS storage.FS = storage.NewOsFS()
+
 // Discover finds the project root by searching for metamodel.yaml
 // It starts from the given directory and walks up the tree
 func Discover(startDir string) (*Context, error) {
+	return DiscoverFS(startDir, defaultProjectFS)
+}
+
+// DiscoverFS finds the project root by searching for metamodel.yaml
+// using the given filesystem.
+// It starts from the given directory and walks up the tree.
+func DiscoverFS(startDir string, fs storage.FS) (*Context, error) {
 	if startDir == "" {
 		var err error
-		startDir, err = os.Getwd()
+		startDir, err = fs.Getwd()
 		if err != nil {
 			return nil, err
 		}
@@ -52,13 +62,13 @@ func Discover(startDir string) (*Context, error) {
 	dir := startDir
 	for {
 		metamodelPath := filepath.Join(dir, MetamodelFile)
-		if _, err := os.Stat(metamodelPath); err == nil {
+		if _, err := fs.Stat(metamodelPath); err == nil {
 			return newContext(dir), nil
 		}
 
 		// Also check for .rela directory (legacy/alternative marker)
 		relaDir := filepath.Join(dir, CacheDir)
-		if info, err := os.Stat(relaDir); err == nil && info.IsDir() {
+		if info, err := fs.Stat(relaDir); err == nil && info.IsDir() {
 			return newContext(dir), nil
 		}
 
@@ -89,18 +99,23 @@ func newContext(root string) *Context {
 
 // Initialize creates the project structure
 func (c *Context) Initialize() error {
+	return c.InitializeFS(defaultProjectFS)
+}
+
+// InitializeFS creates the project structure using the given filesystem.
+func (c *Context) InitializeFS(fs storage.FS) error {
 	// Create .rela directory
-	if err := os.MkdirAll(c.CacheDir, 0755); err != nil {
+	if err := fs.MkdirAll(c.CacheDir, 0755); err != nil {
 		return err
 	}
 
 	// Create entities directory
-	if err := os.MkdirAll(c.EntitiesDir, 0755); err != nil {
+	if err := fs.MkdirAll(c.EntitiesDir, 0755); err != nil {
 		return err
 	}
 
 	// Create relations directory
-	return os.MkdirAll(c.RelationsDir, 0755)
+	return fs.MkdirAll(c.RelationsDir, 0755)
 }
 
 // EntityTypeDir returns the directory for a given entity type (pluralized)
@@ -136,7 +151,12 @@ func (c *Context) RelationFilePath(from, relationType, to string) string {
 
 // Exists checks if the project has been initialized
 func (c *Context) Exists() bool {
-	_, err := os.Stat(c.MetamodelPath)
+	return c.ExistsFS(defaultProjectFS)
+}
+
+// ExistsFS checks if the project has been initialized using the given filesystem.
+func (c *Context) ExistsFS(fs storage.FS) bool {
+	_, err := fs.Stat(c.MetamodelPath)
 	return err == nil
 }
 
