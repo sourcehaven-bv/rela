@@ -186,6 +186,7 @@ linters-settings:
       - rela       # Project name
       - analyses   # Valid plural of analysis
       - cancelled  # British spelling is acceptable
+      - eles       # Cytoscape.js API parameter (elements)
 
   nakedret:
     max-func-lines: 30

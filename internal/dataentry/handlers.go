@@ -32,6 +32,10 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 			a.handleDashboard(w, r)
 			return
 		}
+		if first.Graph {
+			http.Redirect(w, r, "/graph", http.StatusFound)
+			return
+		}
 		// Rewrite path so handleList picks up the first navigation list.
 		// This avoids an HTTP redirect which Wails AssetServer does not follow.
 		r.URL.Path = "/list/" + first.List

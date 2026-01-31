@@ -114,6 +114,7 @@ type NavigationEntry struct {
 	Label     string `yaml:"label"`
 	List      string `yaml:"list,omitempty"`
 	Dashboard bool   `yaml:"dashboard,omitempty"`
+	Graph     bool   `yaml:"graph,omitempty"`
 }
 
 // DashboardConfig defines a dashboard page with query-driven cards.
