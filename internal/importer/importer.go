@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // Format represents an import file format
@@ -89,21 +89,31 @@ type RelationData struct {
 	Properties map[string]interface{} `json:"properties,omitempty" yaml:"properties,omitempty"`
 }
 
+// defaultImporterFS is the filesystem used by the old free functions.
+var defaultImporterFS storage.FS = storage.NewOsFS()
+
 // Importer handles importing data into a rela project
 type Importer struct {
 	ctx  *project.Context
 	meta *metamodel.Metamodel
 	g    *graph.Graph
 	opts Options
+	fs   storage.FS
 }
 
 // New creates a new Importer
 func New(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph, opts Options) *Importer {
+	return NewFS(ctx, meta, g, opts, defaultImporterFS)
+}
+
+// NewFS creates a new Importer using the given filesystem.
+func NewFS(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph, opts Options, fs storage.FS) *Importer {
 	return &Importer{
 		ctx:  ctx,
 		meta: meta,
 		g:    g,
 		opts: opts,
+		fs:   fs,
 	}
 }
 
@@ -117,7 +127,7 @@ func (imp *Importer) ImportFile(path string) (*Result, error) {
 		}
 	}
 
-	file, err := os.Open(path)
+	file, err := imp.fs.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
@@ -598,7 +608,7 @@ func parseCSV(r io.Reader) (*ImportData, error) {
 
 // parseRelationsCSV parses a relations CSV file
 func (imp *Importer) parseRelationsCSV(path string) ([]RelationData, error) {
-	file, err := os.Open(path)
+	file, err := imp.fs.Open(path)
 	if err != nil {
 		return nil, err
 	}

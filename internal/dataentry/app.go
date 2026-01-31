@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -36,9 +36,17 @@ type App struct {
 	styledTypes map[string]bool
 }
 
+// defaultAppFS is the filesystem used by NewApp.
+var defaultAppFS storage.FS = storage.NewOsFS()
+
 // NewApp creates and initializes an App from a project directory.
 // It discovers the rela project and loads data-entry.yaml from the project root.
 func NewApp(projectDir string) (*App, error) {
+	return NewAppFS(projectDir, defaultAppFS)
+}
+
+// NewAppFS creates and initializes an App using the given filesystem.
+func NewAppFS(projectDir string, fs storage.FS) (*App, error) {
 	// Discover rela project
 	absDir, err := filepath.Abs(projectDir)
 	if err != nil {
@@ -51,7 +59,7 @@ func NewApp(projectDir string) (*App, error) {
 
 	// Load data-entry config from project root
 	configPath := filepath.Join(projCtx.Root, ConfigFile)
-	cfgData, err := os.ReadFile(configPath)
+	cfgData, err := fs.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
