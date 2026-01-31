@@ -22,3 +22,6 @@ tickets/
 other-ci.yml
 .claude/
 .ignored/
+
+# Icon generation temp files
+build/package/.icon-tmp/
