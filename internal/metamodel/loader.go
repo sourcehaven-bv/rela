@@ -55,7 +55,7 @@ func LoadFS(path string, fs storage.FS) (*Metamodel, error) {
 	}
 
 	// Check for deprecated syntax that needs migration
-	detections, err := migration.Detect(path, migration.FileTypeMetamodel)
+	detections, err := migration.DetectFS(path, migration.FileTypeMetamodel, fs)
 	if err != nil {
 		return nil, err
 	}
