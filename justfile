@@ -58,10 +58,10 @@ coverage: test-coverage
     @echo "Generating coverage report..."
     go tool cover -func=coverage.out
 
-# Check coverage meets minimum thresholds
+# Check coverage meets minimum thresholds (uses go-test-coverage with ratchet baseline)
 coverage-check: test-coverage
     @echo "Checking coverage thresholds..."
-    ./scripts/check-coverage.sh
+    go-test-coverage --config=.testcoverage.yml
 
 # Generate HTML coverage report
 coverage-html: test-coverage
@@ -153,6 +153,8 @@ install-tools:
     @curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin {{golangci_lint_version}}
     @echo "Installing goimports..."
     go install golang.org/x/tools/cmd/goimports@latest
+    @echo "Installing go-test-coverage..."
+    go install github.com/vladopajic/go-test-coverage/v2@latest
     @echo "Done!"
 
 # Install git hooks

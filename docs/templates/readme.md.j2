@@ -74,7 +74,7 @@ go build -o rela ./cmd/rela
 
 | Tutorial | Description |
 | -------- | ----------- |
-{% for doc in query("docs-project/entities/tutorial/", type="tutorial") -%}
+{% for doc in query("docs-project/entities/tutorial/", type="tutorial") | sort(attribute="meta.id") -%}
 | [{{ doc.meta.title }}](docs/tutorials/{{ doc.meta.id | replace("TUT-", "") }}.md) | {{ doc.meta.summary }} |
 {% endfor %}
 
@@ -82,7 +82,7 @@ go build -o rela ./cmd/rela
 
 | Scenario | Description |
 | -------- | ----------- |
-{% for doc in query("docs-project/entities/scenario/", type="scenario") -%}
+{% for doc in query("docs-project/entities/scenario/", type="scenario") | sort(attribute="meta.id") -%}
 | [{{ doc.meta.title }}](docs/scenarios/{{ doc.meta.id | replace("SCN-", "") }}.md) | {{ doc.meta.summary }} |
 {% endfor %}
 

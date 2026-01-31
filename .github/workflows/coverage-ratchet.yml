@@ -1,0 +1,45 @@
+name: Coverage Ratchet
+
+# After a PR merges, regenerate the coverage baseline and commit if it improved.
+on:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: write
+
+jobs:
+  update-baseline:
+    name: Update Coverage Baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests with coverage
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Install go-test-coverage
+        run: go install github.com/vladopajic/go-test-coverage/v2@latest
+
+      - name: Generate new coverage baseline
+        run: go-test-coverage --config=.testcoverage.yml --breakdown-file-name=.coverage-baseline
+
+      - name: Commit updated baseline
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .coverage-baseline
+          if git diff --cached --quiet; then
+            echo "No coverage baseline changes to commit"
+          else
+            git commit -m "chore: update coverage baseline [skip ci]"
+            git push
+          fi

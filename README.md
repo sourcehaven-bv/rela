@@ -77,16 +77,16 @@ go build -o rela ./cmd/rela
 
 | Tutorial | Description |
 | -------- | ----------- |
-| [Tutorial: Hybrid Project Management with Rela](docs/tutorials/project-management-tutorial.md) | Build a hybrid project management system |
 | [Tutorial: Building an ISO 27001 ISMS with Rela](docs/tutorials/iso27001-isms-tutorial.md) | Build a complete Information Security Management System |
+| [Tutorial: Hybrid Project Management with Rela](docs/tutorials/project-management-tutorial.md) | Build a hybrid project management system |
 
 ### Scenarios
 
 | Scenario | Description |
 | -------- | ----------- |
-| [Scenario: Hybrid Project Management](docs/scenarios/project-management.md) | Hybrid project management documentation |
-| [Scenario: ISO 27001 Information Security Management System](docs/scenarios/iso27001-isms.md) | ISO 27001 Information Security Management System |
 | [Scenario: DevOps/SRE Runbooks & Infrastructure Operations](docs/scenarios/devops-runbooks.md) | DevOps/SRE runbooks and infrastructure operations |
+| [Scenario: ISO 27001 Information Security Management System](docs/scenarios/iso27001-isms.md) | ISO 27001 Information Security Management System |
+| [Scenario: Hybrid Project Management](docs/scenarios/project-management.md) | Hybrid project management documentation |
 
 ## Project Structure
 
