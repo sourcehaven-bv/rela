@@ -423,6 +423,265 @@ The following features are planned for future releases:
 - **View composition** - Reference other views as building blocks
 - **Computed properties** - Calculate derived values in output
 
+## Dependency Analysis & CI Integration
+
+Views can be used to determine which entities contribute to a document, and which documents are
+affected by changes. This is useful for CI pipelines that build artifacts (e.g., PDFs) only when
+relevant entities have changed.
+
+### The Problem
+
+Consider a project with 50 documents, each built from a view that traverses requirements, sections,
+and components. Rebuilding all 50 PDFs on every commit is wasteful when only 2 documents were
+actually affected by a change. Rela provides two commands to solve this:
+
+- **`rela view deps`** — Lists all entity IDs (or file paths) that contribute to a view's output
+- **`rela view affected`** — Given a set of changed entities, reports which document roots are affected
+
+### Listing View Dependencies
+
+Use `rela view deps` to list all entity IDs that a view touches:
+
+```bash
+# All entities used across all documents of this view's entry type
+rela view deps document_publish
+
+# For specific roots only
+rela view deps document_publish --roots DOC-001,DOC-002
+
+# Output file paths instead of IDs (for comparison with git diff)
+rela view deps document_publish --files
+```
+
+Output is one ID (or file path) per line, sorted and deduplicated.
+
+The `--files` flag is particularly useful because the output can be directly compared with
+`git diff --name-only` to determine which documents were affected.
+
+### Finding Affected Documents
+
+Use `rela view affected` to find which document roots are affected by entity changes:
+
+```bash
+# By entity IDs
+rela view affected document_publish --changed REQ-001,COMP-003
+
+# By file paths
+rela view affected document_publish --changed-files entities/requirement/REQ-001.md
+
+# Pipe git diff output via stdin
+git diff --name-only HEAD~1 | rela view affected document_publish --changed-files -
+
+# Restrict to specific roots
+rela view affected document_publish --changed REQ-001 --roots DOC-001,DOC-002
+```
+
+Both entity file paths and relation file paths are recognized. When a relation file changes,
+both endpoint entities are treated as changed.
+
+### How It Works
+
+The `view affected` command works by:
+
+1. Executing the view for each root entity (or all entities of the view's entry type)
+2. Collecting all entity IDs touched during each execution
+3. Checking whether any of the changed entity IDs appear in each root's dependency set
+4. Outputting the root IDs where a match was found
+
+This means that **transitive** changes are detected automatically. If a component changes and
+a document includes a section that describes that component, the document is reported as affected
+even though the document doesn't directly reference the component.
+
+### CI Integration Patterns
+
+#### Shell Script: Selective Builds
+
+The simplest approach — a standalone script you can call from any CI system:
+
+```bash
+#!/bin/bash
+# build-affected-docs.sh
+# Usage: ./build-affected-docs.sh [base-ref]
+set -euo pipefail
+
+BASE_REF="${1:-HEAD~1}"
+VIEW_NAME="document_publish"
+
+# Get changed files since base ref
+changed_files=$(git diff --name-only "$BASE_REF")
+
+if [ -z "$changed_files" ]; then
+  echo "No files changed"
+  exit 0
+fi
+
+# Find affected document roots
+affected=$(echo "$changed_files" | rela view affected "$VIEW_NAME" --changed-files -)
+
+if [ -z "$affected" ]; then
+  echo "No documents affected by changes"
+  exit 0
+fi
+
+echo "Affected documents:"
+echo "$affected"
+echo ""
+
+# Build only affected documents
+for doc_id in $affected; do
+  echo "Building $doc_id..."
+  rela view "$VIEW_NAME" "$doc_id" -o yaml | build_pdf --stdin -o "output/${doc_id}.pdf"
+done
+
+echo "Done. Built $(echo "$affected" | wc -l | tr -d ' ') document(s)."
+```
+
+#### GitHub Actions
+
+<!-- markdownlint-disable line-length -->
+
+```yaml
+name: Build Documents
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for accurate diff
+
+      - name: Install rela
+        run: go install github.com/Sourcehaven-BV/rela/cmd/rela@latest
+
+      - name: Find affected documents
+        id: affected
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="HEAD~1"
+          fi
+
+          AFFECTED=$(git diff --name-only "$BASE" | rela view affected document_publish --changed-files - || true)
+
+          if [ -z "$AFFECTED" ]; then
+            echo "No documents affected"
+            echo "has_affected=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Affected documents:"
+            echo "$AFFECTED"
+            echo "has_affected=true" >> "$GITHUB_OUTPUT"
+            # Store as multiline output
+            {
+              echo "doc_ids<<EOF"
+              echo "$AFFECTED"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build affected documents
+        if: steps.affected.outputs.has_affected == 'true'
+        run: |
+          mkdir -p output
+          echo "${{ steps.affected.outputs.doc_ids }}" | while read -r doc_id; do
+            echo "Building $doc_id..."
+            rela view document_publish "$doc_id" -o yaml | build_pdf --stdin -o "output/${doc_id}.pdf"
+          done
+
+      - name: Upload documents
+        if: steps.affected.outputs.has_affected == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: documents
+          path: output/
+```
+
+<!-- markdownlint-enable line-length -->
+
+#### GitLab CI
+
+```yaml
+build-documents:
+  stage: build
+  script:
+    - |
+      AFFECTED=$(git diff --name-only "$CI_MERGE_REQUEST_DIFF_BASE_SHA" \
+        | rela view affected document_publish --changed-files - || true)
+
+      if [ -z "$AFFECTED" ]; then
+        echo "No documents affected by changes"
+        exit 0
+      fi
+
+      mkdir -p output
+      for doc_id in $AFFECTED; do
+        echo "Building $doc_id..."
+        rela view document_publish "$doc_id" -o yaml \
+          | build_pdf --stdin -o "output/${doc_id}.pdf"
+      done
+  artifacts:
+    paths:
+      - output/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
+
+### Alternative: File-Based Intersection
+
+If you prefer scripting the intersection yourself rather than using `view affected`, you can
+use `view deps --files` and compare directly with `git diff`:
+
+```bash
+#!/bin/bash
+# Using comm to intersect file lists
+changed=$(git diff --name-only HEAD~1 | sort)
+deps=$(rela view deps document_publish --roots DOC-001 --files | sort)
+
+overlap=$(comm -12 <(echo "$changed") <(echo "$deps"))
+
+if [ -n "$overlap" ]; then
+  echo "DOC-001 is affected by changes to:"
+  echo "$overlap"
+fi
+```
+
+This gives you more control but requires iterating over roots manually. The `view affected`
+command does this for you in a single call.
+
+### Choosing the Right Base Reference
+
+The base reference for `git diff` determines which changes are considered:
+
+| Scenario | Base reference | Description |
+| --- | --- | --- |
+| Last commit | `HEAD~1` | Changes in the most recent commit |
+| Pull request | PR base SHA | All changes in the PR branch |
+| Since last release | `v1.0.0` | All changes since a tag |
+| Since last build | stored SHA | Track the last successfully built commit |
+
+For pull requests, most CI systems provide the base SHA automatically
+(e.g., `github.event.pull_request.base.sha` in GitHub Actions,
+`CI_MERGE_REQUEST_DIFF_BASE_SHA` in GitLab CI).
+
+### Tips
+
+- **Full git history**: Use `fetch-depth: 0` (GitHub Actions) or equivalent to ensure
+  `git diff` can reach the base reference
+- **Relation changes matter**: When a relation file changes, both endpoint entities are
+  marked as changed — this catches structural changes like adding or removing links
+- **Metamodel changes**: If `metamodel.yaml` or `views.yaml` changes, consider rebuilding
+  all documents since the schema itself changed
+- **Force rebuilds**: Pass all root IDs as `--changed` to force a full rebuild:
+  `rela view affected document_publish --changed $(rela list document --ids)`
+
 ## Troubleshooting
 
 **View not found:**

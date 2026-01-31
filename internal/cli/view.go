@@ -70,5 +70,7 @@ Examples:
 }
 
 func init() {
+	viewCmd.AddCommand(viewDepsCmd)
+	viewCmd.AddCommand(viewAffectedCmd)
 	rootCmd.AddCommand(viewCmd)
 }
