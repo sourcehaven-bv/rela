@@ -1,4 +1,11 @@
-# Tutorial: Building an ISO 27001 ISMS with Rela
+---
+id: TUT-iso27001-isms-tutorial
+type: tutorial
+title: "Tutorial: Building an ISO 27001 ISMS with Rela"
+status: published
+audience: intermediate
+summary: "Build a complete Information Security Management System"
+---
 
 This comprehensive tutorial walks you through implementing a complete
 Information Security Management System (ISMS) using rela. You'll learn how to

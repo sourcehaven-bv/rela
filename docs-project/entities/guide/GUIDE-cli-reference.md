@@ -1,4 +1,12 @@
-# CLI Reference
+---
+id: GUIDE-cli-reference
+type: guide
+title: "CLI Reference"
+status: published
+order: 3
+audience: intermediate
+summary: "Complete command reference"
+---
 
 Complete reference for all rela commands.
 

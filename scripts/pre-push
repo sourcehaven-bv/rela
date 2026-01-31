@@ -1,0 +1,21 @@
+#!/bin/bash
+# Pre-push hook: verify generated docs are up to date.
+#
+# This runs 'just docs-check' which:
+# 1. Builds rela
+# 2. Regenerates docs from entities via mdcomp
+# 3. Fails if the output differs from what's committed
+
+set -e
+
+echo "pre-push: checking docs are up to date..."
+
+# Only check if docs-project or templates changed
+DOCS_CHANGED=$(git diff --cached --name-only HEAD@{1}..HEAD 2>/dev/null | grep -E '^(docs-project/|docs/templates/)' || true)
+
+if [ -n "$DOCS_CHANGED" ]; then
+    echo "pre-push: doc sources changed, verifying generated output..."
+    just docs-check
+else
+    echo "pre-push: no doc source changes, skipping docs-check."
+fi

@@ -1,0 +1,107 @@
+version: "1.0"
+namespace: "https://rela.dev/docs#"
+
+types:
+  doc_status:
+    values: [draft, review, published, outdated]
+    default: published
+  audience:
+    values: [beginner, intermediate, advanced]
+    default: beginner
+
+entities:
+  guide:
+    label: Guide
+    id_type: manual
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: doc_status
+      summary:
+        type: string
+      order:
+        type: integer
+      audience:
+        type: audience
+
+  tutorial:
+    label: Tutorial
+    id_type: manual
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: doc_status
+      summary:
+        type: string
+      audience:
+        type: audience
+
+  scenario:
+    label: Scenario
+    id_type: manual
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: doc_status
+      summary:
+        type: string
+      domain:
+        type: string
+
+  feature:
+    label: Feature
+    id_type: manual
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: doc_status
+      summary:
+        type: string
+
+  concept:
+    label: Concept
+    id_type: manual
+    properties:
+      title:
+        type: string
+        required: true
+      summary:
+        type: string
+
+relations:
+  explains:
+    label: explains
+    from: [guide, tutorial]
+    to: [concept]
+    inverse: explainedBy
+
+  covers:
+    label: covers
+    from: [guide, tutorial]
+    to: [feature]
+    inverse: coveredBy
+
+  demonstrates:
+    label: demonstrates
+    from: [scenario, tutorial]
+    to: [feature]
+    inverse: demonstratedBy
+
+  prerequisite:
+    label: prerequisite
+    from: [guide, tutorial]
+    to: [guide, concept]
+    inverse: prerequisiteFor
+
+  dependsOn:
+    label: depends on
+    from: [concept]
+    to: [concept]
