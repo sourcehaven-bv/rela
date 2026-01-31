@@ -106,7 +106,7 @@ func resolveRenameEntity(oldType, newType string) (*renameEntityInfo, error) {
 	}
 
 	oldTemplatePath := projectCtx.EntityTemplatePath(resolvedOld)
-	_, statErr := os.Stat(oldTemplatePath)
+	_, statErr := cliFS.Stat(oldTemplatePath)
 
 	return &renameEntityInfo{
 		resolvedOld:     resolvedOld,
@@ -164,17 +164,18 @@ func confirmRename() (bool, error) {
 }
 
 func applyRenameEntity(info *renameEntityInfo) error {
-	if err := metamodel.RenameEntityType(projectCtx.MetamodelPath, info.resolvedOld, info.newType); err != nil {
-		return fmt.Errorf("failed to update metamodel: %w", err)
+	renameErr := metamodel.RenameEntityTypeFS(projectCtx.MetamodelPath, info.resolvedOld, info.newType, cliFS)
+	if renameErr != nil {
+		return fmt.Errorf("failed to update metamodel: %w", renameErr)
 	}
 
-	if _, err := os.Stat(info.oldDir); err == nil {
-		if renameErr := os.Rename(info.oldDir, info.newDir); renameErr != nil {
+	if _, err := cliFS.Stat(info.oldDir); err == nil {
+		if renameErr := cliFS.Rename(info.oldDir, info.newDir); renameErr != nil {
 			return fmt.Errorf("failed to rename directory: %w", renameErr)
 		}
 	}
 
-	if _, err := os.Stat(info.newDir); err == nil {
+	if _, err := cliFS.Stat(info.newDir); err == nil {
 		count, updateErr := markdown.UpdateEntityTypesInDir(info.newDir, info.newType, meta)
 		if updateErr != nil {
 			return fmt.Errorf("failed to update entity files: %w", updateErr)
@@ -186,14 +187,14 @@ func applyRenameEntity(info *renameEntityInfo) error {
 
 	if info.hasTemplate {
 		newTemplatePath := projectCtx.EntityTemplatePath(info.newType)
-		if mkdirErr := os.MkdirAll(projectCtx.EntityTemplatesDir, 0755); mkdirErr != nil {
+		if mkdirErr := cliFS.MkdirAll(projectCtx.EntityTemplatesDir, 0755); mkdirErr != nil {
 			out.WriteWarning("Failed to create templates directory: %v", mkdirErr)
-		} else if renameErr := os.Rename(info.oldTemplatePath, newTemplatePath); renameErr != nil {
+		} else if renameErr := cliFS.Rename(info.oldTemplatePath, newTemplatePath); renameErr != nil {
 			out.WriteWarning("Failed to rename template: %v", renameErr)
 		}
 	}
 
-	if err := os.Remove(projectCtx.CachePath); err != nil && !os.IsNotExist(err) {
+	if err := cliFS.Remove(projectCtx.CachePath); err != nil && !os.IsNotExist(err) {
 		out.WriteWarning("Failed to remove cache: %v", err)
 	}
 

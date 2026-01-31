@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 var (
@@ -28,6 +29,7 @@ var (
 	meta       *metamodel.Metamodel
 	g          *graph.Graph
 	out        *output.Writer
+	cliFS      storage.FS = storage.NewOsFS()
 )
 
 // rootCmd represents the base command
@@ -118,7 +120,7 @@ func init() {
 // saveCache saves the graph to the cache file
 func saveCache() error {
 	if projectCtx != nil && g != nil {
-		return g.SaveCache(projectCtx.CachePath)
+		return g.SaveCacheFS(projectCtx.CachePath, cliFS)
 	}
 	return nil
 }
