@@ -73,6 +73,29 @@ check_package "internal/filter" 85.0 "internal/filter" || FAILED=1
 check_package "internal/graph" 75.0 "internal/graph" || FAILED=1
 check_package "internal/metamodel" 65.0 "internal/metamodel" || FAILED=1
 check_package "internal/importer" 65.0 "internal/importer" || FAILED=1
+check_package "internal/dataentry" 60.0 "internal/dataentry" || FAILED=1
+check_package "internal/tui" 15.0 "internal/tui" || FAILED=1
+
+echo ""
+
+# General minimum: check all internal packages with test files against a baseline
+echo "🔍 Checking general minimum coverage for all tested packages..."
+echo ""
+GENERAL_MIN=30.0
+CHECKED_PACKAGES="internal/model internal/errors internal/output internal/project internal/markdown internal/filter internal/graph internal/metamodel internal/importer internal/dataentry internal/tui"
+
+for pkg_dir in internal/*/; do
+    pkg="${pkg_dir%/}"
+    # Skip packages already checked with explicit thresholds
+    if echo "$CHECKED_PACKAGES" | grep -qw "$pkg"; then
+        continue
+    fi
+    # Skip packages without test files
+    if ! ls "${pkg}"/*_test.go >/dev/null 2>&1; then
+        continue
+    fi
+    check_package "$pkg" "$GENERAL_MIN" "$pkg (general min)" || FAILED=1
+done
 
 echo ""
 

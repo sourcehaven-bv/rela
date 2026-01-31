@@ -33,6 +33,9 @@ go test -run TestName ./...   # Single test by name
 # - internal/graph: ≥75.0%
 # - internal/metamodel: ≥65.0%
 # - internal/importer: ≥65.0%
+# - internal/dataentry: ≥60.0%
+# - internal/tui: ≥15.0% (interactive TUI code)
+# - All other tested packages: ≥30.0% (general minimum)
 
 # Lint
 just lint                     # Run golangci-lint
