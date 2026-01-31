@@ -27,25 +27,11 @@ jobs:
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
-      - name: Check coverage thresholds
-        run: |
-          chmod +x ./scripts/check-coverage.sh
-          ./scripts/check-coverage.sh coverage.out
-
-      - name: Generate coverage report
-        if: always()
-        run: |
-          echo "# Coverage Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Overall Coverage" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          go tool cover -func=coverage.out | tail -1 >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Package Coverage" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          go test ./... -coverprofile=coverage.out -covermode=atomic 2>&1 | grep "coverage:" | grep -v "^[[:space:]]*github" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      - name: Check coverage thresholds (ratchet)
+        uses: vladopajic/go-test-coverage@v2
+        with:
+          config: .testcoverage.yml
+          github-action-output: true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -59,9 +45,7 @@ jobs:
         if: always()
         with:
           name: coverage-report
-          path: |
-            coverage.out
-            coverage.txt
+          path: coverage.out
 
   lint:
     name: Lint
@@ -149,3 +133,35 @@ jobs:
         with:
           name: rela-linux
           path: bin/rela
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build rela
+        run: go build -o bin/rela ./cmd/rela
+
+      - name: Install mdcomp
+        run: pip install git+https://github.com/sourcehaven-bv/mdcomp.git
+
+      - name: Generate docs
+        run: ./scripts/generate-docs.sh
+
+      - name: Check docs are up to date
+        run: |
+          git diff --exit-code docs/ README.md || \
+            (echo "" && \
+             echo "ERROR: docs/ or README.md is out of date with docs-project/ entities." && \
+             echo "Run 'just docs' locally and commit the changes." && \
+             echo "" && \
+             echo "Changed files:" && \
+             git diff --name-only docs/ README.md && \
+             exit 1)

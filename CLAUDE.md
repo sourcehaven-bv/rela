@@ -22,20 +22,9 @@ go test ./...                 # Quick test
 go test -v ./internal/graph/  # Single package with verbose output
 go test -run TestName ./...   # Single test by name
 
-# Coverage Requirements (enforced in CI)
-# - Total project coverage: ≥45.0%
-# - internal/model: ≥95.0%
-# - internal/errors: ≥95.0%
-# - internal/output: ≥90.0%
-# - internal/project: ≥85.0%
-# - internal/markdown: ≥85.0%
-# - internal/filter: ≥85.0%
-# - internal/graph: ≥75.0%
-# - internal/metamodel: ≥65.0%
-# - internal/importer: ≥65.0%
-# - internal/dataentry: ≥60.0%
-# - internal/tui: ≥15.0% (interactive TUI code)
-# - All other tested packages: ≥30.0% (general minimum)
+# Coverage Requirements (enforced in CI via go-test-coverage)
+# Configured in .testcoverage.yml with ratchet baseline in .coverage-baseline
+# Minimum thresholds per package — coverage can never decrease (ratchet)
 
 # Lint
 just lint                     # Run golangci-lint
@@ -47,7 +36,7 @@ just fuzz-short               # Quick fuzz tests (5s each)
 just fuzz                     # Full fuzz tests (30s each)
 
 # Git hooks
-just install-hooks            # Install pre-commit hook (runs lint, test, coverage)
+just install-hooks            # Install pre-commit hook (runs lint, test)
 
 # All checks (CI)
 just ci                       # lint + test + coverage-check + build
@@ -134,14 +123,25 @@ All commands share `projectCtx`, `meta`, `g` (graph), and `out` (output writer).
 
 ## Test Coverage
 
-The project maintains high test coverage for core business logic. Coverage thresholds are enforced in CI.
+The project uses [go-test-coverage](https://github.com/vladopajic/go-test-coverage) with a
+**coverage ratchet**: coverage can never decrease. Configuration is in `.testcoverage.yml` and
+the current baseline is stored in `.coverage-baseline` (committed to the repo).
+
+### How the Ratchet Works
+
+- `.testcoverage.yml` defines minimum floor thresholds per package (override rules)
+- `.coverage-baseline` records per-file coverage from the last merge to main/develop
+- On PRs, CI checks that coverage hasn't dropped below the baseline (`diff.threshold: 0`)
+- After a PR merges, CI regenerates and commits the baseline if coverage improved
+- Coverage can only go up, never down
 
 ### Coverage Policy
 
-- **Core packages** (model, errors): Must maintain ≥95% coverage
-- **Critical functionality** (output, project, markdown, filter): Must maintain ≥85% coverage
-- **Complex logic** (graph, metamodel): Must maintain ≥65% coverage
+- **Core packages** (model, errors): Floor threshold ≥95%
+- **Critical functionality** (output, project, markdown, filter): Floor threshold ≥85%
+- **Complex logic** (graph, metamodel, importer): Floor threshold ≥65%
 - **UI/CLI code**: May have lower coverage with `coverage-ignore` comments for unreasonable-to-test code
+- **Ratchet**: Actual coverage is tracked per-file in `.coverage-baseline` and must not decrease
 
 ### Coverage-Ignore Comments
 
@@ -174,13 +174,13 @@ Valid reasons for `coverage-ignore`:
 ### Running Coverage Checks Locally
 
 ```bash
-# Check if your changes meet coverage requirements
+# Check if your changes meet coverage requirements (uses go-test-coverage)
 just coverage-check
 
 # See detailed coverage report
 just coverage-html
 
-# Install pre-commit hook to check before commit
+# Install pre-commit hook (runs lint + test, coverage is checked in CI)
 just install-hooks
 ```
 
