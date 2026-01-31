@@ -452,7 +452,63 @@ views:
           - property: name
         empty_message: "No labels"
 
+# ──────────────────────────────────────────────
+# Dashboard: query-driven overview cards
+# ──────────────────────────────────────────────
+dashboard:
+  title: "Dashboard"
+  description: "Ticket overview at a glance"
+  cards:
+    - title: "Open Tickets"
+      query: "type:ticket status:open"
+      display: count
+
+    - title: "In Progress"
+      query: "type:ticket status:in-progress"
+      display: count
+
+    - title: "By Status"
+      query: "type:ticket"
+      display: breakdown
+      group_by: status
+
+    - title: "By Priority"
+      query: "type:ticket"
+      display: breakdown
+      group_by: priority
+
+    - title: "Critical Issues"
+      query: "type:ticket prop:priority=critical"
+      display: table
+      columns:
+        - property: title
+          label: "Title"
+          link: true
+        - property: status
+          label: "Status"
+        - property: assignee
+          label: "Assignee"
+      sort:
+        property: status
+        direction: asc
+      limit: 10
+
+    - title: "Recently Blocked"
+      query: "type:ticket prop:is_blocked=true"
+      display: table
+      columns:
+        - property: title
+          label: "Title"
+          link: true
+        - property: priority
+          label: "Priority"
+        - property: assignee
+          label: "Assignee"
+      limit: 5
+
 navigation:
+  - label: "Dashboard"
+    dashboard: true
   - label: "My Tickets"
     list: my_tickets
   - label: "Open Tickets"

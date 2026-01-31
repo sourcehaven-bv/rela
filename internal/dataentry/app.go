@@ -103,6 +103,7 @@ func NewApp(projectDir string) (*App, error) {
 type NavItem struct {
 	Label      string
 	List       string
+	Dashboard  bool
 	EntityType string
 	Count      int
 }
@@ -111,7 +112,10 @@ type NavItem struct {
 func (a *App) navItems() []NavItem {
 	items := make([]NavItem, len(a.Cfg.Navigation))
 	for i, nav := range a.Cfg.Navigation {
-		items[i] = NavItem{Label: nav.Label, List: nav.List}
+		items[i] = NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard}
+		if nav.Dashboard {
+			continue
+		}
 		if list, ok := a.Cfg.Lists[nav.List]; ok {
 			items[i].EntityType = list.EntityType
 			entities := a.g.NodesByType(list.EntityType)

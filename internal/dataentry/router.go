@@ -11,6 +11,7 @@ func (a *App) NewRouter() http.Handler {
 	staticFS, _ := fs.Sub(staticFiles, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("/", a.handleIndex)
+	mux.HandleFunc("/dashboard", a.handleDashboard)
 	mux.HandleFunc("/search", a.handleSearch)
 	mux.HandleFunc("/list/", a.handleList)
 	mux.HandleFunc("/form/", a.handleForm)

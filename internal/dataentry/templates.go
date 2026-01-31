@@ -11,8 +11,6 @@ const allTemplates = `
 <script src="/static/easymde.min.js"></script>
 <link rel="stylesheet" href="/static/slimselect.css">
 <script src="/static/slimselect.min.js"></script>
-<link rel="stylesheet" href="/static/tagify.css">
-<script src="/static/tagify.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -249,11 +247,18 @@ document.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt
       &#128269; Search
     </a>
     {{ range .Navigation }}
+    {{ if .Dashboard }}
+    <a href="/dashboard"{{ if eq "_dashboard" $.ActiveList }} class="active"{{ end }}
+       hx-get="/dashboard" hx-target="#content" hx-push-url="true">
+      {{ .Label }}
+    </a>
+    {{ else }}
     <a href="/list/{{ .List }}"{{ if eq .List $.ActiveList }} class="active"{{ end }}
        data-entity-type="{{ .EntityType }}"
        hx-get="/list/{{ .List }}" hx-target="#content" hx-push-url="true">
       {{ .Label }}<span class="nav-count">{{ .Count }}</span>
     </a>
+    {{ end }}
     {{ end }}
   </nav>
 </aside>
@@ -1054,21 +1059,37 @@ function submitInlineCreate() {
 </div>
 
 <style>
-.search-tagify .tagify { --tags-border-color: var(--border); --tag-pad: 0.2em 0.5em; --tag-text-color--edit: var(--text); border-radius: 6px; min-height: 44px; font-family: var(--font); font-size: 14px; width: 100%; }
-.search-tagify .tagify__tag { border-radius: 9999px; }
-.search-tagify .tagify__tag > div { padding: 0.2em 0.5em; }
-.search-tagify .tagify__tag__removeBtn { margin-left: 2px; }
-.search-tagify .tagify__input { min-width: 120px; }
-.search-tagify .tagify__input::before { color: var(--text-muted); }
-.search-tagify .tagify__dropdown { border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-.search-tagify .tagify__dropdown__item { padding: 6px 12px; font-size: 13px; }
-.search-tagify .tagify__dropdown__item--active { background: var(--primary-light); color: var(--primary); }
+.search-box { position: relative; }
+.search-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; min-height: 0; }
+.search-chips:empty { display: none; }
+.search-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 9999px; font-size: 13px; font-family: var(--font-mono); line-height: 1.4; }
+.search-chip-type { background: #dbeafe; color: #1e40af; }
+.search-chip-status { background: #dcfce7; color: #166534; }
+.search-chip-property { background: #e9d5ff; color: #6b21a8; }
+.search-chip button { background: none; border: none; cursor: pointer; padding: 0 0 0 2px; font-size: 15px; line-height: 1; opacity: 0.6; color: inherit; }
+.search-chip button:hover { opacity: 1; }
+.search-input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-family: var(--font); font-size: 14px; color: var(--text); background: var(--bg-card); outline: none; }
+.search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+.search-dropdown { position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-height: 240px; overflow-y: auto; z-index: 100; display: none; }
+.search-dropdown.open { display: block; }
+.search-dd-item { padding: 7px 12px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.search-dd-item:first-child { border-radius: 6px 6px 0 0; }
+.search-dd-item:last-child { border-radius: 0 0 6px 6px; }
+.search-dd-item.active { background: var(--primary-light); color: var(--primary); }
+.search-dd-item:hover { background: #f1f5f9; }
+.search-dd-item.active:hover { background: var(--primary-light); }
+.search-dd-cat { font-size: 10px; padding: 1px 6px; border-radius: 3px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+.search-dd-cat-type { background: #dbeafe; color: #1e40af; }
+.search-dd-cat-status { background: #dcfce7; color: #166534; }
+.search-dd-cat-property { background: #e9d5ff; color: #6b21a8; }
 </style>
 
 <div class="card" style="padding:20px;margin-bottom:20px;">
-  <div class="search-tagify">
-    <input id="search-input" name="q" value="" data-query="{{ .Query }}" placeholder="Type to search or filter..."
-           autocomplete="off">
+  <div class="search-box" id="search-box">
+    <div class="search-chips" id="search-chips"></div>
+    <input id="search-input" class="search-input" type="text" data-query="{{ .Query }}"
+           placeholder="Type to search or filter..." autocomplete="off">
+    <div class="search-dropdown" id="search-dropdown"></div>
   </div>
   <div style="margin-top:10px;font-size:12px;color:var(--text-muted);line-height:1.8;">
     <strong>Syntax:</strong>
@@ -1093,18 +1114,20 @@ function submitInlineCreate() {
 <script>
 (function() {
   var input = document.getElementById('search-input');
-  if (!input || input._tagify) return;
+  if (!input || input._searchInit) return;
+  input._searchInit = true;
 
+  var chipsEl = document.getElementById('search-chips');
+  var dropdown = document.getElementById('search-dropdown');
   var suggestions = {{ .SuggestionsJSON }};
-  var catStyles = {
-    type:     {bg:'#dbeafe', color:'#1e40af'},
-    status:   {bg:'#dcfce7', color:'#166534'},
-    property: {bg:'#e9d5ff', color:'#6b21a8'}
-  };
+  var chips = [];
+  var activeIdx = -1;
+  var filtered = [];
 
-  function isFilter(val) {
-    return /^(type|status|prop):/.test(val);
-  }
+  var catClass = {type: 'search-chip-type', status: 'search-chip-status', property: 'search-chip-property'};
+  var ddCatClass = {type: 'search-dd-cat-type', status: 'search-dd-cat-status', property: 'search-dd-cat-property'};
+
+  function isFilter(val) { return /^(type|status|prop):/.test(val); }
 
   function detectCategory(val) {
     if (val.lastIndexOf('type:', 0) === 0) return 'type';
@@ -1113,58 +1136,127 @@ function submitInlineCreate() {
     return '';
   }
 
-  var tagify = new Tagify(input, {
-    whitelist: suggestions,
-    enforceWhitelist: false,
-    tagTextProp: 'value',
-    delimiters: null,
-    dropdown: {
-      maxItems: 20,
-      enabled: 1,
-      closeOnSelect: true,
-      searchKeys: ['value'],
-      highlightFirst: true
-    },
-    transformTag: function(tagData) {
-      var cat = tagData.category || detectCategory(tagData.value);
-      var s = catStyles[cat];
-      if (s) {
-        tagData.category = cat;
-        tagData.style = '--tag-bg:' + s.bg + ';--tag-text-color:' + s.color + ';--tag-remove-bg:transparent;--tag-remove-btn-color:' + s.color;
-      }
-    },
-    hooks: {
-      beforeCreateTag: function(tags) {
-        return new Promise(function(resolve, reject) {
-          var valid = tags.filter(function(t) { return isFilter(t.value); });
-          if (valid.length === 0) reject();
-          else {
-            tags.length = 0;
-            for (var i = 0; i < valid.length; i++) tags.push(valid[i]);
-            resolve();
-          }
-        });
-      }
+  function renderChips() {
+    chipsEl.innerHTML = '';
+    for (var i = 0; i < chips.length; i++) {
+      var c = chips[i];
+      var span = document.createElement('span');
+      span.className = 'search-chip ' + (catClass[c.category] || '');
+      span.textContent = c.value;
+      var btn = document.createElement('button');
+      btn.textContent = '\u00d7';
+      btn.setAttribute('data-idx', i);
+      btn.onclick = function() {
+        chips.splice(parseInt(this.getAttribute('data-idx')), 1);
+        renderChips();
+        doSearch();
+        input.focus();
+      };
+      span.appendChild(btn);
+      chipsEl.appendChild(span);
     }
-  });
+  }
 
-  input._tagify = tagify;
+  function addChip(value, category) {
+    for (var i = 0; i < chips.length; i++) {
+      if (chips[i].value === value) return;
+    }
+    chips.push({value: value, category: category || detectCategory(value)});
+    renderChips();
+    doSearch();
+  }
 
-  // Parse initial query: filters become tags, text stays in input
-  var rawQuery = input.getAttribute('data-query') || '';
-  if (rawQuery.trim()) {
-    var tokens = rawQuery.match(/"[^"]*"|\S+/g) || [];
-    var textParts = [];
-    for (var i = 0; i < tokens.length; i++) {
-      var t = tokens[i];
-      if (isFilter(t)) {
-        tagify.addTags([{value: t, category: detectCategory(t)}]);
+  function closeDropdown() {
+    dropdown.classList.remove('open');
+    dropdown.innerHTML = '';
+    activeIdx = -1;
+    filtered = [];
+  }
+
+  function showDropdown(matches) {
+    filtered = matches;
+    activeIdx = 0;
+    dropdown.innerHTML = '';
+    for (var i = 0; i < matches.length; i++) {
+      var item = document.createElement('div');
+      item.className = 'search-dd-item' + (i === 0 ? ' active' : '');
+      item.setAttribute('data-idx', i);
+      var label = document.createElement('span');
+      label.textContent = matches[i].value;
+      item.appendChild(label);
+      var badge = document.createElement('span');
+      badge.className = 'search-dd-cat ' + (ddCatClass[matches[i].category] || '');
+      badge.textContent = matches[i].category;
+      item.appendChild(badge);
+      item.onmousedown = function(e) {
+        e.preventDefault();
+        var idx = parseInt(this.getAttribute('data-idx'));
+        selectItem(idx);
+      };
+      item.onmouseenter = function() {
+        setActive(parseInt(this.getAttribute('data-idx')));
+      };
+      dropdown.appendChild(item);
+    }
+    dropdown.classList.add('open');
+  }
+
+  function setActive(idx) {
+    var items = dropdown.children;
+    if (activeIdx >= 0 && activeIdx < items.length) items[activeIdx].classList.remove('active');
+    activeIdx = idx;
+    if (activeIdx >= 0 && activeIdx < items.length) {
+      items[activeIdx].classList.add('active');
+      items[activeIdx].scrollIntoView({block: 'nearest'});
+    }
+  }
+
+  function selectItem(idx) {
+    if (idx < 0 || idx >= filtered.length) return;
+    var sel = filtered[idx];
+    addChip(sel.value, sel.category);
+    // Remove the filter token from the input, keep other text
+    var text = input.value;
+    var words = text.split(/\s+/);
+    var remaining = [];
+    var removed = false;
+    for (var i = 0; i < words.length; i++) {
+      if (!removed && /^(type|status|prop)(:|$)/.test(words[i])) {
+        removed = true;
       } else {
-        textParts.push(t);
+        remaining.push(words[i]);
       }
     }
-    if (textParts.length) {
-      tagify.DOM.input.textContent = textParts.join(' ');
+    input.value = remaining.length > 0 ? remaining.join(' ') + ' ' : '';
+    closeDropdown();
+    input.focus();
+  }
+
+  // Find matches for the last typed token
+  function updateDropdown() {
+    var text = input.value;
+    var words = text.split(/\s+/);
+    var last = words[words.length - 1] || '';
+    if (!last || !/^(type|status|prop)(:|$)/.test(last)) {
+      closeDropdown();
+      return;
+    }
+    var matches = [];
+    var q = last.toLowerCase();
+    for (var i = 0; i < suggestions.length; i++) {
+      if (suggestions[i].value.toLowerCase().indexOf(q) === 0) {
+        // Skip already-added chips
+        var dupe = false;
+        for (var j = 0; j < chips.length; j++) {
+          if (chips[j].value === suggestions[i].value) { dupe = true; break; }
+        }
+        if (!dupe) matches.push(suggestions[i]);
+      }
+    }
+    if (matches.length > 0) {
+      showDropdown(matches.slice(0, 20));
+    } else {
+      closeDropdown();
     }
   }
 
@@ -1172,13 +1264,9 @@ function submitInlineCreate() {
   function doSearch() {
     if (searchTimer) clearTimeout(searchTimer);
     searchTimer = setTimeout(function() {
-      var tags = tagify.value || [];
       var parts = [];
-      for (var i = 0; i < tags.length; i++) {
-        parts.push(tags[i].value);
-      }
-      // Include free text from the input area
-      var freeText = (tagify.DOM.input.textContent || '').trim();
+      for (var i = 0; i < chips.length; i++) parts.push(chips[i].value);
+      var freeText = input.value.trim();
       if (freeText) parts.push(freeText);
       var q = parts.join(' ');
       var url = '/search?q=' + encodeURIComponent(q);
@@ -1187,12 +1275,61 @@ function submitInlineCreate() {
     }, 300);
   }
 
-  tagify.on('add', doSearch);
-  tagify.on('remove', doSearch);
-  tagify.on('input', doSearch);
+  input.addEventListener('input', function() {
+    updateDropdown();
+    doSearch();
+  });
 
-  // Focus the tagify input
-  setTimeout(function() { tagify.DOM.input.focus(); }, 50);
+  input.addEventListener('keydown', function(e) {
+    var isOpen = dropdown.classList.contains('open');
+    if (isOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (activeIdx < filtered.length - 1) setActive(activeIdx + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (activeIdx > 0) setActive(activeIdx - 1);
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        if (activeIdx >= 0 && activeIdx < filtered.length) {
+          e.preventDefault();
+          selectItem(activeIdx);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeDropdown();
+      }
+    } else {
+      // Backspace on empty input removes the last chip
+      if (e.key === 'Backspace' && input.value === '' && chips.length > 0) {
+        chips.pop();
+        renderChips();
+        doSearch();
+      }
+    }
+  });
+
+  input.addEventListener('blur', function() {
+    // Small delay to allow mousedown on dropdown items to fire
+    setTimeout(closeDropdown, 150);
+  });
+
+  // Parse initial query: filters become chips, text stays in input
+  var rawQuery = input.getAttribute('data-query') || '';
+  if (rawQuery.trim()) {
+    var tokens = rawQuery.match(/"[^"]*"|\S+/g) || [];
+    var textParts = [];
+    for (var i = 0; i < tokens.length; i++) {
+      var t = tokens[i];
+      if (isFilter(t)) {
+        addChip(t, detectCategory(t));
+      } else {
+        textParts.push(t);
+      }
+    }
+    if (textParts.length) input.value = textParts.join(' ');
+  }
+
+  setTimeout(function() { input.focus(); }, 50);
 })();
 </script>
 {{- end -}}
@@ -1225,5 +1362,125 @@ function submitInlineCreate() {
 <div class="card" style="padding:32px;text-align:center;color:var(--text-muted);">No results found</div>
 {{ end }}
 {{ end }}
+{{- end -}}
+
+{{- define "dashboard-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - {{ .Dashboard.Title }}</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+<main class="main" id="content">
+{{ template "dashboard-content" . }}
+</main>
+</body>
+</html>
+{{- end -}}
+
+{{- define "dashboard-content" -}}
+<div class="page-header">
+  <div>
+    <h2>{{ .Dashboard.Title }}</h2>
+    {{ if .Dashboard.Description }}<p>{{ .Dashboard.Description }}</p>{{ end }}
+  </div>
+</div>
+
+<div class="dashboard-grid">
+{{ range .Cards }}
+<div class="card dashboard-card">
+  <div class="dashboard-card-header">
+    <h3>{{ .Title }}</h3>
+    <a href="/search?q={{ urlquery .Query }}" class="dashboard-query-link"
+       hx-get="/search?q={{ urlquery .Query }}" hx-target="#content" hx-push-url="true"
+       title="View in search">&#8599;</a>
+  </div>
+
+  {{ if eq .Display "count" }}
+  <div class="dashboard-count">
+    <span class="dashboard-count-number">{{ .Count }}</span>
+  </div>
+
+  {{ else if eq .Display "breakdown" }}
+  <div class="dashboard-breakdown">
+    {{ range .BreakdownItems }}
+    <div class="dashboard-breakdown-row">
+      <span class="dashboard-breakdown-label">
+        {{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+        {{ else }}{{ .Value }}{{ end }}
+      </span>
+      <div class="dashboard-bar-track">
+        <div class="dashboard-bar-fill {{ if isBadgeType .PropType }}{{ badgeClass .PropType .Value }}{{ else }}badge-blue{{ end }}"
+             style="width:{{ printf "%.0f" .Percentage }}%"></div>
+      </div>
+      <span class="dashboard-breakdown-count">{{ .Count }}</span>
+    </div>
+    {{ end }}
+    {{ if not .BreakdownItems }}
+    <div style="color:var(--text-muted);font-size:13px;padding:8px 0;">No data</div>
+    {{ end }}
+  </div>
+
+  {{ else if eq .Display "table" }}
+  {{ if .Rows }}
+  <div style="overflow-x:auto;">
+    <table class="dashboard-table">
+      <thead>
+        <tr>{{ range .Columns }}<th>{{ .Label }}</th>{{ end }}</tr>
+      </thead>
+      <tbody>
+        {{ range .Rows }}
+        <tr>
+          {{ range . }}
+          <td>
+            {{ if .Link }}<a href="{{ .Link }}" class="cell-link"
+               hx-get="{{ .Link }}" hx-target="#content" hx-push-url="true">{{ end }}
+            {{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+            {{ else }}{{ formatValue .Value }}{{ end }}
+            {{ if .Link }}</a>{{ end }}
+          </td>
+          {{ end }}
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  {{ else }}
+  <div style="color:var(--text-muted);font-size:13px;padding:8px 16px;">No results</div>
+  {{ end }}
+
+  {{ end }}
+</div>
+{{ end }}
+</div>
+
+<style>
+.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.dashboard-card { padding: 0; overflow: hidden; }
+.dashboard-card-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+.dashboard-card-header h3 { font-size: 14px; font-weight: 600; color: var(--text); }
+.dashboard-query-link { font-size: 14px; color: var(--text-muted); text-decoration: none; line-height: 1; }
+.dashboard-query-link:hover { color: var(--primary); }
+.dashboard-count { display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.dashboard-count-number { font-size: 48px; font-weight: 700; color: var(--text); line-height: 1; }
+.dashboard-breakdown { padding: 12px 16px; }
+.dashboard-breakdown-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.dashboard-breakdown-label { min-width: 90px; font-size: 13px; }
+.dashboard-bar-track { flex: 1; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.dashboard-bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+.dashboard-bar-fill.badge-blue { background: #3b82f6; }
+.dashboard-bar-fill.badge-purple { background: #8b5cf6; }
+.dashboard-bar-fill.badge-green { background: #22c55e; }
+.dashboard-bar-fill.badge-gray { background: #94a3b8; }
+.dashboard-bar-fill.badge-red { background: #ef4444; }
+.dashboard-bar-fill.badge-orange { background: #f97316; }
+.dashboard-bar-fill.badge-yellow { background: #eab308; }
+.dashboard-breakdown-count { font-size: 13px; font-weight: 600; color: var(--text); min-width: 24px; text-align: right; }
+.dashboard-table { width: 100%; font-size: 13px; }
+.dashboard-table thead th { padding: 8px 16px; font-size: 11px; }
+.dashboard-table tbody td { padding: 6px 16px; }
+</style>
 {{- end -}}
 `

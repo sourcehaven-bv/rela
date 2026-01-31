@@ -14,7 +14,8 @@ A `data-entry.yaml` file defines:
 - **Forms** - Create and edit forms for entity types, with fields and relation pickers
 - **Lists** - Tabular views with sorting, filtering, and pagination
 - **Views** - Read-only detail pages that traverse the graph to show related entities
-- **Navigation** - Sidebar menu entries that link to lists
+- **Dashboard** - An overview page with query-driven cards showing counts, breakdowns, and tables
+- **Navigation** - Sidebar menu entries that link to lists or the dashboard
 
 The file drives the entire UI without writing any code. The server reads `data-entry.yaml` and
 your `metamodel.yaml` together, validates them, and serves a fully functional CRUD application.
@@ -112,7 +113,16 @@ views:                     # Detail view definitions
       type: task
     ...
 
+dashboard:                 # Optional overview page
+  title: "Dashboard"
+  cards:
+    - title: "Open"
+      query: "type:task status:open"
+      display: count
+
 navigation:                # Sidebar menu
+  - label: "Dashboard"
+    dashboard: true
   - label: "Tasks"
     list: all_tasks
 ```
@@ -599,12 +609,110 @@ sections:
 **`table`** works well for collections with many items. **`cards`** provides a visual layout for
 smaller collections. **`list`** is the most compact.
 
+## Dashboard
+
+The dashboard is an optional overview page that displays a grid of query-driven cards. Each card
+runs a search query against your entities and renders the results as a count, a property breakdown,
+or a mini-table. The query syntax is the same as the search page: `type:`, `prop:`, `status:`,
+and free text.
+
+### Basic Dashboard
+
+```yaml
+dashboard:
+  title: "Dashboard"
+  description: "Project overview"
+  cards:
+    - title: "Open Tickets"
+      query: "type:ticket status:open"
+      display: count
+
+    - title: "By Priority"
+      query: "type:ticket"
+      display: breakdown
+      group_by: priority
+
+    - title: "Critical Issues"
+      query: "type:ticket prop:priority=critical"
+      display: table
+      columns:
+        - property: title
+          label: "Title"
+          link: true
+        - property: status
+          label: "Status"
+        - property: assignee
+          label: "Assignee"
+      sort:
+        property: status
+        direction: asc
+      limit: 10
+```
+
+### Dashboard Fields
+
+| Field         | Type   | Description                            |
+| ------------- | ------ | -------------------------------------- |
+| `title`       | string | Page heading                           |
+| `description` | string | Subtitle shown below the heading       |
+| `cards`       | list   | Card definitions                       |
+
+### Card Options
+
+| Field     | Type   | Description                                                        |
+| --------- | ------ | ------------------------------------------------------------------ |
+| `title`   | string | Card heading                                                       |
+| `query`   | string | Search query (same syntax as the search page)                      |
+| `display` | string | Display mode: `"count"`, `"breakdown"`, or `"table"`               |
+| `group_by`| string | Property to group by (`breakdown` mode only)                       |
+| `columns` | list   | Column definitions (`table` mode only, same format as list columns) |
+| `sort`    | object | Sort order (`table` mode only)                                     |
+| `limit`   | int    | Maximum rows to display (`table` mode only)                        |
+
+### Display Modes
+
+**`count`** shows a single large number — the count of entities matching the query. Use this for
+quick status indicators like "5 open tickets" or "3 overdue items".
+
+**`breakdown`** groups matching entities by a property and shows each value with a count and a
+horizontal bar. The property should be an enum or custom type so values can be styled with badge
+colors from `styles`. For example, grouping by `status` shows "open: 2, in-progress: 1, closed: 1"
+with colored bars.
+
+**`table`** shows matching entities as a compact table. It supports the same `columns` format as
+list definitions (with `property`, `label`, `sortable`, `link`), plus `sort` and `limit` to control
+ordering and row count.
+
+### Query Syntax
+
+Cards use the same search query syntax available on the search page:
+
+| Syntax                   | Example                           | Description                      |
+| ------------------------ | --------------------------------- | -------------------------------- |
+| `type:<entity_type>`     | `type:ticket`                     | Filter by entity type            |
+| `type:<a>,<b>`           | `type:ticket,category`            | Multiple entity types            |
+| `status:<value>`         | `status:open`                     | Shortcut for `prop:status=value` |
+| `prop:<name>=<value>`    | `prop:priority=critical`          | Property equals value            |
+| `prop:<name>!=<value>`   | `prop:assignee!=`                 | Property not equal               |
+| `prop:<name>=~<regex>`   | `prop:title=~auth.*`              | Regex match                      |
+| `prop:<name><<value>`    | `prop:due_date<2025-06-01`        | Less than (dates, numbers)       |
+| free text                | `authentication`                  | Substring match across all fields|
+| `"quoted phrase"`        | `"REST API"`                      | Exact phrase match               |
+
+Multiple terms are combined with AND logic. For example,
+`type:ticket status:open prop:priority=critical` matches tickets that are both open and critical.
+
+Every card includes a link icon (↗) that opens the same query on the search page for further
+exploration.
+
 ## Navigation
 
-The navigation section defines the sidebar menu. Each entry links to a named list:
+The navigation section defines the sidebar menu. Each entry links to a named list or the dashboard:
 
 ```yaml
 navigation:
+  - label: "Dashboard"
+    dashboard: true
   - label: "Open Tickets"
     list: open_tickets
   - label: "All Tickets"
@@ -613,13 +721,17 @@ navigation:
     list: categories
 ```
 
-| Field   | Type   | Description                        |
-| ------- | ------ | ---------------------------------- |
-| `label` | string | Menu item text                     |
-| `list`  | string | List name to navigate to           |
+| Field       | Type   | Description                                              |
+| ----------- | ------ | -------------------------------------------------------- |
+| `label`     | string | Menu item text                                           |
+| `list`      | string | List name to navigate to (mutually exclusive with `dashboard`) |
+| `dashboard` | bool   | Link to the dashboard page (mutually exclusive with `list`)    |
 
-The first entry is the default landing page. Order matters; items appear in the sidebar
-in the order listed.
+The first entry is the default landing page. If the first entry is a dashboard, the root URL
+(`/`) shows the dashboard. Order matters; items appear in the sidebar in the order listed.
+
+List entries show an entity count badge next to the label (based on the list's filters). Dashboard
+entries do not show a count.
 
 ## Complete Example
 
@@ -815,7 +927,31 @@ views:
           - property: status
         empty_message: "Not blocked"
 
+dashboard:
+  title: "Dashboard"
+  description: "Ticket overview"
+  cards:
+    - title: "Open Tickets"
+      query: "type:ticket status:open"
+      display: count
+    - title: "By Status"
+      query: "type:ticket"
+      display: breakdown
+      group_by: ticket_status
+    - title: "Critical"
+      query: "type:ticket prop:priority=critical"
+      display: table
+      columns:
+        - property: title
+          label: "Title"
+          link: true
+        - property: assignee
+          label: "Assignee"
+      limit: 5
+
 navigation:
+  - label: "Dashboard"
+    dashboard: true
   - label: "My Tickets"
     list: my_tickets
   - label: "Open Tickets"
@@ -843,7 +979,8 @@ views and add `sections` for HTML rendering.
 ## Best Practices
 
 1. **Start with navigation** - Decide which entity types users will work with most, and create
-   lists for those first. Add forms as needed.
+   lists for those first. Add forms as needed. Consider adding a dashboard as the landing page
+   for an at-a-glance overview.
 
 2. **Create before edit** - Define a create form with sensible defaults and hidden fields (like
    `status: open`). Then define an edit form with transitions and all fields visible.

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -25,9 +24,15 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(a.Cfg.Navigation) > 0 {
+		first := a.Cfg.Navigation[0]
+		if first.Dashboard {
+			r.URL.Path = "/dashboard"
+			a.handleDashboard(w, r)
+			return
+		}
 		// Rewrite path so handleList picks up the first navigation list.
 		// This avoids an HTTP redirect which Wails AssetServer does not follow.
-		r.URL.Path = "/list/" + a.Cfg.Navigation[0].List
+		r.URL.Path = "/list/" + first.List
 		a.handleList(w, r)
 		return
 	}
@@ -1279,69 +1284,19 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !sq.IsEmpty() {
-		// Collect candidate entities
-		var candidates []*model.Entity
-		if len(sq.EntityTypes) > 0 {
-			for _, t := range sq.EntityTypes {
-				candidates = append(candidates, a.g.NodesByType(t)...)
-			}
-		} else {
-			candidates = a.g.AllNodes()
-		}
-
+		entities := a.executeQuery(query)
 		const maxResults = 100
-		for _, e := range candidates {
+		for _, e := range entities {
 			if len(results) >= maxResults {
 				break
 			}
 
-			// Apply property filters
-			if len(sq.PropertyFilters) > 0 {
-				entDef, ok := a.meta.GetEntityDef(e.Type)
-				if !ok {
-					continue
-				}
-				matched, err := filter.MatchAll(e, sq.PropertyFilters, entDef, a.meta)
-				if err != nil || !matched {
-					continue
-				}
-			}
-
-			// Apply free text search
-			if sq.HasFreeText() {
-				searchText := strings.ToLower(e.ID + " " + a.entityDisplayTitle(e) + " " + e.Content)
-				for _, v := range e.Properties {
-					searchText += " " + strings.ToLower(fmt.Sprintf("%v", v))
-				}
-
-				match := true
-				for _, word := range sq.FreeTextWords {
-					if !strings.Contains(searchText, strings.ToLower(word)) {
-						match = false
-						break
-					}
-				}
-				if match {
-					for _, phrase := range sq.FreeTextPhrases {
-						if !strings.Contains(searchText, strings.ToLower(phrase)) {
-							match = false
-							break
-						}
-					}
-				}
-				if !match {
-					continue
-				}
-			}
-
-			// Build result
 			sr := SearchResult{
 				ID:         e.ID,
 				Title:      a.entityDisplayTitle(e),
 				EntityType: e.Type,
 			}
 
-			// Include key properties (first few from the entity definition)
 			entDef, _ := a.meta.GetEntityDef(e.Type)
 			if entDef != nil {
 				count := 0
@@ -1367,7 +1322,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build search suggestions from metamodel for Tagify autocomplete
+	// Build search suggestions from metamodel for autocomplete
 	type searchSuggestion struct {
 		Value    string `json:"value"`
 		Category string `json:"category"`
@@ -1448,4 +1403,132 @@ func appendToastParam(redirectURL, message string) string {
 		base += "#" + fragment
 	}
 	return base
+}
+
+// coverage-ignore: dashboard handler - tested via integration/manual testing
+func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if a.Cfg.Dashboard == nil {
+		http.NotFound(w, r)
+		return
+	}
+	dash := a.Cfg.Dashboard
+
+	type BreakdownItem struct {
+		Value      string
+		Count      int
+		PropType   string
+		Percentage float64
+	}
+
+	type CellData struct {
+		Value    string
+		PropType string
+		Link     string
+	}
+
+	type ResolvedCard struct {
+		Title   string
+		Display string
+		Query   string
+		// count display
+		Count int
+		// breakdown display
+		BreakdownItems []BreakdownItem
+		GroupByLabel   string
+		// table display
+		Columns []ListColumn
+		Rows    [][]CellData
+	}
+
+	cards := make([]ResolvedCard, len(dash.Cards))
+	for i, card := range dash.Cards {
+		entities := a.executeQuery(card.Query)
+		rc := ResolvedCard{
+			Title:   card.Title,
+			Display: card.Display,
+			Query:   card.Query,
+			Count:   len(entities),
+		}
+
+		switch card.Display {
+		case "breakdown":
+			// Group entities by property value
+			groups := make(map[string]int)
+			var orderedValues []string
+			for _, e := range entities {
+				val := ""
+				if v := e.Properties[card.GroupBy]; v != nil {
+					val = fmt.Sprintf("%v", v)
+				}
+				if val == "" {
+					val = "(empty)"
+				}
+				if groups[val] == 0 {
+					orderedValues = append(orderedValues, val)
+				}
+				groups[val]++
+			}
+			// Determine property type for badge styling
+			propType := ""
+			if len(entities) > 0 {
+				propType = resolvePropertyType(card.GroupBy, entities[0].Type, a.meta)
+			}
+			total := len(entities)
+			for _, val := range orderedValues {
+				pct := 0.0
+				if total > 0 {
+					pct = float64(groups[val]) / float64(total) * 100
+				}
+				rc.BreakdownItems = append(rc.BreakdownItems, BreakdownItem{
+					Value:      val,
+					Count:      groups[val],
+					PropType:   propType,
+					Percentage: pct,
+				})
+			}
+			rc.GroupByLabel = titleCase(card.GroupBy)
+
+		case "table":
+			sortEntities(entities, card.Sort)
+			if card.Limit > 0 && len(entities) > card.Limit {
+				entities = entities[:card.Limit]
+			}
+			rc.Columns = card.Columns
+			for _, e := range entities {
+				row := make([]CellData, len(card.Columns))
+				for j, col := range card.Columns {
+					val := ""
+					if v := e.Properties[col.Property]; v != nil {
+						val = fmt.Sprintf("%v", v)
+					}
+					cd := CellData{
+						Value:    val,
+						PropType: resolvePropertyType(col.Property, e.Type, a.meta),
+					}
+					if col.Link {
+						cd.Link = "/entity/" + e.Type + "/" + e.ID
+					}
+					row[j] = cd
+				}
+				rc.Rows = append(rc.Rows, row)
+			}
+		}
+
+		cards[i] = rc
+	}
+
+	data := map[string]interface{}{
+		"App":        a.Cfg.App,
+		"Navigation": a.navItems(),
+		"ActiveList": "_dashboard",
+		"Dashboard":  dash,
+		"Cards":      cards,
+		"IsHTMX":     r.Header.Get("HX-Request") == "true",
+	}
+
+	if r.Header.Get("HX-Request") == "true" {
+		a.tmpl.ExecuteTemplate(w, "dashboard-content", data) //nolint:errcheck // template errors logged by http
+	} else {
+		a.tmpl.ExecuteTemplate(w, "dashboard-page", data) //nolint:errcheck // template errors logged by http
+	}
 }

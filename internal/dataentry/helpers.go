@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
 
 // applyFilters filters entities by a set of filter conditions.
@@ -325,6 +327,66 @@ func inlineFormat(s string) string {
 		s = s[:start] + "<em>" + s[start+1:end] + "</em>" + s[end+1:]
 	}
 	return s
+}
+
+// executeQuery parses a search query and returns all matching entities from the graph.
+// It supports the same query syntax as the search page: type:, prop:, status:, and free text.
+func (a *App) executeQuery(query string) []*model.Entity {
+	sq := searchparser.ParseQuery(query)
+	if sq.IsEmpty() {
+		return nil
+	}
+
+	var candidates []*model.Entity
+	if len(sq.EntityTypes) > 0 {
+		for _, t := range sq.EntityTypes {
+			candidates = append(candidates, a.g.NodesByType(t)...)
+		}
+	} else {
+		candidates = a.g.AllNodes()
+	}
+
+	results := make([]*model.Entity, 0, len(candidates))
+	for _, e := range candidates {
+		if len(sq.PropertyFilters) > 0 {
+			entDef, ok := a.meta.GetEntityDef(e.Type)
+			if !ok {
+				continue
+			}
+			matched, err := filter.MatchAll(e, sq.PropertyFilters, entDef, a.meta)
+			if err != nil || !matched {
+				continue
+			}
+		}
+
+		if sq.HasFreeText() {
+			searchText := strings.ToLower(e.ID + " " + a.entityDisplayTitle(e) + " " + e.Content)
+			for _, v := range e.Properties {
+				searchText += " " + strings.ToLower(fmt.Sprintf("%v", v))
+			}
+			match := true
+			for _, word := range sq.FreeTextWords {
+				if !strings.Contains(searchText, strings.ToLower(word)) {
+					match = false
+					break
+				}
+			}
+			if match {
+				for _, phrase := range sq.FreeTextPhrases {
+					if !strings.Contains(searchText, strings.ToLower(phrase)) {
+						match = false
+						break
+					}
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
+		results = append(results, e)
+	}
+	return results
 }
 
 // templateFuncs returns the template.FuncMap used by all HTML templates.

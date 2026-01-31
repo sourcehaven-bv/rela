@@ -12,6 +12,7 @@ type Config struct {
 	Forms      map[string]Form              `yaml:"forms"`
 	Lists      map[string]List              `yaml:"lists"`
 	Views      map[string]ViewConfig        `yaml:"views"`
+	Dashboard  *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Navigation []NavigationEntry            `yaml:"navigation"`
 }
 
@@ -110,8 +111,27 @@ type FilterControl struct {
 
 // NavigationEntry defines a sidebar navigation item.
 type NavigationEntry struct {
-	Label string `yaml:"label"`
-	List  string `yaml:"list"`
+	Label     string `yaml:"label"`
+	List      string `yaml:"list,omitempty"`
+	Dashboard bool   `yaml:"dashboard,omitempty"`
+}
+
+// DashboardConfig defines a dashboard page with query-driven cards.
+type DashboardConfig struct {
+	Title       string          `yaml:"title"`
+	Description string          `yaml:"description"`
+	Cards       []DashboardCard `yaml:"cards"`
+}
+
+// DashboardCard defines a single card on the dashboard, driven by a search query.
+type DashboardCard struct {
+	Title   string       `yaml:"title"`
+	Query   string       `yaml:"query"`
+	Display string       `yaml:"display"` // "count", "table", "breakdown"
+	GroupBy string       `yaml:"group_by,omitempty"`
+	Columns []ListColumn `yaml:"columns,omitempty"`
+	Sort    *SortConfig  `yaml:"sort,omitempty"`
+	Limit   int          `yaml:"limit,omitempty"`
 }
 
 // ViewConfig defines a detailed entity view with traversal and sections.
