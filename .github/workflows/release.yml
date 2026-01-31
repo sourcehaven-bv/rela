@@ -120,6 +120,12 @@ jobs:
           sed "s/VERSION_PLACEHOLDER/${{ steps.version.outputs.version }}/g" \
             build/package/macos/Info.plist > "$APP_DIR/Info.plist"
 
+      - name: Ad-hoc sign macOS app
+        if: matrix.os_name == 'darwin'
+        run: |
+          codesign --force --deep -s - "Rela Desktop.app"
+          codesign --verify "Rela Desktop.app"
+
       - name: Create DMG
         if: matrix.os_name == 'darwin'
         run: |
