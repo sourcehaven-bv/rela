@@ -27,7 +27,6 @@ func NewSafeFS(fs FS) *SafeFS {
 //  3. Renames temp file to final path (atomic on POSIX)
 //  4. Fsyncs the parent directory
 func (s *SafeFS) WriteFile(path string, data []byte, perm os.FileMode) error {
-	path = filepath.Clean(path)
 	dir := filepath.Dir(path)
 
 	// Ensure directory exists
