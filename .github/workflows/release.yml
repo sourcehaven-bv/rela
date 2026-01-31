@@ -59,28 +59,24 @@ jobs:
             arch: arm64
             goarch: arm64
             ext: ""
-            archive_ext: tar.gz
             cgo_ldflags: "-framework UniformTypeIdentifiers"
           - runner: macos-latest
             os_name: darwin
             arch: amd64
             goarch: amd64
             ext: ""
-            archive_ext: tar.gz
             cgo_ldflags: "-framework UniformTypeIdentifiers"
           - runner: ubuntu-latest
             os_name: linux
             arch: amd64
             goarch: amd64
             ext: ""
-            archive_ext: tar.gz
             cgo_ldflags: ""
           - runner: windows-latest
             os_name: windows
             arch: amd64
             goarch: amd64
             ext: ".exe"
-            archive_ext: zip
             cgo_ldflags: ""
     steps:
       - uses: actions/checkout@v4
@@ -108,17 +104,149 @@ jobs:
         shell: bash
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Package (Unix)
-        if: matrix.os_name != 'windows'
-        run: tar czf rela-desktop_${{ steps.version.outputs.version }}_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz rela-desktop
+      # --- macOS: Create .app bundle and DMG ---
 
-      - name: Package (Windows)
+      - name: Create macOS app bundle
+        if: matrix.os_name == 'darwin'
+        run: |
+          APP_DIR="Rela Desktop.app/Contents"
+          mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
+          cp rela-desktop "$APP_DIR/MacOS/"
+          cp build/package/macos/rela-desktop.icns "$APP_DIR/Resources/"
+          sed "s/VERSION_PLACEHOLDER/${{ steps.version.outputs.version }}/g" \
+            build/package/macos/Info.plist > "$APP_DIR/Info.plist"
+
+      - name: Create DMG
+        if: matrix.os_name == 'darwin'
+        run: |
+          mkdir dmg_staging
+          cp -r "Rela Desktop.app" dmg_staging/
+          ln -s /Applications dmg_staging/Applications
+          hdiutil create \
+            -volname "Rela Desktop" \
+            -srcfolder dmg_staging \
+            -ov -format UDZO \
+            "rela-desktop_${{ steps.version.outputs.version }}_darwin_${{ matrix.arch }}.dmg"
+
+      # --- Windows: Create MSI installer ---
+
+      - name: Install WiX Toolset
+        if: matrix.os_name == 'windows'
+        run: dotnet tool install --global wix
+
+      - name: Copy icon for MSI
         if: matrix.os_name == 'windows'
         shell: pwsh
-        run: Compress-Archive -Path rela-desktop.exe -DestinationPath rela-desktop_${{ steps.version.outputs.version }}_windows_amd64.zip
+        run: Copy-Item build/package/windows/rela-desktop.ico -Destination .
+
+      - name: Create MSI
+        if: matrix.os_name == 'windows'
+        shell: pwsh
+        run: |
+          wix build build/package/windows/rela-desktop.wxs `
+            -d "Version=${{ steps.version.outputs.version }}" `
+            -d "SourceDir=." `
+            -arch x64 `
+            -o "rela-desktop_${{ steps.version.outputs.version }}_windows_${{ matrix.arch }}.msi"
+
+      # --- Linux: Create .deb and .rpm packages ---
+
+      - name: Install nFPM
+        if: matrix.os_name == 'linux'
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Create .deb package
+        if: matrix.os_name == 'linux'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          nfpm package -p deb -f build/package/linux/nfpm.yaml \
+            -t "rela-desktop_${VERSION}_linux_${ARCH}.deb"
+
+      - name: Create .rpm package
+        if: matrix.os_name == 'linux'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          nfpm package -p rpm -f build/package/linux/nfpm.yaml \
+            -t "rela-desktop_${VERSION}_linux_${ARCH}.rpm"
+
+      # --- Package archives (existing tar.gz/zip) ---
+
+      - name: Package archive (Unix)
+        if: matrix.os_name != 'windows'
+        run: |
+          tar czf "rela-desktop_${{ steps.version.outputs.version }}_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz" \
+            rela-desktop${{ matrix.ext }}
+
+      - name: Package archive (Windows)
+        if: matrix.os_name == 'windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path rela-desktop.exe `
+            -DestinationPath "rela-desktop_${{ steps.version.outputs.version }}_windows_amd64.zip"
+
+      # --- Upload all artifacts to release ---
 
       - name: Upload to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-        run: gh release upload ${{ github.ref_name }} rela-desktop_${{ steps.version.outputs.version }}_${{ matrix.os_name }}_${{ matrix.arch }}.${{ matrix.archive_ext }}
+        run: |
+          gh release upload ${{ github.ref_name }} \
+            rela-desktop_${{ steps.version.outputs.version }}_${{ matrix.os_name }}_${{ matrix.arch }}.* \
+            --clobber
+
+  # Update Homebrew cask after all desktop builds complete.
+  # Requires a HOMEBREW_TAP_TOKEN secret with push access to Sourcehaven-BV/homebrew-tap.
+  # To enable: add the secret and remove the `false &&` guard from the if condition.
+  homebrew:
+    name: Update Homebrew Cask
+    runs-on: macos-latest
+    needs: desktop
+    # Disabled until HOMEBREW_TAP_TOKEN is configured. Also skips pre-releases.
+    if: ${{ false && !contains(github.ref_name, '-') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download DMGs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download ${{ github.ref_name }} \
+            --pattern 'rela-desktop_*_darwin_*.dmg' \
+            --dir .
+
+      - name: Generate cask formula
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ARM_SHA=$(shasum -a 256 "rela-desktop_${VERSION}_darwin_arm64.dmg" | cut -d' ' -f1)
+          AMD_SHA=$(shasum -a 256 "rela-desktop_${VERSION}_darwin_amd64.dmg" | cut -d' ' -f1)
+
+          sed -e "s/VERSION_PLACEHOLDER/$VERSION/g" \
+              -e "s/ARM64_SHA_PLACEHOLDER/$ARM_SHA/g" \
+              -e "s/AMD64_SHA_PLACEHOLDER/$AMD_SHA/g" \
+              build/package/homebrew/rela-desktop.rb.tmpl > rela-desktop.rb
+
+          echo "Generated cask:"
+          cat rela-desktop.rb
+
+      - name: Push to Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/Sourcehaven-BV/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          cp rela-desktop.rb tap/Casks/rela-desktop.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/rela-desktop.rb
+          git diff --cached --quiet || git commit -m "Update rela-desktop cask to ${{ steps.version.outputs.version }}"
+          git push

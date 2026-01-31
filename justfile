@@ -190,6 +190,54 @@ vendor-js:
     curl -sfL -o internal/dataentry/static/tagify.css          "https://unpkg.com/@yaireo/tagify@4.31.3/dist/tagify.css"
     @echo "Done! Review changes with 'git diff' and commit."
 
+# ── Icons ──
+
+# Source SVG and output directories
+logo_svg := "build/package/logo.svg"
+icon_tmp := "build/package/.icon-tmp"
+
+# Generate all app icons from logo.svg (requires rsvg-convert, imagemagick, iconutil)
+icons: _icon-pngs _icon-icns _icon-ico _icon-linux
+    @rm -rf {{icon_tmp}}
+    @echo "All icons generated. Review changes with 'git diff' and commit."
+
+# Generate intermediate PNGs at all required sizes
+_icon-pngs:
+    @mkdir -p {{icon_tmp}}
+    @echo "Generating PNGs from {{logo_svg}}..."
+    @for size in 16 32 48 64 128 256 512 1024; do \
+        rsvg-convert -w $size -h $size -b '#031b75' {{logo_svg}} -o {{icon_tmp}}/icon_${size}.png; \
+    done
+
+# Generate macOS .icns (requires macOS iconutil)
+_icon-icns: _icon-pngs
+    @echo "Generating macOS .icns..."
+    @mkdir -p {{icon_tmp}}/rela-desktop.iconset
+    @cp {{icon_tmp}}/icon_16.png   {{icon_tmp}}/rela-desktop.iconset/icon_16x16.png
+    @cp {{icon_tmp}}/icon_32.png   {{icon_tmp}}/rela-desktop.iconset/icon_16x16@2x.png
+    @cp {{icon_tmp}}/icon_32.png   {{icon_tmp}}/rela-desktop.iconset/icon_32x32.png
+    @cp {{icon_tmp}}/icon_64.png   {{icon_tmp}}/rela-desktop.iconset/icon_32x32@2x.png
+    @cp {{icon_tmp}}/icon_128.png  {{icon_tmp}}/rela-desktop.iconset/icon_128x128.png
+    @cp {{icon_tmp}}/icon_256.png  {{icon_tmp}}/rela-desktop.iconset/icon_128x128@2x.png
+    @cp {{icon_tmp}}/icon_256.png  {{icon_tmp}}/rela-desktop.iconset/icon_256x256.png
+    @cp {{icon_tmp}}/icon_512.png  {{icon_tmp}}/rela-desktop.iconset/icon_256x256@2x.png
+    @cp {{icon_tmp}}/icon_512.png  {{icon_tmp}}/rela-desktop.iconset/icon_512x512.png
+    @cp {{icon_tmp}}/icon_1024.png {{icon_tmp}}/rela-desktop.iconset/icon_512x512@2x.png
+    @iconutil -c icns {{icon_tmp}}/rela-desktop.iconset -o build/package/macos/rela-desktop.icns
+
+# Generate Windows .ico (requires imagemagick)
+_icon-ico: _icon-pngs
+    @echo "Generating Windows .ico..."
+    @magick {{icon_tmp}}/icon_16.png {{icon_tmp}}/icon_32.png {{icon_tmp}}/icon_48.png \
+            {{icon_tmp}}/icon_64.png {{icon_tmp}}/icon_128.png {{icon_tmp}}/icon_256.png \
+            build/package/windows/rela-desktop.ico
+
+# Generate Linux PNGs
+_icon-linux: _icon-pngs
+    @echo "Generating Linux PNGs..."
+    @cp {{icon_tmp}}/icon_256.png build/package/linux/rela-desktop.png
+    @cp {{icon_tmp}}/icon_512.png build/package/linux/rela-desktop-512.png
+
 # ── Dev Server ──
 
 # Run the data entry server for development (ticketing example)
