@@ -4,7 +4,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -136,8 +135,7 @@ func (s *Server) handleReadView(
 	}
 	viewName, entryID := segments[0], segments[1]
 
-	viewsPath := filepath.Join(s.projectCtx.Root, "views.yaml")
-	viewsFile, err := views.Load(viewsPath, s.repo.FS())
+	viewsFile, err := s.repo.LoadViews()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load views: %w", err)
 	}

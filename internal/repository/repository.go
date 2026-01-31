@@ -11,12 +11,15 @@ package repository
 import (
 	"fmt"
 
+	"path/filepath"
+
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 // Repository provides domain-level CRUD for entities, relations, cache,
@@ -35,11 +38,6 @@ func New(fs storage.FS, paths *project.Context) *Repository {
 		paths: paths,
 		fio:   markdown.NewFileIO(fs),
 	}
-}
-
-// FS returns the underlying filesystem.
-func (r *Repository) FS() storage.FS {
-	return r.fs
 }
 
 // Paths returns the project context.
@@ -140,6 +138,15 @@ func (r *Repository) CacheExists() bool {
 // LoadMetamodel loads and parses the metamodel from the project's metamodel file.
 func (r *Repository) LoadMetamodel() (*metamodel.Metamodel, error) {
 	return metamodel.Load(r.paths.MetamodelPath, r.fs)
+}
+
+// --- Views ---
+
+// LoadViews loads and parses the views file from the project root.
+// Returns an empty views file if views.yaml doesn't exist (views are optional).
+func (r *Repository) LoadViews() (*views.File, error) {
+	viewsPath := filepath.Join(r.paths.Root, "views.yaml")
+	return views.Load(viewsPath, r.fs)
 }
 
 // --- Templates ---

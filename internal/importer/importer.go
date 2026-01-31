@@ -88,30 +88,43 @@ type RelationData struct {
 	Properties map[string]interface{} `json:"properties,omitempty" yaml:"properties,omitempty"`
 }
 
+// ImportSource provides filesystem access for reading import input files.
+// It wraps a storage.FS to make the intent explicit: the FS is for reading
+// source data (CSV, JSON, YAML), which may be on a different filesystem
+// than the project's repository.
+type ImportSource struct {
+	fs storage.FS
+}
+
+// NewImportSource creates an ImportSource from a filesystem.
+func NewImportSource(fs storage.FS) *ImportSource {
+	return &ImportSource{fs: fs}
+}
+
+// Open opens a file for reading from the import source.
+func (s *ImportSource) Open(path string) (io.ReadCloser, error) {
+	return s.fs.Open(path)
+}
+
 // Importer handles importing data into a rela project
 type Importer struct {
-	repo *repository.Repository
-	meta *metamodel.Metamodel
-	g    *graph.Graph
-	opts Options
-	fs   storage.FS
+	repo   *repository.Repository
+	meta   *metamodel.Metamodel
+	g      *graph.Graph
+	opts   Options
+	source *ImportSource
 }
 
-// New creates a new Importer
-func New(repo *repository.Repository, meta *metamodel.Metamodel, g *graph.Graph, opts Options) *Importer {
-	return NewFS(repo, meta, g, opts, repo.FS())
-}
-
-// NewFS creates a new Importer using the given filesystem for reading input files.
-func NewFS(
-	repo *repository.Repository, meta *metamodel.Metamodel, g *graph.Graph, opts Options, fs storage.FS,
+// New creates a new Importer that reads input files from the given source.
+func New(
+	repo *repository.Repository, meta *metamodel.Metamodel, g *graph.Graph, opts Options, source *ImportSource,
 ) *Importer {
 	return &Importer{
-		repo: repo,
-		meta: meta,
-		g:    g,
-		opts: opts,
-		fs:   fs,
+		repo:   repo,
+		meta:   meta,
+		g:      g,
+		opts:   opts,
+		source: source,
 	}
 }
 
@@ -125,7 +138,7 @@ func (imp *Importer) ImportFile(path string) (*Result, error) {
 		}
 	}
 
-	file, err := imp.fs.Open(path)
+	file, err := imp.source.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
@@ -591,7 +604,7 @@ func parseCSV(r io.Reader) (*ImportData, error) {
 
 // parseRelationsCSV parses a relations CSV file
 func (imp *Importer) parseRelationsCSV(path string) ([]RelationData, error) {
-	file, err := imp.fs.Open(path)
+	file, err := imp.source.Open(path)
 	if err != nil {
 		return nil, err
 	}

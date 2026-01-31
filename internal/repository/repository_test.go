@@ -37,7 +37,7 @@ relations:
     to: [requirement]
 `
 
-func setupTestRepo(t *testing.T) (*Repository, *metamodel.Metamodel) {
+func setupTestRepo(t *testing.T) (*Repository, *metamodel.Metamodel, storage.FS) {
 	t.Helper()
 	fs := storage.NewMemFS()
 
@@ -71,13 +71,13 @@ func setupTestRepo(t *testing.T) (*Repository, *metamodel.Metamodel) {
 	}
 
 	repo := New(fs, ctx)
-	return repo, meta
+	return repo, meta, fs
 }
 
 // --- Entity CRUD ---
 
 func TestRepository_WriteAndReadEntity(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	entity := model.NewEntity("REQ-001", "requirement")
 	entity.SetString("title", "Test Requirement")
@@ -108,7 +108,7 @@ func TestRepository_WriteAndReadEntity(t *testing.T) {
 }
 
 func TestRepository_WriteEntitySetsFilePath(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	entity := model.NewEntity("REQ-002", "requirement")
 	entity.SetString("title", "Path Check")
@@ -124,7 +124,7 @@ func TestRepository_WriteEntitySetsFilePath(t *testing.T) {
 }
 
 func TestRepository_WriteEntityUnknownType(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	entity := model.NewEntity("FOO-001", "unknown_type")
 	entity.SetString("title", "Bad Type")
@@ -136,7 +136,7 @@ func TestRepository_WriteEntityUnknownType(t *testing.T) {
 }
 
 func TestRepository_ReadEntityNotFound(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	_, err := repo.ReadEntity("requirement", "NONEXISTENT", meta)
 	if err == nil {
@@ -145,7 +145,7 @@ func TestRepository_ReadEntityNotFound(t *testing.T) {
 }
 
 func TestRepository_ReadEntityUnknownType(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	_, err := repo.ReadEntity("nonexistent", "FOO-001", meta)
 	if err == nil {
@@ -154,7 +154,7 @@ func TestRepository_ReadEntityUnknownType(t *testing.T) {
 }
 
 func TestRepository_DeleteEntity(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	entity := model.NewEntity("REQ-003", "requirement")
 	entity.SetString("title", "To Delete")
@@ -180,7 +180,7 @@ func TestRepository_DeleteEntity(t *testing.T) {
 }
 
 func TestRepository_DeleteEntityUnknownType(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	err := repo.DeleteEntity("nonexistent", "FOO-001", meta)
 	if err == nil {
@@ -189,7 +189,7 @@ func TestRepository_DeleteEntityUnknownType(t *testing.T) {
 }
 
 func TestRepository_ListEntities(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	// Write multiple entities
 	for _, id := range []string{"REQ-001", "REQ-002"} {
@@ -218,7 +218,7 @@ func TestRepository_ListEntities(t *testing.T) {
 // --- Relation CRUD ---
 
 func TestRepository_WriteAndReadRelation(t *testing.T) {
-	repo, _ := setupTestRepo(t)
+	repo, _, _ := setupTestRepo(t)
 
 	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
 
@@ -247,7 +247,7 @@ func TestRepository_WriteAndReadRelation(t *testing.T) {
 }
 
 func TestRepository_DeleteRelation(t *testing.T) {
-	repo, _ := setupTestRepo(t)
+	repo, _, _ := setupTestRepo(t)
 
 	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
 	if err := repo.WriteRelation(rel); err != nil {
@@ -265,7 +265,7 @@ func TestRepository_DeleteRelation(t *testing.T) {
 }
 
 func TestRepository_ListRelations(t *testing.T) {
-	repo, _ := setupTestRepo(t)
+	repo, _, _ := setupTestRepo(t)
 
 	r1 := model.NewRelation("DEC-001", "addresses", "REQ-001")
 	r2 := model.NewRelation("DEC-001", "addresses", "REQ-002")
@@ -290,7 +290,7 @@ func TestRepository_ListRelations(t *testing.T) {
 // --- Sync ---
 
 func TestRepository_Sync(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	// Write entities and a relation
 	e1 := model.NewEntity("REQ-001", "requirement")
@@ -329,7 +329,7 @@ func TestRepository_Sync(t *testing.T) {
 // --- Cache ---
 
 func TestRepository_CacheSaveAndLoad(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	// Build a graph with entities
 	g := graph.New()
@@ -369,7 +369,7 @@ func TestRepository_CacheSaveAndLoad(t *testing.T) {
 // --- Metamodel ---
 
 func TestRepository_LoadMetamodel(t *testing.T) {
-	repo, _ := setupTestRepo(t)
+	repo, _, _ := setupTestRepo(t)
 
 	meta, err := repo.LoadMetamodel()
 	if err != nil {
@@ -390,7 +390,7 @@ func TestRepository_LoadMetamodel(t *testing.T) {
 // --- Path Helpers ---
 
 func TestRepository_EntityFilePath(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	got := repo.EntityFilePath("requirement", "REQ-001", meta)
 	want := "/project/entities/requirements/REQ-001.md"
@@ -400,7 +400,7 @@ func TestRepository_EntityFilePath(t *testing.T) {
 }
 
 func TestRepository_EntityFilePath_UnknownType(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	got := repo.EntityFilePath("nonexistent", "FOO-001", meta)
 	if got != "" {
@@ -409,7 +409,7 @@ func TestRepository_EntityFilePath_UnknownType(t *testing.T) {
 }
 
 func TestRepository_EntityTypeDir(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	got := repo.EntityTypeDir("requirement", meta)
 	want := "/project/entities/requirements"
@@ -419,7 +419,7 @@ func TestRepository_EntityTypeDir(t *testing.T) {
 }
 
 func TestRepository_EntityTypeDir_UnknownType(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	got := repo.EntityTypeDir("nonexistent", meta)
 	if got != "" {
@@ -429,16 +429,8 @@ func TestRepository_EntityTypeDir_UnknownType(t *testing.T) {
 
 // --- Accessors ---
 
-func TestRepository_FS(t *testing.T) {
-	repo, _ := setupTestRepo(t)
-
-	if repo.FS() == nil {
-		t.Error("FS() should not be nil")
-	}
-}
-
 func TestRepository_Paths(t *testing.T) {
-	repo, _ := setupTestRepo(t)
+	repo, _, _ := setupTestRepo(t)
 
 	if repo.Paths() == nil {
 		t.Error("Paths() should not be nil")
@@ -451,7 +443,7 @@ func TestRepository_Paths(t *testing.T) {
 // --- Entity with Content ---
 
 func TestRepository_EntityWithContent(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	entity := model.NewEntity("REQ-010", "requirement")
 	entity.SetString("title", "With Content")
@@ -506,7 +498,7 @@ entities:
 // --- Templates ---
 
 func TestRepository_LoadEntityTemplate_NotFound(t *testing.T) {
-	repo, _ := setupTestRepo(t)
+	repo, _, _ := setupTestRepo(t)
 
 	// No template file exists — should return nil, nil
 	doc, err := repo.LoadEntityTemplate("requirement")
@@ -519,12 +511,12 @@ func TestRepository_LoadEntityTemplate_NotFound(t *testing.T) {
 }
 
 func TestRepository_LoadEntityTemplate_Exists(t *testing.T) {
-	repo, _ := setupTestRepo(t)
+	repo, _, fs := setupTestRepo(t)
 
 	// Write a template file
 	tmplContent := "---\nstatus: draft\n---\n\n# Description\n\nTODO\n"
 	tmplPath := "/project/templates/entities/requirement.md"
-	if err := repo.FS().WriteFile(tmplPath, []byte(tmplContent), 0o644); err != nil {
+	if err := fs.WriteFile(tmplPath, []byte(tmplContent), 0o644); err != nil {
 		t.Fatalf("failed to write template: %v", err)
 	}
 
@@ -540,7 +532,7 @@ func TestRepository_LoadEntityTemplate_Exists(t *testing.T) {
 // --- Multiple Entity Types ---
 
 func TestRepository_MultipleEntityTypes(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	req := model.NewEntity("REQ-001", "requirement")
 	req.SetString("title", "A Requirement")
@@ -584,7 +576,7 @@ func TestRepository_MultipleEntityTypes(t *testing.T) {
 // --- Overwrite ---
 
 func TestRepository_OverwriteEntity(t *testing.T) {
-	repo, meta := setupTestRepo(t)
+	repo, meta, _ := setupTestRepo(t)
 
 	entity := model.NewEntity("REQ-001", "requirement")
 	entity.SetString("title", "Original")
