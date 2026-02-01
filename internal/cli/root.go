@@ -8,10 +8,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 var (
@@ -28,6 +29,8 @@ var (
 	meta       *metamodel.Metamodel
 	g          *graph.Graph
 	out        *output.Writer
+	cliFS      storage.FS = storage.NewSafeFS(storage.NewOsFS())
+	repo       *repository.Repository
 )
 
 // rootCmd represents the base command
@@ -55,13 +58,16 @@ and maintain semantic relationships between them.`,
 
 		// Discover project
 		var err error
-		projectCtx, err = project.Discover("")
+		projectCtx, err = project.Discover("", cliFS)
 		if err != nil {
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}
 
+		// Initialize repository
+		repo = repository.New(cliFS, projectCtx)
+
 		// Load metamodel
-		meta, err = metamodel.Load(projectCtx.MetamodelPath)
+		meta, err = repo.LoadMetamodel()
 		if err != nil {
 			return fmt.Errorf("failed to load metamodel: %w", err)
 		}
@@ -70,16 +76,16 @@ and maintain semantic relationships between them.`,
 		g = graph.New()
 
 		// Try to load from cache first
-		if graph.CacheExists(projectCtx.CachePath) {
-			if err := g.LoadCache(projectCtx.CachePath); err != nil {
+		if repo.CacheExists() {
+			if err := repo.LoadCache(g); err != nil {
 				// Cache load failed, sync from files
-				if _, err := markdown.SyncFromFiles(projectCtx, meta, g); err != nil {
+				if _, err := repo.Sync(meta, g); err != nil {
 					return fmt.Errorf("failed to sync: %w", err)
 				}
 			}
 		} else {
 			// No cache, sync from files
-			if _, err := markdown.SyncFromFiles(projectCtx, meta, g); err != nil {
+			if _, err := repo.Sync(meta, g); err != nil {
 				return fmt.Errorf("failed to sync: %w", err)
 			}
 		}
@@ -117,8 +123,8 @@ func init() {
 
 // saveCache saves the graph to the cache file
 func saveCache() error {
-	if projectCtx != nil && g != nil {
-		return g.SaveCache(projectCtx.CachePath)
+	if repo != nil && g != nil {
+		return repo.SaveCache(g)
 	}
 	return nil
 }

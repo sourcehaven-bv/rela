@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,10 +13,11 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -25,33 +25,32 @@ const ConfigFile = "data-entry.yaml"
 
 // App is the central application struct holding config, metamodel, graph, and templates.
 type App struct {
-	Cfg     *Config
-	meta    *metamodel.Metamodel
-	g       *graph.Graph
-	projCtx *project.Context
-	tmpl    *template.Template
+	Cfg  *Config
+	meta *metamodel.Metamodel
+	g    *graph.Graph
+	repo *repository.Repository
+	tmpl *template.Template
 	// styleMap: property type name -> value -> CSS class name
 	styleMap map[string]map[string]string
 	// styledTypes: set of property type names that have style entries
 	styledTypes map[string]bool
 }
 
-// NewApp creates and initializes an App from a project directory.
-// It discovers the rela project and loads data-entry.yaml from the project root.
-func NewApp(projectDir string) (*App, error) {
+// NewApp creates and initializes an App using the given filesystem.
+func NewApp(projectDir string, fs storage.FS) (*App, error) {
 	// Discover rela project
 	absDir, err := filepath.Abs(projectDir)
 	if err != nil {
 		return nil, err
 	}
-	projCtx, err := project.Discover(absDir)
+	projCtx, err := project.Discover(absDir, fs)
 	if err != nil {
 		return nil, fmt.Errorf("discovering project: %w", err)
 	}
 
 	// Load data-entry config from project root
 	configPath := filepath.Join(projCtx.Root, ConfigFile)
-	cfgData, err := os.ReadFile(configPath)
+	cfgData, err := fs.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
@@ -60,8 +59,11 @@ func NewApp(projectDir string) (*App, error) {
 		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
 	}
 
+	// Create repository
+	repo := repository.New(fs, projCtx)
+
 	// Load metamodel
-	meta, err := metamodel.Load(projCtx.MetamodelPath)
+	meta, err := repo.LoadMetamodel()
 	if err != nil {
 		return nil, fmt.Errorf("loading metamodel: %w", err)
 	}
@@ -75,7 +77,7 @@ func NewApp(projectDir string) (*App, error) {
 
 	// Build graph from files
 	g := graph.New()
-	result, err := markdown.SyncFromFiles(projCtx, meta, g)
+	result, err := repo.Sync(meta, g)
 	if err != nil {
 		return nil, fmt.Errorf("syncing graph: %w", err)
 	}
@@ -97,7 +99,7 @@ func NewApp(projectDir string) (*App, error) {
 		Cfg:         &cfg,
 		meta:        meta,
 		g:           g,
-		projCtx:     projCtx,
+		repo:        repo,
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
@@ -245,7 +247,7 @@ func (a *App) ProjectName() string {
 
 // ProjectRoot returns the root directory of the loaded project.
 func (a *App) ProjectRoot() string {
-	return a.projCtx.Root
+	return a.repo.Paths().Root
 }
 
 // colorToCSSClass maps a color name from config to a CSS class.

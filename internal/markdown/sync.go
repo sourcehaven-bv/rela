@@ -13,15 +13,15 @@ type SyncResult struct {
 	Errors          []error
 }
 
-// SyncFromFiles rebuilds the graph from markdown files
-func SyncFromFiles(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph) (*SyncResult, error) {
+// SyncFromFiles rebuilds the graph from markdown files.
+func (f *FileIO) SyncFromFiles(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph) (*SyncResult, error) {
 	result := &SyncResult{}
 
 	// Clear the graph
 	g.Clear()
 
 	// Load all entities
-	entities, err := LoadAllEntities(ctx.EntitiesDir, meta)
+	entities, err := f.LoadAllEntities(ctx.EntitiesDir, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +32,7 @@ func SyncFromFiles(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Gra
 	}
 
 	// Load all relations
-	relations, err := LoadAllRelations(ctx.RelationsDir)
+	relations, err := f.LoadAllRelations(ctx.RelationsDir)
 	if err != nil {
 		return nil, err
 	}

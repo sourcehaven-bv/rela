@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // DetectionResult holds information about a detected migration need.
@@ -32,10 +33,10 @@ type FileResult struct {
 	Error      error
 }
 
-// Detect checks a YAML file for migrations that need to be applied.
-// Returns a list of migrations that detected deprecated patterns.
-func Detect(path string, ft FileType) ([]DetectionResult, error) {
-	data, err := os.ReadFile(path)
+// Detect checks a YAML file for migrations that need to be applied
+// using the given filesystem.
+func Detect(path string, ft FileType, fs storage.FS) ([]DetectionResult, error) {
+	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
 	}
@@ -65,10 +66,10 @@ func DetectFromNode(doc *yaml.Node, ft FileType) []DetectionResult {
 	return results
 }
 
-// Apply runs all applicable migrations on a file.
+// Apply runs all applicable migrations on a file using the given filesystem.
 // Returns results for each migration attempted.
-func Apply(path string, ft FileType) (*FileResult, error) {
-	data, err := os.ReadFile(path)
+func Apply(path string, ft FileType, fs storage.FS) (*FileResult, error) {
+	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
 	}
@@ -124,7 +125,7 @@ func Apply(path string, ft FileType) (*FileResult, error) {
 		return result, nil
 	}
 
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := fs.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		result.Error = fmt.Errorf("writing file: %w", err)
 		return result, nil
 	}
@@ -132,10 +133,10 @@ func Apply(path string, ft FileType) (*FileResult, error) {
 	return result, nil
 }
 
-// CheckOnly runs detection without applying changes.
+// CheckOnly runs detection without applying changes using the given filesystem.
 // Useful for CI or pre-flight checks.
-func CheckOnly(path string, ft FileType) (*FileResult, error) {
-	detections, err := Detect(path, ft)
+func CheckOnly(path string, ft FileType, fs storage.FS) (*FileResult, error) {
+	detections, err := Detect(path, ft, fs)
 	if err != nil {
 		return nil, err
 	}

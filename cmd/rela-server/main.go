@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // coverage-ignore: main function - entry point
@@ -20,7 +21,7 @@ func main() {
 	port := flag.String("port", "8080", "HTTP port to listen on")
 	flag.Parse()
 
-	app, err := dataentry.NewApp(*projectDir)
+	app, err := dataentry.NewApp(*projectDir, storage.NewSafeFS(storage.NewOsFS()))
 	if err != nil {
 		log.Fatalf("Failed to initialize: %v", err)
 	}

@@ -6,7 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
+
+var testMetaFS = storage.NewOsFS()
 
 // Test helpers to avoid import cycle
 func assertEqual(t *testing.T, got, want interface{}) {
@@ -396,7 +400,7 @@ entities:
 	createFile(t, tmpFile, validYAML)
 
 	// Test successful load
-	meta, err := Load(tmpFile)
+	meta, err := Load(tmpFile, testMetaFS)
 	assertNoError(t, err)
 
 	if meta == nil {
@@ -411,7 +415,7 @@ entities:
 }
 
 func TestLoad_NonExistentFile(t *testing.T) {
-	_, err := Load("/nonexistent/metamodel.yaml")
+	_, err := Load("/nonexistent/metamodel.yaml", testMetaFS)
 	assertError(t, err)
 }
 
@@ -426,7 +430,7 @@ entities:
 
 	createFile(t, tmpFile, invalidYAML)
 
-	_, err := Load(tmpFile)
+	_, err := Load(tmpFile, testMetaFS)
 	assertError(t, err)
 }
 

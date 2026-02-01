@@ -9,6 +9,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // testMetamodel creates a test metamodel
@@ -59,8 +61,10 @@ func testMetamodel() *metamodel.Metamodel {
 	}
 }
 
-// setupTestProject creates a temporary test project
-func setupTestProject(t *testing.T) (ctx *project.Context, cleanup func()) {
+// setupTestProject creates a temporary test project and returns a repository and import source
+func setupTestProject(t *testing.T) (
+	repo *repository.Repository, src *ImportSource, ctx *project.Context, cleanup func(),
+) {
 	t.Helper()
 
 	tmpDir, err := os.MkdirTemp("", "rela-import-test-*")
@@ -80,11 +84,15 @@ func setupTestProject(t *testing.T) (ctx *project.Context, cleanup func()) {
 	_ = os.MkdirAll(ctx.RelationsDir, 0755)
 	_ = os.MkdirAll(filepath.Join(tmpDir, ".rela"), 0755)
 
+	fs := storage.NewOsFS()
+	repo = repository.New(fs, ctx)
+	src = NewImportSource(fs)
+
 	cleanup = func() {
 		os.RemoveAll(tmpDir)
 	}
 
-	return ctx, cleanup
+	return repo, src, ctx, cleanup
 }
 
 func TestParseJSON(t *testing.T) {
@@ -279,13 +287,13 @@ func TestDetectFormat(t *testing.T) {
 }
 
 func TestImportDryRun(t *testing.T) {
-	ctx, cleanup := setupTestProject(t)
+	repo, src, ctx, cleanup := setupTestProject(t)
 	defer cleanup()
 
 	meta := testMetamodel()
 	g := graph.New()
 
-	imp := New(ctx, meta, g, Options{DryRun: true})
+	imp := New(repo, meta, g, Options{DryRun: true}, src)
 
 	data := &ImportData{
 		Entities: []EntityData{
@@ -315,13 +323,13 @@ func TestImportDryRun(t *testing.T) {
 }
 
 func TestImportEntities(t *testing.T) {
-	ctx, cleanup := setupTestProject(t)
+	repo, src, _, cleanup := setupTestProject(t)
 	defer cleanup()
 
 	meta := testMetamodel()
 	g := graph.New()
 
-	imp := New(ctx, meta, g, Options{})
+	imp := New(repo, meta, g, Options{}, src)
 
 	data := &ImportData{
 		Entities: []EntityData{
@@ -354,13 +362,13 @@ func TestImportEntities(t *testing.T) {
 }
 
 func TestImportWithRelations(t *testing.T) {
-	ctx, cleanup := setupTestProject(t)
+	repo, src, _, cleanup := setupTestProject(t)
 	defer cleanup()
 
 	meta := testMetamodel()
 	g := graph.New()
 
-	imp := New(ctx, meta, g, Options{})
+	imp := New(repo, meta, g, Options{}, src)
 
 	data := &ImportData{
 		Entities: []EntityData{
@@ -391,7 +399,7 @@ func TestImportWithRelations(t *testing.T) {
 }
 
 func TestImportValidationErrors(t *testing.T) {
-	ctx, cleanup := setupTestProject(t)
+	repo, src, _, cleanup := setupTestProject(t)
 	defer cleanup()
 
 	meta := testMetamodel()
@@ -434,7 +442,7 @@ func TestImportValidationErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			imp := New(ctx, meta, g, Options{})
+			imp := New(repo, meta, g, Options{}, src)
 			_, err := imp.Import(tt.data)
 			if err == nil {
 				t.Error("Expected error, got nil")
@@ -448,14 +456,14 @@ func TestImportValidationErrors(t *testing.T) {
 }
 
 func TestImportUpdate(t *testing.T) {
-	ctx, cleanup := setupTestProject(t)
+	repo, src, _, cleanup := setupTestProject(t)
 	defer cleanup()
 
 	meta := testMetamodel()
 	g := graph.New()
 
 	// First import
-	imp := New(ctx, meta, g, Options{})
+	imp := New(repo, meta, g, Options{}, src)
 	data := &ImportData{
 		Entities: []EntityData{
 			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Original"}},
@@ -467,7 +475,7 @@ func TestImportUpdate(t *testing.T) {
 	}
 
 	// Second import without update - should fail
-	imp2 := New(ctx, meta, g, Options{})
+	imp2 := New(repo, meta, g, Options{}, src)
 	data2 := &ImportData{
 		Entities: []EntityData{
 			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Updated"}},
@@ -479,7 +487,7 @@ func TestImportUpdate(t *testing.T) {
 	}
 
 	// Third import with update - should succeed
-	imp3 := New(ctx, meta, g, Options{Update: true})
+	imp3 := New(repo, meta, g, Options{Update: true}, src)
 	result, err := imp3.Import(data2)
 	if err != nil {
 		t.Fatalf("Update import error: %v", err)
@@ -496,13 +504,13 @@ func TestImportUpdate(t *testing.T) {
 }
 
 func TestImportSkipErrors(t *testing.T) {
-	ctx, cleanup := setupTestProject(t)
+	repo, src, _, cleanup := setupTestProject(t)
 	defer cleanup()
 
 	meta := testMetamodel()
 	g := graph.New()
 
-	imp := New(ctx, meta, g, Options{SkipErrors: true})
+	imp := New(repo, meta, g, Options{SkipErrors: true}, src)
 
 	data := &ImportData{
 		Entities: []EntityData{
@@ -529,7 +537,7 @@ func TestImportSkipErrors(t *testing.T) {
 }
 
 func TestImportFile(t *testing.T) {
-	ctx, cleanup := setupTestProject(t)
+	repo, src, ctx, cleanup := setupTestProject(t)
 	defer cleanup()
 
 	meta := testMetamodel()
@@ -546,7 +554,7 @@ func TestImportFile(t *testing.T) {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	imp := New(ctx, meta, g, Options{})
+	imp := New(repo, meta, g, Options{}, src)
 	result, err := imp.ImportFile(jsonFile)
 	if err != nil {
 		t.Fatalf("ImportFile() error = %v", err)
@@ -558,13 +566,13 @@ func TestImportFile(t *testing.T) {
 }
 
 func TestImportDefaultStatus(t *testing.T) {
-	ctx, cleanup := setupTestProject(t)
+	repo, src, _, cleanup := setupTestProject(t)
 	defer cleanup()
 
 	meta := testMetamodel()
 	g := graph.New()
 
-	imp := New(ctx, meta, g, Options{})
+	imp := New(repo, meta, g, Options{}, src)
 
 	// Import entity without status - should get default
 	data := &ImportData{

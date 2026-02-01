@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -16,7 +15,7 @@ var initCmd = &cobra.Command{
 	Short: "Initialize a new rela project",
 	Long:  `Creates a new rela project in the current directory with a default metamodel.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cwd, err := os.Getwd()
+		cwd, err := cliFS.Getwd()
 		if err != nil {
 			return err
 		}
@@ -24,7 +23,7 @@ var initCmd = &cobra.Command{
 		metamodelPath := filepath.Join(cwd, project.MetamodelFile)
 
 		// Check if already initialized
-		if _, err := os.Stat(metamodelPath); err == nil {
+		if _, err := cliFS.Stat(metamodelPath); err == nil {
 			return fmt.Errorf("project already initialized (metamodel.yaml exists)")
 		}
 
@@ -39,28 +38,25 @@ var initCmd = &cobra.Command{
 		}
 
 		// Create directories
-		if err := ctx.Initialize(); err != nil {
+		if err := ctx.Initialize(cliFS); err != nil {
 			return fmt.Errorf("failed to create directories: %w", err)
 		}
 
 		// Write default metamodel
-		if err := os.WriteFile(metamodelPath, []byte(metamodel.DefaultMetamodelYAML()), 0644); err != nil {
+		if err := cliFS.WriteFile(metamodelPath, []byte(metamodel.DefaultMetamodelYAML()), 0644); err != nil {
 			return fmt.Errorf("failed to write metamodel: %w", err)
 		}
 
 		// Add .rela to .gitignore if it exists
 		gitignorePath := filepath.Join(cwd, ".gitignore")
-		if _, err := os.Stat(gitignorePath); err == nil {
+		if _, err := cliFS.Stat(gitignorePath); err == nil {
 			// Read existing content
-			content, err := os.ReadFile(gitignorePath)
+			content, err := cliFS.ReadFile(gitignorePath)
 			if err == nil {
 				// Check if .rela is already in .gitignore
 				if !contains(string(content), ".rela") {
-					f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0644)
-					if err == nil {
-						_, _ = f.WriteString("\n# rela cache\n.rela/\n")
-						f.Close()
-					}
+					updated := append(content, []byte("\n# rela cache\n.rela/\n")...)
+					_ = cliFS.WriteFile(gitignorePath, updated, 0644)
 				}
 			}
 		}

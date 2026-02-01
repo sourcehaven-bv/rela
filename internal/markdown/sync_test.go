@@ -51,7 +51,7 @@ func TestSyncFromFiles(t *testing.T) {
 	}
 
 	// Sync
-	result, err := SyncFromFiles(ctx, meta, g)
+	result, err := testIO.SyncFromFiles(ctx, meta, g)
 	testutil.AssertNoError(t, err)
 
 	// Verify results
@@ -120,7 +120,7 @@ to: REQ-001
 	}
 	g := graph.New()
 
-	result, err := SyncFromFiles(ctx, meta, g)
+	result, err := testIO.SyncFromFiles(ctx, meta, g)
 	if err != nil {
 		t.Fatalf("SyncFromFiles failed: %v", err)
 	}
@@ -187,7 +187,7 @@ to: REQ-999
 	}
 	g := graph.New()
 
-	result, err := SyncFromFiles(ctx, meta, g)
+	result, err := testIO.SyncFromFiles(ctx, meta, g)
 	if err != nil {
 		t.Fatalf("SyncFromFiles failed: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestSyncFromFiles_EmptyDirectories(t *testing.T) {
 		CacheDir:     testCtx.CacheDir,
 	}
 
-	result, err := SyncFromFiles(ctx, meta, g)
+	result, err := testIO.SyncFromFiles(ctx, meta, g)
 	testutil.AssertNoError(t, err)
 
 	testutil.AssertEqual(t, result.EntitiesLoaded, 0)
@@ -275,7 +275,7 @@ type: requirement
 	}
 
 	// Sync should clear old data
-	result, err := SyncFromFiles(ctx, meta, g)
+	result, err := testIO.SyncFromFiles(ctx, meta, g)
 	if err != nil {
 		t.Fatalf("SyncFromFiles failed: %v", err)
 	}

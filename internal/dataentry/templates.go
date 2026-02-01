@@ -55,6 +55,8 @@ tbody tr:last-child td { border-bottom: none; }
 .cell-link:hover { text-decoration: underline; }
 .edit-icon { color: var(--text-muted); text-decoration: none; font-size: 14px; opacity: 0.6; transition: opacity 0.15s; }
 .edit-icon:hover { opacity: 1; color: var(--primary); }
+.delete-icon { color: var(--text-muted); text-decoration: none; font-size: 14px; opacity: 0.6; transition: opacity 0.15s; }
+.delete-icon:hover { opacity: 1; color: var(--danger); }
 .add-dropdown { position: relative; }
 .add-dropdown summary { list-style: none; cursor: pointer; }
 .add-dropdown summary::-webkit-details-marker { display: none; }
@@ -231,6 +233,27 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 });
 document.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt.detail.target); });
+function confirmDelete(entityID, returnTo) {
+  var existing = document.getElementById('delete-confirm-modal');
+  if (existing) existing.remove();
+  var overlay = document.createElement('div');
+  overlay.id = 'delete-confirm-modal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = '<div class="modal" style="width:380px;">' +
+    '<div class="modal-header"><h3>Confirm Delete</h3>' +
+    '<button class="modal-close" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button></div>' +
+    '<div class="modal-body"><p>Delete <strong>' + entityID + '</strong>?</p>' +
+    '<p style="font-size:13px;color:var(--text-muted);margin-top:8px;">This cannot be undone. The entity and all its relations will be permanently removed.</p></div>' +
+    '<div class="modal-footer">' +
+    '<button class="btn btn-secondary" onclick="this.closest(\'.modal-overlay\').remove()">Cancel</button>' +
+    '<button class="btn btn-danger" id="delete-confirm-btn">Delete</button></div></div>';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+  document.getElementById('delete-confirm-btn').addEventListener('click', function() {
+    htmx.ajax('POST', '/api/delete', {values: {'_entity_id': entityID, '_return_to': returnTo || ''}, swap: 'none'});
+    overlay.remove();
+  });
+}
 </script>
 {{- end -}}
 
@@ -373,6 +396,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
       <thead>
         <tr>
           {{ range .Columns }}<th{{ if .Sortable }} class="sortable" hx-get="{{ .SortURL }}" hx-target="#content" hx-push-url="true" hx-include=".filter-bar select, .filter-bar input"{{ end }}>{{ if .Label }}{{ .Label }}{{ else }}{{ .Property }}{{ end }}{{ if .IsSorted }}<span class="sort-indicator">{{ if eq .SortDir "desc" }}&#9660;{{ else }}&#9650;{{ end }}</span>{{ end }}</th>{{ end }}
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -387,10 +411,12 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
             {{ else }}{{ if .Value }}{{ .Value }}{{ else }}&mdash;{{ end }}{{ end }}
           </td>
           {{ end }}
+          <td style="width:1%;white-space:nowrap;"><a href="#" class="delete-icon" title="Delete"
+              onclick="event.preventDefault();confirmDelete('{{ .EntityID }}','/list/{{ $.ListID }}')">&#128465;</a></td>
         </tr>
         {{ end }}
         {{ if not .Rows }}
-        <tr><td colspan="{{ len .Columns }}" style="text-align:center;padding:32px;color:var(--text-muted);">No items found</td></tr>
+        <tr><td colspan="{{ add (len .Columns) 1 }}" style="text-align:center;padding:32px;color:var(--text-muted);">No items found</td></tr>
         {{ end }}
       </tbody>
     </table>
@@ -552,9 +578,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
       {{ if eq .Mode "edit" }}
       <button type="submit" class="btn btn-primary">Save Changes</button>
       <button type="button" class="btn btn-danger"
-              hx-post="/api/delete" hx-vals='{"_entity_id":"{{ .EntityID }}"}'
-              hx-confirm="Delete {{ .EntityID }}? This cannot be undone."
-              hx-swap="none">Delete</button>
+              onclick="confirmDelete('{{ .EntityID }}','{{ .ReturnTo }}')">Delete</button>
       {{ else }}
       <button type="submit" class="btn btn-primary">Create</button>
       {{ end }}
@@ -923,7 +947,9 @@ function submitInlineCreate() {
             </td>
             {{ end }}
             {{ if .EditFormID }}<td style="width:1%;white-space:nowrap;"><a href="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
-               hx-get="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a></td>{{ end }}
+               hx-get="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a>
+               <a href="#" class="delete-icon" title="Delete" style="margin-left:6px;"
+                  onclick="event.preventDefault();confirmDelete('{{ .EntityID }}','{{ $returnTo }}')">&#128465;</a></td>{{ end }}
           </tr>
           {{ end }}
         </tbody>
@@ -956,7 +982,9 @@ function submitInlineCreate() {
             </td>
             {{ end }}
             {{ if .EditFormID }}<td style="width:1%;white-space:nowrap;"><a href="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
-               hx-get="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a></td>
+               hx-get="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a>
+               <a href="#" class="delete-icon" title="Delete" style="margin-left:6px;"
+                  onclick="event.preventDefault();confirmDelete('{{ .EntityID }}','{{ $returnTo }}')">&#128465;</a></td>
             {{ else }}<td></td>{{ end }}
           </tr>
           {{ end }}

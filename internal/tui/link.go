@@ -200,23 +200,20 @@ func (l *LinkModel) createLink(app *App) (tea.Model, tea.Cmd) {
 	relation := model.NewRelation(l.sourceID, l.selectedRel, target.ID)
 
 	// Load and apply template defaults (if template exists)
-	template, err := markdown.LoadRelationTemplate(app.project, l.selectedRel)
+	template, err := app.repo.LoadRelationTemplate(l.selectedRel)
 	if err == nil && template != nil {
 		markdown.ApplyRelationTemplate(relation, template)
 	}
 
-	filePath := app.project.RelationFilePath(l.sourceID, l.selectedRel, target.ID)
-
-	if err := markdown.WriteRelation(relation, filePath); err != nil {
+	if err := app.repo.WriteRelation(relation); err != nil {
 		return app, SetMessage(fmt.Sprintf("Failed to create link: %v", err), true)
 	}
 
 	// Add to graph
-	relation.FilePath = filePath
 	app.graph.AddEdge(relation)
 
 	// Save cache
-	_ = app.graph.SaveCache(app.project.CachePath)
+	_ = app.repo.SaveCache(app.graph)
 
 	// Refresh browser
 	app.browser.Refresh(app)

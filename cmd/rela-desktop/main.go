@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sync"
 
 	"github.com/wailsapp/wails/v2"
@@ -20,111 +21,132 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-// coverage-ignore: main function - entry point
-
-// SwitchableHandler is an http.Handler that delegates to an underlying handler
-// which can be swapped at runtime for project switching.
-type SwitchableHandler struct {
-	mu      sync.RWMutex
-	handler http.Handler
-}
-
-func (s *SwitchableHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.handler
-	s.mu.RUnlock()
-	h.ServeHTTP(w, r)
-}
-
-func (s *SwitchableHandler) SetHandler(h http.Handler) {
-	s.mu.Lock()
-	s.handler = h
-	s.mu.Unlock()
-}
-
-// DesktopApp is the central desktop application struct, bound to Wails so
-// the frontend can call its exported methods.
-type DesktopApp struct {
+// Desktop is the backend bound to the Wails frontend.
+// It manages project lifecycle: opening a directory picker, loading a project,
+// and persisting recent projects in user preferences.
+type Desktop struct {
 	ctx     context.Context
-	handler *SwitchableHandler
+	mu      sync.RWMutex
+	app     *dataentry.App
+	handler http.Handler
+	loadErr string
 	prefs   *desktop.Preferences
-	app     *dataentry.App // nil when no project is loaded
 }
 
-// OnStartup is called by Wails when the application starts.
-func (d *DesktopApp) OnStartup(ctx context.Context) {
+// coverage-ignore: Wails lifecycle callback
+func (d *Desktop) startup(ctx context.Context) {
 	d.ctx = ctx
 }
 
-// OpenProject shows a directory picker dialog and switches to the selected project.
-func (d *DesktopApp) OpenProject() error {
-	dir, err := wailsruntime.OpenDirectoryDialog(d.ctx, wailsruntime.OpenDialogOptions{
+// OpenProject opens a native directory picker and loads the selected project.
+// It returns an error string (empty on success) so the JS frontend can react.
+func (d *Desktop) OpenProject() string {
+	dir, err := runtime.OpenDirectoryDialog(d.ctx, runtime.OpenDialogOptions{
 		Title: "Open Rela Project",
 	})
 	if err != nil {
-		return err
+		return fmt.Sprintf("dialog error: %v", err)
 	}
 	if dir == "" {
-		return nil // user cancelled
+		return "" // user cancelled
 	}
-	return d.switchProject(dir)
+	return d.LoadProject(dir)
 }
 
-// OpenRecentProject switches to a project from the recent projects list.
-func (d *DesktopApp) OpenRecentProject(path string) error {
-	return d.switchProject(path)
+// OpenRecentProject loads a project from the recent projects list.
+// It returns an error string (empty on success) so the JS frontend can react.
+func (d *Desktop) OpenRecentProject(path string) string {
+	errMsg := d.LoadProject(path)
+	if errMsg != "" {
+		// Project no longer valid — remove from recent list.
+		d.prefs.RemoveRecentProject(path)
+		_ = d.prefs.Save()
+		d.refreshMenu()
+	}
+	return errMsg
 }
 
-// switchProject validates and loads a new project, swaps the handler, and reloads the window.
-func (d *DesktopApp) switchProject(dir string) error {
-	app, err := dataentry.NewApp(dir)
+// LoadProject loads a rela project from the given directory.
+func (d *Desktop) LoadProject(dir string) string {
+	app, err := dataentry.NewApp(dir, storage.NewSafeFS(storage.NewOsFS()))
 	if err != nil {
-		_, _ = wailsruntime.MessageDialog(d.ctx, wailsruntime.MessageDialogOptions{
-			Type:    wailsruntime.ErrorDialog,
-			Title:   "Cannot Open Project",
-			Message: fmt.Sprintf("Failed to open project at %s:\n\n%v", dir, err),
-		})
-		return err
+		d.mu.Lock()
+		d.loadErr = err.Error()
+		d.mu.Unlock()
+		return err.Error()
+	}
+	d.mu.Lock()
+	d.app = app
+	d.handler = app.NewRouter()
+	d.loadErr = ""
+	d.mu.Unlock()
+
+	if d.ctx != nil {
+		runtime.WindowSetTitle(d.ctx, app.ProjectName())
 	}
 
-	d.app = app
-	d.handler.SetHandler(app.NewRouter())
-
-	// Update preferences.
+	// Update preferences with successfully opened project.
 	d.prefs.AddRecentProject(app.ProjectRoot(), app.ProjectName())
 	if saveErr := d.prefs.Save(); saveErr != nil {
 		log.Printf("Warning: could not save preferences: %v", saveErr)
 	}
+	d.refreshMenu()
 
-	// Update window title and menu.
-	wailsruntime.WindowSetTitle(d.ctx, app.ProjectName())
-	d.updateMenu()
-
-	// Reload the window to show the new project.
-	wailsruntime.WindowReloadApp(d.ctx)
-	return nil
+	return ""
 }
 
-// buildMenu constructs the application menu.
-func (d *DesktopApp) buildMenu() *menu.Menu {
+// ServeHTTP dispatches to the loaded app router or the welcome page.
+func (d *Desktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	d.mu.RLock()
+	h := d.handler
+	loadErr := d.loadErr
+	d.mu.RUnlock()
+
+	if h != nil {
+		h.ServeHTTP(w, r)
+		return
+	}
+
+	serveWelcomePage(w, d.prefs, loadErr)
+}
+
+// openProjectFromMenu handles File > Open Project from the native menu bar.
+// coverage-ignore: menu callback - requires Wails runtime
+func (d *Desktop) openProjectFromMenu(_ *menu.CallbackData) {
+	dir, err := runtime.OpenDirectoryDialog(d.ctx, runtime.OpenDialogOptions{
+		Title: "Open Rela Project",
+	})
+	if err != nil || dir == "" {
+		return
+	}
+	if errMsg := d.LoadProject(dir); errMsg != "" {
+		runtime.MessageDialog(d.ctx, runtime.MessageDialogOptions{ //nolint:errcheck // best-effort
+			Type:    runtime.ErrorDialog,
+			Title:   "Failed to open project",
+			Message: errMsg,
+		})
+		return
+	}
+	runtime.WindowReloadApp(d.ctx)
+}
+
+// buildAppMenu constructs the application menu bar including recent projects.
+func (d *Desktop) buildAppMenu() *menu.Menu {
 	appMenu := menu.NewMenu()
 
-	// macOS app menu (About, Services, Quit, etc.)
-	appMenu.Append(menu.AppMenu())
+	if goruntime.GOOS == "darwin" {
+		appMenu.Append(menu.AppMenu())
+	}
 
-	// File menu
 	fileMenu := appMenu.AddSubmenu("File")
-	fileMenu.AddText("Open Project...", keys.CmdOrCtrl("o"), func(_ *menu.CallbackData) {
-		if err := d.OpenProject(); err != nil {
-			log.Printf("Open project error: %v", err)
-		}
-	})
+	fileMenu.AddText("Open Project...", keys.CmdOrCtrl("o"), d.openProjectFromMenu)
 	fileMenu.AddSeparator()
 
 	// Recent Projects submenu
@@ -137,9 +159,15 @@ func (d *DesktopApp) buildMenu() *menu.Menu {
 				label = filepath.Base(proj.Path)
 			}
 			recentMenu.AddText(label, nil, func(_ *menu.CallbackData) {
-				if err := d.OpenRecentProject(proj.Path); err != nil {
-					log.Printf("Open recent project error: %v", err)
+				if errMsg := d.LoadProject(proj.Path); errMsg != "" {
+					runtime.MessageDialog(d.ctx, runtime.MessageDialogOptions{ //nolint:errcheck // best-effort
+						Type:    runtime.ErrorDialog,
+						Title:   "Failed to open project",
+						Message: errMsg,
+					})
+					return
 				}
+				runtime.WindowReloadApp(d.ctx)
 			})
 		}
 		recentMenu.AddSeparator()
@@ -148,30 +176,41 @@ func (d *DesktopApp) buildMenu() *menu.Menu {
 			if err := d.prefs.Save(); err != nil {
 				log.Printf("Warning: could not save preferences: %v", err)
 			}
-			d.updateMenu()
+			d.refreshMenu()
 		})
 		fileMenu.AddSeparator()
 	}
 
-	fileMenu.AddText("Close Window", keys.CmdOrCtrl("w"), func(_ *menu.CallbackData) {
-		wailsruntime.Quit(d.ctx)
-	})
+	if goruntime.GOOS != "darwin" {
+		fileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
+			runtime.Quit(d.ctx)
+		})
+	} else {
+		fileMenu.AddText("Close Window", keys.CmdOrCtrl("w"), func(_ *menu.CallbackData) {
+			runtime.Quit(d.ctx)
+		})
+	}
 
-	// Standard Edit menu (Undo, Redo, Cut, Copy, Paste, Select All)
-	appMenu.Append(menu.EditMenu())
+	if goruntime.GOOS == "darwin" {
+		appMenu.Append(menu.EditMenu())
+	}
 
 	return appMenu
 }
 
-// updateMenu rebuilds and applies the application menu.
-func (d *DesktopApp) updateMenu() {
-	m := d.buildMenu()
-	wailsruntime.MenuSetApplicationMenu(d.ctx, m)
-	wailsruntime.MenuUpdateApplicationMenu(d.ctx)
+// refreshMenu rebuilds and applies the application menu.
+func (d *Desktop) refreshMenu() {
+	if d.ctx == nil {
+		return
+	}
+	m := d.buildAppMenu()
+	runtime.MenuSetApplicationMenu(d.ctx, m)
+	runtime.MenuUpdateApplicationMenu(d.ctx)
 }
 
+// coverage-ignore: main function - entry point
 func main() {
-	projectDir := flag.String("project", "", "Path to the rela project directory")
+	projectDir := flag.String("project", ".", "Path to the rela project directory")
 	flag.Parse()
 
 	// Load desktop preferences.
@@ -181,81 +220,53 @@ func main() {
 		prefs = &desktop.Preferences{}
 	}
 
+	d := &Desktop{prefs: prefs}
+
 	// Determine which project to open.
-	var (
-		app      *dataentry.App
-		errorMsg string
-	)
-
-	dir := *projectDir
-	if dir == "" {
-		// No explicit project flag — try last project from preferences.
-		if prefs.LastProject != "" {
-			dir = prefs.LastProject
+	projectToLoad := resolveProjectDir(*projectDir, prefs)
+	if projectToLoad != "" {
+		if errMsg := d.LoadProject(projectToLoad); errMsg != "" {
+			log.Printf("Could not load project from %q: %s", projectToLoad, errMsg)
 		}
 	}
 
-	if dir != "" {
-		// Validate and load the project.
-		if !isValidProjectDir(dir) {
-			errorMsg = fmt.Sprintf("Last project directory no longer exists or is not a valid rela project: %s", dir)
-			prefs.RemoveRecentProject(dir)
-			_ = prefs.Save()
-		} else {
-			app, err = dataentry.NewApp(dir)
-			if err != nil {
-				errorMsg = fmt.Sprintf("Could not open project at %s: %v", dir, err)
-			}
-		}
-	}
-
-	// Build the handler.
-	switchable := &SwitchableHandler{}
-	if app != nil {
-		switchable.SetHandler(app.NewRouter())
-		// Update preferences with successfully opened project.
-		prefs.AddRecentProject(app.ProjectRoot(), app.ProjectName())
-		if saveErr := prefs.Save(); saveErr != nil {
-			log.Printf("Warning: could not save preferences: %v", saveErr)
-		}
-	} else {
-		switchable.SetHandler(newWelcomeHandler(prefs, errorMsg))
-	}
-
-	dApp := &DesktopApp{
-		handler: switchable,
-		prefs:   prefs,
-		app:     app,
-	}
-
-	// Window title.
 	title := "Rela Desktop"
-	if app != nil {
-		title = app.ProjectName()
+	if d.app != nil {
+		title = d.app.ProjectName()
 	}
 
 	wailsErr := wails.Run(&options.App{
 		Title:  title,
 		Width:  1280,
 		Height: 800,
-		Menu:   dApp.buildMenu(),
+		Menu:   d.buildAppMenu(),
 		AssetServer: &assetserver.Options{
-			Handler: switchable,
+			Handler: d,
 		},
-		OnStartup: dApp.OnStartup,
-		Bind:      []interface{}{dApp},
+		OnStartup: d.startup,
+		Bind:      []interface{}{d},
 	})
 	if wailsErr != nil {
 		log.Fatalf("Wails error: %v", wailsErr)
 	}
 }
 
-// isValidProjectDir checks that a directory exists and contains a metamodel.yaml file.
-func isValidProjectDir(dir string) bool {
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return false
+// resolveProjectDir determines which project directory to load at startup.
+// Priority: explicit -project flag > current dir if rela project > last project from preferences.
+func resolveProjectDir(flagValue string, prefs *desktop.Preferences) string {
+	// Explicit flag or current directory is a rela project.
+	if flagValue != "." || isRelaProject(flagValue) {
+		return flagValue
 	}
-	_, err = os.Stat(filepath.Join(dir, "metamodel.yaml"))
+	// Fall back to last project from preferences.
+	if prefs.LastProject != "" && isRelaProject(prefs.LastProject) {
+		return prefs.LastProject
+	}
+	return ""
+}
+
+// isRelaProject checks if the directory looks like a rela project.
+func isRelaProject(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "metamodel.yaml"))
 	return err == nil
 }

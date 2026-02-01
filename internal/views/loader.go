@@ -5,17 +5,19 @@ import (
 	"os"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-// Load reads and parses a views file from a YAML file
-func Load(path string) (*File, error) {
+// Load reads and parses a views file from a YAML file using the given filesystem.
+func Load(path string, fs storage.FS) (*File, error) {
 	// Check if file exists
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := fs.Stat(path); os.IsNotExist(err) {
 		// Views file is optional, return empty views
 		return &File{Views: make(map[string]ViewDef)}, nil
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read views file: %w", err)
 	}

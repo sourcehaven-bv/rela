@@ -8,8 +8,11 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
+
+var testIO = NewFileIO(storage.NewOsFS())
 
 func TestReadEntity(t *testing.T) {
 	tmpDir := testutil.TempDirWithCleanup(t)
@@ -34,7 +37,7 @@ This is a test requirement.
 	testutil.CreateFile(t, entityPath, entityContent)
 
 	// Test without metamodel
-	entity, err := ReadEntity(entityPath, nil)
+	entity, err := testIO.ReadEntity(entityPath, nil)
 	testutil.AssertNoError(t, err)
 
 	testutil.AssertEqual(t, entity.ID, "REQ-001")
@@ -69,7 +72,7 @@ Content here.
 		WithEntity("requirement", "Requirement", []string{"^REQ-\\d+$"}).
 		Build()
 
-	entity, err := ReadEntity(entityPath, meta)
+	entity, err := testIO.ReadEntity(entityPath, meta)
 	testutil.AssertNoError(t, err)
 
 	// Type inference depends on MatchesID which needs HasPattern to be implemented
@@ -101,7 +104,7 @@ title: Test
 		},
 	}
 
-	entity, err := ReadEntity(entityPath, meta)
+	entity, err := testIO.ReadEntity(entityPath, meta)
 	if err != nil {
 		t.Fatalf("ReadEntity failed: %v", err)
 	}
@@ -114,7 +117,7 @@ title: Test
 }
 
 func TestReadEntity_InvalidFile(t *testing.T) {
-	_, err := ReadEntity("/nonexistent/file.md", nil)
+	_, err := testIO.ReadEntity("/nonexistent/file.md", nil)
 	if err == nil {
 		t.Error("expected error for nonexistent file")
 	}
@@ -134,7 +137,7 @@ type: [invalid
 		t.Fatalf("failed to write test entity: %v", err)
 	}
 
-	_, err := ReadEntity(entityPath, nil)
+	_, err := testIO.ReadEntity(entityPath, nil)
 	if err == nil {
 		t.Error("expected error for invalid YAML")
 	}
@@ -153,7 +156,7 @@ func TestWriteEntity(t *testing.T) {
 
 	entityPath := filepath.Join(tmpDir, "entities", "requirement", "REQ-001.md")
 
-	err := WriteEntity(entity, entityPath)
+	err := testIO.WriteEntity(entity, entityPath)
 	testutil.AssertNoError(t, err)
 
 	// Verify file exists
@@ -178,7 +181,7 @@ func TestWriteEntity_PropertyOrdering(t *testing.T) {
 
 	entityPath := filepath.Join(tmpDir, "REQ-001.md")
 
-	err := WriteEntity(entity, entityPath)
+	err := testIO.WriteEntity(entity, entityPath)
 	if err != nil {
 		t.Fatalf("WriteEntity failed: %v", err)
 	}
@@ -208,14 +211,14 @@ func TestDeleteEntity(t *testing.T) {
 	entityPath := filepath.Join(tmpDir, "REQ-001.md")
 	testutil.CreateFile(t, entityPath, "test")
 
-	err := DeleteEntity(entityPath)
+	err := testIO.DeleteEntity(entityPath)
 	testutil.AssertNoError(t, err)
 
 	testutil.AssertFileNotExists(t, entityPath)
 }
 
 func TestDeleteEntity_NonExistent(t *testing.T) {
-	err := DeleteEntity("/nonexistent/file.md")
+	err := testIO.DeleteEntity("/nonexistent/file.md")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
 	}
@@ -244,7 +247,7 @@ func TestListEntityFiles(t *testing.T) {
 	// Create a non-markdown file (should be ignored)
 	testutil.CreateFile(t, filepath.Join(requirementDir, "README.txt"), "test")
 
-	files, err := ListEntityFiles(entitiesDir)
+	files, err := testIO.ListEntityFiles(entitiesDir)
 	testutil.AssertNoError(t, err)
 	testutil.AssertLengthEqual(t, files, 3)
 
@@ -267,7 +270,7 @@ func TestListEntityFiles_EmptyDir(t *testing.T) {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
-	files, err := ListEntityFiles(entitiesDir)
+	files, err := testIO.ListEntityFiles(entitiesDir)
 	if err != nil {
 		t.Fatalf("ListEntityFiles failed: %v", err)
 	}
@@ -278,7 +281,7 @@ func TestListEntityFiles_EmptyDir(t *testing.T) {
 }
 
 func TestListEntityFiles_NonExistent(t *testing.T) {
-	_, err := ListEntityFiles("/nonexistent/dir")
+	_, err := testIO.ListEntityFiles("/nonexistent/dir")
 	if err == nil {
 		t.Error("expected error for nonexistent directory")
 	}
@@ -308,7 +311,7 @@ Content ` + string(rune('0'+i))
 		}
 	}
 
-	entities, err := LoadAllEntities(entitiesDir, nil)
+	entities, err := testIO.LoadAllEntities(entitiesDir, nil)
 	if err != nil {
 		t.Fatalf("LoadAllEntities failed: %v", err)
 	}
@@ -341,7 +344,7 @@ func TestLoadAllEntities_EmptyDir(t *testing.T) {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
-	entities, err := LoadAllEntities(entitiesDir, nil)
+	entities, err := testIO.LoadAllEntities(entitiesDir, nil)
 	if err != nil {
 		t.Fatalf("LoadAllEntities failed: %v", err)
 	}
@@ -352,7 +355,7 @@ func TestLoadAllEntities_EmptyDir(t *testing.T) {
 }
 
 func TestLoadAllEntities_NonExistent(t *testing.T) {
-	entities, err := LoadAllEntities("/nonexistent/dir", nil)
+	entities, err := testIO.LoadAllEntities("/nonexistent/dir", nil)
 	if err != nil {
 		t.Fatalf("LoadAllEntities should not fail for nonexistent dir: %v", err)
 	}
@@ -388,7 +391,7 @@ invalid yaml: [
 		t.Fatalf("failed to create invalid entity: %v", err)
 	}
 
-	entities, err := LoadAllEntities(entitiesDir, nil)
+	entities, err := testIO.LoadAllEntities(entitiesDir, nil)
 	if err != nil {
 		t.Fatalf("LoadAllEntities failed: %v", err)
 	}
@@ -407,7 +410,7 @@ func TestEntityFileModTime(t *testing.T) {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
-	modTime, err := EntityFileModTime(entityPath)
+	modTime, err := testIO.EntityFileModTime(entityPath)
 	if err != nil {
 		t.Fatalf("EntityFileModTime failed: %v", err)
 	}
@@ -418,7 +421,7 @@ func TestEntityFileModTime(t *testing.T) {
 }
 
 func TestEntityFileModTime_NonExistent(t *testing.T) {
-	_, err := EntityFileModTime("/nonexistent/file.md")
+	_, err := testIO.EntityFileModTime("/nonexistent/file.md")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
 	}

@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
 
 var (
@@ -67,13 +65,13 @@ Examples:
 		// Delete relations first if cascade
 		if deleteCascade {
 			for _, rel := range incoming {
-				if err := markdown.DeleteRelation(rel.FilePath); err != nil && !os.IsNotExist(err) {
+				if err := repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil && !os.IsNotExist(err) {
 					out.WriteWarning("Failed to delete relation file: %v", err)
 				}
 				g.RemoveEdge(rel.From, rel.Type, rel.To)
 			}
 			for _, rel := range outgoing {
-				if err := markdown.DeleteRelation(rel.FilePath); err != nil && !os.IsNotExist(err) {
+				if err := repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil && !os.IsNotExist(err) {
 					out.WriteWarning("Failed to delete relation file: %v", err)
 				}
 				g.RemoveEdge(rel.From, rel.Type, rel.To)
@@ -81,19 +79,7 @@ Examples:
 		}
 
 		// Delete entity file
-		filePath := entity.FilePath
-		if filePath == "" {
-			// Use proper plural from metamodel if available
-			entityDef, _ := meta.GetEntityDef(entity.Type)
-			if entityDef != nil {
-				plural := entityDef.GetDirPlural(entity.Type)
-				filePath = projectCtx.EntityFilePathWithPlural(plural, entityID)
-			} else {
-				filePath = projectCtx.EntityFilePath(entity.Type, entityID)
-			}
-		}
-
-		if err := markdown.DeleteEntity(filePath); err != nil && !os.IsNotExist(err) {
+		if err := repo.DeleteEntity(entity.Type, entityID, meta); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("failed to delete entity file: %w", err)
 		}
 

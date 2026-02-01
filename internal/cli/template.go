@@ -5,8 +5,6 @@ import (
 	"sort"
 
 	"github.com/spf13/cobra"
-
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
 
 var (
@@ -87,7 +85,7 @@ Examples:
 
 		// Generate entity templates
 		for _, entityType := range entityTypes {
-			created, err := markdown.GenerateEntityTemplate(projectCtx, meta, entityType, templateForce)
+			created, err := repo.GenerateEntityTemplate(meta, entityType, templateForce)
 			if err != nil {
 				return fmt.Errorf("failed to generate template for %s: %w", entityType, err)
 			}
@@ -104,7 +102,7 @@ Examples:
 
 		// Generate relation templates
 		for _, relationType := range relationTypes {
-			created, err := markdown.GenerateRelationTemplate(projectCtx, meta, relationType, templateForce)
+			created, err := repo.GenerateRelationTemplate(meta, relationType, templateForce)
 			if err != nil {
 				return fmt.Errorf("failed to generate template for %s: %w", relationType, err)
 			}

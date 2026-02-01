@@ -25,7 +25,7 @@ rationale: Because it makes sense
 		t.Fatalf("failed to write test relation: %v", err)
 	}
 
-	relation, err := ReadRelation(relationPath)
+	relation, err := testIO.ReadRelation(relationPath)
 	if err != nil {
 		t.Fatalf("ReadRelation failed: %v", err)
 	}
@@ -51,7 +51,7 @@ rationale: Because it makes sense
 }
 
 func TestReadRelation_InvalidFile(t *testing.T) {
-	_, err := ReadRelation("/nonexistent/file.md")
+	_, err := testIO.ReadRelation("/nonexistent/file.md")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
 	}
@@ -71,7 +71,7 @@ relation: [invalid
 		t.Fatalf("failed to write test relation: %v", err)
 	}
 
-	_, err := ReadRelation(relationPath)
+	_, err := testIO.ReadRelation(relationPath)
 	if err == nil {
 		t.Error("expected error for invalid YAML")
 	}
@@ -92,7 +92,7 @@ func TestWriteRelation(t *testing.T) {
 
 	relationPath := filepath.Join(tmpDir, "relations", "DEC-001--addresses--REQ-001.md")
 
-	err := WriteRelation(relation, relationPath)
+	err := testIO.WriteRelation(relation, relationPath)
 	if err != nil {
 		t.Fatalf("WriteRelation failed: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestDeleteRelation(t *testing.T) {
 		t.Fatalf("failed to create test file: %v", err)
 	}
 
-	err := DeleteRelation(relationPath)
+	err := testIO.DeleteRelation(relationPath)
 	if err != nil {
 		t.Fatalf("DeleteRelation failed: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestDeleteRelation(t *testing.T) {
 }
 
 func TestDeleteRelation_NonExistent(t *testing.T) {
-	err := DeleteRelation("/nonexistent/file.md")
+	err := testIO.DeleteRelation("/nonexistent/file.md")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
 	}
@@ -173,7 +173,7 @@ func TestListRelationFiles(t *testing.T) {
 		t.Fatalf("failed to create non-md file: %v", err)
 	}
 
-	files, err := ListRelationFiles(relationsDir)
+	files, err := testIO.ListRelationFiles(relationsDir)
 	if err != nil {
 		t.Fatalf("ListRelationFiles failed: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestListRelationFiles_EmptyDir(t *testing.T) {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
-	files, err := ListRelationFiles(relationsDir)
+	files, err := testIO.ListRelationFiles(relationsDir)
 	if err != nil {
 		t.Fatalf("ListRelationFiles failed: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestListRelationFiles_EmptyDir(t *testing.T) {
 }
 
 func TestListRelationFiles_NonExistent(t *testing.T) {
-	files, err := ListRelationFiles("/nonexistent/dir")
+	files, err := testIO.ListRelationFiles("/nonexistent/dir")
 	if err != nil {
 		t.Fatalf("ListRelationFiles should not fail for nonexistent dir: %v", err)
 	}
@@ -244,7 +244,7 @@ to: REQ-00` + string(rune('0'+i)) + `
 		}
 	}
 
-	relations, err := LoadAllRelations(relationsDir)
+	relations, err := testIO.LoadAllRelations(relationsDir)
 	if err != nil {
 		t.Fatalf("LoadAllRelations failed: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestLoadAllRelations_EmptyDir(t *testing.T) {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
-	relations, err := LoadAllRelations(relationsDir)
+	relations, err := testIO.LoadAllRelations(relationsDir)
 	if err != nil {
 		t.Fatalf("LoadAllRelations failed: %v", err)
 	}
@@ -314,7 +314,7 @@ invalid yaml: [
 		t.Fatalf("failed to create invalid relation: %v", err)
 	}
 
-	relations, err := LoadAllRelations(relationsDir)
+	relations, err := testIO.LoadAllRelations(relationsDir)
 	if err != nil {
 		t.Fatalf("LoadAllRelations failed: %v", err)
 	}

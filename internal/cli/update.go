@@ -3,12 +3,9 @@ package cli
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
 
 var (
@@ -102,25 +99,12 @@ Examples:
 			return fmt.Errorf("validation error: %w", errs[0])
 		}
 
-		// Write to file
-		filePath := entity.FilePath
-		if filePath == "" {
-			// Use proper plural from metamodel if available
-			entityDef, _ := meta.GetEntityDef(entity.Type)
-			if entityDef != nil {
-				plural := entityDef.GetDirPlural(entity.Type)
-				filePath = projectCtx.EntityFilePathWithPlural(plural, entityID)
-			} else {
-				filePath = projectCtx.EntityFilePath(entity.Type, entityID)
-			}
-		}
-
-		if err := markdown.WriteEntity(entity, filePath); err != nil {
+		// Write to file (repo computes path and sets entity.FilePath)
+		if err := repo.WriteEntity(entity, meta); err != nil {
 			return fmt.Errorf("failed to write entity: %w", err)
 		}
 
 		// Update in graph
-		entity.FilePath = filePath
 		g.AddNode(entity)
 
 		// Save cache
@@ -152,7 +136,7 @@ func getUpdateBodyContent(cmd *cobra.Command) (string, error) {
 		if updateBodyFile == "-" {
 			content, err = io.ReadAll(cmd.InOrStdin())
 		} else {
-			content, err = os.ReadFile(updateBodyFile)
+			content, err = cliFS.ReadFile(updateBodyFile)
 		}
 
 		if err != nil {

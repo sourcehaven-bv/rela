@@ -87,6 +87,17 @@ release:
   draft: false
   prerelease: auto
   name_template: "{{.Tag}}"
+  header: |
+    ## macOS Desktop App
+
+    The macOS desktop app is ad-hoc signed. After opening the DMG and dragging the app
+    to Applications, macOS Gatekeeper may block it. To allow it to run:
+
+    ```bash
+    xattr -cr "/Applications/Rela Desktop.app"
+    ```
+
+    Alternatively, right-click the app and select **Open**, then confirm in the dialog.
 
 # Homebrew tap (optional - uncomment when you have a homebrew-tap repo)
 # brews:

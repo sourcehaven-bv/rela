@@ -24,7 +24,7 @@ func setupTestContext(t *testing.T) *project.Context {
 func TestLoadEntityTemplate_NotFound(t *testing.T) {
 	ctx := setupTestContext(t)
 
-	doc, err := LoadEntityTemplate(ctx, "requirement")
+	doc, err := testIO.LoadEntityTemplate(ctx, "requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -56,7 +56,7 @@ This is a template description.
 		t.Fatalf("failed to write template: %v", err)
 	}
 
-	doc, err := LoadEntityTemplate(ctx, "requirement")
+	doc, err := testIO.LoadEntityTemplate(ctx, "requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -84,7 +84,7 @@ This is a template description.
 func TestLoadRelationTemplate_NotFound(t *testing.T) {
 	ctx := setupTestContext(t)
 
-	doc, err := LoadRelationTemplate(ctx, "addresses")
+	doc, err := testIO.LoadRelationTemplate(ctx, "addresses")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestGenerateEntityTemplate(t *testing.T) {
 	}
 
 	// Generate template
-	created, err := GenerateEntityTemplate(ctx, meta, "requirement", false)
+	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestGenerateEntityTemplate_NoOverwrite(t *testing.T) {
 	}
 
 	// Try to generate without force
-	created, err := GenerateEntityTemplate(ctx, meta, "requirement", false)
+	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestGenerateEntityTemplate_ForceOverwrite(t *testing.T) {
 	}
 
 	// Generate with force
-	created, err := GenerateEntityTemplate(ctx, meta, "requirement", true)
+	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestGenerateEntityTemplate_UnknownType(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{},
 	}
 
-	_, err := GenerateEntityTemplate(ctx, meta, "unknown", false)
+	_, err := testIO.GenerateEntityTemplate(ctx, meta, "unknown", false)
 	if err == nil {
 		t.Error("expected error for unknown entity type")
 	}
@@ -362,7 +362,7 @@ func TestGenerateRelationTemplate(t *testing.T) {
 		},
 	}
 
-	created, err := GenerateRelationTemplate(ctx, meta, "addresses", false)
+	created, err := testIO.GenerateRelationTemplate(ctx, meta, "addresses", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestGenerateRelationTemplate_UnknownType(t *testing.T) {
 		Relations: map[string]metamodel.RelationDef{},
 	}
 
-	_, err := GenerateRelationTemplate(ctx, meta, "unknown", false)
+	_, err := testIO.GenerateRelationTemplate(ctx, meta, "unknown", false)
 	if err == nil {
 		t.Error("expected error for unknown relation type")
 	}

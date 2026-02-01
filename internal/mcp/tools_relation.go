@@ -99,7 +99,7 @@ func (s *Server) handleCreateRelation(
 	relation.Content = content
 
 	// Load and apply template
-	template, templateErr := markdown.LoadRelationTemplate(s.projectCtx, relType)
+	template, templateErr := s.repo.LoadRelationTemplate(relType)
 	if templateErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to load template: %v", templateErr)), nil
 	}
@@ -107,12 +107,10 @@ func (s *Server) handleCreateRelation(
 		markdown.ApplyRelationTemplate(relation, template)
 	}
 
-	filePath := s.projectCtx.RelationFilePath(fromID, relType, toID)
-	if writeErr := markdown.WriteRelation(relation, filePath); writeErr != nil {
+	if writeErr := s.repo.WriteRelation(relation); writeErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to write relation: %v", writeErr)), nil
 	}
 
-	relation.FilePath = filePath
 	s.graph.AddEdge(relation)
 	s.saveCache()
 
@@ -136,18 +134,14 @@ func (s *Server) handleDeleteRelation(
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	relation, exists := s.graph.GetEdge(fromID, relType, toID)
+	_, exists := s.graph.GetEdge(fromID, relType, toID)
 	if !exists {
 		return mcp.NewToolResultError(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil
 	}
 
-	filePath := relation.FilePath
-	if filePath == "" {
-		filePath = s.projectCtx.RelationFilePath(fromID, relType, toID)
-	}
-	if delErr := markdown.DeleteRelation(filePath); delErr != nil {
-		s.logger.Printf("Warning: failed to delete relation file %s: %v", filePath, delErr)
+	if delErr := s.repo.DeleteRelation(fromID, relType, toID); delErr != nil {
+		s.logger.Printf("Warning: failed to delete relation file: %v", delErr)
 	}
 
 	s.graph.RemoveEdge(fromID, relType, toID)

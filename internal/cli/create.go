@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -83,7 +82,7 @@ Examples:
 		entity := model.NewEntity(entityID, resolvedType)
 
 		// Load and apply template defaults first (if template exists)
-		template, err := markdown.LoadEntityTemplate(projectCtx, resolvedType)
+		template, err := repo.LoadEntityTemplate(resolvedType)
 		if err != nil {
 			return fmt.Errorf("failed to load template: %w", err)
 		}
@@ -146,17 +145,12 @@ Examples:
 			return fmt.Errorf("validation errors:\n  %s", strings.Join(errMsgs, "\n  "))
 		}
 
-		// Determine file path using proper plural from metamodel
-		plural := entityDef.GetDirPlural(resolvedType)
-		filePath := projectCtx.EntityFilePathWithPlural(plural, entityID)
-
-		// Write to file
-		if err := markdown.WriteEntity(entity, filePath); err != nil {
+		// Write to file (repo computes path and sets entity.FilePath)
+		if err := repo.WriteEntity(entity, meta); err != nil {
 			return fmt.Errorf("failed to write entity: %w", err)
 		}
 
 		// Add to graph
-		entity.FilePath = filePath
 		g.AddNode(entity)
 
 		// Save cache
@@ -191,7 +185,7 @@ func getBodyContent(cmd *cobra.Command) (string, error) {
 		if createBodyFile == "-" {
 			content, err = io.ReadAll(cmd.InOrStdin())
 		} else {
-			content, err = os.ReadFile(createBodyFile)
+			content, err = cliFS.ReadFile(createBodyFile)
 		}
 
 		if err != nil {
