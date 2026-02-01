@@ -506,6 +506,49 @@ dashboard:
           label: "Assignee"
       limit: 5
 
+# ──────────────────────────────────────────────
+# Commands: executable scripts triggered from the UI
+# ──────────────────────────────────────────────
+commands:
+  export-json:
+    label: "Export JSON"
+    script: |
+      echo '::rela::{"type":"message","text":"Exporting entity data..."}'
+      cat
+      echo '::rela::{"type":"message","text":"Done!"}'
+    context: entity
+    available_on:
+      entity_types: [ticket]
+
+  ticket-summary:
+    label: "View Summary"
+    script: |
+      echo "::rela::{\"type\":\"message\",\"text\":\"Ticket: $RELA_ENTITY_ID\"}"
+      echo "::rela::{\"type\":\"message\",\"text\":\"View: $RELA_VIEW_ID\"}"
+    context: view
+    available_on:
+      views: [ticket_report]
+
+  generate-pdf:
+    label: "Generate PDF"
+    script: |
+      echo '::rela::{"type":"message","text":"Generating PDF report..."}'
+      PDF="/tmp/rela-ticket-${RELA_ENTITY_ID:-report}.pdf"
+      printf '%%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 44>>stream\nBT /F1 24 Tf 100 700 Td (Hello from rela!) Tj ET\nendstream\nendobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000266 00000 n \n0000000360 00000 n \ntrailer<</Size 6/Root 1 0 R>>\nstartxref\n430\n%%%%EOF\n' > "$PDF"
+      echo "::rela::{\"type\":\"message\",\"text\":\"PDF saved to $PDF\"}"
+      echo "::rela::{\"type\":\"file\",\"path\":\"$PDF\",\"label\":\"Ticket Report PDF\",\"action\":\"open\"}"
+    context: entity
+    available_on:
+      entity_types: [ticket]
+
+  project-info:
+    label: "Project Info"
+    script: |
+      echo "::rela::{\"type\":\"message\",\"text\":\"Project root: $RELA_PROJECT_ROOT\"}"
+    context: global
+    available_on:
+      dashboard: true
+
 navigation:
   - label: "Dashboard"
     dashboard: true
