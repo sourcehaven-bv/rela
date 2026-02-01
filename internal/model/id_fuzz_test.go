@@ -18,6 +18,9 @@ func FuzzParseEntityID(f *testing.F) {
 		"COMP-999",
 		"A1",
 		"ABC123",
+		"ISO-CA-001",
+		"ISO-CA-XX-042",
+		"A-B-1",
 
 		// Edge cases
 		"",
@@ -189,6 +192,7 @@ func FuzzExtractHighestNumber(f *testing.F) {
 	f.Add("DEC", "DEC-1,DEC-10,DEC-2")
 	f.Add("COMP", "")
 	f.Add("REQ", "invalid,REQ-001,alsoinvalid")
+	f.Add("ISO-CA", "ISO-CA-001,ISO-CA-002,ISO-CA-003")
 
 	f.Fuzz(func(t *testing.T, prefix, idsJoined string) {
 		ids := strings.Split(idsJoined, ",")
@@ -208,6 +212,7 @@ func FuzzGenerateNextID(f *testing.F) {
 	f.Add("REQ", "REQ-001,REQ-002")
 	f.Add("DEC-", "DEC-1")
 	f.Add("COMP", "")
+	f.Add("ISO-CA-", "ISO-CA-001,ISO-CA-002")
 
 	f.Fuzz(func(t *testing.T, prefix, idsJoined string) {
 		// Skip very long prefixes to avoid memory issues

@@ -14,8 +14,8 @@ type EntityID struct {
 	Raw    string // Original string
 }
 
-// Common ID pattern: PREFIX-NUMBER (e.g., REQ-001, DEC-42)
-var idPattern = regexp.MustCompile(`^([A-Za-z]+-?)(\d+)$`)
+// Common ID pattern: PREFIX-NUMBER (e.g., REQ-001, DEC-42, ISO-CA-001)
+var idPattern = regexp.MustCompile(`^([A-Za-z]+(?:-[A-Za-z]+)*-?)(\d+)$`)
 
 // ParseEntityID parses an entity ID string into its components
 func ParseEntityID(s string) (EntityID, error) {
