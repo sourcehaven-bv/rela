@@ -49,15 +49,18 @@ type FormField struct {
 
 // FormRelation defines a relation field in a form.
 type FormRelation struct {
-	Relation    string             `yaml:"relation"`
-	Direction   string             `yaml:"direction"`
-	TargetType  string             `yaml:"target_type"`
-	Label       string             `yaml:"label"`
-	Required    bool               `yaml:"required"`
-	Widget      string             `yaml:"widget"`
-	AllowCreate bool               `yaml:"allow_create"`
-	CreateForm  string             `yaml:"create_form"`
-	Properties  []RelationProperty `yaml:"properties"`
+	Relation     string             `yaml:"relation"`
+	Direction    string             `yaml:"direction"`
+	TargetType   string             `yaml:"target_type"`
+	Label        string             `yaml:"label"`
+	Required     bool               `yaml:"required"`
+	Widget       string             `yaml:"widget"`
+	Display      string             `yaml:"display"`
+	AllowCreate  bool               `yaml:"allow_create"`
+	CreateForm   string             `yaml:"create_form"`
+	Properties   []RelationProperty `yaml:"properties"`
+	Fields       []ViewSectionField `yaml:"fields"`
+	EmptyMessage string             `yaml:"empty_message"`
 }
 
 // RelationProperty defines an editable property on a relation.
