@@ -47,6 +47,110 @@ jobs:
           name: coverage-report
           path: coverage.out
 
+  baseline-guard:
+    name: Coverage Baseline Guard
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check coverage baseline not lowered
+        run: |
+          set -euo pipefail
+
+          BASE_REF="${{ github.event.pull_request.base.sha }}"
+
+          # Get the baseline from the base branch
+          if ! git show "${BASE_REF}:.coverage-baseline" > /tmp/base-baseline 2>/dev/null; then
+            echo "No .coverage-baseline on base branch — nothing to guard."
+            exit 0
+          fi
+
+          # If the PR didn't touch the baseline, nothing to check
+          if ! git diff --name-only "${BASE_REF}"...HEAD | grep -q '^\.coverage-baseline$'; then
+            echo ".coverage-baseline not modified in this PR — OK."
+            exit 0
+          fi
+
+          PR_BASELINE=".coverage-baseline"
+          VIOLATIONS=""
+          VIOLATION_COUNT=0
+
+          # Build a map of base coverage: file -> covered_lines
+          declare -A BASE_COVERED
+          declare -A BASE_TOTAL
+          while IFS=';' read -r file total covered; do
+            [[ -z "$file" ]] && continue
+            BASE_COVERED["$file"]="$covered"
+            BASE_TOTAL["$file"]="$total"
+          done < /tmp/base-baseline
+
+          # Check each file in the PR baseline against the base
+          while IFS=';' read -r file total covered; do
+            [[ -z "$file" ]] && continue
+
+            # Skip files not in the base baseline (new files are fine)
+            if [[ -z "${BASE_COVERED[$file]+x}" ]]; then
+              continue
+            fi
+
+            base_covered="${BASE_COVERED[$file]}"
+            base_total="${BASE_TOTAL[$file]}"
+
+            # If base had 0 total lines, skip (avoid division issues)
+            if [[ "$base_total" -eq 0 ]]; then
+              continue
+            fi
+
+            # Compare covered lines: PR must not have fewer covered lines
+            # unless the file's total lines also decreased (legitimate refactor)
+            if [[ "$covered" -lt "$base_covered" ]]; then
+              # Check if the source file was removed from the codebase
+              # (file still in baseline but gone from repo is handled by go-test-coverage)
+              base_pct=$(awk "BEGIN {printf \"%.1f\", ($base_covered/$base_total)*100}")
+              if [[ "$total" -eq 0 ]]; then
+                pr_pct="0.0"
+              else
+                pr_pct=$(awk "BEGIN {printf \"%.1f\", ($covered/$total)*100}")
+              fi
+              VIOLATIONS="${VIOLATIONS}\n  ${file}: ${base_covered}/${base_total} (${base_pct}%) -> ${covered}/${total} (${pr_pct}%)"
+              VIOLATION_COUNT=$((VIOLATION_COUNT + 1))
+            fi
+          done < "$PR_BASELINE"
+
+          # Check for files removed from the baseline that still exist in the repo
+          for file in "${!BASE_COVERED[@]}"; do
+            if ! grep -q "^${file};" "$PR_BASELINE"; then
+              # File was removed from baseline — only OK if source file is also gone
+              if git show "HEAD:${file}" >/dev/null 2>&1; then
+                base_covered="${BASE_COVERED[$file]}"
+                base_total="${BASE_TOTAL[$file]}"
+                base_pct=$(awk "BEGIN {printf \"%.1f\", ($base_covered/$base_total)*100}")
+                VIOLATIONS="${VIOLATIONS}\n  ${file}: removed from baseline but file still exists (was ${base_covered}/${base_total}, ${base_pct}%)"
+                VIOLATION_COUNT=$((VIOLATION_COUNT + 1))
+              fi
+            fi
+          done
+
+          if [[ "$VIOLATION_COUNT" -gt 0 ]]; then
+            echo ""
+            echo "ERROR: Coverage baseline was lowered for ${VIOLATION_COUNT} file(s)!"
+            echo ""
+            echo "The .coverage-baseline file must not be manually edited to lower coverage."
+            echo "It is automatically updated by CI after merging to the base branch."
+            echo ""
+            echo "Violations:"
+            echo -e "$VIOLATIONS"
+            echo ""
+            echo "To fix: remove your changes to .coverage-baseline and improve test"
+            echo "coverage instead, or remove the source files if they are no longer needed."
+            exit 1
+          fi
+
+          echo "Coverage baseline check passed — no coverage was lowered."
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
