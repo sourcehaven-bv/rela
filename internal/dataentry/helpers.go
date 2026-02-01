@@ -443,6 +443,24 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 	}
 }
 
+// resolveRelationColumnValue returns a comma-separated string of display titles
+// for all targets of the given relation type from an entity.
+func (a *App) resolveRelationColumnValue(entityID, relationType string) string {
+	edges := a.g.OutgoingEdges(entityID)
+	titles := make([]string, 0, len(edges))
+	for _, edge := range edges {
+		if edge.Type != relationType {
+			continue
+		}
+		target, ok := a.g.GetNode(edge.To)
+		if !ok {
+			continue
+		}
+		titles = append(titles, a.entityDisplayTitle(target))
+	}
+	return strings.Join(titles, ", ")
+}
+
 // isRelationLinked checks whether a form relation field (formRel) corresponds
 // to a link relation (linkRel) coming from a view's "Add" button. It returns
 // true when the link relation's inverse matches the form relation, when the

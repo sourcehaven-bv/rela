@@ -138,11 +138,17 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entities {
 		var cells []CellData
 		for _, col := range list.Columns {
-			val := fmt.Sprintf("%v", e.Properties[col.Property])
-			if e.Properties[col.Property] == nil {
-				val = ""
+			var val string
+			var propType string
+			if col.Relation != "" {
+				val = a.resolveRelationColumnValue(e.ID, col.Relation)
+			} else {
+				val = fmt.Sprintf("%v", e.Properties[col.Property])
+				if e.Properties[col.Property] == nil {
+					val = ""
+				}
+				propType = resolvePropertyType(col.Property, list.EntityType, a.meta)
 			}
-			propType := resolvePropertyType(col.Property, list.EntityType, a.meta)
 			cells = append(cells, CellData{
 				Value:      val,
 				Property:   col.Property,
@@ -732,6 +738,30 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 				}
 			case "table":
 				sd.Columns = sec.Columns
+				buildRow := func(e *model.Entity) SectionRowData {
+					eDef, _ := a.meta.GetEntityDef(e.Type)
+					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
+					for _, col := range sec.Columns {
+						var val string
+						var propType string
+						if col.Relation != "" {
+							val = a.resolveRelationColumnValue(e.ID, col.Relation)
+						} else {
+							if v := e.Properties[col.Property]; v != nil {
+								val = fmt.Sprintf("%v", v)
+							}
+							if eDef != nil {
+								if pd, ok := eDef.Properties[col.Property]; ok {
+									propType = pd.Type
+								}
+							}
+						}
+						row.Cells = append(row.Cells, SectionColumnData{
+							Value: val, PropType: propType, Link: col.Link, EntityID: e.ID, EntityType: e.Type,
+						})
+					}
+					return row
+				}
 				if sec.GroupBy != "" {
 					sd.IsGrouped = true
 					groups := map[string][]*model.Entity{}
@@ -750,47 +780,13 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 					for _, gName := range groupOrder {
 						gd := GroupData{GroupName: gName}
 						for _, e := range groups[gName] {
-							eDef, _ := a.meta.GetEntityDef(e.Type)
-							row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
-							for _, col := range sec.Columns {
-								val := ""
-								if v := e.Properties[col.Property]; v != nil {
-									val = fmt.Sprintf("%v", v)
-								}
-								propType := ""
-								if eDef != nil {
-									if pd, ok := eDef.Properties[col.Property]; ok {
-										propType = pd.Type
-									}
-								}
-								row.Cells = append(row.Cells, SectionColumnData{
-									Value: val, PropType: propType, Link: col.Link, EntityID: e.ID, EntityType: e.Type,
-								})
-							}
-							gd.Rows = append(gd.Rows, row)
+							gd.Rows = append(gd.Rows, buildRow(e))
 						}
 						sd.Groups = append(sd.Groups, gd)
 					}
 				} else {
 					for _, e := range entities {
-						eDef, _ := a.meta.GetEntityDef(e.Type)
-						row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
-						for _, col := range sec.Columns {
-							val := ""
-							if v := e.Properties[col.Property]; v != nil {
-								val = fmt.Sprintf("%v", v)
-							}
-							propType := ""
-							if eDef != nil {
-								if pd, ok := eDef.Properties[col.Property]; ok {
-									propType = pd.Type
-								}
-							}
-							row.Cells = append(row.Cells, SectionColumnData{
-								Value: val, PropType: propType, Link: col.Link, EntityID: e.ID, EntityType: e.Type,
-							})
-						}
-						sd.Rows = append(sd.Rows, row)
+						sd.Rows = append(sd.Rows, buildRow(e))
 					}
 				}
 
@@ -1547,13 +1543,19 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			for _, e := range entities {
 				row := make([]CellData, len(card.Columns))
 				for j, col := range card.Columns {
-					val := ""
-					if v := e.Properties[col.Property]; v != nil {
-						val = fmt.Sprintf("%v", v)
+					var val string
+					var propType string
+					if col.Relation != "" {
+						val = a.resolveRelationColumnValue(e.ID, col.Relation)
+					} else {
+						if v := e.Properties[col.Property]; v != nil {
+							val = fmt.Sprintf("%v", v)
+						}
+						propType = resolvePropertyType(col.Property, e.Type, a.meta)
 					}
 					cd := CellData{
 						Value:    val,
-						PropType: resolvePropertyType(col.Property, e.Type, a.meta),
+						PropType: propType,
 					}
 					if col.Link {
 						cd.Link = "/entity/" + e.Type + "/" + e.ID

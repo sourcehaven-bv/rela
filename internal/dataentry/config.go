@@ -84,8 +84,11 @@ type List struct {
 }
 
 // ListColumn defines a column in a list view.
+// A column references either a Property (entity property) or a Relation
+// (outgoing relation type whose target titles are shown comma-separated).
 type ListColumn struct {
 	Property string `yaml:"property"`
+	Relation string `yaml:"relation"`
 	Label    string `yaml:"label"`
 	Sortable bool   `yaml:"sortable"`
 	Link     bool   `yaml:"link"`

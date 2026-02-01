@@ -456,7 +456,11 @@ func validateConfig(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 		entDef, _ := meta.GetEntityDef(list.EntityType)
 		for _, c := range list.Columns {
-			if _, ok := entDef.Properties[c.Property]; !ok {
+			if c.Relation != "" {
+				if _, ok := meta.GetRelationDef(c.Relation); !ok {
+					errs = append(errs, fmt.Sprintf("list %q: column relation %q not in metamodel", listID, c.Relation))
+				}
+			} else if _, ok := entDef.Properties[c.Property]; !ok {
 				errs = append(errs, fmt.Sprintf("list %q: column %q not in metamodel for entity %q", listID, c.Property, list.EntityType))
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"html/template"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
@@ -527,6 +528,70 @@ func TestAppendToastParam(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveRelationColumnValue(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"assessment": {
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string"},
+				},
+			},
+			"person": {
+				Properties: map[string]metamodel.PropertyDef{
+					"name": {Type: "string", Required: true},
+				},
+			},
+		},
+	}
+
+	g := graph.New()
+	assessment := model.NewEntity("ASS-001", "assessment")
+	assessment.SetString("title", "Q1 Review")
+	g.AddNode(assessment)
+
+	person1 := model.NewEntity("PER-001", "person")
+	person1.SetString("name", "Alice")
+	g.AddNode(person1)
+
+	person2 := model.NewEntity("PER-002", "person")
+	person2.SetString("name", "Bob")
+	g.AddNode(person2)
+
+	g.AddEdge(&model.Relation{From: "ASS-001", Type: "assessmentBy", To: "PER-001"})
+	g.AddEdge(&model.Relation{From: "ASS-001", Type: "assessmentBy", To: "PER-002"})
+	g.AddEdge(&model.Relation{From: "ASS-001", Type: "otherRel", To: "PER-001"})
+
+	app := &App{meta: meta, g: g}
+
+	t.Run("resolves multiple targets comma-separated", func(t *testing.T) {
+		got := app.resolveRelationColumnValue("ASS-001", "assessmentBy")
+		if got != "Alice, Bob" {
+			t.Errorf("got %q, want %q", got, "Alice, Bob")
+		}
+	})
+
+	t.Run("filters by relation type", func(t *testing.T) {
+		got := app.resolveRelationColumnValue("ASS-001", "otherRel")
+		if got != "Alice" {
+			t.Errorf("got %q, want %q", got, "Alice")
+		}
+	})
+
+	t.Run("returns empty for no matching relations", func(t *testing.T) {
+		got := app.resolveRelationColumnValue("ASS-001", "nonexistent")
+		if got != "" {
+			t.Errorf("got %q, want empty string", got)
+		}
+	})
+
+	t.Run("returns empty for unknown entity", func(t *testing.T) {
+		got := app.resolveRelationColumnValue("UNKNOWN", "assessmentBy")
+		if got != "" {
+			t.Errorf("got %q, want empty string", got)
+		}
+	})
 }
 
 func TestIsRelationLinked(t *testing.T) {
