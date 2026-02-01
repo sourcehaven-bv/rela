@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"encoding/json"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -445,6 +446,23 @@ func TestHandleView(t *testing.T) {
 			t.Errorf("expected 200, got %d", w.Code)
 		}
 	})
+
+	t.Run("link existing button rendered for traversal section", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet, "/view/ticket_detail/TKT-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleView(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "Link existing") {
+			t.Error("expected 'Link existing' button in view page for traversal section")
+		}
+		if !strings.Contains(body, "openLinkExisting") {
+			t.Error("expected openLinkExisting JS call in view page")
+		}
+	})
 }
 
 func TestHandleSearch(t *testing.T) {
@@ -780,6 +798,168 @@ func TestHandleIndexWithGroupedNav(t *testing.T) {
 		body := w.Body.String()
 		if !strings.Contains(body, "TKT-001") {
 			t.Error("expected list page content")
+		}
+	})
+}
+
+func TestHandleLinkCandidates(t *testing.T) {
+	t.Run("missing params returns 400", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet, "/api/link-candidates", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleLinkCandidates(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("returns candidates excluding already linked", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// TKT-001 depends_on TKT-002 (added in newHandlerTestApp)
+		r := httptest.NewRequest(http.MethodGet,
+			"/api/link-candidates?relation=depends_on&link_as=to&peer=TKT-001&entity_types=ticket",
+			http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleLinkCandidates(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var candidates []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+			Type  string `json:"type"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&candidates); err != nil {
+			t.Fatalf("decoding response: %v", err)
+		}
+		// TKT-002 is already linked, TKT-001 is self — expect empty
+		for _, c := range candidates {
+			if c.ID == "TKT-002" {
+				t.Error("TKT-002 should be excluded (already linked)")
+			}
+			if c.ID == "TKT-001" {
+				t.Error("TKT-001 should be excluded (self)")
+			}
+		}
+	})
+
+	t.Run("filters by search query", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// Add a third ticket
+		e3 := model.NewEntity("TKT-003", "ticket")
+		e3.SetString("title", "Third Ticket")
+		app.g.AddNode(e3)
+
+		r := httptest.NewRequest(http.MethodGet,
+			"/api/link-candidates?relation=depends_on&link_as=to&peer=TKT-001&entity_types=ticket&q=Third",
+			http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleLinkCandidates(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var candidates []struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&candidates); err != nil {
+			t.Fatalf("decoding response: %v", err)
+		}
+		if len(candidates) != 1 {
+			t.Fatalf("expected 1 candidate, got %d", len(candidates))
+		}
+		if candidates[0].ID != "TKT-003" {
+			t.Errorf("expected TKT-003, got %s", candidates[0].ID)
+		}
+	})
+
+	t.Run("returns empty array when no candidates", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet,
+			"/api/link-candidates?relation=depends_on&link_as=to&peer=TKT-001&entity_types=ticket&q=nonexistent",
+			http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleLinkCandidates(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		if strings.TrimSpace(body) != "[]" {
+			t.Errorf("expected empty JSON array, got %s", body)
+		}
+	})
+}
+
+func TestHandleLinkExisting(t *testing.T) {
+	t.Run("method not allowed for GET", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet, "/api/link-existing", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleLinkExisting(w, r)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("expected 405, got %d", w.Code)
+		}
+	})
+
+	t.Run("missing params returns 400", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		form := url.Values{"relation": {"depends_on"}}
+		r := httptest.NewRequest(http.MethodPost, "/api/link-existing", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleLinkExisting(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("unknown relation returns 400", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		form := url.Values{
+			"relation": {"nonexistent"},
+			"link_as":  {"to"},
+			"peer":     {"TKT-001"},
+			"target":   {"TKT-002"},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/link-existing", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleLinkExisting(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("unknown peer returns 400", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		form := url.Values{
+			"relation": {"depends_on"},
+			"link_as":  {"to"},
+			"peer":     {"NONEXISTENT"},
+			"target":   {"TKT-002"},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/link-existing", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleLinkExisting(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("unknown target returns 400", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		form := url.Values{
+			"relation": {"depends_on"},
+			"link_as":  {"to"},
+			"peer":     {"TKT-001"},
+			"target":   {"NONEXISTENT"},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/link-existing", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleLinkExisting(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
 		}
 	})
 }

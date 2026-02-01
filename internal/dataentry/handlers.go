@@ -680,6 +680,12 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		PeerID   string // entry entity ID
 		Targets  []SectionAddTarget
 	}
+	type SectionLinkInfo struct {
+		Relation    string   // relation type name
+		LinkAs      string   // "from" or "to" — role of the linked entity
+		PeerID      string   // entry entity ID
+		EntityTypes []string // valid target entity types
+	}
 	type SectionData struct {
 		Heading      string
 		SectionID    string
@@ -696,6 +702,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		Content      string
 		HasContent   bool
 		AddInfo      *SectionAddInfo
+		LinkInfo     *SectionLinkInfo
 	}
 
 	sections := make([]SectionData, 0, len(view.Sections))
@@ -865,7 +872,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Resolve add info: for sections populated by a traverse from "entry",
+		// Resolve add/link info: for sections populated by a traverse from "entry",
 		// determine which entity types can be created and linked.
 		if sec.Source != "entry" {
 			for _, rule := range view.Traverse {
@@ -909,6 +916,15 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 						LinkAs:   linkAs,
 						PeerID:   result.Entry.ID,
 						Targets:  targets,
+					}
+				}
+				// Link existing: always available when candidate types exist
+				if len(candidateTypes) > 0 {
+					sd.LinkInfo = &SectionLinkInfo{
+						Relation:    relName,
+						LinkAs:      linkAs,
+						PeerID:      result.Entry.ID,
+						EntityTypes: candidateTypes,
 					}
 				}
 				break
@@ -1375,6 +1391,126 @@ func (a *App) handleInlineForm(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(sb.String())) //nolint:errcheck // best-effort HTTP response
+}
+
+func (a *App) handleLinkCandidates(w http.ResponseWriter, r *http.Request) {
+	relation := r.URL.Query().Get("relation")
+	linkAs := r.URL.Query().Get("link_as")
+	peerID := r.URL.Query().Get("peer")
+	entityTypesStr := r.URL.Query().Get("entity_types")
+	q := strings.ToLower(r.URL.Query().Get("q"))
+
+	if relation == "" || peerID == "" || entityTypesStr == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing required parameters"}) //nolint:errcheck // best-effort JSON response
+		return
+	}
+
+	entityTypes := strings.Split(entityTypesStr, ",")
+
+	// Collect already-linked entity IDs to exclude them
+	alreadyLinked := map[string]bool{}
+	if linkAs == "to" {
+		for _, edge := range a.g.OutgoingEdges(peerID) {
+			if edge.Type == relation {
+				alreadyLinked[edge.To] = true
+			}
+		}
+	} else {
+		for _, edge := range a.g.IncomingEdges(peerID) {
+			if edge.Type == relation {
+				alreadyLinked[edge.From] = true
+			}
+		}
+	}
+
+	type candidate struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+		Type  string `json:"type"`
+	}
+	var candidates []candidate
+	for _, et := range entityTypes {
+		for _, e := range a.g.NodesByType(et) {
+			if alreadyLinked[e.ID] || e.ID == peerID {
+				continue
+			}
+			title := a.entityDisplayTitle(e)
+			if q != "" && !strings.Contains(strings.ToLower(title), q) && !strings.Contains(strings.ToLower(e.ID), q) {
+				continue
+			}
+			candidates = append(candidates, candidate{ID: e.ID, Title: title, Type: e.Type})
+		}
+	}
+	if candidates == nil {
+		candidates = []candidate{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(candidates) //nolint:errcheck // best-effort JSON response
+}
+
+func (a *App) handleLinkExisting(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"}) //nolint:errcheck // best-effort JSON response
+		return
+	}
+	r.ParseForm() //nolint:errcheck // parse errors handled by empty values
+
+	relation := r.FormValue("relation")
+	linkAs := r.FormValue("link_as")
+	peerID := r.FormValue("peer")
+	targetID := r.FormValue("target")
+
+	if relation == "" || linkAs == "" || peerID == "" || targetID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing required parameters"}) //nolint:errcheck // best-effort JSON response
+		return
+	}
+
+	if _, ok := a.meta.GetRelationDef(relation); !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unknown relation type"}) //nolint:errcheck // best-effort JSON response
+		return
+	}
+	if _, ok := a.g.GetNode(peerID); !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unknown peer entity"}) //nolint:errcheck // best-effort JSON response
+		return
+	}
+	if _, ok := a.g.GetNode(targetID); !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unknown target entity"}) //nolint:errcheck // best-effort JSON response
+		return
+	}
+
+	var fromID, toID string
+	if linkAs == "to" {
+		fromID, toID = peerID, targetID
+	} else {
+		fromID, toID = targetID, peerID
+	}
+
+	rel := model.NewRelation(fromID, relation, toID)
+	if err := a.repo.WriteRelation(rel); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck // best-effort JSON response
+		return
+	}
+	a.g.AddEdge(rel)
+
+	log.Printf("Linked %s --%s--> %s", fromID, relation, toID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"ok": "true"}) //nolint:errcheck // best-effort JSON response
 }
 
 func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
