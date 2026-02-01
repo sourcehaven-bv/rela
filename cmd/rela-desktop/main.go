@@ -28,6 +28,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
+// Version is set at build time via -ldflags.
+var Version = "dev"
+
 // Desktop is the backend bound to the Wails frontend.
 // It manages project lifecycle: opening a directory picker, loading a project,
 // and persisting recent projects in user preferences.
@@ -137,12 +140,25 @@ func (d *Desktop) openProjectFromMenu(_ *menu.CallbackData) {
 	runtime.WindowReloadApp(d.ctx)
 }
 
+// showAbout displays a dialog with version and build information.
+// coverage-ignore: menu callback - requires Wails runtime
+func (d *Desktop) showAbout(_ *menu.CallbackData) {
+	runtime.MessageDialog(d.ctx, runtime.MessageDialogOptions{ //nolint:errcheck // best-effort
+		Type:    runtime.InfoDialog,
+		Title:   "About Rela Desktop",
+		Message: fmt.Sprintf("Rela Desktop\nVersion %s\n\n%s/%s", Version, goruntime.GOOS, goruntime.GOARCH),
+	})
+}
+
 // buildAppMenu constructs the application menu bar including recent projects.
 func (d *Desktop) buildAppMenu() *menu.Menu {
 	appMenu := menu.NewMenu()
 
 	if goruntime.GOOS == "darwin" {
-		appMenu.Append(menu.AppMenu())
+		macAppMenu := appMenu.AddSubmenu("Rela Desktop")
+		macAppMenu.AddText("About Rela Desktop", nil, d.showAbout)
+		macAppMenu.AddSeparator()
+		macAppMenu.Append(menu.AppMenu())
 	}
 
 	fileMenu := appMenu.AddSubmenu("File")
@@ -193,6 +209,11 @@ func (d *Desktop) buildAppMenu() *menu.Menu {
 
 	if goruntime.GOOS == "darwin" {
 		appMenu.Append(menu.EditMenu())
+	}
+
+	if goruntime.GOOS != "darwin" {
+		helpMenu := appMenu.AddSubmenu("Help")
+		helpMenu.AddText("About Rela Desktop", nil, d.showAbout)
 	}
 
 	return appMenu
