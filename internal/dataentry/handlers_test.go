@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -230,6 +231,41 @@ func TestHandleForm(t *testing.T) {
 		app.handleForm(w, r)
 		if w.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d", w.Code)
+		}
+	})
+
+	t.Run("prefills relation from link params via inverse", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// Add inverse to depends_on so we can test inverse matching.
+		rels := app.meta.Relations
+		dep := rels["depends_on"]
+		dep.Inverse = &metamodel.InverseDef{ID: "dependency_of"}
+		rels["depends_on"] = dep
+
+		// Add a form with a relation using the inverse name.
+		app.Cfg.Forms["create-dep-ticket"] = Form{
+			EntityType: "ticket",
+			Fields:     []FormField{{Property: "title"}},
+			Relations: []FormRelation{{
+				Relation:   "dependency_of",
+				TargetType: "ticket",
+				Label:      "Dependency Of",
+				Widget:     "multi-select",
+			}},
+		}
+
+		r := httptest.NewRequest(http.MethodGet,
+			"/form/create-dep-ticket?link_relation=depends_on&link_peer=TKT-001&link_as=to",
+			http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// The TKT-001 option should be marked as selected.
+		if !strings.Contains(body, `value="TKT-001" selected`) {
+			t.Error("expected TKT-001 to be pre-selected in the dependency_of relation")
 		}
 	})
 }

@@ -442,3 +442,26 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 		},
 	}
 }
+
+// isRelationLinked checks whether a form relation field (formRel) corresponds
+// to a link relation (linkRel) coming from a view's "Add" button. It returns
+// true when the link relation's inverse matches the form relation, when the
+// form relation's inverse matches the link relation, or when they are equal.
+func (a *App) isRelationLinked(formRel, linkRel string) bool {
+	if formRel == linkRel {
+		return true
+	}
+	// Check if linkRel has an inverse that equals formRel.
+	if def, ok := a.meta.GetRelationDef(linkRel); ok && def.Inverse != nil {
+		if def.Inverse.GetID() == formRel {
+			return true
+		}
+	}
+	// Check if formRel has an inverse that equals linkRel.
+	if def, ok := a.meta.GetRelationDef(formRel); ok && def.Inverse != nil {
+		if def.Inverse.GetID() == linkRel {
+			return true
+		}
+	}
+	return false
+}
