@@ -452,5 +452,34 @@ func validateConfig(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 	}
+	validContexts := map[string]bool{"entity": true, "list": true, "view": true, "global": true}
+	for cmdID, cmd := range cfg.Commands {
+		if cmd.Label == "" {
+			errs = append(errs, fmt.Sprintf("command %q: label is required", cmdID))
+		}
+		if cmd.Script == "" {
+			errs = append(errs, fmt.Sprintf("command %q: script is required", cmdID))
+		}
+		if !validContexts[cmd.Context] {
+			errs = append(errs, fmt.Sprintf("command %q: invalid context %q (must be entity, list, view, or global)", cmdID, cmd.Context))
+		}
+		if cmd.AvailableOn != nil {
+			for _, v := range cmd.AvailableOn.Views {
+				if _, ok := cfg.Views[v]; !ok {
+					errs = append(errs, fmt.Sprintf("command %q: available_on references unknown view %q", cmdID, v))
+				}
+			}
+			for _, l := range cmd.AvailableOn.Lists {
+				if _, ok := cfg.Lists[l]; !ok {
+					errs = append(errs, fmt.Sprintf("command %q: available_on references unknown list %q", cmdID, l))
+				}
+			}
+			for _, et := range cmd.AvailableOn.EntityTypes {
+				if _, ok := meta.GetEntityDef(et); !ok {
+					errs = append(errs, fmt.Sprintf("command %q: available_on references unknown entity type %q", cmdID, et))
+				}
+			}
+		}
+	}
 	return errs
 }

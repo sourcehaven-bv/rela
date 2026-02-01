@@ -13,6 +13,7 @@ type Config struct {
 	Lists      map[string]List              `yaml:"lists"`
 	Views      map[string]ViewConfig        `yaml:"views"`
 	Dashboard  *DashboardConfig             `yaml:"dashboard,omitempty"`
+	Commands   map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Navigation []NavigationEntry            `yaml:"navigation"`
 }
 
@@ -192,4 +193,23 @@ type ViewSection struct {
 type ViewSectionField struct {
 	Property string `yaml:"property"`
 	Label    string `yaml:"label,omitempty"`
+}
+
+// CommandConfig defines an executable command triggered from the UI.
+// Context must be one of: entity, list, view, global.
+type CommandConfig struct {
+	Label       string            `yaml:"label"`
+	Script      string            `yaml:"script"`
+	Context     string            `yaml:"context"`
+	AvailableOn *CommandScope     `yaml:"available_on,omitempty"`
+	Confirm     string            `yaml:"confirm,omitempty"`
+	Env         map[string]string `yaml:"env,omitempty"`
+}
+
+// CommandScope controls where a command button appears in the UI.
+type CommandScope struct {
+	Views       []string `yaml:"views,omitempty"`
+	Lists       []string `yaml:"lists,omitempty"`
+	EntityTypes []string `yaml:"entity_types,omitempty"`
+	Dashboard   bool     `yaml:"dashboard,omitempty"`
 }

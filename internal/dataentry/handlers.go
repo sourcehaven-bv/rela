@@ -269,6 +269,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		"PrevPageURL":      prevPageURL,
 		"NextPageURL":      nextPageURL,
 		"HasPagination":    pageSize > 0 && totalPages > 1,
+		"Commands":         a.resolveCommands("list", listID, list.EntityType),
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
@@ -546,6 +547,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		"EditFormID": editFormID,
 		"Relations":  rels,
 		"PropTypes":  propTypes,
+		"Commands":   a.resolveCommands("entity", "", entity.Type),
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
 	}
 
@@ -889,6 +891,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		"EditFormID": a.editFormForType(result.Entry.Type),
 		"ReturnTo":   returnTo,
 		"Sections":   sections,
+		"Commands":   a.resolveCommands("view", viewID, result.Entry.Type),
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
 	}
 
@@ -1560,6 +1563,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"ActiveList": "_dashboard",
 		"Dashboard":  dash,
 		"Cards":      cards,
+		"Commands":   a.resolveCommands("dashboard", "", ""),
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
 	}
 

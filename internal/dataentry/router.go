@@ -28,5 +28,9 @@ func (a *App) NewRouter() http.Handler {
 	mux.HandleFunc("/graph", a.handleGraph)
 	mux.HandleFunc("/api/graph-data", a.handleGraphData)
 	mux.HandleFunc("/api/ui/toggle-group", a.handleToggleGroup)
+	mux.HandleFunc("/api/command/", a.handleCommandExec)
+	mux.HandleFunc("/api/command-cancel/", a.handleCommandCancel)
+	mux.HandleFunc("/api/open-file", a.handleOpenFile)
+	mux.HandleFunc("/api/open-url", a.handleOpenURL)
 	return mux
 }

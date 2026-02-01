@@ -196,6 +196,39 @@ thead th.sortable { user-select: none; }
 .jump-link:hover { background: var(--primary-light); }
 .nav-count { margin-left: auto; font-size: 11px; color: rgba(255,255,255,0.4); font-weight: 400; }
 
+/* Command toast */
+#command-toast-container { position: fixed; bottom: 16px; right: 16px; z-index: 1000; display: flex; flex-direction: column-reverse; gap: 8px; max-width: 380px; }
+.command-toast { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); overflow: hidden; animation: toastIn 0.3s; font-size: 13px; }
+.command-toast-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--bg); }
+.command-toast-label { font-weight: 600; font-size: 13px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.command-toast-icon { width: 18px; height: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.command-toast-btn { background: none; border: none; cursor: pointer; font-size: 16px; color: var(--text-muted); padding: 2px 4px; border-radius: 4px; line-height: 1; }
+.command-toast-btn:hover { background: var(--bg); color: var(--text); }
+.command-toast-body { padding: 8px 12px; max-height: 200px; overflow-y: auto; }
+.command-toast-body:empty { display: none; }
+.command-toast-msg { padding: 3px 0; color: var(--text-muted); line-height: 1.4; }
+.command-toast-msg.warning { color: #b45309; }
+.command-toast-msg.error-msg { color: #dc2626; }
+.command-toast-file, .command-toast-entity { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+.command-toast-file a, .command-toast-entity a { font-size: 12px; color: var(--primary); text-decoration: none; padding: 2px 8px; border: 1px solid var(--primary); border-radius: 4px; white-space: nowrap; }
+.command-toast-file a:hover, .command-toast-entity a:hover { background: var(--primary-light); }
+.command-toast-file span, .command-toast-entity span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.command-toast-expand { font-size: 12px; color: var(--primary); cursor: pointer; padding: 4px 0; border: none; background: none; }
+.command-toast-expand:hover { text-decoration: underline; }
+.command-toast-group-label { font-size: 12px; font-weight: 600; color: var(--text); padding: 4px 0 2px; cursor: pointer; }
+.command-toast-group-label::before { content: '\25B6'; font-size: 9px; margin-right: 4px; display: inline-block; transition: transform 0.15s; }
+.command-toast-group-label.open::before { transform: rotate(90deg); }
+.command-toast-group-items { display: none; padding-left: 14px; }
+.command-toast-group-label.open + .command-toast-group-items { display: block; }
+.command-toast.running .command-toast-header { border-left: 3px solid var(--primary); }
+.command-toast.success .command-toast-header { border-left: 3px solid #16a34a; }
+.command-toast.error .command-toast-header { border-left: 3px solid #dc2626; }
+.command-toast.cancelled .command-toast-header { border-left: 3px solid var(--text-muted); }
+@keyframes cmdSpin { to { transform: rotate(360deg); } }
+.cmd-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: cmdSpin 0.6s linear infinite; }
+.command-toast-log { display: none; }
+.command-toast-log.show { display: block; padding: 8px 12px; background: #f8fafc; border-top: 1px solid var(--border); font-family: var(--font-mono); font-size: 11px; max-height: 150px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; color: var(--text-muted); }
+
 </style>
 <script>
 // SlimSelect progressive enhancement
@@ -262,6 +295,304 @@ function confirmDelete(entityID, returnTo) {
     overlay.remove();
   });
 }
+
+// --- Command execution ---
+var _cmdToasts = {};
+var _CMD_MAX_VISIBLE = 5;
+
+function runCommand(commandID, params) {
+  var btn = event.currentTarget;
+  // Close parent dropdown if command was picked from a menu
+  var dd = btn.closest('details.add-dropdown');
+  if (dd) dd.removeAttribute('open');
+  var confirmMsg = btn.getAttribute('data-confirm');
+  if (confirmMsg && !window.confirm(confirmMsg)) return;
+
+  var execID = 'cmd-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6);
+  var label = btn.textContent.trim();
+
+  var container = document.getElementById('command-toast-container');
+  var toast = _createToast(execID, label);
+  container.appendChild(toast);
+
+  var qs = new URLSearchParams(params);
+  qs.set('exec_id', execID);
+
+  _cmdToasts[execID] = { toast: toast, messages: [], logs: [], hoverPause: false, aborted: false };
+
+  toast.addEventListener('mouseenter', function() { _cmdToasts[execID].hoverPause = true; });
+  toast.addEventListener('mouseleave', function() { _cmdToasts[execID].hoverPause = false; });
+
+  // Use fetch+ReadableStream instead of EventSource for Wails compatibility.
+  var url = '/api/command/' + encodeURIComponent(commandID) + '?' + qs.toString();
+  fetch(url).then(function(resp) {
+    if (!resp.ok) {
+      return resp.text().then(function(t) { throw new Error(t || resp.statusText); });
+    }
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var buf = '';
+    function pump() {
+      return reader.read().then(function(result) {
+        if (result.done) return;
+        buf += decoder.decode(result.value, {stream: true});
+        var lines = buf.split('\n');
+        buf = lines.pop(); // keep incomplete last line
+        for (var i = 0; i < lines.length; i++) _processSSELine(execID, lines[i]);
+        return pump();
+      });
+    }
+    return pump();
+  }).then(function() {
+    // If stream ended without a done event, finish as success.
+    var state = _cmdToasts[execID];
+    if (state && !state.finished) _finishToast(execID, true);
+  }).catch(function(err) {
+    var state = _cmdToasts[execID];
+    if (state && !state.aborted && !state.finished) {
+      _addMsg(execID, {type: 'error', text: err.message || 'Connection failed'});
+      _finishToast(execID, false);
+    }
+  });
+}
+
+// Parse SSE lines from the fetch stream.
+var _sseEvent = {};
+function _processSSELine(execID, line) {
+  if (line.indexOf('event: ') === 0) {
+    _sseEvent[execID] = line.substring(7).trim();
+  } else if (line.indexOf('data: ') === 0) {
+    var evtType = _sseEvent[execID] || 'message';
+    var data = line.substring(6);
+    _sseEvent[execID] = '';
+    _dispatchSSE(execID, evtType, data);
+  }
+  // blank lines (SSE delimiter) are handled by clearing event state above
+}
+
+function _dispatchSSE(execID, evtType, raw) {
+  var d;
+  try { d = JSON.parse(raw); } catch(e) { return; }
+  switch (evtType) {
+    case 'message': _addMsg(execID, d); break;
+    case 'file':    _addFile(execID, d); break;
+    case 'entity':  _addEntity(execID, d); break;
+    case 'open':    _handleOpen(d); break;
+    case 'log':     _addLog(execID, d); break;
+    case 'group':   _startGroup(execID, d); break;
+    case 'endgroup': _endGroup(execID); break;
+    case 'error':
+      _addMsg(execID, {type: 'error', text: d.text || 'Command error'});
+      _finishToast(execID, false);
+      break;
+    case 'done':
+      _finishToast(execID, !!d.success);
+      break;
+  }
+}
+
+function cancelCommand(execID) {
+  fetch('/api/command-cancel/' + execID, { method: 'POST' });
+  var state = _cmdToasts[execID];
+  if (!state) return;
+  state.aborted = true;
+  state.finished = true;
+  var t = state.toast;
+  t.className = 'command-toast cancelled';
+  t.querySelector('.command-toast-icon').innerHTML = '&#8709;';
+  var btnEl = t.querySelector('.command-toast-btn');
+  btnEl.innerHTML = '&times;';
+  btnEl.onclick = function() { t.remove(); delete _cmdToasts[execID]; };
+  _autoHide(execID, 3000);
+}
+
+function _createToast(execID, label) {
+  var t = document.createElement('div');
+  t.className = 'command-toast running';
+  t.id = 'toast-' + execID;
+  t.innerHTML =
+    '<div class="command-toast-header">' +
+      '<span class="command-toast-icon"><span class="cmd-spinner"></span></span>' +
+      '<span class="command-toast-label">' + _esc(label) + '</span>' +
+      '<button class="command-toast-btn" onclick="cancelCommand(\'' + execID + '\')" title="Cancel">&#9632;</button>' +
+    '</div>' +
+    '<div class="command-toast-body" id="toast-body-' + execID + '"></div>' +
+    '<div class="command-toast-log" id="toast-log-' + execID + '"></div>';
+  return t;
+}
+
+function _addMsg(execID, msg) {
+  var state = _cmdToasts[execID];
+  if (!state) return;
+  var cls = 'command-toast-msg';
+  if (msg.level === 'warning') cls += ' warning';
+  if (msg.type === 'error') cls += ' error-msg';
+  if (msg.level === 'debug') return;
+  _appendBody(execID, '<div class="' + cls + '">' + _esc(msg.text) + '</div>');
+}
+
+function _addFile(execID, msg) {
+  var state = _cmdToasts[execID];
+  if (!state) return;
+  var label = msg.label || msg.path.split('/').pop();
+  var action = msg.action || 'none';
+  var actionHtml = '';
+  if (action === 'open') {
+    actionHtml = '<a href="#" onclick="event.preventDefault();_openFile(\'' + _escAttr(execID) + '\',\'' + _escAttr(msg.path) + '\',\'open\')">Open</a>' +
+      '<a href="#" onclick="event.preventDefault();_openFile(\'' + _escAttr(execID) + '\',\'' + _escAttr(msg.path) + '\',\'reveal\')">Reveal</a>';
+  } else if (action === 'reveal') {
+    actionHtml = '<a href="#" onclick="event.preventDefault();_openFile(\'' + _escAttr(execID) + '\',\'' + _escAttr(msg.path) + '\',\'reveal\')">Reveal</a>';
+  }
+  _appendBody(execID, '<div class="command-toast-file"><span title="' + _escAttr(msg.path) + '">&#128196; ' + _esc(label) + '</span>' + actionHtml + '</div>');
+  state.hasActions = true;
+}
+
+function _addEntity(execID, msg) {
+  var state = _cmdToasts[execID];
+  if (!state) return;
+  var verb = msg.action || 'updated';
+  var link = '/entity/' + encodeURIComponent(msg.entity_type) + '/' + encodeURIComponent(msg.id);
+  _appendBody(execID,
+    '<div class="command-toast-entity">' +
+      '<span>' + _esc(msg.id) + ' ' + verb + '</span>' +
+      '<a href="' + link + '" hx-get="' + link + '" hx-target="#content" hx-push-url="true">Go to</a>' +
+    '</div>');
+  state.hasActions = true;
+}
+
+function _handleOpen(msg) {
+  if (msg.url) {
+    fetch('/api/open-url?url=' + encodeURIComponent(msg.url), { method: 'POST' });
+  }
+}
+
+function _addLog(execID, msg) {
+  var state = _cmdToasts[execID];
+  if (!state) return;
+  state.logs.push(msg.text || '');
+}
+
+function _startGroup(execID, msg) {
+  var state = _cmdToasts[execID];
+  if (!state) return;
+  state._groupID = 'grp-' + Date.now();
+  _appendBody(execID,
+    '<div class="command-toast-group-label" onclick="this.classList.toggle(\'open\')">' + _esc(msg.label || 'Group') + '</div>' +
+    '<div class="command-toast-group-items" id="' + state._groupID + '"></div>');
+}
+
+function _endGroup(execID) {
+  var state = _cmdToasts[execID];
+  if (state) state._groupID = null;
+}
+
+function _appendBody(execID, html) {
+  var state = _cmdToasts[execID];
+  if (!state) return;
+  state.messages.push(html);
+  var target;
+  if (state._groupID) {
+    target = document.getElementById(state._groupID);
+  }
+  if (!target) {
+    target = document.getElementById('toast-body-' + execID);
+  }
+  if (!target) return;
+  // Message limiting: hide older items beyond _CMD_MAX_VISIBLE
+  var body = document.getElementById('toast-body-' + execID);
+  var items = body.children;
+  target.insertAdjacentHTML('beforeend', html);
+  // Re-check visible count (only direct children of body, not group contents)
+  var directItems = [];
+  for (var i = 0; i < body.children.length; i++) {
+    var ch = body.children[i];
+    if (!ch.classList.contains('command-toast-expand')) directItems.push(ch);
+  }
+  if (directItems.length > _CMD_MAX_VISIBLE + 1) {
+    // Hide overflow items and show expand link
+    var hidden = 0;
+    for (var j = 0; j < directItems.length - _CMD_MAX_VISIBLE; j++) {
+      directItems[j].style.display = 'none';
+      hidden++;
+    }
+    var existing = body.querySelector('.command-toast-expand');
+    if (existing) existing.remove();
+    var expand = document.createElement('button');
+    expand.className = 'command-toast-expand';
+    expand.textContent = hidden + ' more messages';
+    expand.onclick = function() {
+      for (var k = 0; k < body.children.length; k++) body.children[k].style.display = '';
+      expand.remove();
+    };
+    body.insertBefore(expand, body.firstChild);
+  }
+}
+
+function _finishToast(execID, success) {
+  var state = _cmdToasts[execID];
+  if (!state || state.finished) return;
+  state.finished = true;
+  var t = state.toast;
+  var btnEl = t.querySelector('.command-toast-btn');
+  btnEl.innerHTML = '&times;';
+  btnEl.onclick = function() { t.remove(); delete _cmdToasts[execID]; };
+
+  if (success) {
+    t.className = 'command-toast success';
+    t.querySelector('.command-toast-icon').innerHTML = '&#10003;';
+    if (!state.hasActions) _autoHide(execID, 5000);
+  } else {
+    t.className = 'command-toast error';
+    t.querySelector('.command-toast-icon').innerHTML = '&#10007;';
+    // Show log output on error
+    if (state.logs.length > 0) {
+      var logEl = document.getElementById('toast-log-' + execID);
+      logEl.textContent = state.logs.join('\n');
+      var showBtn = document.createElement('button');
+      showBtn.className = 'command-toast-expand';
+      showBtn.textContent = 'Show output';
+      showBtn.onclick = function() { logEl.classList.toggle('show'); showBtn.textContent = logEl.classList.contains('show') ? 'Hide output' : 'Show output'; };
+      var body = document.getElementById('toast-body-' + execID);
+      body.appendChild(showBtn);
+    }
+  }
+}
+
+function _autoHide(execID, ms) {
+  setTimeout(function _tick() {
+    var state = _cmdToasts[execID];
+    if (!state) return;
+    if (state.hoverPause) { setTimeout(_tick, 500); return; }
+    var t = state.toast;
+    t.style.opacity = '0';
+    t.style.transition = 'opacity 0.3s';
+    setTimeout(function() { t.remove(); delete _cmdToasts[execID]; }, 300);
+  }, ms);
+}
+
+function _openFile(execID, path, action) {
+  fetch('/api/open-file?path=' + encodeURIComponent(path) + '&action=' + encodeURIComponent(action), { method: 'POST' });
+  _dismissToast(execID);
+}
+
+function _dismissToast(execID) {
+  var state = _cmdToasts[execID];
+  if (!state) return;
+  var t = state.toast;
+  t.style.opacity = '0';
+  t.style.transition = 'opacity 0.3s';
+  setTimeout(function() { t.remove(); delete _cmdToasts[execID]; }, 300);
+}
+
+function _esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function _escAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+// Close dropdown menus on outside click
+document.addEventListener('click', function(e) {
+  document.querySelectorAll('details.add-dropdown[open]').forEach(function(d) {
+    if (!d.contains(e.target)) d.removeAttribute('open');
+  });
+});
 </script>
 {{- end -}}
 
@@ -389,6 +720,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
 <main class="main" id="content">
 {{ template "list-content" . }}
 </main>
+<div id="command-toast-container"></div>
 </body>
 </html>
 {{- end -}}
@@ -405,6 +737,17 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     <a href="/form/{{ .List.CreateForm }}" class="btn btn-primary btn-sm"
        hx-get="/form/{{ .List.CreateForm }}" hx-target="#content" hx-push-url="true">+ New</a>
     {{ end }}
+    {{ if .Commands }}{{ if gt (len .Commands) 2 }}
+    <details class="add-dropdown">
+      <summary class="btn btn-secondary btn-sm">Commands &#9662;</summary>
+      <div class="add-dropdown-menu">
+        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {list_id:'{{ $.ListID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</a>
+        {{ end }}
+      </div>
+    </details>
+    {{ else }}{{ range .Commands }}
+    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {list_id:'{{ $.ListID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</button>
+    {{ end }}{{ end }}{{ end }}
   </div>
 </div>
 
@@ -745,6 +1088,7 @@ function submitInlineCreate() {
 <main class="main" id="content">
 {{ template "entity-content" . }}
 </main>
+<div id="command-toast-container"></div>
 </body>
 </html>
 {{- end -}}
@@ -760,6 +1104,17 @@ function submitInlineCreate() {
     <a href="/form/{{ .EditFormID }}/{{ .Entity.ID }}" class="btn btn-primary btn-sm"
        hx-get="/form/{{ .EditFormID }}/{{ .Entity.ID }}" hx-target="#content" hx-push-url="true">Edit</a>
     {{ end }}
+    {{ if .Commands }}{{ if gt (len .Commands) 2 }}
+    <details class="add-dropdown">
+      <summary class="btn btn-secondary btn-sm">Commands &#9662;</summary>
+      <div class="add-dropdown-menu">
+        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</a>
+        {{ end }}
+      </div>
+    </details>
+    {{ else }}{{ range .Commands }}
+    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</button>
+    {{ end }}{{ end }}{{ end }}
     <a href="javascript:history.back()" class="btn btn-secondary btn-sm">&larr; Back</a>
   </div>
 </div>
@@ -822,6 +1177,7 @@ function submitInlineCreate() {
 <main class="main" id="content">
 {{ template "view-content" . }}
 </main>
+<div id="command-toast-container"></div>
 </body>
 </html>
 {{- end -}}
@@ -837,6 +1193,17 @@ function submitInlineCreate() {
     <a href="/form/{{ .EditFormID }}/{{ .Entry.ID }}?return_to={{ urlquery .ReturnTo }}" class="btn btn-primary btn-sm"
        hx-get="/form/{{ .EditFormID }}/{{ .Entry.ID }}?return_to={{ urlquery .ReturnTo }}" hx-target="#content" hx-push-url="true">Edit</a>
     {{ end }}
+    {{ if .Commands }}{{ if gt (len .Commands) 2 }}
+    <details class="add-dropdown">
+      <summary class="btn btn-secondary btn-sm">Commands &#9662;</summary>
+      <div class="add-dropdown-menu">
+        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {entity_id:'{{ $.Entry.ID }}',entity_type:'{{ $.Entry.Type }}',view_id:'{{ $.ViewID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</a>
+        {{ end }}
+      </div>
+    </details>
+    {{ else }}{{ range .Commands }}
+    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entry.ID }}',entity_type:'{{ $.Entry.Type }}',view_id:'{{ $.ViewID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</button>
+    {{ end }}{{ end }}{{ end }}
     <a href="javascript:history.back()" class="btn btn-secondary btn-sm">&larr; Back</a>
   </div>
 </div>
@@ -1458,6 +1825,7 @@ function submitInlineCreate() {
 <main class="main" id="content">
 {{ template "dashboard-content" . }}
 </main>
+<div id="command-toast-container"></div>
 </body>
 </html>
 {{- end -}}
@@ -1468,6 +1836,21 @@ function submitInlineCreate() {
     <h2>{{ .Dashboard.Title }}</h2>
     {{ if .Dashboard.Description }}<p>{{ .Dashboard.Description }}</p>{{ end }}
   </div>
+  {{ if .Commands }}
+  <div style="display:flex;gap:8px;">
+    {{ if gt (len .Commands) 2 }}
+    <details class="add-dropdown">
+      <summary class="btn btn-secondary btn-sm">Commands &#9662;</summary>
+      <div class="add-dropdown-menu">
+        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</a>
+        {{ end }}
+      </div>
+    </details>
+    {{ else }}{{ range .Commands }}
+    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</button>
+    {{ end }}{{ end }}
+  </div>
+  {{ end }}
 </div>
 
 <div class="dashboard-grid">
