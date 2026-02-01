@@ -7,5 +7,5 @@ summary: "Config-driven web UI for creating, editing, and browsing entities"
 ---
 
 HTMX-based web application configured entirely through `data-entry.yaml`.
-Provides forms, filterable lists, detail views, dashboards, search, and
-sidebar navigation with optional grouping.
+Provides forms, filterable lists, detail views, dashboards, search,
+sidebar navigation with optional grouping, and user-defined commands.
