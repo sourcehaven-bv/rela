@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	goruntime "runtime"
 	"sync"
 
@@ -23,17 +24,20 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // Desktop is the backend bound to the Wails frontend.
-// It manages project lifecycle: opening a directory picker and loading a project.
+// It manages project lifecycle: opening a directory picker, loading a project,
+// and persisting recent projects in user preferences.
 type Desktop struct {
 	ctx     context.Context
 	mu      sync.RWMutex
 	app     *dataentry.App
 	handler http.Handler
 	loadErr string
+	prefs   *desktop.Preferences
 }
 
 // coverage-ignore: Wails lifecycle callback
@@ -56,6 +60,19 @@ func (d *Desktop) OpenProject() string {
 	return d.LoadProject(dir)
 }
 
+// OpenRecentProject loads a project from the recent projects list.
+// It returns an error string (empty on success) so the JS frontend can react.
+func (d *Desktop) OpenRecentProject(path string) string {
+	errMsg := d.LoadProject(path)
+	if errMsg != "" {
+		// Project no longer valid — remove from recent list.
+		d.prefs.RemoveRecentProject(path)
+		_ = d.prefs.Save()
+		d.refreshMenu()
+	}
+	return errMsg
+}
+
 // LoadProject loads a rela project from the given directory.
 func (d *Desktop) LoadProject(dir string) string {
 	app, err := dataentry.NewApp(dir, storage.NewSafeFS(storage.NewOsFS()))
@@ -72,8 +89,16 @@ func (d *Desktop) LoadProject(dir string) string {
 	d.mu.Unlock()
 
 	if d.ctx != nil {
-		runtime.WindowSetTitle(d.ctx, app.Cfg.App.Name)
+		runtime.WindowSetTitle(d.ctx, app.ProjectName())
 	}
+
+	// Update preferences with successfully opened project.
+	d.prefs.AddRecentProject(app.ProjectRoot(), app.ProjectName())
+	if saveErr := d.prefs.Save(); saveErr != nil {
+		log.Printf("Warning: could not save preferences: %v", saveErr)
+	}
+	d.refreshMenu()
+
 	return ""
 }
 
@@ -89,8 +114,7 @@ func (d *Desktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, welcomePage, loadErr)
+	serveWelcomePage(w, d.prefs, loadErr)
 }
 
 // openProjectFromMenu handles File > Open Project from the native menu bar.
@@ -113,8 +137,8 @@ func (d *Desktop) openProjectFromMenu(_ *menu.CallbackData) {
 	runtime.WindowReloadApp(d.ctx)
 }
 
-// newAppMenu builds the application menu bar.
-func newAppMenu(d *Desktop) *menu.Menu {
+// buildAppMenu constructs the application menu bar including recent projects.
+func (d *Desktop) buildAppMenu() *menu.Menu {
 	appMenu := menu.NewMenu()
 
 	if goruntime.GOOS == "darwin" {
@@ -123,9 +147,46 @@ func newAppMenu(d *Desktop) *menu.Menu {
 
 	fileMenu := appMenu.AddSubmenu("File")
 	fileMenu.AddText("Open Project...", keys.CmdOrCtrl("o"), d.openProjectFromMenu)
-	if goruntime.GOOS != "darwin" {
+	fileMenu.AddSeparator()
+
+	// Recent Projects submenu
+	if len(d.prefs.RecentProjects) > 0 {
+		recentMenu := fileMenu.AddSubmenu("Recent Projects")
+		for _, rp := range d.prefs.RecentProjects {
+			proj := rp // capture for closure
+			label := proj.Name
+			if label == "" {
+				label = filepath.Base(proj.Path)
+			}
+			recentMenu.AddText(label, nil, func(_ *menu.CallbackData) {
+				if errMsg := d.LoadProject(proj.Path); errMsg != "" {
+					runtime.MessageDialog(d.ctx, runtime.MessageDialogOptions{ //nolint:errcheck // best-effort
+						Type:    runtime.ErrorDialog,
+						Title:   "Failed to open project",
+						Message: errMsg,
+					})
+					return
+				}
+				runtime.WindowReloadApp(d.ctx)
+			})
+		}
+		recentMenu.AddSeparator()
+		recentMenu.AddText("Clear Recent Projects", nil, func(_ *menu.CallbackData) {
+			d.prefs.ClearRecentProjects()
+			if err := d.prefs.Save(); err != nil {
+				log.Printf("Warning: could not save preferences: %v", err)
+			}
+			d.refreshMenu()
+		})
 		fileMenu.AddSeparator()
+	}
+
+	if goruntime.GOOS != "darwin" {
 		fileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
+			runtime.Quit(d.ctx)
+		})
+	} else {
+		fileMenu.AddText("Close Window", keys.CmdOrCtrl("w"), func(_ *menu.CallbackData) {
 			runtime.Quit(d.ctx)
 		})
 	}
@@ -137,136 +198,75 @@ func newAppMenu(d *Desktop) *menu.Menu {
 	return appMenu
 }
 
+// refreshMenu rebuilds and applies the application menu.
+func (d *Desktop) refreshMenu() {
+	if d.ctx == nil {
+		return
+	}
+	m := d.buildAppMenu()
+	runtime.MenuSetApplicationMenu(d.ctx, m)
+	runtime.MenuUpdateApplicationMenu(d.ctx)
+}
+
 // coverage-ignore: main function - entry point
 func main() {
 	projectDir := flag.String("project", ".", "Path to the rela project directory")
 	flag.Parse()
 
-	d := &Desktop{}
+	// Load desktop preferences.
+	prefs, err := desktop.Load()
+	if err != nil {
+		log.Printf("Warning: could not load preferences: %v", err)
+		prefs = &desktop.Preferences{}
+	}
 
-	// Try loading the project early so the app opens directly if valid.
-	// Errors are deferred to the welcome screen instead of crashing.
-	if *projectDir != "." || isRelaProject(*projectDir) {
-		if errMsg := d.LoadProject(*projectDir); errMsg != "" {
-			log.Printf("Could not load project from %q: %s", *projectDir, errMsg)
+	d := &Desktop{prefs: prefs}
+
+	// Determine which project to open.
+	projectToLoad := resolveProjectDir(*projectDir, prefs)
+	if projectToLoad != "" {
+		if errMsg := d.LoadProject(projectToLoad); errMsg != "" {
+			log.Printf("Could not load project from %q: %s", projectToLoad, errMsg)
 		}
 	}
 
 	title := "Rela Desktop"
 	if d.app != nil {
-		title = d.app.Cfg.App.Name
+		title = d.app.ProjectName()
 	}
 
-	err := wails.Run(&options.App{
+	wailsErr := wails.Run(&options.App{
 		Title:  title,
 		Width:  1280,
 		Height: 800,
-		Menu:   newAppMenu(d),
+		Menu:   d.buildAppMenu(),
 		AssetServer: &assetserver.Options{
 			Handler: d,
 		},
 		OnStartup: d.startup,
 		Bind:      []interface{}{d},
 	})
-	if err != nil {
-		log.Fatalf("Wails error: %v", err)
+	if wailsErr != nil {
+		log.Fatalf("Wails error: %v", wailsErr)
 	}
+}
+
+// resolveProjectDir determines which project directory to load at startup.
+// Priority: explicit -project flag > current dir if rela project > last project from preferences.
+func resolveProjectDir(flagValue string, prefs *desktop.Preferences) string {
+	// Explicit flag or current directory is a rela project.
+	if flagValue != "." || isRelaProject(flagValue) {
+		return flagValue
+	}
+	// Fall back to last project from preferences.
+	if prefs.LastProject != "" && isRelaProject(prefs.LastProject) {
+		return prefs.LastProject
+	}
+	return ""
 }
 
 // isRelaProject checks if the directory looks like a rela project.
 func isRelaProject(dir string) bool {
-	_, err := os.Stat(dir + "/metamodel.yaml")
+	_, err := os.Stat(filepath.Join(dir, "metamodel.yaml"))
 	return err == nil
 }
-
-const welcomePage = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rela Desktop</title>
-<style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg: #f8fafc; --bg-card: #fff; --text: #1e293b; --text-muted: #64748b;
-  --border: #e2e8f0; --primary: #3b82f6; --primary-hover: #2563eb;
-  --primary-light: #eff6ff; --danger: #ef4444; --radius: 8px;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "SF Mono", "Fira Code", monospace;
-  --shadow: 0 1px 3px rgba(0,0,0,0.08);
-}
-body { font-family: var(--font); background: var(--bg); color: var(--text);
-  display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-.welcome { text-align: center; max-width: 480px; padding: 48px 32px; }
-.welcome h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
-.welcome .subtitle { color: var(--text-muted); font-size: 15px; margin-bottom: 32px; line-height: 1.6; }
-.btn { padding: 12px 32px; border: none; border-radius: var(--radius);
-  font-size: 15px; font-weight: 600; cursor: pointer; font-family: var(--font);
-  transition: all 0.15s; display: inline-flex; align-items: center; gap: 8px; }
-.btn-primary { background: var(--primary); color: #fff; }
-.btn-primary:hover { background: var(--primary-hover); }
-.btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.error { margin-top: 20px; padding: 12px 16px; background: #fef2f2;
-  border: 1px solid #fecaca; border-radius: var(--radius); color: var(--danger);
-  font-size: 13px; font-family: var(--font-mono); text-align: left; word-break: break-word; }
-.hint { margin-top: 24px; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
-.hint code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px;
-  font-family: var(--font-mono); font-size: 12px; }
-.loading { display: none; margin-top: 16px; color: var(--text-muted); font-size: 14px; }
-</style>
-</head>
-<body>
-<div class="welcome">
-  <h1>Rela Desktop</h1>
-  <p class="subtitle">Open a rela project directory to get started.<br>The folder should contain a <code>metamodel.yaml</code> file.</p>
-
-  <button class="btn btn-primary" id="open-btn" onclick="openProject()">Open Project...</button>
-
-  <div class="loading" id="loading">Opening...</div>
-
-  <div id="error" style="display:none" class="error"></div>
-
-  <div class="hint">
-    You can also launch from the command line:<br>
-    <code>rela-desktop -project /path/to/project</code>
-  </div>
-</div>
-<script>
-// Pre-populate error from a failed -project flag load.
-(function() {
-  var initialErr = %q;
-  if (initialErr) {
-    var el = document.getElementById("error");
-    el.textContent = initialErr;
-    el.style.display = "block";
-  }
-})();
-
-async function openProject() {
-  var btn = document.getElementById("open-btn");
-  var loading = document.getElementById("loading");
-  var errorEl = document.getElementById("error");
-  btn.disabled = true;
-  loading.style.display = "block";
-  errorEl.style.display = "none";
-
-  try {
-    var result = await window.go.main.Desktop.OpenProject();
-    if (result === "") {
-      // Success or user cancelled — reload to show the app (or stay on welcome).
-      window.location.reload();
-    } else {
-      errorEl.textContent = result;
-      errorEl.style.display = "block";
-    }
-  } catch (e) {
-    errorEl.textContent = String(e);
-    errorEl.style.display = "block";
-  } finally {
-    btn.disabled = false;
-    loading.style.display = "none";
-  }
-}
-</script>
-</body>
-</html>`

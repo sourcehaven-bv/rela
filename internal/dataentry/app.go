@@ -240,6 +240,16 @@ func (a *App) resolveActiveList(entityType string, r *http.Request) string {
 	return a.activeListFromReferer(r)
 }
 
+// ProjectName returns the display name of the loaded project.
+func (a *App) ProjectName() string {
+	return a.Cfg.App.Name
+}
+
+// ProjectRoot returns the root directory of the loaded project.
+func (a *App) ProjectRoot() string {
+	return a.repo.Paths().Root
+}
+
 // colorToCSSClass maps a color name from config to a CSS class.
 var colorToCSSClass = map[string]string{
 	"blue":   "badge-blue",
