@@ -289,11 +289,13 @@ lists:
     page_size: 50
 
 navigation:
-  - label: "All Products"
-    list: all_products
-  - label: "In Stock"
-    list: in_stock
-  - label: "Low / Out of Stock"
-    list: low_stock
+  - group: "Products"
+    items:
+      - label: "All Products"
+        list: all_products
+      - label: "In Stock"
+        list: in_stock
+      - label: "Low / Out of Stock"
+        list: low_stock
   - label: "Brands"
     list: brands

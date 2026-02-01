@@ -509,13 +509,18 @@ dashboard:
 navigation:
   - label: "Dashboard"
     dashboard: true
-  - label: "My Tickets"
-    list: my_tickets
-  - label: "Open Tickets"
-    list: open_tickets
-  - label: "All Tickets"
-    list: all_tickets
-  - label: "Categories"
-    list: categories
+  - group: "Tickets"
+    items:
+      - label: "My Tickets"
+        list: my_tickets
+      - label: "Open Tickets"
+        list: open_tickets
+      - label: "All Tickets"
+        list: all_tickets
+  - group: "Reference Data"
+    collapsed: true
+    items:
+      - label: "Categories"
+        list: categories
   - label: "Graph Explorer"
     graph: true

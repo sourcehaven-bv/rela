@@ -420,6 +420,14 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 		},
 		"add":            func(a, b int) int { return a + b },
 		"renderMarkdown": simpleMarkdownToHTML,
+		"map": func(pairs ...interface{}) map[string]interface{} {
+			m := make(map[string]interface{}, len(pairs)/2)
+			for i := 0; i+1 < len(pairs); i += 2 {
+				key, _ := pairs[i].(string)
+				m[key] = pairs[i+1]
+			}
+			return m
+		},
 		"formatValue": func(val string) string {
 			if t, err := time.Parse(time.RFC3339, val); err == nil {
 				return t.Format("2006-01-02")

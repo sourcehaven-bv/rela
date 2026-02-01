@@ -1,4 +1,4 @@
-# Data Entry Configuration
+# Data Entry Web App
 
 The data entry application provides a web-based UI for creating, editing, and browsing entities
 stored in a rela project. It is configured entirely through a `data-entry.yaml` file placed
@@ -15,7 +15,7 @@ A `data-entry.yaml` file defines:
 - **Lists** - Tabular views with sorting, filtering, and pagination
 - **Views** - Read-only detail pages that traverse the graph to show related entities
 - **Dashboard** - An overview page with query-driven cards showing counts, breakdowns, and tables
-- **Navigation** - Sidebar menu entries that link to lists or the dashboard
+- **Navigation** - Sidebar menu entries with optional grouping
 
 The file drives the entire UI without writing any code. The server reads `data-entry.yaml` and
 your `metamodel.yaml` together, validates them, and serves a fully functional CRUD application.
@@ -120,11 +120,13 @@ dashboard:                 # Optional overview page
       query: "type:task status:open"
       display: count
 
-navigation:                # Sidebar menu
+navigation:                # Sidebar menu (supports groups)
   - label: "Dashboard"
     dashboard: true
-  - label: "Tasks"
-    list: all_tasks
+  - group: "Tasks"
+    items:
+      - label: "All Tasks"
+        list: all_tasks
 ```
 
 ## App
@@ -448,7 +450,7 @@ sort:
 ## Views
 
 Views define read-only detail pages that traverse the entity graph to display related data.
-They are the data-entry equivalent of the CLI's [views.yaml](views.md) concept, adapted for
+They are the data-entry equivalent of the CLI's views.yaml concept, adapted for
 rendering as HTML sections.
 
 ### Basic View
@@ -518,7 +520,7 @@ specific ticket entity.
 ### Traverse Rules
 
 Traverse rules collect related entities into named collections. They work identically to
-[views.yaml traverse rules](views.md):
+views.yaml traverse rules:
 
 ```yaml
 traverse:
@@ -702,40 +704,68 @@ Cards use the same search query syntax available on the search page:
 Multiple terms are combined with AND logic. For example,
 `type:ticket status:open prop:priority=critical` matches tickets that are both open and critical.
 
-Every card includes a link icon (↗) that opens the same query on the search page for further
+Every card includes a link icon that opens the same query on the search page for further
 exploration.
 
 ## Navigation
 
-The navigation section defines the sidebar menu. Each entry links to a named list or the dashboard:
+The navigation section defines the sidebar menu. Each entry is either a direct item (linking to a
+list, dashboard, or graph) or a **group** containing multiple items:
 
 ```yaml
 navigation:
   - label: "Dashboard"
     dashboard: true
-  - label: "Open Tickets"
-    list: open_tickets
-  - label: "All Tickets"
-    list: all_tickets
-  - label: "Categories"
-    list: categories
+  - group: "Tickets"
+    items:
+      - label: "Open Tickets"
+        list: open_tickets
+      - label: "All Tickets"
+        list: all_tickets
+  - group: "Reference Data"
+    collapsed: true
+    items:
+      - label: "Categories"
+        list: categories
+  - label: "Graph Explorer"
+    graph: true
 ```
+
+### Direct Items
+
+| Field       | Type   | Description                                                    |
+| ----------- | ------ | -------------------------------------------------------------- |
+| `label`     | string | Menu item text                                                 |
+| `list`      | string | List name to navigate to (mutually exclusive with other types) |
+| `dashboard` | bool   | Link to the dashboard page                                     |
+| `graph`     | bool   | Link to the graph explorer                                     |
+
+### Groups
 
 | Field       | Type   | Description                                              |
 | ----------- | ------ | -------------------------------------------------------- |
-| `label`     | string | Menu item text                                           |
-| `list`      | string | List name to navigate to (mutually exclusive with `dashboard`) |
-| `dashboard` | bool   | Link to the dashboard page (mutually exclusive with `list`)    |
+| `group`     | string | Group header text (displayed as uppercase label)         |
+| `collapsed` | bool   | Default collapsed state (optional, default: `false`)     |
+| `items`     | list   | List of direct navigation items within the group         |
 
-The first entry is the default landing page. If the first entry is a dashboard, the root URL
-(`/`) shows the dashboard. Order matters; items appear in the sidebar in the order listed.
+Groups appear as collapsible sections in the sidebar. Clicking the group header toggles
+expand/collapse. The collapsed state is persisted server-side in `.rela/ui-state.json`, so it
+survives page reloads. If the active page is inside a collapsed group, the group auto-expands.
+
+Nested groups are not supported. If an item inside `items` has a `group` field, config validation
+will reject it with a clear error message.
+
+The first navigable entry is the default landing page — the first direct item, or the first item
+inside the first group. Order matters; items appear in the sidebar in the order listed.
 
 List entries show an entity count badge next to the label (based on the list's filters). Dashboard
-entries do not show a count.
+and graph entries do not show a count.
+
+Direct items and groups can be freely mixed in any order.
 
 ## Complete Example
 
-A ticket management system with forms, lists, views, and navigation:
+A ticket management system with forms, lists, views, dashboard, and grouped navigation:
 
 ```yaml
 version: "1.0"
@@ -952,18 +982,20 @@ dashboard:
 navigation:
   - label: "Dashboard"
     dashboard: true
-  - label: "My Tickets"
-    list: my_tickets
-  - label: "Open Tickets"
-    list: open_tickets
-  - label: "All Tickets"
-    list: all_tickets
+  - group: "Tickets"
+    items:
+      - label: "My Tickets"
+        list: my_tickets
+      - label: "Open Tickets"
+        list: open_tickets
+      - label: "All Tickets"
+        list: all_tickets
 ```
 
 ## Relationship to views.yaml
 
 The `views` section in `data-entry.yaml` uses the same traversal engine as the CLI's
-[views.yaml](views.md), but adapted for HTML rendering:
+views.yaml, but adapted for HTML rendering:
 
 | Feature                | views.yaml (CLI)                     | data-entry.yaml views                |
 | ---------------------- | ------------------------------------ | ------------------------------------ |
@@ -991,17 +1023,11 @@ views and add `sections` for HTML rendering.
 4. **Filter strategically** - Use static filters for focused views (e.g., "Open Tickets") and
    filter controls for exploratory views (e.g., "All Tickets").
 
-5. **Keep navigation focused** - 8-15 items is a comfortable sidebar. Group related lists
-   logically (e.g., ISMS items first, then Sales items).
+5. **Group related lists** - Use navigation groups to organize related lists under collapsible
+   headers. Keep 3-5 items per group for clarity.
 
 6. **Style all enums** - Add color mappings for every custom type to make lists scannable.
 
 7. **Views for key entities** - Create detail views for entities that aggregate related data.
    A risk detail view showing assets, controls, and incidents is more useful than viewing the
    risk entity alone.
-
-## See Also
-
-- [Views](views.md) - Declarative views for the CLI
-- [Metamodel](metamodel.md) - Entity types and relations that forms/lists reference
-- [Getting Started](getting-started.md) - Project initialization

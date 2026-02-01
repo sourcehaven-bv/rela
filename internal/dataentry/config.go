@@ -109,12 +109,30 @@ type FilterControl struct {
 	Widget   string `yaml:"widget"`
 }
 
-// NavigationEntry defines a sidebar navigation item.
+// NavigationEntry defines a sidebar navigation item or a group of items.
+// It is a union type: either a direct item (Label + List/Dashboard/Graph)
+// or a group (Group + Items). Nested groups are not supported.
 type NavigationEntry struct {
-	Label     string `yaml:"label"`
+	// Direct item fields
+	Label     string `yaml:"label,omitempty"`
 	List      string `yaml:"list,omitempty"`
 	Dashboard bool   `yaml:"dashboard,omitempty"`
 	Graph     bool   `yaml:"graph,omitempty"`
+
+	// Group fields
+	Group     string            `yaml:"group,omitempty"`
+	Collapsed bool              `yaml:"collapsed,omitempty"`
+	Items     []NavigationEntry `yaml:"items,omitempty"`
+}
+
+// IsGroup returns true if this entry is a navigation group.
+func (n NavigationEntry) IsGroup() bool {
+	return n.Group != ""
+}
+
+// UIState holds user-specific UI preferences persisted in .rela/ui-state.json.
+type UIState struct {
+	CollapsedGroups map[string]bool `json:"collapsed_groups"`
 }
 
 // DashboardConfig defines a dashboard page with query-driven cards.

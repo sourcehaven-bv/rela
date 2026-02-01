@@ -23,8 +23,8 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if len(a.Cfg.Navigation) > 0 {
-		first := a.Cfg.Navigation[0]
+	first := firstNavTarget(a.Cfg.Navigation)
+	if first != nil {
 		if first.Dashboard {
 			r.URL.Path = "/dashboard"
 			a.handleDashboard(w, r)
@@ -250,7 +250,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"App":              a.Cfg.App,
-		"Navigation":       a.navItems(),
+		"Navigation":       a.navElements(listID),
 		"ActiveList":       listID,
 		"List":             list,
 		"ListID":           listID,
@@ -423,10 +423,11 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		mode = "create"
 	}
 
+	activeList := a.resolveActiveList(form.EntityType, r)
 	data := map[string]interface{}{
 		"App":          a.Cfg.App,
-		"Navigation":   a.navItems(),
-		"ActiveList":   a.resolveActiveList(form.EntityType, r),
+		"Navigation":   a.navElements(activeList),
+		"ActiveList":   activeList,
 		"FormID":       formID,
 		"Form":         form,
 		"Fields":       fields,
@@ -535,10 +536,11 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	entityActiveList := a.resolveActiveList(entity.Type, r)
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
-		"Navigation": a.navItems(),
-		"ActiveList": a.resolveActiveList(entity.Type, r),
+		"Navigation": a.navElements(entityActiveList),
+		"ActiveList": entityActiveList,
 		"Entity":     entity,
 		"EntityDef":  entDef,
 		"EditFormID": editFormID,
@@ -874,10 +876,11 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		returnTo += "?" + r.URL.RawQuery
 	}
 
+	viewActiveList := a.resolveActiveList(result.Entry.Type, r)
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
-		"Navigation": a.navItems(),
-		"ActiveList": a.resolveActiveList(result.Entry.Type, r),
+		"Navigation": a.navElements(viewActiveList),
+		"ActiveList": viewActiveList,
 		"View":       view,
 		"ViewID":     viewID,
 		"EntityID":   entityID,
@@ -1402,7 +1405,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"App":             a.Cfg.App,
-		"Navigation":      a.navItems(),
+		"Navigation":      a.navElements(""),
 		"ActiveList":      "",
 		"Query":           query,
 		"Results":         results,
@@ -1553,7 +1556,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
-		"Navigation": a.navItems(),
+		"Navigation": a.navElements("_dashboard"),
 		"ActiveList": "_dashboard",
 		"Dashboard":  dash,
 		"Cards":      cards,
@@ -1565,4 +1568,29 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.tmpl.ExecuteTemplate(w, "dashboard-page", data) //nolint:errcheck // template errors logged by http
 	}
+}
+
+func (a *App) handleToggleGroup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.ParseForm() //nolint:errcheck // form parse errors handled by empty values
+	group := r.FormValue("group")
+	if group == "" {
+		http.Error(w, "Missing group parameter", http.StatusBadRequest)
+		return
+	}
+
+	state := a.loadUIState()
+	// Toggle: if currently collapsed, expand; if expanded (or absent), collapse
+	state.CollapsedGroups[group] = !state.CollapsedGroups[group]
+	// Clean up false entries to keep the file tidy
+	if !state.CollapsedGroups[group] {
+		delete(state.CollapsedGroups, group)
+	}
+	if err := a.saveUIState(state); err != nil {
+		log.Printf("Failed to save UI state: %v", err)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // newHandlerTestApp builds a full App (including parsed templates) for handler tests.
@@ -56,6 +58,7 @@ func newHandlerTestApp(t *testing.T) *App {
 		Cfg:         cfg,
 		meta:        meta,
 		g:           g,
+		fs:          storage.NewOsFS(),
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
@@ -592,6 +595,89 @@ func TestHandleExecuteQuery(t *testing.T) {
 		results := app.executeQuery("type:ticket status:open")
 		if len(results) != 1 || results[0].ID != "TKT-001" {
 			t.Errorf("expected [TKT-001], got %v", collectIDs(results))
+		}
+	})
+}
+
+func TestHandleToggleGroup(t *testing.T) {
+	t.Run("toggles group collapsed state", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.uiStatePath = filepath.Join(t.TempDir(), "ui-state.json")
+
+		// Toggle "Tickets" group to collapsed
+		body := strings.NewReader("group=Tickets")
+		r := httptest.NewRequest(http.MethodPost, "/api/ui/toggle-group", body)
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleToggleGroup(w, r)
+		if w.Code != http.StatusNoContent {
+			t.Errorf("expected 204, got %d", w.Code)
+		}
+
+		state := app.loadUIState()
+		if !state.CollapsedGroups["Tickets"] {
+			t.Error("expected Tickets to be collapsed")
+		}
+
+		// Toggle again to expand
+		body = strings.NewReader("group=Tickets")
+		r = httptest.NewRequest(http.MethodPost, "/api/ui/toggle-group", body)
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w = httptest.NewRecorder()
+		app.handleToggleGroup(w, r)
+		if w.Code != http.StatusNoContent {
+			t.Errorf("expected 204, got %d", w.Code)
+		}
+
+		state = app.loadUIState()
+		if state.CollapsedGroups["Tickets"] {
+			t.Error("expected Tickets to be expanded after second toggle")
+		}
+	})
+
+	t.Run("missing group returns 400", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		body := strings.NewReader("")
+		r := httptest.NewRequest(http.MethodPost, "/api/ui/toggle-group", body)
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleToggleGroup(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("GET not allowed", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet, "/api/ui/toggle-group", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleToggleGroup(w, r)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("expected 405, got %d", w.Code)
+		}
+	})
+}
+
+func TestHandleIndexWithGroupedNav(t *testing.T) {
+	t.Run("first item inside group", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.Cfg.Navigation = []NavigationEntry{
+			{
+				Group: "Tickets",
+				Items: []NavigationEntry{
+					{Label: "All Tickets", List: "tickets"},
+				},
+			},
+		}
+		r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleIndex(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "TKT-001") {
+			t.Error("expected list page content")
 		}
 	})
 }
