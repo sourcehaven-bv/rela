@@ -171,6 +171,9 @@ Valid reasons for `coverage-ignore`:
 - External tool dependencies (graphviz, etc.)
 - OS-specific functionality that can't be reliably mocked
 
+**Important**: When the coverage baseline/ratchet check fails, always add
+tests to improve coverage rather than updating the baseline file.
+
 ### Running Coverage Checks Locally
 
 ```bash

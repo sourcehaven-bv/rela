@@ -1,4 +1,3 @@
-// coverage-ignore: file watcher and SSE - requires filesystem events and HTTP streaming
 package dataentry
 
 import (
@@ -54,6 +53,8 @@ func (b *eventBroker) broadcast(event string) {
 
 // StartWatching begins file watching for live-reload of views when project
 // files change. Returns a stop function to shut down the watcher.
+//
+// coverage-ignore: requires real filesystem events via fsnotify
 func (a *App) StartWatching() (stop func(), err error) {
 	configPath := filepath.Join(a.projCtx.Root, ConfigFile)
 
