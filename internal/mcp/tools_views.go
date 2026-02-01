@@ -4,7 +4,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -99,6 +98,5 @@ func (s *Server) handleExecuteView(
 }
 
 func (s *Server) loadViews() (*views.File, error) {
-	viewsPath := filepath.Join(s.projectCtx.Root, "views.yaml")
-	return views.Load(viewsPath)
+	return s.repo.LoadViews()
 }

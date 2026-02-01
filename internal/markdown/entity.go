@@ -12,9 +12,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
-// ReadEntity reads an entity from a markdown file
-func ReadEntity(path string, meta *metamodel.Metamodel) (*model.Entity, error) {
-	content, err := os.ReadFile(path)
+// ReadEntity reads an entity from a markdown file.
+func (f *FileIO) ReadEntity(path string, meta *metamodel.Metamodel) (*model.Entity, error) {
+	content, err := f.FS.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func ReadEntity(path string, meta *metamodel.Metamodel) (*model.Entity, error) {
 	}
 
 	// Get file modification time
-	if info, err := os.Stat(path); err == nil {
+	if info, err := f.FS.Stat(path); err == nil {
 		entity.ModTime = info.ModTime()
 	}
 
@@ -60,8 +60,8 @@ func ReadEntity(path string, meta *metamodel.Metamodel) (*model.Entity, error) {
 	return entity, nil
 }
 
-// WriteEntity writes an entity to a markdown file
-func WriteEntity(entity *model.Entity, path string) error {
+// WriteEntity writes an entity to a markdown file.
+func (f *FileIO) WriteEntity(entity *model.Entity, path string) error {
 	frontmatter := make(map[string]interface{})
 	frontmatter["id"] = entity.ID
 	frontmatter["type"] = entity.Type
@@ -89,23 +89,23 @@ func WriteEntity(entity *model.Entity, path string) error {
 
 	// Ensure directory exists
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := f.FS.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	return os.WriteFile(path, []byte(content), 0644)
+	return f.FS.WriteFile(path, []byte(content), 0644)
 }
 
-// DeleteEntity removes an entity file
-func DeleteEntity(path string) error {
-	return os.Remove(path)
+// DeleteEntity removes an entity file.
+func (f *FileIO) DeleteEntity(path string) error {
+	return f.FS.Remove(path)
 }
 
-// ListEntityFiles returns all entity markdown files in the entities directory
-func ListEntityFiles(entitiesDir string) ([]string, error) {
+// ListEntityFiles returns all entity markdown files in the entities directory.
+func (f *FileIO) ListEntityFiles(entitiesDir string) ([]string, error) {
 	var files []string
 
-	err := filepath.Walk(entitiesDir, func(path string, info os.FileInfo, err error) error {
+	err := f.FS.Walk(entitiesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -120,9 +120,9 @@ func ListEntityFiles(entitiesDir string) ([]string, error) {
 	return files, err
 }
 
-// LoadAllEntities loads all entities from the entities directory using parallel I/O
-func LoadAllEntities(entitiesDir string, meta *metamodel.Metamodel) ([]*model.Entity, error) {
-	files, err := ListEntityFiles(entitiesDir)
+// LoadAllEntities loads all entities from the entities directory using parallel I/O.
+func (f *FileIO) LoadAllEntities(entitiesDir string, meta *metamodel.Metamodel) ([]*model.Entity, error) {
+	files, err := f.ListEntityFiles(entitiesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []*model.Entity{}, nil
@@ -151,8 +151,8 @@ func LoadAllEntities(entitiesDir string, meta *metamodel.Metamodel) ([]*model.En
 		go func() {
 			defer wg.Done()
 			for file := range fileChan {
-				entity, err := ReadEntity(file, meta)
-				if err != nil {
+				entity, readErr := f.ReadEntity(file, meta)
+				if readErr != nil {
 					// Skip files that can't be parsed
 					continue
 				}
@@ -182,9 +182,9 @@ func LoadAllEntities(entitiesDir string, meta *metamodel.Metamodel) ([]*model.En
 	return entities, nil
 }
 
-// EntityFileModTime returns the modification time of an entity file
-func EntityFileModTime(path string) (time.Time, error) {
-	info, err := os.Stat(path)
+// EntityFileModTime returns the modification time of an entity file.
+func (f *FileIO) EntityFileModTime(path string) (time.Time, error) {
+	info, err := f.FS.Stat(path)
 	if err != nil {
 		return time.Time{}, err
 	}

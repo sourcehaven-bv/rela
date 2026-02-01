@@ -11,8 +11,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -20,14 +18,14 @@ func (s *Server) handleRefresh(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	// Reload metamodel in case it changed
-	newMeta, err := metamodel.Load(s.projectCtx.MetamodelPath)
+	newMeta, err := s.repo.LoadMetamodel()
 	if err != nil {
 		s.logger.Printf("Metamodel reload error (keeping previous version): %v", err)
 	} else {
 		s.setMeta(newMeta)
 	}
 
-	syncResult, err := markdown.SyncFromFiles(s.projectCtx, s.getMeta(), s.graph)
+	syncResult, err := s.repo.Sync(s.getMeta(), s.graph)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
 	}

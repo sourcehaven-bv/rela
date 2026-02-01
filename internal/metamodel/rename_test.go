@@ -24,7 +24,7 @@ relations: {}
 `
 		writeFile(t, path, input)
 
-		if err := RenameEntityType(path, "requirement", "feature"); err != nil {
+		if err := RenameEntityType(path, "requirement", "feature", testMetaFS); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -59,7 +59,7 @@ relations:
 `
 		writeFile(t, path, input)
 
-		if err := RenameEntityType(path, "requirement", "feature"); err != nil {
+		if err := RenameEntityType(path, "requirement", "feature", testMetaFS); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -99,7 +99,7 @@ validations:
 `
 		writeFile(t, path, input)
 
-		if err := RenameEntityType(path, "requirement", "feature"); err != nil {
+		if err := RenameEntityType(path, "requirement", "feature", testMetaFS); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -128,7 +128,7 @@ relations: {}
 `
 		writeFile(t, path, input)
 
-		err := RenameEntityType(path, "nonexistent", "feature")
+		err := RenameEntityType(path, "nonexistent", "feature", testMetaFS)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -151,7 +151,7 @@ relations: {}
 `
 		writeFile(t, path, input)
 
-		err := RenameEntityType(path, "requirement", "decision")
+		err := RenameEntityType(path, "requirement", "decision", testMetaFS)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -167,7 +167,7 @@ relations: {}
 	})
 
 	t.Run("error when file not found", func(t *testing.T) {
-		err := RenameEntityType("/nonexistent/path/metamodel.yaml", "old", "new")
+		err := RenameEntityType("/nonexistent/path/metamodel.yaml", "old", "new", testMetaFS)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -184,7 +184,7 @@ entities:
 `
 		writeFile(t, path, input)
 
-		if err := RenameEntityType(path, "requirement", "feature"); err != nil {
+		if err := RenameEntityType(path, "requirement", "feature", testMetaFS); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -207,7 +207,7 @@ relations: {}
 `
 		writeFile(t, path, input)
 
-		if err := RenameEntityType(path, "requirement", "feature"); err != nil {
+		if err := RenameEntityType(path, "requirement", "feature", testMetaFS); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 

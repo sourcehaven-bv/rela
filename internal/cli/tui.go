@@ -6,9 +6,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/tui"
 )
 
@@ -33,7 +32,7 @@ Keyboard shortcuts:
   Esc - Go back`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Try to discover project
-		ctx, err := project.Discover("")
+		ctx, err := project.Discover("", cliFS)
 		if err != nil {
 			// No project found - launch TUI in init mode
 			cwd, cwdErr := os.Getwd()
@@ -43,8 +42,11 @@ Keyboard shortcuts:
 			return tui.RunInit(cwd)
 		}
 
+		// Initialize repository
+		tuiRepo := repository.New(cliFS, ctx)
+
 		// Load metamodel
-		mm, err := metamodel.Load(ctx.MetamodelPath)
+		mm, err := tuiRepo.LoadMetamodel()
 		if err != nil {
 			return err
 		}
@@ -53,21 +55,21 @@ Keyboard shortcuts:
 		gr := graph.New()
 
 		// Try to load from cache first
-		if graph.CacheExists(ctx.CachePath) {
-			if err := gr.LoadCache(ctx.CachePath); err != nil {
+		if tuiRepo.CacheExists() {
+			if err := tuiRepo.LoadCache(gr); err != nil {
 				// Cache load failed, sync from files
-				if _, err := markdown.SyncFromFiles(ctx, mm, gr); err != nil {
+				if _, err := tuiRepo.Sync(mm, gr); err != nil {
 					return err
 				}
 			}
 		} else {
 			// No cache, sync from files
-			if _, err := markdown.SyncFromFiles(ctx, mm, gr); err != nil {
+			if _, err := tuiRepo.Sync(mm, gr); err != nil {
 				return err
 			}
 		}
 
-		return tui.Run(ctx, mm, gr)
+		return tui.Run(mm, gr, tuiRepo)
 	},
 }
 

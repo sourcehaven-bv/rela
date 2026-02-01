@@ -27,7 +27,7 @@ Examples:
   rela migrate --check # Check for pending migrations (for CI)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Discover project (we need the paths but not the metamodel)
-		ctx, err := project.Discover("")
+		ctx, err := project.Discover("", cliFS)
 		if err != nil {
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}
@@ -59,11 +59,11 @@ func runMigrateCheck(files []struct {
 
 	for _, f := range files {
 		// Skip files that don't exist
-		if _, err := os.Stat(f.path); os.IsNotExist(err) {
+		if _, err := cliFS.Stat(f.path); os.IsNotExist(err) {
 			continue
 		}
 
-		result, err := migration.CheckOnly(f.path, f.fileType)
+		result, err := migration.CheckOnly(f.path, f.fileType, cliFS)
 		if err != nil {
 			return fmt.Errorf("checking %s: %w", f.name, err)
 		}
@@ -96,11 +96,11 @@ func runMigrate(files []struct {
 
 	for _, f := range files {
 		// Skip files that don't exist
-		if _, err := os.Stat(f.path); os.IsNotExist(err) {
+		if _, err := cliFS.Stat(f.path); os.IsNotExist(err) {
 			continue
 		}
 
-		result, err := migration.Apply(f.path, f.fileType)
+		result, err := migration.Apply(f.path, f.fileType, cliFS)
 		if err != nil {
 			return fmt.Errorf("migrating %s: %w", f.name, err)
 		}

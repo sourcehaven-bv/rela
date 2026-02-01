@@ -9,7 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -248,11 +247,11 @@ func (d *DetailModel) editRelation(_ *App, rel *model.Relation) tea.Cmd {
 
 // reloadEntity reloads the entity from disk and updates the graph
 func (d *DetailModel) reloadEntity(app *App) error {
-	if d.entity == nil || d.entity.FilePath == "" {
+	if d.entity == nil {
 		return nil
 	}
 
-	entity, err := markdown.ReadEntity(d.entity.FilePath, app.metamodel)
+	entity, err := app.repo.ReadEntity(d.entity.Type, d.entityID, app.metamodel)
 	if err != nil {
 		return err
 	}
@@ -269,7 +268,7 @@ func (d *DetailModel) reloadEntity(app *App) error {
 	d.allRels = append(d.allRels, d.outgoing...)
 
 	// Save cache
-	_ = app.graph.SaveCache(app.project.CachePath)
+	_ = app.repo.SaveCache(app.graph)
 
 	// Refresh browser
 	app.browser.Refresh(app)
@@ -279,11 +278,11 @@ func (d *DetailModel) reloadEntity(app *App) error {
 
 // reloadRelation reloads the relation from disk and updates the graph
 func (d *DetailModel) reloadRelation(app *App, oldRel *model.Relation) error {
-	if oldRel == nil || oldRel.FilePath == "" {
+	if oldRel == nil {
 		return nil
 	}
 
-	newRel, err := markdown.ReadRelation(oldRel.FilePath)
+	newRel, err := app.repo.ReadRelation(oldRel.From, oldRel.Type, oldRel.To)
 	if err != nil {
 		return err
 	}
@@ -308,7 +307,7 @@ func (d *DetailModel) reloadRelation(app *App, oldRel *model.Relation) error {
 	}
 
 	// Save cache
-	_ = app.graph.SaveCache(app.project.CachePath)
+	_ = app.repo.SaveCache(app.graph)
 
 	return nil
 }
@@ -322,17 +321,15 @@ func (d *DetailModel) deleteRelation(app *App) (tea.Model, tea.Cmd) {
 	rel := d.allRels[d.relIndex]
 
 	// Delete the relation file
-	if rel.FilePath != "" {
-		if err := markdown.DeleteRelation(rel.FilePath); err != nil {
-			return app, SetMessage(fmt.Sprintf("Failed to delete relation: %v", err), true)
-		}
+	if err := app.repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil {
+		return app, SetMessage(fmt.Sprintf("Failed to delete relation: %v", err), true)
 	}
 
 	// Remove from graph
 	app.graph.RemoveEdge(rel.From, rel.Type, rel.To)
 
 	// Save cache
-	_ = app.graph.SaveCache(app.project.CachePath)
+	_ = app.repo.SaveCache(app.graph)
 
 	// Reload relations for this entity
 	d.allRels = nil
@@ -371,33 +368,26 @@ func (d *DetailModel) deleteEntity(app *App) (tea.Model, tea.Cmd) {
 
 	// Delete all relations first (cascade)
 	for _, rel := range d.incoming {
-		if rel.FilePath != "" {
-			// Ignore errors - file may already be deleted
-			_ = markdown.DeleteRelation(rel.FilePath)
-		}
+		// Ignore errors - file may already be deleted
+		_ = app.repo.DeleteRelation(rel.From, rel.Type, rel.To)
 		app.graph.RemoveEdge(rel.From, rel.Type, rel.To)
 	}
 	for _, rel := range d.outgoing {
-		if rel.FilePath != "" {
-			// Ignore errors - file may already be deleted
-			_ = markdown.DeleteRelation(rel.FilePath)
-		}
+		// Ignore errors - file may already be deleted
+		_ = app.repo.DeleteRelation(rel.From, rel.Type, rel.To)
 		app.graph.RemoveEdge(rel.From, rel.Type, rel.To)
 	}
 
 	// Delete entity file
-	filePath := d.entity.FilePath
-	if filePath != "" {
-		if err := markdown.DeleteEntity(filePath); err != nil && !os.IsNotExist(err) {
-			return app, SetMessage(fmt.Sprintf("Failed to delete entity file: %v", err), true)
-		}
+	if err := app.repo.DeleteEntity(d.entity.Type, entityID, app.metamodel); err != nil && !os.IsNotExist(err) {
+		return app, SetMessage(fmt.Sprintf("Failed to delete entity file: %v", err), true)
 	}
 
 	// Remove from graph
 	app.graph.RemoveNode(entityID)
 
 	// Save cache
-	_ = app.graph.SaveCache(app.project.CachePath)
+	_ = app.repo.SaveCache(app.graph)
 
 	// Refresh browser
 	app.browser.Refresh(app)

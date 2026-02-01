@@ -5,8 +5,6 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
 
 var unlinkCmd = &cobra.Command{
@@ -24,18 +22,13 @@ Examples:
 		toID := args[2]
 
 		// Check if relation exists
-		relation, exists := g.GetEdge(fromID, relationType, toID)
+		_, exists := g.GetEdge(fromID, relationType, toID)
 		if !exists {
 			return fmt.Errorf("relation not found: %s --%s--> %s", fromID, relationType, toID)
 		}
 
 		// Delete file
-		filePath := relation.FilePath
-		if filePath == "" {
-			filePath = projectCtx.RelationFilePath(fromID, relationType, toID)
-		}
-
-		if err := markdown.DeleteRelation(filePath); err != nil && !os.IsNotExist(err) {
+		if err := repo.DeleteRelation(fromID, relationType, toID); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("failed to delete relation file: %w", err)
 		}
 

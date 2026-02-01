@@ -11,9 +11,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
 
 // Screen represents different screens in the TUI
@@ -41,6 +41,7 @@ type App struct {
 	project    *project.Context
 	metamodel  *metamodel.Metamodel
 	graph      *graph.Graph
+	repo       *repository.Repository
 	screen     Screen
 	message    string
 	messageErr bool
@@ -68,11 +69,12 @@ type App struct {
 
 // NewApp creates a new TUI application
 // coverage-ignore: TUI initialization - unreasonable to unit test interactive terminal UI
-func NewApp(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph) *App {
+func NewApp(meta *metamodel.Metamodel, g *graph.Graph, repo *repository.Repository) *App {
 	app := &App{
-		project:     ctx,
+		project:     repo.Paths(),
 		metamodel:   meta,
 		graph:       g,
+		repo:        repo,
 		screen:      ScreenBrowser,
 		screenStack: []Screen{ScreenBrowser},
 	}
@@ -86,8 +88,8 @@ func NewApp(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph) *Ap
 
 // Run starts the TUI
 // coverage-ignore: TUI entry point - unreasonable to unit test interactive terminal UI
-func Run(ctx *project.Context, meta *metamodel.Metamodel, g *graph.Graph) error {
-	app := NewApp(ctx, meta, g)
+func Run(meta *metamodel.Metamodel, g *graph.Graph, repo *repository.Repository) error {
+	app := NewApp(meta, g, repo)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
@@ -603,7 +605,7 @@ func PopScreen() tea.Cmd {
 
 // reloadMetamodel reloads the metamodel from disk and updates the screen
 func (a *App) reloadMetamodel() error {
-	meta, err := metamodel.Load(a.project.MetamodelPath)
+	meta, err := a.repo.LoadMetamodel()
 	if err != nil {
 		return err
 	}
@@ -627,13 +629,13 @@ func (a *App) reloadFromDisk() error {
 	}
 
 	// Sync graph from files
-	_, err := markdown.SyncFromFiles(a.project, a.metamodel, a.graph)
+	_, err := a.repo.Sync(a.metamodel, a.graph)
 	if err != nil {
 		return err
 	}
 
 	// Save updated cache
-	_ = a.graph.SaveCache(a.project.CachePath)
+	_ = a.repo.SaveCache(a.graph)
 
 	// Refresh browser
 	if a.browser != nil {

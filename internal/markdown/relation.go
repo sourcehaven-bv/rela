@@ -11,9 +11,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
-// ReadRelation reads a relation from a markdown file
-func ReadRelation(path string) (*model.Relation, error) {
-	content, err := os.ReadFile(path)
+// ReadRelation reads a relation from a markdown file.
+func (f *FileIO) ReadRelation(path string) (*model.Relation, error) {
+	content, err := f.FS.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +32,7 @@ func ReadRelation(path string) (*model.Relation, error) {
 	}
 
 	// Get file modification time
-	if info, err := os.Stat(path); err == nil {
+	if info, err := f.FS.Stat(path); err == nil {
 		relation.ModTime = info.ModTime()
 	}
 
@@ -47,8 +47,8 @@ func ReadRelation(path string) (*model.Relation, error) {
 	return relation, nil
 }
 
-// WriteRelation writes a relation to a markdown file
-func WriteRelation(relation *model.Relation, path string) error {
+// WriteRelation writes a relation to a markdown file.
+func (f *FileIO) WriteRelation(relation *model.Relation, path string) error {
 	frontmatter := map[string]interface{}{
 		"from":     relation.From,
 		"relation": relation.Type,
@@ -67,27 +67,27 @@ func WriteRelation(relation *model.Relation, path string) error {
 
 	// Ensure directory exists
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := f.FS.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	return os.WriteFile(path, []byte(content), 0644)
+	return f.FS.WriteFile(path, []byte(content), 0644)
 }
 
-// DeleteRelation removes a relation file
-func DeleteRelation(path string) error {
-	return os.Remove(path)
+// DeleteRelation removes a relation file.
+func (f *FileIO) DeleteRelation(path string) error {
+	return f.FS.Remove(path)
 }
 
-// ListRelationFiles returns all relation markdown files in the relations directory
-func ListRelationFiles(relationsDir string) ([]string, error) {
+// ListRelationFiles returns all relation markdown files in the relations directory.
+func (f *FileIO) ListRelationFiles(relationsDir string) ([]string, error) {
 	var files []string
 
-	if _, err := os.Stat(relationsDir); os.IsNotExist(err) {
+	if _, err := f.FS.Stat(relationsDir); os.IsNotExist(err) {
 		return files, nil
 	}
 
-	entries, err := os.ReadDir(relationsDir)
+	entries, err := f.FS.ReadDir(relationsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -101,9 +101,9 @@ func ListRelationFiles(relationsDir string) ([]string, error) {
 	return files, nil
 }
 
-// LoadAllRelations loads all relations from the relations directory using parallel I/O
-func LoadAllRelations(relationsDir string) ([]*model.Relation, error) {
-	files, err := ListRelationFiles(relationsDir)
+// LoadAllRelations loads all relations from the relations directory using parallel I/O.
+func (f *FileIO) LoadAllRelations(relationsDir string) ([]*model.Relation, error) {
+	files, err := f.ListRelationFiles(relationsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -129,8 +129,8 @@ func LoadAllRelations(relationsDir string) ([]*model.Relation, error) {
 		go func() {
 			defer wg.Done()
 			for file := range fileChan {
-				relation, err := ReadRelation(file)
-				if err != nil {
+				relation, readErr := f.ReadRelation(file)
+				if readErr != nil {
 					// Skip files that can't be parsed
 					continue
 				}
@@ -160,12 +160,12 @@ func LoadAllRelations(relationsDir string) ([]*model.Relation, error) {
 	return relations, nil
 }
 
-// RelationFilename generates a filename for a relation
+// RelationFilename generates a filename for a relation.
 func RelationFilename(from, relationType, to string) string {
 	return fmt.Sprintf("%s--%s--%s.md", from, relationType, to)
 }
 
-// ParseRelationFilename extracts from, relation, to from a filename
+// ParseRelationFilename extracts from, relation, to from a filename.
 func ParseRelationFilename(filename string) (from, relationType, to string, ok bool) {
 	// Remove .md extension
 	name := strings.TrimSuffix(filename, ".md")

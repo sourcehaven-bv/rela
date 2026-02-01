@@ -122,7 +122,7 @@ func BenchmarkReadEntity(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_, err := ReadEntity(filePath, meta)
+		_, err := testIO.ReadEntity(filePath, meta)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -148,7 +148,7 @@ func BenchmarkWriteEntity(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		filePath := filepath.Join(tmpDir, fmt.Sprintf("REQ-%03d.md", i))
-		err := WriteEntity(entity, filePath)
+		err := testIO.WriteEntity(entity, filePath)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -188,7 +188,7 @@ func BenchmarkListEntityFiles(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				_, err := ListEntityFiles(tmpDir)
+				_, err := testIO.ListEntityFiles(tmpDir)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -239,7 +239,7 @@ func BenchmarkLoadAllEntities(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				_, err := LoadAllEntities(tmpDir, meta)
+				_, err := testIO.LoadAllEntities(tmpDir, meta)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -270,7 +270,7 @@ func BenchmarkLoadAllRelations(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				_, err := LoadAllRelations(tmpDir)
+				_, err := testIO.LoadAllRelations(tmpDir)
 				if err != nil {
 					b.Fatal(err)
 				}

@@ -10,9 +10,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // InitModel handles project initialization
@@ -149,7 +150,7 @@ func (m *InitModel) initProject(app *App) (tea.Model, tea.Cmd) {
 	}
 
 	// Create directories
-	if err := ctx.Initialize(); err != nil {
+	if err := ctx.Initialize(storage.NewOsFS()); err != nil {
 		m.errorMsg = fmt.Sprintf("Failed to create directories: %v", err)
 		return app, nil
 	}
@@ -174,7 +175,7 @@ func (m *InitModel) initProject(app *App) (tea.Model, tea.Cmd) {
 	}
 
 	// Load the metamodel we just created
-	meta, err := metamodel.Load(metamodelPath)
+	meta, err := metamodel.Load(metamodelPath, storage.NewOsFS())
 	if err != nil {
 		m.errorMsg = fmt.Sprintf("Failed to load metamodel: %v", err)
 		return app, nil
@@ -183,8 +184,9 @@ func (m *InitModel) initProject(app *App) (tea.Model, tea.Cmd) {
 	// Initialize graph
 	g := graph.New()
 
-	// Sync from files (will be empty but sets up properly)
-	if _, err := markdown.SyncFromFiles(ctx, meta, g); err != nil {
+	// Create repository and sync (will be empty but sets up properly)
+	newRepo := repository.New(storage.NewOsFS(), ctx)
+	if _, err := newRepo.Sync(meta, g); err != nil {
 		m.errorMsg = fmt.Sprintf("Failed to sync: %v", err)
 		return app, nil
 	}
@@ -193,6 +195,7 @@ func (m *InitModel) initProject(app *App) (tea.Model, tea.Cmd) {
 	app.project = ctx
 	app.metamodel = meta
 	app.graph = g
+	app.repo = newRepo
 
 	// Initialize browser and switch to it
 	app.browser = NewBrowserModel(app)

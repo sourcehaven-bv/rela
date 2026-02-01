@@ -8,13 +8,11 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
@@ -954,13 +952,10 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 		entity.Content = r.FormValue("_body")
 	}
 
-	plural := entDef.GetDirPlural(form.EntityType)
-	filePath := filepath.Join(a.projCtx.EntitiesDir, plural, entityID+".md")
-	if err := markdown.WriteEntity(entity, filePath); err != nil {
+	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write entity: %v", err), http.StatusInternalServerError)
 		return
 	}
-	entity.FilePath = filePath
 	entity.ModTime = time.Now()
 	a.g.AddNode(entity)
 
@@ -977,12 +972,10 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 					relation.Properties[rp.Property] = pv
 				}
 			}
-			relPath := a.projCtx.RelationFilePath(entityID, rel.Relation, targetID)
-			if err := markdown.WriteRelation(relation, relPath); err != nil {
+			if err := a.repo.WriteRelation(relation); err != nil {
 				log.Printf("Failed to write relation: %v", err)
 				continue
 			}
-			relation.FilePath = relPath
 			a.g.AddEdge(relation)
 		}
 	}
@@ -1001,11 +994,9 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 				fromID, toID = linkPeer, entityID
 			}
 			relation := model.NewRelation(fromID, linkRelation, toID)
-			relPath := a.projCtx.RelationFilePath(fromID, linkRelation, toID)
-			if err := markdown.WriteRelation(relation, relPath); err != nil {
+			if err := a.repo.WriteRelation(relation); err != nil {
 				log.Printf("Failed to write link relation: %v", err)
 			} else {
-				relation.FilePath = relPath
 				a.g.AddEdge(relation)
 			}
 		}
@@ -1063,7 +1054,7 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		entity.Content = r.FormValue("_body")
 	}
 
-	if err := markdown.WriteEntity(entity, entity.FilePath); err != nil {
+	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1071,7 +1062,7 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	for _, rel := range form.Relations {
 		for _, edge := range a.g.OutgoingEdges(entityID) {
 			if edge.Type == rel.Relation {
-				if delErr := markdown.DeleteRelation(edge.FilePath); delErr != nil {
+				if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
 					log.Printf("Failed to delete relation file: %v", delErr)
 				}
 				a.g.RemoveEdge(edge.From, edge.Type, edge.To)
@@ -1089,12 +1080,10 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 					relation.Properties[rp.Property] = pv
 				}
 			}
-			relPath := a.projCtx.RelationFilePath(entityID, rel.Relation, targetID)
-			if err := markdown.WriteRelation(relation, relPath); err != nil {
+			if err := a.repo.WriteRelation(relation); err != nil {
 				log.Printf("Failed to write relation: %v", err)
 				continue
 			}
-			relation.FilePath = relPath
 			a.g.AddEdge(relation)
 		}
 	}
@@ -1124,19 +1113,19 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, edge := range a.g.OutgoingEdges(entityID) {
-		if delErr := markdown.DeleteRelation(edge.FilePath); delErr != nil {
+		if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
 			log.Printf("Failed to delete relation file: %v", delErr)
 		}
 		a.g.RemoveEdge(edge.From, edge.Type, edge.To)
 	}
 	for _, edge := range a.g.IncomingEdges(entityID) {
-		if delErr := markdown.DeleteRelation(edge.FilePath); delErr != nil {
+		if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
 			log.Printf("Failed to delete relation file: %v", delErr)
 		}
 		a.g.RemoveEdge(edge.From, edge.Type, edge.To)
 	}
 
-	if err := markdown.DeleteEntity(entity.FilePath); err != nil {
+	if err := a.repo.DeleteEntity(entity.Type, entityID, a.meta); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to delete: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1205,15 +1194,12 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	plural := entDef.GetDirPlural(form.EntityType)
-	filePath := filepath.Join(a.projCtx.EntitiesDir, plural, entityID+".md")
-	if err := markdown.WriteEntity(entity, filePath); err != nil {
+	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck // best-effort JSON response
 		return
 	}
-	entity.FilePath = filePath
 	entity.ModTime = time.Now()
 	a.g.AddNode(entity)
 
