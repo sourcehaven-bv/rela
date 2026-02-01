@@ -418,6 +418,7 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 		"isBadgeType": func(propType string) bool {
 			return styledTypes[propType]
 		},
+		"add":            func(a, b int) int { return a + b },
 		"renderMarkdown": simpleMarkdownToHTML,
 		"formatValue": func(val string) string {
 			if t, err := time.Parse(time.RFC3339, val); err == nil {

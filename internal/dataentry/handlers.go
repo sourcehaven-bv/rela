@@ -1144,7 +1144,11 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Deleted %s", entityID)
 
-	w.Header().Set("HX-Redirect", appendToastParam("/", "Deleted "+entityID))
+	redirect := "/"
+	if returnTo := r.FormValue("_return_to"); returnTo != "" && strings.HasPrefix(returnTo, "/") && !strings.Contains(returnTo, entityID) {
+		redirect = returnTo
+	}
+	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Deleted "+entityID))
 	w.WriteHeader(http.StatusOK)
 }
 
