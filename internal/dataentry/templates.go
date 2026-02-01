@@ -923,7 +923,8 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     <h2>{{ .Form.Title }}{{ if .EntityID }} — {{ .EntityID }}{{ end }}</h2>
     {{ if .Form.Description }}<p>{{ .Form.Description }}</p>{{ end }}
   </div>
-  <a href="javascript:history.back()" class="btn btn-secondary btn-sm">&larr; Back</a>
+  <a href="{{ .BackURL }}" class="btn btn-secondary btn-sm"
+     hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back</a>
 </div>
 
 <div class="card form-card">
@@ -1044,7 +1045,8 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
       {{ else }}
       <button type="submit" class="btn btn-primary">Create</button>
       {{ end }}
-      <a href="javascript:history.back()" class="btn btn-secondary">Cancel</a>
+      <a href="{{ .BackURL }}" class="btn btn-secondary"
+         hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">Cancel</a>
     </div>
   </form>
 </div>
@@ -1184,7 +1186,8 @@ function submitInlineCreate() {
     {{ else }}{{ range .Commands }}
     <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</button>
     {{ end }}{{ end }}{{ end }}
-    <a href="javascript:history.back()" class="btn btn-secondary btn-sm">&larr; Back</a>
+    <a href="{{ .BackURL }}" class="btn btn-secondary btn-sm"
+       hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back</a>
   </div>
 </div>
 
@@ -1273,7 +1276,8 @@ function submitInlineCreate() {
     {{ else }}{{ range .Commands }}
     <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entry.ID }}',entity_type:'{{ $.Entry.Type }}',view_id:'{{ $.ViewID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</button>
     {{ end }}{{ end }}{{ end }}
-    <a href="javascript:history.back()" class="btn btn-secondary btn-sm">&larr; Back</a>
+    <a href="{{ .BackURL }}" class="btn btn-secondary btn-sm"
+       hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back</a>
   </div>
 </div>
 

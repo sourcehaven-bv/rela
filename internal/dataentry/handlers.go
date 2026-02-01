@@ -463,6 +463,18 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	activeList := a.resolveActiveList(form.EntityType, r)
+	returnTo := r.URL.Query().Get("return_to")
+	backURL := returnTo
+	switch {
+	case backURL != "":
+		// keep explicit return_to
+	case mode == "edit" && entityID != "":
+		backURL = "/entity/" + form.EntityType + "/" + entityID
+	case activeList != "":
+		backURL = "/list/" + activeList
+	default:
+		backURL = "/"
+	}
 	data := map[string]interface{}{
 		"App":          a.Cfg.App,
 		"Navigation":   a.navElements(activeList),
@@ -476,7 +488,8 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		"EntityType":   form.EntityType,
 		"ShowBody":     showBody,
 		"Body":         bodyContent,
-		"ReturnTo":     r.URL.Query().Get("return_to"),
+		"ReturnTo":     returnTo,
+		"BackURL":      backURL,
 		"LinkRelation": r.URL.Query().Get("link_relation"),
 		"LinkPeer":     r.URL.Query().Get("link_peer"),
 		"LinkAs":       r.URL.Query().Get("link_as"),
@@ -576,6 +589,10 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entityActiveList := a.resolveActiveList(entity.Type, r)
+	backURL := "/"
+	if entityActiveList != "" {
+		backURL = "/list/" + entityActiveList
+	}
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
 		"Navigation": a.navElements(entityActiveList),
@@ -586,6 +603,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		"Relations":  rels,
 		"PropTypes":  propTypes,
 		"Commands":   a.resolveCommands("entity", "", entity.Type),
+		"BackURL":    backURL,
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
 	}
 
@@ -907,6 +925,10 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	viewActiveList := a.resolveActiveList(result.Entry.Type, r)
+	backURL := "/"
+	if viewActiveList != "" {
+		backURL = "/list/" + viewActiveList
+	}
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
 		"Navigation": a.navElements(viewActiveList),
@@ -920,6 +942,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		"ReturnTo":   returnTo,
 		"Sections":   sections,
 		"Commands":   a.resolveCommands("view", viewID, result.Entry.Type),
+		"BackURL":    backURL,
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
 	}
 
