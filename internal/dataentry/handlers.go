@@ -371,6 +371,9 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		Properties    []RelationProperty
 		SelectedProps map[string]map[string]string
 	}
+	linkRelation := r.URL.Query().Get("link_relation")
+	linkPeer := r.URL.Query().Get("link_peer")
+
 	relations := make([]ResolvedRelation, 0, len(form.Relations))
 	for _, rel := range form.Relations {
 		targetDef, _ := a.meta.GetEntityDef(rel.TargetType)
@@ -411,6 +414,13 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 						rr.SelectedProps[edge.To] = props
 					}
 				}
+			}
+		}
+
+		// Prefill relation from link params (when creating from a view's "Add" button).
+		if entity == nil && linkPeer != "" && linkRelation != "" {
+			if a.isRelationLinked(rel.Relation, linkRelation) {
+				rr.Selected = append(rr.Selected, linkPeer)
 			}
 		}
 

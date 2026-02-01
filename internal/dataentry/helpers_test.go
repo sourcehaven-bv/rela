@@ -528,3 +528,64 @@ func TestAppendToastParam(t *testing.T) {
 		})
 	}
 }
+
+func TestIsRelationLinked(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Relations: map[string]metamodel.RelationDef{
+			"assessedBy": {
+				Label:   "assessed by",
+				From:    []string{"annex_a_control"},
+				To:      []string{"iso_control_assessment"},
+				Inverse: &metamodel.InverseDef{ID: "assesses"},
+			},
+			"depends_on": {
+				Label: "depends on",
+				From:  []string{"ticket"},
+				To:    []string{"ticket"},
+			},
+		},
+	}
+	app := &App{meta: meta}
+
+	tests := []struct {
+		name     string
+		formRel  string
+		linkRel  string
+		expected bool
+	}{
+		{
+			name:     "direct match",
+			formRel:  "depends_on",
+			linkRel:  "depends_on",
+			expected: true,
+		},
+		{
+			name:     "inverse of link relation matches form relation",
+			formRel:  "assesses",
+			linkRel:  "assessedBy",
+			expected: true,
+		},
+		{
+			name:     "no match",
+			formRel:  "assesses",
+			linkRel:  "depends_on",
+			expected: false,
+		},
+		{
+			name:     "unknown relations",
+			formRel:  "unknown_a",
+			linkRel:  "unknown_b",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := app.isRelationLinked(tt.formRel, tt.linkRel)
+			if got != tt.expected {
+				t.Errorf("isRelationLinked(%q, %q) = %v, want %v",
+					tt.formRel, tt.linkRel, got, tt.expected)
+			}
+		})
+	}
+}
