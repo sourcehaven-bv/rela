@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
@@ -38,10 +39,16 @@ type App struct {
 	styleMap map[string]map[string]string
 	// styledTypes: set of property type names that have style entries
 	styledTypes map[string]bool
-	// fs is the filesystem abstraction used for reading/writing UI state.
-	fs storage.FS
+	// projCtx and fs are stored for live-reload and UI state support.
+	projCtx *project.Context
+	fs      storage.FS
 	// uiStatePath is the path to .rela/ui-state.json for persisting UI preferences.
 	uiStatePath string
+	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
+	// during live-reload. Handlers acquire RLock; reload acquires Lock.
+	mu sync.RWMutex
+	// broker delivers SSE events to connected browsers for live-reload.
+	broker *eventBroker
 }
 
 // NewApp creates and initializes an App using the given filesystem.
@@ -111,8 +118,10 @@ func NewApp(projectDir string, fs storage.FS) (*App, error) {
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
+		projCtx:     projCtx,
 		fs:          fs,
 		uiStatePath: filepath.Join(projCtx.CacheDir, uiStateFile),
+		broker:      newEventBroker(),
 	}, nil
 }
 

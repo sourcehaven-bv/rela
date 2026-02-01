@@ -6,6 +6,9 @@ import (
 )
 
 // NewRouter returns an http.Handler with all data entry routes registered.
+// Handlers are wrapped with a reload-lock middleware so that live-reload
+// does not swap state mid-request. The SSE endpoint is excluded from
+// the middleware since it holds the connection open indefinitely.
 func (a *App) NewRouter() http.Handler {
 	mux := http.NewServeMux()
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -13,24 +16,34 @@ func (a *App) NewRouter() http.Handler {
 		panic("embedded static filesystem: " + err.Error())
 	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
-	mux.HandleFunc("/", a.handleIndex)
-	mux.HandleFunc("/dashboard", a.handleDashboard)
-	mux.HandleFunc("/search", a.handleSearch)
-	mux.HandleFunc("/list/", a.handleList)
-	mux.HandleFunc("/form/", a.handleForm)
-	mux.HandleFunc("/entity/", a.handleEntity)
-	mux.HandleFunc("/view/", a.handleView)
-	mux.HandleFunc("/api/create", a.handleCreate)
-	mux.HandleFunc("/api/update", a.handleUpdate)
-	mux.HandleFunc("/api/delete", a.handleDelete)
-	mux.HandleFunc("/api/inline-create", a.handleInlineCreate)
-	mux.HandleFunc("/api/inline-form/", a.handleInlineForm)
-	mux.HandleFunc("/graph", a.handleGraph)
-	mux.HandleFunc("/api/graph-data", a.handleGraphData)
-	mux.HandleFunc("/api/ui/toggle-group", a.handleToggleGroup)
-	mux.HandleFunc("/api/command/", a.handleCommandExec)
-	mux.HandleFunc("/api/command-cancel/", a.handleCommandCancel)
-	mux.HandleFunc("/api/open-file", a.handleOpenFile)
-	mux.HandleFunc("/api/open-url", a.handleOpenURL)
+
+	// SSE endpoint — excluded from reload-lock (long-lived connection)
+	mux.HandleFunc("/api/events", a.handleSSE)
+
+	// All other routes are wrapped with the reload-lock middleware
+	inner := http.NewServeMux()
+	inner.HandleFunc("/", a.handleIndex)
+	inner.HandleFunc("/dashboard", a.handleDashboard)
+	inner.HandleFunc("/search", a.handleSearch)
+	inner.HandleFunc("/list/", a.handleList)
+	inner.HandleFunc("/form/", a.handleForm)
+	inner.HandleFunc("/entity/", a.handleEntity)
+	inner.HandleFunc("/view/", a.handleView)
+	inner.HandleFunc("/api/create", a.handleCreate)
+	inner.HandleFunc("/api/update", a.handleUpdate)
+	inner.HandleFunc("/api/delete", a.handleDelete)
+	inner.HandleFunc("/api/inline-create", a.handleInlineCreate)
+	inner.HandleFunc("/api/inline-form/", a.handleInlineForm)
+	inner.HandleFunc("/graph", a.handleGraph)
+	inner.HandleFunc("/api/graph-data", a.handleGraphData)
+	inner.HandleFunc("/api/ui/toggle-group", a.handleToggleGroup)
+	inner.HandleFunc("/api/command/", a.handleCommandExec)
+	inner.HandleFunc("/api/command-cancel/", a.handleCommandCancel)
+	inner.HandleFunc("/api/open-file", a.handleOpenFile)
+	inner.HandleFunc("/api/open-url", a.handleOpenURL)
+
+	locked := a.reloadLockMiddleware(inner)
+	mux.Handle("/", locked)
+
 	return mux
 }

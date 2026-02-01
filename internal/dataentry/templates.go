@@ -593,6 +593,65 @@ document.addEventListener('click', function(e) {
     if (!d.contains(e.target)) d.removeAttribute('open');
   });
 });
+
+// Live-reload: listen for server-sent events and refresh content + sidebar.
+// On form pages, show a non-intrusive banner instead of refreshing.
+(function() {
+  var es;
+  var reconnectDelay = 1000;
+  function isOnForm() {
+    return !!document.querySelector('#content form[hx-post]');
+  }
+  function doRefresh() {
+    fetch(window.location.pathname + window.location.search)
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var content = document.getElementById('content');
+        var newContent = doc.getElementById('content');
+        if (content && newContent) {
+          content.innerHTML = newContent.innerHTML;
+          htmx.process(content);
+        }
+        doc.querySelectorAll('.sidebar .nav-count').forEach(function(el) {
+          var link = el.closest('a');
+          if (!link) return;
+          var href = link.getAttribute('href');
+          var cur = document.querySelector('.sidebar a[href="' + href + '"] .nav-count');
+          if (cur) cur.textContent = el.textContent;
+        });
+      });
+  }
+  function showUpdateBanner() {
+    if (document.getElementById('live-reload-banner')) return;
+    var banner = document.createElement('div');
+    banner.id = 'live-reload-banner';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#1e40af;color:#fff;padding:8px 16px;display:flex;align-items:center;justify-content:center;gap:12px;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.15);';
+    banner.innerHTML = '<span>Project files have changed.</span>'
+      + '<button onclick="this.parentElement._doRefresh()" style="background:#fff;color:#1e40af;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-weight:600;font-size:13px;">Refresh</button>'
+      + '<button onclick="this.parentElement.remove()" style="background:transparent;color:rgba(255,255,255,0.8);border:1px solid rgba(255,255,255,0.3);border-radius:4px;padding:4px 12px;cursor:pointer;font-size:13px;">Dismiss</button>';
+    banner._doRefresh = function() { banner.remove(); doRefresh(); };
+    document.body.appendChild(banner);
+  }
+  function onRefresh() {
+    if (isOnForm()) {
+      showUpdateBanner();
+    } else {
+      doRefresh();
+    }
+  }
+  function connect() {
+    es = new EventSource('/api/events');
+    es.addEventListener('refresh', onRefresh);
+    es.onopen = function() { reconnectDelay = 1000; };
+    es.onerror = function() {
+      es.close();
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+    };
+  }
+  connect();
+})();
 </script>
 {{- end -}}
 
