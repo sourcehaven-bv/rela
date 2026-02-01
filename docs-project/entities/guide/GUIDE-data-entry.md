@@ -24,6 +24,7 @@ A `data-entry.yaml` file defines:
 - **Views** - Read-only detail pages that traverse the graph to show related entities
 - **Dashboard** - An overview page with query-driven cards showing counts, breakdowns, and tables
 - **Navigation** - Sidebar menu entries with optional grouping
+- **Commands** - User-defined scripts triggered from the UI with streamed results
 
 The file drives the entire UI without writing any code. The server reads `data-entry.yaml` and
 your `metamodel.yaml` together, validates them, and serves a fully functional CRUD application.
@@ -127,6 +128,12 @@ dashboard:                 # Optional overview page
     - title: "Open"
       query: "type:task status:open"
       display: count
+
+commands:                  # User-defined scripts
+  export-json:
+    label: "Export JSON"
+    script: "jq '.' > /tmp/export.json"
+    context: entity
 
 navigation:                # Sidebar menu (supports groups)
   - label: "Dashboard"
@@ -770,6 +777,123 @@ List entries show an entity count badge next to the label (based on the list's f
 and graph entries do not show a count.
 
 Direct items and groups can be freely mixed in any order.
+
+## Commands
+
+Commands let you define shell scripts in `data-entry.yaml` that users can trigger from the UI.
+Each command receives context-specific JSON on stdin and streams results back to the browser
+as toast notifications using the `::rela::` line protocol.
+
+### Configuration
+
+Define commands under the `commands:` key:
+
+```yaml
+commands:
+  export-json:
+    label: "Export JSON"
+    script: |
+      echo '::rela::{"type":"message","text":"Exporting..."}'
+      jq '.' > /tmp/export.json
+      echo '::rela::{"type":"file","path":"/tmp/export.json","label":"JSON Export","action":"reveal"}'
+    context: entity
+    available_on:
+      entity_types: [ticket]
+    confirm: "Export this entity?"
+    env:
+      FORMAT: json
+```
+
+| Field          | Type   | Description                                            |
+| -------------- | ------ | ------------------------------------------------------ |
+| `label`        | string | Button text shown in the UI (required)                 |
+| `script`       | string | Shell script executed via `sh -c` (required)           |
+| `context`      | string | Scope: `entity`, `list`, `view`, or `global` (required)|
+| `available_on` | object | Restrict where the button appears (optional)           |
+| `confirm`      | string | Confirmation prompt before execution (optional)        |
+| `env`          | map    | Custom environment variables (optional)                |
+
+### Context Scopes
+
+Each command runs in one of four scopes, which determines the JSON it receives on stdin:
+
+**`entity`** — runs from entity detail and view pages. Receives the entity with all properties,
+content, and relations.
+
+**`list`** — runs from list pages. Receives all entities currently visible in the list (after
+filters).
+
+**`view`** — runs from view pages only. Receives the entry entity, all traversed collections,
+and relations between them.
+
+**`global`** — runs from the dashboard. Receives only project metadata.
+
+### Visibility Rules (`available_on`)
+
+Without `available_on`, a command appears on every page that matches its context. Add
+`available_on` to restrict it:
+
+```yaml
+available_on:
+  views: [ticket_report]      # Only on specific views
+  lists: [all_tickets]         # Only on specific lists
+  entity_types: [ticket]       # Only for specific entity types
+  dashboard: true              # Only on the dashboard (global context)
+```
+
+A command appears if **any** condition matches.
+
+### Environment Variables
+
+Commands always receive:
+
+| Variable            | Description                              |
+| ------------------- | ---------------------------------------- |
+| `RELA_PROJECT_ROOT` | Absolute path to the project root        |
+| `RELA_CONTEXT`      | Context type (`entity`/`list`/`view`/`global`) |
+
+Context-specific variables:
+
+| Variable            | Available In         | Description              |
+| ------------------- | -------------------- | ------------------------ |
+| `RELA_ENTITY_ID`    | entity, view         | Current entity ID        |
+| `RELA_ENTITY_TYPE`  | entity, view         | Current entity type      |
+| `RELA_LIST_ID`      | list                 | Current list ID          |
+| `RELA_VIEW_ID`      | view                 | Current view ID          |
+
+Custom variables from `env:` are added to the process environment.
+
+### The `::rela::` Line Protocol
+
+Commands communicate results by writing lines to stdout with a `::rela::` prefix followed by
+JSON. Lines without the prefix are treated as log output.
+
+**Message types:**
+
+| Type       | Purpose                          | Key Fields                            |
+| ---------- | -------------------------------- | ------------------------------------- |
+| `message`  | Toast notification               | `text`, `level` (info/warning/error)  |
+| `error`    | Error toast                      | `text`                                |
+| `file`     | Open or reveal a file            | `path`, `label`, `action` (open/reveal) |
+| `entity`   | Entity update notification       | `id`, `entity_type`, `action` (created/updated/deleted) |
+| `open`     | Open URL in browser              | `url`                                 |
+| `group`    | Start a collapsible group        | `label`                               |
+| `endgroup` | End the current group            | —                                     |
+
+**Example script:**
+
+```bash
+echo '::rela::{"type":"group","label":"Generated Files"}'
+echo '::rela::{"type":"file","path":"/tmp/report.pdf","label":"PDF Report","action":"open"}'
+echo '::rela::{"type":"file","path":"/tmp/data.csv","label":"CSV Data","action":"reveal"}'
+echo '::rela::{"type":"endgroup"}'
+echo '::rela::{"type":"message","text":"Done!","level":"info"}'
+```
+
+### Streaming and Cancellation
+
+Command output streams in real time into stacked toast notifications. Long-running commands
+can be cancelled by the user via a cancel button.
 
 ## Complete Example
 
