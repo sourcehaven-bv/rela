@@ -382,6 +382,11 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 
 	relations := make([]ResolvedRelation, 0, len(form.Relations))
 	for _, rel := range form.Relations {
+		// display-only relations (cards, etc.) are not editable form fields
+		if rel.Display != "" {
+			continue
+		}
+
 		targetDef, _ := a.meta.GetEntityDef(rel.TargetType)
 		targetLabel := ""
 		if targetDef != nil {
@@ -407,17 +412,34 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if entity != nil {
-			for _, edge := range a.g.OutgoingEdges(entity.ID) {
-				if edge.Type == rel.Relation {
-					rr.Selected = append(rr.Selected, edge.To)
-					if len(rel.Properties) > 0 {
-						props := make(map[string]string)
-						for _, rp := range rel.Properties {
-							if v, ok := edge.Properties[rp.Property]; ok {
-								props[rp.Property] = fmt.Sprintf("%v", v)
+			if rel.Direction == "incoming" {
+				for _, edge := range a.g.IncomingEdges(entity.ID) {
+					if edge.Type == rel.Relation {
+						rr.Selected = append(rr.Selected, edge.From)
+						if len(rel.Properties) > 0 {
+							props := make(map[string]string)
+							for _, rp := range rel.Properties {
+								if v, ok := edge.Properties[rp.Property]; ok {
+									props[rp.Property] = fmt.Sprintf("%v", v)
+								}
 							}
+							rr.SelectedProps[edge.From] = props
 						}
-						rr.SelectedProps[edge.To] = props
+					}
+				}
+			} else {
+				for _, edge := range a.g.OutgoingEdges(entity.ID) {
+					if edge.Type == rel.Relation {
+						rr.Selected = append(rr.Selected, edge.To)
+						if len(rel.Properties) > 0 {
+							props := make(map[string]string)
+							for _, rp := range rel.Properties {
+								if v, ok := edge.Properties[rp.Property]; ok {
+									props[rp.Property] = fmt.Sprintf("%v", v)
+								}
+							}
+							rr.SelectedProps[edge.To] = props
+						}
 					}
 				}
 			}
@@ -441,6 +463,18 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	activeList := a.resolveActiveList(form.EntityType, r)
+	returnTo := r.URL.Query().Get("return_to")
+	backURL := returnTo
+	switch {
+	case backURL != "":
+		// keep explicit return_to
+	case mode == "edit" && entityID != "":
+		backURL = "/entity/" + form.EntityType + "/" + entityID
+	case activeList != "":
+		backURL = "/list/" + activeList
+	default:
+		backURL = "/"
+	}
 	data := map[string]interface{}{
 		"App":          a.Cfg.App,
 		"Navigation":   a.navElements(activeList),
@@ -454,7 +488,8 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		"EntityType":   form.EntityType,
 		"ShowBody":     showBody,
 		"Body":         bodyContent,
-		"ReturnTo":     r.URL.Query().Get("return_to"),
+		"ReturnTo":     returnTo,
+		"BackURL":      backURL,
 		"LinkRelation": r.URL.Query().Get("link_relation"),
 		"LinkPeer":     r.URL.Query().Get("link_peer"),
 		"LinkAs":       r.URL.Query().Get("link_as"),
@@ -554,6 +589,10 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entityActiveList := a.resolveActiveList(entity.Type, r)
+	backURL := "/"
+	if entityActiveList != "" {
+		backURL = "/list/" + entityActiveList
+	}
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
 		"Navigation": a.navElements(entityActiveList),
@@ -564,6 +603,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		"Relations":  rels,
 		"PropTypes":  propTypes,
 		"Commands":   a.resolveCommands("entity", "", entity.Type),
+		"BackURL":    backURL,
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
 	}
 
@@ -885,6 +925,10 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	viewActiveList := a.resolveActiveList(result.Entry.Type, r)
+	backURL := "/"
+	if viewActiveList != "" {
+		backURL = "/list/" + viewActiveList
+	}
 	data := map[string]interface{}{
 		"App":        a.Cfg.App,
 		"Navigation": a.navElements(viewActiveList),
@@ -898,6 +942,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		"ReturnTo":   returnTo,
 		"Sections":   sections,
 		"Commands":   a.resolveCommands("view", viewID, result.Entry.Type),
+		"BackURL":    backURL,
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
 	}
 
@@ -972,12 +1017,20 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	a.g.AddNode(entity)
 
 	for _, rel := range form.Relations {
+		if rel.Display != "" {
+			continue
+		}
 		values := r.Form[rel.Relation]
 		for _, targetID := range values {
 			if targetID == "" {
 				continue
 			}
-			relation := model.NewRelation(entityID, rel.Relation, targetID)
+			var relation *model.Relation
+			if rel.Direction == "incoming" {
+				relation = model.NewRelation(targetID, rel.Relation, entityID)
+			} else {
+				relation = model.NewRelation(entityID, rel.Relation, targetID)
+			}
 			for _, rp := range rel.Properties {
 				propKey := fmt.Sprintf("_relprop_%s_%s_%s", rel.Relation, targetID, rp.Property)
 				if pv := r.FormValue(propKey); pv != "" {
@@ -1072,12 +1125,26 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, rel := range form.Relations {
-		for _, edge := range a.g.OutgoingEdges(entityID) {
-			if edge.Type == rel.Relation {
-				if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
-					log.Printf("Failed to delete relation file: %v", delErr)
+		if rel.Display != "" {
+			continue
+		}
+		if rel.Direction == "incoming" {
+			for _, edge := range a.g.IncomingEdges(entityID) {
+				if edge.Type == rel.Relation {
+					if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
+						log.Printf("Failed to delete relation file: %v", delErr)
+					}
+					a.g.RemoveEdge(edge.From, edge.Type, edge.To)
 				}
-				a.g.RemoveEdge(edge.From, edge.Type, edge.To)
+			}
+		} else {
+			for _, edge := range a.g.OutgoingEdges(entityID) {
+				if edge.Type == rel.Relation {
+					if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
+						log.Printf("Failed to delete relation file: %v", delErr)
+					}
+					a.g.RemoveEdge(edge.From, edge.Type, edge.To)
+				}
 			}
 		}
 		values := r.Form[rel.Relation]
@@ -1085,7 +1152,12 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			if targetID == "" {
 				continue
 			}
-			relation := model.NewRelation(entityID, rel.Relation, targetID)
+			var relation *model.Relation
+			if rel.Direction == "incoming" {
+				relation = model.NewRelation(targetID, rel.Relation, entityID)
+			} else {
+				relation = model.NewRelation(entityID, rel.Relation, targetID)
+			}
 			for _, rp := range rel.Properties {
 				propKey := fmt.Sprintf("_relprop_%s_%s_%s", rel.Relation, targetID, rp.Property)
 				if pv := r.FormValue(propKey); pv != "" {
