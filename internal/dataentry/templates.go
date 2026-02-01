@@ -1289,6 +1289,11 @@ function submitInlineCreate() {
   {{ if .Heading }}
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
     <h3 class="view-section-heading" style="margin-bottom:0;">{{ .Heading }}</h3>
+    <div style="display:flex;gap:6px;">
+    {{ if .LinkInfo }}
+    {{ $lnk := .LinkInfo }}
+    <button class="btn btn-secondary btn-sm" onclick="openLinkExisting('{{ $lnk.Relation }}','{{ $lnk.LinkAs }}','{{ $lnk.PeerID }}','{{ join $lnk.EntityTypes "," }}','{{ .SectionID }}')">&#128279; Link existing</button>
+    {{ end }}
     {{ if .AddInfo }}
     {{ $info := .AddInfo }}
     {{ $returnTo := printf "%s#%s" $.ReturnTo .SectionID }}
@@ -1311,6 +1316,7 @@ function submitInlineCreate() {
     </details>
     {{ end }}
     {{ end }}
+    </div>
   </div>
   {{ end }}
 
@@ -1550,6 +1556,102 @@ function submitInlineCreate() {
 
 </div>
 {{ end }}
+
+<div id="link-existing-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeLinkExisting()">
+  <div class="modal" style="width:520px;">
+    <div class="modal-header">
+      <h3>Link Existing</h3>
+      <button class="modal-close" onclick="closeLinkExisting()">&times;</button>
+    </div>
+    <div class="modal-body" style="padding:12px 20px;">
+      <input type="text" id="link-existing-search" class="search-input" placeholder="Search..." autocomplete="off"
+             style="margin-bottom:12px;" oninput="searchLinkCandidates()">
+      <div id="link-existing-results" style="max-height:320px;overflow-y:auto;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var _leRelation = '', _leLinkAs = '', _lePeer = '', _leEntityTypes = '', _leSectionID = '';
+  var _leDebounce = null;
+
+  window.openLinkExisting = function(relation, linkAs, peer, entityTypes, sectionID) {
+    _leRelation = relation;
+    _leLinkAs = linkAs;
+    _lePeer = peer;
+    _leEntityTypes = entityTypes;
+    _leSectionID = sectionID;
+    document.getElementById('link-existing-search').value = '';
+    document.getElementById('link-existing-results').innerHTML = '<p style="color:var(--text-muted);text-align:center;">Loading...</p>';
+    document.getElementById('link-existing-modal').style.display = 'flex';
+    searchLinkCandidates();
+    setTimeout(function() { document.getElementById('link-existing-search').focus(); }, 100);
+  };
+
+  window.closeLinkExisting = function() {
+    document.getElementById('link-existing-modal').style.display = 'none';
+    document.getElementById('link-existing-results').innerHTML = '';
+  };
+
+  window.searchLinkCandidates = function() {
+    clearTimeout(_leDebounce);
+    _leDebounce = setTimeout(function() {
+      var q = document.getElementById('link-existing-search').value;
+      var url = '/api/link-candidates?relation=' + encodeURIComponent(_leRelation) +
+        '&link_as=' + encodeURIComponent(_leLinkAs) +
+        '&peer=' + encodeURIComponent(_lePeer) +
+        '&entity_types=' + encodeURIComponent(_leEntityTypes) +
+        '&q=' + encodeURIComponent(q);
+      fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(candidates) {
+          var container = document.getElementById('link-existing-results');
+          if (candidates.length === 0) {
+            container.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:16px 0;">No candidates found</p>';
+            return;
+          }
+          var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
+          candidates.forEach(function(c) {
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid var(--border);border-radius:6px;cursor:pointer;" ' +
+              'onmouseenter="this.style.background=\'var(--primary-light)\'" onmouseleave="this.style.background=\'\'">' +
+              '<div>' +
+              '<div style="font-weight:500;font-size:14px;">' + escHTML(c.title) + '</div>' +
+              '<div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">' + escHTML(c.id) + ' &middot; ' + escHTML(c.type) + '</div>' +
+              '</div>' +
+              '<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();doLinkExisting(\'' + escAttr(c.id) + '\')">Link</button>' +
+              '</div>';
+          });
+          html += '</div>';
+          container.innerHTML = html;
+        })
+        .catch(function() {
+          document.getElementById('link-existing-results').innerHTML = '<p style="color:var(--danger);text-align:center;">Failed to load candidates.</p>';
+        });
+    }, 200);
+  };
+
+  window.doLinkExisting = function(targetID) {
+    var formData = new FormData();
+    formData.append('relation', _leRelation);
+    formData.append('link_as', _leLinkAs);
+    formData.append('peer', _lePeer);
+    formData.append('target', targetID);
+    fetch('/api/link-existing', { method: 'POST', body: formData })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) { alert('Error: ' + data.error); return; }
+        closeLinkExisting();
+        // Reload the current view to reflect the new link
+        window.location.reload();
+      })
+      .catch(function(e) { alert('Error linking: ' + e); });
+  };
+
+  function escHTML(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function escAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+})();
+</script>
 {{- end -}}
 
 {{- define "search-page" -}}
