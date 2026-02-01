@@ -190,6 +190,203 @@ func TestEntityIDMatchesPattern(t *testing.T) {
 	}
 }
 
+// TestParseEntityID_MultiSegmentPrefix tests parsing IDs with multi-segment prefixes
+func TestParseEntityID_MultiSegmentPrefix(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantPrefix string
+		wantNumber int
+		wantRaw    string
+	}{
+		{
+			name:       "single segment prefix",
+			input:      "REQ-001",
+			wantPrefix: "REQ-",
+			wantNumber: 1,
+			wantRaw:    "REQ-001",
+		},
+		{
+			name:       "two segment prefix",
+			input:      "ISO-CA-001",
+			wantPrefix: "ISO-CA-",
+			wantNumber: 1,
+			wantRaw:    "ISO-CA-001",
+		},
+		{
+			name:       "three segment prefix",
+			input:      "ISO-CA-XX-042",
+			wantPrefix: "ISO-CA-XX-",
+			wantNumber: 42,
+			wantRaw:    "ISO-CA-XX-042",
+		},
+		{
+			name:       "two segment no trailing dash",
+			input:      "ISO-CA001",
+			wantPrefix: "ISO-CA",
+			wantNumber: 1,
+			wantRaw:    "ISO-CA001",
+		},
+		{
+			name:       "single letter segments",
+			input:      "A-B-1",
+			wantPrefix: "A-B-",
+			wantNumber: 1,
+			wantRaw:    "A-B-1",
+		},
+		{
+			name:    "opaque id with no number",
+			input:   "PERS-JV",
+			wantRaw: "PERS-JV",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id, err := ParseEntityID(tt.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertEqual(t, id.Prefix, tt.wantPrefix)
+			assertEqual(t, id.Number, tt.wantNumber)
+			assertEqual(t, id.Raw, tt.wantRaw)
+		})
+	}
+}
+
+// TestExtractHighestNumber_MultiSegmentPrefix tests number extraction with multi-segment prefixes
+func TestExtractHighestNumber_MultiSegmentPrefix(t *testing.T) {
+	tests := []struct {
+		name   string
+		ids    []string
+		prefix string
+		want   int
+	}{
+		{
+			name:   "single segment",
+			ids:    []string{"REQ-001", "REQ-002", "REQ-003"},
+			prefix: "REQ-",
+			want:   3,
+		},
+		{
+			name:   "multi segment ISO-CA",
+			ids:    []string{"ISO-CA-001", "ISO-CA-002", "ISO-CA-010"},
+			prefix: "ISO-CA-",
+			want:   10,
+		},
+		{
+			name:   "mixed with other prefixes",
+			ids:    []string{"ISO-CA-001", "REQ-005", "ISO-CA-003"},
+			prefix: "ISO-CA-",
+			want:   3,
+		},
+		{
+			name:   "no matches",
+			ids:    []string{"REQ-001", "DEC-002"},
+			prefix: "ISO-CA-",
+			want:   0,
+		},
+		{
+			name:   "empty list",
+			ids:    []string{},
+			prefix: "ISO-CA-",
+			want:   0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractHighestNumber(tt.ids, tt.prefix)
+			assertEqual(t, got, tt.want)
+		})
+	}
+}
+
+// TestGenerateNextID_MultiSegmentPrefix tests ID generation with multi-segment prefixes
+func TestGenerateNextID_MultiSegmentPrefix(t *testing.T) {
+	tests := []struct {
+		name   string
+		ids    []string
+		prefix string
+		want   string
+	}{
+		{
+			name:   "first ISO-CA ID",
+			ids:    []string{},
+			prefix: "ISO-CA-",
+			want:   "ISO-CA-001",
+		},
+		{
+			name:   "next ISO-CA ID",
+			ids:    []string{"ISO-CA-001"},
+			prefix: "ISO-CA-",
+			want:   "ISO-CA-002",
+		},
+		{
+			name:   "gap in sequence",
+			ids:    []string{"ISO-CA-001", "ISO-CA-005"},
+			prefix: "ISO-CA-",
+			want:   "ISO-CA-006",
+		},
+		{
+			name:   "single segment still works",
+			ids:    []string{"REQ-001", "REQ-002"},
+			prefix: "REQ-",
+			want:   "REQ-003",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GenerateNextID(tt.ids, tt.prefix)
+			assertEqual(t, got, tt.want)
+		})
+	}
+}
+
+// TestEntityIDMatchesPattern_MultiSegment tests pattern matching with multi-segment prefixes
+func TestEntityIDMatchesPattern_MultiSegment(t *testing.T) {
+	tests := []struct {
+		name     string
+		id       EntityID
+		pattern  string
+		expected bool
+	}{
+		{
+			name:     "multi segment exact",
+			id:       EntityID{Prefix: "ISO-CA-"},
+			pattern:  "ISO-CA-",
+			expected: true,
+		},
+		{
+			name:     "multi segment without trailing dash",
+			id:       EntityID{Prefix: "ISO-CA-"},
+			pattern:  "ISO-CA",
+			expected: true,
+		},
+		{
+			name:     "multi segment case insensitive",
+			id:       EntityID{Prefix: "ISO-CA-"},
+			pattern:  "iso-ca",
+			expected: true,
+		},
+		{
+			name:     "multi segment no match",
+			id:       EntityID{Prefix: "ISO-CA-"},
+			pattern:  "ISO-CB",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.id.MatchesPattern(tt.pattern); got != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, got)
+			}
+		})
+	}
+}
+
 // TestStatusIsValid tests Status validation
 func TestStatusIsValid(t *testing.T) {
 	tests := []struct {

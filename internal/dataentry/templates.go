@@ -130,6 +130,7 @@ tbody tr:last-child td { border-bottom: none; }
 .pagination { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-muted); }
 
 .toast { position: fixed; top: 16px; right: 16px; padding: 12px 20px; background: #166534; color: #fff; border-radius: 8px; font-size: 14px; font-weight: 500; z-index: 999; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: toastIn 0.3s; }
+.toast-error { background: #991b1b; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.15s; }
@@ -274,6 +275,15 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 });
 document.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt.detail.target); });
+document.addEventListener('htmx:responseError', function(evt) {
+  var xhr = evt.detail.xhr;
+  var msg = xhr.responseText || ('Request failed: ' + xhr.status);
+  var div = document.createElement('div');
+  div.className = 'toast toast-error';
+  div.textContent = msg;
+  document.body.appendChild(div);
+  setTimeout(function() { div.remove(); }, 5000);
+});
 function confirmDelete(entityID, returnTo) {
   var existing = document.getElementById('delete-confirm-modal');
   if (existing) existing.remove();
