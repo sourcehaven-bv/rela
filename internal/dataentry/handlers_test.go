@@ -234,6 +234,72 @@ func TestHandleForm(t *testing.T) {
 		}
 	})
 
+	t.Run("edit form shows incoming relations as selected", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Add an incoming relation: TKT-001 --belongs_to--> CMP-001
+		// This means CMP-001 has an incoming "belongs_to" edge from TKT-001.
+		app.g.AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
+
+		// Add a form for component with an incoming relation
+		app.Cfg.Forms["edit-component-incoming"] = Form{
+			EntityType: "component",
+			Mode:       "edit",
+			Fields:     []FormField{{Property: "name"}},
+			Relations: []FormRelation{{
+				Relation:   "belongs_to",
+				Direction:  "incoming",
+				TargetType: "ticket",
+				Label:      "Tickets",
+				Widget:     "multi-select",
+			}},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/form/edit-component-incoming/CMP-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// TKT-001 should be selected (it's the source of the incoming belongs_to edge)
+		if !strings.Contains(body, `value="TKT-001" selected`) {
+			t.Error("expected TKT-001 to be pre-selected as incoming relation")
+		}
+	})
+
+	t.Run("edit form shows outgoing relations as selected", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// TKT-001 --depends_on--> TKT-002 already added in newHandlerTestApp
+
+		// Add a form for ticket with an outgoing relation
+		app.Cfg.Forms["edit-ticket-outgoing"] = Form{
+			EntityType: "ticket",
+			Mode:       "edit",
+			Fields:     []FormField{{Property: "title"}},
+			Relations: []FormRelation{{
+				Relation:   "depends_on",
+				Direction:  "outgoing",
+				TargetType: "ticket",
+				Label:      "Dependencies",
+				Widget:     "multi-select",
+			}},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket-outgoing/TKT-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// TKT-002 should be selected (it's the target of the outgoing depends_on edge)
+		if !strings.Contains(body, `value="TKT-002" selected`) {
+			t.Error("expected TKT-002 to be pre-selected as outgoing relation")
+		}
+	})
+
 	t.Run("prefills relation from link params via inverse", func(t *testing.T) {
 		app := newHandlerTestApp(t)
 		// Add inverse to depends_on so we can test inverse matching.
