@@ -32,6 +32,14 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); line
 .sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 8px 20px; color: var(--text-sidebar); text-decoration: none; font-size: 14px; font-weight: 500; transition: all 0.15s; border-left: 3px solid transparent; }
 .sidebar nav a:hover { background: var(--bg-sidebar-hover); color: var(--text-sidebar-active); }
 .sidebar nav a.active { background: var(--bg-sidebar-active); color: var(--text-sidebar-active); border-left-color: var(--primary); }
+.nav-group { margin: 0; }
+.nav-group-toggle { display: flex; align-items: center; gap: 6px; width: 100%; padding: 8px 20px; background: none; border: none; border-left: 3px solid transparent; color: var(--text-sidebar); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; font-family: var(--font); transition: color 0.15s; }
+.nav-group-toggle:hover { color: var(--text-sidebar-active); }
+.nav-group-chevron { display: inline-block; font-size: 20px; line-height: 1; transition: transform 0.15s ease; transform: rotate(90deg); }
+.nav-group-chevron.collapsed { transform: rotate(0deg); }
+.nav-group-items { overflow: hidden; }
+.nav-group-items.hidden { display: none; }
+.sidebar nav .nav-group-items a { padding-left: 40px; }
 
 .main { margin-left: 240px; flex: 1; padding: 32px; max-width: 1100px; }
 .page-header { margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; }
@@ -257,6 +265,25 @@ function confirmDelete(entityID, returnTo) {
 </script>
 {{- end -}}
 
+{{- define "nav-item" -}}
+{{ if .Dashboard }}
+    <a href="/dashboard"{{ if eq "_dashboard" .ActiveList }} class="active"{{ end }}
+       hx-get="/dashboard" hx-target="#content" hx-push-url="true">
+      {{ .Label }}
+    </a>
+{{ else if .Graph }}
+    <a href="/graph"{{ if eq "_graph" .ActiveList }} class="active"{{ end }}>
+      {{ .Label }}
+    </a>
+{{ else }}
+    <a href="/list/{{ .List }}"{{ if eq .List .ActiveList }} class="active"{{ end }}
+       data-entity-type="{{ .EntityType }}"
+       hx-get="/list/{{ .List }}" hx-target="#content" hx-push-url="true">
+      {{ .Label }}<span class="nav-count">{{ .Count }}</span>
+    </a>
+{{ end }}
+{{- end -}}
+
 {{- define "sidebar" -}}
 <aside class="sidebar">
   <div class="sidebar-header">
@@ -270,26 +297,38 @@ function confirmDelete(entityID, returnTo) {
       &#128269; Search
     </a>
     {{ range .Navigation }}
-    {{ if .Dashboard }}
-    <a href="/dashboard"{{ if eq "_dashboard" $.ActiveList }} class="active"{{ end }}
-       hx-get="/dashboard" hx-target="#content" hx-push-url="true">
-      {{ .Label }}
-    </a>
-    {{ else if .Graph }}
-    <a href="/graph"{{ if eq "_graph" $.ActiveList }} class="active"{{ end }}>
-      {{ .Label }}
-    </a>
+    {{ if .Group }}
+    <div class="nav-group">
+      <button class="nav-group-toggle" onclick="toggleNavGroup(this)" data-group="{{ .Group.Group }}">
+        <span class="nav-group-chevron{{ if .Group.Collapsed }} collapsed{{ end }}">&#9656;</span>
+        {{ .Group.Group }}
+      </button>
+      <div class="nav-group-items{{ if .Group.Collapsed }} hidden{{ end }}">
+        {{ range .Group.Items }}
+        {{ template "nav-item" (map "Dashboard" .Dashboard "Graph" .Graph "Label" .Label "List" .List "EntityType" .EntityType "Count" .Count "ActiveList" $.ActiveList) }}
+        {{ end }}
+      </div>
+    </div>
     {{ else }}
-    <a href="/list/{{ .List }}"{{ if eq .List $.ActiveList }} class="active"{{ end }}
-       data-entity-type="{{ .EntityType }}"
-       hx-get="/list/{{ .List }}" hx-target="#content" hx-push-url="true">
-      {{ .Label }}<span class="nav-count">{{ .Count }}</span>
-    </a>
+    {{ template "nav-item" (map "Dashboard" .Item.Dashboard "Graph" .Item.Graph "Label" .Item.Label "List" .Item.List "EntityType" .Item.EntityType "Count" .Item.Count "ActiveList" $.ActiveList) }}
     {{ end }}
     {{ end }}
   </nav>
 </aside>
 <script>
+function toggleNavGroup(btn) {
+  var chevron = btn.querySelector('.nav-group-chevron');
+  var items = btn.nextElementSibling;
+  var isCollapsed = chevron.classList.toggle('collapsed');
+  items.classList.toggle('hidden', isCollapsed);
+  // Persist state to server in the background
+  var group = btn.getAttribute('data-group');
+  fetch('/api/ui/toggle-group', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'group=' + encodeURIComponent(group)
+  });
+}
 document.body.addEventListener('htmx:pushedIntoHistory', function() {
   var path = window.location.pathname;
   var links = document.querySelectorAll('.sidebar nav a');
@@ -303,6 +342,17 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     links.forEach(function(a) {
       var href = a.getAttribute('href');
       a.classList.toggle('active', path === href || path.startsWith(href + '?'));
+    });
+    // Auto-expand group containing the active link
+    links.forEach(function(a) {
+      if (a.classList.contains('active')) {
+        var group = a.closest('.nav-group-items');
+        if (group && group.classList.contains('hidden')) {
+          group.classList.remove('hidden');
+          var chevron = group.previousElementSibling.querySelector('.nav-group-chevron');
+          if (chevron) chevron.classList.remove('collapsed');
+        }
+      }
     });
     return;
   }

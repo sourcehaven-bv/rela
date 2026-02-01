@@ -72,6 +72,7 @@ go build -o rela ./cmd/rela
 | [Export Guide](docs/export.md) | Export, import, and data integration |
 | [Best Practices](docs/best-practices.md) | Maintenance tips and team workflows |
 | [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |
+| [Data Entry Web App](docs/data-entry.md) | Config-driven web UI for entity management |
 
 ### Tutorials
 

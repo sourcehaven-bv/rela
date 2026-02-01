@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // newGraphTestApp builds a full App with graph templates for graph handler tests.
@@ -35,6 +36,7 @@ func newGraphTestApp(t *testing.T) *App {
 		Cfg:         cfg,
 		meta:        meta,
 		g:           g,
+		fs:          storage.NewOsFS(),
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
@@ -395,24 +397,24 @@ func TestHandleIndexGraphRedirect(t *testing.T) {
 	})
 }
 
-func TestNavItemsGraphSkipsCount(t *testing.T) {
+func TestNavElementsGraphSkipsCount(t *testing.T) {
 	app := newGraphTestApp(t)
 	app.Cfg.Navigation = []NavigationEntry{
 		{Label: "Graph", Graph: true},
 		{Label: "Tickets", List: "tickets"},
 	}
-	items := app.navItems()
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(items))
+	elements := app.navElements("")
+	if len(elements) != 2 {
+		t.Fatalf("expected 2 elements, got %d", len(elements))
 	}
-	if !items[0].Graph {
-		t.Error("expected first item to be graph")
+	if elements[0].Item == nil || !elements[0].Item.Graph {
+		t.Error("expected first element to be a graph item")
 	}
-	if items[0].EntityType != "" {
-		t.Errorf("expected empty entity type for graph, got %q", items[0].EntityType)
+	if elements[0].Item.EntityType != "" {
+		t.Errorf("expected empty entity type for graph, got %q", elements[0].Item.EntityType)
 	}
-	if items[0].Count != 0 {
-		t.Errorf("expected count 0 for graph, got %d", items[0].Count)
+	if elements[0].Item.Count != 0 {
+		t.Errorf("expected count 0 for graph, got %d", elements[0].Item.Count)
 	}
 }
 
@@ -427,7 +429,7 @@ func TestBuildContentGraphDataEmptyGraph(t *testing.T) {
 	}
 
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	app := &App{Cfg: cfg, meta: meta, g: g, styleMap: styleMap, styledTypes: styledTypes}
+	app := &App{Cfg: cfg, meta: meta, g: g, fs: storage.NewOsFS(), styleMap: styleMap, styledTypes: styledTypes}
 	resp := app.buildContentGraphData()
 
 	if len(resp.Nodes) != 0 {

@@ -3,11 +3,14 @@ package dataentry
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // testMeta returns a metamodel suitable for testing app-level functions.
@@ -138,6 +141,7 @@ func testAppInstance() *App {
 		Cfg:         cfg,
 		meta:        meta,
 		g:           g,
+		fs:          storage.NewOsFS(),
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 	}
@@ -482,28 +486,36 @@ func TestResolveActiveList(t *testing.T) {
 	})
 }
 
-func TestNavItems(t *testing.T) {
+func TestNavElements(t *testing.T) {
 	app := testAppInstance()
 
-	t.Run("returns items with counts", func(t *testing.T) {
-		items := app.navItems()
-		if len(items) != 2 {
-			t.Fatalf("expected 2 items, got %d", len(items))
+	t.Run("flat items with counts", func(t *testing.T) {
+		elements := app.navElements("")
+		if len(elements) != 2 {
+			t.Fatalf("expected 2 elements, got %d", len(elements))
 		}
-		if items[0].Label != "Tickets" {
-			t.Errorf("expected label 'Tickets', got %q", items[0].Label)
+		item0 := elements[0].Item
+		if item0 == nil {
+			t.Fatal("expected first element to be an item, got group")
 		}
-		if items[0].EntityType != "ticket" {
-			t.Errorf("expected entity type 'ticket', got %q", items[0].EntityType)
+		if item0.Label != "Tickets" {
+			t.Errorf("expected label 'Tickets', got %q", item0.Label)
 		}
-		if items[0].Count != 2 {
-			t.Errorf("expected count 2, got %d", items[0].Count)
+		if item0.EntityType != "ticket" {
+			t.Errorf("expected entity type 'ticket', got %q", item0.EntityType)
 		}
-		if items[1].Label != "Components" {
-			t.Errorf("expected label 'Components', got %q", items[1].Label)
+		if item0.Count != 2 {
+			t.Errorf("expected count 2, got %d", item0.Count)
 		}
-		if items[1].Count != 1 {
-			t.Errorf("expected count 1, got %d", items[1].Count)
+		item1 := elements[1].Item
+		if item1 == nil {
+			t.Fatal("expected second element to be an item, got group")
+		}
+		if item1.Label != "Components" {
+			t.Errorf("expected label 'Components', got %q", item1.Label)
+		}
+		if item1.Count != 1 {
+			t.Errorf("expected count 1, got %d", item1.Count)
 		}
 	})
 
@@ -513,15 +525,15 @@ func TestNavItems(t *testing.T) {
 			{Label: "Dashboard", Dashboard: true},
 			{Label: "Tickets", List: "tickets"},
 		}
-		items := app2.navItems()
-		if len(items) != 2 {
-			t.Fatalf("expected 2 items, got %d", len(items))
+		elements := app2.navElements("")
+		if len(elements) != 2 {
+			t.Fatalf("expected 2 elements, got %d", len(elements))
 		}
-		if items[0].Dashboard != true {
+		if elements[0].Item == nil || !elements[0].Item.Dashboard {
 			t.Error("expected first item to be dashboard")
 		}
-		if items[0].EntityType != "" {
-			t.Errorf("expected empty entity type for dashboard, got %q", items[0].EntityType)
+		if elements[0].Item.EntityType != "" {
+			t.Errorf("expected empty entity type for dashboard, got %q", elements[0].Item.EntityType)
 		}
 	})
 
@@ -533,10 +545,286 @@ func TestNavItems(t *testing.T) {
 				{Property: "status", Operator: "=", Value: "open"},
 			},
 		}
-		items := app2.navItems()
+		elements := app2.navElements("")
 		// Only TKT-001 has status=open
-		if items[0].Count != 1 {
-			t.Errorf("expected count 1 (filtered), got %d", items[0].Count)
+		if elements[0].Item == nil {
+			t.Fatal("expected first element to be an item")
+		}
+		if elements[0].Item.Count != 1 {
+			t.Errorf("expected count 1 (filtered), got %d", elements[0].Item.Count)
+		}
+	})
+
+	t.Run("groups with items", func(t *testing.T) {
+		app2 := testAppInstance()
+		app2.Cfg.Navigation = []NavigationEntry{
+			{Label: "Dashboard", Dashboard: true},
+			{
+				Group: "Tickets",
+				Items: []NavigationEntry{
+					{Label: "All Tickets", List: "tickets"},
+				},
+			},
+			{Label: "Components", List: "components"},
+		}
+		elements := app2.navElements("")
+		if len(elements) != 3 {
+			t.Fatalf("expected 3 elements, got %d", len(elements))
+		}
+		// First: dashboard item
+		if elements[0].Item == nil || !elements[0].Item.Dashboard {
+			t.Error("expected first element to be dashboard item")
+		}
+		// Second: group
+		if elements[1].Group == nil {
+			t.Fatal("expected second element to be a group")
+		}
+		grp := elements[1].Group
+		if grp.Group != "Tickets" {
+			t.Errorf("expected group name 'Tickets', got %q", grp.Group)
+		}
+		if len(grp.Items) != 1 {
+			t.Fatalf("expected 1 item in group, got %d", len(grp.Items))
+		}
+		if grp.Items[0].Label != "All Tickets" {
+			t.Errorf("expected label 'All Tickets', got %q", grp.Items[0].Label)
+		}
+		if grp.Items[0].Count != 2 {
+			t.Errorf("expected count 2, got %d", grp.Items[0].Count)
+		}
+		// Third: flat item
+		if elements[2].Item == nil || elements[2].Item.Label != "Components" {
+			t.Error("expected third element to be 'Components' item")
+		}
+	})
+
+	t.Run("group collapsed from config", func(t *testing.T) {
+		app2 := testAppInstance()
+		app2.Cfg.Navigation = []NavigationEntry{
+			{
+				Group:     "Hidden",
+				Collapsed: true,
+				Items: []NavigationEntry{
+					{Label: "Tickets", List: "tickets"},
+				},
+			},
+		}
+		elements := app2.navElements("")
+		if elements[0].Group == nil {
+			t.Fatal("expected group element")
+		}
+		if !elements[0].Group.Collapsed {
+			t.Error("expected group to be collapsed")
+		}
+	})
+
+	t.Run("auto-expand group containing active list", func(t *testing.T) {
+		app2 := testAppInstance()
+		app2.Cfg.Navigation = []NavigationEntry{
+			{
+				Group:     "Tickets",
+				Collapsed: true,
+				Items: []NavigationEntry{
+					{Label: "All Tickets", List: "tickets"},
+				},
+			},
+		}
+		elements := app2.navElements("tickets")
+		if elements[0].Group == nil {
+			t.Fatal("expected group element")
+		}
+		if elements[0].Group.Collapsed {
+			t.Error("expected group to be auto-expanded because it contains the active list")
+		}
+	})
+}
+
+func TestFirstNavTarget(t *testing.T) {
+	t.Run("flat items returns first", func(t *testing.T) {
+		nav := []NavigationEntry{
+			{Label: "Tickets", List: "tickets"},
+			{Label: "Dashboard", Dashboard: true},
+		}
+		target := firstNavTarget(nav)
+		if target == nil {
+			t.Fatal("expected non-nil target")
+		}
+		if target.List != "tickets" {
+			t.Errorf("expected 'tickets', got %q", target.List)
+		}
+	})
+
+	t.Run("group first item", func(t *testing.T) {
+		nav := []NavigationEntry{
+			{
+				Group: "Tickets",
+				Items: []NavigationEntry{
+					{Label: "All Tickets", List: "tickets"},
+				},
+			},
+		}
+		target := firstNavTarget(nav)
+		if target == nil {
+			t.Fatal("expected non-nil target")
+		}
+		if target.List != "tickets" {
+			t.Errorf("expected 'tickets', got %q", target.List)
+		}
+	})
+
+	t.Run("empty group skipped", func(t *testing.T) {
+		nav := []NavigationEntry{
+			{Group: "Empty", Items: []NavigationEntry{}},
+			{Label: "Dashboard", Dashboard: true},
+		}
+		target := firstNavTarget(nav)
+		if target == nil {
+			t.Fatal("expected non-nil target")
+		}
+		if !target.Dashboard {
+			t.Error("expected dashboard target")
+		}
+	})
+
+	t.Run("empty navigation returns nil", func(t *testing.T) {
+		target := firstNavTarget(nil)
+		if target != nil {
+			t.Error("expected nil for empty navigation")
+		}
+	})
+}
+
+func TestUIStateLoadSave(t *testing.T) {
+	dir := t.TempDir()
+	app := testAppInstance()
+	app.uiStatePath = filepath.Join(dir, "ui-state.json")
+
+	t.Run("load returns defaults when file missing", func(t *testing.T) {
+		state := app.loadUIState()
+		if len(state.CollapsedGroups) != 0 {
+			t.Errorf("expected empty collapsed groups, got %v", state.CollapsedGroups)
+		}
+	})
+
+	t.Run("save and load round-trip", func(t *testing.T) {
+		state := UIState{CollapsedGroups: map[string]bool{"Tickets": true}}
+		if err := app.saveUIState(state); err != nil {
+			t.Fatalf("save error: %v", err)
+		}
+		loaded := app.loadUIState()
+		if !loaded.CollapsedGroups["Tickets"] {
+			t.Error("expected Tickets to be collapsed after load")
+		}
+	})
+
+	t.Run("UIState overrides config default", func(t *testing.T) {
+		app2 := testAppInstance()
+		app2.uiStatePath = filepath.Join(dir, "ui-state.json")
+		app2.Cfg.Navigation = []NavigationEntry{
+			{
+				Group:     "Tickets",
+				Collapsed: false,
+				Items: []NavigationEntry{
+					{Label: "All", List: "tickets"},
+				},
+			},
+		}
+		// UIState says collapsed
+		state := UIState{CollapsedGroups: map[string]bool{"Tickets": true}}
+		if err := app2.saveUIState(state); err != nil {
+			t.Fatalf("save error: %v", err)
+		}
+		elements := app2.navElements("")
+		if elements[0].Group == nil {
+			t.Fatal("expected group element")
+		}
+		if !elements[0].Group.Collapsed {
+			t.Error("expected group to be collapsed via UIState override")
+		}
+	})
+
+	t.Run("empty uiStatePath is safe", func(t *testing.T) {
+		app2 := testAppInstance()
+		app2.uiStatePath = ""
+		state := app2.loadUIState()
+		if len(state.CollapsedGroups) != 0 {
+			t.Error("expected empty state")
+		}
+		if err := app2.saveUIState(state); err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+	})
+}
+
+func TestValidateConfigNestedGroups(t *testing.T) {
+	meta := testMeta()
+
+	t.Run("nested groups rejected", func(t *testing.T) {
+		cfg := &Config{
+			Navigation: []NavigationEntry{
+				{
+					Group: "Outer",
+					Items: []NavigationEntry{
+						{
+							Group: "Inner",
+							Items: []NavigationEntry{
+								{Label: "Tickets", List: "tickets"},
+							},
+						},
+					},
+				},
+			},
+		}
+		errs := validateConfig(cfg, meta)
+		if len(errs) != 1 {
+			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		}
+		if !strings.Contains(errs[0], "nested group") {
+			t.Errorf("expected nested group error, got: %s", errs[0])
+		}
+	})
+
+	t.Run("flat groups are valid", func(t *testing.T) {
+		cfg := &Config{
+			Navigation: []NavigationEntry{
+				{
+					Group: "Tickets",
+					Items: []NavigationEntry{
+						{Label: "All", List: "tickets"},
+					},
+				},
+			},
+		}
+		errs := validateConfig(cfg, meta)
+		if len(errs) != 0 {
+			t.Errorf("expected no errors, got %v", errs)
+		}
+	})
+}
+
+func TestActiveListForEntityTypeWithGroups(t *testing.T) {
+	app := testAppInstance()
+	app.Cfg.Navigation = []NavigationEntry{
+		{
+			Group: "Tickets",
+			Items: []NavigationEntry{
+				{Label: "All Tickets", List: "tickets"},
+			},
+		},
+		{Label: "Components", List: "components"},
+	}
+
+	t.Run("finds list inside group", func(t *testing.T) {
+		got := app.activeListForEntityType("ticket")
+		if got != "tickets" {
+			t.Errorf("expected 'tickets', got %q", got)
+		}
+	})
+
+	t.Run("finds flat list", func(t *testing.T) {
+		got := app.activeListForEntityType("component")
+		if got != "components" {
+			t.Errorf("expected 'components', got %q", got)
 		}
 	})
 }

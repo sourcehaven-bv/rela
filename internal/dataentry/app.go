@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
@@ -23,6 +24,9 @@ import (
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
 const ConfigFile = "data-entry.yaml"
 
+// uiStateFile is the filename for persisted UI state within the .rela directory.
+const uiStateFile = "ui-state.json"
+
 // App is the central application struct holding config, metamodel, graph, and templates.
 type App struct {
 	Cfg  *Config
@@ -34,6 +38,10 @@ type App struct {
 	styleMap map[string]map[string]string
 	// styledTypes: set of property type names that have style entries
 	styledTypes map[string]bool
+	// fs is the filesystem abstraction used for reading/writing UI state.
+	fs storage.FS
+	// uiStatePath is the path to .rela/ui-state.json for persisting UI preferences.
+	uiStatePath string
 }
 
 // NewApp creates and initializes an App using the given filesystem.
@@ -103,6 +111,8 @@ func NewApp(projectDir string, fs storage.FS) (*App, error) {
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
+		fs:          fs,
+		uiStatePath: filepath.Join(projCtx.CacheDir, uiStateFile),
 	}, nil
 }
 
@@ -116,22 +126,115 @@ type NavItem struct {
 	Count      int
 }
 
-// navItems returns enriched navigation entries with entity types resolved from list config.
-func (a *App) navItems() []NavItem {
-	items := make([]NavItem, len(a.Cfg.Navigation))
-	for i, nav := range a.Cfg.Navigation {
-		items[i] = NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard, Graph: nav.Graph}
-		if nav.Dashboard || nav.Graph {
-			continue
-		}
-		if list, ok := a.Cfg.Lists[nav.List]; ok {
-			items[i].EntityType = list.EntityType
-			entities := a.g.NodesByType(list.EntityType)
-			entities = applyFilters(entities, list.Filters)
-			items[i].Count = len(entities)
+// NavGroup is an enriched navigation group containing resolved nav items.
+type NavGroup struct {
+	Group     string
+	Collapsed bool
+	Items     []NavItem
+}
+
+// NavElement is a union of either a direct NavItem or a NavGroup.
+// Exactly one of Item or Group is non-nil.
+type NavElement struct {
+	Item  *NavItem
+	Group *NavGroup
+}
+
+// enrichNavEntry resolves a single NavigationEntry into a NavItem with entity type and count.
+func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
+	item := NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard, Graph: nav.Graph}
+	if nav.Dashboard || nav.Graph {
+		return item
+	}
+	if list, ok := a.Cfg.Lists[nav.List]; ok {
+		item.EntityType = list.EntityType
+		entities := a.g.NodesByType(list.EntityType)
+		entities = applyFilters(entities, list.Filters)
+		item.Count = len(entities)
+	}
+	return item
+}
+
+// navElements returns the navigation structure with groups and items resolved.
+// The activeList parameter is used to auto-expand the group containing the active item.
+func (a *App) navElements(activeList string) []NavElement {
+	uiState := a.loadUIState()
+	elements := make([]NavElement, 0, len(a.Cfg.Navigation))
+	for _, nav := range a.Cfg.Navigation {
+		if nav.IsGroup() {
+			grp := NavGroup{Group: nav.Group}
+			// Determine collapsed state: UIState overrides config default
+			if override, ok := uiState.CollapsedGroups[nav.Group]; ok {
+				grp.Collapsed = override
+			} else {
+				grp.Collapsed = nav.Collapsed
+			}
+			grp.Items = make([]NavItem, len(nav.Items))
+			for i, child := range nav.Items {
+				grp.Items[i] = a.enrichNavEntry(child)
+				// Auto-expand group if it contains the active list
+				if child.List == activeList && activeList != "" {
+					grp.Collapsed = false
+				}
+			}
+			elements = append(elements, NavElement{Group: &grp})
+		} else {
+			item := a.enrichNavEntry(nav)
+			elements = append(elements, NavElement{Item: &item})
 		}
 	}
-	return items
+	return elements
+}
+
+// loadUIState reads .rela/ui-state.json and returns the persisted state.
+// Returns an empty UIState if the file doesn't exist or can't be parsed.
+func (a *App) loadUIState() UIState {
+	state := UIState{CollapsedGroups: make(map[string]bool)}
+	if a.uiStatePath == "" {
+		return state
+	}
+	data, err := a.fs.ReadFile(a.uiStatePath)
+	if err != nil {
+		return state
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return UIState{CollapsedGroups: make(map[string]bool)}
+	}
+	if state.CollapsedGroups == nil {
+		state.CollapsedGroups = make(map[string]bool)
+	}
+	return state
+}
+
+// saveUIState writes the UI state to .rela/ui-state.json.
+func (a *App) saveUIState(state UIState) error {
+	if a.uiStatePath == "" {
+		return nil
+	}
+	// Ensure .rela directory exists
+	if err := a.fs.MkdirAll(filepath.Dir(a.uiStatePath), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return a.fs.WriteFile(a.uiStatePath, data, 0o644)
+}
+
+// firstNavTarget returns the first navigable item from the navigation config,
+// walking into groups as needed.
+func firstNavTarget(nav []NavigationEntry) *NavigationEntry {
+	for i := range nav {
+		if nav[i].IsGroup() {
+			if target := firstNavTarget(nav[i].Items); target != nil {
+				return target
+			}
+			continue
+		}
+		return &nav[i]
+	}
+	return nil
 }
 
 // editFormForType returns the first edit form ID configured for the given entity type,
@@ -191,9 +294,19 @@ func (a *App) entityDisplayTitle(e *model.Entity) string {
 }
 
 // activeListForEntityType returns the first navigation list ID whose entity type
-// matches the given type, or "" if none match.
+// matches the given type, or "" if none match. Walks into groups.
 func (a *App) activeListForEntityType(entityType string) string {
-	for _, nav := range a.Cfg.Navigation {
+	return a.findListByEntityType(a.Cfg.Navigation, entityType)
+}
+
+func (a *App) findListByEntityType(entries []NavigationEntry, entityType string) string {
+	for _, nav := range entries {
+		if nav.IsGroup() {
+			if found := a.findListByEntityType(nav.Items, entityType); found != "" {
+				return found
+			}
+			continue
+		}
 		if list, ok := a.Cfg.Lists[nav.List]; ok && list.EntityType == entityType {
 			return nav.List
 		}
@@ -298,6 +411,18 @@ func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]
 
 func validateConfig(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
+	// Validate navigation: reject nested groups
+	for _, nav := range cfg.Navigation {
+		if nav.IsGroup() {
+			for _, child := range nav.Items {
+				if child.IsGroup() {
+					errs = append(errs, fmt.Sprintf(
+						"navigation: group %q contains nested group %q — nested groups are not supported",
+						nav.Group, child.Group))
+				}
+			}
+		}
+	}
 	for formID, form := range cfg.Forms {
 		if _, ok := meta.GetEntityDef(form.EntityType); !ok {
 			errs = append(errs, fmt.Sprintf("form %q: unknown entity type %q", formID, form.EntityType))

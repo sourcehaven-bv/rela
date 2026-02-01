@@ -27,5 +27,6 @@ func (a *App) NewRouter() http.Handler {
 	mux.HandleFunc("/api/inline-form/", a.handleInlineForm)
 	mux.HandleFunc("/graph", a.handleGraph)
 	mux.HandleFunc("/api/graph-data", a.handleGraphData)
+	mux.HandleFunc("/api/ui/toggle-group", a.handleToggleGroup)
 	return mux
 }
