@@ -419,6 +419,7 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 			return styledTypes[propType]
 		},
 		"add":            func(a, b int) int { return a + b },
+		"boolTrue":       func(b *bool) bool { return b != nil && *b },
 		"renderMarkdown": simpleMarkdownToHTML,
 		"map": func(pairs ...interface{}) map[string]interface{} {
 			m := make(map[string]interface{}, len(pairs)/2)

@@ -812,6 +812,7 @@ commands:
 | `available_on` | object | Restrict where the button appears (optional)           |
 | `confirm`      | string | Confirmation prompt before execution (optional)        |
 | `env`          | map    | Custom environment variables (optional)                |
+| `auto_open`    | bool   | Auto-open output files on completion (optional)        |
 
 ### Context Scopes
 
@@ -889,6 +890,28 @@ echo '::rela::{"type":"file","path":"/tmp/data.csv","label":"CSV Data","action":
 echo '::rela::{"type":"endgroup"}'
 echo '::rela::{"type":"message","text":"Done!","level":"info"}'
 ```
+
+### Auto-Open
+
+When `auto_open: true` is set on a command, all output files with `action: "open"` are
+automatically opened when the command completes successfully, and the toast is dismissed.
+This is useful for commands that produce a single output file where the extra click to
+open it would be redundant:
+
+```yaml
+commands:
+  generate-pdf:
+    label: "Generate PDF"
+    script: |
+      PDF="/tmp/report-${RELA_ENTITY_ID}.pdf"
+      # ... generate PDF ...
+      echo "::rela::{\"type\":\"file\",\"path\":\"$PDF\",\"label\":\"Report\",\"action\":\"open\"}"
+    context: entity
+    auto_open: true
+```
+
+If the command fails or no files have `action: "open"`, the toast stays visible with
+the normal interactive buttons.
 
 ### Streaming and Cancellation
 
@@ -1110,6 +1133,18 @@ dashboard:
         - property: assignee
           label: "Assignee"
       limit: 5
+
+commands:
+  generate-pdf:
+    label: "Generate PDF"
+    script: |
+      PDF="/tmp/ticket-${RELA_ENTITY_ID}.pdf"
+      # ... generate PDF ...
+      echo "::rela::{\"type\":\"file\",\"path\":\"$PDF\",\"label\":\"Ticket PDF\",\"action\":\"open\"}"
+    context: entity
+    auto_open: true
+    available_on:
+      entity_types: [ticket]
 
 navigation:
   - label: "Dashboard"
