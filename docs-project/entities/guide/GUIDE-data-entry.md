@@ -1192,6 +1192,18 @@ views.yaml, but adapted for HTML rendering:
 If you already have a `views.yaml`, you can reuse the same traverse rules in your data-entry
 views and add `sections` for HTML rendering.
 
+## Analysis
+
+The data entry app includes a built-in analysis page at `/analyze` that runs the same quality
+checks as the CLI's `rela analyze all` command. It checks properties, cardinality constraints,
+custom validations, orphans, duplicates, and ID gaps — displaying results grouped by category
+with links to affected entities.
+
+When a dashboard is configured, a validation summary card is automatically appended showing the
+total error and warning counts with a link to the full analysis page.
+
+No configuration is needed — the analysis page is always available in the sidebar.
+
 ## Best Practices
 
 1. **Start with navigation** - Decide which entity types users will work with most, and create

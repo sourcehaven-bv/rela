@@ -709,9 +709,13 @@ document.addEventListener('click', function(e) {
   </div>
   <nav>
     <a href="/search"{{ if eq $.ActiveList "_search" }} class="active"{{ end }}
-       hx-get="/search" hx-target="#content" hx-push-url="true"
-       style="border-bottom:1px solid rgba(255,255,255,0.1);margin-bottom:4px;">
+       hx-get="/search" hx-target="#content" hx-push-url="true">
       &#128269; Search
+    </a>
+    <a href="/analyze"{{ if eq $.ActiveList "_analyze" }} class="active"{{ end }}
+       hx-get="/analyze" hx-target="#content" hx-push-url="true"
+       style="border-bottom:1px solid rgba(255,255,255,0.1);margin-bottom:4px;">
+      &#9888; Analysis
     </a>
     {{ range .Navigation }}
     {{ if .Group }}
@@ -2156,6 +2160,25 @@ function submitInlineCreate() {
 {{ end }}
 </div>
 
+<div class="card dashboard-validation-card" style="margin-top:20px;">
+  <div class="dashboard-card-header">
+    <h3>&#9888; Validation</h3>
+    <a href="/analyze" class="dashboard-query-link"
+       hx-get="/analyze" hx-target="#content" hx-push-url="true"
+       title="View full analysis">&#8599;</a>
+  </div>
+  <div style="padding:16px;display:flex;align-items:center;gap:12px;">
+    {{ if and (eq .AnalysisErrors 0) (eq .AnalysisWarnings 0) }}
+    <span style="color:#166534;font-weight:600;font-size:14px;">&#10003; All checks passed</span>
+    {{ else }}
+    {{ if gt .AnalysisErrors 0 }}<span class="badge badge-red" style="font-size:12px;">{{ .AnalysisErrors }} {{ if eq .AnalysisErrors 1 }}error{{ else }}errors{{ end }}</span>{{ end }}
+    {{ if gt .AnalysisWarnings 0 }}<span class="badge badge-orange" style="font-size:12px;">{{ .AnalysisWarnings }} {{ if eq .AnalysisWarnings 1 }}warning{{ else }}warnings{{ end }}</span>{{ end }}
+    <a href="/analyze" style="margin-left:auto;font-size:13px;color:var(--primary);text-decoration:none;font-weight:500;"
+       hx-get="/analyze" hx-target="#content" hx-push-url="true">View details &rarr;</a>
+    {{ end }}
+  </div>
+</div>
+
 <style>
 .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
 .dashboard-card { padding: 0; overflow: hidden; }
@@ -2181,6 +2204,103 @@ function submitInlineCreate() {
 .dashboard-table { width: 100%; font-size: 13px; }
 .dashboard-table thead th { padding: 8px 16px; font-size: 11px; }
 .dashboard-table tbody td { padding: 6px 16px; }
+</style>
+{{- end -}}
+
+{{- define "analyze-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - Analysis</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+<main class="main" id="content">
+{{ template "analyze-content" . }}
+</main>
+<div id="command-toast-container"></div>
+</body>
+</html>
+{{- end -}}
+
+{{- define "analyze-content" -}}
+<div class="page-header">
+  <div>
+    <h2>Analysis</h2>
+    <p>Validation checks across all entities and relations</p>
+  </div>
+</div>
+
+<div class="analyze-summary">
+  {{ if and (eq .Analysis.ErrorCount 0) (eq .Analysis.WarningCount 0) }}
+  <span class="analyze-chip analyze-chip-ok">&#10003; All checks passed</span>
+  {{ else }}
+  {{ if gt .Analysis.ErrorCount 0 }}<span class="analyze-chip analyze-chip-error">{{ .Analysis.ErrorCount }} {{ if eq .Analysis.ErrorCount 1 }}error{{ else }}errors{{ end }}</span>{{ end }}
+  {{ if gt .Analysis.WarningCount 0 }}<span class="analyze-chip analyze-chip-warning">{{ .Analysis.WarningCount }} {{ if eq .Analysis.WarningCount 1 }}warning{{ else }}warnings{{ end }}</span>{{ end }}
+  {{ end }}
+</div>
+
+{{ range .Analysis.Sections }}
+<div class="card analyze-section">
+  <div class="analyze-section-header">
+    <div class="analyze-section-title">
+      <h3>{{ .Name }}</h3>
+      {{ if .Issues }}
+      {{ if gt (.ErrorCount) 0 }}<span class="badge badge-red">{{ .ErrorCount }}</span>{{ end }}
+      {{ if gt (.WarningCount) 0 }}<span class="badge badge-orange">{{ .WarningCount }}</span>{{ end }}
+      {{ else }}
+      <span class="badge badge-green">0</span>
+      {{ end }}
+    </div>
+    <span class="analyze-section-desc">{{ .Description }}</span>
+  </div>
+  {{ if .Issues }}
+  <table>
+    <thead>
+      <tr>
+        <th>Entity</th>
+        <th>Type</th>
+        <th>Message</th>
+        <th>Severity</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Issues }}
+      <tr>
+        <td>{{ if .EntityID }}<a href="/entity/{{ .EntityType }}/{{ .EntityID }}" class="cell-link"
+               hx-get="/entity/{{ .EntityType }}/{{ .EntityID }}" hx-target="#content" hx-push-url="true"
+            >{{ if .Title }}{{ .Title }}{{ else }}{{ .EntityID }}{{ end }}</a>
+            <div style="font-size:11px;color:var(--text-muted);">{{ .EntityID }}</div>
+            {{ else }}&mdash;{{ end }}</td>
+        <td>{{ if .EntityType }}<span class="badge badge-gray">{{ .EntityType }}</span>{{ else }}&mdash;{{ end }}</td>
+        <td>{{ .Message }}</td>
+        <td>{{ if eq .Severity "error" }}<span class="badge badge-red">error</span>{{ else }}<span class="badge badge-orange">warning</span>{{ end }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else }}
+  <div class="analyze-section-ok">&#10003; No issues</div>
+  {{ end }}
+</div>
+{{ end }}
+
+<style>
+.analyze-summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+.analyze-chip { display: inline-flex; align-items: center; gap: 4px; padding: 6px 14px; border-radius: 9999px; font-size: 13px; font-weight: 600; }
+.analyze-chip-error { background: #fee2e2; color: #991b1b; }
+.analyze-chip-warning { background: #fed7aa; color: #9a3412; }
+.analyze-chip-ok { background: #dcfce7; color: #166534; }
+.analyze-section { margin-bottom: 12px; overflow: hidden; }
+.analyze-section-header { padding: 14px 16px; }
+.analyze-section-title { display: flex; align-items: center; gap: 8px; }
+.analyze-section-title h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.analyze-section-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.analyze-section table { font-size: 13px; border-top: 1px solid var(--border); }
+.analyze-section thead th { padding: 8px 16px; font-size: 11px; }
+.analyze-section tbody td { padding: 8px 16px; vertical-align: top; }
+.analyze-section-ok { padding: 16px; color: #166534; font-size: 13px; font-weight: 500; border-top: 1px solid var(--border); }
 </style>
 {{- end -}}
 `

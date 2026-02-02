@@ -24,6 +24,7 @@ func (a *App) NewRouter() http.Handler {
 	inner := http.NewServeMux()
 	inner.HandleFunc("/", a.handleIndex)
 	inner.HandleFunc("/dashboard", a.handleDashboard)
+	inner.HandleFunc("/analyze", a.handleAnalyze)
 	inner.HandleFunc("/search", a.handleSearch)
 	inner.HandleFunc("/list/", a.handleList)
 	inner.HandleFunc("/form/", a.handleForm)

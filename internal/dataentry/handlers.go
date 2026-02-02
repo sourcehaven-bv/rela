@@ -1798,20 +1798,44 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		cards[i] = rc
 	}
 
+	// Compute analysis summary for the validation card
+	analysisErrors, analysisWarnings := a.analysisIssueCounts()
+
 	data := map[string]interface{}{
-		"App":        a.Cfg.App,
-		"Navigation": a.navElements("_dashboard"),
-		"ActiveList": "_dashboard",
-		"Dashboard":  dash,
-		"Cards":      cards,
-		"Commands":   a.resolveCommands("dashboard", "", ""),
-		"IsHTMX":     r.Header.Get("HX-Request") == "true",
+		"App":              a.Cfg.App,
+		"Navigation":       a.navElements("_dashboard"),
+		"ActiveList":       "_dashboard",
+		"Dashboard":        dash,
+		"Cards":            cards,
+		"Commands":         a.resolveCommands("dashboard", "", ""),
+		"AnalysisErrors":   analysisErrors,
+		"AnalysisWarnings": analysisWarnings,
+		"IsHTMX":           r.Header.Get("HX-Request") == "true",
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
 		a.tmpl.ExecuteTemplate(w, "dashboard-content", data) //nolint:errcheck // template errors logged by http
 	} else {
 		a.tmpl.ExecuteTemplate(w, "dashboard-page", data) //nolint:errcheck // template errors logged by http
+	}
+}
+
+// coverage-ignore: analyze handler - tested via integration/manual testing
+func (a *App) handleAnalyze(w http.ResponseWriter, r *http.Request) {
+	result := a.runAnalysis()
+
+	data := map[string]interface{}{
+		"App":        a.Cfg.App,
+		"Navigation": a.navElements("_analyze"),
+		"ActiveList": "_analyze",
+		"Analysis":   result,
+		"IsHTMX":     r.Header.Get("HX-Request") == "true",
+	}
+
+	if r.Header.Get("HX-Request") == "true" {
+		a.tmpl.ExecuteTemplate(w, "analyze-content", data) //nolint:errcheck // template errors logged by http
+	} else {
+		a.tmpl.ExecuteTemplate(w, "analyze-page", data) //nolint:errcheck // template errors logged by http
 	}
 }
 
