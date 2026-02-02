@@ -399,6 +399,10 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 			b, _ := json.Marshal(v)
 			return string(b)
 		},
+		"jsJSON": func(v interface{}) template.JS {
+			b, _ := json.Marshal(v)
+			return template.JS(b) //nolint:gosec // controlled data from metamodel
+		},
 		"contains": func(slice []string, val string) bool {
 			for _, s := range slice {
 				if s == val {

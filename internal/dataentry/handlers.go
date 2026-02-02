@@ -325,12 +325,16 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 	fields := make([]ResolvedField, 0, len(form.Fields))
 	for _, f := range form.Fields {
 		prop := entDef.Properties[f.Property]
+		userDefault := ""
+		if a.userDefaults != nil {
+			userDefault = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
+		}
 		rf := ResolvedField{
 			Property:    f.Property,
 			Label:       coalesce(f.Label, titleCase(f.Property)),
 			Placeholder: f.Placeholder,
 			Help:        f.Help,
-			Default:     coalesce(f.Default, prop.Default),
+			Default:     coalesce(userDefault, f.Default, prop.Default),
 			Hidden:      f.Hidden,
 			Widget:      resolveWidget(f.Widget, prop, a.meta),
 			Values:      resolvePropertyValues(prop, a.meta),
@@ -449,6 +453,13 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		if entity == nil && linkPeer != "" && linkRelation != "" {
 			if a.isRelationLinked(rel.Relation, linkRelation) {
 				rr.Selected = append(rr.Selected, linkPeer)
+			}
+		}
+
+		// Prefill relation from user defaults (only when creating and not already selected).
+		if entity == nil && len(rr.Selected) == 0 && a.userDefaults != nil {
+			if defaultTarget := a.userDefaults.ResolveRelationDefault(form.EntityType, rel.Relation); defaultTarget != "" {
+				rr.Selected = append(rr.Selected, defaultTarget)
 			}
 		}
 
@@ -1010,6 +1021,9 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	for _, f := range form.Fields {
 		val := r.FormValue(f.Property)
+		if val == "" && a.userDefaults != nil {
+			val = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
+		}
 		if val == "" && f.Default != "" {
 			val = f.Default
 		}
@@ -1037,6 +1051,12 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		values := r.Form[rel.Relation]
+		// Apply user default relation if no value was submitted.
+		if len(values) == 0 && a.userDefaults != nil {
+			if defaultTarget := a.userDefaults.ResolveRelationDefault(form.EntityType, rel.Relation); defaultTarget != "" {
+				values = []string{defaultTarget}
+			}
+		}
 		for _, targetID := range values {
 			if targetID == "" {
 				continue
@@ -1290,6 +1310,9 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 
 	for _, f := range form.Fields {
 		val := r.FormValue(f.Property)
+		if val == "" && a.userDefaults != nil {
+			val = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
+		}
 		if val == "" && f.Default != "" {
 			val = f.Default
 		}
@@ -1862,4 +1885,221 @@ func (a *App) handleToggleGroup(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Failed to save UI state: %v", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSettings renders the settings page for user defaults.
+// coverage-ignore: UI handler
+func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
+	ud := a.userDefaults
+	if ud == nil {
+		ud = &UserDefaults{}
+	}
+
+	// Collect all property names across entity types with their type info.
+	type PropertyInfo struct {
+		Name   string
+		Type   string
+		Values []string
+	}
+	propMap := make(map[string]PropertyInfo)
+	for _, entTypeName := range a.meta.EntityTypes() {
+		entDef, ok := a.meta.GetEntityDef(entTypeName)
+		if !ok {
+			continue
+		}
+		for propName, propDef := range entDef.Properties {
+			if _, exists := propMap[propName]; !exists {
+				propMap[propName] = PropertyInfo{
+					Name:   propName,
+					Type:   propDef.Type,
+					Values: resolvePropertyValues(propDef, a.meta),
+				}
+			} else {
+				// Merge values (union) for properties that appear on multiple types.
+				existing := propMap[propName]
+				seen := make(map[string]bool)
+				for _, v := range existing.Values {
+					seen[v] = true
+				}
+				for _, v := range resolvePropertyValues(propDef, a.meta) {
+					if !seen[v] {
+						existing.Values = append(existing.Values, v)
+						seen[v] = true
+					}
+				}
+				propMap[propName] = existing
+			}
+		}
+	}
+	propNames := make([]string, 0, len(propMap))
+	for name := range propMap {
+		propNames = append(propNames, name)
+	}
+	sort.Strings(propNames)
+	allProperties := make([]PropertyInfo, 0, len(propNames))
+	for _, name := range propNames {
+		allProperties = append(allProperties, propMap[name])
+	}
+
+	// Collect all relation types with their target entity types.
+	type RelationInfo struct {
+		Name       string
+		Label      string
+		TargetType string
+		Targets    []struct{ ID, Title string }
+	}
+	relNames := a.meta.RelationTypes()
+	sort.Strings(relNames)
+	allRelations := make([]RelationInfo, 0, len(relNames))
+	for _, relName := range relNames {
+		relDef, ok := a.meta.GetRelationDef(relName)
+		if !ok {
+			continue
+		}
+		ri := RelationInfo{
+			Name:  relName,
+			Label: relDef.Label,
+		}
+		// Use the first "to" type as the target type for default selection.
+		if len(relDef.To) > 0 {
+			ri.TargetType = relDef.To[0]
+			for _, targetType := range relDef.To {
+				for _, e := range a.g.NodesByType(targetType) {
+					ri.Targets = append(ri.Targets, struct{ ID, Title string }{e.ID, a.entityDisplayTitle(e)})
+				}
+			}
+		}
+		allRelations = append(allRelations, ri)
+	}
+
+	// Entity types for override type selection.
+	entityTypes := a.meta.EntityTypes()
+	sort.Strings(entityTypes)
+
+	activeList := "_settings"
+	data := map[string]interface{}{
+		"App":           a.Cfg.App,
+		"Navigation":    a.navElements(activeList),
+		"ActiveList":    activeList,
+		"UserDefaults":  ud,
+		"AllProperties": allProperties,
+		"AllRelations":  allRelations,
+		"EntityTypes":   entityTypes,
+	}
+
+	if r.Header.Get("HX-Request") == "true" {
+		a.tmpl.ExecuteTemplate(w, "settings-content", data) //nolint:errcheck // template errors logged by http
+	} else {
+		a.tmpl.ExecuteTemplate(w, "settings-page", data) //nolint:errcheck // template errors logged by http
+	}
+}
+
+// handleSaveSettings persists user defaults from the settings form.
+func (a *App) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.ParseForm() //nolint:errcheck // form parse errors handled by empty values
+
+	ud := UserDefaults{
+		Defaults:         make(map[string]string),
+		RelationDefaults: make(map[string]string),
+	}
+
+	// Parse global property defaults: default_prop[<name>] = value
+	for key, vals := range r.Form {
+		if strings.HasPrefix(key, "default_prop[") && strings.HasSuffix(key, "]") {
+			propName := key[len("default_prop[") : len(key)-1]
+			if len(vals) > 0 && vals[0] != "" {
+				ud.Defaults[propName] = vals[0]
+			}
+		}
+	}
+
+	// Parse global relation defaults: default_rel[<name>] = value
+	for key, vals := range r.Form {
+		if strings.HasPrefix(key, "default_rel[") && strings.HasSuffix(key, "]") {
+			relName := key[len("default_rel[") : len(key)-1]
+			if len(vals) > 0 && vals[0] != "" {
+				ud.RelationDefaults[relName] = vals[0]
+			}
+		}
+	}
+
+	// Parse override groups: override[<idx>][types], override[<idx>][prop][<name>], override[<idx>][rel][<name>]
+	overrideTypes := make(map[string][]string)          // idx -> types
+	overrideProps := make(map[string]map[string]string) // idx -> prop -> val
+	overrideRels := make(map[string]map[string]string)  // idx -> rel -> val
+	for key, vals := range r.Form {
+		if !strings.HasPrefix(key, "override[") {
+			continue
+		}
+		rest := key[len("override["):]
+		idx, rest, ok := strings.Cut(rest, "]")
+		if !ok {
+			continue
+		}
+		switch {
+		case rest == "[types]":
+			// Multiple values (multi-select)
+			overrideTypes[idx] = vals
+		case strings.HasPrefix(rest, "[prop][") && strings.HasSuffix(rest, "]"):
+			propName := rest[len("[prop][") : len(rest)-1]
+			if overrideProps[idx] == nil {
+				overrideProps[idx] = make(map[string]string)
+			}
+			if len(vals) > 0 && vals[0] != "" {
+				overrideProps[idx][propName] = vals[0]
+			}
+		case strings.HasPrefix(rest, "[rel][") && strings.HasSuffix(rest, "]"):
+			relName := rest[len("[rel][") : len(rest)-1]
+			if overrideRels[idx] == nil {
+				overrideRels[idx] = make(map[string]string)
+			}
+			if len(vals) > 0 && vals[0] != "" {
+				overrideRels[idx][relName] = vals[0]
+			}
+		}
+	}
+
+	// Collect override indices and sort them for deterministic order.
+	idxSet := make(map[string]bool)
+	for idx := range overrideTypes {
+		idxSet[idx] = true
+	}
+	for idx := range overrideProps {
+		idxSet[idx] = true
+	}
+	for idx := range overrideRels {
+		idxSet[idx] = true
+	}
+	indices := make([]string, 0, len(idxSet))
+	for idx := range idxSet {
+		indices = append(indices, idx)
+	}
+	sort.Strings(indices)
+
+	for _, idx := range indices {
+		types := overrideTypes[idx]
+		if len(types) == 0 {
+			continue
+		}
+		o := DefaultOverride{
+			Types:            types,
+			Defaults:         overrideProps[idx],
+			RelationDefaults: overrideRels[idx],
+		}
+		ud.Overrides = append(ud.Overrides, o)
+	}
+
+	if err := a.saveUserDefaults(&ud); err != nil {
+		log.Printf("Failed to save user defaults: %v", err)
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+	a.userDefaults = &ud
+
+	w.Header().Set("HX-Redirect", appendToastParam("/settings", "Settings saved"))
+	w.WriteHeader(http.StatusOK)
 }

@@ -29,6 +29,9 @@ const ConfigFile = "data-entry.yaml"
 // uiStateFile is the filename for persisted UI state within the .rela directory.
 const uiStateFile = "ui-state.json"
 
+// userDefaultsFile is the filename for user-specific default values within the .rela directory.
+const userDefaultsFile = "user-defaults.yaml"
+
 // App is the central application struct holding config, metamodel, graph, and templates.
 type App struct {
 	Cfg  *Config
@@ -45,6 +48,10 @@ type App struct {
 	fs      storage.FS
 	// uiStatePath is the path to .rela/ui-state.json for persisting UI preferences.
 	uiStatePath string
+	// userDefaultsPath is the path to .rela/user-defaults.yaml for user-specific defaults.
+	userDefaultsPath string
+	// userDefaults holds the loaded user defaults (nil if not yet loaded or no file).
+	userDefaults *UserDefaults
 	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
 	// during live-reload. Handlers acquire RLock; reload acquires Lock.
 	mu sync.RWMutex
@@ -120,19 +127,22 @@ func NewApp(projectDir string, fs storage.FS) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing graph templates: %w", err)
 	}
-	return &App{
-		Cfg:         &cfg,
-		meta:        meta,
-		g:           g,
-		repo:        repo,
-		tmpl:        tmpl,
-		styleMap:    styleMap,
-		styledTypes: styledTypes,
-		projCtx:     projCtx,
-		fs:          fs,
-		uiStatePath: filepath.Join(projCtx.CacheDir, uiStateFile),
-		broker:      newEventBroker(),
-	}, nil
+	app := &App{
+		Cfg:              &cfg,
+		meta:             meta,
+		g:                g,
+		repo:             repo,
+		tmpl:             tmpl,
+		styleMap:         styleMap,
+		styledTypes:      styledTypes,
+		projCtx:          projCtx,
+		fs:               fs,
+		uiStatePath:      filepath.Join(projCtx.CacheDir, uiStateFile),
+		userDefaultsPath: filepath.Join(projCtx.CacheDir, userDefaultsFile),
+		broker:           newEventBroker(),
+	}
+	app.userDefaults = app.loadUserDefaults()
+	return app, nil
 }
 
 // NavItem is an enriched navigation entry that includes the entity type for client-side matching.
@@ -239,6 +249,38 @@ func (a *App) saveUIState(state UIState) error {
 		return err
 	}
 	return a.fs.WriteFile(a.uiStatePath, data, 0o644)
+}
+
+// loadUserDefaults reads .rela/user-defaults.yaml and returns the parsed defaults.
+// Returns nil if the file doesn't exist or can't be parsed.
+func (a *App) loadUserDefaults() *UserDefaults {
+	if a.userDefaultsPath == "" {
+		return nil
+	}
+	data, err := a.fs.ReadFile(a.userDefaultsPath)
+	if err != nil {
+		return nil
+	}
+	var ud UserDefaults
+	if err := yaml.Unmarshal(data, &ud); err != nil {
+		return nil
+	}
+	return &ud
+}
+
+// saveUserDefaults writes the user defaults to .rela/user-defaults.yaml.
+func (a *App) saveUserDefaults(ud *UserDefaults) error {
+	if a.userDefaultsPath == "" {
+		return nil
+	}
+	if err := a.fs.MkdirAll(filepath.Dir(a.userDefaultsPath), 0o755); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(ud)
+	if err != nil {
+		return err
+	}
+	return a.fs.WriteFile(a.userDefaultsPath, data, 0o644)
 }
 
 // firstNavTarget returns the first navigable item from the navigation config,

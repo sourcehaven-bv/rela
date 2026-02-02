@@ -756,6 +756,67 @@ func TestUIStateLoadSave(t *testing.T) {
 	})
 }
 
+func TestUserDefaultsLoadSave(t *testing.T) {
+	dir := t.TempDir()
+	app := testAppInstance()
+	app.userDefaultsPath = filepath.Join(dir, "user-defaults.yaml")
+
+	t.Run("load returns nil when file missing", func(t *testing.T) {
+		ud := app.loadUserDefaults()
+		if ud != nil {
+			t.Errorf("expected nil, got %+v", ud)
+		}
+	})
+
+	t.Run("save and load round-trip", func(t *testing.T) {
+		ud := &UserDefaults{
+			Defaults:         map[string]string{"priority": "medium"},
+			RelationDefaults: map[string]string{"belongs_to": "CMP-001"},
+			Overrides: []DefaultOverride{
+				{
+					Types:            []string{"ticket"},
+					Defaults:         map[string]string{"status": "open"},
+					RelationDefaults: map[string]string{"assigned_to": "PER-001"},
+				},
+			},
+		}
+		if err := app.saveUserDefaults(ud); err != nil {
+			t.Fatalf("save error: %v", err)
+		}
+		loaded := app.loadUserDefaults()
+		if loaded == nil {
+			t.Fatal("expected non-nil loaded defaults")
+		}
+		if loaded.Defaults["priority"] != "medium" {
+			t.Errorf("expected priority=medium, got %q", loaded.Defaults["priority"])
+		}
+		if loaded.RelationDefaults["belongs_to"] != "CMP-001" {
+			t.Errorf("expected belongs_to=CMP-001, got %q", loaded.RelationDefaults["belongs_to"])
+		}
+		if len(loaded.Overrides) != 1 {
+			t.Fatalf("expected 1 override, got %d", len(loaded.Overrides))
+		}
+		if loaded.Overrides[0].Defaults["status"] != "open" {
+			t.Errorf("expected override status=open, got %q", loaded.Overrides[0].Defaults["status"])
+		}
+		if loaded.Overrides[0].RelationDefaults["assigned_to"] != "PER-001" {
+			t.Errorf("expected override assigned_to=PER-001, got %q", loaded.Overrides[0].RelationDefaults["assigned_to"])
+		}
+	})
+
+	t.Run("empty userDefaultsPath is safe", func(t *testing.T) {
+		app2 := testAppInstance()
+		app2.userDefaultsPath = ""
+		ud := app2.loadUserDefaults()
+		if ud != nil {
+			t.Errorf("expected nil, got %+v", ud)
+		}
+		if err := app2.saveUserDefaults(&UserDefaults{}); err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+	})
+}
+
 func TestValidateConfigNestedGroups(t *testing.T) {
 	meta := testMeta()
 
