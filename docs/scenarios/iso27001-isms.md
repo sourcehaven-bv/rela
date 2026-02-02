@@ -257,7 +257,7 @@ relations:
     description: A risk is treated by a control
     from: [risk]
     to: [control]
-    source_min: 1 # Every risk must have at least one treatment
+    min_outgoing: 1 # Every risk must have at least one treatment
     inverse: treats
 
   # Control relationships
@@ -303,7 +303,7 @@ relations:
     description: A nonconformity is addressed by a corrective action
     from: [nonconformity]
     to: [corrective_action]
-    source_min: 1 # Every NC must have at least one CA
+    min_outgoing: 1 # Every NC must have at least one CA
     inverse: addresses
 
   # Cross-references

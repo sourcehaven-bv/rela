@@ -202,7 +202,7 @@ func (a *AnalysisModel) runCardinality(app *App) {
 	violations := 0
 
 	for relName, relDef := range app.metamodel.Relations {
-		if relDef.SourceMin != nil && *relDef.SourceMin > 0 {
+		if relDef.MinOutgoing != nil && *relDef.MinOutgoing > 0 {
 			for _, sourceType := range relDef.From {
 				entities := app.graph.NodesByType(sourceType)
 				for _, e := range entities {
@@ -212,7 +212,7 @@ func (a *AnalysisModel) runCardinality(app *App) {
 							count++
 						}
 					}
-					if count < *relDef.SourceMin {
+					if count < *relDef.MinOutgoing {
 						violations++
 					}
 				}

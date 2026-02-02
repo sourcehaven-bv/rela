@@ -1101,10 +1101,10 @@ func TestRelationDef_GetterMethods(t *testing.T) {
 		From:        []string{"design"},
 		To:          []string{"requirement"},
 		Symmetric:   false,
-		SourceMin:   &minOne,
-		SourceMax:   &maxFive,
-		TargetMin:   &minOne,
-		TargetMax:   &maxFive,
+		MinOutgoing: &minOne,
+		MaxOutgoing: &maxFive,
+		MinIncoming: &minOne,
+		MaxIncoming: &maxFive,
 		Inverse:     &InverseDef{ID: "implementedBy"},
 	}
 
@@ -1140,31 +1140,31 @@ func TestRelationDef_GetterMethods(t *testing.T) {
 		}
 	})
 
-	t.Run("GetSourceMin", func(t *testing.T) {
-		got := rel.GetSourceMin()
+	t.Run("GetMinOutgoing", func(t *testing.T) {
+		got := rel.GetMinOutgoing()
 		if got == nil || *got != 1 {
-			t.Errorf("GetSourceMin() = %v, want 1", got)
+			t.Errorf("GetMinOutgoing() = %v, want 1", got)
 		}
 	})
 
-	t.Run("GetSourceMax", func(t *testing.T) {
-		got := rel.GetSourceMax()
+	t.Run("GetMaxOutgoing", func(t *testing.T) {
+		got := rel.GetMaxOutgoing()
 		if got == nil || *got != 5 {
-			t.Errorf("GetSourceMax() = %v, want 5", got)
+			t.Errorf("GetMaxOutgoing() = %v, want 5", got)
 		}
 	})
 
-	t.Run("GetTargetMin", func(t *testing.T) {
-		got := rel.GetTargetMin()
+	t.Run("GetMinIncoming", func(t *testing.T) {
+		got := rel.GetMinIncoming()
 		if got == nil || *got != 1 {
-			t.Errorf("GetTargetMin() = %v, want 1", got)
+			t.Errorf("GetMinIncoming() = %v, want 1", got)
 		}
 	})
 
-	t.Run("GetTargetMax", func(t *testing.T) {
-		got := rel.GetTargetMax()
+	t.Run("GetMaxIncoming", func(t *testing.T) {
+		got := rel.GetMaxIncoming()
 		if got == nil || *got != 5 {
-			t.Errorf("GetTargetMax() = %v, want 5", got)
+			t.Errorf("GetMaxIncoming() = %v, want 5", got)
 		}
 	})
 

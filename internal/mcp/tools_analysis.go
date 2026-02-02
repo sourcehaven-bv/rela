@@ -73,13 +73,13 @@ func (s *Server) checkCardinalityForRelation(
 ) []cardinalityViolation {
 	var violations []cardinalityViolation
 
-	// Check source constraints (outgoing edges from source types)
+	// Check outgoing constraints (from-side: outgoing edges from source types)
 	violations = append(violations,
-		s.checkCardinalityBound(relName, relDef.From, relDef.SourceMin, relDef.SourceMax, true)...)
+		s.checkCardinalityBound(relName, relDef.From, relDef.MinOutgoing, relDef.MaxOutgoing, true)...)
 
-	// Check target constraints (incoming edges to target types)
+	// Check incoming constraints (to-side: incoming edges to target types)
 	violations = append(violations,
-		s.checkCardinalityBound(relName, relDef.To, relDef.TargetMin, relDef.TargetMax, false)...)
+		s.checkCardinalityBound(relName, relDef.To, relDef.MinIncoming, relDef.MaxIncoming, false)...)
 
 	return violations
 }

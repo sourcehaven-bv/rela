@@ -525,9 +525,9 @@ func TestHandleAnalyzeCardinality_WithViolation(t *testing.T) {
 	// Set a minimum cardinality that won't be met
 	minVal := 5
 	s.meta.Relations["addresses"] = metamodel.RelationDef{
-		From:      []string{"decision"},
-		To:        []string{"requirement"},
-		SourceMin: &minVal,
+		From:        []string{"decision"},
+		To:          []string{"requirement"},
+		MinOutgoing: &minVal,
 	}
 	result, err := s.handleAnalyzeCardinality(context.Background(), mcp.CallToolRequest{})
 	if err != nil {

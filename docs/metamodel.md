@@ -337,18 +337,18 @@ properties:
 
 Relations define how entity types can be connected:
 
-| Field         | Description                                    |
-| ------------- | ---------------------------------------------- |
-| `label`       | Display name                                   |
-| `description` | Explanation of the relation's meaning          |
-| `from`        | Source entity types (list)                     |
-| `to`          | Target entity types (list)                     |
-| `inverse`     | Inverse relation definition (string or object) |
-| `symmetric`   | `true` if relation is bidirectional            |
-| `source_min`  | Minimum outgoing relations per source entity   |
-| `source_max`  | Maximum outgoing relations per source entity   |
-| `target_min`  | Minimum incoming relations per target entity   |
-| `target_max`  | Maximum incoming relations per target entity   |
+| Field            | Description                                        |
+| ---------------- | -------------------------------------------------- |
+| `label`          | Display name                                       |
+| `description`    | Explanation of the relation's meaning              |
+| `from`           | Source entity types (list)                         |
+| `to`             | Target entity types (list)                         |
+| `inverse`        | Inverse relation definition (string or object)     |
+| `symmetric`      | `true` if relation is bidirectional                |
+| `min_outgoing`   | Minimum outgoing relations per from-side entity    |
+| `max_outgoing`   | Maximum outgoing relations per from-side entity    |
+| `min_incoming`   | Minimum incoming relations per to-side entity      |
+| `max_incoming`   | Maximum incoming relations per to-side entity      |
 
 ### Example Relation
 
@@ -359,7 +359,7 @@ relations:
     description: A decision addresses a requirement
     from: [decision]
     to: [requirement]
-    source_min: 1 # Each decision must address at least one requirement
+    min_outgoing: 1 # Each decision must address at least one requirement
     inverse: addressedBy # Simple form - label auto-derived as "addressed by"
 ```
 
@@ -396,8 +396,8 @@ relations:
     label: implements
     from: [solution]
     to: [decision]
-    source_min: 1 # Every solution must implement at least one decision
-    target_max: 1 # Each decision can only be implemented by one solution
+    min_outgoing: 1 # Every solution must implement at least one decision
+    max_incoming: 1 # Each decision can only be implemented by one solution
 ```
 
 Check violations with:

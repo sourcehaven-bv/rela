@@ -336,7 +336,7 @@ relations:
     description: A runbook remediates a failure mode
     from: [runbook]
     to: [failure_mode]
-    source_min: 1 # Every runbook must address at least one failure mode
+    min_outgoing: 1 # Every runbook must address at least one failure mode
     inverse: remediatedBy
 
   linkedToAlert:
@@ -344,7 +344,7 @@ relations:
     description: An alert links to a runbook
     from: [alert]
     to: [runbook]
-    source_min: 1 # Every alert should have a runbook
+    min_outgoing: 1 # Every alert should have a runbook
     inverse: triggeredBy
 
   operatesOn:

@@ -454,7 +454,7 @@ relations:
     description: A goal or feature is owned by a stakeholder
     from: [goal, feature, epic]
     to: [stakeholder]
-    target_max: 1
+    max_incoming: 1
     inverse: owns
 
   interestedIn:
