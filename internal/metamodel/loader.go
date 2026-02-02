@@ -209,8 +209,35 @@ func validateEntitySemantics(m *Metamodel) []string {
 					"entity %q: property %q is type \"enum\" but has no 'values' list", name, propName))
 			}
 		}
+
+		errs = append(errs, validateDefaultSort(name, def)...)
 	}
 
+	return errs
+}
+
+// validateDefaultSort checks default_sort entries for an entity definition.
+func validateDefaultSort(entityName string, def EntityDef) []string {
+	var errs []string
+	for i, ss := range def.DefaultSort {
+		if ss.Property == "" {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: default_sort[%d] has no property specified", entityName, i))
+			continue
+		}
+		// "id" and "modified" are virtual sort properties
+		if ss.Property != "id" && ss.Property != "modified" {
+			if _, ok := def.Properties[ss.Property]; !ok {
+				errs = append(errs, fmt.Sprintf(
+					"entity %q: default_sort references unknown property %q", entityName, ss.Property))
+			}
+		}
+		if ss.Direction != "" && ss.Direction != "asc" && ss.Direction != "desc" {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: default_sort[%d] has invalid direction %q (use \"asc\" or \"desc\")",
+				entityName, i, ss.Direction))
+		}
+	}
 	return errs
 }
 

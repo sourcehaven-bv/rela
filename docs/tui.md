@@ -149,7 +149,7 @@ The entity ID is auto-generated based on the type's ID pattern.
 
 ### Search
 
-Full-text search across all entities.
+Full-text search across all entities with structured query support.
 
 ```text
 ┌─────────────────────────────────────────┐
@@ -168,12 +168,29 @@ Full-text search across all entities.
 └─────────────────────────────────────────┘
 ```
 
-Searches in:
+**Query syntax:**
 
-- Entity IDs
-- Titles
-- Descriptions
-- Free-form content
+| Syntax                     | Description                                    |
+| -------------------------- | ---------------------------------------------- |
+| `type:requirement`         | Filter by entity type                          |
+| `type:requirement,decision`| Filter by multiple types                       |
+| `status:draft`             | Shortcut for `prop:status=draft`               |
+| `prop:priority=high`       | Property equals value                          |
+| `prop:assignee!=`          | Property not equal / not empty                 |
+| `prop:title=~auth.*`       | Regex match                                    |
+| `prop:score>5`             | Greater than (dates, integers)                 |
+| `sort:priority`            | Sort ascending by property                     |
+| `sort:priority:desc`       | Sort descending                                |
+| `sort:modified:desc`       | Sort by modification time (newest first)       |
+| `sort:id`                  | Sort by entity ID                              |
+| `"quoted phrase"`          | Exact phrase match                             |
+| free text                  | Substring match across IDs, titles, content    |
+
+Multiple filter terms combine with AND logic. Multiple `sort:` clauses apply in order
+(first is the primary key, second is the tiebreaker).
+
+When no `sort:` clause is given, results use the entity type's `default_sort` from the
+metamodel (if all results are the same type), otherwise sort by ID ascending.
 
 **Shortcuts:**
 

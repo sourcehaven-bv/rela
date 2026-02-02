@@ -456,11 +456,25 @@ filter_controls:
 
 ### Sort Configuration
 
+Sort supports multiple criteria as a list. The first entry is the primary sort key:
+
 ```yaml
 sort:
-  property: priority
-  direction: asc    # "asc" or "desc"
+  - property: priority
+    direction: desc
+  - property: due_date
+    direction: asc   # "asc" (default) or "desc"
 ```
+
+You can also sort by the virtual properties `id` (entity ID) and `modified` (file modification time).
+
+If no sort is configured, the list falls back to the entity type's `default_sort` from the metamodel,
+or sorts by ID ascending.
+
+The search bar also supports `sort:` clauses (see [Query Syntax](#query-syntax) below).
+
+> **Migration**: If your config uses the old single-object format (`sort: {property: ..., direction: ...}`),
+> run `rela migrate` to convert it to the list format.
 
 ## Views
 
@@ -713,6 +727,9 @@ Cards use the same search query syntax available on the search page:
 | `prop:<name>!=<value>`   | `prop:assignee!=`                 | Property not equal               |
 | `prop:<name>=~<regex>`   | `prop:title=~auth.*`              | Regex match                      |
 | `prop:<name><<value>`    | `prop:due_date<2025-06-01`        | Less than (dates, numbers)       |
+| `sort:<property>`        | `sort:priority`                   | Sort ascending by property       |
+| `sort:<property>:desc`   | `sort:priority:desc`              | Sort descending by property      |
+| `sort:id` / `sort:modified` | `sort:modified:desc`           | Sort by ID or modification time  |
 | free text                | `authentication`                  | Substring match across all fields|
 | `"quoted phrase"`        | `"REST API"`                      | Exact phrase match               |
 

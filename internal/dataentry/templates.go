@@ -1707,6 +1707,7 @@ function submitInlineCreate() {
 .search-chip-type { background: #dbeafe; color: #1e40af; }
 .search-chip-status { background: #dcfce7; color: #166534; }
 .search-chip-property { background: #e9d5ff; color: #6b21a8; }
+.search-chip-sort { background: #fce7f3; color: #9d174d; }
 .search-chip button { background: none; border: none; cursor: pointer; padding: 0 0 0 2px; font-size: 15px; line-height: 1; opacity: 0.6; color: inherit; }
 .search-chip button:hover { opacity: 1; }
 .search-input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-family: var(--font); font-size: 14px; color: var(--text); background: var(--bg-card); outline: none; }
@@ -1723,6 +1724,7 @@ function submitInlineCreate() {
 .search-dd-cat-type { background: #dbeafe; color: #1e40af; }
 .search-dd-cat-status { background: #dcfce7; color: #166534; }
 .search-dd-cat-property { background: #e9d5ff; color: #6b21a8; }
+.search-dd-cat-sort { background: #fce7f3; color: #9d174d; }
 </style>
 
 <div class="card" style="padding:20px;margin-bottom:20px;">
@@ -1737,6 +1739,7 @@ function submitInlineCreate() {
     <code>type:ticket</code> filter by entity type &middot;
     <code>status:open</code> filter by status &middot;
     <code>prop:priority=high</code> filter by property &middot;
+    <code>sort:priority:desc</code> sort results &middot;
     <code>"exact phrase"</code> exact match &middot;
     plain words (AND logic)
   </div>
@@ -1765,15 +1768,16 @@ function submitInlineCreate() {
   var activeIdx = -1;
   var filtered = [];
 
-  var catClass = {type: 'search-chip-type', status: 'search-chip-status', property: 'search-chip-property'};
-  var ddCatClass = {type: 'search-dd-cat-type', status: 'search-dd-cat-status', property: 'search-dd-cat-property'};
+  var catClass = {type: 'search-chip-type', status: 'search-chip-status', property: 'search-chip-property', sort: 'search-chip-sort'};
+  var ddCatClass = {type: 'search-dd-cat-type', status: 'search-dd-cat-status', property: 'search-dd-cat-property', sort: 'search-dd-cat-sort'};
 
-  function isFilter(val) { return /^(type|status|prop):/.test(val); }
+  function isFilter(val) { return /^(type|status|prop|sort):/.test(val); }
 
   function detectCategory(val) {
     if (val.lastIndexOf('type:', 0) === 0) return 'type';
     if (val.lastIndexOf('status:', 0) === 0) return 'status';
     if (val.lastIndexOf('prop:', 0) === 0) return 'property';
+    if (val.lastIndexOf('sort:', 0) === 0) return 'sort';
     return '';
   }
 
@@ -1855,6 +1859,24 @@ function submitInlineCreate() {
   function selectItem(idx) {
     if (idx < 0 || idx >= filtered.length) return;
     var sel = filtered[idx];
+    // For first-stage sort suggestions (no direction yet), advance to direction picker
+    if (sel.category === 'sort' && sel.value.split(':').length === 2) {
+      // Replace the current token with sort:prop: to trigger direction dropdown
+      var text = input.value;
+      var words = text.split(/\s+/);
+      var replaced = false;
+      for (var i = words.length - 1; i >= 0; i--) {
+        if (!replaced && /^sort(:|$)/.test(words[i])) {
+          words[i] = sel.value + ':';
+          replaced = true;
+        }
+      }
+      input.value = words.join(' ');
+      closeDropdown();
+      input.focus();
+      updateDropdown();
+      return;
+    }
     addChip(sel.value, sel.category);
     // Remove the filter token from the input, keep other text
     var text = input.value;
@@ -1862,7 +1884,7 @@ function submitInlineCreate() {
     var remaining = [];
     var removed = false;
     for (var i = 0; i < words.length; i++) {
-      if (!removed && /^(type|status|prop)(:|$)/.test(words[i])) {
+      if (!removed && /^(type|status|prop|sort)(:|$)/.test(words[i])) {
         removed = true;
       } else {
         remaining.push(words[i]);
@@ -1878,9 +1900,30 @@ function submitInlineCreate() {
     var text = input.value;
     var words = text.split(/\s+/);
     var last = words[words.length - 1] || '';
-    if (!last || !/^(type|status|prop)(:|$)/.test(last)) {
+    if (!last || !/^(type|status|prop|sort)(:|$)/.test(last)) {
       closeDropdown();
       return;
+    }
+    // Second-stage: sort direction picker (e.g. "sort:priority:" -> asc/desc)
+    var sortDirMatch = last.match(/^(sort:[^:]+):(.*)$/);
+    if (sortDirMatch) {
+      var base = sortDirMatch[1];
+      var dirPrefix = sortDirMatch[2].toLowerCase();
+      // Only offer directions if base matches a known sort suggestion
+      var knownBase = false;
+      for (var s = 0; s < suggestions.length; s++) {
+        if (suggestions[s].value === base && suggestions[s].category === 'sort') { knownBase = true; break; }
+      }
+      if (knownBase) {
+        var dirs = [{value: base + ':asc', category: 'sort'}, {value: base + ':desc', category: 'sort'}];
+        var dirMatches = [];
+        for (var d = 0; d < dirs.length; d++) {
+          if (dirs[d].value.toLowerCase().indexOf(last.toLowerCase()) === 0) dirMatches.push(dirs[d]);
+        }
+        if (dirMatches.length > 0) { showDropdown(dirMatches); return; }
+        closeDropdown();
+        return;
+      }
     }
     var matches = [];
     var q = last.toLowerCase();

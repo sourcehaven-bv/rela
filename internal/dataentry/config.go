@@ -4,6 +4,8 @@
 // on entities stored as markdown files.
 package dataentry
 
+import "github.com/Sourcehaven-BV/rela/internal/model"
+
 // Config is the top-level configuration for a data entry application.
 type Config struct {
 	Version    string                       `yaml:"version"`
@@ -77,7 +79,7 @@ type List struct {
 	Title          string          `yaml:"title"`
 	Description    string          `yaml:"description"`
 	Columns        []ListColumn    `yaml:"columns"`
-	Sort           *SortConfig     `yaml:"sort,omitempty"`
+	Sort           []SortSpec      `yaml:"sort,omitempty"`
 	Filters        []FilterConfig  `yaml:"filters"`
 	FilterControls []FilterControl `yaml:"filter_controls"`
 	CreateForm     string          `yaml:"create_form"`
@@ -97,11 +99,10 @@ type ListColumn struct {
 	Link     bool   `yaml:"link"`
 }
 
-// SortConfig defines default sort order for a list.
-type SortConfig struct {
-	Property  string `yaml:"property"`
-	Direction string `yaml:"direction"`
-}
+// SortSpec defines a single sort criterion for a list or dashboard card.
+// This is the data-entry-specific alias matching the YAML config format.
+// The migration system converts the legacy single-object format to a list.
+type SortSpec = model.SortSpec
 
 // FilterConfig defines a static filter applied to a list.
 type FilterConfig struct {
@@ -156,7 +157,7 @@ type DashboardCard struct {
 	Display string       `yaml:"display"` // "count", "table", "breakdown"
 	GroupBy string       `yaml:"group_by,omitempty"`
 	Columns []ListColumn `yaml:"columns,omitempty"`
-	Sort    *SortConfig  `yaml:"sort,omitempty"`
+	Sort    []SortSpec   `yaml:"sort,omitempty"`
 	Limit   int          `yaml:"limit,omitempty"`
 }
 

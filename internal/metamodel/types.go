@@ -1,6 +1,10 @@
 package metamodel
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/model"
+)
 
 // Metamodel represents the full metamodel configuration
 type Metamodel struct {
@@ -74,6 +78,7 @@ type EntityDef struct {
 	IDPrefixes  []string               `yaml:"id_prefixes,omitempty"` // Multiple ID prefixes
 	RDFType     string                 `yaml:"rdf_type,omitempty"`
 	Properties  map[string]PropertyDef `yaml:"properties"`
+	DefaultSort []model.SortSpec       `yaml:"default_sort,omitempty"` // Default sort order for this entity type
 	Color       string                 `yaml:"color,omitempty"`
 	BorderColor string                 `yaml:"border_color,omitempty"`
 }

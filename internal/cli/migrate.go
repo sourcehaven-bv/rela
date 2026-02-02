@@ -3,9 +3,11 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
@@ -33,13 +35,15 @@ Examples:
 		}
 
 		// Define files to check
+		dataEntryPath := filepath.Join(ctx.Root, dataentry.ConfigFile)
+
 		files := []struct {
 			path     string
 			fileType migration.FileType
 			name     string
 		}{
 			{ctx.MetamodelPath, migration.FileTypeMetamodel, "metamodel.yaml"},
-			// Future: add views.yaml, templates, etc.
+			{dataEntryPath, migration.FileTypeDataEntry, dataentry.ConfigFile},
 		}
 
 		if migrateCheck {

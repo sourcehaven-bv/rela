@@ -16,6 +16,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
@@ -69,6 +70,15 @@ func NewApp(projectDir string, fs storage.FS) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
+	// Check for deprecated syntax that needs migration
+	detections, detectErr := migration.Detect(configPath, migration.FileTypeDataEntry, fs)
+	if detectErr == nil && len(detections) > 0 {
+		return nil, &migration.Error{
+			FilePath:   configPath,
+			Detections: detections,
+		}
+	}
+
 	var cfg Config
 	if unmarshalErr := yaml.Unmarshal(cfgData, &cfg); unmarshalErr != nil {
 		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
