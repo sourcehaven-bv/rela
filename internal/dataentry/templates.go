@@ -320,6 +320,7 @@ function runCommand(commandID, params) {
 
   var execID = 'cmd-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6);
   var label = btn.textContent.trim();
+  var autoOpen = btn.getAttribute('data-auto-open') === 'true';
 
   var container = document.getElementById('command-toast-container');
   var toast = _createToast(execID, label);
@@ -328,7 +329,7 @@ function runCommand(commandID, params) {
   var qs = new URLSearchParams(params);
   qs.set('exec_id', execID);
 
-  _cmdToasts[execID] = { toast: toast, messages: [], logs: [], hoverPause: false, aborted: false };
+  _cmdToasts[execID] = { toast: toast, messages: [], logs: [], hoverPause: false, aborted: false, autoOpen: autoOpen, files: [] };
 
   toast.addEventListener('mouseenter', function() { _cmdToasts[execID].hoverPause = true; });
   toast.addEventListener('mouseleave', function() { _cmdToasts[execID].hoverPause = false; });
@@ -446,6 +447,7 @@ function _addFile(execID, msg) {
   if (!state) return;
   var label = msg.label || msg.path.split('/').pop();
   var action = msg.action || 'none';
+  if (state.files) state.files.push({ path: msg.path, action: action });
   var actionHtml = '';
   if (action === 'open') {
     actionHtml = '<a href="#" onclick="event.preventDefault();_openFile(\'' + _escAttr(execID) + '\',\'' + _escAttr(msg.path) + '\',\'open\')">Open</a>' +
@@ -550,6 +552,21 @@ function _finishToast(execID, success) {
   if (success) {
     t.className = 'command-toast success';
     t.querySelector('.command-toast-icon').innerHTML = '&#10003;';
+    // Auto-open: open all files with action "open" and dismiss toast.
+    if (state.autoOpen && state.files && state.files.length > 0) {
+      var opened = 0;
+      for (var i = 0; i < state.files.length; i++) {
+        var f = state.files[i];
+        if (f.action === 'open') {
+          fetch('/api/open-file?path=' + encodeURIComponent(f.path) + '&action=open', { method: 'POST' });
+          opened++;
+        }
+      }
+      if (opened > 0) {
+        _dismissToast(execID);
+        return;
+      }
+    }
     if (!state.hasActions) _autoHide(execID, 5000);
   } else {
     t.className = 'command-toast error';
@@ -810,12 +827,12 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     <details class="add-dropdown">
       <summary class="btn btn-secondary btn-sm">Commands &#9662;</summary>
       <div class="add-dropdown-menu">
-        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {list_id:'{{ $.ListID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</a>
+        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {list_id:'{{ $.ListID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</a>
         {{ end }}
       </div>
     </details>
     {{ else }}{{ range .Commands }}
-    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {list_id:'{{ $.ListID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</button>
+    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {list_id:'{{ $.ListID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</button>
     {{ end }}{{ end }}{{ end }}
   </div>
 </div>
@@ -1179,12 +1196,12 @@ function submitInlineCreate() {
     <details class="add-dropdown">
       <summary class="btn btn-secondary btn-sm">Commands &#9662;</summary>
       <div class="add-dropdown-menu">
-        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</a>
+        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</a>
         {{ end }}
       </div>
     </details>
     {{ else }}{{ range .Commands }}
-    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</button>
+    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</button>
     {{ end }}{{ end }}{{ end }}
     <a href="{{ .BackURL }}" class="btn btn-secondary btn-sm"
        hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back</a>
@@ -1269,12 +1286,12 @@ function submitInlineCreate() {
     <details class="add-dropdown">
       <summary class="btn btn-secondary btn-sm">Commands &#9662;</summary>
       <div class="add-dropdown-menu">
-        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {entity_id:'{{ $.Entry.ID }}',entity_type:'{{ $.Entry.Type }}',view_id:'{{ $.ViewID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</a>
+        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {entity_id:'{{ $.Entry.ID }}',entity_type:'{{ $.Entry.Type }}',view_id:'{{ $.ViewID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</a>
         {{ end }}
       </div>
     </details>
     {{ else }}{{ range .Commands }}
-    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entry.ID }}',entity_type:'{{ $.Entry.Type }}',view_id:'{{ $.ViewID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</button>
+    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entry.ID }}',entity_type:'{{ $.Entry.Type }}',view_id:'{{ $.ViewID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</button>
     {{ end }}{{ end }}{{ end }}
     <a href="{{ .BackURL }}" class="btn btn-secondary btn-sm"
        hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back</a>
@@ -2017,12 +2034,12 @@ function submitInlineCreate() {
     <details class="add-dropdown">
       <summary class="btn btn-secondary btn-sm">Commands &#9662;</summary>
       <div class="add-dropdown-menu">
-        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</a>
+        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</a>
         {{ end }}
       </div>
     </details>
     {{ else }}{{ range .Commands }}
-    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}>{{ .Label }}</button>
+    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</button>
     {{ end }}{{ end }}
   </div>
   {{ end }}

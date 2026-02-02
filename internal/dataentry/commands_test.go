@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
@@ -111,6 +113,37 @@ func TestResolveCommands(t *testing.T) {
 		cmds := app2.resolveCommands("entity", "", "ticket")
 		if cmds != nil {
 			t.Errorf("expected nil, got %v", cmds)
+		}
+	})
+
+	t.Run("auto_open propagated to resolved command", func(t *testing.T) {
+		app2 := testAppInstance()
+		trueVal := true
+		app2.Cfg.Commands = map[string]CommandConfig{
+			"auto-cmd": {
+				Label:    "Auto",
+				Script:   "echo hi",
+				Context:  "entity",
+				AutoOpen: &trueVal,
+			},
+			"normal-cmd": {
+				Label:   "Normal",
+				Script:  "echo hi",
+				Context: "entity",
+			},
+		}
+		cmds := app2.resolveCommands("entity", "", "ticket")
+		for _, c := range cmds {
+			if c.ID == "auto-cmd" {
+				if c.AutoOpen == nil || !*c.AutoOpen {
+					t.Error("expected auto-cmd to have AutoOpen=true")
+				}
+			}
+			if c.ID == "normal-cmd" {
+				if c.AutoOpen != nil {
+					t.Error("expected normal-cmd to have AutoOpen=nil")
+				}
+			}
 		}
 	})
 
@@ -486,6 +519,63 @@ func TestValidateCommandConfig(t *testing.T) {
 		errs := validateConfig(cfg, meta)
 		if !hasError(errs, "unknown entity type") {
 			t.Errorf("expected entity type error, got %v", errs)
+		}
+	})
+}
+
+func TestCommandConfigAutoOpenYAML(t *testing.T) {
+	t.Run("true, false, and omitted", func(t *testing.T) {
+		yamlData := []byte(`
+commands:
+  gen-pdf:
+    label: Generate PDF
+    script: echo hi
+    context: entity
+    auto_open: true
+  no-auto:
+    label: No Auto
+    script: echo hi
+    context: entity
+    auto_open: false
+  export:
+    label: Export
+    script: echo hi
+    context: entity
+`)
+		var cfg Config
+		if err := yaml.Unmarshal(yamlData, &cfg); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		genPDF := cfg.Commands["gen-pdf"]
+		if genPDF.AutoOpen == nil || !*genPDF.AutoOpen {
+			t.Error("expected gen-pdf auto_open to be true")
+		}
+		noAuto := cfg.Commands["no-auto"]
+		if noAuto.AutoOpen == nil {
+			t.Fatal("expected no-auto auto_open to be non-nil")
+		}
+		if *noAuto.AutoOpen {
+			t.Error("expected no-auto auto_open to be false")
+		}
+		export := cfg.Commands["export"]
+		if export.AutoOpen != nil {
+			t.Errorf("expected export auto_open to be nil, got %v", *export.AutoOpen)
+		}
+	})
+
+	t.Run("boolTrue template func", func(t *testing.T) {
+		funcs := templateFuncs(nil, nil)
+		fn := funcs["boolTrue"].(func(*bool) bool)
+		trueVal := true
+		falseVal := false
+		if !fn(&trueVal) {
+			t.Error("boolTrue(&true) should be true")
+		}
+		if fn(&falseVal) {
+			t.Error("boolTrue(&false) should be false")
+		}
+		if fn(nil) {
+			t.Error("boolTrue(nil) should be false")
 		}
 	})
 }

@@ -23,10 +23,11 @@ const commandOutputPrefix = "::rela::"
 
 // ResolvedCommand is a command that has been matched to a specific page context.
 type ResolvedCommand struct {
-	ID      string
-	Label   string
-	Confirm string
-	Context string
+	ID       string
+	Label    string
+	Confirm  string
+	Context  string
+	AutoOpen *bool
 }
 
 // resolveCommands returns commands available for a given page context.
@@ -50,10 +51,11 @@ func (a *App) resolveCommands(pageType, qualifier, entityType string) []Resolved
 		cmd := a.Cfg.Commands[id]
 		if matchesPage(cmd, pageType, qualifier, entityType) {
 			result = append(result, ResolvedCommand{
-				ID:      id,
-				Label:   cmd.Label,
-				Confirm: cmd.Confirm,
-				Context: cmd.Context,
+				ID:       id,
+				Label:    cmd.Label,
+				Confirm:  cmd.Confirm,
+				Context:  cmd.Context,
+				AutoOpen: cmd.AutoOpen,
 			})
 		}
 	}

@@ -210,6 +210,7 @@ type CommandConfig struct {
 	AvailableOn *CommandScope     `yaml:"available_on,omitempty"`
 	Confirm     string            `yaml:"confirm,omitempty"`
 	Env         map[string]string `yaml:"env,omitempty"`
+	AutoOpen    *bool             `yaml:"auto_open,omitempty"`
 }
 
 // CommandScope controls where a command button appears in the UI.
