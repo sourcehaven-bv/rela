@@ -555,17 +555,17 @@ func (w *Writer) WriteSchemaRelationDetail(name string, def SchemaRelationDef) e
 	if def.IsSymmetric() {
 		data["symmetric"] = true
 	}
-	if srcMin := def.GetSourceMin(); srcMin != nil {
-		data["source_min"] = *srcMin
+	if minOut := def.GetMinOutgoing(); minOut != nil {
+		data["min_outgoing"] = *minOut
 	}
-	if srcMax := def.GetSourceMax(); srcMax != nil {
-		data["source_max"] = *srcMax
+	if maxOut := def.GetMaxOutgoing(); maxOut != nil {
+		data["max_outgoing"] = *maxOut
 	}
-	if tgtMin := def.GetTargetMin(); tgtMin != nil {
-		data["target_min"] = *tgtMin
+	if minIn := def.GetMinIncoming(); minIn != nil {
+		data["min_incoming"] = *minIn
 	}
-	if tgtMax := def.GetTargetMax(); tgtMax != nil {
-		data["target_max"] = *tgtMax
+	if maxIn := def.GetMaxIncoming(); maxIn != nil {
+		data["max_incoming"] = *maxIn
 	}
 	return w.writeJSON(data)
 }
@@ -598,8 +598,8 @@ type SchemaRelationDef interface {
 	GetDescription() string
 	GetInverse() interface{}
 	IsSymmetric() bool
-	GetSourceMin() *int
-	GetSourceMax() *int
-	GetTargetMin() *int
-	GetTargetMax() *int
+	GetMinOutgoing() *int
+	GetMaxOutgoing() *int
+	GetMinIncoming() *int
+	GetMaxIncoming() *int
 }

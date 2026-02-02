@@ -143,10 +143,10 @@ type RelationDef struct {
 	To          []string    `yaml:"to"`
 	Inverse     *InverseDef `yaml:"inverse,omitempty"`
 	Symmetric   bool        `yaml:"symmetric,omitempty"`
-	SourceMin   *int        `yaml:"source_min,omitempty"`
-	SourceMax   *int        `yaml:"source_max,omitempty"`
-	TargetMin   *int        `yaml:"target_min,omitempty"`
-	TargetMax   *int        `yaml:"target_max,omitempty"`
+	MinOutgoing *int        `yaml:"min_outgoing,omitempty"`
+	MaxOutgoing *int        `yaml:"max_outgoing,omitempty"`
+	MinIncoming *int        `yaml:"min_incoming,omitempty"`
+	MaxIncoming *int        `yaml:"max_incoming,omitempty"`
 }
 
 // InverseDef defines the inverse of a relation.
@@ -702,22 +702,22 @@ func (r *RelationDef) IsSymmetric() bool {
 	return r.Symmetric
 }
 
-// GetSourceMin returns the source minimum cardinality
-func (r *RelationDef) GetSourceMin() *int {
-	return r.SourceMin
+// GetMinOutgoing returns the minimum outgoing cardinality (from-side constraint)
+func (r *RelationDef) GetMinOutgoing() *int {
+	return r.MinOutgoing
 }
 
-// GetSourceMax returns the source maximum cardinality
-func (r *RelationDef) GetSourceMax() *int {
-	return r.SourceMax
+// GetMaxOutgoing returns the maximum outgoing cardinality (from-side constraint)
+func (r *RelationDef) GetMaxOutgoing() *int {
+	return r.MaxOutgoing
 }
 
-// GetTargetMin returns the target minimum cardinality
-func (r *RelationDef) GetTargetMin() *int {
-	return r.TargetMin
+// GetMinIncoming returns the minimum incoming cardinality (to-side constraint)
+func (r *RelationDef) GetMinIncoming() *int {
+	return r.MinIncoming
 }
 
-// GetTargetMax returns the target maximum cardinality
-func (r *RelationDef) GetTargetMax() *int {
-	return r.TargetMax
+// GetMaxIncoming returns the maximum incoming cardinality (to-side constraint)
+func (r *RelationDef) GetMaxIncoming() *int {
+	return r.MaxIncoming
 }

@@ -910,10 +910,10 @@ func (r *mockRelationDef) GetDescription() string {
 }
 func (r *mockRelationDef) GetInverse() interface{} { return r.inverse }
 func (r *mockRelationDef) IsSymmetric() bool       { return r.symmetric }
-func (r *mockRelationDef) GetSourceMin() *int      { return r.srcMin }
-func (r *mockRelationDef) GetSourceMax() *int      { return r.srcMax }
-func (r *mockRelationDef) GetTargetMin() *int      { return r.tgtMin }
-func (r *mockRelationDef) GetTargetMax() *int      { return r.tgtMax }
+func (r *mockRelationDef) GetMinOutgoing() *int    { return r.srcMin }
+func (r *mockRelationDef) GetMaxOutgoing() *int    { return r.srcMax }
+func (r *mockRelationDef) GetMinIncoming() *int    { return r.tgtMin }
+func (r *mockRelationDef) GetMaxIncoming() *int    { return r.tgtMax }
 
 // TestWriteSchemaOverview tests schema overview output
 func TestWriteSchemaOverview(t *testing.T) {
@@ -1058,7 +1058,7 @@ func TestWriteSchemaRelationDetail(t *testing.T) {
 	if result2["symmetric"] != true {
 		t.Error("expected symmetric in output")
 	}
-	if result2["source_min"] != float64(1) {
-		t.Error("expected source_min in output")
+	if result2["min_outgoing"] != float64(1) {
+		t.Error("expected min_outgoing in output")
 	}
 }

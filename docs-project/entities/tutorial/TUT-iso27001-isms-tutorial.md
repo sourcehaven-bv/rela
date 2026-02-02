@@ -251,7 +251,7 @@ relations:
     description: A risk is treated by a control
     from: [risk]
     to: [control]
-    source_min: 1
+    min_outgoing: 1
     inverse: treats
 
   implementedBy:
@@ -294,7 +294,7 @@ relations:
     description: A nonconformity is addressed by a corrective action
     from: [nonconformity]
     to: [corrective_action]
-    source_min: 1
+    min_outgoing: 1
     inverse: addresses
 
   relatesTo:

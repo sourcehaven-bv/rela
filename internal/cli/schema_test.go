@@ -565,11 +565,11 @@ func TestSchemaWithCardinality(t *testing.T) {
 		},
 		Relations: map[string]metamodel.RelationDef{
 			"links": {
-				Label:     "links",
-				From:      []string{"entity1"},
-				To:        []string{"entity2"},
-				SourceMin: &sourceMin,
-				SourceMax: &sourceMax,
+				Label:       "links",
+				From:        []string{"entity1"},
+				To:          []string{"entity2"},
+				MinOutgoing: &sourceMin,
+				MaxOutgoing: &sourceMax,
 			},
 		},
 	}
@@ -588,11 +588,11 @@ func TestSchemaWithCardinality(t *testing.T) {
 	if !strings.Contains(result, "Cardinality:") {
 		t.Errorf("expected 'Cardinality:' in output, got: %s", result)
 	}
-	if !strings.Contains(result, "source_min=1") {
-		t.Errorf("expected 'source_min=1' in output, got: %s", result)
+	if !strings.Contains(result, "min_outgoing=1") {
+		t.Errorf("expected 'min_outgoing=1' in output, got: %s", result)
 	}
-	if !strings.Contains(result, "source_max=5") {
-		t.Errorf("expected 'source_max=5' in output, got: %s", result)
+	if !strings.Contains(result, "max_outgoing=5") {
+		t.Errorf("expected 'max_outgoing=5' in output, got: %s", result)
 	}
 }
 
@@ -736,11 +736,11 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 		},
 		Relations: map[string]metamodel.RelationDef{
 			"links": {
-				Label:     "links to",
-				From:      []string{"source"},
-				To:        []string{"target"},
-				SourceMin: &sourceMin,
-				TargetMax: &targetMax,
+				Label:       "links to",
+				From:        []string{"source"},
+				To:          []string{"target"},
+				MinOutgoing: &sourceMin,
+				MaxIncoming: &targetMax,
 			},
 		},
 	}
@@ -758,11 +758,11 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 	})
 
 	// Check for cardinality in label
-	if !strings.Contains(result, "src:1..*") {
-		t.Errorf("expected 'src:1..*' cardinality in output, got: %s", result)
+	if !strings.Contains(result, "out:1..*") {
+		t.Errorf("expected 'out:1..*' cardinality in output, got: %s", result)
 	}
-	if !strings.Contains(result, "tgt:0..1") {
-		t.Errorf("expected 'tgt:0..1' cardinality in output, got: %s", result)
+	if !strings.Contains(result, "in:0..1") {
+		t.Errorf("expected 'in:0..1' cardinality in output, got: %s", result)
 	}
 }
 
@@ -865,53 +865,53 @@ func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
 
 func TestFormatCardinality(t *testing.T) {
 	tests := []struct {
-		name      string
-		sourceMin *int
-		sourceMax *int
-		targetMin *int
-		targetMax *int
-		expected  string
+		name        string
+		minOutgoing *int
+		maxOutgoing *int
+		minIncoming *int
+		maxIncoming *int
+		expected    string
 	}{
 		{
 			name:     "no constraints",
 			expected: "",
 		},
 		{
-			name:      "source min only",
-			sourceMin: intPtr(1),
-			expected:  "src:1..*",
+			name:        "min outgoing only",
+			minOutgoing: intPtr(1),
+			expected:    "out:1..*",
 		},
 		{
-			name:      "source max only",
-			sourceMax: intPtr(5),
-			expected:  "src:0..5",
+			name:        "max outgoing only",
+			maxOutgoing: intPtr(5),
+			expected:    "out:0..5",
 		},
 		{
-			name:      "source min and max same",
-			sourceMin: intPtr(1),
-			sourceMax: intPtr(1),
-			expected:  "src:1",
+			name:        "min and max outgoing same",
+			minOutgoing: intPtr(1),
+			maxOutgoing: intPtr(1),
+			expected:    "out:1",
 		},
 		{
-			name:      "target min only",
-			targetMin: intPtr(1),
-			expected:  "tgt:1..*",
+			name:        "min incoming only",
+			minIncoming: intPtr(1),
+			expected:    "in:1..*",
 		},
 		{
-			name:      "both source and target",
-			sourceMin: intPtr(1),
-			targetMax: intPtr(1),
-			expected:  "src:1..* tgt:0..1",
+			name:        "both outgoing and incoming",
+			minOutgoing: intPtr(1),
+			maxIncoming: intPtr(1),
+			expected:    "out:1..* in:0..1",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			relDef := metamodel.RelationDef{
-				SourceMin: tt.sourceMin,
-				SourceMax: tt.sourceMax,
-				TargetMin: tt.targetMin,
-				TargetMax: tt.targetMax,
+				MinOutgoing: tt.minOutgoing,
+				MaxOutgoing: tt.maxOutgoing,
+				MinIncoming: tt.minIncoming,
+				MaxIncoming: tt.maxIncoming,
 			}
 			result := formatCardinality(relDef)
 			if result != tt.expected {

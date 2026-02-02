@@ -95,7 +95,7 @@ relations:
     label: test
     from: [requirement]
     to: [requirement]
-    source_min: "one"
+    min_outgoing: "one"
 `,
 			wantMsgs: []string{"expected a number", "got a string"},
 			notWant:  []string{"!!str", "int"},

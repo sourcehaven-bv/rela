@@ -240,17 +240,17 @@ func runSchemaRelations() error {
 
 		// Cardinality constraints
 		cardParts := []string{}
-		if def.SourceMin != nil {
-			cardParts = append(cardParts, fmt.Sprintf("source_min=%d", *def.SourceMin))
+		if def.MinOutgoing != nil {
+			cardParts = append(cardParts, fmt.Sprintf("min_outgoing=%d", *def.MinOutgoing))
 		}
-		if def.SourceMax != nil {
-			cardParts = append(cardParts, fmt.Sprintf("source_max=%d", *def.SourceMax))
+		if def.MaxOutgoing != nil {
+			cardParts = append(cardParts, fmt.Sprintf("max_outgoing=%d", *def.MaxOutgoing))
 		}
-		if def.TargetMin != nil {
-			cardParts = append(cardParts, fmt.Sprintf("target_min=%d", *def.TargetMin))
+		if def.MinIncoming != nil {
+			cardParts = append(cardParts, fmt.Sprintf("min_incoming=%d", *def.MinIncoming))
 		}
-		if def.TargetMax != nil {
-			cardParts = append(cardParts, fmt.Sprintf("target_max=%d", *def.TargetMax))
+		if def.MaxIncoming != nil {
+			cardParts = append(cardParts, fmt.Sprintf("max_incoming=%d", *def.MaxIncoming))
 		}
 		if len(cardParts) > 0 {
 			out.WriteMessage("  Cardinality: %s", strings.Join(cardParts, ", "))
@@ -450,20 +450,20 @@ func runSchemaRelation(name string) error {
 	}
 
 	// Cardinality constraints
-	if def.SourceMin != nil || def.SourceMax != nil || def.TargetMin != nil || def.TargetMax != nil {
+	if def.MinOutgoing != nil || def.MaxOutgoing != nil || def.MinIncoming != nil || def.MaxIncoming != nil {
 		out.WriteMessage("")
 		out.WriteMessage("Cardinality Constraints:")
-		if def.SourceMin != nil {
-			out.WriteMessage("  Source Min: %d", *def.SourceMin)
+		if def.MinOutgoing != nil {
+			out.WriteMessage("  Min Outgoing: %d", *def.MinOutgoing)
 		}
-		if def.SourceMax != nil {
-			out.WriteMessage("  Source Max: %d", *def.SourceMax)
+		if def.MaxOutgoing != nil {
+			out.WriteMessage("  Max Outgoing: %d", *def.MaxOutgoing)
 		}
-		if def.TargetMin != nil {
-			out.WriteMessage("  Target Min: %d", *def.TargetMin)
+		if def.MinIncoming != nil {
+			out.WriteMessage("  Min Incoming: %d", *def.MinIncoming)
 		}
-		if def.TargetMax != nil {
-			out.WriteMessage("  Target Max: %d", *def.TargetMax)
+		if def.MaxIncoming != nil {
+			out.WriteMessage("  Max Incoming: %d", *def.MaxIncoming)
 		}
 	}
 
@@ -598,17 +598,17 @@ func buildConstraintLabel(relDef metamodel.RelationDef) string {
 }
 
 func formatCardinality(relDef metamodel.RelationDef) string {
-	// Format: source[min..max] -> target[min..max]
+	// Format: out[min..max] in[min..max]
 	var parts []string
 
-	sourceCard := formatCardinalityRange(relDef.SourceMin, relDef.SourceMax)
-	if sourceCard != "" {
-		parts = append(parts, "src:"+sourceCard)
+	outCard := formatCardinalityRange(relDef.MinOutgoing, relDef.MaxOutgoing)
+	if outCard != "" {
+		parts = append(parts, "out:"+outCard)
 	}
 
-	targetCard := formatCardinalityRange(relDef.TargetMin, relDef.TargetMax)
-	if targetCard != "" {
-		parts = append(parts, "tgt:"+targetCard)
+	inCard := formatCardinalityRange(relDef.MinIncoming, relDef.MaxIncoming)
+	if inCard != "" {
+		parts = append(parts, "in:"+inCard)
 	}
 
 	return strings.Join(parts, " ")
