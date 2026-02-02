@@ -284,9 +284,24 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
 .shortcut-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; font-size: 14px; }
 .shortcut-row + .shortcut-row { border-top: 1px solid #f1f5f9; }
 .shortcut-keys { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--text-muted); }
+.scope-nav { display:flex; align-items:center; gap:8px; padding:6px 12px; margin-bottom:12px; background:var(--bg-card); border:1px solid var(--border); border-radius:6px; font-size:13px; }
+.scope-nav-btn { text-decoration:none; color:var(--primary); padding:2px 8px; border-radius:4px; transition:background 0.15s; }
+.scope-nav-btn:hover { background:var(--primary-light); }
+.scope-nav-disabled { opacity:0.35; pointer-events:none; color:var(--text-muted); padding:2px 8px; }
+.scope-nav-progress { font-weight:600; font-family:var(--font-mono); }
+.scope-nav-label { color:var(--text-muted); }
 
 </style>
 <script>
+// Scope navigation keyboard shortcuts (left/right arrow keys)
+document.addEventListener('keydown', function(e) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  var nav = document.querySelector('.scope-nav');
+  if (!nav) return;
+  if (e.key === 'ArrowLeft') { var btn = nav.querySelector('a.scope-nav-btn'); if (btn) btn.click(); }
+  if (e.key === 'ArrowRight') { var btns = nav.querySelectorAll('a.scope-nav-btn'); if (btns.length > 0) btns[btns.length-1].click(); }
+});
+
 // SlimSelect progressive enhancement
 function enhanceSelects(root) {
   if (typeof SlimSelect === 'undefined') return;
@@ -1517,8 +1532,8 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
           {{ $dlp := $.DetailLinkPrefix }}
           {{ range .Cells }}
           <td>
-            {{ if .Link }}<a href="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}" class="cell-link"
-               hx-get="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}" hx-target="#content" hx-push-url="true">{{ .Value }}</a>
+            {{ if .Link }}<a href="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}&scope=list:{{ $.ListID }}{{ $.ScopeParams }}" class="cell-link"
+               hx-get="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}&scope=list:{{ $.ListID }}{{ $.ScopeParams }}" hx-target="#content" hx-push-url="true">{{ .Value }}</a>
             {{ else if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
             {{ else }}{{ if .Value }}{{ .Value }}{{ else }}&mdash;{{ end }}{{ end }}
           </td>
@@ -1885,7 +1900,27 @@ function submitInlineCreate() {
 </html>
 {{- end -}}
 
+{{- define "scope-nav" -}}
+{{ if .Scope }}
+<div class="scope-nav">
+  {{ if .Scope.PrevURL }}
+  <a href="{{ .Scope.PrevURL }}" hx-get="{{ .Scope.PrevURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">&larr; Prev</a>
+  {{ else }}
+  <span class="scope-nav-disabled">&larr; Prev</span>
+  {{ end }}
+  <span class="scope-nav-progress">{{ .Scope.Progress }}</span>
+  <span class="scope-nav-label">{{ .Scope.Label }}</span>
+  {{ if .Scope.NextURL }}
+  <a href="{{ .Scope.NextURL }}" hx-get="{{ .Scope.NextURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">Next &rarr;</a>
+  {{ else }}
+  <span class="scope-nav-disabled">Next &rarr;</span>
+  {{ end }}
+</div>
+{{ end }}
+{{- end -}}
+
 {{- define "entity-content" -}}
+{{ template "scope-nav" . }}
 <div class="page-header">
   <div>
     <h2>{{ .Entity.Title }}{{ if not .Entity.Title }}{{ .Entity.ID }}{{ end }}</h2>
@@ -1893,8 +1928,8 @@ function submitInlineCreate() {
   </div>
   <div style="display:flex;gap:8px;">
     {{ if .EditFormID }}
-    <a href="/form/{{ .EditFormID }}/{{ .Entity.ID }}" class="btn btn-primary btn-sm"
-       hx-get="/form/{{ .EditFormID }}/{{ .Entity.ID }}" hx-target="#content" hx-push-url="true">Edit <kbd>E</kbd></a>
+    <a href="/form/{{ .EditFormID }}/{{ .Entity.ID }}?return_to={{ urlquery .ReturnTo }}" class="btn btn-primary btn-sm"
+       hx-get="/form/{{ .EditFormID }}/{{ .Entity.ID }}?return_to={{ urlquery .ReturnTo }}" hx-target="#content" hx-push-url="true">Edit <kbd>E</kbd></a>
     {{ end }}
     {{ if .Commands }}{{ if gt (len .Commands) 2 }}
     <details class="add-dropdown">
@@ -1907,8 +1942,6 @@ function submitInlineCreate() {
     {{ else }}{{ range .Commands }}
     <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</button>
     {{ end }}{{ end }}{{ end }}
-    <a href="{{ .BackURL }}" class="btn btn-secondary btn-sm"
-       hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back <kbd>Esc</kbd></a>
   </div>
 </div>
 
@@ -1976,6 +2009,7 @@ function submitInlineCreate() {
 {{- end -}}
 
 {{- define "view-content" -}}
+{{ template "scope-nav" . }}
 <div class="page-header">
   <div>
     <h2>{{ .EntryTitle }}</h2>
@@ -2734,8 +2768,8 @@ function submitInlineCreate() {
 {{ range .Results }}
 <div class="card" style="padding:16px;margin-bottom:8px;">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
-    <a href="/entity/{{ .EntityType }}/{{ .ID }}" class="cell-link" style="font-size:15px;font-weight:600;"
-       hx-get="/entity/{{ .EntityType }}/{{ .ID }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
+    <a href="/entity/{{ .EntityType }}/{{ .ID }}?{{ $.ScopeParams }}" class="cell-link" style="font-size:15px;font-weight:600;"
+       hx-get="/entity/{{ .EntityType }}/{{ .ID }}?{{ $.ScopeParams }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
     <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted);background:#f1f5f9;padding:1px 6px;border-radius:3px;">{{ .ID }}</span>
     <span class="badge badge-blue" style="font-size:10px;">{{ .EntityType }}</span>
   </div>
