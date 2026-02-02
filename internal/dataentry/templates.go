@@ -154,6 +154,15 @@ tbody tr:last-child td { border-bottom: none; }
 .EasyMDEContainer .CodeMirror { border: none; border-radius: 0 0 6px 6px; font-family: var(--font-mono); font-size: 14px; }
 .EasyMDEContainer .editor-toolbar { border-bottom: 1px solid var(--border); border-radius: 6px 6px 0 0; }
 
+/* Fullscreen editor mode */
+.editor-fullscreen-overlay { position: fixed; inset: 0; z-index: 300; background: var(--bg); display: flex; flex-direction: column; }
+.editor-fullscreen-overlay .editor-fullscreen-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg-card); flex-shrink: 0; }
+.editor-fullscreen-overlay .editor-fullscreen-header h3 { font-size: 15px; font-weight: 600; color: var(--text); }
+.editor-fullscreen-overlay .editor-fullscreen-body { flex: 1; display: flex; flex-direction: column; padding: 16px 24px; overflow: hidden; }
+.editor-fullscreen-overlay .EasyMDEContainer { flex: 1; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px; }
+.editor-fullscreen-overlay .EasyMDEContainer .CodeMirror { flex: 1; }
+.editor-fullscreen-overlay .EasyMDEContainer .CodeMirror-scroll { min-height: 0; }
+
 .view-section-heading { font-size: 15px; font-weight: 700; color: var(--text); margin: 0 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--border); }
 .view-content-entity .markdown-body { font-size: 14px; line-height: 1.7; color: var(--text); }
 .markdown-body h3 { font-size: 15px; font-weight: 600; margin: 16px 0 6px; }
@@ -1067,19 +1076,90 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
 
 <script>
 // EasyMDE initialization
+var _editorInstance = null;
 (function() {
   var el = document.getElementById('body-editor');
   if (el) {
-    new EasyMDE({
+    _editorInstance = new EasyMDE({
       element: el,
       spellChecker: false,
       status: false,
       minHeight: '200px',
-      toolbar: ['bold', 'italic', 'heading', '|', 'unordered-list', 'ordered-list', '|', 'link', 'image', '|', 'preview', 'side-by-side', '|', 'guide'],
+      toolbar: ['bold', 'italic', 'heading', '|', 'unordered-list', 'ordered-list', '|', 'link', 'image', '|', 'preview', 'side-by-side', '|', {
+        name: 'toggle-fullscreen-editor',
+        action: toggleFullscreenEditor,
+        className: 'fa fa-arrows-alt',
+        title: 'Toggle Full Screen Editor',
+      }, '|', 'guide'],
       sideBySideFullscreen: false,
     });
   }
 })();
+
+// Fullscreen editor toggle
+function toggleFullscreenEditor() {
+  var overlay = document.getElementById('editor-fullscreen-overlay');
+  if (overlay) {
+    exitFullscreenEditor();
+    return;
+  }
+  if (!_editorInstance) return;
+
+  // Create overlay
+  overlay = document.createElement('div');
+  overlay.id = 'editor-fullscreen-overlay';
+  overlay.className = 'editor-fullscreen-overlay';
+
+  var header = document.createElement('div');
+  header.className = 'editor-fullscreen-header';
+  var title = document.createElement('h3');
+  title.textContent = 'Body (Markdown)';
+  var exitBtn = document.createElement('button');
+  exitBtn.className = 'btn btn-secondary btn-sm';
+  exitBtn.textContent = 'Exit Full Screen';
+  exitBtn.onclick = exitFullscreenEditor;
+  header.appendChild(title);
+  header.appendChild(exitBtn);
+
+  var body = document.createElement('div');
+  body.className = 'editor-fullscreen-body';
+
+  overlay.appendChild(header);
+  overlay.appendChild(body);
+
+  // Move the EasyMDE container into the overlay
+  var container = _editorInstance.codemirror.getWrapperElement().closest('.EasyMDEContainer');
+  container._originalParent = container.parentNode;
+  container._originalNext = container.nextSibling;
+  body.appendChild(container);
+
+  document.body.appendChild(overlay);
+  _editorInstance.codemirror.refresh();
+  _editorInstance.codemirror.focus();
+
+  // Escape key to exit
+  overlay._keyHandler = function(e) {
+    if (e.key === 'Escape') exitFullscreenEditor();
+  };
+  document.addEventListener('keydown', overlay._keyHandler);
+}
+
+function exitFullscreenEditor() {
+  var overlay = document.getElementById('editor-fullscreen-overlay');
+  if (!overlay || !_editorInstance) return;
+
+  var container = _editorInstance.codemirror.getWrapperElement().closest('.EasyMDEContainer');
+  // Move editor back to original location
+  if (container._originalNext) {
+    container._originalParent.insertBefore(container, container._originalNext);
+  } else {
+    container._originalParent.appendChild(container);
+  }
+
+  document.removeEventListener('keydown', overlay._keyHandler);
+  overlay.remove();
+  _editorInstance.codemirror.refresh();
+}
 
 // Inline create modal
 var _inlineRelation = '';
