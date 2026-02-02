@@ -80,12 +80,12 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 	sortProp := r.URL.Query().Get("sort")
 	sortDir := r.URL.Query().Get("sort_dir")
 	if sortProp != "" {
-		sortEntities(entities, &SortConfig{Property: sortProp, Direction: sortDir})
+		a.sortEntitiesMulti(entities, []model.SortSpec{{Property: sortProp, Direction: sortDir}})
 	} else {
-		sortEntities(entities, list.Sort)
-		if list.Sort != nil {
-			sortProp = list.Sort.Property
-			sortDir = list.Sort.Direction
+		a.sortEntitiesMulti(entities, list.Sort)
+		if len(list.Sort) > 0 {
+			sortProp = list.Sort[0].Property
+			sortDir = list.Sort[0].Direction
 		}
 	}
 
@@ -1459,6 +1459,27 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Add sort suggestions: virtual properties + all entity properties
+	sortSeen := make(map[string]bool)
+	for _, vp := range []string{"id", "modified"} {
+		key := "sort:" + vp
+		suggestions = append(suggestions, searchSuggestion{Value: key, Category: "sort"})
+		sortSeen[key] = true
+	}
+	for _, entityTypeName := range a.meta.EntityTypes() {
+		entDef, ok := a.meta.GetEntityDef(entityTypeName)
+		if !ok {
+			continue
+		}
+		for propName := range entDef.Properties {
+			key := "sort:" + propName
+			if !sortSeen[key] {
+				suggestions = append(suggestions, searchSuggestion{Value: key, Category: "sort"})
+				sortSeen[key] = true
+			}
+		}
+	}
+
 	suggestionsJSON, _ := json.Marshal(suggestions)
 
 	data := map[string]interface{}{
@@ -1584,7 +1605,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			rc.GroupByLabel = titleCase(card.GroupBy)
 
 		case "table":
-			sortEntities(entities, card.Sort)
+			a.sortEntitiesMulti(entities, card.Sort)
 			if card.Limit > 0 && len(entities) > card.Limit {
 				entities = entities[:card.Limit]
 			}

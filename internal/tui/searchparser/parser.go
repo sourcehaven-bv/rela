@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // SearchQuery represents parsed search query components
@@ -14,6 +15,7 @@ type SearchQuery struct {
 	PropertyFilters []*filter.Filter // Property filters (e.g., status=published)
 	FreeTextWords   []string         // Free text words (AND logic)
 	FreeTextPhrases []string         // Exact phrase matches (quoted strings)
+	SortClauses     []model.SortSpec // Sort criteria (e.g., sort:priority:desc)
 	ParseErrors     []string         // Any parsing errors encountered
 }
 
@@ -25,6 +27,7 @@ func ParseQuery(query string) *SearchQuery {
 		PropertyFilters: []*filter.Filter{},
 		FreeTextWords:   []string{},
 		FreeTextPhrases: []string{},
+		SortClauses:     []model.SortSpec{},
 		ParseErrors:     []string{},
 	}
 
@@ -85,6 +88,33 @@ func ParseQuery(query string) *SearchQuery {
 				continue
 			}
 			sq.PropertyFilters = append(sq.PropertyFilters, f)
+			continue
+		}
+
+		// Check for sort clause
+		if strings.HasPrefix(token, "sort:") {
+			sortStr := strings.TrimPrefix(token, "sort:")
+			if sortStr == "" {
+				sq.ParseErrors = append(sq.ParseErrors, "sort: requires a property name")
+				continue
+			}
+			parts := strings.SplitN(sortStr, ":", 2)
+			property := parts[0]
+			direction := "asc"
+			if len(parts) == 2 {
+				switch parts[1] {
+				case "asc", "desc":
+					direction = parts[1]
+				default:
+					sq.ParseErrors = append(sq.ParseErrors,
+						fmt.Sprintf("sort: invalid direction %q (use \"asc\" or \"desc\")", parts[1]))
+					continue
+				}
+			}
+			sq.SortClauses = append(sq.SortClauses, model.SortSpec{
+				Property:  property,
+				Direction: direction,
+			})
 			continue
 		}
 
@@ -165,7 +195,13 @@ func (sq *SearchQuery) HasFreeText() bool {
 	return len(sq.FreeTextWords) > 0 || len(sq.FreeTextPhrases) > 0
 }
 
-// IsEmpty returns true if the query has no search components
+// HasSort returns true if the query has any sort clauses
+func (sq *SearchQuery) HasSort() bool {
+	return len(sq.SortClauses) > 0
+}
+
+// IsEmpty returns true if the query has no search components.
+// A query with only sort clauses is still considered empty (sort without results is meaningless).
 func (sq *SearchQuery) IsEmpty() bool {
 	return !sq.HasFilters() && !sq.HasFreeText()
 }
@@ -242,6 +278,24 @@ func GetAutocompleteContext(query string, cursorPos int) *AutocompleteContext {
 		return &AutocompleteContext{
 			Type:   "status",
 			Prefix: prefix,
+		}
+	}
+
+	// Check if we're in the middle of a sort: clause
+	if strings.HasPrefix(currentToken, "sort:") {
+		sortPart := strings.TrimPrefix(currentToken, "sort:")
+		parts := strings.SplitN(sortPart, ":", 2)
+		if len(parts) == 2 {
+			// After property name, completing direction
+			return &AutocompleteContext{
+				Type:   "sortdir",
+				Prefix: parts[1],
+			}
+		}
+		// Completing property name
+		return &AutocompleteContext{
+			Type:   "sort",
+			Prefix: parts[0],
 		}
 	}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
@@ -187,6 +188,35 @@ func (s *SearchModel) updateSuggestions(app *App) {
 	case "status":
 		// Status is a common property shortcut, use same logic as propvalue
 		s.suggestions = s.getPropertyValueSuggestions(app, "status", ctx.Prefix)
+		s.showSuggestions = len(s.suggestions) > 0
+
+	case "sort":
+		// Suggest property names plus virtual properties "id" and "modified"
+		propMap := make(map[string]bool)
+		propMap["id"] = true
+		propMap["modified"] = true
+		for _, entityDef := range app.metamodel.Entities {
+			for propName := range entityDef.Properties {
+				propMap[propName] = true
+			}
+		}
+		s.suggestions = []string{}
+		for propName := range propMap {
+			if strings.HasPrefix(strings.ToLower(propName), strings.ToLower(ctx.Prefix)) {
+				s.suggestions = append(s.suggestions, propName)
+			}
+		}
+		sort.Strings(s.suggestions)
+		s.showSuggestions = len(s.suggestions) > 0
+
+	case "sortdir":
+		// Suggest "asc" and "desc"
+		s.suggestions = []string{}
+		for _, dir := range []string{"asc", "desc"} {
+			if strings.HasPrefix(dir, strings.ToLower(ctx.Prefix)) {
+				s.suggestions = append(s.suggestions, dir)
+			}
+		}
 		s.showSuggestions = len(s.suggestions) > 0
 
 	default:
@@ -402,6 +432,20 @@ func (s *SearchModel) acceptSuggestion() {
 	case "status":
 		s.query = prefix + "status:" + suggestion + " " + suffix
 		s.cursorPos = len(prefix) + len("status:") + len(suggestion) + 1
+	case "sort":
+		// After accepting a sort property, add ":" so user can type direction
+		s.query = prefix + "sort:" + suggestion + ":" + suffix
+		s.cursorPos = len(prefix) + len("sort:") + len(suggestion) + 1
+	case "sortdir":
+		// Find the sort: token start, rebuild with chosen direction
+		currentToken := s.query[tokenStart:s.cursorPos]
+		// currentToken is like "sort:property:de" — replace everything after last ":"
+		lastColon := strings.LastIndex(currentToken, ":")
+		if lastColon != -1 {
+			beforeDir := s.query[:tokenStart] + currentToken[:lastColon+1]
+			s.query = beforeDir + suggestion + " " + suffix
+			s.cursorPos = len(beforeDir) + len(suggestion) + 1
+		}
 	}
 
 	// Hide suggestions after accepting
@@ -487,7 +531,83 @@ func (s *SearchModel) performSearch(app *App, query string) (results []*model.En
 		}
 	}
 
+	// Validate sort properties against result set
+	if sq.HasSort() {
+		allProps := collectAllPropertyNames(app.metamodel, filtered)
+		for _, sc := range sq.SortClauses {
+			if sc.Property != "id" && sc.Property != "modified" && !allProps[sc.Property] {
+				errors = append(errors, fmt.Sprintf("sort: unknown property %q", sc.Property))
+			}
+		}
+		if len(errors) > 0 {
+			return filtered, errors
+		}
+	}
+
+	// Apply sort
+	if sq.HasSort() {
+		entityDefs := collectEntityDefs(app.metamodel, filtered)
+		filter.SortMulti(filtered, sq.SortClauses, entityDefs, app.metamodel)
+	} else {
+		// Apply default_sort if single entity type
+		types := uniqueTypes(filtered)
+		if len(types) == 1 {
+			if def, ok := app.metamodel.GetEntityDef(types[0]); ok && len(def.DefaultSort) > 0 {
+				entityDefs := map[string]*metamodel.EntityDef{types[0]: def}
+				filter.SortMulti(filtered, def.DefaultSort, entityDefs, app.metamodel)
+			} else {
+				filter.SortByID(filtered, false)
+			}
+		} else {
+			filter.SortByID(filtered, false)
+		}
+	}
+
 	return filtered, nil
+}
+
+// collectEntityDefs builds a map of entity type definitions for the given entities.
+func collectEntityDefs(meta *metamodel.Metamodel, entities []*model.Entity) map[string]*metamodel.EntityDef {
+	defs := make(map[string]*metamodel.EntityDef)
+	for _, e := range entities {
+		if _, ok := defs[e.Type]; !ok {
+			if def, ok := meta.GetEntityDef(e.Type); ok {
+				defs[e.Type] = def
+			}
+		}
+	}
+	return defs
+}
+
+// collectAllPropertyNames returns a set of all property names across all entity types in the result set.
+func collectAllPropertyNames(meta *metamodel.Metamodel, entities []*model.Entity) map[string]bool {
+	seen := make(map[string]bool)
+	typesSeen := make(map[string]bool)
+	for _, e := range entities {
+		if typesSeen[e.Type] {
+			continue
+		}
+		typesSeen[e.Type] = true
+		if def, ok := meta.GetEntityDef(e.Type); ok {
+			for propName := range def.Properties {
+				seen[propName] = true
+			}
+		}
+	}
+	return seen
+}
+
+// uniqueTypes returns the distinct entity types in the given slice.
+func uniqueTypes(entities []*model.Entity) []string {
+	seen := make(map[string]bool)
+	var types []string
+	for _, e := range entities {
+		if !seen[e.Type] {
+			seen[e.Type] = true
+			types = append(types, e.Type)
+		}
+	}
+	return types
 }
 
 // matchesFilters checks if an entity matches all search criteria
@@ -699,9 +819,12 @@ func (s *SearchModel) View(_, height int) string {
 		sb.WriteString("  prop:status=published         - filter by property\n")
 		sb.WriteString("  authentication                - free text search\n")
 		sb.WriteString("  \"exact phrase\"                - exact phrase match\n")
+		sb.WriteString("  sort:priority:desc            - sort by property\n")
+		sb.WriteString("  sort:modified:desc            - sort by last modified\n")
 		sb.WriteString("\n")
 		sb.WriteString("  type:requirement prop:priority>3 auth\n")
 		sb.WriteString("  type:decision,solution \"REST API\"\n")
+		sb.WriteString("  type:requirement sort:priority:desc sort:title\n")
 	}
 
 	return sb.String()
@@ -716,6 +839,7 @@ func (s *SearchModel) highlightSyntax(text string) string {
 	typeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))   // blue
 	propStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))   // green
 	quoteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")) // yellow
+	sortStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("213"))  // magenta
 
 	// Parse text to handle quoted strings correctly
 	var result strings.Builder
@@ -759,6 +883,8 @@ func (s *SearchModel) highlightSyntax(text string) string {
 			result.WriteString(typeStyle.Render(token))
 		case strings.HasPrefix(token, "prop:"), strings.HasPrefix(token, "status:"):
 			result.WriteString(propStyle.Render(token))
+		case strings.HasPrefix(token, "sort:"):
+			result.WriteString(sortStyle.Render(token))
 		default:
 			result.WriteString(token)
 		}

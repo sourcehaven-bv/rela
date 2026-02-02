@@ -11,8 +11,9 @@ import (
 type FileType string
 
 const (
-	FileTypeMetamodel FileType = "metamodel" // metamodel.yaml
-	FileTypeViews     FileType = "views"     // views.yaml (future)
+	FileTypeMetamodel FileType = "metamodel"  // metamodel.yaml
+	FileTypeViews     FileType = "views"      // views.yaml (future)
+	FileTypeDataEntry FileType = "data-entry" // data-entry.yaml
 )
 
 // Migration defines the interface for schema migrations.

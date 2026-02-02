@@ -197,6 +197,162 @@ func TestTokenize(t *testing.T) {
 	}
 }
 
+func TestParseQuery_SortClause(t *testing.T) {
+	sq := ParseQuery("sort:priority")
+	if len(sq.SortClauses) != 1 {
+		t.Fatalf("Expected 1 sort clause, got %d", len(sq.SortClauses))
+	}
+	if sq.SortClauses[0].Property != "priority" {
+		t.Errorf("Expected property 'priority', got %s", sq.SortClauses[0].Property)
+	}
+	if sq.SortClauses[0].Direction != "asc" {
+		t.Errorf("Expected direction 'asc', got %s", sq.SortClauses[0].Direction)
+	}
+}
+
+func TestParseQuery_SortClauseDesc(t *testing.T) {
+	sq := ParseQuery("sort:priority:desc")
+	if len(sq.SortClauses) != 1 {
+		t.Fatalf("Expected 1 sort clause, got %d", len(sq.SortClauses))
+	}
+	if sq.SortClauses[0].Property != "priority" {
+		t.Errorf("Expected property 'priority', got %s", sq.SortClauses[0].Property)
+	}
+	if sq.SortClauses[0].Direction != "desc" {
+		t.Errorf("Expected direction 'desc', got %s", sq.SortClauses[0].Direction)
+	}
+}
+
+func TestParseQuery_SortClauseAscExplicit(t *testing.T) {
+	sq := ParseQuery("sort:title:asc")
+	if len(sq.SortClauses) != 1 {
+		t.Fatalf("Expected 1 sort clause, got %d", len(sq.SortClauses))
+	}
+	if sq.SortClauses[0].Direction != "asc" {
+		t.Errorf("Expected direction 'asc', got %s", sq.SortClauses[0].Direction)
+	}
+}
+
+func TestParseQuery_SortVirtualProperties(t *testing.T) {
+	sq := ParseQuery("sort:id sort:modified:desc")
+	if len(sq.SortClauses) != 2 {
+		t.Fatalf("Expected 2 sort clauses, got %d", len(sq.SortClauses))
+	}
+	if sq.SortClauses[0].Property != "id" {
+		t.Errorf("Expected 'id', got %s", sq.SortClauses[0].Property)
+	}
+	if sq.SortClauses[1].Property != "modified" {
+		t.Errorf("Expected 'modified', got %s", sq.SortClauses[1].Property)
+	}
+	if sq.SortClauses[1].Direction != "desc" {
+		t.Errorf("Expected 'desc', got %s", sq.SortClauses[1].Direction)
+	}
+}
+
+func TestParseQuery_MultipleSortClauses(t *testing.T) {
+	sq := ParseQuery("sort:priority:desc sort:title")
+	if len(sq.SortClauses) != 2 {
+		t.Fatalf("Expected 2 sort clauses, got %d", len(sq.SortClauses))
+	}
+	if sq.SortClauses[0].Property != "priority" || sq.SortClauses[0].Direction != "desc" {
+		t.Errorf("First sort clause wrong: %+v", sq.SortClauses[0])
+	}
+	if sq.SortClauses[1].Property != "title" || sq.SortClauses[1].Direction != "asc" {
+		t.Errorf("Second sort clause wrong: %+v", sq.SortClauses[1])
+	}
+}
+
+func TestParseQuery_SortEmpty(t *testing.T) {
+	sq := ParseQuery("sort:")
+	if len(sq.ParseErrors) == 0 {
+		t.Error("Expected parse error for empty sort")
+	}
+}
+
+func TestParseQuery_SortInvalidDirection(t *testing.T) {
+	sq := ParseQuery("sort:priority:invalid")
+	if len(sq.ParseErrors) == 0 {
+		t.Error("Expected parse error for invalid sort direction")
+	}
+	if len(sq.SortClauses) != 0 {
+		t.Error("Expected no sort clauses for invalid direction")
+	}
+}
+
+func TestParseQuery_SortCombined(t *testing.T) {
+	sq := ParseQuery(`type:requirement prop:status=draft sort:priority:desc auth`)
+	if len(sq.EntityTypes) != 1 || sq.EntityTypes[0] != "requirement" {
+		t.Errorf("Expected type 'requirement', got %v", sq.EntityTypes)
+	}
+	if len(sq.PropertyFilters) != 1 {
+		t.Errorf("Expected 1 property filter, got %d", len(sq.PropertyFilters))
+	}
+	if len(sq.SortClauses) != 1 || sq.SortClauses[0].Property != "priority" {
+		t.Errorf("Expected sort by priority, got %v", sq.SortClauses)
+	}
+	if len(sq.FreeTextWords) != 1 || sq.FreeTextWords[0] != "auth" {
+		t.Errorf("Expected free text 'auth', got %v", sq.FreeTextWords)
+	}
+}
+
+func TestParseQuery_SortOnlyIsEmpty(t *testing.T) {
+	sq := ParseQuery("sort:priority:desc")
+	// A query with only sort and no filters/text is considered empty
+	if !sq.IsEmpty() {
+		t.Error("Expected query with only sort to be empty")
+	}
+	if !sq.HasSort() {
+		t.Error("Expected HasSort to be true")
+	}
+}
+
+func TestParseQuery_SortNotAFilter(t *testing.T) {
+	sq := ParseQuery("sort:priority")
+	if sq.HasFilters() {
+		t.Error("Sort clauses should not count as filters")
+	}
+}
+
+func TestAutocompleteContext_Sort(t *testing.T) {
+	ctx := GetAutocompleteContext("sort:", 5)
+	if ctx.Type != "sort" {
+		t.Errorf("Expected type 'sort', got %s", ctx.Type)
+	}
+	if ctx.Prefix != "" {
+		t.Errorf("Expected empty prefix, got %s", ctx.Prefix)
+	}
+}
+
+func TestAutocompleteContext_SortWithPrefix(t *testing.T) {
+	ctx := GetAutocompleteContext("sort:pri", 8)
+	if ctx.Type != "sort" {
+		t.Errorf("Expected type 'sort', got %s", ctx.Type)
+	}
+	if ctx.Prefix != "pri" {
+		t.Errorf("Expected prefix 'pri', got %s", ctx.Prefix)
+	}
+}
+
+func TestAutocompleteContext_SortDir(t *testing.T) {
+	ctx := GetAutocompleteContext("sort:priority:", 14)
+	if ctx.Type != "sortdir" {
+		t.Errorf("Expected type 'sortdir', got %s", ctx.Type)
+	}
+	if ctx.Prefix != "" {
+		t.Errorf("Expected empty prefix, got %s", ctx.Prefix)
+	}
+}
+
+func TestAutocompleteContext_SortDirWithPrefix(t *testing.T) {
+	ctx := GetAutocompleteContext("sort:priority:de", 16)
+	if ctx.Type != "sortdir" {
+		t.Errorf("Expected type 'sortdir', got %s", ctx.Type)
+	}
+	if ctx.Prefix != "de" {
+		t.Errorf("Expected prefix 'de', got %s", ctx.Prefix)
+	}
+}
+
 func TestErrorString(t *testing.T) {
 	sq := &SearchQuery{
 		ParseErrors: []string{"error1", "error2"},

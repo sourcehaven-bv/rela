@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"sort"
 	"strings"
 	"time"
 
@@ -48,25 +47,20 @@ func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Ent
 	return result
 }
 
-// sortEntities sorts entities by a property according to the given config.
-func sortEntities(entities []*model.Entity, cfg *SortConfig) {
-	if cfg == nil || cfg.Property == "" {
+// sortEntitiesMulti sorts entities by multiple sort specs using type-aware comparison.
+func (a *App) sortEntitiesMulti(entities []*model.Entity, specs []model.SortSpec) {
+	if len(specs) == 0 {
 		return
 	}
-	sort.Slice(entities, func(i, j int) bool {
-		vi := fmt.Sprintf("%v", entities[i].Properties[cfg.Property])
-		vj := fmt.Sprintf("%v", entities[j].Properties[cfg.Property])
-		if entities[i].Properties[cfg.Property] == nil {
-			vi = ""
+	entityDefs := make(map[string]*metamodel.EntityDef)
+	for _, e := range entities {
+		if _, ok := entityDefs[e.Type]; !ok {
+			if def, ok := a.meta.GetEntityDef(e.Type); ok {
+				entityDefs[e.Type] = def
+			}
 		}
-		if entities[j].Properties[cfg.Property] == nil {
-			vj = ""
-		}
-		if cfg.Direction == "desc" {
-			return vi > vj
-		}
-		return vi < vj
-	})
+	}
+	filter.SortMulti(entities, specs, entityDefs, a.meta)
 }
 
 // resolvePropertyValues returns allowed values for a property from its definition or custom type.
@@ -388,6 +382,12 @@ func (a *App) executeQuery(query string) []*model.Entity {
 
 		results = append(results, e)
 	}
+
+	// Apply sort from query syntax
+	if sq.HasSort() {
+		a.sortEntitiesMulti(results, sq.SortClauses)
+	}
+
 	return results
 }
 

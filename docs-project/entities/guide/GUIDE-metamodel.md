@@ -683,12 +683,56 @@ rela list control --sort id
 
 Sorting is type-aware:
 
-- `string`, `enum`: Lexicographic (alphabetical)
+- `string`: Lexicographic (alphabetical)
+- `enum`/custom types: By the order defined in the type's `values` list (not alphabetical)
 - `date`: Chronological
 - `integer`: Numeric
 - `boolean`: `false` before `true`
 
 Entities with missing values for the sort property are placed at the end.
+
+### Default Sort Order
+
+Entity types can declare a default sort order in the metamodel. This is used when no explicit
+sort is specified in a query or CLI command:
+
+```yaml
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    default_sort:
+      - property: priority
+      - property: due_date
+        direction: asc
+    properties:
+      # ...
+```
+
+Each entry in `default_sort` is a sort criterion applied in order (first entry is the primary key).
+The `direction` field is optional and defaults to `"asc"`. Supported values: `"asc"` or `"desc"`.
+
+You can sort by any property defined on the entity, plus two virtual properties:
+
+- `id` — sorts by entity ID
+- `modified` — sorts by file modification time
+
+### Sort in Search Queries
+
+The TUI search screen and data entry search bar support a `sort:` clause:
+
+```text
+sort:priority                     # sort by priority ascending
+sort:priority:desc                # sort by priority descending
+sort:id:desc                      # sort by entity ID descending
+sort:modified:desc                # sort by modification time (newest first)
+sort:priority:desc sort:title     # multi-sort: priority desc, then title asc
+```
+
+When no `sort:` clause is present:
+
+1. If all results are the same entity type and that type has `default_sort`, it is used
+2. Otherwise, results are sorted by ID ascending
 
 ## Custom Validation Rules
 

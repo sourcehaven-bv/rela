@@ -80,26 +80,38 @@ func TestApplyFilters(t *testing.T) {
 	}
 }
 
-func TestSortEntities(t *testing.T) {
+func TestSortEntitiesMulti(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"item": {
+				Properties: map[string]metamodel.PropertyDef{
+					"name": {Type: "string"},
+				},
+			},
+		},
+	}
+
 	makeEntities := func() []*model.Entity {
 		return []*model.Entity{
-			{ID: "E-003", Properties: map[string]interface{}{"name": "Charlie"}},
-			{ID: "E-001", Properties: map[string]interface{}{"name": "Alice"}},
-			{ID: "E-002", Properties: map[string]interface{}{"name": "Bob"}},
+			{ID: "E-003", Type: "item", Properties: map[string]interface{}{"name": "Charlie"}},
+			{ID: "E-001", Type: "item", Properties: map[string]interface{}{"name": "Alice"}},
+			{ID: "E-002", Type: "item", Properties: map[string]interface{}{"name": "Bob"}},
 		}
 	}
 
-	t.Run("nil config does nothing", func(t *testing.T) {
+	app := &App{meta: meta}
+
+	t.Run("nil specs does nothing", func(t *testing.T) {
 		entities := makeEntities()
-		sortEntities(entities, nil)
+		app.sortEntitiesMulti(entities, nil)
 		if entities[0].ID != "E-003" {
 			t.Errorf("expected no reorder, got %s first", entities[0].ID)
 		}
 	})
 
-	t.Run("empty property does nothing", func(t *testing.T) {
+	t.Run("empty specs does nothing", func(t *testing.T) {
 		entities := makeEntities()
-		sortEntities(entities, &SortConfig{Property: ""})
+		app.sortEntitiesMulti(entities, []model.SortSpec{})
 		if entities[0].ID != "E-003" {
 			t.Errorf("expected no reorder, got %s first", entities[0].ID)
 		}
@@ -107,7 +119,7 @@ func TestSortEntities(t *testing.T) {
 
 	t.Run("ascending sort", func(t *testing.T) {
 		entities := makeEntities()
-		sortEntities(entities, &SortConfig{Property: "name", Direction: "asc"})
+		app.sortEntitiesMulti(entities, []model.SortSpec{{Property: "name", Direction: "asc"}})
 		if entities[0].ID != "E-001" || entities[1].ID != "E-002" || entities[2].ID != "E-003" {
 			t.Errorf("expected Alice, Bob, Charlie; got %s, %s, %s",
 				entities[0].Properties["name"], entities[1].Properties["name"], entities[2].Properties["name"])
@@ -116,23 +128,29 @@ func TestSortEntities(t *testing.T) {
 
 	t.Run("descending sort", func(t *testing.T) {
 		entities := makeEntities()
-		sortEntities(entities, &SortConfig{Property: "name", Direction: "desc"})
+		app.sortEntitiesMulti(entities, []model.SortSpec{{Property: "name", Direction: "desc"}})
 		if entities[0].ID != "E-003" || entities[1].ID != "E-002" || entities[2].ID != "E-001" {
 			t.Errorf("expected Charlie, Bob, Alice; got %s, %s, %s",
 				entities[0].Properties["name"], entities[1].Properties["name"], entities[2].Properties["name"])
 		}
 	})
 
-	t.Run("nil property values sort as empty", func(t *testing.T) {
+	t.Run("nil property values sort to end", func(t *testing.T) {
 		entities := []*model.Entity{
-			{ID: "E-001", Properties: map[string]interface{}{"name": "Bob"}},
-			{ID: "E-002", Properties: map[string]interface{}{}},
-			{ID: "E-003", Properties: map[string]interface{}{"name": "Alice"}},
+			{ID: "E-001", Type: "item", Properties: map[string]interface{}{"name": "Bob"}},
+			{ID: "E-002", Type: "item", Properties: map[string]interface{}{}},
+			{ID: "E-003", Type: "item", Properties: map[string]interface{}{"name": "Alice"}},
 		}
-		sortEntities(entities, &SortConfig{Property: "name", Direction: "asc"})
-		// empty string sorts before "Alice"
-		if entities[0].ID != "E-002" {
-			t.Errorf("expected nil property to sort first, got %s", entities[0].ID)
+		app.sortEntitiesMulti(entities, []model.SortSpec{{Property: "name", Direction: "asc"}})
+		// With type-aware sorting, nil values sort to end
+		if entities[0].ID != "E-003" {
+			t.Errorf("expected Alice first, got %s", entities[0].ID)
+		}
+		if entities[1].ID != "E-001" {
+			t.Errorf("expected Bob second, got %s", entities[1].ID)
+		}
+		if entities[2].ID != "E-002" {
+			t.Errorf("expected nil property last, got %s", entities[2].ID)
 		}
 	})
 }
