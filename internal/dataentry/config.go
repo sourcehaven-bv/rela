@@ -27,13 +27,21 @@ type AppConfig struct {
 
 // Form defines a create/edit form for an entity type.
 type Form struct {
-	EntityType  string         `yaml:"entity_type"`
-	Title       string         `yaml:"title"`
-	Description string         `yaml:"description"`
-	Mode        string         `yaml:"mode"`
-	Body        *bool          `yaml:"body,omitempty"`
-	Fields      []FormField    `yaml:"fields"`
-	Relations   []FormRelation `yaml:"relations"`
+	EntityType  string           `yaml:"entity_type"`
+	Title       string           `yaml:"title"`
+	Description string           `yaml:"description"`
+	Mode        string           `yaml:"mode"`
+	Body        *bool            `yaml:"body,omitempty"`
+	Fields      []FormField      `yaml:"fields"`
+	Relations   []FormRelation   `yaml:"relations"`
+	SidePanel   *SidePanelConfig `yaml:"side_panel,omitempty"`
+}
+
+// SidePanelConfig defines an optional context panel shown alongside a form.
+// It reuses the view traversal and section display system.
+type SidePanelConfig struct {
+	Traverse []ViewTraverse `yaml:"traverse"`
+	Sections []ViewSection  `yaml:"sections"`
 }
 
 // FormField defines a single field in a form.
