@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -149,12 +150,13 @@ func testAppInstance() *App {
 
 func TestValidateConfig(t *testing.T) {
 	meta := testMeta()
+	emptyYAML := []byte(`version: "1.0"`)
 
 	t.Run("valid config", func(t *testing.T) {
 		cfg := testConfig()
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 0 {
-			t.Errorf("expected no errors, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err != nil {
+			t.Errorf("expected no errors, got %v", err)
 		}
 	})
 
@@ -164,11 +166,18 @@ func TestValidateConfig(t *testing.T) {
 				"bad-form": {EntityType: "nonexistent", Fields: []FormField{{Property: "title"}}},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
-		if got := errs[0]; got != `form "bad-form": unknown entity type "nonexistent"` {
+		var configErr *ConfigValidationError
+		if !errors.As(err, &configErr) {
+			t.Fatalf("expected ConfigValidationError, got %T", err)
+		}
+		if len(configErr.Errors) != 1 {
+			t.Fatalf("expected 1 error, got %d: %v", len(configErr.Errors), configErr.Errors)
+		}
+		if got := configErr.Errors[0]; got != `form "bad-form": unknown entity type "nonexistent"` {
 			t.Errorf("unexpected error: %s", got)
 		}
 	})
@@ -179,9 +188,9 @@ func TestValidateConfig(t *testing.T) {
 				"bad-form": {EntityType: "ticket", Fields: []FormField{{Property: "nonexistent"}}},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
 
@@ -191,9 +200,9 @@ func TestValidateConfig(t *testing.T) {
 				"bad-form": {EntityType: "ticket", Relations: []FormRelation{{Relation: "nonexistent"}}},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
 
@@ -203,9 +212,9 @@ func TestValidateConfig(t *testing.T) {
 				"bad-list": {EntityType: "nonexistent"},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
 
@@ -215,17 +224,17 @@ func TestValidateConfig(t *testing.T) {
 				"bad-list": {EntityType: "ticket", Columns: []ListColumn{{Property: "nonexistent"}}},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
 
 	t.Run("empty config is valid", func(t *testing.T) {
 		cfg := &Config{}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 0 {
-			t.Errorf("expected no errors, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err != nil {
+			t.Errorf("expected no errors, got %v", err)
 		}
 	})
 }
@@ -834,6 +843,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 
 func TestValidateConfigNestedGroups(t *testing.T) {
 	meta := testMeta()
+	emptyYAML := []byte(`version: "1.0"`)
 
 	t.Run("nested groups rejected", func(t *testing.T) {
 		cfg := &Config{
@@ -851,17 +861,20 @@ func TestValidateConfigNestedGroups(t *testing.T) {
 				},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
-		if !strings.Contains(errs[0], "nested group") {
-			t.Errorf("expected nested group error, got: %s", errs[0])
+		if !strings.Contains(err.Error(), "nested group") {
+			t.Errorf("expected nested group error, got: %s", err.Error())
 		}
 	})
 
 	t.Run("flat groups are valid", func(t *testing.T) {
 		cfg := &Config{
+			Lists: map[string]List{
+				"tickets": {EntityType: "ticket"},
+			},
 			Navigation: []NavigationEntry{
 				{
 					Group: "Tickets",
@@ -871,9 +884,9 @@ func TestValidateConfigNestedGroups(t *testing.T) {
 				},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 0 {
-			t.Errorf("expected no errors, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err != nil {
+			t.Errorf("expected no errors, got %v", err)
 		}
 	})
 }
