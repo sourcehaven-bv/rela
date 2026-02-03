@@ -818,9 +818,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 						if col.Relation != "" {
 							val = a.resolveRelationColumnValue(e.ID, col.Relation)
 						} else {
-							if v := e.Properties[col.Property]; v != nil {
-								val = fmt.Sprintf("%v", v)
-							}
+							val = e.GetAttributeString(col.Property)
 							if eDef != nil {
 								if pd, ok := eDef.Properties[col.Property]; ok {
 									propType = pd.Type
