@@ -10,8 +10,8 @@ package repository
 
 import (
 	"fmt"
-
 	"path/filepath"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
@@ -21,6 +21,96 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/views"
 )
+
+// Store defines the domain-level persistence contract for entities,
+// relations, cache, metamodel, views, and templates. Implementations may
+// be backed by markdown files on disk, an SQLite database, a remote API,
+// or any other storage mechanism.
+type Store interface {
+	// Paths returns the project context (root directory, entity/relation dirs, etc.).
+	Paths() *project.Context
+
+	// --- Entity CRUD ---
+
+	ReadEntity(entityType, id string, meta *metamodel.Metamodel) (*model.Entity, error)
+	WriteEntity(entity *model.Entity, meta *metamodel.Metamodel) error
+	DeleteEntity(entityType, id string, meta *metamodel.Metamodel) error
+	ListEntities(meta *metamodel.Metamodel) ([]*model.Entity, error)
+
+	// --- Relation CRUD ---
+
+	ReadRelation(from, relType, to string) (*model.Relation, error)
+	WriteRelation(relation *model.Relation) error
+	DeleteRelation(from, relType, to string) error
+	ListRelations() ([]*model.Relation, error)
+
+	// --- Sync ---
+
+	Sync(meta *metamodel.Metamodel, g *graph.Graph) (*model.SyncResult, error)
+
+	// --- Cache ---
+
+	SaveCache(g *graph.Graph) error
+	LoadCache(g *graph.Graph) error
+	CacheExists() bool
+
+	// --- Metamodel ---
+
+	LoadMetamodel() (*metamodel.Metamodel, error)
+
+	// --- Views ---
+
+	LoadViews() (*views.File, error)
+
+	// --- Project Files ---
+
+	// ReadProjectFile reads a file relative to the project root.
+	// This allows consumers to read app-specific config files (e.g. data-entry.yaml)
+	// without needing direct filesystem access.
+	ReadProjectFile(filename string) ([]byte, error)
+
+	// WriteProjectFile writes a file relative to the project root.
+	WriteProjectFile(filename string, data []byte) error
+
+	// ReadCacheFile reads a file relative to the cache directory (.rela/).
+	// This is for app-specific state files (e.g. ui-state.json).
+	ReadCacheFile(filename string) ([]byte, error)
+
+	// WriteCacheFile writes a file relative to the cache directory (.rela/).
+	// Creates the cache directory if it doesn't exist.
+	WriteCacheFile(filename string, data []byte) error
+
+	// --- Templates ---
+
+	LoadEntityTemplate(entityType string) (*markdown.Document, error)
+	LoadRelationTemplate(relationType string) (*markdown.Document, error)
+	GenerateEntityTemplate(meta *metamodel.Metamodel, entityType string, force bool) (bool, error)
+	GenerateRelationTemplate(meta *metamodel.Metamodel, relationType string, force bool) (bool, error)
+
+	// --- Path Helpers ---
+
+	EntityFilePath(entityType, id string, meta *metamodel.Metamodel) string
+	EntityTypeDir(entityType string, meta *metamodel.Metamodel) string
+
+	// --- Change Notification ---
+
+	// Watch starts watching for changes to stored data. The onChange callback
+	// is called with batched change events after a debounce period. Returns a
+	// stop function to shut down the watcher. Implementations may use
+	// filesystem notifications, database triggers, polling, etc.
+	Watch(opts WatchOptions, onChange func(events []model.ChangeEvent)) (stop func(), err error)
+}
+
+// WatchOptions configures optional parameters for Store.Watch.
+type WatchOptions struct {
+	// ExtraFiles lists additional files to watch beyond the standard set
+	// (entities, relations, metamodel, views). This allows consumers to
+	// watch app-specific config files (e.g. data-entry.yaml).
+	ExtraFiles []string
+}
+
+// Compile-time check: *Repository implements Store.
+var _ Store = (*Repository)(nil)
 
 // Repository provides domain-level CRUD for entities, relations, cache,
 // metamodel, and templates. It does NOT hold the Graph — it only handles
@@ -112,7 +202,7 @@ func (r *Repository) ListRelations() ([]*model.Relation, error) {
 // --- Sync ---
 
 // Sync rebuilds the graph from all entity and relation files on disk.
-func (r *Repository) Sync(meta *metamodel.Metamodel, g *graph.Graph) (*markdown.SyncResult, error) {
+func (r *Repository) Sync(meta *metamodel.Metamodel, g *graph.Graph) (*model.SyncResult, error) {
 	return r.fio.SyncFromFiles(r.paths, meta, g)
 }
 
@@ -149,6 +239,32 @@ func (r *Repository) LoadViews() (*views.File, error) {
 	return views.Load(viewsPath, r.fs)
 }
 
+// --- Project Files ---
+
+// ReadProjectFile reads a file relative to the project root.
+func (r *Repository) ReadProjectFile(filename string) ([]byte, error) {
+	return r.fs.ReadFile(filepath.Join(r.paths.Root, filename))
+}
+
+// WriteProjectFile writes a file relative to the project root.
+func (r *Repository) WriteProjectFile(filename string, data []byte) error {
+	return r.fs.WriteFile(filepath.Join(r.paths.Root, filename), data, 0o644)
+}
+
+// ReadCacheFile reads a file relative to the cache directory (.rela/).
+func (r *Repository) ReadCacheFile(filename string) ([]byte, error) {
+	return r.fs.ReadFile(filepath.Join(r.paths.CacheDir, filename))
+}
+
+// WriteCacheFile writes a file relative to the cache directory (.rela/).
+// Creates the cache directory if it doesn't exist.
+func (r *Repository) WriteCacheFile(filename string, data []byte) error {
+	if err := r.fs.MkdirAll(r.paths.CacheDir, 0o755); err != nil {
+		return err
+	}
+	return r.fs.WriteFile(filepath.Join(r.paths.CacheDir, filename), data, 0o644)
+}
+
 // --- Templates ---
 
 // LoadEntityTemplate loads the template for the given entity type, or
@@ -177,6 +293,34 @@ func (r *Repository) GenerateRelationTemplate(
 	meta *metamodel.Metamodel, relationType string, force bool,
 ) (bool, error) {
 	return r.fio.GenerateRelationTemplate(r.paths, meta, relationType, force)
+}
+
+// --- Change Notification ---
+
+// Watch starts watching for changes to entities, relations, metamodel, and
+// views files. The onChange callback is called with batched change events.
+// Returns a stop function to shut down the watcher.
+func (r *Repository) Watch(
+	opts WatchOptions, onChange func(events []model.ChangeEvent),
+) (stop func(), err error) {
+	viewsPath := filepath.Join(r.paths.Root, "views.yaml")
+	files := []string{r.paths.MetamodelPath, viewsPath}
+	files = append(files, opts.ExtraFiles...)
+
+	w, err := storage.NewWatcher(storage.WatchConfig{
+		Dirs:       []string{r.paths.EntitiesDir, r.paths.RelationsDir},
+		Files:      files,
+		Extensions: []string{".md", ".yaml", ".yml"},
+		Debounce:   200 * time.Millisecond,
+		SkipHidden: true,
+		OnChange:   onChange,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	go w.Start()
+	return w.Stop, nil
 }
 
 // --- Path Helpers ---

@@ -6,12 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -56,14 +57,20 @@ func newHandlerTestApp(t *testing.T) *App {
 		t.Fatalf("parsing templates: %v", err)
 	}
 
+	// Set up a repo for tests that need to read/write cache files
+	fs := storage.NewMemFS()
+	ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
+	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+	repo := repository.New(fs, ctx)
+
 	return &App{
 		Cfg:         cfg,
 		meta:        meta,
 		g:           g,
-		fs:          storage.NewOsFS(),
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
+		repo:        repo,
 	}
 }
 
@@ -722,7 +729,11 @@ func TestHandleExecuteQuery(t *testing.T) {
 func TestHandleToggleGroup(t *testing.T) {
 	t.Run("toggles group collapsed state", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		app.uiStatePath = filepath.Join(t.TempDir(), "ui-state.json")
+		// Set up a repo for UI state persistence
+		fs := storage.NewMemFS()
+		ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
+		_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+		app.repo = repository.New(fs, ctx)
 
 		// Toggle "Tickets" group to collapsed
 		body := strings.NewReader("group=Tickets")
@@ -781,7 +792,6 @@ func TestHandleToggleGroup(t *testing.T) {
 func TestHandleSettings(t *testing.T) {
 	t.Run("renders settings page", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
 		app.userDefaults = nil
 		r := httptest.NewRequest(http.MethodGet, "/settings", http.NoBody)
 		w := httptest.NewRecorder()
@@ -797,7 +807,6 @@ func TestHandleSettings(t *testing.T) {
 
 	t.Run("renders settings with existing defaults", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
 		app.userDefaults = &UserDefaults{
 			Defaults: map[string]string{"priority": "high"},
 		}
@@ -811,7 +820,6 @@ func TestHandleSettings(t *testing.T) {
 
 	t.Run("HTMX request returns partial", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
 		app.userDefaults = nil
 		r := httptest.NewRequest(http.MethodGet, "/settings", http.NoBody)
 		r.Header.Set("HX-Request", "true")
@@ -826,7 +834,6 @@ func TestHandleSettings(t *testing.T) {
 func TestHandleSaveSettings(t *testing.T) {
 	t.Run("saves global property defaults", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
 		app.userDefaults = nil
 
 		form := url.Values{
@@ -853,7 +860,6 @@ func TestHandleSaveSettings(t *testing.T) {
 
 	t.Run("saves global relation defaults", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
 
 		form := url.Values{
 			"default_rel[belongs_to]": {"CMP-001"},
@@ -872,7 +878,6 @@ func TestHandleSaveSettings(t *testing.T) {
 
 	t.Run("saves override groups", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
 
 		form := url.Values{
 			"override[0][types]":           {"ticket"},
@@ -903,7 +908,6 @@ func TestHandleSaveSettings(t *testing.T) {
 
 	t.Run("skips overrides without types", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
 
 		form := url.Values{
 			"override[0][prop][priority]": {"high"},
@@ -922,7 +926,6 @@ func TestHandleSaveSettings(t *testing.T) {
 
 	t.Run("empty values are not saved", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
 
 		form := url.Values{
 			"default_prop[priority]":  {""},
@@ -955,7 +958,6 @@ func TestHandleSaveSettings(t *testing.T) {
 
 	t.Run("persists to file and reloads", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
 
 		form := url.Values{
 			"default_prop[priority]": {"medium"},

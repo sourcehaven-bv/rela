@@ -30,7 +30,7 @@ var (
 	g          *graph.Graph
 	out        *output.Writer
 	cliFS      storage.FS = storage.NewSafeFS(storage.NewOsFS())
-	repo       *repository.Repository
+	repo       repository.Store
 )
 
 // rootCmd represents the base command

@@ -1,9 +1,7 @@
 version: "1.0"
-
 app:
   name: "Support Tickets"
   description: "Internal ticket management system"
-
 # Colors for enum/custom type values from the metamodel.
 # Referenced by type name — applies everywhere that value appears.
 styles:
@@ -12,56 +10,45 @@ styles:
     in-progress: purple
     resolved: green
     closed: gray
-
   priority:
     critical: red
     high: orange
     medium: yellow
     low: green
-
 forms:
   create_ticket:
     entity_type: ticket
     title: "New Ticket"
     description: "Submit a new support ticket"
     body: true
-
     fields:
       - property: title
         label: "Title"
         placeholder: "Brief summary of the issue..."
         help: "A short, descriptive title for the ticket"
         required: true
-
       - property: description
         label: "Description"
         widget: textarea
         help: "Detailed description of the issue"
-
       - property: priority
         label: "Priority"
         default: medium
-
       - property: reporter
         label: "Reported by"
         placeholder: "your.name"
-
       - property: assignee
         label: "Assign to"
         placeholder: "assignee.name"
-
       - property: due_date
         label: "Due Date"
         widget: date
-
       - property: estimated_hours
         label: "Estimated Hours"
         widget: number
-
       - property: status
         hidden: true
         default: open
-
     relations:
       - relation: belongs-to
         direction: outgoing
@@ -71,7 +58,6 @@ forms:
         widget: select
         allow_create: true
         create_form: create_category
-
       - relation: tagged
         direction: outgoing
         target_type: label
@@ -79,24 +65,19 @@ forms:
         widget: multi-select
         allow_create: true
         create_form: create_label
-
   edit_ticket:
     entity_type: ticket
     title: "Edit Ticket"
     mode: edit
     body: true
-
     fields:
       - property: title
         label: "Title"
-
       - property: description
         label: "Description"
         widget: textarea
-
       - property: priority
         label: "Priority"
-
       - property: status
         label: "Status"
         transitions:
@@ -104,25 +85,19 @@ forms:
           in-progress: [open, resolved]
           resolved: [closed, in-progress]
           closed: [open]
-
       - property: assignee
         label: "Assign to"
-
       - property: reporter
         label: "Reported by"
-
       - property: due_date
         label: "Due Date"
         widget: date
-
       - property: estimated_hours
         label: "Estimated Hours"
         widget: number
-
       - property: is_blocked
         label: "Blocked"
         widget: checkbox
-
     relations:
       - relation: belongs-to
         direction: outgoing
@@ -132,7 +107,6 @@ forms:
         widget: select
         allow_create: true
         create_form: create_category
-
       - relation: tagged
         direction: outgoing
         target_type: label
@@ -140,7 +114,6 @@ forms:
         widget: multi-select
         allow_create: true
         create_form: create_label
-
       - relation: blocks
         direction: outgoing
         target_type: ticket
@@ -150,74 +123,59 @@ forms:
           - property: reason
             label: "Block Reason"
             widget: text
-
   create_category:
     entity_type: category
     title: "New Category"
     description: "Create a ticket category"
-
     fields:
       - property: name
         label: "Category Name"
         required: true
         placeholder: "e.g., Backend, Frontend, DevOps"
-
       - property: description
         label: "Description"
         widget: textarea
-
       - property: color
         label: "Color"
         placeholder: "#3b82f6"
         help: "Hex color code for visual identification"
-
   create_label:
     entity_type: label
     title: "New Label"
     description: "Create a ticket label"
-
     fields:
       - property: name
         label: "Label Name"
         required: true
         placeholder: "e.g., bug, enhancement, urgent"
-
 lists:
   all_tickets:
     entity_type: ticket
     title: "All Tickets"
     description: "View all tickets"
-
     columns:
       - property: title
         label: "Title"
         sortable: true
         link: true
-
       - property: status
         label: "Status"
         sortable: true
-
       - property: priority
         label: "Priority"
         sortable: true
-
       - property: assignee
         label: "Assignee"
         sortable: true
-
       - property: reporter
         label: "Reporter"
         sortable: true
-
       - property: due_date
         label: "Due"
         sortable: true
-
     sort:
-      property: priority
-      direction: asc
-
+      - property: priority
+        direction: asc
     filter_controls:
       - property: status
         widget: multi-select
@@ -225,16 +183,13 @@ lists:
         widget: select
       - property: assignee
         widget: search
-
     create_form: create_ticket
     edit_form: edit_ticket
     detail_view: ticket_report
     page_size: 25
-
   open_tickets:
     entity_type: ticket
     title: "Open Tickets"
-
     columns:
       - property: title
         label: "Title"
@@ -249,24 +204,19 @@ lists:
       - property: due_date
         label: "Due"
         sortable: true
-
     filters:
       - property: status
         operator: "="
         value: open
-
     sort:
-      property: priority
-      direction: asc
-
+      - property: priority
+        direction: asc
     create_form: create_ticket
     edit_form: edit_ticket
     page_size: 25
-
   my_tickets:
     entity_type: ticket
     title: "My Tickets"
-
     columns:
       - property: title
         link: true
@@ -278,24 +228,19 @@ lists:
       - property: due_date
         label: "Due"
         sortable: true
-
     filters:
       - property: assignee
         operator: "="
         value: "$USER"
-
     sort:
-      property: due_date
-      direction: asc
-
+      - property: due_date
+        direction: asc
     create_form: create_ticket
     edit_form: edit_ticket
     page_size: 25
-
   categories:
     entity_type: category
     title: "Categories"
-
     columns:
       - property: name
         label: "Name"
@@ -303,15 +248,12 @@ lists:
         link: true
       - property: description
         label: "Description"
-
     sort:
-      property: name
-      direction: asc
-
+      - property: name
+        direction: asc
     create_form: create_category
     detail_view: category_report
     page_size: 50
-
 # ──────────────────────────────────────────────
 # Views: read-only detail views with graph traversal
 # ──────────────────────────────────────────────
@@ -320,23 +262,19 @@ views:
     title: "Category Report"
     entry:
       type: category
-
     traverse:
       # Pull in all tickets that belong to this category (incoming relation)
       - from: entry
         follow_incoming: belongs-to
         collect_as: tickets
-
       # From those tickets, find what they block
       - from: tickets
         follow: blocks
         collect_as: blocked_tickets
-
       # From those tickets, find their labels
       - from: tickets
         follow: tagged
         collect_as: labels
-
     sections:
       # Category properties
       - heading: "Category"
@@ -347,7 +285,6 @@ views:
             label: "Name"
           - property: description
             label: "Description"
-
       # All tickets as full content cards
       - heading: "Tickets"
         source: tickets
@@ -359,7 +296,6 @@ views:
           - property: due_date
             label: "Due"
         empty_message: "No tickets in this category"
-
       # Blocked tickets as a table
       - heading: "Blocked Tickets"
         source: blocked_tickets
@@ -375,7 +311,6 @@ views:
           - property: assignee
             label: "Assignee"
         empty_message: "No blocking relationships"
-
       # Labels used by tickets in this category
       - heading: "Labels Used"
         source: labels
@@ -383,28 +318,23 @@ views:
         fields:
           - property: name
         empty_message: "No labels applied"
-
   ticket_report:
     title: "Ticket Report"
     entry:
       type: ticket
-
     traverse:
       # What tickets does this block?
       - from: entry
         follow: blocks
         collect_as: blocks
-
       # What tickets block this one?
       - from: entry
         follow_incoming: blocks
         collect_as: blocked_by
-
       # Labels on this ticket
       - from: entry
         follow: tagged
         collect_as: labels
-
     sections:
       # Ticket properties
       - heading: "Ticket"
@@ -419,11 +349,9 @@ views:
             label: "Due Date"
           - property: estimated_hours
             label: "Estimated Hours"
-
       # Ticket body (markdown content)
       - source: entry
         display: content
-
       # What this ticket blocks
       - heading: "Blocks"
         source: blocks
@@ -433,7 +361,6 @@ views:
           - property: priority
           - property: assignee
         empty_message: "This ticket does not block any others"
-
       # What blocks this ticket
       - heading: "Blocked By"
         source: blocked_by
@@ -443,7 +370,6 @@ views:
           - property: priority
           - property: assignee
         empty_message: "This ticket is not blocked"
-
       # Labels
       - heading: "Labels"
         source: labels
@@ -451,7 +377,6 @@ views:
         fields:
           - property: name
         empty_message: "No labels"
-
 # ──────────────────────────────────────────────
 # Dashboard: query-driven overview cards
 # ──────────────────────────────────────────────
@@ -462,21 +387,17 @@ dashboard:
     - title: "Open Tickets"
       query: "type:ticket status:open"
       display: count
-
     - title: "In Progress"
       query: "type:ticket status:in-progress"
       display: count
-
     - title: "By Status"
       query: "type:ticket"
       display: breakdown
       group_by: status
-
     - title: "By Priority"
       query: "type:ticket"
       display: breakdown
       group_by: priority
-
     - title: "Critical Issues"
       query: "type:ticket prop:priority=critical"
       display: table
@@ -489,10 +410,9 @@ dashboard:
         - property: assignee
           label: "Assignee"
       sort:
-        property: status
-        direction: asc
+        - property: status
+          direction: asc
       limit: 10
-
     - title: "Recently Blocked"
       query: "type:ticket prop:is_blocked=true"
       display: table
@@ -505,7 +425,6 @@ dashboard:
         - property: assignee
           label: "Assignee"
       limit: 5
-
 # ──────────────────────────────────────────────
 # Commands: executable scripts triggered from the UI
 # ──────────────────────────────────────────────
@@ -519,7 +438,6 @@ commands:
     context: entity
     available_on:
       entity_types: [ticket]
-
   ticket-summary:
     label: "View Summary"
     script: |
@@ -528,7 +446,6 @@ commands:
     context: view
     available_on:
       views: [ticket_report]
-
   generate-pdf:
     label: "Generate PDF"
     script: |
@@ -540,7 +457,6 @@ commands:
     context: entity
     available_on:
       entity_types: [ticket]
-
   project-info:
     label: "Project Info"
     script: |
@@ -548,7 +464,6 @@ commands:
     context: global
     available_on:
       dashboard: true
-
 navigation:
   - label: "Dashboard"
     dashboard: true

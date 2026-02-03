@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 func TestWatcher_NewAndStop(t *testing.T) {
@@ -176,12 +178,12 @@ func TestIsRelevantFile(t *testing.T) {
 func TestToChangeOp(t *testing.T) {
 	tests := []struct {
 		op   fsnotify.Op
-		want ChangeOp
+		want model.ChangeOp
 	}{
-		{fsnotify.Create, OpCreate},
-		{fsnotify.Write, OpModify},
-		{fsnotify.Remove, OpDelete},
-		{fsnotify.Rename, OpRename},
+		{fsnotify.Create, model.OpCreate},
+		{fsnotify.Write, model.OpModify},
+		{fsnotify.Remove, model.OpDelete},
+		{fsnotify.Rename, model.OpRename},
 	}
 
 	for _, tt := range tests {
@@ -194,14 +196,14 @@ func TestToChangeOp(t *testing.T) {
 
 func TestChangeOp_String(t *testing.T) {
 	tests := []struct {
-		op   ChangeOp
+		op   model.ChangeOp
 		want string
 	}{
-		{OpCreate, "CREATE"},
-		{OpModify, "MODIFY"},
-		{OpDelete, "DELETE"},
-		{OpRename, "RENAME"},
-		{ChangeOp(99), "UNKNOWN"},
+		{model.OpCreate, "CREATE"},
+		{model.OpModify, "MODIFY"},
+		{model.OpDelete, "DELETE"},
+		{model.OpRename, "RENAME"},
+		{model.ChangeOp(99), "UNKNOWN"},
 	}
 
 	for _, tt := range tests {

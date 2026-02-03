@@ -464,3 +464,60 @@ func TestAllPriorities(t *testing.T) {
 		}
 	}
 }
+
+// TestChangeOpString tests the String method for ChangeOp
+func TestChangeOpString(t *testing.T) {
+	tests := []struct {
+		op   ChangeOp
+		want string
+	}{
+		{OpCreate, "CREATE"},
+		{OpModify, "MODIFY"},
+		{OpDelete, "DELETE"},
+		{OpRename, "RENAME"},
+		{ChangeOp(99), "UNKNOWN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := tt.op.String(); got != tt.want {
+				t.Errorf("ChangeOp.String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSyncErrorError tests the Error method for SyncError
+func TestSyncErrorError(t *testing.T) {
+	err := &SyncError{
+		File:    "entities/req/REQ-001.md",
+		Message: "invalid YAML frontmatter",
+	}
+	want := "entities/req/REQ-001.md: invalid YAML frontmatter"
+	if got := err.Error(); got != want {
+		t.Errorf("SyncError.Error() = %q, want %q", got, want)
+	}
+}
+
+// TestSortSpecIsDescending tests the IsDescending method for SortSpec
+func TestSortSpecIsDescending(t *testing.T) {
+	tests := []struct {
+		name      string
+		direction string
+		want      bool
+	}{
+		{"empty direction", "", false},
+		{"asc direction", "asc", false},
+		{"desc direction", "desc", true},
+		{"other value", "ascending", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := SortSpec{Property: "title", Direction: tt.direction}
+			if got := s.IsDescending(); got != tt.want {
+				t.Errorf("SortSpec.IsDescending() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

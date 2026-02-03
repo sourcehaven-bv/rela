@@ -9,43 +9,9 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/Sourcehaven-BV/rela/internal/model"
 )
-
-// ChangeOp represents the type of file system change.
-type ChangeOp int
-
-const (
-	// OpCreate indicates a file was created.
-	OpCreate ChangeOp = iota
-	// OpModify indicates a file was modified.
-	OpModify
-	// OpDelete indicates a file was deleted.
-	OpDelete
-	// OpRename indicates a file was renamed.
-	OpRename
-)
-
-// String returns a human-readable representation of the change operation.
-func (op ChangeOp) String() string {
-	switch op {
-	case OpCreate:
-		return "CREATE"
-	case OpModify:
-		return "MODIFY"
-	case OpDelete:
-		return "DELETE"
-	case OpRename:
-		return "RENAME"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-// ChangeEvent represents a single file system change.
-type ChangeEvent struct {
-	Path string
-	Op   ChangeOp
-}
 
 // WatchConfig configures a Watcher.
 type WatchConfig struct {
@@ -61,7 +27,7 @@ type WatchConfig struct {
 	// SkipHidden skips hidden directories (names starting with ".").
 	SkipHidden bool
 	// OnChange is called after debounce with the batched change events.
-	OnChange func(events []ChangeEvent)
+	OnChange func(events []model.ChangeEvent)
 }
 
 // Watcher watches files and directories for changes, debouncing events
@@ -71,7 +37,7 @@ type Watcher struct {
 	fsWatcher *fsnotify.Watcher
 	done      chan struct{}
 	mu        sync.Mutex
-	pending   []ChangeEvent
+	pending   []model.ChangeEvent
 }
 
 // NewWatcher creates a file watcher with the given configuration.
@@ -130,7 +96,7 @@ func (w *Watcher) Start() {
 			}
 
 			w.mu.Lock()
-			w.pending = append(w.pending, ChangeEvent{
+			w.pending = append(w.pending, model.ChangeEvent{
 				Path: event.Name,
 				Op:   toChangeOp(event.Op),
 			})
@@ -198,15 +164,15 @@ func (w *Watcher) isRelevantFile(path string) bool {
 	return false
 }
 
-func toChangeOp(op fsnotify.Op) ChangeOp {
+func toChangeOp(op fsnotify.Op) model.ChangeOp {
 	switch {
 	case op.Has(fsnotify.Create):
-		return OpCreate
+		return model.OpCreate
 	case op.Has(fsnotify.Remove):
-		return OpDelete
+		return model.OpDelete
 	case op.Has(fsnotify.Rename):
-		return OpRename
+		return model.OpRename
 	default:
-		return OpModify
+		return model.OpModify
 	}
 }
