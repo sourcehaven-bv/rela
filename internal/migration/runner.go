@@ -49,6 +49,16 @@ func Detect(path string, ft FileType, fs storage.FS) ([]DetectionResult, error) 
 	return DetectFromNode(&doc, ft), nil
 }
 
+// DetectBytes checks YAML content for migrations that need to be applied.
+// This is useful when the file content is already available.
+func DetectBytes(data []byte, ft FileType) []DetectionResult {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil // Invalid YAML, no migrations to detect
+	}
+	return DetectFromNode(&doc, ft)
+}
+
 // DetectFromNode checks a parsed YAML document for migrations.
 func DetectFromNode(doc *yaml.Node, ft FileType) []DetectionResult {
 	var results []DetectionResult

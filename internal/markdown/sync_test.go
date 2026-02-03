@@ -300,7 +300,7 @@ type: requirement
 }
 
 func TestSyncError_Error(t *testing.T) {
-	err := &SyncError{
+	err := &model.SyncError{
 		File:    "/path/to/file.md",
 		Message: "something went wrong",
 	}

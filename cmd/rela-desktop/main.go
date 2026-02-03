@@ -25,6 +25,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -78,7 +80,14 @@ func (d *Desktop) OpenRecentProject(path string) string {
 
 // LoadProject loads a rela project from the given directory.
 func (d *Desktop) LoadProject(dir string) string {
-	app, err := dataentry.NewApp(dir, storage.NewSafeFS(storage.NewOsFS()))
+	repo, err := createRepo(dir)
+	if err != nil {
+		d.mu.Lock()
+		d.loadErr = err.Error()
+		d.mu.Unlock()
+		return err.Error()
+	}
+	app, err := dataentry.NewApp(repo)
 	if err != nil {
 		d.mu.Lock()
 		d.loadErr = err.Error()
@@ -290,4 +299,18 @@ func resolveProjectDir(flagValue string, prefs *desktop.Preferences) string {
 func isRelaProject(dir string) bool {
 	_, err := os.Stat(filepath.Join(dir, "metamodel.yaml"))
 	return err == nil
+}
+
+// createRepo discovers the project and creates a repository.
+func createRepo(projectDir string) (repository.Store, error) {
+	absDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	projCtx, err := project.Discover(absDir, fs)
+	if err != nil {
+		return nil, fmt.Errorf("discovering project: %w", err)
+	}
+	return repository.New(fs, projCtx), nil
 }

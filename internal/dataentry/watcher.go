@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
 
 // eventBroker manages SSE client connections for live-reload notifications.
@@ -56,38 +56,29 @@ func (b *eventBroker) broadcast(event string) {
 //
 // coverage-ignore: requires real filesystem events via fsnotify
 func (a *App) StartWatching() (stop func(), err error) {
-	configPath := filepath.Join(a.projCtx.Root, ConfigFile)
+	configPath := filepath.Join(a.repo.Paths().Root, ConfigFile)
 
-	w, err := storage.NewWatcher(storage.WatchConfig{
-		Dirs:       []string{a.projCtx.EntitiesDir, a.projCtx.RelationsDir},
-		Files:      []string{a.projCtx.MetamodelPath, configPath},
-		Extensions: []string{".md", ".yaml", ".yml"},
-		Debounce:   500 * time.Millisecond,
-		SkipHidden: true,
-		OnChange: func(events []storage.ChangeEvent) {
-			for _, e := range events {
-				log.Printf("File changed: %s (%s)", e.Path, e.Op)
-			}
-			a.reload(events)
-			a.broker.broadcast("refresh")
-		},
-	})
-	if err != nil {
-		return nil, err
+	opts := repository.WatchOptions{
+		ExtraFiles: []string{configPath},
 	}
-
-	go w.Start()
-	return w.Stop, nil
+	return a.repo.Watch(opts, func(events []model.ChangeEvent) {
+		for _, e := range events {
+			log.Printf("File changed: %s (%s)", e.Path, e.Op)
+		}
+		a.reload(events)
+		a.broker.broadcast("refresh")
+	})
 }
 
 // reload re-syncs the graph and optionally reloads metamodel/config when
 // the corresponding files have changed. It holds the write lock to ensure
 // no handlers are reading stale state during the swap.
-func (a *App) reload(events []storage.ChangeEvent) {
+func (a *App) reload(events []model.ChangeEvent) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	configPath := filepath.Join(a.projCtx.Root, ConfigFile)
+	paths := a.repo.Paths()
+	configPath := filepath.Join(paths.Root, ConfigFile)
 	needConfigReload := false
 	needMetamodelReload := false
 
@@ -95,7 +86,7 @@ func (a *App) reload(events []storage.ChangeEvent) {
 		switch e.Path {
 		case configPath:
 			needConfigReload = true
-		case a.projCtx.MetamodelPath:
+		case paths.MetamodelPath:
 			needMetamodelReload = true
 		}
 	}
@@ -115,7 +106,7 @@ func (a *App) reload(events []storage.ChangeEvent) {
 	}
 
 	if needConfigReload {
-		cfgData, err := a.fs.ReadFile(configPath)
+		cfgData, err := a.repo.ReadProjectFile(ConfigFile)
 		if err != nil {
 			log.Printf("Config reload error: %v", err)
 		} else {

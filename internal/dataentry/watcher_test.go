@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -132,8 +133,6 @@ status: open
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
-		projCtx:     ctx,
-		fs:          fs,
 		broker:      newEventBroker(),
 	}
 
@@ -270,7 +269,7 @@ func TestReloadEntityChanges(t *testing.T) {
 	initialCount := len(app.g.AllNodes())
 
 	// Add a new entity file
-	_ = fs.WriteFile(app.projCtx.EntitiesDir+"/tickets/TKT-002.md", []byte(`---
+	_ = fs.WriteFile(app.repo.Paths().EntitiesDir+"/tickets/TKT-002.md", []byte(`---
 id: TKT-002
 type: ticket
 title: Second Ticket
@@ -279,8 +278,8 @@ status: open
 `), 0o644)
 
 	// Reload with a generic entity change (not metamodel or config)
-	app.reload([]storage.ChangeEvent{
-		{Path: app.projCtx.EntitiesDir + "/tickets/TKT-002.md", Op: storage.OpCreate},
+	app.reload([]model.ChangeEvent{
+		{Path: app.repo.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: model.OpCreate},
 	})
 
 	newCount := len(app.g.AllNodes())
@@ -324,10 +323,10 @@ relations:
     from: [ticket]
     to: [ticket]
 `
-	_ = fs.WriteFile(app.projCtx.MetamodelPath, []byte(updatedMeta), 0o644)
+	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
-	app.reload([]storage.ChangeEvent{
-		{Path: app.projCtx.MetamodelPath, Op: storage.OpModify},
+	app.reload([]model.ChangeEvent{
+		{Path: app.repo.Paths().MetamodelPath, Op: model.OpModify},
 	})
 
 	if _, ok := app.meta.GetEntityDef("component"); !ok {
@@ -348,11 +347,11 @@ lists: {}
 forms: {}
 navigation: []
 `
-	configPath := app.projCtx.Root + "/" + ConfigFile
+	configPath := app.repo.Paths().Root + "/" + ConfigFile
 	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
 
-	app.reload([]storage.ChangeEvent{
-		{Path: configPath, Op: storage.OpModify},
+	app.reload([]model.ChangeEvent{
+		{Path: configPath, Op: model.OpModify},
 	})
 
 	if app.Cfg.App.Name == originalName {
@@ -369,10 +368,10 @@ func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
 	original := app.meta
 
 	// Write invalid metamodel
-	_ = fs.WriteFile(app.projCtx.MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
+	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
 
-	app.reload([]storage.ChangeEvent{
-		{Path: app.projCtx.MetamodelPath, Op: storage.OpModify},
+	app.reload([]model.ChangeEvent{
+		{Path: app.repo.Paths().MetamodelPath, Op: model.OpModify},
 	})
 
 	// Metamodel should be unchanged
@@ -385,13 +384,13 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
 	originalName := app.Cfg.App.Name
-	configPath := app.projCtx.Root + "/" + ConfigFile
+	configPath := app.repo.Paths().Root + "/" + ConfigFile
 
 	// Write invalid YAML config
 	_ = fs.WriteFile(configPath, []byte(`not: valid: yaml: {{{`), 0o644)
 
-	app.reload([]storage.ChangeEvent{
-		{Path: configPath, Op: storage.OpModify},
+	app.reload([]model.ChangeEvent{
+		{Path: configPath, Op: model.OpModify},
 	})
 
 	// Config should be unchanged
@@ -403,7 +402,7 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 func TestReloadMixedEvents(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
-	configPath := app.projCtx.Root + "/" + ConfigFile
+	configPath := app.repo.Paths().Root + "/" + ConfigFile
 	updatedConfig := `version: "1.0"
 app:
   name: "Mixed Update"
@@ -433,12 +432,12 @@ relations:
     from: [ticket]
     to: [ticket]
 `
-	_ = fs.WriteFile(app.projCtx.MetamodelPath, []byte(updatedMeta), 0o644)
+	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
 	// Reload with both config and metamodel changes at once
-	app.reload([]storage.ChangeEvent{
-		{Path: configPath, Op: storage.OpModify},
-		{Path: app.projCtx.MetamodelPath, Op: storage.OpModify},
+	app.reload([]model.ChangeEvent{
+		{Path: configPath, Op: model.OpModify},
+		{Path: app.repo.Paths().MetamodelPath, Op: model.OpModify},
 	})
 
 	if app.Cfg.App.Name != "Mixed Update" {

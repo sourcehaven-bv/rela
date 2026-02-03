@@ -21,7 +21,7 @@ type Server struct {
 	meta       *metamodel.Metamodel
 	metaMu     sync.RWMutex // protects meta
 	projectCtx *project.Context
-	repo       *repository.Repository
+	repo       repository.Store
 	watcher    *Watcher
 	logger     *log.Logger
 }
@@ -41,7 +41,7 @@ func (s *Server) setMeta(m *metamodel.Metamodel) {
 }
 
 // NewServer creates a new MCP server for a rela project.
-func NewServer(g *graph.Graph, meta *metamodel.Metamodel, repo *repository.Repository, version string) *Server {
+func NewServer(g *graph.Graph, meta *metamodel.Metamodel, repo repository.Store, version string) *Server {
 	logger := log.New(os.Stderr, "[rela-mcp] ", log.LstdFlags)
 
 	s := &Server{
@@ -86,7 +86,6 @@ func (s *Server) Serve() error {
 		s.logger.Printf("Warning: file watcher not started: %v", err)
 	} else {
 		s.watcher = watcher
-		go s.watcher.Start()
 	}
 
 	defer func() {

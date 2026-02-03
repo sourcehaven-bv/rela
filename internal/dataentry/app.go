@@ -18,9 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -37,19 +35,12 @@ type App struct {
 	Cfg  *Config
 	meta *metamodel.Metamodel
 	g    *graph.Graph
-	repo *repository.Repository
+	repo repository.Store
 	tmpl *template.Template
 	// styleMap: property type name -> value -> CSS class name
 	styleMap map[string]map[string]string
 	// styledTypes: set of property type names that have style entries
 	styledTypes map[string]bool
-	// projCtx and fs are stored for live-reload and UI state support.
-	projCtx *project.Context
-	fs      storage.FS
-	// uiStatePath is the path to .rela/ui-state.json for persisting UI preferences.
-	uiStatePath string
-	// userDefaultsPath is the path to .rela/user-defaults.yaml for user-specific defaults.
-	userDefaultsPath string
 	// userDefaults holds the loaded user defaults (nil if not yet loaded or no file).
 	userDefaults *UserDefaults
 	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
@@ -59,27 +50,17 @@ type App struct {
 	broker *eventBroker
 }
 
-// NewApp creates and initializes an App using the given filesystem.
-func NewApp(projectDir string, fs storage.FS) (*App, error) {
-	// Discover rela project
-	absDir, err := filepath.Abs(projectDir)
-	if err != nil {
-		return nil, err
-	}
-	projCtx, err := project.Discover(absDir, fs)
-	if err != nil {
-		return nil, fmt.Errorf("discovering project: %w", err)
-	}
-
+// NewApp creates and initializes an App using the given Store.
+func NewApp(repo repository.Store) (*App, error) {
 	// Load data-entry config from project root
-	configPath := filepath.Join(projCtx.Root, ConfigFile)
-	cfgData, err := fs.ReadFile(configPath)
+	cfgData, err := repo.ReadProjectFile(ConfigFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
 	// Check for deprecated syntax that needs migration
-	detections, detectErr := migration.Detect(configPath, migration.FileTypeDataEntry, fs)
-	if detectErr == nil && len(detections) > 0 {
+	configPath := filepath.Join(repo.Paths().Root, ConfigFile)
+	detections := migration.DetectBytes(cfgData, migration.FileTypeDataEntry)
+	if len(detections) > 0 {
 		return nil, &migration.Error{
 			FilePath:   configPath,
 			Detections: detections,
@@ -90,9 +71,6 @@ func NewApp(projectDir string, fs storage.FS) (*App, error) {
 	if unmarshalErr := yaml.Unmarshal(cfgData, &cfg); unmarshalErr != nil {
 		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
 	}
-
-	// Create repository
-	repo := repository.New(fs, projCtx)
 
 	// Load metamodel
 	meta, err := repo.LoadMetamodel()
@@ -128,18 +106,14 @@ func NewApp(projectDir string, fs storage.FS) (*App, error) {
 		return nil, fmt.Errorf("parsing graph templates: %w", err)
 	}
 	app := &App{
-		Cfg:              &cfg,
-		meta:             meta,
-		g:                g,
-		repo:             repo,
-		tmpl:             tmpl,
-		styleMap:         styleMap,
-		styledTypes:      styledTypes,
-		projCtx:          projCtx,
-		fs:               fs,
-		uiStatePath:      filepath.Join(projCtx.CacheDir, uiStateFile),
-		userDefaultsPath: filepath.Join(projCtx.CacheDir, userDefaultsFile),
-		broker:           newEventBroker(),
+		Cfg:         &cfg,
+		meta:        meta,
+		g:           g,
+		repo:        repo,
+		tmpl:        tmpl,
+		styleMap:    styleMap,
+		styledTypes: styledTypes,
+		broker:      newEventBroker(),
 	}
 	app.userDefaults = app.loadUserDefaults()
 	return app, nil
@@ -219,10 +193,10 @@ func (a *App) navElements(activeList string) []NavElement {
 // Returns an empty UIState if the file doesn't exist or can't be parsed.
 func (a *App) loadUIState() UIState {
 	state := UIState{CollapsedGroups: make(map[string]bool)}
-	if a.uiStatePath == "" {
+	if a.repo == nil {
 		return state
 	}
-	data, err := a.fs.ReadFile(a.uiStatePath)
+	data, err := a.repo.ReadCacheFile(uiStateFile)
 	if err != nil {
 		return state
 	}
@@ -237,27 +211,23 @@ func (a *App) loadUIState() UIState {
 
 // saveUIState writes the UI state to .rela/ui-state.json.
 func (a *App) saveUIState(state UIState) error {
-	if a.uiStatePath == "" {
+	if a.repo == nil {
 		return nil
-	}
-	// Ensure .rela directory exists
-	if err := a.fs.MkdirAll(filepath.Dir(a.uiStatePath), 0o755); err != nil {
-		return err
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
-	return a.fs.WriteFile(a.uiStatePath, data, 0o644)
+	return a.repo.WriteCacheFile(uiStateFile, data)
 }
 
 // loadUserDefaults reads .rela/user-defaults.yaml and returns the parsed defaults.
 // Returns nil if the file doesn't exist or can't be parsed.
 func (a *App) loadUserDefaults() *UserDefaults {
-	if a.userDefaultsPath == "" {
+	if a.repo == nil {
 		return nil
 	}
-	data, err := a.fs.ReadFile(a.userDefaultsPath)
+	data, err := a.repo.ReadCacheFile(userDefaultsFile)
 	if err != nil {
 		return nil
 	}
@@ -270,17 +240,14 @@ func (a *App) loadUserDefaults() *UserDefaults {
 
 // saveUserDefaults writes the user defaults to .rela/user-defaults.yaml.
 func (a *App) saveUserDefaults(ud *UserDefaults) error {
-	if a.userDefaultsPath == "" {
+	if a.repo == nil {
 		return nil
-	}
-	if err := a.fs.MkdirAll(filepath.Dir(a.userDefaultsPath), 0o755); err != nil {
-		return err
 	}
 	data, err := yaml.Marshal(ud)
 	if err != nil {
 		return err
 	}
-	return a.fs.WriteFile(a.userDefaultsPath, data, 0o644)
+	return a.repo.WriteCacheFile(userDefaultsFile, data)
 }
 
 // firstNavTarget returns the first navigable item from the navigation config,
