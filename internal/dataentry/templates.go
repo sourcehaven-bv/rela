@@ -2018,7 +2018,7 @@ function submitInlineCreate() {
   <div style="display:flex;gap:8px;">
     {{ if .EditFormID }}
     <a href="/form/{{ .EditFormID }}/{{ .Entry.ID }}?return_to={{ urlquery .ReturnTo }}" class="btn btn-primary btn-sm"
-       hx-get="/form/{{ .EditFormID }}/{{ .Entry.ID }}?return_to={{ urlquery .ReturnTo }}" hx-target="#content" hx-push-url="true">Edit</a>
+       hx-get="/form/{{ .EditFormID }}/{{ .Entry.ID }}?return_to={{ urlquery .ReturnTo }}" hx-target="#content" hx-push-url="true">Edit <kbd>E</kbd></a>
     {{ end }}
     {{ if .Commands }}{{ if gt (len .Commands) 2 }}
     <details class="add-dropdown">
