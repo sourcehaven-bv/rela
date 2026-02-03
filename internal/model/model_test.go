@@ -82,6 +82,66 @@ func TestEntityDescription(t *testing.T) {
 	assertEqual(t, e.Description(), "My Description")
 }
 
+// TestEntityGetAttribute tests the GetAttribute method for uniform field/property access
+func TestEntityGetAttribute(t *testing.T) {
+	e := NewEntity("REQ-001", "requirement")
+	e.Properties["title"] = "Test Title"
+	e.Properties["priority"] = "high"
+	e.Properties["count"] = 42
+
+	tests := []struct {
+		name     string
+		attrName string
+		expected interface{}
+	}{
+		{"id field", "id", "REQ-001"},
+		{"type field", "type", "requirement"},
+		{"title property", "title", "Test Title"},
+		{"priority property", "priority", "high"},
+		{"count property (int)", "count", 42},
+		{"missing property", "missing", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := e.GetAttribute(tt.attrName)
+			if got != tt.expected {
+				t.Errorf("GetAttribute(%q) = %v, want %v", tt.attrName, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestEntityGetAttributeString tests the GetAttributeString method
+func TestEntityGetAttributeString(t *testing.T) {
+	e := NewEntity("REQ-001", "requirement")
+	e.Properties["title"] = "Test Title"
+	e.Properties["count"] = 42
+	e.Properties["active"] = true
+
+	tests := []struct {
+		name     string
+		attrName string
+		expected string
+	}{
+		{"id field", "id", "REQ-001"},
+		{"type field", "type", "requirement"},
+		{"title property", "title", "Test Title"},
+		{"count property (int to string)", "count", "42"},
+		{"bool property", "active", "true"},
+		{"missing property", "missing", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := e.GetAttributeString(tt.attrName)
+			if got != tt.expected {
+				t.Errorf("GetAttributeString(%q) = %q, want %q", tt.attrName, got, tt.expected)
+			}
+		})
+	}
+}
+
 // TestNewRelation tests relation creation
 func TestNewRelation(t *testing.T) {
 	r := NewRelation("REQ-001", "implements", "DEC-001")

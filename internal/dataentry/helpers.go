@@ -27,10 +27,7 @@ func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Ent
 			if strings.HasPrefix(f.Value, "$") {
 				continue // skip variable substitution
 			}
-			val := fmt.Sprintf("%v", e.Properties[f.Property])
-			if e.Properties[f.Property] == nil {
-				val = ""
-			}
+			val := e.GetAttributeString(f.Property)
 			switch f.Operator {
 			case "=":
 				if val != f.Value {
