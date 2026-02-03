@@ -11,6 +11,7 @@ const allTemplates = `
 <script src="/static/easymde.min.js"></script>
 <link rel="stylesheet" href="/static/slimselect.css">
 <script src="/static/slimselect.min.js"></script>
+<script src="/static/mermaid.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -249,9 +250,9 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
 #search-results .card.result-selected { outline: 2px solid var(--primary); outline-offset: -2px; background: var(--primary-light); }
 
 /* Sidebar footer */
-.sidebar-footer { padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: auto; }
-.sidebar-footer button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 0; background: none; border: none; color: var(--text-sidebar); font-size: 13px; cursor: pointer; font-family: var(--font); transition: color 0.15s; }
-.sidebar-footer button:hover { color: var(--text-sidebar-active); }
+.sidebar-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: auto; }
+.sidebar-footer a, .sidebar-footer button { display: flex; align-items: center; gap: 6px; padding: 4px 0; background: none; border: none; color: var(--text-sidebar); font-size: 13px; cursor: pointer; font-family: var(--font); text-decoration: none; transition: color 0.15s; }
+.sidebar-footer a:hover, .sidebar-footer button:hover { color: var(--text-sidebar-active); }
 
 /* Command palette */
 .cmd-palette-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; display: flex; align-items: flex-start; justify-content: center; padding-top: 15vh; animation: fadeIn 0.1s; }
@@ -344,6 +345,20 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'ArrowLeft') { var btn = nav.querySelector('a.scope-nav-btn'); if (btn) btn.click(); }
   if (e.key === 'ArrowRight') { var btns = nav.querySelectorAll('a.scope-nav-btn'); if (btns.length > 0) btns[btns.length-1].click(); }
 });
+
+// Mermaid diagram rendering
+if (typeof mermaid !== 'undefined') {
+  mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+  function renderMermaid(root) {
+    var nodes = (root || document).querySelectorAll('pre.mermaid:not([data-mermaid-processed])');
+    if (nodes.length > 0) {
+      nodes.forEach(function(n) { n.setAttribute('data-mermaid-processed', 'true'); });
+      mermaid.run({ nodes: nodes });
+    }
+  }
+  document.addEventListener('DOMContentLoaded', function() { renderMermaid(); });
+  document.addEventListener('htmx:afterSettle', function(e) { renderMermaid(e.detail.target); });
+}
 
 // SlimSelect progressive enhancement
 function enhanceSelects(root) {
@@ -1412,15 +1427,10 @@ document.addEventListener('click', function(e) {
     {{ end }}
     {{ end }}
   </nav>
-  <div style="padding:8px 0;border-top:1px solid rgba(255,255,255,0.1);">
-    <a href="/settings"{{ if eq $.ActiveList "_settings" }} class="active"{{ end }}
-       hx-get="/settings" hx-target="#content" hx-push-url="true"
-       style="display:flex;align-items:center;gap:10px;padding:8px 20px;color:var(--text-sidebar);text-decoration:none;font-size:14px;font-weight:500;transition:all 0.15s;border-left:3px solid transparent;">
-      &#9881; Settings
-    </a>
-  </div>
   <div class="sidebar-footer">
-    <button onclick="_toggleShortcuts()">Keyboard shortcuts <kbd>?</kbd></button>
+    <a href="/settings"{{ if eq $.ActiveList "_settings" }} class="active"{{ end }}
+       hx-get="/settings" hx-target="#content" hx-push-url="true">&#9881; Settings</a>
+    <button onclick="_toggleShortcuts()"><kbd>?</kbd> Shortcuts</button>
   </div>
 </aside>
 <script>
@@ -2176,7 +2186,9 @@ function closeSidePanel() {
 <div class="card" style="padding:24px;">
   <div id="properties" class="detail-grid">
     {{ $propTypes := .PropTypes }}
-    {{ range $key, $val := .Entity.Properties }}
+    {{ $props := .Entity.Properties }}
+    {{ range $key := sortedKeys $props }}
+    {{ $val := index $props $key }}
     {{ $ptype := index $propTypes $key }}
     <div class="detail-label">{{ $key }}</div>
     <div class="detail-value">
@@ -2240,7 +2252,7 @@ function closeSidePanel() {
   <div style="display:flex;gap:8px;">
     {{ if .EditFormID }}
     <a href="/form/{{ .EditFormID }}/{{ .Entry.ID }}?return_to={{ urlquery .ReturnTo }}" class="btn btn-primary btn-sm"
-       hx-get="/form/{{ .EditFormID }}/{{ .Entry.ID }}?return_to={{ urlquery .ReturnTo }}" hx-target="#content" hx-push-url="true">Edit</a>
+       hx-get="/form/{{ .EditFormID }}/{{ .Entry.ID }}?return_to={{ urlquery .ReturnTo }}" hx-target="#content" hx-push-url="true">Edit <kbd>E</kbd></a>
     {{ end }}
     {{ if .Commands }}{{ if gt (len .Commands) 2 }}
     <details class="add-dropdown">

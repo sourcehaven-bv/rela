@@ -41,7 +41,7 @@ type App struct {
 	project    *project.Context
 	metamodel  *metamodel.Metamodel
 	graph      *graph.Graph
-	repo       *repository.Repository
+	repo       repository.Store
 	screen     Screen
 	message    string
 	messageErr bool
@@ -69,7 +69,7 @@ type App struct {
 
 // NewApp creates a new TUI application
 // coverage-ignore: TUI initialization - unreasonable to unit test interactive terminal UI
-func NewApp(meta *metamodel.Metamodel, g *graph.Graph, repo *repository.Repository) *App {
+func NewApp(meta *metamodel.Metamodel, g *graph.Graph, repo repository.Store) *App {
 	app := &App{
 		project:     repo.Paths(),
 		metamodel:   meta,
@@ -88,7 +88,7 @@ func NewApp(meta *metamodel.Metamodel, g *graph.Graph, repo *repository.Reposito
 
 // Run starts the TUI
 // coverage-ignore: TUI entry point - unreasonable to unit test interactive terminal UI
-func Run(meta *metamodel.Metamodel, g *graph.Graph, repo *repository.Repository) error {
+func Run(meta *metamodel.Metamodel, g *graph.Graph, repo repository.Store) error {
 	app := NewApp(meta, g, repo)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	_, err := p.Run()

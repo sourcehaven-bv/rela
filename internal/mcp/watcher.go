@@ -2,55 +2,41 @@
 package mcp
 
 import (
-	"path/filepath"
-	"time"
-
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
 
 // Watcher watches entity and relation files for changes and notifies MCP clients.
 type Watcher struct {
-	server  *Server
-	watcher *storage.Watcher
+	server *Server
+	stop   func()
 }
 
-// NewWatcher creates a new file watcher for the rela project.
+// NewWatcher creates a new file watcher for the rela project using the
+// Store's Watch method.
 func NewWatcher(s *Server) (*Watcher, error) {
-	viewsPath := filepath.Join(s.projectCtx.Root, "views.yaml")
-
 	w := &Watcher{server: s}
 
-	sw, err := storage.NewWatcher(storage.WatchConfig{
-		Dirs:       []string{s.projectCtx.EntitiesDir, s.projectCtx.RelationsDir},
-		Files:      []string{s.projectCtx.MetamodelPath, viewsPath},
-		Extensions: []string{".md", ".yaml", ".yml"},
-		Debounce:   200 * time.Millisecond,
-		OnChange: func(events []storage.ChangeEvent) {
-			for _, e := range events {
-				s.logger.Printf("File changed: %s (%s)", e.Path, e.Op)
-			}
-			w.syncAndNotify()
-		},
+	stop, err := s.repo.Watch(repository.WatchOptions{}, func(events []model.ChangeEvent) {
+		for _, e := range events {
+			s.logger.Printf("File changed: %s (%s)", e.Path, e.Op)
+		}
+		w.syncAndNotify()
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	w.watcher = sw
+	w.stop = stop
 	return w, nil
-}
-
-// Start begins watching for file changes. Should be called in a goroutine.
-func (w *Watcher) Start() {
-	w.watcher.Start()
 }
 
 // Stop stops the file watcher.
 func (w *Watcher) Stop() {
-	w.watcher.Stop()
+	w.stop()
 }
 
 func (w *Watcher) syncAndNotify() {

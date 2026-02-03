@@ -413,3 +413,119 @@ func TestRelationsOfType(t *testing.T) {
 	dependsOn := g.RelationsOfType("depends_on")
 	assertEqual(t, len(dependsOn), 1)
 }
+
+// TestAllNodesSorted verifies that AllNodes returns entities sorted by ID.
+func TestAllNodesSorted(t *testing.T) {
+	g := New()
+	// Add nodes in reverse order to ensure sorting is tested
+	g.AddNode(newEntity("ZZZ-003", "test"))
+	g.AddNode(newEntity("AAA-001", "test"))
+	g.AddNode(newEntity("MMM-002", "test"))
+
+	nodes := g.AllNodes()
+	assertEqual(t, len(nodes), 3)
+	assertEqual(t, nodes[0].ID, "AAA-001")
+	assertEqual(t, nodes[1].ID, "MMM-002")
+	assertEqual(t, nodes[2].ID, "ZZZ-003")
+}
+
+// TestNodesByTypeSorted verifies that NodesByType returns entities sorted by ID.
+func TestNodesByTypeSorted(t *testing.T) {
+	g := New()
+	g.AddNode(newEntity("REQ-003", "requirement"))
+	g.AddNode(newEntity("REQ-001", "requirement"))
+	g.AddNode(newEntity("DEC-001", "decision"))
+	g.AddNode(newEntity("REQ-002", "requirement"))
+
+	reqs := g.NodesByType("requirement")
+	assertEqual(t, len(reqs), 3)
+	assertEqual(t, reqs[0].ID, "REQ-001")
+	assertEqual(t, reqs[1].ID, "REQ-002")
+	assertEqual(t, reqs[2].ID, "REQ-003")
+}
+
+// TestAllIDsSorted verifies that AllIDs returns IDs in sorted order.
+func TestAllIDsSorted(t *testing.T) {
+	g := New()
+	g.AddNode(newEntity("ZZZ-003", "test"))
+	g.AddNode(newEntity("AAA-001", "test"))
+	g.AddNode(newEntity("MMM-002", "test"))
+
+	ids := g.AllIDs()
+	assertEqual(t, len(ids), 3)
+	assertEqual(t, ids[0], "AAA-001")
+	assertEqual(t, ids[1], "MMM-002")
+	assertEqual(t, ids[2], "ZZZ-003")
+}
+
+// TestIDsByTypeSorted verifies that IDsByType returns IDs in sorted order.
+func TestIDsByTypeSorted(t *testing.T) {
+	g := New()
+	g.AddNode(newEntity("REQ-003", "requirement"))
+	g.AddNode(newEntity("REQ-001", "requirement"))
+	g.AddNode(newEntity("REQ-002", "requirement"))
+
+	ids := g.IDsByType("requirement")
+	assertEqual(t, len(ids), 3)
+	assertEqual(t, ids[0], "REQ-001")
+	assertEqual(t, ids[1], "REQ-002")
+	assertEqual(t, ids[2], "REQ-003")
+}
+
+// TestAllEdgesSorted verifies that AllEdges returns edges sorted by from, type, to.
+func TestAllEdgesSorted(t *testing.T) {
+	g := New()
+	g.AddEdge(newRelation("C", "implements", "D"))
+	g.AddEdge(newRelation("A", "depends_on", "B"))
+	g.AddEdge(newRelation("A", "implements", "C"))
+	g.AddEdge(newRelation("A", "implements", "B"))
+
+	edges := g.AllEdges()
+	assertEqual(t, len(edges), 4)
+	// Should be sorted by From, then Type, then To
+	assertEqual(t, edges[0].From, "A")
+	assertEqual(t, edges[0].Type, "depends_on")
+	assertEqual(t, edges[1].From, "A")
+	assertEqual(t, edges[1].Type, "implements")
+	assertEqual(t, edges[1].To, "B")
+	assertEqual(t, edges[2].From, "A")
+	assertEqual(t, edges[2].Type, "implements")
+	assertEqual(t, edges[2].To, "C")
+	assertEqual(t, edges[3].From, "C")
+}
+
+// TestOutgoingEdgesSorted verifies that OutgoingEdges returns edges sorted by type, then target.
+func TestOutgoingEdgesSorted(t *testing.T) {
+	g := New()
+	g.AddEdge(newRelation("A", "implements", "Z"))
+	g.AddEdge(newRelation("A", "depends_on", "B"))
+	g.AddEdge(newRelation("A", "implements", "C"))
+
+	edges := g.OutgoingEdges("A")
+	assertEqual(t, len(edges), 3)
+	// Should be sorted by Type, then To
+	assertEqual(t, edges[0].Type, "depends_on")
+	assertEqual(t, edges[0].To, "B")
+	assertEqual(t, edges[1].Type, "implements")
+	assertEqual(t, edges[1].To, "C")
+	assertEqual(t, edges[2].Type, "implements")
+	assertEqual(t, edges[2].To, "Z")
+}
+
+// TestIncomingEdgesSorted verifies that IncomingEdges returns edges sorted by type, then source.
+func TestIncomingEdgesSorted(t *testing.T) {
+	g := New()
+	g.AddEdge(newRelation("Z", "implements", "TARGET"))
+	g.AddEdge(newRelation("A", "depends_on", "TARGET"))
+	g.AddEdge(newRelation("C", "implements", "TARGET"))
+
+	edges := g.IncomingEdges("TARGET")
+	assertEqual(t, len(edges), 3)
+	// Should be sorted by Type, then From
+	assertEqual(t, edges[0].Type, "depends_on")
+	assertEqual(t, edges[0].From, "A")
+	assertEqual(t, edges[1].Type, "implements")
+	assertEqual(t, edges[1].From, "C")
+	assertEqual(t, edges[2].Type, "implements")
+	assertEqual(t, edges[2].From, "Z")
+}

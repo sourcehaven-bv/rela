@@ -6,12 +6,18 @@
 package main
 
 import (
+	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -21,8 +27,21 @@ func main() {
 	port := flag.String("port", "8080", "HTTP port to listen on")
 	flag.Parse()
 
-	app, err := dataentry.NewApp(*projectDir, storage.NewSafeFS(storage.NewOsFS()))
+	repo, err := createRepo(*projectDir)
 	if err != nil {
+		log.Fatalf("Failed to initialize repository: %v", err)
+	}
+
+	app, err := dataentry.NewApp(repo)
+	if err != nil {
+		var configErr *dataentry.ConfigValidationError
+		if errors.As(err, &configErr) {
+			fmt.Fprintln(os.Stderr, "Configuration validation failed:")
+			for _, e := range configErr.Errors {
+				fmt.Fprintf(os.Stderr, "  - %s\n", e)
+			}
+			os.Exit(1)
+		}
 		log.Fatalf("Failed to initialize: %v", err)
 	}
 
@@ -45,4 +64,18 @@ func main() {
 
 	log.Printf("Starting %s on http://localhost:%s", app.Cfg.App.Name, *port)
 	log.Fatal(srv.ListenAndServe())
+}
+
+// createRepo discovers the project and creates a repository.
+func createRepo(projectDir string) (repository.Store, error) {
+	absDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	projCtx, err := project.Discover(absDir, fs)
+	if err != nil {
+		return nil, fmt.Errorf("discovering project: %w", err)
+	}
+	return repository.New(fs, projCtx), nil
 }

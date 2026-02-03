@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // newGraphTestApp builds a full App with graph templates for graph handler tests.
@@ -36,7 +35,6 @@ func newGraphTestApp(t *testing.T) *App {
 		Cfg:         cfg,
 		meta:        meta,
 		g:           g,
-		fs:          storage.NewOsFS(),
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
@@ -429,7 +427,7 @@ func TestBuildContentGraphDataEmptyGraph(t *testing.T) {
 	}
 
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	app := &App{Cfg: cfg, meta: meta, g: g, fs: storage.NewOsFS(), styleMap: styleMap, styledTypes: styledTypes}
+	app := &App{Cfg: cfg, meta: meta, g: g, styleMap: styleMap, styledTypes: styledTypes}
 	resp := app.buildContentGraphData()
 
 	if len(resp.Nodes) != 0 {

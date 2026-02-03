@@ -4,15 +4,20 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 func TestWatcherStop(t *testing.T) {
 	s := makeTestServer(t)
 
-	// Create required directories so NewWatcher doesn't fail
-	entitiesDir := filepath.Join(s.projectCtx.Root, "entities")
-	relationsDir := filepath.Join(s.projectCtx.Root, "relations")
-	metamodelPath := filepath.Join(s.projectCtx.Root, "metamodel.yaml")
+	// Create required directories so Watch doesn't fail
+	root := s.projectCtx.Root
+	entitiesDir := filepath.Join(root, "entities")
+	relationsDir := filepath.Join(root, "relations")
+	metamodelPath := filepath.Join(root, "metamodel.yaml")
 	if err := os.MkdirAll(entitiesDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -23,23 +28,20 @@ func TestWatcherStop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.projectCtx.EntitiesDir = entitiesDir
-	s.projectCtx.RelationsDir = relationsDir
-	s.projectCtx.MetamodelPath = metamodelPath
+	ctx := &project.Context{
+		Root:          root,
+		EntitiesDir:   entitiesDir,
+		RelationsDir:  relationsDir,
+		MetamodelPath: metamodelPath,
+	}
+	s.repo = repository.New(storage.NewOsFS(), ctx)
+	s.projectCtx = ctx
 
 	w, err := NewWatcher(s)
 	if err != nil {
 		t.Fatalf("NewWatcher failed: %v", err)
 	}
 
-	// Start in goroutine
-	done := make(chan struct{})
-	go func() {
-		w.Start()
-		close(done)
-	}()
-
-	// Stop should cause Start to return
+	// Stop should shut down the watcher started by Watch
 	w.Stop()
-	<-done
 }

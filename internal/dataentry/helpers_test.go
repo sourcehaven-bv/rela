@@ -380,6 +380,16 @@ func TestSimpleMarkdownToHTML(t *testing.T) {
 			"- item\n\nText after list.",
 			"<ul>\n<li>item</li>\n</ul>\n<p>Text after list.</p>",
 		},
+		{
+			"mermaid block",
+			"```mermaid\ngraph TD\n  A-->B\n```",
+			"<pre class=\"mermaid\">\ngraph TD\n  A--&gt;B\n</pre>",
+		},
+		{
+			"mermaid block unclosed",
+			"```mermaid\ngraph LR\n  A-->B",
+			"<pre class=\"mermaid\">\ngraph LR\n  A--&gt;B\n</pre>",
+		},
 	}
 
 	for _, tt := range tests {
@@ -504,6 +514,34 @@ func TestTemplateFuncs(t *testing.T) {
 		got := fn("just text")
 		if got != "just text" {
 			t.Errorf("formatValue = %q, want 'just text'", got)
+		}
+	})
+
+	t.Run("sortedKeys returns sorted keys", func(t *testing.T) {
+		fn := funcs["sortedKeys"].(func(map[string]interface{}) []string)
+		m := map[string]interface{}{
+			"zebra":  1,
+			"apple":  2,
+			"mango":  3,
+			"banana": 4,
+		}
+		got := fn(m)
+		want := []string{"apple", "banana", "mango", "zebra"}
+		if len(got) != len(want) {
+			t.Fatalf("sortedKeys length = %d, want %d", len(got), len(want))
+		}
+		for i, k := range got {
+			if k != want[i] {
+				t.Errorf("sortedKeys[%d] = %q, want %q", i, k, want[i])
+			}
+		}
+	})
+
+	t.Run("sortedKeys empty map", func(t *testing.T) {
+		fn := funcs["sortedKeys"].(func(map[string]interface{}) []string)
+		got := fn(map[string]interface{}{})
+		if len(got) != 0 {
+			t.Errorf("sortedKeys empty map = %v, want empty slice", got)
 		}
 	})
 }

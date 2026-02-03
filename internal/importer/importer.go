@@ -108,7 +108,7 @@ func (s *ImportSource) Open(path string) (io.ReadCloser, error) {
 
 // Importer handles importing data into a rela project
 type Importer struct {
-	repo   *repository.Repository
+	repo   repository.Store
 	meta   *metamodel.Metamodel
 	g      *graph.Graph
 	opts   Options
@@ -117,7 +117,7 @@ type Importer struct {
 
 // New creates a new Importer that reads input files from the given source.
 func New(
-	repo *repository.Repository, meta *metamodel.Metamodel, g *graph.Graph, opts Options, source *ImportSource,
+	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, opts Options, source *ImportSource,
 ) *Importer {
 	return &Importer{
 		repo:   repo,

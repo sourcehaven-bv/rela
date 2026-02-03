@@ -143,10 +143,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 			if col.Relation != "" {
 				val = a.resolveRelationColumnValue(e.ID, col.Relation)
 			} else {
-				val = fmt.Sprintf("%v", e.Properties[col.Property])
-				if e.Properties[col.Property] == nil {
-					val = ""
-				}
+				val = e.GetAttributeString(col.Property)
 				propType = resolvePropertyType(col.Property, list.EntityType, a.meta)
 			}
 			cells = append(cells, CellData{
@@ -587,8 +584,13 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 			targetType = target.Type
 		}
 		rd := RelDisplay{e.Type, e.To, targetType, title, "outgoing", nil}
-		for k, v := range e.Properties {
-			rd.Properties = append(rd.Properties, RelPropDisplay{k, fmt.Sprintf("%v", v)})
+		propKeys := make([]string, 0, len(e.Properties))
+		for k := range e.Properties {
+			propKeys = append(propKeys, k)
+		}
+		sort.Strings(propKeys)
+		for _, k := range propKeys {
+			rd.Properties = append(rd.Properties, RelPropDisplay{k, fmt.Sprintf("%v", e.Properties[k])})
 		}
 		rels = append(rels, rd)
 	}
@@ -601,16 +603,26 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 			sourceType = source.Type
 		}
 		rd := RelDisplay{e.Type, e.From, sourceType, title, "incoming", nil}
-		for k, v := range e.Properties {
-			rd.Properties = append(rd.Properties, RelPropDisplay{k, fmt.Sprintf("%v", v)})
+		propKeys := make([]string, 0, len(e.Properties))
+		for k := range e.Properties {
+			propKeys = append(propKeys, k)
+		}
+		sort.Strings(propKeys)
+		for _, k := range propKeys {
+			rd.Properties = append(rd.Properties, RelPropDisplay{k, fmt.Sprintf("%v", e.Properties[k])})
 		}
 		rels = append(rels, rd)
 	}
 
 	propTypes := make(map[string]string)
 	if entDef != nil {
-		for propName, propDef := range entDef.Properties {
-			propTypes[propName] = propDef.Type
+		propTypeKeys := make([]string, 0, len(entDef.Properties))
+		for propName := range entDef.Properties {
+			propTypeKeys = append(propTypeKeys, propName)
+		}
+		sort.Strings(propTypeKeys)
+		for _, propName := range propTypeKeys {
+			propTypes[propName] = entDef.Properties[propName].Type
 		}
 	}
 
@@ -1557,6 +1569,8 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 				groups[val]++
 			}
+			// Sort values alphabetically for consistent display
+			sort.Strings(orderedValues)
 			// Determine property type for badge styling
 			propType := ""
 			if len(entities) > 0 {

@@ -18,9 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -37,19 +35,12 @@ type App struct {
 	Cfg  *Config
 	meta *metamodel.Metamodel
 	g    *graph.Graph
-	repo *repository.Repository
+	repo repository.Store
 	tmpl *template.Template
 	// styleMap: property type name -> value -> CSS class name
 	styleMap map[string]map[string]string
 	// styledTypes: set of property type names that have style entries
 	styledTypes map[string]bool
-	// projCtx and fs are stored for live-reload and UI state support.
-	projCtx *project.Context
-	fs      storage.FS
-	// uiStatePath is the path to .rela/ui-state.json for persisting UI preferences.
-	uiStatePath string
-	// userDefaultsPath is the path to .rela/user-defaults.yaml for user-specific defaults.
-	userDefaultsPath string
 	// userDefaults holds the loaded user defaults (nil if not yet loaded or no file).
 	userDefaults *UserDefaults
 	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
@@ -59,27 +50,17 @@ type App struct {
 	broker *eventBroker
 }
 
-// NewApp creates and initializes an App using the given filesystem.
-func NewApp(projectDir string, fs storage.FS) (*App, error) {
-	// Discover rela project
-	absDir, err := filepath.Abs(projectDir)
-	if err != nil {
-		return nil, err
-	}
-	projCtx, err := project.Discover(absDir, fs)
-	if err != nil {
-		return nil, fmt.Errorf("discovering project: %w", err)
-	}
-
+// NewApp creates and initializes an App using the given Store.
+func NewApp(repo repository.Store) (*App, error) {
 	// Load data-entry config from project root
-	configPath := filepath.Join(projCtx.Root, ConfigFile)
-	cfgData, err := fs.ReadFile(configPath)
+	cfgData, err := repo.ReadProjectFile(ConfigFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
 	// Check for deprecated syntax that needs migration
-	detections, detectErr := migration.Detect(configPath, migration.FileTypeDataEntry, fs)
-	if detectErr == nil && len(detections) > 0 {
+	configPath := filepath.Join(repo.Paths().Root, ConfigFile)
+	detections := migration.DetectBytes(cfgData, migration.FileTypeDataEntry)
+	if len(detections) > 0 {
 		return nil, &migration.Error{
 			FilePath:   configPath,
 			Detections: detections,
@@ -91,9 +72,6 @@ func NewApp(projectDir string, fs storage.FS) (*App, error) {
 		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
 	}
 
-	// Create repository
-	repo := repository.New(fs, projCtx)
-
 	// Load metamodel
 	meta, err := repo.LoadMetamodel()
 	if err != nil {
@@ -101,10 +79,8 @@ func NewApp(projectDir string, fs storage.FS) (*App, error) {
 	}
 
 	// Validate config against metamodel
-	if errs := validateConfig(&cfg, meta); len(errs) > 0 {
-		for _, e := range errs {
-			log.Printf("Config warning: %s", e)
-		}
+	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
+		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
 	}
 
 	// Build graph from files
@@ -128,18 +104,14 @@ func NewApp(projectDir string, fs storage.FS) (*App, error) {
 		return nil, fmt.Errorf("parsing graph templates: %w", err)
 	}
 	app := &App{
-		Cfg:              &cfg,
-		meta:             meta,
-		g:                g,
-		repo:             repo,
-		tmpl:             tmpl,
-		styleMap:         styleMap,
-		styledTypes:      styledTypes,
-		projCtx:          projCtx,
-		fs:               fs,
-		uiStatePath:      filepath.Join(projCtx.CacheDir, uiStateFile),
-		userDefaultsPath: filepath.Join(projCtx.CacheDir, userDefaultsFile),
-		broker:           newEventBroker(),
+		Cfg:         &cfg,
+		meta:        meta,
+		g:           g,
+		repo:        repo,
+		tmpl:        tmpl,
+		styleMap:    styleMap,
+		styledTypes: styledTypes,
+		broker:      newEventBroker(),
 	}
 	app.userDefaults = app.loadUserDefaults()
 	return app, nil
@@ -219,10 +191,10 @@ func (a *App) navElements(activeList string) []NavElement {
 // Returns an empty UIState if the file doesn't exist or can't be parsed.
 func (a *App) loadUIState() UIState {
 	state := UIState{CollapsedGroups: make(map[string]bool)}
-	if a.uiStatePath == "" {
+	if a.repo == nil {
 		return state
 	}
-	data, err := a.fs.ReadFile(a.uiStatePath)
+	data, err := a.repo.ReadCacheFile(uiStateFile)
 	if err != nil {
 		return state
 	}
@@ -237,27 +209,23 @@ func (a *App) loadUIState() UIState {
 
 // saveUIState writes the UI state to .rela/ui-state.json.
 func (a *App) saveUIState(state UIState) error {
-	if a.uiStatePath == "" {
+	if a.repo == nil {
 		return nil
-	}
-	// Ensure .rela directory exists
-	if err := a.fs.MkdirAll(filepath.Dir(a.uiStatePath), 0o755); err != nil {
-		return err
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
-	return a.fs.WriteFile(a.uiStatePath, data, 0o644)
+	return a.repo.WriteCacheFile(uiStateFile, data)
 }
 
 // loadUserDefaults reads .rela/user-defaults.yaml and returns the parsed defaults.
 // Returns nil if the file doesn't exist or can't be parsed.
 func (a *App) loadUserDefaults() *UserDefaults {
-	if a.userDefaultsPath == "" {
+	if a.repo == nil {
 		return nil
 	}
-	data, err := a.fs.ReadFile(a.userDefaultsPath)
+	data, err := a.repo.ReadCacheFile(userDefaultsFile)
 	if err != nil {
 		return nil
 	}
@@ -270,17 +238,14 @@ func (a *App) loadUserDefaults() *UserDefaults {
 
 // saveUserDefaults writes the user defaults to .rela/user-defaults.yaml.
 func (a *App) saveUserDefaults(ud *UserDefaults) error {
-	if a.userDefaultsPath == "" {
+	if a.repo == nil {
 		return nil
-	}
-	if err := a.fs.MkdirAll(filepath.Dir(a.userDefaultsPath), 0o755); err != nil {
-		return err
 	}
 	data, err := yaml.Marshal(ud)
 	if err != nil {
 		return err
 	}
-	return a.fs.WriteFile(a.userDefaultsPath, data, 0o644)
+	return a.repo.WriteCacheFile(userDefaultsFile, data)
 }
 
 // firstNavTarget returns the first navigable item from the navigation config,
@@ -468,83 +433,4 @@ func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]
 	}
 
 	return sm, st
-}
-
-func validateConfig(cfg *Config, meta *metamodel.Metamodel) []string {
-	var errs []string
-	// Validate navigation: reject nested groups
-	for _, nav := range cfg.Navigation {
-		if nav.IsGroup() {
-			for _, child := range nav.Items {
-				if child.IsGroup() {
-					errs = append(errs, fmt.Sprintf(
-						"navigation: group %q contains nested group %q — nested groups are not supported",
-						nav.Group, child.Group))
-				}
-			}
-		}
-	}
-	for formID, form := range cfg.Forms {
-		if _, ok := meta.GetEntityDef(form.EntityType); !ok {
-			errs = append(errs, fmt.Sprintf("form %q: unknown entity type %q", formID, form.EntityType))
-			continue
-		}
-		entDef, _ := meta.GetEntityDef(form.EntityType)
-		for _, f := range form.Fields {
-			if _, ok := entDef.Properties[f.Property]; !ok {
-				errs = append(errs, fmt.Sprintf("form %q: field %q not in metamodel for entity %q", formID, f.Property, form.EntityType))
-			}
-		}
-		for _, r := range form.Relations {
-			if _, ok := meta.GetRelationDef(r.Relation); !ok {
-				errs = append(errs, fmt.Sprintf("form %q: unknown relation %q", formID, r.Relation))
-			}
-		}
-	}
-	for listID, list := range cfg.Lists {
-		if _, ok := meta.GetEntityDef(list.EntityType); !ok {
-			errs = append(errs, fmt.Sprintf("list %q: unknown entity type %q", listID, list.EntityType))
-			continue
-		}
-		entDef, _ := meta.GetEntityDef(list.EntityType)
-		for _, c := range list.Columns {
-			if c.Relation != "" {
-				if _, ok := meta.GetRelationDef(c.Relation); !ok {
-					errs = append(errs, fmt.Sprintf("list %q: column relation %q not in metamodel", listID, c.Relation))
-				}
-			} else if _, ok := entDef.Properties[c.Property]; !ok {
-				errs = append(errs, fmt.Sprintf("list %q: column %q not in metamodel for entity %q", listID, c.Property, list.EntityType))
-			}
-		}
-	}
-	validContexts := map[string]bool{"entity": true, "list": true, "view": true, "global": true}
-	for cmdID, cmd := range cfg.Commands {
-		if cmd.Label == "" {
-			errs = append(errs, fmt.Sprintf("command %q: label is required", cmdID))
-		}
-		if cmd.Script == "" {
-			errs = append(errs, fmt.Sprintf("command %q: script is required", cmdID))
-		}
-		if !validContexts[cmd.Context] {
-			errs = append(errs, fmt.Sprintf("command %q: invalid context %q (must be entity, list, view, or global)", cmdID, cmd.Context))
-		}
-		if cmd.AvailableOn != nil {
-			for _, v := range cmd.AvailableOn.Views {
-				if _, ok := cfg.Views[v]; !ok {
-					errs = append(errs, fmt.Sprintf("command %q: available_on references unknown view %q", cmdID, v))
-				}
-			}
-			for _, l := range cmd.AvailableOn.Lists {
-				if _, ok := cfg.Lists[l]; !ok {
-					errs = append(errs, fmt.Sprintf("command %q: available_on references unknown list %q", cmdID, l))
-				}
-			}
-			for _, et := range cmd.AvailableOn.EntityTypes {
-				if _, ok := meta.GetEntityDef(et); !ok {
-					errs = append(errs, fmt.Sprintf("command %q: available_on references unknown entity type %q", cmdID, et))
-				}
-			}
-		}
-	}
-	return errs
 }

@@ -27,10 +27,7 @@ func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Ent
 			if strings.HasPrefix(f.Value, "$") {
 				continue // skip variable substitution
 			}
-			val := fmt.Sprintf("%v", e.Properties[f.Property])
-			if e.Properties[f.Property] == nil {
-				val = ""
-			}
+			val := e.GetAttributeString(f.Property)
 			switch f.Operator {
 			case "=":
 				if val != f.Value {
@@ -193,23 +190,41 @@ func simpleMarkdownToHTML(md string) template.HTML {
 		}
 	}
 
+	inMermaidBlock := false
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
 		// Code block toggle
 		if strings.HasPrefix(trimmed, "```") {
-			if inCodeBlock {
-				out = append(out, "</code></pre>")
-				inCodeBlock = false
+			if inCodeBlock || inMermaidBlock {
+				if inMermaidBlock {
+					out = append(out, "</pre>")
+					inMermaidBlock = false
+				} else {
+					out = append(out, "</code></pre>")
+					inCodeBlock = false
+				}
 			} else {
 				flushParagraph()
 				closeList()
-				out = append(out, "<pre><code>")
-				inCodeBlock = true
+				// Check for mermaid code block
+				lang := strings.TrimSpace(trimmed[3:])
+				if lang == "mermaid" {
+					out = append(out, `<pre class="mermaid">`)
+					inMermaidBlock = true
+				} else {
+					out = append(out, "<pre><code>")
+					inCodeBlock = true
+				}
 			}
 			continue
 		}
 		if inCodeBlock {
+			out = append(out, template.HTMLEscapeString(line))
+			continue
+		}
+		if inMermaidBlock {
 			out = append(out, template.HTMLEscapeString(line))
 			continue
 		}
@@ -277,6 +292,9 @@ func simpleMarkdownToHTML(md string) template.HTML {
 	closeList()
 	if inCodeBlock {
 		out = append(out, "</code></pre>")
+	}
+	if inMermaidBlock {
+		out = append(out, "</pre>")
 	}
 
 	return template.HTML(strings.Join(out, "\n")) //nolint:gosec // HTML is constructed from escaped user content
@@ -446,6 +464,14 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 				return t.Format("2006-01-02")
 			}
 			return val
+		},
+		"sortedKeys": func(m map[string]interface{}) []string {
+			keys := make([]string, 0, len(m))
+			for k := range m {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			return keys
 		},
 	}
 }

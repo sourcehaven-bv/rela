@@ -30,6 +30,13 @@ build-desktop:
 # Build all binaries
 build: build-cli build-server build-desktop
 
+# Install CLI to ~/bin
+install: build-cli
+    @echo "Installing rela to ~/bin..."
+    @mkdir -p ~/bin
+    @install {{build_dir}}/rela ~/bin/rela
+    @echo "Done! Make sure ~/bin is in your PATH."
+
 # Clean build artifacts
 clean:
     @echo "Cleaning..."
@@ -191,6 +198,7 @@ vendor-js:
     curl -sfL -o internal/dataentry/static/tagify.min.js       "https://unpkg.com/@yaireo/tagify@4.31.3/dist/tagify.min.js"
     curl -sfL -o internal/dataentry/static/tagify.css          "https://unpkg.com/@yaireo/tagify@4.31.3/dist/tagify.css"
     curl -sfL -o internal/dataentry/static/cytoscape.min.js    "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"
+    curl -sfL -o internal/dataentry/static/mermaid.min.js      "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
     @echo "Done! Review changes with 'git diff' and commit."
 
 # ── Icons ──

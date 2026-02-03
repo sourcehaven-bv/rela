@@ -1,15 +1,17 @@
 package dataentry
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -141,7 +143,6 @@ func testAppInstance() *App {
 		Cfg:         cfg,
 		meta:        meta,
 		g:           g,
-		fs:          storage.NewOsFS(),
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 	}
@@ -149,12 +150,13 @@ func testAppInstance() *App {
 
 func TestValidateConfig(t *testing.T) {
 	meta := testMeta()
+	emptyYAML := []byte(`version: "1.0"`)
 
 	t.Run("valid config", func(t *testing.T) {
 		cfg := testConfig()
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 0 {
-			t.Errorf("expected no errors, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err != nil {
+			t.Errorf("expected no errors, got %v", err)
 		}
 	})
 
@@ -164,11 +166,18 @@ func TestValidateConfig(t *testing.T) {
 				"bad-form": {EntityType: "nonexistent", Fields: []FormField{{Property: "title"}}},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
-		if got := errs[0]; got != `form "bad-form": unknown entity type "nonexistent"` {
+		var configErr *ConfigValidationError
+		if !errors.As(err, &configErr) {
+			t.Fatalf("expected ConfigValidationError, got %T", err)
+		}
+		if len(configErr.Errors) != 1 {
+			t.Fatalf("expected 1 error, got %d: %v", len(configErr.Errors), configErr.Errors)
+		}
+		if got := configErr.Errors[0]; got != `form "bad-form": unknown entity type "nonexistent"` {
 			t.Errorf("unexpected error: %s", got)
 		}
 	})
@@ -179,9 +188,9 @@ func TestValidateConfig(t *testing.T) {
 				"bad-form": {EntityType: "ticket", Fields: []FormField{{Property: "nonexistent"}}},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
 
@@ -191,9 +200,9 @@ func TestValidateConfig(t *testing.T) {
 				"bad-form": {EntityType: "ticket", Relations: []FormRelation{{Relation: "nonexistent"}}},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
 
@@ -203,9 +212,9 @@ func TestValidateConfig(t *testing.T) {
 				"bad-list": {EntityType: "nonexistent"},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
 
@@ -215,17 +224,17 @@ func TestValidateConfig(t *testing.T) {
 				"bad-list": {EntityType: "ticket", Columns: []ListColumn{{Property: "nonexistent"}}},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
 	})
 
 	t.Run("empty config is valid", func(t *testing.T) {
 		cfg := &Config{}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 0 {
-			t.Errorf("expected no errors, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err != nil {
+			t.Errorf("expected no errors, got %v", err)
 		}
 	})
 }
@@ -695,9 +704,17 @@ func TestFirstNavTarget(t *testing.T) {
 }
 
 func TestUIStateLoadSave(t *testing.T) {
-	dir := t.TempDir()
+	// Create an app with a real repository backed by memfs
+	fs := storage.NewMemFS()
+	ctx := &project.Context{
+		Root:     "/project",
+		CacheDir: "/project/.rela",
+	}
+	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+	repo := repository.New(fs, ctx)
+
 	app := testAppInstance()
-	app.uiStatePath = filepath.Join(dir, "ui-state.json")
+	app.repo = repo
 
 	t.Run("load returns defaults when file missing", func(t *testing.T) {
 		state := app.loadUIState()
@@ -719,7 +736,7 @@ func TestUIStateLoadSave(t *testing.T) {
 
 	t.Run("UIState overrides config default", func(t *testing.T) {
 		app2 := testAppInstance()
-		app2.uiStatePath = filepath.Join(dir, "ui-state.json")
+		app2.repo = repo
 		app2.Cfg.Navigation = []NavigationEntry{
 			{
 				Group:     "Tickets",
@@ -743,9 +760,9 @@ func TestUIStateLoadSave(t *testing.T) {
 		}
 	})
 
-	t.Run("empty uiStatePath is safe", func(t *testing.T) {
+	t.Run("nil repo is safe", func(t *testing.T) {
 		app2 := testAppInstance()
-		app2.uiStatePath = ""
+		app2.repo = nil
 		state := app2.loadUIState()
 		if len(state.CollapsedGroups) != 0 {
 			t.Error("expected empty state")
@@ -757,9 +774,16 @@ func TestUIStateLoadSave(t *testing.T) {
 }
 
 func TestUserDefaultsLoadSave(t *testing.T) {
-	dir := t.TempDir()
+	fs := storage.NewMemFS()
+	ctx := &project.Context{
+		Root:     "/project",
+		CacheDir: "/project/.rela",
+	}
+	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+	repo := repository.New(fs, ctx)
+
 	app := testAppInstance()
-	app.userDefaultsPath = filepath.Join(dir, "user-defaults.yaml")
+	app.repo = repo
 
 	t.Run("load returns nil when file missing", func(t *testing.T) {
 		ud := app.loadUserDefaults()
@@ -804,9 +828,9 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 		}
 	})
 
-	t.Run("empty userDefaultsPath is safe", func(t *testing.T) {
+	t.Run("nil repo is safe", func(t *testing.T) {
 		app2 := testAppInstance()
-		app2.userDefaultsPath = ""
+		app2.repo = nil
 		ud := app2.loadUserDefaults()
 		if ud != nil {
 			t.Errorf("expected nil, got %+v", ud)
@@ -819,6 +843,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 
 func TestValidateConfigNestedGroups(t *testing.T) {
 	meta := testMeta()
+	emptyYAML := []byte(`version: "1.0"`)
 
 	t.Run("nested groups rejected", func(t *testing.T) {
 		cfg := &Config{
@@ -836,17 +861,20 @@ func TestValidateConfigNestedGroups(t *testing.T) {
 				},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 1 {
-			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
-		if !strings.Contains(errs[0], "nested group") {
-			t.Errorf("expected nested group error, got: %s", errs[0])
+		if !strings.Contains(err.Error(), "nested group") {
+			t.Errorf("expected nested group error, got: %s", err.Error())
 		}
 	})
 
 	t.Run("flat groups are valid", func(t *testing.T) {
 		cfg := &Config{
+			Lists: map[string]List{
+				"tickets": {EntityType: "ticket"},
+			},
 			Navigation: []NavigationEntry{
 				{
 					Group: "Tickets",
@@ -856,9 +884,9 @@ func TestValidateConfigNestedGroups(t *testing.T) {
 				},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 0 {
-			t.Errorf("expected no errors, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err != nil {
+			t.Errorf("expected no errors, got %v", err)
 		}
 	})
 }

@@ -429,11 +429,12 @@ func TestBuildCommandEnvViewContext(t *testing.T) {
 
 func TestValidateCommandConfig(t *testing.T) {
 	meta := testMeta()
+	emptyYAML := []byte(`version: "1.0"`)
 
 	t.Run("valid command", func(t *testing.T) {
 		cfg := &Config{
 			Lists: map[string]List{"tickets": {EntityType: "ticket"}},
-			Views: map[string]ViewConfig{"ticket_detail": {}},
+			Views: map[string]ViewConfig{"ticket_detail": {Entry: ViewEntry{Type: "ticket"}}},
 			Commands: map[string]CommandConfig{
 				"test": {
 					Label:   "Test",
@@ -447,9 +448,9 @@ func TestValidateCommandConfig(t *testing.T) {
 				},
 			},
 		}
-		errs := validateConfig(cfg, meta)
-		if len(errs) != 0 {
-			t.Errorf("expected no errors, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if err != nil {
+			t.Errorf("expected no errors, got %v", err)
 		}
 	})
 
@@ -457,9 +458,9 @@ func TestValidateCommandConfig(t *testing.T) {
 		cfg := &Config{Commands: map[string]CommandConfig{
 			"bad": {Script: "echo", Context: "entity"},
 		}}
-		errs := validateConfig(cfg, meta)
-		if !hasError(errs, "label") {
-			t.Errorf("expected label error, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if !hasErrorStr(err, "label") {
+			t.Errorf("expected label error, got %v", err)
 		}
 	})
 
@@ -467,9 +468,9 @@ func TestValidateCommandConfig(t *testing.T) {
 		cfg := &Config{Commands: map[string]CommandConfig{
 			"bad": {Label: "Test", Context: "entity"},
 		}}
-		errs := validateConfig(cfg, meta)
-		if !hasError(errs, "script") {
-			t.Errorf("expected script error, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if !hasErrorStr(err, "script") {
+			t.Errorf("expected script error, got %v", err)
 		}
 	})
 
@@ -477,9 +478,9 @@ func TestValidateCommandConfig(t *testing.T) {
 		cfg := &Config{Commands: map[string]CommandConfig{
 			"bad": {Label: "Test", Script: "echo", Context: "invalid"},
 		}}
-		errs := validateConfig(cfg, meta)
-		if !hasError(errs, "invalid context") {
-			t.Errorf("expected context error, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if !hasErrorStr(err, "invalid context") {
+			t.Errorf("expected context error, got %v", err)
 		}
 	})
 
@@ -490,9 +491,9 @@ func TestValidateCommandConfig(t *testing.T) {
 				AvailableOn: &CommandScope{Views: []string{"nonexistent"}},
 			},
 		}}
-		errs := validateConfig(cfg, meta)
-		if !hasError(errs, "unknown view") {
-			t.Errorf("expected view error, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if !hasErrorStr(err, "unknown view") {
+			t.Errorf("expected view error, got %v", err)
 		}
 	})
 
@@ -503,9 +504,9 @@ func TestValidateCommandConfig(t *testing.T) {
 				AvailableOn: &CommandScope{Lists: []string{"nonexistent"}},
 			},
 		}}
-		errs := validateConfig(cfg, meta)
-		if !hasError(errs, "unknown list") {
-			t.Errorf("expected list error, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if !hasErrorStr(err, "unknown list") {
+			t.Errorf("expected list error, got %v", err)
 		}
 	})
 
@@ -516,9 +517,9 @@ func TestValidateCommandConfig(t *testing.T) {
 				AvailableOn: &CommandScope{EntityTypes: []string{"nonexistent"}},
 			},
 		}}
-		errs := validateConfig(cfg, meta)
-		if !hasError(errs, "unknown entity type") {
-			t.Errorf("expected entity type error, got %v", errs)
+		err := ValidateConfig(emptyYAML, cfg, meta)
+		if !hasErrorStr(err, "unknown entity type") {
+			t.Errorf("expected entity type error, got %v", err)
 		}
 	})
 }
@@ -959,13 +960,11 @@ func assertNotContains(t *testing.T, ids []string, unexpected string) {
 	}
 }
 
-func hasError(errs []string, substring string) bool {
-	for _, e := range errs {
-		if strings.Contains(strings.ToLower(e), strings.ToLower(substring)) {
-			return true
-		}
+func hasErrorStr(err error, substring string) bool {
+	if err == nil {
+		return false
 	}
-	return false
+	return strings.Contains(strings.ToLower(err.Error()), strings.ToLower(substring))
 }
 
 func envToMap(env []string) map[string]string {
