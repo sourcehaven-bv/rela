@@ -254,6 +254,13 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Build scope params for detail links (sort + filter state for scope reconstruction)
+	var scopeParams string
+	if sortProp != "" {
+		scopeParams += "&sort=" + url.QueryEscape(sortProp) + "&sort_dir=" + url.QueryEscape(sortDir)
+	}
+	scopeParams += filterParams
+
 	data := map[string]interface{}{
 		"App":              a.Cfg.App,
 		"Navigation":       a.navElements(listID),
@@ -267,6 +274,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		"TotalCount":       totalCount,
 		"EditForm":         list.EditForm,
 		"DetailLinkPrefix": detailLinkPrefix,
+		"ScopeParams":      scopeParams,
 		"IsHTMX":           r.Header.Get("HX-Request") == "true",
 		"SortProperty":     sortProp,
 		"SortDirection":    sortDir,
@@ -599,6 +607,12 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Build return URL for edit links (preserves scope params)
+	returnTo := r.URL.Path
+	if r.URL.RawQuery != "" {
+		returnTo += "?" + r.URL.RawQuery
+	}
+
 	entityActiveList := a.resolveActiveList(entity.Type, r)
 	backURL := "/"
 	if entityActiveList != "" {
@@ -613,6 +627,8 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		"EditFormID": editFormID,
 		"Relations":  rels,
 		"PropTypes":  propTypes,
+		"ReturnTo":   returnTo,
+		"Scope":      a.resolveScope(entity.ID, r),
 		"Commands":   a.resolveCommands("entity", "", entity.Type),
 		"BackURL":    backURL,
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
@@ -968,6 +984,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		"EditFormID": a.editFormForType(result.Entry.Type),
 		"ReturnTo":   returnTo,
 		"Sections":   sections,
+		"Scope":      a.resolveScope(entityID, r),
 		"Commands":   a.resolveCommands("view", viewID, result.Entry.Type),
 		"BackURL":    backURL,
 		"IsHTMX":     r.Header.Get("HX-Request") == "true",
@@ -1556,6 +1573,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	if !sq.IsEmpty() {
 		entities := a.executeQuery(query)
+		sort.Slice(entities, func(i, j int) bool { return entities[i].ID < entities[j].ID })
 		const maxResults = 100
 		for _, e := range entities {
 			if len(results) >= maxResults {
@@ -1673,6 +1691,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		"ResultCount":     len(results),
 		"HasQuery":        query != "",
 		"ParseErrors":     parseErrors,
+		"ScopeParams":     "scope=search:" + url.QueryEscape(query),
 		"IsHTMX":          r.Header.Get("HX-Request") == "true",
 		"SuggestionsJSON": htmltemplate.JS(suggestionsJSON), //nolint:gosec // controlled data from metamodel
 	}

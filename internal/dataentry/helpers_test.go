@@ -2,6 +2,9 @@ package dataentry
 
 import (
 	"html/template"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -671,4 +674,229 @@ func TestIsRelationLinked(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveScope(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Properties: map[string]metamodel.PropertyDef{
+					"status":   {Type: "string"},
+					"priority": {Type: "string"},
+				},
+			},
+		},
+	}
+
+	makeGraph := func() *graph.Graph {
+		g := graph.New()
+		for _, e := range []*model.Entity{
+			{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"status": "open", "priority": "high"}},
+			{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"status": "closed", "priority": "low"}},
+			{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"status": "open", "priority": "medium"}},
+			{ID: "T-004", Type: "ticket", Properties: map[string]interface{}{"status": "open", "priority": "low"}},
+		} {
+			g.AddNode(e)
+		}
+		return g
+	}
+
+	makeApp := func() *App {
+		return &App{
+			meta: meta,
+			g:    makeGraph(),
+			Cfg: &Config{
+				Lists: map[string]List{
+					"tickets": {
+						EntityType: "ticket",
+						Title:      "Tickets",
+						Sort:       []SortSpec{{Property: "priority", Direction: "asc"}},
+						Filters:    nil,
+						FilterControls: []FilterControl{
+							{Property: "status"},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	makeRequest := func(urlStr string) *http.Request {
+		return httptest.NewRequest(http.MethodGet, urlStr, http.NoBody)
+	}
+
+	t.Run("no scope param returns nil", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/entity/ticket/T-002")
+		got := app.resolveScope("T-002", r)
+		if got != nil {
+			t.Errorf("expected nil, got %+v", got)
+		}
+	})
+
+	t.Run("empty scope param returns nil", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/entity/ticket/T-002?scope=")
+		got := app.resolveScope("T-002", r)
+		if got != nil {
+			t.Errorf("expected nil, got %+v", got)
+		}
+	})
+
+	t.Run("invalid scope prefix returns nil", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/entity/ticket/T-002?scope=bogus:foo")
+		got := app.resolveScope("T-002", r)
+		if got != nil {
+			t.Errorf("expected nil, got %+v", got)
+		}
+	})
+
+	t.Run("unknown list returns nil", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/entity/ticket/T-002?scope=list:nonexistent")
+		got := app.resolveScope("T-002", r)
+		if got != nil {
+			t.Errorf("expected nil, got %+v", got)
+		}
+	})
+
+	t.Run("entity not in scope returns nil", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/entity/ticket/T-999?scope=list:tickets")
+		got := app.resolveScope("T-999", r)
+		if got != nil {
+			t.Errorf("expected nil, got %+v", got)
+		}
+	})
+
+	t.Run("list scope middle item has prev and next", func(t *testing.T) {
+		app := makeApp()
+		// Sort by status asc: closed(T-002), open(T-001), open(T-003), open(T-004)
+		// T-001 has status=open which sorts after closed.
+		r := makeRequest("/entity/ticket/T-001?scope=list:tickets&sort=status&sort_dir=asc")
+		got := app.resolveScope("T-001", r)
+		if got == nil {
+			t.Fatal("expected non-nil scope")
+		}
+		if got.PrevURL == "" {
+			t.Error("expected PrevURL to be set for non-first item")
+		}
+		if got.Label != "4 Tickets" {
+			t.Errorf("Label = %q, want %q", got.Label, "4 Tickets")
+		}
+	})
+
+	t.Run("list scope first item has no prev", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/entity/ticket/T-001?scope=list:tickets&sort=status&sort_dir=asc")
+		got := app.resolveScope("T-001", r)
+		if got == nil {
+			t.Fatal("expected non-nil scope")
+		}
+		if got.Progress == "[1/4]" && got.PrevURL != "" {
+			t.Error("first item should not have PrevURL")
+		}
+	})
+
+	t.Run("list scope last item has no next", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/entity/ticket/T-001?scope=list:tickets&sort=priority&sort_dir=desc")
+		got := app.resolveScope("T-001", r)
+		if got == nil {
+			t.Fatal("expected non-nil scope")
+		}
+		if got.Progress == "[4/4]" && got.NextURL != "" {
+			t.Error("last item should not have NextURL")
+		}
+	})
+
+	t.Run("list scope with filter narrows results", func(t *testing.T) {
+		app := makeApp()
+		// Filter to status=open should give T-001, T-003, T-004 (3 items)
+		r := makeRequest("/entity/ticket/T-003?scope=list:tickets&filter_status=open")
+		got := app.resolveScope("T-003", r)
+		if got == nil {
+			t.Fatal("expected non-nil scope")
+		}
+		if got.Label != "3 Tickets" {
+			t.Errorf("Label = %q, want %q", got.Label, "3 Tickets")
+		}
+	})
+
+	t.Run("list scope preserves query params in prev/next URLs", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/entity/ticket/T-003?from=tickets&scope=list:tickets&filter_status=open")
+		got := app.resolveScope("T-003", r)
+		if got == nil {
+			t.Fatal("expected non-nil scope")
+		}
+		checkURL := got.NextURL
+		if checkURL == "" {
+			checkURL = got.PrevURL
+		}
+		if checkURL == "" {
+			t.Fatal("expected at least one nav URL")
+		}
+		for _, param := range []string{"scope=list%3Atickets", "filter_status=open", "from=tickets"} {
+			if !strings.Contains(checkURL, param) {
+				t.Errorf("URL %q missing expected param %q", checkURL, param)
+			}
+		}
+	})
+
+	t.Run("single item scope has no prev or next", func(t *testing.T) {
+		app := makeApp()
+		// Filter to status=closed should give only T-002
+		r := makeRequest("/entity/ticket/T-002?scope=list:tickets&filter_status=closed")
+		got := app.resolveScope("T-002", r)
+		if got == nil {
+			t.Fatal("expected non-nil scope")
+		}
+		if got.PrevURL != "" {
+			t.Errorf("single item should have empty PrevURL, got %q", got.PrevURL)
+		}
+		if got.NextURL != "" {
+			t.Errorf("single item should have empty NextURL, got %q", got.NextURL)
+		}
+		if got.Progress != "[1/1]" {
+			t.Errorf("Progress = %q, want [1/1]", got.Progress)
+		}
+	})
+
+	t.Run("search scope finds entity", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/entity/ticket/T-002?scope=search:type:ticket")
+		got := app.resolveScope("T-002", r)
+		if got == nil {
+			t.Fatal("expected non-nil scope for search")
+		}
+		if got.Label == "" {
+			t.Error("expected non-empty label for search scope")
+		}
+	})
+
+	t.Run("search scope with no results returns nil", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/entity/ticket/T-002?scope=search:type:nonexistent")
+		got := app.resolveScope("T-002", r)
+		if got != nil {
+			t.Errorf("expected nil for search with no results, got %+v", got)
+		}
+	})
+
+	t.Run("view path scope replaces entity ID correctly", func(t *testing.T) {
+		app := makeApp()
+		r := makeRequest("/view/ticket-detail/T-002?scope=list:tickets&sort=priority&sort_dir=asc")
+		got := app.resolveScope("T-002", r)
+		if got == nil {
+			t.Fatal("expected non-nil scope")
+		}
+		if got.PrevURL != "" && !strings.Contains(got.PrevURL, "/view/ticket-detail/") {
+			t.Errorf("PrevURL should preserve view path prefix, got %q", got.PrevURL)
+		}
+		if got.NextURL != "" && !strings.Contains(got.NextURL, "/view/ticket-detail/") {
+			t.Errorf("NextURL should preserve view path prefix, got %q", got.NextURL)
+		}
+	})
 }
