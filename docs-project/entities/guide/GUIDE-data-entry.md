@@ -25,6 +25,7 @@ A `data-entry.yaml` file defines:
 - **Dashboard** - An overview page with query-driven cards showing counts, breakdowns, and tables
 - **Navigation** - Sidebar menu entries with optional grouping
 - **Commands** - User-defined scripts triggered from the UI with streamed results
+- **User Defaults** - Per-user default values for properties and relations, configurable via Settings page
 
 The file drives the entire UI without writing any code. The server reads `data-entry.yaml` and
 your `metamodel.yaml` together, validates them, and serves a fully functional CRUD application.
@@ -934,6 +935,58 @@ the normal interactive buttons.
 
 Command output streams in real time into stacked toast notifications. Long-running commands
 can be cancelled by the user via a cancel button.
+
+## User Defaults
+
+The data entry app includes a **Settings** page where users can configure default values for
+properties and relations. These defaults are applied automatically when creating new entities,
+reducing repetitive data entry.
+
+### Storage
+
+User defaults are stored in `.rela/user-defaults.yaml` (gitignored, per-user). The file is
+created automatically when a user saves settings for the first time.
+
+```yaml
+# .rela/user-defaults.yaml
+defaults:
+    assignee: alice
+    priority: high
+relations:
+    belongs-to: backend
+overrides:
+    - entity_types:
+        - ticket
+      defaults:
+          reporter: bob
+      relations:
+          tagged: bug
+```
+
+### Settings Page
+
+The Settings page is accessible from the sidebar (gear icon at the bottom). It has three sections:
+
+**Property Defaults** — Set default values for any property defined in the metamodel. The widget
+type (text input, dropdown, date picker, etc.) matches the property's type. For enum/custom types,
+a dropdown shows the allowed values.
+
+**Relation Defaults** — Set a default target entity for any relation type. When creating a new
+entity, the relation will be pre-filled with this target.
+
+**Overrides** — Scope defaults to specific entity types. For example, set `priority: critical`
+only when creating tickets, while leaving the global default as `medium`.
+
+### Resolution Order
+
+When creating a new entity, default values are resolved in this order (highest priority first):
+
+1. **Entity-type override** from user defaults (e.g., ticket-specific override)
+2. **Global user default** (e.g., `assignee: alice`)
+3. **Form-level default** (from `data-entry.yaml`, e.g., `default: medium`)
+4. **Metamodel default** (from `metamodel.yaml` type definition)
+
+User defaults never override values explicitly set by the user in the form.
 
 ## Complete Example
 

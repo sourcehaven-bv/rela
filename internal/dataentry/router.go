@@ -44,6 +44,8 @@ func (a *App) NewRouter() http.Handler {
 	inner.HandleFunc("/api/command-cancel/", a.handleCommandCancel)
 	inner.HandleFunc("/api/open-file", a.handleOpenFile)
 	inner.HandleFunc("/api/open-url", a.handleOpenURL)
+	inner.HandleFunc("/settings", a.handleSettings)
+	inner.HandleFunc("/api/settings", a.handleSaveSettings)
 
 	locked := a.reloadLockMiddleware(inner)
 	mux.Handle("/", locked)

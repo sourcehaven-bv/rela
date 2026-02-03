@@ -143,6 +143,63 @@ type UIState struct {
 	CollapsedGroups map[string]bool `json:"collapsed_groups"`
 }
 
+// UserDefaults holds user-configurable default values for entity creation,
+// persisted in .rela/user-defaults.yaml.
+type UserDefaults struct {
+	Defaults         map[string]string `yaml:"defaults,omitempty"`
+	RelationDefaults map[string]string `yaml:"relation_defaults,omitempty"`
+	Overrides        []DefaultOverride `yaml:"overrides,omitempty"`
+}
+
+// DefaultOverride defines property and relation defaults for specific entity types.
+type DefaultOverride struct {
+	Types            []string          `yaml:"entity_types"`
+	Defaults         map[string]string `yaml:"defaults,omitempty"`
+	RelationDefaults map[string]string `yaml:"relation_defaults,omitempty"`
+}
+
+// ResolvePropertyDefault returns the best default value for a property on the given entity type.
+// It checks overrides first (first matching), then global defaults.
+func (ud *UserDefaults) ResolvePropertyDefault(entityType, property string) string {
+	if ud == nil {
+		return ""
+	}
+	for _, o := range ud.Overrides {
+		for _, t := range o.Types {
+			if t == entityType {
+				if val, ok := o.Defaults[property]; ok {
+					return val
+				}
+			}
+		}
+	}
+	if val, ok := ud.Defaults[property]; ok {
+		return val
+	}
+	return ""
+}
+
+// ResolveRelationDefault returns the best default target for a relation on the given entity type.
+// It checks overrides first (first matching), then global relation defaults.
+func (ud *UserDefaults) ResolveRelationDefault(entityType, relation string) string {
+	if ud == nil {
+		return ""
+	}
+	for _, o := range ud.Overrides {
+		for _, t := range o.Types {
+			if t == entityType {
+				if val, ok := o.RelationDefaults[relation]; ok {
+					return val
+				}
+			}
+		}
+	}
+	if val, ok := ud.RelationDefaults[relation]; ok {
+		return val
+	}
+	return ""
+}
+
 // DashboardConfig defines a dashboard page with query-driven cards.
 type DashboardConfig struct {
 	Title       string          `yaml:"title"`

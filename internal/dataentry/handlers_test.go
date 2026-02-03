@@ -778,6 +778,319 @@ func TestHandleToggleGroup(t *testing.T) {
 	})
 }
 
+func TestHandleSettings(t *testing.T) {
+	t.Run("renders settings page", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
+		app.userDefaults = nil
+		r := httptest.NewRequest(http.MethodGet, "/settings", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleSettings(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "Settings") {
+			t.Error("expected 'Settings' in page")
+		}
+	})
+
+	t.Run("renders settings with existing defaults", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
+		app.userDefaults = &UserDefaults{
+			Defaults: map[string]string{"priority": "high"},
+		}
+		r := httptest.NewRequest(http.MethodGet, "/settings", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleSettings(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+	})
+
+	t.Run("HTMX request returns partial", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
+		app.userDefaults = nil
+		r := httptest.NewRequest(http.MethodGet, "/settings", http.NoBody)
+		r.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		app.handleSettings(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+	})
+}
+
+func TestHandleSaveSettings(t *testing.T) {
+	t.Run("saves global property defaults", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
+		app.userDefaults = nil
+
+		form := url.Values{
+			"default_prop[priority]": {"high"},
+			"default_prop[status]":   {"open"},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleSaveSettings(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		if app.userDefaults == nil {
+			t.Fatal("expected userDefaults to be set")
+		}
+		if app.userDefaults.Defaults["priority"] != "high" {
+			t.Errorf("expected priority=high, got %q", app.userDefaults.Defaults["priority"])
+		}
+		if app.userDefaults.Defaults["status"] != "open" {
+			t.Errorf("expected status=open, got %q", app.userDefaults.Defaults["status"])
+		}
+	})
+
+	t.Run("saves global relation defaults", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
+
+		form := url.Values{
+			"default_rel[belongs_to]": {"CMP-001"},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleSaveSettings(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		if app.userDefaults.RelationDefaults["belongs_to"] != "CMP-001" {
+			t.Errorf("expected belongs_to=CMP-001, got %q", app.userDefaults.RelationDefaults["belongs_to"])
+		}
+	})
+
+	t.Run("saves override groups", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
+
+		form := url.Values{
+			"override[0][types]":           {"ticket"},
+			"override[0][prop][priority]":  {"high"},
+			"override[0][rel][depends_on]": {"TKT-002"},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleSaveSettings(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		if len(app.userDefaults.Overrides) != 1 {
+			t.Fatalf("expected 1 override, got %d", len(app.userDefaults.Overrides))
+		}
+		o := app.userDefaults.Overrides[0]
+		if len(o.Types) != 1 || o.Types[0] != "ticket" {
+			t.Errorf("expected types=[ticket], got %v", o.Types)
+		}
+		if o.Defaults["priority"] != "high" {
+			t.Errorf("expected priority=high, got %q", o.Defaults["priority"])
+		}
+		if o.RelationDefaults["depends_on"] != "TKT-002" {
+			t.Errorf("expected depends_on=TKT-002, got %q", o.RelationDefaults["depends_on"])
+		}
+	})
+
+	t.Run("skips overrides without types", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
+
+		form := url.Values{
+			"override[0][prop][priority]": {"high"},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleSaveSettings(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		if len(app.userDefaults.Overrides) != 0 {
+			t.Errorf("expected 0 overrides (no types), got %d", len(app.userDefaults.Overrides))
+		}
+	})
+
+	t.Run("empty values are not saved", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
+
+		form := url.Values{
+			"default_prop[priority]":  {""},
+			"default_rel[belongs_to]": {""},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleSaveSettings(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		if len(app.userDefaults.Defaults) != 0 {
+			t.Errorf("expected 0 defaults, got %d", len(app.userDefaults.Defaults))
+		}
+		if len(app.userDefaults.RelationDefaults) != 0 {
+			t.Errorf("expected 0 relation defaults, got %d", len(app.userDefaults.RelationDefaults))
+		}
+	})
+
+	t.Run("GET not allowed", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet, "/api/settings", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleSaveSettings(w, r)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("expected 405, got %d", w.Code)
+		}
+	})
+
+	t.Run("persists to file and reloads", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaultsPath = filepath.Join(t.TempDir(), "user-defaults.yaml")
+
+		form := url.Values{
+			"default_prop[priority]": {"medium"},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		app.handleSaveSettings(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+
+		// Reload from file
+		loaded := app.loadUserDefaults()
+		if loaded == nil {
+			t.Fatal("expected non-nil loaded defaults")
+		}
+		if loaded.Defaults["priority"] != "medium" {
+			t.Errorf("expected priority=medium, got %q", loaded.Defaults["priority"])
+		}
+	})
+}
+
+func TestHandleFormWithUserDefaults(t *testing.T) {
+	t.Run("create form uses user defaults for property", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaults = &UserDefaults{
+			Defaults: map[string]string{"status": "in_progress"},
+		}
+		// Use the edit-ticket form which has the status field, for creating
+		app.Cfg.Forms["create-ticket-status"] = Form{
+			EntityType: "ticket",
+			Mode:       "create",
+			Fields: []FormField{
+				{Property: "title"},
+				{Property: "status"},
+			},
+		}
+		r := httptest.NewRequest(http.MethodGet, "/form/create-ticket-status", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// The status field should be pre-selected to "in_progress"
+		if !strings.Contains(body, `value="in_progress" selected`) {
+			t.Error("expected user default 'in_progress' to be selected in form")
+		}
+	})
+
+	t.Run("create form uses user defaults for relation", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaults = &UserDefaults{
+			RelationDefaults: map[string]string{"belongs_to": "CMP-001"},
+		}
+		// Need a form with a relation field
+		app.Cfg.Forms["create-ticket-rel"] = Form{
+			EntityType: "ticket",
+			Mode:       "create",
+			Fields:     []FormField{{Property: "title"}},
+			Relations: []FormRelation{{
+				Relation:   "belongs_to",
+				TargetType: "component",
+				Label:      "Component",
+				Widget:     "select",
+			}},
+		}
+		r := httptest.NewRequest(http.MethodGet, "/form/create-ticket-rel", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// CMP-001 should be pre-selected as the default relation target
+		if !strings.Contains(body, `value="CMP-001" selected`) {
+			t.Error("expected CMP-001 to be pre-selected as user default relation")
+		}
+	})
+
+	t.Run("edit form does not use user defaults", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaults = &UserDefaults{
+			Defaults: map[string]string{"status": "in_progress"},
+		}
+		// TKT-001 has status=open, user default is in_progress.
+		// Edit should show actual value, not user default.
+		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket/TKT-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// The actual value "open" should be in the form, not the user default
+		if !strings.Contains(body, "open") {
+			t.Error("expected actual value 'open' in edit form")
+		}
+	})
+
+	t.Run("override takes precedence in create form", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.userDefaults = &UserDefaults{
+			Defaults: map[string]string{"priority": "low"},
+			Overrides: []DefaultOverride{
+				{
+					Types:    []string{"ticket"},
+					Defaults: map[string]string{"priority": "high"},
+				},
+			},
+		}
+		// Add priority to create-ticket form fields
+		app.Cfg.Forms["create-ticket"] = Form{
+			EntityType: "ticket",
+			Mode:       "create",
+			Fields: []FormField{
+				{Property: "title"},
+				{Property: "priority"},
+			},
+		}
+		r := httptest.NewRequest(http.MethodGet, "/form/create-ticket", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should use override "high", not global "low"
+		if !strings.Contains(body, `value="high" selected`) {
+			t.Error("expected override 'high' to be selected for ticket priority")
+		}
+	})
+}
+
 func TestHandleIndexWithGroupedNav(t *testing.T) {
 	t.Run("first item inside group", func(t *testing.T) {
 		app := newHandlerTestApp(t)

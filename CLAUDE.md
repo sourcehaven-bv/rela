@@ -205,7 +205,35 @@ relations/                  # Markdown relation files (FROM--type--TO.md)
 templates/entities/<type>.md  # Optional: entity templates for defaults
 templates/relations/<type>.md # Optional: relation templates for defaults
 .rela/cache.json            # Graph cache (gitignored)
+.rela/ui-state.json         # Persisted UI state (gitignored)
+.rela/user-defaults.yaml    # User-specific default values (gitignored)
 ```
+
+### User Defaults
+
+The data entry app supports user-configurable default values for entity creation,
+stored in `.rela/user-defaults.yaml` (gitignored, per-user). Users configure these
+via the Settings page in the web UI.
+
+**Types and resolution** (`internal/dataentry/config.go`):
+
+- `UserDefaults` holds global property defaults, global relation defaults, and entity-type overrides
+- `DefaultOverride` scopes defaults to a list of entity types
+- `ResolvePropertyDefault(entityType, property)` checks overrides first, then global defaults
+- `ResolveRelationDefault(entityType, relation)` same resolution order for relations
+
+**Default resolution chain** (highest to lowest priority):
+
+1. Entity-type override from user defaults
+2. Global user default
+3. Form-level default (from `data-entry.yaml`)
+4. Metamodel default (from `metamodel.yaml`)
+
+**Integration points**:
+
+- `handleForm`: user defaults populate `ResolvedField.Default` via `coalesce()` and pre-select relations
+- `handleCreate` / `handleInlineCreate`: user defaults fill empty properties and create default relations
+- `handleSettings` / `handleSaveSettings`: Settings page renders metamodel-aware widgets and persists to YAML
 
 ## Migration System
 
