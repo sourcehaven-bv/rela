@@ -151,6 +151,50 @@ forms:
             label: "Block Reason"
             widget: text
 
+    side_panel:
+      traverse:
+        - from: entry
+          follow_incoming: blocks
+          collect_as: blocked_by
+        - from: entry
+          follow: blocks
+          collect_as: blocks
+        - from: entry
+          follow: tagged
+          collect_as: labels
+      sections:
+        - heading: "Blocked By"
+          source: blocked_by
+          display: cards
+          fields:
+            - property: status
+            - property: priority
+            - property: assignee
+          empty_message: "Not blocked"
+        - heading: "Blocks"
+          source: blocks
+          display: cards
+          fields:
+            - property: status
+            - property: priority
+          empty_message: "Does not block any tickets"
+        - heading: "Labels"
+          source: labels
+          display: list
+          fields:
+            - property: name
+          empty_message: "No labels"
+        - heading: "Details"
+          source: entry
+          display: properties
+          fields:
+            - property: reporter
+              label: "Reporter"
+            - property: due_date
+              label: "Due Date"
+            - property: estimated_hours
+              label: "Est. Hours"
+
   create_category:
     entity_type: category
     title: "New Category"

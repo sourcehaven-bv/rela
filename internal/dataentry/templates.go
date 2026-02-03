@@ -291,6 +291,49 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
 .scope-nav-progress { font-weight:600; font-family:var(--font-mono); }
 .scope-nav-label { color:var(--text-muted); }
 
+/* ── Side panel (form context panel) ── */
+.main-with-panel { max-width: none; display: flex; align-items: stretch; min-height: 100vh; padding: 0; }
+.main-with-panel .form-column { flex: 0 1 640px; min-width: 0; padding: 32px; }
+.main-with-panel .form-column .form-card { max-width: none; }
+.side-panel { flex: 0 0 auto; width: min(420px, 30vw); min-width: 260px; margin-left: auto; background: #f1f5f9; border-left: 1px solid var(--border); padding: 32px 16px; overflow-y: auto; position: sticky; top: 0; height: 100vh; }
+.side-panel-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.side-panel-section + .side-panel-section { margin-top: 12px; }
+.side-panel-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 16px; background: none; border: none; cursor: pointer; font-family: var(--font); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); transition: color 0.15s; text-align: left; }
+.side-panel-toggle:hover { color: var(--text); }
+.sp-chevron { display: inline-block; font-size: 16px; line-height: 1; transition: transform 0.15s ease; transform: rotate(90deg); }
+.sp-chevron.collapsed { transform: rotate(0deg); }
+.side-panel-body { padding: 0 16px 14px; }
+.side-panel-body.hidden { display: none; }
+.side-panel-header { display: none; }
+.side-panel-close-btn { display: none; background: none; border: none; cursor: pointer; font-size: 22px; color: var(--text-muted); padding: 2px 6px; border-radius: 4px; margin-left: auto; }
+.side-panel-close-btn:hover { background: var(--border); color: var(--text); }
+.side-panel-overlay { display: none; }
+.side-panel-edge-bar { display: none; position: fixed; top: 0; right: 0; bottom: 0; z-index: 150; width: 32px; background: #f1f5f9; border-left: 1px solid var(--border); cursor: pointer; flex-direction: column; align-items: center; justify-content: center; transition: background 0.15s; }
+.side-panel-edge-bar:hover { background: #e2e8f0; }
+.sp-edge-icon { width: 18px; height: 16px; position: relative; }
+.sp-edge-icon::before { content: ''; position: absolute; inset: 0; border: 1.5px solid var(--text-muted); border-radius: 2px; }
+.sp-edge-icon::after { content: ''; position: absolute; top: 3px; bottom: 3px; right: 5px; width: 1.5px; background: var(--text-muted); }
+.side-panel-edge-bar:hover .sp-edge-icon::before, .side-panel-edge-bar:hover .sp-edge-icon::after { border-color: var(--primary); background-color: var(--primary); }
+.side-panel-edge-bar:hover .sp-edge-icon::before { background-color: transparent; }
+/* Panel card styling */
+.sp-card { padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+.sp-card + .sp-card { margin-top: 8px; }
+.sp-card-title { font-weight: 600; font-size: 13px; color: var(--primary); text-decoration: none; }
+.sp-card-title:hover { text-decoration: underline; }
+.sp-card-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+@media (max-width: 1100px) {
+  .side-panel-edge-bar { display: flex; }
+  .main-with-panel .form-column { flex: 1; max-width: 640px; padding-right: 48px; }
+  .side-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: 200; max-width: 380px; width: 85vw; min-width: 0; border-radius: 0; border: none; border-left: 1px solid var(--border); padding: 0; overflow-y: auto; height: auto; transform: translateX(100%); transition: transform 0.25s ease; box-shadow: -4px 0 20px rgba(0,0,0,0.1); }
+  .side-panel.open { transform: translateX(0); }
+  .side-panel-header { display: flex; align-items: center; padding: 16px; border-bottom: 1px solid var(--border); background: #f1f5f9; }
+  .side-panel-header-title { font-size: 14px; font-weight: 600; color: var(--text); }
+  .side-panel-close-btn { display: block; }
+  .side-panel-sections { padding: 16px; }
+  .side-panel-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 199; }
+  .side-panel-overlay.open { display: block; }
+}
+
 </style>
 <script>
 // Scope navigation keyboard shortcuts (left/right arrow keys)
@@ -1575,7 +1618,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
 </head>
 <body>
 {{ template "sidebar" . }}
-<main class="main" id="content">
+<main class="main{{ if .SidePanelSections }} main-with-panel{{ end }}" id="content">
 {{ template "form-content" . }}
 </main>
 </body>
@@ -1583,6 +1626,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
 {{- end -}}
 
 {{- define "form-content" -}}
+{{ if .SidePanelSections }}<div class="form-column">{{ end }}
 <div class="page-header">
   <div>
     <h2>{{ .Form.Title }}{{ if .EntityID }} — {{ .EntityID }}{{ end }}</h2>
@@ -1715,6 +1759,162 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     </div>
   </form>
 </div>
+
+{{ if .SidePanelSections }}
+</div>{{/* close .form-column */}}
+
+{{/* Edge bar toggle (small screens) */}}
+<div class="side-panel-edge-bar" onclick="openSidePanel()" role="button" tabindex="0" aria-label="Open side panel">
+  <div class="sp-edge-icon"></div>
+</div>
+<div class="side-panel-overlay" onclick="closeSidePanel()"></div>
+
+<aside class="side-panel">
+  <div class="side-panel-header">
+    <span class="side-panel-header-title">Context</span>
+    <button type="button" class="side-panel-close-btn" onclick="closeSidePanel()" aria-label="Close side panel">&times;</button>
+  </div>
+  <div class="side-panel-sections">
+  {{ range .SidePanelSections }}
+  <div class="side-panel-section">
+    <button type="button" class="side-panel-toggle" onclick="toggleSidePanel(this)">
+      <span class="sp-chevron">›</span>
+      {{ .Heading }}
+    </button>
+    <div class="side-panel-body">
+
+    {{/* display: properties (entry source — single entity) */}}
+    {{ if and (eq .Display "properties") (not .Entities) }}
+    <div class="detail-grid">
+      {{ range .Fields }}
+      <div class="detail-label">{{ .Label }}</div>
+      <div class="detail-value">
+        {{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+        {{ else }}{{ if .Value }}{{ formatValue .Value }}{{ else }}&mdash;{{ end }}{{ end }}
+      </div>
+      {{ end }}
+    </div>
+    {{ end }}
+
+    {{/* display: properties (collection source — multiple entities as cards) */}}
+    {{ if and (eq .Display "properties") .Entities }}
+    {{ if .IsEmpty }}
+    <p style="font-size:13px;color:var(--text-muted);padding:4px 0;">{{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}</p>
+    {{ else }}
+    {{ range .Entities }}
+    <div class="sp-card">
+      <a href="/entity/{{ .Type }}/{{ .ID }}" class="sp-card-title"
+         hx-get="/entity/{{ .Type }}/{{ .ID }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
+      <div class="sp-card-meta">
+        {{ range .Fields }}{{ if .Value }}{{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>{{ else }}<span>{{ .Value }}</span>{{ end }}{{ end }}{{ end }}
+      </div>
+    </div>
+    {{ end }}
+    {{ end }}
+    {{ end }}
+
+    {{/* display: cards */}}
+    {{ if eq .Display "cards" }}
+    {{ if .IsEmpty }}
+    <p style="font-size:13px;color:var(--text-muted);padding:4px 0;">{{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}</p>
+    {{ else }}
+    {{ range .Entities }}
+    <div class="sp-card">
+      <a href="/entity/{{ .Type }}/{{ .ID }}" class="sp-card-title"
+         hx-get="/entity/{{ .Type }}/{{ .ID }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
+      <div class="sp-card-meta">
+        {{ range .Fields }}{{ if .Value }}{{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>{{ else }}<span>{{ .Value }}</span>{{ end }}{{ end }}{{ end }}
+      </div>
+      {{ if .HasContent }}
+      <div class="markdown-body" style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px;font-size:12px;">
+        {{ renderMarkdown .Content }}
+      </div>
+      {{ end }}
+    </div>
+    {{ end }}
+    {{ end }}
+    {{ end }}
+
+    {{/* display: content (entry) */}}
+    {{ if and (eq .Display "content") .HasContent (not .Entities) }}
+    <div class="markdown-body" style="font-size:13px;">{{ renderMarkdown .Content }}</div>
+    {{ end }}
+
+    {{/* display: content (collection) */}}
+    {{ if and (eq .Display "content") .Entities }}
+    {{ if .IsEmpty }}
+    <p style="font-size:13px;color:var(--text-muted);padding:4px 0;">{{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}</p>
+    {{ else }}
+    {{ range .Entities }}
+    <div class="sp-card">
+      <a href="/entity/{{ .Type }}/{{ .ID }}" class="sp-card-title"
+         hx-get="/entity/{{ .Type }}/{{ .ID }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
+      {{ if .Fields }}
+      <div class="sp-card-meta">
+        {{ range .Fields }}{{ if .Value }}{{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>{{ else }}<span>{{ .Value }}</span>{{ end }}{{ end }}{{ end }}
+      </div>
+      {{ end }}
+      {{ if .HasContent }}
+      <div class="markdown-body" style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px;font-size:12px;">
+        {{ renderMarkdown .Content }}
+      </div>
+      {{ end }}
+    </div>
+    {{ end }}
+    {{ end }}
+    {{ end }}
+
+    {{/* display: list */}}
+    {{ if eq .Display "list" }}
+    {{ if .IsEmpty }}
+    <p style="font-size:13px;color:var(--text-muted);padding:4px 0;">{{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}</p>
+    {{ else }}
+    <ul class="rel-list">
+      {{ range .Entities }}
+      <li>
+        <a href="/entity/{{ .Type }}/{{ .ID }}" class="cell-link" style="font-size:13px;"
+           hx-get="/entity/{{ .Type }}/{{ .ID }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
+        {{ range .Fields }}{{ if .Value }}{{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>{{ else }}<span style="font-size:12px;color:var(--text-muted);">{{ .Value }}</span>{{ end }}{{ end }}{{ end }}
+      </li>
+      {{ end }}
+    </ul>
+    {{ end }}
+    {{ end }}
+
+    {{/* display: table */}}
+    {{ if eq .Display "table" }}
+    {{ if .IsEmpty }}
+    <p style="font-size:13px;color:var(--text-muted);padding:4px 0;">{{ if .EmptyMessage }}{{ .EmptyMessage }}{{ else }}No items{{ end }}</p>
+    {{ else }}
+    <div style="overflow-x:auto;margin:0 -16px;">
+      <table style="font-size:13px;">
+        <thead>
+          <tr>{{ range .Columns }}<th style="padding:6px 12px;">{{ if .Label }}{{ .Label }}{{ else }}{{ .Property }}{{ end }}</th>{{ end }}</tr>
+        </thead>
+        <tbody>
+          {{ range .Rows }}
+          <tr>
+            {{ range .Cells }}
+            <td style="padding:6px 12px;">
+              {{ if .Link }}<a href="/entity/{{ .EntityType }}/{{ .EntityID }}" class="cell-link" hx-get="/entity/{{ .EntityType }}/{{ .EntityID }}" hx-target="#content" hx-push-url="true">{{ .Value }}</a>
+              {{ else if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+              {{ else }}{{ if .Value }}{{ .Value }}{{ else }}&mdash;{{ end }}{{ end }}
+            </td>
+            {{ end }}
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+    {{ end }}
+    {{ end }}
+
+    </div>{{/* close .side-panel-body */}}
+  </div>{{/* close .side-panel-section */}}
+  {{ end }}
+  </div>{{/* close .side-panel-sections */}}
+</aside>
+{{ end }}
 
 <div id="inline-create-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeInlineCreate()">
   <div class="modal">
@@ -1879,6 +2079,28 @@ function submitInlineCreate() {
       closeInlineCreate();
     })
     .catch(function(e) { alert('Error creating: ' + e); });
+}
+
+// Side panel toggle
+function toggleSidePanel(btn) {
+  var chevron = btn.querySelector('.sp-chevron');
+  var body = btn.nextElementSibling;
+  chevron.classList.toggle('collapsed');
+  body.classList.toggle('hidden');
+}
+function openSidePanel() {
+  var p = document.querySelector('.side-panel');
+  var o = document.querySelector('.side-panel-overlay');
+  if (p) p.classList.add('open');
+  if (o) o.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeSidePanel() {
+  var p = document.querySelector('.side-panel');
+  var o = document.querySelector('.side-panel-overlay');
+  if (p) p.classList.remove('open');
+  if (o) o.classList.remove('open');
+  document.body.style.overflow = '';
 }
 </script>
 {{- end -}}

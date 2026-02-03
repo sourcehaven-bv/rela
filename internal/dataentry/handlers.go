@@ -481,6 +481,12 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		mode = "create"
 	}
 
+	// Build side panel sections (only for edit mode with an existing entity).
+	var sidePanelSections []SectionData
+	if form.SidePanel != nil && entity != nil {
+		sidePanelSections = a.executeSidePanel(form.SidePanel, entityID, form.EntityType)
+	}
+
 	activeList := a.resolveActiveList(form.EntityType, r)
 	returnTo := r.URL.Query().Get("return_to")
 	backURL := returnTo
@@ -495,24 +501,25 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		backURL = "/"
 	}
 	data := map[string]interface{}{
-		"App":          a.Cfg.App,
-		"Navigation":   a.navElements(activeList),
-		"ActiveList":   activeList,
-		"FormID":       formID,
-		"Form":         form,
-		"Fields":       fields,
-		"Relations":    relations,
-		"Mode":         mode,
-		"EntityID":     entityID,
-		"EntityType":   form.EntityType,
-		"ShowBody":     showBody,
-		"Body":         bodyContent,
-		"ReturnTo":     returnTo,
-		"BackURL":      backURL,
-		"LinkRelation": r.URL.Query().Get("link_relation"),
-		"LinkPeer":     r.URL.Query().Get("link_peer"),
-		"LinkAs":       r.URL.Query().Get("link_as"),
-		"IsHTMX":       r.Header.Get("HX-Request") == "true",
+		"App":               a.Cfg.App,
+		"Navigation":        a.navElements(activeList),
+		"ActiveList":        activeList,
+		"FormID":            formID,
+		"Form":              form,
+		"Fields":            fields,
+		"Relations":         relations,
+		"Mode":              mode,
+		"EntityID":          entityID,
+		"EntityType":        form.EntityType,
+		"ShowBody":          showBody,
+		"Body":              bodyContent,
+		"ReturnTo":          returnTo,
+		"BackURL":           backURL,
+		"LinkRelation":      r.URL.Query().Get("link_relation"),
+		"LinkPeer":          r.URL.Query().Get("link_peer"),
+		"LinkAs":            r.URL.Query().Get("link_as"),
+		"IsHTMX":            r.Header.Get("HX-Request") == "true",
+		"SidePanelSections": sidePanelSections,
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
@@ -663,302 +670,67 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build section data for the template
-	type SectionFieldData struct {
-		Label    string
-		Value    string
-		PropType string
-	}
-	type SectionEntityData struct {
-		ID         string
-		Title      string
-		Type       string
-		EditFormID string
-		Fields     []SectionFieldData
-		Content    string
-		HasContent bool
-	}
-	type SectionColumnData struct {
-		Value      string
-		PropType   string
-		Link       bool
-		EntityID   string
-		EntityType string
-	}
-	type SectionRowData struct {
-		EntityID   string
-		EntityType string
-		EditFormID string
-		Cells      []SectionColumnData
-		Content    string
-	}
-	type GroupData struct {
-		GroupName string
-		Rows      []SectionRowData
-		Entities  []SectionEntityData
-	}
-	type SectionAddTarget struct {
-		EntityType string
-		FormID     string
-		Label      string
-	}
-	type SectionAddInfo struct {
-		Relation string
-		LinkAs   string // "from" or "to" — role of the new entity in the relation
-		PeerID   string // entry entity ID
-		Targets  []SectionAddTarget
-	}
-	type SectionLinkInfo struct {
-		Relation    string   // relation type name
-		LinkAs      string   // "from" or "to" — role of the linked entity
-		PeerID      string   // entry entity ID
-		EntityTypes []string // valid target entity types
-	}
-	type SectionData struct {
-		Heading      string
-		SectionID    string
-		Display      string
-		Fields       []SectionFieldData
-		Entities     []SectionEntityData
-		Columns      []ListColumn
-		Rows         []SectionRowData
-		Groups       []GroupData
-		IsGrouped    bool
-		EmptyMessage string
-		IsEmpty      bool
-		Link         bool
-		Content      string
-		HasContent   bool
-		AddInfo      *SectionAddInfo
-		LinkInfo     *SectionLinkInfo
-	}
+	sections := a.buildSections(view.Sections, result)
 
-	sections := make([]SectionData, 0, len(view.Sections))
-
-	for _, sec := range view.Sections {
-		sd := SectionData{
-			Heading:      sec.Heading,
-			SectionID:    slugify(sec.Heading),
-			Display:      sec.Display,
-			EmptyMessage: sec.EmptyMessage,
-			Link:         sec.Link,
-		}
-
+	// Resolve add/link info for sections populated by traversal from "entry".
+	for i, sec := range view.Sections {
 		if sec.Source == "entry" {
-			e := result.Entry
-			entDef, _ := a.meta.GetEntityDef(e.Type)
-
-			switch sec.Display {
-			case "properties":
-				for _, f := range sec.Fields {
-					val := ""
-					if v := e.Properties[f.Property]; v != nil {
-						val = fmt.Sprintf("%v", v)
-					}
-					propType := ""
-					if entDef != nil {
-						if pd, ok := entDef.Properties[f.Property]; ok {
-							propType = pd.Type
-						}
-					}
-					label := f.Label
-					if label == "" {
-						label = titleCase(f.Property)
-					}
-					sd.Fields = append(sd.Fields, SectionFieldData{
-						Label: label, Value: val, PropType: propType,
-					})
-				}
-			case "content":
-				sd.Content = e.Content
-				sd.HasContent = e.Content != ""
-			}
-		} else {
-			entities, exists := result.Collections[sec.Source]
-			if !exists {
-				entities = []*model.Entity{}
-			}
-			sd.IsEmpty = len(entities) == 0
-
-			switch sec.Display {
-			case "properties", "list":
-				for _, e := range entities {
-					eDef, _ := a.meta.GetEntityDef(e.Type)
-					sed := SectionEntityData{
-						ID:         e.ID,
-						Title:      a.entityDisplayTitle(e),
-						Type:       e.Type,
-						EditFormID: a.editFormForType(e.Type),
-					}
-					for _, f := range sec.Fields {
-						val := ""
-						if v := e.Properties[f.Property]; v != nil {
-							val = fmt.Sprintf("%v", v)
-						}
-						propType := ""
-						if eDef != nil {
-							if pd, ok := eDef.Properties[f.Property]; ok {
-								propType = pd.Type
-							}
-						}
-						label := f.Label
-						if label == "" {
-							label = titleCase(f.Property)
-						}
-						sed.Fields = append(sed.Fields, SectionFieldData{
-							Label: label, Value: val, PropType: propType,
-						})
-					}
-					sd.Entities = append(sd.Entities, sed)
-				}
-			case "table":
-				sd.Columns = sec.Columns
-				buildRow := func(e *model.Entity) SectionRowData {
-					eDef, _ := a.meta.GetEntityDef(e.Type)
-					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
-					for _, col := range sec.Columns {
-						var val string
-						var propType string
-						if col.Relation != "" {
-							val = a.resolveRelationColumnValue(e.ID, col.Relation)
-						} else {
-							if v := e.Properties[col.Property]; v != nil {
-								val = fmt.Sprintf("%v", v)
-							}
-							if eDef != nil {
-								if pd, ok := eDef.Properties[col.Property]; ok {
-									propType = pd.Type
-								}
-							}
-						}
-						row.Cells = append(row.Cells, SectionColumnData{
-							Value: val, PropType: propType, Link: col.Link, EntityID: e.ID, EntityType: e.Type,
-						})
-					}
-					return row
-				}
-				if sec.GroupBy != "" {
-					sd.IsGrouped = true
-					groups := map[string][]*model.Entity{}
-					var groupOrder []string
-					for _, e := range entities {
-						prop := strings.TrimPrefix(sec.GroupBy, "properties.")
-						groupKey := "(none)"
-						if v := e.Properties[prop]; v != nil {
-							groupKey = fmt.Sprintf("%v", v)
-						}
-						if _, seen := groups[groupKey]; !seen {
-							groupOrder = append(groupOrder, groupKey)
-						}
-						groups[groupKey] = append(groups[groupKey], e)
-					}
-					for _, gName := range groupOrder {
-						gd := GroupData{GroupName: gName}
-						for _, e := range groups[gName] {
-							gd.Rows = append(gd.Rows, buildRow(e))
-						}
-						sd.Groups = append(sd.Groups, gd)
-					}
-				} else {
-					for _, e := range entities {
-						sd.Rows = append(sd.Rows, buildRow(e))
-					}
-				}
-
-			case "content", "cards":
-				for _, e := range entities {
-					eDef, _ := a.meta.GetEntityDef(e.Type)
-					sed := SectionEntityData{
-						ID:         e.ID,
-						Title:      a.entityDisplayTitle(e),
-						Type:       e.Type,
-						EditFormID: a.editFormForType(e.Type),
-						Content:    e.Content,
-						HasContent: e.Content != "",
-					}
-					for _, f := range sec.Fields {
-						val := ""
-						if v := e.Properties[f.Property]; v != nil {
-							val = fmt.Sprintf("%v", v)
-						}
-						propType := ""
-						if eDef != nil {
-							if pd, ok := eDef.Properties[f.Property]; ok {
-								propType = pd.Type
-							}
-						}
-						label := f.Label
-						if label == "" {
-							label = titleCase(f.Property)
-						}
-						sed.Fields = append(sed.Fields, SectionFieldData{
-							Label: label, Value: val, PropType: propType,
-						})
-					}
-					sd.Entities = append(sd.Entities, sed)
-				}
-			}
+			continue
 		}
-
-		// Resolve add/link info: for sections populated by a traverse from "entry",
-		// determine which entity types can be created and linked.
-		if sec.Source != "entry" {
-			for _, rule := range view.Traverse {
-				if rule.CollectAs != sec.Source || rule.From != "entry" {
-					continue
-				}
-				relName := rule.Follow
-				linkAs := "to" // new entity is the target (outgoing from entry)
-				if rule.FollowIncoming != "" {
-					relName = rule.FollowIncoming
-					linkAs = "from" // new entity is the source (incoming to entry)
-				}
-				relDef, ok := a.meta.GetRelationDef(relName)
-				if !ok {
-					break
-				}
-				// Determine valid target types for creation
-				var candidateTypes []string
-				if linkAs == "to" {
-					candidateTypes = relDef.To
-				} else {
-					candidateTypes = relDef.From
-				}
-				var targets []SectionAddTarget
-				for _, et := range candidateTypes {
-					formID := a.createFormForType(et)
-					if formID == "" {
-						continue
-					}
-					label := et
-					if ed, ok := a.meta.GetEntityDef(et); ok && ed.Label != "" {
-						label = ed.Label
-					}
-					targets = append(targets, SectionAddTarget{
-						EntityType: et, FormID: formID, Label: label,
-					})
-				}
-				if len(targets) > 0 {
-					sd.AddInfo = &SectionAddInfo{
-						Relation: relName,
-						LinkAs:   linkAs,
-						PeerID:   result.Entry.ID,
-						Targets:  targets,
-					}
-				}
-				// Link existing: always available when candidate types exist
-				if len(candidateTypes) > 0 {
-					sd.LinkInfo = &SectionLinkInfo{
-						Relation:    relName,
-						LinkAs:      linkAs,
-						PeerID:      result.Entry.ID,
-						EntityTypes: candidateTypes,
-					}
-				}
+		for _, rule := range view.Traverse {
+			if rule.CollectAs != sec.Source || rule.From != "entry" {
+				continue
+			}
+			relName := rule.Follow
+			linkAs := "to" // new entity is the target (outgoing from entry)
+			if rule.FollowIncoming != "" {
+				relName = rule.FollowIncoming
+				linkAs = "from" // new entity is the source (incoming to entry)
+			}
+			relDef, ok := a.meta.GetRelationDef(relName)
+			if !ok {
 				break
 			}
+			// Determine valid target types for creation
+			var candidateTypes []string
+			if linkAs == "to" {
+				candidateTypes = relDef.To
+			} else {
+				candidateTypes = relDef.From
+			}
+			var targets []SectionAddTarget
+			for _, et := range candidateTypes {
+				formID := a.createFormForType(et)
+				if formID == "" {
+					continue
+				}
+				label := et
+				if ed, ok := a.meta.GetEntityDef(et); ok && ed.Label != "" {
+					label = ed.Label
+				}
+				targets = append(targets, SectionAddTarget{
+					EntityType: et, FormID: formID, Label: label,
+				})
+			}
+			if len(targets) > 0 {
+				sections[i].AddInfo = &SectionAddInfo{
+					Relation: relName,
+					LinkAs:   linkAs,
+					PeerID:   result.Entry.ID,
+					Targets:  targets,
+				}
+			}
+			// Link existing: always available when candidate types exist
+			if len(candidateTypes) > 0 {
+				sections[i].LinkInfo = &SectionLinkInfo{
+					Relation:    relName,
+					LinkAs:      linkAs,
+					PeerID:      result.Entry.ID,
+					EntityTypes: candidateTypes,
+				}
+			}
+			break
 		}
-
-		sections = append(sections, sd)
 	}
 
 	// Build the return URL for edit links to redirect back to this view
