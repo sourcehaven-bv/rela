@@ -30,6 +30,13 @@ build-desktop:
 # Build all binaries
 build: build-cli build-server build-desktop
 
+# Install CLI to ~/bin
+install: build-cli
+    @echo "Installing rela to ~/bin..."
+    @mkdir -p ~/bin
+    @install {{build_dir}}/rela ~/bin/rela
+    @echo "Done! Make sure ~/bin is in your PATH."
+
 # Clean build artifacts
 clean:
     @echo "Cleaning..."
