@@ -249,9 +249,9 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
 #search-results .card.result-selected { outline: 2px solid var(--primary); outline-offset: -2px; background: var(--primary-light); }
 
 /* Sidebar footer */
-.sidebar-footer { padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: auto; }
-.sidebar-footer button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 0; background: none; border: none; color: var(--text-sidebar); font-size: 13px; cursor: pointer; font-family: var(--font); transition: color 0.15s; }
-.sidebar-footer button:hover { color: var(--text-sidebar-active); }
+.sidebar-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: auto; }
+.sidebar-footer a, .sidebar-footer button { display: flex; align-items: center; gap: 6px; padding: 4px 0; background: none; border: none; color: var(--text-sidebar); font-size: 13px; cursor: pointer; font-family: var(--font); text-decoration: none; transition: color 0.15s; }
+.sidebar-footer a:hover, .sidebar-footer button:hover { color: var(--text-sidebar-active); }
 
 /* Command palette */
 .cmd-palette-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; display: flex; align-items: flex-start; justify-content: center; padding-top: 15vh; animation: fadeIn 0.1s; }
@@ -1369,15 +1369,10 @@ document.addEventListener('click', function(e) {
     {{ end }}
     {{ end }}
   </nav>
-  <div style="padding:8px 0;border-top:1px solid rgba(255,255,255,0.1);">
-    <a href="/settings"{{ if eq $.ActiveList "_settings" }} class="active"{{ end }}
-       hx-get="/settings" hx-target="#content" hx-push-url="true"
-       style="display:flex;align-items:center;gap:10px;padding:8px 20px;color:var(--text-sidebar);text-decoration:none;font-size:14px;font-weight:500;transition:all 0.15s;border-left:3px solid transparent;">
-      &#9881; Settings
-    </a>
-  </div>
   <div class="sidebar-footer">
-    <button onclick="_toggleShortcuts()">Keyboard shortcuts <kbd>?</kbd></button>
+    <a href="/settings"{{ if eq $.ActiveList "_settings" }} class="active"{{ end }}
+       hx-get="/settings" hx-target="#content" hx-push-url="true">&#9881; Settings</a>
+    <button onclick="_toggleShortcuts()"><kbd>?</kbd> Shortcuts</button>
   </div>
 </aside>
 <script>
