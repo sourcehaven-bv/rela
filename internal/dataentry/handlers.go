@@ -143,10 +143,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 			if col.Relation != "" {
 				val = a.resolveRelationColumnValue(e.ID, col.Relation)
 			} else {
-				val = fmt.Sprintf("%v", e.Properties[col.Property])
-				if e.Properties[col.Property] == nil {
-					val = ""
-				}
+				val = e.GetAttributeString(col.Property)
 				propType = resolvePropertyType(col.Property, list.EntityType, a.meta)
 			}
 			cells = append(cells, CellData{

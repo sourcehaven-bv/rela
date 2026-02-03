@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Entity represents any architecture entity (requirement, decision, etc.)
 type Entity struct {
@@ -52,6 +55,33 @@ func (e *Entity) Status() Status {
 // Description returns the entity's description
 func (e *Entity) Description() string {
 	return e.GetString("description")
+}
+
+// GetAttribute returns struct fields (id, type) or property map values uniformly.
+// This allows renderers to access both built-in fields and custom properties
+// without special-case handling.
+func (e *Entity) GetAttribute(name string) interface{} {
+	switch name {
+	case "id":
+		return e.ID
+	case "type":
+		return e.Type
+	default:
+		return e.Properties[name]
+	}
+}
+
+// GetAttributeString returns the string representation of an attribute.
+// Returns empty string for nil values.
+func (e *Entity) GetAttributeString(name string) string {
+	val := e.GetAttribute(name)
+	if val == nil {
+		return ""
+	}
+	if s, ok := val.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", val)
 }
 
 // Relation represents a directed relationship between two entities
