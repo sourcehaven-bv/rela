@@ -79,10 +79,8 @@ func NewApp(repo repository.Store) (*App, error) {
 	}
 
 	// Validate config against metamodel
-	if errs := validateConfig(&cfg, meta); len(errs) > 0 {
-		for _, e := range errs {
-			log.Printf("Config warning: %s", e)
-		}
+	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
+		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
 	}
 
 	// Build graph from files
@@ -435,83 +433,4 @@ func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]
 	}
 
 	return sm, st
-}
-
-func validateConfig(cfg *Config, meta *metamodel.Metamodel) []string {
-	var errs []string
-	// Validate navigation: reject nested groups
-	for _, nav := range cfg.Navigation {
-		if nav.IsGroup() {
-			for _, child := range nav.Items {
-				if child.IsGroup() {
-					errs = append(errs, fmt.Sprintf(
-						"navigation: group %q contains nested group %q — nested groups are not supported",
-						nav.Group, child.Group))
-				}
-			}
-		}
-	}
-	for formID, form := range cfg.Forms {
-		if _, ok := meta.GetEntityDef(form.EntityType); !ok {
-			errs = append(errs, fmt.Sprintf("form %q: unknown entity type %q", formID, form.EntityType))
-			continue
-		}
-		entDef, _ := meta.GetEntityDef(form.EntityType)
-		for _, f := range form.Fields {
-			if _, ok := entDef.Properties[f.Property]; !ok {
-				errs = append(errs, fmt.Sprintf("form %q: field %q not in metamodel for entity %q", formID, f.Property, form.EntityType))
-			}
-		}
-		for _, r := range form.Relations {
-			if _, ok := meta.GetRelationDef(r.Relation); !ok {
-				errs = append(errs, fmt.Sprintf("form %q: unknown relation %q", formID, r.Relation))
-			}
-		}
-	}
-	for listID, list := range cfg.Lists {
-		if _, ok := meta.GetEntityDef(list.EntityType); !ok {
-			errs = append(errs, fmt.Sprintf("list %q: unknown entity type %q", listID, list.EntityType))
-			continue
-		}
-		entDef, _ := meta.GetEntityDef(list.EntityType)
-		for _, c := range list.Columns {
-			if c.Relation != "" {
-				if _, ok := meta.GetRelationDef(c.Relation); !ok {
-					errs = append(errs, fmt.Sprintf("list %q: column relation %q not in metamodel", listID, c.Relation))
-				}
-			} else if _, ok := entDef.Properties[c.Property]; !ok {
-				errs = append(errs, fmt.Sprintf("list %q: column %q not in metamodel for entity %q", listID, c.Property, list.EntityType))
-			}
-		}
-	}
-	validContexts := map[string]bool{"entity": true, "list": true, "view": true, "global": true}
-	for cmdID, cmd := range cfg.Commands {
-		if cmd.Label == "" {
-			errs = append(errs, fmt.Sprintf("command %q: label is required", cmdID))
-		}
-		if cmd.Script == "" {
-			errs = append(errs, fmt.Sprintf("command %q: script is required", cmdID))
-		}
-		if !validContexts[cmd.Context] {
-			errs = append(errs, fmt.Sprintf("command %q: invalid context %q (must be entity, list, view, or global)", cmdID, cmd.Context))
-		}
-		if cmd.AvailableOn != nil {
-			for _, v := range cmd.AvailableOn.Views {
-				if _, ok := cfg.Views[v]; !ok {
-					errs = append(errs, fmt.Sprintf("command %q: available_on references unknown view %q", cmdID, v))
-				}
-			}
-			for _, l := range cmd.AvailableOn.Lists {
-				if _, ok := cfg.Lists[l]; !ok {
-					errs = append(errs, fmt.Sprintf("command %q: available_on references unknown list %q", cmdID, l))
-				}
-			}
-			for _, et := range cmd.AvailableOn.EntityTypes {
-				if _, ok := meta.GetEntityDef(et); !ok {
-					errs = append(errs, fmt.Sprintf("command %q: available_on references unknown entity type %q", cmdID, et))
-				}
-			}
-		}
-	}
-	return errs
 }

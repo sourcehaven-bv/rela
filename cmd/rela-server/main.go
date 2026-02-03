@@ -6,10 +6,12 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -32,6 +34,14 @@ func main() {
 
 	app, err := dataentry.NewApp(repo)
 	if err != nil {
+		var configErr *dataentry.ConfigValidationError
+		if errors.As(err, &configErr) {
+			fmt.Fprintln(os.Stderr, "Configuration validation failed:")
+			for _, e := range configErr.Errors {
+				fmt.Fprintf(os.Stderr, "  - %s\n", e)
+			}
+			os.Exit(1)
+		}
 		log.Fatalf("Failed to initialize: %v", err)
 	}
 
