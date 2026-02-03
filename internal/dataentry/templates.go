@@ -1949,7 +1949,9 @@ function submitInlineCreate() {
 <div class="card" style="padding:24px;">
   <div id="properties" class="detail-grid">
     {{ $propTypes := .PropTypes }}
-    {{ range $key, $val := .Entity.Properties }}
+    {{ $props := .Entity.Properties }}
+    {{ range $key := sortedKeys $props }}
+    {{ $val := index $props $key }}
     {{ $ptype := index $propTypes $key }}
     <div class="detail-label">{{ $key }}</div>
     <div class="detail-value">

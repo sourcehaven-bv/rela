@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -206,21 +207,37 @@ func (g *Graph) GetEdge(from, relationType, to string) (*model.Relation, bool) {
 	return nil, false
 }
 
-// OutgoingEdges returns all outgoing relations from a node
+// OutgoingEdges returns all outgoing relations from a node, sorted by type then target ID
 func (g *Graph) OutgoingEdges(id string) []*model.Relation {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return g.outgoing[id]
+	edges := make([]*model.Relation, len(g.outgoing[id]))
+	copy(edges, g.outgoing[id])
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].Type != edges[j].Type {
+			return edges[i].Type < edges[j].Type
+		}
+		return edges[i].To < edges[j].To
+	})
+	return edges
 }
 
-// IncomingEdges returns all incoming relations to a node
+// IncomingEdges returns all incoming relations to a node, sorted by type then source ID
 func (g *Graph) IncomingEdges(id string) []*model.Relation {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return g.incoming[id]
+	edges := make([]*model.Relation, len(g.incoming[id]))
+	copy(edges, g.incoming[id])
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].Type != edges[j].Type {
+			return edges[i].Type < edges[j].Type
+		}
+		return edges[i].From < edges[j].From
+	})
+	return edges
 }
 
-// AllNodes returns all entities in the graph
+// AllNodes returns all entities in the graph, sorted by ID
 func (g *Graph) AllNodes() []*model.Entity {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -229,20 +246,32 @@ func (g *Graph) AllNodes() []*model.Entity {
 	for _, node := range g.nodes {
 		nodes = append(nodes, node)
 	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].ID < nodes[j].ID
+	})
 	return nodes
 }
 
-// AllEdges returns all relations in the graph
+// AllEdges returns all relations in the graph, sorted by source ID, type, then target ID
 func (g *Graph) AllEdges() []*model.Relation {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
 	edges := make([]*model.Relation, len(g.edges))
 	copy(edges, g.edges)
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].From != edges[j].From {
+			return edges[i].From < edges[j].From
+		}
+		if edges[i].Type != edges[j].Type {
+			return edges[i].Type < edges[j].Type
+		}
+		return edges[i].To < edges[j].To
+	})
 	return edges
 }
 
-// NodesByType returns all entities of a given type
+// NodesByType returns all entities of a given type, sorted by ID
 func (g *Graph) NodesByType(entityType string) []*model.Entity {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -253,6 +282,9 @@ func (g *Graph) NodesByType(entityType string) []*model.Entity {
 			nodes = append(nodes, node)
 		}
 	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].ID < nodes[j].ID
+	})
 	return nodes
 }
 
@@ -270,7 +302,7 @@ func (g *Graph) EdgeCount() int {
 	return len(g.edges)
 }
 
-// AllIDs returns all entity IDs in the graph
+// AllIDs returns all entity IDs in the graph, sorted
 func (g *Graph) AllIDs() []string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -279,10 +311,11 @@ func (g *Graph) AllIDs() []string {
 	for id := range g.nodes {
 		ids = append(ids, id)
 	}
+	sort.Strings(ids)
 	return ids
 }
 
-// IDsByType returns all entity IDs of a given type
+// IDsByType returns all entity IDs of a given type, sorted
 func (g *Graph) IDsByType(entityType string) []string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -293,6 +326,7 @@ func (g *Graph) IDsByType(entityType string) []string {
 			ids = append(ids, id)
 		}
 	}
+	sort.Strings(ids)
 	return ids
 }
 
