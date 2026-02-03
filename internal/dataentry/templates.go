@@ -11,6 +11,7 @@ const allTemplates = `
 <script src="/static/easymde.min.js"></script>
 <link rel="stylesheet" href="/static/slimselect.css">
 <script src="/static/slimselect.min.js"></script>
+<script src="/static/mermaid.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -301,6 +302,20 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'ArrowLeft') { var btn = nav.querySelector('a.scope-nav-btn'); if (btn) btn.click(); }
   if (e.key === 'ArrowRight') { var btns = nav.querySelectorAll('a.scope-nav-btn'); if (btns.length > 0) btns[btns.length-1].click(); }
 });
+
+// Mermaid diagram rendering
+if (typeof mermaid !== 'undefined') {
+  mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+  function renderMermaid(root) {
+    var nodes = (root || document).querySelectorAll('pre.mermaid:not([data-mermaid-processed])');
+    if (nodes.length > 0) {
+      nodes.forEach(function(n) { n.setAttribute('data-mermaid-processed', 'true'); });
+      mermaid.run({ nodes: nodes });
+    }
+  }
+  document.addEventListener('DOMContentLoaded', function() { renderMermaid(); });
+  document.addEventListener('htmx:afterSettle', function(e) { renderMermaid(e.detail.target); });
+}
 
 // SlimSelect progressive enhancement
 function enhanceSelects(root) {

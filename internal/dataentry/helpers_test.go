@@ -380,6 +380,16 @@ func TestSimpleMarkdownToHTML(t *testing.T) {
 			"- item\n\nText after list.",
 			"<ul>\n<li>item</li>\n</ul>\n<p>Text after list.</p>",
 		},
+		{
+			"mermaid block",
+			"```mermaid\ngraph TD\n  A-->B\n```",
+			"<pre class=\"mermaid\">\ngraph TD\n  A--&gt;B\n</pre>",
+		},
+		{
+			"mermaid block unclosed",
+			"```mermaid\ngraph LR\n  A-->B",
+			"<pre class=\"mermaid\">\ngraph LR\n  A--&gt;B\n</pre>",
+		},
 	}
 
 	for _, tt := range tests {
