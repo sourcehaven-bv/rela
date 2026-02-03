@@ -239,6 +239,52 @@ thead th.sortable { user-select: none; }
 .command-toast-log { display: none; }
 .command-toast-log.show { display: block; padding: 8px 12px; background: #f8fafc; border-top: 1px solid var(--border); font-family: var(--font-mono); font-size: 11px; max-height: 150px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; color: var(--text-muted); }
 
+/* Keyboard shortcut hints */
+kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; background: #f1f5f9; border: 1px solid #d1d5db; border-bottom-width: 2px; border-radius: 3px; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); line-height: 1; vertical-align: middle; }
+kbd + kbd { margin-left: 2px; }
+.btn kbd { background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.3); color: rgba(255,255,255,0.8); font-size: 10px; height: 16px; min-width: 16px; margin-left: 4px; }
+.btn-secondary kbd { background: #f1f5f9; border-color: #d1d5db; color: var(--text-muted); }
+.sidebar kbd { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); color: rgba(255,255,255,0.4); }
+tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); outline-offset: -2px; }
+#search-results .card.result-selected { outline: 2px solid var(--primary); outline-offset: -2px; background: var(--primary-light); }
+
+/* Sidebar footer */
+.sidebar-footer { padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: auto; }
+.sidebar-footer button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 0; background: none; border: none; color: var(--text-sidebar); font-size: 13px; cursor: pointer; font-family: var(--font); transition: color 0.15s; }
+.sidebar-footer button:hover { color: var(--text-sidebar-active); }
+
+/* Command palette */
+.cmd-palette-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; display: flex; align-items: flex-start; justify-content: center; padding-top: 15vh; animation: fadeIn 0.1s; }
+.cmd-palette { background: var(--bg-card); border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05); width: 520px; max-height: 400px; overflow: hidden; display: flex; flex-direction: column; }
+.cmd-palette-input-wrap { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+.cmd-palette-input-wrap svg { flex-shrink: 0; color: var(--text-muted); }
+.cmd-palette-input { flex: 1; border: none; outline: none; font-size: 15px; font-family: var(--font); background: none; color: var(--text); }
+.cmd-palette-input::placeholder { color: #94a3b8; }
+.cmd-palette-results { overflow-y: auto; padding: 6px; }
+.cmd-palette-section { padding: 6px 10px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.cmd-palette-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; color: var(--text); transition: background 0.1s; }
+.cmd-palette-item:hover, .cmd-palette-item.active { background: var(--primary-light); }
+.cmd-palette-item.active { outline: 2px solid var(--primary); outline-offset: -2px; }
+.cmd-palette-icon { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: #f1f5f9; border-radius: 6px; font-size: 14px; flex-shrink: 0; }
+.cmd-palette-label { flex: 1; }
+.cmd-palette-shortcut { display: flex; gap: 3px; }
+.cmd-palette-footer { padding: 8px 16px; border-top: 1px solid var(--border); display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Shortcuts help modal */
+.shortcuts-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.1s; }
+.shortcuts-modal { background: var(--bg-card); border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,0.2); width: 560px; max-height: 80vh; overflow-y: auto; }
+.shortcuts-modal-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.shortcuts-modal-header h3 { font-size: 18px; font-weight: 700; }
+.shortcuts-modal-close { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--text-muted); padding: 4px 8px; border-radius: 4px; }
+.shortcuts-modal-close:hover { background: var(--bg); color: var(--text); }
+.shortcuts-body { padding: 16px 24px 24px; }
+.shortcuts-group { margin-bottom: 20px; }
+.shortcuts-group h4 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 8px; }
+.shortcut-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; font-size: 14px; }
+.shortcut-row + .shortcut-row { border-top: 1px solid #f1f5f9; }
+.shortcut-keys { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--text-muted); }
+
 </style>
 <script>
 // SlimSelect progressive enhancement
@@ -688,6 +734,570 @@ document.addEventListener('click', function(e) {
   }
   connect();
 })();
+
+// --- Keyboard shortcuts, command palette, help modal ---
+(function() {
+  var _selectedRow = -1;
+  var _searchSelectedResult = -1;
+  var _gPending = false;
+  var _gTimer = null;
+  var _cmdPaletteEl = null;
+  var _shortcutsEl = null;
+
+  // --- Helpers ---
+  function isInputFocused() {
+    var el = document.activeElement;
+    if (!el) return false;
+    var tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (el.closest && el.closest('.CodeMirror')) return true;
+    if (el.isContentEditable) return true;
+    return false;
+  }
+
+  function getListRows() {
+    var content = document.getElementById('content');
+    if (!content) return [];
+    return content.querySelectorAll('table tbody tr');
+  }
+
+  function isListPage() { return getListRows().length > 0; }
+  function isFormPage() { return !!document.querySelector('#content form[hx-post]'); }
+  function isSearchPage() { return !!document.getElementById('search-input'); }
+
+  // --- Row selection ---
+  function updateRowSelection() {
+    var rows = getListRows();
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].classList.toggle('row-selected', i === _selectedRow);
+    }
+    if (_selectedRow >= 0 && _selectedRow < rows.length) {
+      var row = rows[_selectedRow];
+      if (row.scrollIntoView) row.scrollIntoView({block: 'nearest'});
+    }
+  }
+
+  function selectRow(delta) {
+    var rows = getListRows();
+    if (rows.length === 0) return;
+    _selectedRow = Math.max(0, Math.min(rows.length - 1, _selectedRow + delta));
+    updateRowSelection();
+  }
+
+  // --- Search result selection ---
+  function getSearchResults() {
+    var container = document.getElementById('search-results');
+    return container ? container.querySelectorAll('.card') : [];
+  }
+
+  function updateSearchSelection() {
+    var results = getSearchResults();
+    for (var i = 0; i < results.length; i++) {
+      results[i].classList.toggle('result-selected', i === _searchSelectedResult);
+    }
+    if (_searchSelectedResult >= 0 && _searchSelectedResult < results.length) {
+      results[_searchSelectedResult].scrollIntoView({block: 'nearest'});
+    }
+  }
+
+  function selectSearchResult(delta) {
+    var results = getSearchResults();
+    if (results.length === 0) return;
+    _searchSelectedResult = Math.max(0, Math.min(results.length - 1, _searchSelectedResult + delta));
+    updateSearchSelection();
+  }
+
+  function enterSearchResults() {
+    var results = getSearchResults();
+    if (results.length === 0) return false;
+    _searchSelectedResult = 0;
+    updateSearchSelection();
+    document.getElementById('search-input').blur();
+    return true;
+  }
+
+  function exitSearchResults() {
+    _searchSelectedResult = -1;
+    updateSearchSelection();
+    var input = document.getElementById('search-input');
+    if (input) input.focus();
+  }
+
+  function hasSearchResultSelected() {
+    return _searchSelectedResult >= 0 && getSearchResults().length > 0;
+  }
+
+  // Reset selection on HTMX content swap; auto-focus first form field
+  document.addEventListener('htmx:afterSettle', function() {
+    _selectedRow = -1;
+    _searchSelectedResult = -1;
+    if (isFormPage()) {
+      var first = document.querySelector('#content form input:not([type=hidden]), #content form textarea, #content form select');
+      if (first) first.focus();
+    }
+  });
+
+  // --- DOM-driven shortcut scanning ---
+  // Finds all <kbd> elements inside clickable parents (a, button) and builds
+  // a keymap: key → clickable element. This means adding a shortcut is just
+  // putting <kbd>X</kbd> inside a button — no JS changes needed.
+  //
+  // Returns { key: element } where key is the lowercase text content of the kbd.
+  // Modifier combos (e.g. ⌘↵) are returned with a 'meta+' prefix.
+  function scanKbdShortcuts() {
+    var map = {};
+    // Scan sidebar and #content (not the shortcuts modal or command palette)
+    var scopes = [document.querySelector('.sidebar'), document.getElementById('content')];
+    scopes.forEach(function(scope) {
+      if (!scope) return;
+      scope.querySelectorAll('kbd').forEach(function(kbd) {
+        var clickable = kbd.closest('a, button');
+        if (!clickable) return;
+        // Skip disabled/invisible elements
+        if (clickable.style.pointerEvents === 'none' || clickable.closest('[style*="pointer-events:none"]')) return;
+        var raw = kbd.textContent.trim();
+        if (!raw) return;
+        // Normalize: detect modifier combos (⌘↵ = meta+Enter)
+        var key = _normalizeKbdKey(raw);
+        if (key) map[key] = clickable;
+      });
+    });
+    return map;
+  }
+
+  // Map display symbols back to event key names
+  function _normalizeKbdKey(raw) {
+    // Modifier combo: ⌘↵ → meta+Enter
+    if (raw === '\u2318\u21B5' || raw === '\u2318Enter') return 'meta+Enter';
+    // Single chars
+    var sym = {'\u21B5': 'Enter', '\u2318': 'meta', '\u232B': 'Backspace'};
+    if (sym[raw]) return sym[raw];
+    // Simple single-char shortcuts: N, E, H, L, /, ?
+    if (raw.length === 1) return raw.toLowerCase();
+    return raw.toLowerCase();
+  }
+
+  // --- Command Palette ---
+  function _extractLabel(el) {
+    var label = '';
+    for (var n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3) label += n.textContent;
+    }
+    return label.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim();
+  }
+
+  function _extractShortcut(el) {
+    var kbd = el.querySelector('kbd');
+    return kbd ? kbd.textContent.trim() : '';
+  }
+
+  function buildPaletteItems() {
+    var items = [];
+    // Navigation from sidebar links — read shortcuts from their <kbd> elements
+    var navLinks = document.querySelectorAll('.sidebar nav a');
+    navLinks.forEach(function(a) {
+      var href = a.getAttribute('href');
+      var label = _extractLabel(a);
+      if (!label || !href) return;
+      var icon = '&#128196;';
+      if (href === '/search') icon = '&#128269;';
+      else if (href === '/dashboard') icon = '&#128202;';
+      else if (href === '/graph') icon = '&#128312;';
+      var shortcut = _extractShortcut(a);
+      items.push({section: 'Navigation', icon: icon, label: 'Go to ' + label, shortcut: shortcut, action: function() {
+        a.click();
+      }});
+    });
+    // Actions from #content — any link/button with a <kbd> becomes an action
+    var content = document.getElementById('content');
+    if (content) {
+      content.querySelectorAll('a[href] kbd, button kbd').forEach(function(kbd) {
+        var clickable = kbd.closest('a, button');
+        if (!clickable) return;
+        var label = _extractLabel(clickable);
+        var shortcut = kbd.textContent.trim();
+        if (!label) return;
+        items.push({section: 'Actions', icon: '&#9654;', label: label, shortcut: shortcut, action: function() { clickable.click(); }});
+      });
+    }
+    // Commands from current page (these don't have <kbd> but should still appear)
+    var cmdLinks = document.querySelectorAll('#content .add-dropdown-menu a[onclick*="runCommand"], #content button[onclick*="runCommand"]');
+    cmdLinks.forEach(function(el) {
+      var label = el.textContent.trim();
+      if (label) {
+        items.push({section: 'Commands', icon: '&#9654;', label: label, shortcut: '', action: function() { el.click(); }});
+      }
+    });
+    return items;
+  }
+
+  function createPalette() {
+    if (_cmdPaletteEl) return;
+    var overlay = document.createElement('div');
+    overlay.className = 'cmd-palette-overlay';
+    overlay.id = 'cmd-palette';
+    overlay.style.display = 'none';
+    overlay.innerHTML =
+      '<div class="cmd-palette">' +
+        '<div class="cmd-palette-input-wrap">' +
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>' +
+          '<input class="cmd-palette-input" id="cmd-palette-input" placeholder="Type a command or search..." autocomplete="off">' +
+        '</div>' +
+        '<div class="cmd-palette-results" id="cmd-palette-results"></div>' +
+        '<div class="cmd-palette-footer">' +
+          '<span><kbd>&uarr;</kbd><kbd>&darr;</kbd> Navigate</span>' +
+          '<span><kbd>&#8629;</kbd> Select</span>' +
+          '<span><kbd>Esc</kbd> Close</span>' +
+        '</div>' +
+      '</div>';
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) togglePalette(); });
+    document.body.appendChild(overlay);
+    _cmdPaletteEl = overlay;
+  }
+
+  var _paletteItems = [];
+  var _paletteFiltered = [];
+  var _paletteIdx = 0;
+
+  function renderPaletteResults(query) {
+    var results = document.getElementById('cmd-palette-results');
+    if (!results) return;
+    var q = (query || '').toLowerCase();
+    _paletteFiltered = q ? _paletteItems.filter(function(item) {
+      return item.label.toLowerCase().indexOf(q) >= 0;
+    }) : _paletteItems.slice();
+    _paletteIdx = 0;
+    var html = '';
+    var lastSection = '';
+    for (var i = 0; i < _paletteFiltered.length; i++) {
+      var item = _paletteFiltered[i];
+      if (item.section !== lastSection) {
+        html += '<div class="cmd-palette-section">' + _esc(item.section) + '</div>';
+        lastSection = item.section;
+      }
+      var shortcutHtml = '';
+      if (item.shortcut) {
+        shortcutHtml = '<div class="cmd-palette-shortcut"><kbd>' + _esc(item.shortcut) + '</kbd></div>';
+      }
+      html += '<div class="cmd-palette-item' + (i === 0 ? ' active' : '') + '" data-idx="' + i + '">' +
+        '<div class="cmd-palette-icon">' + item.icon + '</div>' +
+        '<div class="cmd-palette-label">' + _esc(item.label) + '</div>' +
+        shortcutHtml +
+      '</div>';
+    }
+    if (_paletteFiltered.length === 0) {
+      html = '<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:14px;">No results</div>';
+    }
+    results.innerHTML = html;
+    results.querySelectorAll('.cmd-palette-item').forEach(function(el) {
+      el.addEventListener('mouseenter', function() {
+        _paletteIdx = parseInt(el.getAttribute('data-idx'));
+        updatePaletteActive();
+      });
+      el.addEventListener('click', function() {
+        executePaletteItem(_paletteIdx);
+      });
+    });
+  }
+
+  function updatePaletteActive() {
+    var items = document.querySelectorAll('#cmd-palette-results .cmd-palette-item');
+    items.forEach(function(el, i) { el.classList.toggle('active', i === _paletteIdx); });
+    if (items[_paletteIdx]) items[_paletteIdx].scrollIntoView({block: 'nearest'});
+  }
+
+  function executePaletteItem(idx) {
+    if (idx >= 0 && idx < _paletteFiltered.length) {
+      togglePalette();
+      _paletteFiltered[idx].action();
+    }
+  }
+
+  function togglePalette() {
+    createPalette();
+    var el = _cmdPaletteEl;
+    var visible = el.style.display !== 'none';
+    if (visible) {
+      el.style.display = 'none';
+    } else {
+      _paletteItems = buildPaletteItems();
+      el.style.display = '';
+      var input = document.getElementById('cmd-palette-input');
+      input.value = '';
+      renderPaletteResults('');
+      setTimeout(function() { input.focus(); }, 10);
+    }
+  }
+
+  function isPaletteOpen() {
+    return _cmdPaletteEl && _cmdPaletteEl.style.display !== 'none';
+  }
+
+  // Palette keyboard nav
+  document.addEventListener('keydown', function(e) {
+    if (!isPaletteOpen()) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      _paletteIdx = Math.min(_paletteIdx + 1, _paletteFiltered.length - 1);
+      updatePaletteActive();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      _paletteIdx = Math.max(_paletteIdx - 1, 0);
+      updatePaletteActive();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      executePaletteItem(_paletteIdx);
+    }
+  });
+  document.addEventListener('input', function(e) {
+    if (e.target.id === 'cmd-palette-input') {
+      renderPaletteResults(e.target.value);
+    }
+  });
+
+  // --- Shortcuts Help Modal ---
+  function createShortcutsModal() {
+    if (_shortcutsEl) return;
+    var overlay = document.createElement('div');
+    overlay.className = 'shortcuts-overlay';
+    overlay.id = 'shortcuts-modal';
+    overlay.style.display = 'none';
+    var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+    var mod = isMac ? '&#8984;' : 'Ctrl';
+    overlay.innerHTML =
+      '<div class="shortcuts-modal">' +
+        '<div class="shortcuts-modal-header">' +
+          '<h3>Keyboard shortcuts</h3>' +
+          '<button class="shortcuts-modal-close" onclick="document.getElementById(\'shortcuts-modal\').style.display=\'none\'">&times;</button>' +
+        '</div>' +
+        '<div class="shortcuts-body">' +
+          '<div class="shortcuts-group"><h4>Global</h4>' +
+            _shortcutRow('Open command palette', mod + ' + K') +
+            _shortcutRow('Focus search', '/') +
+            _shortcutRow('Show keyboard shortcuts', '?') +
+            _shortcutRow('Close modal / cancel', 'Esc') +
+          '</div>' +
+          '<div class="shortcuts-group"><h4>Navigation</h4>' +
+            _shortcutRow('Go to Dashboard', 'G then D') +
+            _shortcutRow('Go to Graph', 'G then G') +
+          '</div>' +
+          '<div class="shortcuts-group"><h4>List view</h4>' +
+            _shortcutRow('Move selection down', 'J or &darr;') +
+            _shortcutRow('Move selection up', 'K or &uarr;') +
+            _shortcutRow('Open selected entity', 'Enter or O') +
+            _shortcutRow('Edit selected entity', 'E') +
+            _shortcutRow('Create new entity', 'N') +
+            _shortcutRow('Delete selected entity', 'Del') +
+            _shortcutRow('Previous page', 'H') +
+            _shortcutRow('Next page', 'L') +
+          '</div>' +
+          '<div class="shortcuts-group"><h4>Search results</h4>' +
+            _shortcutRow('Enter results from input', 'Tab or &darr;') +
+            _shortcutRow('Navigate results', 'J or K') +
+            _shortcutRow('Open selected result', 'Enter or O') +
+            _shortcutRow('Return to search input', 'Esc or /') +
+          '</div>' +
+          '<div class="shortcuts-group"><h4>Entity detail</h4>' +
+            _shortcutRow('Edit entity', 'E') +
+          '</div>' +
+          '<div class="shortcuts-group"><h4>Form / editor</h4>' +
+            _shortcutRow('Save / submit', mod + ' + Enter') +
+            _shortcutRow('Cancel and go back', 'Esc') +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) toggleShortcuts(); });
+    document.body.appendChild(overlay);
+    _shortcutsEl = overlay;
+  }
+
+  function _shortcutRow(label, keys) {
+    return '<div class="shortcut-row"><span>' + label + '</span><div class="shortcut-keys">' +
+      keys.split(' ').map(function(k) {
+        if (k === 'or' || k === 'then' || k === '+') return '<span style="margin:0 2px;">' + k + '</span>';
+        return '<kbd>' + k + '</kbd>';
+      }).join('') +
+    '</div></div>';
+  }
+
+  function toggleShortcuts() {
+    createShortcutsModal();
+    _shortcutsEl.style.display = _shortcutsEl.style.display === 'none' ? '' : 'none';
+  }
+
+  function isShortcutsOpen() {
+    return _shortcutsEl && _shortcutsEl.style.display !== 'none';
+  }
+
+  // Expose toggles for inline onclick usage
+  window._toggleCmdPalette = togglePalette;
+  window._toggleShortcuts = toggleShortcuts;
+  window._enterSearchResults = enterSearchResults;
+
+  // --- Main keyboard handler ---
+  document.addEventListener('keydown', function(e) {
+    // Cmd/Ctrl+K: command palette (works always, even in inputs)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      if (isShortcutsOpen()) toggleShortcuts();
+      togglePalette();
+      return;
+    }
+
+    // Cmd/Ctrl+Enter: scan DOM for a matching <kbd> on a submit button
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      var kbdMap = scanKbdShortcuts();
+      if (kbdMap['meta+enter']) {
+        e.preventDefault();
+        kbdMap['meta+enter'].click();
+      }
+      return;
+    }
+
+    // Escape: close palette/modal, blur input, or cancel form
+    if (e.key === 'Escape') {
+      if (isPaletteOpen()) { togglePalette(); return; }
+      if (isShortcutsOpen()) { toggleShortcuts(); return; }
+      if (hasSearchResultSelected()) { exitSearchResults(); return; }
+      if (isInputFocused()) { document.activeElement.blur(); return; }
+      // On form, entity detail, or view pages — click the Back/Cancel button
+      var backBtn = document.querySelector('#content .btn-secondary[hx-get]');
+      if (backBtn) backBtn.click();
+      return;
+    }
+
+    // Don't handle single-key shortcuts in palette, modals, or inputs
+    if (isPaletteOpen() || isShortcutsOpen() || isInputFocused()) return;
+
+    // --- Search results navigation (after input blur via Tab/ArrowDown) ---
+    if (hasSearchResultSelected()) {
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectSearchResult(1);
+        return;
+      }
+      if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (_searchSelectedResult === 0) { exitSearchResults(); return; }
+        selectSearchResult(-1);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'o') {
+        var results = getSearchResults();
+        var link = results[_searchSelectedResult] && results[_searchSelectedResult].querySelector('.cell-link');
+        if (link) link.click();
+        return;
+      }
+      if (e.key === '/' || e.key === 'Tab') {
+        e.preventDefault();
+        exitSearchResults();
+        return;
+      }
+      // Any printable character: refocus input and let it through
+      if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
+        exitSearchResults();
+        return;  // let the keydown propagate to the now-focused input
+      }
+      return;
+    }
+
+    // G-prefix sequences
+    if (_gPending) {
+      _gPending = false;
+      clearTimeout(_gTimer);
+      if (e.key === 'd') {
+        var dashLink = document.querySelector('.sidebar nav a[href="/dashboard"]');
+        if (dashLink) dashLink.click();
+        return;
+      }
+      if (e.key === 'g') {
+        var graphLink = document.querySelector('.sidebar nav a[href="/graph"]');
+        if (graphLink) { window.location.href = '/graph'; }
+        return;
+      }
+      return;
+    }
+
+    // ? = shortcuts help
+    if (e.key === '?') { toggleShortcuts(); return; }
+
+    // / = focus search (not on search page — handled via DOM <kbd> on sidebar)
+    if (e.key === '/' && !isSearchPage()) {
+      e.preventDefault();
+      var kbdMap = scanKbdShortcuts();
+      if (kbdMap['/']) { kbdMap['/'].click(); return; }
+      var searchLink = document.querySelector('.sidebar nav a[href="/search"]');
+      if (searchLink) searchLink.click();
+      return;
+    }
+
+    // g = start G-sequence
+    if (e.key === 'g') {
+      _gPending = true;
+      _gTimer = setTimeout(function() { _gPending = false; }, 1000);
+      return;
+    }
+
+    // --- List-specific behavioral shortcuts (no DOM element to click) ---
+    if (isListPage()) {
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectRow(_selectedRow < 0 ? 0 : 1);
+        return;
+      }
+      if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (_selectedRow < 0) { selectRow(0); } else { selectRow(-1); }
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === 'o') && _selectedRow >= 0) {
+        var rows = getListRows();
+        var link = rows[_selectedRow] && rows[_selectedRow].querySelector('.cell-link');
+        if (link) link.click();
+        return;
+      }
+      if (e.key === 'e' && _selectedRow >= 0) {
+        var rows = getListRows();
+        var row = rows[_selectedRow];
+        if (row) {
+          var editHref = row.getAttribute('data-edit-href');
+          if (editHref) {
+            // Create a temporary HTMX link to trigger proper navigation
+            var tmp = document.createElement('a');
+            tmp.href = editHref;
+            tmp.setAttribute('hx-get', editHref);
+            tmp.setAttribute('hx-target', '#content');
+            tmp.setAttribute('hx-push-url', 'true');
+            tmp.style.display = 'none';
+            document.body.appendChild(tmp);
+            htmx.process(tmp);
+            tmp.click();
+            tmp.remove();
+            return;
+          }
+          // Fallback: open detail view
+          var link = row.querySelector('.cell-link');
+          if (link) link.click();
+        }
+        return;
+      }
+      if ((e.key === 'Backspace' || e.key === 'Delete') && _selectedRow >= 0) {
+        var rows = getListRows();
+        var delIcon = rows[_selectedRow] && rows[_selectedRow].querySelector('.delete-icon');
+        if (delIcon) delIcon.click();
+        return;
+      }
+    }
+
+    // --- DOM-driven shortcuts: scan <kbd> elements and click their parent ---
+    var kbdMap = scanKbdShortcuts();
+    var target = kbdMap[e.key.toLowerCase()];
+    if (target) {
+      e.preventDefault();
+      target.click();
+    }
+  });
+})();
 </script>
 {{- end -}}
 
@@ -719,7 +1329,7 @@ document.addEventListener('click', function(e) {
   <nav>
     <a href="/search"{{ if eq $.ActiveList "_search" }} class="active"{{ end }}
        hx-get="/search" hx-target="#content" hx-push-url="true">
-      &#128269; Search
+      &#128269; Search <kbd style="margin-left:auto;">/</kbd>
     </a>
     <a href="/analyze"{{ if eq $.ActiveList "_analyze" }} class="active"{{ end }}
        hx-get="/analyze" hx-target="#content" hx-push-url="true"
@@ -750,6 +1360,9 @@ document.addEventListener('click', function(e) {
        style="display:flex;align-items:center;gap:10px;padding:8px 20px;color:var(--text-sidebar);text-decoration:none;font-size:14px;font-weight:500;transition:all 0.15s;border-left:3px solid transparent;">
       &#9881; Settings
     </a>
+  </div>
+  <div class="sidebar-footer">
+    <button onclick="_toggleShortcuts()">Keyboard shortcuts <kbd>?</kbd></button>
   </div>
 </aside>
 <script>
@@ -841,7 +1454,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     <span style="font-size:13px;color:var(--text-muted);">{{ .TotalCount }} items</span>
     {{ if .List.CreateForm }}
     <a href="/form/{{ .List.CreateForm }}" class="btn btn-primary btn-sm"
-       hx-get="/form/{{ .List.CreateForm }}" hx-target="#content" hx-push-url="true">+ New</a>
+       hx-get="/form/{{ .List.CreateForm }}" hx-target="#content" hx-push-url="true">+ New <kbd>N</kbd></a>
     {{ end }}
     {{ if .Commands }}{{ if gt (len .Commands) 2 }}
     <details class="add-dropdown">
@@ -900,7 +1513,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
       </thead>
       <tbody>
         {{ range .Rows }}
-        <tr>
+        <tr{{ if $.EditForm }} data-edit-href="/form/{{ $.EditForm }}/{{ .EntityID }}?return_to=/list/{{ $.ListID }}"{{ end }}>
           {{ $dlp := $.DetailLinkPrefix }}
           {{ range .Cells }}
           <td>
@@ -911,7 +1524,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
           </td>
           {{ end }}
           <td style="width:1%;white-space:nowrap;"><a href="#" class="delete-icon" title="Delete"
-              onclick="event.preventDefault();confirmDelete('{{ .EntityID }}','/list/{{ $.ListID }}')">&#128465;</a></td>
+              onclick="event.preventDefault();confirmDelete('{{ .EntityID }}','/list/{{ $.ListID }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></a></td>
         </tr>
         {{ end }}
         {{ if not .Rows }}
@@ -926,12 +1539,12 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     <div style="display:flex;gap:6px;">
       {{ if .PrevPageURL }}<a href="{{ .PrevPageURL }}" class="btn btn-secondary btn-sm"
          hx-get="{{ .PrevPageURL }}" hx-target="#content" hx-push-url="true"
-         hx-include=".filter-bar select, .filter-bar input">&larr; Prev</a>
-      {{ else }}<span class="btn btn-secondary btn-sm" style="opacity:0.4;pointer-events:none;">&larr; Prev</span>{{ end }}
+         hx-include=".filter-bar select, .filter-bar input">&larr; Prev <kbd>H</kbd></a>
+      {{ else }}<span class="btn btn-secondary btn-sm" style="opacity:0.4;pointer-events:none;">&larr; Prev <kbd>H</kbd></span>{{ end }}
       {{ if .NextPageURL }}<a href="{{ .NextPageURL }}" class="btn btn-secondary btn-sm"
          hx-get="{{ .NextPageURL }}" hx-target="#content" hx-push-url="true"
-         hx-include=".filter-bar select, .filter-bar input">Next &rarr;</a>
-      {{ else }}<span class="btn btn-secondary btn-sm" style="opacity:0.4;pointer-events:none;">Next &rarr;</span>{{ end }}
+         hx-include=".filter-bar select, .filter-bar input">Next &rarr; <kbd>L</kbd></a>
+      {{ else }}<span class="btn btn-secondary btn-sm" style="opacity:0.4;pointer-events:none;">Next &rarr; <kbd>L</kbd></span>{{ end }}
     </div>
     {{ end }}
   </div>
@@ -961,7 +1574,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     {{ if .Form.Description }}<p>{{ .Form.Description }}</p>{{ end }}
   </div>
   <a href="{{ .BackURL }}" class="btn btn-secondary btn-sm"
-     hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back</a>
+     hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back <kbd>Esc</kbd></a>
 </div>
 
 <div class="card form-card">
@@ -1076,14 +1689,14 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
 
     <div class="form-actions">
       {{ if eq .Mode "edit" }}
-      <button type="submit" class="btn btn-primary">Save Changes</button>
+      <button type="submit" class="btn btn-primary">Save Changes <kbd>&#8984;&#8629;</kbd></button>
       <button type="button" class="btn btn-danger"
               onclick="confirmDelete('{{ .EntityID }}','{{ .ReturnTo }}')">Delete</button>
       {{ else }}
-      <button type="submit" class="btn btn-primary">Create</button>
+      <button type="submit" class="btn btn-primary">Create <kbd>&#8984;&#8629;</kbd></button>
       {{ end }}
       <a href="{{ .BackURL }}" class="btn btn-secondary"
-         hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">Cancel</a>
+         hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">Cancel <kbd>Esc</kbd></a>
     </div>
   </form>
 </div>
@@ -1281,7 +1894,7 @@ function submitInlineCreate() {
   <div style="display:flex;gap:8px;">
     {{ if .EditFormID }}
     <a href="/form/{{ .EditFormID }}/{{ .Entity.ID }}" class="btn btn-primary btn-sm"
-       hx-get="/form/{{ .EditFormID }}/{{ .Entity.ID }}" hx-target="#content" hx-push-url="true">Edit</a>
+       hx-get="/form/{{ .EditFormID }}/{{ .Entity.ID }}" hx-target="#content" hx-push-url="true">Edit <kbd>E</kbd></a>
     {{ end }}
     {{ if .Commands }}{{ if gt (len .Commands) 2 }}
     <details class="add-dropdown">
@@ -1295,7 +1908,7 @@ function submitInlineCreate() {
     <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</button>
     {{ end }}{{ end }}{{ end }}
     <a href="{{ .BackURL }}" class="btn btn-secondary btn-sm"
-       hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back</a>
+       hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back <kbd>Esc</kbd></a>
   </div>
 </div>
 
@@ -1385,7 +1998,7 @@ function submitInlineCreate() {
     <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entry.ID }}',entity_type:'{{ $.Entry.Type }}',view_id:'{{ $.ViewID }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</button>
     {{ end }}{{ end }}{{ end }}
     <a href="{{ .BackURL }}" class="btn btn-secondary btn-sm"
-       hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back</a>
+       hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back <kbd>Esc</kbd></a>
   </div>
 </div>
 
@@ -1553,7 +2166,7 @@ function submitInlineCreate() {
             {{ if .EditFormID }}<td style="width:1%;white-space:nowrap;"><a href="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
                hx-get="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a>
                <a href="#" class="delete-icon" title="Delete" style="margin-left:6px;"
-                  onclick="event.preventDefault();confirmDelete('{{ .EntityID }}','{{ $returnTo }}')">&#128465;</a></td>{{ end }}
+                  onclick="event.preventDefault();confirmDelete('{{ .EntityID }}','{{ $returnTo }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></a></td>{{ end }}
           </tr>
           {{ end }}
         </tbody>
@@ -1588,7 +2201,7 @@ function submitInlineCreate() {
             {{ if .EditFormID }}<td style="width:1%;white-space:nowrap;"><a href="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
                hx-get="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a>
                <a href="#" class="delete-icon" title="Delete" style="margin-left:6px;"
-                  onclick="event.preventDefault();confirmDelete('{{ .EntityID }}','{{ $returnTo }}')">&#128465;</a></td>
+                  onclick="event.preventDefault();confirmDelete('{{ .EntityID }}','{{ $returnTo }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></a></td>
             {{ else }}<td></td>{{ end }}
           </tr>
           {{ end }}
@@ -2079,6 +2692,12 @@ function submitInlineCreate() {
         chips.pop();
         renderChips();
         doSearch();
+      }
+      // Tab or ArrowDown with dropdown closed: enter search results
+      if (e.key === 'Tab' || e.key === 'ArrowDown') {
+        if (typeof _enterSearchResults === 'function' && _enterSearchResults()) {
+          e.preventDefault();
+        }
       }
     }
   });
