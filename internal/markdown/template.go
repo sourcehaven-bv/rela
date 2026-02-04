@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
@@ -140,7 +140,7 @@ func (f *FileIO) GenerateEntityTemplate(
 	for name := range entityDef.Properties {
 		propNames = append(propNames, name)
 	}
-	sort.Strings(propNames)
+	natsort.Strings(propNames)
 
 	// Add properties with defaults or empty values
 	for _, name := range propNames {

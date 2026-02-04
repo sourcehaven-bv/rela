@@ -1,7 +1,7 @@
 package views
 
 import (
-	"sort"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // CollectDeps executes a view for each root and returns all unique entity IDs touched.
@@ -48,7 +48,7 @@ func (e *Engine) CollectDeps(view ViewDef, rootIDs []string) ([]string, error) {
 	for id := range seen {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	natsort.Strings(ids)
 
 	return ids, nil
 }

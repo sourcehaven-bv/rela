@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // LinkStep represents the current step in link creation
@@ -74,7 +75,7 @@ func (l *LinkModel) loadRelations(app *App) {
 	}
 
 	sort.Slice(l.relations, func(i, j int) bool {
-		return l.relations[i].label < l.relations[j].label
+		return natsort.Less(l.relations[i].label, l.relations[j].label)
 	})
 }
 
@@ -99,7 +100,7 @@ func (l *LinkModel) loadTargets(app *App) {
 	}
 
 	sort.Slice(l.targets, func(i, j int) bool {
-		return l.targets[i].ID < l.targets[j].ID
+		return natsort.Less(l.targets[i].ID, l.targets[j].ID)
 	})
 
 	l.filteredList = l.targets

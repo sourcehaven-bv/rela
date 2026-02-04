@@ -4,11 +4,11 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
@@ -143,7 +143,7 @@ func (s *Server) handleReadView(
 	viewDef, ok := viewsFile.GetView(viewName)
 	if !ok {
 		names := viewsFile.ViewNames()
-		sort.Strings(names)
+		natsort.Strings(names)
 		return nil, fmt.Errorf("view not found: %s (available: %s)", viewName, strings.Join(names, ", "))
 	}
 

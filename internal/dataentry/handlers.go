@@ -15,6 +15,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
 
@@ -588,7 +589,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		for k := range e.Properties {
 			propKeys = append(propKeys, k)
 		}
-		sort.Strings(propKeys)
+		natsort.Strings(propKeys)
 		for _, k := range propKeys {
 			rd.Properties = append(rd.Properties, RelPropDisplay{k, fmt.Sprintf("%v", e.Properties[k])})
 		}
@@ -607,7 +608,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		for k := range e.Properties {
 			propKeys = append(propKeys, k)
 		}
-		sort.Strings(propKeys)
+		natsort.Strings(propKeys)
 		for _, k := range propKeys {
 			rd.Properties = append(rd.Properties, RelPropDisplay{k, fmt.Sprintf("%v", e.Properties[k])})
 		}
@@ -620,7 +621,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		for propName := range entDef.Properties {
 			propTypeKeys = append(propTypeKeys, propName)
 		}
-		sort.Strings(propTypeKeys)
+		natsort.Strings(propTypeKeys)
 		for _, propName := range propTypeKeys {
 			propTypes[propName] = entDef.Properties[propName].Type
 		}
@@ -1376,7 +1377,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 				for pn := range entDef.Properties {
 					propNames = append(propNames, pn)
 				}
-				sort.Strings(propNames)
+				natsort.Strings(propNames)
 				count := 0
 				for _, propName := range propNames {
 					if count >= 3 {
@@ -1569,8 +1570,8 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 				groups[val]++
 			}
-			// Sort values alphabetically for consistent display
-			sort.Strings(orderedValues)
+			// Sort values in natural order for consistent display
+			natsort.Strings(orderedValues)
 			// Determine property type for badge styling
 			propType := ""
 			if len(entities) > 0 {
@@ -1740,7 +1741,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 	for name := range propMap {
 		propNames = append(propNames, name)
 	}
-	sort.Strings(propNames)
+	natsort.Strings(propNames)
 	allProperties := make([]PropertyInfo, 0, len(propNames))
 	for _, name := range propNames {
 		allProperties = append(allProperties, propMap[name])
@@ -1754,7 +1755,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		Targets    []struct{ ID, Title string }
 	}
 	relNames := a.meta.RelationTypes()
-	sort.Strings(relNames)
+	natsort.Strings(relNames)
 	allRelations := make([]RelationInfo, 0, len(relNames))
 	for _, relName := range relNames {
 		relDef, ok := a.meta.GetRelationDef(relName)
@@ -1779,7 +1780,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Entity types for override type selection.
 	entityTypes := a.meta.EntityTypes()
-	sort.Strings(entityTypes)
+	natsort.Strings(entityTypes)
 
 	activeList := "_settings"
 	data := map[string]interface{}{
@@ -1883,7 +1884,7 @@ func (a *App) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	for idx := range idxSet {
 		indices = append(indices, idx)
 	}
-	sort.Strings(indices)
+	natsort.Strings(indices)
 
 	for _, idx := range indices {
 		types := overrideTypes[idx]

@@ -9,6 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // MetamodelTab represents the active tab
@@ -66,7 +68,7 @@ func (m *MetamodelModel) load(app *App) {
 			}
 			props = append(props, fmt.Sprintf("%s%s: %s", propName, required, propDef.Type))
 		}
-		sort.Strings(props)
+		natsort.Strings(props)
 
 		m.entityTypes = append(m.entityTypes, entityTypeInfo{
 			name:       name,
@@ -77,7 +79,7 @@ func (m *MetamodelModel) load(app *App) {
 		})
 	}
 	sort.Slice(m.entityTypes, func(i, j int) bool {
-		return m.entityTypes[i].label < m.entityTypes[j].label
+		return natsort.Less(m.entityTypes[i].label, m.entityTypes[j].label)
 	})
 
 	// Load relations
@@ -98,7 +100,7 @@ func (m *MetamodelModel) load(app *App) {
 		})
 	}
 	sort.Slice(m.relations, func(i, j int) bool {
-		return m.relations[i].label < m.relations[j].label
+		return natsort.Less(m.relations[i].label, m.relations[j].label)
 	})
 }
 

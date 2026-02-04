@@ -2,12 +2,12 @@ package dataentry
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // Valid top-level keys in data-entry.yaml
@@ -125,7 +125,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
-		sort.Strings(errs)
+		natsort.Strings(errs)
 		return &ConfigValidationError{Errors: errs}
 	}
 	return nil
@@ -803,7 +803,7 @@ func sortedMapKeys[V any](m map[string]V) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	natsort.Strings(keys)
 	return keys
 }
 
@@ -814,6 +814,6 @@ func joinMapKeys(m map[string]bool) string {
 			keys = append(keys, k)
 		}
 	}
-	sort.Strings(keys)
+	natsort.Strings(keys)
 	return strings.Join(keys, ", ")
 }

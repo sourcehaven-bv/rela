@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
 
@@ -270,7 +270,7 @@ func (a *App) editFormForType(entityType string) string {
 	for id := range a.Cfg.Forms {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	natsort.Strings(ids)
 	for _, id := range ids {
 		f := a.Cfg.Forms[id]
 		if f.EntityType == entityType && (f.Mode == "edit" || f.Mode == "") {
@@ -288,7 +288,7 @@ func (a *App) createFormForType(entityType string) string {
 	for id := range a.Cfg.Forms {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	natsort.Strings(ids)
 	fallback := ""
 	for _, id := range ids {
 		f := a.Cfg.Forms[id]

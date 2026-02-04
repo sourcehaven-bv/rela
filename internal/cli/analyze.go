@@ -39,6 +39,7 @@ var analyzeOrphansCmd = &cobra.Command{
 			return nil
 		}
 
+		filter.SortByID(orphans, false)
 		out.WriteWarning("Found %d orphan entities:", len(orphans))
 		return out.WriteEntities(orphans)
 	},

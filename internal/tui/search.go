@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
 
@@ -97,7 +98,7 @@ func (s *SearchModel) getPropertyValueSuggestions(app *App, propertyName, prefix
 			if sorted[i].count != sorted[j].count {
 				return sorted[i].count > sorted[j].count // Higher count first
 			}
-			return sorted[i].val < sorted[j].val // Alphabetical for same count
+			return natsort.Less(sorted[i].val, sorted[j].val) // Natural order for same count
 		})
 
 		// Take top N suggestions
@@ -206,7 +207,7 @@ func (s *SearchModel) updateSuggestions(app *App) {
 				s.suggestions = append(s.suggestions, propName)
 			}
 		}
-		sort.Strings(s.suggestions)
+		natsort.Strings(s.suggestions)
 		s.showSuggestions = len(s.suggestions) > 0
 
 	case "sortdir":

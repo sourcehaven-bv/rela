@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // AffectedRoots finds which root entities are affected by changes to the given entity IDs.
@@ -38,7 +39,7 @@ func (e *Engine) AffectedRoots(view ViewDef, changedIDs, rootIDs []string) ([]*m
 	}
 
 	sort.Slice(affected, func(i, j int) bool {
-		return affected[i].ID < affected[j].ID
+		return natsort.Less(affected[i].ID, affected[j].ID)
 	})
 
 	return affected, nil

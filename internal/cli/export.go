@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 var (
@@ -111,7 +112,7 @@ func exportEntities(entityType string) error {
 
 	// Sort by ID for consistent output
 	sort.Slice(entities, func(i, j int) bool {
-		return entities[i].ID < entities[j].ID
+		return natsort.Less(entities[i].ID, entities[j].ID)
 	})
 
 	if len(entities) == 0 {
@@ -147,20 +148,20 @@ func exportAllData() error {
 	// Sort entities by type, then ID
 	sort.Slice(allEntities, func(i, j int) bool {
 		if allEntities[i].Type != allEntities[j].Type {
-			return allEntities[i].Type < allEntities[j].Type
+			return natsort.Less(allEntities[i].Type, allEntities[j].Type)
 		}
-		return allEntities[i].ID < allEntities[j].ID
+		return natsort.Less(allEntities[i].ID, allEntities[j].ID)
 	})
 
 	// Sort edges by from, relation, to
 	sort.Slice(allEdges, func(i, j int) bool {
 		if allEdges[i].From != allEdges[j].From {
-			return allEdges[i].From < allEdges[j].From
+			return natsort.Less(allEdges[i].From, allEdges[j].From)
 		}
 		if allEdges[i].Type != allEdges[j].Type {
-			return allEdges[i].Type < allEdges[j].Type
+			return natsort.Less(allEdges[i].Type, allEdges[j].Type)
 		}
-		return allEdges[i].To < allEdges[j].To
+		return natsort.Less(allEdges[i].To, allEdges[j].To)
 	})
 
 	exportEntities := make([]ExportEntity, 0, len(allEntities))
@@ -346,7 +347,7 @@ func collectPropertyKeys(entities []*model.Entity) []string {
 	for k := range keySet {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	natsort.Strings(keys)
 
 	// Move common properties to the front
 	priority := []string{"title", "status", "description"}
@@ -392,7 +393,7 @@ func formatRelationsMap(m map[string][]RelationTarget) string {
 	for rt := range m {
 		relTypes = append(relTypes, rt)
 	}
-	sort.Strings(relTypes)
+	natsort.Strings(relTypes)
 
 	for _, rt := range relTypes {
 		targets := m[rt]

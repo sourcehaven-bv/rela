@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -129,6 +130,7 @@ func (a *AnalysisModel) runCheck(app *App, check string) {
 
 func (a *AnalysisModel) runOrphans(app *App) {
 	orphans := app.graph.FindOrphans()
+	filter.SortByID(orphans, false)
 
 	if len(orphans) == 0 {
 		a.results = append(a.results, analysisResult{

@@ -10,6 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // TemplatesDir is the directory name for templates
@@ -65,7 +67,7 @@ func (t *TemplatesModel) load(app *App) {
 	for typeName := range app.metamodel.Entities {
 		t.entityTypes = append(t.entityTypes, typeName)
 	}
-	sort.Strings(t.entityTypes)
+	natsort.Strings(t.entityTypes)
 
 	// Load templates
 	t.templates = nil
@@ -116,9 +118,9 @@ func (t *TemplatesModel) load(app *App) {
 	// Sort templates by entity type then name
 	sort.Slice(t.templates, func(i, j int) bool {
 		if t.templates[i].EntityType != t.templates[j].EntityType {
-			return t.templates[i].EntityType < t.templates[j].EntityType
+			return natsort.Less(t.templates[i].EntityType, t.templates[j].EntityType)
 		}
-		return t.templates[i].Name < t.templates[j].Name
+		return natsort.Less(t.templates[i].Name, t.templates[j].Name)
 	})
 }
 
