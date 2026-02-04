@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
 
@@ -548,7 +549,7 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 			for k := range m {
 				keys = append(keys, k)
 			}
-			sort.Strings(keys)
+			natsort.Strings(keys)
 			return keys
 		},
 	}
@@ -632,7 +633,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 	case strings.HasPrefix(scope, "search:"):
 		query := strings.TrimPrefix(scope, "search:")
 		entities := a.executeQuery(query)
-		sort.Slice(entities, func(i, j int) bool { return entities[i].ID < entities[j].ID })
+		sort.Slice(entities, func(i, j int) bool { return natsort.Less(entities[i].ID, entities[j].ID) })
 		ids = make([]string, len(entities))
 		for i, e := range entities {
 			ids[i] = e.ID

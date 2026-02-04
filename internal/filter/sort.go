@@ -6,6 +6,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // Sort sorts entities by a property with type-aware comparison.
@@ -119,10 +120,10 @@ func compareEnums(valI, valJ interface{}, enumIndex map[string]int) bool {
 	return sI < sJ
 }
 
-// SortByID sorts entities by their ID (default sort)
+// SortByID sorts entities by their ID using natural ordering (default sort)
 func SortByID(entities []*model.Entity, descending bool) {
 	sort.SliceStable(entities, func(i, j int) bool {
-		less := entities[i].ID < entities[j].ID
+		less := natsort.Less(entities[i].ID, entities[j].ID)
 		if descending {
 			return !less
 		}
@@ -130,14 +131,14 @@ func SortByID(entities []*model.Entity, descending bool) {
 	})
 }
 
-// compareStrings compares two values as strings
+// compareStrings compares two values as strings using natural ordering
 func compareStrings(valI, valJ interface{}) bool {
 	sI, okI := valI.(string)
 	sJ, okJ := valJ.(string)
 	if !okI || !okJ {
 		return false
 	}
-	return sI < sJ
+	return natsort.Less(sI, sJ)
 }
 
 // compareDates compares two values as dates.

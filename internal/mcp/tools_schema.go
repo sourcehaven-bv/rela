@@ -3,11 +3,11 @@ package mcp
 
 import (
 	"context"
-	"sort"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 func (s *Server) handleGetMetamodel(
@@ -46,7 +46,7 @@ func (s *Server) handleListEntityTypes(
 
 	meta := s.getMeta()
 	types := meta.EntityTypes()
-	sort.Strings(types)
+	natsort.Strings(types)
 
 	result := make([]entityTypeInfo, 0, len(types))
 	for _, name := range types {
@@ -86,7 +86,7 @@ func (s *Server) handleListRelationTypes(
 
 	meta := s.getMeta()
 	types := meta.RelationTypes()
-	sort.Strings(types)
+	natsort.Strings(types)
 
 	result := make([]relationTypeInfo, 0, len(types))
 	for _, name := range types {

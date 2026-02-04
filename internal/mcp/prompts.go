@@ -4,12 +4,12 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 func (s *Server) registerPrompts() {
@@ -147,7 +147,7 @@ func (s *Server) handleReviewOrphansPrompt(
 	// Get available relation types
 	meta := s.getMeta()
 	relTypes := meta.RelationTypes()
-	sort.Strings(relTypes)
+	natsort.Strings(relTypes)
 	var relInfo strings.Builder
 	for _, name := range relTypes {
 		def, _ := meta.GetRelationDef(name)
@@ -192,7 +192,7 @@ func (s *Server) handleSummarizeProjectPrompt(
 	// Entity counts by type
 	meta := s.getMeta()
 	entityTypes := meta.EntityTypes()
-	sort.Strings(entityTypes)
+	natsort.Strings(entityTypes)
 	var entityCounts strings.Builder
 	totalEntities := 0
 	for _, t := range entityTypes {
@@ -208,7 +208,7 @@ func (s *Server) handleSummarizeProjectPrompt(
 
 	// Relation counts by type
 	relTypes := meta.RelationTypes()
-	sort.Strings(relTypes)
+	natsort.Strings(relTypes)
 	var relCounts strings.Builder
 	totalRelations := 0
 	for _, t := range relTypes {

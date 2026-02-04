@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	mdmodel "github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // propertyInput represents a required property being filled in
@@ -55,7 +56,7 @@ func (c *CreateModel) loadTypes(app *App) {
 		})
 	}
 	sort.Slice(c.types, func(i, j int) bool {
-		return c.types[i].label < c.types[j].label
+		return natsort.Less(c.types[i].label, c.types[j].label)
 	})
 
 	// Preselect type if set

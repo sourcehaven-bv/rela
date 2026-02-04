@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // entityJSON represents an entity for JSON output in MCP responses.
@@ -202,23 +203,23 @@ func convertRelationsList(relations []*model.Relation) (string, error) {
 	return marshalJSON(result)
 }
 
-// sortEntitiesByID sorts entities by ID for consistent output.
+// sortEntitiesByID sorts entities by ID using natural ordering for consistent output.
 func sortEntitiesByID(entities []*model.Entity) {
 	sort.Slice(entities, func(i, j int) bool {
-		return entities[i].ID < entities[j].ID
+		return natsort.Less(entities[i].ID, entities[j].ID)
 	})
 }
 
-// sortRelations sorts relations for consistent output.
+// sortRelations sorts relations using natural ordering for consistent output.
 func sortRelations(relations []*model.Relation) {
 	sort.Slice(relations, func(i, j int) bool {
 		if relations[i].From != relations[j].From {
-			return relations[i].From < relations[j].From
+			return natsort.Less(relations[i].From, relations[j].From)
 		}
 		if relations[i].Type != relations[j].Type {
-			return relations[i].Type < relations[j].Type
+			return natsort.Less(relations[i].Type, relations[j].Type)
 		}
-		return relations[i].To < relations[j].To
+		return natsort.Less(relations[i].To, relations[j].To)
 	})
 }
 

@@ -4,7 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
+
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // handleGraph serves the full-page graph visualization.
@@ -127,7 +128,7 @@ func (a *App) buildContentGraphData() graphDataResponse {
 
 	// Collect entity types
 	entityTypes := a.meta.EntityTypes()
-	sort.Strings(entityTypes)
+	natsort.Strings(entityTypes)
 
 	etList := make([]graphEntityType, 0, len(entityTypes))
 	for i, et := range entityTypes {
@@ -176,7 +177,7 @@ func (a *App) buildContentGraphData() graphDataResponse {
 
 	// Collect relation types
 	relTypes := a.meta.RelationTypes()
-	sort.Strings(relTypes)
+	natsort.Strings(relTypes)
 	rtList := make([]graphRelationType, 0, len(relTypes))
 	for _, rt := range relTypes {
 		label := rt
@@ -200,7 +201,7 @@ func (a *App) buildContentGraphData() graphDataResponse {
 
 func (a *App) buildMetamodelGraphData() graphDataResponse {
 	entityTypes := a.meta.EntityTypes()
-	sort.Strings(entityTypes)
+	natsort.Strings(entityTypes)
 
 	etList := make([]graphEntityType, 0, len(entityTypes))
 	nodes := make([]graphNode, 0, len(entityTypes))
@@ -223,7 +224,7 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 			for pn := range entDef.Properties {
 				propNames = append(propNames, pn)
 			}
-			sort.Strings(propNames)
+			natsort.Strings(propNames)
 			for _, pn := range propNames {
 				pd := entDef.Properties[pn]
 				props[pn] = pd.Type
@@ -242,7 +243,7 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 
 	// Build edges from relation definitions (from-type → to-type)
 	relTypes := a.meta.RelationTypes()
-	sort.Strings(relTypes)
+	natsort.Strings(relTypes)
 
 	var edges []graphEdge
 	relTypeCounts := make(map[string]int)
@@ -296,7 +297,7 @@ func (a *App) buildMetaInfo(entityTypes, relTypes []string) graphMetaData {
 			for pn := range entDef.Properties {
 				propNames = append(propNames, pn)
 			}
-			sort.Strings(propNames)
+			natsort.Strings(propNames)
 			for _, pn := range propNames {
 				pd := entDef.Properties[pn]
 				me.Properties = append(me.Properties, graphMetaProperty{Name: pn, Type: pd.Type})

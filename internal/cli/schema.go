@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 var (
@@ -643,7 +644,7 @@ func getSortedEntityNames(m *metamodel.Metamodel) []string {
 		names = append(names, name)
 	}
 	sort.Slice(names, func(i, j int) bool {
-		return m.Entities[names[i]].Label < m.Entities[names[j]].Label
+		return natsort.Less(m.Entities[names[i]].Label, m.Entities[names[j]].Label)
 	})
 	return names
 }
@@ -654,7 +655,7 @@ func getSortedRelationNames(m *metamodel.Metamodel) []string {
 		names = append(names, name)
 	}
 	sort.Slice(names, func(i, j int) bool {
-		return m.Relations[names[i]].Label < m.Relations[names[j]].Label
+		return natsort.Less(m.Relations[names[i]].Label, m.Relations[names[j]].Label)
 	})
 	return names
 }
@@ -664,7 +665,7 @@ func getSortedTypeNames(m *metamodel.Metamodel) []string {
 	for name := range m.Types {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	natsort.Strings(names)
 	return names
 }
 

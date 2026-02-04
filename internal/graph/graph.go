@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // Graph represents an in-memory graph of entities and relations
@@ -215,9 +216,9 @@ func (g *Graph) OutgoingEdges(id string) []*model.Relation {
 	copy(edges, g.outgoing[id])
 	sort.Slice(edges, func(i, j int) bool {
 		if edges[i].Type != edges[j].Type {
-			return edges[i].Type < edges[j].Type
+			return natsort.Less(edges[i].Type, edges[j].Type)
 		}
-		return edges[i].To < edges[j].To
+		return natsort.Less(edges[i].To, edges[j].To)
 	})
 	return edges
 }
@@ -230,9 +231,9 @@ func (g *Graph) IncomingEdges(id string) []*model.Relation {
 	copy(edges, g.incoming[id])
 	sort.Slice(edges, func(i, j int) bool {
 		if edges[i].Type != edges[j].Type {
-			return edges[i].Type < edges[j].Type
+			return natsort.Less(edges[i].Type, edges[j].Type)
 		}
-		return edges[i].From < edges[j].From
+		return natsort.Less(edges[i].From, edges[j].From)
 	})
 	return edges
 }
@@ -247,7 +248,7 @@ func (g *Graph) AllNodes() []*model.Entity {
 		nodes = append(nodes, node)
 	}
 	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].ID < nodes[j].ID
+		return natsort.Less(nodes[i].ID, nodes[j].ID)
 	})
 	return nodes
 }
@@ -261,12 +262,12 @@ func (g *Graph) AllEdges() []*model.Relation {
 	copy(edges, g.edges)
 	sort.Slice(edges, func(i, j int) bool {
 		if edges[i].From != edges[j].From {
-			return edges[i].From < edges[j].From
+			return natsort.Less(edges[i].From, edges[j].From)
 		}
 		if edges[i].Type != edges[j].Type {
-			return edges[i].Type < edges[j].Type
+			return natsort.Less(edges[i].Type, edges[j].Type)
 		}
-		return edges[i].To < edges[j].To
+		return natsort.Less(edges[i].To, edges[j].To)
 	})
 	return edges
 }
@@ -283,7 +284,7 @@ func (g *Graph) NodesByType(entityType string) []*model.Entity {
 		}
 	}
 	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].ID < nodes[j].ID
+		return natsort.Less(nodes[i].ID, nodes[j].ID)
 	})
 	return nodes
 }
@@ -311,7 +312,7 @@ func (g *Graph) AllIDs() []string {
 	for id := range g.nodes {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	natsort.Strings(ids)
 	return ids
 }
 
@@ -326,7 +327,7 @@ func (g *Graph) IDsByType(entityType string) []string {
 			ids = append(ids, id)
 		}
 	}
-	sort.Strings(ids)
+	natsort.Strings(ids)
 	return ids
 }
 
@@ -379,16 +380,13 @@ func (g *Graph) GetPropertyValues(propertyName string, limit int) []string {
 		sorted = append(sorted, valueCount{value: val, count: count})
 	}
 
-	// Sort by count descending, then by value alphabetically
-	for i := 0; i < len(sorted); i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[j].count > sorted[i].count ||
-				(sorted[j].count == sorted[i].count && sorted[j].value < sorted[i].value) {
-
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
+	// Sort by count descending, then by value in natural order
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].count != sorted[j].count {
+			return sorted[i].count > sorted[j].count
 		}
-	}
+		return natsort.Less(sorted[i].value, sorted[j].value)
+	})
 
 	// Extract values up to limit
 	result := make([]string, 0, limit)
