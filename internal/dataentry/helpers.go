@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -191,6 +192,7 @@ func simpleMarkdownToHTML(md string) template.HTML {
 	}
 
 	inMermaidBlock := false
+	cbIndex := 0
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -250,6 +252,28 @@ func simpleMarkdownToHTML(md string) template.HTML {
 		if strings.HasPrefix(trimmed, "# ") {
 			flushParagraph()
 			out = append(out, "<h3>"+inlineFormat(trimmed[2:])+"</h3>")
+			continue
+		}
+
+		// Task list item (checkbox)
+		if strings.HasPrefix(trimmed, "- [ ] ") || strings.HasPrefix(trimmed, "- [x] ") || strings.HasPrefix(trimmed, "- [X] ") {
+			flushParagraph()
+			if listTag != "" && listTag != "ul" {
+				closeList()
+			}
+			if listTag == "" {
+				out = append(out, `<ul class="task-list">`)
+				listTag = "ul"
+			}
+			checked := trimmed[3] != ' '
+			content := trimmed[6:]
+			checkedAttr := ""
+			if checked {
+				checkedAttr = " checked"
+			}
+			out = append(out, fmt.Sprintf(`<li class="task-item"><label><input type="checkbox" data-cb-idx="%d"%s> %s</label></li>`,
+				cbIndex, checkedAttr, inlineFormat(content)))
+			cbIndex++
 			continue
 		}
 
@@ -343,6 +367,59 @@ func inlineFormat(s string) string {
 		s = s[:start] + "<em>" + s[start+1:end] + "</em>" + s[end+1:]
 	}
 	return s
+}
+
+// checkboxPattern matches markdown task list items: - [ ], - [x], - [X].
+var checkboxPattern = regexp.MustCompile(`^(- \[)([ xX])(\] )`)
+
+// toggleCheckbox flips the checkbox at the given 0-based index in a markdown string.
+// Returns the modified content and an error if the index is out of range.
+func toggleCheckbox(content string, index int) (string, error) {
+	lines := strings.Split(content, "\n")
+	cbIdx := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if checkboxPattern.MatchString(trimmed) {
+			if cbIdx == index {
+				// Find the bracket position in the original (untrimmed) line
+				pos := strings.Index(line, "- [")
+				if pos < 0 {
+					return "", fmt.Errorf("checkbox %d: bracket not found", index)
+				}
+				charPos := pos + 3 // position of the check character
+				if line[charPos] == ' ' {
+					line = line[:charPos] + "x" + line[charPos+1:]
+				} else {
+					line = line[:charPos] + " " + line[charPos+1:]
+				}
+				lines[i] = line
+				return strings.Join(lines, "\n"), nil
+			}
+			cbIdx++
+		}
+	}
+	return "", fmt.Errorf("checkbox index %d out of range (found %d)", index, cbIdx)
+}
+
+// CheckboxStats holds completion counts for task list items.
+type CheckboxStats struct {
+	Checked int
+	Total   int
+}
+
+// checkboxStats counts checked and total task list items in markdown content.
+func checkboxStats(content string) CheckboxStats {
+	var stats CheckboxStats
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if checkboxPattern.MatchString(trimmed) {
+			stats.Total++
+			if trimmed[3] != ' ' {
+				stats.Checked++
+			}
+		}
+	}
+	return stats
 }
 
 // executeQuery parses a search query and returns all matching entities from the graph.
@@ -445,6 +522,7 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 		"add":            func(a, b int) int { return a + b },
 		"boolTrue":       func(b *bool) bool { return b != nil && *b },
 		"renderMarkdown": simpleMarkdownToHTML,
+		"checkboxStats":  checkboxStats,
 		"map": func(pairs ...interface{}) map[string]interface{} {
 			m := make(map[string]interface{}, len(pairs)/2)
 			for i := 0; i+1 < len(pairs); i += 2 {
