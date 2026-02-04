@@ -45,9 +45,14 @@ func TestValidateEntity_EmptyRequiredProperty(t *testing.T) {
 		t.Errorf("expected 1 error for empty required property, got %d: %v", len(errs), errs)
 	}
 
-	// Verify it's the "missing required property" error
-	if len(errs) > 0 && errs[0].Error() != "missing required property: title" {
-		t.Errorf("unexpected error message: %v", errs[0])
+	// Verify it's a required field error
+	if len(errs) > 0 {
+		if errs[0].Type != ValidationErrorRequired {
+			t.Errorf("expected ValidationErrorRequired, got %v", errs[0].Type)
+		}
+		if errs[0].Property != "title" {
+			t.Errorf("expected property 'title', got %q", errs[0].Property)
+		}
 	}
 }
 
@@ -447,7 +452,7 @@ func TestValidatePropertyValue_UnknownType(t *testing.T) {
 		t.Fatal("expected error for unknown property type, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "unknown type") {
+	if !strings.Contains(strings.ToLower(err.Error()), "unknown type") {
 		t.Errorf("expected 'unknown type' in error, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "nonexistent") {
