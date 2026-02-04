@@ -130,45 +130,29 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 			}
 		}
 
-	case "status":
-		// Legacy built-in status type
-		if s, ok := val.(string); ok {
-			if !model.Status(s).IsValid() {
-				return fmt.Errorf("invalid status value: %s", s)
-			}
-		}
-
-	case "priority":
-		// Legacy built-in priority type
-		if p, ok := val.(string); ok {
-			if !model.Priority(p).IsValid() {
-				return fmt.Errorf("invalid priority value: %s", p)
-			}
-		}
-
 	default:
-		// Check if it's a custom type (enum defined in types section)
+		// Custom type (enum defined in types section)
 		if customType, ok := m.Types[propDef.Type]; ok {
-			s, ok := val.(string)
-			if !ok {
-				return fmt.Errorf("property %s must be a string", propName)
-			}
-			valid := false
-			for _, v := range customType.Values {
-				if v == s {
-					valid = true
-					break
-				}
-			}
-			if !valid {
-				return fmt.Errorf("invalid value for %s: %s (allowed: %v)", propName, s, customType.Values)
-			}
-		} else {
-			return fmt.Errorf("property %s has unknown type %q", propName, propDef.Type)
+			return validateCustomTypeValue(propName, customType, val)
 		}
+		return fmt.Errorf("property %s has unknown type %q", propName, propDef.Type)
 	}
 
 	return nil
+}
+
+// validateCustomTypeValue validates a value against a custom type's allowed values.
+func validateCustomTypeValue(propName string, customType CustomType, val interface{}) error {
+	s, ok := val.(string)
+	if !ok {
+		return fmt.Errorf("property %s must be a string", propName)
+	}
+	for _, v := range customType.Values {
+		if v == s {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid value for %s: %s (allowed: %v)", propName, s, customType.Values)
 }
 
 // ParseDateValue parses a date string using the property's format.
