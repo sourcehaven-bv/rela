@@ -390,6 +390,35 @@ func TestSimpleMarkdownToHTML(t *testing.T) {
 			"```mermaid\ngraph LR\n  A-->B",
 			"<pre class=\"mermaid\">\ngraph LR\n  A--&gt;B\n</pre>",
 		},
+		{
+			"unchecked checkbox",
+			"- [ ] task one",
+			`<ul class="task-list">` + "\n" + `<li class="task-item"><label><input type="checkbox" data-cb-idx="0"> task one</label></li>` + "\n" + `</ul>`,
+		},
+		{
+			"checked checkbox",
+			"- [x] done task",
+			`<ul class="task-list">` + "\n" + `<li class="task-item"><label><input type="checkbox" data-cb-idx="0" checked> done task</label></li>` + "\n" + `</ul>`,
+		},
+		{
+			"checked checkbox uppercase",
+			"- [X] done task",
+			`<ul class="task-list">` + "\n" + `<li class="task-item"><label><input type="checkbox" data-cb-idx="0" checked> done task</label></li>` + "\n" + `</ul>`,
+		},
+		{
+			"multiple checkboxes",
+			"- [ ] first\n- [x] second\n- [ ] third",
+			`<ul class="task-list">` + "\n" +
+				`<li class="task-item"><label><input type="checkbox" data-cb-idx="0"> first</label></li>` + "\n" +
+				`<li class="task-item"><label><input type="checkbox" data-cb-idx="1" checked> second</label></li>` + "\n" +
+				`<li class="task-item"><label><input type="checkbox" data-cb-idx="2"> third</label></li>` + "\n" +
+				`</ul>`,
+		},
+		{
+			"checkbox with bold",
+			"- [x] **bold** task",
+			`<ul class="task-list">` + "\n" + `<li class="task-item"><label><input type="checkbox" data-cb-idx="0" checked> <strong>bold</strong> task</label></li>` + "\n" + `</ul>`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -420,6 +449,103 @@ func TestInlineFormat(t *testing.T) {
 			got := inlineFormat(tt.input)
 			if got != tt.want {
 				t.Errorf("inlineFormat(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestToggleCheckbox(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		index   int
+		want    string
+		wantErr bool
+	}{
+		{
+			"check unchecked",
+			"- [ ] task one",
+			0,
+			"- [x] task one",
+			false,
+		},
+		{
+			"uncheck checked",
+			"- [x] task one",
+			0,
+			"- [ ] task one",
+			false,
+		},
+		{
+			"uncheck uppercase",
+			"- [X] task one",
+			0,
+			"- [ ] task one",
+			false,
+		},
+		{
+			"toggle second of three",
+			"- [ ] first\n- [ ] second\n- [x] third",
+			1,
+			"- [ ] first\n- [x] second\n- [x] third",
+			false,
+		},
+		{
+			"index out of range",
+			"- [ ] only one",
+			1,
+			"",
+			true,
+		},
+		{
+			"no checkboxes",
+			"just text",
+			0,
+			"",
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := toggleCheckbox(tt.content, tt.index)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("toggleCheckbox(%q, %d)\n  got:  %q\n  want: %q", tt.content, tt.index, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckboxStats(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		checked int
+		total   int
+	}{
+		{"empty", "", 0, 0},
+		{"no checkboxes", "just text\n- list item", 0, 0},
+		{"one unchecked", "- [ ] task", 0, 1},
+		{"one checked", "- [x] task", 1, 1},
+		{"mixed", "- [ ] first\n- [x] second\n- [ ] third", 1, 3},
+		{"all checked", "- [x] a\n- [X] b", 2, 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stats := checkboxStats(tt.content)
+			if stats.Checked != tt.checked || stats.Total != tt.total {
+				t.Errorf("checkboxStats(%q) = {Checked:%d, Total:%d}, want {Checked:%d, Total:%d}",
+					tt.content, stats.Checked, stats.Total, tt.checked, tt.total)
 			}
 		})
 	}

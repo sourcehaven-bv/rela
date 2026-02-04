@@ -1019,6 +1019,44 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.ParseForm() //nolint:errcheck // form parse errors are handled by empty values
+
+	entityID := r.FormValue("entity_id")
+	indexStr := r.FormValue("index")
+
+	entity, ok := a.g.GetNode(entityID)
+	if !ok {
+		http.Error(w, "Entity not found", http.StatusNotFound)
+		return
+	}
+
+	idx, err := strconv.Atoi(indexStr)
+	if err != nil {
+		http.Error(w, "Invalid checkbox index", http.StatusBadRequest)
+		return
+	}
+
+	newContent, err := toggleCheckbox(entity.Content, idx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	entity.Content = newContent
+	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = fmt.Fprint(w, simpleMarkdownToHTML(entity.Content))
+}
+
 func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
