@@ -292,7 +292,7 @@ func runPropertyValidation() error {
 	// Group errors by entity for cleaner output
 	type entityErrors struct {
 		entity *model.Entity
-		errs   []error
+		errs   []*metamodel.ValidationError
 	}
 	var allErrors []entityErrors
 
@@ -310,7 +310,7 @@ func runPropertyValidation() error {
 		for _, ee := range allErrors {
 			errStrings := make([]string, len(ee.errs))
 			for i, err := range ee.errs {
-				errStrings[i] = err.Error()
+				errStrings[i] = err.Message
 			}
 			results = append(results, output.PropertyValidationResult{
 				EntityID:   ee.entity.ID,

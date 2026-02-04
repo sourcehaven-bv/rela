@@ -320,6 +320,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		InputType   string
 		Values      []string
 		Transitions map[string][]string
+		Error       string
 	}
 
 	var entity *model.Entity
@@ -781,6 +782,193 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// renderFormWithErrors re-renders the form with validation errors.
+// fieldErrors is a map of property name to error message.
+func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formID string, entity *model.Entity, fieldErrors map[string]string) {
+	form, ok := a.Cfg.Forms[formID]
+	if !ok {
+		http.Error(w, "Unknown form", http.StatusBadRequest)
+		return
+	}
+
+	entDef, _ := a.meta.GetEntityDef(form.EntityType)
+
+	// Resolve fields with errors
+	type ResolvedField struct {
+		Property    string
+		Label       string
+		Placeholder string
+		Help        string
+		Required    bool
+		Default     string
+		Value       string
+		Hidden      bool
+		Widget      string
+		InputType   string
+		Values      []string
+		Transitions map[string][]string
+		Error       string
+	}
+
+	fields := make([]ResolvedField, 0, len(form.Fields))
+	for _, f := range form.Fields {
+		prop := entDef.Properties[f.Property]
+		rf := ResolvedField{
+			Property:    f.Property,
+			Label:       coalesce(f.Label, titleCase(f.Property)),
+			Placeholder: f.Placeholder,
+			Help:        f.Help,
+			Default:     coalesce(f.Default, prop.Default),
+			Hidden:      f.Hidden,
+			Widget:      resolveWidget(f.Widget, prop, a.meta),
+			Values:      resolvePropertyValues(prop, a.meta),
+			Transitions: f.Transitions,
+			Error:       fieldErrors[f.Property],
+		}
+		if f.Required != nil {
+			rf.Required = *f.Required
+		} else {
+			rf.Required = prop.Required
+		}
+		rf.InputType = widgetToInputType(rf.Widget)
+
+		// Use submitted value from entity properties
+		if val := entity.Properties[f.Property]; val != nil {
+			rf.Value = fmt.Sprintf("%v", val)
+		}
+
+		fields = append(fields, rf)
+	}
+
+	// Resolve body content
+	var bodyContent string
+	showBody := form.Body != nil && *form.Body
+	if showBody {
+		bodyContent = entity.Content
+	}
+
+	// Resolve relation fields (similar to handleForm but using form values)
+	type ResolvedRelation struct {
+		Relation      string
+		Label         string
+		Required      bool
+		Widget        string
+		TargetType    string
+		TargetLabel   string
+		Options       []struct{ ID, Title string }
+		Selected      []string
+		AllowCreate   bool
+		CreateForm    string
+		Properties    []RelationProperty
+		SelectedProps map[string]map[string]string
+	}
+	linkRelation := r.FormValue("_link_relation")
+	linkPeer := r.FormValue("_link_peer")
+
+	relations := make([]ResolvedRelation, 0, len(form.Relations))
+	for _, rel := range form.Relations {
+		if rel.Display != "" {
+			continue
+		}
+
+		targetDef, _ := a.meta.GetEntityDef(rel.TargetType)
+		targetLabel := ""
+		if targetDef != nil {
+			targetLabel = targetDef.Label
+		}
+
+		rr := ResolvedRelation{
+			Relation:      rel.Relation,
+			Label:         rel.Label,
+			Required:      rel.Required,
+			Widget:        coalesce(rel.Widget, "select"),
+			TargetType:    rel.TargetType,
+			TargetLabel:   targetLabel,
+			AllowCreate:   rel.AllowCreate,
+			CreateForm:    rel.CreateForm,
+			Properties:    rel.Properties,
+			SelectedProps: make(map[string]map[string]string),
+		}
+
+		targets := a.g.NodesByType(rel.TargetType)
+		for _, t := range targets {
+			rr.Options = append(rr.Options, struct{ ID, Title string }{t.ID, a.entityDisplayTitle(t)})
+		}
+
+		// Preserve submitted relation values from form
+		rr.Selected = r.Form[rel.Relation]
+
+		relations = append(relations, rr)
+	}
+
+	var mode string
+	if entity.ID != "" {
+		if _, exists := a.g.GetNode(entity.ID); exists {
+			mode = "edit"
+		} else {
+			mode = "create"
+		}
+	} else {
+		mode = "create"
+	}
+
+	activeList := a.resolveActiveList(form.EntityType, r)
+	returnTo := r.FormValue("_return_to")
+	backURL := returnTo
+	switch {
+	case backURL != "":
+		// keep explicit return_to
+	case mode == "edit" && entity.ID != "":
+		backURL = "/entity/" + form.EntityType + "/" + entity.ID
+	case activeList != "":
+		backURL = "/list/" + activeList
+	default:
+		backURL = "/"
+	}
+
+	data := map[string]interface{}{
+		"App":          a.Cfg.App,
+		"Navigation":   a.navElements(activeList),
+		"ActiveList":   activeList,
+		"FormID":       formID,
+		"Form":         form,
+		"Fields":       fields,
+		"Relations":    relations,
+		"Mode":         mode,
+		"EntityID":     entity.ID,
+		"EntityType":   form.EntityType,
+		"ShowBody":     showBody,
+		"Body":         bodyContent,
+		"ReturnTo":     returnTo,
+		"BackURL":      backURL,
+		"LinkRelation": linkRelation,
+		"LinkPeer":     linkPeer,
+		"LinkAs":       r.FormValue("_link_as"),
+		"IsHTMX":       true, // Always true since this is a form submission response
+		"HasErrors":    len(fieldErrors) > 0,
+	}
+
+	// Return 422 Unprocessable Entity for validation errors.
+	// HX-Retarget and HX-Reswap tell HTMX to swap the response into #content,
+	// overriding the form's hx-swap="none" which is used for successful submissions.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("HX-Retarget", "#content")
+	w.Header().Set("HX-Reswap", "innerHTML")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	a.tmpl.ExecuteTemplate(w, "form-content", data) //nolint:errcheck // template errors logged by http
+}
+
+// validationErrorsToFieldMap converts structured ValidationErrors to a map of field names to error messages.
+func validationErrorsToFieldMap(errs []*metamodel.ValidationError) map[string]string {
+	fieldErrors := make(map[string]string)
+	for _, err := range errs {
+		if err.Property != "" {
+			fieldErrors[err.Property] = err.Message
+		}
+	}
+	return fieldErrors
+}
+
 func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -838,6 +1026,12 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	if form.Body != nil && *form.Body {
 		entity.Content = r.FormValue("_body")
+	}
+
+	// Validate entity before writing
+	if validationErrs := a.meta.ValidateEntity(entity); len(validationErrs) > 0 {
+		a.renderFormWithErrors(w, r, formID, entity, validationErrorsToFieldMap(validationErrs))
+		return
 	}
 
 	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
@@ -954,6 +1148,12 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	if form.Body != nil && *form.Body {
 		entity.Content = r.FormValue("_body")
+	}
+
+	// Validate entity before writing
+	if validationErrs := a.meta.ValidateEntity(entity); len(validationErrs) > 0 {
+		a.renderFormWithErrors(w, r, formID, entity, validationErrorsToFieldMap(validationErrs))
+		return
 	}
 
 	if err := a.repo.WriteEntity(entity, a.meta); err != nil {

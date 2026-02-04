@@ -1278,3 +1278,154 @@ func TestHandleLinkExisting(t *testing.T) {
 		}
 	})
 }
+
+func newTestRepository(t *testing.T, tmpDir string) *repository.Repository {
+	t.Helper()
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	ctx := &project.Context{Root: tmpDir}
+	return repository.New(fs, ctx)
+}
+
+func TestValidationErrorsToFieldMap(t *testing.T) {
+	t.Run("converts required property error", func(t *testing.T) {
+		errs := []*metamodel.ValidationError{
+			{Type: metamodel.ValidationErrorRequired, Property: "title", Message: "This field is required"},
+		}
+		result := validationErrorsToFieldMap(errs)
+		if result["title"] != "This field is required" {
+			t.Errorf("expected 'This field is required', got %q", result["title"])
+		}
+	})
+
+	t.Run("converts invalid value error", func(t *testing.T) {
+		errs := []*metamodel.ValidationError{
+			{Type: metamodel.ValidationErrorInvalidValue, Property: "status", Message: "Invalid value"},
+		}
+		result := validationErrorsToFieldMap(errs)
+		if result["status"] != "Invalid value" {
+			t.Errorf("expected 'Invalid value', got %q", result["status"])
+		}
+	})
+
+	t.Run("handles multiple errors", func(t *testing.T) {
+		errs := []*metamodel.ValidationError{
+			{Type: metamodel.ValidationErrorRequired, Property: "title", Message: "This field is required"},
+			{Type: metamodel.ValidationErrorRequired, Property: "status", Message: "This field is required"},
+		}
+		result := validationErrorsToFieldMap(errs)
+		if len(result) != 2 {
+			t.Errorf("expected 2 errors, got %d", len(result))
+		}
+	})
+
+	t.Run("skips entity-level errors without property", func(t *testing.T) {
+		errs := []*metamodel.ValidationError{
+			{Type: metamodel.ValidationErrorIDPrefix, Property: "", Message: "ID prefix mismatch"},
+		}
+		result := validationErrorsToFieldMap(errs)
+		if len(result) != 0 {
+			t.Errorf("expected empty map, got %d entries", len(result))
+		}
+	})
+
+	t.Run("handles empty errors", func(t *testing.T) {
+		result := validationErrorsToFieldMap(nil)
+		if len(result) != 0 {
+			t.Errorf("expected empty map, got %d entries", len(result))
+		}
+	})
+}
+
+func TestHandleCreateWithValidationErrors(t *testing.T) {
+	t.Run("returns 422 with validation errors for missing required field", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// Configure temp directory for repository to avoid writing to real filesystem
+		tmpDir := t.TempDir()
+		app.repo = newTestRepository(t, tmpDir)
+
+		// Make title required in the metamodel
+		entDef := app.meta.Entities["ticket"]
+		titleProp := entDef.Properties["title"]
+		titleProp.Required = true
+		entDef.Properties["title"] = titleProp
+		app.meta.Entities["ticket"] = entDef
+
+		// Submit form without title (required field)
+		form := url.Values{
+			"_form_id":   {"create-ticket"},
+			"_entity_id": {"TKT-NEW"},
+			"status":     {"open"},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/create", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		app.handleCreate(w, r)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("expected 422, got %d", w.Code)
+		}
+
+		// Verify HX-Retarget and HX-Reswap headers for HTMX swap override
+		if got := w.Header().Get("HX-Retarget"); got != "#content" {
+			t.Errorf("expected HX-Retarget=#content, got %q", got)
+		}
+		if got := w.Header().Get("HX-Reswap"); got != "innerHTML" {
+			t.Errorf("expected HX-Reswap=innerHTML, got %q", got)
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "field-error") {
+			t.Error("expected field-error class in response")
+		}
+		if !strings.Contains(body, "This field is required") {
+			t.Error("expected validation error message in response")
+		}
+	})
+}
+
+func TestHandleUpdateWithValidationErrors(t *testing.T) {
+	t.Run("returns 422 with validation errors for invalid field", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// Configure temp directory for repository to avoid writing to real filesystem
+		tmpDir := t.TempDir()
+		app.repo = newTestRepository(t, tmpDir)
+
+		// Make title required in the metamodel
+		entDef := app.meta.Entities["ticket"]
+		titleProp := entDef.Properties["title"]
+		titleProp.Required = true
+		entDef.Properties["title"] = titleProp
+		app.meta.Entities["ticket"] = entDef
+
+		// Submit form with empty title (required field)
+		form := url.Values{
+			"_form_id":   {"edit-ticket"},
+			"_entity_id": {"TKT-001"},
+			"title":      {""}, // Empty required field
+			"status":     {"open"},
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/update", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		app.handleUpdate(w, r)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("expected 422, got %d", w.Code)
+		}
+
+		// Verify HX-Retarget and HX-Reswap headers
+		if got := w.Header().Get("HX-Retarget"); got != "#content" {
+			t.Errorf("expected HX-Retarget=#content, got %q", got)
+		}
+		if got := w.Header().Get("HX-Reswap"); got != "innerHTML" {
+			t.Errorf("expected HX-Reswap=innerHTML, got %q", got)
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "field-error") {
+			t.Error("expected field-error class in response")
+		}
+	})
+}

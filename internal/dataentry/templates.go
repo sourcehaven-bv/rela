@@ -111,6 +111,10 @@ tbody tr:last-child td { border-bottom: none; }
 .form-section-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 28px 0 16px; padding-top: 20px; border-top: 1px solid var(--border); }
 .form-actions { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); display: flex; gap: 12px; }
 
+.form-group.has-error input, .form-group.has-error textarea, .form-group.has-error select { border-color: var(--danger); background-color: #fef2f2; }
+.form-group.has-error input:focus, .form-group.has-error textarea:focus, .form-group.has-error select:focus { border-color: var(--danger); box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1); }
+.field-error { color: var(--danger); font-size: 12px; margin-top: 4px; font-weight: 500; }
+
 .transitions-info { margin-top: 6px; padding: 8px 12px; background: #f8fafc; border-radius: 6px; border: 1px solid var(--border); }
 .transitions-info .t-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 4px; }
 .transitions-info .t-row { font-size: 12px; font-family: var(--font-mono); color: var(--text-muted); line-height: 1.8; }
@@ -402,7 +406,37 @@ document.addEventListener('DOMContentLoaded', function() {
     history.replaceState(null, '', clean);
   }
 });
-document.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt.detail.target); });
+document.addEventListener('htmx:beforeSwap', function(evt) {
+  // Allow 422 validation error responses to be swapped (HTMX ignores non-2xx by default).
+  // The server sends HX-Retarget and HX-Reswap headers to control where/how the swap happens.
+  if (evt.detail.xhr.status === 422) {
+    evt.detail.shouldSwap = true;
+    evt.detail.isError = false;
+  }
+});
+document.addEventListener('htmx:afterSettle', function(evt) {
+  enhanceSelects(evt.detail.target);
+  // Scroll to first validation error if present
+  var firstError = evt.detail.target.querySelector('[data-has-error]');
+  if (firstError) {
+    firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var input = firstError.querySelector('input, textarea, select');
+    if (input) setTimeout(function() { input.focus(); }, 300);
+  }
+});
+// Clear validation error styling when user modifies a field.
+// Only respond to trusted (real user) events, not programmatic ones (e.g. SlimSelect init).
+function clearFieldError(evt) {
+  if (!evt.isTrusted) return;
+  var group = evt.target.closest('.form-group.has-error');
+  if (!group) return;
+  group.classList.remove('has-error');
+  group.removeAttribute('data-has-error');
+  var err = group.querySelector('.field-error');
+  if (err) err.remove();
+}
+document.addEventListener('input', clearFieldError);
+document.addEventListener('change', clearFieldError);
 document.addEventListener('htmx:responseError', function(evt) {
   var xhr = evt.detail.xhr;
   var msg = xhr.responseText || ('Request failed: ' + xhr.status);
@@ -1648,7 +1682,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
 
 <div class="card form-card">
   <form {{ if eq .Mode "edit" }}hx-post="/api/update"{{ else }}hx-post="/api/create"{{ end }}
-        hx-swap="none">
+        hx-swap="none" novalidate>
     <input type="hidden" name="_form_id" value="{{ .FormID }}">
     <input type="hidden" name="_entity_id" value="{{ .EntityID }}">
     {{ if .ReturnTo }}<input type="hidden" name="_return_to" value="{{ .ReturnTo }}">{{ end }}
@@ -1660,27 +1694,30 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     {{ if .Hidden }}
     <input type="hidden" name="{{ .Property }}" value="{{ .Value }}">
     {{ else if eq .Widget "checkbox" }}
-    <div class="form-group">
+    <div class="form-group{{ if .Error }} has-error{{ end }}"{{ if .Error }} data-has-error="true"{{ end }}>
       <div class="form-row-checkbox">
         <input type="checkbox" name="{{ .Property }}" value="true" id="f-{{ .Property }}"{{ if eq .Value "true" }} checked{{ end }}>
         <label for="f-{{ .Property }}">{{ .Label }}</label>
       </div>
+      {{ if .Error }}<p class="field-error">{{ .Error }}</p>{{ end }}
       {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
     </div>
     {{ else if eq .Widget "textarea" }}
-    <div class="form-group">
+    <div class="form-group{{ if .Error }} has-error{{ end }}"{{ if .Error }} data-has-error="true"{{ end }}>
       <label for="f-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
       <textarea name="{{ .Property }}" id="f-{{ .Property }}" placeholder="{{ .Placeholder }}"{{ if .Required }} required{{ end }}>{{ .Value }}</textarea>
+      {{ if .Error }}<p class="field-error">{{ .Error }}</p>{{ end }}
       {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
     </div>
     {{ else if or (eq .Widget "select") (eq .Widget "multi-select") }}
-    <div class="form-group">
+    <div class="form-group{{ if .Error }} has-error{{ end }}"{{ if .Error }} data-has-error="true"{{ end }}>
       <label for="f-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
       <select name="{{ .Property }}" id="f-{{ .Property }}"{{ if eq .Widget "multi-select" }} multiple{{ end }}{{ if .Required }} required{{ end }}>
         {{ if ne .Widget "multi-select" }}<option value="">Select...</option>{{ end }}
         {{ $val := .Value }}
         {{ range .Values }}<option value="{{ . }}"{{ if eq . $val }} selected{{ end }}>{{ . }}</option>{{ end }}
       </select>
+      {{ if .Error }}<p class="field-error">{{ .Error }}</p>{{ end }}
       {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
       {{ if .Transitions }}
       <div class="transitions-info">
@@ -1692,10 +1729,11 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
       {{ end }}
     </div>
     {{ else }}
-    <div class="form-group">
+    <div class="form-group{{ if .Error }} has-error{{ end }}"{{ if .Error }} data-has-error="true"{{ end }}>
       <label for="f-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
       <input type="{{ .InputType }}" name="{{ .Property }}" id="f-{{ .Property }}"
              placeholder="{{ .Placeholder }}" value="{{ .Value }}"{{ if .Required }} required{{ end }}>
+      {{ if .Error }}<p class="field-error">{{ .Error }}</p>{{ end }}
       {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
     </div>
     {{ end }}

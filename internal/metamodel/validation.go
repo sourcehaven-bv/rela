@@ -8,13 +8,40 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
-// ValidateEntity validates an entity against the metamodel
-func (m *Metamodel) ValidateEntity(entity *model.Entity) []error {
-	var errs []error
+// ValidationErrorType indicates the kind of validation error.
+type ValidationErrorType string
+
+const (
+	ValidationErrorRequired     ValidationErrorType = "required"
+	ValidationErrorInvalidValue ValidationErrorType = "invalid_value"
+	ValidationErrorInvalidType  ValidationErrorType = "invalid_type"
+	ValidationErrorUnknownType  ValidationErrorType = "unknown_type"
+	ValidationErrorIDPrefix     ValidationErrorType = "id_prefix"
+)
+
+// ValidationError represents a structured validation error with field information.
+type ValidationError struct {
+	Type     ValidationErrorType
+	Property string // The property name that failed validation (empty for entity-level errors)
+	Message  string // Human-readable error message
+}
+
+// Error implements the error interface.
+func (e *ValidationError) Error() string {
+	return e.Message
+}
+
+// ValidateEntity validates an entity against the metamodel.
+// Returns a slice of *ValidationError for structured error handling.
+func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
+	var errs []*ValidationError
 
 	def, ok := m.GetEntityDef(entity.Type)
 	if !ok {
-		errs = append(errs, fmt.Errorf("unknown entity type: %s", entity.Type))
+		errs = append(errs, &ValidationError{
+			Type:    ValidationErrorUnknownType,
+			Message: fmt.Sprintf("unknown entity type: %s", entity.Type),
+		})
 		return errs
 	}
 
@@ -23,7 +50,11 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []error {
 		if propDef.Required {
 			val, exists := entity.Properties[propName]
 			if !exists || val == nil || val == "" {
-				errs = append(errs, fmt.Errorf("missing required property: %s", propName))
+				errs = append(errs, &ValidationError{
+					Type:     ValidationErrorRequired,
+					Property: propName,
+					Message:  "This field is required",
+				})
 			}
 		}
 	}
@@ -40,7 +71,7 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []error {
 			continue
 		}
 
-		if err := m.ValidatePropertyValue(propName, &propDef, val); err != nil {
+		if err := m.validatePropertyValue(propName, &propDef, val); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -56,8 +87,10 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []error {
 			}
 		}
 		if !matched {
-			errs = append(errs, fmt.Errorf("entity ID %s does not match any prefix for type %s: %v",
-				entity.ID, entity.Type, prefixes))
+			errs = append(errs, &ValidationError{
+				Type:    ValidationErrorIDPrefix,
+				Message: fmt.Sprintf("entity ID %s does not match any prefix for type %s: %v", entity.ID, entity.Type, prefixes),
+			})
 		}
 	}
 
@@ -69,23 +102,50 @@ func (m *Metamodel) ValidateRelationEntities(relationType string, from, to *mode
 	return m.ValidateRelation(relationType, from.Type, to.Type)
 }
 
-// ValidatePropertyValue validates a single property value against its definition
+// ValidatePropertyValue validates a single property value against its definition.
+// Returns a plain error for backward compatibility with existing callers.
+//
+// Note: The explicit nil check is required because returning a nil *ValidationError
+// directly as error creates a non-nil interface with nil value (Go interface gotcha).
 func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef, val interface{}) error {
+	err := m.validatePropertyValue(propName, propDef, val)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// validatePropertyValue validates a single property value and returns a structured ValidationError.
+//
+//nolint:funlen // large switch for property type validation; splitting would reduce readability
+func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef, val interface{}) *ValidationError {
 	switch propDef.Type {
 	case PropertyTypeString:
 		if _, ok := val.(string); !ok {
-			return fmt.Errorf("property %s must be a string", propName)
+			return &ValidationError{
+				Type:     ValidationErrorInvalidType,
+				Property: propName,
+				Message:  "Must be a string",
+			}
 		}
 
 	case PropertyTypeDate:
 		s, ok := val.(string)
 		if !ok {
-			return fmt.Errorf("property %s must be a date string", propName)
+			return &ValidationError{
+				Type:     ValidationErrorInvalidType,
+				Property: propName,
+				Message:  "Must be a date string",
+			}
 		}
 		// Use ParseDateValue to validate - it accepts the configured format plus common fallbacks
 		if _, err := ParseDateValue(s, propDef); err != nil {
 			format := propDef.GetDateFormat()
-			return fmt.Errorf("invalid date %q for property %s (expected format: %s)", s, propName, format)
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  fmt.Sprintf("Invalid date %q (expected format: %s)", s, format),
+			}
 		}
 
 	case PropertyTypeInteger:
@@ -94,10 +154,18 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 			// OK - YAML may parse integers as these types
 		case string:
 			if _, err := strconv.Atoi(v); err != nil {
-				return fmt.Errorf("invalid integer %q for property %s", v, propName)
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid integer %q", v),
+				}
 			}
 		default:
-			return fmt.Errorf("property %s must be an integer", propName)
+			return &ValidationError{
+				Type:     ValidationErrorInvalidType,
+				Property: propName,
+				Message:  "Must be an integer",
+			}
 		}
 
 	case PropertyTypeBoolean:
@@ -106,17 +174,29 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 			// OK
 		case string:
 			if v != "true" && v != "false" {
-				return fmt.Errorf("property %s must be true or false, got %q", propName, v)
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Must be true or false, got %q", v),
+				}
 			}
 		default:
-			return fmt.Errorf("property %s must be a boolean", propName)
+			return &ValidationError{
+				Type:     ValidationErrorInvalidType,
+				Property: propName,
+				Message:  "Must be a boolean",
+			}
 		}
 
 	case PropertyTypeEnum:
 		if propDef.Values != nil {
 			s, ok := val.(string)
 			if !ok {
-				return fmt.Errorf("property %s must be a string", propName)
+				return &ValidationError{
+					Type:     ValidationErrorInvalidType,
+					Property: propName,
+					Message:  "Must be a string",
+				}
 			}
 			valid := false
 			for _, v := range propDef.Values {
@@ -126,7 +206,11 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 				}
 			}
 			if !valid {
-				return fmt.Errorf("invalid value for %s: %s (allowed: %v)", propName, s, propDef.Values)
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, propDef.Values),
+				}
 			}
 		}
 
@@ -134,7 +218,11 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 		// Legacy built-in status type
 		if s, ok := val.(string); ok {
 			if !model.Status(s).IsValid() {
-				return fmt.Errorf("invalid status value: %s", s)
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid status value: %s", s),
+				}
 			}
 		}
 
@@ -142,7 +230,11 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 		// Legacy built-in priority type
 		if p, ok := val.(string); ok {
 			if !model.Priority(p).IsValid() {
-				return fmt.Errorf("invalid priority value: %s", p)
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid priority value: %s", p),
+				}
 			}
 		}
 
@@ -151,7 +243,11 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 		if customType, ok := m.Types[propDef.Type]; ok {
 			s, ok := val.(string)
 			if !ok {
-				return fmt.Errorf("property %s must be a string", propName)
+				return &ValidationError{
+					Type:     ValidationErrorInvalidType,
+					Property: propName,
+					Message:  "Must be a string",
+				}
 			}
 			valid := false
 			for _, v := range customType.Values {
@@ -161,10 +257,18 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 				}
 			}
 			if !valid {
-				return fmt.Errorf("invalid value for %s: %s (allowed: %v)", propName, s, customType.Values)
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
+				}
 			}
 		} else {
-			return fmt.Errorf("property %s has unknown type %q", propName, propDef.Type)
+			return &ValidationError{
+				Type:     ValidationErrorUnknownType,
+				Property: propName,
+				Message:  fmt.Sprintf("Unknown type %q", propDef.Type),
+			}
 		}
 	}
 
