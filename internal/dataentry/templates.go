@@ -173,6 +173,10 @@ tbody tr:last-child td { border-bottom: none; }
 .editor-fullscreen-overlay .EasyMDEContainer { flex: 1; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px; }
 .editor-fullscreen-overlay .EasyMDEContainer .CodeMirror { flex: 1; }
 .editor-fullscreen-overlay .EasyMDEContainer .CodeMirror-scroll { min-height: 0; }
+.editor-fullscreen-overlay .EasyMDEContainer.sided--no-fullscreen { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr; }
+.editor-fullscreen-overlay .EasyMDEContainer.sided--no-fullscreen .editor-toolbar { grid-column: 1 / -1; }
+.editor-fullscreen-overlay .EasyMDEContainer.sided--no-fullscreen .CodeMirror { min-height: 0; width: 100% !important; }
+.editor-fullscreen-overlay .EasyMDEContainer.sided--no-fullscreen .editor-preview-active-side { overflow: auto; width: 100% !important; }
 
 .view-section-heading { font-size: 15px; font-weight: 700; color: var(--text); margin: 0 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--border); }
 .view-content-entity .markdown-body { font-size: 14px; line-height: 1.7; color: var(--text); }
