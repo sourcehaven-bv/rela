@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
@@ -87,10 +88,10 @@ func TestSearchIntegration(t *testing.T) {
 			expectIDs:   []string{"REQ-001", "SOL-001"},
 		},
 		{
-			name:        "Multiple words (AND logic)",
+			name:        "Multiple words (OR logic with ranking)",
 			query:       "API authentication",
-			expectCount: 1,
-			expectIDs:   []string{"DEC-002"},
+			expectCount: 6,
+			expectIDs:   []string{"REQ-001", "REQ-002", "REQ-004", "DEC-002", "SOL-001", "SOL-002"},
 		},
 		{
 			name:        "Type filter - requirements only",
@@ -302,7 +303,7 @@ func runSearchTest(t *testing.T, g *graph.Graph, tc searchTestCase) {
 	}
 }
 
-// matchesSearchFilters duplicates the logic from SearchModel.matchesFilters for testing
+// matchesSearchFilters checks if an entity matches search criteria using OR-based scoring.
 func matchesSearchFilters(entity *model.Entity, sq *searchparser.SearchQuery) bool {
 	// 1. Filter by entity type (if specified)
 	if len(sq.EntityTypes) > 0 {
@@ -329,29 +330,9 @@ func matchesSearchFilters(entity *model.Entity, sq *searchparser.SearchQuery) bo
 		}
 	}
 
-	// 3. Apply free-text search (AND logic - all words must be present)
+	// 3. Apply free-text search (OR logic with scoring)
 	if sq.HasFreeText() {
-		// Combine all searchable text
-		searchableText := strings.ToLower(strings.Join([]string{
-			entity.ID,
-			entity.Title(),
-			entity.Description(),
-			entity.Content,
-		}, " "))
-
-		// Check all free text words
-		for _, word := range sq.FreeTextWords {
-			if !strings.Contains(searchableText, strings.ToLower(word)) {
-				return false
-			}
-		}
-
-		// Check all exact phrases
-		for _, phrase := range sq.FreeTextPhrases {
-			if !strings.Contains(searchableText, strings.ToLower(phrase)) {
-				return false
-			}
-		}
+		return search.ScoreEntity(entity, sq.FreeTextWords, sq.FreeTextPhrases) > 0
 	}
 
 	return true

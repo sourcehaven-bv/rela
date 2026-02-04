@@ -1596,7 +1596,10 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	if !sq.IsEmpty() {
 		entities := a.executeQuery(query)
-		sort.Slice(entities, func(i, j int) bool { return entities[i].ID < entities[j].ID })
+		// Only sort by ID when there's no free-text query (preserve relevance ranking)
+		if !sq.HasFreeText() && !sq.HasSort() {
+			sort.Slice(entities, func(i, j int) bool { return entities[i].ID < entities[j].ID })
+		}
 		const maxResults = 100
 		for _, e := range entities {
 			if len(results) >= maxResults {

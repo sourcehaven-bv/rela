@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
 
@@ -425,6 +426,7 @@ func checkboxStats(content string) CheckboxStats {
 
 // executeQuery parses a search query and returns all matching entities from the graph.
 // It supports the same query syntax as the search page: type:, prop:, status:, and free text.
+// Free-text words use OR logic with relevance scoring; results are ranked by score.
 func (a *App) executeQuery(query string) []*model.Entity {
 	sq := searchparser.ParseQuery(query)
 	if sq.IsEmpty() {
@@ -440,7 +442,12 @@ func (a *App) executeQuery(query string) []*model.Entity {
 		candidates = a.g.AllNodes()
 	}
 
-	results := make([]*model.Entity, 0, len(candidates))
+	type scored struct {
+		entity *model.Entity
+		score  float64
+	}
+	var scoredResults []scored
+
 	for _, e := range candidates {
 		if len(sq.PropertyFilters) > 0 {
 			entDef, ok := a.meta.GetEntityDef(e.Type)
@@ -454,36 +461,32 @@ func (a *App) executeQuery(query string) []*model.Entity {
 		}
 
 		if sq.HasFreeText() {
-			searchText := strings.ToLower(e.ID + " " + a.entityDisplayTitle(e) + " " + e.Content)
-			for _, v := range e.Properties {
-				searchText += " " + strings.ToLower(fmt.Sprintf("%v", v))
-			}
-			match := true
-			for _, word := range sq.FreeTextWords {
-				if !strings.Contains(searchText, strings.ToLower(word)) {
-					match = false
-					break
-				}
-			}
-			if match {
-				for _, phrase := range sq.FreeTextPhrases {
-					if !strings.Contains(searchText, strings.ToLower(phrase)) {
-						match = false
-						break
-					}
-				}
-			}
-			if !match {
+			sc := search.ScoreEntity(e, sq.FreeTextWords, sq.FreeTextPhrases)
+			if sc <= 0 {
 				continue
 			}
+			scoredResults = append(scoredResults, scored{entity: e, score: sc})
+		} else {
+			scoredResults = append(scoredResults, scored{entity: e, score: 1.0})
 		}
-
-		results = append(results, e)
 	}
 
-	// Apply sort from query syntax
+	results := make([]*model.Entity, len(scoredResults))
+	for i, sr := range scoredResults {
+		results[i] = sr.entity
+	}
+
+	// Apply sort from query syntax, or rank by relevance for free-text queries
 	if sq.HasSort() {
 		a.sortEntitiesMulti(results, sq.SortClauses)
+	} else if sq.HasFreeText() {
+		sort.SliceStable(results, func(i, j int) bool {
+			si, sj := scoredResults[i].score, scoredResults[j].score
+			if si != sj {
+				return si > sj
+			}
+			return results[i].ID < results[j].ID
+		})
 	}
 
 	return results

@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
 
@@ -523,13 +524,24 @@ func (s *SearchModel) performSearch(app *App, query string) (results []*model.En
 
 	// Get all entities from graph
 	allEntities := app.graph.AllNodes()
-	var filtered []*model.Entity
 
-	// Apply filters
+	// Score and filter entities
+	type scored struct {
+		entity *model.Entity
+		score  float64
+	}
+	var scoredResults []scored
+
 	for _, entity := range allEntities {
-		if s.matchesFilters(entity, sq) {
-			filtered = append(filtered, entity)
+		sc := s.scoreEntity(entity, sq)
+		if sc > 0 {
+			scoredResults = append(scoredResults, scored{entity: entity, score: sc})
 		}
+	}
+
+	filtered := make([]*model.Entity, len(scoredResults))
+	for i, sr := range scoredResults {
+		filtered[i] = sr.entity
 	}
 
 	// Validate sort properties against result set
@@ -546,11 +558,21 @@ func (s *SearchModel) performSearch(app *App, query string) (results []*model.En
 	}
 
 	// Apply sort
-	if sq.HasSort() {
+	switch {
+	case sq.HasSort():
 		entityDefs := collectEntityDefs(app.metamodel, filtered)
 		filter.SortMulti(filtered, sq.SortClauses, entityDefs, app.metamodel)
-	} else {
-		// Apply default_sort if single entity type
+	case sq.HasFreeText():
+		// Sort by relevance score (descending), then by ID for stability
+		sort.SliceStable(filtered, func(i, j int) bool {
+			si, sj := scoredResults[i].score, scoredResults[j].score
+			if si != sj {
+				return si > sj
+			}
+			return filtered[i].ID < filtered[j].ID
+		})
+	default:
+		// No free text — apply default_sort if single entity type
 		types := uniqueTypes(filtered)
 		if len(types) == 1 {
 			if def, ok := app.metamodel.GetEntityDef(types[0]); ok && len(def.DefaultSort) > 0 {
@@ -611,61 +633,42 @@ func uniqueTypes(entities []*model.Entity) []string {
 	return types
 }
 
-// matchesFilters checks if an entity matches all search criteria
-func (s *SearchModel) matchesFilters(entity *model.Entity, sq *searchparser.SearchQuery) bool {
-	// 1. Filter by entity type (if specified)
+// scoreEntity returns a relevance score for an entity against the search query.
+// Returns 0 if the entity doesn't match type/property filters or no free-text terms match.
+// Returns a positive score based on how many free-text words/phrases match.
+// When there's no free-text query, returns 1.0 for entities passing type/property filters.
+func (s *SearchModel) scoreEntity(entity *model.Entity, sq *searchparser.SearchQuery) float64 {
+	// 1. Filter by entity type (if specified) — boolean gate
 	if len(sq.EntityTypes) > 0 {
 		found := false
 		for _, t := range sq.EntityTypes {
-			// Support prefix matching (case-insensitive)
-			// e.g., "req" matches "requirement", "dec" matches "decision"
 			if strings.HasPrefix(strings.ToLower(entity.Type), strings.ToLower(t)) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			return false
+			return 0
 		}
 	}
 
-	// 2. Apply property filters (AND logic)
+	// 2. Apply property filters (AND logic) — boolean gate
 	for _, propFilter := range sq.PropertyFilters {
 		value, exists := entity.Properties[propFilter.Property]
 		if !exists {
-			return false
+			return 0
 		}
 		if !filter.MatchValue(value, propFilter) {
-			return false
+			return 0
 		}
 	}
 
-	// 3. Apply free-text search (AND logic - all words must be present)
+	// 3. Apply free-text search (OR logic with scoring)
 	if sq.HasFreeText() {
-		// Combine all searchable text
-		searchableText := strings.ToLower(strings.Join([]string{
-			entity.ID,
-			entity.Title(),
-			entity.Description(),
-			entity.Content,
-		}, " "))
-
-		// Check all free text words
-		for _, word := range sq.FreeTextWords {
-			if !strings.Contains(searchableText, strings.ToLower(word)) {
-				return false
-			}
-		}
-
-		// Check all exact phrases
-		for _, phrase := range sq.FreeTextPhrases {
-			if !strings.Contains(searchableText, strings.ToLower(phrase)) {
-				return false
-			}
-		}
+		return search.ScoreEntity(entity, sq.FreeTextWords, sq.FreeTextPhrases)
 	}
 
-	return true
+	return 1.0
 }
 
 // View renders the search screen
