@@ -95,7 +95,7 @@ func toolDeleteEntity() mcp.Tool {
 	return mcp.NewTool("delete_entity",
 		mcp.WithDescription("Delete an entity and optionally its relations"),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Entity ID to delete")),
-		mcp.WithBoolean("cascade", mcp.Description("Also delete all relations (default true)")),
+		mcp.WithBoolean("cascade", mcp.Description("Also delete all relations (default false)")),
 	)
 }
 

@@ -4,11 +4,11 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
@@ -21,7 +21,7 @@ func (s *Server) handleListViews(
 	}
 
 	names := viewsFile.ViewNames()
-	sort.Strings(names)
+	natsort.Strings(names)
 
 	if len(names) == 0 {
 		return mcp.NewToolResultText("No views defined (views.yaml not found or empty)"), nil
@@ -59,10 +59,12 @@ func (s *Server) handleExecuteView(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	viewName = strings.TrimSpace(viewName)
 	entryID, err := request.RequireString("id")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	entryID = trimID(entryID)
 	format := request.GetString("format", "json")
 
 	viewsFile, loadErr := s.loadViews()
@@ -73,7 +75,7 @@ func (s *Server) handleExecuteView(
 	viewDef, ok := viewsFile.GetView(viewName)
 	if !ok {
 		names := viewsFile.ViewNames()
-		sort.Strings(names)
+		natsort.Strings(names)
 		return mcp.NewToolResultError(
 			fmt.Sprintf("view not found: %s (available: %s)", viewName, strings.Join(names, ", "))), nil
 	}

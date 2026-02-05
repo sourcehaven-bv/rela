@@ -9,13 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // Protocol prefix for structured command output messages.
@@ -44,7 +44,7 @@ func (a *App) resolveCommands(pageType, qualifier, entityType string) []Resolved
 	for id := range a.Cfg.Commands {
 		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	natsort.Strings(ids)
 
 	var result []ResolvedCommand
 	for _, id := range ids {

@@ -2,9 +2,10 @@ package cli
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 var (
@@ -64,12 +65,12 @@ Examples:
 			if !templateRelations {
 				// Include entities (default or --entities flag)
 				entityTypes = meta.EntityTypes()
-				sort.Strings(entityTypes)
+				natsort.Strings(entityTypes)
 			}
 			if !templateEntities {
 				// Include relations (default or --relations flag)
 				relationTypes = meta.RelationTypes()
-				sort.Strings(relationTypes)
+				natsort.Strings(relationTypes)
 			}
 		}
 

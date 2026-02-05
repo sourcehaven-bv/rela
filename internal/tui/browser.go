@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // BrowserLevel represents the navigation level in the browser
@@ -59,7 +60,7 @@ func (b *BrowserModel) loadTypes(app *App) {
 	}
 	// Sort by label
 	sort.Slice(b.types, func(i, j int) bool {
-		return b.types[i].label < b.types[j].label
+		return natsort.Less(b.types[i].label, b.types[j].label)
 	})
 }
 
@@ -67,7 +68,7 @@ func (b *BrowserModel) loadEntities(app *App, typeName string) {
 	b.entities = app.graph.NodesByType(typeName)
 	// Sort by ID
 	sort.Slice(b.entities, func(i, j int) bool {
-		return b.entities[i].ID < b.entities[j].ID
+		return natsort.Less(b.entities[i].ID, b.entities[j].ID)
 	})
 	b.selectedType = typeName
 }

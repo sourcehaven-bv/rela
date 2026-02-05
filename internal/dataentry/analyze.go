@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // AnalysisIssue represents a single validation issue, optionally linked to an entity.
@@ -132,7 +133,7 @@ func (a *App) analyzeDuplicates() AnalysisSection {
 			titles = append(titles, title)
 		}
 	}
-	sort.Strings(titles)
+	natsort.Strings(titles)
 
 	for _, title := range titles {
 		group := titleGroups[title]
@@ -190,7 +191,7 @@ func (a *App) analyzeGaps() AnalysisSection {
 	for prefix := range prefixGroups {
 		prefixes = append(prefixes, prefix)
 	}
-	sort.Strings(prefixes)
+	natsort.Strings(prefixes)
 
 	for _, prefix := range prefixes {
 		numbers := prefixGroups[prefix]
@@ -227,7 +228,7 @@ func (a *App) analyzeCardinality() AnalysisSection {
 	for name := range a.meta.Relations {
 		relNames = append(relNames, name)
 	}
-	sort.Strings(relNames)
+	natsort.Strings(relNames)
 
 	for _, relName := range relNames {
 		relDef := a.meta.Relations[relName]
@@ -430,10 +431,10 @@ func countEdgesByType(edges []*model.Relation, relType string) int {
 	return n
 }
 
-// sortEntitiesByID sorts entities by their ID for deterministic output.
+// sortEntitiesByID sorts entities by their ID using natural ordering for deterministic output.
 func sortEntitiesByID(entities []*model.Entity) {
 	sort.Slice(entities, func(i, j int) bool {
-		return entities[i].ID < entities[j].ID
+		return natsort.Less(entities[i].ID, entities[j].ID)
 	})
 }
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
 
@@ -320,6 +321,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		InputType   string
 		Values      []string
 		Transitions map[string][]string
+		Error       string
 	}
 
 	var entity *model.Entity
@@ -588,7 +590,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		for k := range e.Properties {
 			propKeys = append(propKeys, k)
 		}
-		sort.Strings(propKeys)
+		natsort.Strings(propKeys)
 		for _, k := range propKeys {
 			rd.Properties = append(rd.Properties, RelPropDisplay{k, fmt.Sprintf("%v", e.Properties[k])})
 		}
@@ -607,7 +609,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		for k := range e.Properties {
 			propKeys = append(propKeys, k)
 		}
-		sort.Strings(propKeys)
+		natsort.Strings(propKeys)
 		for _, k := range propKeys {
 			rd.Properties = append(rd.Properties, RelPropDisplay{k, fmt.Sprintf("%v", e.Properties[k])})
 		}
@@ -620,7 +622,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		for propName := range entDef.Properties {
 			propTypeKeys = append(propTypeKeys, propName)
 		}
-		sort.Strings(propTypeKeys)
+		natsort.Strings(propTypeKeys)
 		for _, propName := range propTypeKeys {
 			propTypes[propName] = entDef.Properties[propName].Type
 		}
@@ -781,6 +783,193 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// renderFormWithErrors re-renders the form with validation errors.
+// fieldErrors is a map of property name to error message.
+func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formID string, entity *model.Entity, fieldErrors map[string]string) {
+	form, ok := a.Cfg.Forms[formID]
+	if !ok {
+		http.Error(w, "Unknown form", http.StatusBadRequest)
+		return
+	}
+
+	entDef, _ := a.meta.GetEntityDef(form.EntityType)
+
+	// Resolve fields with errors
+	type ResolvedField struct {
+		Property    string
+		Label       string
+		Placeholder string
+		Help        string
+		Required    bool
+		Default     string
+		Value       string
+		Hidden      bool
+		Widget      string
+		InputType   string
+		Values      []string
+		Transitions map[string][]string
+		Error       string
+	}
+
+	fields := make([]ResolvedField, 0, len(form.Fields))
+	for _, f := range form.Fields {
+		prop := entDef.Properties[f.Property]
+		rf := ResolvedField{
+			Property:    f.Property,
+			Label:       coalesce(f.Label, titleCase(f.Property)),
+			Placeholder: f.Placeholder,
+			Help:        f.Help,
+			Default:     coalesce(f.Default, prop.Default),
+			Hidden:      f.Hidden,
+			Widget:      resolveWidget(f.Widget, prop, a.meta),
+			Values:      resolvePropertyValues(prop, a.meta),
+			Transitions: f.Transitions,
+			Error:       fieldErrors[f.Property],
+		}
+		if f.Required != nil {
+			rf.Required = *f.Required
+		} else {
+			rf.Required = prop.Required
+		}
+		rf.InputType = widgetToInputType(rf.Widget)
+
+		// Use submitted value from entity properties
+		if val := entity.Properties[f.Property]; val != nil {
+			rf.Value = fmt.Sprintf("%v", val)
+		}
+
+		fields = append(fields, rf)
+	}
+
+	// Resolve body content
+	var bodyContent string
+	showBody := form.Body != nil && *form.Body
+	if showBody {
+		bodyContent = entity.Content
+	}
+
+	// Resolve relation fields (similar to handleForm but using form values)
+	type ResolvedRelation struct {
+		Relation      string
+		Label         string
+		Required      bool
+		Widget        string
+		TargetType    string
+		TargetLabel   string
+		Options       []struct{ ID, Title string }
+		Selected      []string
+		AllowCreate   bool
+		CreateForm    string
+		Properties    []RelationProperty
+		SelectedProps map[string]map[string]string
+	}
+	linkRelation := r.FormValue("_link_relation")
+	linkPeer := r.FormValue("_link_peer")
+
+	relations := make([]ResolvedRelation, 0, len(form.Relations))
+	for _, rel := range form.Relations {
+		if rel.Display != "" {
+			continue
+		}
+
+		targetDef, _ := a.meta.GetEntityDef(rel.TargetType)
+		targetLabel := ""
+		if targetDef != nil {
+			targetLabel = targetDef.Label
+		}
+
+		rr := ResolvedRelation{
+			Relation:      rel.Relation,
+			Label:         rel.Label,
+			Required:      rel.Required,
+			Widget:        coalesce(rel.Widget, "select"),
+			TargetType:    rel.TargetType,
+			TargetLabel:   targetLabel,
+			AllowCreate:   rel.AllowCreate,
+			CreateForm:    rel.CreateForm,
+			Properties:    rel.Properties,
+			SelectedProps: make(map[string]map[string]string),
+		}
+
+		targets := a.g.NodesByType(rel.TargetType)
+		for _, t := range targets {
+			rr.Options = append(rr.Options, struct{ ID, Title string }{t.ID, a.entityDisplayTitle(t)})
+		}
+
+		// Preserve submitted relation values from form
+		rr.Selected = r.Form[rel.Relation]
+
+		relations = append(relations, rr)
+	}
+
+	var mode string
+	if entity.ID != "" {
+		if _, exists := a.g.GetNode(entity.ID); exists {
+			mode = "edit"
+		} else {
+			mode = "create"
+		}
+	} else {
+		mode = "create"
+	}
+
+	activeList := a.resolveActiveList(form.EntityType, r)
+	returnTo := r.FormValue("_return_to")
+	backURL := returnTo
+	switch {
+	case backURL != "":
+		// keep explicit return_to
+	case mode == "edit" && entity.ID != "":
+		backURL = "/entity/" + form.EntityType + "/" + entity.ID
+	case activeList != "":
+		backURL = "/list/" + activeList
+	default:
+		backURL = "/"
+	}
+
+	data := map[string]interface{}{
+		"App":          a.Cfg.App,
+		"Navigation":   a.navElements(activeList),
+		"ActiveList":   activeList,
+		"FormID":       formID,
+		"Form":         form,
+		"Fields":       fields,
+		"Relations":    relations,
+		"Mode":         mode,
+		"EntityID":     entity.ID,
+		"EntityType":   form.EntityType,
+		"ShowBody":     showBody,
+		"Body":         bodyContent,
+		"ReturnTo":     returnTo,
+		"BackURL":      backURL,
+		"LinkRelation": linkRelation,
+		"LinkPeer":     linkPeer,
+		"LinkAs":       r.FormValue("_link_as"),
+		"IsHTMX":       true, // Always true since this is a form submission response
+		"HasErrors":    len(fieldErrors) > 0,
+	}
+
+	// Return 422 Unprocessable Entity for validation errors.
+	// HX-Retarget and HX-Reswap tell HTMX to swap the response into #content,
+	// overriding the form's hx-swap="none" which is used for successful submissions.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("HX-Retarget", "#content")
+	w.Header().Set("HX-Reswap", "innerHTML")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	a.tmpl.ExecuteTemplate(w, "form-content", data) //nolint:errcheck // template errors logged by http
+}
+
+// validationErrorsToFieldMap converts structured ValidationErrors to a map of field names to error messages.
+func validationErrorsToFieldMap(errs []*metamodel.ValidationError) map[string]string {
+	fieldErrors := make(map[string]string)
+	for _, err := range errs {
+		if err.Property != "" {
+			fieldErrors[err.Property] = err.Message
+		}
+	}
+	return fieldErrors
+}
+
 func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -838,6 +1027,12 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	if form.Body != nil && *form.Body {
 		entity.Content = r.FormValue("_body")
+	}
+
+	// Validate entity before writing
+	if validationErrs := a.meta.ValidateEntity(entity); len(validationErrs) > 0 {
+		a.renderFormWithErrors(w, r, formID, entity, validationErrorsToFieldMap(validationErrs))
+		return
 	}
 
 	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
@@ -956,6 +1151,12 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		entity.Content = r.FormValue("_body")
 	}
 
+	// Validate entity before writing
+	if validationErrs := a.meta.ValidateEntity(entity); len(validationErrs) > 0 {
+		a.renderFormWithErrors(w, r, formID, entity, validationErrorsToFieldMap(validationErrs))
+		return
+	}
+
 	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
@@ -1017,6 +1218,44 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Saved "+entityID))
 	w.WriteHeader(http.StatusOK)
+}
+
+func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.ParseForm() //nolint:errcheck // form parse errors are handled by empty values
+
+	entityID := r.FormValue("entity_id")
+	indexStr := r.FormValue("index")
+
+	entity, ok := a.g.GetNode(entityID)
+	if !ok {
+		http.Error(w, "Entity not found", http.StatusNotFound)
+		return
+	}
+
+	idx, err := strconv.Atoi(indexStr)
+	if err != nil {
+		http.Error(w, "Invalid checkbox index", http.StatusBadRequest)
+		return
+	}
+
+	newContent, err := toggleCheckbox(entity.Content, idx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	entity.Content = newContent
+	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = fmt.Fprint(w, simpleMarkdownToHTML(entity.Content))
 }
 
 func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
@@ -1376,7 +1615,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 				for pn := range entDef.Properties {
 					propNames = append(propNames, pn)
 				}
-				sort.Strings(propNames)
+				natsort.Strings(propNames)
 				count := 0
 				for _, propName := range propNames {
 					if count >= 3 {
@@ -1569,8 +1808,8 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 				groups[val]++
 			}
-			// Sort values alphabetically for consistent display
-			sort.Strings(orderedValues)
+			// Sort values in natural order for consistent display
+			natsort.Strings(orderedValues)
 			// Determine property type for badge styling
 			propType := ""
 			if len(entities) > 0 {
@@ -1740,7 +1979,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 	for name := range propMap {
 		propNames = append(propNames, name)
 	}
-	sort.Strings(propNames)
+	natsort.Strings(propNames)
 	allProperties := make([]PropertyInfo, 0, len(propNames))
 	for _, name := range propNames {
 		allProperties = append(allProperties, propMap[name])
@@ -1754,7 +1993,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		Targets    []struct{ ID, Title string }
 	}
 	relNames := a.meta.RelationTypes()
-	sort.Strings(relNames)
+	natsort.Strings(relNames)
 	allRelations := make([]RelationInfo, 0, len(relNames))
 	for _, relName := range relNames {
 		relDef, ok := a.meta.GetRelationDef(relName)
@@ -1779,7 +2018,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Entity types for override type selection.
 	entityTypes := a.meta.EntityTypes()
-	sort.Strings(entityTypes)
+	natsort.Strings(entityTypes)
 
 	activeList := "_settings"
 	data := map[string]interface{}{
@@ -1883,7 +2122,7 @@ func (a *App) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	for idx := range idxSet {
 		indices = append(indices, idx)
 	}
-	sort.Strings(indices)
+	natsort.Strings(indices)
 
 	for _, idx := range indices {
 		types := overrideTypes[idx]

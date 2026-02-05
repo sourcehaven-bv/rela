@@ -15,6 +15,7 @@ func (s *Server) handleTraceFrom(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	id = trimID(id)
 	maxDepth := request.GetInt("max_depth", 0)
 
 	if _, ok := s.graph.GetNode(id); !ok {
@@ -40,6 +41,7 @@ func (s *Server) handleTraceTo(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	id = trimID(id)
 	maxDepth := request.GetInt("max_depth", 0)
 
 	if _, ok := s.graph.GetNode(id); !ok {
@@ -65,10 +67,12 @@ func (s *Server) handleFindPath(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	from = trimID(from)
 	to, err := request.RequireString("to")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	to = trimID(to)
 
 	if _, ok := s.graph.GetNode(from); !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("source entity not found: %s", from)), nil

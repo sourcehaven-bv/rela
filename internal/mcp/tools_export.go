@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 func (s *Server) handleRefresh(
@@ -181,7 +181,7 @@ func (s *Server) exportCSV(entities []*model.Entity) (*mcp.CallToolResult, error
 	for k := range keySet {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	natsort.Strings(keys)
 
 	// Build CSV
 	var buf strings.Builder

@@ -433,6 +433,100 @@ func TestMatchMissingProperty(t *testing.T) {
 	}
 }
 
+// TestMatchEmptyStringProperty tests that entities with empty string properties
+// are treated the same as missing properties for filtering purposes.
+// This is important for non-required typed properties (like dates) where an empty
+// string means "no value set" rather than a valid value.
+func TestMatchEmptyStringProperty(t *testing.T) {
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name    string
+		propDef *metamodel.PropertyDef
+		filter  string
+		want    bool
+		wantErr bool
+	}{
+		// Date property with empty string
+		{
+			name:    "empty string date should not match =date",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate, Format: "2006-01-02"},
+			filter:  "due_date=2025-01-01",
+			want:    false,
+		},
+		{
+			name:    "empty string date should not match !=date",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate, Format: "2006-01-02"},
+			filter:  "due_date!=2025-01-01",
+			want:    false,
+		},
+		{
+			name:    "empty string date should match = (empty check)",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate, Format: "2006-01-02"},
+			filter:  "due_date=",
+			want:    true,
+		},
+		{
+			name:    "empty string date should not match != (empty check)",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate, Format: "2006-01-02"},
+			filter:  "due_date!=",
+			want:    false,
+		},
+		{
+			name:    "empty string date should not match >date",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate, Format: "2006-01-02"},
+			filter:  "due_date>2025-01-01",
+			want:    false,
+		},
+		// Integer property with empty string
+		{
+			name:    "empty string integer should not match =value",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			filter:  "count=10",
+			want:    false,
+		},
+		{
+			name:    "empty string integer should match = (empty check)",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			filter:  "count=",
+			want:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Entity with empty string property value
+			entity := &model.Entity{
+				ID:   "TEST-001",
+				Type: "test",
+				Properties: map[string]interface{}{
+					tt.propDef.Type: "", // empty string
+				},
+			}
+			// Use the actual property name from the filter
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+			entity.Properties[f.Property] = ""
+
+			got, err := Match(entity, f, tt.propDef, mm)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatchAllAND(t *testing.T) {
 	mm := &metamodel.Metamodel{}
 	entityDef := &metamodel.EntityDef{

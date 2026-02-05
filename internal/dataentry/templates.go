@@ -94,7 +94,7 @@ tbody tr:last-child td { border-bottom: none; }
 .btn-danger { background: #fff; color: var(--danger); border-color: var(--danger); }
 .btn-danger:hover { background: #fef2f2; }
 
-.form-card { padding: 28px; max-width: 640px; }
+.form-card { padding: 28px; max-width: 820px; }
 .form-desc { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
 .form-group { margin-bottom: 20px; }
 .form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
@@ -110,6 +110,10 @@ tbody tr:last-child td { border-bottom: none; }
 .form-row-checkbox label { margin-bottom: 0; font-weight: 500; }
 .form-section-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 28px 0 16px; padding-top: 20px; border-top: 1px solid var(--border); }
 .form-actions { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); display: flex; gap: 12px; }
+
+.form-group.has-error input, .form-group.has-error textarea, .form-group.has-error select { border-color: var(--danger); background-color: #fef2f2; }
+.form-group.has-error input:focus, .form-group.has-error textarea:focus, .form-group.has-error select:focus { border-color: var(--danger); box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1); }
+.field-error { color: var(--danger); font-size: 12px; margin-top: 4px; font-weight: 500; }
 
 .transitions-info { margin-top: 6px; padding: 8px 12px; background: #f8fafc; border-radius: 6px; border: 1px solid var(--border); }
 .transitions-info .t-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 4px; }
@@ -154,6 +158,12 @@ tbody tr:last-child td { border-bottom: none; }
 .EasyMDEContainer { border: 1px solid var(--border); border-radius: 6px; }
 .EasyMDEContainer .CodeMirror { border: none; border-radius: 0 0 6px 6px; font-family: var(--font-mono); font-size: 14px; }
 .EasyMDEContainer .editor-toolbar { border-bottom: 1px solid var(--border); border-radius: 6px 6px 0 0; }
+.EasyMDEContainer .editor-preview { padding: 12px 16px; }
+.EasyMDEContainer .editor-preview ul, .EasyMDEContainer .editor-preview ol { padding-left: 24px; }
+.EasyMDEContainer .editor-preview li { margin: 2px 0; }
+.EasyMDEContainer .editor-preview ul.contains-task-list { list-style: none; padding-left: 4px; }
+.EasyMDEContainer .editor-preview .task-list-item { display: flex; align-items: baseline; gap: 6px; }
+.EasyMDEContainer .editor-preview .task-list-item input[type="checkbox"] { margin: 0; position: relative; top: 1px; }
 
 /* Fullscreen editor mode */
 .editor-fullscreen-overlay { position: fixed; inset: 0; z-index: 300; background: var(--bg); display: flex; flex-direction: column; }
@@ -163,6 +173,10 @@ tbody tr:last-child td { border-bottom: none; }
 .editor-fullscreen-overlay .EasyMDEContainer { flex: 1; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px; }
 .editor-fullscreen-overlay .EasyMDEContainer .CodeMirror { flex: 1; }
 .editor-fullscreen-overlay .EasyMDEContainer .CodeMirror-scroll { min-height: 0; }
+.editor-fullscreen-overlay .EasyMDEContainer.sided--no-fullscreen { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr; }
+.editor-fullscreen-overlay .EasyMDEContainer.sided--no-fullscreen .editor-toolbar { grid-column: 1 / -1; }
+.editor-fullscreen-overlay .EasyMDEContainer.sided--no-fullscreen .CodeMirror { min-height: 0; width: 100% !important; }
+.editor-fullscreen-overlay .EasyMDEContainer.sided--no-fullscreen .editor-preview-active-side { overflow: auto; width: 100% !important; }
 
 .view-section-heading { font-size: 15px; font-weight: 700; color: var(--text); margin: 0 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--border); }
 .view-content-entity .markdown-body { font-size: 14px; line-height: 1.7; color: var(--text); }
@@ -177,6 +191,11 @@ tbody tr:last-child td { border-bottom: none; }
 .markdown-body pre code { background: none; padding: 0; }
 .markdown-body strong { font-weight: 600; }
 .markdown-body em { font-style: italic; }
+.markdown-body ul.task-list { list-style: none; padding-left: 4px; }
+.markdown-body .task-item { margin: 4px 0; }
+.markdown-body .task-item label { display: flex; align-items: baseline; gap: 6px; cursor: pointer; }
+.markdown-body .task-item input[type="checkbox"] { cursor: pointer; margin: 0; position: relative; top: 1px; }
+.cb-stats { font-size: 13px; font-weight: 400; color: var(--text-muted); margin-left: 6px; }
 
 /* SlimSelect theme overrides */
 :root {
@@ -294,7 +313,7 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
 
 /* ── Side panel (form context panel) ── */
 .main-with-panel { max-width: none; display: flex; align-items: stretch; min-height: 100vh; padding: 0; }
-.main-with-panel .form-column { flex: 0 1 640px; min-width: 0; padding: 32px; }
+.main-with-panel .form-column { flex: 0 1 820px; min-width: 0; padding: 32px; }
 .main-with-panel .form-column .form-card { max-width: none; }
 .side-panel { flex: 0 0 auto; width: min(420px, 30vw); min-width: 260px; margin-left: auto; background: #f1f5f9; border-left: 1px solid var(--border); padding: 32px 16px; overflow-y: auto; position: sticky; top: 0; height: 100vh; }
 .side-panel-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
@@ -324,7 +343,7 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
 .sp-card-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 @media (max-width: 1100px) {
   .side-panel-edge-bar { display: flex; }
-  .main-with-panel .form-column { flex: 1; max-width: 640px; padding-right: 48px; }
+  .main-with-panel .form-column { flex: 1; max-width: 820px; padding-right: 48px; }
   .side-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: 200; max-width: 380px; width: 85vw; min-width: 0; border-radius: 0; border: none; border-left: 1px solid var(--border); padding: 0; overflow-y: auto; height: auto; transform: translateX(100%); transition: transform 0.25s ease; box-shadow: -4px 0 20px rgba(0,0,0,0.1); }
   .side-panel.open { transform: translateX(0); }
   .side-panel-header { display: flex; align-items: center; padding: 16px; border-bottom: 1px solid var(--border); background: #f1f5f9; }
@@ -359,6 +378,35 @@ if (typeof mermaid !== 'undefined') {
   document.addEventListener('DOMContentLoaded', function() { renderMermaid(); });
   document.addEventListener('htmx:afterSettle', function(e) { renderMermaid(e.detail.target); });
 }
+
+// Checkbox toggle enhancement
+function enhanceCheckboxes(root) {
+  (root || document).querySelectorAll('.markdown-body input[type="checkbox"][data-cb-idx]').forEach(function(cb) {
+    if (cb.dataset.enhanced) return;
+    cb.dataset.enhanced = 'true';
+    cb.addEventListener('change', function() {
+      var container = cb.closest('[data-entity-id]');
+      if (!container) return;
+      var body = new FormData();
+      body.append('entity_id', container.dataset.entityId);
+      body.append('index', cb.dataset.cbIdx);
+      fetch('/api/toggle-checkbox', { method: 'POST', body: body })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+          var target = cb.closest('.markdown-body');
+          if (target) { target.innerHTML = html; enhanceCheckboxes(target); }
+          var stats = container.querySelector('.cb-stats');
+          if (stats) {
+            var checked = target.querySelectorAll('input[type="checkbox"]:checked').length;
+            var total = target.querySelectorAll('input[type="checkbox"][data-cb-idx]').length;
+            stats.textContent = checked + '/' + total;
+          }
+        });
+    });
+  });
+}
+document.addEventListener('DOMContentLoaded', function() { enhanceCheckboxes(); });
+document.addEventListener('htmx:afterSettle', function(e) { enhanceCheckboxes(e.detail.target); });
 
 // SlimSelect progressive enhancement
 function enhanceSelects(root) {
@@ -402,7 +450,37 @@ document.addEventListener('DOMContentLoaded', function() {
     history.replaceState(null, '', clean);
   }
 });
-document.addEventListener('htmx:afterSettle', function(evt) { enhanceSelects(evt.detail.target); });
+document.addEventListener('htmx:beforeSwap', function(evt) {
+  // Allow 422 validation error responses to be swapped (HTMX ignores non-2xx by default).
+  // The server sends HX-Retarget and HX-Reswap headers to control where/how the swap happens.
+  if (evt.detail.xhr.status === 422) {
+    evt.detail.shouldSwap = true;
+    evt.detail.isError = false;
+  }
+});
+document.addEventListener('htmx:afterSettle', function(evt) {
+  enhanceSelects(evt.detail.target);
+  // Scroll to first validation error if present
+  var firstError = evt.detail.target.querySelector('[data-has-error]');
+  if (firstError) {
+    firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var input = firstError.querySelector('input, textarea, select');
+    if (input) setTimeout(function() { input.focus(); }, 300);
+  }
+});
+// Clear validation error styling when user modifies a field.
+// Only respond to trusted (real user) events, not programmatic ones (e.g. SlimSelect init).
+function clearFieldError(evt) {
+  if (!evt.isTrusted) return;
+  var group = evt.target.closest('.form-group.has-error');
+  if (!group) return;
+  group.classList.remove('has-error');
+  group.removeAttribute('data-has-error');
+  var err = group.querySelector('.field-error');
+  if (err) err.remove();
+}
+document.addEventListener('input', clearFieldError);
+document.addEventListener('change', clearFieldError);
 document.addEventListener('htmx:responseError', function(evt) {
   var xhr = evt.detail.xhr;
   var msg = xhr.responseText || ('Request failed: ' + xhr.status);
@@ -1648,7 +1726,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
 
 <div class="card form-card">
   <form {{ if eq .Mode "edit" }}hx-post="/api/update"{{ else }}hx-post="/api/create"{{ end }}
-        hx-swap="none">
+        hx-swap="none" novalidate>
     <input type="hidden" name="_form_id" value="{{ .FormID }}">
     <input type="hidden" name="_entity_id" value="{{ .EntityID }}">
     {{ if .ReturnTo }}<input type="hidden" name="_return_to" value="{{ .ReturnTo }}">{{ end }}
@@ -1660,27 +1738,30 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
     {{ if .Hidden }}
     <input type="hidden" name="{{ .Property }}" value="{{ .Value }}">
     {{ else if eq .Widget "checkbox" }}
-    <div class="form-group">
+    <div class="form-group{{ if .Error }} has-error{{ end }}"{{ if .Error }} data-has-error="true"{{ end }}>
       <div class="form-row-checkbox">
         <input type="checkbox" name="{{ .Property }}" value="true" id="f-{{ .Property }}"{{ if eq .Value "true" }} checked{{ end }}>
         <label for="f-{{ .Property }}">{{ .Label }}</label>
       </div>
+      {{ if .Error }}<p class="field-error">{{ .Error }}</p>{{ end }}
       {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
     </div>
     {{ else if eq .Widget "textarea" }}
-    <div class="form-group">
+    <div class="form-group{{ if .Error }} has-error{{ end }}"{{ if .Error }} data-has-error="true"{{ end }}>
       <label for="f-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
       <textarea name="{{ .Property }}" id="f-{{ .Property }}" placeholder="{{ .Placeholder }}"{{ if .Required }} required{{ end }}>{{ .Value }}</textarea>
+      {{ if .Error }}<p class="field-error">{{ .Error }}</p>{{ end }}
       {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
     </div>
     {{ else if or (eq .Widget "select") (eq .Widget "multi-select") }}
-    <div class="form-group">
+    <div class="form-group{{ if .Error }} has-error{{ end }}"{{ if .Error }} data-has-error="true"{{ end }}>
       <label for="f-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
       <select name="{{ .Property }}" id="f-{{ .Property }}"{{ if eq .Widget "multi-select" }} multiple{{ end }}{{ if .Required }} required{{ end }}>
         {{ if ne .Widget "multi-select" }}<option value="">Select...</option>{{ end }}
         {{ $val := .Value }}
         {{ range .Values }}<option value="{{ . }}"{{ if eq . $val }} selected{{ end }}>{{ . }}</option>{{ end }}
       </select>
+      {{ if .Error }}<p class="field-error">{{ .Error }}</p>{{ end }}
       {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
       {{ if .Transitions }}
       <div class="transitions-info">
@@ -1692,10 +1773,11 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
       {{ end }}
     </div>
     {{ else }}
-    <div class="form-group">
+    <div class="form-group{{ if .Error }} has-error{{ end }}"{{ if .Error }} data-has-error="true"{{ end }}>
       <label for="f-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
       <input type="{{ .InputType }}" name="{{ .Property }}" id="f-{{ .Property }}"
              placeholder="{{ .Placeholder }}" value="{{ .Value }}"{{ if .Required }} required{{ end }}>
+      {{ if .Error }}<p class="field-error">{{ .Error }}</p>{{ end }}
       {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
     </div>
     {{ end }}
@@ -1953,7 +2035,21 @@ var _editorInstance = null;
       spellChecker: false,
       status: false,
       minHeight: '200px',
-      toolbar: ['bold', 'italic', 'heading', '|', 'unordered-list', 'ordered-list', '|', 'link', 'image', '|', 'preview', 'side-by-side', '|', {
+      toolbar: ['bold', 'italic', 'heading', '|', 'unordered-list', 'ordered-list', {
+        name: 'checklist',
+        action: function(editor) {
+          var cm = editor.codemirror;
+          var sel = cm.getSelection();
+          if (sel) {
+            cm.replaceSelection(sel.split('\n').map(function(l) { return '- [ ] ' + l; }).join('\n'));
+          } else {
+            cm.replaceSelection('- [ ] ');
+          }
+          cm.focus();
+        },
+        className: 'fa fa-check-square-o',
+        title: 'Checklist (Ctrl+Shift+L)',
+      }, '|', 'link', 'image', '|', 'preview', 'side-by-side', '|', {
         name: 'toggle-fullscreen-editor',
         action: toggleFullscreenEditor,
         className: 'fa fa-arrows-alt',
@@ -2180,7 +2276,7 @@ function closeSidePanel() {
 <div class="jump-bar">
   <a href="#properties" class="jump-link">Properties</a>
   {{ if .Relations }}<a href="#relations" class="jump-link">Relations ({{ len .Relations }})</a>{{ end }}
-  {{ if .Entity.Content }}<a href="#content" class="jump-link">Content</a>{{ end }}
+  {{ if .Entity.Content }}<a href="#content" class="jump-link">Content{{ with checkboxStats .Entity.Content }}{{ if gt .Total 0 }} ({{ .Checked }}/{{ .Total }}){{ end }}{{ end }}</a>{{ end }}
 </div>
 
 <div class="card" style="padding:24px;">
@@ -2218,8 +2314,8 @@ function closeSidePanel() {
 
   {{ if .Entity.Content }}
   <div id="entity-content" class="detail-section">
-    <h3>Content</h3>
-    <div class="markdown-body" style="padding:12px;background:#f8fafc;border-radius:6px;font-size:14px;">{{ renderMarkdown .Entity.Content }}</div>
+    <h3>Content{{ with checkboxStats .Entity.Content }}{{ if gt .Total 0 }} <span class="cb-stats">{{ .Checked }}/{{ .Total }}</span>{{ end }}{{ end }}</h3>
+    <div class="markdown-body" data-entity-id="{{ .Entity.ID }}" style="padding:12px;background:#f8fafc;border-radius:6px;font-size:14px;">{{ renderMarkdown .Entity.Content }}</div>
   </div>
   {{ end }}
 </div>

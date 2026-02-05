@@ -442,7 +442,7 @@ func TestImportValidationErrors(t *testing.T) {
 			data: &ImportData{
 				Entities: []EntityData{{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{}}},
 			},
-			wantErr: "missing required property: title",
+			wantErr: "This field is required",
 		},
 	}
 
