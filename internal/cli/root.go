@@ -23,6 +23,7 @@ var (
 	outputFormat string
 	verbose      bool
 	quiet        bool
+	projectPath  string
 
 	// Shared state
 	projectCtx *project.Context
@@ -56,9 +57,15 @@ and maintain semantic relationships between them.`,
 			return nil
 		}
 
+		// Determine project path: flag > env var > cwd
+		startDir := projectPath
+		if startDir == "" {
+			startDir = os.Getenv("RELA_PROJECT")
+		}
+
 		// Discover project
 		var err error
-		projectCtx, err = project.Discover("", cliFS)
+		projectCtx, err = project.Discover(startDir, cliFS)
 		if err != nil {
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}
@@ -110,6 +117,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "table", "Output format (table, json)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Quiet output")
+	rootCmd.PersistentFlags().StringVarP(&projectPath, "project", "p", "", "Project directory (default: auto-detect from cwd, or RELA_PROJECT env var)")
 
 	// Add version command
 	rootCmd.AddCommand(&cobra.Command{
