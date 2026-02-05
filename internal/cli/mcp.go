@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -46,9 +47,15 @@ Logs are written to stderr.`,
 }
 
 func runMCPServer() error {
+	// Determine start directory: flag > env var > cwd
+	startDir := projectPath
+	if startDir == "" {
+		startDir = os.Getenv("RELA_PROJECT")
+	}
+
 	// Discover project (standalone initialization because mcp is excluded
 	// from the root PersistentPreRunE skip list)
-	ctx, err := project.Discover("", cliFS)
+	ctx, err := project.Discover(startDir, cliFS)
 	if err != nil {
 		return fmt.Errorf("no project found: run 'rela init' to create one")
 	}

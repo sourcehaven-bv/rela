@@ -29,8 +29,14 @@ Examples:
   rela migrate         # Apply all pending migrations
   rela migrate --check # Check for pending migrations (for CI)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Determine start directory: flag > env var > cwd
+		startDir := projectPath
+		if startDir == "" {
+			startDir = os.Getenv("RELA_PROJECT")
+		}
+
 		// Discover project (we need the paths but not the metamodel)
-		ctx, err := project.Discover("", cliFS)
+		ctx, err := project.Discover(startDir, cliFS)
 		if err != nil {
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}

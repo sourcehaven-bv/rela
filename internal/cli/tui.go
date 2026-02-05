@@ -31,8 +31,14 @@ Keyboard shortcuts:
   q - Quit or go back
   Esc - Go back`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Determine start directory: flag > env var > cwd
+		startDir := projectPath
+		if startDir == "" {
+			startDir = os.Getenv("RELA_PROJECT")
+		}
+
 		// Try to discover project
-		ctx, err := project.Discover("", cliFS)
+		ctx, err := project.Discover(startDir, cliFS)
 		if err != nil {
 			// No project found - launch TUI in init mode
 			cwd, cwdErr := os.Getwd()
