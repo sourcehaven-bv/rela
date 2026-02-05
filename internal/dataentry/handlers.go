@@ -221,7 +221,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 	for i, col := range list.Columns {
 		rc := ResolvedColumn{
 			Property: col.Property,
-			Label:    col.Label,
+			Label:    coalesce(col.Label, titleCase(col.Property)),
 			Sortable: col.Sortable,
 			Link:     col.Link,
 		}
@@ -398,7 +398,44 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		targetDef, _ := a.meta.GetEntityDef(rel.TargetType)
+		// Resolve direction from metamodel if not specified.
+		direction := rel.Direction
+		relDef, relDefOK := a.meta.GetRelationDef(rel.Relation)
+		if direction == "" && relDefOK {
+			inFrom := containsString(relDef.From, form.EntityType)
+			inTo := containsString(relDef.To, form.EntityType)
+			if inFrom && !inTo {
+				direction = "outgoing"
+			} else if inTo && !inFrom {
+				direction = "incoming"
+			}
+			// If in both or neither, direction remains empty (caller must specify)
+		}
+
+		// Resolve target type from metamodel if not specified.
+		targetType := rel.TargetType
+		if targetType == "" && relDefOK {
+			if direction == "incoming" {
+				if len(relDef.From) == 1 {
+					targetType = relDef.From[0]
+				}
+			} else {
+				if len(relDef.To) == 1 {
+					targetType = relDef.To[0]
+				}
+			}
+		}
+
+		// Resolve label from metamodel if not specified.
+		label := rel.Label
+		if label == "" && relDefOK {
+			label = relDef.Label
+		}
+		if label == "" {
+			label = titleCase(rel.Relation)
+		}
+
+		targetDef, _ := a.meta.GetEntityDef(targetType)
 		targetLabel := ""
 		if targetDef != nil {
 			targetLabel = targetDef.Label
@@ -406,10 +443,10 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 
 		rr := ResolvedRelation{
 			Relation:      rel.Relation,
-			Label:         rel.Label,
+			Label:         label,
 			Required:      rel.Required,
 			Widget:        coalesce(rel.Widget, "select"),
-			TargetType:    rel.TargetType,
+			TargetType:    targetType,
 			TargetLabel:   targetLabel,
 			AllowCreate:   rel.AllowCreate,
 			CreateForm:    rel.CreateForm,
@@ -417,13 +454,13 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			SelectedProps: make(map[string]map[string]string),
 		}
 
-		targets := a.g.NodesByType(rel.TargetType)
+		targets := a.g.NodesByType(targetType)
 		for _, t := range targets {
 			rr.Options = append(rr.Options, struct{ ID, Title string }{t.ID, a.entityDisplayTitle(t)})
 		}
 
 		if entity != nil {
-			if rel.Direction == "incoming" {
+			if direction == "incoming" {
 				for _, edge := range a.g.IncomingEdges(entity.ID) {
 					if edge.Type == rel.Relation {
 						rr.Selected = append(rr.Selected, edge.From)

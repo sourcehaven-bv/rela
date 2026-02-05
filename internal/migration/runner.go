@@ -36,6 +36,12 @@ type FileResult struct {
 // Detect checks a YAML file for migrations that need to be applied
 // using the given filesystem.
 func Detect(path string, ft FileType, fs storage.FS) ([]DetectionResult, error) {
+	return DetectWithMetamodel(path, ft, fs, nil)
+}
+
+// DetectWithMetamodel checks a YAML file for migrations, passing the metamodel
+// to migrations that implement MetamodelAware.
+func DetectWithMetamodel(path string, ft FileType, fs storage.FS, meta MetamodelProvider) ([]DetectionResult, error) {
 	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
@@ -46,7 +52,7 @@ func Detect(path string, ft FileType, fs storage.FS) ([]DetectionResult, error) 
 		return nil, fmt.Errorf("parsing YAML: %w", err)
 	}
 
-	return DetectFromNode(&doc, ft), nil
+	return DetectFromNodeWithMetamodel(&doc, ft, meta), nil
 }
 
 // DetectBytes checks YAML content for migrations that need to be applied.
@@ -61,10 +67,21 @@ func DetectBytes(data []byte, ft FileType) []DetectionResult {
 
 // DetectFromNode checks a parsed YAML document for migrations.
 func DetectFromNode(doc *yaml.Node, ft FileType) []DetectionResult {
+	return DetectFromNodeWithMetamodel(doc, ft, nil)
+}
+
+// DetectFromNodeWithMetamodel checks a parsed YAML document for migrations,
+// passing the metamodel to migrations that implement MetamodelAware.
+func DetectFromNodeWithMetamodel(doc *yaml.Node, ft FileType, meta MetamodelProvider) []DetectionResult {
 	var results []DetectionResult
 	migrations := ForFileType(ft)
 
 	for _, m := range migrations {
+		// Pass metamodel to migrations that need it
+		if ma, ok := m.(MetamodelAware); ok && meta != nil {
+			ma.SetMetamodel(meta)
+		}
+
 		if m.Detect(doc) {
 			results = append(results, DetectionResult{
 				Migration:   m,
@@ -79,6 +96,12 @@ func DetectFromNode(doc *yaml.Node, ft FileType) []DetectionResult {
 // Apply runs all applicable migrations on a file using the given filesystem.
 // Returns results for each migration attempted.
 func Apply(path string, ft FileType, fs storage.FS) (*FileResult, error) {
+	return ApplyWithMetamodel(path, ft, fs, nil)
+}
+
+// ApplyWithMetamodel runs all applicable migrations on a file, passing the metamodel
+// to migrations that implement MetamodelAware.
+func ApplyWithMetamodel(path string, ft FileType, fs storage.FS, meta MetamodelProvider) (*FileResult, error) {
 	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
@@ -95,13 +118,13 @@ func Apply(path string, ft FileType, fs storage.FS) (*FileResult, error) {
 	}
 
 	// First detect what needs migration
-	result.Detections = DetectFromNode(&doc, ft)
+	result.Detections = DetectFromNodeWithMetamodel(&doc, ft, meta)
 
 	if len(result.Detections) == 0 {
 		return result, nil
 	}
 
-	// Apply each detected migration
+	// Apply each detected migration (metamodel already set during detection)
 	for _, detection := range result.Detections {
 		mr := Result{Migration: detection.Migration}
 

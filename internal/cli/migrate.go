@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
@@ -34,6 +35,9 @@ Examples:
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}
 
+		// Load metamodel for context-aware migrations (ignore errors - metamodel may need migration)
+		mm, _ := metamodel.LoadWithoutMigrationCheck(ctx.MetamodelPath, cliFS)
+
 		// Define files to check
 		dataEntryPath := filepath.Join(ctx.Root, dataentry.ConfigFile)
 
@@ -47,10 +51,10 @@ Examples:
 		}
 
 		if migrateCheck {
-			return runMigrateCheck(files)
+			return runMigrateCheck(files, mm)
 		}
 
-		return runMigrate(files)
+		return runMigrate(files, mm)
 	},
 }
 
@@ -58,7 +62,7 @@ func runMigrateCheck(files []struct {
 	path     string
 	fileType migration.FileType
 	name     string
-}) error {
+}, meta *metamodel.Metamodel) error {
 	needsMigration := false
 
 	for _, f := range files {
@@ -67,15 +71,15 @@ func runMigrateCheck(files []struct {
 			continue
 		}
 
-		result, err := migration.CheckOnly(f.path, f.fileType, cliFS)
+		detections, err := migration.DetectWithMetamodel(f.path, f.fileType, cliFS, meta)
 		if err != nil {
 			return fmt.Errorf("checking %s: %w", f.name, err)
 		}
 
-		if result.NeedsMigration() {
+		if len(detections) > 0 {
 			needsMigration = true
 			fmt.Printf("%s needs migration:\n", f.name)
-			for _, d := range result.Detections {
+			for _, d := range detections {
 				fmt.Printf("  - %s\n", d.Description)
 			}
 		}
@@ -94,7 +98,7 @@ func runMigrate(files []struct {
 	path     string
 	fileType migration.FileType
 	name     string
-}) error {
+}, meta *metamodel.Metamodel) error {
 	filesUpdated := 0
 	totalMigrations := 0
 
@@ -104,7 +108,7 @@ func runMigrate(files []struct {
 			continue
 		}
 
-		result, err := migration.Apply(f.path, f.fileType, cliFS)
+		result, err := migration.ApplyWithMetamodel(f.path, f.fileType, cliFS, meta)
 		if err != nil {
 			return fmt.Errorf("migrating %s: %w", f.name, err)
 		}

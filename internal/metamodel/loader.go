@@ -81,6 +81,31 @@ func Load(path string, fs storage.FS) (*Metamodel, error) {
 	return m, nil
 }
 
+// LoadWithoutMigrationCheck loads a metamodel without checking for migrations.
+// This is used by the migrate command itself to avoid chicken-and-egg issues.
+// Returns nil if loading fails (caller should handle gracefully).
+func LoadWithoutMigrationCheck(path string, fs storage.FS) (*Metamodel, error) {
+	data, err := fs.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	m, err := parseRaw(data)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(m.Includes) > 0 {
+		rootDir := filepath.Dir(path)
+		if err := loadWithIncludes(m, path, rootDir, fs); err != nil {
+			return nil, err
+		}
+	}
+
+	// Skip validation since metamodel may be in a migration state
+	return m, nil
+}
+
 // Parse parses and validates metamodel YAML content.
 func Parse(data []byte) (*Metamodel, error) {
 	m, err := parseRaw(data)

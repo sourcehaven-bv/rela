@@ -3,9 +3,28 @@
 // comments and formatting using yaml.Node AST manipulation.
 package migration
 
-import (
-	"gopkg.in/yaml.v3"
-)
+import "gopkg.in/yaml.v3"
+
+// MetamodelProvider provides metamodel data for context-aware migrations.
+// This interface is satisfied by *metamodel.Metamodel.
+type MetamodelProvider interface {
+	// GetPropertyType returns the type of a property for an entity type (empty if not found).
+	GetPropertyType(entityType, property string) string
+	// IsPropertyRequired returns whether a property is required.
+	IsPropertyRequired(entityType, property string) bool
+	// GetPropertyDefault returns the default value for a property.
+	GetPropertyDefault(entityType, property string) string
+	// GetTypeDefault returns the default value for a custom type.
+	GetTypeDefault(typeName string) string
+	// IsEnumType returns whether a type is an enum-like type (has values).
+	IsEnumType(typeName string) bool
+	// GetRelationLabel returns the label for a relation (empty if not found).
+	GetRelationLabel(relation string) string
+	// GetRelationFrom returns the "from" entity types for a relation.
+	GetRelationFrom(relation string) []string
+	// GetRelationTo returns the "to" entity types for a relation.
+	GetRelationTo(relation string) []string
+}
 
 // FileType identifies which project files a migration applies to.
 type FileType string
@@ -35,6 +54,17 @@ type Migration interface {
 	// Apply transforms the YAML document in-place.
 	// It should only be called if Detect returned true.
 	Apply(doc *yaml.Node) error
+}
+
+// MetamodelAware is an optional interface for migrations that need access to the
+// metamodel for context-aware detection and transformation. Migrations implementing
+// this interface will receive the metamodel when processing data-entry.yaml files.
+type MetamodelAware interface {
+	Migration
+
+	// SetMetamodel provides the metamodel to the migration.
+	// Called by the runner before Detect/Apply for data-entry migrations.
+	SetMetamodel(meta MetamodelProvider)
 }
 
 // registry holds all registered migrations in order of application.
