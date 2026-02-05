@@ -66,8 +66,9 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
 			continue
 		}
 
-		// Skip empty strings for required properties - already reported as missing
-		if propDef.Required && val == "" {
+		// Skip empty strings - they represent "no value"
+		// For required properties, this is already reported as missing above
+		if val == "" {
 			continue
 		}
 

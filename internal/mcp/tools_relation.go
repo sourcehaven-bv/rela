@@ -4,6 +4,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -64,14 +65,17 @@ func (s *Server) handleCreateRelation(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	fromID = trimID(fromID)
 	relType, err := request.RequireString("type")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	relType = strings.TrimSpace(relType)
 	toID, err := request.RequireString("to")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	toID = trimID(toID)
 	content := request.GetString("content", "")
 
 	// Check entities exist
@@ -125,14 +129,17 @@ func (s *Server) handleDeleteRelation(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	fromID = trimID(fromID)
 	relType, err := request.RequireString("type")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	relType = strings.TrimSpace(relType)
 	toID, err := request.RequireString("to")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	toID = trimID(toID)
 
 	_, exists := s.graph.GetEdge(fromID, relType, toID)
 	if !exists {

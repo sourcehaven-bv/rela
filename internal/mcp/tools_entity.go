@@ -56,6 +56,7 @@ func (s *Server) handleShowEntity(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	id = trimID(id)
 
 	entity, ok := s.graph.GetNode(id)
 	if !ok {
@@ -127,6 +128,11 @@ func (s *Server) handleCreateEntity(
 
 	// Parse properties from the request
 	properties := s.extractProperties(request)
+
+	// Validate property names early for better error messages
+	if errResult := s.validatePropertyNames(resolvedType, properties); errResult != nil {
+		return errResult, nil
+	}
 
 	// Generate or validate ID
 	var entityID string
@@ -202,6 +208,7 @@ func (s *Server) handleUpdateEntity(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	id = trimID(id)
 
 	entity, ok := s.graph.GetNode(id)
 	if !ok {
@@ -213,6 +220,11 @@ func (s *Server) handleUpdateEntity(
 
 	if len(properties) == 0 && content == "" {
 		return mcp.NewToolResultError("no updates specified"), nil
+	}
+
+	// Validate property names early for better error messages
+	if errResult := s.validatePropertyNames(entity.Type, properties); errResult != nil {
+		return errResult, nil
 	}
 
 	// Apply property updates
@@ -250,7 +262,8 @@ func (s *Server) handleDeleteEntity(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	cascade := request.GetBool("cascade", true)
+	id = trimID(id)
+	cascade := request.GetBool("cascade", false)
 
 	entity, ok := s.graph.GetNode(id)
 	if !ok {

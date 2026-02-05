@@ -103,6 +103,11 @@ func TestValidateEntity_DateValidation_RFC3339(t *testing.T) {
 			wantErr:   false,
 		},
 		{
+			name:      "empty string on non-required date",
+			dateValue: "",
+			wantErr:   false,
+		},
+		{
 			name:      "invalid date format",
 			dateValue: "15-03-2026",
 			wantErr:   true,
