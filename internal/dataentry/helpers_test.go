@@ -269,6 +269,30 @@ func TestCoalesce(t *testing.T) {
 	}
 }
 
+func TestContainsString(t *testing.T) {
+	tests := []struct {
+		name  string
+		slice []string
+		s     string
+		want  bool
+	}{
+		{"found", []string{"a", "b", "c"}, "b", true},
+		{"not found", []string{"a", "b", "c"}, "d", false},
+		{"empty slice", []string{}, "a", false},
+		{"nil slice", nil, "a", false},
+		{"empty string found", []string{"", "b"}, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := containsString(tt.slice, tt.s)
+			if got != tt.want {
+				t.Errorf("containsString(%v, %q) = %v, want %v", tt.slice, tt.s, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSlugify(t *testing.T) {
 	tests := []struct {
 		input string

@@ -23,17 +23,12 @@ forms:
     body: true
     fields:
       - property: title
-        label: "Title"
         placeholder: "Brief summary of the issue..."
         help: "A short, descriptive title for the ticket"
-        required: true
       - property: description
-        label: "Description"
         widget: textarea
         help: "Detailed description of the issue"
       - property: priority
-        label: "Priority"
-        default: medium
       - property: reporter
         label: "Reported by"
         placeholder: "your.name"
@@ -41,27 +36,15 @@ forms:
         label: "Assign to"
         placeholder: "assignee.name"
       - property: due_date
-        label: "Due Date"
-        widget: date
       - property: estimated_hours
-        label: "Estimated Hours"
-        widget: number
       - property: status
         hidden: true
-        default: open
     relations:
       - relation: belongs-to
-        direction: outgoing
-        target_type: category
-        label: "Category"
         required: true
-        widget: select
         allow_create: true
         create_form: create_category
       - relation: tagged
-        direction: outgoing
-        target_type: label
-        label: "Labels"
         widget: multi-select
         allow_create: true
         create_form: create_label
@@ -72,14 +55,10 @@ forms:
     body: true
     fields:
       - property: title
-        label: "Title"
       - property: description
-        label: "Description"
         widget: textarea
       - property: priority
-        label: "Priority"
       - property: status
-        label: "Status"
         transitions:
           open: [in-progress, closed]
           in-progress: [open, resolved]
@@ -90,39 +69,23 @@ forms:
       - property: reporter
         label: "Reported by"
       - property: due_date
-        label: "Due Date"
-        widget: date
       - property: estimated_hours
-        label: "Estimated Hours"
-        widget: number
       - property: is_blocked
-        label: "Blocked"
-        widget: checkbox
     relations:
       - relation: belongs-to
-        direction: outgoing
-        target_type: category
-        label: "Category"
         required: true
-        widget: select
         allow_create: true
         create_form: create_category
       - relation: tagged
-        direction: outgoing
-        target_type: label
-        label: "Labels"
         widget: multi-select
         allow_create: true
         create_form: create_label
       - relation: blocks
         direction: outgoing
-        target_type: ticket
-        label: "Blocks"
         widget: search
         properties:
           - property: reason
             label: "Block Reason"
-            widget: text
 
     side_panel:
       traverse:
@@ -162,9 +125,7 @@ forms:
           display: properties
           fields:
             - property: reporter
-              label: "Reporter"
             - property: due_date
-              label: "Due Date"
             - property: estimated_hours
               label: "Est. Hours"
 
@@ -175,13 +136,10 @@ forms:
     fields:
       - property: name
         label: "Category Name"
-        required: true
         placeholder: "e.g., Backend, Frontend, DevOps"
       - property: description
-        label: "Description"
         widget: textarea
       - property: color
-        label: "Color"
         placeholder: "#3b82f6"
         help: "Hex color code for visual identification"
   create_label:
@@ -191,7 +149,6 @@ forms:
     fields:
       - property: name
         label: "Label Name"
-        required: true
         placeholder: "e.g., bug, enhancement, urgent"
 lists:
   all_tickets:
@@ -200,20 +157,15 @@ lists:
     description: "View all tickets"
     columns:
       - property: title
-        label: "Title"
         sortable: true
         link: true
       - property: status
-        label: "Status"
         sortable: true
       - property: priority
-        label: "Priority"
         sortable: true
       - property: assignee
-        label: "Assignee"
         sortable: true
       - property: reporter
-        label: "Reporter"
         sortable: true
       - property: due_date
         label: "Due"
@@ -237,14 +189,11 @@ lists:
     title: "Open Tickets"
     columns:
       - property: title
-        label: "Title"
         sortable: true
         link: true
       - property: priority
-        label: "Priority"
         sortable: true
       - property: assignee
-        label: "Assignee"
         sortable: true
       - property: due_date
         label: "Due"
@@ -288,11 +237,9 @@ lists:
     title: "Categories"
     columns:
       - property: name
-        label: "Name"
         sortable: true
         link: true
       - property: description
-        label: "Description"
     sort:
       - property: name
         direction: asc
@@ -327,9 +274,7 @@ views:
         display: properties
         fields:
           - property: name
-            label: "Name"
           - property: description
-            label: "Description"
       # All tickets as full content cards
       - heading: "Tickets"
         source: tickets
@@ -347,14 +292,10 @@ views:
         display: table
         columns:
           - property: title
-            label: "Title"
             link: true
           - property: status
-            label: "Status"
           - property: priority
-            label: "Priority"
           - property: assignee
-            label: "Assignee"
         empty_message: "No blocking relationships"
       # Labels used by tickets in this category
       - heading: "Labels Used"
@@ -391,9 +332,7 @@ views:
           - property: assignee
           - property: reporter
           - property: due_date
-            label: "Due Date"
           - property: estimated_hours
-            label: "Estimated Hours"
       # Ticket body (markdown content)
       - source: entry
         display: content
@@ -448,12 +387,9 @@ dashboard:
       display: table
       columns:
         - property: title
-          label: "Title"
           link: true
         - property: status
-          label: "Status"
         - property: assignee
-          label: "Assignee"
       sort:
         - property: status
           direction: asc
@@ -463,12 +399,9 @@ dashboard:
       display: table
       columns:
         - property: title
-          label: "Title"
           link: true
         - property: priority
-          label: "Priority"
         - property: assignee
-          label: "Assignee"
       limit: 5
 # ──────────────────────────────────────────────
 # Commands: executable scripts triggered from the UI

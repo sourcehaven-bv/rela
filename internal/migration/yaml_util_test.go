@@ -286,3 +286,45 @@ func TestGetDocumentRoot(t *testing.T) {
 		t.Error("GetDocumentRoot(nil) should return nil")
 	}
 }
+
+func TestDeleteMapKey(t *testing.T) {
+	yamlContent := `
+key1: value1
+key2: value2
+key3: value3
+`
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(yamlContent), &doc); err != nil {
+		t.Fatalf("failed to parse YAML: %v", err)
+	}
+
+	root := GetDocumentRoot(&doc)
+
+	// Delete existing key
+	if !DeleteMapKey(root, "key2") {
+		t.Error("DeleteMapKey() returned false for existing key")
+	}
+
+	// Verify it's gone
+	if GetMapValue(root, "key2") != nil {
+		t.Error("key2 still exists after deletion")
+	}
+
+	// Verify other keys still exist
+	if GetMapValue(root, "key1") == nil {
+		t.Error("key1 should still exist")
+	}
+	if GetMapValue(root, "key3") == nil {
+		t.Error("key3 should still exist")
+	}
+
+	// Delete non-existing key
+	if DeleteMapKey(root, "nonexistent") {
+		t.Error("DeleteMapKey() returned true for non-existing key")
+	}
+
+	// Delete from nil
+	if DeleteMapKey(nil, "key") {
+		t.Error("DeleteMapKey(nil, ...) should return false")
+	}
+}

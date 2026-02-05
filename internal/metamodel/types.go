@@ -634,6 +634,90 @@ func (m *Metamodel) GetTypes() interface{} {
 	return m.Types
 }
 
+// Methods implementing migration.MetamodelProvider interface
+
+// GetPropertyType returns the type of a property for an entity type (empty if not found).
+func (m *Metamodel) GetPropertyType(entityType, property string) string {
+	entDef, ok := m.GetEntityDef(entityType)
+	if !ok {
+		return ""
+	}
+	propDef, ok := entDef.Properties[property]
+	if !ok {
+		return ""
+	}
+	return propDef.Type
+}
+
+// IsPropertyRequired returns whether a property is required.
+func (m *Metamodel) IsPropertyRequired(entityType, property string) bool {
+	entDef, ok := m.GetEntityDef(entityType)
+	if !ok {
+		return false
+	}
+	propDef, ok := entDef.Properties[property]
+	if !ok {
+		return false
+	}
+	return propDef.Required
+}
+
+// GetPropertyDefault returns the default value for a property.
+func (m *Metamodel) GetPropertyDefault(entityType, property string) string {
+	entDef, ok := m.GetEntityDef(entityType)
+	if !ok {
+		return ""
+	}
+	propDef, ok := entDef.Properties[property]
+	if !ok {
+		return ""
+	}
+	return propDef.Default
+}
+
+// GetTypeDefault returns the default value for a custom type.
+func (m *Metamodel) GetTypeDefault(typeName string) string {
+	if ct, ok := m.Types[typeName]; ok {
+		return ct.Default
+	}
+	return ""
+}
+
+// IsEnumType returns whether a type is an enum-like type (has values).
+func (m *Metamodel) IsEnumType(typeName string) bool {
+	if ct, ok := m.Types[typeName]; ok {
+		return len(ct.Values) > 0
+	}
+	return false
+}
+
+// GetRelationLabel returns the label for a relation (empty if not found).
+func (m *Metamodel) GetRelationLabel(relation string) string {
+	relDef, ok := m.GetRelationDef(relation)
+	if !ok {
+		return ""
+	}
+	return relDef.Label
+}
+
+// GetRelationFrom returns the "from" entity types for a relation.
+func (m *Metamodel) GetRelationFrom(relation string) []string {
+	relDef, ok := m.GetRelationDef(relation)
+	if !ok {
+		return nil
+	}
+	return relDef.From
+}
+
+// GetRelationTo returns the "to" entity types for a relation.
+func (m *Metamodel) GetRelationTo(relation string) []string {
+	relDef, ok := m.GetRelationDef(relation)
+	if !ok {
+		return nil
+	}
+	return relDef.To
+}
+
 // Schema output interface methods for EntityDef
 
 // GetLabel returns the entity label

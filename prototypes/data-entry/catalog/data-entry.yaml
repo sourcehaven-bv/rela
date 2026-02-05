@@ -27,56 +27,38 @@ forms:
       - property: name
         label: "Product Name"
         placeholder: "e.g., Wireless Keyboard MK-500"
-        required: true
 
       - property: sku
-        label: "SKU"
         placeholder: "e.g., WK-MK500-BLK"
         help: "Unique stock keeping unit identifier"
 
       - property: description
-        label: "Description"
         widget: textarea
 
       - property: price
         label: "Price (cents)"
-        widget: number
         placeholder: "4999"
         help: "Price in cents, e.g., 4999 = $49.99"
 
       - property: availability
-        label: "Availability"
-        default: in-stock
 
       - property: condition
-        label: "Condition"
-        default: new
 
       - property: weight_grams
         label: "Weight (g)"
-        widget: number
 
       - property: release_date
-        label: "Release Date"
-        widget: date
 
       - property: featured
-        label: "Featured Product"
-        widget: checkbox
 
     relations:
       - relation: made-by
-        direction: outgoing
-        target_type: brand
         label: "Brand"
         required: true
-        widget: select
         allow_create: true
         create_form: add_brand
 
       - relation: tagged
-        direction: outgoing
-        target_type: tag
         label: "Tags"
         widget: multi-select
         allow_create: true
@@ -93,47 +75,32 @@ forms:
         label: "Product Name"
 
       - property: sku
-        label: "SKU"
 
       - property: description
-        label: "Description"
         widget: textarea
 
       - property: price
         label: "Price (cents)"
-        widget: number
 
       - property: availability
-        label: "Availability"
 
       - property: condition
-        label: "Condition"
 
       - property: weight_grams
         label: "Weight (g)"
-        widget: number
 
       - property: release_date
-        label: "Release Date"
-        widget: date
 
       - property: featured
-        label: "Featured Product"
-        widget: checkbox
 
     relations:
       - relation: made-by
-        direction: outgoing
-        target_type: brand
         label: "Brand"
         required: true
-        widget: select
         allow_create: true
         create_form: add_brand
 
       - relation: tagged
-        direction: outgoing
-        target_type: tag
         label: "Tags"
         widget: multi-select
         allow_create: true
@@ -141,8 +108,6 @@ forms:
 
       - relation: accessory-for
         direction: outgoing
-        target_type: product
-        label: "Accessory For"
         widget: search
 
   add_brand:
@@ -152,15 +117,12 @@ forms:
     fields:
       - property: name
         label: "Brand Name"
-        required: true
         placeholder: "e.g., Logitech"
 
       - property: website
-        label: "Website"
         placeholder: "https://..."
 
       - property: country
-        label: "Country"
         placeholder: "e.g., Switzerland"
 
   add_tag:
@@ -170,7 +132,6 @@ forms:
     fields:
       - property: name
         label: "Tag Name"
-        required: true
         placeholder: "e.g., wireless, ergonomic, gaming"
 
 lists:
@@ -186,19 +147,15 @@ lists:
         link: true
 
       - property: sku
-        label: "SKU"
         sortable: true
 
       - property: price
-        label: "Price"
         sortable: true
 
       - property: availability
-        label: "Availability"
         sortable: true
 
       - property: condition
-        label: "Condition"
         sortable: true
 
     sort:
@@ -276,10 +233,8 @@ lists:
         sortable: true
         link: true
       - property: country
-        label: "Country"
         sortable: true
       - property: website
-        label: "Website"
 
     sort:
       property: name

@@ -180,3 +180,19 @@ func GetDocumentRoot(doc *yaml.Node) *yaml.Node {
 	}
 	return doc
 }
+
+// DeleteMapKey removes a key-value pair from a mapping node by key name.
+// Returns true if the key was found and deleted.
+func DeleteMapKey(node *yaml.Node, key string) bool {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		if node.Content[i].Value == key {
+			// Remove both key and value (2 elements)
+			node.Content = append(node.Content[:i], node.Content[i+2:]...)
+			return true
+		}
+	}
+	return false
+}
