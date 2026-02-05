@@ -33,6 +33,10 @@ rela show REQ-001
 
 # Launch the interactive TUI
 rela tui
+
+# Work with a project in a different directory
+rela -p /path/to/project list
+export RELA_PROJECT=/path/to/project && rela list
 ```
 
 ## Features

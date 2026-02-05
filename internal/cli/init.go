@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -15,12 +16,20 @@ var initCmd = &cobra.Command{
 	Short: "Initialize a new rela project",
 	Long:  `Creates a new rela project in the current directory with a default metamodel.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cwd, err := cliFS.Getwd()
-		if err != nil {
-			return err
+		// Determine target directory: flag > env var > cwd
+		targetDir := projectPath
+		if targetDir == "" {
+			targetDir = os.Getenv("RELA_PROJECT")
+		}
+		if targetDir == "" {
+			var err error
+			targetDir, err = cliFS.Getwd()
+			if err != nil {
+				return err
+			}
 		}
 
-		metamodelPath := filepath.Join(cwd, project.MetamodelFile)
+		metamodelPath := filepath.Join(targetDir, project.MetamodelFile)
 
 		// Check if already initialized
 		if _, err := cliFS.Stat(metamodelPath); err == nil {
@@ -29,12 +38,12 @@ var initCmd = &cobra.Command{
 
 		// Create project context
 		ctx := &project.Context{
-			Root:          cwd,
+			Root:          targetDir,
 			MetamodelPath: metamodelPath,
-			CacheDir:      filepath.Join(cwd, project.CacheDir),
-			CachePath:     filepath.Join(cwd, project.CacheDir, project.CacheFile),
-			EntitiesDir:   filepath.Join(cwd, project.EntitiesDir),
-			RelationsDir:  filepath.Join(cwd, project.RelationsDir),
+			CacheDir:      filepath.Join(targetDir, project.CacheDir),
+			CachePath:     filepath.Join(targetDir, project.CacheDir, project.CacheFile),
+			EntitiesDir:   filepath.Join(targetDir, project.EntitiesDir),
+			RelationsDir:  filepath.Join(targetDir, project.RelationsDir),
 		}
 
 		// Create directories
@@ -48,7 +57,7 @@ var initCmd = &cobra.Command{
 		}
 
 		// Add .rela to .gitignore if it exists
-		gitignorePath := filepath.Join(cwd, ".gitignore")
+		gitignorePath := filepath.Join(targetDir, ".gitignore")
 		if _, err := cliFS.Stat(gitignorePath); err == nil {
 			// Read existing content
 			content, err := cliFS.ReadFile(gitignorePath)
@@ -61,7 +70,7 @@ var initCmd = &cobra.Command{
 			}
 		}
 
-		out.WriteSuccess("Initialized rela project in %s", cwd)
+		out.WriteSuccess("Initialized rela project in %s", targetDir)
 		out.WriteMessage("  Created metamodel.yaml")
 		out.WriteMessage("  Created entities/ directory")
 		out.WriteMessage("  Created relations/ directory")

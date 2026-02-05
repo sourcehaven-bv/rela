@@ -6,21 +6,29 @@ Complete reference for all rela commands.
 
 These options work with any command:
 
-| Option          | Description                                |
-| --------------- | ------------------------------------------ |
-| `-o, --output`  | Output format: `table` (default) or `json` |
-| `-v, --verbose` | Enable verbose output                      |
-| `-q, --quiet`   | Suppress non-essential output              |
-| `-h, --help`    | Show help for any command                  |
+| Option          | Description                                                          |
+| --------------- | -------------------------------------------------------------------- |
+| `-p, --project` | Project directory (default: auto-detect from cwd, or `RELA_PROJECT`) |
+| `-o, --output`  | Output format: `table` (default) or `json`                           |
+| `-v, --verbose` | Enable verbose output                                                |
+| `-q, --quiet`   | Suppress non-essential output                                        |
+| `-h, --help`    | Show help for any command                                            |
+
+## Environment Variables
+
+| Variable       | Description                                                      |
+| -------------- | ---------------------------------------------------------------- |
+| `RELA_PROJECT` | Default project directory when `--project` flag is not specified |
 
 ## Commands
 
 ### rela init
 
-Initialize a new rela project in the current directory.
+Initialize a new rela project.
 
 ```bash
 rela init
+rela init -p /path/to/project
 ```
 
 Creates:
