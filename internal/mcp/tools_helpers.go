@@ -13,6 +13,7 @@ import (
 )
 
 func (s *Server) resolveType(typeName string) string {
+	typeName = strings.TrimSpace(typeName)
 	meta := s.getMeta()
 	resolved := meta.ResolveAlias(typeName)
 	if _, ok := meta.GetEntityDef(resolved); ok {
@@ -32,6 +33,11 @@ func (s *Server) resolveType(typeName string) string {
 	return typeName
 }
 
+// trimID trims whitespace from an entity ID
+func trimID(id string) string {
+	return strings.TrimSpace(id)
+}
+
 func (s *Server) resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
 	resolved := s.resolveType(typeName)
 	def, ok := s.getMeta().GetEntityDef(resolved)
@@ -48,17 +54,43 @@ func (s *Server) extractProperties(request mcp.CallToolRequest) map[string]inter
 		return nil
 	}
 
+	var props map[string]interface{}
 	switch p := propsRaw.(type) {
 	case map[string]interface{}:
-		return p
+		props = p
 	case string:
 		// Try to parse as JSON
-		var result map[string]interface{}
-		if err := json.Unmarshal([]byte(p), &result); err == nil {
-			return result
+		if err := json.Unmarshal([]byte(p), &props); err != nil {
+			return nil
 		}
+	default:
+		return nil
 	}
-	return nil
+
+	// Filter out nil and empty string values - they represent "no value"
+	return filterNilAndEmpty(props)
+}
+
+// filterNilAndEmpty removes nil and empty string values from a property map.
+// These values are semantically "no value" and should not be stored.
+func filterNilAndEmpty(props map[string]interface{}) map[string]interface{} {
+	if props == nil {
+		return nil
+	}
+	filtered := make(map[string]interface{}, len(props))
+	for k, v := range props {
+		if v == nil {
+			continue
+		}
+		if s, ok := v.(string); ok && s == "" {
+			continue
+		}
+		filtered[k] = v
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 func (s *Server) validateEntity(entity *model.Entity) *mcp.CallToolResult {
@@ -71,6 +103,40 @@ func (s *Server) validateEntity(entity *model.Entity) *mcp.CallToolResult {
 		msgs = append(msgs, e.Error())
 	}
 	return mcp.NewToolResultError(fmt.Sprintf("validation errors:\n  %s", strings.Join(msgs, "\n  ")))
+}
+
+// validatePropertyNames checks if all property names exist in the metamodel for the given entity type.
+// Returns an error result if any unknown properties are found, nil otherwise.
+func (s *Server) validatePropertyNames(entityType string, properties map[string]interface{}) *mcp.CallToolResult {
+	if properties == nil {
+		return nil
+	}
+
+	meta := s.getMeta()
+	entityDef, ok := meta.GetEntityDef(entityType)
+	if !ok {
+		return nil // Type validation will catch this
+	}
+
+	var unknown []string
+	for propName := range properties {
+		if _, exists := entityDef.Properties[propName]; !exists {
+			unknown = append(unknown, propName)
+		}
+	}
+
+	if len(unknown) > 0 {
+		// Get list of valid properties for helpful error message
+		valid := make([]string, 0, len(entityDef.Properties))
+		for name := range entityDef.Properties {
+			valid = append(valid, name)
+		}
+		return mcp.NewToolResultError(fmt.Sprintf(
+			"unknown properties for %s: %s (valid: %s)",
+			entityType, strings.Join(unknown, ", "), strings.Join(valid, ", ")))
+	}
+
+	return nil
 }
 
 func (s *Server) saveCache() {

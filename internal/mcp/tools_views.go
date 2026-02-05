@@ -59,10 +59,12 @@ func (s *Server) handleExecuteView(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	viewName = strings.TrimSpace(viewName)
 	entryID, err := request.RequireString("id")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	entryID = trimID(entryID)
 	format := request.GetString("format", "json")
 
 	viewsFile, loadErr := s.loadViews()
