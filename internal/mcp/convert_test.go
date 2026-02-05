@@ -557,26 +557,26 @@ func TestMarshalJSON_Indented(t *testing.T) {
 	}
 }
 
-func TestMatchesSearch(t *testing.T) {
+func TestScoreSearch(t *testing.T) {
 	e := model.NewEntity("REQ-001", "requirement")
 	e.Properties["title"] = "Authentication Feature"
 	e.Properties["status"] = "draft"
 	e.Content = "Users should be able to log in"
 
 	// Match by ID
-	if !matchesSearch(e, "req-001") {
+	if scoreSearch(e, "req-001") <= 0 {
 		t.Error("expected match by ID")
 	}
 	// Match by property
-	if !matchesSearch(e, "authentication") {
+	if scoreSearch(e, "authentication") <= 0 {
 		t.Error("expected match by property value")
 	}
-	// Match by content
-	if !matchesSearch(e, "log in") {
+	// Match by content (two words, OR logic)
+	if scoreSearch(e, "log in") <= 0 {
 		t.Error("expected match by content")
 	}
 	// No match
-	if matchesSearch(e, "nonexistent") {
+	if scoreSearch(e, "nonexistent") > 0 {
 		t.Error("expected no match for nonexistent query")
 	}
 	// Non-string property should not match
@@ -685,44 +685,54 @@ func TestConvertTraceResult_DeepNesting(t *testing.T) {
 	}
 }
 
-func TestMatchesSearch_ByIDCaseInsensitive(t *testing.T) {
+func TestScoreSearch_ByIDCaseInsensitive(t *testing.T) {
 	e := model.NewEntity("REQ-001", "requirement")
 
-	// matchesSearch expects queryLower to already be lowercase
-	if !matchesSearch(e, "req") {
+	if scoreSearch(e, "req") <= 0 {
 		t.Error("expected case-insensitive ID match")
 	}
-	if !matchesSearch(e, "req-001") {
+	if scoreSearch(e, "req-001") <= 0 {
 		t.Error("expected full ID match")
 	}
 }
 
-func TestMatchesSearch_ByContent(t *testing.T) {
+func TestScoreSearch_ByContent(t *testing.T) {
 	e := model.NewEntity("REQ-001", "requirement")
 	e.Content = "This is about Authentication"
 
-	if !matchesSearch(e, "authentication") {
+	if scoreSearch(e, "authentication") <= 0 {
 		t.Error("expected case-insensitive content match")
 	}
 }
 
-func TestMatchesSearch_NoMatch(t *testing.T) {
+func TestScoreSearch_NoMatch(t *testing.T) {
 	e := model.NewEntity("REQ-001", "requirement")
 	e.Properties["title"] = "Something"
 	e.Content = "Other content"
 
-	if matchesSearch(e, "zzznomatch") {
+	if scoreSearch(e, "zzznomatch") > 0 {
 		t.Error("expected no match")
 	}
 }
 
-func TestMatchesSearch_NonStringProperty(t *testing.T) {
+func TestScoreSearch_MultipleWords(t *testing.T) {
 	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["count"] = 42
+	e.Properties["title"] = "Authentication Feature"
+	e.Content = "OAuth 2.0 API integration"
 
-	// Non-string properties should not be searched
-	if matchesSearch(e, "42") {
-		t.Error("expected non-string property to not match")
+	// Both words match → higher score
+	scoreBoth := scoreSearch(e, "authentication oauth")
+	// One word matches
+	scoreOne := scoreSearch(e, "authentication elephant")
+
+	if scoreBoth <= 0 {
+		t.Error("expected match for both words")
+	}
+	if scoreOne <= 0 {
+		t.Error("expected match for one word")
+	}
+	if scoreBoth <= scoreOne {
+		t.Errorf("both-match score (%f) should be higher than one-match (%f)", scoreBoth, scoreOne)
 	}
 }
 

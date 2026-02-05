@@ -134,7 +134,7 @@ func (h *HelpModel) View(_, height int) string {
 				{"prop:status=draft", "Property filter (=, !=, <, <=, >, >=)"},
 				{"status:published", "Status shortcut"},
 				{"\"exact phrase\"", "Exact phrase match"},
-				{"word1 word2", "Free text (AND logic)"},
+				{"word1 word2", "Free text (OR, ranked)"},
 			},
 		},
 		{

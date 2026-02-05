@@ -2809,7 +2809,7 @@ function closeSidePanel() {
     <code>prop:priority=high</code> filter by property &middot;
     <code>sort:priority:desc</code> sort results &middot;
     <code>"exact phrase"</code> exact match &middot;
-    plain words (AND logic)
+    plain words (fuzzy, ranked)
   </div>
 </div>
 

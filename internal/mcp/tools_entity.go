@@ -4,6 +4,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -83,7 +84,11 @@ func (s *Server) handleSearchEntities(
 
 	queryLower := strings.ToLower(query)
 
-	var results []*model.Entity
+	type scored struct {
+		entity *model.Entity
+		score  float64
+	}
+
 	var candidates []*model.Entity
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
@@ -92,13 +97,26 @@ func (s *Server) handleSearchEntities(
 		candidates = s.graph.AllNodes()
 	}
 
+	var scoredResults []scored
 	for _, e := range candidates {
-		if matchesSearch(e, queryLower) {
-			results = append(results, e)
+		sc := scoreSearch(e, queryLower)
+		if sc > 0 {
+			scoredResults = append(scoredResults, scored{entity: e, score: sc})
 		}
 	}
 
-	sortEntitiesByID(results)
+	// Sort by relevance score (descending), then by ID for stability
+	sort.SliceStable(scoredResults, func(i, j int) bool {
+		if scoredResults[i].score != scoredResults[j].score {
+			return scoredResults[i].score > scoredResults[j].score
+		}
+		return scoredResults[i].entity.ID < scoredResults[j].entity.ID
+	})
+
+	results := make([]*model.Entity, len(scoredResults))
+	for i, sr := range scoredResults {
+		results[i] = sr.entity
+	}
 	if limit > 0 && limit < len(results) {
 		results = results[:limit]
 	}
