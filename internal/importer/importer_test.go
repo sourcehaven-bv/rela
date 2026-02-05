@@ -17,6 +17,12 @@ import (
 func testMetamodel() *metamodel.Metamodel {
 	return &metamodel.Metamodel{
 		Version: "1.0",
+		Types: map[string]metamodel.CustomType{
+			"status": {
+				Values:  []string{"draft", "approved", "accepted", "rejected"},
+				Default: "draft",
+			},
+		},
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
 				Label:    "Requirement",

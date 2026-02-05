@@ -10,6 +10,12 @@ import (
 func TestValidateEntity_EmptyRequiredProperty(t *testing.T) {
 	// Bug PROP-002: Empty required property should only show one error, not two
 	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"status": {
+				Values:  []string{"draft", "proposed", "accepted"},
+				Default: "draft",
+			},
+		},
 		Entities: map[string]EntityDef{
 			"requirement": {
 				Label:    "Requirement",
@@ -441,6 +447,74 @@ func TestValidatePropertyValue_CustomType(t *testing.T) {
 	err = meta.ValidatePropertyValue("severity", propDef, 123)
 	if err == nil {
 		t.Error("expected error for non-string custom type")
+	}
+}
+
+func TestValidatePropertyValue_CustomStatusType(t *testing.T) {
+	// Bug #70: Custom type named "status" should override built-in status validation
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"status": {
+				Values:  []string{"draft", "review", "approved", "active", "completed", "on_hold", "superseded", "retired"},
+				Default: "draft",
+			},
+		},
+	}
+	propDef := &PropertyDef{Type: "status"}
+
+	// All custom values should be accepted
+	for _, val := range []string{"draft", "review", "approved", "active", "completed", "on_hold", "superseded", "retired"} {
+		err := meta.ValidatePropertyValue("status", propDef, val)
+		if err != nil {
+			t.Errorf("expected custom status value %q to be valid, got: %v", val, err)
+		}
+	}
+
+	// Values not in the custom type should be rejected
+	err := meta.ValidatePropertyValue("status", propDef, "proposed")
+	if err == nil {
+		t.Error("expected error for value not in custom status type")
+	}
+}
+
+func TestValidatePropertyValue_CustomPriorityType(t *testing.T) {
+	// Custom type named "priority" should override built-in priority validation
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"priority": {
+				Values:  []string{"p0", "p1", "p2", "p3"},
+				Default: "p2",
+			},
+		},
+	}
+	propDef := &PropertyDef{Type: "priority"}
+
+	// Custom values should be accepted
+	err := meta.ValidatePropertyValue("priority", propDef, "p1")
+	if err != nil {
+		t.Errorf("expected custom priority value to be valid, got: %v", err)
+	}
+
+	// Built-in values not in custom type should be rejected
+	err = meta.ValidatePropertyValue("priority", propDef, "high")
+	if err == nil {
+		t.Error("expected error for value not in custom priority type")
+	}
+}
+
+func TestValidatePropertyValue_UndeclaredStatusType(t *testing.T) {
+	// Using type "status" without declaring it in types section should error
+	meta := &Metamodel{
+		Types: map[string]CustomType{},
+	}
+	propDef := &PropertyDef{Type: "status"}
+
+	err := meta.ValidatePropertyValue("status", propDef, "draft")
+	if err == nil {
+		t.Error("expected error for undeclared status type")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "unknown type") {
+		t.Errorf("expected 'unknown type' in error, got: %v", err)
 	}
 }
 

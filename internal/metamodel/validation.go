@@ -215,65 +215,41 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 			}
 		}
 
-	case "status":
-		// Legacy built-in status type
-		if s, ok := val.(string); ok {
-			if !model.Status(s).IsValid() {
-				return &ValidationError{
-					Type:     ValidationErrorInvalidValue,
-					Property: propName,
-					Message:  fmt.Sprintf("Invalid status value: %s", s),
-				}
-			}
-		}
-
-	case "priority":
-		// Legacy built-in priority type
-		if p, ok := val.(string); ok {
-			if !model.Priority(p).IsValid() {
-				return &ValidationError{
-					Type:     ValidationErrorInvalidValue,
-					Property: propName,
-					Message:  fmt.Sprintf("Invalid priority value: %s", p),
-				}
-			}
-		}
-
 	default:
-		// Check if it's a custom type (enum defined in types section)
+		// Custom type (enum defined in types section)
 		if customType, ok := m.Types[propDef.Type]; ok {
-			s, ok := val.(string)
-			if !ok {
-				return &ValidationError{
-					Type:     ValidationErrorInvalidType,
-					Property: propName,
-					Message:  "Must be a string",
-				}
-			}
-			valid := false
-			for _, v := range customType.Values {
-				if v == s {
-					valid = true
-					break
-				}
-			}
-			if !valid {
-				return &ValidationError{
-					Type:     ValidationErrorInvalidValue,
-					Property: propName,
-					Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
-				}
-			}
-		} else {
-			return &ValidationError{
-				Type:     ValidationErrorUnknownType,
-				Property: propName,
-				Message:  fmt.Sprintf("Unknown type %q", propDef.Type),
-			}
+			return validateCustomTypeValue(propName, customType, val)
+		}
+		return &ValidationError{
+			Type:     ValidationErrorUnknownType,
+			Property: propName,
+			Message:  fmt.Sprintf("Unknown type %q", propDef.Type),
 		}
 	}
 
 	return nil
+}
+
+// validateCustomTypeValue validates a value against a custom type's allowed values.
+func validateCustomTypeValue(propName string, customType CustomType, val interface{}) *ValidationError {
+	s, ok := val.(string)
+	if !ok {
+		return &ValidationError{
+			Type:     ValidationErrorInvalidType,
+			Property: propName,
+			Message:  "Must be a string",
+		}
+	}
+	for _, v := range customType.Values {
+		if v == s {
+			return nil
+		}
+	}
+	return &ValidationError{
+		Type:     ValidationErrorInvalidValue,
+		Property: propName,
+		Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
+	}
 }
 
 // ParseDateValue parses a date string using the property's format.
