@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -15,6 +16,21 @@ import (
 
 // ErrTemplateNotFound is returned when a template file does not exist.
 var ErrTemplateNotFound = fmt.Errorf("template not found")
+
+// TemplateRelation represents a pre-filled relation in a template.
+type TemplateRelation struct {
+	Relation string `yaml:"relation"`
+	Target   string `yaml:"target"`
+}
+
+// EntityTemplate represents a parsed entity template with optional variant name.
+type EntityTemplate struct {
+	Name       string                 // "" for default, "epic" for --epic variant
+	EntityType string                 // The entity type this template is for
+	Properties map[string]interface{} // Property defaults (excludes _template_relations)
+	Content    string                 // Markdown body content
+	Relations  []TemplateRelation     // Pre-filled relations
+}
 
 // LoadEntityTemplate reads an entity template file and returns the parsed document.
 // Returns nil, nil if the template file does not exist.
@@ -36,6 +52,140 @@ func (f *FileIO) LoadRelationTemplate(ctx *project.Context, relationType string)
 		return nil, nil //nolint:nilnil // nil,nil is intentional when template doesn't exist
 	}
 	return doc, err
+}
+
+// DiscoverEntityTemplates returns all templates for an entity type, including variants.
+// Templates are discovered by looking for files matching:
+//   - <entityType>.md (default template)
+//   - <entityType>--<variant>.md (variant templates)
+//
+// Returns templates sorted by name (default first, then alphabetically).
+// Returns an empty slice if no templates exist (not an error).
+func (f *FileIO) DiscoverEntityTemplates(ctx *project.Context, entityType string) ([]*EntityTemplate, error) {
+	dir := ctx.EntityTemplatesDir
+
+	// Check if templates directory exists
+	if _, err := f.FS.Stat(dir); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	// Read directory entries
+	entries, err := f.FS.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read templates directory: %w", err)
+	}
+
+	templates := make([]*EntityTemplate, 0, len(entries))
+	prefix := entityType + "--"
+	defaultFile := entityType + ".md"
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".md") {
+			continue
+		}
+
+		var variantName string
+		switch {
+		case name == defaultFile:
+			variantName = "" // default template
+		case strings.HasPrefix(name, prefix):
+			// Extract variant name: requirement--epic.md -> epic
+			variantName = strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".md")
+		default:
+			continue // not a template for this entity type
+		}
+
+		// Load and parse the template
+		path := filepath.Join(dir, name)
+		tmpl, err := f.loadEntityTemplate(path, entityType, variantName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load template %s: %w", name, err)
+		}
+		templates = append(templates, tmpl)
+	}
+
+	// Sort: default first, then alphabetically by variant name
+	sort.Slice(templates, func(i, j int) bool {
+		// Default template (empty name) always comes first
+		if templates[i].Name == "" {
+			return true
+		}
+		if templates[j].Name == "" {
+			return false
+		}
+		return natsort.Less(templates[i].Name, templates[j].Name)
+	})
+
+	return templates, nil
+}
+
+// loadEntityTemplate loads a single entity template file and parses it into an EntityTemplate.
+func (f *FileIO) loadEntityTemplate(path, entityType, variantName string) (*EntityTemplate, error) {
+	content, err := f.FS.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read template: %w", err)
+	}
+
+	doc, err := ParseDocument(string(content))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse template: %w", err)
+	}
+
+	// Extract _template_relations from frontmatter
+	relations := extractTemplateRelations(doc.Frontmatter)
+
+	// Remove _template_relations from properties
+	properties := make(map[string]interface{})
+	for k, v := range doc.Frontmatter {
+		if k != "_template_relations" {
+			properties[k] = v
+		}
+	}
+
+	return &EntityTemplate{
+		Name:       variantName,
+		EntityType: entityType,
+		Properties: properties,
+		Content:    doc.Content,
+		Relations:  relations,
+	}, nil
+}
+
+// extractTemplateRelations parses the _template_relations field from frontmatter.
+func extractTemplateRelations(frontmatter map[string]interface{}) []TemplateRelation {
+	raw, ok := frontmatter["_template_relations"]
+	if !ok {
+		return nil
+	}
+
+	// _template_relations should be a list of maps with "relation" and "target" keys
+	list, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	var relations []TemplateRelation
+	for _, item := range list {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		rel := TemplateRelation{}
+		if r, ok := m["relation"].(string); ok {
+			rel.Relation = r
+		}
+		if t, ok := m["target"].(string); ok {
+			rel.Target = t
+		}
+		if rel.Relation != "" && rel.Target != "" {
+			relations = append(relations, rel)
+		}
+	}
+	return relations
 }
 
 // loadTemplate reads and parses a template file.
@@ -111,11 +261,13 @@ func ApplyRelationTemplate(relation *model.Relation, template *Document) {
 }
 
 // GenerateEntityTemplate creates a template file for an entity type.
+// If variant is non-empty, creates a variant template (e.g., type--variant.md).
 // Returns true if the file was created, false if it already existed (and force is false).
 func (f *FileIO) GenerateEntityTemplate(
 	ctx *project.Context,
 	meta *metamodel.Metamodel,
 	entityType string,
+	variant string,
 	force bool,
 ) (bool, error) {
 	entityDef, ok := meta.GetEntityDef(entityType)
@@ -123,7 +275,7 @@ func (f *FileIO) GenerateEntityTemplate(
 		return false, fmt.Errorf("unknown entity type: %s", entityType)
 	}
 
-	path := ctx.EntityTemplatePath(entityType)
+	path := ctx.EntityTemplateVariantPath(entityType, variant)
 
 	// Check if file exists
 	if !force {

@@ -141,9 +141,19 @@ func (c *Context) Exists(fs storage.FS) bool {
 	return err == nil
 }
 
-// EntityTemplatePath returns the file path for an entity type template
+// EntityTemplatePath returns the file path for an entity type template.
+// If variant is non-empty, returns the path for that variant (e.g., type--variant.md).
 func (c *Context) EntityTemplatePath(entityType string) string {
 	return filepath.Join(c.EntityTemplatesDir, entityType+".md")
+}
+
+// EntityTemplateVariantPath returns the file path for an entity template variant.
+// Variant templates use the naming convention: <type>--<variant>.md
+func (c *Context) EntityTemplateVariantPath(entityType, variant string) string {
+	if variant == "" {
+		return c.EntityTemplatePath(entityType)
+	}
+	return filepath.Join(c.EntityTemplatesDir, entityType+"--"+variant+".md")
 }
 
 // RelationTemplatePath returns the file path for a relation type template

@@ -223,7 +223,7 @@ func TestGenerateEntityTemplate(t *testing.T) {
 	}
 
 	// Generate template
-	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", false)
+	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestGenerateEntityTemplate_NoOverwrite(t *testing.T) {
 	}
 
 	// Try to generate without force
-	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", false)
+	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestGenerateEntityTemplate_ForceOverwrite(t *testing.T) {
 	}
 
 	// Generate with force
-	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", true)
+	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", "", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -343,9 +343,60 @@ func TestGenerateEntityTemplate_UnknownType(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{},
 	}
 
-	_, err := testIO.GenerateEntityTemplate(ctx, meta, "unknown", false)
+	_, err := testIO.GenerateEntityTemplate(ctx, meta, "unknown", "", false)
 	if err == nil {
 		t.Error("expected error for unknown entity type")
+	}
+}
+
+func TestGenerateEntityTemplate_Variant(t *testing.T) {
+	ctx := setupTestContext(t)
+
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"requirement": {
+				Label: "Requirement",
+				Properties: map[string]metamodel.PropertyDef{
+					"status": {Type: "status", Default: "draft"},
+				},
+			},
+		},
+		Types: map[string]metamodel.CustomType{
+			"status": {
+				Values:  []string{"draft", "proposed", "accepted"},
+				Default: "draft",
+			},
+		},
+	}
+
+	// Generate variant template
+	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", "epic", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !created {
+		t.Error("expected variant template to be created")
+	}
+
+	// Verify file exists at correct path (requirement--epic.md)
+	variantPath := ctx.EntityTemplateVariantPath("requirement", "epic")
+	if _, statErr := os.Stat(variantPath); os.IsNotExist(statErr) {
+		t.Error("variant template file should exist")
+	}
+
+	// Default template should NOT exist
+	defaultPath := ctx.EntityTemplatePath("requirement")
+	if _, statErr := os.Stat(defaultPath); !os.IsNotExist(statErr) {
+		t.Error("default template should not be created when generating variant")
+	}
+
+	// Verify content
+	content, err := os.ReadFile(variantPath)
+	if err != nil {
+		t.Fatalf("failed to read variant template: %v", err)
+	}
+	if len(content) == 0 {
+		t.Error("variant template content is empty")
 	}
 }
 
@@ -387,5 +438,219 @@ func TestGenerateRelationTemplate_UnknownType(t *testing.T) {
 	_, err := testIO.GenerateRelationTemplate(ctx, meta, "unknown", false)
 	if err == nil {
 		t.Error("expected error for unknown relation type")
+	}
+}
+
+func TestDiscoverEntityTemplates_NoTemplatesDir(t *testing.T) {
+	ctx := setupTestContext(t)
+
+	templates, err := testIO.DiscoverEntityTemplates(ctx, "requirement")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(templates) != 0 {
+		t.Errorf("expected 0 templates, got %d", len(templates))
+	}
+}
+
+func TestDiscoverEntityTemplates_DefaultOnly(t *testing.T) {
+	ctx := setupTestContext(t)
+
+	// Create templates directory and default template
+	if err := os.MkdirAll(ctx.EntityTemplatesDir, 0755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	templateContent := `---
+status: draft
+priority: high
+---
+# Default content
+`
+	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "requirement.md"), []byte(templateContent), 0644); err != nil {
+		t.Fatalf("failed to write template: %v", err)
+	}
+
+	templates, err := testIO.DiscoverEntityTemplates(ctx, "requirement")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(templates))
+	}
+
+	tmpl := templates[0]
+	if tmpl.Name != "" {
+		t.Errorf("default template Name = %q, want empty string", tmpl.Name)
+	}
+	if tmpl.EntityType != "requirement" {
+		t.Errorf("EntityType = %q, want %q", tmpl.EntityType, "requirement")
+	}
+	if tmpl.Properties["status"] != "draft" {
+		t.Errorf("status = %v, want %q", tmpl.Properties["status"], "draft")
+	}
+}
+
+func TestDiscoverEntityTemplates_WithVariants(t *testing.T) {
+	ctx := setupTestContext(t)
+
+	if err := os.MkdirAll(ctx.EntityTemplatesDir, 0755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	// Default template
+	defaultContent := `---
+status: draft
+---
+# Default
+`
+	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "requirement.md"), []byte(defaultContent), 0644); err != nil {
+		t.Fatalf("failed to write default template: %v", err)
+	}
+
+	// Epic variant
+	epicContent := `---
+status: proposed
+priority: high
+---
+# Epic template
+`
+	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "requirement--epic.md"), []byte(epicContent), 0644); err != nil {
+		t.Fatalf("failed to write epic template: %v", err)
+	}
+
+	// Checklist variant
+	checklistContent := `---
+status: draft
+---
+# Checklist
+- [ ] Item 1
+`
+	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "requirement--checklist.md"), []byte(checklistContent), 0644); err != nil {
+		t.Fatalf("failed to write checklist template: %v", err)
+	}
+
+	// Unrelated template (different entity type)
+	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "decision.md"), []byte("---\n---\n"), 0644); err != nil {
+		t.Fatalf("failed to write unrelated template: %v", err)
+	}
+
+	templates, err := testIO.DiscoverEntityTemplates(ctx, "requirement")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(templates) != 3 {
+		t.Fatalf("expected 3 templates, got %d", len(templates))
+	}
+
+	// Check order: default first, then alphabetically
+	if templates[0].Name != "" {
+		t.Errorf("first template should be default (empty name), got %q", templates[0].Name)
+	}
+	if templates[1].Name != "checklist" {
+		t.Errorf("second template should be 'checklist', got %q", templates[1].Name)
+	}
+	if templates[2].Name != "epic" {
+		t.Errorf("third template should be 'epic', got %q", templates[2].Name)
+	}
+
+	// Verify epic template properties
+	epic := templates[2]
+	if epic.Properties["priority"] != "high" {
+		t.Errorf("epic priority = %v, want %q", epic.Properties["priority"], "high")
+	}
+}
+
+func TestDiscoverEntityTemplates_WithRelations(t *testing.T) {
+	ctx := setupTestContext(t)
+
+	if err := os.MkdirAll(ctx.EntityTemplatesDir, 0755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	templateContent := `---
+status: draft
+_template_relations:
+  - relation: addresses
+    target: COMP-001
+  - relation: assigned-to
+    target: USER-042
+---
+# Template with relations
+`
+	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "requirement.md"), []byte(templateContent), 0644); err != nil {
+		t.Fatalf("failed to write template: %v", err)
+	}
+
+	templates, err := testIO.DiscoverEntityTemplates(ctx, "requirement")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(templates))
+	}
+
+	tmpl := templates[0]
+
+	// _template_relations should be extracted and removed from Properties
+	if _, exists := tmpl.Properties["_template_relations"]; exists {
+		t.Error("_template_relations should not be in Properties")
+	}
+
+	// Check relations were parsed
+	if len(tmpl.Relations) != 2 {
+		t.Fatalf("expected 2 relations, got %d", len(tmpl.Relations))
+	}
+
+	rel1 := tmpl.Relations[0]
+	if rel1.Relation != "addresses" || rel1.Target != "COMP-001" {
+		t.Errorf("relation 1 = {%q, %q}, want {addresses, COMP-001}", rel1.Relation, rel1.Target)
+	}
+
+	rel2 := tmpl.Relations[1]
+	if rel2.Relation != "assigned-to" || rel2.Target != "USER-042" {
+		t.Errorf("relation 2 = {%q, %q}, want {assigned-to, USER-042}", rel2.Relation, rel2.Target)
+	}
+}
+
+func TestExtractTemplateRelations_Empty(t *testing.T) {
+	frontmatter := map[string]interface{}{
+		"status": "draft",
+	}
+
+	relations := extractTemplateRelations(frontmatter)
+	if len(relations) != 0 {
+		t.Errorf("expected 0 relations, got %d", len(relations))
+	}
+}
+
+func TestExtractTemplateRelations_InvalidFormat(t *testing.T) {
+	// _template_relations is not a list
+	frontmatter := map[string]interface{}{
+		"_template_relations": "invalid",
+	}
+
+	relations := extractTemplateRelations(frontmatter)
+	if len(relations) != 0 {
+		t.Errorf("expected 0 relations for invalid format, got %d", len(relations))
+	}
+}
+
+func TestExtractTemplateRelations_PartialData(t *testing.T) {
+	// Some entries missing required fields
+	frontmatter := map[string]interface{}{
+		"_template_relations": []interface{}{
+			map[string]interface{}{"relation": "addresses"},                       // missing target
+			map[string]interface{}{"target": "COMP-001"},                          // missing relation
+			map[string]interface{}{"relation": "implements", "target": "REQ-001"}, // valid
+		},
+	}
+
+	relations := extractTemplateRelations(frontmatter)
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 valid relation, got %d", len(relations))
+	}
+	if relations[0].Relation != "implements" || relations[0].Target != "REQ-001" {
+		t.Errorf("relation = {%q, %q}, want {implements, REQ-001}", relations[0].Relation, relations[0].Target)
 	}
 }
