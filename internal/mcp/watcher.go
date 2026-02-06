@@ -62,7 +62,9 @@ func (w *Watcher) syncAndNotify() {
 	w.server.logger.Println("Graph re-synced from file changes")
 
 	// Notify MCP clients that resources have changed
-	w.server.mcp.SendNotificationToAllClients(
-		mcp.MethodNotificationResourcesListChanged, nil,
-	)
+	if w.server.mcp != nil {
+		w.server.mcp.SendNotificationToAllClients(
+			mcp.MethodNotificationResourcesListChanged, nil,
+		)
+	}
 }

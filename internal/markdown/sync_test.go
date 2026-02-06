@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -308,5 +310,35 @@ func TestSyncError_Error(t *testing.T) {
 	expected := "/path/to/file.md: something went wrong"
 	if got := err.Error(); got != expected {
 		t.Errorf("Error() = %q, want %q", got, expected)
+	}
+}
+
+func TestSyncFromFiles_LoadEntitiesError(t *testing.T) {
+	// Create an ErrorFS that returns an error on Walk
+	memFS := storage.NewMemFS()
+	errFS := storage.NewErrorFS(memFS)
+	errFS.WalkError = errors.New("permission denied")
+
+	errorIO := NewFileIO(errFS)
+
+	ctx := &project.Context{
+		Root:         "/test",
+		EntitiesDir:  "/test/entities",
+		RelationsDir: "/test/relations",
+	}
+
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"requirement": {Label: "Requirement"},
+		},
+	}
+	g := graph.New()
+
+	_, err := errorIO.SyncFromFiles(ctx, meta, g)
+	if err == nil {
+		t.Error("expected error from SyncFromFiles when LoadAllEntities fails")
+	}
+	if err.Error() != "permission denied" {
+		t.Errorf("error = %q, want 'permission denied'", err.Error())
 	}
 }

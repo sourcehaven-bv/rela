@@ -212,3 +212,226 @@ func TestChangeOp_String(t *testing.T) {
 		}
 	}
 }
+
+func TestWatcher_FileChangeEvents(t *testing.T) {
+	dir := t.TempDir()
+
+	eventsChan := make(chan []model.ChangeEvent, 10)
+
+	w, err := NewWatcher(WatchConfig{
+		Dirs:       []string{dir},
+		Extensions: []string{".md"},
+		Debounce:   50 * time.Millisecond,
+		OnChange: func(events []model.ChangeEvent) {
+			eventsChan <- events
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWatcher() error = %v", err)
+	}
+
+	go w.Start()
+	defer w.Stop()
+
+	// Give the watcher time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Create a file
+	testFile := filepath.Join(dir, "test.md")
+	if err := os.WriteFile(testFile, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for event
+	select {
+	case events := <-eventsChan:
+		if len(events) == 0 {
+			t.Error("expected at least one event")
+		}
+		found := false
+		for _, e := range events {
+			if e.Path == testFile {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected event for %s, got %v", testFile, events)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("timeout waiting for file create event")
+	}
+}
+
+func TestWatcher_IgnoresNonMatchingExtensions(t *testing.T) {
+	dir := t.TempDir()
+
+	eventsChan := make(chan []model.ChangeEvent, 10)
+
+	w, err := NewWatcher(WatchConfig{
+		Dirs:       []string{dir},
+		Extensions: []string{".md"},
+		Debounce:   50 * time.Millisecond,
+		OnChange: func(events []model.ChangeEvent) {
+			eventsChan <- events
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWatcher() error = %v", err)
+	}
+
+	go w.Start()
+	defer w.Stop()
+
+	// Give the watcher time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Create a non-matching file
+	testFile := filepath.Join(dir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should not receive event for .txt file
+	select {
+	case events := <-eventsChan:
+		// Check if any event is for our .txt file (shouldn't be)
+		for _, e := range events {
+			if e.Path == testFile {
+				t.Errorf("should not receive event for non-matching extension: %v", e)
+			}
+		}
+	case <-time.After(200 * time.Millisecond):
+		// Expected: no event for non-matching extension
+	}
+}
+
+func TestWatcher_AutoWatchesNewDirectories(t *testing.T) {
+	dir := t.TempDir()
+
+	eventsChan := make(chan []model.ChangeEvent, 10)
+
+	w, err := NewWatcher(WatchConfig{
+		Dirs:       []string{dir},
+		Extensions: []string{".md"},
+		Debounce:   50 * time.Millisecond,
+		OnChange: func(events []model.ChangeEvent) {
+			eventsChan <- events
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWatcher() error = %v", err)
+	}
+
+	go w.Start()
+	defer w.Stop()
+
+	// Give the watcher time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Create a new subdirectory
+	subDir := filepath.Join(dir, "subdir")
+	if err := os.Mkdir(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Give time for the directory to be watched
+	time.Sleep(150 * time.Millisecond)
+
+	// Create a file in the new subdirectory
+	testFile := filepath.Join(subDir, "test.md")
+	if err := os.WriteFile(testFile, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for event from the new subdirectory
+	select {
+	case events := <-eventsChan:
+		found := false
+		for _, e := range events {
+			if e.Path == testFile {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected event for %s in new subdir, got %v", testFile, events)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("timeout waiting for event from new subdirectory")
+	}
+}
+
+func TestWatcher_FileModifyAndDelete(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create file before starting watcher
+	testFile := filepath.Join(dir, "test.md")
+	if err := os.WriteFile(testFile, []byte("initial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	eventsChan := make(chan []model.ChangeEvent, 10)
+
+	w, err := NewWatcher(WatchConfig{
+		Dirs:       []string{dir},
+		Extensions: []string{".md"},
+		Debounce:   50 * time.Millisecond,
+		OnChange: func(events []model.ChangeEvent) {
+			eventsChan <- events
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWatcher() error = %v", err)
+	}
+
+	go w.Start()
+	defer w.Stop()
+
+	// Give the watcher time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Modify the file
+	if err := os.WriteFile(testFile, []byte("modified"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for modify event
+	select {
+	case events := <-eventsChan:
+		found := false
+		for _, e := range events {
+			if e.Path == testFile && e.Op == model.OpModify {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Logf("received events: %v (looking for MODIFY)", events)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("timeout waiting for file modify event")
+	}
+
+	// Delete the file
+	if err := os.Remove(testFile); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for delete event
+	select {
+	case events := <-eventsChan:
+		found := false
+		for _, e := range events {
+			if e.Path == testFile && e.Op == model.OpDelete {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Logf("received events: %v (looking for DELETE)", events)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("timeout waiting for file delete event")
+	}
+}
