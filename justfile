@@ -31,10 +31,11 @@ build-desktop:
 build: build-cli build-server build-desktop
 
 # Install CLI to ~/bin
-install: build-cli
-    @echo "Installing rela to ~/bin..."
+install: build-cli build-server
+    @echo "Installing rela and rela-server to ~/bin..."
     @mkdir -p ~/bin
     @install {{build_dir}}/rela ~/bin/rela
+    @install {{build_dir}}/rela-server ~/bin/rela-server
     @echo "Done! Make sure ~/bin is in your PATH."
 
 # Clean build artifacts
