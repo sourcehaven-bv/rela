@@ -373,8 +373,9 @@ When creating or updating entities in `rela-issues-and-design-tickets`:
 ### Validation Rules
 
 The metamodel includes validation rules that enforce:
+
 - In-progress bugs should have `why1` and `why2` started
-- Done bugs must have full 5-whys analysis (`why1`-`why3` required, `why4`-`why5` recommended) and `prevention`
+- Done bugs must have 5-whys analysis (`why1`-`why3` required) and `prevention`
 - Ready tickets need `effort`, `priority`, and `description`
 - Accepted decisions need `date`, `context`, and `consequences`
 
@@ -392,4 +393,5 @@ Bug tickets use the 5-whys method for root cause analysis:
 | `why4` | Why did that happen? |
 | `why5` | What is the systemic root cause? |
 
-Done bugs require at least 3 levels (why1-why3). The goal is to reach systemic causes that can be addressed with process/tooling improvements documented in `prevention`.
+Done bugs require at least 3 levels (why1-why3). The goal is to reach systemic causes
+that can be addressed with process/tooling improvements documented in `prevention`.
