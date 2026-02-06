@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -433,4 +434,13 @@ func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]
 	}
 
 	return sm, st
+}
+
+// templatesForType returns all entity templates for a type, or nil on error.
+func (a *App) templatesForType(entityType string) []*markdown.EntityTemplate {
+	templates, err := a.repo.DiscoverEntityTemplates(entityType)
+	if err != nil {
+		return nil
+	}
+	return templates
 }

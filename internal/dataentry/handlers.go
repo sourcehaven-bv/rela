@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
@@ -307,6 +308,27 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 
 	entDef, _ := a.meta.GetEntityDef(form.EntityType)
 
+	// Load templates (only relevant for create mode)
+	var templates []*markdown.EntityTemplate
+	var selectedTemplate *markdown.EntityTemplate
+	selectedTemplateName := r.URL.Query().Get("template")
+
+	if entityID == "" { // create mode
+		templates = a.templatesForType(form.EntityType)
+		// Find the selected template
+		for _, t := range templates {
+			if t.Name == selectedTemplateName {
+				selectedTemplate = t
+				break
+			}
+		}
+		// If no template selected and templates exist, use the first (default)
+		if selectedTemplate == nil && len(templates) > 0 {
+			selectedTemplate = templates[0]
+			selectedTemplateName = selectedTemplate.Name
+		}
+	}
+
 	// Resolve fields
 	type ResolvedField struct {
 		Property    string
@@ -336,12 +358,19 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		if a.userDefaults != nil {
 			userDefault = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
 		}
+		// Get template default if available
+		templateDefault := ""
+		if selectedTemplate != nil {
+			if val, ok := selectedTemplate.Properties[f.Property]; ok {
+				templateDefault = fmt.Sprintf("%v", val)
+			}
+		}
 		rf := ResolvedField{
 			Property:    f.Property,
 			Label:       coalesce(f.Label, titleCase(f.Property)),
 			Placeholder: f.Placeholder,
 			Help:        f.Help,
-			Default:     coalesce(userDefault, f.Default, prop.Default),
+			Default:     coalesce(userDefault, templateDefault, f.Default, prop.Default),
 			Hidden:      f.Hidden,
 			Widget:      resolveWidget(f.Widget, prop, a.meta),
 			Values:      resolvePropertyValues(prop, a.meta),
@@ -369,8 +398,12 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 	// Resolve body content
 	var bodyContent string
 	showBody := form.Body != nil && *form.Body
-	if showBody && entity != nil {
-		bodyContent = entity.Content
+	if showBody {
+		if entity != nil {
+			bodyContent = entity.Content
+		} else if selectedTemplate != nil && selectedTemplate.Content != "" {
+			bodyContent = selectedTemplate.Content
+		}
 	}
 
 	// Resolve relation fields
@@ -501,9 +534,19 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Prefill relation from user defaults (only when creating and not already selected).
+		// User defaults take precedence over template defaults.
 		if entity == nil && len(rr.Selected) == 0 && a.userDefaults != nil {
 			if defaultTarget := a.userDefaults.ResolveRelationDefault(form.EntityType, rel.Relation); defaultTarget != "" {
 				rr.Selected = append(rr.Selected, defaultTarget)
+			}
+		}
+
+		// Prefill relation from template (only when creating and not already selected).
+		if entity == nil && len(rr.Selected) == 0 && selectedTemplate != nil {
+			for _, tr := range selectedTemplate.Relations {
+				if tr.Relation == rel.Relation && tr.Target != "" {
+					rr.Selected = append(rr.Selected, tr.Target)
+				}
 			}
 		}
 
@@ -536,6 +579,30 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 	default:
 		backURL = "/"
 	}
+
+	// Build template options for the UI
+	type TemplateOption struct {
+		Name     string
+		Label    string
+		Selected bool
+	}
+	templateOptions := make([]TemplateOption, 0, len(templates))
+	for _, t := range templates {
+		label := t.Name
+		if label == "" {
+			label = "Default"
+		} else {
+			label = titleCase(t.Name)
+		}
+		templateOptions = append(templateOptions, TemplateOption{
+			Name:     t.Name,
+			Label:    label,
+			Selected: t.Name == selectedTemplateName,
+		})
+	}
+	showTemplates := len(templates) > 1
+	usePills := len(templates) <= 4
+
 	data := map[string]interface{}{
 		"App":               a.Cfg.App,
 		"Navigation":        a.navElements(activeList),
@@ -556,6 +623,10 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		"LinkAs":            r.URL.Query().Get("link_as"),
 		"IsHTMX":            r.Header.Get("HX-Request") == "true",
 		"SidePanelSections": sidePanelSections,
+		"Templates":         templateOptions,
+		"ShowTemplates":     showTemplates,
+		"UsePills":          usePills,
+		"SelectedTemplate":  selectedTemplateName,
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
@@ -1133,6 +1204,82 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 			} else {
 				a.g.AddEdge(relation)
 			}
+		}
+	}
+
+	// Create relations from template (templates apply even without explicit selection)
+	templateName := r.FormValue("_template")
+	templates := a.templatesForType(form.EntityType)
+	var selectedTemplate *markdown.EntityTemplate
+	for _, t := range templates {
+		if t.Name == templateName {
+			selectedTemplate = t
+			break
+		}
+	}
+	// If no specific template selected but templates exist, use default
+	if selectedTemplate == nil && len(templates) > 0 {
+		selectedTemplate = templates[0]
+	}
+
+	if selectedTemplate != nil {
+		// Create relations defined in the template that weren't already created
+		// via form relations (to avoid duplicates)
+		createdRelations := make(map[string]bool)
+		for _, edge := range a.g.OutgoingEdges(entityID) {
+			createdRelations[edge.Type+"->"+edge.To] = true
+		}
+		for _, edge := range a.g.IncomingEdges(entityID) {
+			createdRelations[edge.Type+"<-"+edge.From] = true
+		}
+
+		for _, tr := range selectedTemplate.Relations {
+			if tr.Target == "" {
+				continue
+			}
+			// Check if target entity exists
+			if _, exists := a.g.GetNode(tr.Target); !exists {
+				log.Printf("Template relation target %s not found, skipping", tr.Target)
+				continue
+			}
+
+			// Determine direction from metamodel
+			relDef, relOK := a.meta.GetRelationDef(tr.Relation)
+			if !relOK {
+				log.Printf("Unknown relation type %s in template, skipping", tr.Relation)
+				continue
+			}
+
+			// Determine if this entity is the source or target
+			isFrom := containsString(relDef.From, form.EntityType)
+			isTo := containsString(relDef.To, form.EntityType)
+
+			var fromID, toID, key string
+			switch {
+			case isFrom && !isTo:
+				fromID, toID = entityID, tr.Target
+				key = tr.Relation + "->" + tr.Target
+			case isTo && !isFrom:
+				fromID, toID = tr.Target, entityID
+				key = tr.Relation + "<-" + tr.Target
+			default:
+				// Ambiguous - assume outgoing
+				fromID, toID = entityID, tr.Target
+				key = tr.Relation + "->" + tr.Target
+			}
+
+			// Skip if already created
+			if createdRelations[key] {
+				continue
+			}
+
+			relation := model.NewRelation(fromID, tr.Relation, toID)
+			if err := a.repo.WriteRelation(relation); err != nil {
+				log.Printf("Failed to write template relation: %v", err)
+				continue
+			}
+			a.g.AddEdge(relation)
+			createdRelations[key] = true
 		}
 	}
 

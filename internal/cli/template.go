@@ -12,6 +12,7 @@ var (
 	templateForce     bool
 	templateEntities  bool
 	templateRelations bool
+	templateVariant   string
 )
 
 var templateCmd = &cobra.Command{
@@ -36,15 +37,17 @@ Without arguments, generates templates for all entity and relation types.
 With arguments, generates templates only for the specified types.
 
 Use --entities or --relations to filter by kind.
+Use --variant to create a named variant template (e.g., requirement--epic.md).
 Use --force to overwrite existing templates.
 
 Examples:
-  rela template init                    # Generate all templates
-  rela template init requirement        # Generate requirement template
-  rela template init addresses          # Generate addresses relation template
-  rela template init --entities         # Generate all entity templates
-  rela template init --relations        # Generate all relation templates
-  rela template init --force            # Overwrite existing templates`,
+  rela template init                         # Generate all templates
+  rela template init requirement             # Generate requirement template
+  rela template init addresses               # Generate addresses relation template
+  rela template init --entities              # Generate all entity templates
+  rela template init --relations             # Generate all relation templates
+  rela template init --force                 # Overwrite existing templates
+  rela template init requirement --variant epic  # Generate requirement--epic.md variant`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Collect types to generate
 		var entityTypes, relationTypes []string
@@ -86,16 +89,20 @@ Examples:
 
 		// Generate entity templates
 		for _, entityType := range entityTypes {
-			created, err := repo.GenerateEntityTemplate(meta, entityType, templateForce)
+			created, err := repo.GenerateEntityTemplate(meta, entityType, templateVariant, templateForce)
 			if err != nil {
 				return fmt.Errorf("failed to generate template for %s: %w", entityType, err)
 			}
+			filename := entityType + ".md"
+			if templateVariant != "" {
+				filename = entityType + "--" + templateVariant + ".md"
+			}
 			if created {
-				out.WriteSuccess("Created template: templates/entities/%s.md", entityType)
+				out.WriteSuccess("Created template: templates/entities/%s", filename)
 				createdCount++
 			} else {
 				if !quiet {
-					out.WriteInfo("Skipped (exists): templates/entities/%s.md", entityType)
+					out.WriteInfo("Skipped (exists): templates/entities/%s", filename)
 				}
 				skippedCount++
 			}
@@ -135,6 +142,7 @@ func init() {
 	templateInitCmd.Flags().BoolVar(&templateForce, "force", false, "Overwrite existing templates")
 	templateInitCmd.Flags().BoolVar(&templateEntities, "entities", false, "Only generate entity templates")
 	templateInitCmd.Flags().BoolVar(&templateRelations, "relations", false, "Only generate relation templates")
+	templateInitCmd.Flags().StringVar(&templateVariant, "variant", "", "Create a named variant template (e.g., --variant epic)")
 
 	templateCmd.AddCommand(templateInitCmd)
 	rootCmd.AddCommand(templateCmd)

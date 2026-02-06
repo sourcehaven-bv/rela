@@ -84,8 +84,11 @@ type Store interface {
 
 	LoadEntityTemplate(entityType string) (*markdown.Document, error)
 	LoadRelationTemplate(relationType string) (*markdown.Document, error)
-	GenerateEntityTemplate(meta *metamodel.Metamodel, entityType string, force bool) (bool, error)
+	GenerateEntityTemplate(meta *metamodel.Metamodel, entityType, variant string, force bool) (bool, error)
 	GenerateRelationTemplate(meta *metamodel.Metamodel, relationType string, force bool) (bool, error)
+	// DiscoverEntityTemplates returns all templates (including variants) for an entity type.
+	// Templates are named <type>.md (default) and <type>--<variant>.md (variants).
+	DiscoverEntityTemplates(entityType string) ([]*markdown.EntityTemplate, error)
 
 	// --- Path Helpers ---
 
@@ -280,11 +283,12 @@ func (r *Repository) LoadRelationTemplate(relationType string) (*markdown.Docume
 }
 
 // GenerateEntityTemplate generates a template file for the given entity type.
+// If variant is non-empty, creates a variant template (e.g., type--variant.md).
 // Returns true if a new template was created.
 func (r *Repository) GenerateEntityTemplate(
-	meta *metamodel.Metamodel, entityType string, force bool,
+	meta *metamodel.Metamodel, entityType, variant string, force bool,
 ) (bool, error) {
-	return r.fio.GenerateEntityTemplate(r.paths, meta, entityType, force)
+	return r.fio.GenerateEntityTemplate(r.paths, meta, entityType, variant, force)
 }
 
 // GenerateRelationTemplate generates a template file for the given relation type.
@@ -293,6 +297,11 @@ func (r *Repository) GenerateRelationTemplate(
 	meta *metamodel.Metamodel, relationType string, force bool,
 ) (bool, error) {
 	return r.fio.GenerateRelationTemplate(r.paths, meta, relationType, force)
+}
+
+// DiscoverEntityTemplates returns all templates (including variants) for an entity type.
+func (r *Repository) DiscoverEntityTemplates(entityType string) ([]*markdown.EntityTemplate, error) {
+	return r.fio.DiscoverEntityTemplates(r.paths, entityType)
 }
 
 // --- Change Notification ---

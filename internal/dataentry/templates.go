@@ -95,6 +95,13 @@ tbody tr:last-child td { border-bottom: none; }
 .btn-danger:hover { background: #fef2f2; }
 
 .form-card { padding: 28px; max-width: 820px; }
+.template-selector { margin-bottom: 16px; display: flex; align-items: center; gap: 12px; max-width: 820px; }
+.template-label { font-size: 13px; font-weight: 500; color: var(--text-muted); }
+.template-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+.template-pill { padding: 6px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-card); font-size: 13px; cursor: pointer; transition: all 0.15s; color: var(--text); }
+.template-pill:hover { border-color: var(--primary); color: var(--primary); }
+.template-pill.active { background: var(--primary); color: white; border-color: var(--primary); }
+.template-dropdown { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--bg-card); color: var(--text); }
 .form-desc { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
 .form-group { margin-bottom: 20px; }
 .form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
@@ -457,6 +464,16 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     evt.detail.shouldSwap = true;
     evt.detail.isError = false;
   }
+  // Destroy SlimSelect instances before swap to prevent orphaned elements
+  var target = evt.detail.target;
+  if (target) {
+    target.querySelectorAll('select').forEach(function(sel) {
+      if (sel._slimSelect) {
+        try { sel._slimSelect.destroy(); } catch(e) {}
+        sel._slimSelect = null;
+      }
+    });
+  }
 });
 document.addEventListener('htmx:afterSettle', function(evt) {
   enhanceSelects(evt.detail.target);
@@ -511,6 +528,39 @@ function confirmDelete(entityID, returnTo) {
     overlay.remove();
   });
 }
+
+// --- Template switching ---
+var _formDirty = false;
+document.addEventListener('input', function(e) {
+  if (e.target.closest('form.form-card form, .form-card form, form[hx-post]')) _formDirty = true;
+});
+document.addEventListener('htmx:beforeSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'content') _formDirty = false;
+});
+
+function switchTemplate(templateName) {
+  var formID = document.querySelector('input[name="_form_id"]');
+  if (!formID) return;
+  var url = '/form/' + formID.value + '?template=' + encodeURIComponent(templateName);
+  if (_formDirty && !confirm('Discard changes and switch template?')) return;
+  htmx.ajax('GET', url, {target: '#content', swap: 'innerHTML'}).then(function() {
+    history.pushState({}, '', url);
+  });
+}
+
+// Intercept pill button switches for dirty form warning
+document.addEventListener('htmx:confirm', function(e) {
+  var elt = e.detail.elt;
+  if (elt.classList.contains('template-pill') && !elt.classList.contains('active')) {
+    if (_formDirty) {
+      e.preventDefault();
+      if (confirm('Discard changes and switch template?')) {
+        _formDirty = false;
+        htmx.trigger(elt, 'htmx:confirm');
+      }
+    }
+  }
+});
 
 // --- Command execution ---
 var _cmdToasts = {};
@@ -1724,11 +1774,32 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
      hx-get="{{ .BackURL }}" hx-target="#content" hx-push-url="true">&larr; Back <kbd>Esc</kbd></a>
 </div>
 
+{{ if .ShowTemplates }}
+<div class="template-selector">
+  {{ if .UsePills }}
+  <div class="template-pills">
+    {{ range .Templates }}
+    <button type="button" class="template-pill{{ if .Selected }} active{{ end }}"
+            {{ if not .Selected }}hx-get="/form/{{ $.FormID }}?template={{ .Name }}" hx-target="#content" hx-push-url="true"{{ end }}>{{ .Label }}</button>
+    {{ end }}
+  </div>
+  {{ else }}
+  <label class="template-label">Template:</label>
+  <select class="template-dropdown" onchange="switchTemplate(this.value)">
+    {{ range .Templates }}
+    <option value="{{ .Name }}"{{ if .Selected }} selected{{ end }}>{{ .Label }}</option>
+    {{ end }}
+  </select>
+  {{ end }}
+</div>
+{{ end }}
+
 <div class="card form-card">
   <form {{ if eq .Mode "edit" }}hx-post="/api/update"{{ else }}hx-post="/api/create"{{ end }}
         hx-swap="none" novalidate>
     <input type="hidden" name="_form_id" value="{{ .FormID }}">
     <input type="hidden" name="_entity_id" value="{{ .EntityID }}">
+    <input type="hidden" name="_template" value="{{ .SelectedTemplate }}">
     {{ if .ReturnTo }}<input type="hidden" name="_return_to" value="{{ .ReturnTo }}">{{ end }}
     {{ if .LinkRelation }}<input type="hidden" name="_link_relation" value="{{ .LinkRelation }}">
     <input type="hidden" name="_link_peer" value="{{ .LinkPeer }}">
