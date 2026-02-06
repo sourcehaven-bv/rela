@@ -222,6 +222,68 @@ jobs:
           name: rela-linux
           path: bin/rela
 
+  rela-tickets:
+    name: Rela Tickets
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build rela
+        run: go build -o bin/rela ./cmd/rela
+
+      - name: Check for new bug or feature entity
+        run: |
+          set -euo pipefail
+          BASE_REF="${{ github.event.pull_request.base.sha }}"
+
+          # Get list of added entity files in this PR
+          ADDED_ENTITIES=$(git diff --name-only --diff-filter=A "${BASE_REF}"...HEAD -- \
+            'tickets/entities/bugs/*.md' \
+            'tickets/entities/features/*.md' \
+            'tickets/entities/tickets/*.md' || true)
+
+          if [[ -z "$ADDED_ENTITIES" ]]; then
+            echo ""
+            echo "ERROR: PR must include a new bug, feature, or ticket entity in tickets/entities/"
+            echo ""
+            echo "Create one with:"
+            echo "  rela create bug --project tickets -t 'Title'"
+            echo "  rela create feature --project tickets -t 'Title'"
+            echo "  rela create ticket --project tickets -t 'Title'"
+            exit 1
+          fi
+
+          echo "Found new entities:"
+          echo "$ADDED_ENTITIES"
+
+      - name: Run rela analyze
+        run: |
+          set -euo pipefail
+          cd tickets
+
+          echo "Running cardinality check..."
+          ../bin/rela analyze cardinality
+
+          echo "Running orphans check..."
+          ../bin/rela analyze orphans
+
+          echo "Running properties check..."
+          ../bin/rela analyze properties
+
+          echo "Running validations check..."
+          ../bin/rela analyze validations
+
+          echo ""
+          echo "All rela checks passed!"
+
   docs:
     name: Docs
     runs-on: ubuntu-latest

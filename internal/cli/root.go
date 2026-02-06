@@ -117,7 +117,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "table", "Output format (table, json)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Quiet output")
-	rootCmd.PersistentFlags().StringVarP(&projectPath, "project", "p", "", "Project directory (default: auto-detect from cwd, or RELA_PROJECT env var)")
+	rootCmd.PersistentFlags().StringVar(&projectPath, "project", "", "Project directory (default: auto-detect from cwd, or RELA_PROJECT env var)")
 
 	// Add version command
 	rootCmd.AddCommand(&cobra.Command{

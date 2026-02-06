@@ -3,6 +3,10 @@
     "rela-docs": {
       "command": "bash",
       "args": ["-c", "cd docs-project && exec rela mcp"]
+    },
+    "rela-issues-and-design-tickets": {
+      "command": "bash",
+      "args": ["-c", "cd tickets && exec rela mcp"]
     }
   }
 }
