@@ -43,13 +43,15 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); line
 .sidebar nav .nav-group-items a { padding-left: 40px; }
 
 .main { margin-left: 240px; flex: 1; padding: 32px; max-width: 1100px; }
-.page-header { margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; }
+.page-header { position: sticky; top: 0; z-index: 50; background: var(--bg); padding: 12px 0; margin: -12px 0 16px 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
 .page-header h2 { font-size: 22px; font-weight: 700; }
 .page-header p { color: var(--text-muted); font-size: 14px; margin-top: 2px; }
 
 .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 
-.filter-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+.filter-bar-sentinel { height: 1px; margin: 0; visibility: hidden; }
+.filter-bar { position: sticky; top: 57px; z-index: 40; background: var(--bg); padding: 8px 0 12px 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+.filter-bar.is-stuck { border-bottom: 1px solid var(--border); box-shadow: 0 2px 4px rgba(0,0,0,0.04); }
 .filter-bar label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
 .filter-bar select, .filter-bar input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: var(--font); background: var(--bg-card); min-width: 140px; }
 
@@ -228,7 +230,7 @@ tbody tr:last-child td { border-bottom: none; }
 html { scroll-behavior: smooth; }
 thead th.sortable { user-select: none; }
 .sort-indicator { font-size: 10px; margin-left: 2px; opacity: 0.7; }
-.jump-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 20px; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); }
+.jump-bar { position: sticky; top: 57px; z-index: 40; display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 20px; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 2px 4px rgba(0,0,0,0.04); }
 .jump-link { font-size: 13px; color: var(--primary); text-decoration: none; padding: 2px 10px; border-radius: 9999px; transition: all 0.15s; }
 .jump-link:hover { background: var(--primary-light); }
 .nav-count { margin-left: auto; font-size: 11px; color: rgba(255,255,255,0.4); font-weight: 400; }
@@ -371,6 +373,19 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'ArrowLeft') { var btn = nav.querySelector('a.scope-nav-btn'); if (btn) btn.click(); }
   if (e.key === 'ArrowRight') { var btns = nav.querySelectorAll('a.scope-nav-btn'); if (btns.length > 0) btns[btns.length-1].click(); }
 });
+
+// Sticky detection for filter-bar
+(function() {
+  var filterBar = document.querySelector('.filter-bar');
+  if (!filterBar) return;
+  var sentinel = document.createElement('div');
+  sentinel.className = 'filter-bar-sentinel';
+  filterBar.parentNode.insertBefore(sentinel, filterBar);
+  var observer = new IntersectionObserver(function(entries) {
+    filterBar.classList.toggle('is-stuck', !entries[0].isIntersecting);
+  }, { threshold: 0, rootMargin: '-58px 0px 0px 0px' });
+  observer.observe(sentinel);
+})();
 
 // Mermaid diagram rendering
 if (typeof mermaid !== 'undefined') {
