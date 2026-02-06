@@ -340,3 +340,56 @@ Place temporary working documents in the `.ignored/` directory:
 - Scratch notes
 
 This directory is gitignored. Never commit design docs, tickets, or reports to the repository.
+
+## Rela for Planning & Issue Tracking
+
+This project uses two rela instances via MCP for design and issue tracking:
+
+- **rela-docs**: Documentation entities (concepts, features, guides, tutorials, scenarios)
+- **rela-issues-and-design-tickets**: Issue tracking (tickets, features, decisions, concepts, risks, measures, tests)
+
+### Workflow for Creating Tickets/Entities
+
+When creating or updating entities in `rela-issues-and-design-tickets`:
+
+1. **Create the entity** with required properties
+2. **Run ALL analyze tools** to check for issues:
+   - `analyze_cardinality` - check required relations
+   - `analyze_orphans` - find unlinked entities
+   - `analyze_properties` - validate property values
+   - `analyze_validations` - run custom validation rules
+3. **Fix any violations** (create missing relations, add required properties, etc.)
+4. **Repeat analysis until ALL checks pass** - do not stop after fixing one issue
+
+### Common Required Relations
+
+| Entity Type | Required Relations |
+|-------------|-------------------|
+| ticket | `affects` → concept (min 1), `implements` → feature (min 1) |
+| feature | `requires` → concept (min 1) |
+| test-case/test-suite | `test-covers` → concept (min 1), `verifies` → feature/ticket (min 1) |
+| doc-task | `affects` → concept (min 1), `triggered-by` → ticket/feature/decision (min 1), `updates` → guide/tutorial/scenario (min 1) |
+
+### Validation Rules
+
+The metamodel includes validation rules that enforce:
+- In-progress bugs should have `why1` and `why2` started
+- Done bugs must have full 5-whys analysis (`why1`-`why3` required, `why4`-`why5` recommended) and `prevention`
+- Ready tickets need `effort`, `priority`, and `description`
+- Accepted decisions need `date`, `context`, and `consequences`
+
+Always run `analyze_validations` to catch these issues.
+
+### 5-Whys for Bug Analysis
+
+Bug tickets use the 5-whys method for root cause analysis:
+
+| Property | Purpose |
+|----------|---------|
+| `why1` | What was the immediate cause? |
+| `why2` | Why did that happen? |
+| `why3` | Why did that happen? |
+| `why4` | Why did that happen? |
+| `why5` | What is the systemic root cause? |
+
+Done bugs require at least 3 levels (why1-why3). The goal is to reach systemic causes that can be addressed with process/tooling improvements documented in `prevention`.

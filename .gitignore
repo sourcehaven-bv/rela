@@ -18,7 +18,6 @@ QA-SUMMARY-*.md
 BUG-FIX-*.md
 *-BUGFIXES.md
 test-tui*.sh
-tickets/
 other-ci.yml
 .claude/
 .ignored/
