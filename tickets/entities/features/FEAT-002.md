@@ -18,11 +18,13 @@ status: in-progress
 ## Implementation
 
 ### CSS Changes (templates.go)
+
 - `.page-header`: `position: sticky; top: 0`
 - `.filter-bar`: `position: sticky; top: 57px`
 - `.filter-bar.is-stuck`: border + shadow styles
 - `.jump-bar`: `position: sticky; top: 57px`
 
 ### JavaScript
+
 - IntersectionObserver watches a sentinel div inserted before filter-bar
 - Toggles `is-stuck` class when sentinel leaves viewport
