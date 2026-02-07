@@ -1376,6 +1376,9 @@ document.addEventListener('click', function(e) {
       if (isShortcutsOpen()) { toggleShortcuts(); return; }
       if (hasSearchResultSelected()) { exitSearchResults(); return; }
       if (isInputFocused()) { document.activeElement.blur(); return; }
+      // On scope nav — click the Back button (first link in scope-nav)
+      var scopeBackBtn = document.querySelector('.scope-nav a.scope-nav-btn');
+      if (scopeBackBtn) { scopeBackBtn.click(); return; }
       // On form, entity detail, or view pages — click the Back/Cancel button
       var backBtn = document.querySelector('#content .btn-secondary[hx-get]');
       if (backBtn) backBtn.click();
@@ -2317,10 +2320,11 @@ function closeSidePanel() {
 {{- define "scope-nav" -}}
 {{ if .Scope }}
 <div class="scope-nav">
+  <a href="{{ .Scope.BackURL }}" hx-get="{{ .Scope.BackURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">&larr; Back <kbd>Esc</kbd></a>
   {{ if .Scope.PrevURL }}
-  <a href="{{ .Scope.PrevURL }}" hx-get="{{ .Scope.PrevURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">&larr; Prev</a>
+  <a href="{{ .Scope.PrevURL }}" hx-get="{{ .Scope.PrevURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">Prev</a>
   {{ else }}
-  <span class="scope-nav-disabled">&larr; Prev</span>
+  <span class="scope-nav-disabled">Prev</span>
   {{ end }}
   <span class="scope-nav-progress">{{ .Scope.Progress }}</span>
   <span class="scope-nav-label">{{ .Scope.Label }}</span>

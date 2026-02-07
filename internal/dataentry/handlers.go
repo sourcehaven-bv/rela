@@ -744,7 +744,10 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 
 	entityActiveList := a.resolveActiveList(entity.Type, r)
 	backURL := "/"
-	if entityActiveList != "" {
+	if scope := r.URL.Query().Get("scope"); strings.HasPrefix(scope, "search:") {
+		query := strings.TrimPrefix(scope, "search:")
+		backURL = "/search?q=" + url.QueryEscape(query)
+	} else if entityActiveList != "" {
 		backURL = "/list/" + entityActiveList
 	}
 	data := map[string]interface{}{

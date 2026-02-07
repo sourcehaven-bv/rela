@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -592,6 +593,7 @@ type ScopeNav struct {
 	NextURL  string // URL for next entity (empty if at last)
 	Progress string // e.g. "[3/12]"
 	Label    string // e.g. "12 tickets" or "5 results for 'auth'"
+	BackURL  string // URL to return to the list/search
 }
 
 // resolveScope parses the "scope" query parameter and reconstructs the ordered
@@ -605,6 +607,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 
 	var ids []string
 	var label string
+	var backURL string
 
 	switch {
 	case strings.HasPrefix(scope, "list:"):
@@ -642,6 +645,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 			ids[i] = e.ID
 		}
 		label = fmt.Sprintf("%d %s", len(ids), list.Title)
+		backURL = "/list/" + listID
 
 	case strings.HasPrefix(scope, "search:"):
 		query := strings.TrimPrefix(scope, "search:")
@@ -656,6 +660,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 			displayQuery = displayQuery[:30] + "..."
 		}
 		label = fmt.Sprintf("%d results for \"%s\"", len(ids), displayQuery)
+		backURL = "/search?q=" + url.QueryEscape(query)
 
 	default:
 		return nil
@@ -676,6 +681,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 	nav := &ScopeNav{
 		Progress: fmt.Sprintf("[%d/%d]", idx+1, len(ids)),
 		Label:    label,
+		BackURL:  backURL,
 	}
 
 	// Build prev/next URLs by swapping the entity ID in the path
