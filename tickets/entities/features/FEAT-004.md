@@ -1,6 +1,6 @@
 ---
 id: FEAT-004
 status: proposed
-title: Dark mode support
+title: Add back button to search results in data entry
 type: feature
 ---
