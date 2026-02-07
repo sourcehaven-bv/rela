@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -68,6 +69,47 @@ func (a *App) StartWatching() (stop func(), err error) {
 		a.reload(events)
 		a.broker.broadcast("refresh")
 	})
+}
+
+// StartGitFetch begins periodic git fetch in the background.
+// Returns a stop function to shut down the fetcher.
+//
+// coverage-ignore: background goroutine with timer
+func (a *App) StartGitFetch() (stop func()) {
+	a.mu.RLock()
+	gitOps := a.gitOps
+	cfg := a.Cfg.Git
+	a.mu.RUnlock()
+
+	if gitOps == nil || cfg == nil || cfg.FetchInterval <= 0 {
+		return func() {} // no-op if git not configured or fetch disabled
+	}
+
+	interval := time.Duration(cfg.FetchInterval) * time.Second
+	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				if err := gitOps.Fetch(); err != nil {
+					log.Printf("Git fetch error: %v", err)
+				} else {
+					// Broadcast git status update so UI can refresh
+					a.broker.broadcast("git")
+				}
+			case <-done:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
+	log.Printf("Git background fetch started (every %v)", interval)
+	return func() {
+		close(done)
+	}
 }
 
 // reload re-syncs the graph and optionally reloads metamodel/config when

@@ -38,9 +38,9 @@ const allTemplates = `
   --warning: #fbbf24; --warning-light: rgba(251,191,36,0.15); --warning-text: #fbbf24;
   --shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
-body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.6; display: flex; min-height: 100vh; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.6; display: flex; min-height: 100vh; padding-bottom: 36px; }
 
-.sidebar { width: 240px; background: var(--bg-sidebar); position: fixed; top: 0; left: 0; bottom: 0; overflow-y: auto; z-index: 100; display: flex; flex-direction: column; }
+.sidebar { width: 240px; background: var(--bg-sidebar); position: fixed; top: 0; left: 0; bottom: 36px; overflow-y: auto; z-index: 100; display: flex; flex-direction: column; }
 .sidebar-header { padding: 20px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.1); }
 .sidebar-header h1 { font-size: 16px; font-weight: 700; color: #fff; }
 .sidebar-header p { font-size: 12px; color: var(--text-sidebar); margin-top: 4px; }
@@ -361,10 +361,22 @@ kbd + kbd { margin-left: 2px; }
 tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); outline-offset: -2px; }
 #search-results .card.result-selected { outline: 2px solid var(--primary); outline-offset: -2px; background: var(--primary-light); }
 
-/* Sidebar footer */
-.sidebar-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.1); margin-top: auto; }
-.sidebar-footer a, .sidebar-footer button { display: flex; align-items: center; gap: 6px; padding: 4px 0; background: none; border: none; color: var(--text-sidebar); font-size: 13px; cursor: pointer; font-family: var(--font); text-decoration: none; transition: color 0.15s; }
-.sidebar-footer a:hover, .sidebar-footer button:hover { color: var(--text-sidebar-active); }
+/* Status bar */
+.status-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 36px; background: var(--bg-sidebar); border-top: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; z-index: 150; }
+.status-bar-left, .status-bar-right { display: flex; align-items: center; gap: 16px; }
+.status-bar a, .status-bar button { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: none; border: none; color: var(--text-sidebar); font-size: 13px; cursor: pointer; font-family: var(--font); text-decoration: none; transition: all 0.15s; border-radius: 4px; }
+.status-bar a:hover, .status-bar button:hover { color: var(--text-sidebar-active); background: var(--bg-sidebar-hover); }
+.status-bar .git-status { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 4px; font-size: 13px; color: var(--text-sidebar); cursor: pointer; transition: all 0.15s; }
+.status-bar .git-status:hover { background: var(--bg-sidebar-hover); color: var(--text-sidebar-active); }
+.status-bar .git-status.has-changes { color: #fbbf24; }
+.status-bar .git-status.has-remote { color: #60a5fa; }
+.status-bar .git-status.has-both { color: #fbbf24; }
+.status-bar .git-status.conflict { color: #f87171; }
+.status-bar .git-branch { font-family: var(--font-mono); font-size: 12px; opacity: 0.7; }
+.status-bar .git-indicator { display: flex; align-items: center; gap: 6px; }
+.status-bar .git-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status-bar .git-spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Command palette */
 .cmd-palette-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; display: flex; align-items: flex-start; justify-content: center; padding-top: 15vh; animation: fadeIn 0.1s; }
@@ -383,6 +395,27 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
 .cmd-palette-shortcut { display: flex; gap: 3px; }
 .cmd-palette-footer { padding: 8px 16px; border-top: 1px solid var(--border); display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Sync modal */
+.sync-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 600; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.15s; }
+.sync-modal { background: var(--bg-card); border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,0.25); width: 400px; max-width: 90vw; }
+.sync-modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.sync-modal-header h3 { font-size: 16px; font-weight: 600; }
+.sync-modal-close { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--text-muted); padding: 4px 8px; border-radius: 4px; }
+.sync-modal-close:hover { background: var(--bg); color: var(--text); }
+.sync-modal-body { padding: 20px; }
+.sync-info { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size: 14px; margin-bottom: 16px; }
+.sync-info-label { color: var(--text-muted); }
+.sync-info-value { font-weight: 500; }
+.sync-info-value.changes { color: #f59e0b; }
+.sync-info-value.remote { color: #3b82f6; }
+.sync-progress { padding: 12px 16px; background: var(--bg); border-radius: 8px; display: flex; align-items: center; gap: 12px; font-size: 14px; color: var(--text-muted); }
+.sync-progress .sync-spinner { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
+.sync-error { padding: 12px 16px; background: var(--danger-light); border: 1px solid var(--danger-border); border-radius: 8px; color: var(--danger); font-size: 14px; margin-bottom: 16px; }
+.sync-error-title { font-weight: 600; margin-bottom: 4px; }
+.sync-error-files { font-family: var(--font-mono); font-size: 12px; margin-top: 8px; padding-left: 16px; }
+.sync-success { padding: 12px 16px; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3); border-radius: 8px; color: #16a34a; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.sync-modal-footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
 
 /* Shortcuts help modal */
 .shortcuts-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.1s; }
@@ -1103,6 +1136,8 @@ document.addEventListener('click', function(e) {
     document.body.appendChild(banner);
   }
   function onRefresh() {
+    // Refresh git status when files change
+    if (typeof refreshGitStatus === 'function') refreshGitStatus();
     if (isOnForm()) {
       showUpdateBanner();
     } else {
@@ -1112,6 +1147,10 @@ document.addEventListener('click', function(e) {
   function connect() {
     es = new EventSource('/api/events');
     es.addEventListener('refresh', onRefresh);
+    es.addEventListener('git', function() {
+      // Refresh git status in UI when background fetch completes
+      if (typeof refreshGitStatus === 'function') refreshGitStatus();
+    });
     es.onopen = function() { reconnectDelay = 1000; };
     es.onerror = function() {
       es.close();
@@ -1521,6 +1560,161 @@ document.addEventListener('click', function(e) {
   window._toggleShortcuts = toggleShortcuts;
   window._enterSearchResults = enterSearchResults;
 
+  // --- Git Sync Modal ---
+  var _syncModal = null;
+  var _syncState = { syncing: false };
+
+  function createSyncModal() {
+    if (_syncModal) return;
+    var overlay = document.createElement('div');
+    overlay.className = 'sync-modal-overlay';
+    overlay.id = 'sync-modal';
+    overlay.style.display = 'none';
+    overlay.innerHTML =
+      '<div class="sync-modal">' +
+        '<div class="sync-modal-header">' +
+          '<h3>Sync Changes</h3>' +
+          '<button class="sync-modal-close" onclick="closeSyncModal()">&times;</button>' +
+        '</div>' +
+        '<div class="sync-modal-body">' +
+          '<div class="sync-info">' +
+            '<span class="sync-info-label">Branch:</span>' +
+            '<span class="sync-info-value" id="sync-branch">main</span>' +
+            '<span class="sync-info-label">Local changes:</span>' +
+            '<span class="sync-info-value" id="sync-local">0</span>' +
+            '<span class="sync-info-label">Remote updates:</span>' +
+            '<span class="sync-info-value" id="sync-remote">0</span>' +
+          '</div>' +
+          '<div id="sync-status"></div>' +
+        '</div>' +
+        '<div class="sync-modal-footer">' +
+          '<button class="btn btn-secondary" id="sync-cancel-btn" onclick="closeSyncModal()">Cancel</button>' +
+          '<button class="btn btn-primary" id="sync-now-btn" onclick="doSync()">Sync Now</button>' +
+        '</div>' +
+      '</div>';
+    overlay.addEventListener('click', function(e) { if (e.target === overlay && !_syncState.syncing) closeSyncModal(); });
+    document.body.appendChild(overlay);
+    _syncModal = overlay;
+  }
+
+  function openSyncModal() {
+    createSyncModal();
+    _syncModal.style.display = '';
+    document.getElementById('sync-status').innerHTML = '';
+    document.getElementById('sync-now-btn').disabled = false;
+    document.getElementById('sync-cancel-btn').disabled = false;
+    refreshGitStatus(true);
+  }
+
+  function closeSyncModal() {
+    if (_syncState.syncing) return;
+    if (_syncModal) _syncModal.style.display = 'none';
+  }
+
+  function doSync() {
+    if (_syncState.syncing) return;
+    _syncState.syncing = true;
+    document.getElementById('sync-now-btn').disabled = true;
+    document.getElementById('sync-cancel-btn').disabled = true;
+    document.getElementById('sync-status').innerHTML =
+      '<div class="sync-progress"><div class="sync-spinner"></div><span>Syncing...</span></div>';
+
+    fetch('/api/git/sync', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        _syncState.syncing = false;
+        if (data.error) {
+          var html = '<div class="sync-error"><div class="sync-error-title">Sync failed</div>' + escapeHtml(data.error);
+          if (data.conflict_files && data.conflict_files.length) {
+            html += '<ul class="sync-error-files">';
+            data.conflict_files.forEach(function(f) { html += '<li>' + escapeHtml(f) + '</li>'; });
+            html += '</ul>';
+          }
+          html += '</div>';
+          document.getElementById('sync-status').innerHTML = html;
+          document.getElementById('sync-cancel-btn').disabled = false;
+          document.getElementById('sync-now-btn').textContent = 'Retry';
+          document.getElementById('sync-now-btn').disabled = false;
+        } else {
+          document.getElementById('sync-status').innerHTML =
+            '<div class="sync-success">&#10003; Synced successfully</div>';
+          setTimeout(function() {
+            closeSyncModal();
+            refreshGitStatus();
+          }, 1500);
+        }
+      })
+      .catch(function(err) {
+        _syncState.syncing = false;
+        document.getElementById('sync-status').innerHTML =
+          '<div class="sync-error"><div class="sync-error-title">Network error</div>' + escapeHtml(err.message) + '</div>';
+        document.getElementById('sync-cancel-btn').disabled = false;
+        document.getElementById('sync-now-btn').disabled = false;
+      });
+  }
+
+  function refreshGitStatus(updateModal) {
+    fetch('/api/git/status')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.available) return;
+        var btn = document.getElementById('git-status-btn');
+        var branchEl = document.getElementById('git-branch');
+        var textEl = document.getElementById('git-status-text');
+        if (branchEl) branchEl.textContent = data.branch || 'main';
+
+        var statusParts = [];
+        var statusClass = '';
+        if (data.remote_ahead > 0) {
+          statusParts.push('↓' + data.remote_ahead);
+          statusClass = 'has-remote';
+        }
+        if (data.local_changes > 0) {
+          statusParts.push(data.local_changes + ' changes');
+          statusClass = data.remote_ahead > 0 ? 'has-both' : 'has-changes';
+        }
+        if (data.conflict) {
+          statusParts = ['Conflict'];
+          statusClass = 'conflict';
+        }
+        if (statusParts.length === 0) {
+          statusParts.push('Synced');
+        }
+        if (textEl) textEl.textContent = statusParts.join(' · ');
+        if (btn) {
+          btn.className = 'git-status' + (statusClass ? ' ' + statusClass : '');
+        }
+
+        if (updateModal && _syncModal && _syncModal.style.display !== 'none') {
+          document.getElementById('sync-branch').textContent = data.branch || 'main';
+          var localEl = document.getElementById('sync-local');
+          localEl.textContent = data.local_changes || 0;
+          localEl.className = 'sync-info-value' + (data.local_changes > 0 ? ' changes' : '');
+          var remoteEl = document.getElementById('sync-remote');
+          remoteEl.textContent = data.remote_ahead || 0;
+          remoteEl.className = 'sync-info-value' + (data.remote_ahead > 0 ? ' remote' : '');
+        }
+      })
+      .catch(function() {});
+  }
+
+  function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  window.openSyncModal = openSyncModal;
+  window.closeSyncModal = closeSyncModal;
+  window.doSync = doSync;
+  window.refreshGitStatus = refreshGitStatus;
+
+  // Initial git status check and periodic refresh
+  if (document.getElementById('git-status-btn')) {
+    refreshGitStatus();
+    setInterval(refreshGitStatus, 30000); // Check every 30s
+  }
+
   // --- Main keyboard handler ---
   document.addEventListener('keydown', function(e) {
     // Cmd/Ctrl+K: command palette (works always, even in inputs)
@@ -1890,12 +2084,25 @@ document.addEventListener('keydown', function(e) {
     {{ end }}
     {{ end }}
   </nav>
-  <div class="sidebar-footer">
+</aside>
+<div class="status-bar">
+  <div class="status-bar-left">
     <a href="/settings"{{ if eq $.ActiveList "_settings" }} class="active"{{ end }}
        hx-get="/settings" hx-target="#content" hx-push-url="true">&#9881; Settings</a>
+  </div>
+  <div class="status-bar-right">
+    {{ if .GitEnabled }}
+    <button class="git-status" id="git-status-btn" onclick="openSyncModal()" title="Sync with remote">
+      <span class="git-branch" id="git-branch">{{ .GitBranch }}</span>
+      <span class="git-indicator" id="git-indicator">
+        <span class="git-dot"></span>
+        <span id="git-status-text">Synced</span>
+      </span>
+    </button>
+    {{ end }}
     <button onclick="_toggleShortcuts()"><kbd>?</kbd> Shortcuts</button>
   </div>
-</aside>
+</div>
 <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
   <span class="icon-sun">&#9788;</span>
   <span class="icon-moon">&#9790;</span>

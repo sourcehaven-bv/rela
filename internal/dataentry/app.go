@@ -13,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -44,6 +45,8 @@ type App struct {
 	styledTypes map[string]bool
 	// userDefaults holds the loaded user defaults (nil if not yet loaded or no file).
 	userDefaults *UserDefaults
+	// gitOps provides git operations when git is enabled.
+	gitOps *git.Ops
 	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
 	// during live-reload. Handlers acquire RLock; reload acquires Lock.
 	mu sync.RWMutex
@@ -115,6 +118,13 @@ func NewApp(repo repository.Store) (*App, error) {
 		broker:      newEventBroker(),
 	}
 	app.userDefaults = app.loadUserDefaults()
+
+	// Initialize git ops if enabled and repo is a git repository
+	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(repo.Paths().Root) {
+		app.gitOps = git.NewOps(repo.Paths().Root, *cfg.Git)
+		log.Printf("Git sync enabled (mode: %s)", cfg.Git.Mode)
+	}
+
 	return app, nil
 }
 
@@ -141,6 +151,26 @@ type NavGroup struct {
 type NavElement struct {
 	Item  *NavItem
 	Group *NavGroup
+}
+
+// gitTemplateData returns git-related fields for templates.
+// Returns GitEnabled=true and GitBranch if git is configured.
+func (a *App) gitTemplateData() (enabled bool, branch string) {
+	if a.gitOps == nil {
+		return false, ""
+	}
+	status, err := a.gitOps.GetStatus()
+	if err != nil || !status.Available {
+		return false, ""
+	}
+	return true, status.Branch
+}
+
+// addGitData adds git-related fields to a template data map.
+func (a *App) addGitData(data map[string]interface{}) {
+	enabled, branch := a.gitTemplateData()
+	data["GitEnabled"] = enabled
+	data["GitBranch"] = branch
 }
 
 // enrichNavEntry resolves a single NavigationEntry into a NavItem with entity type and count.
