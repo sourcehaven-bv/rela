@@ -2,13 +2,25 @@ package markdown
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
+// ErrConflictedFile is returned when a file has unresolved git conflict markers.
+var ErrConflictedFile = errors.New("file has unresolved git conflicts")
+
 const frontmatterDelimiter = "---"
+
+// Git conflict markers
+var (
+	conflictMarkerStart = []byte("<<<<<<<")
+	conflictMarkerMid   = []byte("=======")
+	conflictMarkerEnd   = []byte(">>>>>>>")
+)
 
 // Document represents a parsed markdown document with YAML frontmatter
 type Document struct {
@@ -16,8 +28,23 @@ type Document struct {
 	Content     string
 }
 
-// ParseDocument parses a markdown document with YAML frontmatter
+// HasConflictMarkers checks if content contains git conflict markers.
+func HasConflictMarkers(content []byte) bool {
+	return bytes.Contains(content, conflictMarkerStart)
+}
+
+// HasConflictMarkersString checks if content contains git conflict markers.
+func HasConflictMarkersString(content string) bool {
+	return strings.Contains(content, string(conflictMarkerStart))
+}
+
+// ParseDocument parses a markdown document with YAML frontmatter.
+// Returns ErrConflictedFile if the content contains git conflict markers.
 func ParseDocument(content string) (*Document, error) {
+	if HasConflictMarkersString(content) {
+		return nil, ErrConflictedFile
+	}
+
 	frontmatter, body, err := splitFrontmatter(content)
 	if err != nil {
 		return nil, err

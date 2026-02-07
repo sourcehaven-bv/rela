@@ -262,6 +262,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"App":              a.Cfg.App,
+		"ConflictCount":    a.conflictCount(),
 		"Navigation":       a.navElements(listID),
 		"ActiveList":       listID,
 		"List":             list,
@@ -605,6 +606,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"App":               a.Cfg.App,
+		"ConflictCount":     a.conflictCount(),
 		"Navigation":        a.navElements(activeList),
 		"ActiveList":        activeList,
 		"FormID":            formID,
@@ -748,19 +750,20 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		backURL = "/list/" + entityActiveList
 	}
 	data := map[string]interface{}{
-		"App":        a.Cfg.App,
-		"Navigation": a.navElements(entityActiveList),
-		"ActiveList": entityActiveList,
-		"Entity":     entity,
-		"EntityDef":  entDef,
-		"EditFormID": editFormID,
-		"Relations":  rels,
-		"PropTypes":  propTypes,
-		"ReturnTo":   returnTo,
-		"Scope":      a.resolveScope(entity.ID, r),
-		"Commands":   a.resolveCommands("entity", "", entity.Type),
-		"BackURL":    backURL,
-		"IsHTMX":     r.Header.Get("HX-Request") == "true",
+		"App":           a.Cfg.App,
+		"ConflictCount": a.conflictCount(),
+		"Navigation":    a.navElements(entityActiveList),
+		"ActiveList":    entityActiveList,
+		"Entity":        entity,
+		"EntityDef":     entDef,
+		"EditFormID":    editFormID,
+		"Relations":     rels,
+		"PropTypes":     propTypes,
+		"ReturnTo":      returnTo,
+		"Scope":         a.resolveScope(entity.ID, r),
+		"Commands":      a.resolveCommands("entity", "", entity.Type),
+		"BackURL":       backURL,
+		"IsHTMX":        r.Header.Get("HX-Request") == "true",
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
@@ -867,21 +870,22 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		backURL = "/list/" + viewActiveList
 	}
 	data := map[string]interface{}{
-		"App":        a.Cfg.App,
-		"Navigation": a.navElements(viewActiveList),
-		"ActiveList": viewActiveList,
-		"View":       view,
-		"ViewID":     viewID,
-		"EntityID":   entityID,
-		"Entry":      result.Entry,
-		"EntryTitle": a.entityDisplayTitle(result.Entry),
-		"EditFormID": a.editFormForType(result.Entry.Type),
-		"ReturnTo":   returnTo,
-		"Sections":   sections,
-		"Scope":      a.resolveScope(entityID, r),
-		"Commands":   a.resolveCommands("view", viewID, result.Entry.Type),
-		"BackURL":    backURL,
-		"IsHTMX":     r.Header.Get("HX-Request") == "true",
+		"App":           a.Cfg.App,
+		"ConflictCount": a.conflictCount(),
+		"Navigation":    a.navElements(viewActiveList),
+		"ActiveList":    viewActiveList,
+		"View":          view,
+		"ViewID":        viewID,
+		"EntityID":      entityID,
+		"Entry":         result.Entry,
+		"EntryTitle":    a.entityDisplayTitle(result.Entry),
+		"EditFormID":    a.editFormForType(result.Entry.Type),
+		"ReturnTo":      returnTo,
+		"Sections":      sections,
+		"Scope":         a.resolveScope(entityID, r),
+		"Commands":      a.resolveCommands("view", viewID, result.Entry.Type),
+		"BackURL":       backURL,
+		"IsHTMX":        r.Header.Get("HX-Request") == "true",
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
@@ -1036,25 +1040,26 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 	}
 
 	data := map[string]interface{}{
-		"App":          a.Cfg.App,
-		"Navigation":   a.navElements(activeList),
-		"ActiveList":   activeList,
-		"FormID":       formID,
-		"Form":         form,
-		"Fields":       fields,
-		"Relations":    relations,
-		"Mode":         mode,
-		"EntityID":     entity.ID,
-		"EntityType":   form.EntityType,
-		"ShowBody":     showBody,
-		"Body":         bodyContent,
-		"ReturnTo":     returnTo,
-		"BackURL":      backURL,
-		"LinkRelation": linkRelation,
-		"LinkPeer":     linkPeer,
-		"LinkAs":       r.FormValue("_link_as"),
-		"IsHTMX":       true, // Always true since this is a form submission response
-		"HasErrors":    len(fieldErrors) > 0,
+		"App":           a.Cfg.App,
+		"ConflictCount": a.conflictCount(),
+		"Navigation":    a.navElements(activeList),
+		"ActiveList":    activeList,
+		"FormID":        formID,
+		"Form":          form,
+		"Fields":        fields,
+		"Relations":     relations,
+		"Mode":          mode,
+		"EntityID":      entity.ID,
+		"EntityType":    form.EntityType,
+		"ShowBody":      showBody,
+		"Body":          bodyContent,
+		"ReturnTo":      returnTo,
+		"BackURL":       backURL,
+		"LinkRelation":  linkRelation,
+		"LinkPeer":      linkPeer,
+		"LinkAs":        r.FormValue("_link_as"),
+		"IsHTMX":        true, // Always true since this is a form submission response
+		"HasErrors":     len(fieldErrors) > 0,
 	}
 
 	// Return 422 Unprocessable Entity for validation errors.
@@ -1894,6 +1899,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"App":             a.Cfg.App,
+		"ConflictCount":   a.conflictCount(),
 		"Navigation":      a.navElements(""),
 		"ActiveList":      "",
 		"Query":           query,
@@ -2057,6 +2063,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"App":              a.Cfg.App,
+		"ConflictCount":    a.conflictCount(),
 		"Navigation":       a.navElements("_dashboard"),
 		"ActiveList":       "_dashboard",
 		"Dashboard":        dash,
@@ -2079,11 +2086,12 @@ func (a *App) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	result := a.runAnalysis()
 
 	data := map[string]interface{}{
-		"App":        a.Cfg.App,
-		"Navigation": a.navElements("_analyze"),
-		"ActiveList": "_analyze",
-		"Analysis":   result,
-		"IsHTMX":     r.Header.Get("HX-Request") == "true",
+		"App":           a.Cfg.App,
+		"ConflictCount": a.conflictCount(),
+		"Navigation":    a.navElements("_analyze"),
+		"ActiveList":    "_analyze",
+		"Analysis":      result,
+		"IsHTMX":        r.Header.Get("HX-Request") == "true",
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
@@ -2210,6 +2218,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 	activeList := "_settings"
 	data := map[string]interface{}{
 		"App":           a.Cfg.App,
+		"ConflictCount": a.conflictCount(),
 		"Navigation":    a.navElements(activeList),
 		"ActiveList":    activeList,
 		"UserDefaults":  ud,

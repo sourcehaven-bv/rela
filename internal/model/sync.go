@@ -5,6 +5,7 @@ type SyncResult struct {
 	EntitiesLoaded  int
 	RelationsLoaded int
 	Errors          []error
+	Conflicted      []string // Files with unresolved git conflicts
 }
 
 // SyncError represents an error during sync.

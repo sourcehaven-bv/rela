@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +12,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
+
+// EntityLoadResult contains results from loading entities.
+type EntityLoadResult struct {
+	Entities   []*model.Entity
+	Conflicted []string // Paths of files with git conflicts
+}
 
 // ReadEntity reads an entity from a markdown file.
 func (f *FileIO) ReadEntity(path string, meta *metamodel.Metamodel) (*model.Entity, error) {
@@ -122,16 +129,25 @@ func (f *FileIO) ListEntityFiles(entitiesDir string) ([]string, error) {
 
 // LoadAllEntities loads all entities from the entities directory using parallel I/O.
 func (f *FileIO) LoadAllEntities(entitiesDir string, meta *metamodel.Metamodel) ([]*model.Entity, error) {
+	result, err := f.LoadAllEntitiesWithConflicts(entitiesDir, meta)
+	if err != nil {
+		return nil, err
+	}
+	return result.Entities, nil
+}
+
+// LoadAllEntitiesWithConflicts loads all entities and tracks conflicted files.
+func (f *FileIO) LoadAllEntitiesWithConflicts(entitiesDir string, meta *metamodel.Metamodel) (*EntityLoadResult, error) {
 	files, err := f.ListEntityFiles(entitiesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []*model.Entity{}, nil
+			return &EntityLoadResult{Entities: []*model.Entity{}}, nil
 		}
 		return nil, err
 	}
 
 	if len(files) == 0 {
-		return []*model.Entity{}, nil
+		return &EntityLoadResult{Entities: []*model.Entity{}}, nil
 	}
 
 	// Use worker pool for parallel file reading
@@ -140,9 +156,14 @@ func (f *FileIO) LoadAllEntities(entitiesDir string, meta *metamodel.Metamodel) 
 		numWorkers = len(files)
 	}
 
+	type loadResult struct {
+		entity     *model.Entity
+		conflicted string // Non-empty if file has conflicts
+	}
+
 	// Channels for work distribution and result collection
 	fileChan := make(chan string, len(files))
-	resultChan := make(chan *model.Entity, len(files))
+	resultChan := make(chan loadResult, len(files))
 
 	// Start workers
 	var wg sync.WaitGroup
@@ -153,10 +174,13 @@ func (f *FileIO) LoadAllEntities(entitiesDir string, meta *metamodel.Metamodel) 
 			for file := range fileChan {
 				entity, readErr := f.ReadEntity(file, meta)
 				if readErr != nil {
-					// Skip files that can't be parsed
+					if errors.Is(readErr, ErrConflictedFile) {
+						resultChan <- loadResult{conflicted: file}
+					}
+					// Skip other files that can't be parsed
 					continue
 				}
-				resultChan <- entity
+				resultChan <- loadResult{entity: entity}
 			}
 		}()
 	}
@@ -174,12 +198,20 @@ func (f *FileIO) LoadAllEntities(entitiesDir string, meta *metamodel.Metamodel) 
 	}()
 
 	// Collect results
-	entities := make([]*model.Entity, 0, len(files))
-	for entity := range resultChan {
-		entities = append(entities, entity)
+	result := &EntityLoadResult{
+		Entities:   make([]*model.Entity, 0, len(files)),
+		Conflicted: make([]string, 0),
+	}
+	for lr := range resultChan {
+		if lr.entity != nil {
+			result.Entities = append(result.Entities, lr.entity)
+		}
+		if lr.conflicted != "" {
+			result.Conflicted = append(result.Conflicted, lr.conflicted)
+		}
 	}
 
-	return entities, nil
+	return result, nil
 }
 
 // EntityFileModTime returns the modification time of an entity file.
