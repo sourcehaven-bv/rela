@@ -15,6 +15,7 @@ A `data-entry.yaml` file defines:
 - **Lists** - Tabular views with sorting, filtering, and pagination
 - **Views** - Read-only detail pages that traverse the graph to show related entities
 - **Dashboard** - An overview page with query-driven cards showing counts, breakdowns, and tables
+- **Kanbans** - Visual board views with drag-and-drop cards grouped by columns and optional swimlanes
 - **Navigation** - Sidebar menu entries with optional grouping
 - **Commands** - User-defined scripts triggered from the UI with streamed results
 - **User Defaults** - Per-user default values for properties and relations, configurable via Settings page
@@ -121,6 +122,12 @@ dashboard:                 # Optional overview page
     - title: "Open"
       query: "type:task status:open"
       display: count
+
+kanbans:                   # Kanban board views
+  board_name:
+    entity_type: task
+    column_property: status
+    ...
 
 commands:                  # User-defined scripts
   export-json:
@@ -732,6 +739,189 @@ Multiple terms are combined with AND logic. For example,
 Every card includes a link icon that opens the same query on the search page for further
 exploration.
 
+## Kanbans
+
+Kanbans provide a visual board view where entities are displayed as cards grouped into columns
+(and optionally swimlanes). Cards can be dragged between columns/swimlanes to update the
+underlying entity properties.
+
+### Basic Kanban
+
+```yaml
+kanbans:
+  ticket_board:
+    entity_type: ticket
+    title: "Ticket Board"
+    column_property: status
+    card:
+      title: title
+      fields:
+        - property: priority
+        - property: assignee
+    edit_form: edit_ticket
+    create_form: create_ticket
+```
+
+### Kanban Fields
+
+| Field              | Type   | Description                                                |
+| ------------------ | ------ | ---------------------------------------------------------- |
+| `entity_type`      | string | Entity type to display on the board                        |
+| `title`            | string | Board heading                                              |
+| `column_property`  | string | Property to group by for columns (must be enum/custom type)|
+| `columns`          | list   | Explicit column definitions (optional)                     |
+| `swimlane_property`| string | Property to group by for swimlanes (optional)              |
+| `swimlanes`        | list   | Explicit swimlane definitions (optional)                   |
+| `card`             | object | Card display configuration                                 |
+| `edit_form`        | string | Form name for editing cards (click to open)                |
+| `create_form`      | string | Form name for the "New" button                             |
+| `filters`          | list   | Static filters (same as lists)                             |
+| `filter_controls`  | list   | Interactive filter controls (same as lists)                |
+
+### Columns
+
+By default, columns are inferred from the enum values of `column_property` in the metamodel.
+To customize column order or labels, define explicit columns:
+
+```yaml
+kanbans:
+  ticket_board:
+    entity_type: ticket
+    column_property: status
+    columns:
+      - value: open
+        label: "📥 To Do"
+      - value: in-progress
+        label: "🔧 In Progress"
+      - value: resolved
+        label: "✅ Done"
+```
+
+| Field   | Type   | Description                                    |
+| ------- | ------ | ---------------------------------------------- |
+| `value` | string | Enum value that maps to this column            |
+| `label` | string | Display label (defaults to title-cased value)  |
+
+Entities with column property values not in the explicit list are hidden from the board.
+
+### Swimlanes
+
+Add a second grouping dimension with swimlanes. This creates a grid where columns are horizontal
+and swimlanes are vertical rows:
+
+```yaml
+kanbans:
+  priority_board:
+    entity_type: ticket
+    column_property: priority
+    swimlane_property: status
+    swimlanes:
+      - value: open
+      - value: in-progress
+      - value: resolved
+```
+
+| Field   | Type   | Description                                      |
+| ------- | ------ | ------------------------------------------------ |
+| `value` | string | Enum value that maps to this swimlane            |
+| `label` | string | Display label (defaults to title-cased value)    |
+
+Without explicit swimlanes, values are inferred from the metamodel. Entities whose swimlane
+property value is not in the list are hidden.
+
+### Card Configuration
+
+The `card` object controls what's displayed on each card:
+
+```yaml
+card:
+  title: title          # Property to use as card heading
+  fields:               # Additional fields shown on the card
+    - property: priority
+    - property: assignee
+      label: "Owner"
+```
+
+| Field    | Type   | Description                                           |
+| -------- | ------ | ----------------------------------------------------- |
+| `title`  | string | Property name for the card heading                    |
+| `fields` | list   | Additional properties displayed as badges on the card |
+
+Card fields use the same styling as lists — enum values are displayed with colors from `styles`.
+
+### Drag and Drop
+
+Cards can be dragged between columns (and swimlanes if configured). Dropping a card updates
+the entity's column property (and swimlane property) and saves the change to disk. The board
+re-renders to reflect the new state.
+
+### Navigation
+
+Add kanban boards to the sidebar using the `kanban` field in navigation entries:
+
+```yaml
+navigation:
+  - group: "Boards"
+    items:
+      - label: "Ticket Board"
+        kanban: ticket_board
+      - label: "Priority Board"
+        kanban: priority_board
+```
+
+### Keyboard Shortcuts
+
+| Key | Action                              |
+| --- | ----------------------------------- |
+| `N` | Open the create form (if configured)|
+
+### Complete Example
+
+```yaml
+kanbans:
+  ticket_board:
+    entity_type: ticket
+    title: "Ticket Board"
+    column_property: status
+    columns:
+      - value: open
+        label: "📥 To Do"
+      - value: in-progress
+        label: "🔧 In Progress"
+      - value: resolved
+        label: "✅ Done"
+    card:
+      title: title
+      fields:
+        - property: priority
+        - property: assignee
+    edit_form: edit_ticket
+    create_form: create_ticket
+    filter_controls:
+      - property: priority
+        widget: select
+
+  priority_board:
+    entity_type: ticket
+    title: "Priority Board"
+    column_property: priority
+    swimlane_property: status
+    swimlanes:
+      - value: open
+      - value: in-progress
+      - value: resolved
+    card:
+      title: title
+      fields:
+        - property: assignee
+    edit_form: edit_ticket
+    create_form: create_ticket
+    filters:
+      - property: status
+        operator: "!="
+        value: closed
+```
+
 ## Navigation
 
 The navigation section defines the sidebar menu. Each entry is either a direct item (linking to a
@@ -762,6 +952,7 @@ navigation:
 | ----------- | ------ | -------------------------------------------------------------- |
 | `label`     | string | Menu item text                                                 |
 | `list`      | string | List name to navigate to (mutually exclusive with other types) |
+| `kanban`    | string | Kanban board name to navigate to                               |
 | `dashboard` | bool   | Link to the dashboard page                                     |
 | `graph`     | bool   | Link to the graph explorer                                     |
 
@@ -1208,6 +1399,26 @@ commands:
     available_on:
       entity_types: [ticket]
 
+kanbans:
+  ticket_board:
+    entity_type: ticket
+    title: "Ticket Board"
+    column_property: ticket_status
+    columns:
+      - value: open
+        label: "📥 To Do"
+      - value: in-progress
+        label: "🔧 In Progress"
+      - value: resolved
+        label: "✅ Done"
+    card:
+      title: title
+      fields:
+        - property: priority
+        - property: assignee
+    edit_form: edit_ticket
+    create_form: create_ticket
+
 navigation:
   - label: "Dashboard"
     dashboard: true
@@ -1219,6 +1430,8 @@ navigation:
         list: open_tickets
       - label: "All Tickets"
         list: all_tickets
+      - label: "Ticket Board"
+        kanban: ticket_board
 ```
 
 ## Relationship to views.yaml
