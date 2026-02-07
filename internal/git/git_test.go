@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,7 +9,7 @@ import (
 )
 
 // setupTestRepo creates a temporary git repository for testing.
-func setupTestRepo(t *testing.T) (string, func()) {
+func setupTestRepo(t *testing.T) (dir string, cleanup func()) {
 	t.Helper()
 
 	dir, err := os.MkdirTemp("", "git-test-*")
@@ -16,22 +17,22 @@ func setupTestRepo(t *testing.T) (string, func()) {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 
-	cleanup := func() {
+	cleanup = func() {
 		os.RemoveAll(dir)
 	}
 
 	// Initialize git repo
-	if err := runCmd(dir, "git", "init"); err != nil {
+	if err := runCmd(dir, "init"); err != nil {
 		cleanup()
 		t.Fatalf("git init failed: %v", err)
 	}
 
 	// Configure git user for commits
-	if err := runCmd(dir, "git", "config", "user.email", "test@test.com"); err != nil {
+	if err := runCmd(dir, "config", "user.email", "test@test.com"); err != nil {
 		cleanup()
 		t.Fatalf("git config email failed: %v", err)
 	}
-	if err := runCmd(dir, "git", "config", "user.name", "Test User"); err != nil {
+	if err := runCmd(dir, "config", "user.name", "Test User"); err != nil {
 		cleanup()
 		t.Fatalf("git config name failed: %v", err)
 	}
@@ -51,11 +52,11 @@ func setupTestRepo(t *testing.T) (string, func()) {
 		t.Fatalf("write file failed: %v", err)
 	}
 
-	if err := runCmd(dir, "git", "add", "."); err != nil {
+	if err := runCmd(dir, "add", "."); err != nil {
 		cleanup()
 		t.Fatalf("git add failed: %v", err)
 	}
-	if err := runCmd(dir, "git", "commit", "-m", "Initial commit"); err != nil {
+	if err := runCmd(dir, "commit", "-m", "Initial commit"); err != nil {
 		cleanup()
 		t.Fatalf("git commit failed: %v", err)
 	}
@@ -64,7 +65,9 @@ func setupTestRepo(t *testing.T) (string, func()) {
 }
 
 // setupTestRepoWithRemote creates a test repo with a remote.
-func setupTestRepoWithRemote(t *testing.T) (string, string, func()) {
+//
+//nolint:unparam // remoteDir is returned for potential future use
+func setupTestRepoWithRemote(t *testing.T) (localDir, remoteDir string, cleanup func()) {
 	t.Helper()
 
 	// Create "remote" (bare repo)
@@ -72,7 +75,7 @@ func setupTestRepoWithRemote(t *testing.T) (string, string, func()) {
 	if err != nil {
 		t.Fatalf("failed to create remote dir: %v", err)
 	}
-	if err := runCmd(remoteDir, "git", "init", "--bare"); err != nil {
+	if err := runCmd(remoteDir, "init", "--bare"); err != nil {
 		os.RemoveAll(remoteDir)
 		t.Fatalf("git init bare failed: %v", err)
 	}
@@ -80,25 +83,25 @@ func setupTestRepoWithRemote(t *testing.T) (string, string, func()) {
 	// Create local repo
 	localDir, cleanupLocal := setupTestRepo(t)
 
-	cleanup := func() {
+	cleanup = func() {
 		cleanupLocal()
 		os.RemoveAll(remoteDir)
 	}
 
 	// Add remote
-	if err := runCmd(localDir, "git", "remote", "add", "origin", remoteDir); err != nil {
+	if err := runCmd(localDir, "remote", "add", "origin", remoteDir); err != nil {
 		cleanup()
 		t.Fatalf("git remote add failed: %v", err)
 	}
 
 	// Push to remote
-	if err := runCmd(localDir, "git", "push", "-u", "origin", "master"); err != nil {
+	if err := runCmd(localDir, "push", "-u", "origin", "master"); err != nil {
 		// Try main branch
-		if err := runCmd(localDir, "git", "branch", "-M", "main"); err != nil {
+		if err := runCmd(localDir, "branch", "-M", "main"); err != nil {
 			cleanup()
 			t.Fatalf("git branch rename failed: %v", err)
 		}
-		if err := runCmd(localDir, "git", "push", "-u", "origin", "main"); err != nil {
+		if err := runCmd(localDir, "push", "-u", "origin", "main"); err != nil {
 			cleanup()
 			t.Fatalf("git push failed: %v", err)
 		}
@@ -107,8 +110,8 @@ func setupTestRepoWithRemote(t *testing.T) (string, string, func()) {
 	return localDir, remoteDir, cleanup
 }
 
-func runCmd(dir, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+func runCmd(dir string, args ...string) error {
+	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	return cmd.Run()
 }
@@ -294,5 +297,46 @@ func TestAbortRebase_NoRebaseInProgress(t *testing.T) {
 	err := ops.AbortRebase()
 	if err == nil {
 		t.Error("expected error when aborting non-existent rebase")
+	}
+}
+
+func TestSync_RejectsWhenConflictInProgress(t *testing.T) {
+	dir, _, cleanup := setupTestRepoWithRemote(t)
+	defer cleanup()
+
+	// Simulate a rebase conflict by creating the rebase-merge directory
+	// (this is what git creates during a rebase conflict)
+	rebaseMergeDir := filepath.Join(dir, ".git", "rebase-merge")
+	if err := os.MkdirAll(rebaseMergeDir, 0o755); err != nil {
+		t.Fatalf("create rebase-merge dir failed: %v", err)
+	}
+
+	ops := NewOps(dir, Config{})
+	err := ops.Sync("should fail")
+	if err == nil {
+		t.Error("expected Sync to fail when conflict in progress")
+	}
+	if !errors.Is(err, ErrConflictInProgress) {
+		t.Errorf("expected ErrConflictInProgress, got: %v", err)
+	}
+}
+
+func TestSync_RejectsWhenRebaseApplyInProgress(t *testing.T) {
+	dir, _, cleanup := setupTestRepoWithRemote(t)
+	defer cleanup()
+
+	// Simulate a rebase by creating the rebase-apply directory
+	rebaseApplyDir := filepath.Join(dir, ".git", "rebase-apply")
+	if err := os.MkdirAll(rebaseApplyDir, 0o755); err != nil {
+		t.Fatalf("create rebase-apply dir failed: %v", err)
+	}
+
+	ops := NewOps(dir, Config{})
+	err := ops.Sync("should fail")
+	if err == nil {
+		t.Error("expected Sync to fail when rebase-apply in progress")
+	}
+	if !errors.Is(err, ErrConflictInProgress) {
+		t.Errorf("expected ErrConflictInProgress, got: %v", err)
 	}
 }

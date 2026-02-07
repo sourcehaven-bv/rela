@@ -103,8 +103,18 @@ func (g *Ops) Fetch() error {
 	return err
 }
 
+// ErrConflictInProgress indicates a rebase conflict that must be resolved first.
+var ErrConflictInProgress = errors.New("rebase conflict in progress, resolve before syncing")
+
 // Sync performs commit + rebase + push.
 func (g *Ops) Sync(message string) error {
+	// Check for rebase conflict first
+	if exists(filepath.Join(g.root, ".git", "rebase-merge")) ||
+		exists(filepath.Join(g.root, ".git", "rebase-apply")) {
+
+		return ErrConflictInProgress
+	}
+
 	// Stage all changes in entities/ and relations/
 	_, _ = runGit(g.root, "add", "entities/")
 	_, _ = runGit(g.root, "add", "relations/")
