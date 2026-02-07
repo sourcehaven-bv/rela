@@ -9,6 +9,9 @@ const graphTemplates = `
 <title>{{ .App.Name }} - Graph Explorer</title>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+(function(){var t=localStorage.getItem('theme');if(t){document.documentElement.setAttribute('data-theme',t)}else if(matchMedia('(prefers-color-scheme:dark)').matches){document.documentElement.setAttribute('data-theme','dark')}})();
+</script>
 <script src="/static/cytoscape.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -22,6 +25,15 @@ const graphTemplates = `
   --shadow: 0 1px 3px rgba(0,0,0,0.08);
   --accent: #6366f1; --accent-light: rgba(99,102,241,0.12);
   --surface: rgba(255,255,255,0.72); --blur: blur(20px);
+}
+[data-theme="dark"] {
+  --bg: #0f172a; --bg-card: #1e293b; --bg-sidebar: #020617; --bg-sidebar-hover: #1e293b;
+  --bg-sidebar-active: #0f172a; --text: #e2e8f0; --text-muted: #94a3b8;
+  --text-sidebar: #94a3b8; --text-sidebar-active: #f1f5f9; --border: #334155;
+  --primary: #60a5fa; --primary-hover: #3b82f6; --primary-light: rgba(59,130,246,0.15);
+  --danger: #f87171; --shadow: 0 1px 3px rgba(0,0,0,0.3);
+  --accent: #818cf8; --accent-light: rgba(129,140,248,0.2);
+  --surface: rgba(30,41,59,0.85);
 }
 body { font-family: var(--font); color: var(--text); line-height: 1.6; display: flex; min-height: 100vh; margin: 0; overflow: hidden; }
 
@@ -185,6 +197,35 @@ body { font-family: var(--font); color: var(--text); line-height: 1.6; display: 
   font-size: 11px; font-weight: 600; color: var(--text-muted);
 }
 .depth-ctrl input { width: 60px; accent-color: var(--accent); }
+
+/* Dark mode overrides */
+[data-theme="dark"] .graph-container {
+  background-image:
+    radial-gradient(at 20% 20%, rgba(99,102,241,0.12) 0%, transparent 50%),
+    radial-gradient(at 80% 80%, rgba(168,85,247,0.08) 0%, transparent 50%),
+    radial-gradient(at 50% 0%, rgba(6,182,212,0.06) 0%, transparent 50%);
+}
+[data-theme="dark"] .graph-header { border-bottom-color: var(--border); }
+[data-theme="dark"] .graph-search input { background: var(--bg-card); border-color: var(--border); }
+[data-theme="dark"] .view-toggle { background: rgba(255,255,255,0.06); }
+[data-theme="dark"] .filter-sidebar { border-right-color: var(--border); }
+[data-theme="dark"] .type-item:hover { background: rgba(255,255,255,0.04); }
+[data-theme="dark"] .type-count { background: rgba(255,255,255,0.08); }
+[data-theme="dark"] .detail-panel { border-left-color: var(--border); }
+[data-theme="dark"] .close-btn { background: rgba(255,255,255,0.08); }
+[data-theme="dark"] .close-btn:hover { background: rgba(255,255,255,0.12); }
+[data-theme="dark"] .detail-section { border-bottom-color: var(--border); }
+[data-theme="dark"] .rel-item:hover { background: rgba(255,255,255,0.04); }
+[data-theme="dark"] .graph-toolbar { box-shadow: 0 4px 24px rgba(0,0,0,0.3), 0 0 0 1px var(--border); }
+[data-theme="dark"] .graph-toolbar button:hover { background: rgba(255,255,255,0.08); }
+[data-theme="dark"] .graph-toolbar .sep { background: var(--border); }
+
+.theme-toggle { position: fixed; top: 12px; right: 16px; z-index: 200; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: var(--shadow); transition: all 0.2s; }
+.theme-toggle:hover { background: var(--primary-light); border-color: var(--primary); }
+.theme-toggle .icon-sun, .theme-toggle .icon-moon { display: none; }
+:root:not([data-theme]) .theme-toggle .icon-sun, [data-theme="light"] .theme-toggle .icon-sun { display: block; }
+[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) .theme-toggle .icon-moon { display: block; } :root:not([data-theme]) .theme-toggle .icon-sun { display: none; } }
 .depth-num {
   background: var(--accent-light); color: var(--accent); font-weight: 700;
   width: 20px; height: 20px; border-radius: 6px;
@@ -202,6 +243,10 @@ body { font-family: var(--font); color: var(--text); line-height: 1.6; display: 
 </head>
 <body>
 {{ template "sidebar" . }}
+<button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
+  <span class="icon-sun">&#9788;</span>
+  <span class="icon-moon">&#9790;</span>
+</button>
 <div class="graph-container">
   <div class="graph-header">
     <h2>Graph Explorer</h2>
@@ -244,6 +289,12 @@ body { font-family: var(--font); color: var(--text); line-height: 1.6; display: 
 </div>
 
 <script>
+function toggleTheme() {
+  var current = document.documentElement.getAttribute('data-theme');
+  var next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+}
 (function() {
   var currentMode = 'content';
   var graphData = null;
