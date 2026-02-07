@@ -567,6 +567,18 @@ traverse:
     recursive: true
     max_depth: 5
     collect_as: dependencies
+
+  # Filter by entity type
+  - from: entry
+    follow_incoming: partOf
+    collect_as: functions
+    where: "type = function"
+
+  # Filter by property value
+  - from: entry
+    follow_incoming: partOf
+    collect_as: active_items
+    where: "status = active"
 ```
 
 | Field             | Type   | Description                                        |
@@ -577,6 +589,53 @@ traverse:
 | `collect_as`      | string | Name for the collected entities                    |
 | `recursive`       | bool   | Follow the relation transitively                   |
 | `max_depth`       | int    | Maximum recursion depth                            |
+| `where`           | string | Filter expression (e.g., `type = function`)        |
+
+#### Where Clause
+
+The `where` clause filters traversed entities using filter expressions. This is useful when
+a relation can have multiple source entity types and you want to separate them into different
+collections.
+
+**Filter by entity type:**
+
+```yaml
+traverse:
+  - from: entry
+    follow_incoming: partOfBouwblok
+    collect_as: functions
+    where: "type = function"
+
+  - from: entry
+    follow_incoming: partOfBouwblok
+    collect_as: usecases
+    where: "type = usecase"
+```
+
+**Filter by property value:**
+
+```yaml
+traverse:
+  - from: entry
+    follow_incoming: implements
+    collect_as: active_features
+    where: "status = active"
+```
+
+**Supported operators:**
+
+| Operator | Description                           | Example                    |
+| -------- | ------------------------------------- | -------------------------- |
+| `=`      | Equals (supports `*` glob patterns)   | `type = function`          |
+| `!=`     | Not equals                            | `type != component`        |
+| `=~`     | Regex match                           | `title =~ ^API.*`          |
+| `<`      | Less than (dates, integers)           | `due_date < 2025-01-01`    |
+| `<=`     | Less than or equal                    | `priority <= 2`            |
+| `>`      | Greater than                          | `risk_score > 5`           |
+| `>=`     | Greater than or equal                 | `effort >= 3`              |
+
+The special pseudo-property `type` matches against the entity type (e.g., `function`,
+`usecase`, `component`).
 
 ### Sections
 
@@ -1229,6 +1288,7 @@ views.yaml, but adapted for HTML rendering:
 | Feature                | views.yaml (CLI)                     | data-entry.yaml views                |
 | ---------------------- | ------------------------------------ | ------------------------------------ |
 | Traversal rules        | Same `from`/`follow`/`collect_as`    | Same `from`/`follow`/`collect_as`    |
+| Where clause           | `where` on traverse rules            | `where` on traverse rules            |
 | Output                 | YAML/JSON data                       | HTML sections                        |
 | Display control        | N/A (raw data)                       | `sections` with display modes        |
 | Filters/derived        | `filters`, `derived`                 | Not yet supported                    |
