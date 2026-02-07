@@ -124,6 +124,7 @@ type NavItem struct {
 	List       string
 	Dashboard  bool
 	Graph      bool
+	Kanban     string
 	EntityType string
 	Count      int
 }
@@ -144,8 +145,8 @@ type NavElement struct {
 
 // enrichNavEntry resolves a single NavigationEntry into a NavItem with entity type and count.
 func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
-	item := NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard, Graph: nav.Graph}
-	if nav.Dashboard || nav.Graph {
+	item := NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard, Graph: nav.Graph, Kanban: nav.Kanban}
+	if nav.Dashboard || nav.Graph || nav.Kanban != "" {
 		return item
 	}
 	if list, ok := a.Cfg.Lists[nav.List]; ok {

@@ -530,6 +530,14 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 			}
 			return "badge-gray"
 		},
+		"accentColor": func(propType, val string) string {
+			if vals, ok := styleMap[propType]; ok {
+				if cls, ok := vals[val]; ok {
+					return strings.TrimPrefix(cls, "badge-")
+				}
+			}
+			return "gray"
+		},
 		"isBadgeType": func(propType string) bool {
 			return styledTypes[propType]
 		},

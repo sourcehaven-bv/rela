@@ -14,6 +14,7 @@ type Config struct {
 	Forms      map[string]Form              `yaml:"forms"`
 	Lists      map[string]List              `yaml:"lists"`
 	Views      map[string]ViewConfig        `yaml:"views"`
+	Kanbans    map[string]Kanban            `yaml:"kanbans"`
 	Dashboard  *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands   map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Navigation []NavigationEntry            `yaml:"navigation"`
@@ -125,8 +126,41 @@ type FilterControl struct {
 	Widget   string `yaml:"widget"`
 }
 
+// Kanban defines a kanban board view for an entity type.
+type Kanban struct {
+	EntityType       string           `yaml:"entity_type"`
+	Title            string           `yaml:"title"`
+	ColumnProperty   string           `yaml:"column_property"`
+	Columns          []KanbanColumn   `yaml:"columns,omitempty"`
+	SwimlaneProperty string           `yaml:"swimlane_property,omitempty"`
+	Swimlanes        []KanbanSwimlane `yaml:"swimlanes,omitempty"`
+	Card             KanbanCard       `yaml:"card"`
+	EditForm         string           `yaml:"edit_form,omitempty"`
+	CreateForm       string           `yaml:"create_form,omitempty"`
+	Filters          []FilterConfig   `yaml:"filters,omitempty"`
+	FilterControls   []FilterControl  `yaml:"filter_controls,omitempty"`
+}
+
+// KanbanColumn defines a column in the kanban board.
+type KanbanColumn struct {
+	Value string `yaml:"value"`
+	Label string `yaml:"label,omitempty"`
+}
+
+// KanbanSwimlane defines a swimlane row in the kanban board.
+type KanbanSwimlane struct {
+	Value string `yaml:"value"`
+	Label string `yaml:"label,omitempty"`
+}
+
+// KanbanCard defines how cards are displayed on the board.
+type KanbanCard struct {
+	Title  string             `yaml:"title"`
+	Fields []ViewSectionField `yaml:"fields,omitempty"`
+}
+
 // NavigationEntry defines a sidebar navigation item or a group of items.
-// It is a union type: either a direct item (Label + List/Dashboard/Graph)
+// It is a union type: either a direct item (Label + List/Dashboard/Graph/Kanban)
 // or a group (Group + Items). Nested groups are not supported.
 type NavigationEntry struct {
 	// Direct item fields
@@ -134,6 +168,7 @@ type NavigationEntry struct {
 	List      string `yaml:"list,omitempty"`
 	Dashboard bool   `yaml:"dashboard,omitempty"`
 	Graph     bool   `yaml:"graph,omitempty"`
+	Kanban    string `yaml:"kanban,omitempty"`
 
 	// Group fields
 	Group     string            `yaml:"group,omitempty"`

@@ -18,6 +18,7 @@ var validTopLevelKeys = map[string]bool{
 	"forms":      true,
 	"lists":      true,
 	"views":      true,
+	"kanbans":    true,
 	"dashboard":  true,
 	"commands":   true,
 	"navigation": true,
@@ -28,6 +29,7 @@ var knownTypos = map[string]string{
 	"form":        "forms",
 	"list":        "lists",
 	"view":        "views",
+	"kanban":      "kanbans",
 	"command":     "commands",
 	"style":       "styles",
 	"nav":         "navigation",
@@ -119,6 +121,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateForms(cfg, meta)...)
 	errs = append(errs, validateLists(cfg, meta)...)
 	errs = append(errs, validateViews(cfg, meta)...)
+	errs = append(errs, validateKanbans(cfg, meta)...)
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
@@ -184,6 +187,13 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 		if _, ok := cfg.Lists[nav.List]; !ok {
 			errs = append(errs, fmt.Sprintf(
 				"navigation: references unknown list %q", nav.List))
+		}
+	}
+
+	if nav.Kanban != "" {
+		if _, ok := cfg.Kanbans[nav.Kanban]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: references unknown kanban %q", nav.Kanban))
 		}
 	}
 
@@ -597,6 +607,154 @@ func suggestRelation(name string, meta *metamodel.Metamodel) string {
 	}
 
 	return ""
+}
+
+// validateKanbans validates kanban board definitions.
+func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
+	var errs []string
+
+	for kanbanID, kanban := range cfg.Kanbans {
+		// Validate entity type
+		entDef, ok := meta.GetEntityDef(kanban.EntityType)
+		if !ok {
+			errs = append(errs, fmt.Sprintf("kanban %q: unknown entity type %q", kanbanID, kanban.EntityType))
+			continue
+		}
+
+		// Validate column_property exists and is enum type
+		if kanban.ColumnProperty == "" {
+			errs = append(errs, fmt.Sprintf("kanban %q: column_property is required", kanbanID))
+		} else {
+			propDef, ok := entDef.Properties[kanban.ColumnProperty]
+			if !ok {
+				errs = append(errs, fmt.Sprintf(
+					"kanban %q: column_property %q not in entity %q",
+					kanbanID, kanban.ColumnProperty, kanban.EntityType))
+			} else {
+				// Check if it's an enum type
+				validValues := getValidEnumValues(propDef, meta)
+				if len(validValues) == 0 {
+					errs = append(errs, fmt.Sprintf(
+						"kanban %q: column_property %q must be an enum type",
+						kanbanID, kanban.ColumnProperty))
+				} else {
+					// Validate column values if specified
+					validSet := make(map[string]bool)
+					for _, v := range validValues {
+						validSet[v] = true
+					}
+					for i, col := range kanban.Columns {
+						if !validSet[col.Value] {
+							errs = append(errs, fmt.Sprintf(
+								"kanban %q: columns[%d] value %q is not valid for %q (valid: %s)",
+								kanbanID, i, col.Value, kanban.ColumnProperty, strings.Join(validValues, ", ")))
+						}
+					}
+				}
+			}
+		}
+
+		// Validate swimlane_property if specified
+		if kanban.SwimlaneProperty != "" {
+			propDef, ok := entDef.Properties[kanban.SwimlaneProperty]
+			if !ok {
+				errs = append(errs, fmt.Sprintf(
+					"kanban %q: swimlane_property %q not in entity %q",
+					kanbanID, kanban.SwimlaneProperty, kanban.EntityType))
+			} else {
+				// Check if it's an enum type
+				validValues := getValidEnumValues(propDef, meta)
+				if len(validValues) == 0 {
+					errs = append(errs, fmt.Sprintf(
+						"kanban %q: swimlane_property %q must be an enum type",
+						kanbanID, kanban.SwimlaneProperty))
+				} else {
+					// Validate swimlane values if specified
+					validSet := make(map[string]bool)
+					for _, v := range validValues {
+						validSet[v] = true
+					}
+					for i, lane := range kanban.Swimlanes {
+						if !validSet[lane.Value] {
+							errs = append(errs, fmt.Sprintf(
+								"kanban %q: swimlanes[%d] value %q is not valid for %q (valid: %s)",
+								kanbanID, i, lane.Value, kanban.SwimlaneProperty, strings.Join(validValues, ", ")))
+						}
+					}
+				}
+			}
+		}
+
+		// Validate card title property
+		if kanban.Card.Title != "" {
+			if _, ok := entDef.Properties[kanban.Card.Title]; !ok {
+				errs = append(errs, fmt.Sprintf(
+					"kanban %q: card.title property %q not in entity %q",
+					kanbanID, kanban.Card.Title, kanban.EntityType))
+			}
+		}
+
+		// Validate card fields
+		for i, f := range kanban.Card.Fields {
+			if f.Property != "" && f.Property != "title" && f.Property != "id" {
+				if _, ok := entDef.Properties[f.Property]; !ok {
+					errs = append(errs, fmt.Sprintf(
+						"kanban %q: card.fields[%d] property %q not in entity %q",
+						kanbanID, i, f.Property, kanban.EntityType))
+				}
+			}
+		}
+
+		// Validate filter properties
+		for i, f := range kanban.Filters {
+			if !validFilterOperators[f.Operator] {
+				errs = append(errs, fmt.Sprintf(
+					"kanban %q: filters[%d] has invalid operator %q (valid: %s)",
+					kanbanID, i, f.Operator, joinMapKeys(validFilterOperators)))
+			}
+			if f.Property != "" && f.Property != "id" && f.Property != "type" {
+				if _, ok := entDef.Properties[f.Property]; !ok {
+					errs = append(errs, fmt.Sprintf(
+						"kanban %q: filters[%d] references unknown property %q",
+						kanbanID, i, f.Property))
+				}
+			}
+		}
+
+		// Validate filter_controls
+		for i, fc := range kanban.FilterControls {
+			if !validFilterWidgets[fc.Widget] {
+				errs = append(errs, fmt.Sprintf(
+					"kanban %q: filter_controls[%d] has invalid widget %q (valid: %s)",
+					kanbanID, i, fc.Widget, joinMapKeys(validFilterWidgets)))
+			}
+			if fc.Property != "" {
+				if _, ok := entDef.Properties[fc.Property]; !ok {
+					errs = append(errs, fmt.Sprintf(
+						"kanban %q: filter_controls[%d] references unknown property %q",
+						kanbanID, i, fc.Property))
+				}
+			}
+		}
+
+		// Validate form references
+		if kanban.EditForm != "" {
+			if _, ok := cfg.Forms[kanban.EditForm]; !ok {
+				errs = append(errs, fmt.Sprintf(
+					"kanban %q: references unknown form %q in edit_form",
+					kanbanID, kanban.EditForm))
+			}
+		}
+		if kanban.CreateForm != "" {
+			if _, ok := cfg.Forms[kanban.CreateForm]; !ok {
+				errs = append(errs, fmt.Sprintf(
+					"kanban %q: references unknown form %q in create_form",
+					kanbanID, kanban.CreateForm))
+			}
+		}
+	}
+
+	return errs
 }
 
 // validateDashboard validates dashboard configuration.
