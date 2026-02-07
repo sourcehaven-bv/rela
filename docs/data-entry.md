@@ -568,7 +568,7 @@ traverse:
     max_depth: 5
     collect_as: dependencies
 
-  # Filter by entity type
+  # Filter results with where clause
   - from: entry
     follow_incoming: partOf
     collect_as: functions
@@ -589,53 +589,33 @@ traverse:
 | `collect_as`      | string | Name for the collected entities                    |
 | `recursive`       | bool   | Follow the relation transitively                   |
 | `max_depth`       | int    | Maximum recursion depth                            |
-| `where`           | string | Filter expression (e.g., `type = function`)        |
+| `where`           | string | Filter expression to select matching entities      |
 
-#### Where Clause
+#### Where Clause Syntax
 
-The `where` clause filters traversed entities using filter expressions. This is useful when
-a relation can have multiple source entity types and you want to separate them into different
-collections.
+The `where` clause filters traversed entities using simple expressions:
 
-**Filter by entity type:**
-
-```yaml
-traverse:
-  - from: entry
-    follow_incoming: partOfBouwblok
-    collect_as: functions
-    where: "type = function"
-
-  - from: entry
-    follow_incoming: partOfBouwblok
-    collect_as: usecases
-    where: "type = usecase"
+```
+property = value    # Equality
+property != value   # Inequality
 ```
 
-**Filter by property value:**
+The special pseudo-property `type` matches the entity type:
 
 ```yaml
-traverse:
-  - from: entry
-    follow_incoming: implements
-    collect_as: active_features
-    where: "status = active"
+where: "type = function"     # Only function entities
+where: "type != component"   # Everything except components
 ```
 
-**Supported operators:**
+Regular properties use metamodel-aware matching:
 
-| Operator | Description                           | Example                    |
-| -------- | ------------------------------------- | -------------------------- |
-| `=`      | Equals (supports `*` glob patterns)   | `type = function`          |
-| `!=`     | Not equals                            | `type != component`        |
-| `=~`     | Regex match                           | `title =~ ^API.*`          |
-| `<`      | Less than (dates, integers)           | `due_date < 2025-01-01`    |
-| `<=`     | Less than or equal                    | `priority <= 2`            |
-| `>`      | Greater than                          | `risk_score > 5`           |
-| `>=`     | Greater than or equal                 | `effort >= 3`              |
+```yaml
+where: "status = active"     # Match status property
+where: "priority != low"     # Exclude low priority
+```
 
-The special pseudo-property `type` matches against the entity type (e.g., `function`,
-`usecase`, `component`).
+If a where clause is invalid or a property doesn't exist, the filter is silently
+skipped and all entities are returned (fail-open for robustness).
 
 ### Sections
 
@@ -1288,7 +1268,6 @@ views.yaml, but adapted for HTML rendering:
 | Feature                | views.yaml (CLI)                     | data-entry.yaml views                |
 | ---------------------- | ------------------------------------ | ------------------------------------ |
 | Traversal rules        | Same `from`/`follow`/`collect_as`    | Same `from`/`follow`/`collect_as`    |
-| Where clause           | `where` on traverse rules            | `where` on traverse rules            |
 | Output                 | YAML/JSON data                       | HTML sections                        |
 | Display control        | N/A (raw data)                       | `sections` with display modes        |
 | Filters/derived        | `filters`, `derived`                 | Not yet supported                    |

@@ -575,6 +575,18 @@ traverse:
     recursive: true
     max_depth: 5
     collect_as: dependencies
+
+  # Filter results with where clause
+  - from: entry
+    follow_incoming: partOf
+    collect_as: functions
+    where: "type = function"
+
+  # Filter by property value
+  - from: entry
+    follow_incoming: partOf
+    collect_as: active_items
+    where: "status = active"
 ```
 
 | Field             | Type   | Description                                        |
@@ -585,6 +597,33 @@ traverse:
 | `collect_as`      | string | Name for the collected entities                    |
 | `recursive`       | bool   | Follow the relation transitively                   |
 | `max_depth`       | int    | Maximum recursion depth                            |
+| `where`           | string | Filter expression to select matching entities      |
+
+#### Where Clause Syntax
+
+The `where` clause filters traversed entities using simple expressions:
+
+```
+property = value    # Equality
+property != value   # Inequality
+```
+
+The special pseudo-property `type` matches the entity type:
+
+```yaml
+where: "type = function"     # Only function entities
+where: "type != component"   # Everything except components
+```
+
+Regular properties use metamodel-aware matching:
+
+```yaml
+where: "status = active"     # Match status property
+where: "priority != low"     # Exclude low priority
+```
+
+If a where clause is invalid or a property doesn't exist, the filter is silently
+skipped and all entities are returned (fail-open for robustness).
 
 ### Sections
 
