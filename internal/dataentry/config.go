@@ -247,6 +247,7 @@ type ViewTraverse struct {
 	CollectAs      string `yaml:"collect_as"`
 	Recursive      bool   `yaml:"recursive,omitempty"`
 	MaxDepth       int    `yaml:"max_depth,omitempty"`
+	Where          string `yaml:"where,omitempty"`
 }
 
 // ViewSection defines a section within a view.

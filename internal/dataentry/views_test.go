@@ -275,3 +275,309 @@ func collectIDs(entities []*model.Entity) []string {
 	}
 	return ids
 }
+
+// testViewAppWithMixedTypes creates an App with mixed entity types for where clause tests.
+//
+//	BOUWBLOK-001
+//	  <--partOfBouwblok-- FUNC-001 (function)
+//	  <--partOfBouwblok-- FUNC-002 (function)
+//	  <--partOfBouwblok-- UC-001 (usecase)
+//	  <--partOfBouwblok-- SCEN-001 (scenario)
+func testViewAppWithMixedTypes() *App {
+	meta := &metamodel.Metamodel{
+		Types: map[string]metamodel.CustomType{
+			"status_type": {Values: []string{"draft", "active", "done"}},
+		},
+		Entities: map[string]metamodel.EntityDef{
+			"bouwblok": {
+				Label: "Bouwblok",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
+			},
+			"function": {
+				Label: "Function",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":  {Type: "string", Required: true},
+					"status": {Type: "status_type"},
+				},
+			},
+			"usecase": {
+				Label: "Use Case",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":  {Type: "string", Required: true},
+					"status": {Type: "status_type"},
+				},
+			},
+			"scenario": {
+				Label: "Scenario",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
+			},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"partOfBouwblok": {
+				From: []string{"function", "usecase", "scenario"},
+				To:   []string{"bouwblok"},
+			},
+		},
+	}
+
+	cfg := &Config{
+		App: AppConfig{Name: "Test"},
+	}
+
+	g := graph.New()
+
+	// Bouwblok
+	bb := model.NewEntity("BOUWBLOK-001", "bouwblok")
+	bb.SetString("title", "Main Bouwblok")
+	g.AddNode(bb)
+
+	// Functions
+	f1 := model.NewEntity("FUNC-001", "function")
+	f1.SetString("title", "Function One")
+	f1.SetString("status", "active")
+	g.AddNode(f1)
+
+	f2 := model.NewEntity("FUNC-002", "function")
+	f2.SetString("title", "Function Two")
+	f2.SetString("status", "draft")
+	g.AddNode(f2)
+
+	// Use case
+	uc := model.NewEntity("UC-001", "usecase")
+	uc.SetString("title", "Use Case One")
+	uc.SetString("status", "active")
+	g.AddNode(uc)
+
+	// Scenario
+	sc := model.NewEntity("SCEN-001", "scenario")
+	sc.SetString("title", "Scenario One")
+	g.AddNode(sc)
+
+	// Relations: all point to bouwblok
+	g.AddEdge(model.NewRelation("FUNC-001", "partOfBouwblok", "BOUWBLOK-001"))
+	g.AddEdge(model.NewRelation("FUNC-002", "partOfBouwblok", "BOUWBLOK-001"))
+	g.AddEdge(model.NewRelation("UC-001", "partOfBouwblok", "BOUWBLOK-001"))
+	g.AddEdge(model.NewRelation("SCEN-001", "partOfBouwblok", "BOUWBLOK-001"))
+
+	styleMap, styledTypes := buildStyleMap(cfg, meta)
+	return &App{
+		Cfg:         cfg,
+		meta:        meta,
+		g:           g,
+		styleMap:    styleMap,
+		styledTypes: styledTypes,
+	}
+}
+
+func TestExecuteViewWithWhere(t *testing.T) {
+	app := testViewAppWithMixedTypes()
+
+	t.Run("filter by type - functions only", func(t *testing.T) {
+		view := ViewConfig{
+			Entry: ViewEntry{Type: "bouwblok"},
+			Traverse: []ViewTraverse{
+				{
+					From:           "entry",
+					FollowIncoming: "partOfBouwblok",
+					CollectAs:      "functions",
+					Where:          "type = function",
+				},
+			},
+		}
+		result, err := app.executeView(view, "BOUWBLOK-001")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		functions := result.Collections["functions"]
+		if len(functions) != 2 {
+			ids := collectIDs(functions)
+			t.Errorf("expected 2 functions, got %v", ids)
+		}
+		for _, f := range functions {
+			if f.Type != "function" {
+				t.Errorf("expected type function, got %s", f.Type)
+			}
+		}
+	})
+
+	t.Run("filter by type - usecases only", func(t *testing.T) {
+		view := ViewConfig{
+			Entry: ViewEntry{Type: "bouwblok"},
+			Traverse: []ViewTraverse{
+				{
+					From:           "entry",
+					FollowIncoming: "partOfBouwblok",
+					CollectAs:      "usecases",
+					Where:          "type = usecase",
+				},
+			},
+		}
+		result, err := app.executeView(view, "BOUWBLOK-001")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		usecases := result.Collections["usecases"]
+		if len(usecases) != 1 || usecases[0].ID != "UC-001" {
+			ids := collectIDs(usecases)
+			t.Errorf("expected [UC-001], got %v", ids)
+		}
+	})
+
+	t.Run("filter by type - exclude with !=", func(t *testing.T) {
+		view := ViewConfig{
+			Entry: ViewEntry{Type: "bouwblok"},
+			Traverse: []ViewTraverse{
+				{
+					From:           "entry",
+					FollowIncoming: "partOfBouwblok",
+					CollectAs:      "not_functions",
+					Where:          "type != function",
+				},
+			},
+		}
+		result, err := app.executeView(view, "BOUWBLOK-001")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		notFunctions := result.Collections["not_functions"]
+		if len(notFunctions) != 2 {
+			ids := collectIDs(notFunctions)
+			t.Errorf("expected 2 non-functions (UC-001, SCEN-001), got %v", ids)
+		}
+		for _, e := range notFunctions {
+			if e.Type == "function" {
+				t.Errorf("should not contain functions, but found %s", e.ID)
+			}
+		}
+	})
+
+	t.Run("filter by property - status", func(t *testing.T) {
+		view := ViewConfig{
+			Entry: ViewEntry{Type: "bouwblok"},
+			Traverse: []ViewTraverse{
+				{
+					From:           "entry",
+					FollowIncoming: "partOfBouwblok",
+					CollectAs:      "active_items",
+					Where:          "status = active",
+				},
+			},
+		}
+		result, err := app.executeView(view, "BOUWBLOK-001")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		activeItems := result.Collections["active_items"]
+		// FUNC-001 (active) and UC-001 (active) should match
+		// FUNC-002 (draft) and SCEN-001 (no status) should not
+		if len(activeItems) != 2 {
+			ids := collectIDs(activeItems)
+			t.Errorf("expected 2 active items, got %v", ids)
+		}
+	})
+
+	t.Run("multiple traverse rules with different type filters", func(t *testing.T) {
+		view := ViewConfig{
+			Entry: ViewEntry{Type: "bouwblok"},
+			Traverse: []ViewTraverse{
+				{
+					From:           "entry",
+					FollowIncoming: "partOfBouwblok",
+					CollectAs:      "functions",
+					Where:          "type = function",
+				},
+				{
+					From:           "entry",
+					FollowIncoming: "partOfBouwblok",
+					CollectAs:      "usecases",
+					Where:          "type = usecase",
+				},
+				{
+					From:           "entry",
+					FollowIncoming: "partOfBouwblok",
+					CollectAs:      "scenarios",
+					Where:          "type = scenario",
+				},
+			},
+		}
+		result, err := app.executeView(view, "BOUWBLOK-001")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(result.Collections["functions"]) != 2 {
+			t.Errorf("expected 2 functions, got %d", len(result.Collections["functions"]))
+		}
+		if len(result.Collections["usecases"]) != 1 {
+			t.Errorf("expected 1 usecase, got %d", len(result.Collections["usecases"]))
+		}
+		if len(result.Collections["scenarios"]) != 1 {
+			t.Errorf("expected 1 scenario, got %d", len(result.Collections["scenarios"]))
+		}
+	})
+
+	t.Run("invalid where expression - continues with unfiltered", func(t *testing.T) {
+		view := ViewConfig{
+			Entry: ViewEntry{Type: "bouwblok"},
+			Traverse: []ViewTraverse{
+				{
+					From:           "entry",
+					FollowIncoming: "partOfBouwblok",
+					CollectAs:      "all",
+					Where:          "invalid expression without operator",
+				},
+			},
+		}
+		result, err := app.executeView(view, "BOUWBLOK-001")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// On invalid expression, should continue with unfiltered results
+		all := result.Collections["all"]
+		if len(all) != 4 {
+			ids := collectIDs(all)
+			t.Errorf("expected 4 unfiltered entities, got %v", ids)
+		}
+	})
+}
+
+func TestFilterEntities(t *testing.T) {
+	app := testViewAppWithMixedTypes()
+
+	entities := []*model.Entity{
+		{ID: "FUNC-001", Type: "function", Properties: map[string]interface{}{"status": "active"}},
+		{ID: "FUNC-002", Type: "function", Properties: map[string]interface{}{"status": "draft"}},
+		{ID: "UC-001", Type: "usecase", Properties: map[string]interface{}{"status": "active"}},
+		{ID: "SCEN-001", Type: "scenario", Properties: map[string]interface{}{}},
+	}
+
+	t.Run("filter by type", func(t *testing.T) {
+		result, err := app.filterEntities(entities, "type = function")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(result) != 2 {
+			t.Errorf("expected 2 functions, got %d", len(result))
+		}
+	})
+
+	t.Run("filter by type not equal", func(t *testing.T) {
+		result, err := app.filterEntities(entities, "type != function")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(result) != 2 {
+			t.Errorf("expected 2 non-functions, got %d", len(result))
+		}
+	})
+
+	t.Run("invalid expression returns error", func(t *testing.T) {
+		_, err := app.filterEntities(entities, "no operator here")
+		if err == nil {
+			t.Error("expected error for invalid expression")
+		}
+	})
+}

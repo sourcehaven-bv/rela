@@ -3,6 +3,7 @@ package dataentry
 import (
 	"fmt"
 
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -77,6 +78,15 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 		}
 	}
 
+	// Apply where filter if specified
+	if rule.Where != "" {
+		filtered, err := a.filterEntities(found, rule.Where)
+		if err == nil {
+			found = filtered
+		}
+		// On error, continue with unfiltered results (silent failure for robustness)
+	}
+
 	// Deduplicate into collection
 	if result.Collections[rule.CollectAs] == nil {
 		result.Collections[rule.CollectAs] = []*model.Entity{}
@@ -137,4 +147,42 @@ func countViewEntities(collections map[string][]*model.Entity) int {
 		}
 	}
 	return len(seen)
+}
+
+// filterEntities filters entities based on a where expression.
+// Supports the "type" pseudo-property to filter by entity type.
+func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*model.Entity, error) {
+	f, err := filter.Parse(whereExpr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid where expression: %w", err)
+	}
+
+	var result []*model.Entity
+	for _, entity := range entities {
+		// Special handling for "type" pseudo-property
+		if f.Property == "type" {
+			if filter.MatchValue(entity.Type, f) {
+				result = append(result, entity)
+			}
+			continue
+		}
+
+		// Regular property - use metamodel-aware matching
+		entityDef, ok := a.meta.GetEntityDef(entity.Type)
+		if !ok {
+			continue
+		}
+		propDef, ok := entityDef.Properties[f.Property]
+		if !ok {
+			continue
+		}
+		matches, err := filter.Match(entity, f, &propDef, a.meta)
+		if err != nil {
+			continue
+		}
+		if matches {
+			result = append(result, entity)
+		}
+	}
+	return result, nil
 }
