@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -353,6 +354,110 @@ id: REQ-001
 	testutil.AssertStringContains(t, frontmatter, "id: REQ-001")
 
 	testutil.AssertEqual(t, body, "")
+}
+
+func TestHasConflictMarkers(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		expected bool
+	}{
+		{
+			name:     "no conflicts",
+			content:  "---\nid: REQ-001\n---\nContent",
+			expected: false,
+		},
+		{
+			name: "has conflicts in frontmatter",
+			content: `---
+id: REQ-001
+<<<<<<< HEAD
+status: draft
+=======
+status: approved
+>>>>>>> feature-branch
+---
+Content`,
+			expected: true,
+		},
+		{
+			name: "has conflicts in content",
+			content: `---
+id: REQ-001
+---
+<<<<<<< HEAD
+Some content
+=======
+Different content
+>>>>>>> feature-branch`,
+			expected: true,
+		},
+		{
+			name:     "partial marker only",
+			content:  "Some text with <<<<<< but not full marker",
+			expected: false,
+		},
+		{
+			name:     "full start marker",
+			content:  "Some text with <<<<<<< HEAD somewhere",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := HasConflictMarkersString(tt.content)
+			testutil.AssertEqual(t, got, tt.expected)
+
+			// Also test byte version
+			gotBytes := HasConflictMarkers([]byte(tt.content))
+			testutil.AssertEqual(t, gotBytes, tt.expected)
+		})
+	}
+}
+
+func TestParseDocument_ConflictedFile(t *testing.T) {
+	content := `---
+id: REQ-001
+<<<<<<< HEAD
+status: draft
+=======
+status: approved
+>>>>>>> feature-branch
+---
+
+# Description
+`
+
+	_, err := ParseDocument(content)
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, ErrConflictedFile) {
+		t.Errorf("expected ErrConflictedFile, got %v", err)
+	}
+}
+
+func TestParseDocument_ConflictedFileInContent(t *testing.T) {
+	content := `---
+id: REQ-001
+status: draft
+---
+
+# Description
+
+<<<<<<< HEAD
+This is the current content.
+=======
+This is the incoming content.
+>>>>>>> feature-branch
+`
+
+	_, err := ParseDocument(content)
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, ErrConflictedFile) {
+		t.Errorf("expected ErrConflictedFile, got %v", err)
+	}
 }
 
 func TestRoundTrip(t *testing.T) {

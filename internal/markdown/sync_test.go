@@ -342,3 +342,125 @@ func TestSyncFromFiles_LoadEntitiesError(t *testing.T) {
 		t.Errorf("error = %q, want 'permission denied'", err.Error())
 	}
 }
+
+func TestSyncFromFiles_ConflictedFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx := &project.Context{
+		Root:         tmpDir,
+		EntitiesDir:  filepath.Join(tmpDir, "entities"),
+		RelationsDir: filepath.Join(tmpDir, "relations"),
+	}
+
+	// Create entity directory
+	reqDir := filepath.Join(ctx.EntitiesDir, "requirement")
+	if err := os.MkdirAll(reqDir, 0755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+	if err := os.MkdirAll(ctx.RelationsDir, 0755); err != nil {
+		t.Fatalf("failed to create relations dir: %v", err)
+	}
+
+	// Create a valid entity
+	validContent := `---
+id: REQ-001
+type: requirement
+title: Valid Entity
+---
+`
+	if err := os.WriteFile(filepath.Join(reqDir, "REQ-001.md"), []byte(validContent), 0644); err != nil {
+		t.Fatalf("failed to create valid entity: %v", err)
+	}
+
+	// Create a conflicted entity
+	conflictedContent := `---
+id: REQ-002
+type: requirement
+<<<<<<< HEAD
+status: draft
+=======
+status: approved
+>>>>>>> feature-branch
+---
+`
+	conflictedEntityPath := filepath.Join(reqDir, "REQ-002.md")
+	if err := os.WriteFile(conflictedEntityPath, []byte(conflictedContent), 0644); err != nil {
+		t.Fatalf("failed to create conflicted entity: %v", err)
+	}
+
+	// Create a valid relation
+	relationContent := `---
+from: REQ-001
+relation: depends-on
+to: REQ-001
+---
+`
+	if err := os.WriteFile(filepath.Join(ctx.RelationsDir, "REQ-001--depends-on--REQ-001.md"), []byte(relationContent), 0644); err != nil {
+		t.Fatalf("failed to create relation: %v", err)
+	}
+
+	// Create a conflicted relation
+	conflictedRelationContent := `---
+from: REQ-001
+relation: addresses
+<<<<<<< HEAD
+to: REQ-002
+=======
+to: REQ-003
+>>>>>>> feature-branch
+---
+`
+	conflictedRelationPath := filepath.Join(ctx.RelationsDir, "REQ-001--addresses--conflict.md")
+	if err := os.WriteFile(conflictedRelationPath, []byte(conflictedRelationContent), 0644); err != nil {
+		t.Fatalf("failed to create conflicted relation: %v", err)
+	}
+
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"requirement": {Label: "Requirement"},
+		},
+	}
+	g := graph.New()
+
+	result, err := testIO.SyncFromFiles(ctx, meta, g)
+	if err != nil {
+		t.Fatalf("SyncFromFiles failed: %v", err)
+	}
+
+	// Should load 1 valid entity
+	if result.EntitiesLoaded != 1 {
+		t.Errorf("EntitiesLoaded = %d, want 1", result.EntitiesLoaded)
+	}
+
+	// Should load 1 valid relation
+	if result.RelationsLoaded != 1 {
+		t.Errorf("RelationsLoaded = %d, want 1", result.RelationsLoaded)
+	}
+
+	// Should track 2 conflicted files (1 entity + 1 relation)
+	if len(result.Conflicted) != 2 {
+		t.Errorf("got %d conflicted files, want 2", len(result.Conflicted))
+	}
+
+	// Verify the conflicted files are tracked
+	conflictedMap := make(map[string]bool)
+	for _, path := range result.Conflicted {
+		conflictedMap[path] = true
+	}
+	if !conflictedMap[conflictedEntityPath] {
+		t.Errorf("missing conflicted entity: %s", conflictedEntityPath)
+	}
+	if !conflictedMap[conflictedRelationPath] {
+		t.Errorf("missing conflicted relation: %s", conflictedRelationPath)
+	}
+
+	// Verify the graph only contains valid entities
+	if g.NodeCount() != 1 {
+		t.Errorf("graph has %d nodes, want 1", g.NodeCount())
+	}
+	if _, ok := g.GetNode("REQ-001"); !ok {
+		t.Error("REQ-001 should exist in graph")
+	}
+	if _, ok := g.GetNode("REQ-002"); ok {
+		t.Error("REQ-002 should not exist in graph (conflicted)")
+	}
+}

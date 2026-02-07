@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,12 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
+
+// RelationLoadResult contains results from loading relations.
+type RelationLoadResult struct {
+	Relations  []*model.Relation
+	Conflicted []string // Paths of files with git conflicts
+}
 
 // ReadRelation reads a relation from a markdown file.
 func (f *FileIO) ReadRelation(path string) (*model.Relation, error) {
@@ -103,13 +110,22 @@ func (f *FileIO) ListRelationFiles(relationsDir string) ([]string, error) {
 
 // LoadAllRelations loads all relations from the relations directory using parallel I/O.
 func (f *FileIO) LoadAllRelations(relationsDir string) ([]*model.Relation, error) {
+	result, err := f.LoadAllRelationsWithConflicts(relationsDir)
+	if err != nil {
+		return nil, err
+	}
+	return result.Relations, nil
+}
+
+// LoadAllRelationsWithConflicts loads all relations and tracks conflicted files.
+func (f *FileIO) LoadAllRelationsWithConflicts(relationsDir string) (*RelationLoadResult, error) {
 	files, err := f.ListRelationFiles(relationsDir)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(files) == 0 {
-		return []*model.Relation{}, nil
+		return &RelationLoadResult{Relations: []*model.Relation{}}, nil
 	}
 
 	// Use worker pool for parallel file reading
@@ -118,9 +134,14 @@ func (f *FileIO) LoadAllRelations(relationsDir string) ([]*model.Relation, error
 		numWorkers = len(files)
 	}
 
+	type loadResult struct {
+		relation   *model.Relation
+		conflicted string // Non-empty if file has conflicts
+	}
+
 	// Channels for work distribution and result collection
 	fileChan := make(chan string, len(files))
-	resultChan := make(chan *model.Relation, len(files))
+	resultChan := make(chan loadResult, len(files))
 
 	// Start workers
 	var wg sync.WaitGroup
@@ -131,10 +152,13 @@ func (f *FileIO) LoadAllRelations(relationsDir string) ([]*model.Relation, error
 			for file := range fileChan {
 				relation, readErr := f.ReadRelation(file)
 				if readErr != nil {
-					// Skip files that can't be parsed
+					if errors.Is(readErr, ErrConflictedFile) {
+						resultChan <- loadResult{conflicted: file}
+					}
+					// Skip other files that can't be parsed
 					continue
 				}
-				resultChan <- relation
+				resultChan <- loadResult{relation: relation}
 			}
 		}()
 	}
@@ -152,12 +176,20 @@ func (f *FileIO) LoadAllRelations(relationsDir string) ([]*model.Relation, error
 	}()
 
 	// Collect results
-	relations := make([]*model.Relation, 0, len(files))
-	for relation := range resultChan {
-		relations = append(relations, relation)
+	result := &RelationLoadResult{
+		Relations:  make([]*model.Relation, 0, len(files)),
+		Conflicted: make([]string, 0),
+	}
+	for lr := range resultChan {
+		if lr.relation != nil {
+			result.Relations = append(result.Relations, lr.relation)
+		}
+		if lr.conflicted != "" {
+			result.Conflicted = append(result.Conflicted, lr.conflicted)
+		}
 	}
 
-	return relations, nil
+	return result, nil
 }
 
 // RelationFilename generates a filename for a relation.

@@ -182,6 +182,15 @@ tbody tr:last-child td { border-bottom: none; }
 .toast-error { background: #991b1b; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 
+.conflict-banner { position: fixed; top: 0; left: 240px; right: 0; z-index: 90; background: linear-gradient(90deg, #fef3c7, #fde68a); border-bottom: 1px solid #fcd34d; padding: 8px 20px; display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #92400e; }
+.conflict-banner-icon { font-size: 16px; margin-right: 8px; }
+.conflict-banner a { color: #92400e; font-weight: 600; text-decoration: underline; }
+.conflict-banner a:hover { color: #78350f; }
+.conflict-banner-close { background: none; border: none; font-size: 18px; cursor: pointer; color: #92400e; opacity: 0.7; padding: 4px 8px; }
+.conflict-banner-close:hover { opacity: 1; }
+.has-conflict-banner .main { padding-top: 56px; }
+.has-conflict-banner .page-header { top: 44px; }
+
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.15s; }
 .modal { background: var(--bg-card); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.2); width: 480px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
 .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
@@ -401,6 +410,93 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
   .side-panel-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 199; }
   .side-panel-overlay.open { display: block; }
 }
+
+/* Settings page */
+.settings-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.settings-row:first-child { border-top: 1px solid var(--border); }
+.settings-row-label { font-size: 13px; font-weight: 500; font-family: var(--font-mono); color: var(--text); min-width: 140px; flex-shrink: 0; }
+.settings-row-value { flex: 1; }
+.settings-row-value select, .settings-row-value input { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: var(--font); background: var(--bg-card); color: var(--text); }
+.settings-row-value select:focus, .settings-row-value input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); }
+.settings-row-remove { background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 18px; padding: 4px; border-radius: 4px; transition: all 0.15s; line-height: 1; flex-shrink: 0; }
+.settings-row-remove:hover { color: var(--danger); background: #fef2f2; }
+.override-group { border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-top: 12px; background: var(--bg); }
+.override-header { display: flex; align-items: start; gap: 12px; }
+.settings-stale-badge { display: inline-block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; padding: 2px 6px; border-radius: 4px; background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; margin-left: 6px; flex-shrink: 0; white-space: nowrap; }
+.stale-option { color: #92400e; font-style: italic; }
+
+/* Conflicts list page */
+.conflict-summary { margin-bottom: 16px; }
+.conflict-chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; font-size: 14px; font-weight: 600; }
+.conflict-chip-warning { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.conflict-path { font-family: var(--font-mono); font-size: 13px; }
+.conflict-path-link { display: block; text-decoration: none; color: inherit; }
+.conflict-path-link:hover .conflict-path { color: var(--primary); text-decoration: underline; }
+.conflict-id { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.conflict-empty { text-align: center; padding: 60px 20px; }
+.conflict-empty-icon { font-size: 48px; color: #22c55e; margin-bottom: 16px; }
+.conflict-empty h3 { font-size: 18px; color: var(--text); margin-bottom: 8px; }
+.conflict-empty p { color: var(--text-muted); }
+
+/* Conflict resolution page */
+.resolve-actions-top { display: flex; gap: 12px; margin-bottom: 16px; }
+.resolve-actions-bottom { display: flex; gap: 12px; margin-top: 16px; justify-content: flex-end; }
+.resolve-card { padding: 20px; margin-bottom: 16px; }
+.resolve-card h3 { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 16px; }
+.resolve-table { width: 100%; }
+.resolve-table th { text-align: left; padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid var(--border); }
+.resolve-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.resolve-prop-name { font-family: var(--font-mono); font-size: 13px; font-weight: 500; }
+.resolve-value { font-size: 13px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.resolve-value em { color: var(--text-muted); }
+.resolve-choice { white-space: nowrap; }
+.resolve-choice label { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; font-size: 13px; cursor: pointer; }
+.resolve-same { background: #f0fdf4; }
+.resolve-same-label { font-size: 11px; color: #15803d; font-weight: 500; }
+.resolve-radio-hidden { position: absolute; opacity: 0; pointer-events: none; }
+.resolve-value-selectable { cursor: pointer; transition: all 0.15s ease; position: relative; border-left: 3px solid transparent; }
+.resolve-value-selectable:hover { background: #eff6ff; }
+.resolve-value-selected { background: #eff6ff; border-left-color: #3b82f6; }
+.resolve-value-unselected { color: var(--text-muted); opacity: 0.6; }
+.resolve-value-unselected:hover { opacity: 1; }
+.resolve-value-same { text-align: center; color: var(--text-muted); }
+.resolve-row-focused td { outline: 2px solid #3b82f6; outline-offset: -2px; }
+.resolve-row-focused td:first-child { border-radius: 4px 0 0 4px; }
+.resolve-row-focused td:last-child { border-radius: 0 4px 4px 0; }
+.resolve-content-choice { display: flex; gap: 20px; margin-bottom: 16px; }
+.resolve-content-choice label { display: flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
+.resolve-content-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.resolve-content-side { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.resolve-content-label { background: var(--bg); padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+.resolve-content-pre { padding: 12px; margin: 0; font-size: 12px; font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; background: var(--bg-card); }
+.resolve-manual-edit { margin-top: 16px; }
+.resolve-manual-edit label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; }
+.resolve-manual-edit textarea { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: var(--font-mono); resize: vertical; }
+
+/* Diff highlighting */
+.diff-line { display: block; padding: 1px 4px; margin: 0 -4px; border-radius: 2px; }
+.diff-line-add { background: #f0fdf4; }
+.diff-line-remove { background: #fef2f2; }
+.diff-line-change { background: transparent; }
+.diff-word-add { background: #bbf7d0; border-radius: 2px; padding: 0 2px; }
+.diff-word-remove { background: #fecaca; border-radius: 2px; padding: 0 2px; }
+
+/* Dark mode: Conflict resolution */
+[data-theme="dark"] .conflict-banner { background: linear-gradient(90deg, rgba(251,191,36,0.15), rgba(251,191,36,0.1)); border-bottom-color: #92400e; color: #fcd34d; }
+[data-theme="dark"] .conflict-banner a { color: #fcd34d; }
+[data-theme="dark"] .conflict-banner a:hover { color: #fef3c7; }
+[data-theme="dark"] .conflict-banner-close { color: #fcd34d; }
+[data-theme="dark"] .conflict-chip-warning { background: rgba(251,191,36,0.15); color: #fcd34d; border-color: #92400e; }
+[data-theme="dark"] .conflict-empty-icon { color: #4ade80; }
+[data-theme="dark"] .resolve-same { background: rgba(34,197,94,0.1); }
+[data-theme="dark"] .resolve-same-label { color: #4ade80; }
+[data-theme="dark"] .resolve-value-selectable:hover { background: rgba(59,130,246,0.15); }
+[data-theme="dark"] .resolve-value-selected { background: rgba(59,130,246,0.2); border-left-color: #60a5fa; }
+[data-theme="dark"] .resolve-row-focused td { outline-color: #60a5fa; }
+[data-theme="dark"] .diff-line-add { background: rgba(34,197,94,0.15); }
+[data-theme="dark"] .diff-line-remove { background: rgba(239,68,68,0.15); }
+[data-theme="dark"] .diff-word-add { background: rgba(34,197,94,0.3); }
+[data-theme="dark"] .diff-word-remove { background: rgba(239,68,68,0.3); }
 
 </style>
 <script>
@@ -1507,8 +1603,10 @@ document.addEventListener('click', function(e) {
       }
       if ((e.key === 'Enter' || e.key === 'o') && _selectedRow >= 0) {
         var rows = getListRows();
-        var link = rows[_selectedRow] && rows[_selectedRow].querySelector('.cell-link');
-        if (link) link.click();
+        var row = rows[_selectedRow];
+        // Click first link in row (primary action)
+        var link = row && (row.querySelector('.cell-link') || row.querySelector('a[href]'));
+        if (link) { link.click(); return; }
         return;
       }
       if (e.key === 'e' && _selectedRow >= 0) {
@@ -1553,6 +1651,46 @@ document.addEventListener('click', function(e) {
     }
   });
 })();
+
+// Shared EasyMDE factory - creates editor with consistent config
+function createRelaEditor(element, options) {
+  options = options || {};
+  var toolbar = ['bold', 'italic', 'heading', '|', 'unordered-list', 'ordered-list', {
+    name: 'checklist',
+    action: function(editor) {
+      var cm = editor.codemirror;
+      var sel = cm.getSelection();
+      if (sel) {
+        cm.replaceSelection(sel.split('\n').map(function(l) { return '- [ ] ' + l; }).join('\n'));
+      } else {
+        cm.replaceSelection('- [ ] ');
+      }
+      cm.focus();
+    },
+    className: 'fa fa-check-square-o',
+    title: 'Checklist (Ctrl+Shift+L)',
+  }, '|', 'link', 'image', '|', 'preview', 'side-by-side'];
+
+  // Add fullscreen toggle if callback provided
+  if (options.fullscreenToggle) {
+    toolbar.push('|', {
+      name: 'toggle-fullscreen-editor',
+      action: options.fullscreenToggle,
+      className: 'fa fa-arrows-alt',
+      title: 'Toggle Full Screen Editor',
+    });
+  }
+  toolbar.push('|', 'guide');
+
+  return new EasyMDE({
+    element: element,
+    spellChecker: false,
+    status: false,
+    minHeight: options.minHeight || '200px',
+    toolbar: toolbar,
+    sideBySideFullscreen: false,
+  });
+}
 </script>
 {{- end -}}
 
@@ -1572,6 +1710,20 @@ document.addEventListener('click', function(e) {
        hx-get="/list/{{ .List }}" hx-target="#content" hx-push-url="true">
       {{ .Label }}<span class="nav-count">{{ .Count }}</span>
     </a>
+{{ end }}
+{{- end -}}
+
+{{- define "conflict-bar" -}}
+{{ if and .ConflictCount (gt .ConflictCount 0) }}
+<div class="conflict-banner" id="conflict-banner">
+  <div>
+    <span class="conflict-banner-icon">⚠️</span>
+    <strong>{{ .ConflictCount }} file{{ if gt .ConflictCount 1 }}s{{ end }} with merge conflicts</strong> —
+    <a href="/conflicts" hx-get="/conflicts" hx-target="#content" hx-push-url="true">Resolve now</a>
+  </div>
+  <button class="conflict-banner-close" onclick="this.parentElement.remove();document.body.classList.remove('has-conflict-banner');" title="Dismiss">×</button>
+</div>
+<script>document.body.classList.add('has-conflict-banner');</script>
 {{ end }}
 {{- end -}}
 
@@ -1704,6 +1856,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
 </head>
 <body>
 {{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
 <main class="main" id="content">
 {{ template "list-content" . }}
 </main>
@@ -1828,6 +1981,7 @@ document.body.addEventListener('htmx:pushedIntoHistory', function() {
 </head>
 <body>
 {{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
 <main class="main{{ if .SidePanelSections }} main-with-panel{{ end }}" id="content">
 {{ template "form-content" . }}
 </main>
@@ -2173,32 +2327,8 @@ var _editorInstance = null;
 (function() {
   var el = document.getElementById('body-editor');
   if (el) {
-    _editorInstance = new EasyMDE({
-      element: el,
-      spellChecker: false,
-      status: false,
-      minHeight: '200px',
-      toolbar: ['bold', 'italic', 'heading', '|', 'unordered-list', 'ordered-list', {
-        name: 'checklist',
-        action: function(editor) {
-          var cm = editor.codemirror;
-          var sel = cm.getSelection();
-          if (sel) {
-            cm.replaceSelection(sel.split('\n').map(function(l) { return '- [ ] ' + l; }).join('\n'));
-          } else {
-            cm.replaceSelection('- [ ] ');
-          }
-          cm.focus();
-        },
-        className: 'fa fa-check-square-o',
-        title: 'Checklist (Ctrl+Shift+L)',
-      }, '|', 'link', 'image', '|', 'preview', 'side-by-side', '|', {
-        name: 'toggle-fullscreen-editor',
-        action: toggleFullscreenEditor,
-        className: 'fa fa-arrows-alt',
-        title: 'Toggle Full Screen Editor',
-      }, '|', 'guide'],
-      sideBySideFullscreen: false,
+    _editorInstance = createRelaEditor(el, {
+      fullscreenToggle: toggleFullscreenEditor
     });
   }
 })();
@@ -2363,6 +2493,7 @@ function closeSidePanel() {
 </head>
 <body>
 {{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
 <main class="main" id="content">
 {{ template "entity-content" . }}
 </main>
@@ -2473,6 +2604,7 @@ function closeSidePanel() {
 </head>
 <body>
 {{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
 <main class="main" id="content">
 {{ template "view-content" . }}
 </main>
@@ -2895,6 +3027,7 @@ function closeSidePanel() {
 </head>
 <body>
 {{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
 <main class="main" id="content">
 {{ template "search-content" . }}
 </main>
@@ -3282,6 +3415,7 @@ function closeSidePanel() {
 </head>
 <body>
 {{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
 <main class="main" id="content">
 {{ template "dashboard-content" . }}
 </main>
@@ -3437,6 +3571,7 @@ function closeSidePanel() {
 </head>
 <body>
 {{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
 <main class="main" id="content">
 {{ template "analyze-content" . }}
 </main>
@@ -3532,10 +3667,10 @@ function closeSidePanel() {
 <head>
 <title>{{ .App.Name }} - Settings</title>
 {{ template "head" . }}
-{{ template "settings-head" . }}
 </head>
 <body>
 {{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
 <main class="main" id="content">
 {{ template "settings-content" . }}
 </main>
@@ -3934,4 +4069,439 @@ function addOverrideGroup() {
 .stale-option { color: #92400e; font-style: italic; }
 </style>
 {{- end -}}
+
+{{- define "conflicts-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - Conflicts</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
+<main class="main" id="content">
+{{ template "conflicts-content" . }}
+</main>
+<div id="command-toast-container"></div>
+</body>
+</html>
+{{- end -}}
+
+{{- define "conflicts-content" -}}
+<div class="page-header">
+  <div>
+    <h2>Merge Conflicts</h2>
+    <p>Files with unresolved git conflicts</p>
+  </div>
+</div>
+
+{{ if .HasConflicts }}
+<div class="conflict-summary">
+  <span class="conflict-chip conflict-chip-warning">⚠ {{ len .Conflicts }} file{{ if gt (len .Conflicts) 1 }}s{{ end }} with conflicts</span>
+</div>
+
+<div class="card" style="margin-top: 16px;">
+  <table>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Type</th>
+        <th>Conflicts</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Conflicts }}
+      <tr>
+        <td>
+          <a href="/conflicts/{{ .RelPath }}" class="conflict-path-link"
+             hx-get="/conflicts/{{ .RelPath }}" hx-target="#content" hx-push-url="true">
+            <div class="conflict-path">{{ .RelPath }}</div>
+            {{ if .EntityID }}<div class="conflict-id">{{ .EntityID }}</div>{{ end }}
+          </a>
+        </td>
+        <td>{{ if .EntityType }}<span class="badge badge-gray">{{ .EntityType }}</span>{{ else }}<span class="badge badge-purple">relation</span>{{ end }}</td>
+        <td><span class="badge badge-orange">{{ .MarkerCount }}</span></td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ else }}
+<div class="conflict-empty">
+  <div class="conflict-empty-icon">✓</div>
+  <h3>No conflicts detected</h3>
+  <p>All entity and relation files are clean.</p>
+</div>
+{{ end }}
+{{- end -}}
+
+
+{{- define "conflict-resolve-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - Resolve Conflict</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
+<main class="main" id="content">
+{{ template "conflict-resolve-content" . }}
+</main>
+<div id="command-toast-container"></div>
+</body>
+</html>
+{{- end -}}
+
+{{- define "conflict-resolve-content" -}}
+<div class="page-header">
+  <div>
+    <h2>Resolve Conflict</h2>
+    <p>{{ .Resolution.RelPath }}</p>
+  </div>
+  <a href="/conflicts" class="btn btn-secondary" hx-get="/conflicts" hx-target="#content" hx-push-url="true">← Back to Conflicts</a>
+</div>
+
+<form method="POST" action="/api/conflict-resolve" id="resolve-form">
+  <input type="hidden" name="path" value="{{ .Resolution.RelPath }}">
+
+  <div class="resolve-actions-top">
+    <button type="button" class="btn btn-secondary" onclick="selectAllSide('ours')">Select All Ours <kbd>O</kbd></button>
+    <button type="button" class="btn btn-secondary" onclick="selectAllSide('theirs')">Select All Theirs <kbd>T</kbd></button>
+  </div>
+
+  <div class="card resolve-card">
+    <h3>Properties</h3>
+    <table class="resolve-table">
+      <thead>
+        <tr>
+          <th>Property</th>
+          <th>Ours (HEAD)</th>
+          <th>Theirs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Resolution.Info.PropertyDiffs }}
+        <tr class="{{ if .IsSame }}resolve-same{{ else }}resolve-diff{{ end }}" data-prop="{{ .Property }}">
+          <td class="resolve-prop-name">{{ .Property }}</td>
+          {{ if .IsSame }}
+          <td class="resolve-value resolve-value-same" colspan="2">{{ if .OursValue }}{{ .OursValue }}{{ else }}<em>empty</em>{{ end }}</td>
+          <input type="hidden" name="prop_{{ .Property }}" value="ours">
+          {{ else }}
+          <td class="resolve-value resolve-value-selectable resolve-value-selected" data-side="ours" data-prop="{{ .Property }}">
+            <input type="radio" name="prop_{{ .Property }}" value="ours" checked class="resolve-radio-hidden">
+            <span class="resolve-value-text">{{ if .OursValue }}{{ .OursValue }}{{ else }}<em>empty</em>{{ end }}</span>
+          </td>
+          <td class="resolve-value resolve-value-selectable resolve-value-unselected" data-side="theirs" data-prop="{{ .Property }}">
+            <input type="radio" name="prop_{{ .Property }}" value="theirs" class="resolve-radio-hidden">
+            <span class="resolve-value-text">{{ if .TheirsValue }}{{ .TheirsValue }}{{ else }}<em>empty</em>{{ end }}</span>
+          </td>
+          {{ end }}
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+
+  {{ if not .Resolution.Info.ContentSame }}
+  <div class="card resolve-card">
+    <h3>Content</h3>
+    <div class="resolve-content-choice">
+      <label><input type="radio" name="content" value="ours" checked> Use Ours</label>
+      <label><input type="radio" name="content" value="theirs"> Use Theirs</label>
+      <label><input type="radio" name="content" value="manual" id="content-manual-radio"> Edit Manually</label>
+    </div>
+    <div class="resolve-content-compare">
+      <div class="resolve-content-side">
+        <div class="resolve-content-label">Ours (HEAD)</div>
+        <pre class="resolve-content-pre" id="diff-ours">{{ .Resolution.Info.ContentDiffOurs }}</pre>
+      </div>
+      <div class="resolve-content-side">
+        <div class="resolve-content-label">Theirs</div>
+        <pre class="resolve-content-pre" id="diff-theirs">{{ .Resolution.Info.ContentDiffTheirs }}</pre>
+      </div>
+    </div>
+    <div class="resolve-manual-edit" id="manual-edit-container" style="display:none;">
+      <label>Manual Content</label>
+      <textarea name="manual_content" id="manual-content-editor" rows="10">{{ .Resolution.Info.ContentDiffOurs }}</textarea>
+    </div>
+  </div>
+  {{ else }}
+  <input type="hidden" name="content" value="ours">
+  {{ end }}
+
+  <div class="resolve-actions-bottom">
+    <button type="submit" name="action" value="custom" class="btn btn-primary">Apply Resolution <kbd>&#8984;&#8629;</kbd></button>
+  </div>
+</form>
+
+<script>
+(function() {
+  var manualRadio = document.getElementById('content-manual-radio');
+  var container = document.getElementById('manual-edit-container');
+  var editorEl = document.getElementById('manual-content-editor');
+  var editorInstance = null;
+
+  function showManualEdit() {
+    container.style.display = 'block';
+    if (!editorInstance && editorEl) {
+      editorInstance = createRelaEditor(editorEl, { minHeight: '250px' });
+    }
+    if (editorInstance) {
+      setTimeout(function() { editorInstance.codemirror.refresh(); }, 10);
+    }
+  }
+
+  function hideManualEdit() {
+    container.style.display = 'none';
+  }
+
+  if (manualRadio) {
+    manualRadio.addEventListener('change', function() {
+      if (this.checked) showManualEdit();
+    });
+  }
+
+  document.querySelectorAll('input[name="content"]').forEach(function(radio) {
+    radio.addEventListener('change', function() {
+      if (manualRadio && manualRadio.checked) {
+        showManualEdit();
+      } else {
+        hideManualEdit();
+      }
+    });
+  });
+
+  // Diff highlighting
+  function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  function computeLineDiff(oursLines, theirsLines) {
+    // Simple LCS-based diff
+    var m = oursLines.length, n = theirsLines.length;
+    var dp = [];
+    for (var i = 0; i <= m; i++) {
+      dp[i] = [];
+      for (var j = 0; j <= n; j++) {
+        if (i === 0 || j === 0) dp[i][j] = 0;
+        else if (oursLines[i-1] === theirsLines[j-1]) dp[i][j] = dp[i-1][j-1] + 1;
+        else dp[i][j] = Math.max(dp[i-1][j], dp[i][j-1]);
+      }
+    }
+    // Backtrack to find diff
+    var oursResult = [], theirsResult = [];
+    var i = m, j = n;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && oursLines[i-1] === theirsLines[j-1]) {
+        oursResult.unshift({ text: oursLines[i-1], type: 'same' });
+        theirsResult.unshift({ text: theirsLines[j-1], type: 'same' });
+        i--; j--;
+      } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+        theirsResult.unshift({ text: theirsLines[j-1], type: 'add' });
+        j--;
+      } else {
+        oursResult.unshift({ text: oursLines[i-1], type: 'remove' });
+        i--;
+      }
+    }
+    return { ours: oursResult, theirs: theirsResult };
+  }
+
+  function highlightWordDiff(line1, line2, addClass, removeClass) {
+    var words1 = line1.split(/(\s+)/), words2 = line2.split(/(\s+)/);
+    var result1 = '', result2 = '';
+    var i = 0, j = 0;
+    while (i < words1.length || j < words2.length) {
+      if (i < words1.length && j < words2.length && words1[i] === words2[j]) {
+        result1 += escapeHtml(words1[i]);
+        result2 += escapeHtml(words2[j]);
+        i++; j++;
+      } else if (j < words2.length && (i >= words1.length || words1.indexOf(words2[j], i) === -1)) {
+        result2 += '<span class="' + addClass + '">' + escapeHtml(words2[j]) + '</span>';
+        j++;
+      } else {
+        result1 += '<span class="' + removeClass + '">' + escapeHtml(words1[i]) + '</span>';
+        i++;
+      }
+    }
+    return { line1: result1, line2: result2 };
+  }
+
+  function renderDiff() {
+    var oursEl = document.getElementById('diff-ours');
+    var theirsEl = document.getElementById('diff-theirs');
+    if (!oursEl || !theirsEl) return;
+
+    var oursText = oursEl.textContent;
+    var theirsText = theirsEl.textContent;
+    var oursLines = oursText.split('\n');
+    var theirsLines = theirsText.split('\n');
+
+    var diff = computeLineDiff(oursLines, theirsLines);
+
+    var oursHtml = '', theirsHtml = '';
+    var oi = 0, ti = 0;
+    while (oi < diff.ours.length || ti < diff.theirs.length) {
+      var oLine = diff.ours[oi], tLine = diff.theirs[ti];
+      if (oLine && tLine && oLine.type === 'same' && tLine.type === 'same') {
+        oursHtml += '<span class="diff-line">' + escapeHtml(oLine.text) + '</span>\n';
+        theirsHtml += '<span class="diff-line">' + escapeHtml(tLine.text) + '</span>\n';
+        oi++; ti++;
+      } else if (oLine && oLine.type === 'remove' && tLine && tLine.type === 'add') {
+        // Changed line - highlight word differences
+        var wordDiff = highlightWordDiff(oLine.text, tLine.text, 'diff-word-add', 'diff-word-remove');
+        oursHtml += '<span class="diff-line diff-line-change">' + wordDiff.line1 + '</span>\n';
+        theirsHtml += '<span class="diff-line diff-line-change">' + wordDiff.line2 + '</span>\n';
+        oi++; ti++;
+      } else if (oLine && oLine.type === 'remove') {
+        oursHtml += '<span class="diff-line diff-line-remove">' + escapeHtml(oLine.text) + '</span>\n';
+        oi++;
+      } else if (tLine && tLine.type === 'add') {
+        theirsHtml += '<span class="diff-line diff-line-add">' + escapeHtml(tLine.text) + '</span>\n';
+        ti++;
+      } else {
+        oi++; ti++;
+      }
+    }
+
+    oursEl.innerHTML = oursHtml.replace(/\n$/, '');
+    theirsEl.innerHTML = theirsHtml.replace(/\n$/, '');
+  }
+
+  renderDiff();
+
+  // Select all properties and content to one side
+  window.selectAllSide = function(side) {
+    // Select all property values
+    document.querySelectorAll('.resolve-value-selectable[data-side="' + side + '"]').forEach(function(cell) {
+      cell.click();
+    });
+    // Select content radio
+    var contentRadio = document.querySelector('input[name="content"][value="' + side + '"]');
+    if (contentRadio) contentRadio.click();
+  };
+
+  // Click-to-select property values
+  document.querySelectorAll('.resolve-value-selectable').forEach(function(cell) {
+    cell.addEventListener('click', function() {
+      var prop = this.getAttribute('data-prop');
+      var side = this.getAttribute('data-side');
+      var row = this.closest('tr');
+
+      // Check the radio button
+      var radio = this.querySelector('input[type="radio"]');
+      if (radio) radio.checked = true;
+
+      // Update visual states
+      row.querySelectorAll('.resolve-value-selectable').forEach(function(c) {
+        if (c.getAttribute('data-side') === side) {
+          c.classList.add('resolve-value-selected');
+          c.classList.remove('resolve-value-unselected');
+        } else {
+          c.classList.remove('resolve-value-selected');
+          c.classList.add('resolve-value-unselected');
+        }
+      });
+    });
+  });
+
+  // Keyboard navigation for conflict resolution
+  (function() {
+    var rows = Array.from(document.querySelectorAll('.resolve-table tbody tr'));
+    var focusedIndex = -1;
+
+    function setFocusedRow(index) {
+      rows.forEach(function(r) { r.classList.remove('resolve-row-focused'); });
+      if (index >= 0 && index < rows.length) {
+        focusedIndex = index;
+        rows[index].classList.add('resolve-row-focused');
+        rows[index].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+
+    function selectSide(side) {
+      if (focusedIndex < 0 || focusedIndex >= rows.length) return;
+      var row = rows[focusedIndex];
+      var cell = row.querySelector('.resolve-value-selectable[data-side="' + side + '"]');
+      if (cell) cell.click();
+    }
+
+    document.addEventListener('keydown', function(e) {
+      // Skip if typing in an input/textarea
+      var tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.target.isContentEditable) return;
+
+      // Only handle if we're on the conflict resolution page
+      var table = document.querySelector('.resolve-table');
+      if (!table) return;
+
+      switch(e.key) {
+        case 'ArrowDown':
+        case 'j':
+          e.preventDefault();
+          if (focusedIndex < 0) {
+            // First press: focus first differing row
+            for (var i = 0; i < rows.length; i++) {
+              if (rows[i].querySelector('.resolve-value-selectable')) {
+                setFocusedRow(i);
+                break;
+              }
+            }
+          } else {
+            setFocusedRow(Math.min(focusedIndex + 1, rows.length - 1));
+          }
+          break;
+        case 'ArrowUp':
+        case 'k':
+          e.preventDefault();
+          if (focusedIndex < 0) {
+            // First press: focus last differing row
+            for (var i = rows.length - 1; i >= 0; i--) {
+              if (rows[i].querySelector('.resolve-value-selectable')) {
+                setFocusedRow(i);
+                break;
+              }
+            }
+          } else {
+            setFocusedRow(Math.max(focusedIndex - 1, 0));
+          }
+          break;
+        case 'ArrowLeft':
+        case 'h':
+        case '1':
+          e.preventDefault();
+          selectSide('ours');
+          break;
+        case 'ArrowRight':
+        case 'l':
+        case '2':
+          e.preventDefault();
+          selectSide('theirs');
+          break;
+        case 'Escape':
+          e.preventDefault();
+          var backLink = document.querySelector('a[href="/conflicts"]');
+          if (backLink) backLink.click();
+          break;
+        case 'O':
+          e.preventDefault();
+          selectAllSide('ours');
+          break;
+        case 'T':
+          e.preventDefault();
+          selectAllSide('theirs');
+          break;
+      }
+    });
+  })();
+})();
+</script>
+{{- end -}}
+
 `

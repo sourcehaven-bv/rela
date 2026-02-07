@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -424,5 +425,113 @@ func TestEntityFileModTime_NonExistent(t *testing.T) {
 	_, err := testIO.EntityFileModTime("/nonexistent/file.md")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
+	}
+}
+
+func TestLoadAllEntitiesWithConflicts(t *testing.T) {
+	tmpDir := t.TempDir()
+	entitiesDir := filepath.Join(tmpDir, "entities")
+	if err := os.MkdirAll(entitiesDir, 0755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	// Create a valid entity
+	validContent := `---
+id: REQ-001
+type: requirement
+title: Valid Entity
+---
+
+Valid content.
+`
+	if err := os.WriteFile(filepath.Join(entitiesDir, "REQ-001.md"), []byte(validContent), 0644); err != nil {
+		t.Fatalf("failed to create valid entity: %v", err)
+	}
+
+	// Create a conflicted entity
+	conflictedContent := `---
+id: REQ-002
+type: requirement
+<<<<<<< HEAD
+status: draft
+=======
+status: approved
+>>>>>>> feature-branch
+---
+
+Some content.
+`
+	conflictedPath := filepath.Join(entitiesDir, "REQ-002.md")
+	if err := os.WriteFile(conflictedPath, []byte(conflictedContent), 0644); err != nil {
+		t.Fatalf("failed to create conflicted entity: %v", err)
+	}
+
+	// Create another valid entity
+	valid2Content := `---
+id: REQ-003
+type: requirement
+title: Another Valid Entity
+---
+`
+	if err := os.WriteFile(filepath.Join(entitiesDir, "REQ-003.md"), []byte(valid2Content), 0644); err != nil {
+		t.Fatalf("failed to create valid entity: %v", err)
+	}
+
+	result, err := testIO.LoadAllEntitiesWithConflicts(entitiesDir, nil)
+	if err != nil {
+		t.Fatalf("LoadAllEntitiesWithConflicts failed: %v", err)
+	}
+
+	// Should load 2 valid entities
+	if len(result.Entities) != 2 {
+		t.Errorf("got %d entities, want 2", len(result.Entities))
+	}
+
+	// Should track 1 conflicted file
+	if len(result.Conflicted) != 1 {
+		t.Errorf("got %d conflicted files, want 1", len(result.Conflicted))
+	}
+
+	if len(result.Conflicted) > 0 && result.Conflicted[0] != conflictedPath {
+		t.Errorf("conflicted file = %q, want %q", result.Conflicted[0], conflictedPath)
+	}
+
+	// Verify the valid entities are loaded correctly
+	ids := make(map[string]bool)
+	for _, entity := range result.Entities {
+		ids[entity.ID] = true
+	}
+	if !ids["REQ-001"] || !ids["REQ-003"] {
+		t.Error("expected REQ-001 and REQ-003 to be loaded")
+	}
+	if ids["REQ-002"] {
+		t.Error("REQ-002 should not be loaded (conflicted)")
+	}
+}
+
+func TestReadEntity_ConflictedFile(t *testing.T) {
+	tmpDir := testutil.TempDirWithCleanup(t)
+
+	conflictedContent := `---
+id: REQ-001
+type: requirement
+<<<<<<< HEAD
+status: draft
+=======
+status: approved
+>>>>>>> feature-branch
+---
+
+Content here.
+`
+
+	entityPath := filepath.Join(tmpDir, "REQ-001.md")
+	testutil.CreateFile(t, entityPath, conflictedContent)
+
+	_, err := testIO.ReadEntity(entityPath, nil)
+	testutil.AssertError(t, err)
+
+	if !errors.Is(err, ErrConflictedFile) {
+		t.Errorf("expected ErrConflictedFile, got %v", err)
 	}
 }
