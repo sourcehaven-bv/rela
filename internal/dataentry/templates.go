@@ -58,6 +58,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); line
 .sidebar nav .nav-group-items a { padding-left: 40px; }
 
 .main { margin-left: 240px; flex: 1; padding: 32px; max-width: 1100px; }
+.main.main-wide { max-width: none; }
 .page-header { position: sticky; top: 0; z-index: 50; background: var(--bg); padding: 12px 0; margin: -12px 0 16px 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
 .page-header h2 { font-size: 22px; font-weight: 700; }
 .page-header p { color: var(--text-muted); font-size: 14px; margin-top: 2px; }
@@ -282,6 +283,41 @@ thead th.sortable { user-select: none; }
 .jump-link { font-size: 13px; color: var(--primary); text-decoration: none; padding: 2px 10px; border-radius: 9999px; transition: all 0.15s; }
 .jump-link:hover { background: var(--primary-light); }
 .nav-count { margin-left: auto; font-size: 11px; color: rgba(255,255,255,0.4); font-weight: 400; }
+
+/* Kanban board */
+.kanban-board { display: flex; gap: 12px; padding: 16px 0; overflow-x: auto; min-height: 400px; align-items: flex-start; }
+.kanban-column { flex: 0 0 280px; background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border); display: flex; flex-direction: column; max-height: calc(100vh - 200px); }
+.kanban-column-header { padding: 12px 16px; font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; background: var(--bg-card); border-radius: var(--radius) var(--radius) 0 0; z-index: 1; }
+.kanban-column-header .kanban-count { font-size: 11px; font-weight: 500; color: var(--text-muted); background: var(--bg); padding: 2px 8px; border-radius: 9999px; }
+.kanban-cards { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 8px; min-height: 80px; overflow-y: auto; background: var(--bg); }
+.kanban-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: box-shadow 0.15s, transform 0.15s, opacity 0.15s; border-left: 3px solid var(--border); position: relative; }
+.kanban-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); transform: translateY(-1px); }
+.kanban-card.dragging { opacity: 0.5; transform: rotate(2deg); }
+.kanban-card-title { font-weight: 500; font-size: 13px; margin-bottom: 8px; line-height: 1.4; color: var(--text); }
+.kanban-card-fields { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.kanban-card-fields .badge { font-size: 10px; padding: 2px 6px; }
+.kanban-column.drag-over { background: var(--primary-light); }
+.kanban-column.drag-over .kanban-cards { background: var(--primary-light); }
+/* Card accent colors based on first field */
+.kanban-card[data-accent="red"] { border-left-color: #ef4444; }
+.kanban-card[data-accent="orange"] { border-left-color: #f97316; }
+.kanban-card[data-accent="yellow"] { border-left-color: #eab308; }
+.kanban-card[data-accent="green"] { border-left-color: #22c55e; }
+.kanban-card[data-accent="blue"] { border-left-color: #3b82f6; }
+.kanban-card[data-accent="purple"] { border-left-color: #a855f7; }
+.kanban-card[data-accent="gray"] { border-left-color: #6b7280; }
+
+/* Kanban swimlanes */
+.kanban-board.with-swimlanes { display: grid; gap: 0; overflow: auto; border-radius: var(--radius); border: 1px solid var(--border); padding: 0; }
+.kanban-swimlane-header { display: contents; }
+.kanban-swimlane-header .kanban-corner { background: transparent; padding: 12px; border-bottom: 1px solid var(--border); }
+.kanban-swimlane-header .kanban-col-header { background: var(--bg-card); padding: 12px 16px; font-weight: 600; font-size: 12px; text-align: center; color: var(--text); text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); }
+.kanban-swimlane { display: contents; }
+.kanban-swimlane-label { background: var(--bg-card); color: var(--text); padding: 16px 12px; font-weight: 600; font-size: 13px; min-width: 100px; display: flex; align-items: flex-start; justify-content: flex-start; border-right: 3px solid var(--primary); border-bottom: 1px solid var(--border); }
+.kanban-swimlane:last-child .kanban-swimlane-label { border-bottom: none; }
+.kanban-cell { background: var(--bg); padding: 8px; min-height: 120px; display: flex; flex-direction: column; gap: 8px; align-content: flex-start; align-self: stretch; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.kanban-swimlane:last-child .kanban-cell { border-bottom: none; }
+.kanban-cell.drag-over { background: var(--primary-light); }
 
 /* Command toast */
 #command-toast-container { position: fixed; bottom: 16px; right: 16px; z-index: 1000; display: flex; flex-direction: column-reverse; gap: 8px; max-width: 380px; }
@@ -1691,6 +1727,91 @@ function createRelaEditor(element, options) {
     sideBySideFullscreen: false,
   });
 }
+
+// Kanban board functions
+function applyKanbanFilter(sel, kanbanId) {
+  var params = new URLSearchParams(window.location.search);
+  if (sel.value) {
+    params.set(sel.name, sel.value);
+  } else {
+    params.delete(sel.name);
+  }
+  var url = '/kanban/' + kanbanId + (params.toString() ? '?' + params.toString() : '');
+  htmx.ajax('GET', url, { target: '#content', pushUrl: true });
+}
+
+// Kanban keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
+  if (e.key === 'n' || e.key === 'N') {
+    var btn = document.getElementById('kanban-new-btn');
+    if (btn) { e.preventDefault(); btn.click(); }
+  }
+});
+
+// Kanban drag and drop
+(function() {
+  document.addEventListener('dragstart', function(e) {
+    var card = e.target.closest('.kanban-card');
+    if (card) {
+      e.dataTransfer.setData('text/plain', card.dataset.entityId);
+      e.dataTransfer.effectAllowed = 'move';
+      card.classList.add('dragging');
+    }
+  });
+
+  document.addEventListener('dragend', function(e) {
+    var card = e.target.closest('.kanban-card');
+    if (card) {
+      card.classList.remove('dragging');
+    }
+    document.querySelectorAll('.drag-over').forEach(function(el) {
+      el.classList.remove('drag-over');
+    });
+  });
+
+  document.addEventListener('dragover', function(e) {
+    var target = e.target.closest('.kanban-column, .kanban-cell');
+    if (target) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      document.querySelectorAll('.drag-over').forEach(function(el) {
+        if (el !== target) el.classList.remove('drag-over');
+      });
+      target.classList.add('drag-over');
+    }
+  });
+
+  document.addEventListener('dragleave', function(e) {
+    var target = e.target.closest('.kanban-column, .kanban-cell');
+    if (target && !target.contains(e.relatedTarget)) {
+      target.classList.remove('drag-over');
+    }
+  });
+
+  document.addEventListener('drop', function(e) {
+    var target = e.target.closest('.kanban-column, .kanban-cell');
+    if (!target) return;
+    e.preventDefault();
+    target.classList.remove('drag-over');
+
+    var entityId = e.dataTransfer.getData('text/plain');
+    var column = target.dataset.column;
+    var swimlane = target.dataset.swimlane || '';
+    var board = target.closest('.kanban-board');
+    var kanbanId = board ? board.dataset.kanbanId : '';
+
+    // Build filter params from current URL
+    var params = new URLSearchParams(window.location.search);
+    var filterParams = params.toString() ? '?' + params.toString() : '';
+
+    htmx.ajax('POST', '/api/kanban/move' + filterParams, {
+      values: { entity_id: entityId, column: column, swimlane: swimlane, kanban_id: kanbanId },
+      target: '#content',
+      swap: 'innerHTML'
+    });
+  });
+})();
 </script>
 {{- end -}}
 
@@ -1702,6 +1823,11 @@ function createRelaEditor(element, options) {
     </a>
 {{ else if .Graph }}
     <a href="/graph"{{ if eq "_graph" .ActiveList }} class="active"{{ end }}>
+      {{ .Label }}
+    </a>
+{{ else if .Kanban }}
+    <a href="/kanban/{{ .Kanban }}"{{ if eq (printf "_kanban_%s" .Kanban) .ActiveList }} class="active"{{ end }}
+       hx-get="/kanban/{{ .Kanban }}" hx-target="#content" hx-push-url="true">
       {{ .Label }}
     </a>
 {{ else }}
@@ -1752,7 +1878,7 @@ function createRelaEditor(element, options) {
       </button>
       <div class="nav-group-items{{ if .Group.Collapsed }} hidden{{ end }}">
         {{ range .Group.Items }}
-        {{ template "nav-item" (map "Dashboard" .Dashboard "Graph" .Graph "Label" .Label "List" .List "EntityType" .EntityType "Count" .Count "ActiveList" $.ActiveList) }}
+        {{ template "nav-item" (map "Dashboard" .Dashboard "Graph" .Graph "Kanban" .Kanban "Label" .Label "List" .List "EntityType" .EntityType "Count" .Count "ActiveList" $.ActiveList) }}
         {{ end }}
       </div>
     </div>
@@ -4504,4 +4630,110 @@ function addOverrideGroup() {
 </script>
 {{- end -}}
 
+{{- define "kanban-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - {{ .Kanban.Title }}</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+<main class="main main-wide" id="content">
+{{ template "kanban-content" . }}
+</main>
+<div id="command-toast-container"></div>
+</body>
+</html>
+{{- end -}}
+
+{{- define "kanban-content" -}}
+<script>document.getElementById('content').classList.add('main-wide');</script>
+<div class="page-header">
+  <div>
+    <h2>{{ .Kanban.Title }}</h2>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span style="font-size:13px;color:var(--text-muted);">{{ .TotalCount }} items</span>
+    {{ if .CreateForm }}
+    <a id="kanban-new-btn" href="/form/{{ .CreateForm }}" class="btn btn-primary btn-sm"
+       hx-get="/form/{{ .CreateForm }}" hx-target="#content" hx-push-url="true">+ New <kbd>N</kbd></a>
+    {{ end }}
+  </div>
+</div>
+
+{{ if .FilterControls }}
+<div class="filter-bar-sentinel"></div>
+<div class="filter-bar">
+  {{ range .FilterControls }}
+  <div>
+    <label>{{ .Label }}</label>
+    <select name="filter_{{ .Property }}" onchange="applyKanbanFilter(this, '{{ $.KanbanID }}')">
+      <option value="">All</option>
+      {{ $cur := .Current }}
+      {{ range .Values }}<option value="{{ . }}"{{ if eq . $cur }} selected{{ end }}>{{ . }}</option>{{ end }}
+    </select>
+  </div>
+  {{ end }}
+</div>
+{{ end }}
+
+{{ if .HasSwimlanes }}
+<div class="kanban-board with-swimlanes" data-kanban-id="{{ .KanbanID }}"
+     style="grid-template-columns: auto repeat({{ len .Columns }}, minmax(240px, 1fr));">
+  <div class="kanban-swimlane-header">
+    <div class="kanban-corner"></div>
+    {{ range .Columns }}
+    <div class="kanban-col-header">{{ .Label }}</div>
+    {{ end }}
+  </div>
+  {{ range $lane := .Swimlanes }}
+  <div class="kanban-swimlane" data-swimlane="{{ $lane.Value }}">
+    <div class="kanban-swimlane-label">{{ $lane.Label }}</div>
+    {{ range $col := $.Columns }}
+    <div class="kanban-cell" data-column="{{ $col.Value }}" data-swimlane="{{ $lane.Value }}">
+      {{ $cards := index (index $.Cells $col.Value) $lane.Value }}
+      {{ range $cards }}
+      {{ template "kanban-card" (map "Card" . "EditForm" $.EditForm "KanbanID" $.KanbanID "FilterParams" $.FilterParams) }}
+      {{ end }}
+    </div>
+    {{ end }}
+  </div>
+  {{ end }}
+</div>
+{{ else }}
+<div class="kanban-board" data-kanban-id="{{ .KanbanID }}">
+  {{ range $col := .Columns }}
+  <div class="kanban-column" data-column="{{ $col.Value }}">
+    <div class="kanban-column-header">
+      <span>{{ $col.Label }}</span>
+      {{ $cards := index (index $.Cells $col.Value) "" }}
+      <span class="kanban-count">{{ len $cards }}</span>
+    </div>
+    <div class="kanban-cards">
+      {{ range $cards }}
+      {{ template "kanban-card" (map "Card" . "EditForm" $.EditForm "KanbanID" $.KanbanID "FilterParams" $.FilterParams) }}
+      {{ end }}
+    </div>
+  </div>
+  {{ end }}
+</div>
+{{ end }}
+{{- end -}}
+
+{{- define "kanban-card" -}}
+<div class="kanban-card" draggable="true" data-entity-id="{{ .Card.ID }}"
+     data-accent="{{ accentColor .Card.AccentType .Card.AccentValue }}"
+     hx-get="/form/{{ .EditForm }}/{{ .Card.ID }}?from=/kanban/{{ .KanbanID }}{{ .FilterParams }}"
+     hx-target="#content" hx-push-url="true">
+  <div class="kanban-card-title">{{ .Card.Title }}</div>
+  {{ if .Card.Fields }}
+  <div class="kanban-card-fields">
+    {{ range .Card.Fields }}
+    <span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+    {{ end }}
+  </div>
+  {{ end }}
+</div>
+{{- end -}}
 `

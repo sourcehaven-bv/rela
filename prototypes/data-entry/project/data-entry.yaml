@@ -442,6 +442,50 @@ commands:
     context: global
     available_on:
       dashboard: true
+# ──────────────────────────────────────────────
+# Kanban boards: visual card-based views
+# ──────────────────────────────────────────────
+kanbans:
+  ticket_board:
+    entity_type: ticket
+    title: "Ticket Board"
+    column_property: status
+    columns:
+      - value: open
+        label: "📥 To Do"
+      - value: in-progress
+        label: "🔧 In Progress"
+      - value: resolved
+        label: "✅ Done"
+    card:
+      title: title
+      fields:
+        - property: priority
+        - property: assignee
+    edit_form: edit_ticket
+    create_form: create_ticket
+    filter_controls:
+      - property: priority
+        widget: select
+  priority_board:
+    entity_type: ticket
+    title: "Priority Board"
+    column_property: priority
+    swimlane_property: status
+    swimlanes:
+      - value: open
+      - value: in-progress
+      - value: resolved
+    card:
+      title: title
+      fields:
+        - property: assignee
+    edit_form: edit_ticket
+    create_form: create_ticket
+    filters:
+      - property: status
+        operator: "!="
+        value: closed
 navigation:
   - label: "Dashboard"
     dashboard: true
@@ -453,6 +497,10 @@ navigation:
         list: open_tickets
       - label: "All Tickets"
         list: all_tickets
+      - label: "Ticket Board"
+        kanban: ticket_board
+      - label: "Priority Board"
+        kanban: priority_board
   - group: "Reference Data"
     collapsed: true
     items:
