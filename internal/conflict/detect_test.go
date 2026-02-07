@@ -146,7 +146,7 @@ status: draft
 		t.Fatalf("DetectInFile failed: %v", err)
 	}
 	if cf == nil {
-		t.Error("expected conflict to be detected")
+		t.Fatal("expected conflict to be detected")
 	}
 	if cf.Path != conflictedPath {
 		t.Errorf("Path = %q, want %q", cf.Path, conflictedPath)

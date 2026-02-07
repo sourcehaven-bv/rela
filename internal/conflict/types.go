@@ -14,8 +14,8 @@ const (
 	SideTheirs Side = "theirs" // Incoming branch
 )
 
-// ConflictMarker represents a single conflict region in a file.
-type ConflictMarker struct {
+// Marker represents a single conflict region in a file.
+type Marker struct {
 	StartLine int    // Line number of <<<<<<<
 	MidLine   int    // Line number of =======
 	EndLine   int    // Line number of >>>>>>>
@@ -25,12 +25,12 @@ type ConflictMarker struct {
 
 // ConflictedFile represents a file with one or more git conflicts.
 type ConflictedFile struct {
-	Path       string           // Absolute path to the file
-	EntityType string           // Entity type (if known)
-	EntityID   string           // Entity ID (if parseable from either side)
-	Markers    []ConflictMarker // All conflict regions in the file
-	Ours       *ParsedSide      // Parsed content from "ours" side
-	Theirs     *ParsedSide      // Parsed content from "theirs" side
+	Path       string      // Absolute path to the file
+	EntityType string      // Entity type (if known)
+	EntityID   string      // Entity ID (if parseable from either side)
+	Markers    []Marker    // All conflict regions in the file
+	Ours       *ParsedSide // Parsed content from "ours" side
+	Theirs     *ParsedSide // Parsed content from "theirs" side
 }
 
 // ParsedSide represents one side of a conflict, parsed into structured data.
@@ -48,8 +48,8 @@ type PropertyDiff struct {
 	IsSame      bool        // True if both sides have the same value
 }
 
-// ConflictInfo provides a structured view of differences between sides.
-type ConflictInfo struct {
+// Info provides a structured view of differences between sides.
+type Info struct {
 	File              *ConflictedFile
 	PropertyDiffs     []PropertyDiff // Differences in frontmatter properties
 	ContentDiffOurs   string         // Markdown content from ours

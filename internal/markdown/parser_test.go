@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -431,7 +432,7 @@ status: approved
 	_, err := ParseDocument(content)
 	testutil.AssertError(t, err)
 
-	if err != ErrConflictedFile {
+	if !errors.Is(err, ErrConflictedFile) {
 		t.Errorf("expected ErrConflictedFile, got %v", err)
 	}
 }
@@ -454,7 +455,7 @@ This is the incoming content.
 	_, err := ParseDocument(content)
 	testutil.AssertError(t, err)
 
-	if err != ErrConflictedFile {
+	if !errors.Is(err, ErrConflictedFile) {
 		t.Errorf("expected ErrConflictedFile, got %v", err)
 	}
 }

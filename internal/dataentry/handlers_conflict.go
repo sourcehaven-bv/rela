@@ -21,7 +21,7 @@ type ConflictListItem struct {
 // ConflictResolutionData contains data for the resolution page.
 type ConflictResolutionData struct {
 	File       *conflict.ConflictedFile
-	Info       *conflict.ConflictInfo
+	Info       *conflict.Info
 	RelPath    string
 	IsEntity   bool
 	IsRelation bool
@@ -72,9 +72,9 @@ func (a *App) handleConflicts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
-		a.tmpl.ExecuteTemplate(w, "conflicts-content", data) //nolint:errcheck
+		a.tmpl.ExecuteTemplate(w, "conflicts-content", data) //nolint:errcheck // template errors handled by http response
 	} else {
-		a.tmpl.ExecuteTemplate(w, "conflicts-page", data) //nolint:errcheck
+		a.tmpl.ExecuteTemplate(w, "conflicts-page", data) //nolint:errcheck // template errors handled by http response
 	}
 }
 
@@ -118,9 +118,9 @@ func (a *App) handleConflictResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
-		a.tmpl.ExecuteTemplate(w, "conflict-resolve-content", data) //nolint:errcheck
+		a.tmpl.ExecuteTemplate(w, "conflict-resolve-content", data) //nolint:errcheck // template errors handled by http response
 	} else {
-		a.tmpl.ExecuteTemplate(w, "conflict-resolve-page", data) //nolint:errcheck
+		a.tmpl.ExecuteTemplate(w, "conflict-resolve-page", data) //nolint:errcheck // template errors handled by http response
 	}
 }
 
@@ -181,11 +181,12 @@ func (a *App) handleConflictApply(w http.ResponseWriter, r *http.Request) {
 
 		// Get content choice
 		contentChoice := r.FormValue("content")
-		if contentChoice == "theirs" {
+		switch contentChoice {
+		case "theirs":
 			resolution.ContentChoice = conflict.SideTheirs
-		} else if contentChoice == "manual" {
+		case "manual":
 			resolution.ManualContent = r.FormValue("manual_content")
-		} else {
+		default:
 			resolution.ContentChoice = conflict.SideOurs
 		}
 	default:

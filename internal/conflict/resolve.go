@@ -18,19 +18,13 @@ func Resolve(cf *ConflictedFile, resolution *Resolution) (*model.Entity, *model.
 
 	// Handle entity files
 	if cf.Ours.Entity != nil && cf.Theirs.Entity != nil {
-		entity, err := resolveEntity(cf, resolution)
-		if err != nil {
-			return nil, nil, err
-		}
+		entity := resolveEntity(cf, resolution)
 		return entity, nil, nil
 	}
 
 	// Handle relation files
 	if cf.Ours.Relation != nil && cf.Theirs.Relation != nil {
-		relation, err := resolveRelation(cf, resolution)
-		if err != nil {
-			return nil, nil, err
-		}
+		relation := resolveRelation(cf, resolution)
 		return nil, relation, nil
 	}
 
@@ -38,7 +32,7 @@ func Resolve(cf *ConflictedFile, resolution *Resolution) (*model.Entity, *model.
 }
 
 // resolveEntity merges two entity versions based on the resolution.
-func resolveEntity(cf *ConflictedFile, resolution *Resolution) (*model.Entity, error) {
+func resolveEntity(cf *ConflictedFile, resolution *Resolution) *model.Entity {
 	ours := cf.Ours.Entity
 	theirs := cf.Theirs.Entity
 
@@ -66,8 +60,6 @@ func resolveEntity(cf *ConflictedFile, resolution *Resolution) (*model.Entity, e
 			if val, ok := theirs.Properties[prop]; ok {
 				resolved.Properties[prop] = val
 			}
-		case SideOurs:
-			fallthrough
 		default:
 			// Default to ours
 			if val, ok := ours.Properties[prop]; ok {
@@ -77,19 +69,20 @@ func resolveEntity(cf *ConflictedFile, resolution *Resolution) (*model.Entity, e
 	}
 
 	// Resolve content
-	if resolution.ManualContent != "" {
+	switch {
+	case resolution.ManualContent != "":
 		resolved.Content = resolution.ManualContent
-	} else if resolution.ContentChoice == SideTheirs {
+	case resolution.ContentChoice == SideTheirs:
 		resolved.Content = theirs.Content
-	} else {
+	default:
 		resolved.Content = ours.Content
 	}
 
-	return resolved, nil
+	return resolved
 }
 
 // resolveRelation merges two relation versions based on the resolution.
-func resolveRelation(cf *ConflictedFile, resolution *Resolution) (*model.Relation, error) {
+func resolveRelation(cf *ConflictedFile, resolution *Resolution) *model.Relation {
 	ours := cf.Ours.Relation
 	theirs := cf.Theirs.Relation
 
@@ -121,8 +114,6 @@ func resolveRelation(cf *ConflictedFile, resolution *Resolution) (*model.Relatio
 			if val, ok := theirs.Properties[prop]; ok {
 				resolved.Properties[prop] = val
 			}
-		case SideOurs:
-			fallthrough
 		default:
 			if val, ok := ours.Properties[prop]; ok {
 				resolved.Properties[prop] = val
@@ -131,15 +122,16 @@ func resolveRelation(cf *ConflictedFile, resolution *Resolution) (*model.Relatio
 	}
 
 	// Resolve content
-	if resolution.ManualContent != "" {
+	switch {
+	case resolution.ManualContent != "":
 		resolved.Content = resolution.ManualContent
-	} else if resolution.ContentChoice == SideTheirs {
+	case resolution.ContentChoice == SideTheirs:
 		resolved.Content = theirs.Content
-	} else {
+	default:
 		resolved.Content = ours.Content
 	}
 
-	return resolved, nil
+	return resolved
 }
 
 // ResolveAndWrite resolves a conflict and writes the result to disk.
@@ -155,7 +147,7 @@ func ResolveAndWrite(cf *ConflictedFile, resolution *Resolution, meta *metamodel
 		// Validate entity before writing
 		if meta != nil {
 			if errs := meta.ValidateEntity(entity); len(errs) > 0 {
-				return fmt.Errorf("validation failed: %v", errs[0])
+				return fmt.Errorf("validation failed: %w", errs[0])
 			}
 		}
 		return fio.WriteEntity(entity, cf.Path)

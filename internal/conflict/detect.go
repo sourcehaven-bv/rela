@@ -30,8 +30,8 @@ func DetectAll(ctx *project.Context) (*DetectResult, error) {
 	}
 
 	for _, path := range entityFiles {
-		conflicted, err := DetectInFile(path)
-		if err != nil {
+		conflicted, detectErr := DetectInFile(path)
+		if detectErr != nil {
 			continue // Skip files we can't read
 		}
 		if conflicted != nil {
@@ -48,8 +48,8 @@ func DetectAll(ctx *project.Context) (*DetectResult, error) {
 	}
 
 	for _, path := range relationFiles {
-		conflicted, err := DetectInFile(path)
-		if err != nil {
+		conflicted, detectErr := DetectInFile(path)
+		if detectErr != nil {
 			continue // Skip files we can't read
 		}
 		if conflicted != nil {
@@ -61,7 +61,7 @@ func DetectAll(ctx *project.Context) (*DetectResult, error) {
 }
 
 // DetectInFile checks a single file for git conflicts.
-// Returns nil if the file has no conflicts.
+// Returns nil, nil if the file has no conflicts (this is not an error condition).
 func DetectInFile(path string) (*ConflictedFile, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -69,12 +69,12 @@ func DetectInFile(path string) (*ConflictedFile, error) {
 	}
 
 	if !markdown.HasConflictMarkers(content) {
-		return nil, nil
+		return nil, nil //nolint:nilnil // no conflicts is not an error
 	}
 
 	markers := FindMarkers(string(content))
 	if len(markers) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // no conflicts is not an error
 	}
 
 	return &ConflictedFile{
@@ -84,12 +84,12 @@ func DetectInFile(path string) (*ConflictedFile, error) {
 }
 
 // FindMarkers locates all conflict marker regions in content.
-func FindMarkers(content string) []ConflictMarker {
-	var markers []ConflictMarker
+func FindMarkers(content string) []Marker {
+	var markers []Marker
 
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	lineNum := 0
-	var current *ConflictMarker
+	var current *Marker
 
 	for scanner.Scan() {
 		lineNum++
@@ -98,7 +98,7 @@ func FindMarkers(content string) []ConflictMarker {
 		switch {
 		case strings.HasPrefix(line, markerStart):
 			// Start of new conflict
-			current = &ConflictMarker{
+			current = &Marker{
 				StartLine: lineNum,
 				OursRef:   strings.TrimSpace(strings.TrimPrefix(line, markerStart)),
 			}

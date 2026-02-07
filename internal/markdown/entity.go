@@ -137,7 +137,9 @@ func (f *FileIO) LoadAllEntities(entitiesDir string, meta *metamodel.Metamodel) 
 }
 
 // LoadAllEntitiesWithConflicts loads all entities and tracks conflicted files.
-func (f *FileIO) LoadAllEntitiesWithConflicts(entitiesDir string, meta *metamodel.Metamodel) (*EntityLoadResult, error) {
+func (f *FileIO) LoadAllEntitiesWithConflicts(
+	entitiesDir string, meta *metamodel.Metamodel,
+) (*EntityLoadResult, error) {
 	files, err := f.ListEntityFiles(entitiesDir)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -530,7 +531,7 @@ Content here.
 	_, err := testIO.ReadEntity(entityPath, nil)
 	testutil.AssertError(t, err)
 
-	if err != ErrConflictedFile {
+	if !errors.Is(err, ErrConflictedFile) {
 		t.Errorf("expected ErrConflictedFile, got %v", err)
 	}
 }

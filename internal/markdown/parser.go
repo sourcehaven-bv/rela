@@ -15,12 +15,8 @@ var ErrConflictedFile = errors.New("file has unresolved git conflicts")
 
 const frontmatterDelimiter = "---"
 
-// Git conflict markers
-var (
-	conflictMarkerStart = []byte("<<<<<<<")
-	conflictMarkerMid   = []byte("=======")
-	conflictMarkerEnd   = []byte(">>>>>>>")
-)
+// Git conflict marker for detecting conflicts.
+var conflictMarkerStart = []byte("<<<<<<<")
 
 // Document represents a parsed markdown document with YAML frontmatter
 type Document struct {

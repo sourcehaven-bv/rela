@@ -1,7 +1,6 @@
 package conflict
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -74,7 +73,7 @@ func ParseConflictedContent(path, content string, meta *metamodel.Metamodel) (*C
 
 // ExtractSides extracts the "ours" and "theirs" versions from conflicted content.
 // It handles multiple conflict regions by merging them appropriately.
-func ExtractSides(content string, markers []ConflictMarker) (ours, theirs string) {
+func ExtractSides(content string, markers []Marker) (ours, theirs string) {
 	lines := strings.Split(content, "\n")
 
 	var oursLines, theirsLines []string
@@ -120,8 +119,8 @@ func ExtractSides(content string, markers []ConflictMarker) (ours, theirs string
 }
 
 // AnalyzeConflict creates a detailed diff between the two sides.
-func AnalyzeConflict(cf *ConflictedFile) *ConflictInfo {
-	info := &ConflictInfo{
+func AnalyzeConflict(cf *ConflictedFile) *Info {
+	info := &Info{
 		File:              cf,
 		PropertyDiffs:     make([]PropertyDiff, 0),
 		ContentDiffOurs:   "",
@@ -200,7 +199,7 @@ func isRelationFile(path string) bool {
 }
 
 // docToEntity converts a parsed document to an entity.
-func docToEntity(doc *markdown.Document, path string, meta *metamodel.Metamodel, fio *markdown.FileIO) *model.Entity {
+func docToEntity(doc *markdown.Document, path string, meta *metamodel.Metamodel, _ *markdown.FileIO) *model.Entity {
 	id := doc.GetString("id")
 	entityType := doc.GetString("type")
 
@@ -247,21 +246,4 @@ func docToRelation(doc *markdown.Document, path string) *model.Relation {
 	}
 
 	return relation
-}
-
-// readLines reads a file into lines for easier manipulation.
-func readLines(path string) ([]string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-
-	return lines, scanner.Err()
 }
