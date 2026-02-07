@@ -6,6 +6,7 @@ const allTemplates = `
 {{- define "head" -}}
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <script>
 (function(){var t=localStorage.getItem('theme');if(t){document.documentElement.setAttribute('data-theme',t)}else if(matchMedia('(prefers-color-scheme:dark)').matches){document.documentElement.setAttribute('data-theme','dark')}})();
 </script>
