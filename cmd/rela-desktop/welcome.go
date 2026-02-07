@@ -42,15 +42,41 @@ const welcomePage = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rela Desktop</title>
+<script>
+(function(){
+  var t=localStorage.getItem('theme');
+  if(t){document.documentElement.setAttribute('data-theme',t)}
+  else if(matchMedia('(prefers-color-scheme:dark)').matches){
+    document.documentElement.setAttribute('data-theme','dark')
+  }
+})();
+</script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
   --bg: #f8fafc; --bg-card: #fff; --text: #1e293b; --text-muted: #64748b;
   --border: #e2e8f0; --primary: #3b82f6; --primary-hover: #2563eb;
-  --primary-light: #eff6ff; --danger: #ef4444; --radius: 8px;
+  --primary-light: #eff6ff; --danger: #ef4444; --danger-light: #fef2f2;
+  --danger-border: #fecaca; --radius: 8px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "SF Mono", "Fira Code", monospace;
   --shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+[data-theme="dark"] {
+  --bg: #0f172a; --bg-card: #1e293b; --text: #e2e8f0; --text-muted: #94a3b8;
+  --border: #334155; --primary: #60a5fa; --primary-hover: #3b82f6;
+  --primary-light: rgba(59,130,246,0.15); --danger: #f87171;
+  --danger-light: rgba(239,68,68,0.15); --danger-border: rgba(239,68,68,0.3);
+  --shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f172a; --bg-card: #1e293b; --text: #e2e8f0; --text-muted: #94a3b8;
+    --border: #334155; --primary: #60a5fa; --primary-hover: #3b82f6;
+    --primary-light: rgba(59,130,246,0.15); --danger: #f87171;
+    --danger-light: rgba(239,68,68,0.15); --danger-border: rgba(239,68,68,0.3);
+    --shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
 }
 body { font-family: var(--font); background: var(--bg); color: var(--text);
   display: flex; align-items: center; justify-content: center; min-height: 100vh; }
@@ -63,15 +89,15 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
 .btn-primary { background: var(--primary); color: #fff; }
 .btn-primary:hover { background: var(--primary-hover); }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.error { margin-bottom: 20px; padding: 12px 16px; background: #fef2f2;
-  border: 1px solid #fecaca; border-radius: var(--radius); color: var(--danger);
+.error { margin-bottom: 20px; padding: 12px 16px; background: var(--danger-light);
+  border: 1px solid var(--danger-border); border-radius: var(--radius); color: var(--danger);
   font-size: 13px; font-family: var(--font-mono); text-align: left; word-break: break-word; }
 .hint { margin-top: 24px; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
-.hint code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px;
+.hint code { background: var(--bg-card); border: 1px solid var(--border); padding: 2px 6px; border-radius: 4px;
   font-family: var(--font-mono); font-size: 12px; }
 .loading { display: none; margin-top: 16px; color: var(--text-muted); font-size: 14px; }
-.runtime-error { display: none; margin-top: 20px; padding: 12px 16px; background: #fef2f2;
-  border: 1px solid #fecaca; border-radius: var(--radius); color: var(--danger);
+.runtime-error { display: none; margin-top: 20px; padding: 12px 16px; background: var(--danger-light);
+  border: 1px solid var(--danger-border); border-radius: var(--radius); color: var(--danger);
   font-size: 13px; font-family: var(--font-mono); text-align: left; word-break: break-word; }
 .recent-section { margin-top: 32px; text-align: left; }
 .recent-section h2 { font-size: 13px; font-weight: 600; text-transform: uppercase;
@@ -85,9 +111,25 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
 .recent-item .name { font-weight: 500; font-size: 14px; }
 .recent-item .path { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);
   margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theme-toggle { position: fixed; top: 16px; right: 16px; width: 36px; height: 36px;
+  border-radius: 50%%; border: 1px solid var(--border); background: var(--bg-card);
+  color: var(--text); cursor: pointer; display: flex; align-items: center;
+  justify-content: center; font-size: 16px; box-shadow: var(--shadow); transition: all 0.2s; }
+.theme-toggle:hover { background: var(--primary-light); border-color: var(--primary); }
+.theme-toggle .icon-sun, .theme-toggle .icon-moon { display: none; }
+:root:not([data-theme]) .theme-toggle .icon-sun, [data-theme="light"] .theme-toggle .icon-sun { display: block; }
+[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .theme-toggle .icon-moon { display: block; }
+  :root:not([data-theme]) .theme-toggle .icon-sun { display: none; }
+}
 </style>
 </head>
 <body>
+<button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
+  <span class="icon-sun">&#9788;</span>
+  <span class="icon-moon">&#9790;</span>
+</button>
 <div class="welcome">
   <h1>Rela Desktop</h1>
   <p class="subtitle">Open a rela project directory to get started.<br>The folder should contain a <code>metamodel.yaml</code> file.</p>
@@ -107,6 +149,12 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
   %s
 </div>
 <script>
+function toggleTheme() {
+  var current = document.documentElement.getAttribute('data-theme');
+  var next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+}
 async function openProject() {
   var btn = document.getElementById("open-btn");
   var loading = document.getElementById("loading");
