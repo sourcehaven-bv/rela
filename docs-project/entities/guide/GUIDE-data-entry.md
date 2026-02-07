@@ -603,7 +603,7 @@ traverse:
 
 The `where` clause filters traversed entities using simple expressions:
 
-```
+```text
 property = value    # Equality
 property != value   # Inequality
 ```
