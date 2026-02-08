@@ -1,0 +1,128 @@
+{{- define "dashboard-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - {{ .Dashboard.Title }}</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
+<main class="main" id="content">
+{{ template "dashboard-content" . }}
+</main>
+<div id="command-toast-container"></div>
+</body>
+</html>
+{{- end -}}
+
+{{- define "dashboard-content" -}}
+<div class="page-header">
+  <div>
+    <h2>{{ .Dashboard.Title }}</h2>
+    {{ if .Dashboard.Description }}<p>{{ .Dashboard.Description }}</p>{{ end }}
+  </div>
+  {{ if .Commands }}
+  <div style="display:flex;gap:8px;">
+    {{ if gt (len .Commands) 2 }}
+    <details class="add-dropdown">
+      <summary class="btn btn-secondary btn-sm">Commands &#9662;</summary>
+      <div class="add-dropdown-menu">
+        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</a>
+        {{ end }}
+      </div>
+    </details>
+    {{ else }}{{ range .Commands }}
+    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</button>
+    {{ end }}{{ end }}
+  </div>
+  {{ end }}
+</div>
+
+<div class="dashboard-grid">
+{{ range .Cards }}
+<div class="card dashboard-card">
+  <div class="dashboard-card-header">
+    <h3>{{ .Title }}</h3>
+    <a href="/search?q={{ urlquery .Query }}" class="dashboard-query-link"
+       hx-get="/search?q={{ urlquery .Query }}" hx-target="#content" hx-push-url="true"
+       title="View in search">&#8599;</a>
+  </div>
+
+  {{ if eq .Display "count" }}
+  <div class="dashboard-count">
+    <span class="dashboard-count-number">{{ .Count }}</span>
+  </div>
+
+  {{ else if eq .Display "breakdown" }}
+  <div class="dashboard-breakdown">
+    {{ range .BreakdownItems }}
+    <div class="dashboard-breakdown-row">
+      <span class="dashboard-breakdown-label">
+        {{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+        {{ else }}{{ .Value }}{{ end }}
+      </span>
+      <div class="dashboard-bar-track">
+        <div class="dashboard-bar-fill {{ if isBadgeType .PropType }}{{ badgeClass .PropType .Value }}{{ else }}badge-blue{{ end }}"
+             style="width:{{ printf "%.0f" .Percentage }}%"></div>
+      </div>
+      <span class="dashboard-breakdown-count">{{ .Count }}</span>
+    </div>
+    {{ end }}
+    {{ if not .BreakdownItems }}
+    <div style="color:var(--text-muted);font-size:13px;padding:8px 0;">No data</div>
+    {{ end }}
+  </div>
+
+  {{ else if eq .Display "table" }}
+  {{ if .Rows }}
+  <div style="overflow-x:auto;">
+    <table class="dashboard-table">
+      <thead>
+        <tr>{{ range .Columns }}<th>{{ .Label }}</th>{{ end }}</tr>
+      </thead>
+      <tbody>
+        {{ range .Rows }}
+        <tr>
+          {{ range . }}
+          <td>
+            {{ if .Link }}<a href="{{ .Link }}" class="cell-link"
+               hx-get="{{ .Link }}" hx-target="#content" hx-push-url="true">{{ end }}
+            {{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+            {{ else }}{{ formatValue .Value }}{{ end }}
+            {{ if .Link }}</a>{{ end }}
+          </td>
+          {{ end }}
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  {{ else }}
+  <div style="color:var(--text-muted);font-size:13px;padding:8px 16px;">No results</div>
+  {{ end }}
+
+  {{ end }}
+</div>
+{{ end }}
+</div>
+
+<div class="card dashboard-validation-card" style="margin-top:20px;">
+  <div class="dashboard-card-header">
+    <h3>&#9888; Validation</h3>
+    <a href="/analyze" class="dashboard-query-link"
+       hx-get="/analyze" hx-target="#content" hx-push-url="true"
+       title="View full analysis">&#8599;</a>
+  </div>
+  <div style="padding:16px;display:flex;align-items:center;gap:12px;">
+    {{ if and (eq .AnalysisErrors 0) (eq .AnalysisWarnings 0) }}
+    <span style="color:#166534;font-weight:600;font-size:14px;">&#10003; All checks passed</span>
+    {{ else }}
+    {{ if gt .AnalysisErrors 0 }}<span class="badge badge-red" style="font-size:12px;">{{ .AnalysisErrors }} {{ if eq .AnalysisErrors 1 }}error{{ else }}errors{{ end }}</span>{{ end }}
+    {{ if gt .AnalysisWarnings 0 }}<span class="badge badge-orange" style="font-size:12px;">{{ .AnalysisWarnings }} {{ if eq .AnalysisWarnings 1 }}warning{{ else }}warnings{{ end }}</span>{{ end }}
+    <a href="/analyze" style="margin-left:auto;font-size:13px;color:var(--primary);text-decoration:none;font-weight:500;"
+       hx-get="/analyze" hx-target="#content" hx-push-url="true">View details &rarr;</a>
+    {{ end }}
+  </div>
+</div>
+{{- end -}}

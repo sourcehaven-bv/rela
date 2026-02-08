@@ -1,0 +1,167 @@
+{{- define "conflicts-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - Conflicts</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
+<main class="main" id="content">
+{{ template "conflicts-content" . }}
+</main>
+<div id="command-toast-container"></div>
+</body>
+</html>
+{{- end -}}
+
+{{- define "conflicts-content" -}}
+<div class="page-header">
+  <div>
+    <h2>Merge Conflicts</h2>
+    <p>Files with unresolved git conflicts</p>
+  </div>
+</div>
+
+{{ if .HasConflicts }}
+<div class="conflict-summary">
+  <span class="conflict-chip conflict-chip-warning">⚠ {{ len .Conflicts }} file{{ if gt (len .Conflicts) 1 }}s{{ end }} with conflicts</span>
+</div>
+
+<div class="card" style="margin-top: 16px;">
+  <table>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Type</th>
+        <th>Conflicts</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Conflicts }}
+      <tr>
+        <td>
+          <a href="/conflicts/{{ .RelPath }}" class="conflict-path-link"
+             hx-get="/conflicts/{{ .RelPath }}" hx-target="#content" hx-push-url="true">
+            <div class="conflict-path">{{ .RelPath }}</div>
+            {{ if .EntityID }}<div class="conflict-id">{{ .EntityID }}</div>{{ end }}
+          </a>
+        </td>
+        <td>{{ if .EntityType }}<span class="badge badge-gray">{{ .EntityType }}</span>{{ else }}<span class="badge badge-purple">relation</span>{{ end }}</td>
+        <td><span class="badge badge-orange">{{ .MarkerCount }}</span></td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ else }}
+<div class="conflict-empty">
+  <div class="conflict-empty-icon">✓</div>
+  <h3>No conflicts detected</h3>
+  <p>All entity and relation files are clean.</p>
+</div>
+{{ end }}
+{{- end -}}
+
+
+{{- define "conflict-resolve-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - Resolve Conflict</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
+<main class="main" id="content">
+{{ template "conflict-resolve-content" . }}
+</main>
+<div id="command-toast-container"></div>
+</body>
+</html>
+{{- end -}}
+
+{{- define "conflict-resolve-content" -}}
+<div class="page-header">
+  <div>
+    <h2>Resolve Conflict</h2>
+    <p>{{ .Resolution.RelPath }}</p>
+  </div>
+  <a href="/conflicts" class="btn btn-secondary" hx-get="/conflicts" hx-target="#content" hx-push-url="true">← Back to Conflicts</a>
+</div>
+
+<form method="POST" action="/api/conflict-resolve" id="resolve-form">
+  <input type="hidden" name="path" value="{{ .Resolution.RelPath }}">
+
+  <div class="resolve-actions-top">
+    <button type="button" class="btn btn-secondary" onclick="selectAllSide('ours')">Select All Ours <kbd>O</kbd></button>
+    <button type="button" class="btn btn-secondary" onclick="selectAllSide('theirs')">Select All Theirs <kbd>T</kbd></button>
+  </div>
+
+  <div class="card resolve-card">
+    <h3>Properties</h3>
+    <table class="resolve-table">
+      <thead>
+        <tr>
+          <th>Property</th>
+          <th>Ours (HEAD)</th>
+          <th>Theirs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Resolution.Info.PropertyDiffs }}
+        <tr class="{{ if .IsSame }}resolve-same{{ else }}resolve-diff{{ end }}" data-prop="{{ .Property }}">
+          <td class="resolve-prop-name">{{ .Property }}</td>
+          {{ if .IsSame }}
+          <td class="resolve-value resolve-value-same" colspan="2">{{ if .OursValue }}{{ .OursValue }}{{ else }}<em>empty</em>{{ end }}</td>
+          <input type="hidden" name="prop_{{ .Property }}" value="ours">
+          {{ else }}
+          <td class="resolve-value resolve-value-selectable resolve-value-selected" data-side="ours" data-prop="{{ .Property }}">
+            <input type="radio" name="prop_{{ .Property }}" value="ours" checked class="resolve-radio-hidden">
+            <span class="resolve-value-text">{{ if .OursValue }}{{ .OursValue }}{{ else }}<em>empty</em>{{ end }}</span>
+          </td>
+          <td class="resolve-value resolve-value-selectable resolve-value-unselected" data-side="theirs" data-prop="{{ .Property }}">
+            <input type="radio" name="prop_{{ .Property }}" value="theirs" class="resolve-radio-hidden">
+            <span class="resolve-value-text">{{ if .TheirsValue }}{{ .TheirsValue }}{{ else }}<em>empty</em>{{ end }}</span>
+          </td>
+          {{ end }}
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+
+  {{ if not .Resolution.Info.ContentSame }}
+  <div class="card resolve-card">
+    <h3>Content</h3>
+    <div class="resolve-content-choice">
+      <label><input type="radio" name="content" value="ours" checked> Use Ours</label>
+      <label><input type="radio" name="content" value="theirs"> Use Theirs</label>
+      <label><input type="radio" name="content" value="manual" id="content-manual-radio"> Edit Manually</label>
+    </div>
+    <div class="resolve-content-compare">
+      <div class="resolve-content-side">
+        <div class="resolve-content-label">Ours (HEAD)</div>
+        <pre class="resolve-content-pre" id="diff-ours">{{ .Resolution.Info.ContentDiffOurs }}</pre>
+      </div>
+      <div class="resolve-content-side">
+        <div class="resolve-content-label">Theirs</div>
+        <pre class="resolve-content-pre" id="diff-theirs">{{ .Resolution.Info.ContentDiffTheirs }}</pre>
+      </div>
+    </div>
+    <div class="resolve-manual-edit" id="manual-edit-container" style="display:none;">
+      <label>Manual Content</label>
+      <textarea name="manual_content" id="manual-content-editor" rows="10">{{ .Resolution.Info.ContentDiffOurs }}</textarea>
+    </div>
+  </div>
+  {{ else }}
+  <input type="hidden" name="content" value="ours">
+  {{ end }}
+
+  <div class="resolve-actions-bottom">
+    <button type="submit" name="action" value="custom" class="btn btn-primary">Apply Resolution <kbd>&#8984;&#8629;</kbd></button>
+  </div>
+</form>
+{{- end -}}

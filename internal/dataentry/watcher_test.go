@@ -116,7 +116,7 @@ status: open
 	}
 
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates)
+	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
 	if err != nil {
 		t.Fatalf("parsing templates: %v", err)
 	}

@@ -1,0 +1,80 @@
+{{- define "analyze-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - Analysis</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
+<main class="main" id="content">
+{{ template "analyze-content" . }}
+</main>
+<div id="command-toast-container"></div>
+</body>
+</html>
+{{- end -}}
+
+{{- define "analyze-content" -}}
+<div class="page-header">
+  <div>
+    <h2>Analysis</h2>
+    <p>Validation checks across all entities and relations</p>
+  </div>
+</div>
+
+<div class="analyze-summary">
+  {{ if and (eq .Analysis.ErrorCount 0) (eq .Analysis.WarningCount 0) }}
+  <span class="analyze-chip analyze-chip-ok">&#10003; All checks passed</span>
+  {{ else }}
+  {{ if gt .Analysis.ErrorCount 0 }}<span class="analyze-chip analyze-chip-error">{{ .Analysis.ErrorCount }} {{ if eq .Analysis.ErrorCount 1 }}error{{ else }}errors{{ end }}</span>{{ end }}
+  {{ if gt .Analysis.WarningCount 0 }}<span class="analyze-chip analyze-chip-warning">{{ .Analysis.WarningCount }} {{ if eq .Analysis.WarningCount 1 }}warning{{ else }}warnings{{ end }}</span>{{ end }}
+  {{ end }}
+</div>
+
+{{ range .Analysis.Sections }}
+<div class="card analyze-section">
+  <div class="analyze-section-header">
+    <div class="analyze-section-title">
+      <h3>{{ .Name }}</h3>
+      {{ if .Issues }}
+      {{ if gt (.ErrorCount) 0 }}<span class="badge badge-red">{{ .ErrorCount }}</span>{{ end }}
+      {{ if gt (.WarningCount) 0 }}<span class="badge badge-orange">{{ .WarningCount }}</span>{{ end }}
+      {{ else }}
+      <span class="badge badge-green">0</span>
+      {{ end }}
+    </div>
+    <span class="analyze-section-desc">{{ .Description }}</span>
+  </div>
+  {{ if .Issues }}
+  <table>
+    <thead>
+      <tr>
+        <th>Entity</th>
+        <th>Type</th>
+        <th>Message</th>
+        <th>Severity</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Issues }}
+      <tr>
+        <td>{{ if .EntityID }}<a href="/entity/{{ .EntityType }}/{{ .EntityID }}" class="cell-link"
+               hx-get="/entity/{{ .EntityType }}/{{ .EntityID }}" hx-target="#content" hx-push-url="true"
+            >{{ if .Title }}{{ .Title }}{{ else }}{{ .EntityID }}{{ end }}</a>
+            <div style="font-size:11px;color:var(--text-muted);">{{ .EntityID }}</div>
+            {{ else }}&mdash;{{ end }}</td>
+        <td>{{ if .EntityType }}<span class="badge badge-gray">{{ .EntityType }}</span>{{ else }}&mdash;{{ end }}</td>
+        <td>{{ .Message }}</td>
+        <td>{{ if eq .Severity "error" }}<span class="badge badge-red">error</span>{{ else }}<span class="badge badge-orange">warning</span>{{ end }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else }}
+  <div class="analyze-section-ok">&#10003; No issues</div>
+  {{ end }}
+</div>
+{{ end }}
+{{- end -}}
