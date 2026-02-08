@@ -1400,7 +1400,7 @@ function toggleNavGroup(btn) {
 }
 
 // Update active sidebar link after HTMX navigation
-document.body.addEventListener('htmx:pushedIntoHistory', function() {
+document.addEventListener('htmx:pushedIntoHistory', function() {
   var path = window.location.pathname;
   var links = document.querySelectorAll('.sidebar nav a');
   var matched = false;
