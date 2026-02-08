@@ -285,6 +285,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		"HasPagination":    pageSize > 0 && totalPages > 1,
 		"Commands":         a.resolveCommands("list", listID, list.EntityType),
 	}
+	a.addGitData(data)
 
 	if r.Header.Get("HX-Request") == "true" {
 		a.tmpl.ExecuteTemplate(w, "list-content", data) //nolint:errcheck // template errors logged by http
@@ -630,6 +631,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		"UsePills":          usePills,
 		"SelectedTemplate":  selectedTemplateName,
 	}
+	a.addGitData(data)
 
 	if r.Header.Get("HX-Request") == "true" {
 		a.tmpl.ExecuteTemplate(w, "form-content", data) //nolint:errcheck // template errors logged by http
@@ -768,6 +770,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		"BackURL":       backURL,
 		"IsHTMX":        r.Header.Get("HX-Request") == "true",
 	}
+	a.addGitData(data)
 
 	if r.Header.Get("HX-Request") == "true" {
 		a.tmpl.ExecuteTemplate(w, "entity-content", data) //nolint:errcheck // template errors logged by http
@@ -890,6 +893,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 		"BackURL":       backURL,
 		"IsHTMX":        r.Header.Get("HX-Request") == "true",
 	}
+	a.addGitData(data)
 
 	if r.Header.Get("HX-Request") == "true" {
 		a.tmpl.ExecuteTemplate(w, "view-content", data) //nolint:errcheck // template errors logged by http
@@ -1064,6 +1068,7 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 		"IsHTMX":        true, // Always true since this is a form submission response
 		"HasErrors":     len(fieldErrors) > 0,
 	}
+	a.addGitData(data)
 
 	// Return 422 Unprocessable Entity for validation errors.
 	// HX-Retarget and HX-Reswap tell HTMX to swap the response into #content,
@@ -1914,6 +1919,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		"IsHTMX":          r.Header.Get("HX-Request") == "true",
 		"SuggestionsJSON": htmltemplate.JS(suggestionsJSON), //nolint:gosec // controlled data from metamodel
 	}
+	a.addGitData(data)
 
 	if r.Header.Get("HX-Request") == "true" {
 		if r.Header.Get("HX-Target") == "search-results" {
@@ -2076,6 +2082,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"AnalysisWarnings": analysisWarnings,
 		"IsHTMX":           r.Header.Get("HX-Request") == "true",
 	}
+	a.addGitData(data)
 
 	if r.Header.Get("HX-Request") == "true" {
 		a.tmpl.ExecuteTemplate(w, "dashboard-content", data) //nolint:errcheck // template errors logged by http
@@ -2096,6 +2103,7 @@ func (a *App) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		"Analysis":      result,
 		"IsHTMX":        r.Header.Get("HX-Request") == "true",
 	}
+	a.addGitData(data)
 
 	if r.Header.Get("HX-Request") == "true" {
 		a.tmpl.ExecuteTemplate(w, "analyze-content", data) //nolint:errcheck // template errors logged by http
@@ -2229,6 +2237,7 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"AllRelations":  allRelations,
 		"EntityTypes":   entityTypes,
 	}
+	a.addGitData(data)
 
 	if r.Header.Get("HX-Request") == "true" {
 		a.tmpl.ExecuteTemplate(w, "settings-content", data) //nolint:errcheck // template errors logged by http

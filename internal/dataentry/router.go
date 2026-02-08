@@ -52,6 +52,8 @@ func (a *App) NewRouter() http.Handler {
 	inner.HandleFunc("/conflicts", a.handleConflicts)
 	inner.HandleFunc("/conflicts/", a.handleConflicts)
 	inner.HandleFunc("/api/conflict-resolve", a.handleConflictApply)
+	inner.HandleFunc("/api/git/status", a.handleGitStatus)
+	inner.HandleFunc("/api/git/sync", a.handleGitSync)
 
 	locked := a.reloadLockMiddleware(inner)
 	mux.Handle("/", locked)

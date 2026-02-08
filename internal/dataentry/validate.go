@@ -14,6 +14,7 @@ import (
 var validTopLevelKeys = map[string]bool{
 	"version":    true,
 	"app":        true,
+	"git":        true,
 	"styles":     true,
 	"forms":      true,
 	"lists":      true,

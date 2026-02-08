@@ -165,12 +165,44 @@ Configure git synchronization behavior:
 
 ```yaml
 git:
+  enabled: true
+  mode: direct              # "direct" or "pr"
+  branch: main              # Branch to sync with (direct mode)
+  base_branch: main         # Branch to rebase onto (pr mode)
+  push_branch: feature/data # Branch to push to (pr mode)
+  fetch_interval: 30        # Background fetch interval in seconds (0 = disabled)
   require_pr: [main, production]
 ```
 
-| Field        | Description                                                           |
-| ------------ | --------------------------------------------------------------------- |
-| `require_pr` | List of branch names where direct push is blocked (protected branches) |
+| Field            | Description                                                           |
+| ---------------- | --------------------------------------------------------------------- |
+| `enabled`        | Enable git sync features (status bar, sync button)                    |
+| `mode`           | `direct` pushes to the same branch; `pr` rebases onto base and pushes to a separate branch |
+| `branch`         | Target branch for direct mode (default: `main`)                       |
+| `base_branch`    | Branch to rebase onto in PR mode                                      |
+| `push_branch`    | Branch to push to in PR mode                                          |
+| `fetch_interval` | Seconds between background fetches (0 disables background fetch)      |
+| `require_pr`     | List of branch names where direct push is blocked (protected branches) |
+
+### Sync behavior
+
+When git is enabled, the UI shows a status bar with:
+
+- Current branch name
+- Number of local changes (uncommitted files in `entities/` and `relations/`)
+- Number of remote commits ahead
+- Conflict indicator if a rebase conflict is in progress
+
+The **Sync** button performs:
+
+1. Stage all changes in `entities/` and `relations/`
+2. Commit with an auto-generated message describing the changes
+3. Fetch from remote
+4. Rebase onto the target branch (if behind)
+5. Push to the remote
+
+If a rebase conflict occurs, the status bar shows a conflict indicator and provides options to
+resolve conflicts or abort the rebase.
 
 When editing on a protected branch, the UI shows a banner suggesting the user create a working
 branch. Commits are auto-created on every entity change, but push is blocked until the user

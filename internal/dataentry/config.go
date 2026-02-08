@@ -4,12 +4,16 @@
 // on entities stored as markdown files.
 package dataentry
 
-import "github.com/Sourcehaven-BV/rela/internal/model"
+import (
+	"github.com/Sourcehaven-BV/rela/internal/git"
+	"github.com/Sourcehaven-BV/rela/internal/model"
+)
 
 // Config is the top-level configuration for a data entry application.
 type Config struct {
 	Version    string                       `yaml:"version"`
 	App        AppConfig                    `yaml:"app"`
+	Git        *git.Config                  `yaml:"git,omitempty"`
 	Styles     map[string]map[string]string `yaml:"styles"`
 	Forms      map[string]Form              `yaml:"forms"`
 	Lists      map[string]List              `yaml:"lists"`
