@@ -197,12 +197,12 @@ The **Sync** button performs:
 
 1. Stage all changes in `entities/` and `relations/`
 2. Commit with an auto-generated message describing the changes
-3. Fetch from origin
-4. Rebase onto the target branch (if behind remote)
-5. Push to the target branch
+3. Fetch from remote
+4. Rebase onto the target branch (if behind)
+5. Push to the remote
 
-If a rebase conflict is in progress, sync is blocked until the conflict is resolved via the
-conflict resolution UI or by aborting the rebase.
+If a rebase conflict occurs, the status bar shows a conflict indicator and provides options to
+resolve conflicts or abort the rebase.
 
 When editing on a protected branch, the UI shows a banner suggesting the user create a working
 branch. Commits are auto-created on every entity change, but push is blocked until the user
