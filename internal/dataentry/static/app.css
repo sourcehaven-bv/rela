@@ -274,7 +274,7 @@ thead th.sortable { user-select: none; }
 .kanban-cards { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 8px; min-height: 80px; overflow-y: auto; background: var(--bg); }
 .kanban-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: box-shadow 0.15s, transform 0.15s, opacity 0.15s; border-left: 3px solid var(--border); position: relative; }
 .kanban-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); transform: translateY(-1px); }
-.kanban-card.dragging { opacity: 0.5; transform: rotate(2deg); }
+.kanban-card.dragging { opacity: 0.5; transform: rotate(2deg); pointer-events: none; }
 .kanban-card-title { font-weight: 500; font-size: 13px; margin-bottom: 8px; line-height: 1.4; color: var(--text); }
 .kanban-card-fields { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .kanban-card-fields .badge { font-size: 10px; padding: 2px 6px; }
