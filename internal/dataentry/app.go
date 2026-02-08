@@ -99,7 +99,7 @@ func NewApp(repo repository.Store) (*App, error) {
 	styleMap, styledTypes := buildStyleMap(&cfg, meta)
 
 	// Parse templates with style-aware funcs
-	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates)
+	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
 	if err != nil {
 		return nil, fmt.Errorf("parsing templates: %w", err)
 	}

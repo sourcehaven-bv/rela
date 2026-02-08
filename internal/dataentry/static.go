@@ -7,3 +7,8 @@ import "embed"
 //
 //go:embed static/*
 var staticFiles embed.FS
+
+// templateFiles embeds all HTML templates.
+//
+//go:embed templates/*.html
+var templateFiles embed.FS

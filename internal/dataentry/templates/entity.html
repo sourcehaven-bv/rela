@@ -1,0 +1,111 @@
+{{- define "entity-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - {{ .Entity.ID }}</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
+<main class="main" id="content">
+{{ template "entity-content" . }}
+</main>
+<div id="command-toast-container"></div>
+</body>
+</html>
+{{- end -}}
+
+{{- define "scope-nav" -}}
+{{ if .Scope }}
+<div class="scope-nav">
+  <a href="{{ .Scope.BackURL }}" hx-get="{{ .Scope.BackURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">&larr; Back <kbd>Esc</kbd></a>
+  {{ if .Scope.PrevURL }}
+  <a href="{{ .Scope.PrevURL }}" hx-get="{{ .Scope.PrevURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">Prev</a>
+  {{ else }}
+  <span class="scope-nav-disabled">Prev</span>
+  {{ end }}
+  <span class="scope-nav-progress">{{ .Scope.Progress }}</span>
+  <span class="scope-nav-label">{{ .Scope.Label }}</span>
+  {{ if .Scope.NextURL }}
+  <a href="{{ .Scope.NextURL }}" hx-get="{{ .Scope.NextURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">Next &rarr;</a>
+  {{ else }}
+  <span class="scope-nav-disabled">Next &rarr;</span>
+  {{ end }}
+</div>
+{{ end }}
+{{- end -}}
+
+{{- define "entity-content" -}}
+{{ template "scope-nav" . }}
+<div class="page-header">
+  <div>
+    <h2>{{ .Entity.Title }}{{ if not .Entity.Title }}{{ .Entity.ID }}{{ end }}</h2>
+    <p style="font-family:var(--font-mono);font-size:13px;color:var(--text-muted);">{{ .Entity.ID }} &middot; {{ .Entity.Type }}</p>
+  </div>
+  <div style="display:flex;gap:8px;">
+    {{ if .EditFormID }}
+    <a href="/form/{{ .EditFormID }}/{{ .Entity.ID }}?return_to={{ urlquery .ReturnTo }}" class="btn btn-primary btn-sm"
+       hx-get="/form/{{ .EditFormID }}/{{ .Entity.ID }}?return_to={{ urlquery .ReturnTo }}" hx-target="#content" hx-push-url="true">Edit <kbd>E</kbd></a>
+    {{ end }}
+    {{ if .Commands }}{{ if gt (len .Commands) 2 }}
+    <details class="add-dropdown">
+      <summary class="btn btn-secondary btn-sm">Commands &#9662;</summary>
+      <div class="add-dropdown-menu">
+        {{ range .Commands }}<a href="#" onclick="event.preventDefault();runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</a>
+        {{ end }}
+      </div>
+    </details>
+    {{ else }}{{ range .Commands }}
+    <button class="btn btn-secondary btn-sm" onclick="runCommand('{{ .ID }}', {entity_id:'{{ $.Entity.ID }}',entity_type:'{{ $.Entity.Type }}'})" {{ if .Confirm }}data-confirm="{{ .Confirm }}"{{ end }}{{ if boolTrue .AutoOpen }} data-auto-open="true"{{ end }}>{{ .Label }}</button>
+    {{ end }}{{ end }}{{ end }}
+  </div>
+</div>
+
+<div class="jump-bar">
+  <a href="#properties" class="jump-link">Properties</a>
+  {{ if .Relations }}<a href="#relations" class="jump-link">Relations ({{ len .Relations }})</a>{{ end }}
+  {{ if .Entity.Content }}<a href="#content" class="jump-link">Content{{ with checkboxStats .Entity.Content }}{{ if gt .Total 0 }} ({{ .Checked }}/{{ .Total }}){{ end }}{{ end }}</a>{{ end }}
+</div>
+
+<div class="card" style="padding:24px;">
+  <div id="properties" class="detail-grid">
+    {{ $propTypes := .PropTypes }}
+    {{ $props := .Entity.Properties }}
+    {{ range $key := sortedKeys $props }}
+    {{ $val := index $props $key }}
+    {{ $ptype := index $propTypes $key }}
+    <div class="detail-label">{{ $key }}</div>
+    <div class="detail-value">
+      {{ if isBadgeType $ptype }}<span class="badge {{ badgeClass $ptype (printf "%v" $val) }}">{{ $val }}</span>
+      {{ else }}{{ if $val }}{{ $val }}{{ else }}&mdash;{{ end }}{{ end }}
+    </div>
+    {{ end }}
+  </div>
+
+  {{ if .Relations }}
+  <div id="relations" class="detail-section">
+    <h3>Relations</h3>
+    <ul class="rel-list">
+      {{ range .Relations }}
+      <li>
+        <span class="rel-type">{{ .Direction }} {{ .Type }}</span>
+        <a href="/entity/{{ .TargetType }}/{{ .TargetID }}" class="cell-link"
+           hx-get="/entity/{{ .TargetType }}/{{ .TargetID }}" hx-target="#content" hx-push-url="true">{{ .TargetTitle }}</a>
+        {{ range .Properties }}
+        <span style="font-size:11px;color:var(--text-muted);background:var(--bg);padding:1px 6px;border-radius:3px;">{{ .Key }}: {{ .Value }}</span>
+        {{ end }}
+      </li>
+      {{ end }}
+    </ul>
+  </div>
+  {{ end }}
+
+  {{ if .Entity.Content }}
+  <div id="entity-content" class="detail-section">
+    <h3>Content{{ with checkboxStats .Entity.Content }}{{ if gt .Total 0 }} <span class="cb-stats">{{ .Checked }}/{{ .Total }}</span>{{ end }}{{ end }}</h3>
+    <div class="markdown-body" data-entity-id="{{ .Entity.ID }}" style="padding:12px;background:var(--bg);border-radius:6px;font-size:14px;">{{ renderMarkdown .Entity.Content }}</div>
+  </div>
+  {{ end }}
+</div>
+{{- end -}}
