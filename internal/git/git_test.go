@@ -9,38 +9,28 @@ import (
 )
 
 // setupTestRepo creates a temporary git repository for testing.
-func setupTestRepo(t *testing.T) (dir string, cleanup func()) {
+// Uses t.TempDir() for automatic cleanup.
+func setupTestRepo(t *testing.T) string {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("", "git-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	cleanup = func() {
-		os.RemoveAll(dir)
-	}
+	dir := t.TempDir()
 
 	// Initialize git repo
 	if err := runCmd(dir, "init"); err != nil {
-		cleanup()
 		t.Fatalf("git init failed: %v", err)
 	}
 
 	// Configure git user for commits
 	if err := runCmd(dir, "config", "user.email", "test@test.com"); err != nil {
-		cleanup()
 		t.Fatalf("git config email failed: %v", err)
 	}
 	if err := runCmd(dir, "config", "user.name", "Test User"); err != nil {
-		cleanup()
 		t.Fatalf("git config name failed: %v", err)
 	}
 
 	// Create entities directory
 	entitiesDir := filepath.Join(dir, "entities", "tickets")
 	if err := os.MkdirAll(entitiesDir, 0o755); err != nil {
-		cleanup()
 		t.Fatalf("mkdir entities failed: %v", err)
 	}
 
@@ -48,49 +38,37 @@ func setupTestRepo(t *testing.T) (dir string, cleanup func()) {
 	testFile := filepath.Join(entitiesDir, "TKT-001.md")
 	content := "---\nid: TKT-001\ntype: ticket\n---\nTest ticket\n"
 	if err := os.WriteFile(testFile, []byte(content), 0o644); err != nil {
-		cleanup()
 		t.Fatalf("write file failed: %v", err)
 	}
 
 	if err := runCmd(dir, "add", "."); err != nil {
-		cleanup()
 		t.Fatalf("git add failed: %v", err)
 	}
 	if err := runCmd(dir, "commit", "-m", "Initial commit"); err != nil {
-		cleanup()
 		t.Fatalf("git commit failed: %v", err)
 	}
 
-	return dir, cleanup
+	return dir
 }
 
 // setupTestRepoWithRemote creates a test repo with a remote.
+// Uses t.TempDir() for automatic cleanup.
 //
 //nolint:unparam // remoteDir is returned for potential future use
-func setupTestRepoWithRemote(t *testing.T) (localDir, remoteDir string, cleanup func()) {
+func setupTestRepoWithRemote(t *testing.T) (localDir, remoteDir string) {
 	t.Helper()
 
 	// Create "remote" (bare repo)
-	remoteDir, err := os.MkdirTemp("", "git-remote-*")
-	if err != nil {
-		t.Fatalf("failed to create remote dir: %v", err)
-	}
+	remoteDir = t.TempDir()
 	if err := runCmd(remoteDir, "init", "--bare"); err != nil {
-		os.RemoveAll(remoteDir)
 		t.Fatalf("git init bare failed: %v", err)
 	}
 
 	// Create local repo
-	localDir, cleanupLocal := setupTestRepo(t)
-
-	cleanup = func() {
-		cleanupLocal()
-		os.RemoveAll(remoteDir)
-	}
+	localDir = setupTestRepo(t)
 
 	// Add remote
 	if err := runCmd(localDir, "remote", "add", "origin", remoteDir); err != nil {
-		cleanup()
 		t.Fatalf("git remote add failed: %v", err)
 	}
 
@@ -98,30 +76,32 @@ func setupTestRepoWithRemote(t *testing.T) (localDir, remoteDir string, cleanup 
 	if err := runCmd(localDir, "push", "-u", "origin", "master"); err != nil {
 		// Try main branch
 		if err := runCmd(localDir, "branch", "-M", "main"); err != nil {
-			cleanup()
 			t.Fatalf("git branch rename failed: %v", err)
 		}
 		if err := runCmd(localDir, "push", "-u", "origin", "main"); err != nil {
-			cleanup()
 			t.Fatalf("git push failed: %v", err)
 		}
 	}
 
-	return localDir, remoteDir, cleanup
+	return localDir, remoteDir
 }
 
 func runCmd(dir string, args ...string) error {
+	if dir == "" {
+		panic("runCmd: dir is empty")
+	}
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		panic("runCmd: dir does not exist: " + dir)
+	}
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	// Explicitly set GIT_DIR to prevent git from using parent repos
+	cmd.Env = append(os.Environ(), "GIT_DIR="+filepath.Join(dir, ".git"))
 	return cmd.Run()
 }
 
 func TestIsRepo_NotARepo(t *testing.T) {
-	dir, err := os.MkdirTemp("", "not-a-repo-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	if IsRepo(dir) {
 		t.Error("expected IsRepo to return false for non-repo directory")
@@ -129,8 +109,7 @@ func TestIsRepo_NotARepo(t *testing.T) {
 }
 
 func TestIsRepo_NoRemote(t *testing.T) {
-	dir, cleanup := setupTestRepo(t)
-	defer cleanup()
+	dir := setupTestRepo(t)
 
 	// Repo without remote should return false
 	if IsRepo(dir) {
@@ -139,8 +118,7 @@ func TestIsRepo_NoRemote(t *testing.T) {
 }
 
 func TestIsRepo_WithRemote(t *testing.T) {
-	dir, _, cleanup := setupTestRepoWithRemote(t)
-	defer cleanup()
+	dir, _ := setupTestRepoWithRemote(t)
 
 	if !IsRepo(dir) {
 		t.Error("expected IsRepo to return true for repo with remote")
@@ -148,8 +126,7 @@ func TestIsRepo_WithRemote(t *testing.T) {
 }
 
 func TestGetStatus_NoRemote(t *testing.T) {
-	dir, cleanup := setupTestRepo(t)
-	defer cleanup()
+	dir := setupTestRepo(t)
 
 	ops := NewOps(dir, Config{})
 	status, err := ops.GetStatus()
@@ -163,8 +140,7 @@ func TestGetStatus_NoRemote(t *testing.T) {
 }
 
 func TestGetStatus_WithRemote(t *testing.T) {
-	dir, _, cleanup := setupTestRepoWithRemote(t)
-	defer cleanup()
+	dir, _ := setupTestRepoWithRemote(t)
 
 	ops := NewOps(dir, Config{})
 	status, err := ops.GetStatus()
@@ -184,8 +160,7 @@ func TestGetStatus_WithRemote(t *testing.T) {
 }
 
 func TestGetStatus_LocalChanges(t *testing.T) {
-	dir, _, cleanup := setupTestRepoWithRemote(t)
-	defer cleanup()
+	dir, _ := setupTestRepoWithRemote(t)
 
 	// Modify a file in entities/
 	testFile := filepath.Join(dir, "entities", "tickets", "TKT-001.md")
@@ -206,8 +181,7 @@ func TestGetStatus_LocalChanges(t *testing.T) {
 }
 
 func TestGetStatus_IgnoresNonEntityChanges(t *testing.T) {
-	dir, _, cleanup := setupTestRepoWithRemote(t)
-	defer cleanup()
+	dir, _ := setupTestRepoWithRemote(t)
 
 	// Create a file outside entities/
 	testFile := filepath.Join(dir, "README.md")
@@ -228,8 +202,7 @@ func TestGetStatus_IgnoresNonEntityChanges(t *testing.T) {
 }
 
 func TestFetch(t *testing.T) {
-	dir, _, cleanup := setupTestRepoWithRemote(t)
-	defer cleanup()
+	dir, _ := setupTestRepoWithRemote(t)
 
 	ops := NewOps(dir, Config{})
 	err := ops.Fetch()
@@ -289,8 +262,7 @@ func TestGetBaseBranch(t *testing.T) {
 }
 
 func TestAbortRebase_NoRebaseInProgress(t *testing.T) {
-	dir, _, cleanup := setupTestRepoWithRemote(t)
-	defer cleanup()
+	dir, _ := setupTestRepoWithRemote(t)
 
 	ops := NewOps(dir, Config{})
 	// AbortRebase when no rebase is in progress should fail
@@ -301,8 +273,7 @@ func TestAbortRebase_NoRebaseInProgress(t *testing.T) {
 }
 
 func TestSync_RejectsWhenConflictInProgress(t *testing.T) {
-	dir, _, cleanup := setupTestRepoWithRemote(t)
-	defer cleanup()
+	dir, _ := setupTestRepoWithRemote(t)
 
 	// Simulate a rebase conflict by creating the rebase-merge directory
 	// (this is what git creates during a rebase conflict)
@@ -322,8 +293,7 @@ func TestSync_RejectsWhenConflictInProgress(t *testing.T) {
 }
 
 func TestSync_RejectsWhenRebaseApplyInProgress(t *testing.T) {
-	dir, _, cleanup := setupTestRepoWithRemote(t)
-	defer cleanup()
+	dir, _ := setupTestRepoWithRemote(t)
 
 	// Simulate a rebase by creating the rebase-apply directory
 	rebaseApplyDir := filepath.Join(dir, ".git", "rebase-apply")
