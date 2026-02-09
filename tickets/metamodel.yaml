@@ -78,6 +78,20 @@ types:
     values: [beginner, intermediate, advanced]
     default: beginner
 
+  # Ideation statuses
+  idea_status:
+    values: [captured, exploring, validated, promoted, parked, rejected]
+    default: captured
+
+  idea_category:
+    values: [feature, ux, integration, ai, visualization, performance, dx, architecture]
+
+  idea_effort:
+    values: [trivial, small, medium, large, epic]
+
+  idea_value:
+    values: [nice-to-have, useful, valuable, critical]
+
 entities:
   # ===================
   # Architecture
@@ -106,6 +120,83 @@ entities:
         required: true
     default_sort:
       - property: layer
+      - property: title
+
+  # ===================
+  # Ideation
+  # ===================
+  idea:
+    label: Idea
+    aliases: [brainstorm]
+    id_prefix: "IDEA-"
+    color: "#F3E5F5"
+    border_color: "#9C27B0"
+    properties:
+      title:
+        type: string
+        required: true
+      description:
+        type: string
+        description: What is the idea? What problem does it solve?
+      category:
+        type: idea_category
+        description: What area does this idea relate to?
+      inspiration:
+        type: string
+        description: Where did this idea come from? (tool, article, user feedback)
+      effort:
+        type: idea_effort
+        description: Rough estimate of implementation effort
+      value:
+        type: idea_value
+        description: Potential value if implemented
+      notes:
+        type: string
+        description: Additional thoughts, considerations, or open questions
+      status:
+        type: idea_status
+        required: true
+    default_sort:
+      - property: status
+      - property: category
+      - property: title
+
+  future-concept:
+    label: Future Concept
+    aliases: [possibility, exploration]
+    id_type: manual
+    color: "#E1BEE7"
+    border_color: "#7B1FA2"
+    properties:
+      title:
+        type: string
+        required: true
+      summary:
+        type: string
+        description: Brief explanation of the concept
+      description:
+        type: string
+        description: Detailed explanation of what this would involve
+      rationale:
+        type: string
+        description: Why would this be valuable?
+      challenges:
+        type: string
+        description: What makes this difficult or risky?
+      prerequisites:
+        type: string
+        description: What needs to exist first?
+      effort:
+        type: idea_effort
+      value:
+        type: idea_value
+      status:
+        type: idea_status
+        required: true
+    default_sort:
+      - property: status
+      - property: value
+        direction: desc
       - property: title
 
   decision:
@@ -563,6 +654,67 @@ relations:
     from: [concept]
     to: [concept]
     inverse: dependencyOf
+
+  # ===================
+  # Ideation Relations
+  # ===================
+  inspires:
+    label: inspires
+    description: Idea inspires this feature, concept, or other idea
+    from: [idea]
+    to: [feature, concept, future-concept, idea]
+    inverse: inspiredBy
+
+  promotes-to:
+    label: promotes to
+    description: Idea was promoted to a feature or future-concept
+    from: [idea]
+    to: [feature, future-concept]
+    inverse: promotedFrom
+    max_outgoing: 1  # An idea promotes to at most one thing
+
+  elaborates:
+    label: elaborates
+    description: Future concept elaborates on an idea
+    from: [future-concept]
+    to: [idea]
+    inverse: elaboratedBy
+    min_outgoing: 1  # Future concepts should trace back to ideas
+
+  extends-concept:
+    label: extends
+    description: Future concept would extend this existing concept
+    from: [future-concept]
+    to: [concept]
+    inverse: extendedBy
+
+  enables:
+    label: enables
+    description: Future concept would enable these features
+    from: [future-concept]
+    to: [feature]
+    inverse: enabledBy
+
+  replaces:
+    label: would replace
+    description: Future concept would replace this existing concept or feature
+    from: [future-concept]
+    to: [concept, feature]
+    inverse: replacedBy
+
+  blocked-by-concept:
+    label: blocked by
+    description: Idea/future-concept is blocked by missing concept or feature
+    from: [idea, future-concept]
+    to: [concept, feature, future-concept]
+    inverse: blocks-idea
+
+  related-idea:
+    label: related to
+    description: Ideas that are related or could be combined
+    from: [idea]
+    to: [idea]
+    symmetric: true
 
   # ===================
   # Root Cause Analysis (bugs only)
@@ -1257,4 +1409,150 @@ validations:
       - "status=stable"
     then:
       - "summary!="
+    severity: error
+
+  # --- Idea completeness (progressive) ---
+  - name: captured-ideas-should-have-description
+    description: "Captured ideas should have a description"
+    entity_type: idea
+    when:
+      - "status=captured"
+    then:
+      - "description!="
+    severity: warning
+
+  - name: exploring-ideas-need-category
+    description: "Ideas being explored must have a category"
+    entity_type: idea
+    when:
+      - "status=exploring"
+    then:
+      - "category!="
+    severity: error
+
+  - name: exploring-ideas-need-description
+    description: "Ideas being explored must have a description"
+    entity_type: idea
+    when:
+      - "status=exploring"
+    then:
+      - "description!="
+    severity: error
+
+  - name: validated-ideas-need-effort
+    description: "Validated ideas must have effort estimated"
+    entity_type: idea
+    when:
+      - "status=validated"
+    then:
+      - "effort!="
+    severity: error
+
+  - name: validated-ideas-need-value
+    description: "Validated ideas must have value assessed"
+    entity_type: idea
+    when:
+      - "status=validated"
+    then:
+      - "value!="
+    severity: error
+
+  - name: validated-ideas-need-description
+    description: "Validated ideas must have a description"
+    entity_type: idea
+    when:
+      - "status=validated"
+    then:
+      - "description!="
+    severity: error
+
+  - name: parked-ideas-should-have-notes
+    description: "Parked ideas should document why they were parked"
+    entity_type: idea
+    when:
+      - "status=parked"
+    then:
+      - "notes!="
+    severity: warning
+
+  - name: rejected-ideas-need-notes
+    description: "Rejected ideas must document why they were rejected"
+    entity_type: idea
+    when:
+      - "status=rejected"
+    then:
+      - "notes!="
+    severity: error
+
+  # --- Future concept completeness (progressive) ---
+  - name: captured-future-concepts-should-have-summary
+    description: "Captured future concepts should have a summary"
+    entity_type: future-concept
+    when:
+      - "status=captured"
+    then:
+      - "summary!="
+    severity: warning
+
+  - name: exploring-future-concepts-need-description
+    description: "Future concepts being explored must have a description"
+    entity_type: future-concept
+    when:
+      - "status=exploring"
+    then:
+      - "description!="
+    severity: error
+
+  - name: exploring-future-concepts-need-rationale
+    description: "Future concepts being explored must have a rationale"
+    entity_type: future-concept
+    when:
+      - "status=exploring"
+    then:
+      - "rationale!="
+    severity: error
+
+  - name: validated-future-concepts-need-effort
+    description: "Validated future concepts must have effort estimated"
+    entity_type: future-concept
+    when:
+      - "status=validated"
+    then:
+      - "effort!="
+    severity: error
+
+  - name: validated-future-concepts-need-value
+    description: "Validated future concepts must have value assessed"
+    entity_type: future-concept
+    when:
+      - "status=validated"
+    then:
+      - "value!="
+    severity: error
+
+  - name: validated-future-concepts-need-challenges
+    description: "Validated future concepts must document challenges"
+    entity_type: future-concept
+    when:
+      - "status=validated"
+    then:
+      - "challenges!="
+    severity: error
+
+  - name: parked-future-concepts-should-have-description
+    description: "Parked future concepts should document the reasoning"
+    entity_type: future-concept
+    when:
+      - "status=parked"
+    then:
+      - "description!="
+    severity: warning
+
+  - name: rejected-future-concepts-need-description
+    description: "Rejected future concepts must document the reasoning"
+    entity_type: future-concept
+    when:
+      - "status=rejected"
+    then:
+      - "description!="
     severity: error
