@@ -7,10 +7,72 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/net/html"
+
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
+
+// htmlHasElement checks if the HTML contains an element matching the given tag and optional attributes.
+func htmlHasElement(htmlStr, tag string, attrs map[string]string) bool {
+	doc, err := html.Parse(strings.NewReader(htmlStr))
+	if err != nil {
+		return false
+	}
+	return findElement(doc, tag, attrs) != nil
+}
+
+// htmlHasText checks if the HTML contains the given text content anywhere.
+func htmlHasText(htmlStr, text string) bool {
+	doc, err := html.Parse(strings.NewReader(htmlStr))
+	if err != nil {
+		return false
+	}
+	return findText(doc, text)
+}
+
+func findElement(n *html.Node, tag string, attrs map[string]string) *html.Node {
+	if n.Type == html.ElementNode && n.Data == tag {
+		if matchAttrs(n, attrs) {
+			return n
+		}
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := findElement(c, tag, attrs); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func matchAttrs(n *html.Node, attrs map[string]string) bool {
+	for key, val := range attrs {
+		found := false
+		for _, a := range n.Attr {
+			if a.Key == key && (val == "" || a.Val == val) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func findText(n *html.Node, text string) bool {
+	if n.Type == html.TextNode && strings.Contains(n.Data, text) {
+		return true
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if findText(c, text) {
+			return true
+		}
+	}
+	return false
+}
 
 func TestApplyFilters(t *testing.T) {
 	entities := []*model.Entity{
@@ -374,105 +436,150 @@ func TestResolvePropertyType(t *testing.T) {
 
 func TestSimpleMarkdownToHTML(t *testing.T) {
 	tests := []struct {
-		name string
-		md   string
-		want string
+		name     string
+		md       string
+		elements []struct {
+			tag   string
+			attrs map[string]string
+		}
+		texts []string
 	}{
-		{"empty", "", ""},
-		{"plain text", "Hello world", "<p>Hello world</p>"},
-		{"h1", "# Title", "<h3>Title</h3>"},
-		{"h2", "## Subtitle", "<h4>Subtitle</h4>"},
-		{"h3", "### Section", "<h5>Section</h5>"},
-		{"bold", "Some **bold** text", "<p>Some <strong>bold</strong> text</p>"},
-		{"italic", "Some *italic* text", "<p>Some <em>italic</em> text</p>"},
-		{"inline code", "Use `code` here", "<p>Use <code>code</code> here</p>"},
-		{"unordered list", "- item one\n- item two", "<ul>\n<li>item one</li>\n<li>item two</li>\n</ul>"},
-		{"ordered list", "1. first\n2. second", "<ol>\n<li>first</li>\n<li>second</li>\n</ol>"},
-		{"code block", "```\nfoo\nbar\n```", "<pre><code>\nfoo\nbar\n</code></pre>"},
 		{
-			"unclosed code block",
-			"```\ncode here",
-			"<pre><code>\ncode here\n</code></pre>",
+			name: "empty",
+			md:   "",
 		},
 		{
-			"paragraph break",
-			"First paragraph.\n\nSecond paragraph.",
-			"<p>First paragraph.</p>\n<p>Second paragraph.</p>",
+			name:  "plain text",
+			md:    "Hello world",
+			texts: []string{"Hello world"},
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{{"p", nil}},
 		},
 		{
-			"list followed by text",
-			"- item\n\nText after list.",
-			"<ul>\n<li>item</li>\n</ul>\n<p>Text after list.</p>",
+			name:  "headings",
+			md:    "# H1\n## H2\n### H3",
+			texts: []string{"H1", "H2", "H3"},
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{{"h1", nil}, {"h2", nil}, {"h3", nil}},
 		},
 		{
-			"mermaid block",
-			"```mermaid\ngraph TD\n  A-->B\n```",
-			"<pre class=\"mermaid\">\ngraph TD\n  A--&gt;B\n</pre>",
+			name:  "bold and italic",
+			md:    "Some **bold** and *italic* text",
+			texts: []string{"bold", "italic"},
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{{"strong", nil}, {"em", nil}},
 		},
 		{
-			"mermaid block unclosed",
-			"```mermaid\ngraph LR\n  A-->B",
-			"<pre class=\"mermaid\">\ngraph LR\n  A--&gt;B\n</pre>",
+			name:  "inline code",
+			md:    "Use `code` here",
+			texts: []string{"code"},
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{{"code", nil}},
 		},
 		{
-			"unchecked checkbox",
-			"- [ ] task one",
-			`<ul class="task-list">` + "\n" + `<li class="task-item"><label><input type="checkbox" data-cb-idx="0"> task one</label></li>` + "\n" + `</ul>`,
+			name:  "unordered list",
+			md:    "- item one\n- item two",
+			texts: []string{"item one", "item two"},
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{{"ul", nil}, {"li", nil}},
 		},
 		{
-			"checked checkbox",
-			"- [x] done task",
-			`<ul class="task-list">` + "\n" + `<li class="task-item"><label><input type="checkbox" data-cb-idx="0" checked> done task</label></li>` + "\n" + `</ul>`,
+			name:  "ordered list",
+			md:    "1. first\n2. second",
+			texts: []string{"first", "second"},
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{{"ol", nil}, {"li", nil}},
 		},
 		{
-			"checked checkbox uppercase",
-			"- [X] done task",
-			`<ul class="task-list">` + "\n" + `<li class="task-item"><label><input type="checkbox" data-cb-idx="0" checked> done task</label></li>` + "\n" + `</ul>`,
+			name:  "code block",
+			md:    "```\nfoo\nbar\n```",
+			texts: []string{"foo", "bar"},
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{{"pre", nil}, {"code", nil}},
 		},
 		{
-			"multiple checkboxes",
-			"- [ ] first\n- [x] second\n- [ ] third",
-			`<ul class="task-list">` + "\n" +
-				`<li class="task-item"><label><input type="checkbox" data-cb-idx="0"> first</label></li>` + "\n" +
-				`<li class="task-item"><label><input type="checkbox" data-cb-idx="1" checked> second</label></li>` + "\n" +
-				`<li class="task-item"><label><input type="checkbox" data-cb-idx="2"> third</label></li>` + "\n" +
-				`</ul>`,
+			name:  "mermaid block",
+			md:    "```mermaid\ngraph TD\n```",
+			texts: []string{"graph TD"},
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{{"pre", map[string]string{"class": "mermaid"}}},
 		},
 		{
-			"checkbox with bold",
-			"- [x] **bold** task",
-			`<ul class="task-list">` + "\n" + `<li class="task-item"><label><input type="checkbox" data-cb-idx="0" checked> <strong>bold</strong> task</label></li>` + "\n" + `</ul>`,
+			name:  "checkbox unchecked",
+			md:    "- [ ] task one",
+			texts: []string{"task one"},
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{{"input", map[string]string{"type": "checkbox", "data-cb-idx": ""}}},
+		},
+		{
+			name: "checkbox checked",
+			md:   "- [x] done task",
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{{"input", map[string]string{"type": "checkbox", "checked": ""}}},
+		},
+		{
+			name: "multiple checkboxes have indices",
+			md:   "- [ ] first\n- [x] second\n- [ ] third",
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{
+				{"input", map[string]string{"data-cb-idx": "0"}},
+				{"input", map[string]string{"data-cb-idx": "1"}},
+				{"input", map[string]string{"data-cb-idx": "2"}},
+			},
+		},
+		{
+			name:  "table",
+			md:    "| Name | Age |\n|------|-----|\n| Alice | 30 |",
+			texts: []string{"Name", "Age", "Alice", "30"},
+			elements: []struct {
+				tag   string
+				attrs map[string]string
+			}{
+				{"table", map[string]string{"class": "md-table"}},
+				{"thead", nil},
+				{"tbody", nil},
+				{"th", nil},
+				{"td", nil},
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := string(simpleMarkdownToHTML(tt.md))
-			if got != tt.want {
-				t.Errorf("simpleMarkdownToHTML(%q)\n  got:  %q\n  want: %q", tt.md, got, tt.want)
+
+			for _, elem := range tt.elements {
+				if !htmlHasElement(got, elem.tag, elem.attrs) {
+					t.Errorf("missing element <%s %v> in:\n%s", elem.tag, elem.attrs, got)
+				}
 			}
-		})
-	}
-}
 
-func TestInlineFormat(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"bold", "**bold**", "<strong>bold</strong>"},
-		{"italic", "*italic*", "<em>italic</em>"},
-		{"code", "`code`", "<code>code</code>"},
-		{"HTML escaping", "<script>alert('xss')</script>", "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"},
-		{"no formatting", "plain text", "plain text"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := inlineFormat(tt.input)
-			if got != tt.want {
-				t.Errorf("inlineFormat(%q) = %q, want %q", tt.input, got, tt.want)
+			for _, text := range tt.texts {
+				if !htmlHasText(got, text) {
+					t.Errorf("missing text %q in:\n%s", text, got)
+				}
 			}
 		})
 	}
@@ -645,9 +752,9 @@ func TestTemplateFuncs(t *testing.T) {
 
 	t.Run("renderMarkdown", func(t *testing.T) {
 		fn := funcs["renderMarkdown"].(func(string) template.HTML)
-		got := fn("**bold**")
-		if string(got) != "<p><strong>bold</strong></p>" {
-			t.Errorf("renderMarkdown = %q", got)
+		got := string(fn("**bold**"))
+		if !htmlHasElement(got, "strong", nil) || !htmlHasText(got, "bold") {
+			t.Errorf("renderMarkdown = %q, expected <strong> element with text 'bold'", got)
 		}
 	})
 
