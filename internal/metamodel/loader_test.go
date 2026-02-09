@@ -2,6 +2,7 @@ package metamodel
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -716,6 +717,42 @@ relations: {}
 	}
 	if !strings.Contains(err.Error(), "mypriority") {
 		t.Errorf("expected 'mypriority' in error, got: %v", err)
+	}
+}
+
+func TestParse_NumberTypeSuggestsInteger(t *testing.T) {
+	tests := []struct {
+		name     string
+		typeName string
+	}{
+		{"number type", "number"},
+		{"float type", "float"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml := fmt.Sprintf(`
+version: "1.0"
+entities:
+  phase:
+    label: Phase
+    id_prefix: "PH-"
+    properties:
+      order:
+        type: %s
+types: {}
+relations: {}
+`, tt.typeName)
+			_, err := Parse([]byte(yaml))
+			assertError(t, err)
+
+			if !strings.Contains(err.Error(), tt.typeName) {
+				t.Errorf("expected %q in error, got: %v", tt.typeName, err)
+			}
+			if !strings.Contains(err.Error(), `use "integer" instead`) {
+				t.Errorf("expected suggestion to use integer, got: %v", err)
+			}
+		})
 	}
 }
 

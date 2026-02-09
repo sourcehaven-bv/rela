@@ -225,9 +225,15 @@ func validateEntitySemantics(m *Metamodel) []string {
 				continue
 			}
 			if !isKnownPropertyType(propDef.Type, m) {
-				errs = append(errs, fmt.Sprintf(
-					"entity %q: property %q has unknown type %q (not a built-in type and not defined in 'types')",
-					name, propName, propDef.Type))
+				if propDef.Type == "number" || propDef.Type == "float" {
+					errs = append(errs, fmt.Sprintf(
+						"entity %q: property %q has type %q which is not supported; use \"integer\" instead",
+						name, propName, propDef.Type))
+				} else {
+					errs = append(errs, fmt.Sprintf(
+						"entity %q: property %q has unknown type %q (not a built-in type and not defined in 'types')",
+						name, propName, propDef.Type))
+				}
 			}
 			if propDef.Type == PropertyTypeEnum && len(propDef.Values) == 0 {
 				errs = append(errs, fmt.Sprintf(
