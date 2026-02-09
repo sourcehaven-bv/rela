@@ -235,6 +235,10 @@ tbody tr:last-child td { border-bottom: none; }
 .markdown-body .task-item { margin: 4px 0; }
 .markdown-body .task-item label { display: flex; align-items: baseline; gap: 6px; cursor: pointer; }
 .markdown-body .task-item input[type="checkbox"] { cursor: pointer; margin: 0; position: relative; top: 1px; }
+.markdown-body table.md-table { width: auto; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+.markdown-body table.md-table th, .markdown-body table.md-table td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; }
+.markdown-body table.md-table th { background: var(--bg); font-weight: 600; }
+.markdown-body table.md-table tbody tr:hover { background: var(--primary-light); }
 .cb-stats { font-size: 13px; font-weight: 400; color: var(--text-muted); margin-left: 6px; }
 
 /* SlimSelect theme overrides */

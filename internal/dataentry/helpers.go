@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -10,6 +11,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/renderer/html"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -177,209 +183,52 @@ func resolvePropertyType(prop, entityType string, meta *metamodel.Metamodel) str
 	return propDef.Type
 }
 
-// simpleMarkdownToHTML converts basic markdown to HTML.
+// mdConverter is the goldmark instance with GFM extensions (tables, task lists, etc.).
+var mdConverter = goldmark.New(
+	goldmark.WithExtensions(extension.GFM),
+	goldmark.WithParserOptions(parser.WithAutoHeadingID()),
+	goldmark.WithRendererOptions(html.WithUnsafe()),
+)
+
+// simpleMarkdownToHTML converts markdown to HTML using goldmark with GFM extensions.
 func simpleMarkdownToHTML(md string) template.HTML {
 	if md == "" {
 		return ""
 	}
-	lines := strings.Split(md, "\n")
-	var out []string
-	inCodeBlock := false
-	listTag := "" // "", "ul", or "ol"
-	paragraph := make([]string, 0, len(lines))
 
-	flushParagraph := func() {
-		if len(paragraph) > 0 {
-			text := strings.Join(paragraph, " ")
-			text = inlineFormat(text)
-			out = append(out, "<p>"+text+"</p>")
-			paragraph = nil
-		}
+	var buf bytes.Buffer
+	if err := mdConverter.Convert([]byte(md), &buf); err != nil {
+		//nolint:gosec // fallback to escaped input on conversion error
+		return template.HTML(template.HTMLEscapeString(md))
 	}
 
-	closeList := func() {
-		if listTag != "" {
-			out = append(out, "</"+listTag+">")
-			listTag = ""
-		}
-	}
+	result := buf.String()
 
-	inMermaidBlock := false
-	cbIndex := 0
+	// Post-process: add md-table class to tables
+	result = strings.ReplaceAll(result, "<table>", `<table class="md-table">`)
 
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
+	// Post-process: convert mermaid code blocks
+	result = mermaidBlockRe.ReplaceAllString(result, `<pre class="mermaid">$1</pre>`)
 
-		// Code block toggle
-		if strings.HasPrefix(trimmed, "```") {
-			if inCodeBlock || inMermaidBlock {
-				if inMermaidBlock {
-					out = append(out, "</pre>")
-					inMermaidBlock = false
-				} else {
-					out = append(out, "</code></pre>")
-					inCodeBlock = false
-				}
-			} else {
-				flushParagraph()
-				closeList()
-				// Check for mermaid code block
-				lang := strings.TrimSpace(trimmed[3:])
-				if lang == "mermaid" {
-					out = append(out, `<pre class="mermaid">`)
-					inMermaidBlock = true
-				} else {
-					out = append(out, "<pre><code>")
-					inCodeBlock = true
-				}
-			}
-			continue
-		}
-		if inCodeBlock {
-			out = append(out, template.HTMLEscapeString(line))
-			continue
-		}
-		if inMermaidBlock {
-			out = append(out, template.HTMLEscapeString(line))
-			continue
-		}
+	// Post-process: add checkbox indices for interactive toggling
+	result = addCheckboxIndices(result)
 
-		// Empty line
-		if trimmed == "" {
-			flushParagraph()
-			closeList()
-			continue
-		}
-
-		// Headers
-		if strings.HasPrefix(trimmed, "### ") {
-			flushParagraph()
-			out = append(out, "<h5>"+inlineFormat(trimmed[4:])+"</h5>")
-			continue
-		}
-		if strings.HasPrefix(trimmed, "## ") {
-			flushParagraph()
-			out = append(out, "<h4>"+inlineFormat(trimmed[3:])+"</h4>")
-			continue
-		}
-		if strings.HasPrefix(trimmed, "# ") {
-			flushParagraph()
-			out = append(out, "<h3>"+inlineFormat(trimmed[2:])+"</h3>")
-			continue
-		}
-
-		// Task list item (checkbox)
-		if strings.HasPrefix(trimmed, "- [ ] ") || strings.HasPrefix(trimmed, "- [x] ") || strings.HasPrefix(trimmed, "- [X] ") {
-			flushParagraph()
-			if listTag != "" && listTag != "ul" {
-				closeList()
-			}
-			if listTag == "" {
-				out = append(out, `<ul class="task-list">`)
-				listTag = "ul"
-			}
-			checked := trimmed[3] != ' '
-			content := trimmed[6:]
-			checkedAttr := ""
-			if checked {
-				checkedAttr = " checked"
-			}
-			out = append(out, fmt.Sprintf(`<li class="task-item"><label><input type="checkbox" data-cb-idx="%d"%s> %s</label></li>`,
-				cbIndex, checkedAttr, inlineFormat(content)))
-			cbIndex++
-			continue
-		}
-
-		// Unordered list
-		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
-			flushParagraph()
-			if listTag != "" && listTag != "ul" {
-				closeList()
-			}
-			if listTag == "" {
-				out = append(out, "<ul>")
-				listTag = "ul"
-			}
-			out = append(out, "<li>"+inlineFormat(trimmed[2:])+"</li>")
-			continue
-		}
-
-		// Ordered list
-		if len(trimmed) > 2 && trimmed[0] >= '0' && trimmed[0] <= '9' {
-			if idx := strings.Index(trimmed, ". "); idx > 0 && idx < 4 {
-				flushParagraph()
-				if listTag != "" && listTag != "ol" {
-					closeList()
-				}
-				if listTag == "" {
-					out = append(out, "<ol>")
-					listTag = "ol"
-				}
-				out = append(out, "<li>"+inlineFormat(trimmed[idx+2:])+"</li>")
-				continue
-			}
-		}
-
-		// Regular text
-		closeList()
-		paragraph = append(paragraph, trimmed)
-	}
-
-	flushParagraph()
-	closeList()
-	if inCodeBlock {
-		out = append(out, "</code></pre>")
-	}
-	if inMermaidBlock {
-		out = append(out, "</pre>")
-	}
-
-	return template.HTML(strings.Join(out, "\n")) //nolint:gosec // HTML is constructed from escaped user content
+	//nolint:gosec // HTML is generated by goldmark from user markdown
+	return template.HTML(result)
 }
 
-// inlineFormat handles bold, italic, inline code.
-func inlineFormat(s string) string {
-	s = template.HTMLEscapeString(s)
-	// Inline code
-	for {
-		start := strings.Index(s, "`")
-		if start < 0 {
-			break
-		}
-		end := strings.Index(s[start+1:], "`")
-		if end < 0 {
-			break
-		}
-		end += start + 1
-		s = s[:start] + "<code>" + s[start+1:end] + "</code>" + s[end+1:]
-	}
-	// Bold
-	for {
-		start := strings.Index(s, "**")
-		if start < 0 {
-			break
-		}
-		end := strings.Index(s[start+2:], "**")
-		if end < 0 {
-			break
-		}
-		end += start + 2
-		s = s[:start] + "<strong>" + s[start+2:end] + "</strong>" + s[end+2:]
-	}
-	// Italic
-	for {
-		start := strings.Index(s, "*")
-		if start < 0 {
-			break
-		}
-		end := strings.Index(s[start+1:], "*")
-		if end < 0 {
-			break
-		}
-		end += start + 1
-		s = s[:start] + "<em>" + s[start+1:end] + "</em>" + s[end+1:]
-	}
-	return s
+var mermaidBlockRe = regexp.MustCompile(`<pre><code class="language-mermaid">([\s\S]*?)</code></pre>`)
+
+var checkboxRe = regexp.MustCompile(`<input[^>]*type="checkbox"[^>]*>`)
+
+func addCheckboxIndices(s string) string {
+	idx := 0
+	return checkboxRe.ReplaceAllStringFunc(s, func(match string) string {
+		// Add data-cb-idx attribute
+		result := strings.Replace(match, "<input", fmt.Sprintf(`<input data-cb-idx="%d"`, idx), 1)
+		idx++
+		return result
+	})
 }
 
 // checkboxPattern matches markdown task list items: - [ ], - [x], - [X].
