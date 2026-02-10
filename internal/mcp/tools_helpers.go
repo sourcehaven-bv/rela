@@ -48,6 +48,23 @@ func (s *Server) resolveEntityType(typeName string) (string, *metamodel.EntityDe
 	return resolved, def, nil
 }
 
+// generateEntityID generates a new ID for an entity based on its type configuration.
+// Returns empty string for manual ID types (caller must provide ID).
+func (s *Server) generateEntityID(entityDef *metamodel.EntityDef) string {
+	if entityDef.IsManualID() {
+		return ""
+	}
+	prefixes := entityDef.GetIDPrefixes()
+	if len(prefixes) == 0 {
+		return ""
+	}
+	existingIDs := s.graph.AllIDs()
+	if entityDef.IsShortID() {
+		return model.GenerateShortID(existingIDs, prefixes[0], s.graph.NodeCount())
+	}
+	return model.GenerateNextID(existingIDs, prefixes[0])
+}
+
 func (s *Server) extractProperties(request mcp.CallToolRequest) map[string]interface{} {
 	args := request.GetArguments()
 	propsRaw, ok := args["properties"]

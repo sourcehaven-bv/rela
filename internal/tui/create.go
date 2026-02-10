@@ -254,6 +254,10 @@ func (c *CreateModel) createEntity(app *App) (tea.Model, tea.Cmd) {
 	}
 
 	// Generate ID
+	if entityDef.IsManualID() {
+		return app, SetMessage("Manual ID types not supported in TUI", true)
+	}
+
 	prefixes := entityDef.GetIDPrefixes()
 	if len(prefixes) == 0 {
 		return app, SetMessage("No ID prefixes for type", true)
@@ -261,7 +265,13 @@ func (c *CreateModel) createEntity(app *App) (tea.Model, tea.Cmd) {
 
 	prefix := prefixes[0]
 	existingIDs := app.graph.AllIDs()
-	entityID := mdmodel.GenerateNextID(existingIDs, prefix)
+
+	var entityID string
+	if entityDef.IsShortID() {
+		entityID = mdmodel.GenerateShortID(existingIDs, prefix, app.graph.NodeCount())
+	} else {
+		entityID = mdmodel.GenerateNextID(existingIDs, prefix)
+	}
 
 	// Create entity
 	entity := mdmodel.NewEntity(entityID, typeName)

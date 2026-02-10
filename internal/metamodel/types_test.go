@@ -291,14 +291,19 @@ func TestEntityDef_GetIDType(t *testing.T) {
 		want string
 	}{
 		{
-			name: "empty defaults to auto",
+			name: "empty defaults to short",
 			def:  EntityDef{},
-			want: IDTypeAuto,
+			want: IDTypeShort,
 		},
 		{
-			name: "explicit auto",
-			def:  EntityDef{IDType: IDTypeAuto},
-			want: IDTypeAuto,
+			name: "explicit short",
+			def:  EntityDef{IDType: IDTypeShort},
+			want: IDTypeShort,
+		},
+		{
+			name: "explicit sequential",
+			def:  EntityDef{IDType: IDTypeSequential},
+			want: IDTypeSequential,
 		},
 		{
 			name: "explicit manual",
@@ -317,22 +322,45 @@ func TestEntityDef_GetIDType(t *testing.T) {
 	}
 }
 
-func TestEntityDef_IsAutoID(t *testing.T) {
+func TestEntityDef_IsShortID(t *testing.T) {
 	tests := []struct {
 		name string
 		def  EntityDef
 		want bool
 	}{
-		{name: "empty is auto", def: EntityDef{}, want: true},
-		{name: "explicit auto", def: EntityDef{IDType: IDTypeAuto}, want: true},
-		{name: "manual is not auto", def: EntityDef{IDType: IDTypeManual}, want: false},
+		{name: "empty is short (default)", def: EntityDef{}, want: true},
+		{name: "explicit short", def: EntityDef{IDType: IDTypeShort}, want: true},
+		{name: "sequential is not short", def: EntityDef{IDType: IDTypeSequential}, want: false},
+		{name: "manual is not short", def: EntityDef{IDType: IDTypeManual}, want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.def.IsAutoID()
+			got := tt.def.IsShortID()
 			if got != tt.want {
-				t.Errorf("IsAutoID() = %v, want %v", got, tt.want)
+				t.Errorf("IsShortID() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEntityDef_IsSequentialID(t *testing.T) {
+	tests := []struct {
+		name string
+		def  EntityDef
+		want bool
+	}{
+		{name: "empty is not sequential (defaults to short)", def: EntityDef{}, want: false},
+		{name: "explicit sequential", def: EntityDef{IDType: IDTypeSequential}, want: true},
+		{name: "short is not sequential", def: EntityDef{IDType: IDTypeShort}, want: false},
+		{name: "manual is not sequential", def: EntityDef{IDType: IDTypeManual}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.def.IsSequentialID()
+			if got != tt.want {
+				t.Errorf("IsSequentialID() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -344,8 +372,9 @@ func TestEntityDef_IsManualID(t *testing.T) {
 		def  EntityDef
 		want bool
 	}{
-		{name: "empty is not manual", def: EntityDef{}, want: false},
-		{name: "auto is not manual", def: EntityDef{IDType: IDTypeAuto}, want: false},
+		{name: "empty is not manual (defaults to short)", def: EntityDef{}, want: false},
+		{name: "short is not manual", def: EntityDef{IDType: IDTypeShort}, want: false},
+		{name: "sequential is not manual", def: EntityDef{IDType: IDTypeSequential}, want: false},
 		{name: "explicit manual", def: EntityDef{IDType: IDTypeManual}, want: true},
 	}
 
@@ -367,13 +396,28 @@ func TestParse_IDTypeValidation(t *testing.T) {
 		errType error
 	}{
 		{
+			name: "valid short id_type",
+			yaml: `
+version: "1.0"
+entities:
+  ticket:
+    label: Ticket
+    id_type: short
+    id_prefixes: ["TKT-"]
+    properties:
+      title:
+        type: string
+`,
+			wantErr: false,
+		},
+		{
 			name: "valid auto id_type",
 			yaml: `
 version: "1.0"
 entities:
   requirement:
     label: Requirement
-    id_type: auto
+    id_type: sequential
     id_prefixes: ["REQ-"]
     properties:
       title:
@@ -396,7 +440,7 @@ entities:
 			wantErr: false,
 		},
 		{
-			name: "empty id_type is valid (defaults to auto)",
+			name: "empty id_type is valid (defaults to short)",
 			yaml: `
 version: "1.0"
 entities:
@@ -1211,7 +1255,7 @@ func TestErrorTypes(t *testing.T) {
 			EntityType: "requirement",
 			IDType:     "invalid",
 		}
-		want := "invalid id_type for entity requirement: invalid (must be 'auto' or 'manual')"
+		want := "invalid id_type for entity requirement: invalid (must be 'short', 'sequential', or 'manual')"
 		if got := err.Error(); got != want {
 			t.Errorf("Error() = %q, want %q", got, want)
 		}

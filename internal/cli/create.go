@@ -65,7 +65,7 @@ Examples:
 			}
 			entityID = createID
 		} else {
-			// Auto-generate ID (only for auto ID types)
+			// Auto-generate ID (only for auto/short ID types)
 			if entityDef.IsManualID() {
 				return fmt.Errorf("entity type %s uses manual IDs; --id is required", resolvedType)
 			}
@@ -75,7 +75,13 @@ Examples:
 			}
 			prefix := prefixes[0]
 			existingIDs := g.AllIDs()
-			entityID = model.GenerateNextID(existingIDs, prefix)
+
+			if entityDef.IsShortID() {
+				entityID = model.GenerateShortID(existingIDs, prefix, g.NodeCount())
+			} else {
+				// Auto (sequential) IDs
+				entityID = model.GenerateNextID(existingIDs, prefix)
+			}
 		}
 
 		// Create entity

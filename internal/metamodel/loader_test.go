@@ -61,6 +61,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -78,6 +79,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       id:
         type: string
@@ -95,6 +97,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       type:
         type: string
@@ -112,12 +115,14 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       title:
         type: string
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       id:
         type: string
@@ -211,6 +216,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       " id":
         type: string
@@ -228,6 +234,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       "id ":
         type: string
@@ -245,6 +252,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       " id ":
         type: string
@@ -262,6 +270,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       " type":
         type: string
@@ -279,6 +288,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       "type ":
         type: string
@@ -296,6 +306,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       "   ":
         type: string
@@ -313,6 +324,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       "some property":
         type: string
@@ -329,6 +341,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       "	id":
         type: string
@@ -392,6 +405,7 @@ entities:
   task:
     label: Task
     id_prefix: "TASK-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -460,7 +474,7 @@ func TestParse_AutoIDType(t *testing.T) {
 entities:
   task:
     label: Task
-    id_type: auto
+    id_type: sequential
     id_prefix: "TASK-"
     properties:
       title:
@@ -470,7 +484,7 @@ entities:
 	meta, err := Parse([]byte(yaml))
 	assertNoError(t, err)
 
-	assertEqual(t, meta.Entities["task"].IDType, IDTypeAuto)
+	assertEqual(t, meta.Entities["task"].IDType, IDTypeSequential)
 }
 
 func TestParse_ManualIDType(t *testing.T) {
@@ -497,6 +511,7 @@ entities:
     label: Requirement
     aliases: [req, reqs]
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -504,6 +519,7 @@ entities:
     label: Decision
     aliases: [dec]
     id_prefix: "DEC-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -583,7 +599,7 @@ func TestInvalidIDTypeError_Error(t *testing.T) {
 		IDType:     "invalid",
 	}
 
-	expected := `invalid id_type for entity task: invalid (must be 'auto' or 'manual')`
+	expected := `invalid id_type for entity task: invalid (must be 'short', 'sequential', or 'manual')`
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
@@ -603,6 +619,7 @@ entity:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -619,6 +636,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -637,6 +655,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -655,6 +674,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -700,6 +720,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -737,6 +758,7 @@ entities:
   phase:
     label: Phase
     id_prefix: "PH-"
+    id_type: sequential
     properties:
       order:
         type: %s
@@ -763,6 +785,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -790,6 +813,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -832,6 +856,7 @@ version: "1.0"
 entities:
   requirement:
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -853,6 +878,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
 types: {}
 relations: {}
 `
@@ -908,6 +934,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -931,8 +958,10 @@ version: "1.0"
 entities:
   requirement:
     id_prefix: "REQ-"
+    id_type: sequential
   decision:
     id_prefix: "DEC-"
+    id_type: sequential
 types: {}
 relations: {}
 `
@@ -959,6 +988,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -968,6 +998,7 @@ entities:
   decision:
     label: Decision
     id_prefix: "DEC-"
+    id_type: sequential
     properties:
       title:
         type: string

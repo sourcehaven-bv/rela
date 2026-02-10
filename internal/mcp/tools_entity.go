@@ -163,16 +163,11 @@ func (s *Server) handleCreateEntity(
 		}
 		entityID = customID
 	} else {
-		if entityDef.IsManualID() {
+		entityID = s.generateEntityID(entityDef)
+		if entityID == "" {
 			return mcp.NewToolResultError(
 				fmt.Sprintf("entity type %s uses manual IDs; provide an 'id' parameter", resolvedType)), nil
 		}
-		prefixes := entityDef.GetIDPrefixes()
-		if len(prefixes) == 0 {
-			return mcp.NewToolResultError(
-				fmt.Sprintf("no ID prefixes defined for type %s", resolvedType)), nil
-		}
-		entityID = model.GenerateNextID(s.graph.AllIDs(), prefixes[0])
 	}
 
 	// Create entity

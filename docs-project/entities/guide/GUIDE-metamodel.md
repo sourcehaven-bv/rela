@@ -221,7 +221,7 @@ entities:
   requirement:
     label: Requirement
     id_patterns: ["REQ-"]
-    # id_type: auto  # This is the default
+    # id_type: sequential  # This is the default
 
   # Manual IDs for components/modules
   component:

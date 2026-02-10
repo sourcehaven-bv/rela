@@ -3,95 +3,70 @@
 
 version: "1.0"
 namespace: "https://rela.dev/ontology/development#"
-
 types:
   # Lifecycle statuses
   concept_status:
     values: [draft, stable, deprecated]
     default: draft
-
   decision_status:
     values: [proposed, accepted, superseded, deprecated]
     default: proposed
-
   feature_status:
     values: [proposed, planned, in-progress, implemented, removed]
     default: proposed
-
   ticket_status:
     values: [backlog, ready, in-progress, blocked, done, wont-fix]
     default: backlog
-
   risk_status:
     values: [identified, mitigated, accepted, resolved]
     default: identified
-
   test_status:
     values: [draft, active, skipped, deprecated]
     default: active
-
   qa_result:
     values: [in-progress, passed, failed, blocked]
     default: in-progress
-
   doc_status:
     values: [stub, draft, review, published, outdated]
     default: stub
-
   # Enums
   priority:
     values: [critical, high, medium, low]
     default: medium
-
   layer:
     values: [core, cli, tui, server, infra]
-
   ticket_kind:
     values: [enhancement, refactor, docs, test, chore]
-
   effort:
     values: [xs, s, m, l, xl]
-
   likelihood:
     values: [low, medium, high]
-
   impact:
     values: [low, medium, high]
-
   test_kind:
     values: [unit, integration, e2e, manual, fuzz, property]
-
   automated_measure_kind:
     values: [test, lint, ci, type-check, monitoring]
-
   manual_measure_kind:
     values: [review, docs, process, checklist]
-
   measure_status:
     values: [proposed, active, deprecated]
     default: proposed
-
   doc_kind:
     values: [guide, reference, tutorial, howto, explanation, changelog]
-
   audience:
     values: [beginner, intermediate, advanced]
     default: beginner
-
   # Ideation statuses
   idea_status:
     values: [captured, exploring, validated, promoted, parked, rejected]
     default: captured
-
   idea_category:
     values: [feature, ux, integration, ai, visualization, performance, dx, architecture]
-
   idea_effort:
     values: [trivial, small, medium, large, epic]
-
   idea_value:
     values: [nice-to-have, useful, valuable, critical]
-
 entities:
   # ===================
   # Architecture
@@ -121,7 +96,6 @@ entities:
     default_sort:
       - property: layer
       - property: title
-
   # ===================
   # Ideation
   # ===================
@@ -129,6 +103,7 @@ entities:
     label: Idea
     aliases: [brainstorm]
     id_prefix: "IDEA-"
+    id_type: sequential
     color: "#F3E5F5"
     border_color: "#9C27B0"
     properties:
@@ -160,7 +135,6 @@ entities:
       - property: status
       - property: category
       - property: title
-
   future-concept:
     label: Future Concept
     aliases: [possibility, exploration]
@@ -198,11 +172,11 @@ entities:
       - property: value
         direction: desc
       - property: title
-
   decision:
     label: Decision
     aliases: [dec, adr]
     id_prefix: "DEC-"
+    id_type: sequential
     color: "#FFF3E0"
     border_color: "#F57C00"
     properties:
@@ -223,13 +197,13 @@ entities:
     default_sort:
       - property: date
         direction: desc
-
   # ===================
   # Planning
   # ===================
   feature:
     label: Feature
     id_prefix: "FEAT-"
+    id_type: sequential
     color: "#E8F5E9"
     border_color: "#388E3C"
     properties:
@@ -249,11 +223,11 @@ entities:
     default_sort:
       - property: priority
       - property: status
-
   bug:
     label: Bug
     aliases: [defect]
     id_prefix: "BUG-"
+    id_type: sequential
     color: "#FFCDD2"
     border_color: "#D32F2F"
     properties:
@@ -290,11 +264,11 @@ entities:
     default_sort:
       - property: priority
       - property: status
-
   ticket:
     label: Ticket
     aliases: [task, issue]
     id_prefix: "TKT-"
+    id_type: sequential
     color: "#FFFDE7"
     border_color: "#FBC02D"
     properties:
@@ -316,10 +290,10 @@ entities:
     default_sort:
       - property: priority
       - property: status
-
   risk:
     label: Risk
     id_prefix: "RISK-"
+    id_type: sequential
     color: "#FFEBEE"
     border_color: "#D32F2F"
     properties:
@@ -345,7 +319,6 @@ entities:
         direction: desc
       - property: likelihood
         direction: desc
-
   # ===================
   # QA / Testing
   # ===================
@@ -353,6 +326,7 @@ entities:
     label: Test Case
     aliases: [test]
     id_prefix: "TC-"
+    id_type: sequential
     color: "#F3E5F5"
     border_color: "#7B1FA2"
     properties:
@@ -376,11 +350,11 @@ entities:
     default_sort:
       - property: kind
       - property: title
-
   test-suite:
     label: Test Suite
     aliases: [suite]
     id_prefix: "TS-"
+    id_type: sequential
     color: "#EDE7F6"
     border_color: "#512DA8"
     properties:
@@ -397,11 +371,11 @@ entities:
     default_sort:
       - property: kind
       - property: title
-
   qa-report:
     label: QA Report
     aliases: [qa]
     id_prefix: "QA-"
+    id_type: sequential
     color: "#FCE4EC"
     border_color: "#C2185B"
     properties:
@@ -428,7 +402,6 @@ entities:
     default_sort:
       - property: date
         direction: desc
-
   # ===================
   # Preventive Measures
   # ===================
@@ -457,7 +430,6 @@ entities:
     default_sort:
       - property: kind
       - property: title
-
   manual-measure:
     label: Manual Measure
     aliases: [process, guideline]
@@ -482,7 +454,6 @@ entities:
     default_sort:
       - property: kind
       - property: title
-
   # ===================
   # Documentation
   # ===================
@@ -511,7 +482,6 @@ entities:
     default_sort:
       - property: order
       - property: title
-
   tutorial:
     label: Tutorial
     id_type: manual
@@ -534,7 +504,6 @@ entities:
     default_sort:
       - property: audience
       - property: title
-
   scenario:
     label: Scenario
     id_type: manual
@@ -558,10 +527,10 @@ entities:
     default_sort:
       - property: domain
       - property: title
-
   doc-task:
     label: Doc Task
     id_prefix: "DOC-"
+    id_type: sequential
     color: "#ECEFF1"
     border_color: "#546E7A"
     properties:
@@ -578,7 +547,6 @@ entities:
     default_sort:
       - property: priority
       - property: status
-
 relations:
   # ===================
   # Ticket → Work Relations
@@ -589,31 +557,27 @@ relations:
     from: [ticket]
     to: [feature]
     inverse: implementedBy
-    min_outgoing: 1  # Every ticket should implement at least one feature
-
+    min_outgoing: 1 # Every ticket should implement at least one feature
   fixes:
     label: fixes
     description: Bug fixes an issue in this feature
     from: [bug]
     to: [feature]
     inverse: fixedBy
-    min_outgoing: 1  # Every bug must be linked to the feature it fixes
-
+    min_outgoing: 1 # Every bug must be linked to the feature it fixes
   affects:
     label: affects
     description: Work touches this architectural concept
     from: [ticket, bug, doc-task]
     to: [concept]
     inverse: affectedBy
-    min_outgoing: 1  # Work items must specify which concepts they affect
-
+    min_outgoing: 1 # Work items must specify which concepts they affect
   depends-on:
     label: depends on
     description: Requires this to be completed first
     from: [ticket, bug, feature, doc-task]
     to: [ticket, bug, feature, doc-task]
     inverse: blocks
-
   # ===================
   # Architecture Relations
   # ===================
@@ -623,38 +587,33 @@ relations:
     from: [decision]
     to: [concept]
     inverse: decidedBy
-    min_outgoing: 1  # Every decision must relate to at least one concept
-
+    min_outgoing: 1 # Every decision must relate to at least one concept
   supersedes:
     label: supersedes
     description: Replaces previous decision
     from: [decision]
     to: [decision]
     inverse: supersededBy
-    max_outgoing: 1  # A decision supersedes at most one other
-
+    max_outgoing: 1 # A decision supersedes at most one other
   refines:
     label: refines
     description: More specific version of
     from: [concept, feature]
     to: [concept, feature]
     inverse: refinedBy
-
   requires:
     label: requires
     description: Feature requires this concept to exist
     from: [feature]
     to: [concept]
     inverse: requiredBy
-    min_outgoing: 1  # Features must be grounded in at least one concept
-
+    min_outgoing: 1 # Features must be grounded in at least one concept
   concept-depends-on:
     label: depends on
     description: Concept depends on another concept
     from: [concept]
     to: [concept]
     inverse: dependencyOf
-
   # ===================
   # Ideation Relations
   # ===================
@@ -664,58 +623,50 @@ relations:
     from: [idea]
     to: [feature, concept, future-concept, idea]
     inverse: inspiredBy
-
   promotes-to:
     label: promotes to
     description: Idea was promoted to a feature or future-concept
     from: [idea]
     to: [feature, future-concept]
     inverse: promotedFrom
-    max_outgoing: 1  # An idea promotes to at most one thing
-
+    max_outgoing: 1 # An idea promotes to at most one thing
   elaborates:
     label: elaborates
     description: Future concept elaborates on an idea
     from: [future-concept]
     to: [idea]
     inverse: elaboratedBy
-    min_outgoing: 1  # Future concepts should trace back to ideas
-
+    min_outgoing: 1 # Future concepts should trace back to ideas
   extends-concept:
     label: extends
     description: Future concept would extend this existing concept
     from: [future-concept]
     to: [concept]
     inverse: extendedBy
-
   enables:
     label: enables
     description: Future concept would enable these features
     from: [future-concept]
     to: [feature]
     inverse: enabledBy
-
   replaces:
     label: would replace
     description: Future concept would replace this existing concept or feature
     from: [future-concept]
     to: [concept, feature]
     inverse: replacedBy
-
   blocked-by-concept:
     label: blocked by
     description: Idea/future-concept is blocked by missing concept or feature
     from: [idea, future-concept]
     to: [concept, feature, future-concept]
     inverse: blocks-idea
-
   related-idea:
     label: related to
     description: Ideas that are related or could be combined
     from: [idea]
     to: [idea]
     symmetric: true
-
   # ===================
   # Root Cause Analysis (bugs only)
   # ===================
@@ -725,7 +676,6 @@ relations:
     from: [bug]
     to: [concept, decision, ticket, bug]
     inverse: caused
-
   # ===================
   # Prevention (bugs only)
   # ===================
@@ -735,29 +685,25 @@ relations:
     from: [bug]
     to: [automated-measure, manual-measure]
     inverse: shouldPrevent
-
   detected-by:
     label: detected by
     description: Bug was detected by this measure
     from: [bug]
     to: [automated-measure, manual-measure, test-case, test-suite, qa-report]
     inverse: detected
-
   adds-measure:
     label: adds measure
     description: Bug fix must add an automated preventive measure
     from: [bug]
     to: [automated-measure]
     inverse: addedBy
-    min_outgoing: 1  # Every bug must result in an automated preventive measure
-
+    min_outgoing: 1 # Every bug must result in an automated preventive measure
   protects:
     label: protects
     description: Measure protects this concept from bugs
     from: [automated-measure, manual-measure]
     to: [concept]
     inverse: protectedBy
-
   # ===================
   # Risk Relations
   # ===================
@@ -767,14 +713,12 @@ relations:
     from: [ticket, bug, decision]
     to: [risk]
     inverse: mitigatedBy
-
   introduces:
     label: introduces
     description: This change introduces a risk
     from: [ticket, bug, decision, feature]
     to: [risk]
     inverse: introducedBy
-
   # ===================
   # QA Relations (logical verification)
   # ===================
@@ -784,53 +728,46 @@ relations:
     from: [test-case, test-suite]
     to: [feature, ticket, bug]
     inverse: verifiedBy
-    min_outgoing: 1  # Tests must verify at least one feature/ticket/bug
-
+    min_outgoing: 1 # Tests must verify at least one feature/ticket/bug
   test-covers:
     label: covers
     description: Test exercises this architectural concept
     from: [test-case, test-suite]
     to: [concept]
     inverse: testedBy
-    min_outgoing: 1  # Tests must cover at least one concept
-
+    min_outgoing: 1 # Tests must cover at least one concept
   contains:
     label: contains
     description: Suite contains these test cases
     from: [test-suite]
     to: [test-case]
     inverse: containedIn
-    min_outgoing: 1  # Suites must contain at least one test
-
+    min_outgoing: 1 # Suites must contain at least one test
   found-by:
     label: found by
     description: Bug was discovered by this test or QA session
     from: [bug]
     to: [test-case, qa-report]
     inverse: found
-
   regression-for:
     label: regression test for
     description: Test prevents regression of this fixed bug
     from: [test-case]
     to: [bug]
     inverse: hasRegressionTest
-
   blocks-release:
     label: blocks release
     description: This issue blocks the release
     from: [ticket, bug, risk]
     to: [qa-report]
     inverse: releaseBlockedBy
-
   tested-in:
     label: tested in
     description: Feature/ticket/bug was tested in this QA session
     from: [feature, ticket, bug]
     to: [qa-report]
     inverse: tests
-    min_incoming: 1  # QA reports must test at least one feature/ticket/bug
-
+    min_incoming: 1 # QA reports must test at least one feature/ticket/bug
   # ===================
   # Documentation Relations
   # ===================
@@ -840,51 +777,44 @@ relations:
     from: [guide, tutorial]
     to: [concept]
     inverse: explainedBy
-
   covers:
     label: covers
     description: Guide/tutorial covers this feature
     from: [guide, tutorial]
     to: [feature]
     inverse: coveredBy
-
   demonstrates:
     label: demonstrates
     description: Scenario/tutorial demonstrates this feature in practice
     from: [scenario, tutorial]
     to: [feature]
     inverse: demonstratedBy
-
   prerequisite:
     label: prerequisite
     description: This guide/tutorial requires reading another first
     from: [guide, tutorial]
     to: [guide, concept]
     inverse: prerequisiteFor
-
   documents:
     label: documents
     description: Documentation describes this decision
     from: [guide, tutorial, scenario]
     to: [decision]
     inverse: documentedBy
-
   updates:
     label: updates
     description: Doc task updates this documentation
     from: [doc-task]
     to: [guide, tutorial, scenario]
     inverse: updatedBy
-    min_outgoing: 1  # Every doc-task must update at least one doc
-
+    min_outgoing: 1 # Every doc-task must update at least one doc
   triggered-by:
     label: triggered by
     description: Doc work triggered by this change
     from: [doc-task]
     to: [ticket, bug, feature, decision]
     inverse: triggers
-    min_outgoing: 1  # Doc tasks must be triggered by something
-
+    min_outgoing: 1 # Doc tasks must be triggered by something
 # ===================
 # Validation Rules
 # ===================
@@ -898,7 +828,6 @@ validations:
     then:
       - "description!="
     severity: warning
-
   - name: ready-tickets-need-effort
     description: "Ready tickets must have effort estimated"
     entity_type: ticket
@@ -907,7 +836,6 @@ validations:
     then:
       - "effort!="
     severity: error
-
   - name: ready-tickets-need-priority
     description: "Ready tickets must have priority set"
     entity_type: ticket
@@ -916,7 +844,6 @@ validations:
     then:
       - "priority!="
     severity: error
-
   - name: ready-tickets-need-description
     description: "Ready tickets must have a description"
     entity_type: ticket
@@ -925,7 +852,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: in-progress-tickets-need-priority
     description: "In-progress tickets must have priority set"
     entity_type: ticket
@@ -934,7 +860,6 @@ validations:
     then:
       - "priority!="
     severity: error
-
   - name: done-tickets-need-description
     description: "Done tickets must have a description"
     entity_type: ticket
@@ -943,7 +868,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   # --- Bug completeness (progressive) ---
   - name: bugs-should-have-description
     description: "Bugs should have a description"
@@ -951,7 +875,6 @@ validations:
     then:
       - "description!="
     severity: warning
-
   - name: ready-bugs-need-effort
     description: "Ready bugs must have effort estimated"
     entity_type: bug
@@ -960,7 +883,6 @@ validations:
     then:
       - "effort!="
     severity: error
-
   - name: ready-bugs-need-priority
     description: "Ready bugs must have priority set"
     entity_type: bug
@@ -969,7 +891,6 @@ validations:
     then:
       - "priority!="
     severity: error
-
   - name: ready-bugs-need-description
     description: "Ready bugs must have a description"
     entity_type: bug
@@ -978,7 +899,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: in-progress-bugs-need-priority
     description: "In-progress bugs must have priority set"
     entity_type: bug
@@ -987,7 +907,6 @@ validations:
     then:
       - "priority!="
     severity: error
-
   - name: in-progress-bugs-should-have-why1
     description: "In-progress bugs should identify immediate cause"
     entity_type: bug
@@ -996,7 +915,6 @@ validations:
     then:
       - "why1!="
     severity: warning
-
   - name: in-progress-bugs-should-have-why2
     description: "In-progress bugs should start 5-whys analysis"
     entity_type: bug
@@ -1005,7 +923,6 @@ validations:
     then:
       - "why2!="
     severity: warning
-
   - name: done-bugs-need-5-whys
     description: "Done bugs must have 5-whys analysis (at least 3 levels)"
     entity_type: bug
@@ -1016,7 +933,6 @@ validations:
       - "why2!="
       - "why3!="
     severity: error
-
   - name: done-bugs-should-have-deep-analysis
     description: "Done bugs should have full 5-whys analysis"
     entity_type: bug
@@ -1026,7 +942,6 @@ validations:
       - "why4!="
       - "why5!="
     severity: warning
-
   - name: done-bugs-need-prevention
     description: "Done bugs must document prevention strategy"
     entity_type: bug
@@ -1035,7 +950,6 @@ validations:
     then:
       - "prevention!="
     severity: error
-
   - name: done-bugs-need-description
     description: "Done bugs must have a description"
     entity_type: bug
@@ -1044,7 +958,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   # --- Measure completeness ---
   # --- Automated measure completeness ---
   - name: active-automated-measures-need-description
@@ -1055,7 +968,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: proposed-automated-measures-should-have-description
     description: "Proposed automated measures should have a description"
     entity_type: automated-measure
@@ -1064,7 +976,6 @@ validations:
     then:
       - "description!="
     severity: warning
-
   # --- Manual measure completeness ---
   - name: active-manual-measures-need-description
     description: "Active manual measures must have a description"
@@ -1074,7 +985,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: proposed-manual-measures-should-have-description
     description: "Proposed manual measures should have a description"
     entity_type: manual-measure
@@ -1083,7 +993,6 @@ validations:
     then:
       - "description!="
     severity: warning
-
   # --- Decision completeness (progressive) ---
   - name: proposed-decisions-should-have-date
     description: "Proposed decisions should have a date"
@@ -1093,7 +1002,6 @@ validations:
     then:
       - "date!="
     severity: warning
-
   - name: proposed-decisions-should-have-context
     description: "Proposed decisions should document their context"
     entity_type: decision
@@ -1102,7 +1010,6 @@ validations:
     then:
       - "context!="
     severity: warning
-
   - name: accepted-decisions-need-date
     description: "Accepted decisions must have a date"
     entity_type: decision
@@ -1111,7 +1018,6 @@ validations:
     then:
       - "date!="
     severity: error
-
   - name: accepted-decisions-need-context
     description: "Accepted decisions must document their context"
     entity_type: decision
@@ -1120,7 +1026,6 @@ validations:
     then:
       - "context!="
     severity: error
-
   - name: accepted-decisions-need-consequences
     description: "Accepted decisions must document consequences"
     entity_type: decision
@@ -1129,7 +1034,6 @@ validations:
     then:
       - "consequences!="
     severity: error
-
   # --- Feature completeness (progressive) ---
   - name: proposed-features-should-have-description
     description: "Proposed features should have a description"
@@ -1139,7 +1043,6 @@ validations:
     then:
       - "description!="
     severity: warning
-
   - name: planned-features-need-priority
     description: "Planned features must have priority assigned"
     entity_type: feature
@@ -1148,7 +1051,6 @@ validations:
     then:
       - "priority!="
     severity: error
-
   - name: planned-features-need-description
     description: "Planned features must have a description"
     entity_type: feature
@@ -1157,7 +1059,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: in-progress-features-need-description
     description: "In-progress features must have a description"
     entity_type: feature
@@ -1166,7 +1067,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: implemented-features-need-summary
     description: "Implemented features must have a summary for docs"
     entity_type: feature
@@ -1175,7 +1075,6 @@ validations:
     then:
       - "summary!="
     severity: error
-
   - name: implemented-features-need-description
     description: "Implemented features must have a description"
     entity_type: feature
@@ -1184,7 +1083,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   # --- Risk completeness (progressive) ---
   - name: identified-risks-need-assessment
     description: "Identified risks must have likelihood and impact"
@@ -1195,7 +1093,6 @@ validations:
       - "likelihood!="
       - "impact!="
     severity: error
-
   - name: identified-risks-should-have-description
     description: "Identified risks should have a description"
     entity_type: risk
@@ -1204,7 +1101,6 @@ validations:
     then:
       - "description!="
     severity: warning
-
   - name: mitigated-risks-need-mitigation
     description: "Mitigated risks must document the mitigation"
     entity_type: risk
@@ -1213,7 +1109,6 @@ validations:
     then:
       - "mitigation!="
     severity: error
-
   - name: mitigated-risks-need-description
     description: "Mitigated risks must have a description"
     entity_type: risk
@@ -1222,7 +1117,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: resolved-risks-need-mitigation
     description: "Resolved risks must document how they were addressed"
     entity_type: risk
@@ -1231,7 +1125,6 @@ validations:
     then:
       - "mitigation!="
     severity: error
-
   # --- Test completeness ---
   - name: automated-tests-need-location
     description: "Automated tests must specify their location"
@@ -1241,7 +1134,6 @@ validations:
     then:
       - "location!="
     severity: error
-
   - name: active-tests-should-have-description
     description: "Active tests should have a description"
     entity_type: test-case
@@ -1250,14 +1142,12 @@ validations:
     then:
       - "description!="
     severity: warning
-
   - name: test-suites-need-kind
     description: "Test suites must specify their kind"
     entity_type: test-suite
     then:
       - "kind!="
     severity: error
-
   - name: active-suites-should-have-description
     description: "Active test suites should have a description"
     entity_type: test-suite
@@ -1266,7 +1156,6 @@ validations:
     then:
       - "description!="
     severity: warning
-
   # --- QA completeness ---
   - name: completed-qa-needs-counts
     description: "Completed QA reports must have test counts"
@@ -1276,7 +1165,6 @@ validations:
     then:
       - "passed!="
     severity: warning
-
   - name: failed-qa-needs-counts
     description: "Failed QA reports must document failure count"
     entity_type: qa-report
@@ -1285,7 +1173,6 @@ validations:
     then:
       - "failed!="
     severity: error
-
   # --- Documentation completeness ---
   - name: published-guides-need-path
     description: "Published guides must have a file path"
@@ -1295,7 +1182,6 @@ validations:
     then:
       - "path!="
     severity: error
-
   - name: published-tutorials-need-path
     description: "Published tutorials must have a file path"
     entity_type: tutorial
@@ -1304,7 +1190,6 @@ validations:
     then:
       - "path!="
     severity: error
-
   - name: published-scenarios-need-path
     description: "Published scenarios must have a file path"
     entity_type: scenario
@@ -1313,21 +1198,18 @@ validations:
     then:
       - "path!="
     severity: error
-
   - name: guides-should-have-audience
     description: "Guides should specify target audience"
     entity_type: guide
     then:
       - "audience!="
     severity: warning
-
   - name: tutorials-should-have-audience
     description: "Tutorials should specify target audience"
     entity_type: tutorial
     then:
       - "audience!="
     severity: warning
-
   # --- Doc task completeness (progressive) ---
   - name: ready-doc-tasks-need-priority
     description: "Ready doc tasks must have priority set"
@@ -1337,7 +1219,6 @@ validations:
     then:
       - "priority!="
     severity: error
-
   - name: ready-doc-tasks-need-description
     description: "Ready doc tasks must have a description"
     entity_type: doc-task
@@ -1346,7 +1227,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: done-doc-tasks-need-description
     description: "Done doc tasks must have a description"
     entity_type: doc-task
@@ -1355,7 +1235,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   # --- Concept completeness (progressive) ---
   - name: draft-concepts-should-have-layer
     description: "Draft concepts should specify their layer"
@@ -1365,7 +1244,6 @@ validations:
     then:
       - "layer!="
     severity: warning
-
   - name: draft-concepts-should-have-description
     description: "Draft concepts should have a description"
     entity_type: concept
@@ -1374,7 +1252,6 @@ validations:
     then:
       - "description!="
     severity: warning
-
   - name: stable-concepts-need-layer
     description: "Stable concepts must specify their layer"
     entity_type: concept
@@ -1383,7 +1260,6 @@ validations:
     then:
       - "layer!="
     severity: error
-
   - name: stable-concepts-need-package
     description: "Stable concepts must specify their package location"
     entity_type: concept
@@ -1392,7 +1268,6 @@ validations:
     then:
       - "package!="
     severity: error
-
   - name: stable-concepts-need-description
     description: "Stable concepts must have a description"
     entity_type: concept
@@ -1401,7 +1276,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: stable-concepts-need-summary
     description: "Stable concepts must have a summary for docs"
     entity_type: concept
@@ -1410,7 +1284,6 @@ validations:
     then:
       - "summary!="
     severity: error
-
   # --- Idea completeness (progressive) ---
   - name: captured-ideas-should-have-description
     description: "Captured ideas should have a description"
@@ -1420,7 +1293,6 @@ validations:
     then:
       - "description!="
     severity: warning
-
   - name: exploring-ideas-need-category
     description: "Ideas being explored must have a category"
     entity_type: idea
@@ -1429,7 +1301,6 @@ validations:
     then:
       - "category!="
     severity: error
-
   - name: exploring-ideas-need-description
     description: "Ideas being explored must have a description"
     entity_type: idea
@@ -1438,7 +1309,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: validated-ideas-need-effort
     description: "Validated ideas must have effort estimated"
     entity_type: idea
@@ -1447,7 +1317,6 @@ validations:
     then:
       - "effort!="
     severity: error
-
   - name: validated-ideas-need-value
     description: "Validated ideas must have value assessed"
     entity_type: idea
@@ -1456,7 +1325,6 @@ validations:
     then:
       - "value!="
     severity: error
-
   - name: validated-ideas-need-description
     description: "Validated ideas must have a description"
     entity_type: idea
@@ -1465,7 +1333,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: parked-ideas-should-have-notes
     description: "Parked ideas should document why they were parked"
     entity_type: idea
@@ -1474,7 +1341,6 @@ validations:
     then:
       - "notes!="
     severity: warning
-
   - name: rejected-ideas-need-notes
     description: "Rejected ideas must document why they were rejected"
     entity_type: idea
@@ -1483,7 +1349,6 @@ validations:
     then:
       - "notes!="
     severity: error
-
   # --- Future concept completeness (progressive) ---
   - name: captured-future-concepts-should-have-summary
     description: "Captured future concepts should have a summary"
@@ -1493,7 +1358,6 @@ validations:
     then:
       - "summary!="
     severity: warning
-
   - name: exploring-future-concepts-need-description
     description: "Future concepts being explored must have a description"
     entity_type: future-concept
@@ -1502,7 +1366,6 @@ validations:
     then:
       - "description!="
     severity: error
-
   - name: exploring-future-concepts-need-rationale
     description: "Future concepts being explored must have a rationale"
     entity_type: future-concept
@@ -1511,7 +1374,6 @@ validations:
     then:
       - "rationale!="
     severity: error
-
   - name: validated-future-concepts-need-effort
     description: "Validated future concepts must have effort estimated"
     entity_type: future-concept
@@ -1520,7 +1382,6 @@ validations:
     then:
       - "effort!="
     severity: error
-
   - name: validated-future-concepts-need-value
     description: "Validated future concepts must have value assessed"
     entity_type: future-concept
@@ -1529,7 +1390,6 @@ validations:
     then:
       - "value!="
     severity: error
-
   - name: validated-future-concepts-need-challenges
     description: "Validated future concepts must document challenges"
     entity_type: future-concept
@@ -1538,7 +1398,6 @@ validations:
     then:
       - "challenges!="
     severity: error
-
   - name: parked-future-concepts-should-have-description
     description: "Parked future concepts should document the reasoning"
     entity_type: future-concept
@@ -1547,7 +1406,6 @@ validations:
     then:
       - "description!="
     severity: warning
-
   - name: rejected-future-concepts-need-description
     description: "Rejected future concepts must document the reasoning"
     entity_type: future-concept

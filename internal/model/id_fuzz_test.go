@@ -270,3 +270,114 @@ func FuzzFormatWithPadding(f *testing.F) {
 		}
 	})
 }
+
+// FuzzGenerateShortID tests short random ID generation
+func FuzzGenerateShortID(f *testing.F) {
+	// Seed with various prefixes and entity counts
+	f.Add("TKT", "", 0)
+	f.Add("REQ-", "REQ-a1b2", 10)
+	f.Add("DEC", "DEC-xxxx,DEC-yyyy,DEC-zzzz", 100)
+	f.Add("COMP-", "", 1000)
+	f.Add("A", "", 10000)
+
+	f.Fuzz(func(t *testing.T, prefix, existingJoined string, entityCount int) {
+		// Skip very long prefixes
+		if len(prefix) > 50 {
+			return
+		}
+
+		// Skip invalid prefixes - must match ID character rules (alphanumeric, dash, underscore)
+		if prefix == "" || !utf8.ValidString(prefix) {
+			return
+		}
+		for _, c := range prefix {
+			if !isAllowedIDChar(c) {
+				return
+			}
+		}
+
+		// Limit entity count to reasonable values
+		if entityCount < 0 {
+			entityCount = 0
+		}
+		if entityCount > 100000 {
+			entityCount = 100000
+		}
+
+		var existing []string
+		if existingJoined != "" {
+			existing = strings.Split(existingJoined, ",")
+		}
+
+		// Should never panic
+		result := GenerateShortID(existing, prefix, entityCount)
+
+		// Result should be non-empty
+		if result == "" {
+			t.Error("GenerateShortID returned empty string")
+			return
+		}
+
+		// Result should start with uppercased prefix + dash
+		expectedPrefix := strings.ToUpper(strings.TrimSuffix(prefix, "-")) + "-"
+		if !strings.HasPrefix(result, expectedPrefix) {
+			t.Errorf("GenerateShortID result %q doesn't have expected prefix %q",
+				result, expectedPrefix)
+		}
+
+		// Result should not be in the existing set
+		for _, ex := range existing {
+			if result == ex {
+				t.Errorf("GenerateShortID returned existing ID %q", result)
+			}
+		}
+
+		// Result should be valid according to ValidateID
+		if err := ValidateID(result); err != nil {
+			t.Errorf("GenerateShortID returned invalid ID %q: %v", result, err)
+		}
+
+		// Random part should only contain base36 characters
+		randomPart := strings.TrimPrefix(result, expectedPrefix)
+		for _, c := range randomPart {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+				t.Errorf("GenerateShortID random part %q contains invalid char %q",
+					randomPart, c)
+			}
+		}
+	})
+}
+
+// FuzzGenerateShortIDCollision stress tests collision resistance
+func FuzzGenerateShortIDCollision(f *testing.F) {
+	f.Add("TKT", 100)
+	f.Add("REQ", 500)
+	f.Add("X", 1000)
+
+	f.Fuzz(func(t *testing.T, prefix string, count int) {
+		// Skip invalid inputs
+		if prefix == "" || len(prefix) > 20 {
+			return
+		}
+		if count < 1 || count > 1000 {
+			return
+		}
+
+		// Generate many IDs and verify no collisions
+		seen := make(map[string]struct{}, count)
+		for i := 0; i < count; i++ {
+			// Convert seen map to slice
+			existing := make([]string, 0, len(seen))
+			for id := range seen {
+				existing = append(existing, id)
+			}
+
+			id := GenerateShortID(existing, prefix, len(seen))
+			if _, exists := seen[id]; exists {
+				t.Errorf("GenerateShortID produced collision: %q (iteration %d)", id, i)
+				return
+			}
+			seen[id] = struct{}{}
+		}
+	})
+}

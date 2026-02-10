@@ -1108,7 +1108,7 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	entDef, _ := a.meta.GetEntityDef(form.EntityType)
 
 	var entityID string
-	if entDef.GetIDType() == metamodel.IDTypeManual {
+	if entDef.IsManualID() {
 		entityID = r.FormValue("_entity_id")
 		if entityID == "" {
 			http.Error(w, "Manual ID required", http.StatusBadRequest)
@@ -1120,7 +1120,11 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 		if len(prefixes) > 0 {
 			prefix = prefixes[0]
 		}
-		entityID = model.GenerateNextID(a.g.IDsByType(form.EntityType), prefix)
+		if entDef.IsShortID() {
+			entityID = model.GenerateShortID(a.g.AllIDs(), prefix, a.g.NodeCount())
+		} else {
+			entityID = model.GenerateNextID(a.g.IDsByType(form.EntityType), prefix)
+		}
 	}
 
 	if _, exists := a.g.GetNode(entityID); exists {
@@ -1519,7 +1523,7 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 	entDef, _ := a.meta.GetEntityDef(form.EntityType)
 
 	var entityID string
-	if entDef.GetIDType() == metamodel.IDTypeManual {
+	if entDef.IsManualID() {
 		entityID = r.FormValue("_entity_id")
 		if entityID == "" {
 			w.Header().Set("Content-Type", "application/json")
@@ -1533,7 +1537,11 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 		if len(prefixes) > 0 {
 			prefix = prefixes[0]
 		}
-		entityID = model.GenerateNextID(a.g.IDsByType(form.EntityType), prefix)
+		if entDef.IsShortID() {
+			entityID = model.GenerateShortID(a.g.AllIDs(), prefix, a.g.NodeCount())
+		} else {
+			entityID = model.GenerateNextID(a.g.IDsByType(form.EntityType), prefix)
+		}
 	}
 
 	if _, exists := a.g.GetNode(entityID); exists {
