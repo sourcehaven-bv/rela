@@ -1,0 +1,1363 @@
+version: "1.0"
+app:
+  name: "Rela Development"
+  description: "Architecture, features, tickets, and ideas for rela"
+styles:
+  # Ticket/Bug statuses
+  ticket_status:
+    backlog: gray
+    ready: blue
+    in-progress: purple
+    blocked: red
+    done: green
+    wont-fix: gray
+  # Feature statuses
+  feature_status:
+    proposed: gray
+    planned: blue
+    in-progress: purple
+    implemented: green
+    removed: gray
+  # Concept statuses
+  concept_status:
+    draft: gray
+    stable: green
+    deprecated: red
+  # Decision statuses
+  decision_status:
+    proposed: gray
+    accepted: green
+    superseded: orange
+    deprecated: red
+  # Idea statuses
+  idea_status:
+    captured: gray
+    exploring: blue
+    validated: purple
+    promoted: green
+    parked: orange
+    rejected: red
+  # Priority
+  priority:
+    critical: red
+    high: orange
+    medium: yellow
+    low: green
+  # Effort
+  effort:
+    xs: green
+    s: green
+    m: yellow
+    l: orange
+    xl: red
+  idea_effort:
+    trivial: green
+    small: green
+    medium: yellow
+    large: orange
+    epic: red
+  # Value
+  idea_value:
+    nice-to-have: gray
+    useful: blue
+    valuable: purple
+    critical: green
+  # Category
+  idea_category:
+    feature: blue
+    ux: purple
+    integration: cyan
+    ai: pink
+    visualization: orange
+    performance: yellow
+    dx: green
+    architecture: gray
+# ══════════════════════════════════════════════════
+# Forms
+# ══════════════════════════════════════════════════
+forms:
+  # ─────────────────────────────────────────────────
+  # Ideas
+  # ─────────────────────────────────────────────────
+  create_idea:
+    entity_type: idea
+    title: "Capture Idea"
+    description: "Quick capture of a new idea"
+    body: true
+    fields:
+      - property: title
+        placeholder: "What's the idea?"
+        help: "A short, descriptive title"
+      - property: description
+        widget: textarea
+        placeholder: "What problem does it solve? How would it work?"
+      - property: category
+        help: "What area does this relate to?"
+      - property: inspiration
+        placeholder: "Notion, Obsidian, user feedback, etc."
+        help: "Where did this idea come from?"
+      - property: status
+        hidden: true
+  edit_idea:
+    entity_type: idea
+    title: "Edit Idea"
+    mode: edit
+    body: true
+    fields:
+      - property: title
+      - property: description
+        widget: textarea
+      - property: category
+      - property: inspiration
+      - property: effort
+      - property: value
+      - property: notes
+        widget: textarea
+        help: "Additional thoughts, open questions, considerations"
+      - property: status
+        transitions:
+          captured: [exploring, parked, rejected]
+          exploring: [captured, validated, parked, rejected]
+          validated: [exploring, promoted, parked]
+          parked: [captured, exploring]
+          rejected: [captured]
+    relations:
+      - relation: related-idea
+        widget: multi-select
+        label: "Related Ideas"
+      - relation: inspires
+        widget: multi-select
+      - relation: promotes-to
+        widget: search
+        label: "Promoted To"
+    side_panel:
+      traverse:
+        - from: entry
+          follow: related-idea
+          collect_as: related
+        - from: entry
+          follow: inspires
+          collect_as: inspires
+        - from: entry
+          follow_incoming: elaborates
+          collect_as: future_concepts
+      sections:
+        - heading: "Related Ideas"
+          source: related
+          display: cards
+          fields:
+            - property: status
+            - property: category
+          empty_message: "No related ideas"
+        - heading: "Inspires"
+          source: inspires
+          display: cards
+          fields:
+            - property: status
+          empty_message: "Not linked to any features or concepts"
+        - heading: "Elaborated By"
+          source: future_concepts
+          display: cards
+          fields:
+            - property: status
+            - property: effort
+          empty_message: "No future concepts yet"
+  # ─────────────────────────────────────────────────
+  # Future Concepts
+  # ─────────────────────────────────────────────────
+  create_future_concept:
+    entity_type: future-concept
+    title: "New Future Concept"
+    description: "Flesh out a possibility for future development"
+    body: true
+    fields:
+      - property: title
+        placeholder: "What is this concept?"
+      - property: summary
+        widget: textarea
+        placeholder: "Brief explanation (1-2 sentences)"
+      - property: description
+        widget: textarea
+        placeholder: "Detailed explanation of what this would involve"
+      - property: rationale
+        widget: textarea
+        placeholder: "Why would this be valuable?"
+      - property: status
+        hidden: true
+    relations:
+      - relation: elaborates
+        label: "Elaborates Ideas"
+        widget: multi-select
+        required: true
+  edit_future_concept:
+    entity_type: future-concept
+    title: "Edit Future Concept"
+    mode: edit
+    body: true
+    fields:
+      - property: title
+      - property: summary
+        widget: textarea
+      - property: description
+        widget: textarea
+      - property: rationale
+        widget: textarea
+      - property: challenges
+        widget: textarea
+        placeholder: "What makes this difficult or risky?"
+      - property: prerequisites
+        widget: textarea
+        placeholder: "What needs to exist first?"
+      - property: effort
+      - property: value
+      - property: status
+        transitions:
+          captured: [exploring, parked, rejected]
+          exploring: [captured, validated, parked, rejected]
+          validated: [exploring, promoted, parked]
+          parked: [captured, exploring]
+          rejected: [captured]
+    relations:
+      - relation: elaborates
+        label: "Elaborates Ideas"
+        widget: multi-select
+      - relation: extends-concept
+        label: "Extends Concepts"
+        widget: multi-select
+      - relation: enables
+        label: "Would Enable Features"
+        widget: multi-select
+      - relation: replaces
+        label: "Would Replace"
+        widget: multi-select
+      - relation: blocked-by-concept
+        label: "Blocked By"
+        widget: multi-select
+    side_panel:
+      traverse:
+        - from: entry
+          follow: elaborates
+          collect_as: ideas
+        - from: entry
+          follow: extends-concept
+          collect_as: extends
+        - from: entry
+          follow: enables
+          collect_as: enables
+        - from: entry
+          follow: blocked-by-concept
+          collect_as: blockers
+      sections:
+        - heading: "Based On Ideas"
+          source: ideas
+          display: cards
+          fields:
+            - property: status
+            - property: category
+          empty_message: "Not linked to any ideas"
+        - heading: "Extends"
+          source: extends
+          display: list
+          fields:
+            - property: title
+          empty_message: "Does not extend existing concepts"
+        - heading: "Would Enable"
+          source: enables
+          display: list
+          fields:
+            - property: status
+          empty_message: "No features enabled"
+        - heading: "Blocked By"
+          source: blockers
+          display: cards
+          fields:
+            - property: status
+          empty_message: "No blockers"
+  # ─────────────────────────────────────────────────
+  # Features
+  # ─────────────────────────────────────────────────
+  create_feature:
+    entity_type: feature
+    title: "New Feature"
+    body: true
+    fields:
+      - property: title
+        placeholder: "Feature name"
+      - property: description
+        widget: textarea
+      - property: priority
+      - property: status
+        hidden: true
+    relations:
+      - relation: requires
+        label: "Requires Concepts"
+        widget: multi-select
+  edit_feature:
+    entity_type: feature
+    title: "Edit Feature"
+    mode: edit
+    body: true
+    fields:
+      - property: title
+      - property: summary
+        widget: textarea
+        help: "Brief explanation for documentation"
+      - property: description
+        widget: textarea
+      - property: priority
+      - property: status
+        transitions:
+          proposed: [planned, removed]
+          planned: [proposed, in-progress, removed]
+          in-progress: [planned, implemented]
+          implemented: [removed]
+          removed: [proposed]
+    relations:
+      - relation: requires
+        label: "Requires Concepts"
+        widget: multi-select
+      - relation: refines
+        widget: search
+    side_panel:
+      traverse:
+        - from: entry
+          follow: requires
+          collect_as: concepts
+        - from: entry
+          follow_incoming: implements
+          collect_as: tickets
+        - from: entry
+          follow_incoming: fixes
+          collect_as: bugs
+        - from: entry
+          follow_incoming: inspiredBy
+          collect_as: ideas
+      sections:
+        - heading: "Required Concepts"
+          source: concepts
+          display: list
+          fields:
+            - property: status
+          empty_message: "No concepts linked"
+        - heading: "Implementation Tickets"
+          source: tickets
+          display: cards
+          fields:
+            - property: status
+            - property: priority
+          empty_message: "No tickets yet"
+        - heading: "Bug Fixes"
+          source: bugs
+          display: cards
+          fields:
+            - property: status
+            - property: priority
+          empty_message: "No bugs"
+        - heading: "Inspired By Ideas"
+          source: ideas
+          display: list
+          fields:
+            - property: category
+          empty_message: "No linked ideas"
+  # ─────────────────────────────────────────────────
+  # Tickets
+  # ─────────────────────────────────────────────────
+  create_ticket:
+    entity_type: ticket
+    title: "New Ticket"
+    body: true
+    fields:
+      - property: title
+        placeholder: "What needs to be done?"
+      - property: description
+        widget: textarea
+      - property: kind
+      - property: priority
+      - property: effort
+      - property: status
+        hidden: true
+    relations:
+      - relation: implements
+        label: "Implements Feature"
+        widget: search
+        required: true
+      - relation: affects
+        label: "Affects Concepts"
+        widget: multi-select
+        required: true
+  edit_ticket:
+    entity_type: ticket
+    title: "Edit Ticket"
+    mode: edit
+    body: true
+    fields:
+      - property: title
+      - property: description
+        widget: textarea
+      - property: kind
+      - property: priority
+      - property: effort
+      - property: status
+        transitions:
+          backlog: [ready, wont-fix]
+          ready: [backlog, in-progress, wont-fix]
+          in-progress: [ready, blocked, done]
+          blocked: [in-progress, wont-fix]
+          done: [in-progress]
+          wont-fix: [backlog]
+    relations:
+      - relation: implements
+        label: "Implements Feature"
+        widget: search
+      - relation: affects
+        label: "Affects Concepts"
+        widget: multi-select
+      - relation: depends-on
+        widget: multi-select
+  # ─────────────────────────────────────────────────
+  # Bugs
+  # ─────────────────────────────────────────────────
+  create_bug:
+    entity_type: bug
+    title: "Report Bug"
+    body: true
+    fields:
+      - property: title
+        placeholder: "Brief description of the bug"
+      - property: description
+        widget: textarea
+        placeholder: "Steps to reproduce, expected vs actual behavior"
+      - property: priority
+      - property: status
+        hidden: true
+    relations:
+      - relation: fixes
+        label: "Fixes Feature"
+        widget: search
+        required: true
+      - relation: affects
+        label: "Affects Concepts"
+        widget: multi-select
+  edit_bug:
+    entity_type: bug
+    title: "Edit Bug"
+    mode: edit
+    body: true
+    fields:
+      - property: title
+      - property: description
+        widget: textarea
+      - property: priority
+      - property: effort
+      - property: why1
+        widget: textarea
+        label: "Why 1"
+        help: "What was the immediate cause?"
+      - property: why2
+        widget: textarea
+        label: "Why 2"
+        help: "Why did that happen?"
+      - property: why3
+        widget: textarea
+        label: "Why 3"
+        help: "Why did that happen?"
+      - property: why4
+        widget: textarea
+        label: "Why 4"
+        help: "Why did that happen?"
+      - property: why5
+        widget: textarea
+        label: "Why 5"
+        help: "What is the systemic root cause?"
+      - property: prevention
+        widget: textarea
+        help: "How to prevent similar bugs"
+      - property: status
+        transitions:
+          backlog: [ready, wont-fix]
+          ready: [backlog, in-progress, wont-fix]
+          in-progress: [ready, blocked, done]
+          blocked: [in-progress, wont-fix]
+          done: [in-progress]
+          wont-fix: [backlog]
+    relations:
+      - relation: fixes
+        label: "Fixes Feature"
+        widget: search
+      - relation: affects
+        label: "Affects Concepts"
+        widget: multi-select
+      - relation: caused-by
+        widget: multi-select
+      - relation: adds-measure
+        widget: multi-select
+  # ─────────────────────────────────────────────────
+  # Concepts
+  # ─────────────────────────────────────────────────
+  create_concept:
+    entity_type: concept
+    title: "New Concept"
+    body: true
+    fields:
+      - property: title
+        placeholder: "Concept name"
+      - property: summary
+        widget: textarea
+        placeholder: "Brief explanation"
+      - property: description
+        widget: textarea
+      - property: layer
+      - property: package
+        placeholder: "e.g., internal/graph"
+      - property: status
+        hidden: true
+  edit_concept:
+    entity_type: concept
+    title: "Edit Concept"
+    mode: edit
+    body: true
+    fields:
+      - property: title
+      - property: summary
+        widget: textarea
+      - property: description
+        widget: textarea
+      - property: layer
+      - property: package
+      - property: status
+        transitions:
+          draft: [stable, deprecated]
+          stable: [deprecated]
+          deprecated: [stable]
+    relations:
+      - relation: concept-depends-on
+        label: "Depends On"
+        widget: multi-select
+  # ─────────────────────────────────────────────────
+  # Decisions
+  # ─────────────────────────────────────────────────
+  create_decision:
+    entity_type: decision
+    title: "New Decision"
+    body: true
+    fields:
+      - property: title
+        placeholder: "Decision title"
+      - property: context
+        widget: textarea
+        placeholder: "Why is this decision needed?"
+      - property: date
+      - property: status
+        hidden: true
+    relations:
+      - relation: decides
+        label: "Decides Concepts"
+        widget: multi-select
+        required: true
+  edit_decision:
+    entity_type: decision
+    title: "Edit Decision"
+    mode: edit
+    body: true
+    fields:
+      - property: title
+      - property: context
+        widget: textarea
+      - property: consequences
+        widget: textarea
+        help: "Implications of this decision"
+      - property: date
+      - property: status
+        transitions:
+          proposed: [accepted, deprecated]
+          accepted: [superseded, deprecated]
+          superseded: []
+          deprecated: [proposed]
+    relations:
+      - relation: decides
+        label: "Decides Concepts"
+        widget: multi-select
+      - relation: supersedes
+        widget: search
+# ══════════════════════════════════════════════════
+# Lists
+# ══════════════════════════════════════════════════
+lists:
+  # ─────────────────────────────────────────────────
+  # Ideas
+  # ─────────────────────────────────────────────────
+  all_ideas:
+    entity_type: idea
+    title: "All Ideas"
+    description: "Browse all captured ideas"
+    columns:
+      - property: title
+        sortable: true
+        link: true
+      - property: category
+        sortable: true
+      - property: status
+        sortable: true
+      - property: effort
+        sortable: true
+      - property: value
+        sortable: true
+    sort:
+      - property: status
+      - property: value
+        direction: desc
+    filter_controls:
+      - property: status
+        widget: multi-select
+      - property: category
+        widget: multi-select
+      - property: value
+        widget: select
+    create_form: create_idea
+    edit_form: edit_idea
+    detail_view: idea_detail
+    page_size: 25
+  active_ideas:
+    entity_type: idea
+    title: "Active Ideas"
+    description: "Ideas being explored or validated"
+    columns:
+      - property: title
+        link: true
+        sortable: true
+      - property: category
+        sortable: true
+      - property: effort
+      - property: value
+        sortable: true
+    filters:
+      - property: status
+        operator: "=~"
+        value: "exploring|validated"
+    sort:
+      - property: value
+        direction: desc
+    create_form: create_idea
+    edit_form: edit_idea
+    page_size: 25
+  game_changers:
+    entity_type: idea
+    title: "Game Changers"
+    description: "High-value ideas"
+    columns:
+      - property: title
+        link: true
+      - property: category
+      - property: status
+      - property: effort
+    filters:
+      - property: value
+        operator: "="
+        value: critical
+    sort:
+      - property: status
+    create_form: create_idea
+    edit_form: edit_idea
+    page_size: 25
+  # ─────────────────────────────────────────────────
+  # Future Concepts
+  # ─────────────────────────────────────────────────
+  future_concepts:
+    entity_type: future-concept
+    title: "Future Concepts"
+    description: "Possibilities being explored"
+    columns:
+      - property: title
+        link: true
+        sortable: true
+      - property: status
+        sortable: true
+      - property: effort
+        sortable: true
+      - property: value
+        sortable: true
+    sort:
+      - property: status
+      - property: value
+        direction: desc
+    filter_controls:
+      - property: status
+        widget: multi-select
+      - property: value
+        widget: select
+    create_form: create_future_concept
+    edit_form: edit_future_concept
+    detail_view: future_concept_detail
+    page_size: 25
+  # ─────────────────────────────────────────────────
+  # Features
+  # ─────────────────────────────────────────────────
+  all_features:
+    entity_type: feature
+    title: "All Features"
+    columns:
+      - property: title
+        link: true
+        sortable: true
+      - property: status
+        sortable: true
+      - property: priority
+        sortable: true
+    sort:
+      - property: priority
+      - property: status
+    filter_controls:
+      - property: status
+        widget: multi-select
+      - property: priority
+        widget: select
+    create_form: create_feature
+    edit_form: edit_feature
+    detail_view: feature_detail
+    page_size: 25
+  # ─────────────────────────────────────────────────
+  # Tickets & Bugs
+  # ─────────────────────────────────────────────────
+  all_tickets:
+    entity_type: ticket
+    title: "All Tickets"
+    columns:
+      - property: title
+        link: true
+        sortable: true
+      - property: kind
+        sortable: true
+      - property: status
+        sortable: true
+      - property: priority
+        sortable: true
+      - property: effort
+    sort:
+      - property: priority
+      - property: status
+    filter_controls:
+      - property: status
+        widget: multi-select
+      - property: priority
+        widget: select
+      - property: kind
+        widget: select
+    create_form: create_ticket
+    edit_form: edit_ticket
+    page_size: 25
+  active_tickets:
+    entity_type: ticket
+    title: "Active Tickets"
+    columns:
+      - property: title
+        link: true
+        sortable: true
+      - property: kind
+      - property: priority
+        sortable: true
+      - property: effort
+    filters:
+      - property: status
+        operator: "=~"
+        value: "ready|in-progress|blocked"
+    sort:
+      - property: priority
+    create_form: create_ticket
+    edit_form: edit_ticket
+    page_size: 25
+  all_bugs:
+    entity_type: bug
+    title: "All Bugs"
+    columns:
+      - property: title
+        link: true
+        sortable: true
+      - property: status
+        sortable: true
+      - property: priority
+        sortable: true
+      - property: effort
+    sort:
+      - property: priority
+      - property: status
+    filter_controls:
+      - property: status
+        widget: multi-select
+      - property: priority
+        widget: select
+    create_form: create_bug
+    edit_form: edit_bug
+    page_size: 25
+  # ─────────────────────────────────────────────────
+  # Concepts & Decisions
+  # ─────────────────────────────────────────────────
+  all_concepts:
+    entity_type: concept
+    title: "Concepts"
+    columns:
+      - property: title
+        link: true
+        sortable: true
+      - property: layer
+        sortable: true
+      - property: package
+      - property: status
+        sortable: true
+    sort:
+      - property: layer
+      - property: title
+    filter_controls:
+      - property: layer
+        widget: select
+      - property: status
+        widget: select
+    create_form: create_concept
+    edit_form: edit_concept
+    detail_view: concept_detail
+    page_size: 50
+  all_decisions:
+    entity_type: decision
+    title: "Decisions"
+    columns:
+      - property: title
+        link: true
+        sortable: true
+      - property: date
+        sortable: true
+      - property: status
+        sortable: true
+    sort:
+      - property: date
+        direction: desc
+    filter_controls:
+      - property: status
+        widget: select
+    create_form: create_decision
+    edit_form: edit_decision
+    page_size: 25
+# ══════════════════════════════════════════════════
+# Views (detail pages)
+# ══════════════════════════════════════════════════
+views:
+  idea_detail:
+    title: "Idea"
+    entry:
+      type: idea
+    traverse:
+      - from: entry
+        follow: related-idea
+        collect_as: related
+      - from: entry
+        follow: inspires
+        collect_as: inspires
+      - from: entry
+        follow: promotes-to
+        collect_as: promoted
+      - from: entry
+        follow_incoming: elaborates
+        collect_as: future_concepts
+    sections:
+      - heading: "Idea"
+        source: entry
+        display: properties
+        fields:
+          - property: category
+          - property: status
+          - property: effort
+          - property: value
+          - property: inspiration
+      - source: entry
+        display: content
+      - heading: "Notes"
+        source: entry
+        display: properties
+        fields:
+          - property: notes
+      - heading: "Related Ideas"
+        source: related
+        display: cards
+        fields:
+          - property: category
+          - property: status
+        empty_message: "No related ideas"
+      - heading: "Inspires"
+        source: inspires
+        display: cards
+        fields:
+          - property: status
+        empty_message: "Not linked to features or concepts"
+      - heading: "Elaborated By Future Concepts"
+        source: future_concepts
+        display: content
+        fields:
+          - property: status
+          - property: effort
+          - property: value
+        empty_message: "No future concepts elaborate on this idea"
+      - heading: "Promoted To"
+        source: promoted
+        display: cards
+        fields:
+          - property: status
+        empty_message: "Not yet promoted"
+  future_concept_detail:
+    title: "Future Concept"
+    entry:
+      type: future-concept
+    traverse:
+      - from: entry
+        follow: elaborates
+        collect_as: ideas
+      - from: entry
+        follow: extends-concept
+        collect_as: extends
+      - from: entry
+        follow: enables
+        collect_as: enables
+      - from: entry
+        follow: replaces
+        collect_as: replaces
+      - from: entry
+        follow: blocked-by-concept
+        collect_as: blockers
+    sections:
+      - heading: "Future Concept"
+        source: entry
+        display: properties
+        fields:
+          - property: status
+          - property: effort
+          - property: value
+      - source: entry
+        display: content
+      - heading: "Rationale"
+        source: entry
+        display: properties
+        fields:
+          - property: rationale
+      - heading: "Challenges"
+        source: entry
+        display: properties
+        fields:
+          - property: challenges
+      - heading: "Prerequisites"
+        source: entry
+        display: properties
+        fields:
+          - property: prerequisites
+      - heading: "Based On Ideas"
+        source: ideas
+        display: cards
+        fields:
+          - property: category
+          - property: status
+        empty_message: "Not linked to any ideas"
+      - heading: "Extends Concepts"
+        source: extends
+        display: list
+        fields:
+          - property: layer
+          - property: status
+        empty_message: "Does not extend existing concepts"
+      - heading: "Would Enable Features"
+        source: enables
+        display: list
+        fields:
+          - property: status
+        empty_message: "No features would be enabled"
+      - heading: "Would Replace"
+        source: replaces
+        display: list
+        fields:
+          - property: status
+        empty_message: "Does not replace anything"
+      - heading: "Blocked By"
+        source: blockers
+        display: cards
+        fields:
+          - property: status
+        empty_message: "No blockers"
+  feature_detail:
+    title: "Feature"
+    entry:
+      type: feature
+    traverse:
+      - from: entry
+        follow: requires
+        collect_as: concepts
+      - from: entry
+        follow_incoming: implements
+        collect_as: tickets
+      - from: entry
+        follow_incoming: fixes
+        collect_as: bugs
+      - from: entry
+        follow_incoming: verifies
+        collect_as: tests
+      - from: entry
+        follow_incoming: inspires
+        collect_as: ideas
+    sections:
+      - heading: "Feature"
+        source: entry
+        display: properties
+        fields:
+          - property: status
+          - property: priority
+          - property: summary
+      - source: entry
+        display: content
+      - heading: "Required Concepts"
+        source: concepts
+        display: list
+        fields:
+          - property: layer
+          - property: status
+        empty_message: "No concepts linked"
+      - heading: "Implementation Tickets"
+        source: tickets
+        display: table
+        columns:
+          - property: title
+            link: true
+          - property: status
+          - property: priority
+          - property: effort
+        empty_message: "No tickets"
+      - heading: "Bug Fixes"
+        source: bugs
+        display: table
+        columns:
+          - property: title
+            link: true
+          - property: status
+          - property: priority
+        empty_message: "No bugs"
+      - heading: "Tests"
+        source: tests
+        display: list
+        fields:
+          - property: kind
+          - property: status
+        empty_message: "No tests"
+      - heading: "Inspired By Ideas"
+        source: ideas
+        display: cards
+        fields:
+          - property: category
+          - property: status
+        empty_message: "No linked ideas"
+  concept_detail:
+    title: "Concept"
+    entry:
+      type: concept
+    traverse:
+      - from: entry
+        follow_incoming: affects
+        collect_as: work
+      - from: entry
+        follow_incoming: requires
+        collect_as: features
+      - from: entry
+        follow_incoming: decides
+        collect_as: decisions
+      - from: entry
+        follow_incoming: test-covers
+        collect_as: tests
+      - from: entry
+        follow_incoming: extends-concept
+        collect_as: future_extensions
+    sections:
+      - heading: "Concept"
+        source: entry
+        display: properties
+        fields:
+          - property: layer
+          - property: package
+          - property: status
+          - property: summary
+      - source: entry
+        display: content
+      - heading: "Governed By Decisions"
+        source: decisions
+        display: cards
+        fields:
+          - property: status
+          - property: date
+        empty_message: "No decisions"
+      - heading: "Required By Features"
+        source: features
+        display: list
+        fields:
+          - property: status
+          - property: priority
+        empty_message: "No features require this"
+      - heading: "Work Items"
+        source: work
+        display: table
+        columns:
+          - property: title
+            link: true
+          - property: status
+          - property: priority
+        empty_message: "No tickets or bugs affect this"
+      - heading: "Test Coverage"
+        source: tests
+        display: list
+        fields:
+          - property: kind
+          - property: status
+        empty_message: "No test coverage"
+      - heading: "Future Extensions"
+        source: future_extensions
+        display: cards
+        fields:
+          - property: status
+          - property: effort
+        empty_message: "No future concepts would extend this"
+# ══════════════════════════════════════════════════
+# Kanban Boards
+# ══════════════════════════════════════════════════
+kanbans:
+  idea_board:
+    entity_type: idea
+    title: "Idea Pipeline"
+    column_property: status
+    columns:
+      - value: captured
+        label: "Captured"
+      - value: exploring
+        label: "Exploring"
+      - value: validated
+        label: "Validated"
+      - value: promoted
+        label: "Promoted"
+      - value: parked
+        label: "Parked"
+      - value: rejected
+        label: "Rejected"
+    card:
+      title: title
+      fields:
+        - property: category
+        - property: value
+    edit_form: edit_idea
+    create_form: create_idea
+    filter_controls:
+      - property: category
+        widget: multi-select
+      - property: value
+        widget: select
+  idea_by_category:
+    entity_type: idea
+    title: "Ideas by Category"
+    column_property: category
+    swimlane_property: status
+    swimlanes:
+      - value: captured
+      - value: exploring
+      - value: validated
+    card:
+      title: title
+      fields:
+        - property: effort
+        - property: value
+    edit_form: edit_idea
+    create_form: create_idea
+    filters:
+      - property: status
+        operator: "!="
+        value: rejected
+  future_concept_board:
+    entity_type: future-concept
+    title: "Future Concepts Pipeline"
+    column_property: status
+    columns:
+      - value: captured
+        label: "Captured"
+      - value: exploring
+        label: "Exploring"
+      - value: validated
+        label: "Validated"
+    card:
+      title: title
+      fields:
+        - property: effort
+        - property: value
+    edit_form: edit_future_concept
+    create_form: create_future_concept
+  ticket_board:
+    entity_type: ticket
+    title: "Ticket Board"
+    column_property: status
+    columns:
+      - value: backlog
+        label: "Backlog"
+      - value: ready
+        label: "Ready"
+      - value: in-progress
+        label: "In Progress"
+      - value: done
+        label: "Done"
+    card:
+      title: title
+      fields:
+        - property: kind
+        - property: priority
+        - property: effort
+    edit_form: edit_ticket
+    create_form: create_ticket
+    filter_controls:
+      - property: priority
+        widget: select
+      - property: kind
+        widget: select
+  bug_board:
+    entity_type: bug
+    title: "Bug Board"
+    column_property: status
+    columns:
+      - value: backlog
+        label: "Backlog"
+      - value: ready
+        label: "Ready"
+      - value: in-progress
+        label: "In Progress"
+      - value: done
+        label: "Done"
+    card:
+      title: title
+      fields:
+        - property: priority
+        - property: effort
+    edit_form: edit_bug
+    create_form: create_bug
+    filter_controls:
+      - property: priority
+        widget: select
+  feature_board:
+    entity_type: feature
+    title: "Feature Roadmap"
+    column_property: status
+    columns:
+      - value: proposed
+        label: "Proposed"
+      - value: planned
+        label: "Planned"
+      - value: in-progress
+        label: "In Progress"
+      - value: implemented
+        label: "Implemented"
+    card:
+      title: title
+      fields:
+        - property: priority
+    edit_form: edit_feature
+    create_form: create_feature
+    filter_controls:
+      - property: priority
+        widget: select
+# ══════════════════════════════════════════════════
+# Dashboard
+# ══════════════════════════════════════════════════
+dashboard:
+  title: "Rela Development"
+  description: "Overview of architecture, features, and ideas"
+  cards:
+    - title: "Ideas"
+      query: "type:idea"
+      display: breakdown
+      group_by: status
+    - title: "Critical Ideas"
+      query: "type:idea prop:value=critical"
+      display: count
+    - title: "Future Concepts"
+      query: "type:future-concept"
+      display: breakdown
+      group_by: status
+    - title: "Features"
+      query: "type:feature"
+      display: breakdown
+      group_by: status
+    - title: "Active Work"
+      query: "type:ticket prop:status=in-progress"
+      display: count
+    - title: "Open Bugs"
+      query: "type:bug prop:status!=done prop:status!=wont-fix"
+      display: count
+    - title: "Top Ideas"
+      query: "type:idea prop:value=critical prop:status!=rejected prop:status!=parked"
+      display: table
+      columns:
+        - property: title
+          link: true
+        - property: category
+        - property: status
+        - property: effort
+      limit: 5
+    - title: "Validated Future Concepts"
+      query: "type:future-concept prop:status=validated"
+      display: table
+      columns:
+        - property: title
+          link: true
+        - property: effort
+        - property: value
+      limit: 5
+    - title: "Critical Issues"
+      query: "type:bug prop:priority=critical prop:status!=done"
+      display: table
+      columns:
+        - property: title
+          link: true
+        - property: status
+      limit: 5
+# ══════════════════════════════════════════════════
+# Navigation
+# ══════════════════════════════════════════════════
+navigation:
+  - label: "Dashboard"
+    dashboard: true
+  - group: "Ideation"
+    items:
+      - label: "All Ideas"
+        list: all_ideas
+      - label: "Active Ideas"
+        list: active_ideas
+      - label: "Game Changers"
+        list: game_changers
+      - label: "Idea Pipeline"
+        kanban: idea_board
+      - label: "Ideas by Category"
+        kanban: idea_by_category
+      - label: "Future Concepts"
+        list: future_concepts
+      - label: "Concepts Pipeline"
+        kanban: future_concept_board
+  - group: "Planning"
+    items:
+      - label: "Features"
+        list: all_features
+      - label: "Feature Roadmap"
+        kanban: feature_board
+  - group: "Work"
+    items:
+      - label: "Active Tickets"
+        list: active_tickets
+      - label: "All Tickets"
+        list: all_tickets
+      - label: "Ticket Board"
+        kanban: ticket_board
+      - label: "Bugs"
+        list: all_bugs
+      - label: "Bug Board"
+        kanban: bug_board
+  - group: "Architecture"
+    collapsed: true
+    items:
+      - label: "Concepts"
+        list: all_concepts
+      - label: "Decisions"
+        list: all_decisions
+  - label: "Graph"
+    graph: true

@@ -1,0 +1,9 @@
+# markdownlint-cli2 configuration
+# Extends .markdownlint.yaml for linting rules
+
+ignores:
+  - node_modules/**
+  - docs/templates/**
+  - .claude/**
+  - .ignored/**
+  - tickets/**
