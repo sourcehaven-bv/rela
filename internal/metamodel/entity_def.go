@@ -87,17 +87,22 @@ func (e *EntityDef) GetPrimaryProperty() string {
 	return ""
 }
 
-// GetIDType returns the ID type for this entity, defaulting to "auto".
+// GetIDType returns the ID type for this entity, defaulting to "short".
 func (e *EntityDef) GetIDType() string {
 	if e.IDType == "" {
-		return IDTypeAuto
+		return IDTypeShort
 	}
 	return e.IDType
 }
 
-// IsAutoID returns true if this entity type uses auto-generated IDs
-func (e *EntityDef) IsAutoID() bool {
-	return e.GetIDType() == IDTypeAuto
+// IsShortID returns true if this entity type uses short random IDs
+func (e *EntityDef) IsShortID() bool {
+	return e.GetIDType() == IDTypeShort
+}
+
+// IsSequentialID returns true if this entity type uses auto-generated sequential IDs
+func (e *EntityDef) IsSequentialID() bool {
+	return e.GetIDType() == IDTypeSequential
 }
 
 // IsManualID returns true if this entity type uses manually-specified IDs

@@ -100,13 +100,12 @@ const (
 
 // ID types for entities
 const (
-	// New canonical values
-	IDTypeAuto   = "auto"   // IDs are auto-generated with numeric suffix (e.g., REQ-001)
-	IDTypeManual = "manual" // IDs are manually specified strings (e.g., auth-module)
+	IDTypeShort      = "short"      // IDs are random base36 strings (e.g., REQ-a3f8) - default
+	IDTypeSequential = "sequential" // IDs are auto-generated with numeric suffix (e.g., REQ-001)
+	IDTypeManual     = "manual"     // IDs are manually specified strings (e.g., auth-module)
 
-	// Deprecated aliases (still accepted for backwards compatibility)
-	IDTypeSequential = "sequential" // Deprecated: use "auto" instead
-	IDTypeString     = "string"     // Deprecated: use "manual" instead
+	// Deprecated alias (still accepted for backwards compatibility)
+	IDTypeString = "string" // Deprecated: use "manual" instead
 )
 
 // ReservedPropertyNames contains property names that cannot be used in metamodel definitions

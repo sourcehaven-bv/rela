@@ -24,6 +24,7 @@ entities:
     label: Ticket
     plural: tickets
     id_prefix: "TKT-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -303,6 +304,7 @@ entities:
     label: Ticket
     plural: tickets
     id_prefix: "TKT-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -313,6 +315,7 @@ entities:
     label: Component
     plural: components
     id_prefix: "CMP-"
+    id_type: sequential
     properties:
       name:
         type: string
@@ -418,6 +421,7 @@ entities:
     label: Ticket
     plural: tickets
     id_prefix: "TKT-"
+    id_type: sequential
     properties:
       title:
         type: string

@@ -16,6 +16,7 @@ entities:
     label: Requirement
     plural: requirements
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -26,6 +27,7 @@ entities:
     label: Decision
     plural: decisions
     id_prefix: "DEC-"
+    id_type: sequential
     properties:
       title:
         type: string

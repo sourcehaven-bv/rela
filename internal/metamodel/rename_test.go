@@ -17,6 +17,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string

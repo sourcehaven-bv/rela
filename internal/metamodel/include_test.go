@@ -18,6 +18,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -29,6 +30,7 @@ entities:
   control:
     label: Control
     id_prefix: "CTL-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -62,6 +64,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -79,6 +82,7 @@ entities:
   risk:
     label: Risk
     id_prefix: "RISK-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -129,6 +133,7 @@ entities:
   root_entity:
     label: Root
     id_prefix: "ROOT-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -141,6 +146,7 @@ entities:
   entity_a:
     label: Entity A
     id_prefix: "A-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -151,6 +157,7 @@ entities:
   entity_b:
     label: Entity B
     id_prefix: "B-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -186,6 +193,7 @@ entities:
   entity_a:
     label: A
     id_prefix: "A-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -198,6 +206,7 @@ entities:
   entity_b:
     label: B
     id_prefix: "B-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -245,6 +254,7 @@ entities:
   control:
     label: Control
     id_prefix: "CTL-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -255,6 +265,7 @@ entities:
   control:
     label: Control Duplicate
     id_prefix: "CTL-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -406,6 +417,7 @@ entities:
   control:
     label: Control
     id_prefix: "CTL-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -436,6 +448,7 @@ entities:
   control:
     label: Control
     id_prefix: "CTL-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -461,6 +474,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -487,6 +501,7 @@ entities:
   risk:
     label: Risk
     id_prefix: "RISK-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -534,6 +549,7 @@ entities:
   decision:
     label: Decision
     id_prefix: "DEC-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -541,6 +557,7 @@ entities:
   risk:
     label: Risk
     id_prefix: "RISK-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -591,6 +608,7 @@ entities:
   entity_b:
     label: B
     id_prefix: "B-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -603,6 +621,7 @@ entities:
   entity_c:
     label: C
     id_prefix: "C-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -641,6 +660,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -652,6 +672,7 @@ entities:
   control:
     label: Control
     id_prefix: "CTL-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -678,6 +699,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -689,6 +711,7 @@ entities:
   requirement:
     label: Requirement Duplicate
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -716,6 +739,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -770,6 +794,7 @@ entities:
     label: Requirement
     aliases: [req]
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -782,6 +807,7 @@ entities:
     label: Control
     aliases: [ctl, ctrl]
     id_prefix: "CTL-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -809,6 +835,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string

@@ -30,7 +30,7 @@ type InvalidIDTypeError struct {
 }
 
 func (e *InvalidIDTypeError) Error() string {
-	return "invalid id_type for entity " + e.EntityType + ": " + e.IDType + " (must be 'auto' or 'manual')"
+	return "invalid id_type for entity " + e.EntityType + ": " + e.IDType + " (must be 'short', 'sequential', or 'manual')"
 }
 
 // ReservedPropertyError is returned when a property name conflicts with a reserved name.

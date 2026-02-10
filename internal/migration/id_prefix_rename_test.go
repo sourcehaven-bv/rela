@@ -277,7 +277,7 @@ entities:
   # Requirements entity
   requirement:
     label: Requirement
-    id_type: auto
+    id_type: sequential
     id_patterns: ["REQ-"]  # Legacy patterns field
 
   # Components with multiple patterns

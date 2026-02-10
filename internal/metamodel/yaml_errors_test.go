@@ -20,6 +20,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     aliases: req
     properties:
       title:
@@ -36,6 +37,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       - title
       - description
@@ -51,6 +53,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -71,6 +74,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -87,6 +91,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -108,6 +113,7 @@ entities:
   requirement:
     label: Requirement
     id_prefix: "REQ-"
+    id_type: sequential
     properties:
       title:
         type: string

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"crypto/rand"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -124,4 +125,96 @@ func GenerateNextID(existingIDs []string, prefix string) string {
 		prefix += "-"
 	}
 	return fmt.Sprintf("%s%03d", strings.ToUpper(prefix), highest+1)
+}
+
+// Short ID generation constants
+const (
+	// base36Chars contains the characters used for short ID generation
+	base36Chars = "0123456789abcdefghijklmnopqrstuvwxyz"
+	// base36Size is the number of characters in base36
+	base36Size = 36
+	// maxShortIDLength is the maximum length of the random part of a short ID
+	maxShortIDLength = 8
+	// shortIDMaxAttempts is the maximum number of attempts to generate a unique ID
+	shortIDMaxAttempts = 100
+	// shortIDLengthIncreaseInterval is how often to increase length on collision
+	shortIDLengthIncreaseInterval = 10
+)
+
+// ID length thresholds based on entity count (birthday paradox)
+const (
+	shortIDThreshold500   = 500   // Up to 500: use 4 chars (1.7M combinations)
+	shortIDThreshold1500  = 1500  // Up to 1500: use 5 chars (60M combinations)
+	shortIDThreshold10000 = 10000 // Up to 10000: use 6 chars (2.2B combinations)
+	shortIDThreshold50000 = 50000 // Up to 50000: use 7 chars (78B combinations)
+
+	shortIDLength4 = 4 // For small projects
+	shortIDLength5 = 5
+	shortIDLength6 = 6
+	shortIDLength7 = 7
+	shortIDLength8 = 8 // For large projects
+)
+
+// GenerateShortID generates a random base36 ID with the given prefix.
+// Length is adaptive based on entityCount to minimize collision probability.
+// The function retries with progressively longer IDs if collisions occur.
+func GenerateShortID(existingIDs []string, prefix string, entityCount int) string {
+	// Build a set for fast lookup
+	existing := make(map[string]struct{}, len(existingIDs))
+	for _, id := range existingIDs {
+		existing[id] = struct{}{}
+	}
+
+	length := calculateIDLength(entityCount)
+
+	for attempts := 0; attempts < shortIDMaxAttempts; attempts++ {
+		id := generateRandomBase36(prefix, length)
+		if _, exists := existing[id]; !exists {
+			return id
+		}
+		// Collision - increase length periodically
+		if attempts > 0 && attempts%shortIDLengthIncreaseInterval == 0 && length < maxShortIDLength {
+			length++
+		}
+	}
+
+	// Final fallback: use maximum length
+	return generateRandomBase36(prefix, maxShortIDLength)
+}
+
+// calculateIDLength determines the optimal ID length based on entity count.
+// Uses birthday paradox thresholds to keep collision probability low.
+func calculateIDLength(entityCount int) int {
+	switch {
+	case entityCount <= shortIDThreshold500:
+		return shortIDLength4
+	case entityCount <= shortIDThreshold1500:
+		return shortIDLength5
+	case entityCount <= shortIDThreshold10000:
+		return shortIDLength6
+	case entityCount <= shortIDThreshold50000:
+		return shortIDLength7
+	default:
+		return shortIDLength8
+	}
+}
+
+// generateRandomBase36 generates a random ID with the given prefix and length.
+func generateRandomBase36(prefix string, length int) string {
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to less random but functional approach
+		for i := range b {
+			b[i] = byte(i * 7 % base36Size)
+		}
+	}
+
+	for i := range b {
+		b[i] = base36Chars[b[i]%base36Size]
+	}
+
+	if !strings.HasSuffix(prefix, "-") {
+		prefix += "-"
+	}
+	return strings.ToUpper(prefix) + string(b)
 }

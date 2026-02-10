@@ -581,3 +581,156 @@ func TestSortSpecIsDescending(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerateShortID tests short random ID generation
+func TestGenerateShortID(t *testing.T) {
+	tests := []struct {
+		name        string
+		existingIDs []string
+		prefix      string
+		entityCount int
+		wantPrefix  string
+		wantLength  int
+	}{
+		{
+			name:        "first ID with empty prefix",
+			existingIDs: []string{},
+			prefix:      "TKT",
+			entityCount: 0,
+			wantPrefix:  "TKT-",
+			wantLength:  4, // 4 chars for small counts
+		},
+		{
+			name:        "prefix with trailing dash",
+			existingIDs: []string{},
+			prefix:      "REQ-",
+			entityCount: 0,
+			wantPrefix:  "REQ-",
+			wantLength:  4,
+		},
+		{
+			name:        "length scales with entity count 500",
+			existingIDs: []string{},
+			prefix:      "TKT",
+			entityCount: 500,
+			wantPrefix:  "TKT-",
+			wantLength:  4,
+		},
+		{
+			name:        "length scales with entity count 501",
+			existingIDs: []string{},
+			prefix:      "TKT",
+			entityCount: 501,
+			wantPrefix:  "TKT-",
+			wantLength:  5,
+		},
+		{
+			name:        "length scales with entity count 1501",
+			existingIDs: []string{},
+			prefix:      "TKT",
+			entityCount: 1501,
+			wantPrefix:  "TKT-",
+			wantLength:  6,
+		},
+		{
+			name:        "length scales with entity count 10001",
+			existingIDs: []string{},
+			prefix:      "TKT",
+			entityCount: 10001,
+			wantPrefix:  "TKT-",
+			wantLength:  7,
+		},
+		{
+			name:        "length scales with entity count 50001",
+			existingIDs: []string{},
+			prefix:      "TKT",
+			entityCount: 50001,
+			wantPrefix:  "TKT-",
+			wantLength:  8,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GenerateShortID(tt.existingIDs, tt.prefix, tt.entityCount)
+
+			// Check prefix
+			if len(got) < len(tt.wantPrefix) || got[:len(tt.wantPrefix)] != tt.wantPrefix {
+				t.Errorf("GenerateShortID() = %q, want prefix %q", got, tt.wantPrefix)
+			}
+
+			// Check length (prefix + random part)
+			wantTotalLen := len(tt.wantPrefix) + tt.wantLength
+			if len(got) != wantTotalLen {
+				t.Errorf("GenerateShortID() length = %d, want %d (got %q)", len(got), wantTotalLen, got)
+			}
+
+			// Check random part contains only valid base36 characters
+			randomPart := got[len(tt.wantPrefix):]
+			for _, c := range randomPart {
+				if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+					t.Errorf("GenerateShortID() random part contains invalid char %q in %q", c, got)
+				}
+			}
+		})
+	}
+}
+
+// TestGenerateShortID_Uniqueness tests that generated IDs are unique
+func TestGenerateShortID_Uniqueness(t *testing.T) {
+	generated := make(map[string]bool)
+	existingIDs := []string{}
+
+	// Generate many IDs and check for uniqueness
+	for i := 0; i < 1000; i++ {
+		id := GenerateShortID(existingIDs, "TKT", i)
+		if generated[id] {
+			t.Errorf("Duplicate ID generated: %s", id)
+		}
+		generated[id] = true
+		existingIDs = append(existingIDs, id)
+	}
+}
+
+// TestGenerateShortID_CollisionAvoidance tests collision handling
+func TestGenerateShortID_CollisionAvoidance(t *testing.T) {
+	// Pre-populate with some IDs that might collide
+	existingIDs := []string{"TKT-0000", "TKT-1111", "TKT-aaaa"}
+
+	// Generate IDs and ensure none collide with existing
+	for i := 0; i < 100; i++ {
+		id := GenerateShortID(existingIDs, "TKT", len(existingIDs))
+		for _, existing := range existingIDs {
+			if id == existing {
+				t.Errorf("Generated ID %s collides with existing ID", id)
+			}
+		}
+		existingIDs = append(existingIDs, id)
+	}
+}
+
+// TestCalculateIDLength tests the ID length calculation
+func TestCalculateIDLength(t *testing.T) {
+	tests := []struct {
+		entityCount int
+		wantLength  int
+	}{
+		{0, 4},
+		{500, 4},
+		{501, 5},
+		{1500, 5},
+		{1501, 6},
+		{10000, 6},
+		{10001, 7},
+		{50000, 7},
+		{50001, 8},
+		{100000, 8},
+	}
+
+	for _, tt := range tests {
+		got := calculateIDLength(tt.entityCount)
+		if got != tt.wantLength {
+			t.Errorf("calculateIDLength(%d) = %d, want %d", tt.entityCount, got, tt.wantLength)
+		}
+	}
+}
