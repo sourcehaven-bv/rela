@@ -1,18 +1,16 @@
 version: "1.0"
-
 types:
   ticket_status:
     values: [open, in-progress, resolved, closed]
     default: open
-
   priority:
     values: [critical, high, medium, low]
     default: medium
-
 entities:
   ticket:
     label: Ticket
     id_prefix: "TKT-"
+    id_type: sequential
     properties:
       title:
         type: string
@@ -36,7 +34,6 @@ entities:
         type: integer
       is_blocked:
         type: boolean
-
   category:
     label: Category
     plural: categories
@@ -49,7 +46,6 @@ entities:
         type: string
       color:
         type: string
-
   label:
     label: Label
     id_type: manual
@@ -57,20 +53,17 @@ entities:
       name:
         type: string
         required: true
-
 relations:
   belongs-to:
     label: belongs to
     from: [ticket]
     to: [category]
     inverse: contains
-
   tagged:
     label: tagged
     from: [ticket]
     to: [label]
     inverse: appliedTo
-
   blocks:
     label: blocks
     from: [ticket]
