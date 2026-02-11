@@ -1,0 +1,111 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: rela
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: rela
+    main: ./cmd/rela
+    binary: rela
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/Sourcehaven-BV/rela/internal/cli.Version={{.Version}}
+    flags:
+      - -trimpath
+
+  - id: rela-server
+    main: ./cmd/rela-server
+    binary: rela-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    flags:
+      - -trimpath
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: Sourcehaven-BV
+    name: rela
+  draft: false
+  prerelease: auto
+  name_template: "{{.Tag}}"
+  header: |
+    ## macOS Desktop App
+
+    The macOS desktop app is ad-hoc signed. After opening the DMG and dragging the app
+    to Applications, macOS Gatekeeper may block it. To allow it to run:
+
+    ```bash
+    xattr -cr "/Applications/Rela Desktop.app"
+    ```
+
+    Alternatively, right-click the app and select **Open**, then confirm in the dialog.
+
+# Homebrew tap (optional - uncomment when you have a homebrew-tap repo)
+# brews:
+#   - repository:
+#       owner: Sourcehaven-BV
+#       name: homebrew-tap
+#     homepage: https://github.com/Sourcehaven-BV/rela
+#     description: Traceability CLI for managing entities and relationships
+#     license: MIT
+#     install: |
+#       bin.install "rela"

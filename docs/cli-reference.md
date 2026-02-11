@@ -1,0 +1,1086 @@
+# CLI Reference
+
+Complete reference for all rela commands.
+
+## Global Options
+
+These options work with any command:
+
+| Option          | Description                                                          |
+| --------------- | -------------------------------------------------------------------- |
+| `-p, --project` | Project directory (default: auto-detect from cwd, or `RELA_PROJECT`) |
+| `-o, --output`  | Output format: `table` (default) or `json`                           |
+| `-v, --verbose` | Enable verbose output                                                |
+| `-q, --quiet`   | Suppress non-essential output                                        |
+| `-h, --help`    | Show help for any command                                            |
+
+## Environment Variables
+
+| Variable       | Description                                                      |
+| -------------- | ---------------------------------------------------------------- |
+| `RELA_PROJECT` | Default project directory when `--project` flag is not specified |
+
+## Commands
+
+### rela init
+
+Initialize a new rela project.
+
+```bash
+rela init
+rela init -p /path/to/project
+```
+
+Creates:
+
+- `metamodel.yaml` - Default configuration
+- `entities/` - Entity storage directory
+- `relations/` - Relation storage directory
+- `.rela/` - Cache directory (added to `.gitignore` if present)
+
+---
+
+### rela create
+
+Create a new entity.
+
+```bash
+rela create <type> [flags]
+```
+
+**Arguments:**
+
+- `type` - Entity type (e.g., `requirement`, `decision`, `solution`, `component`)
+
+**Flags:**
+
+| Flag              | Description                                                                    |
+| ----------------- | ------------------------------------------------------------------------------ |
+| `-t, --title`     | Entity title (required)                                                        |
+| `-s, --status`    | Entity status (default: `draft`)                                               |
+| `-p, --priority`  | Entity priority                                                                |
+| `--id`            | Custom entity ID (required for string ID types, auto-generated for sequential) |
+| `-P, --property`  | Set a property (format: key=value, can be repeated)                            |
+| `-b, --body`      | Markdown body content for the entity                                           |
+| `-B, --body-file` | Read body content from file (use `-` for stdin)                                |
+
+**Templates:**
+
+If a template exists at `templates/entities/<type>.md`, its frontmatter values are used as defaults
+and its content is applied to the new entity. CLI flags override template defaults.
+See [rela template](#rela-template) for creating templates.
+
+**ID Types:**
+
+Entity types can have either sequential or string IDs (configured in `metamodel.yaml`):
+
+- **Sequential** (default): IDs are auto-generated (`REQ-001`, `REQ-002`, etc.)
+- **String**: IDs must be provided with `--id` flag
+
+```bash
+# Sequential ID type (auto-generated)
+rela create requirement --title "System must scale to 1000 users"
+# Creates REQ-001
+
+# String ID type (requires --id)
+rela create component --id auth-service --title "Authentication Service"
+# Creates auth-service
+```
+
+**Examples:**
+
+```bash
+# Create with auto-generated ID (sequential types)
+rela create requirement --title "System must scale to 1000 users"
+
+# Use type alias
+rela create req -t "Short form works too"
+
+# With status and priority
+rela create requirement --title "Security audit" --status proposed --priority high
+
+# With custom ID (works for both sequential and string types)
+rela create requirement --title "Custom ID" --id REQ-CUSTOM-001
+
+# String ID type (--id is required)
+rela create component --id user-service --title "User Service"
+
+# With custom properties
+rela create control -t "Access Control" -P "iso27001=A.5.15" -P "owner=Security Team"
+
+# With body content
+rela create requirement -t "Auth feature" --body "## Description\n\nUser authentication."
+```
+
+---
+
+### rela list
+
+List entities with optional filtering.
+
+```bash
+rela list [type] [flags]
+```
+
+**Arguments:**
+
+- `type` - Entity type to filter by (optional, shows all if omitted)
+
+**Flags:**
+
+| Flag         | Description        |
+| ------------ | ------------------ |
+| `--status`   | Filter by status   |
+| `--priority` | Filter by priority |
+
+**Examples:**
+
+```bash
+# List all entities
+rela list
+
+# List by type (plural or singular)
+rela list requirements
+rela list requirement
+rela list req
+
+# Filter by status
+rela list --status accepted
+
+# Combine filters
+rela list requirements --status draft --priority high
+
+# JSON output
+rela list -o json
+```
+
+---
+
+### rela show
+
+Display detailed information about an entity.
+
+```bash
+rela show <id>
+```
+
+**Arguments:**
+
+- `id` - Entity ID to show
+
+Shows the entity's properties plus all incoming and outgoing relations.
+
+**Examples:**
+
+```bash
+rela show REQ-001
+rela show DEC-042 -o json
+```
+
+---
+
+### rela update
+
+Update an entity's properties.
+
+```bash
+rela update <id> [flags]
+```
+
+**Arguments:**
+
+- `id` - Entity ID to update
+
+**Flags:**
+
+| Flag                | Description     |
+| ------------------- | --------------- |
+| `-t, --title`       | New title       |
+| `-s, --status`      | New status      |
+| `-p, --priority`    | New priority    |
+| `-d, --description` | New description |
+
+At least one flag is required.
+
+**Examples:**
+
+```bash
+# Update status
+rela update REQ-001 --status accepted
+
+# Update multiple fields
+rela update DEC-042 --title "Revised title" --status proposed
+
+# Update description
+rela update SOL-001 --description "Detailed implementation notes"
+```
+
+---
+
+### rela delete
+
+Delete an entity.
+
+```bash
+rela delete <id> [flags]
+```
+
+**Arguments:**
+
+- `id` - Entity ID to delete
+
+**Flags:**
+
+| Flag          | Description               |
+| ------------- | ------------------------- |
+| `-f, --force` | Skip confirmation prompt  |
+| `--cascade`   | Also delete related links |
+
+Without `--cascade`, deletion fails if the entity has relations.
+
+**Examples:**
+
+```bash
+# Interactive confirmation
+rela delete REQ-001
+
+# Skip confirmation
+rela delete REQ-001 --force
+
+# Delete entity and all its relations
+rela delete REQ-001 --cascade
+```
+
+---
+
+### rela link
+
+Create a relation between two entities.
+
+```bash
+rela link <from> <relation> <to>
+```
+
+**Arguments:**
+
+- `from` - Source entity ID
+- `relation` - Relation type name
+- `to` - Target entity ID
+
+Both entities must exist. The relation type is validated against the metamodel.
+
+**Templates:**
+
+If a template exists at `templates/relations/<type>.md`, its frontmatter values are used as defaults
+for relation properties. See [rela template](#rela-template) for creating templates.
+
+**Examples:**
+
+```bash
+rela link DEC-001 addresses REQ-001
+rela link SOL-001 implements DEC-001
+rela link COMP-001 realizes SOL-001
+rela link COMP-001 dependsOn COMP-002
+```
+
+---
+
+### rela unlink
+
+Remove a relation between entities.
+
+```bash
+rela unlink <from> <relation> <to>
+```
+
+**Arguments:**
+
+- `from` - Source entity ID
+- `relation` - Relation type name
+- `to` - Target entity ID
+
+**Examples:**
+
+```bash
+rela unlink DEC-001 addresses REQ-001
+```
+
+---
+
+### rela sync
+
+Rebuild the graph from markdown files.
+
+```bash
+rela sync [flags]
+```
+
+**Flags:**
+
+| Flag      | Description        |
+| --------- | ------------------ |
+| `--force` | Force full rebuild |
+
+Use after manually editing markdown files to update the cache.
+
+**Examples:**
+
+```bash
+rela sync
+rela sync --force
+```
+
+---
+
+### rela trace
+
+Trace dependencies between entities.
+
+#### rela trace from
+
+Trace downstream dependencies (what depends on this entity).
+
+```bash
+rela trace from <id> [flags]
+```
+
+**Flags:**
+
+| Flag      | Description                   |
+| --------- | ----------------------------- |
+| `--depth` | Maximum depth (0 = unlimited) |
+
+**Examples:**
+
+```bash
+rela trace from REQ-001
+rela trace from REQ-001 --depth 2
+```
+
+#### rela trace to
+
+Trace upstream dependencies (what this entity depends on).
+
+```bash
+rela trace to <id> [flags]
+```
+
+**Flags:**
+
+| Flag      | Description                   |
+| --------- | ----------------------------- |
+| `--depth` | Maximum depth (0 = unlimited) |
+
+**Examples:**
+
+```bash
+rela trace to COMP-001
+rela trace to COMP-001 --depth 3
+```
+
+#### rela trace path
+
+Find the shortest path between two entities.
+
+```bash
+rela trace path <from> <to>
+```
+
+**Examples:**
+
+```bash
+rela trace path REQ-001 COMP-001
+```
+
+---
+
+### rela graph
+
+Export the entity graph to Graphviz DOT format.
+
+```bash
+rela graph [flags]
+```
+
+**Flags:**
+
+| Flag           | Description                                             |
+| -------------- | ------------------------------------------------------- |
+| `-o, --output` | Output file (stdout if not specified)                   |
+| `-f, --format` | Output format: `dot`, `png`, `svg`, `pdf`               |
+| `--direction`  | Graph direction: `tb` (top-bottom) or `lr` (left-right) |
+| `--types`      | Filter by entity types (comma-separated)                |
+
+Rendering to PNG/SVG/PDF requires Graphviz (`dot` command).
+
+**Examples:**
+
+```bash
+# Print DOT to stdout
+rela graph
+
+# Save DOT file
+rela graph -o architecture.dot
+
+# Render to PNG
+rela graph -o architecture.png -f png
+
+# Filter by types
+rela graph --types requirement,decision
+
+# Left-to-right layout
+rela graph --direction lr
+```
+
+---
+
+### rela export
+
+Export entities to structured formats for external tool integration.
+
+```bash
+rela export [type] [flags]
+```
+
+**Arguments:**
+
+- `type` - Entity type to export (required unless using `--all`)
+
+**Flags:**
+
+| Flag               | Description                                       |
+| ------------------ | ------------------------------------------------- |
+| `-f, --format`     | Output format: `json` (default), `csv`, or `yaml` |
+| `--with-relations` | Include relation data in export                   |
+| `--all`            | Export all entities and relations                 |
+
+**Output Formats:**
+
+- **JSON**: Array of objects with full property data. Best for programmatic processing with `jq`.
+- **CSV**: Comma-separated values with header row. Best for spreadsheet import or `mlr` (Miller).
+- **YAML**: YAML format. Best for human readability and configuration.
+
+**Examples:**
+
+```bash
+# Export all controls as JSON
+rela export control --format json
+
+# Export controls as CSV for spreadsheet import
+rela export control --format csv
+
+# Export controls with their relations included
+rela export control --with-relations
+
+# Export all entities and relations
+rela export --all --format json
+
+# Use with jq for custom filtering
+rela export control --format json | jq '.[] | select(.properties.status == "draft")'
+
+# Use with jq to create a summary report
+rela export control --format json | jq '[.[] | {id, title: .properties.title, status: .properties.status}]'
+
+# Use with Miller for CSV filtering
+rela export control --format csv | mlr --csv filter '$status == "implemented"'
+
+# Generate a gap report (controls without evidence)
+rela export control --with-relations --format json | \
+  jq '.[] | select(.relations.outgoing.evidencedBy == null) | {id, title: .properties.title}'
+
+# Export to file
+rela export control --format csv > controls.csv
+```
+
+**Relation Data Structure:**
+
+When using `--with-relations`, each entity includes:
+
+```json
+{
+  "id": "CTRL-001",
+  "type": "control",
+  "properties": { ... },
+  "relations": {
+    "outgoing": {
+      "mitigates": [{"id": "RISK-001", "title": "Unauthorized Access"}],
+      "evidencedBy": [{"id": "EV-001", "title": "Audit Report"}]
+    },
+    "incoming": {
+      "implements": [{"id": "PROC-001", "title": "Access Procedure"}]
+    }
+  }
+}
+```
+
+**Full Export Structure:**
+
+When using `--all`, the output includes both entities and relations:
+
+```json
+{
+  "entities": [ ... ],
+  "relations": [
+    {"from": "DEC-001", "relation": "addresses", "to": "REQ-001"}
+  ]
+}
+```
+
+---
+
+### rela view
+
+Execute a view definition to generate context for an entity.
+
+```bash
+rela view <view-name> <entry-id> [flags]
+```
+
+**Arguments:**
+
+- `view-name` - Name of the view defined in `views.yaml`
+- `entry-id` - ID of the entry entity
+
+**Flags:**
+
+| Flag           | Description                     |
+| -------------- | ------------------------------- |
+| `-o, --output` | Output format: `yaml` or `json` |
+
+Views are defined in `views.yaml` and specify declarative graph traversals, filters, and derived
+collections. See [Views](views.md) for the full view definition reference.
+
+**Examples:**
+
+```bash
+rela view document_publish DOC-001 -o yaml
+rela view document_publish DOC-001 -o json
+```
+
+#### rela view deps
+
+List all entity IDs used when executing a view. Useful for determining which entities contribute to
+a document or context.
+
+```bash
+rela view deps <view-name> [flags]
+```
+
+**Arguments:**
+
+- `view-name` - Name of the view defined in `views.yaml`
+
+**Flags:**
+
+| Flag      | Description                                                              |
+| --------- | ------------------------------------------------------------------------ |
+| `--roots` | Comma-separated root entity IDs (default: all entities of entry type)    |
+| `--files` | Output file paths instead of entity IDs                                  |
+
+Output is one entity ID (or file path) per line, sorted and deduplicated.
+
+**Examples:**
+
+```bash
+# List all entities used across all documents
+rela view deps document_publish
+
+# List entities for specific documents
+rela view deps document_publish --roots DOC-001,DOC-002
+
+# Output file paths (useful for comparing with git diff)
+rela view deps document_publish --files
+```
+
+#### rela view affected
+
+Find which document roots are affected by changes to specific entities. Given a set of changed
+entity IDs (or file paths), executes the view for each root and reports which roots include any of
+the changed entities.
+
+```bash
+rela view affected <view-name> [flags]
+```
+
+**Arguments:**
+
+- `view-name` - Name of the view defined in `views.yaml`
+
+**Flags:**
+
+| Flag              | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| `--changed`       | Comma-separated changed entity IDs                                          |
+| `--changed-files` | Comma-separated changed file paths, or `-` to read from stdin               |
+| `--roots`         | Comma-separated root entity IDs (default: all entities of entry type)       |
+
+At least one of `--changed` or `--changed-files` is required. Output is one affected root entity ID
+per line.
+
+**Examples:**
+
+```bash
+# Find documents affected by entity changes
+rela view affected document_publish --changed REQ-001,COMP-003
+
+# Using file paths
+rela view affected document_publish --changed-files entities/requirement/REQ-001.md
+
+# Pipe git diff output via stdin
+git diff --name-only HEAD~1 | rela view affected document_publish --changed-files -
+
+# Restrict to specific document roots
+rela view affected document_publish --changed REQ-001 --roots DOC-001,DOC-002
+```
+
+**CI Integration:**
+
+Only rebuild PDFs for documents affected by recent changes:
+
+```bash
+affected=$(git diff --name-only HEAD~1 | rela view affected document_publish --changed-files -)
+for doc in $affected; do
+  build_pdf "$doc"
+done
+```
+
+---
+
+### rela import
+
+Import entities and relations from structured files.
+
+```bash
+rela import <file> [flags]
+```
+
+**Arguments:**
+
+- `file` - Path to the import file (JSON, YAML, or CSV)
+
+**Flags:**
+
+| Flag              | Description                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| `-f, --format`    | Input format: `json`, `yaml`, or `csv`. Auto-detected from extension if not specified |
+| `-n, --dry-run`   | Validate without creating files                                                       |
+| `-u, --update`    | Replace existing entities instead of failing on duplicates                            |
+| `--skip-errors`   | Continue importing on validation errors                                               |
+| `-r, --relations` | Path to relations CSV file (for CSV imports)                                          |
+
+**Input Formats:**
+
+**JSON** - Object with `entities` and `relations` arrays, or just an array of entities:
+
+```json
+{
+  "entities": [
+    {
+      "id": "REQ-001",
+      "type": "requirement",
+      "properties": { "title": "User login", "status": "draft" }
+    },
+    {
+      "id": "DEC-001",
+      "type": "decision",
+      "properties": { "title": "Use JWT", "status": "accepted" }
+    }
+  ],
+  "relations": [{ "from": "DEC-001", "relation": "addresses", "to": "REQ-001" }]
+}
+```
+
+**YAML** - Same structure as JSON:
+
+```yaml
+entities:
+  - id: REQ-001
+    type: requirement
+    properties:
+      title: User login
+      status: draft
+relations:
+  - from: DEC-001
+    relation: addresses
+    to: REQ-001
+```
+
+**CSV** - Columns for entity fields (id, type, and properties):
+
+```csv
+id,type,title,status,priority
+REQ-001,requirement,User login,draft,high
+REQ-002,requirement,User logout,draft,medium
+```
+
+For CSV, relations require a separate file with `--relations`:
+
+```csv
+from,relation,to
+DEC-001,addresses,REQ-001
+```
+
+**Examples:**
+
+```bash
+# Import from JSON
+rela import entities.json
+
+# Import from YAML
+rela import data.yaml
+
+# Import from CSV
+rela import entities.csv
+
+# Import CSV with separate relations file
+rela import entities.csv --relations relations.csv
+
+# Dry-run to validate without creating files
+rela import --dry-run data.json
+
+# Update existing entities instead of failing
+rela import --update data.json
+
+# Continue on validation errors
+rela import --skip-errors data.json
+
+# Explicit format (when extension doesn't match)
+rela import data.txt --format json
+```
+
+**Behavior Notes:**
+
+- **Validation**: All entities are validated against the metamodel before import
+- **Auto-generated properties**: If `status` is not provided, the entity type's default is used
+- **Duplicate handling**: Without `--update`, importing an existing entity ID fails
+- **Update mode**: `--update` does a full replacement, not a merge (existing properties not in the import file are removed)
+- **Relations**: Relations referencing entities not in the graph (and not in the import) will fail
+- **Atomic by default**: If any entity fails validation, no entities are created (unless `--skip-errors`)
+
+**Round-trip with export:**
+
+```bash
+# Export all entities and relations
+rela export --all -f json > backup.json
+
+# Later, import to a new project
+rela import backup.json
+```
+
+---
+
+### rela analyze
+
+Run quality analysis checks.
+
+#### rela analyze orphans
+
+Find entities with no connections.
+
+```bash
+rela analyze orphans
+```
+
+#### rela analyze duplicates
+
+Find entities with similar titles.
+
+```bash
+rela analyze duplicates
+```
+
+#### rela analyze gaps
+
+Find gaps in ID sequences for entity types with sequential IDs.
+
+```bash
+rela analyze gaps
+```
+
+Entity types configured with `id_type: manual` are excluded from gap analysis since they use
+manually-specified IDs that are not expected to be sequential.
+
+#### rela analyze cardinality
+
+Check relation cardinality constraints.
+
+```bash
+rela analyze cardinality
+```
+
+#### rela analyze validations
+
+Run custom validation rules defined in the metamodel.
+
+```bash
+rela analyze validations
+```
+
+Validation rules check entity properties against custom conditions.
+See [Metamodel Reference - Custom Validation Rules](metamodel.md#custom-validation-rules) for details.
+
+**Example output:**
+
+```text
+$ rela analyze validations
+✗ Accepted requirements must have a priority assigned (2):
+  REQ-003: User authentication
+  REQ-007: Data encryption
+⚠ Decisions should have a rationale documented (1):
+  DEC-002: Use PostgreSQL
+Found 2 errors, 1 warnings across 2 rules
+```
+
+#### rela analyze all
+
+Run all analysis checks.
+
+```bash
+rela analyze all
+```
+
+Runs orphans, duplicates, gaps, cardinality, and (if defined) custom validations.
+
+---
+
+### rela mcp
+
+Start the MCP (Model Context Protocol) server over stdio.
+
+```bash
+rela mcp
+```
+
+Exposes rela's capabilities to AI assistants like Claude Code, Cursor, and other MCP-compatible
+clients. The server runs on stdin/stdout using JSON-RPC and provides:
+
+- **22 tools** for entity/relation CRUD, graph tracing, analysis, and export
+- **3 resources** for reading entities, relations, and the metamodel by URI
+- **4 prompts** for common AI-assisted workflows
+- **File watching** with automatic graph sync on changes
+
+**Client Configuration (Claude Code):**
+
+Setup with `claude mcp add` (recommended):
+
+```bash
+claude mcp add rela -s local -- /path/to/rela mcp
+```
+
+Setup with `.mcp.json` (for sharing via git):
+
+```json
+{
+  "mcpServers": {
+    "rela": {
+      "command": "rela",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+See [MCP Server Guide](mcp-server.md) for the full tool/resource/prompt reference.
+
+---
+
+### rela tui
+
+Launch the interactive terminal UI.
+
+```bash
+rela tui
+```
+
+See [TUI Guide](tui.md) for details.
+
+---
+
+### rela completion
+
+Generate shell completion scripts.
+
+```bash
+rela completion <shell>
+```
+
+**Arguments:**
+
+- `shell` - Target shell: `bash`, `zsh`, `fish`, or `powershell`
+
+**Examples:**
+
+```bash
+# Bash
+rela completion bash > /etc/bash_completion.d/rela
+
+# Zsh
+rela completion zsh > "${fpath[1]}/_rela"
+
+# Fish
+rela completion fish > ~/.config/fish/completions/rela.fish
+```
+
+---
+
+### rela template
+
+Manage templates for creating entities and relations.
+
+Templates provide default frontmatter values and markdown body content when creating new entities or
+relations. They are stored in:
+
+- `templates/entities/<type>.md` - Entity templates
+- `templates/relations/<type>.md` - Relation templates
+
+#### rela template init
+
+Generate template files from the metamodel.
+
+```bash
+rela template init [type...] [flags]
+```
+
+**Arguments:**
+
+- `type...` - Optional: specific entity or relation types to generate templates for
+
+**Flags:**
+
+| Flag          | Description                      |
+| ------------- | -------------------------------- |
+| `--entities`  | Only generate entity templates   |
+| `--relations` | Only generate relation templates |
+| `--force`     | Overwrite existing templates     |
+
+Without arguments, generates templates for all entity and relation types defined in the metamodel.
+
+**Examples:**
+
+```bash
+# Generate all templates
+rela template init
+
+# Generate template for a specific entity type
+rela template init requirement
+
+# Generate template for a specific relation type
+rela template init addresses
+
+# Generate only entity templates
+rela template init --entities
+
+# Generate only relation templates
+rela template init --relations
+
+# Overwrite existing templates
+rela template init --force
+
+# Generate specific types with force
+rela template init requirement decision --force
+```
+
+**Generated Template Format:**
+
+Entity templates include all properties from the metamodel with their default values:
+
+```markdown
+---
+title: ""
+status: draft
+priority: medium
+---
+
+# Description
+
+Describe your requirement here.
+```
+
+Relation templates include a placeholder for rationale:
+
+```markdown
+---
+---
+
+# Rationale
+
+Explain why this addresses relation exists.
+```
+
+**Using Templates:**
+
+Once templates are created, they are automatically applied when using `rela create` or `rela link`.
+CLI flags override template defaults.
+
+```bash
+# Create a template
+rela template init requirement
+
+# Edit the template to customize defaults
+# templates/entities/requirement.md
+
+# New entities will use the template
+rela create requirement --title "My Requirement"
+```
+
+---
+
+### rela migrate
+
+Migrate project files to the current schema format.
+
+```bash
+rela migrate [flags]
+```
+
+**Flags:**
+
+| Flag      | Description                                                   |
+| --------- | ------------------------------------------------------------- |
+| `--check` | Check for pending migrations without applying (useful for CI) |
+
+This command detects deprecated syntax patterns in your project files (e.g., `metamodel.yaml`) and
+transforms them to the current format while preserving comments and formatting.
+
+**When to use:**
+
+If you see an error like this when running any rela command:
+
+```text
+metamodel.yaml uses deprecated syntax:
+  - Rename id_type values: "sequential" → "auto", "string" → "manual"
+
+Run 'rela migrate' to update your project files.
+```
+
+Run `rela migrate` to automatically update your files.
+
+**Examples:**
+
+```bash
+# Apply all pending migrations
+rela migrate
+
+# Check for migrations without applying (for CI pipelines)
+rela migrate --check
+```
+
+**CI Integration:**
+
+Add to your CI pipeline to ensure project files are up-to-date:
+
+```yaml
+- run: rela migrate --check
+```
+
+This will exit with code 1 if migrations are needed.
+
+---
+
+### rela version
+
+Print version information.
+
+```bash
+rela version
+```

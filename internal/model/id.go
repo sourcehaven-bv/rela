@@ -1,0 +1,220 @@
+package model
+
+import (
+	"crypto/rand"
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+// EntityID represents a parsed entity identifier
+type EntityID struct {
+	Prefix string // e.g., "REQ-", "DEC-"
+	Number int    // e.g., 1, 42
+	Raw    string // Original string
+}
+
+// Common ID pattern: PREFIX-NUMBER (e.g., REQ-001, DEC-42, ISO-CA-001)
+var idPattern = regexp.MustCompile(`^([A-Za-z]+(?:-[A-Za-z]+)*-?)(\d+)$`)
+
+// ParseEntityID parses an entity ID string into its components
+func ParseEntityID(s string) (EntityID, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return EntityID{}, fmt.Errorf("empty entity ID")
+	}
+
+	matches := idPattern.FindStringSubmatch(s)
+	if matches == nil {
+		// Not a standard PREFIX-NUMBER format, treat as opaque ID
+		return EntityID{Raw: s}, nil
+	}
+
+	num, err := strconv.Atoi(matches[2])
+	if err != nil {
+		return EntityID{}, fmt.Errorf("invalid number in ID: %s", s)
+	}
+
+	return EntityID{
+		Prefix: matches[1],
+		Number: num,
+		Raw:    s,
+	}, nil
+}
+
+// String returns the canonical string representation
+func (id EntityID) String() string {
+	if id.Raw != "" {
+		return id.Raw
+	}
+	if id.Prefix != "" {
+		return fmt.Sprintf("%s%d", id.Prefix, id.Number)
+	}
+	return fmt.Sprintf("%d", id.Number)
+}
+
+// FormatWithPadding returns the ID with zero-padded number
+func (id EntityID) FormatWithPadding(width int) string {
+	if id.Raw != "" && id.Prefix == "" {
+		return id.Raw
+	}
+	return fmt.Sprintf("%s%0*d", id.Prefix, width, id.Number)
+}
+
+// NextID returns the next ID in sequence
+func (id EntityID) NextID() EntityID {
+	return EntityID{
+		Prefix: id.Prefix,
+		Number: id.Number + 1,
+	}
+}
+
+// MatchesPattern checks if this ID matches a given prefix pattern
+func (id EntityID) MatchesPattern(pattern string) bool {
+	pattern = strings.TrimSuffix(pattern, "-")
+	prefix := strings.TrimSuffix(id.Prefix, "-")
+	return strings.EqualFold(prefix, pattern)
+}
+
+// ValidateID checks if a string is a valid entity ID
+// It rejects IDs with path traversal attempts or invalid characters
+func ValidateID(s string) error {
+	if s == "" {
+		return fmt.Errorf("empty entity ID")
+	}
+
+	// Reject path traversal
+	if strings.Contains(s, "..") || strings.Contains(s, "/") || strings.Contains(s, "\\") {
+		return fmt.Errorf("invalid characters in entity ID: %s", s)
+	}
+
+	// Allow alphanumeric, dash, underscore
+	valid := regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	if !valid.MatchString(s) {
+		return fmt.Errorf("invalid characters in entity ID: %s", s)
+	}
+
+	return nil
+}
+
+// ExtractHighestNumber finds the highest number for a given prefix from a list of IDs
+func ExtractHighestNumber(ids []string, prefix string) int {
+	highest := 0
+	prefix = strings.ToUpper(strings.TrimSuffix(prefix, "-"))
+
+	for _, idStr := range ids {
+		id, err := ParseEntityID(idStr)
+		if err != nil {
+			continue
+		}
+		idPrefix := strings.ToUpper(strings.TrimSuffix(id.Prefix, "-"))
+		if idPrefix == prefix && id.Number > highest {
+			highest = id.Number
+		}
+	}
+
+	return highest
+}
+
+// GenerateNextID generates the next available ID for a given prefix
+func GenerateNextID(existingIDs []string, prefix string) string {
+	highest := ExtractHighestNumber(existingIDs, prefix)
+	// Ensure prefix ends with dash
+	if !strings.HasSuffix(prefix, "-") {
+		prefix += "-"
+	}
+	return fmt.Sprintf("%s%03d", strings.ToUpper(prefix), highest+1)
+}
+
+// Short ID generation constants
+const (
+	// base36Chars contains the characters used for short ID generation
+	base36Chars = "0123456789abcdefghijklmnopqrstuvwxyz"
+	// base36Size is the number of characters in base36
+	base36Size = 36
+	// maxShortIDLength is the maximum length of the random part of a short ID
+	maxShortIDLength = 8
+	// shortIDMaxAttempts is the maximum number of attempts to generate a unique ID
+	shortIDMaxAttempts = 100
+	// shortIDLengthIncreaseInterval is how often to increase length on collision
+	shortIDLengthIncreaseInterval = 10
+)
+
+// ID length thresholds based on entity count (birthday paradox)
+const (
+	shortIDThreshold500   = 500   // Up to 500: use 4 chars (1.7M combinations)
+	shortIDThreshold1500  = 1500  // Up to 1500: use 5 chars (60M combinations)
+	shortIDThreshold10000 = 10000 // Up to 10000: use 6 chars (2.2B combinations)
+	shortIDThreshold50000 = 50000 // Up to 50000: use 7 chars (78B combinations)
+
+	shortIDLength4 = 4 // For small projects
+	shortIDLength5 = 5
+	shortIDLength6 = 6
+	shortIDLength7 = 7
+	shortIDLength8 = 8 // For large projects
+)
+
+// GenerateShortID generates a random base36 ID with the given prefix.
+// Length is adaptive based on entityCount to minimize collision probability.
+// The function retries with progressively longer IDs if collisions occur.
+func GenerateShortID(existingIDs []string, prefix string, entityCount int) string {
+	// Build a set for fast lookup
+	existing := make(map[string]struct{}, len(existingIDs))
+	for _, id := range existingIDs {
+		existing[id] = struct{}{}
+	}
+
+	length := calculateIDLength(entityCount)
+
+	for attempts := 0; attempts < shortIDMaxAttempts; attempts++ {
+		id := generateRandomBase36(prefix, length)
+		if _, exists := existing[id]; !exists {
+			return id
+		}
+		// Collision - increase length periodically
+		if attempts > 0 && attempts%shortIDLengthIncreaseInterval == 0 && length < maxShortIDLength {
+			length++
+		}
+	}
+
+	// Final fallback: use maximum length
+	return generateRandomBase36(prefix, maxShortIDLength)
+}
+
+// calculateIDLength determines the optimal ID length based on entity count.
+// Uses birthday paradox thresholds to keep collision probability low.
+func calculateIDLength(entityCount int) int {
+	switch {
+	case entityCount <= shortIDThreshold500:
+		return shortIDLength4
+	case entityCount <= shortIDThreshold1500:
+		return shortIDLength5
+	case entityCount <= shortIDThreshold10000:
+		return shortIDLength6
+	case entityCount <= shortIDThreshold50000:
+		return shortIDLength7
+	default:
+		return shortIDLength8
+	}
+}
+
+// generateRandomBase36 generates a random ID with the given prefix and length.
+func generateRandomBase36(prefix string, length int) string {
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to less random but functional approach
+		for i := range b {
+			b[i] = byte(i * 7 % base36Size)
+		}
+	}
+
+	for i := range b {
+		b[i] = base36Chars[b[i]%base36Size]
+	}
+
+	if !strings.HasSuffix(prefix, "-") {
+		prefix += "-"
+	}
+	return strings.ToUpper(prefix) + string(b)
+}

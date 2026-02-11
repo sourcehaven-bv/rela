@@ -1,0 +1,351 @@
+{{- define "search-page" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - Search</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
+<main class="main" id="content">
+{{ template "search-content" . }}
+</main>
+</body>
+</html>
+{{- end -}}
+
+{{- define "search-content" -}}
+<div class="page-header">
+  <div>
+    <h2>Search</h2>
+    <p>Search across all entities by text, type, or property filters</p>
+  </div>
+</div>
+
+<div class="card" style="padding:20px;margin-bottom:20px;">
+  <div class="search-box" id="search-box">
+    <div class="search-chips" id="search-chips"></div>
+    <input id="search-input" class="search-input" type="text" data-query="{{ .Query }}"
+           placeholder="Type to search or filter..." autocomplete="off">
+    <div class="search-dropdown" id="search-dropdown"></div>
+  </div>
+  <div style="margin-top:10px;font-size:12px;color:var(--text-muted);line-height:1.8;">
+    <strong>Syntax:</strong>
+    <code>type:ticket</code> filter by entity type &middot;
+    <code>status:open</code> filter by status &middot;
+    <code>prop:priority=high</code> filter by property &middot;
+    <code>sort:priority:desc</code> sort results &middot;
+    <code>"exact phrase"</code> exact match &middot;
+    plain words (fuzzy, ranked)
+  </div>
+</div>
+
+{{ if .ParseErrors }}
+<div class="error-box">
+  {{ .ParseErrors }}
+</div>
+{{ end }}
+
+<div id="search-results">
+{{ template "search-results" . }}
+</div>
+
+<script>
+(function() {
+  var input = document.getElementById('search-input');
+  if (!input || input._searchInit) return;
+  input._searchInit = true;
+
+  var chipsEl = document.getElementById('search-chips');
+  var dropdown = document.getElementById('search-dropdown');
+  var suggestions = {{ .SuggestionsJSON }};
+  var chips = [];
+  var activeIdx = -1;
+  var filtered = [];
+
+  var catClass = {type: 'search-chip-type', status: 'search-chip-status', property: 'search-chip-property', sort: 'search-chip-sort'};
+  var ddCatClass = {type: 'search-dd-cat-type', status: 'search-dd-cat-status', property: 'search-dd-cat-property', sort: 'search-dd-cat-sort'};
+
+  function isFilter(val) { return /^(type|status|prop|sort):/.test(val); }
+
+  function detectCategory(val) {
+    if (val.lastIndexOf('type:', 0) === 0) return 'type';
+    if (val.lastIndexOf('status:', 0) === 0) return 'status';
+    if (val.lastIndexOf('prop:', 0) === 0) return 'property';
+    if (val.lastIndexOf('sort:', 0) === 0) return 'sort';
+    return '';
+  }
+
+  function renderChips() {
+    chipsEl.innerHTML = '';
+    for (var i = 0; i < chips.length; i++) {
+      var c = chips[i];
+      var span = document.createElement('span');
+      span.className = 'search-chip ' + (catClass[c.category] || '');
+      span.textContent = c.value;
+      var btn = document.createElement('button');
+      btn.textContent = '\u00d7';
+      btn.setAttribute('data-idx', i);
+      btn.onclick = function() {
+        chips.splice(parseInt(this.getAttribute('data-idx')), 1);
+        renderChips();
+        doSearch();
+        input.focus();
+      };
+      span.appendChild(btn);
+      chipsEl.appendChild(span);
+    }
+  }
+
+  function addChip(value, category) {
+    for (var i = 0; i < chips.length; i++) {
+      if (chips[i].value === value) return;
+    }
+    chips.push({value: value, category: category || detectCategory(value)});
+    renderChips();
+    doSearch();
+  }
+
+  function closeDropdown() {
+    dropdown.classList.remove('open');
+    dropdown.innerHTML = '';
+    activeIdx = -1;
+    filtered = [];
+  }
+
+  function showDropdown(matches) {
+    filtered = matches;
+    activeIdx = 0;
+    dropdown.innerHTML = '';
+    for (var i = 0; i < matches.length; i++) {
+      var item = document.createElement('div');
+      item.className = 'search-dd-item' + (i === 0 ? ' active' : '');
+      item.setAttribute('data-idx', i);
+      var label = document.createElement('span');
+      label.textContent = matches[i].value;
+      item.appendChild(label);
+      var badge = document.createElement('span');
+      badge.className = 'search-dd-cat ' + (ddCatClass[matches[i].category] || '');
+      badge.textContent = matches[i].category;
+      item.appendChild(badge);
+      item.onmousedown = function(e) {
+        e.preventDefault();
+        var idx = parseInt(this.getAttribute('data-idx'));
+        selectItem(idx);
+      };
+      item.onmouseenter = function() {
+        setActive(parseInt(this.getAttribute('data-idx')));
+      };
+      dropdown.appendChild(item);
+    }
+    dropdown.classList.add('open');
+  }
+
+  function setActive(idx) {
+    var items = dropdown.children;
+    if (activeIdx >= 0 && activeIdx < items.length) items[activeIdx].classList.remove('active');
+    activeIdx = idx;
+    if (activeIdx >= 0 && activeIdx < items.length) {
+      items[activeIdx].classList.add('active');
+      items[activeIdx].scrollIntoView({block: 'nearest'});
+    }
+  }
+
+  function selectItem(idx) {
+    if (idx < 0 || idx >= filtered.length) return;
+    var sel = filtered[idx];
+    // For first-stage sort suggestions (no direction yet), advance to direction picker
+    if (sel.category === 'sort' && sel.value.split(':').length === 2) {
+      // Replace the current token with sort:prop: to trigger direction dropdown
+      var text = input.value;
+      var words = text.split(/\s+/);
+      var replaced = false;
+      for (var i = words.length - 1; i >= 0; i--) {
+        if (!replaced && /^sort(:|$)/.test(words[i])) {
+          words[i] = sel.value + ':';
+          replaced = true;
+        }
+      }
+      input.value = words.join(' ');
+      closeDropdown();
+      input.focus();
+      updateDropdown();
+      return;
+    }
+    addChip(sel.value, sel.category);
+    // Remove the filter token from the input, keep other text
+    var text = input.value;
+    var words = text.split(/\s+/);
+    var remaining = [];
+    var removed = false;
+    for (var i = 0; i < words.length; i++) {
+      if (!removed && /^(type|status|prop|sort)(:|$)/.test(words[i])) {
+        removed = true;
+      } else {
+        remaining.push(words[i]);
+      }
+    }
+    input.value = remaining.length > 0 ? remaining.join(' ') + ' ' : '';
+    closeDropdown();
+    input.focus();
+  }
+
+  // Find matches for the last typed token
+  function updateDropdown() {
+    var text = input.value;
+    var words = text.split(/\s+/);
+    var last = words[words.length - 1] || '';
+    if (!last || !/^(type|status|prop|sort)(:|$)/.test(last)) {
+      closeDropdown();
+      return;
+    }
+    // Second-stage: sort direction picker (e.g. "sort:priority:" -> asc/desc)
+    var sortDirMatch = last.match(/^(sort:[^:]+):(.*)$/);
+    if (sortDirMatch) {
+      var base = sortDirMatch[1];
+      var dirPrefix = sortDirMatch[2].toLowerCase();
+      // Only offer directions if base matches a known sort suggestion
+      var knownBase = false;
+      for (var s = 0; s < suggestions.length; s++) {
+        if (suggestions[s].value === base && suggestions[s].category === 'sort') { knownBase = true; break; }
+      }
+      if (knownBase) {
+        var dirs = [{value: base + ':asc', category: 'sort'}, {value: base + ':desc', category: 'sort'}];
+        var dirMatches = [];
+        for (var d = 0; d < dirs.length; d++) {
+          if (dirs[d].value.toLowerCase().indexOf(last.toLowerCase()) === 0) dirMatches.push(dirs[d]);
+        }
+        if (dirMatches.length > 0) { showDropdown(dirMatches); return; }
+        closeDropdown();
+        return;
+      }
+    }
+    var matches = [];
+    var q = last.toLowerCase();
+    for (var i = 0; i < suggestions.length; i++) {
+      if (suggestions[i].value.toLowerCase().indexOf(q) === 0) {
+        // Skip already-added chips
+        var dupe = false;
+        for (var j = 0; j < chips.length; j++) {
+          if (chips[j].value === suggestions[i].value) { dupe = true; break; }
+        }
+        if (!dupe) matches.push(suggestions[i]);
+      }
+    }
+    if (matches.length > 0) {
+      showDropdown(matches.slice(0, 20));
+    } else {
+      closeDropdown();
+    }
+  }
+
+  var searchTimer = null;
+  function doSearch() {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(function() {
+      var parts = [];
+      for (var i = 0; i < chips.length; i++) parts.push(chips[i].value);
+      var freeText = input.value.trim();
+      if (freeText) parts.push(freeText);
+      var q = parts.join(' ');
+      var url = '/search?q=' + encodeURIComponent(q);
+      htmx.ajax('GET', url, {target: '#search-results', swap: 'innerHTML'});
+      history.replaceState(null, '', url);
+    }, 300);
+  }
+
+  input.addEventListener('input', function() {
+    updateDropdown();
+    doSearch();
+  });
+
+  input.addEventListener('keydown', function(e) {
+    var isOpen = dropdown.classList.contains('open');
+    if (isOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (activeIdx < filtered.length - 1) setActive(activeIdx + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (activeIdx > 0) setActive(activeIdx - 1);
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        if (activeIdx >= 0 && activeIdx < filtered.length) {
+          e.preventDefault();
+          selectItem(activeIdx);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeDropdown();
+      }
+    } else {
+      // Backspace on empty input removes the last chip
+      if (e.key === 'Backspace' && input.value === '' && chips.length > 0) {
+        chips.pop();
+        renderChips();
+        doSearch();
+      }
+      // Tab or ArrowDown with dropdown closed: enter search results
+      if (e.key === 'Tab' || e.key === 'ArrowDown') {
+        if (typeof _enterSearchResults === 'function' && _enterSearchResults()) {
+          e.preventDefault();
+        }
+      }
+    }
+  });
+
+  input.addEventListener('blur', function() {
+    // Small delay to allow mousedown on dropdown items to fire
+    setTimeout(closeDropdown, 150);
+  });
+
+  // Parse initial query: filters become chips, text stays in input
+  var rawQuery = input.getAttribute('data-query') || '';
+  if (rawQuery.trim()) {
+    var tokens = rawQuery.match(/"[^"]*"|\S+/g) || [];
+    var textParts = [];
+    for (var i = 0; i < tokens.length; i++) {
+      var t = tokens[i];
+      if (isFilter(t)) {
+        addChip(t, detectCategory(t));
+      } else {
+        textParts.push(t);
+      }
+    }
+    if (textParts.length) input.value = textParts.join(' ');
+  }
+
+  setTimeout(function() { input.focus(); }, 50);
+})();
+</script>
+{{- end -}}
+
+{{- define "search-results" -}}
+{{ if .HasQuery }}
+<div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">{{ .ResultCount }} results</div>
+{{ range .Results }}
+<div class="card" style="padding:16px;margin-bottom:8px;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+    <a href="/entity/{{ .EntityType }}/{{ .ID }}?{{ $.ScopeParams }}" class="cell-link" style="font-size:15px;font-weight:600;"
+       hx-get="/entity/{{ .EntityType }}/{{ .ID }}?{{ $.ScopeParams }}" hx-target="#content" hx-push-url="true">{{ .Title }}</a>
+    <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted);background:var(--bg);padding:1px 6px;border-radius:3px;">{{ .ID }}</span>
+    <span class="badge badge-blue" style="font-size:10px;">{{ .EntityType }}</span>
+  </div>
+  {{ if .Properties }}
+  <div style="display:flex;gap:12px;flex-wrap:wrap;">
+    {{ range .Properties }}
+    <span style="font-size:12px;color:var(--text-muted);">
+      {{ .Key }}:
+      {{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+      {{ else }}<strong>{{ formatValue .Value }}</strong>{{ end }}
+    </span>
+    {{ end }}
+  </div>
+  {{ end }}
+</div>
+{{ end }}
+{{ if not .Results }}
+<div class="card" style="padding:32px;text-align:center;color:var(--text-muted);">No results found</div>
+{{ end }}
+{{ end }}
+{{- end -}}

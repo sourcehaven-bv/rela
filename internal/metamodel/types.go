@@ -1,0 +1,230 @@
+package metamodel
+
+import "github.com/Sourcehaven-BV/rela/internal/model"
+
+// Metamodel represents the full metamodel configuration
+type Metamodel struct {
+	Version     string                 `yaml:"version"`
+	Namespace   string                 `yaml:"namespace"`
+	Includes    []string               `yaml:"includes,omitempty"`
+	Types       map[string]CustomType  `yaml:"types"`
+	Entities    map[string]EntityDef   `yaml:"entities"`
+	Relations   map[string]RelationDef `yaml:"relations"`
+	Validations []ValidationRule       `yaml:"validations,omitempty"`
+
+	// Computed lookups (not from YAML)
+	aliasMap map[string]string // alias -> canonical name
+}
+
+// ValidationRule defines a custom validation rule for entities
+type ValidationRule struct {
+	// Name is a unique identifier for the validation rule
+	Name string `yaml:"name"`
+
+	// Description explains what this validation checks
+	Description string `yaml:"description"`
+
+	// EntityType limits the validation to a specific entity type (optional)
+	// If empty, the validation applies to all entity types
+	EntityType string `yaml:"entity_type,omitempty"`
+
+	// When specifies filter conditions that select which entities this rule applies to
+	// Uses the same syntax as --where filters (e.g., "status=approved")
+	// Multiple conditions are ANDed together
+	// If empty, the rule applies to all entities (of the specified type)
+	When []string `yaml:"when,omitempty"`
+
+	// Then specifies filter conditions that matching entities must satisfy
+	// Uses the same syntax as --where filters (e.g., "owner!=")
+	// Multiple conditions are ANDed together
+	Then []string `yaml:"then"`
+
+	// Severity is the severity level of violations: "error" or "warning"
+	// Defaults to "warning" if not specified
+	Severity string `yaml:"severity,omitempty"`
+}
+
+// GetSeverity returns the severity level, defaulting to "warning"
+func (v *ValidationRule) GetSeverity() string {
+	if v.Severity == "" {
+		return "warning"
+	}
+	return v.Severity
+}
+
+// IsError returns true if this validation has error severity
+func (v *ValidationRule) IsError() bool {
+	return v.GetSeverity() == "error"
+}
+
+// CustomType defines a reusable enum type
+type CustomType struct {
+	Values  []string `yaml:"values"`
+	Default string   `yaml:"default,omitempty"`
+}
+
+// EntityDef defines an entity type in the metamodel
+type EntityDef struct {
+	Label       string                 `yaml:"label"`
+	LabelPlural string                 `yaml:"label_plural,omitempty"`
+	Plural      string                 `yaml:"plural,omitempty"` // Used for directory names (e.g., "policies" for "policy")
+	Aliases     []string               `yaml:"aliases,omitempty"`
+	IDType      string                 `yaml:"id_type,omitempty"`     // "auto" (default) or "manual"
+	IDPrefix    string                 `yaml:"id_prefix,omitempty"`   // Single ID prefix (sugar for single-element id_prefixes)
+	IDPrefixes  []string               `yaml:"id_prefixes,omitempty"` // Multiple ID prefixes
+	RDFType     string                 `yaml:"rdf_type,omitempty"`
+	Properties  map[string]PropertyDef `yaml:"properties"`
+	DefaultSort []model.SortSpec       `yaml:"default_sort,omitempty"` // Default sort order for this entity type
+	Color       string                 `yaml:"color,omitempty"`
+	BorderColor string                 `yaml:"border_color,omitempty"`
+}
+
+// PropertyDef defines a property on an entity
+type PropertyDef struct {
+	Type        string   `yaml:"type"`
+	Required    bool     `yaml:"required,omitempty"`
+	Values      []string `yaml:"values,omitempty"` // For inline enum types
+	Default     string   `yaml:"default,omitempty"`
+	Description string   `yaml:"description,omitempty"` // Documentation for the property
+	Format      string   `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
+}
+
+// Built-in property types
+const (
+	PropertyTypeString  = "string"
+	PropertyTypeDate    = "date"
+	PropertyTypeInteger = "integer"
+	PropertyTypeBoolean = "boolean"
+	PropertyTypeEnum    = "enum"
+)
+
+// ID types for entities
+const (
+	IDTypeShort      = "short"      // IDs are random base36 strings (e.g., REQ-a3f8) - default
+	IDTypeSequential = "sequential" // IDs are auto-generated with numeric suffix (e.g., REQ-001)
+	IDTypeManual     = "manual"     // IDs are manually specified strings (e.g., auth-module)
+
+	// Deprecated alias (still accepted for backwards compatibility)
+	IDTypeString = "string" // Deprecated: use "manual" instead
+)
+
+// ReservedPropertyNames contains property names that cannot be used in metamodel definitions
+// because they conflict with built-in entity fields.
+var ReservedPropertyNames = map[string]bool{
+	"id":   true, // Entity.ID
+	"type": true, // Entity.Type
+}
+
+// DefaultDateFormat is the default format for date properties (ISO 8601)
+const DefaultDateFormat = "2006-01-02"
+
+// IsBuiltinType returns true if the type is a built-in property type
+func IsBuiltinType(t string) bool {
+	switch t {
+	case PropertyTypeString, PropertyTypeDate, PropertyTypeInteger, PropertyTypeBoolean, PropertyTypeEnum:
+		return true
+	}
+	return false
+}
+
+// GetDateFormat returns the date format for a property, defaulting to ISO 8601
+func (p *PropertyDef) GetDateFormat() string {
+	if p.Format != "" {
+		return p.Format
+	}
+	return DefaultDateFormat
+}
+
+// RelationDef defines a relation type in the metamodel
+type RelationDef struct {
+	Label       string      `yaml:"label"`
+	Description string      `yaml:"description,omitempty"`
+	From        []string    `yaml:"from"`
+	To          []string    `yaml:"to"`
+	Inverse     *InverseDef `yaml:"inverse,omitempty"`
+	Symmetric   bool        `yaml:"symmetric,omitempty"`
+	MinOutgoing *int        `yaml:"min_outgoing,omitempty"`
+	MaxOutgoing *int        `yaml:"max_outgoing,omitempty"`
+	MinIncoming *int        `yaml:"min_incoming,omitempty"`
+	MaxIncoming *int        `yaml:"max_incoming,omitempty"`
+}
+
+// InverseDef defines the inverse of a relation.
+// Can be unmarshaled from either a simple string (inverse identifier only)
+// or an object with id and label fields.
+type InverseDef struct {
+	// ID is the identifier for the inverse relation (e.g., "addressedBy")
+	ID string `yaml:"id,omitempty"`
+
+	// Label is the display label for the inverse relation (e.g., "addressed by")
+	// If not specified, it's auto-derived from ID by converting camelCase to space-separated.
+	Label string `yaml:"label,omitempty"`
+}
+
+// GetID returns the inverse relation identifier
+func (i *InverseDef) GetID() string {
+	return i.ID
+}
+
+// GetLabel returns the display label, auto-deriving from ID if not specified
+func (i *InverseDef) GetLabel() string {
+	if i.Label != "" {
+		return i.Label
+	}
+	// Auto-derive from ID by converting camelCase to space-separated lowercase
+	if i.ID == "" {
+		return ""
+	}
+	return camelCaseToSpaced(i.ID)
+}
+
+// camelCaseToSpaced converts camelCase/PascalCase to space-separated lowercase.
+// Examples: "addressedBy" → "addressed by", "implementedBy" → "implemented by"
+func camelCaseToSpaced(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	const asciiCaseOffset = 'a' - 'A'   // 32, but as a named constant
+	result := make([]byte, 0, len(s)+4) // Extra space for inserted spaces
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		isUpper := c >= 'A' && c <= 'Z'
+
+		switch {
+		case i > 0 && isUpper:
+			// Insert space before uppercase letters (except at start) and convert to lowercase
+			result = append(result, ' ', c+asciiCaseOffset)
+		case isUpper:
+			// First character - just convert to lowercase
+			result = append(result, c+asciiCaseOffset)
+		default:
+			result = append(result, c)
+		}
+	}
+	return string(result)
+}
+
+// UnmarshalYAML allows InverseDef to be unmarshaled from either a string or an object.
+// String form: "addressedBy" (ID only, label auto-derived)
+// Object form: { id: "addressedBy", label: "addressed by" }
+func (i *InverseDef) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// First try to unmarshal as a string (simple form)
+	var simpleForm string
+	if err := unmarshal(&simpleForm); err == nil {
+		i.ID = simpleForm
+		// Label will be auto-derived by GetLabel()
+		return nil
+	}
+
+	// Try to unmarshal as an object (expanded form)
+	type inverseDefAlias InverseDef // Alias to avoid infinite recursion
+	var objectForm inverseDefAlias
+	if err := unmarshal(&objectForm); err != nil {
+		return err
+	}
+
+	*i = InverseDef(objectForm)
+	return nil
+}

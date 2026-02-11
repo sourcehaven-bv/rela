@@ -1,0 +1,66 @@
+name: Coverage Ratchet
+
+# After a PR merges, regenerate the coverage baseline and open a PR if it improved.
+on:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-baseline:
+    name: Update Coverage Baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests with coverage
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Install go-test-coverage
+        run: go install github.com/vladopajic/go-test-coverage/v2@latest
+
+      - name: Generate new coverage baseline
+        run: go-test-coverage --config=.testcoverage.yml --breakdown-file-name=.coverage-baseline
+
+      - name: Create PR for updated baseline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet .coverage-baseline; then
+            echo "No coverage baseline changes"
+            exit 0
+          fi
+
+          BRANCH="chore/coverage-baseline-update"
+          BASE="${{ github.ref_name }}"
+
+          # Clean up any existing branch/PR
+          git push origin --delete "$BRANCH" 2>/dev/null || true
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add .coverage-baseline
+          git commit -m "chore: update coverage baseline"
+          git push -u origin "$BRANCH"
+
+          PR_URL=$(gh pr create \
+            --base "$BASE" \
+            --head "$BRANCH" \
+            --title "chore: update coverage baseline" \
+            --body "Auto-generated coverage baseline update after merge to \`$BASE\`.
+
+          Coverage can only ratchet upward — this PR records improved coverage.")
+
+          gh pr merge "$PR_URL" --auto --squash

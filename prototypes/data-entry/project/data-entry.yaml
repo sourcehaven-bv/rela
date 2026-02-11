@@ -1,0 +1,510 @@
+version: "1.0"
+app:
+  name: "Support Tickets"
+  description: "Internal ticket management system"
+# Colors for enum/custom type values from the metamodel.
+# Referenced by type name — applies everywhere that value appears.
+styles:
+  ticket_status:
+    open: blue
+    in-progress: purple
+    resolved: green
+    closed: gray
+  priority:
+    critical: red
+    high: orange
+    medium: yellow
+    low: green
+forms:
+  create_ticket:
+    entity_type: ticket
+    title: "New Ticket"
+    description: "Submit a new support ticket"
+    body: true
+    fields:
+      - property: title
+        placeholder: "Brief summary of the issue..."
+        help: "A short, descriptive title for the ticket"
+      - property: description
+        widget: textarea
+        help: "Detailed description of the issue"
+      - property: priority
+      - property: reporter
+        label: "Reported by"
+        placeholder: "your.name"
+      - property: assignee
+        label: "Assign to"
+        placeholder: "assignee.name"
+      - property: due_date
+      - property: estimated_hours
+      - property: status
+        hidden: true
+    relations:
+      - relation: belongs-to
+        required: true
+        allow_create: true
+        create_form: create_category
+      - relation: tagged
+        widget: multi-select
+        allow_create: true
+        create_form: create_label
+  edit_ticket:
+    entity_type: ticket
+    title: "Edit Ticket"
+    mode: edit
+    body: true
+    fields:
+      - property: title
+      - property: description
+        widget: textarea
+      - property: priority
+      - property: status
+        transitions:
+          open: [in-progress, closed]
+          in-progress: [open, resolved]
+          resolved: [closed, in-progress]
+          closed: [open]
+      - property: assignee
+        label: "Assign to"
+      - property: reporter
+        label: "Reported by"
+      - property: due_date
+      - property: estimated_hours
+      - property: is_blocked
+    relations:
+      - relation: belongs-to
+        required: true
+        allow_create: true
+        create_form: create_category
+      - relation: tagged
+        widget: multi-select
+        allow_create: true
+        create_form: create_label
+      - relation: blocks
+        direction: outgoing
+        widget: search
+        properties:
+          - property: reason
+            label: "Block Reason"
+
+    side_panel:
+      traverse:
+        - from: entry
+          follow_incoming: blocks
+          collect_as: blocked_by
+        - from: entry
+          follow: blocks
+          collect_as: blocks
+        - from: entry
+          follow: tagged
+          collect_as: labels
+      sections:
+        - heading: "Blocked By"
+          source: blocked_by
+          display: cards
+          fields:
+            - property: status
+            - property: priority
+            - property: assignee
+          empty_message: "Not blocked"
+        - heading: "Blocks"
+          source: blocks
+          display: cards
+          fields:
+            - property: status
+            - property: priority
+          empty_message: "Does not block any tickets"
+        - heading: "Labels"
+          source: labels
+          display: list
+          fields:
+            - property: name
+          empty_message: "No labels"
+        - heading: "Details"
+          source: entry
+          display: properties
+          fields:
+            - property: reporter
+            - property: due_date
+            - property: estimated_hours
+              label: "Est. Hours"
+
+  create_category:
+    entity_type: category
+    title: "New Category"
+    description: "Create a ticket category"
+    fields:
+      - property: name
+        label: "Category Name"
+        placeholder: "e.g., Backend, Frontend, DevOps"
+      - property: description
+        widget: textarea
+      - property: color
+        placeholder: "#3b82f6"
+        help: "Hex color code for visual identification"
+  create_label:
+    entity_type: label
+    title: "New Label"
+    description: "Create a ticket label"
+    fields:
+      - property: name
+        label: "Label Name"
+        placeholder: "e.g., bug, enhancement, urgent"
+lists:
+  all_tickets:
+    entity_type: ticket
+    title: "All Tickets"
+    description: "View all tickets"
+    columns:
+      - property: title
+        sortable: true
+        link: true
+      - property: status
+        sortable: true
+      - property: priority
+        sortable: true
+      - property: assignee
+        sortable: true
+      - property: reporter
+        sortable: true
+      - property: due_date
+        label: "Due"
+        sortable: true
+    sort:
+      - property: priority
+        direction: asc
+    filter_controls:
+      - property: status
+        widget: multi-select
+      - property: priority
+        widget: select
+      - property: assignee
+        widget: search
+    create_form: create_ticket
+    edit_form: edit_ticket
+    detail_view: ticket_report
+    page_size: 25
+  open_tickets:
+    entity_type: ticket
+    title: "Open Tickets"
+    columns:
+      - property: title
+        sortable: true
+        link: true
+      - property: priority
+        sortable: true
+      - property: assignee
+        sortable: true
+      - property: due_date
+        label: "Due"
+        sortable: true
+    filters:
+      - property: status
+        operator: "="
+        value: open
+    sort:
+      - property: priority
+        direction: asc
+    create_form: create_ticket
+    edit_form: edit_ticket
+    page_size: 25
+  my_tickets:
+    entity_type: ticket
+    title: "My Tickets"
+    columns:
+      - property: title
+        link: true
+        sortable: true
+      - property: status
+        sortable: true
+      - property: priority
+        sortable: true
+      - property: due_date
+        label: "Due"
+        sortable: true
+    filters:
+      - property: assignee
+        operator: "="
+        value: "$USER"
+    sort:
+      - property: due_date
+        direction: asc
+    create_form: create_ticket
+    edit_form: edit_ticket
+    page_size: 25
+  categories:
+    entity_type: category
+    title: "Categories"
+    columns:
+      - property: name
+        sortable: true
+        link: true
+      - property: description
+    sort:
+      - property: name
+        direction: asc
+    create_form: create_category
+    detail_view: category_report
+    page_size: 50
+# ──────────────────────────────────────────────
+# Views: read-only detail views with graph traversal
+# ──────────────────────────────────────────────
+views:
+  category_report:
+    title: "Category Report"
+    entry:
+      type: category
+    traverse:
+      # Pull in all tickets that belong to this category (incoming relation)
+      - from: entry
+        follow_incoming: belongs-to
+        collect_as: tickets
+      # From those tickets, find what they block
+      - from: tickets
+        follow: blocks
+        collect_as: blocked_tickets
+      # From those tickets, find their labels
+      - from: tickets
+        follow: tagged
+        collect_as: labels
+    sections:
+      # Category properties
+      - heading: "Category"
+        source: entry
+        display: properties
+        fields:
+          - property: name
+          - property: description
+      # All tickets as full content cards
+      - heading: "Tickets"
+        source: tickets
+        display: content
+        fields:
+          - property: status
+          - property: priority
+          - property: assignee
+          - property: due_date
+            label: "Due"
+        empty_message: "No tickets in this category"
+      # Blocked tickets as a table
+      - heading: "Blocked Tickets"
+        source: blocked_tickets
+        display: table
+        columns:
+          - property: title
+            link: true
+          - property: status
+          - property: priority
+          - property: assignee
+        empty_message: "No blocking relationships"
+      # Labels used by tickets in this category
+      - heading: "Labels Used"
+        source: labels
+        display: list
+        fields:
+          - property: name
+        empty_message: "No labels applied"
+  ticket_report:
+    title: "Ticket Report"
+    entry:
+      type: ticket
+    traverse:
+      # What tickets does this block?
+      - from: entry
+        follow: blocks
+        collect_as: blocks
+      # What tickets block this one?
+      - from: entry
+        follow_incoming: blocks
+        collect_as: blocked_by
+      # Labels on this ticket
+      - from: entry
+        follow: tagged
+        collect_as: labels
+    sections:
+      # Ticket properties
+      - heading: "Ticket"
+        source: entry
+        display: properties
+        fields:
+          - property: status
+          - property: priority
+          - property: assignee
+          - property: reporter
+          - property: due_date
+          - property: estimated_hours
+      # Ticket body (markdown content)
+      - source: entry
+        display: content
+      # What this ticket blocks
+      - heading: "Blocks"
+        source: blocks
+        display: content
+        fields:
+          - property: status
+          - property: priority
+          - property: assignee
+        empty_message: "This ticket does not block any others"
+      # What blocks this ticket
+      - heading: "Blocked By"
+        source: blocked_by
+        display: cards
+        fields:
+          - property: status
+          - property: priority
+          - property: assignee
+        empty_message: "This ticket is not blocked"
+      # Labels
+      - heading: "Labels"
+        source: labels
+        display: list
+        fields:
+          - property: name
+        empty_message: "No labels"
+# ──────────────────────────────────────────────
+# Dashboard: query-driven overview cards
+# ──────────────────────────────────────────────
+dashboard:
+  title: "Dashboard"
+  description: "Ticket overview at a glance"
+  cards:
+    - title: "Open Tickets"
+      query: "type:ticket status:open"
+      display: count
+    - title: "In Progress"
+      query: "type:ticket status:in-progress"
+      display: count
+    - title: "By Status"
+      query: "type:ticket"
+      display: breakdown
+      group_by: status
+    - title: "By Priority"
+      query: "type:ticket"
+      display: breakdown
+      group_by: priority
+    - title: "Critical Issues"
+      query: "type:ticket prop:priority=critical"
+      display: table
+      columns:
+        - property: title
+          link: true
+        - property: status
+        - property: assignee
+      sort:
+        - property: status
+          direction: asc
+      limit: 10
+    - title: "Recently Blocked"
+      query: "type:ticket prop:is_blocked=true"
+      display: table
+      columns:
+        - property: title
+          link: true
+        - property: priority
+        - property: assignee
+      limit: 5
+# ──────────────────────────────────────────────
+# Commands: executable scripts triggered from the UI
+# ──────────────────────────────────────────────
+commands:
+  export-json:
+    label: "Export JSON"
+    script: |
+      echo '::rela::{"type":"message","text":"Exporting entity data..."}'
+      cat
+      echo '::rela::{"type":"message","text":"Done!"}'
+    context: entity
+    available_on:
+      entity_types: [ticket]
+  ticket-summary:
+    label: "View Summary"
+    script: |
+      echo "::rela::{\"type\":\"message\",\"text\":\"Ticket: $RELA_ENTITY_ID\"}"
+      echo "::rela::{\"type\":\"message\",\"text\":\"View: $RELA_VIEW_ID\"}"
+    context: view
+    available_on:
+      views: [ticket_report]
+  generate-pdf:
+    label: "Generate PDF"
+    script: |
+      echo '::rela::{"type":"message","text":"Generating PDF report..."}'
+      PDF="/tmp/rela-ticket-${RELA_ENTITY_ID:-report}.pdf"
+      printf '%%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 44>>stream\nBT /F1 24 Tf 100 700 Td (Hello from rela!) Tj ET\nendstream\nendobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000266 00000 n \n0000000360 00000 n \ntrailer<</Size 6/Root 1 0 R>>\nstartxref\n430\n%%%%EOF\n' > "$PDF"
+      echo "::rela::{\"type\":\"message\",\"text\":\"PDF saved to $PDF\"}"
+      echo "::rela::{\"type\":\"file\",\"path\":\"$PDF\",\"label\":\"Ticket Report PDF\",\"action\":\"open\"}"
+    context: entity
+    available_on:
+      entity_types: [ticket]
+  project-info:
+    label: "Project Info"
+    script: |
+      echo "::rela::{\"type\":\"message\",\"text\":\"Project root: $RELA_PROJECT_ROOT\"}"
+    context: global
+    available_on:
+      dashboard: true
+# ──────────────────────────────────────────────
+# Kanban boards: visual card-based views
+# ──────────────────────────────────────────────
+kanbans:
+  ticket_board:
+    entity_type: ticket
+    title: "Ticket Board"
+    column_property: status
+    columns:
+      - value: open
+        label: "📥 To Do"
+      - value: in-progress
+        label: "🔧 In Progress"
+      - value: resolved
+        label: "✅ Done"
+    card:
+      title: title
+      fields:
+        - property: priority
+        - property: assignee
+    edit_form: edit_ticket
+    create_form: create_ticket
+    filter_controls:
+      - property: priority
+        widget: select
+  priority_board:
+    entity_type: ticket
+    title: "Priority Board"
+    column_property: priority
+    swimlane_property: status
+    swimlanes:
+      - value: open
+      - value: in-progress
+      - value: resolved
+    card:
+      title: title
+      fields:
+        - property: assignee
+    edit_form: edit_ticket
+    create_form: create_ticket
+    filters:
+      - property: status
+        operator: "!="
+        value: closed
+navigation:
+  - label: "Dashboard"
+    dashboard: true
+  - group: "Tickets"
+    items:
+      - label: "My Tickets"
+        list: my_tickets
+      - label: "Open Tickets"
+        list: open_tickets
+      - label: "All Tickets"
+        list: all_tickets
+      - label: "Ticket Board"
+        kanban: ticket_board
+      - label: "Priority Board"
+        kanban: priority_board
+  - group: "Reference Data"
+    collapsed: true
+    items:
+      - label: "Categories"
+        list: categories
+  - label: "Graph Explorer"
+    graph: true

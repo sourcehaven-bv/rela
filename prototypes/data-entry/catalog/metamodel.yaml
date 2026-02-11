@@ -1,0 +1,77 @@
+version: "1.0"
+
+types:
+  availability:
+    values: [in-stock, low-stock, out-of-stock, discontinued]
+    default: in-stock
+
+  condition:
+    values: [new, refurbished, used]
+    default: new
+
+entities:
+  product:
+    label: Product
+    id_prefix: "PRD-"
+    properties:
+      name:
+        type: string
+        required: true
+      description:
+        type: string
+      sku:
+        type: string
+        required: true
+      price:
+        type: integer
+        description: "Price in cents"
+      availability:
+        type: availability
+        required: true
+      condition:
+        type: condition
+      weight_grams:
+        type: integer
+      release_date:
+        type: date
+      featured:
+        type: boolean
+
+  brand:
+    label: Brand
+    id_type: manual
+    properties:
+      name:
+        type: string
+        required: true
+      website:
+        type: string
+      country:
+        type: string
+
+  tag:
+    label: Tag
+    id_type: manual
+    properties:
+      name:
+        type: string
+        required: true
+
+relations:
+  made-by:
+    label: made by
+    from: [product]
+    to: [brand]
+    inverse: produces
+
+  tagged:
+    label: tagged
+    from: [product]
+    to: [tag]
+    inverse: appliedTo
+
+  accessory-for:
+    label: accessory for
+    from: [product]
+    to: [product]
+    inverse: hasAccessory
