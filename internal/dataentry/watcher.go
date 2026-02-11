@@ -175,7 +175,7 @@ func (a *App) reload(events []model.ChangeEvent) {
 	// Rebuild styles and templates if config or metamodel changed
 	if needConfigReload || needMetamodelReload {
 		a.styleMap, a.styledTypes = buildStyleMap(a.Cfg, a.meta)
-		tmpl, err := template.New("").Funcs(templateFuncs(a.styleMap, a.styledTypes)).Parse(allTemplates())
+		tmpl, err := template.New("").Funcs(templateFuncs(a.styleMap, a.styledTypes, a.repo.Paths().Root)).Parse(allTemplates())
 		if err != nil {
 			log.Printf("Template re-parse error: %v", err)
 		} else {

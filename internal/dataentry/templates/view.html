@@ -126,6 +126,30 @@
       <div class="detail-label">{{ .Label }}</div>
       <div class="detail-value">
         {{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+        {{ else if isFileType .PropType }}{{ if .Value }}{{ if .FileValues }}
+          <div class="file-display">
+            {{ range .FileValues }}
+            <a href="/{{ . }}" target="_blank" class="file-display-item">
+              {{ if isImagePath . }}<img src="/{{ . }}" class="file-display-thumb" alt="">
+              {{ else }}<div class="file-display-icon">{{ fileIcon . }}</div>{{ end }}
+              <div class="file-display-info">
+                <div class="file-display-name">{{ fileDisplayName . }}</div>
+              </div>
+            </a>
+            {{ end }}
+          </div>
+        {{ else if isImagePath .Value }}
+          <a href="/{{ .Value }}" target="_blank" class="file-image-link">
+            <img src="/{{ .Value }}" class="file-image-preview" style="max-height:200px;" alt="">
+          </a>
+        {{ else }}
+          <a href="/{{ .Value }}" target="_blank" class="file-display-item">
+            <div class="file-display-icon">{{ fileIcon .Value }}</div>
+            <div class="file-display-info">
+              <div class="file-display-name">{{ fileDisplayName .Value }}</div>
+            </div>
+          </a>
+        {{ end }}{{ else }}&mdash;{{ end }}
         {{ else }}{{ if .Value }}{{ formatValue .Value }}{{ else }}&mdash;{{ end }}{{ end }}
       </div>
       {{ end }}

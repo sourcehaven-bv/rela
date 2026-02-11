@@ -2005,3 +2005,176 @@ function closeSidePanel() {
     });
   });
 })();
+
+// File upload and asset picker functions
+(function() {
+  var currentFileProperty = null;
+  var currentFileMultiple = false;
+
+  window.uploadFile = function(property, multiple) {
+    currentFileProperty = property;
+    currentFileMultiple = multiple;
+    var input = document.getElementById('file-upload-input');
+    input.multiple = multiple;
+    input.click();
+  };
+
+  window.handleFileUpload = function(input) {
+    if (!input.files || input.files.length === 0) return;
+
+    var files = Array.from(input.files);
+    var property = currentFileProperty;
+    var multiple = currentFileMultiple;
+
+    files.forEach(function(file) {
+      var formData = new FormData();
+      formData.append('file', file);
+
+      fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      })
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+        if (data.success) {
+          addFileItem(property, data.path, data.displayName, multiple);
+        } else {
+          alert('Upload failed: ' + (data.error || 'Unknown error'));
+        }
+      })
+      .catch(function(err) {
+        alert('Upload failed: ' + err.message);
+      });
+    });
+
+    input.value = '';
+  };
+
+  window.openAssetPicker = function(property, multiple) {
+    currentFileProperty = property;
+    currentFileMultiple = multiple;
+    var modal = document.getElementById('asset-picker-modal');
+    var grid = document.getElementById('asset-picker-grid');
+    var search = document.getElementById('asset-picker-search');
+
+    search.value = '';
+    grid.innerHTML = '<div class="loading">Loading assets...</div>';
+    modal.classList.add('active');
+
+    fetch('/api/asset/list')
+      .then(function(response) { return response.json(); })
+      .then(function(assets) {
+        renderAssetGrid(assets, property, multiple);
+      })
+      .catch(function(err) {
+        grid.innerHTML = '<div class="error">Failed to load assets: ' + err.message + '</div>';
+      });
+  };
+
+  window.closeAssetPicker = function() {
+    var modal = document.getElementById('asset-picker-modal');
+    modal.classList.remove('active');
+    currentFileProperty = null;
+    currentFileMultiple = false;
+  };
+
+  window.filterAssets = function(query) {
+    var items = document.querySelectorAll('.asset-picker-item');
+    var lowerQuery = query.toLowerCase();
+    items.forEach(function(item) {
+      var name = item.dataset.name.toLowerCase();
+      item.style.display = name.includes(lowerQuery) ? '' : 'none';
+    });
+  };
+
+  window.selectAsset = function(path, displayName) {
+    addFileItem(currentFileProperty, path, displayName, currentFileMultiple);
+    if (!currentFileMultiple) {
+      closeAssetPicker();
+    }
+  };
+
+  window.addFileItem = function(property, path, displayName, multiple) {
+    var container = document.querySelector('.file-field[data-property="' + property + '"]');
+    if (!container) return;
+
+    var list = container.querySelector('.file-list');
+
+    // For single file, clear existing
+    if (!multiple) {
+      list.innerHTML = '';
+    }
+
+    // Check for duplicates
+    var existing = list.querySelector('input[value="' + path + '"]');
+    if (existing) return;
+
+    var item = document.createElement('div');
+    item.className = 'file-item';
+    item.innerHTML =
+      '<input type="hidden" name="' + property + '" value="' + path + '">' +
+      '<a href="/attachments/' + path + '" target="_blank" class="file-link">' + escapeHtml(displayName) + '</a>' +
+      '<button type="button" class="file-remove" onclick="removeFile(this)" title="Remove">&times;</button>';
+    list.appendChild(item);
+  };
+
+  window.removeFile = function(btn) {
+    var item = btn.closest('.file-item');
+    if (item) item.remove();
+  };
+
+  function renderAssetGrid(assets, property, multiple) {
+    var grid = document.getElementById('asset-picker-grid');
+    if (assets.length === 0) {
+      grid.innerHTML = '<div class="empty">No assets found. Upload a file first.</div>';
+      return;
+    }
+
+    var html = assets.map(function(asset) {
+      var preview = asset.isImage
+        ? '<img src="/attachments/' + asset.path + '" alt="" class="asset-thumb">'
+        : '<div class="asset-icon">' + getFileIcon(asset.contentType) + '</div>';
+
+      return '<div class="asset-picker-item" data-name="' + escapeHtml(asset.displayName) + '" onclick="selectAsset(\'' + asset.path + '\', \'' + escapeHtml(asset.displayName).replace(/'/g, "\\'") + '\')">' +
+        preview +
+        '<div class="asset-name">' + escapeHtml(asset.displayName) + '</div>' +
+        '<div class="asset-size">' + asset.size + '</div>' +
+      '</div>';
+    }).join('');
+
+    grid.innerHTML = html;
+  }
+
+  function getFileIcon(contentType) {
+    if (contentType.startsWith('image/')) return '🖼';
+    if (contentType.startsWith('video/')) return '🎬';
+    if (contentType.startsWith('audio/')) return '🎵';
+    if (contentType.includes('pdf')) return '📄';
+    if (contentType.includes('zip') || contentType.includes('tar') || contentType.includes('gzip')) return '📦';
+    if (contentType.includes('text/')) return '📝';
+    return '📎';
+  }
+
+  function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // Close modal on escape key
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      var modal = document.getElementById('asset-picker-modal');
+      if (modal && modal.classList.contains('active')) {
+        closeAssetPicker();
+      }
+    }
+  });
+
+  // Close modal on backdrop click
+  document.addEventListener('click', function(e) {
+    if (e.target.id === 'asset-picker-modal') {
+      closeAssetPicker();
+    }
+  });
+})();

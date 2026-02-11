@@ -22,7 +22,7 @@ func newGraphTestApp(t *testing.T) *App {
 	g.AddEdge(model.NewRelation("TKT-001", "depends_on", "TKT-002"))
 
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
+	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes, "")).Parse(allTemplates())
 	if err != nil {
 		t.Fatalf("parsing templates: %v", err)
 	}

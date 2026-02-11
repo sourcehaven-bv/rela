@@ -9,9 +9,10 @@ import (
 
 // SectionFieldData holds a single resolved field for template rendering.
 type SectionFieldData struct {
-	Label    string
-	Value    string
-	PropType string
+	Label      string
+	Value      string
+	PropType   string
+	FileValues []string // For file type properties with multiple values
 }
 
 // SectionEntityData holds a resolved entity for template rendering.
@@ -114,8 +115,18 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 			case "properties":
 				for _, f := range sec.Fields {
 					val := ""
+					var fileValues []string
 					if v := e.Properties[f.Property]; v != nil {
 						val = fmt.Sprintf("%v", v)
+						// Check if this is a file type with multiple values
+						switch arr := v.(type) {
+						case []interface{}:
+							for _, item := range arr {
+								fileValues = append(fileValues, fmt.Sprintf("%v", item))
+							}
+						case []string:
+							fileValues = arr
+						}
 					}
 					propType := ""
 					if entDef != nil {
@@ -128,7 +139,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 						label = titleCase(f.Property)
 					}
 					sd.Fields = append(sd.Fields, SectionFieldData{
-						Label: label, Value: val, PropType: propType,
+						Label: label, Value: val, PropType: propType, FileValues: fileValues,
 					})
 				}
 			case "content":

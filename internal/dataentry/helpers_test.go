@@ -688,7 +688,7 @@ func TestTemplateFuncs(t *testing.T) {
 	}
 	styledTypes := map[string]bool{"status_type": true}
 
-	funcs := templateFuncs(styleMap, styledTypes)
+	funcs := templateFuncs(styleMap, styledTypes, "")
 
 	t.Run("join", func(t *testing.T) {
 		fn := funcs["join"].(func([]string, string) string)

@@ -7,6 +7,8 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
 
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -99,6 +102,8 @@ func resolveWidget(explicit string, prop metamodel.PropertyDef, meta *metamodel.
 		return "checkbox"
 	case "enum":
 		return "select"
+	case "file":
+		return "file"
 	default:
 		if _, ok := meta.Types[prop.Type]; ok {
 			return "select"
@@ -353,7 +358,7 @@ func (a *App) executeQuery(query string) []*model.Entity {
 }
 
 // templateFuncs returns the template.FuncMap used by all HTML templates.
-func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string]bool) template.FuncMap {
+func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string]bool, projectRoot string) template.FuncMap {
 	return template.FuncMap{
 		"join": strings.Join,
 		"json": func(v interface{}) string {
@@ -394,7 +399,16 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 		"add":            func(a, b int) int { return a + b },
 		"boolTrue":       func(b *bool) bool { return b != nil && *b },
 		"renderMarkdown": simpleMarkdownToHTML,
-		"checkboxStats":  checkboxStats,
+		"isImagePath":    isImagePath,
+		"fileIcon":       fileIcon,
+		"fileDisplayName": func(path string) string {
+			return fileDisplayName(path, projectRoot)
+		},
+		"isFileType": func(propType string) bool {
+			return propType == "file"
+		},
+		"toFileList":    toFileList,
+		"checkboxStats": checkboxStats,
 		"map": func(pairs ...interface{}) map[string]interface{} {
 			m := make(map[string]interface{}, len(pairs)/2)
 			for i := 0; i+1 < len(pairs); i += 2 {
@@ -424,6 +438,98 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 			return keys
 		},
 	}
+}
+
+// isImagePath returns true if the path looks like an image file.
+func isImagePath(path string) bool {
+	lower := strings.ToLower(path)
+	return strings.HasSuffix(lower, ".jpg") ||
+		strings.HasSuffix(lower, ".jpeg") ||
+		strings.HasSuffix(lower, ".png") ||
+		strings.HasSuffix(lower, ".gif") ||
+		strings.HasSuffix(lower, ".webp") ||
+		strings.HasSuffix(lower, ".svg")
+}
+
+// toFileList converts a property value (string, []string, or []interface{}) to a []string.
+// Returns nil if the value is empty or not a valid file property value.
+func toFileList(val interface{}) []string {
+	if val == nil {
+		return nil
+	}
+	switch v := val.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	case []string:
+		if len(v) == 0 {
+			return nil
+		}
+		return v
+	case []interface{}:
+		if len(v) == 0 {
+			return nil
+		}
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				result = append(result, s)
+			}
+		}
+		if len(result) == 0 {
+			return nil
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+// fileIcon returns an emoji icon for a file based on its extension.
+func fileIcon(path string) string {
+	lower := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lower, ".pdf"):
+		return "📄"
+	case strings.HasSuffix(lower, ".doc") || strings.HasSuffix(lower, ".docx"):
+		return "📝"
+	case strings.HasSuffix(lower, ".xls") || strings.HasSuffix(lower, ".xlsx"):
+		return "📊"
+	case strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar") || strings.HasSuffix(lower, ".gz"):
+		return "📦"
+	case strings.HasSuffix(lower, ".txt") || strings.HasSuffix(lower, ".md"):
+		return "📃"
+	case strings.HasSuffix(lower, ".mp4") || strings.HasSuffix(lower, ".mov") || strings.HasSuffix(lower, ".avi"):
+		return "🎬"
+	case strings.HasSuffix(lower, ".mp3") || strings.HasSuffix(lower, ".wav") || strings.HasSuffix(lower, ".ogg"):
+		return "🎵"
+	default:
+		return "📎"
+	}
+}
+
+// fileDisplayName returns the display name for an attachment file.
+// It tries to read the original filename from the metadata YAML sidecar.
+// Falls back to the filename from the path if metadata is not available.
+func fileDisplayName(path, projectRoot string) string {
+	if projectRoot != "" {
+		// Try to read metadata from sidecar file
+		absPath := filepath.Join(projectRoot, path)
+		metaPath := attachment.MetadataPath(absPath)
+		if data, err := os.ReadFile(metaPath); err == nil {
+			if meta, err := attachment.UnmarshalMetadata(data); err == nil && meta.OriginalName != "" {
+				return meta.OriginalName
+			}
+		}
+	}
+
+	// Fallback: return just the filename from the path
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
 }
 
 // resolveRelationColumnValue returns a comma-separated string of display titles

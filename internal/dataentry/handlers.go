@@ -340,6 +340,8 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		Required    bool
 		Default     string
 		Value       string
+		FileValues  []string // For file type with multiple: true
+		Multiple    bool     // For file type: allow multiple files
 		Hidden      bool
 		Widget      string
 		InputType   string
@@ -384,11 +386,26 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			rf.Required = prop.Required
 		}
 		rf.InputType = widgetToInputType(rf.Widget)
+		rf.Multiple = prop.Multiple
 
 		if entity != nil {
 			val := entity.Properties[f.Property]
 			if val != nil {
-				rf.Value = fmt.Sprintf("%v", val)
+				// Handle file type with multiple values
+				if prop.Type == metamodel.PropertyTypeFile && prop.Multiple {
+					switch v := val.(type) {
+					case []interface{}:
+						for _, item := range v {
+							rf.FileValues = append(rf.FileValues, fmt.Sprintf("%v", item))
+						}
+					case []string:
+						rf.FileValues = v
+					default:
+						rf.Value = fmt.Sprintf("%v", val)
+					}
+				} else {
+					rf.Value = fmt.Sprintf("%v", val)
+				}
 			}
 		} else {
 			rf.Value = rf.Default
@@ -1330,11 +1347,23 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	entDef, _ := a.meta.GetEntityDef(form.EntityType)
 	for _, f := range form.Fields {
+		prop := entDef.Properties[f.Property]
+
+		// Handle file properties with multiple: true
+		if prop.Type == metamodel.PropertyTypeFile && prop.Multiple {
+			values := r.Form[f.Property]
+			if len(values) > 0 {
+				entity.Properties[f.Property] = values
+			} else {
+				delete(entity.Properties, f.Property)
+			}
+			continue
+		}
+
 		val := r.FormValue(f.Property)
 		if val != "" {
 			entity.Properties[f.Property] = val
 		} else if entDef != nil {
-			prop := entDef.Properties[f.Property]
 			widget := resolveWidget(f.Widget, prop, a.meta)
 			if widget == "checkbox" {
 				entity.Properties[f.Property] = "false"

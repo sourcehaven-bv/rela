@@ -565,7 +565,7 @@ commands:
 	})
 
 	t.Run("boolTrue template func", func(t *testing.T) {
-		funcs := templateFuncs(nil, nil)
+		funcs := templateFuncs(nil, nil, "")
 		fn := funcs["boolTrue"].(func(*bool) bool)
 		trueVal := true
 		falseVal := false

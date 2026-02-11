@@ -87,6 +87,7 @@ type PropertyDef struct {
 	Default     string   `yaml:"default,omitempty"`
 	Description string   `yaml:"description,omitempty"` // Documentation for the property
 	Format      string   `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
+	Multiple    bool     `yaml:"multiple,omitempty"`    // For file type: allow multiple attachments
 }
 
 // Built-in property types
@@ -96,6 +97,7 @@ const (
 	PropertyTypeInteger = "integer"
 	PropertyTypeBoolean = "boolean"
 	PropertyTypeEnum    = "enum"
+	PropertyTypeFile    = "file"
 )
 
 // ID types for entities
@@ -122,7 +124,8 @@ const DefaultDateFormat = "2006-01-02"
 // IsBuiltinType returns true if the type is a built-in property type
 func IsBuiltinType(t string) bool {
 	switch t {
-	case PropertyTypeString, PropertyTypeDate, PropertyTypeInteger, PropertyTypeBoolean, PropertyTypeEnum:
+	case PropertyTypeString, PropertyTypeDate, PropertyTypeInteger,
+		PropertyTypeBoolean, PropertyTypeEnum, PropertyTypeFile:
 		return true
 	}
 	return false

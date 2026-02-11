@@ -215,6 +215,32 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 			}
 		}
 
+	case PropertyTypeFile:
+		// File properties can be a single string (path) or a slice of strings (multiple files)
+		switch v := val.(type) {
+		case string:
+			// Single file path is valid
+		case []string:
+			// Multiple file paths are valid
+		case []interface{}:
+			// YAML may parse as []interface{}, verify all elements are strings
+			for _, item := range v {
+				if _, ok := item.(string); !ok {
+					return &ValidationError{
+						Type:     ValidationErrorInvalidType,
+						Property: propName,
+						Message:  "File paths must be strings",
+					}
+				}
+			}
+		default:
+			return &ValidationError{
+				Type:     ValidationErrorInvalidType,
+				Property: propName,
+				Message:  "Must be a file path or list of file paths",
+			}
+		}
+
 	default:
 		// Custom type (enum defined in types section)
 		if customType, ok := m.Types[propDef.Type]; ok {

@@ -102,6 +102,12 @@ type Store interface {
 	// stop function to shut down the watcher. Implementations may use
 	// filesystem notifications, database triggers, polling, etc.
 	Watch(opts WatchOptions, onChange func(events []model.ChangeEvent)) (stop func(), err error)
+
+	// --- Filesystem Access ---
+
+	// FS returns the underlying filesystem for low-level operations.
+	// Use this sparingly - prefer higher-level methods when possible.
+	FS() storage.FS
 }
 
 // WatchOptions configures optional parameters for Store.Watch.
@@ -136,6 +142,11 @@ func New(fs storage.FS, paths *project.Context) *Repository {
 // Paths returns the project context.
 func (r *Repository) Paths() *project.Context {
 	return r.paths
+}
+
+// FS returns the underlying filesystem.
+func (r *Repository) FS() storage.FS {
+	return r.fs
 }
 
 // --- Entity CRUD ---

@@ -37,6 +37,8 @@ forms:
         placeholder: "assignee.name"
       - property: due_date
       - property: estimated_hours
+      - property: screenshot
+      - property: attachments
       - property: status
         hidden: true
     relations:
@@ -71,6 +73,8 @@ forms:
       - property: due_date
       - property: estimated_hours
       - property: is_blocked
+      - property: screenshot
+      - property: attachments
     relations:
       - relation: belongs-to
         required: true
@@ -86,7 +90,6 @@ forms:
         properties:
           - property: reason
             label: "Block Reason"
-
     side_panel:
       traverse:
         - from: entry
@@ -128,7 +131,6 @@ forms:
             - property: due_date
             - property: estimated_hours
               label: "Est. Hours"
-
   create_category:
     entity_type: category
     title: "New Category"
@@ -333,6 +335,8 @@ views:
           - property: reporter
           - property: due_date
           - property: estimated_hours
+          - property: screenshot
+          - property: attachments
       # Ticket body (markdown content)
       - source: entry
         display: content
@@ -452,9 +456,9 @@ kanbans:
     column_property: status
     columns:
       - value: open
-        label: "📥 To Do"
+        label: "\U0001F4E5 To Do"
       - value: in-progress
-        label: "🔧 In Progress"
+        label: "\U0001F527 In Progress"
       - value: resolved
         label: "✅ Done"
     card:

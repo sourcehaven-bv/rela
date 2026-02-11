@@ -36,6 +36,11 @@ entities:
         type: integer
       is_blocked:
         type: boolean
+      screenshot:
+        type: file
+      attachments:
+        type: file
+        multiple: true
 
   category:
     label: Category

@@ -95,6 +95,45 @@
       </div>
       {{ end }}
     </div>
+    {{ else if eq .Widget "file" }}
+    <div class="form-group{{ if .Error }} has-error{{ end }}"{{ if .Error }} data-has-error="true"{{ end }}>
+      <label for="f-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
+      <div class="file-field" data-property="{{ .Property }}" data-multiple="{{ .Multiple }}">
+        <div class="file-list">
+          {{ if .Multiple }}
+            {{ range .FileValues }}
+            <div class="file-item" data-path="{{ . }}">
+              {{ if isImagePath . }}<img src="/attachments/{{ . }}" class="file-item-thumb" alt="">
+              {{ else }}<div class="file-item-icon">{{ fileIcon . }}</div>{{ end }}
+              <div class="file-item-info">
+                <div class="file-item-name">{{ fileDisplayName . }}</div>
+              </div>
+              <button type="button" class="file-remove" onclick="removeFile(this)" title="Remove">&times;</button>
+              <input type="hidden" name="{{ $.Property }}" value="{{ . }}">
+            </div>
+            {{ end }}
+          {{ else }}
+            {{ if .Value }}
+            <div class="file-item" data-path="{{ .Value }}">
+              {{ if isImagePath .Value }}<img src="/attachments/{{ .Value }}" class="file-item-thumb" alt="">
+              {{ else }}<div class="file-item-icon">{{ fileIcon .Value }}</div>{{ end }}
+              <div class="file-item-info">
+                <div class="file-item-name">{{ fileDisplayName .Value }}</div>
+              </div>
+              <button type="button" class="file-remove" onclick="removeFile(this)" title="Remove">&times;</button>
+              <input type="hidden" name="{{ .Property }}" value="{{ .Value }}">
+            </div>
+            {{ end }}
+          {{ end }}
+        </div>
+        <div class="file-actions">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="uploadFile('{{ .Property }}', {{ .Multiple }})">&#128206; Upload</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="openAssetPicker('{{ .Property }}', {{ .Multiple }})">&#128194; Browse</button>
+        </div>
+      </div>
+      {{ if .Error }}<p class="field-error">{{ .Error }}</p>{{ end }}
+      {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
+    </div>
     {{ else }}
     <div class="form-group{{ if .Error }} has-error{{ end }}"{{ if .Error }} data-has-error="true"{{ end }}>
       <label for="f-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
@@ -346,4 +385,26 @@
     </div>
   </div>
 </div>
+
+<div id="asset-picker-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeAssetPicker()">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <h3>Select File</h3>
+      <button class="modal-close" onclick="closeAssetPicker()">&times;</button>
+    </div>
+    <div class="modal-body" id="asset-picker-body">
+      <div class="asset-picker-search">
+        <input type="text" id="asset-picker-search" placeholder="Search files..." oninput="filterAssets(this.value)">
+      </div>
+      <div class="asset-picker-grid" id="asset-picker-grid">
+        <p style="color:var(--text-muted);">Loading...</p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary btn-sm" onclick="closeAssetPicker()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="file-upload-input" style="display:none;" onchange="handleFileUpload(this)">
 {{- end -}}

@@ -538,3 +538,38 @@ func TestValidatePropertyValue_UnknownType(t *testing.T) {
 		t.Errorf("expected 'nonexistent' in error, got: %v", err)
 	}
 }
+
+func TestValidatePropertyValue_File(t *testing.T) {
+	meta := &Metamodel{}
+	propDef := &PropertyDef{Type: PropertyTypeFile}
+
+	// Valid single file path (string)
+	err := meta.ValidatePropertyValue("screenshot", propDef, "attachments/ab/abcd1234.png")
+	if err != nil {
+		t.Errorf("unexpected error for string file path: %v", err)
+	}
+
+	// Valid multiple files as []string
+	err = meta.ValidatePropertyValue("attachments", propDef, []string{"path1.png", "path2.pdf"})
+	if err != nil {
+		t.Errorf("unexpected error for []string file paths: %v", err)
+	}
+
+	// Valid multiple files as []interface{} (from YAML parsing)
+	err = meta.ValidatePropertyValue("attachments", propDef, []interface{}{"path1.png", "path2.pdf"})
+	if err != nil {
+		t.Errorf("unexpected error for []interface{} file paths: %v", err)
+	}
+
+	// Invalid: []interface{} with non-string element
+	err = meta.ValidatePropertyValue("attachments", propDef, []interface{}{"path1.png", 123})
+	if err == nil {
+		t.Error("expected error for []interface{} with non-string element")
+	}
+
+	// Invalid type (integer)
+	err = meta.ValidatePropertyValue("screenshot", propDef, 123)
+	if err == nil {
+		t.Error("expected error for invalid type")
+	}
+}
