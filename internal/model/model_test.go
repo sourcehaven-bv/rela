@@ -709,6 +709,34 @@ func TestGenerateShortID_CollisionAvoidance(t *testing.T) {
 	}
 }
 
+// TestEntityClone tests the Clone method
+func TestEntityClone(t *testing.T) {
+	original := NewEntity("REQ-001", "requirement")
+	original.SetString("title", "Original Title")
+	original.SetString("status", "accepted")
+	original.Content = "Original content"
+	original.FilePath = "/path/to/file.md"
+
+	clone := original.Clone()
+
+	// Verify clone has same values
+	assertEqual(t, clone.ID, original.ID)
+	assertEqual(t, clone.Type, original.Type)
+	assertEqual(t, clone.Content, original.Content)
+	assertEqual(t, clone.FilePath, original.FilePath)
+	assertEqual(t, clone.GetString("title"), "Original Title")
+	assertEqual(t, clone.GetString("status"), "accepted")
+
+	// Verify clone has independent properties map
+	clone.SetString("title", "Modified Title")
+	assertEqual(t, original.GetString("title"), "Original Title")
+	assertEqual(t, clone.GetString("title"), "Modified Title")
+
+	// Verify modifying original doesn't affect clone
+	original.SetString("status", "rejected")
+	assertEqual(t, clone.GetString("status"), "accepted")
+}
+
 // TestCalculateIDLength tests the ID length calculation
 func TestCalculateIDLength(t *testing.T) {
 	tests := []struct {
