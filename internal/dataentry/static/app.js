@@ -1346,7 +1346,7 @@ function createRelaEditor(element, options) {
   }
   toolbar.push('|', 'guide');
 
-  return new EasyMDE({
+  var editor = new EasyMDE({
     element: element,
     spellChecker: false,
     status: false,
@@ -1354,6 +1354,14 @@ function createRelaEditor(element, options) {
     toolbar: toolbar,
     sideBySideFullscreen: false,
   });
+
+  // Sync CodeMirror content to textarea before form submission
+  // Using 'changes' event (batched) is more efficient than 'change' (per-keystroke)
+  editor.codemirror.on('changes', function() {
+    editor.codemirror.save();
+  });
+
+  return editor;
 }
 
 // Kanban board functions
@@ -1519,7 +1527,6 @@ document.addEventListener('htmx:afterSettle', function(e) {
     _editorInstance = createRelaEditor(el, { fullscreenToggle: toggleFullscreenEditor });
   }
 });
-
 // Inline create modal
 var _inlineRelation = '';
 var _inlineFormID = '';
