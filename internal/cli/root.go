@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
@@ -26,12 +27,13 @@ var (
 	projectPath  string
 
 	// Shared state
-	projectCtx *project.Context
-	meta       *metamodel.Metamodel
-	g          *graph.Graph
-	out        *output.Writer
-	cliFS      storage.FS = storage.NewSafeFS(storage.NewOsFS())
-	repo       repository.Store
+	projectCtx       *project.Context
+	meta             *metamodel.Metamodel
+	g                *graph.Graph
+	out              *output.Writer
+	cliFS            storage.FS = storage.NewSafeFS(storage.NewOsFS())
+	repo             repository.Store
+	automationEngine *automation.Engine
 )
 
 // rootCmd represents the base command
@@ -78,6 +80,9 @@ and maintain semantic relationships between them.`,
 		if err != nil {
 			return fmt.Errorf("failed to load metamodel: %w", err)
 		}
+
+		// Initialize automation engine
+		automationEngine = automation.NewEngineFromMetamodel(meta.Automations)
 
 		// Initialize graph
 		g = graph.New()

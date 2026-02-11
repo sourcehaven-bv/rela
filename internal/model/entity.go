@@ -108,3 +108,19 @@ func NewRelation(from, relationType, to string) *Relation {
 func (r *Relation) Key() string {
 	return r.From + "--" + r.Type + "--" + r.To
 }
+
+// Clone returns a deep copy of the entity.
+func (e *Entity) Clone() *Entity {
+	clone := &Entity{
+		ID:         e.ID,
+		Type:       e.Type,
+		Content:    e.Content,
+		FilePath:   e.FilePath,
+		ModTime:    e.ModTime,
+		Properties: make(map[string]interface{}, len(e.Properties)),
+	}
+	for k, v := range e.Properties {
+		clone.Properties[k] = v
+	}
+	return clone
+}

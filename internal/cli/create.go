@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
@@ -141,6 +142,30 @@ Examples:
 			entity.Content = bodyContent
 		}
 
+		// Process automations (entity created event)
+		var autoResult *automation.Result
+		if automationEngine != nil {
+			autoResult = automationEngine.Process(automation.Event{
+				Type:   automation.EventEntityCreated,
+				Entity: entity,
+			})
+
+			// Apply property changes from automations
+			for prop, val := range autoResult.PropertiesSet {
+				entity.SetString(prop, val)
+			}
+
+			// Show warnings (but continue - CLI doesn't block for warnings)
+			for _, warning := range autoResult.Warnings {
+				out.WriteWarning("Automation: %s", warning)
+			}
+
+			// Show errors (but continue - they're not fatal)
+			for _, errMsg := range autoResult.Errors {
+				out.WriteWarning("Automation error: %s", errMsg)
+			}
+		}
+
 		// Validate entity
 		errs := meta.ValidateEntity(entity)
 		if len(errs) > 0 {
@@ -158,6 +183,20 @@ Examples:
 
 		// Add to graph
 		g.AddNode(entity)
+
+		// Create any relations from automations
+		if autoResult != nil && len(autoResult.RelationsToCreate) > 0 {
+			for _, rel := range autoResult.RelationsToCreate {
+				// Update the From field to use the actual entity ID
+				rel.From = entity.ID
+				if err := repo.WriteRelation(rel); err != nil {
+					out.WriteWarning("Failed to create automation relation: %v", err)
+				} else {
+					g.AddEdge(rel)
+					out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
+				}
+			}
+		}
 
 		// Save cache
 		if err := saveCache(); err != nil {

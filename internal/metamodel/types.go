@@ -11,6 +11,7 @@ type Metamodel struct {
 	Entities    map[string]EntityDef   `yaml:"entities"`
 	Relations   map[string]RelationDef `yaml:"relations"`
 	Validations []ValidationRule       `yaml:"validations,omitempty"`
+	Automations []AutomationDef        `yaml:"automations,omitempty"`
 
 	// Computed lookups (not from YAML)
 	aliasMap map[string]string // alias -> canonical name
@@ -228,5 +229,65 @@ func (i *InverseDef) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 
 	*i = InverseDef(objectForm)
+	return nil
+}
+
+// AutomationDef defines a trigger-action automation rule.
+type AutomationDef struct {
+	Name        string             `yaml:"name"`
+	Description string             `yaml:"description,omitempty"`
+	On          AutomationTrigger  `yaml:"on"`
+	Do          []AutomationAction `yaml:"do,omitempty"`
+	Validate    []AutomationCheck  `yaml:"validate,omitempty"`
+}
+
+// AutomationTrigger specifies conditions that activate an automation.
+type AutomationTrigger struct {
+	Entity          StringOrSlice `yaml:"entity,omitempty"`
+	Property        string        `yaml:"property,omitempty"`
+	Becomes         string        `yaml:"becomes,omitempty"`
+	From            string        `yaml:"from,omitempty"`
+	Created         bool          `yaml:"created,omitempty"`
+	RelationCreated string        `yaml:"relation_created,omitempty"`
+	RelationRemoved string        `yaml:"relation_removed,omitempty"`
+}
+
+// AutomationAction specifies an operation to perform.
+type AutomationAction struct {
+	Set            string                `yaml:"set,omitempty"`
+	Value          string                `yaml:"value,omitempty"`
+	CreateRelation *CreateRelationAction `yaml:"create_relation,omitempty"`
+}
+
+// CreateRelationAction specifies parameters for creating a relation.
+type CreateRelationAction struct {
+	Relation string `yaml:"relation"`
+	To       string `yaml:"to"`
+}
+
+// AutomationCheck specifies a validation condition.
+type AutomationCheck struct {
+	Check    string `yaml:"check"`
+	Severity string `yaml:"severity,omitempty"`
+	Message  string `yaml:"message"`
+}
+
+// StringOrSlice is a YAML type that can be unmarshaled from either a string or []string.
+type StringOrSlice []string
+
+// UnmarshalYAML allows StringOrSlice to be unmarshaled from either a string or a slice.
+func (s *StringOrSlice) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// Try string first
+	var single string
+	if err := unmarshal(&single); err == nil {
+		*s = []string{single}
+		return nil
+	}
+	// Try slice
+	var slice []string
+	if err := unmarshal(&slice); err != nil {
+		return err
+	}
+	*s = slice
 	return nil
 }

@@ -20,6 +20,7 @@ var validTopLevelKeys = map[string]bool{
 	"entities":    true,
 	"relations":   true,
 	"validations": true,
+	"automations": true,
 	"includes":    true,
 }
 
