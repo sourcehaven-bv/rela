@@ -13,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
@@ -47,6 +48,8 @@ type App struct {
 	userDefaults *UserDefaults
 	// gitOps provides git operations when git is enabled.
 	gitOps *git.Ops
+	// automationEngine processes automation rules.
+	automationEngine *automation.Engine
 	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
 	// during live-reload. Handlers acquire RLock; reload acquires Lock.
 	mu sync.RWMutex
@@ -108,14 +111,15 @@ func NewApp(repo repository.Store) (*App, error) {
 		return nil, fmt.Errorf("parsing graph templates: %w", err)
 	}
 	app := &App{
-		Cfg:         &cfg,
-		meta:        meta,
-		g:           g,
-		repo:        repo,
-		tmpl:        tmpl,
-		styleMap:    styleMap,
-		styledTypes: styledTypes,
-		broker:      newEventBroker(),
+		Cfg:              &cfg,
+		meta:             meta,
+		g:                g,
+		repo:             repo,
+		tmpl:             tmpl,
+		styleMap:         styleMap,
+		styledTypes:      styledTypes,
+		automationEngine: automation.NewEngineFromMetamodel(meta.Automations),
+		broker:           newEventBroker(),
 	}
 	app.userDefaults = app.loadUserDefaults()
 

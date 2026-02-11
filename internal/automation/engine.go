@@ -1,0 +1,241 @@
+package automation
+
+import (
+	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/model"
+)
+
+// Engine evaluates automations against entity events.
+type Engine struct {
+	automations []Automation
+	vars        TemplateVars
+}
+
+// NewEngine creates an automation engine with the given automations.
+func NewEngine(automations []Automation) *Engine {
+	return &Engine{
+		automations: automations,
+		vars:        DefaultTemplateVars(),
+	}
+}
+
+// NewEngineFromMetamodel creates an automation engine from metamodel definitions.
+func NewEngineFromMetamodel(defs []metamodel.AutomationDef) *Engine {
+	automations := make([]Automation, len(defs))
+	for i, def := range defs {
+		automations[i] = convertFromMetamodel(def)
+	}
+	return NewEngine(automations)
+}
+
+// convertFromMetamodel converts a metamodel AutomationDef to the internal Automation type.
+func convertFromMetamodel(def metamodel.AutomationDef) Automation {
+	auto := Automation{
+		Name:        def.Name,
+		Description: def.Description,
+		On: Trigger{
+			Entity:          []string(def.On.Entity),
+			Property:        def.On.Property,
+			Becomes:         def.On.Becomes,
+			From:            def.On.From,
+			Created:         def.On.Created,
+			RelationCreated: def.On.RelationCreated,
+			RelationRemoved: def.On.RelationRemoved,
+		},
+		Do:       make([]Action, len(def.Do)),
+		Validate: make([]Validation, len(def.Validate)),
+	}
+
+	for i, a := range def.Do {
+		action := Action{
+			Set:   a.Set,
+			Value: a.Value,
+		}
+		if a.CreateRelation != nil {
+			action.CreateRelation = &CreateRelationAction{
+				Relation: a.CreateRelation.Relation,
+				To:       a.CreateRelation.To,
+			}
+		}
+		auto.Do[i] = action
+	}
+
+	for i, v := range def.Validate {
+		auto.Validate[i] = Validation{
+			Check:    v.Check,
+			Severity: v.Severity,
+			Message:  v.Message,
+		}
+	}
+
+	return auto
+}
+
+// SetTemplateVars sets the template variables for interpolation.
+func (e *Engine) SetTemplateVars(vars TemplateVars) {
+	e.vars = vars
+}
+
+// Process evaluates all automations against an event and returns the result.
+func (e *Engine) Process(event Event) *Result {
+	result := &Result{
+		PropertiesSet:     make(map[string]string),
+		RelationsToCreate: make([]*model.Relation, 0),
+		Warnings:          make([]string, 0),
+		Errors:            make([]string, 0),
+	}
+
+	for _, auto := range e.automations {
+		if !e.matches(auto.On, event) {
+			continue
+		}
+
+		// Execute actions
+		for _, action := range auto.Do {
+			e.executeAction(action, event, result)
+		}
+
+		// Evaluate validations
+		for _, validation := range auto.Validate {
+			e.evaluateValidation(validation, event, result)
+		}
+	}
+
+	return result
+}
+
+// matches checks if a trigger matches an event.
+func (e *Engine) matches(trigger Trigger, event Event) bool {
+	// Check entity type constraint
+	if len(trigger.Entity) > 0 && event.Entity != nil {
+		matched := false
+		for _, entityType := range trigger.Entity {
+			if event.Entity.Type == entityType {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+
+	switch event.Type {
+	case EventEntityCreated:
+		return trigger.Created
+
+	case EventEntityUpdated:
+		if trigger.Property == "" {
+			return false
+		}
+		return e.matchesPropertyChange(trigger, event)
+
+	case EventRelationCreated:
+		if trigger.RelationCreated == "" {
+			return false
+		}
+		return event.Relation != nil && event.Relation.Type == trigger.RelationCreated
+
+	case EventRelationRemoved:
+		if trigger.RelationRemoved == "" {
+			return false
+		}
+		return event.Relation != nil && event.Relation.Type == trigger.RelationRemoved
+	}
+
+	return false
+}
+
+// matchesPropertyChange checks if a property change event matches the trigger.
+func (e *Engine) matchesPropertyChange(trigger Trigger, event Event) bool {
+	if event.Entity == nil {
+		return false
+	}
+
+	newValue := event.Entity.GetString(trigger.Property)
+	oldValue := ""
+	if event.OldEntity != nil {
+		oldValue = event.OldEntity.GetString(trigger.Property)
+	}
+
+	// No change occurred
+	if newValue == oldValue {
+		return false
+	}
+
+	// Check "from" constraint
+	if trigger.From != "" && oldValue != trigger.From {
+		return false
+	}
+
+	// Check "becomes" constraint
+	if trigger.Becomes != "" && newValue != trigger.Becomes {
+		return false
+	}
+
+	return true
+}
+
+// executeAction performs an action and updates the result.
+func (e *Engine) executeAction(action Action, event Event, result *Result) {
+	if action.Set != "" {
+		value := e.interpolate(action.Value, event)
+		result.PropertiesSet[action.Set] = value
+	}
+
+	if action.CreateRelation != nil {
+		targetID := e.interpolate(action.CreateRelation.To, event)
+		if targetID != "" && event.Entity != nil {
+			rel := model.NewRelation(event.Entity.ID, action.CreateRelation.Relation, targetID)
+			result.RelationsToCreate = append(result.RelationsToCreate, rel)
+		}
+	}
+}
+
+// evaluateValidation checks a validation and adds warnings/errors to the result.
+func (e *Engine) evaluateValidation(validation Validation, event Event, result *Result) {
+	if event.Entity == nil {
+		return
+	}
+
+	// Parse the check expression and evaluate against the entity
+	f, err := filter.Parse(validation.Check)
+	if err != nil {
+		result.Warnings = append(result.Warnings, "Invalid validation check: "+validation.Check)
+		return
+	}
+
+	// Use simple value matching (works without full metamodel context)
+	val := event.Entity.Properties[f.Property]
+	if !matchSimple(val, f) {
+		msg := e.interpolate(validation.Message, event)
+		if validation.GetSeverity() == "error" {
+			result.Errors = append(result.Errors, msg)
+		} else {
+			result.Warnings = append(result.Warnings, msg)
+		}
+	}
+}
+
+// matchSimple does simple value matching without metamodel context.
+// Handles the most common automation validation cases.
+func matchSimple(val interface{}, f *filter.Filter) bool {
+	// Handle nil/missing/empty values
+	if val == nil || val == "" {
+		// Only match if explicitly comparing to empty with = operator
+		if f.Operator == filter.OpEqual && f.Value == "" {
+			return true
+		}
+		// For "!=" with empty value, missing/nil means "is empty", so it should NOT match "is not empty"
+		return false
+	}
+
+	// Use the filter package's MatchValue for the actual comparison
+	return filter.MatchValue(val, f)
+}
+
+// interpolate replaces template variables in a string.
+func (e *Engine) interpolate(template string, event Event) string {
+	return Interpolate(template, e.vars, event.Entity, event.OldEntity)
+}
