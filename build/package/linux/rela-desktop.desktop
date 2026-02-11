@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=Rela Desktop
-Comment=Traceability desktop app for managing entities and relationships
-Exec=rela-desktop
-Icon=rela-desktop
-Terminal=false
-Type=Application
-Categories=Development;
