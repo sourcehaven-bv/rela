@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/rename"
 )
 
 func (s *Server) handleListEntities(
@@ -321,4 +322,72 @@ func (s *Server) handleDeleteEntity(
 		msg += fmt.Sprintf(" and %d relation(s)", totalRelations)
 	}
 	return mcp.NewToolResultText(msg), nil
+}
+
+func (s *Server) handleRenameEntity(
+	_ context.Context, request mcp.CallToolRequest,
+) (*mcp.CallToolResult, error) {
+	oldID, err := request.RequireString("id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	oldID = trimID(oldID)
+
+	newID, err := request.RequireString("new_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	newID = trimID(newID)
+
+	dryRun := request.GetBool("dry_run", false)
+
+	// Get entity to find type
+	entity, ok := s.graph.GetNode(oldID)
+	if !ok {
+		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", oldID)), nil
+	}
+
+	// Pause watcher during rename
+	if s.watcher != nil {
+		s.watcher.Pause()
+		defer s.watcher.Resume()
+	}
+
+	opts := rename.Options{DryRun: dryRun}
+	result, renameErr := rename.Rename(s.repo, s.getMeta(), s.graph, entity.Type, oldID, newID, opts)
+	if renameErr != nil {
+		return mcp.NewToolResultError(renameErr.Error()), nil
+	}
+
+	if !dryRun {
+		s.saveCache()
+	}
+
+	return mcp.NewToolResultText(formatRenameResult(result, dryRun)), nil
+}
+
+func formatRenameResult(result *rename.Result, dryRun bool) string {
+	var sb strings.Builder
+
+	if dryRun {
+		sb.WriteString("Dry run - no changes made\n\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("Rename: %s → %s\n", result.OldID, result.NewID))
+	sb.WriteString(fmt.Sprintf("Entity file: %s\n", result.EntityFile))
+
+	if len(result.RelationsUpdated) > 0 {
+		sb.WriteString(fmt.Sprintf("\nRelations updated (%d):\n", len(result.RelationsUpdated)))
+		for _, rel := range result.RelationsUpdated {
+			sb.WriteString(fmt.Sprintf("  %s --%s--> %s\n", rel.From, rel.Type, rel.To))
+		}
+	} else {
+		sb.WriteString("\nNo relations updated\n")
+	}
+
+	if !dryRun && len(result.OldFilesDeleted) > 0 {
+		sb.WriteString(fmt.Sprintf("\nOld files deleted (%d)\n", len(result.OldFilesDeleted)))
+	}
+
+	return sb.String()
 }

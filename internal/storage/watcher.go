@@ -38,6 +38,7 @@ type Watcher struct {
 	done      chan struct{}
 	mu        sync.Mutex
 	pending   []model.ChangeEvent
+	paused    bool
 }
 
 // NewWatcher creates a file watcher with the given configuration.
@@ -96,12 +97,14 @@ func (w *Watcher) Start() {
 			}
 
 			w.mu.Lock()
-			w.pending = append(w.pending, model.ChangeEvent{
-				Path: event.Name,
-				Op:   toChangeOp(event.Op),
-			})
+			if !w.paused {
+				w.pending = append(w.pending, model.ChangeEvent{
+					Path: event.Name,
+					Op:   toChangeOp(event.Op),
+				})
+				timer.Reset(w.cfg.Debounce)
+			}
 			w.mu.Unlock()
-			timer.Reset(w.cfg.Debounce)
 
 		case <-timer.C:
 			w.mu.Lock()
@@ -134,6 +137,30 @@ func (w *Watcher) Stop() {
 // Useful for testing.
 func (w *Watcher) WatchList() []string {
 	return w.fsWatcher.WatchList()
+}
+
+// Pause temporarily stops processing file change events.
+// Events that occur while paused are discarded.
+// Use Resume to re-enable event processing.
+func (w *Watcher) Pause() {
+	w.mu.Lock()
+	w.paused = true
+	w.pending = nil // Discard any pending events
+	w.mu.Unlock()
+}
+
+// Resume re-enables event processing after a Pause.
+func (w *Watcher) Resume() {
+	w.mu.Lock()
+	w.paused = false
+	w.mu.Unlock()
+}
+
+// IsPaused returns whether the watcher is currently paused.
+func (w *Watcher) IsPaused() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.paused
 }
 
 func (w *Watcher) addRecursive(root string) {

@@ -103,11 +103,29 @@ type Store interface {
 	// filesystem notifications, database triggers, polling, etc.
 	Watch(opts WatchOptions, onChange func(events []model.ChangeEvent)) (stop func(), err error)
 
+	// WatchWithHandle is like Watch but returns a WatchHandle that allows
+	// pausing and resuming the watcher in addition to stopping it.
+	WatchWithHandle(opts WatchOptions, onChange func(events []model.ChangeEvent)) (*WatchHandle, error)
+
 	// --- Filesystem Access ---
 
 	// FS returns the underlying filesystem for direct access when needed
 	// (e.g., for attachment storage that operates on raw files).
 	FS() storage.FS
+
+	// --- Transactions ---
+
+	// Transaction executes a function within a transaction context.
+	// All write/delete operations are batched and applied atomically.
+	// On error, all staged changes are rolled back.
+	Transaction(fn func(tx Tx) error) error
+
+	// FindOrphanedTempFiles scans for leftover .new files from interrupted transactions.
+	FindOrphanedTempFiles() ([]string, error)
+
+	// CleanupOrphanedTempFiles removes all orphaned .new temp files.
+	// Returns the number of files cleaned up.
+	CleanupOrphanedTempFiles() (int, error)
 }
 
 // WatchOptions configures optional parameters for Store.Watch.
@@ -317,12 +335,45 @@ func (r *Repository) DiscoverEntityTemplates(entityType string) ([]*markdown.Ent
 
 // --- Change Notification ---
 
+// WatchHandle provides control over an active file watcher.
+type WatchHandle struct {
+	watcher *storage.Watcher
+}
+
+// Stop stops the file watcher and releases resources.
+func (h *WatchHandle) Stop() {
+	h.watcher.Stop()
+}
+
+// Pause temporarily stops processing file change events.
+// Events that occur while paused are discarded.
+func (h *WatchHandle) Pause() {
+	h.watcher.Pause()
+}
+
+// Resume re-enables event processing after a Pause.
+func (h *WatchHandle) Resume() {
+	h.watcher.Resume()
+}
+
 // Watch starts watching for changes to entities, relations, metamodel, and
 // views files. The onChange callback is called with batched change events.
 // Returns a stop function to shut down the watcher.
 func (r *Repository) Watch(
 	opts WatchOptions, onChange func(events []model.ChangeEvent),
 ) (stop func(), err error) {
+	handle, err := r.WatchWithHandle(opts, onChange)
+	if err != nil {
+		return nil, err
+	}
+	return handle.Stop, nil
+}
+
+// WatchWithHandle is like Watch but returns a WatchHandle that allows
+// pausing and resuming the watcher in addition to stopping it.
+func (r *Repository) WatchWithHandle(
+	opts WatchOptions, onChange func(events []model.ChangeEvent),
+) (*WatchHandle, error) {
 	viewsPath := filepath.Join(r.paths.Root, "views.yaml")
 	files := []string{r.paths.MetamodelPath, viewsPath}
 	files = append(files, opts.ExtraFiles...)
@@ -340,7 +391,7 @@ func (r *Repository) Watch(
 	}
 
 	go w.Start()
-	return w.Stop, nil
+	return &WatchHandle{watcher: w}, nil
 }
 
 // --- Path Helpers ---

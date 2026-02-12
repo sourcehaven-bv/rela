@@ -12,6 +12,7 @@ import (
 var (
 	gcDryRun      bool
 	gcAttachments bool
+	gcTempFiles   bool
 )
 
 var gcCmd = &cobra.Command{
@@ -19,19 +20,29 @@ var gcCmd = &cobra.Command{
 	Short: "Garbage collect unreferenced files",
 	Long: `Remove unreferenced files from the project.
 
-Currently supports cleaning up attachments that are no longer referenced
-by any entity.
+Supports cleaning up:
+  --attachments  Remove attachment files no longer referenced by entities
+  --temp-files   Remove orphaned .new files from interrupted transactions
 
 Examples:
   rela gc --attachments           # Remove unreferenced attachment files
+  rela gc --temp-files            # Remove orphaned temp files
   rela gc --attachments --dry-run # Show what would be removed`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !gcAttachments {
-			return fmt.Errorf("specify --attachments to clean up attachment files")
+		if !gcAttachments && !gcTempFiles {
+			return fmt.Errorf("specify at least one of --attachments or --temp-files")
+		}
+
+		if gcTempFiles {
+			if err := gcOrphanedTempFiles(); err != nil {
+				return err
+			}
 		}
 
 		if gcAttachments {
-			return gcAttachmentFiles()
+			if err := gcAttachmentFiles(); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -119,9 +130,38 @@ func extractAttachmentPaths(val interface{}) []string {
 	return nil
 }
 
+func gcOrphanedTempFiles() error {
+	orphaned, err := repo.FindOrphanedTempFiles()
+	if err != nil {
+		return fmt.Errorf("find orphaned files: %w", err)
+	}
+
+	if len(orphaned) == 0 {
+		out.WriteMessage("No orphaned temp files found")
+		return nil
+	}
+
+	if gcDryRun {
+		out.WriteMessage("Would remove %d orphaned temp file(s):", len(orphaned))
+		for _, path := range orphaned {
+			out.WriteMessage("  %s", path)
+		}
+		return nil
+	}
+
+	count, err := repo.CleanupOrphanedTempFiles()
+	if err != nil {
+		return fmt.Errorf("cleanup failed: %w", err)
+	}
+
+	out.WriteSuccess("Removed %d orphaned temp file(s)", count)
+	return nil
+}
+
 func init() {
 	gcCmd.Flags().BoolVar(&gcDryRun, "dry-run", false, "Show what would be removed without actually removing")
 	gcCmd.Flags().BoolVar(&gcAttachments, "attachments", false, "Clean up unreferenced attachment files")
+	gcCmd.Flags().BoolVar(&gcTempFiles, "temp-files", false, "Clean up orphaned .new files from interrupted transactions")
 
 	rootCmd.AddCommand(gcCmd)
 }
