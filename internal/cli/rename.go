@@ -11,11 +11,13 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/rename"
 )
 
 var (
-	renameForce  bool
-	renamePlural string
+	renameForce    bool
+	renamePlural   string
+	renameIDDryRun bool
 )
 
 var renameCmd = &cobra.Command{
@@ -223,10 +225,72 @@ func validateTypeName(name string) error {
 	return nil
 }
 
+var renameIDCmd = &cobra.Command{
+	Use:   "id <old-id> <new-id>",
+	Short: "Rename an entity's ID",
+	Long: `Renames an entity's ID and updates all relations that reference it.
+
+This updates:
+  - The entity file (renamed and id field updated)
+  - All relation files where this entity is the 'from' or 'to' endpoint
+
+Examples:
+  rela rename id REQ-001 REQ-100
+  rela rename id REQ-001 REQ-100 --dry-run`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRenameID(args[0], args[1])
+	},
+}
+
+func runRenameID(oldID, newID string) error {
+	// Get entity to find type
+	entity, ok := g.GetNode(oldID)
+	if !ok {
+		return fmt.Errorf("entity not found: %s", oldID)
+	}
+
+	result, err := rename.Rename(repo, meta, g, entity.Type, oldID, newID, rename.Options{DryRun: renameIDDryRun})
+	if err != nil {
+		return err
+	}
+
+	if renameIDDryRun {
+		out.WriteMessage("Dry run - no changes made")
+		out.WriteMessage("")
+	}
+
+	out.WriteMessage("Rename: %s → %s", result.OldID, result.NewID)
+	out.WriteMessage("Entity file: %s", result.EntityFile)
+
+	if len(result.RelationsUpdated) > 0 {
+		out.WriteMessage("\nRelations updated (%d):", len(result.RelationsUpdated))
+		for _, rel := range result.RelationsUpdated {
+			out.WriteMessage("  %s --%s--> %s", rel.From, rel.Type, rel.To)
+		}
+	} else {
+		out.WriteMessage("\nNo relations updated")
+	}
+
+	if !renameIDDryRun {
+		if saveErr := saveCache(); saveErr != nil {
+			out.WriteWarning("Failed to save cache: %v", saveErr)
+		}
+		if len(result.OldFilesDeleted) > 0 {
+			out.WriteMessage("\nOld files deleted (%d)", len(result.OldFilesDeleted))
+		}
+	}
+
+	return nil
+}
+
 func init() {
 	renameEntityCmd.Flags().BoolVarP(&renameForce, "force", "f", false, "Skip confirmation prompt")
 	renameEntityCmd.Flags().StringVar(&renamePlural, "plural", "", "Override plural form for directory name")
 
+	renameIDCmd.Flags().BoolVar(&renameIDDryRun, "dry-run", false, "Preview changes without applying")
+
 	renameCmd.AddCommand(renameEntityCmd)
+	renameCmd.AddCommand(renameIDCmd)
 	rootCmd.AddCommand(renameCmd)
 }

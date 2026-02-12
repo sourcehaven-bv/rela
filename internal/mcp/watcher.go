@@ -12,7 +12,7 @@ import (
 // Watcher watches entity and relation files for changes and notifies MCP clients.
 type Watcher struct {
 	server *Server
-	stop   func()
+	handle *repository.WatchHandle
 }
 
 // NewWatcher creates a new file watcher for the rela project using the
@@ -20,7 +20,7 @@ type Watcher struct {
 func NewWatcher(s *Server) (*Watcher, error) {
 	w := &Watcher{server: s}
 
-	stop, err := s.repo.Watch(repository.WatchOptions{}, func(events []model.ChangeEvent) {
+	handle, err := s.repo.WatchWithHandle(repository.WatchOptions{}, func(events []model.ChangeEvent) {
 		for _, e := range events {
 			s.logger.Printf("File changed: %s (%s)", e.Path, e.Op)
 		}
@@ -30,13 +30,24 @@ func NewWatcher(s *Server) (*Watcher, error) {
 		return nil, err
 	}
 
-	w.stop = stop
+	w.handle = handle
 	return w, nil
 }
 
 // Stop stops the file watcher.
 func (w *Watcher) Stop() {
-	w.stop()
+	w.handle.Stop()
+}
+
+// Pause temporarily stops processing file change events.
+// Events that occur while paused are discarded.
+func (w *Watcher) Pause() {
+	w.handle.Pause()
+}
+
+// Resume re-enables event processing after a Pause.
+func (w *Watcher) Resume() {
+	w.handle.Resume()
 }
 
 func (w *Watcher) syncAndNotify() {

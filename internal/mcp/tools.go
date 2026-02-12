@@ -12,6 +12,7 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolCreateEntity(), s.handleCreateEntity)
 	s.mcp.AddTool(toolUpdateEntity(), s.handleUpdateEntity)
 	s.mcp.AddTool(toolDeleteEntity(), s.handleDeleteEntity)
+	s.mcp.AddTool(toolRenameEntity(), s.handleRenameEntity)
 
 	// Relation tools
 	s.mcp.AddTool(toolListRelations(), s.handleListRelations)
@@ -96,6 +97,15 @@ func toolDeleteEntity() mcp.Tool {
 		mcp.WithDescription("Delete an entity and optionally its relations"),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Entity ID to delete")),
 		mcp.WithBoolean("cascade", mcp.Description("Also delete all relations (default false)")),
+	)
+}
+
+func toolRenameEntity() mcp.Tool {
+	return mcp.NewTool("rename_entity",
+		mcp.WithDescription("Rename an entity's ID, updating all relations that reference it"),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Current entity ID")),
+		mcp.WithString("new_id", mcp.Required(), mcp.Description("New entity ID")),
+		mcp.WithBoolean("dry_run", mcp.Description("Preview changes without applying (default false)")),
 	)
 }
 
