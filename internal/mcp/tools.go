@@ -39,6 +39,9 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolListViews(), s.handleListViews)
 	s.mcp.AddTool(toolExecuteView(), s.handleExecuteView)
 
+	// Render tools
+	s.mcp.AddTool(toolRenderEntity(), s.handleRenderEntity)
+
 	// Utility tools
 	s.mcp.AddTool(toolRefresh(), s.handleRefresh)
 	s.mcp.AddTool(toolExport(), s.handleExport)
@@ -237,5 +240,18 @@ func toolExport() mcp.Tool {
 		mcp.WithString("format", mcp.Required(),
 			mcp.Description("Output format"), mcp.Enum("json", "yaml", "csv")),
 		mcp.WithString("type", mcp.Description("Entity type to export (omit for all)")),
+	)
+}
+
+func toolRenderEntity() mcp.Tool {
+	return mcp.NewTool("render_entity",
+		mcp.WithDescription(
+			"Render an entity with all transclusions (![[EntityID]]) resolved. "+
+				"Transclusions embed content from other entities inline. "+
+				"Supports section references like ![[REQ-001#Rationale]]."),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Entity ID to render")),
+		mcp.WithBoolean("include_frontmatter", mcp.Description("Include YAML frontmatter (default: false)")),
+		mcp.WithNumber("max_depth", mcp.Description("Maximum transclusion depth (default: 10)")),
+		mcp.WithBoolean("strip_comments", mcp.Description("Remove HTML comments (default: true)")),
 	)
 }
