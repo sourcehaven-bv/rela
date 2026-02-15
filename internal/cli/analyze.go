@@ -28,6 +28,28 @@ Subcommands:
   all         - Run all analyses`,
 }
 
+// writeAnalysisJSON writes an analysis result in JSON format if JSON output is enabled.
+// Returns true if JSON was written (caller should return), false if text output should be used.
+// When count > 0, the status is set to "warning" and issuesFmt is used as the message format.
+func writeAnalysisJSON(count int, details interface{}, successMsg, issuesFmt string) bool {
+	if out.Format != "json" {
+		return false
+	}
+	status := "success"
+	message := successMsg
+	if count > 0 {
+		status = "warning"
+		message = fmt.Sprintf(issuesFmt, count)
+	}
+	_ = out.WriteAnalysisResult(output.AnalysisResult{
+		Status:  status,
+		Message: message,
+		Count:   count,
+		Details: details,
+	})
+	return true
+}
+
 var analyzeOrphansCmd = &cobra.Command{
 	Use:   "orphans",
 	Short: "Find entities with no connections",
@@ -35,28 +57,15 @@ var analyzeOrphansCmd = &cobra.Command{
 		orphans := g.FindOrphans()
 		filter.SortByID(orphans, false)
 
-		// Handle JSON output format
-		if out.Format == "json" {
-			status := "success"
-			message := "No orphan entities found"
-			if len(orphans) > 0 {
-				status = "warning"
-				message = fmt.Sprintf("Found %d orphan entities", len(orphans))
-			}
-			return out.WriteAnalysisResult(output.AnalysisResult{
-				Status:  status,
-				Message: message,
-				Count:   len(orphans),
-				Details: orphans,
-			})
+		if writeAnalysisJSON(len(orphans), orphans,
+			"No orphan entities found", "Found %d orphan entities") {
+			return nil
 		}
 
-		// Text output format
 		if len(orphans) == 0 {
 			out.WriteSuccess("No orphan entities found")
 			return nil
 		}
-
 		out.WriteWarning("Found %d orphan entities:", len(orphans))
 		return out.WriteEntities(orphans)
 	},
@@ -98,22 +107,11 @@ var analyzeDuplicatesCmd = &cobra.Command{
 					Entities: group,
 				})
 			}
-
-			status := "success"
-			message := "No duplicate titles found"
-			if len(duplicates) > 0 {
-				status = "warning"
-				message = fmt.Sprintf("Found %d groups of potential duplicates", len(duplicates))
-			}
-			return out.WriteAnalysisResult(output.AnalysisResult{
-				Status:  status,
-				Message: message,
-				Count:   len(duplicates),
-				Details: details,
-			})
+			writeAnalysisJSON(len(duplicates), details,
+				"No duplicate titles found", "Found %d groups of potential duplicates")
+			return nil
 		}
 
-		// Text output format
 		if len(duplicates) == 0 {
 			out.WriteSuccess("No duplicate titles found")
 			return nil
@@ -200,23 +198,11 @@ since they use manually-specified IDs that are not expected to be sequential.`,
 			}
 		}
 
-		// Handle JSON output format
-		if out.Format == "json" {
-			status := "success"
-			message := "No ID sequence gaps found"
-			if len(allGaps) > 0 {
-				status = "warning"
-				message = fmt.Sprintf("Found gaps in %d ID sequences", len(allGaps))
-			}
-			return out.WriteAnalysisResult(output.AnalysisResult{
-				Status:  status,
-				Message: message,
-				Count:   len(allGaps),
-				Details: allGaps,
-			})
+		if writeAnalysisJSON(len(allGaps), allGaps,
+			"No ID sequence gaps found", "Found gaps in %d ID sequences") {
+			return nil
 		}
 
-		// Text output format
 		if len(allGaps) == 0 {
 			out.WriteSuccess("No ID sequence gaps found")
 		} else {
@@ -353,23 +339,11 @@ var analyzeCardinalityCmd = &cobra.Command{
 			}
 		}
 
-		// Handle JSON output format
-		if out.Format == "json" {
-			status := "success"
-			message := "All cardinality constraints satisfied"
-			if len(allViolations) > 0 {
-				status = "warning"
-				message = fmt.Sprintf("Found %d cardinality violations", len(allViolations))
-			}
-			return out.WriteAnalysisResult(output.AnalysisResult{
-				Status:  status,
-				Message: message,
-				Count:   len(allViolations),
-				Details: allViolations,
-			})
+		if writeAnalysisJSON(len(allViolations), allViolations,
+			"All cardinality constraints satisfied", "Found %d cardinality violations") {
+			return nil
 		}
 
-		// Text output format
 		for _, v := range allViolations {
 			if strings.HasPrefix(v.Constraint, "min_") {
 				out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
