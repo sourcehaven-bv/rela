@@ -989,3 +989,146 @@ func TestMatchAllUnknownProperty(t *testing.T) {
 		t.Error("Expected error for unknown property")
 	}
 }
+
+// TestMatchEmptyFilterValueNonStringTypes tests that "property!=" (not empty check)
+// works correctly for non-string types like integers, dates, and booleans.
+// This is issue #152: validation rules with property!="" fail for non-string values
+// because the empty filter value cannot be parsed as the target type.
+func TestMatchEmptyFilterValueNonStringTypes(t *testing.T) {
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name    string
+		propDef *metamodel.PropertyDef
+		value   interface{}
+		filter  string
+		want    bool
+		wantErr bool
+	}{
+		// Integer property with native int value (as YAML would parse)
+		{
+			name:    "integer not empty with int value",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			value:   4, // int, not "4" string
+			filter:  "score!=",
+			want:    true,
+		},
+		{
+			name:    "integer is empty with int value",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			value:   4,
+			filter:  "score=",
+			want:    false,
+		},
+		{
+			name:    "integer not empty with float64 value",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			value:   4.0, // float64, as YAML might also parse
+			filter:  "score!=",
+			want:    true,
+		},
+		{
+			name:    "integer not empty with string value",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			value:   "4", // string representation
+			filter:  "score!=",
+			want:    true,
+		},
+		{
+			name:    "integer not empty with zero value",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			value:   0, // zero is still a value
+			filter:  "score!=",
+			want:    true,
+		},
+		// Date property
+		{
+			name:    "date not empty with string date",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate, Format: "2006-01-02"},
+			value:   "2026-01-13",
+			filter:  "review_date!=",
+			want:    true,
+		},
+		{
+			name:    "date is empty with string date",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate, Format: "2006-01-02"},
+			value:   "2026-01-13",
+			filter:  "review_date=",
+			want:    false,
+		},
+		// Boolean property
+		{
+			name:    "boolean not empty with true",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean},
+			value:   true,
+			filter:  "active!=",
+			want:    true,
+		},
+		{
+			name:    "boolean not empty with false",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean},
+			value:   false, // false is still a value
+			filter:  "active!=",
+			want:    true,
+		},
+		{
+			name:    "boolean is empty with true",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean},
+			value:   true,
+			filter:  "active=",
+			want:    false,
+		},
+		// String property (existing behavior should still work)
+		{
+			name:    "string not empty with value",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeString},
+			value:   "hello",
+			filter:  "title!=",
+			want:    true,
+		},
+		{
+			name:    "string is empty with value",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeString},
+			value:   "hello",
+			filter:  "title=",
+			want:    false,
+		},
+		// Quoted string integer (as might appear in YAML)
+		{
+			name:    "integer not empty with quoted string",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			value:   "1", // quoted in YAML: sequence_position: "1"
+			filter:  "sequence_position!=",
+			want:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+
+			entity := &model.Entity{
+				ID:         "TEST-001",
+				Type:       "test",
+				Properties: map[string]interface{}{f.Property: tt.value},
+			}
+
+			got, err := Match(entity, f, tt.propDef, mm)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
