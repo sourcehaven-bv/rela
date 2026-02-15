@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -637,6 +639,171 @@ func TestCountPropertyErrors(t *testing.T) {
 			if tt.wantZero && got != 0 {
 				t.Errorf("countPropertyErrors() = %d, want 0", got)
 			}
+		})
+	}
+}
+
+// setupJSONTestOutput sets up JSON output writer and returns the buffer
+func setupJSONTestOutput() *bytes.Buffer {
+	var buf bytes.Buffer
+	out = output.NewWithWriter(&buf, output.FormatJSON)
+	return &buf
+}
+
+// runJSONTest is a helper that runs an analyze command and verifies the JSON output
+func runJSONTest(t *testing.T, name string, setup func(), run func() error, wantStatus string, wantCount int) {
+	t.Helper()
+	setup()
+	buf := setupJSONTestOutput()
+
+	if err := run(); err != nil {
+		t.Fatalf("%s error = %v", name, err)
+	}
+
+	var result output.AnalysisResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	if result.Status != wantStatus {
+		t.Errorf("Expected status %q, got %q", wantStatus, result.Status)
+	}
+	if result.Count != wantCount {
+		t.Errorf("Expected count %d, got %d", wantCount, result.Count)
+	}
+}
+
+func TestAnalyzeJSONOutput(t *testing.T) {
+	minThree := 3
+
+	tests := []struct {
+		name       string
+		setup      func()
+		run        func() error
+		wantStatus string
+		wantCount  int
+	}{
+		{
+			name: "orphans with issues",
+			setup: func() {
+				g = graph.New()
+				meta = &metamodel.Metamodel{
+					Entities: map[string]metamodel.EntityDef{
+						"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
+					},
+				}
+				orphan := model.NewEntity("REQ-003", "requirement")
+				orphan.Properties["title"] = "Orphan Requirement"
+				g.AddNode(orphan)
+			},
+			run:        func() error { return analyzeOrphansCmd.RunE(nil, nil) },
+			wantStatus: "warning",
+			wantCount:  1,
+		},
+		{
+			name:       "orphans empty",
+			setup:      setupAnalyzeTestGraph,
+			run:        func() error { return analyzeOrphansCmd.RunE(nil, nil) },
+			wantStatus: "success",
+			wantCount:  0,
+		},
+		{
+			name: "duplicates with issues",
+			setup: func() {
+				g = graph.New()
+				meta = &metamodel.Metamodel{
+					Entities: map[string]metamodel.EntityDef{
+						"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
+					},
+				}
+				e1 := model.NewEntity("REQ-001", "requirement")
+				e1.Properties["title"] = "Same Title"
+				g.AddNode(e1)
+				e2 := model.NewEntity("REQ-002", "requirement")
+				e2.Properties["title"] = "Same Title"
+				g.AddNode(e2)
+			},
+			run:        func() error { return analyzeDuplicatesCmd.RunE(nil, nil) },
+			wantStatus: "warning",
+			wantCount:  1,
+		},
+		{
+			name: "gaps with issues",
+			setup: func() {
+				g = graph.New()
+				meta = &metamodel.Metamodel{
+					Entities: map[string]metamodel.EntityDef{
+						"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
+					},
+				}
+				g.AddNode(model.NewEntity("REQ-001", "requirement"))
+				g.AddNode(model.NewEntity("REQ-003", "requirement"))
+			},
+			run:        func() error { return analyzeGapsCmd.RunE(nil, nil) },
+			wantStatus: "warning",
+			wantCount:  1,
+		},
+		{
+			name: "cardinality with violations",
+			setup: func() {
+				setupAnalyzeTestGraph()
+				meta.Relations["implements"] = metamodel.RelationDef{
+					Label:       "Implements",
+					From:        []string{"decision"},
+					To:          []string{"requirement"},
+					MinOutgoing: &minThree,
+				}
+			},
+			run:        func() error { return analyzeCardinalityCmd.RunE(nil, nil) },
+			wantStatus: "warning",
+			wantCount:  1,
+		},
+		{
+			name: "validations with errors",
+			setup: func() {
+				g = graph.New()
+				meta = &metamodel.Metamodel{
+					Entities: map[string]metamodel.EntityDef{
+						"requirement": {
+							Label:    "Requirement",
+							IDPrefix: "REQ-",
+							Properties: map[string]metamodel.PropertyDef{
+								"status":   {Type: "string"},
+								"priority": {Type: "string"},
+							},
+						},
+					},
+					Validations: []metamodel.ValidationRule{
+						{
+							Name:        "accepted-needs-priority",
+							Description: "Accepted requirements must have priority",
+							EntityType:  "requirement",
+							When:        []string{"status=accepted"},
+							Then:        []string{"priority!="},
+							Severity:    "error",
+						},
+					},
+				}
+				e := model.NewEntity("REQ-001", "requirement")
+				e.Properties["status"] = "accepted"
+				g.AddNode(e)
+			},
+			run:        runValidations,
+			wantStatus: "error",
+			wantCount:  1,
+		},
+		{
+			name:       "all analyses pass",
+			setup:      setupAnalyzeTestGraph,
+			run:        func() error { return analyzeAllCmd.RunE(nil, nil) },
+			wantStatus: "success",
+			wantCount:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runJSONTest(t, tt.name, tt.setup, tt.run, tt.wantStatus, tt.wantCount)
 		})
 	}
 }
