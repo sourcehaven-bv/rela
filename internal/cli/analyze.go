@@ -33,13 +33,30 @@ var analyzeOrphansCmd = &cobra.Command{
 	Short: "Find entities with no connections",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		orphans := g.FindOrphans()
+		filter.SortByID(orphans, false)
 
+		// Handle JSON output format
+		if out.Format == "json" {
+			status := "success"
+			message := "No orphan entities found"
+			if len(orphans) > 0 {
+				status = "warning"
+				message = fmt.Sprintf("Found %d orphan entities", len(orphans))
+			}
+			return out.WriteAnalysisResult(output.AnalysisResult{
+				Status:  status,
+				Message: message,
+				Count:   len(orphans),
+				Details: orphans,
+			})
+		}
+
+		// Text output format
 		if len(orphans) == 0 {
 			out.WriteSuccess("No orphan entities found")
 			return nil
 		}
 
-		filter.SortByID(orphans, false)
 		out.WriteWarning("Found %d orphan entities:", len(orphans))
 		return out.WriteEntities(orphans)
 	},
@@ -68,6 +85,35 @@ var analyzeDuplicatesCmd = &cobra.Command{
 			}
 		}
 
+		// Handle JSON output format
+		if out.Format == "json" {
+			type duplicateGroup struct {
+				Title    string          `json:"title"`
+				Entities []*model.Entity `json:"entities"`
+			}
+			var details []duplicateGroup
+			for _, group := range duplicates {
+				details = append(details, duplicateGroup{
+					Title:    group[0].Title(),
+					Entities: group,
+				})
+			}
+
+			status := "success"
+			message := "No duplicate titles found"
+			if len(duplicates) > 0 {
+				status = "warning"
+				message = fmt.Sprintf("Found %d groups of potential duplicates", len(duplicates))
+			}
+			return out.WriteAnalysisResult(output.AnalysisResult{
+				Status:  status,
+				Message: message,
+				Count:   len(duplicates),
+				Details: details,
+			})
+		}
+
+		// Text output format
 		if len(duplicates) == 0 {
 			out.WriteSuccess("No duplicate titles found")
 			return nil
@@ -121,7 +167,12 @@ since they use manually-specified IDs that are not expected to be sequential.`,
 			prefixGroups[parsed.Prefix] = append(prefixGroups[parsed.Prefix], parsed.Number)
 		}
 
-		hasGaps := false
+		// Collect all gaps
+		type gapResult struct {
+			Prefix  string   `json:"prefix"`
+			Missing []string `json:"missing"`
+		}
+		var allGaps []gapResult
 
 		for prefix, numbers := range prefixGroups {
 			sort.Ints(numbers)
@@ -138,18 +189,41 @@ since they use manually-specified IDs that are not expected to be sequential.`,
 			}
 
 			if len(gaps) > 0 {
-				hasGaps = true
-				out.WriteWarning("Gaps in %s sequence:", prefix)
 				gapStrs := make([]string, len(gaps))
 				for i, n := range gaps {
 					gapStrs[i] = fmt.Sprintf("%s%03d", prefix, n)
 				}
-				out.WriteMessage("  Missing: %s", strings.Join(gapStrs, ", "))
+				allGaps = append(allGaps, gapResult{
+					Prefix:  prefix,
+					Missing: gapStrs,
+				})
 			}
 		}
 
-		if !hasGaps {
+		// Handle JSON output format
+		if out.Format == "json" {
+			status := "success"
+			message := "No ID sequence gaps found"
+			if len(allGaps) > 0 {
+				status = "warning"
+				message = fmt.Sprintf("Found gaps in %d ID sequences", len(allGaps))
+			}
+			return out.WriteAnalysisResult(output.AnalysisResult{
+				Status:  status,
+				Message: message,
+				Count:   len(allGaps),
+				Details: allGaps,
+			})
+		}
+
+		// Text output format
+		if len(allGaps) == 0 {
 			out.WriteSuccess("No ID sequence gaps found")
+		} else {
+			for _, gap := range allGaps {
+				out.WriteWarning("Gaps in %s sequence:", gap.Prefix)
+				out.WriteMessage("  Missing: %s", strings.Join(gap.Missing, ", "))
+			}
 		}
 
 		return nil
@@ -160,7 +234,14 @@ var analyzeCardinalityCmd = &cobra.Command{
 	Use:   "cardinality",
 	Short: "Check relation cardinality constraints",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		violations := 0
+		type cardinalityViolation struct {
+			EntityID     string `json:"entity_id"`
+			RelationType string `json:"relation_type"`
+			Constraint   string `json:"constraint"`
+			Required     int    `json:"required"`
+			Actual       int    `json:"actual"`
+		}
+		var allViolations []cardinalityViolation
 
 		for relName, relDef := range meta.Relations {
 			// Check min_outgoing constraint
@@ -176,9 +257,13 @@ var analyzeCardinalityCmd = &cobra.Command{
 							}
 						}
 						if count < *relDef.MinOutgoing {
-							out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
-								e.ID, *relDef.MinOutgoing, relName, count)
-							violations++
+							allViolations = append(allViolations, cardinalityViolation{
+								EntityID:     e.ID,
+								RelationType: relName,
+								Constraint:   "min_outgoing",
+								Required:     *relDef.MinOutgoing,
+								Actual:       count,
+							})
 						}
 					}
 				}
@@ -196,9 +281,13 @@ var analyzeCardinalityCmd = &cobra.Command{
 							}
 						}
 						if count > *relDef.MaxOutgoing {
-							out.WriteWarning("%s has more than %d '%s' relation(s): %d",
-								e.ID, *relDef.MaxOutgoing, relName, count)
-							violations++
+							allViolations = append(allViolations, cardinalityViolation{
+								EntityID:     e.ID,
+								RelationType: relName,
+								Constraint:   "max_outgoing",
+								Required:     *relDef.MaxOutgoing,
+								Actual:       count,
+							})
 						}
 					}
 				}
@@ -222,9 +311,13 @@ var analyzeCardinalityCmd = &cobra.Command{
 							if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
 								relLabel = relDef.Inverse.GetID()
 							}
-							out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
-								e.ID, *relDef.MinIncoming, relLabel, count)
-							violations++
+							allViolations = append(allViolations, cardinalityViolation{
+								EntityID:     e.ID,
+								RelationType: relLabel,
+								Constraint:   "min_incoming",
+								Required:     *relDef.MinIncoming,
+								Actual:       count,
+							})
 						}
 					}
 				}
@@ -247,19 +340,50 @@ var analyzeCardinalityCmd = &cobra.Command{
 							if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
 								relLabel = relDef.Inverse.GetID()
 							}
-							out.WriteWarning("%s has more than %d '%s' relation(s): %d",
-								e.ID, *relDef.MaxIncoming, relLabel, count)
-							violations++
+							allViolations = append(allViolations, cardinalityViolation{
+								EntityID:     e.ID,
+								RelationType: relLabel,
+								Constraint:   "max_incoming",
+								Required:     *relDef.MaxIncoming,
+								Actual:       count,
+							})
 						}
 					}
 				}
 			}
 		}
 
-		if violations == 0 {
+		// Handle JSON output format
+		if out.Format == "json" {
+			status := "success"
+			message := "All cardinality constraints satisfied"
+			if len(allViolations) > 0 {
+				status = "warning"
+				message = fmt.Sprintf("Found %d cardinality violations", len(allViolations))
+			}
+			return out.WriteAnalysisResult(output.AnalysisResult{
+				Status:  status,
+				Message: message,
+				Count:   len(allViolations),
+				Details: allViolations,
+			})
+		}
+
+		// Text output format
+		for _, v := range allViolations {
+			if strings.HasPrefix(v.Constraint, "min_") {
+				out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
+					v.EntityID, v.Required, v.RelationType, v.Actual)
+			} else {
+				out.WriteWarning("%s has more than %d '%s' relation(s): %d",
+					v.EntityID, v.Required, v.RelationType, v.Actual)
+			}
+		}
+
+		if len(allViolations) == 0 {
 			out.WriteSuccess("All cardinality constraints satisfied")
 		} else {
-			out.WriteWarning("Found %d cardinality violations", violations)
+			out.WriteWarning("Found %d cardinality violations", len(allViolations))
 		}
 
 		return nil
@@ -389,29 +513,62 @@ Example metamodel configuration:
 }
 
 // runValidations executes custom validation rules and returns error/warning counts
-func runValidations() error {
-	rules := meta.Validations
-	if len(rules) == 0 {
-		out.WriteSuccess("No custom validation rules defined in metamodel")
-		return nil
+// validationViolation represents a single validation rule violation for JSON output
+type validationViolation struct {
+	RuleName    string `json:"rule_name"`
+	Description string `json:"description"`
+	Severity    string `json:"severity"`
+	EntityID    string `json:"entity_id"`
+	EntityTitle string `json:"entity_title"`
+}
+
+// collectValidationViolations collects all validation violations and counts
+func collectValidationViolations(
+	rules []metamodel.ValidationRule,
+) (violations []validationViolation, errorCount, warningCount int) {
+	for _, rule := range rules {
+		ruleViolations := checkValidationRule(rule)
+		severity := rule.GetSeverity()
+		for _, v := range ruleViolations {
+			violations = append(violations, validationViolation{
+				RuleName:    rule.Name,
+				Description: rule.Description,
+				Severity:    severity,
+				EntityID:    v.ID,
+				EntityTitle: v.Title(),
+			})
+			if severity == "error" {
+				errorCount++
+			} else {
+				warningCount++
+			}
+		}
 	}
+	return violations, errorCount, warningCount
+}
 
-	errorCount := 0
-	warningCount := 0
-
+// writeValidationsTextOutput writes validation results in text format
+func writeValidationsTextOutput(
+	rules []metamodel.ValidationRule,
+	errorCount, warningCount int,
+) {
+	// Group violations by rule
+	ruleViolations := make(map[string][]*model.Entity)
 	for _, rule := range rules {
 		violations := checkValidationRule(rule)
 		if len(violations) > 0 {
-			// Determine severity indicator
-			severity := rule.GetSeverity()
-			if severity == "error" {
-				errorCount += len(violations)
+			ruleViolations[rule.Name] = violations
+		}
+	}
+
+	for _, rule := range rules {
+		violations := ruleViolations[rule.Name]
+		if len(violations) > 0 {
+			if rule.GetSeverity() == "error" {
 				out.WriteError("%s (%d):", rule.Description, len(violations))
 			} else {
-				warningCount += len(violations)
 				out.WriteWarning("%s (%d):", rule.Description, len(violations))
 			}
-
 			for _, v := range violations {
 				out.WriteMessage("  %s: %s", v.ID, v.Title())
 			}
@@ -420,14 +577,53 @@ func runValidations() error {
 
 	if errorCount == 0 && warningCount == 0 {
 		out.WriteSuccess("All %d validation rules passed", len(rules))
+		return
+	}
+	if errorCount > 0 {
+		out.WriteError("Found %d errors, %d warnings across %d rules", errorCount, warningCount, len(rules))
 	} else {
-		if errorCount > 0 {
-			out.WriteError("Found %d errors, %d warnings across %d rules", errorCount, warningCount, len(rules))
-		} else {
-			out.WriteWarning("Found %d warnings across %d rules", warningCount, len(rules))
+		out.WriteWarning("Found %d warnings across %d rules", warningCount, len(rules))
+	}
+}
+
+// runValidations executes custom validation rules and returns error/warning counts
+func runValidations() error {
+	rules := meta.Validations
+	if len(rules) == 0 {
+		if out.Format == "json" {
+			return out.WriteAnalysisResult(output.AnalysisResult{
+				Status:  "success",
+				Message: "No custom validation rules defined in metamodel",
+				Count:   0,
+				Details: []interface{}{},
+			})
 		}
+		out.WriteSuccess("No custom validation rules defined in metamodel")
+		return nil
 	}
 
+	allViolations, errorCount, warningCount := collectValidationViolations(rules)
+
+	if out.Format == "json" {
+		status := "success"
+		message := fmt.Sprintf("All %d validation rules passed", len(rules))
+		if errorCount > 0 {
+			status = "error"
+			message = fmt.Sprintf("Found %d errors, %d warnings across %d rules",
+				errorCount, warningCount, len(rules))
+		} else if warningCount > 0 {
+			status = "warning"
+			message = fmt.Sprintf("Found %d warnings across %d rules", warningCount, len(rules))
+		}
+		return out.WriteAnalysisResult(output.AnalysisResult{
+			Status:  status,
+			Message: message,
+			Count:   errorCount + warningCount,
+			Details: allViolations,
+		})
+	}
+
+	writeValidationsTextOutput(rules, errorCount, warningCount)
 	return nil
 }
 
@@ -668,7 +864,49 @@ var analyzeAllCmd = &cobra.Command{
 		// Count validation issues
 		validationErrors, validationWarnings := countValidationIssues()
 
-		// Summary box
+		// Handle JSON output format
+		if out.Format == "json" {
+			type allAnalysisSummary struct {
+				Orphans            int `json:"orphans"`
+				Cardinality        int `json:"cardinality"`
+				Duplicates         int `json:"duplicates"`
+				Gaps               int `json:"gaps"`
+				Properties         int `json:"properties"`
+				ValidationErrors   int `json:"validation_errors"`
+				ValidationWarnings int `json:"validation_warnings"`
+			}
+
+			summary := allAnalysisSummary{
+				Orphans:            orphanCount,
+				Cardinality:        cardinalityCount,
+				Duplicates:         duplicateCount,
+				Gaps:               gapCount,
+				Properties:         propertyErrorCount,
+				ValidationErrors:   validationErrors,
+				ValidationWarnings: validationWarnings,
+			}
+
+			totalIssues := orphanCount + cardinalityCount + duplicateCount +
+				gapCount + propertyErrorCount + validationErrors
+			status := "success"
+			message := "All analyses passed"
+			if validationErrors > 0 || propertyErrorCount > 0 {
+				status = "error"
+				message = fmt.Sprintf("Found %d issues requiring attention", totalIssues)
+			} else if totalIssues > 0 || validationWarnings > 0 {
+				status = "warning"
+				message = fmt.Sprintf("Found %d issues and %d warnings", totalIssues, validationWarnings)
+			}
+
+			return out.WriteAnalysisResult(output.AnalysisResult{
+				Status:  status,
+				Message: message,
+				Count:   totalIssues + validationWarnings,
+				Details: summary,
+			})
+		}
+
+		// Text output format
 		summaryItems := []string{
 			fmt.Sprintf("Orphans: %d", orphanCount),
 			fmt.Sprintf("Cardinality: %d", cardinalityCount),

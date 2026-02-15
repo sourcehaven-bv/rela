@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -638,5 +640,242 @@ func TestCountPropertyErrors(t *testing.T) {
 				t.Errorf("countPropertyErrors() = %d, want 0", got)
 			}
 		})
+	}
+}
+
+// setupJSONTestOutput sets up JSON output writer and returns the buffer
+func setupJSONTestOutput() *bytes.Buffer {
+	var buf bytes.Buffer
+	out = output.NewWithWriter(&buf, output.FormatJSON)
+	return &buf
+}
+
+func TestAnalyzeOrphansJSONOutput(t *testing.T) {
+	setupAnalyzeTestGraph()
+	buf := setupJSONTestOutput()
+
+	// Remove all edges to create orphans
+	g = graph.New()
+	orphan := model.NewEntity("REQ-003", "requirement")
+	orphan.Properties["title"] = "Orphan Requirement"
+	g.AddNode(orphan)
+
+	err := analyzeOrphansCmd.RunE(nil, nil)
+	if err != nil {
+		t.Fatalf("analyzeOrphansCmd.RunE() error = %v", err)
+	}
+
+	var result output.AnalysisResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	if result.Status != "warning" {
+		t.Errorf("Expected status 'warning', got %q", result.Status)
+	}
+	if result.Count != 1 {
+		t.Errorf("Expected count 1, got %d", result.Count)
+	}
+}
+
+func TestAnalyzeOrphansJSONOutputEmpty(t *testing.T) {
+	setupAnalyzeTestGraph()
+	buf := setupJSONTestOutput()
+
+	err := analyzeOrphansCmd.RunE(nil, nil)
+	if err != nil {
+		t.Fatalf("analyzeOrphansCmd.RunE() error = %v", err)
+	}
+
+	var result output.AnalysisResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	if result.Status != "success" {
+		t.Errorf("Expected status 'success', got %q", result.Status)
+	}
+	if result.Count != 0 {
+		t.Errorf("Expected count 0, got %d", result.Count)
+	}
+}
+
+func TestAnalyzeDuplicatesJSONOutput(t *testing.T) {
+	g = graph.New()
+	meta = &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
+		},
+	}
+	buf := setupJSONTestOutput()
+
+	// Create entities with duplicate titles
+	e1 := model.NewEntity("REQ-001", "requirement")
+	e1.Properties["title"] = "Same Title"
+	g.AddNode(e1)
+
+	e2 := model.NewEntity("REQ-002", "requirement")
+	e2.Properties["title"] = "Same Title"
+	g.AddNode(e2)
+
+	err := analyzeDuplicatesCmd.RunE(nil, nil)
+	if err != nil {
+		t.Fatalf("analyzeDuplicatesCmd.RunE() error = %v", err)
+	}
+
+	var result output.AnalysisResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	if result.Status != "warning" {
+		t.Errorf("Expected status 'warning', got %q", result.Status)
+	}
+	if result.Count != 1 {
+		t.Errorf("Expected count 1, got %d", result.Count)
+	}
+}
+
+func TestAnalyzeGapsJSONOutput(t *testing.T) {
+	g = graph.New()
+	meta = &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
+		},
+	}
+	buf := setupJSONTestOutput()
+
+	// Create entities with a gap in IDs
+	e1 := model.NewEntity("REQ-001", "requirement")
+	g.AddNode(e1)
+	e3 := model.NewEntity("REQ-003", "requirement")
+	g.AddNode(e3)
+
+	err := analyzeGapsCmd.RunE(nil, nil)
+	if err != nil {
+		t.Fatalf("analyzeGapsCmd.RunE() error = %v", err)
+	}
+
+	var result output.AnalysisResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	if result.Status != "warning" {
+		t.Errorf("Expected status 'warning', got %q", result.Status)
+	}
+	if result.Count != 1 {
+		t.Errorf("Expected count 1, got %d", result.Count)
+	}
+}
+
+func TestAnalyzeCardinalityJSONOutput(t *testing.T) {
+	setupAnalyzeTestGraph()
+	buf := setupJSONTestOutput()
+
+	// Add cardinality constraint that will be violated
+	minTwo := 2
+	meta.Relations["implements"] = metamodel.RelationDef{
+		Label:       "Implements",
+		From:        []string{"decision"},
+		To:          []string{"requirement"},
+		MinOutgoing: &minTwo,
+	}
+
+	// DEC-001 has 2 implements relations, so no violation with MinOutgoing=2
+	// But let's test with 3 to cause a violation
+	minThree := 3
+	meta.Relations["implements"] = metamodel.RelationDef{
+		Label:       "Implements",
+		From:        []string{"decision"},
+		To:          []string{"requirement"},
+		MinOutgoing: &minThree,
+	}
+
+	err := analyzeCardinalityCmd.RunE(nil, nil)
+	if err != nil {
+		t.Fatalf("analyzeCardinalityCmd.RunE() error = %v", err)
+	}
+
+	var result output.AnalysisResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	if result.Status != "warning" {
+		t.Errorf("Expected status 'warning', got %q", result.Status)
+	}
+	if result.Count != 1 {
+		t.Errorf("Expected count 1, got %d", result.Count)
+	}
+}
+
+func TestAnalyzeValidationsJSONOutput(t *testing.T) {
+	g = graph.New()
+	meta = &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"requirement": {
+				Label:    "Requirement",
+				IDPrefix: "REQ-",
+				Properties: map[string]metamodel.PropertyDef{
+					"status":   {Type: "string"},
+					"priority": {Type: "string"},
+				},
+			},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "accepted-needs-priority",
+				Description: "Accepted requirements must have priority",
+				EntityType:  "requirement",
+				When:        []string{"status=accepted"},
+				Then:        []string{"priority!="},
+				Severity:    "error",
+			},
+		},
+	}
+	buf := setupJSONTestOutput()
+
+	// Create entity that violates the rule
+	e := model.NewEntity("REQ-001", "requirement")
+	e.Properties["status"] = "accepted"
+	// No priority set - will violate the rule
+	g.AddNode(e)
+
+	err := runValidations()
+	if err != nil {
+		t.Fatalf("runValidations() error = %v", err)
+	}
+
+	var result output.AnalysisResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	if result.Status != "error" {
+		t.Errorf("Expected status 'error', got %q", result.Status)
+	}
+	if result.Count != 1 {
+		t.Errorf("Expected count 1, got %d", result.Count)
+	}
+}
+
+func TestAnalyzeAllJSONOutput(t *testing.T) {
+	setupAnalyzeTestGraph()
+	buf := setupJSONTestOutput()
+
+	err := analyzeAllCmd.RunE(nil, nil)
+	if err != nil {
+		t.Fatalf("analyzeAllCmd.RunE() error = %v", err)
+	}
+
+	var result output.AnalysisResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	// With the test graph having no violations, should be success
+	if result.Status != "success" {
+		t.Errorf("Expected status 'success', got %q", result.Status)
 	}
 }
