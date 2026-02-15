@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -407,17 +408,87 @@ func (a *App) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity
 			}
 		}
 
-		satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, a.meta)
-		if err != nil {
-			violations = append(violations, entity)
-			continue
+		// Check property-based then conditions
+		if len(thenFilters) > 0 {
+			satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, a.meta)
+			if err != nil {
+				violations = append(violations, entity)
+				continue
+			}
+			if !satisfies {
+				violations = append(violations, entity)
+				continue
+			}
 		}
-		if !satisfies {
-			violations = append(violations, entity)
+
+		// Check content rules
+		if rule.Content != nil {
+			if !checkContentRule(entity, rule.Content) {
+				violations = append(violations, entity)
+			}
 		}
 	}
 
 	return violations
+}
+
+// checkContentRule validates markdown content against content rules.
+func checkContentRule(entity *model.Entity, rule *metamodel.ContentRule) bool {
+	if rule == nil {
+		return true
+	}
+
+	headers := extractMarkdownHeaders(entity.Content)
+
+	for _, headerCheck := range rule.RequiredHeaders {
+		if !matchHeader(headers, headerCheck) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// extractMarkdownHeaders extracts all markdown headers from content.
+func extractMarkdownHeaders(content string) []string {
+	var headers []string
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			headers = append(headers, trimmed)
+		}
+	}
+	return headers
+}
+
+// matchHeader checks if any header matches the given header check.
+func matchHeader(headers []string, check metamodel.HeaderCheck) bool {
+	matchStr := check.GetMatchString()
+	if matchStr == "" {
+		return true
+	}
+
+	if check.IsPattern() {
+		re, err := regexp.Compile(matchStr)
+		if err != nil {
+			return false
+		}
+		for _, h := range headers {
+			if re.MatchString(h) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Exact match
+	for _, h := range headers {
+		if h == matchStr {
+			return true
+		}
+	}
+	return false
 }
 
 // countEdgesByType counts relations of a specific type in a slice.

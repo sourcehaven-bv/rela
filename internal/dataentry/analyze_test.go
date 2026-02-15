@@ -475,3 +475,326 @@ func TestNormalizeTitle(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractMarkdownHeaders(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name:    "no headers",
+			content: "Just some text\nwithout headers",
+			want:    nil,
+		},
+		{
+			name:    "single header",
+			content: "# Title\nSome content",
+			want:    []string{"# Title"},
+		},
+		{
+			name:    "multiple levels",
+			content: "# H1\n## H2\n### H3\ntext",
+			want:    []string{"# H1", "## H2", "### H3"},
+		},
+		{
+			name:    "headers with whitespace",
+			content: "  ## Context  \ntext\n   ### Details   ",
+			want:    []string{"## Context", "### Details"},
+		},
+		{
+			name:    "empty content",
+			content: "",
+			want:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractMarkdownHeaders(tt.content)
+			if len(got) != len(tt.want) {
+				t.Errorf("extractMarkdownHeaders() got %d headers, want %d", len(got), len(tt.want))
+				return
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("header[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestMatchHeader(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers []string
+		check   metamodel.HeaderCheck
+		want    bool
+	}{
+		{
+			name:    "exact match found",
+			headers: []string{"# Title", "## Context", "## Decision"},
+			check:   metamodel.HeaderCheck{Header: "## Context"},
+			want:    true,
+		},
+		{
+			name:    "exact match not found",
+			headers: []string{"# Title", "## Decision"},
+			check:   metamodel.HeaderCheck{Header: "## Context"},
+			want:    false,
+		},
+		{
+			name:    "pattern match found",
+			headers: []string{"# Title", "## Alternatives"},
+			check:   metamodel.HeaderCheck{Pattern: "## (Alternative|Alternatives)"},
+			want:    true,
+		},
+		{
+			name:    "pattern match not found",
+			headers: []string{"# Title", "## Other"},
+			check:   metamodel.HeaderCheck{Pattern: "## (Alternative|Alternatives)"},
+			want:    false,
+		},
+		{
+			name:    "empty check matches",
+			headers: []string{"# Title"},
+			check:   metamodel.HeaderCheck{},
+			want:    true,
+		},
+		{
+			name:    "empty headers no match",
+			headers: []string{},
+			check:   metamodel.HeaderCheck{Header: "## Context"},
+			want:    false,
+		},
+		{
+			name:    "invalid regex returns false",
+			headers: []string{"## Test"},
+			check:   metamodel.HeaderCheck{Pattern: "[invalid"},
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchHeader(tt.headers, tt.check)
+			if got != tt.want {
+				t.Errorf("matchHeader() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckContentRule(t *testing.T) {
+	tests := []struct {
+		name   string
+		entity *model.Entity
+		rule   *metamodel.ContentRule
+		want   bool
+	}{
+		{
+			name:   "nil rule passes",
+			entity: &model.Entity{Content: "# Title"},
+			rule:   nil,
+			want:   true,
+		},
+		{
+			name:   "empty rule passes",
+			entity: &model.Entity{Content: "# Title"},
+			rule:   &metamodel.ContentRule{},
+			want:   true,
+		},
+		{
+			name:   "required header present",
+			entity: &model.Entity{Content: "# Title\n## Context\nSome text"},
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{
+					{Header: "## Context"},
+				},
+			},
+			want: true,
+		},
+		{
+			name:   "required header missing",
+			entity: &model.Entity{Content: "# Title\nSome text"},
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{
+					{Header: "## Context"},
+				},
+			},
+			want: false,
+		},
+		{
+			name:   "multiple required headers all present",
+			entity: &model.Entity{Content: "# Title\n## Context\n## Decision\n## Alternatives"},
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{
+					{Header: "## Context"},
+					{Header: "## Decision"},
+				},
+			},
+			want: true,
+		},
+		{
+			name:   "multiple required headers one missing",
+			entity: &model.Entity{Content: "# Title\n## Context"},
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{
+					{Header: "## Context"},
+					{Header: "## Decision"},
+				},
+			},
+			want: false,
+		},
+		{
+			name:   "pattern header present",
+			entity: &model.Entity{Content: "# Title\n## Alternatives"},
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{
+					{Pattern: "## (Alternative|Alternatives)"},
+				},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := checkContentRule(tt.entity, tt.rule)
+			if got != tt.want {
+				t.Errorf("checkContentRule() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeValidationsWithContentRules(t *testing.T) {
+	g := graph.New()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"decision": {Properties: map[string]metamodel.PropertyDef{
+				"title":  {Type: "string"},
+				"status": {Type: "string"},
+			}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "decision-needs-context",
+				Description: "Decisions must have Context section",
+				EntityType:  "decision",
+				When:        []string{"status=accepted"},
+				Content: &metamodel.ContentRule{
+					RequiredHeaders: []metamodel.HeaderCheck{
+						{Header: "## Context"},
+					},
+				},
+				Severity: "error",
+			},
+		},
+	}
+
+	// Accepted without Context section — violation
+	g.AddNode(&model.Entity{
+		ID:         "DEC-001",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "Auth", "status": "accepted"},
+		Content:    "# Decision\nSome text without context section",
+	})
+	// Accepted with Context section — OK
+	g.AddNode(&model.Entity{
+		ID:         "DEC-002",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "Database", "status": "accepted"},
+		Content:    "# Decision\n## Context\nWe need to decide...",
+	})
+	// Draft — rule doesn't apply
+	g.AddNode(&model.Entity{
+		ID:         "DEC-003",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "Draft", "status": "draft"},
+		Content:    "# Draft decision",
+	})
+
+	app := newTestApp(g, meta)
+	section := app.analyzeValidations()
+
+	if len(section.Issues) != 1 {
+		t.Fatalf("expected 1 content validation issue, got %d", len(section.Issues))
+	}
+	if section.Issues[0].EntityID != "DEC-001" {
+		t.Errorf("expected violation on DEC-001, got %s", section.Issues[0].EntityID)
+	}
+	if section.Issues[0].Severity != "error" {
+		t.Errorf("expected severity 'error', got %q", section.Issues[0].Severity)
+	}
+}
+
+func TestAnalyzeValidationsWithCombinedRules(t *testing.T) {
+	g := graph.New()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"decision": {Properties: map[string]metamodel.PropertyDef{
+				"title":  {Type: "string"},
+				"status": {Type: "string"},
+				"owner":  {Type: "string"},
+			}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "accepted-decision-complete",
+				Description: "Accepted decisions need owner and Context section",
+				EntityType:  "decision",
+				When:        []string{"status=accepted"},
+				Then:        []string{"owner!="},
+				Content: &metamodel.ContentRule{
+					RequiredHeaders: []metamodel.HeaderCheck{
+						{Header: "## Context"},
+					},
+				},
+				Severity: "error",
+			},
+		},
+	}
+
+	// Missing owner — then fails
+	g.AddNode(&model.Entity{
+		ID:         "DEC-001",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "No owner", "status": "accepted"},
+		Content:    "# Decision\n## Context\nHas context",
+	})
+	// Has owner but missing Context — content fails
+	g.AddNode(&model.Entity{
+		ID:         "DEC-002",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "No context", "status": "accepted", "owner": "Alice"},
+		Content:    "# Decision\nNo context section",
+	})
+	// Has both — OK
+	g.AddNode(&model.Entity{
+		ID:         "DEC-003",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "Complete", "status": "accepted", "owner": "Bob"},
+		Content:    "# Decision\n## Context\nAll good",
+	})
+
+	app := newTestApp(g, meta)
+	section := app.analyzeValidations()
+
+	if len(section.Issues) != 2 {
+		t.Fatalf("expected 2 violations (DEC-001 and DEC-002), got %d", len(section.Issues))
+	}
+
+	// Check both violations are present
+	ids := make(map[string]bool)
+	for _, issue := range section.Issues {
+		ids[issue.EntityID] = true
+	}
+	if !ids["DEC-001"] {
+		t.Error("expected violation on DEC-001")
+	}
+	if !ids["DEC-002"] {
+		t.Error("expected violation on DEC-002")
+	}
+}
