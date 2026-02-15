@@ -29,6 +29,25 @@ func Match(entity *model.Entity, filter *Filter, propDef *metamodel.PropertyDef,
 		return false, nil
 	}
 
+	// Handle empty filter value checks ("property=" or "property!=")
+	// This checks for existence/emptiness and works for all property types.
+	// When filter.Value is empty, we're checking if the property has any value,
+	// not comparing to a specific value. This avoids parse errors for non-string types.
+	if filter.Value == "" {
+		switch filter.Operator {
+		case OpEqual:
+			// property= means "is empty", but we already handled nil/"" above,
+			// so if we reach here the value is not empty
+			return false, nil
+		case OpNotEqual:
+			// property!= means "is not empty" - value exists and is not empty
+			return true, nil
+		case OpLess, OpLessEqual, OpGreater, OpGreaterEqual, OpRegex:
+			// For other operators with empty value, fall through to type-specific matching
+			// which will return an appropriate error
+		}
+	}
+
 	// Validate operator is supported for this property type
 	if err := validateOperatorForType(filter.Operator, propDef, m); err != nil {
 		return false, err
