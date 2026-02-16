@@ -38,7 +38,10 @@ type ValidationRule struct {
 	// Then specifies filter conditions that matching entities must satisfy
 	// Uses the same syntax as --where filters (e.g., "owner!=")
 	// Multiple conditions are ANDed together
-	Then []string `yaml:"then"`
+	Then []string `yaml:"then,omitempty"`
+
+	// Content specifies validation rules for markdown body content
+	Content *ContentRule `yaml:"content,omitempty"`
 
 	// Severity is the severity level of violations: "error" or "warning"
 	// Defaults to "warning" if not specified
@@ -270,6 +273,57 @@ type AutomationCheck struct {
 	Check    string `yaml:"check"`
 	Severity string `yaml:"severity,omitempty"`
 	Message  string `yaml:"message"`
+}
+
+// ContentRule defines validation rules for markdown body content.
+type ContentRule struct {
+	// RequiredHeaders specifies headers that must appear in the content
+	RequiredHeaders []HeaderCheck `yaml:"required-headers,omitempty"`
+}
+
+// HeaderCheck specifies a header to check for in markdown content.
+// Can be unmarshaled from either a simple string (exact match) or an object with pattern field.
+type HeaderCheck struct {
+	// Header is an exact header string to match (e.g., "## Context")
+	Header string `yaml:"header,omitempty"`
+
+	// Pattern is a regex pattern to match headers (e.g., "## (Alternative|Alternatives)")
+	Pattern string `yaml:"pattern,omitempty"`
+}
+
+// IsPattern returns true if this is a regex pattern match
+func (h *HeaderCheck) IsPattern() bool {
+	return h.Pattern != ""
+}
+
+// GetMatchString returns the pattern or header string to match against
+func (h *HeaderCheck) GetMatchString() string {
+	if h.Pattern != "" {
+		return h.Pattern
+	}
+	return h.Header
+}
+
+// UnmarshalYAML allows HeaderCheck to be unmarshaled from either a string or an object.
+// String form: "## Context" (exact header match)
+// Object form: { pattern: "## (Alternative|Alternatives)" }
+func (h *HeaderCheck) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// First try to unmarshal as a string (simple form - exact match)
+	var simpleForm string
+	if err := unmarshal(&simpleForm); err == nil {
+		h.Header = simpleForm
+		return nil
+	}
+
+	// Try to unmarshal as an object (expanded form with pattern)
+	type headerCheckAlias HeaderCheck // Alias to avoid infinite recursion
+	var objectForm headerCheckAlias
+	if err := unmarshal(&objectForm); err != nil {
+		return err
+	}
+
+	*h = HeaderCheck(objectForm)
+	return nil
 }
 
 // StringOrSlice is a YAML type that can be unmarshaled from either a string or []string.

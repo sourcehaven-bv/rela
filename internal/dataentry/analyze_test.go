@@ -475,3 +475,133 @@ func TestNormalizeTitle(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalyzeValidationsWithContentRules(t *testing.T) {
+	g := graph.New()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"decision": {Properties: map[string]metamodel.PropertyDef{
+				"title":  {Type: "string"},
+				"status": {Type: "string"},
+			}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "decision-needs-context",
+				Description: "Decisions must have Context section",
+				EntityType:  "decision",
+				When:        []string{"status=accepted"},
+				Content: &metamodel.ContentRule{
+					RequiredHeaders: []metamodel.HeaderCheck{
+						{Header: "## Context"},
+					},
+				},
+				Severity: "error",
+			},
+		},
+	}
+
+	// Accepted without Context section — violation
+	g.AddNode(&model.Entity{
+		ID:         "DEC-001",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "Auth", "status": "accepted"},
+		Content:    "# Decision\nSome text without context section",
+	})
+	// Accepted with Context section — OK
+	g.AddNode(&model.Entity{
+		ID:         "DEC-002",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "Database", "status": "accepted"},
+		Content:    "# Decision\n## Context\nWe need to decide...",
+	})
+	// Draft — rule doesn't apply
+	g.AddNode(&model.Entity{
+		ID:         "DEC-003",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "Draft", "status": "draft"},
+		Content:    "# Draft decision",
+	})
+
+	app := newTestApp(g, meta)
+	section := app.analyzeValidations()
+
+	if len(section.Issues) != 1 {
+		t.Fatalf("expected 1 content validation issue, got %d", len(section.Issues))
+	}
+	if section.Issues[0].EntityID != "DEC-001" {
+		t.Errorf("expected violation on DEC-001, got %s", section.Issues[0].EntityID)
+	}
+	if section.Issues[0].Severity != "error" {
+		t.Errorf("expected severity 'error', got %q", section.Issues[0].Severity)
+	}
+}
+
+func TestAnalyzeValidationsWithCombinedRules(t *testing.T) {
+	g := graph.New()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"decision": {Properties: map[string]metamodel.PropertyDef{
+				"title":  {Type: "string"},
+				"status": {Type: "string"},
+				"owner":  {Type: "string"},
+			}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "accepted-decision-complete",
+				Description: "Accepted decisions need owner and Context section",
+				EntityType:  "decision",
+				When:        []string{"status=accepted"},
+				Then:        []string{"owner!="},
+				Content: &metamodel.ContentRule{
+					RequiredHeaders: []metamodel.HeaderCheck{
+						{Header: "## Context"},
+					},
+				},
+				Severity: "error",
+			},
+		},
+	}
+
+	// Missing owner — then fails
+	g.AddNode(&model.Entity{
+		ID:         "DEC-001",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "No owner", "status": "accepted"},
+		Content:    "# Decision\n## Context\nHas context",
+	})
+	// Has owner but missing Context — content fails
+	g.AddNode(&model.Entity{
+		ID:         "DEC-002",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "No context", "status": "accepted", "owner": "Alice"},
+		Content:    "# Decision\nNo context section",
+	})
+	// Has both — OK
+	g.AddNode(&model.Entity{
+		ID:         "DEC-003",
+		Type:       "decision",
+		Properties: map[string]interface{}{"title": "Complete", "status": "accepted", "owner": "Bob"},
+		Content:    "# Decision\n## Context\nAll good",
+	})
+
+	app := newTestApp(g, meta)
+	section := app.analyzeValidations()
+
+	if len(section.Issues) != 2 {
+		t.Fatalf("expected 2 violations (DEC-001 and DEC-002), got %d", len(section.Issues))
+	}
+
+	// Check both violations are present
+	ids := make(map[string]bool)
+	for _, issue := range section.Issues {
+		ids[issue.EntityID] = true
+	}
+	if !ids["DEC-001"] {
+		t.Error("expected violation on DEC-001")
+	}
+	if !ids["DEC-002"] {
+		t.Error("expected violation on DEC-002")
+	}
+}

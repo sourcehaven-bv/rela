@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
@@ -648,15 +649,25 @@ func checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
 		}
 
 		// Entity matches - now check if it satisfies the 'then' conditions
-		satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, meta)
-		if err != nil {
-			// If we can't evaluate the then filter, treat as violation
-			violations = append(violations, entity)
-			continue
+		if len(thenFilters) > 0 {
+			satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, meta)
+			if err != nil {
+				// If we can't evaluate the then filter, treat as violation
+				violations = append(violations, entity)
+				continue
+			}
+
+			if !satisfies {
+				violations = append(violations, entity)
+				continue
+			}
 		}
 
-		if !satisfies {
-			violations = append(violations, entity)
+		// Check content rules
+		if rule.Content != nil {
+			if !markdown.CheckContentRule(entity, rule.Content) {
+				violations = append(violations, entity)
+			}
 		}
 	}
 

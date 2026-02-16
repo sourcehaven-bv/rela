@@ -8,6 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -197,9 +198,24 @@ func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Ent
 			}
 		}
 
-		satisfies, matchErr := filter.MatchAll(entity, thenFilters, entityDef, meta)
-		if matchErr != nil || !satisfies {
-			violations = append(violations, entity)
+		// Check property-based then conditions
+		if len(thenFilters) > 0 {
+			satisfies, matchErr := filter.MatchAll(entity, thenFilters, entityDef, meta)
+			if matchErr != nil {
+				violations = append(violations, entity)
+				continue
+			}
+			if !satisfies {
+				violations = append(violations, entity)
+				continue
+			}
+		}
+
+		// Check content rules
+		if rule.Content != nil {
+			if !markdown.CheckContentRule(entity, rule.Content) {
+				violations = append(violations, entity)
+			}
 		}
 	}
 

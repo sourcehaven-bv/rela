@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
@@ -407,13 +408,24 @@ func (a *App) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity
 			}
 		}
 
-		satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, a.meta)
-		if err != nil {
-			violations = append(violations, entity)
-			continue
+		// Check property-based then conditions
+		if len(thenFilters) > 0 {
+			satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, a.meta)
+			if err != nil {
+				violations = append(violations, entity)
+				continue
+			}
+			if !satisfies {
+				violations = append(violations, entity)
+				continue
+			}
 		}
-		if !satisfies {
-			violations = append(violations, entity)
+
+		// Check content rules
+		if rule.Content != nil {
+			if !markdown.CheckContentRule(entity, rule.Content) {
+				violations = append(violations, entity)
+			}
 		}
 	}
 

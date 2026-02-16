@@ -4,6 +4,8 @@ import (
 	"errors"
 	"sort"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestEntityDef_GetDirPlural(t *testing.T) {
@@ -1295,7 +1297,7 @@ func TestErrorTypes(t *testing.T) {
 }
 
 func TestParse_ValidationWhenThen(t *testing.T) {
-	yaml := `
+	input := `
 version: "1.0"
 entities:
   requirement:
@@ -1316,7 +1318,7 @@ validations:
       - "priority!="
     severity: error
 `
-	m, err := Parse([]byte(yaml))
+	m, err := Parse([]byte(input))
 	if err != nil {
 		t.Fatalf("Parse() error: %v", err)
 	}
@@ -1336,5 +1338,125 @@ validations:
 
 	if len(rule.Then) != 1 || rule.Then[0] != "priority!=" {
 		t.Errorf("Then = %v, want [\"priority!=\"]", rule.Then)
+	}
+}
+
+func TestHeaderCheck_IsPattern(t *testing.T) {
+	tests := []struct {
+		name  string
+		check HeaderCheck
+		want  bool
+	}{
+		{name: "exact header is not pattern", check: HeaderCheck{Header: "## Context"}, want: false},
+		{name: "regex pattern is pattern", check: HeaderCheck{Pattern: "## (Alternative|Alternatives)"}, want: true},
+		{name: "empty is not pattern", check: HeaderCheck{}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.check.IsPattern(); got != tt.want {
+				t.Errorf("IsPattern() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHeaderCheck_GetMatchString(t *testing.T) {
+	tests := []struct {
+		name  string
+		check HeaderCheck
+		want  string
+	}{
+		{name: "exact header", check: HeaderCheck{Header: "## Context"}, want: "## Context"},
+		{name: "regex pattern", check: HeaderCheck{Pattern: "## (Alt|Alts)"}, want: "## (Alt|Alts)"},
+		{name: "both set prefers pattern", check: HeaderCheck{Header: "## Alt", Pattern: "## (Alt|Alts)"}, want: "## (Alt|Alts)"},
+		{name: "empty", check: HeaderCheck{}, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.check.GetMatchString(); got != tt.want {
+				t.Errorf("GetMatchString() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHeaderCheck_UnmarshalYAML(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantHeader  string
+		wantPattern string
+	}{
+		{name: "simple string form", input: `"## Context"`, wantHeader: "## Context", wantPattern: ""},
+		{name: "object form with pattern", input: `pattern: "## (Alternative|Alternatives)"`, wantHeader: "", wantPattern: "## (Alternative|Alternatives)"},
+		{name: "object form with header", input: `header: "## Decision"`, wantHeader: "## Decision", wantPattern: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var check HeaderCheck
+			if err := yaml.Unmarshal([]byte(tt.input), &check); err != nil {
+				t.Fatalf("UnmarshalYAML() error: %v", err)
+			}
+			if check.Header != tt.wantHeader {
+				t.Errorf("Header = %q, want %q", check.Header, tt.wantHeader)
+			}
+			if check.Pattern != tt.wantPattern {
+				t.Errorf("Pattern = %q, want %q", check.Pattern, tt.wantPattern)
+			}
+		})
+	}
+}
+
+func TestParse_ValidationWithContentRules(t *testing.T) {
+	input := `
+version: "1.0"
+entities:
+  decision:
+    label: Decision
+    id_prefix: "DEC-"
+    properties:
+      status:
+        type: string
+validations:
+  - name: decision-needs-context
+    description: "Decisions must have a Context section"
+    entity_type: decision
+    content:
+      required-headers:
+        - "## Context"
+        - pattern: "## (Alternative|Alternatives)"
+    severity: error
+`
+	m, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	if len(m.Validations) != 1 {
+		t.Fatalf("expected 1 validation, got %d", len(m.Validations))
+	}
+
+	rule := m.Validations[0]
+	if rule.Content == nil {
+		t.Fatal("Content is nil")
+	}
+
+	if len(rule.Content.RequiredHeaders) != 2 {
+		t.Fatalf("RequiredHeaders count = %d, want 2", len(rule.Content.RequiredHeaders))
+	}
+
+	// Check first header (exact match)
+	h1 := rule.Content.RequiredHeaders[0]
+	if h1.Header != "## Context" || h1.IsPattern() {
+		t.Errorf("RequiredHeaders[0] = {Header: %q, IsPattern: %v}, want exact match", h1.Header, h1.IsPattern())
+	}
+
+	// Check second header (pattern)
+	h2 := rule.Content.RequiredHeaders[1]
+	if h2.Pattern != "## (Alternative|Alternatives)" || !h2.IsPattern() {
+		t.Errorf("RequiredHeaders[1] = {Pattern: %q, IsPattern: %v}, want pattern", h2.Pattern, h2.IsPattern())
 	}
 }
