@@ -507,6 +507,16 @@ func TestExtractMarkdownHeaders(t *testing.T) {
 			content: "",
 			want:    nil,
 		},
+		{
+			name:    "ignores headers in code blocks",
+			content: "# Real Header\n```\n## Not a header\n# Also not a header\n```\n## Another Real Header",
+			want:    []string{"# Real Header", "## Another Real Header"},
+		},
+		{
+			name:    "ignores headers in indented code blocks",
+			content: "# Title\n\n    ## Indented code\n    # More code\n\n## Actual Header",
+			want:    []string{"# Title", "## Actual Header"},
+		},
 	}
 
 	for _, tt := range tests {
