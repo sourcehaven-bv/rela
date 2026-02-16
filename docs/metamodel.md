@@ -807,6 +807,80 @@ Validation rules support all the same operators as `--where` filters:
 | `>=`     | `created>=2025-01-01`  | Greater than or equal                             |
 | `=~`     | `title=~^ADR-\\d+`     | Regex match (strings)                             |
 
+### Content Validation
+
+In addition to property-based conditions, validation rules can check markdown content structure
+using the `content` field. This validates the presence of required headers in entity markdown files.
+
+```yaml
+validations:
+  - name: adr-structure
+    description: "ADRs must have Context and Decision headers"
+    entity_type: decision
+    when:
+      - "status=accepted"
+    content:
+      required-headers:
+        - "## Context"
+        - "## Decision"
+```
+
+#### Required Headers
+
+The `required-headers` field accepts a list of header checks. Each check can be:
+
+1. **Exact match** (string): The header must match exactly, including the `#` prefix
+
+   ```yaml
+   required-headers:
+     - "## Context"        # Requires exactly "## Context"
+     - "### Details"       # Requires exactly "### Details"
+   ```
+
+2. **Pattern match** (regex): Use the `pattern:` prefix for flexible matching
+
+   ```yaml
+   required-headers:
+     - pattern: "## (Alternative|Alternatives)"  # Matches either spelling
+     - pattern: "## .+ Analysis"                 # Matches any "## X Analysis" header
+   ```
+
+#### Content Validation Example
+
+```yaml
+validations:
+  # ADRs must follow the standard structure
+  - name: adr-required-sections
+    description: "Accepted ADRs must have Context, Decision, and Consequences sections"
+    entity_type: decision
+    when:
+      - "status=accepted"
+    content:
+      required-headers:
+        - "## Context"
+        - "## Decision"
+        - "## Consequences"
+    severity: error
+
+  # User stories should have acceptance criteria
+  - name: story-acceptance-criteria
+    description: "User stories should have acceptance criteria"
+    entity_type: requirement
+    when:
+      - "title=~^As a"
+    content:
+      required-headers:
+        - pattern: "## (Acceptance Criteria|AC)"
+    severity: warning
+```
+
+#### How Content Validation Works
+
+1. Headers are extracted from the entity's markdown content using a proper parser
+2. Headers inside code blocks (fenced or indented) are ignored
+3. Each required header is checked against the extracted headers
+4. If any required header is missing, the entity violates the rule
+
 ### Running Validations
 
 ```bash
