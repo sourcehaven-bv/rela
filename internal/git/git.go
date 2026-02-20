@@ -16,7 +16,7 @@ type Config struct {
 	Enabled       bool   `yaml:"enabled"`
 	Mode          string `yaml:"mode"`           // "direct" or "pr"
 	Branch        string `yaml:"branch"`         // for direct mode
-	BaseBranch    string `yaml:"base_branch"`    // for pr mode: rebase onto this
+	BaseBranch    string `yaml:"base_branch"`    // for pr mode: merge from this
 	PushBranch    string `yaml:"push_branch"`    // for pr mode: push to this
 	FetchInterval int    `yaml:"fetch_interval"` // seconds, 0 = disabled
 }
@@ -28,7 +28,7 @@ type Status struct {
 	LocalChanges  int      // number of uncommitted files
 	RemoteAhead   int      // commits ahead on remote
 	Syncing       bool     // true if sync in progress
-	Conflict      bool     // true if rebase conflict
+	Conflict      bool     // true if merge conflict
 	ConflictFiles []string // files with conflicts
 }
 
@@ -79,10 +79,8 @@ func (g *Ops) GetStatus() (*Status, error) {
 	}
 	status.LocalChanges = changes
 
-	// Check for rebase in progress
-	if exists(filepath.Join(g.root, ".git", "rebase-merge")) ||
-		exists(filepath.Join(g.root, ".git", "rebase-apply")) {
-
+	// Check for merge conflict in progress
+	if exists(filepath.Join(g.root, ".git", "MERGE_HEAD")) {
 		status.Conflict = true
 		files, _ := g.getConflictFiles()
 		status.ConflictFiles = files
@@ -103,15 +101,13 @@ func (g *Ops) Fetch() error {
 	return err
 }
 
-// ErrConflictInProgress indicates a rebase conflict that must be resolved first.
-var ErrConflictInProgress = errors.New("rebase conflict in progress, resolve before syncing")
+// ErrConflictInProgress indicates a merge conflict that must be resolved first.
+var ErrConflictInProgress = errors.New("merge conflict in progress, resolve before syncing")
 
-// Sync performs commit + rebase + push.
+// Sync performs commit + merge + push.
 func (g *Ops) Sync(message string) error {
-	// Check for rebase conflict first
-	if exists(filepath.Join(g.root, ".git", "rebase-merge")) ||
-		exists(filepath.Join(g.root, ".git", "rebase-apply")) {
-
+	// Check for merge conflict first
+	if exists(filepath.Join(g.root, ".git", "MERGE_HEAD")) {
 		return ErrConflictInProgress
 	}
 
@@ -145,15 +141,15 @@ func (g *Ops) Sync(message string) error {
 		return fmt.Errorf("fetch: %w", err)
 	}
 
-	// Check if rebase is needed (are we behind remote?)
+	// Check if merge is needed (are we behind remote?)
 	targetBranch := g.getBaseBranch()
 	behind, _ := runGit(g.root, "rev-list", "--count", "HEAD..origin/"+targetBranch)
 	behindCount := strings.TrimSpace(behind)
 
 	if behindCount != "" && behindCount != "0" {
-		// Rebase onto target branch, autostash to handle any unstaged changes
-		if _, err := runGit(g.root, "rebase", "--autostash", "origin/"+targetBranch); err != nil {
-			return fmt.Errorf("rebase: %w", err)
+		// Merge from target branch
+		if _, err := runGit(g.root, "merge", "origin/"+targetBranch, "-m", "Merge "+targetBranch); err != nil {
+			return fmt.Errorf("merge: %w", err)
 		}
 	}
 
@@ -171,9 +167,9 @@ func (g *Ops) Sync(message string) error {
 	return nil
 }
 
-// AbortRebase aborts an in-progress rebase.
-func (g *Ops) AbortRebase() error {
-	_, err := runGit(g.root, "rebase", "--abort")
+// AbortMerge aborts an in-progress merge.
+func (g *Ops) AbortMerge() error {
+	_, err := runGit(g.root, "merge", "--abort")
 	return err
 }
 

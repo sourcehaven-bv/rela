@@ -261,50 +261,31 @@ func TestGetBaseBranch(t *testing.T) {
 	}
 }
 
-func TestAbortRebase_NoRebaseInProgress(t *testing.T) {
+func TestAbortMerge_NoMergeInProgress(t *testing.T) {
 	dir, _ := setupTestRepoWithRemote(t)
 
 	ops := NewOps(dir, Config{})
-	// AbortRebase when no rebase is in progress should fail
-	err := ops.AbortRebase()
+	// AbortMerge when no merge is in progress should fail
+	err := ops.AbortMerge()
 	if err == nil {
-		t.Error("expected error when aborting non-existent rebase")
+		t.Error("expected error when aborting non-existent merge")
 	}
 }
 
-func TestSync_RejectsWhenConflictInProgress(t *testing.T) {
+func TestSync_RejectsWhenMergeConflictInProgress(t *testing.T) {
 	dir, _ := setupTestRepoWithRemote(t)
 
-	// Simulate a rebase conflict by creating the rebase-merge directory
-	// (this is what git creates during a rebase conflict)
-	rebaseMergeDir := filepath.Join(dir, ".git", "rebase-merge")
-	if err := os.MkdirAll(rebaseMergeDir, 0o755); err != nil {
-		t.Fatalf("create rebase-merge dir failed: %v", err)
+	// Simulate a merge conflict by creating the MERGE_HEAD file
+	// (this is what git creates during a merge conflict)
+	mergeHeadFile := filepath.Join(dir, ".git", "MERGE_HEAD")
+	if err := os.WriteFile(mergeHeadFile, []byte("abc123"), 0o644); err != nil {
+		t.Fatalf("create MERGE_HEAD file failed: %v", err)
 	}
 
 	ops := NewOps(dir, Config{})
 	err := ops.Sync("should fail")
 	if err == nil {
 		t.Error("expected Sync to fail when conflict in progress")
-	}
-	if !errors.Is(err, ErrConflictInProgress) {
-		t.Errorf("expected ErrConflictInProgress, got: %v", err)
-	}
-}
-
-func TestSync_RejectsWhenRebaseApplyInProgress(t *testing.T) {
-	dir, _ := setupTestRepoWithRemote(t)
-
-	// Simulate a rebase by creating the rebase-apply directory
-	rebaseApplyDir := filepath.Join(dir, ".git", "rebase-apply")
-	if err := os.MkdirAll(rebaseApplyDir, 0o755); err != nil {
-		t.Fatalf("create rebase-apply dir failed: %v", err)
-	}
-
-	ops := NewOps(dir, Config{})
-	err := ops.Sync("should fail")
-	if err == nil {
-		t.Error("expected Sync to fail when rebase-apply in progress")
 	}
 	if !errors.Is(err, ErrConflictInProgress) {
 		t.Errorf("expected ErrConflictInProgress, got: %v", err)

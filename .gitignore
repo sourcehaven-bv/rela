@@ -1,3 +1,4 @@
+.DS_Store
 bin/
 /rela
 /rela-server
@@ -24,3 +25,10 @@ other-ci.yml
 
 # Icon generation temp files
 build/package/.icon-tmp/
+
+# E2E test artifacts
+e2e/node_modules/
+e2e/dist/
+e2e/test-results/
+e2e/playwright-report/
+e2e/.playwright/

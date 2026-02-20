@@ -31,6 +31,8 @@ type RecentProject struct {
 type Preferences struct {
 	LastProject    string          `json:"last_project,omitempty"`
 	RecentProjects []RecentProject `json:"recent_projects"`
+	GitHubToken    string          `json:"github_token,omitempty"`
+	CloneDir       string          `json:"clone_dir,omitempty"` // default directory for cloning
 }
 
 // Load reads preferences from the user's config directory.
