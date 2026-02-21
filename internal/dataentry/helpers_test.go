@@ -145,6 +145,60 @@ func TestApplyFilters(t *testing.T) {
 	}
 }
 
+func TestApplyFiltersMultiSelect(t *testing.T) {
+	entities := []*model.Entity{
+		{ID: "E-001", Type: "clause", Properties: map[string]interface{}{"applies_to": "client"}},
+		{ID: "E-002", Type: "clause", Properties: map[string]interface{}{"applies_to": "client,provider"}},
+		{ID: "E-003", Type: "clause", Properties: map[string]interface{}{"applies_to": "provider,employee"}},
+		{ID: "E-004", Type: "clause", Properties: map[string]interface{}{"applies_to": "employee"}},
+	}
+
+	tests := []struct {
+		name    string
+		filters []FilterConfig
+		wantIDs []string
+	}{
+		{
+			name:    "= client matches single and combined values",
+			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "client"}},
+			wantIDs: []string{"E-001", "E-002"},
+		},
+		{
+			name:    "= provider matches combined values",
+			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "provider"}},
+			wantIDs: []string{"E-002", "E-003"},
+		},
+		{
+			name:    "= employee matches combined and single",
+			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "employee"}},
+			wantIDs: []string{"E-003", "E-004"},
+		},
+		{
+			name:    "!= client excludes all entries containing client",
+			filters: []FilterConfig{{Property: "applies_to", Operator: "!=", Value: "client"}},
+			wantIDs: []string{"E-003", "E-004"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := applyFilters(entities, tt.filters)
+			gotIDs := make([]string, len(got))
+			for i, e := range got {
+				gotIDs[i] = e.ID
+			}
+			if len(gotIDs) != len(tt.wantIDs) {
+				t.Fatalf("got %v, want %v", gotIDs, tt.wantIDs)
+			}
+			for i, id := range gotIDs {
+				if id != tt.wantIDs[i] {
+					t.Errorf("got[%d] = %s, want %s", i, id, tt.wantIDs[i])
+				}
+			}
+		})
+	}
+}
+
 func TestSortEntitiesMulti(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{

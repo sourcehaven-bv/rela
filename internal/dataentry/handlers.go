@@ -126,6 +126,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		Value      string
 		Property   string
 		PropType   string
+		Widget     string
 		Link       bool
 		EntityID   string
 		EntityType string
@@ -152,6 +153,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 				Value:      val,
 				Property:   col.Property,
 				PropType:   propType,
+				Widget:     col.Widget,
 				Link:       col.Link,
 				EntityID:   e.ID,
 				EntityType: e.Type,
@@ -1135,7 +1137,14 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	entity := model.NewEntity(entityID, form.EntityType)
 
 	for _, f := range form.Fields {
-		val := r.FormValue(f.Property)
+		prop := entDef.Properties[f.Property]
+		widget := resolveWidget(f.Widget, prop, a.meta)
+		var val string
+		if widget == "multi-select" {
+			val = strings.Join(r.Form[f.Property], ",")
+		} else {
+			val = r.FormValue(f.Property)
+		}
 		if val == "" && a.userDefaults != nil {
 			val = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
 		}
@@ -1334,12 +1343,17 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	entDef, _ := a.meta.GetEntityDef(form.EntityType)
 	for _, f := range form.Fields {
-		val := r.FormValue(f.Property)
+		prop := entDef.Properties[f.Property]
+		widget := resolveWidget(f.Widget, prop, a.meta)
+		var val string
+		if widget == "multi-select" {
+			val = strings.Join(r.Form[f.Property], ",")
+		} else {
+			val = r.FormValue(f.Property)
+		}
 		if val != "" {
 			entity.Properties[f.Property] = val
-		} else if entDef != nil {
-			prop := entDef.Properties[f.Property]
-			widget := resolveWidget(f.Widget, prop, a.meta)
+		} else {
 			if widget == "checkbox" {
 				entity.Properties[f.Property] = "false"
 			} else {

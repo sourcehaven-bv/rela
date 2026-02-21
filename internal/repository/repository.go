@@ -134,6 +134,9 @@ type WatchOptions struct {
 	// (entities, relations, metamodel, views). This allows consumers to
 	// watch app-specific config files (e.g. data-entry.yaml).
 	ExtraFiles []string
+	// ExtraDirs lists additional directories to watch beyond the standard set
+	// (entities, relations). Useful for watching metamodel include directories.
+	ExtraDirs []string
 }
 
 // Compile-time check: *Repository implements Store.
@@ -378,8 +381,11 @@ func (r *Repository) WatchWithHandle(
 	files := []string{r.paths.MetamodelPath, viewsPath}
 	files = append(files, opts.ExtraFiles...)
 
+	dirs := []string{r.paths.EntitiesDir, r.paths.RelationsDir}
+	dirs = append(dirs, opts.ExtraDirs...)
+
 	w, err := storage.NewWatcher(storage.WatchConfig{
-		Dirs:       []string{r.paths.EntitiesDir, r.paths.RelationsDir},
+		Dirs:       dirs,
 		Files:      files,
 		Extensions: []string{".md", ".yaml", ".yml"},
 		Debounce:   200 * time.Millisecond,

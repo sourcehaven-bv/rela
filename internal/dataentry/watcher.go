@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,10 +58,13 @@ func (b *eventBroker) broadcast(event string) {
 //
 // coverage-ignore: requires real filesystem events via fsnotify
 func (a *App) StartWatching() (stop func(), err error) {
-	configPath := filepath.Join(a.repo.Paths().Root, ConfigFile)
+	paths := a.repo.Paths()
+	configPath := filepath.Join(paths.Root, ConfigFile)
+	metamodelDir := filepath.Join(paths.Root, "metamodel")
 
 	opts := repository.WatchOptions{
 		ExtraFiles: []string{configPath},
+		ExtraDirs:  []string{metamodelDir},
 	}
 	return a.repo.Watch(opts, func(events []model.ChangeEvent) {
 		for _, e := range events {
@@ -121,14 +125,17 @@ func (a *App) reload(events []model.ChangeEvent) {
 
 	paths := a.repo.Paths()
 	configPath := filepath.Join(paths.Root, ConfigFile)
+	metamodelDir := filepath.Join(paths.Root, "metamodel") + string(filepath.Separator)
 	needConfigReload := false
 	needMetamodelReload := false
 
 	for _, e := range events {
-		switch e.Path {
-		case configPath:
+		switch {
+		case e.Path == configPath:
 			needConfigReload = true
-		case paths.MetamodelPath:
+		case e.Path == paths.MetamodelPath:
+			needMetamodelReload = true
+		case strings.HasPrefix(e.Path, metamodelDir):
 			needMetamodelReload = true
 		}
 	}
