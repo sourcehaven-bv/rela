@@ -131,6 +131,31 @@ func TestScoreEntity(t *testing.T) {
 	if score <= 0 {
 		t.Errorf("should match property value, got %f", score)
 	}
+
+	// Test multi-select property ([]string)
+	e2 := model.NewEntity("CLS-001", "clause")
+	e2.Properties["title"] = "Service Agreement"
+	e2.Properties["applies_to"] = []string{"client", "provider"}
+
+	score = ScoreEntity(e2, []string{"client"}, nil)
+	if score <= 0 {
+		t.Errorf("should match []string property value, got %f", score)
+	}
+
+	score = ScoreEntity(e2, []string{"provider"}, nil)
+	if score <= 0 {
+		t.Errorf("should match second []string value, got %f", score)
+	}
+
+	// Test multi-select property ([]interface{} from YAML)
+	e3 := model.NewEntity("CLS-002", "clause")
+	e3.Properties["title"] = "Privacy Policy"
+	e3.Properties["applies_to"] = []interface{}{"employee", "contractor"}
+
+	score = ScoreEntity(e3, []string{"contractor"}, nil)
+	if score <= 0 {
+		t.Errorf("should match []interface{} property value, got %f", score)
+	}
 }
 
 func TestScoreText_RelevanceRanking(t *testing.T) {

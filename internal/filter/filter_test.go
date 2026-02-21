@@ -299,6 +299,63 @@ func TestMatchValue(t *testing.T) {
 			want:  "bbb",
 			match: true,
 		},
+		// List types (multi-select)
+		{
+			name:  "[]string contains matching value",
+			value: []string{"client", "provider"},
+			op:    OpEqual,
+			want:  "client",
+			match: true,
+		},
+		{
+			name:  "[]string contains second value",
+			value: []string{"client", "provider"},
+			op:    OpEqual,
+			want:  "provider",
+			match: true,
+		},
+		{
+			name:  "[]string does not contain value",
+			value: []string{"client", "provider"},
+			op:    OpEqual,
+			want:  "employee",
+			match: false,
+		},
+		{
+			name:  "[]string not equal - none match",
+			value: []string{"client", "provider"},
+			op:    OpNotEqual,
+			want:  "employee",
+			match: true,
+		},
+		{
+			name:  "[]string not equal - one matches",
+			value: []string{"client", "provider"},
+			op:    OpNotEqual,
+			want:  "client",
+			match: false,
+		},
+		{
+			name:  "[]interface{} contains matching value",
+			value: []interface{}{"admin", "editor"},
+			op:    OpEqual,
+			want:  "editor",
+			match: true,
+		},
+		{
+			name:  "[]interface{} does not contain value",
+			value: []interface{}{"admin", "editor"},
+			op:    OpEqual,
+			want:  "viewer",
+			match: false,
+		},
+		{
+			name:  "empty []string matches empty filter",
+			value: []string{},
+			op:    OpEqual,
+			want:  "",
+			match: true,
+		},
 	}
 
 	for _, tt := range tests {
