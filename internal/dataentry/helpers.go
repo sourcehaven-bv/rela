@@ -25,6 +25,23 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
 )
 
+// splitAndTrim splits a comma-separated string and trims whitespace from each part,
+// returning only non-empty values.
+func splitAndTrim(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
 // applyFilters filters entities by a set of filter conditions.
 func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Entity {
 	if len(filters) == 0 {
@@ -38,13 +55,23 @@ func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Ent
 				continue // skip variable substitution
 			}
 			val := e.GetAttributeString(f.Property)
+			parts := splitAndTrim(val)
 			switch f.Operator {
 			case "=":
-				if !containsString(strings.Split(val, ","), f.Value) {
+				// Handle empty value filter: empty matches empty (nil property)
+				if f.Value == "" {
+					if val != "" {
+						match = false
+					}
+				} else if !containsString(parts, f.Value) {
 					match = false
 				}
 			case "!=":
-				if containsString(strings.Split(val, ","), f.Value) {
+				if f.Value == "" {
+					if val == "" {
+						match = false
+					}
+				} else if containsString(parts, f.Value) {
 					match = false
 				}
 			}
@@ -356,7 +383,7 @@ func (a *App) executeQuery(query string) []*model.Entity {
 func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string]bool) template.FuncMap {
 	return template.FuncMap{
 		"join":        strings.Join,
-		"splitValues": func(val string) []string { return strings.Split(val, ",") },
+		"splitValues": splitAndTrim,
 		"json": func(v interface{}) string {
 			b, _ := json.Marshal(v)
 			return string(b)

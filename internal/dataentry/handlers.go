@@ -1341,7 +1341,11 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entDef, _ := a.meta.GetEntityDef(form.EntityType)
+	entDef, ok := a.meta.GetEntityDef(form.EntityType)
+	if !ok {
+		http.Error(w, "Unknown entity type", http.StatusBadRequest)
+		return
+	}
 	for _, f := range form.Fields {
 		prop := entDef.Properties[f.Property]
 		widget := resolveWidget(f.Widget, prop, a.meta)

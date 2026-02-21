@@ -246,13 +246,26 @@ func validateCustomTypeValue(propName string, customType CustomType, val interfa
 	for _, v := range customType.Values {
 		allowed[v] = true
 	}
+	hasValue := false
 	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		hasValue = true
 		if !allowed[part] {
 			return &ValidationError{
 				Type:     ValidationErrorInvalidValue,
 				Property: propName,
 				Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", part, customType.Values),
 			}
+		}
+	}
+	if !hasValue {
+		return &ValidationError{
+			Type:     ValidationErrorInvalidValue,
+			Property: propName,
+			Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
 		}
 	}
 	return nil
