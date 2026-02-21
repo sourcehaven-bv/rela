@@ -55,6 +55,15 @@ func (a *App) NewRouter() http.Handler {
 	inner.HandleFunc("/api/git/status", a.handleGitStatus)
 	inner.HandleFunc("/api/git/sync", a.handleGitSync)
 
+	// JSON API endpoints for mobile/programmatic access
+	inner.HandleFunc("/api/entity-types", a.handleAPIEntityTypes)
+	inner.HandleFunc("/api/entities", a.handleAPIEntitiesCRUD)
+	inner.HandleFunc("/api/entities/", a.handleAPIEntityCRUD)
+	inner.HandleFunc("/api/relations", a.handleAPIRelationsCRUD)
+	inner.HandleFunc("/api/metamodel", a.handleAPIMetamodel)
+	inner.HandleFunc("/api/analyze", a.handleAPIAnalyze)
+	inner.HandleFunc("/api/search", a.handleAPISearch)
+
 	locked := a.reloadLockMiddleware(inner)
 	mux.Handle("/", locked)
 
