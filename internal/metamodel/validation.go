@@ -3,7 +3,6 @@ package metamodel
 import (
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -232,36 +231,80 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 }
 
 // validateCustomTypeValue validates a value against a custom type's allowed values.
-// Comma-separated values (multi-select) are each validated individually.
+// Supports both single string values and []string (multi-select).
 func validateCustomTypeValue(propName string, customType CustomType, val interface{}) *ValidationError {
+	allowed := make(map[string]bool, len(customType.Values))
+	for _, v := range customType.Values {
+		allowed[v] = true
+	}
+
+	// Handle []string (multi-select from form submission)
+	if list, ok := val.([]string); ok {
+		if len(list) == 0 {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  fmt.Sprintf("Empty list (allowed: %v)", customType.Values),
+			}
+		}
+		for _, s := range list {
+			if !allowed[s] {
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
+				}
+			}
+		}
+		return nil
+	}
+
+	// Handle []interface{} (from YAML parsing)
+	if list, ok := val.([]interface{}); ok {
+		if len(list) == 0 {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  fmt.Sprintf("Empty list (allowed: %v)", customType.Values),
+			}
+		}
+		for _, item := range list {
+			s, ok := item.(string)
+			if !ok {
+				return &ValidationError{
+					Type:     ValidationErrorInvalidType,
+					Property: propName,
+					Message:  "List values must be strings",
+				}
+			}
+			if !allowed[s] {
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
+				}
+			}
+		}
+		return nil
+	}
+
+	// Handle single string value
 	s, ok := val.(string)
 	if !ok {
 		return &ValidationError{
 			Type:     ValidationErrorInvalidType,
 			Property: propName,
-			Message:  "Must be a string",
+			Message:  "Must be a string or list of strings",
 		}
 	}
-	allowed := make(map[string]bool, len(customType.Values))
-	for _, v := range customType.Values {
-		allowed[v] = true
-	}
-	hasValue := false
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		hasValue = true
-		if !allowed[part] {
-			return &ValidationError{
-				Type:     ValidationErrorInvalidValue,
-				Property: propName,
-				Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", part, customType.Values),
-			}
+	if s == "" {
+		return &ValidationError{
+			Type:     ValidationErrorInvalidValue,
+			Property: propName,
+			Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
 		}
 	}
-	if !hasValue {
+	if !allowed[s] {
 		return &ValidationError{
 			Type:     ValidationErrorInvalidValue,
 			Property: propName,

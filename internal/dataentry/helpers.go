@@ -25,21 +25,49 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 )
 
-// splitAndTrim splits a comma-separated string and trims whitespace from each part,
-// returning only non-empty values.
-func splitAndTrim(s string) []string {
-	if s == "" {
-		return nil
+// propertyContains checks if a property value contains the given string.
+// Handles string, []string, and []interface{} property types.
+func propertyContains(prop interface{}, value string) bool {
+	if prop == nil {
+		return value == ""
 	}
-	parts := strings.Split(s, ",")
-	result := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
+	switch v := prop.(type) {
+	case string:
+		return v == value
+	case []string:
+		for _, s := range v {
+			if s == value {
+				return true
+			}
 		}
+		return false
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok && s == value {
+				return true
+			}
+		}
+		return false
+	default:
+		return fmt.Sprintf("%v", prop) == value
 	}
-	return result
+}
+
+// propertyIsEmpty checks if a property value is empty/nil.
+func propertyIsEmpty(prop interface{}) bool {
+	if prop == nil {
+		return true
+	}
+	switch v := prop.(type) {
+	case string:
+		return v == ""
+	case []string:
+		return len(v) == 0
+	case []interface{}:
+		return len(v) == 0
+	default:
+		return false
+	}
 }
 
 // applyFilters filters entities by a set of filter conditions.
@@ -54,24 +82,22 @@ func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Ent
 			if strings.HasPrefix(f.Value, "$") {
 				continue // skip variable substitution
 			}
-			val := e.GetAttributeString(f.Property)
-			parts := splitAndTrim(val)
+			prop := e.Properties[f.Property]
 			switch f.Operator {
 			case "=":
-				// Handle empty value filter: empty matches empty (nil property)
 				if f.Value == "" {
-					if val != "" {
+					if !propertyIsEmpty(prop) {
 						match = false
 					}
-				} else if !containsString(parts, f.Value) {
+				} else if !propertyContains(prop, f.Value) {
 					match = false
 				}
 			case "!=":
 				if f.Value == "" {
-					if val == "" {
+					if propertyIsEmpty(prop) {
 						match = false
 					}
-				} else if containsString(parts, f.Value) {
+				} else if propertyContains(prop, f.Value) {
 					match = false
 				}
 			}
@@ -382,8 +408,7 @@ func (a *App) executeQuery(query string) []*model.Entity {
 // templateFuncs returns the template.FuncMap used by all HTML templates.
 func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string]bool) template.FuncMap {
 	return template.FuncMap{
-		"join":        strings.Join,
-		"splitValues": splitAndTrim,
+		"join": strings.Join,
 		"json": func(v interface{}) string {
 			b, _ := json.Marshal(v)
 			return string(b)

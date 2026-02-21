@@ -124,6 +124,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 	// Resolve columns with values
 	type CellData struct {
 		Value      string
+		Values     []string // for multi-select
 		Property   string
 		PropType   string
 		Widget     string
@@ -141,23 +142,36 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entities {
 		var cells []CellData
 		for _, col := range list.Columns {
-			var val string
-			var propType string
-			if col.Relation != "" {
-				val = a.resolveRelationColumnValue(e.ID, col.Relation)
-			} else {
-				val = e.GetAttributeString(col.Property)
-				propType = resolvePropertyType(col.Property, list.EntityType, a.meta)
-			}
-			cells = append(cells, CellData{
-				Value:      val,
+			cell := CellData{
 				Property:   col.Property,
-				PropType:   propType,
 				Widget:     col.Widget,
 				Link:       col.Link,
 				EntityID:   e.ID,
 				EntityType: e.Type,
-			})
+			}
+			if col.Relation != "" {
+				cell.Value = a.resolveRelationColumnValue(e.ID, col.Relation)
+			} else {
+				cell.PropType = resolvePropertyType(col.Property, list.EntityType, a.meta)
+				// Handle multi-select values as []string
+				if prop := e.Properties[col.Property]; prop != nil {
+					switch v := prop.(type) {
+					case []string:
+						cell.Values = v
+						cell.Value = strings.Join(v, ", ")
+					case []interface{}:
+						for _, item := range v {
+							if s, ok := item.(string); ok {
+								cell.Values = append(cell.Values, s)
+							}
+						}
+						cell.Value = strings.Join(cell.Values, ", ")
+					default:
+						cell.Value = e.GetAttributeString(col.Property)
+					}
+				}
+			}
+			cells = append(cells, cell)
 		}
 		rows = append(rows, RowData{EntityID: e.ID, EntityType: e.Type, Cells: cells})
 	}
@@ -335,19 +349,20 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve fields
 	type ResolvedField struct {
-		Property    string
-		Label       string
-		Placeholder string
-		Help        string
-		Required    bool
-		Default     string
-		Value       string
-		Hidden      bool
-		Widget      string
-		InputType   string
-		Values      []string
-		Transitions map[string][]string
-		Error       string
+		Property       string
+		Label          string
+		Placeholder    string
+		Help           string
+		Required       bool
+		Default        string
+		Value          string
+		SelectedValues []string // for multi-select widgets
+		Hidden         bool
+		Widget         string
+		InputType      string
+		Values         []string
+		Transitions    map[string][]string
+		Error          string
 	}
 
 	var entity *model.Entity
@@ -390,7 +405,20 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		if entity != nil {
 			val := entity.Properties[f.Property]
 			if val != nil {
-				rf.Value = fmt.Sprintf("%v", val)
+				switch v := val.(type) {
+				case []string:
+					rf.SelectedValues = v
+					rf.Value = strings.Join(v, ", ")
+				case []interface{}:
+					for _, item := range v {
+						if s, ok := item.(string); ok {
+							rf.SelectedValues = append(rf.SelectedValues, s)
+						}
+					}
+					rf.Value = strings.Join(rf.SelectedValues, ", ")
+				default:
+					rf.Value = fmt.Sprintf("%v", val)
+				}
 			}
 		} else {
 			rf.Value = rf.Default
@@ -917,19 +945,20 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 
 	// Resolve fields with errors
 	type ResolvedField struct {
-		Property    string
-		Label       string
-		Placeholder string
-		Help        string
-		Required    bool
-		Default     string
-		Value       string
-		Hidden      bool
-		Widget      string
-		InputType   string
-		Values      []string
-		Transitions map[string][]string
-		Error       string
+		Property       string
+		Label          string
+		Placeholder    string
+		Help           string
+		Required       bool
+		Default        string
+		Value          string
+		SelectedValues []string // for multi-select widgets
+		Hidden         bool
+		Widget         string
+		InputType      string
+		Values         []string
+		Transitions    map[string][]string
+		Error          string
 	}
 
 	fields := make([]ResolvedField, 0, len(form.Fields))
@@ -956,7 +985,20 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 
 		// Use submitted value from entity properties
 		if val := entity.Properties[f.Property]; val != nil {
-			rf.Value = fmt.Sprintf("%v", val)
+			switch v := val.(type) {
+			case []string:
+				rf.SelectedValues = v
+				rf.Value = strings.Join(v, ", ")
+			case []interface{}:
+				for _, item := range v {
+					if s, ok := item.(string); ok {
+						rf.SelectedValues = append(rf.SelectedValues, s)
+					}
+				}
+				rf.Value = strings.Join(rf.SelectedValues, ", ")
+			default:
+				rf.Value = fmt.Sprintf("%v", val)
+			}
 		}
 
 		fields = append(fields, rf)
@@ -1139,23 +1181,25 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	for _, f := range form.Fields {
 		prop := entDef.Properties[f.Property]
 		widget := resolveWidget(f.Widget, prop, a.meta)
-		var val string
 		if widget == "multi-select" {
-			val = strings.Join(r.Form[f.Property], ",")
+			values := r.Form[f.Property]
+			if len(values) > 0 {
+				entity.Properties[f.Property] = values
+			}
 		} else {
-			val = r.FormValue(f.Property)
-		}
-		if val == "" && a.userDefaults != nil {
-			val = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
-		}
-		if val == "" && f.Default != "" {
-			val = f.Default
-		}
-		if val == "" && f.Hidden {
-			val = f.Default
-		}
-		if val != "" {
-			entity.Properties[f.Property] = val
+			val := r.FormValue(f.Property)
+			if val == "" && a.userDefaults != nil {
+				val = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
+			}
+			if val == "" && f.Default != "" {
+				val = f.Default
+			}
+			if val == "" && f.Hidden {
+				val = f.Default
+			}
+			if val != "" {
+				entity.Properties[f.Property] = val
+			}
 		}
 	}
 
@@ -1349,19 +1393,23 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	for _, f := range form.Fields {
 		prop := entDef.Properties[f.Property]
 		widget := resolveWidget(f.Widget, prop, a.meta)
-		var val string
 		if widget == "multi-select" {
-			val = strings.Join(r.Form[f.Property], ",")
-		} else {
-			val = r.FormValue(f.Property)
-		}
-		if val != "" {
-			entity.Properties[f.Property] = val
-		} else {
-			if widget == "checkbox" {
-				entity.Properties[f.Property] = "false"
+			values := r.Form[f.Property]
+			if len(values) > 0 {
+				entity.Properties[f.Property] = values
 			} else {
 				delete(entity.Properties, f.Property)
+			}
+		} else {
+			val := r.FormValue(f.Property)
+			if val != "" {
+				entity.Properties[f.Property] = val
+			} else {
+				if widget == "checkbox" {
+					entity.Properties[f.Property] = "false"
+				} else {
+					delete(entity.Properties, f.Property)
+				}
 			}
 		}
 	}
@@ -1572,15 +1620,24 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 	entity := model.NewEntity(entityID, form.EntityType)
 
 	for _, f := range form.Fields {
-		val := r.FormValue(f.Property)
-		if val == "" && a.userDefaults != nil {
-			val = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
-		}
-		if val == "" && f.Default != "" {
-			val = f.Default
-		}
-		if val != "" {
-			entity.Properties[f.Property] = val
+		prop := entDef.Properties[f.Property]
+		widget := resolveWidget(f.Widget, prop, a.meta)
+		if widget == "multi-select" {
+			values := r.Form[f.Property]
+			if len(values) > 0 {
+				entity.Properties[f.Property] = values
+			}
+		} else {
+			val := r.FormValue(f.Property)
+			if val == "" && a.userDefaults != nil {
+				val = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
+			}
+			if val == "" && f.Default != "" {
+				val = f.Default
+			}
+			if val != "" {
+				entity.Properties[f.Property] = val
+			}
 		}
 	}
 

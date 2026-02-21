@@ -74,31 +74,52 @@ func findText(n *html.Node, text string) bool {
 	return false
 }
 
-func TestSplitAndTrim(t *testing.T) {
+func TestPropertyContains(t *testing.T) {
 	tests := []struct {
-		input string
-		want  []string
+		name  string
+		prop  interface{}
+		value string
+		want  bool
 	}{
-		{"", nil},
-		{"a", []string{"a"}},
-		{"a,b", []string{"a", "b"}},
-		{"a, b", []string{"a", "b"}},
-		{" a , b ", []string{"a", "b"}},
-		{"a,,b", []string{"a", "b"}},
-		{",a,b,", []string{"a", "b"}},
-		{"  ,  ", nil},
-		{"a, b, c", []string{"a", "b", "c"}},
+		{"nil property matches empty", nil, "", true},
+		{"nil property does not match non-empty", nil, "foo", false},
+		{"string exact match", "foo", "foo", true},
+		{"string no match", "foo", "bar", false},
+		{"[]string contains", []string{"foo", "bar"}, "bar", true},
+		{"[]string does not contain", []string{"foo", "bar"}, "baz", false},
+		{"[]interface{} contains", []interface{}{"foo", "bar"}, "foo", true},
+		{"[]interface{} does not contain", []interface{}{"foo", "bar"}, "baz", false},
+		{"empty []string does not match", []string{}, "foo", false},
 	}
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := splitAndTrim(tt.input)
-			if len(got) != len(tt.want) {
-				t.Fatalf("splitAndTrim(%q) = %v, want %v", tt.input, got, tt.want)
+		t.Run(tt.name, func(t *testing.T) {
+			got := propertyContains(tt.prop, tt.value)
+			if got != tt.want {
+				t.Errorf("propertyContains(%v, %q) = %v, want %v", tt.prop, tt.value, got, tt.want)
 			}
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("splitAndTrim(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
-				}
+		})
+	}
+}
+
+func TestPropertyIsEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		prop interface{}
+		want bool
+	}{
+		{"nil is empty", nil, true},
+		{"empty string is empty", "", true},
+		{"non-empty string is not empty", "foo", false},
+		{"empty []string is empty", []string{}, true},
+		{"non-empty []string is not empty", []string{"foo"}, false},
+		{"empty []interface{} is empty", []interface{}{}, true},
+		{"non-empty []interface{} is not empty", []interface{}{"foo"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := propertyIsEmpty(tt.prop)
+			if got != tt.want {
+				t.Errorf("propertyIsEmpty(%v) = %v, want %v", tt.prop, got, tt.want)
 			}
 		})
 	}
@@ -178,10 +199,10 @@ func TestApplyFilters(t *testing.T) {
 func TestApplyFiltersMultiSelect(t *testing.T) {
 	entities := []*model.Entity{
 		{ID: "E-001", Type: "clause", Properties: map[string]interface{}{"applies_to": "client"}},
-		{ID: "E-002", Type: "clause", Properties: map[string]interface{}{"applies_to": "client,provider"}},
-		{ID: "E-003", Type: "clause", Properties: map[string]interface{}{"applies_to": "provider,employee"}},
+		{ID: "E-002", Type: "clause", Properties: map[string]interface{}{"applies_to": []string{"client", "provider"}}},
+		{ID: "E-003", Type: "clause", Properties: map[string]interface{}{"applies_to": []string{"provider", "employee"}}},
 		{ID: "E-004", Type: "clause", Properties: map[string]interface{}{"applies_to": "employee"}},
-		{ID: "E-005", Type: "clause", Properties: map[string]interface{}{"applies_to": "client, provider"}}, // with space
+		{ID: "E-005", Type: "clause", Properties: map[string]interface{}{"applies_to": []interface{}{"client", "provider"}}}, // from YAML
 	}
 
 	tests := []struct {
@@ -190,17 +211,17 @@ func TestApplyFiltersMultiSelect(t *testing.T) {
 		wantIDs []string
 	}{
 		{
-			name:    "= client matches single and combined values including whitespace",
+			name:    "= client matches single and list values",
 			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "client"}},
 			wantIDs: []string{"E-001", "E-002", "E-005"},
 		},
 		{
-			name:    "= provider matches combined values including whitespace",
+			name:    "= provider matches list values",
 			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "provider"}},
 			wantIDs: []string{"E-002", "E-003", "E-005"},
 		},
 		{
-			name:    "= employee matches combined and single",
+			name:    "= employee matches list and single",
 			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "employee"}},
 			wantIDs: []string{"E-003", "E-004"},
 		},
