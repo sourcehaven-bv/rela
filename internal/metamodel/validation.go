@@ -3,6 +3,7 @@ package metamodel
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -231,6 +232,7 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 }
 
 // validateCustomTypeValue validates a value against a custom type's allowed values.
+// Comma-separated values (multi-select) are each validated individually.
 func validateCustomTypeValue(propName string, customType CustomType, val interface{}) *ValidationError {
 	s, ok := val.(string)
 	if !ok {
@@ -240,16 +242,20 @@ func validateCustomTypeValue(propName string, customType CustomType, val interfa
 			Message:  "Must be a string",
 		}
 	}
+	allowed := make(map[string]bool, len(customType.Values))
 	for _, v := range customType.Values {
-		if v == s {
-			return nil
+		allowed[v] = true
+	}
+	for _, part := range strings.Split(s, ",") {
+		if !allowed[part] {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", part, customType.Values),
+			}
 		}
 	}
-	return &ValidationError{
-		Type:     ValidationErrorInvalidValue,
-		Property: propName,
-		Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
-	}
+	return nil
 }
 
 // ParseDateValue parses a date string using the property's format.

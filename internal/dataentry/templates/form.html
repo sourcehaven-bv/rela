@@ -81,8 +81,8 @@
       <label for="f-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
       <select name="{{ .Property }}" id="f-{{ .Property }}"{{ if eq .Widget "multi-select" }} multiple{{ end }}{{ if .Required }} required{{ end }}>
         {{ if ne .Widget "multi-select" }}<option value="">Select...</option>{{ end }}
-        {{ $val := .Value }}
-        {{ range .Values }}<option value="{{ . }}"{{ if eq . $val }} selected{{ end }}>{{ . }}</option>{{ end }}
+        {{ $val := .Value }}{{ $isMulti := eq .Widget "multi-select" }}
+        {{ range .Values }}<option value="{{ . }}"{{ if $isMulti }}{{ if contains (splitValues $val) . }} selected{{ end }}{{ else }}{{ if eq . $val }} selected{{ end }}{{ end }}>{{ . }}</option>{{ end }}
       </select>
       {{ if .Error }}<p class="field-error">{{ .Error }}</p>{{ end }}
       {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}

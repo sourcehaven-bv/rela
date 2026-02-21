@@ -110,6 +110,7 @@ type ListColumn struct {
 	Label    string `yaml:"label"`
 	Sortable bool   `yaml:"sortable"`
 	Link     bool   `yaml:"link"`
+	Widget   string `yaml:"widget"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.

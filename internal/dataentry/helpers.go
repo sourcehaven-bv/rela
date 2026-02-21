@@ -40,11 +40,11 @@ func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Ent
 			val := e.GetAttributeString(f.Property)
 			switch f.Operator {
 			case "=":
-				if val != f.Value {
+				if !containsString(strings.Split(val, ","), f.Value) {
 					match = false
 				}
 			case "!=":
-				if val == f.Value {
+				if containsString(strings.Split(val, ","), f.Value) {
 					match = false
 				}
 			}
@@ -355,7 +355,8 @@ func (a *App) executeQuery(query string) []*model.Entity {
 // templateFuncs returns the template.FuncMap used by all HTML templates.
 func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string]bool) template.FuncMap {
 	return template.FuncMap{
-		"join": strings.Join,
+		"join":        strings.Join,
+		"splitValues": func(val string) []string { return strings.Split(val, ",") },
 		"json": func(v interface{}) string {
 			b, _ := json.Marshal(v)
 			return string(b)
