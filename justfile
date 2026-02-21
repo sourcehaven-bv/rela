@@ -27,6 +27,12 @@ build-desktop:
     @mkdir -p {{build_dir}}
     CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,production -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
+# Build the desktop app with debug/devtools support for E2E testing
+build-desktop-debug:
+    @echo "Building rela-desktop (debug)..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
+
 # Build all binaries
 build: build-cli build-server build-desktop
 
@@ -55,6 +61,29 @@ test:
 test-verbose:
     @echo "Running tests (verbose)..."
     go test -race -cover -v ./...
+
+# ── E2E Tests ──
+
+# Install E2E test dependencies
+e2e-install:
+    @echo "Installing E2E test dependencies..."
+    cd e2e && npm install
+    cd e2e && npx playwright install chromium
+
+# Run E2E tests (tests data entry UI via rela-server)
+e2e: build-server
+    @echo "Running E2E tests..."
+    cd e2e && npm test
+
+# Run E2E tests in headed mode (visible browser)
+e2e-headed: build-server
+    @echo "Running E2E tests (headed)..."
+    cd e2e && npm run test:headed
+
+# Run E2E tests with Playwright UI
+e2e-ui: build-server
+    @echo "Running E2E tests with Playwright UI..."
+    cd e2e && npm run test:ui
 
 # Run tests with coverage profile
 test-coverage:
