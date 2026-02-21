@@ -1,6 +1,8 @@
 module github.com/Sourcehaven-BV/rela
 
-go 1.25.0
+go 1.24
+
+toolchain go1.24.13
 
 require (
 	github.com/charmbracelet/bubbletea v0.25.0
