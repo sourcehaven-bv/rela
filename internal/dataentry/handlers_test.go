@@ -190,6 +190,83 @@ func TestHandleList(t *testing.T) {
 			t.Errorf("expected 200, got %d", w.Code)
 		}
 	})
+
+	t.Run("multi-select column renders list values", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// Add a multi-select type and property
+		app.meta.Types["applies_to_type"] = metamodel.CustomType{
+			Values: []string{"client", "provider", "employee"},
+		}
+		app.meta.Entities["ticket"].Properties["applies_to"] = metamodel.PropertyDef{
+			Type: "applies_to_type",
+		}
+		// Add a list with multi-select column
+		app.Cfg.Lists["tickets"] = List{
+			EntityType: "ticket",
+			Title:      "Tickets",
+			Columns: []ListColumn{
+				{Property: "title", Label: "Title", Link: true},
+				{Property: "applies_to", Label: "Applies To", Widget: "multi-select"},
+			},
+		}
+		// Add entity with multi-select values as []string
+		e := model.NewEntity("TKT-003", "ticket")
+		e.SetString("title", "Multi-select Test")
+		e.Properties["applies_to"] = []string{"client", "provider"}
+		app.g.AddNode(e)
+
+		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleList(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should contain both values (rendered as badges or comma-separated)
+		if !strings.Contains(body, "client") {
+			t.Error("expected 'client' in multi-select column")
+		}
+		if !strings.Contains(body, "provider") {
+			t.Error("expected 'provider' in multi-select column")
+		}
+	})
+
+	t.Run("multi-select column renders []interface{} from YAML", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.meta.Types["tag_type"] = metamodel.CustomType{
+			Values: []string{"bug", "feature", "docs"},
+		}
+		app.meta.Entities["ticket"].Properties["tags"] = metamodel.PropertyDef{
+			Type: "tag_type",
+		}
+		app.Cfg.Lists["tickets"] = List{
+			EntityType: "ticket",
+			Title:      "Tickets",
+			Columns: []ListColumn{
+				{Property: "title", Label: "Title"},
+				{Property: "tags", Label: "Tags", Widget: "multi-select"},
+			},
+		}
+		// Simulate YAML-parsed values ([]interface{})
+		e := model.NewEntity("TKT-004", "ticket")
+		e.SetString("title", "YAML Test")
+		e.Properties["tags"] = []interface{}{"bug", "feature"}
+		app.g.AddNode(e)
+
+		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleList(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "bug") {
+			t.Error("expected 'bug' in multi-select column")
+		}
+		if !strings.Contains(body, "feature") {
+			t.Error("expected 'feature' in multi-select column")
+		}
+	})
 }
 
 func TestHandleForm(t *testing.T) {
@@ -305,6 +382,50 @@ func TestHandleForm(t *testing.T) {
 		// TKT-002 should be selected (it's the target of the outgoing depends_on edge)
 		if !strings.Contains(body, `value="TKT-002" selected`) {
 			t.Error("expected TKT-002 to be pre-selected as outgoing relation")
+		}
+	})
+
+	t.Run("edit form pre-selects multi-select property values", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// Add a multi-select property type
+		app.meta.Types["role_type"] = metamodel.CustomType{
+			Values: []string{"admin", "editor", "viewer"},
+		}
+		app.meta.Entities["ticket"].Properties["roles"] = metamodel.PropertyDef{
+			Type: "role_type",
+		}
+		// Add form with multi-select field
+		app.Cfg.Forms["edit-ticket-roles"] = Form{
+			EntityType: "ticket",
+			Mode:       "edit",
+			Fields: []FormField{
+				{Property: "title"},
+				{Property: "roles", Widget: "multi-select"},
+			},
+		}
+		// Add entity with multi-select values
+		e := model.NewEntity("TKT-ROLES", "ticket")
+		e.SetString("title", "Role Test")
+		e.Properties["roles"] = []string{"admin", "viewer"}
+		app.g.AddNode(e)
+
+		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket-roles/TKT-ROLES", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Both selected values should have "selected" attribute
+		if !strings.Contains(body, `value="admin"`) || !strings.Contains(body, "selected") {
+			t.Error("expected 'admin' option to be selected")
+		}
+		if !strings.Contains(body, `value="viewer"`) {
+			t.Error("expected 'viewer' option in form")
+		}
+		// editor should NOT be selected
+		if strings.Contains(body, `value="editor" selected`) {
+			t.Error("did not expect 'editor' to be selected")
 		}
 	})
 
