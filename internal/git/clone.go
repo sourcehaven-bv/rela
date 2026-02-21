@@ -6,6 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
 // CloneOptions configures the clone operation.
@@ -38,55 +42,41 @@ func Clone(opts CloneOptions) error {
 		return fmt.Errorf("create parent directory: %w", err)
 	}
 
-	// Build clone URL with authentication if token provided
-	cloneURL := opts.URL
-	if opts.Token != "" {
-		authURL, err := injectAuth(opts.URL, opts.Username, opts.Token)
-		if err != nil {
-			return fmt.Errorf("inject auth: %w", err)
-		}
-		cloneURL = authURL
+	// Build clone options
+	cloneOpts := &git.CloneOptions{
+		URL:          opts.URL,
+		SingleBranch: true,
 	}
 
-	// Build clone command
-	args := []string{"clone"}
+	// Set branch if specified
 	if opts.Branch != "" {
-		args = append(args, "--branch", opts.Branch)
+		cloneOpts.ReferenceName = plumbing.NewBranchReferenceName(opts.Branch)
 	}
-	args = append(args, "--single-branch", cloneURL, opts.Path)
 
-	// Use parent directory as working directory
-	_, err := runGit(parent, args...)
+	// Add auth if token provided
+	if opts.Token != "" {
+		username := opts.Username
+		if username == "" {
+			username = defaultUsername
+		}
+		cloneOpts.Auth = &http.BasicAuth{
+			Username: username,
+			Password: opts.Token,
+		}
+	}
+
+	// Clone the repository
+	repo, err := git.PlainClone(opts.Path, false, cloneOpts)
 	if err != nil {
 		return fmt.Errorf("clone: %w", err)
 	}
 
-	// Configure credential helper to avoid prompts (store token for future operations)
+	// Store credentials for future operations if token was provided
 	if opts.Token != "" {
-		// Non-fatal: clone succeeded, just log if we can't store credentials
-		_ = configureCredentials(opts.Path, opts.URL, opts.Username, opts.Token)
+		_ = storeCredentials(repo, opts.Path, opts.URL, opts.Username, opts.Token)
 	}
 
 	return nil
-}
-
-// injectAuth injects username:password into an HTTPS URL.
-func injectAuth(repoURL, username, token string) (string, error) {
-	u, err := url.Parse(repoURL)
-	if err != nil {
-		return "", err
-	}
-
-	if u.Scheme != "https" {
-		return "", fmt.Errorf("only HTTPS URLs supported, got %s", u.Scheme)
-	}
-
-	if username == "" {
-		username = defaultUsername
-	}
-
-	u.User = url.UserPassword(username, token)
-	return u.String(), nil
 }
 
 const defaultUsername = "oauth2"
@@ -94,8 +84,8 @@ const defaultUsername = "oauth2"
 // credentialFileMode is the file permissions for credential files.
 const credentialFileMode = 0o600
 
-// configureCredentials stores credentials for future git operations.
-func configureCredentials(repoPath, repoURL, username, token string) error {
+// storeCredentials stores credentials for future git operations.
+func storeCredentials(_ *git.Repository, repoPath, repoURL, username, token string) error {
 	if username == "" {
 		username = defaultUsername
 	}
@@ -106,21 +96,31 @@ func configureCredentials(repoPath, repoURL, username, token string) error {
 		return err
 	}
 
-	// Use git credential store for this repo
-	// This creates a .git-credentials file or uses the system credential helper
+	// Create credential URL for the store
 	credentialURL := fmt.Sprintf("https://%s:%s@%s", username, token, u.Host)
 
-	// Store credential using git credential approve
-	_, _ = runGit(repoPath, "config", "credential.helper", "store")
-
-	// Write credential directly to store file
+	// Write credential directly to store file in .git directory
 	credFile := filepath.Join(repoPath, ".git", "credentials")
-	if err := os.WriteFile(credFile, []byte(credentialURL+"\n"), credentialFileMode); err != nil {
+	if writeErr := os.WriteFile(credFile, []byte(credentialURL+"\n"), credentialFileMode); writeErr != nil {
+		return writeErr
+	}
+
+	// Configure git to use this credentials file
+	// We need to set the config in the repository
+	configPath := filepath.Join(repoPath, ".git", "config")
+	config, err := os.ReadFile(configPath)
+	if err != nil {
 		return err
 	}
 
-	// Point git to use this credentials file
-	_, _ = runGit(repoPath, "config", "credential.helper", "store --file=.git/credentials")
+	// Append credential helper config if not present
+	configStr := string(config)
+	if !strings.Contains(configStr, "credential") {
+		configStr += "\n[credential]\n\thelper = store --file=.git/credentials\n"
+		if err := os.WriteFile(configPath, []byte(configStr), 0o644); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

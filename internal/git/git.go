@@ -2,14 +2,22 @@
 package git
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"os/exec"
+	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"time"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport/http"
 )
+
+// maxCommitTraversalLimit is the safety limit for commit traversal to avoid infinite loops.
+const maxCommitTraversalLimit = 1000
 
 // Config holds git configuration for the data entry app.
 type Config struct {
@@ -19,6 +27,8 @@ type Config struct {
 	BaseBranch    string `yaml:"base_branch"`    // for pr mode: merge from this
 	PushBranch    string `yaml:"push_branch"`    // for pr mode: push to this
 	FetchInterval int    `yaml:"fetch_interval"` // seconds, 0 = disabled
+	Token         string `yaml:"-"`              // OAuth token for auth (not persisted)
+	Username      string `yaml:"-"`              // Username for auth (not persisted)
 }
 
 // Status represents the current git state.
@@ -36,29 +46,41 @@ type Status struct {
 type Ops struct {
 	root   string
 	config Config
+	repo   *git.Repository
 }
 
 // NewOps creates a new git operations instance.
 func NewOps(root string, cfg Config) *Ops {
-	return &Ops{root: root, config: cfg}
+	ops := &Ops{root: root, config: cfg}
+	// Try to open the repo, but don't fail if it doesn't exist
+	repo, err := git.PlainOpen(root)
+	if err == nil {
+		ops.repo = repo
+	}
+	return ops
 }
 
 // IsRepo checks if the directory is a git repository with a remote.
 func IsRepo(root string) bool {
-	gitDir := filepath.Join(root, ".git")
-	if !exists(gitDir) {
-		return false
-	}
-	// Check for at least one remote
-	out, err := runGit(root, "remote")
+	repo, err := git.PlainOpen(root)
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(out) != ""
+
+	// Check for at least one remote
+	remotes, err := repo.Remotes()
+	if err != nil {
+		return false
+	}
+	return len(remotes) > 0
 }
 
 // GetStatus returns the current git status.
 func (g *Ops) GetStatus() (*Status, error) {
+	if g.repo == nil {
+		return &Status{Available: false}, nil
+	}
+
 	if !IsRepo(g.root) {
 		return &Status{Available: false}, nil
 	}
@@ -66,11 +88,11 @@ func (g *Ops) GetStatus() (*Status, error) {
 	status := &Status{Available: true}
 
 	// Get current branch
-	branch, err := runGit(g.root, "rev-parse", "--abbrev-ref", "HEAD")
+	head, err := g.repo.Head()
 	if err != nil {
-		return nil, fmt.Errorf("get branch: %w", err)
+		return nil, fmt.Errorf("get HEAD: %w", err)
 	}
-	status.Branch = strings.TrimSpace(branch)
+	status.Branch = head.Name().Short()
 
 	// Count local changes (staged + unstaged + untracked in entities/relations)
 	changes, err := g.countLocalChanges()
@@ -97,8 +119,31 @@ func (g *Ops) GetStatus() (*Status, error) {
 
 // Fetch fetches from remote.
 func (g *Ops) Fetch() error {
-	_, err := runGit(g.root, "fetch", "origin")
-	return err
+	if g.repo == nil {
+		return errors.New("not a git repository")
+	}
+
+	fetchOpts := &git.FetchOptions{
+		RemoteName: "origin",
+	}
+
+	// Add auth if token is set
+	if g.config.Token != "" {
+		username := g.config.Username
+		if username == "" {
+			username = defaultUsername
+		}
+		fetchOpts.Auth = &http.BasicAuth{
+			Username: username,
+			Password: g.config.Token,
+		}
+	}
+
+	err := g.repo.Fetch(fetchOpts)
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return err
+	}
+	return nil
 }
 
 // ErrConflictInProgress indicates a merge conflict that must be resolved first.
@@ -106,71 +151,209 @@ var ErrConflictInProgress = errors.New("merge conflict in progress, resolve befo
 
 // Sync performs commit + merge + push.
 func (g *Ops) Sync(message string) error {
+	if g.repo == nil {
+		return errors.New("not a git repository")
+	}
+
 	// Check for merge conflict first
 	if exists(filepath.Join(g.root, ".git", "MERGE_HEAD")) {
 		return ErrConflictInProgress
 	}
 
-	// Stage all changes in entities/ and relations/
-	_, _ = runGit(g.root, "add", "entities/")
-	_, _ = runGit(g.root, "add", "relations/")
-
-	// Check if there's anything staged to commit
-	staged, err := runGit(g.root, "diff", "--cached", "--name-only")
+	wt, err := g.repo.Worktree()
 	if err != nil {
-		return fmt.Errorf("check staged: %w", err)
+		return fmt.Errorf("get worktree: %w", err)
+	}
+
+	// Stage all changes in entities/ and relations/
+	status, err := wt.Status()
+	if err != nil {
+		return fmt.Errorf("get status: %w", err)
 	}
 
 	hasChanges := false
-	for _, line := range strings.Split(staged, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			hasChanges = true
-			break
+	for path, s := range status {
+		if strings.HasPrefix(path, "entities/") || strings.HasPrefix(path, "relations/") {
+			if s.Worktree != git.Unmodified || s.Staging != git.Unmodified {
+				if _, addErr := wt.Add(path); addErr != nil {
+					// Ignore errors for deleted files that don't exist
+					continue
+				}
+				hasChanges = true
+			}
 		}
 	}
 
 	if hasChanges {
-		if _, err := runGit(g.root, "commit", "-m", message); err != nil {
+		_, err = wt.Commit(message, &git.CommitOptions{
+			Author: &object.Signature{
+				Name:  "rela",
+				Email: "rela@local",
+				When:  time.Now(),
+			},
+		})
+		if err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
 	}
 
 	// Fetch latest
-	if err := g.Fetch(); err != nil {
-		return fmt.Errorf("fetch: %w", err)
+	if fetchErr := g.Fetch(); fetchErr != nil {
+		return fmt.Errorf("fetch: %w", fetchErr)
 	}
 
 	// Check if merge is needed (are we behind remote?)
 	targetBranch := g.getBaseBranch()
-	behind, _ := runGit(g.root, "rev-list", "--count", "HEAD..origin/"+targetBranch)
-	behindCount := strings.TrimSpace(behind)
+	remoteBranchRef := plumbing.NewRemoteReferenceName("origin", targetBranch)
 
-	if behindCount != "" && behindCount != "0" {
-		// Merge from target branch
-		if _, err := runGit(g.root, "merge", "origin/"+targetBranch, "-m", "Merge "+targetBranch); err != nil {
+	remoteRef, err := g.repo.Reference(remoteBranchRef, true)
+	if err != nil {
+		// Remote branch doesn't exist, skip merge
+		return g.push()
+	}
+
+	head, err := g.repo.Head()
+	if err != nil {
+		return fmt.Errorf("get HEAD: %w", err)
+	}
+
+	// Check if we're behind
+	behind, err := g.commitsBehind(head.Hash(), remoteRef.Hash())
+	if err != nil {
+		return fmt.Errorf("check behind: %w", err)
+	}
+
+	if behind > 0 {
+		// Perform merge
+		if err := g.merge(remoteRef.Hash(), "Merge "+targetBranch); err != nil {
 			return fmt.Errorf("merge: %w", err)
 		}
 	}
 
-	// Check if we have commits to push
-	pushBranch := g.getPushBranch()
-	ahead, _ := runGit(g.root, "rev-list", "--count", "origin/"+pushBranch+"..HEAD")
-	aheadCount := strings.TrimSpace(ahead)
+	return g.push()
+}
 
-	if aheadCount != "" && aheadCount != "0" {
-		if _, err := runGit(g.root, "push", "origin", "HEAD:"+pushBranch); err != nil {
-			return fmt.Errorf("push: %w", err)
+// push pushes to remote.
+func (g *Ops) push() error {
+	pushBranch := g.getPushBranch()
+
+	head, err := g.repo.Head()
+	if err != nil {
+		return fmt.Errorf("get HEAD: %w", err)
+	}
+
+	pushOpts := &git.PushOptions{
+		RemoteName: "origin",
+		RefSpecs: []config.RefSpec{
+			config.RefSpec(string(head.Name()) + ":refs/heads/" + pushBranch),
+		},
+	}
+
+	// Add auth if token is set
+	if g.config.Token != "" {
+		username := g.config.Username
+		if username == "" {
+			username = defaultUsername
+		}
+		pushOpts.Auth = &http.BasicAuth{
+			Username: username,
+			Password: g.config.Token,
 		}
 	}
 
+	err = g.repo.Push(pushOpts)
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return fmt.Errorf("push: %w", err)
+	}
 	return nil
+}
+
+// merge performs a merge of the given commit into HEAD.
+func (g *Ops) merge(commitHash plumbing.Hash, message string) error {
+	wt, err := g.repo.Worktree()
+	if err != nil {
+		return err
+	}
+
+	// Get current HEAD
+	head, err := g.repo.Head()
+	if err != nil {
+		return err
+	}
+
+	// Get the commit to merge
+	mergeCommit, err := g.repo.CommitObject(commitHash)
+	if err != nil {
+		return err
+	}
+
+	// Create merge commit
+	_, err = wt.Commit(message, &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "rela",
+			Email: "rela@local",
+			When:  time.Now(),
+		},
+		Parents: []plumbing.Hash{head.Hash(), mergeCommit.Hash},
+	})
+
+	return err
+}
+
+// commitsBehind returns how many commits HEAD is behind the target.
+func (g *Ops) commitsBehind(headHash, targetHash plumbing.Hash) (int, error) {
+	if headHash == targetHash {
+		return 0, nil
+	}
+
+	// Walk from target back to find head
+	count := 0
+	iter, err := g.repo.Log(&git.LogOptions{From: targetHash})
+	if err != nil {
+		return 0, err
+	}
+
+	err = iter.ForEach(func(c *object.Commit) error {
+		if c.Hash == headHash {
+			return errors.New("found")
+		}
+		count++
+		if count > maxCommitTraversalLimit {
+			return errors.New("too many commits")
+		}
+		return nil
+	})
+
+	if err != nil && err.Error() == "found" {
+		return count, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // AbortMerge aborts an in-progress merge.
 func (g *Ops) AbortMerge() error {
-	_, err := runGit(g.root, "merge", "--abort")
-	return err
+	mergeHeadPath := filepath.Join(g.root, ".git", "MERGE_HEAD")
+	if !exists(mergeHeadPath) {
+		return errors.New("no merge in progress")
+	}
+
+	// Remove merge state files
+	for _, f := range []string{"MERGE_HEAD", "MERGE_MSG", "MERGE_MODE"} {
+		_ = os.Remove(filepath.Join(g.root, ".git", f))
+	}
+
+	// Reset to HEAD
+	if g.repo != nil {
+		wt, err := g.repo.Worktree()
+		if err != nil {
+			return err
+		}
+		return wt.Reset(&git.ResetOptions{Mode: git.HardReset})
+	}
+	return nil
 }
 
 func (g *Ops) getBaseBranch() string {
@@ -188,75 +371,89 @@ func (g *Ops) getPushBranch() string {
 		return g.config.PushBranch
 	}
 	// Get current branch
-	branch, err := runGit(g.root, "rev-parse", "--abbrev-ref", "HEAD")
-	if err != nil {
-		return g.getBaseBranch()
+	if g.repo != nil {
+		head, err := g.repo.Head()
+		if err == nil {
+			return head.Name().Short()
+		}
 	}
-	return strings.TrimSpace(branch)
+	return g.getBaseBranch()
 }
 
 func (g *Ops) countLocalChanges() (int, error) {
-	out, err := runGit(g.root, "status", "--porcelain")
+	if g.repo == nil {
+		return 0, errors.New("not a git repository")
+	}
+
+	wt, err := g.repo.Worktree()
+	if err != nil {
+		return 0, err
+	}
+
+	status, err := wt.Status()
 	if err != nil {
 		return 0, err
 	}
 
 	count := 0
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
+	for path, s := range status {
 		// Only count changes in entities/ or relations/
-		if strings.Contains(line, "entities/") || strings.Contains(line, "relations/") {
-			count++
+		if strings.HasPrefix(path, "entities/") || strings.HasPrefix(path, "relations/") {
+			if s.Worktree != git.Unmodified || s.Staging != git.Unmodified {
+				count++
+			}
 		}
 	}
 	return count, nil
 }
 
 func (g *Ops) countRemoteAhead() (int, error) {
+	if g.repo == nil {
+		return 0, errors.New("not a git repository")
+	}
+
 	branch := g.getBaseBranch()
-	out, err := runGit(g.root, "rev-list", "--count", "HEAD..origin/"+branch)
+	remoteBranchRef := plumbing.NewRemoteReferenceName("origin", branch)
+
+	remoteRef, err := g.repo.Reference(remoteBranchRef, true)
 	if err != nil {
 		return 0, err
 	}
-	count, err := strconv.Atoi(strings.TrimSpace(out))
+
+	head, err := g.repo.Head()
 	if err != nil {
 		return 0, err
 	}
-	return count, nil
+
+	return g.commitsBehind(head.Hash(), remoteRef.Hash())
 }
 
 func (g *Ops) getConflictFiles() ([]string, error) {
-	out, err := runGit(g.root, "diff", "--name-only", "--diff-filter=U")
+	if g.repo == nil {
+		return nil, errors.New("not a git repository")
+	}
+
+	wt, err := g.repo.Worktree()
 	if err != nil {
 		return nil, err
 	}
+
+	status, err := wt.Status()
+	if err != nil {
+		return nil, err
+	}
+
 	var files []string
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			files = append(files, line)
+	for path, s := range status {
+		// Both modified indicates conflict
+		if s.Worktree == git.UpdatedButUnmerged || s.Staging == git.UpdatedButUnmerged {
+			files = append(files, path)
 		}
 	}
 	return files, nil
 }
 
-func runGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err != nil {
-		return "", errors.New(stderr.String())
-	}
-	return stdout.String(), nil
-}
-
 func exists(path string) bool {
-	cmd := exec.Command("test", "-e", path)
-	return cmd.Run() == nil
+	_, err := os.Stat(path)
+	return err == nil
 }
