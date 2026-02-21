@@ -222,3 +222,28 @@ func Analyze() (string, error) {
 	}
 	return body, nil
 }
+
+// Search returns entities matching the given query as JSON.
+func Search(query string) (string, error) {
+	path := "/api/search?q=" + query
+	status, body, err := request("GET", path, "")
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d: %s", status, body)
+	}
+	return body, nil
+}
+
+// AllEntities returns all entities regardless of type as JSON.
+func AllEntities() (string, error) {
+	status, body, err := request("GET", "/api/entities", "")
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d: %s", status, body)
+	}
+	return body, nil
+}

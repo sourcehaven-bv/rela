@@ -57,8 +57,9 @@ func (a *App) NewRouter() http.Handler {
 
 	// JSON API endpoints for mobile/programmatic access
 	inner.HandleFunc("/api/entity-types", a.handleAPIEntityTypes)
-	inner.HandleFunc("/api/entities", a.handleAPIEntities)
-	inner.HandleFunc("/api/entities/", a.handleAPIEntity)
+	inner.HandleFunc("/api/entities", a.handleAPIEntitiesCRUD)
+	inner.HandleFunc("/api/entities/", a.handleAPIEntityCRUD)
+	inner.HandleFunc("/api/relations", a.handleAPIRelationsCRUD)
 	inner.HandleFunc("/api/metamodel", a.handleAPIMetamodel)
 	inner.HandleFunc("/api/analyze", a.handleAPIAnalyze)
 	inner.HandleFunc("/api/search", a.handleAPISearch)
