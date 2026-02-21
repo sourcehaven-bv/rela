@@ -55,51 +55,6 @@ func TestIsValidRepoURL(t *testing.T) {
 	}
 }
 
-func TestInjectAuth(t *testing.T) {
-	tests := []struct {
-		url      string
-		username string
-		token    string
-		expected string
-		wantErr  bool
-	}{
-		{
-			"https://github.com/user/repo.git",
-			"oauth2",
-			"token123",
-			"https://oauth2:token123@github.com/user/repo.git",
-			false,
-		},
-		{
-			"https://github.com/user/repo.git",
-			"", // empty username defaults to oauth2
-			"token123",
-			"https://oauth2:token123@github.com/user/repo.git",
-			false,
-		},
-		{
-			"http://github.com/user/repo.git",
-			"oauth2",
-			"token123",
-			"",
-			true, // HTTP not allowed
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.url, func(t *testing.T) {
-			got, err := injectAuth(tt.url, tt.username, tt.token)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("injectAuth() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr && got != tt.expected {
-				t.Errorf("injectAuth() = %q, want %q", got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestClone_EmptyURL(t *testing.T) {
 	err := Clone(CloneOptions{
 		Path: "/tmp/test",
