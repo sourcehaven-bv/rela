@@ -74,6 +74,36 @@ func findText(n *html.Node, text string) bool {
 	return false
 }
 
+func TestSplitAndTrim(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []string
+	}{
+		{"", nil},
+		{"a", []string{"a"}},
+		{"a,b", []string{"a", "b"}},
+		{"a, b", []string{"a", "b"}},
+		{" a , b ", []string{"a", "b"}},
+		{"a,,b", []string{"a", "b"}},
+		{",a,b,", []string{"a", "b"}},
+		{"  ,  ", nil},
+		{"a, b, c", []string{"a", "b", "c"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := splitAndTrim(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("splitAndTrim(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("splitAndTrim(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestApplyFilters(t *testing.T) {
 	entities := []*model.Entity{
 		{ID: "E-001", Type: "ticket", Properties: map[string]interface{}{"status": "open", "priority": "high"}},
@@ -151,6 +181,7 @@ func TestApplyFiltersMultiSelect(t *testing.T) {
 		{ID: "E-002", Type: "clause", Properties: map[string]interface{}{"applies_to": "client,provider"}},
 		{ID: "E-003", Type: "clause", Properties: map[string]interface{}{"applies_to": "provider,employee"}},
 		{ID: "E-004", Type: "clause", Properties: map[string]interface{}{"applies_to": "employee"}},
+		{ID: "E-005", Type: "clause", Properties: map[string]interface{}{"applies_to": "client, provider"}}, // with space
 	}
 
 	tests := []struct {
@@ -159,14 +190,14 @@ func TestApplyFiltersMultiSelect(t *testing.T) {
 		wantIDs []string
 	}{
 		{
-			name:    "= client matches single and combined values",
+			name:    "= client matches single and combined values including whitespace",
 			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "client"}},
-			wantIDs: []string{"E-001", "E-002"},
+			wantIDs: []string{"E-001", "E-002", "E-005"},
 		},
 		{
-			name:    "= provider matches combined values",
+			name:    "= provider matches combined values including whitespace",
 			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "provider"}},
-			wantIDs: []string{"E-002", "E-003"},
+			wantIDs: []string{"E-002", "E-003", "E-005"},
 		},
 		{
 			name:    "= employee matches combined and single",
