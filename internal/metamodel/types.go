@@ -91,6 +91,7 @@ type PropertyDef struct {
 	Default     string   `yaml:"default,omitempty"`
 	Description string   `yaml:"description,omitempty"` // Documentation for the property
 	Format      string   `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
+	List        bool     `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
 }
 
 // Built-in property types

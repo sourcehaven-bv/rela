@@ -144,7 +144,6 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		for _, col := range list.Columns {
 			cell := CellData{
 				Property:   col.Property,
-				Widget:     col.Widget,
 				Link:       col.Link,
 				EntityID:   e.ID,
 				EntityType: e.Type,
@@ -152,23 +151,36 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 			if col.Relation != "" {
 				cell.Value = a.resolveRelationColumnValue(e.ID, col.Relation)
 			} else {
-				cell.PropType = resolvePropertyType(col.Property, list.EntityType, a.meta)
-				// Handle multi-select values as []string
-				if prop := e.Properties[col.Property]; prop != nil {
-					switch v := prop.(type) {
-					case []string:
-						cell.Values = v
-						cell.Value = strings.Join(v, ", ")
-					case []interface{}:
-						for _, item := range v {
-							if s, ok := item.(string); ok {
-								cell.Values = append(cell.Values, s)
-							}
-						}
-						cell.Value = strings.Join(cell.Values, ", ")
-					default:
-						cell.Value = e.GetAttributeString(col.Property)
+				// Get property definition from metamodel
+				var propDef metamodel.PropertyDef
+				if entDef != nil {
+					if pd, ok := entDef.Properties[col.Property]; ok {
+						propDef = pd
 					}
+				}
+				cell.PropType = propDef.Type
+				// Resolve widget (auto-detects multi-select from propDef.List)
+				cell.Widget = resolveWidget(col.Widget, propDef, a.meta)
+				// Handle multi-select values as []string
+				if cell.Widget == "multi-select" {
+					if prop := e.Properties[col.Property]; prop != nil {
+						switch v := prop.(type) {
+						case []string:
+							cell.Values = v
+							cell.Value = strings.Join(v, ", ")
+						case []interface{}:
+							for _, item := range v {
+								if s, ok := item.(string); ok {
+									cell.Values = append(cell.Values, s)
+								}
+							}
+							cell.Value = strings.Join(cell.Values, ", ")
+						default:
+							cell.Value = e.GetAttributeString(col.Property)
+						}
+					}
+				} else {
+					cell.Value = e.GetAttributeString(col.Property)
 				}
 			}
 			cells = append(cells, cell)

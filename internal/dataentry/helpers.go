@@ -141,6 +141,14 @@ func resolveWidget(explicit string, prop metamodel.PropertyDef, meta *metamodel.
 	if explicit != "" {
 		return explicit
 	}
+
+	// Check if property is a list (multi-select) - only applies to enum types
+	_, isCustomType := meta.Types[prop.Type]
+	isEnum := prop.Type == "enum" || isCustomType
+	if prop.List && isEnum {
+		return "multi-select"
+	}
+
 	switch prop.Type {
 	case "string":
 		return "text"

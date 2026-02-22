@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -187,14 +188,18 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 						if col.Relation != "" {
 							cell.Value = a.resolveRelationColumnValue(e.ID, col.Relation)
 						} else {
-							cell.Widget = col.Widget
+							// Get property definition to check if it's a list
+							var pd metamodel.PropertyDef
 							if eDef != nil {
-								if pd, ok := eDef.Properties[col.Property]; ok {
+								if propDef, ok := eDef.Properties[col.Property]; ok {
+									pd = propDef
 									cell.PropType = pd.Type
 								}
 							}
+							// Resolve widget (auto-detects multi-select from pd.List)
+							cell.Widget = resolveWidget(col.Widget, pd, a.meta)
 							// Handle multi-select values
-							if col.Widget == "multi-select" {
+							if cell.Widget == "multi-select" {
 								if prop := e.Properties[col.Property]; prop != nil {
 									switch v := prop.(type) {
 									case []string:
