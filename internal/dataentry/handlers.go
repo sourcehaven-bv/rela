@@ -161,23 +161,10 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 				cell.PropType = propDef.Type
 				// Resolve widget (auto-detects multi-select from propDef.List)
 				cell.Widget = resolveWidget(propDef, a.meta)
-				// Handle multi-select values as []string
 				if cell.Widget == "multi-select" {
-					if prop := e.Properties[col.Property]; prop != nil {
-						switch v := prop.(type) {
-						case []string:
-							cell.Values = v
-							cell.Value = strings.Join(v, ", ")
-						case []interface{}:
-							for _, item := range v {
-								if s, ok := item.(string); ok {
-									cell.Values = append(cell.Values, s)
-								}
-							}
-							cell.Value = strings.Join(cell.Values, ", ")
-						default:
-							cell.Value = e.GetAttributeString(col.Property)
-						}
+					if vs := e.GetAttributeStrings(col.Property); vs != nil {
+						cell.Values = vs
+						cell.Value = strings.Join(vs, ", ")
 					}
 				} else {
 					cell.Value = e.GetAttributeString(col.Property)
@@ -415,22 +402,11 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		rf.InputType = widgetToInputType(rf.Widget)
 
 		if entity != nil {
-			val := entity.Properties[f.Property]
-			if val != nil {
-				switch v := val.(type) {
-				case []string:
-					rf.SelectedValues = v
-					rf.Value = strings.Join(v, ", ")
-				case []interface{}:
-					for _, item := range v {
-						if s, ok := item.(string); ok {
-							rf.SelectedValues = append(rf.SelectedValues, s)
-						}
-					}
-					rf.Value = strings.Join(rf.SelectedValues, ", ")
-				default:
-					rf.Value = fmt.Sprintf("%v", val)
-				}
+			if vs := entity.GetAttributeStrings(f.Property); vs != nil {
+				rf.SelectedValues = vs
+				rf.Value = strings.Join(vs, ", ")
+			} else if val := entity.Properties[f.Property]; val != nil {
+				rf.Value = fmt.Sprintf("%v", val)
 			}
 		} else {
 			rf.Value = rf.Default
@@ -996,21 +972,11 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 		rf.InputType = widgetToInputType(rf.Widget)
 
 		// Use submitted value from entity properties
-		if val := entity.Properties[f.Property]; val != nil {
-			switch v := val.(type) {
-			case []string:
-				rf.SelectedValues = v
-				rf.Value = strings.Join(v, ", ")
-			case []interface{}:
-				for _, item := range v {
-					if s, ok := item.(string); ok {
-						rf.SelectedValues = append(rf.SelectedValues, s)
-					}
-				}
-				rf.Value = strings.Join(rf.SelectedValues, ", ")
-			default:
-				rf.Value = fmt.Sprintf("%v", val)
-			}
+		if vs := entity.GetAttributeStrings(f.Property); vs != nil {
+			rf.SelectedValues = vs
+			rf.Value = strings.Join(vs, ", ")
+		} else if val := entity.Properties[f.Property]; val != nil {
+			rf.Value = fmt.Sprintf("%v", val)
 		}
 
 		fields = append(fields, rf)

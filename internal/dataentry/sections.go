@@ -198,23 +198,10 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 							}
 							// Resolve widget (auto-detects multi-select from pd.List)
 							cell.Widget = resolveWidget(pd, a.meta)
-							// Handle multi-select values
 							if cell.Widget == "multi-select" {
-								if prop := e.Properties[col.Property]; prop != nil {
-									switch v := prop.(type) {
-									case []string:
-										cell.Values = v
-										cell.Value = strings.Join(v, ", ")
-									case []interface{}:
-										for _, item := range v {
-											if s, ok := item.(string); ok {
-												cell.Values = append(cell.Values, s)
-											}
-										}
-										cell.Value = strings.Join(cell.Values, ", ")
-									default:
-										cell.Value = e.GetAttributeString(col.Property)
-									}
+								if vs := e.GetAttributeStrings(col.Property); vs != nil {
+									cell.Values = vs
+									cell.Value = strings.Join(vs, ", ")
 								}
 							} else {
 								cell.Value = e.GetAttributeString(col.Property)
