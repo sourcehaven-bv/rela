@@ -336,7 +336,6 @@ func TestHandleForm(t *testing.T) {
 				Direction:  "incoming",
 				TargetType: "ticket",
 				Label:      "Tickets",
-				
 			}},
 		}
 
@@ -368,7 +367,6 @@ func TestHandleForm(t *testing.T) {
 				Direction:  "outgoing",
 				TargetType: "ticket",
 				Label:      "Dependencies",
-				
 			}},
 		}
 
@@ -446,7 +444,6 @@ func TestHandleForm(t *testing.T) {
 				Relation:   "dependency_of",
 				TargetType: "ticket",
 				Label:      "Dependency Of",
-				
 			}},
 		}
 
@@ -1145,7 +1142,6 @@ func TestHandleFormWithUserDefaults(t *testing.T) {
 				Relation:   "belongs_to",
 				TargetType: "component",
 				Label:      "Component",
-				
 			}},
 		}
 		r := httptest.NewRequest(http.MethodGet, "/form/create-ticket-rel", http.NoBody)

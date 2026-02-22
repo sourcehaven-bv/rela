@@ -172,7 +172,6 @@ func TestValidateConfig_UnknownFormFieldProperty(t *testing.T) {
 	}
 }
 
-
 func TestValidateConfig_InvalidTransitions(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{

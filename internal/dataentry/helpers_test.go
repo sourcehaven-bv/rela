@@ -909,6 +909,40 @@ func TestTemplateFuncs(t *testing.T) {
 			t.Errorf("sortedKeys empty map = %v, want empty slice", got)
 		}
 	})
+
+	t.Run("toStringSlice with []interface{}", func(t *testing.T) {
+		fn := funcs["toStringSlice"].(func(interface{}) []string)
+		got := fn([]interface{}{"a", "b", "c"})
+		want := []string{"a", "b", "c"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("toStringSlice = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("toStringSlice with []string", func(t *testing.T) {
+		fn := funcs["toStringSlice"].(func(interface{}) []string)
+		got := fn([]string{"x", "y"})
+		want := []string{"x", "y"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("toStringSlice = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("toStringSlice with scalar", func(t *testing.T) {
+		fn := funcs["toStringSlice"].(func(interface{}) []string)
+		got := fn("scalar")
+		if got != nil {
+			t.Errorf("toStringSlice scalar = %v, want nil", got)
+		}
+	})
+
+	t.Run("toStringSlice with nil", func(t *testing.T) {
+		fn := funcs["toStringSlice"].(func(interface{}) []string)
+		got := fn(nil)
+		if got != nil {
+			t.Errorf("toStringSlice nil = %v, want nil", got)
+		}
+	})
 }
 
 func TestAppendToastParam(t *testing.T) {

@@ -95,7 +95,7 @@ func Match(entity *model.Entity, filter *Filter, propDef *metamodel.PropertyDef,
 // matchList checks if any element in a list matches the filter.
 // For = operator: returns true if ANY element equals the filter value
 // For != operator: returns true if NO element equals the filter value
-func matchList(list []string, filter *Filter, propDef *metamodel.PropertyDef, m *metamodel.Metamodel) (bool, error) {
+func matchList(list []string, filter *Filter, _ *metamodel.PropertyDef, _ *metamodel.Metamodel) (bool, error) {
 	// Handle empty list
 	if len(list) == 0 {
 		if filter.Operator == OpEqual && filter.Value == "" {

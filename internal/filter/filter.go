@@ -216,7 +216,6 @@ func matchStringList(list []string, f *Filter) bool {
 
 // matchStringSimple checks if a string value matches the filter (simple version without errors)
 func matchStringSimple(strValue string, f *Filter) bool {
-
 	switch f.Operator {
 	case OpEqual:
 		if f.IsGlob {
