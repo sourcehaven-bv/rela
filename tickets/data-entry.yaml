@@ -374,6 +374,7 @@ forms:
       - property: kind
       - property: priority
       - property: effort
+      - property: tags
       - property: status
         hidden: true
     relations:
@@ -397,6 +398,7 @@ forms:
       - property: kind
       - property: priority
       - property: effort
+      - property: tags
       - property: status
         transitions:
           backlog: [ready, wont-fix]
@@ -732,6 +734,7 @@ lists:
       - property: priority
         sortable: true
       - property: effort
+      - property: tags
     sort:
       - property: priority
       - property: status
@@ -1205,6 +1208,7 @@ kanbans:
         - property: kind
         - property: priority
         - property: effort
+        - property: tags
     edit_form: edit_ticket
     create_form: create_ticket
     filter_controls:

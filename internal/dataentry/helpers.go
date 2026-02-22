@@ -460,6 +460,20 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 			}
 			return m
 		},
+		"toStringSlice": func(val interface{}) []string {
+			switch v := val.(type) {
+			case []string:
+				return v
+			case []interface{}:
+				result := make([]string, 0, len(v))
+				for _, item := range v {
+					result = append(result, fmt.Sprintf("%v", item))
+				}
+				return result
+			default:
+				return nil
+			}
+		},
 		"formatValue": func(val string) string {
 			if t, err := time.Parse(time.RFC3339, val); err == nil {
 				return t.Format("2006-01-02")

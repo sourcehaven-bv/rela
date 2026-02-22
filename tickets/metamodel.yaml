@@ -67,6 +67,8 @@ types:
     values: [trivial, small, medium, large, epic]
   idea_value:
     values: [nice-to-have, useful, valuable, critical]
+  ticket_tag:
+    values: [good-first, needs-investigation, needs-design, tech-debt, regression, blocked-upstream]
 entities:
   # ===================
   # Architecture
@@ -284,6 +286,9 @@ entities:
         type: priority
       effort:
         type: effort
+      tags:
+        type: ticket_tag
+        list: true
       status:
         type: ticket_status
         required: true

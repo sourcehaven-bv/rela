@@ -77,7 +77,9 @@
     {{ $ptype := index $propTypes $key }}
     <div class="detail-label">{{ $key }}</div>
     <div class="detail-value">
-      {{ if isBadgeType $ptype }}<span class="badge {{ badgeClass $ptype (printf "%v" $val) }}">{{ $val }}</span>
+      {{ $slice := toStringSlice $val }}{{ if $slice }}{{ if isBadgeType $ptype }}{{ range $slice }}<span class="badge {{ badgeClass $ptype . }}">{{ . }}</span> {{ end }}
+      {{ else }}{{ join $slice ", " }}{{ end }}
+      {{ else if isBadgeType $ptype }}<span class="badge {{ badgeClass $ptype (printf "%v" $val) }}">{{ $val }}</span>
       {{ else }}{{ if $val }}{{ $val }}{{ else }}&mdash;{{ end }}{{ end }}
     </div>
     {{ end }}
