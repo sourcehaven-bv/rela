@@ -4,6 +4,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -988,31 +989,33 @@ func TestResolveRelationColumnValue(t *testing.T) {
 
 	app := &App{meta: meta, g: g}
 
-	t.Run("resolves multiple targets comma-separated", func(t *testing.T) {
-		got := app.resolveRelationColumnValue("ASS-001", "assessmentBy")
-		if got != "Alice, Bob" {
-			t.Errorf("got %q, want %q", got, "Alice, Bob")
+	t.Run("resolves multiple targets", func(t *testing.T) {
+		got := app.resolveRelationColumnValues("ASS-001", "assessmentBy")
+		want := []string{"Alice", "Bob"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 
 	t.Run("filters by relation type", func(t *testing.T) {
-		got := app.resolveRelationColumnValue("ASS-001", "otherRel")
-		if got != "Alice" {
-			t.Errorf("got %q, want %q", got, "Alice")
+		got := app.resolveRelationColumnValues("ASS-001", "otherRel")
+		want := []string{"Alice"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 
 	t.Run("returns empty for no matching relations", func(t *testing.T) {
-		got := app.resolveRelationColumnValue("ASS-001", "nonexistent")
-		if got != "" {
-			t.Errorf("got %q, want empty string", got)
+		got := app.resolveRelationColumnValues("ASS-001", "nonexistent")
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 
 	t.Run("returns empty for unknown entity", func(t *testing.T) {
-		got := app.resolveRelationColumnValue("UNKNOWN", "assessmentBy")
-		if got != "" {
-			t.Errorf("got %q, want empty string", got)
+		got := app.resolveRelationColumnValues("UNKNOWN", "assessmentBy")
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 }

@@ -98,7 +98,7 @@
   {{ if .Card.Fields }}
   <div class="kanban-card-fields">
     {{ range .Card.Fields }}
-    {{ if .Values }}{{ $pt := .PropType }}{{ range .Values }}<span class="badge {{ badgeClass $pt . }}">{{ . }}</span> {{ end }}{{ else }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>{{ end }}
+    {{ $pt := .PropType }}{{ range .Values }}<span class="badge {{ badgeClass $pt . }}">{{ . }}</span> {{ end }}
     {{ end }}
   </div>
   {{ end }}

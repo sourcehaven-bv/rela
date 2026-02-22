@@ -90,10 +90,9 @@
           {{ range .Cells }}
           <td>
             {{ if .Link }}<a href="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}&scope=list:{{ $.ListID }}{{ $.ScopeParams }}" class="cell-link"
-               hx-get="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}&scope=list:{{ $.ListID }}{{ $.ScopeParams }}" hx-target="#content" hx-push-url="true">{{ .Value }}</a>
-            {{ else if and (eq .Widget "multi-select") (isBadgeType .PropType) }}{{ if .Values }}{{ $pt := .PropType }}{{ range .Values }}<span class="badge {{ badgeClass $pt . }}">{{ . }}</span> {{ end }}{{ else }}&mdash;{{ end }}
-            {{ else if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
-            {{ else }}{{ if .Value }}{{ .Value }}{{ else }}&mdash;{{ end }}{{ end }}
+               hx-get="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}&scope=list:{{ $.ListID }}{{ $.ScopeParams }}" hx-target="#content" hx-push-url="true">{{ join .Values ", " }}</a>
+            {{ else if isBadgeType .PropType }}{{ if .Values }}{{ $pt := .PropType }}{{ range .Values }}<span class="badge {{ badgeClass $pt . }}">{{ . }}</span> {{ end }}{{ else }}&mdash;{{ end }}
+            {{ else }}{{ if .Values }}{{ join .Values ", " }}{{ else }}&mdash;{{ end }}{{ end }}
           </td>
           {{ end }}
           <td style="width:1%;white-space:nowrap;"><a href="#" class="delete-icon" title="Delete"

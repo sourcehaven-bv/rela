@@ -35,8 +35,7 @@ type KanbanCardData struct {
 // KanbanCardField holds a single field displayed on a card.
 type KanbanCardField struct {
 	Label    string
-	Value    string   // Single value (for backwards compatibility)
-	Values   []string // Multiple values for multi-select fields
+	Values   []string
 	PropType string
 }
 
@@ -252,30 +251,17 @@ func (a *App) buildKanbanCard(e *model.Entity, kanban Kanban) KanbanCardData {
 			PropType: propType,
 		}
 
-		// Handle array values (multi-select)
-		if arr, ok := rawVal.([]interface{}); ok {
-			if len(arr) == 0 {
+		if vs := e.GetAttributeStrings(f.Property); vs != nil {
+			if len(vs) == 0 {
 				continue
 			}
-			for _, v := range arr {
-				if s, ok := v.(string); ok {
-					field.Values = append(field.Values, s)
-				}
-			}
-			field.Value = e.GetAttributeString(f.Property) // Keep for backwards compat
-		} else if strArr, ok := rawVal.([]string); ok {
-			if len(strArr) == 0 {
-				continue
-			}
-			field.Values = strArr
-			field.Value = e.GetAttributeString(f.Property)
+			field.Values = vs
 		} else {
-			// Single value
 			val := e.GetAttributeString(f.Property)
 			if val == "" {
 				continue
 			}
-			field.Value = val
+			field.Values = []string{val}
 		}
 
 		card.Fields = append(card.Fields, field)
