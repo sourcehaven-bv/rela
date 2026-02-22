@@ -483,9 +483,9 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 	}
 }
 
-// resolveRelationColumnValue returns a comma-separated string of display titles
-// for all targets of the given relation type from an entity.
-func (a *App) resolveRelationColumnValue(entityID, relationType string) string {
+// resolveRelationColumnValues returns display titles for all targets of the given
+// relation type from an entity.
+func (a *App) resolveRelationColumnValues(entityID, relationType string) []string {
 	edges := a.g.OutgoingEdges(entityID)
 	titles := make([]string, 0, len(edges))
 	for _, edge := range edges {
@@ -498,7 +498,7 @@ func (a *App) resolveRelationColumnValue(entityID, relationType string) string {
 		}
 		titles = append(titles, a.entityDisplayTitle(target))
 	}
-	return strings.Join(titles, ", ")
+	return titles
 }
 
 // ScopeNav holds prev/next navigation context for browsing through a list of entities.

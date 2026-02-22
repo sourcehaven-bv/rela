@@ -28,8 +28,7 @@ type SectionEntityData struct {
 
 // SectionColumnData holds a resolved table cell for template rendering.
 type SectionColumnData struct {
-	Value      string
-	Values     []string // For multi-select properties
+	Values     []string
 	PropType   string
 	Widget     string
 	Link       bool
@@ -186,9 +185,8 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 							Link: col.Link, EntityID: e.ID, EntityType: e.Type,
 						}
 						if col.Relation != "" {
-							cell.Value = a.resolveRelationColumnValue(e.ID, col.Relation)
+							cell.Values = a.resolveRelationColumnValues(e.ID, col.Relation)
 						} else {
-							// Get property definition to check if it's a list
 							var pd metamodel.PropertyDef
 							if eDef != nil {
 								if propDef, ok := eDef.Properties[col.Property]; ok {
@@ -196,15 +194,11 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 									cell.PropType = pd.Type
 								}
 							}
-							// Resolve widget (auto-detects multi-select from pd.List)
 							cell.Widget = resolveWidget(pd, a.meta)
-							if cell.Widget == "multi-select" {
-								if vs := e.GetAttributeStrings(col.Property); vs != nil {
-									cell.Values = vs
-									cell.Value = strings.Join(vs, ", ")
-								}
-							} else {
-								cell.Value = e.GetAttributeString(col.Property)
+							if vs := e.GetAttributeStrings(col.Property); vs != nil {
+								cell.Values = vs
+							} else if val := e.GetAttributeString(col.Property); val != "" {
+								cell.Values = []string{val}
 							}
 						}
 						row.Cells = append(row.Cells, cell)

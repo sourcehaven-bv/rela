@@ -123,8 +123,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve columns with values
 	type CellData struct {
-		Value      string
-		Values     []string // for multi-select
+		Values     []string
 		Property   string
 		PropType   string
 		Widget     string
@@ -149,7 +148,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 				EntityType: e.Type,
 			}
 			if col.Relation != "" {
-				cell.Value = a.resolveRelationColumnValue(e.ID, col.Relation)
+				cell.Values = a.resolveRelationColumnValues(e.ID, col.Relation)
 			} else {
 				// Get property definition from metamodel
 				var propDef metamodel.PropertyDef
@@ -159,15 +158,11 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				cell.PropType = propDef.Type
-				// Resolve widget (auto-detects multi-select from propDef.List)
 				cell.Widget = resolveWidget(propDef, a.meta)
-				if cell.Widget == "multi-select" {
-					if vs := e.GetAttributeStrings(col.Property); vs != nil {
-						cell.Values = vs
-						cell.Value = strings.Join(vs, ", ")
-					}
-				} else {
-					cell.Value = e.GetAttributeString(col.Property)
+				if vs := e.GetAttributeStrings(col.Property); vs != nil {
+					cell.Values = vs
+				} else if val := e.GetAttributeString(col.Property); val != "" {
+					cell.Values = []string{val}
 				}
 			}
 			cells = append(cells, cell)
@@ -1113,50 +1108,30 @@ func validationErrorsToFieldMap(errs []*metamodel.ValidationError) map[string]st
 	return fieldErrors
 }
 
-func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	r.ParseForm() //nolint:errcheck // form parse errors are handled by empty values
-
-	formID := r.FormValue("_form_id")
-	form, ok := a.Cfg.Forms[formID]
-	if !ok {
-		http.Error(w, "Unknown form", http.StatusBadRequest)
-		return
-	}
-
-	entDef, _ := a.meta.GetEntityDef(form.EntityType)
-
-	var entityID string
+// generateEntityID returns a new entity ID, either from a manual form field or auto-generated.
+func (a *App) generateEntityID(entDef *metamodel.EntityDef, entityType string, r *http.Request) (string, error) {
 	if entDef.IsManualID() {
-		entityID = r.FormValue("_entity_id")
-		if entityID == "" {
-			http.Error(w, "Manual ID required", http.StatusBadRequest)
-			return
+		id := r.FormValue("_entity_id")
+		if id == "" {
+			return "", fmt.Errorf("manual ID required")
 		}
-	} else {
-		prefix := ""
-		prefixes := entDef.GetIDPrefixes()
-		if len(prefixes) > 0 {
-			prefix = prefixes[0]
-		}
-		if entDef.IsShortID() {
-			entityID = model.GenerateShortID(a.g.AllIDs(), prefix, a.g.NodeCount())
-		} else {
-			entityID = model.GenerateNextID(a.g.IDsByType(form.EntityType), prefix)
-		}
+		return id, nil
 	}
-
-	if _, exists := a.g.GetNode(entityID); exists {
-		http.Error(w, fmt.Sprintf("Entity %s already exists", entityID), http.StatusConflict)
-		return
+	prefix := ""
+	prefixes := entDef.GetIDPrefixes()
+	if len(prefixes) > 0 {
+		prefix = prefixes[0]
 	}
+	if entDef.IsShortID() {
+		return model.GenerateShortID(a.g.AllIDs(), prefix, a.g.NodeCount()), nil
+	}
+	return model.GenerateNextID(a.g.IDsByType(entityType), prefix), nil
+}
 
-	entity := model.NewEntity(entityID, form.EntityType)
-
-	for _, f := range form.Fields {
+// populateProperties reads form field values into an entity, applying the default chain
+// (user defaults → form default) for empty values.
+func (a *App) populateProperties(entity *model.Entity, fields []FormField, entDef *metamodel.EntityDef, entityType string, r *http.Request) {
+	for _, f := range fields {
 		prop := entDef.Properties[f.Property]
 		widget := resolveWidget(prop, a.meta)
 		if widget == "multi-select" {
@@ -1167,7 +1142,7 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 		} else {
 			val := r.FormValue(f.Property)
 			if val == "" && a.userDefaults != nil {
-				val = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
+				val = a.userDefaults.ResolvePropertyDefault(entityType, f.Property)
 			}
 			if val == "" && f.Default != "" {
 				val = f.Default
@@ -1180,32 +1155,18 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
 
-	if form.Body != nil && *form.Body {
-		entity.Content = r.FormValue("_body")
-	}
-
-	// Validate entity before writing
-	if validationErrs := a.meta.ValidateEntity(entity); len(validationErrs) > 0 {
-		a.renderFormWithErrors(w, r, formID, entity, validationErrorsToFieldMap(validationErrs))
-		return
-	}
-
-	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to write entity: %v", err), http.StatusInternalServerError)
-		return
-	}
-	entity.ModTime = time.Now()
-	a.g.AddNode(entity)
-
-	for _, rel := range form.Relations {
+// createFormRelations creates relations from form relation fields, applying user-default
+// relations when no value is submitted.
+func (a *App) createFormRelations(entityID string, relations []FormRelation, entityType string, r *http.Request) {
+	for _, rel := range relations {
 		if rel.Display != "" {
 			continue
 		}
 		values := r.Form[rel.Relation]
-		// Apply user default relation if no value was submitted.
 		if len(values) == 0 && a.userDefaults != nil {
-			if defaultTarget := a.userDefaults.ResolveRelationDefault(form.EntityType, rel.Relation); defaultTarget != "" {
+			if defaultTarget := a.userDefaults.ResolveRelationDefault(entityType, rel.Relation); defaultTarget != "" {
 				values = []string{defaultTarget}
 			}
 		}
@@ -1232,32 +1193,41 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 			a.g.AddEdge(relation)
 		}
 	}
+}
 
-	// Create a relation to the peer entity if requested (from view "Add" button)
-	if linkRelation := r.FormValue("_link_relation"); linkRelation != "" {
-		linkPeer := r.FormValue("_link_peer")
-		linkAs := r.FormValue("_link_as")
-		_, relOK := a.meta.GetRelationDef(linkRelation)
-		_, peerOK := a.g.GetNode(linkPeer)
-		if linkPeer != "" && (linkAs == "from" || linkAs == "to") && relOK && peerOK {
-			var fromID, toID string
-			if linkAs == "from" {
-				fromID, toID = entityID, linkPeer
-			} else {
-				fromID, toID = linkPeer, entityID
-			}
-			relation := model.NewRelation(fromID, linkRelation, toID)
-			if err := a.repo.WriteRelation(relation); err != nil {
-				log.Printf("Failed to write link relation: %v", err)
-			} else {
-				a.g.AddEdge(relation)
-			}
-		}
+// createLinkRelation creates a single relation to a peer entity when triggered from a
+// view's "Add" button (_link_relation, _link_peer, _link_as form params).
+func (a *App) createLinkRelation(entityID string, r *http.Request) {
+	linkRelation := r.FormValue("_link_relation")
+	if linkRelation == "" {
+		return
 	}
+	linkPeer := r.FormValue("_link_peer")
+	linkAs := r.FormValue("_link_as")
+	_, relOK := a.meta.GetRelationDef(linkRelation)
+	_, peerOK := a.g.GetNode(linkPeer)
+	if linkPeer == "" || (linkAs != "from" && linkAs != "to") || !relOK || !peerOK {
+		return
+	}
+	var fromID, toID string
+	if linkAs == "from" {
+		fromID, toID = entityID, linkPeer
+	} else {
+		fromID, toID = linkPeer, entityID
+	}
+	relation := model.NewRelation(fromID, linkRelation, toID)
+	if err := a.repo.WriteRelation(relation); err != nil {
+		log.Printf("Failed to write link relation: %v", err)
+	} else {
+		a.g.AddEdge(relation)
+	}
+}
 
-	// Create relations from template (templates apply even without explicit selection)
+// createTemplateRelations creates relations defined in the selected (or default) entity
+// template, skipping any that were already created via form or link relations.
+func (a *App) createTemplateRelations(entityID, entityType string, r *http.Request) {
 	templateName := r.FormValue("_template")
-	templates := a.templatesForType(form.EntityType)
+	templates := a.templatesForType(entityType)
 	var selectedTemplate *markdown.EntityTemplate
 	for _, t := range templates {
 		if t.Name == templateName {
@@ -1265,71 +1235,116 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	// If no specific template selected but templates exist, use default
 	if selectedTemplate == nil && len(templates) > 0 {
 		selectedTemplate = templates[0]
 	}
-
-	if selectedTemplate != nil {
-		// Create relations defined in the template that weren't already created
-		// via form relations (to avoid duplicates)
-		createdRelations := make(map[string]bool)
-		for _, edge := range a.g.OutgoingEdges(entityID) {
-			createdRelations[edge.Type+"->"+edge.To] = true
-		}
-		for _, edge := range a.g.IncomingEdges(entityID) {
-			createdRelations[edge.Type+"<-"+edge.From] = true
-		}
-
-		for _, tr := range selectedTemplate.Relations {
-			if tr.Target == "" {
-				continue
-			}
-			// Check if target entity exists
-			if _, exists := a.g.GetNode(tr.Target); !exists {
-				log.Printf("Template relation target %s not found, skipping", tr.Target)
-				continue
-			}
-
-			// Determine direction from metamodel
-			relDef, relOK := a.meta.GetRelationDef(tr.Relation)
-			if !relOK {
-				log.Printf("Unknown relation type %s in template, skipping", tr.Relation)
-				continue
-			}
-
-			// Determine if this entity is the source or target
-			isFrom := containsString(relDef.From, form.EntityType)
-			isTo := containsString(relDef.To, form.EntityType)
-
-			var fromID, toID, key string
-			switch {
-			case isFrom && !isTo:
-				fromID, toID = entityID, tr.Target
-				key = tr.Relation + "->" + tr.Target
-			case isTo && !isFrom:
-				fromID, toID = tr.Target, entityID
-				key = tr.Relation + "<-" + tr.Target
-			default:
-				// Ambiguous - assume outgoing
-				fromID, toID = entityID, tr.Target
-				key = tr.Relation + "->" + tr.Target
-			}
-
-			// Skip if already created
-			if createdRelations[key] {
-				continue
-			}
-
-			relation := model.NewRelation(fromID, tr.Relation, toID)
-			if err := a.repo.WriteRelation(relation); err != nil {
-				log.Printf("Failed to write template relation: %v", err)
-				continue
-			}
-			a.g.AddEdge(relation)
-			createdRelations[key] = true
-		}
+	if selectedTemplate == nil {
+		return
 	}
+
+	// Build set of already-created relations to avoid duplicates
+	createdRelations := make(map[string]bool)
+	for _, edge := range a.g.OutgoingEdges(entityID) {
+		createdRelations[edge.Type+"->"+edge.To] = true
+	}
+	for _, edge := range a.g.IncomingEdges(entityID) {
+		createdRelations[edge.Type+"<-"+edge.From] = true
+	}
+
+	for _, tr := range selectedTemplate.Relations {
+		if tr.Target == "" {
+			continue
+		}
+		if _, exists := a.g.GetNode(tr.Target); !exists {
+			log.Printf("Template relation target %s not found, skipping", tr.Target)
+			continue
+		}
+
+		relDef, relOK := a.meta.GetRelationDef(tr.Relation)
+		if !relOK {
+			log.Printf("Unknown relation type %s in template, skipping", tr.Relation)
+			continue
+		}
+
+		isFrom := containsString(relDef.From, entityType)
+		isTo := containsString(relDef.To, entityType)
+
+		var fromID, toID, key string
+		switch {
+		case isFrom && !isTo:
+			fromID, toID = entityID, tr.Target
+			key = tr.Relation + "->" + tr.Target
+		case isTo && !isFrom:
+			fromID, toID = tr.Target, entityID
+			key = tr.Relation + "<-" + tr.Target
+		default:
+			fromID, toID = entityID, tr.Target
+			key = tr.Relation + "->" + tr.Target
+		}
+
+		if createdRelations[key] {
+			continue
+		}
+
+		relation := model.NewRelation(fromID, tr.Relation, toID)
+		if err := a.repo.WriteRelation(relation); err != nil {
+			log.Printf("Failed to write template relation: %v", err)
+			continue
+		}
+		a.g.AddEdge(relation)
+		createdRelations[key] = true
+	}
+}
+
+func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.ParseForm() //nolint:errcheck // form parse errors are handled by empty values
+
+	formID := r.FormValue("_form_id")
+	form, ok := a.Cfg.Forms[formID]
+	if !ok {
+		http.Error(w, "Unknown form", http.StatusBadRequest)
+		return
+	}
+
+	entDef, _ := a.meta.GetEntityDef(form.EntityType)
+
+	entityID, err := a.generateEntityID(entDef, form.EntityType, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if _, exists := a.g.GetNode(entityID); exists {
+		http.Error(w, fmt.Sprintf("Entity %s already exists", entityID), http.StatusConflict)
+		return
+	}
+
+	entity := model.NewEntity(entityID, form.EntityType)
+	a.populateProperties(entity, form.Fields, entDef, form.EntityType, r)
+
+	if form.Body != nil && *form.Body {
+		entity.Content = r.FormValue("_body")
+	}
+
+	// Validate entity before writing
+	if validationErrs := a.meta.ValidateEntity(entity); len(validationErrs) > 0 {
+		a.renderFormWithErrors(w, r, formID, entity, validationErrorsToFieldMap(validationErrs))
+		return
+	}
+
+	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write entity: %v", err), http.StatusInternalServerError)
+		return
+	}
+	entity.ModTime = time.Now()
+	a.g.AddNode(entity)
+
+	a.createFormRelations(entityID, form.Relations, form.EntityType, r)
+	a.createLinkRelation(entityID, r)
+	a.createTemplateRelations(entityID, form.EntityType, r)
 
 	log.Printf("Created %s %s", form.EntityType, entityID)
 
@@ -2105,7 +2120,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					var val string
 					var propType string
 					if col.Relation != "" {
-						val = a.resolveRelationColumnValue(e.ID, col.Relation)
+						val = strings.Join(a.resolveRelationColumnValues(e.ID, col.Relation), ", ")
 					} else {
 						if v := e.Properties[col.Property]; v != nil {
 							val = fmt.Sprintf("%v", v)
