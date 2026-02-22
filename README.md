@@ -31,6 +31,9 @@ rela link DEC-001 addresses REQ-001
 # View the relationship
 rela show REQ-001
 
+# Launch the interactive TUI
+rela tui
+
 # Work with a project in a different directory
 rela -p /path/to/project list
 export RELA_PROJECT=/path/to/project && rela list
@@ -42,6 +45,7 @@ export RELA_PROJECT=/path/to/project && rela list
 - **Relationship Tracing** - Link entities and trace dependencies
 - **Quality Analysis** - Find orphans, check coverage, detect gaps
 - **Graph Export** - Export to Graphviz DOT format
+- **Interactive TUI** - Full-featured terminal interface
 - **MCP Server** - Expose rela to AI assistants via Model Context Protocol
 - **Markdown Storage** - Human-readable, version-controllable files
 

@@ -552,6 +552,14 @@ rela update GOAL-003 \
 rela list goal
 ```
 
+Or use the interactive TUI:
+
+```bash
+rela tui
+```
+
+Navigate to Goals to see all strategic objectives.
+
 ## Part 3: Creating the Planning Layer
 
 ### Create Epics
@@ -1084,6 +1092,53 @@ rela export csv --output project-data.csv
 rela export dot --output dependencies.dot
 dot -Tpng dependencies.dot -o dependencies.png
 ```
+
+## Part 10: Using the TUI
+
+The Terminal User Interface provides an interactive way to navigate your
+project:
+
+```bash
+rela tui
+```
+
+### Key Navigation
+
+- **Arrow keys**: Navigate lists
+- **Enter**: View details / select
+- **Tab**: Switch between panes
+- **c**: Create new entity
+- **l**: Create link from current entity
+- **d**: Delete current entity
+- **e**: Edit current entity
+- **s**: Search
+- **g**: View relationship graph
+- **?**: Help
+
+### TUI Workflows
+
+**Daily Standup:**
+
+1. Open TUI
+2. Navigate to Tasks
+3. Filter by `status=in_progress`
+4. Review each task, update status as needed
+5. Check for blocked items
+
+**Sprint Planning:**
+
+1. Navigate to Features
+2. Filter by `status=backlog`
+3. Review each feature
+4. Create tasks for features selected for sprint
+5. Link tasks to features
+
+**Risk Review:**
+
+1. Navigate to Risks
+2. Filter by `status=identified` or `exposure=high`
+3. Review each risk
+4. Update status or create mitigation tasks
 
 ## Best Practices
 

@@ -107,9 +107,20 @@ View a specific entity with its relations:
 rela show REQ-001
 ```
 
+## Using the TUI
+
+For a more interactive experience, launch the terminal UI:
+
+```bash
+rela tui
+```
+
+Navigate with arrow keys or `j`/`k`, press `?` for help.
+
 ## Next Steps
 
 - [CLI Reference](cli-reference.md) - All commands and options
+- [TUI Guide](tui.md) - Master the interactive interface
 - [Metamodel](metamodel.md) - Customize entity types and relations
 - [Concepts](concepts.md) - Understand architecture traceability
 

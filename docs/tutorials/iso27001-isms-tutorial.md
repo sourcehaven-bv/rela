@@ -649,7 +649,7 @@ rela analyze all
 
 ### Find Controls Without Evidence
 
-Using trace commands:
+Using the TUI or trace commands:
 
 ```bash
 # See what evidence each control has
@@ -802,7 +802,40 @@ rela list corrective_action --where "status=in_progress"
 
 ---
 
-## Part 8: Audit Trail with Git
+## Part 8: Using the TUI for Daily Operations
+
+Launch the interactive TUI:
+
+```bash
+rela tui
+```
+
+### Key TUI Features for ISMS Management
+
+| Key               | Action                     |
+| ----------------- | -------------------------- |
+| `j`/`k` or arrows | Navigate                   |
+| `/`               | Search across all entities |
+| `Enter`           | View entity details        |
+| `c`               | Create new entity          |
+| `l`               | Link entities              |
+| `m`               | View metamodel             |
+| `a`               | Run analysis               |
+| `g`               | View graph                 |
+| `?`               | Help                       |
+
+### Useful TUI Workflows
+
+1. **Finding a control by framework reference**: Press `/`, type `A.5.15` to
+   search
+2. **Viewing the risk treatment chain**: Navigate to a risk, see its `treatedBy`
+   relations
+3. **Quick evidence review**: Navigate to a control, check `evidencedBy` count
+4. **Graph exploration**: Press `g` to see visual relationships
+
+---
+
+## Part 9: Audit Trail with Git
 
 Since rela stores everything as markdown files, Git provides a complete audit
 trail.
@@ -918,6 +951,7 @@ Control ← affects ← Nonconformity → addressedBy → Corrective Action
 | Find controls without evidence | `rela trace to CTRL-001`                        |
 | Track open findings            | `rela list nonconformity --where "status=open"` |
 | View full graph                | `rela graph -o isms.dot`                        |
+| Search anything                | `rela tui` then `/`                             |
 
 ---
 

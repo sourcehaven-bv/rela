@@ -884,6 +884,18 @@ See [MCP Server Guide](mcp-server.md) for the full tool/resource/prompt referenc
 
 ---
 
+### rela tui
+
+Launch the interactive terminal UI.
+
+```bash
+rela tui
+```
+
+See [TUI Guide](tui.md) for details.
+
+---
+
 ### rela completion
 
 Generate shell completion scripts.
