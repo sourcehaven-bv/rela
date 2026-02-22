@@ -22,7 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
+	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 )
 
 // applyFilters filters entities by a set of filter conditions.

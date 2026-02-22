@@ -69,7 +69,6 @@ relations/*.md → Relation ↗      ↓
 | `cmd/rela-server`    | Data entry HTTP server entry point                      |
 | `cmd/rela-desktop`   | Wails desktop app entry point                           |
 | `internal/cli`       | Cobra commands (create, link, analyze, export, etc.)    |
-| `internal/tui`       | Bubbletea TUI screens (browser, detail, search, etc.)   |
 | `internal/dataentry` | Config-driven data entry web app (HTMX, handlers, views)|
 | `internal/model`     | Core types: `Entity`, `Relation`, `Status`              |
 | `internal/graph`     | In-memory graph with adjacency lists, tracing, analysis |
@@ -102,14 +101,6 @@ capabilities to AI assistants (Claude Code, Cursor, etc.):
 
 The `rela mcp` command handles its own initialization (project discovery, metamodel loading, graph
 sync) independently from the standard CLI state setup in `PersistentPreRunE`.
-
-### TUI Architecture
-
-The TUI uses Bubbletea with a central `App` struct containing screen-specific models:
-
-- `Screen` enum controls which view is active
-- Each screen (browser, detail, search, etc.) has its own model file
-- Navigation uses a screen stack for back navigation
 
 ### CLI State Initialization
 
@@ -153,11 +144,6 @@ func main() {
     // ...
 }
 
-// coverage-ignore: TUI code - requires interactive terminal
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-    // ...
-}
-
 // coverage-ignore: requires external graphviz installation
 func renderWithGraphviz() error {
     // ...
@@ -167,7 +153,6 @@ func renderWithGraphviz() error {
 Valid reasons for `coverage-ignore`:
 
 - Main/entry point functions (better tested via integration tests)
-- Interactive TUI code (requires terminal simulation)
 - External tool dependencies (graphviz, etc.)
 - OS-specific functionality that can't be reliably mocked
 
@@ -191,7 +176,6 @@ just install-hooks
 
 The project uses golangci-lint with extensive rules. Key exclusions:
 
-- TUI code is exempt from complexity checks (funlen, gocognit, nestif)
 - Test files exempt from dupl, funlen, magic numbers
 - Cobra `cmd`/`args` unused parameters are allowed
 - Line length limit: 120 chars
@@ -205,7 +189,6 @@ relations/                  # Markdown relation files (FROM--type--TO.md)
 templates/entities/<type>.md  # Optional: entity templates for defaults
 templates/relations/<type>.md # Optional: relation templates for defaults
 .rela/cache.json            # Graph cache (gitignored)
-.rela/ui-state.json         # Persisted UI state (gitignored)
 .rela/user-defaults.yaml    # User-specific default values (gitignored)
 ```
 

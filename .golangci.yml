@@ -288,18 +288,13 @@ issues:
     - path: internal/cli/.*\.go
       text: "unused-parameter.*(cmd|args)"
 
-    # TUI code has specific patterns that are valid
-    - path: internal/tui/.*\.go
+    # Search parser has complex parsing logic
+    - path: internal/search/searchparser/.*\.go
       linters:
-        - funlen        # UI View functions are inherently long
-        - gocognit      # Event handlers have complex control flow
-        - gocyclo       # UI Update functions are inherently complex
-        - mnd           # Magic numbers are common in UI layout code
-        - nestif        # Event handlers often have complex conditionals
-        - exhaustive    # Switch statements on screen types are intentionally partial
-        - unparam       # Width/height params needed for interface consistency
+        - funlen        # Query parsing is inherently complex
+        - gocognit      # Query parsing has complex control flow
 
-    # Data entry web handlers have similar patterns to TUI code
+    # Data entry web handlers have specific patterns
     - path: internal/dataentry/.*\.go
       linters:
         - funlen        # HTTP handlers with template data are inherently long

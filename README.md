@@ -72,7 +72,6 @@ go build -o rela ./cmd/rela
 | [CLI Reference](docs/cli-reference.md) | Complete command reference |
 | [Metamodel Reference](docs/metamodel.md) | Configure entity types and relations |
 | [Views - Declarative Context Generation](docs/views.md) | Declarative views, CI integration |
-| [TUI Guide](docs/tui.md) | Interactive terminal interface |
 | [Export Guide](docs/export.md) | Export, import, and data integration |
 | [Best Practices](docs/best-practices.md) | Maintenance tips and team workflows |
 | [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |
