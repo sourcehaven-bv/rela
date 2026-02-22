@@ -31,9 +31,6 @@ rela link DEC-001 addresses REQ-001
 # View the relationship
 rela show REQ-001
 
-# Launch the interactive TUI
-rela tui
-
 # Work with a project in a different directory
 rela -p /path/to/project list
 export RELA_PROJECT=/path/to/project && rela list
@@ -45,7 +42,6 @@ export RELA_PROJECT=/path/to/project && rela list
 - **Relationship Tracing** - Link entities and trace dependencies
 - **Quality Analysis** - Find orphans, check coverage, detect gaps
 - **Graph Export** - Export to Graphviz DOT format
-- **Interactive TUI** - Full-featured terminal interface
 - **MCP Server** - Expose rela to AI assistants via Model Context Protocol
 - **Markdown Storage** - Human-readable, version-controllable files
 
@@ -72,7 +68,6 @@ go build -o rela ./cmd/rela
 | [CLI Reference](docs/cli-reference.md) | Complete command reference |
 | [Metamodel Reference](docs/metamodel.md) | Configure entity types and relations |
 | [Views - Declarative Context Generation](docs/views.md) | Declarative views, CI integration |
-| [TUI Guide](docs/tui.md) | Interactive terminal interface |
 | [Export Guide](docs/export.md) | Export, import, and data integration |
 | [Best Practices](docs/best-practices.md) | Maintenance tips and team workflows |
 | [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |

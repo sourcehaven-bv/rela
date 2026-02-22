@@ -17,7 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
-	"github.com/Sourcehaven-BV/rela/internal/tui/searchparser"
+	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 )
 
 func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {

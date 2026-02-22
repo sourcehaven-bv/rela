@@ -587,10 +587,6 @@ After editing `metamodel.yaml`:
 ```bash
 # Rebuild the cache
 rela sync
-
-# Verify with
-rela tui
-# Press 'm' to see the updated metamodel
 ```
 
 Note: Existing entities remain valid. The metamodel only affects creation and validation of new entities and relations.
@@ -711,7 +707,7 @@ You can sort by any property defined on the entity, plus two virtual properties:
 
 ### Sort in Search Queries
 
-The TUI search screen and data entry search bar support a `sort:` clause:
+The data entry search bar supports a `sort:` clause:
 
 ```text
 sort:priority                     # sort by priority ascending

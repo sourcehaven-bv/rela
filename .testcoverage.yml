@@ -31,8 +31,6 @@ override:
     threshold: 65
   - path: ^internal/dataentry$
     threshold: 60
-  - path: ^internal/tui$
-    threshold: 15
 
 # Exclude packages that are not meaningful to coverage-check
 exclude:
