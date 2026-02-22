@@ -68,7 +68,7 @@ func TestValidateConfig_ValidConfig(t *testing.T) {
 				Title:      "New Ticket",
 				Fields: []FormField{
 					{Property: "title"},
-					{Property: "status", Widget: "select"},
+					{Property: "status"},
 				},
 				Relations: []FormRelation{
 					{Relation: "belongs-to", Direction: "outgoing"},
@@ -172,25 +172,6 @@ func TestValidateConfig_UnknownFormFieldProperty(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_InvalidFormWidget(t *testing.T) {
-	meta := testMetamodel()
-	cfg := &Config{
-		Forms: map[string]Form{
-			"test": {
-				EntityType: "ticket",
-				Fields:     []FormField{{Property: "title", Widget: "dropdown"}},
-			},
-		},
-	}
-
-	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-	if err == nil {
-		t.Fatal("expected error for invalid widget")
-	}
-	if !strings.Contains(err.Error(), `unknown widget "dropdown"`) {
-		t.Errorf("expected error about unknown widget, got: %v", err)
-	}
-}
 
 func TestValidateConfig_InvalidTransitions(t *testing.T) {
 	meta := testMetamodel()
@@ -375,26 +356,6 @@ func TestValidateConfig_InvalidFilterOperator(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `invalid operator "=="`) {
 		t.Errorf("expected error about invalid operator, got: %v", err)
-	}
-}
-
-func TestValidateConfig_InvalidFilterControlWidget(t *testing.T) {
-	meta := testMetamodel()
-	cfg := &Config{
-		Lists: map[string]List{
-			"test": {
-				EntityType:     "ticket",
-				FilterControls: []FilterControl{{Property: "status", Widget: "dropdown"}},
-			},
-		},
-	}
-
-	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-	if err == nil {
-		t.Fatal("expected error for invalid filter control widget")
-	}
-	if !strings.Contains(err.Error(), `invalid widget "dropdown"`) {
-		t.Errorf("expected error about invalid widget, got: %v", err)
 	}
 }
 

@@ -206,7 +206,7 @@ func TestHandleList(t *testing.T) {
 			Title:      "Tickets",
 			Columns: []ListColumn{
 				{Property: "title", Label: "Title", Link: true},
-				{Property: "applies_to", Label: "Applies To", Widget: "multi-select"},
+				{Property: "applies_to", Label: "Applies To"},
 			},
 		}
 		// Add entity with multi-select values as []string
@@ -244,7 +244,7 @@ func TestHandleList(t *testing.T) {
 			Title:      "Tickets",
 			Columns: []ListColumn{
 				{Property: "title", Label: "Title"},
-				{Property: "tags", Label: "Tags", Widget: "multi-select"},
+				{Property: "tags", Label: "Tags"},
 			},
 		}
 		// Simulate YAML-parsed values ([]interface{})
@@ -336,7 +336,7 @@ func TestHandleForm(t *testing.T) {
 				Direction:  "incoming",
 				TargetType: "ticket",
 				Label:      "Tickets",
-				Widget:     "multi-select",
+				
 			}},
 		}
 
@@ -368,7 +368,7 @@ func TestHandleForm(t *testing.T) {
 				Direction:  "outgoing",
 				TargetType: "ticket",
 				Label:      "Dependencies",
-				Widget:     "multi-select",
+				
 			}},
 		}
 
@@ -393,6 +393,7 @@ func TestHandleForm(t *testing.T) {
 		}
 		app.meta.Entities["ticket"].Properties["roles"] = metamodel.PropertyDef{
 			Type: "role_type",
+			List: true,
 		}
 		// Add form with multi-select field
 		app.Cfg.Forms["edit-ticket-roles"] = Form{
@@ -400,7 +401,7 @@ func TestHandleForm(t *testing.T) {
 			Mode:       "edit",
 			Fields: []FormField{
 				{Property: "title"},
-				{Property: "roles", Widget: "multi-select"},
+				{Property: "roles"},
 			},
 		}
 		// Add entity with multi-select values
@@ -445,7 +446,7 @@ func TestHandleForm(t *testing.T) {
 				Relation:   "dependency_of",
 				TargetType: "ticket",
 				Label:      "Dependency Of",
-				Widget:     "multi-select",
+				
 			}},
 		}
 
@@ -1144,7 +1145,7 @@ func TestHandleFormWithUserDefaults(t *testing.T) {
 				Relation:   "belongs_to",
 				TargetType: "component",
 				Label:      "Component",
-				Widget:     "select",
+				
 			}},
 		}
 		r := httptest.NewRequest(http.MethodGet, "/form/create-ticket-rel", http.NoBody)

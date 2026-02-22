@@ -366,26 +366,27 @@ func TestResolveWidget(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		explicit string
-		prop     metamodel.PropertyDef
-		want     string
+		name string
+		prop metamodel.PropertyDef
+		want string
 	}{
-		{"explicit override", "textarea", metamodel.PropertyDef{Type: "string"}, "textarea"},
-		{"string type", "", metamodel.PropertyDef{Type: "string"}, "text"},
-		{"date type", "", metamodel.PropertyDef{Type: "date"}, "date"},
-		{"integer type", "", metamodel.PropertyDef{Type: "integer"}, "number"},
-		{"boolean type", "", metamodel.PropertyDef{Type: "boolean"}, "checkbox"},
-		{"enum type", "", metamodel.PropertyDef{Type: "enum"}, "select"},
-		{"custom type", "", metamodel.PropertyDef{Type: "priority_type"}, "select"},
-		{"unknown type", "", metamodel.PropertyDef{Type: "something_else"}, "text"},
+		{"string type", metamodel.PropertyDef{Type: "string"}, "text"},
+		{"date type", metamodel.PropertyDef{Type: "date"}, "date"},
+		{"integer type", metamodel.PropertyDef{Type: "integer"}, "number"},
+		{"boolean type", metamodel.PropertyDef{Type: "boolean"}, "checkbox"},
+		{"enum type", metamodel.PropertyDef{Type: "enum"}, "select"},
+		{"custom type", metamodel.PropertyDef{Type: "priority_type"}, "select"},
+		{"unknown type", metamodel.PropertyDef{Type: "something_else"}, "text"},
+		{"list enum type", metamodel.PropertyDef{Type: "enum", List: true}, "multi-select"},
+		{"list custom type", metamodel.PropertyDef{Type: "priority_type", List: true}, "multi-select"},
+		{"list string type (not multi-select)", metamodel.PropertyDef{Type: "string", List: true}, "text"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveWidget(tt.explicit, tt.prop, meta)
+			got := resolveWidget(tt.prop, meta)
 			if got != tt.want {
-				t.Errorf("resolveWidget(%q, %v) = %q, want %q", tt.explicit, tt.prop.Type, got, tt.want)
+				t.Errorf("resolveWidget(%v) = %q, want %q", tt.prop.Type, got, tt.want)
 			}
 		})
 	}

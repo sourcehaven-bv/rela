@@ -37,27 +37,6 @@ var knownTypos = map[string]string{
 	"navaigation": "navigation",
 }
 
-// Valid widget types for form fields
-var validFormWidgets = map[string]bool{
-	"":             true, // default (auto-detected)
-	"text":         true,
-	"textarea":     true,
-	"select":       true,
-	"multi-select": true,
-	"search":       true,
-	"date":         true,
-	"number":       true,
-	"checkbox":     true,
-}
-
-// Valid widget types for filter controls
-var validFilterWidgets = map[string]bool{
-	"":             true, // default
-	"select":       true,
-	"multi-select": true,
-	"search":       true,
-}
-
 // Valid filter operators
 var validFilterOperators = map[string]bool{
 	"=":  true,
@@ -226,13 +205,6 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 					formID, i, f.Property, form.EntityType))
 			}
 
-			// Validate widget
-			if !validFormWidgets[f.Widget] {
-				errs = append(errs, fmt.Sprintf(
-					"form %q: field[%d] has unknown widget %q (valid: %s)",
-					formID, i, f.Widget, joinMapKeys(validFormWidgets)))
-			}
-
 			// Validate transitions (if specified, must be valid enum values)
 			if len(f.Transitions) > 0 {
 				propDef, hasProp := entDef.Properties[f.Property]
@@ -379,11 +351,6 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Validate filter_controls
 		for i, fc := range list.FilterControls {
-			if !validFilterWidgets[fc.Widget] {
-				errs = append(errs, fmt.Sprintf(
-					"list %q: filter_controls[%d] has invalid widget %q (valid: %s)",
-					listID, i, fc.Widget, joinMapKeys(validFilterWidgets)))
-			}
 			if fc.Property != "" {
 				if _, ok := entDef.Properties[fc.Property]; !ok {
 					errs = append(errs, fmt.Sprintf(
@@ -724,11 +691,6 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Validate filter_controls
 		for i, fc := range kanban.FilterControls {
-			if !validFilterWidgets[fc.Widget] {
-				errs = append(errs, fmt.Sprintf(
-					"kanban %q: filter_controls[%d] has invalid widget %q (valid: %s)",
-					kanbanID, i, fc.Widget, joinMapKeys(validFilterWidgets)))
-			}
 			if fc.Property != "" {
 				if _, ok := entDef.Properties[fc.Property]; !ok {
 					errs = append(errs, fmt.Sprintf(

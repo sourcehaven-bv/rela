@@ -160,7 +160,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 				}
 				cell.PropType = propDef.Type
 				// Resolve widget (auto-detects multi-select from propDef.List)
-				cell.Widget = resolveWidget(col.Widget, propDef, a.meta)
+				cell.Widget = resolveWidget(propDef, a.meta)
 				// Handle multi-select values as []string
 				if cell.Widget == "multi-select" {
 					if prop := e.Properties[col.Property]; prop != nil {
@@ -203,7 +203,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		filterControls = append(filterControls, ResolvedFC{
 			Property: fc.Property,
 			Label:    titleCase(fc.Property),
-			Widget:   fc.Widget,
+			Widget:   resolveWidget(prop, a.meta),
 			Values:   vals,
 			Current:  r.URL.Query().Get("filter_" + fc.Property),
 		})
@@ -403,7 +403,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			Help:        f.Help,
 			Default:     coalesce(userDefault, templateDefault, f.Default, prop.Default),
 			Hidden:      f.Hidden,
-			Widget:      resolveWidget(f.Widget, prop, a.meta),
+			Widget:      resolveWidget(prop, a.meta),
 			Values:      resolvePropertyValues(prop, a.meta),
 			Transitions: f.Transitions,
 		}
@@ -522,7 +522,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			Relation:      rel.Relation,
 			Label:         label,
 			Required:      rel.Required,
-			Widget:        coalesce(rel.Widget, "select"),
+			Widget:        "select",
 			TargetType:    targetType,
 			TargetLabel:   targetLabel,
 			AllowCreate:   rel.AllowCreate,
@@ -983,7 +983,7 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 			Help:        f.Help,
 			Default:     coalesce(f.Default, prop.Default),
 			Hidden:      f.Hidden,
-			Widget:      resolveWidget(f.Widget, prop, a.meta),
+			Widget:      resolveWidget(prop, a.meta),
 			Values:      resolvePropertyValues(prop, a.meta),
 			Transitions: f.Transitions,
 			Error:       fieldErrors[f.Property],
@@ -1057,7 +1057,7 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 			Relation:      rel.Relation,
 			Label:         rel.Label,
 			Required:      rel.Required,
-			Widget:        coalesce(rel.Widget, "select"),
+			Widget:        "select",
 			TargetType:    rel.TargetType,
 			TargetLabel:   targetLabel,
 			AllowCreate:   rel.AllowCreate,
@@ -1192,7 +1192,7 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	for _, f := range form.Fields {
 		prop := entDef.Properties[f.Property]
-		widget := resolveWidget(f.Widget, prop, a.meta)
+		widget := resolveWidget(prop, a.meta)
 		if widget == "multi-select" {
 			values := r.Form[f.Property]
 			if len(values) > 0 {
@@ -1404,7 +1404,7 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, f := range form.Fields {
 		prop := entDef.Properties[f.Property]
-		widget := resolveWidget(f.Widget, prop, a.meta)
+		widget := resolveWidget(prop, a.meta)
 		if widget == "multi-select" {
 			values := r.Form[f.Property]
 			if len(values) > 0 {
@@ -1633,7 +1633,7 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 
 	for _, f := range form.Fields {
 		prop := entDef.Properties[f.Property]
-		widget := resolveWidget(f.Widget, prop, a.meta)
+		widget := resolveWidget(prop, a.meta)
 		if widget == "multi-select" {
 			values := r.Form[f.Property]
 			if len(values) > 0 {
@@ -1698,7 +1698,7 @@ func (a *App) handleInlineForm(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		prop := entDef.Properties[f.Property]
-		widget := resolveWidget(f.Widget, prop, a.meta)
+		widget := resolveWidget(prop, a.meta)
 		label := coalesce(f.Label, titleCase(f.Property))
 		required := prop.Required
 		if f.Required != nil {

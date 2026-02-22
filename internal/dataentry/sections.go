@@ -197,7 +197,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 								}
 							}
 							// Resolve widget (auto-detects multi-select from pd.List)
-							cell.Widget = resolveWidget(col.Widget, pd, a.meta)
+							cell.Widget = resolveWidget(pd, a.meta)
 							// Handle multi-select values
 							if cell.Widget == "multi-select" {
 								if prop := e.Properties[col.Property]; prop != nil {

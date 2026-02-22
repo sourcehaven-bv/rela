@@ -128,7 +128,7 @@ func (a *App) handleKanban(w http.ResponseWriter, r *http.Request) {
 		filterControls = append(filterControls, ResolvedFC{
 			Property: fc.Property,
 			Label:    titleCase(fc.Property),
-			Widget:   fc.Widget,
+			Widget:   resolveWidget(prop, a.meta),
 			Values:   vals,
 			Current:  r.URL.Query().Get("filter_" + fc.Property),
 		})

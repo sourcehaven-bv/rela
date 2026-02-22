@@ -58,7 +58,6 @@ type FormField struct {
 	Required    *bool               `yaml:"required,omitempty"`
 	Default     string              `yaml:"default"`
 	Hidden      bool                `yaml:"hidden"`
-	Widget      string              `yaml:"widget"`
 	Transitions map[string][]string `yaml:"transitions,omitempty"`
 }
 
@@ -69,7 +68,6 @@ type FormRelation struct {
 	TargetType   string             `yaml:"target_type"`
 	Label        string             `yaml:"label"`
 	Required     bool               `yaml:"required"`
-	Widget       string             `yaml:"widget"`
 	Display      string             `yaml:"display"`
 	AllowCreate  bool               `yaml:"allow_create"`
 	CreateForm   string             `yaml:"create_form"`
@@ -82,7 +80,6 @@ type FormRelation struct {
 type RelationProperty struct {
 	Property string `yaml:"property"`
 	Label    string `yaml:"label"`
-	Widget   string `yaml:"widget"`
 	Required bool   `yaml:"required"`
 }
 
@@ -110,7 +107,6 @@ type ListColumn struct {
 	Label    string `yaml:"label"`
 	Sortable bool   `yaml:"sortable"`
 	Link     bool   `yaml:"link"`
-	Widget   string `yaml:"widget"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
@@ -128,7 +124,6 @@ type FilterConfig struct {
 // FilterControl defines a user-facing filter control in a list.
 type FilterControl struct {
 	Property string `yaml:"property"`
-	Widget   string `yaml:"widget"`
 }
 
 // Kanban defines a kanban board view for an entity type.

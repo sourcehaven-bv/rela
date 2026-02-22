@@ -137,11 +137,7 @@ func resolvePropertyValues(prop metamodel.PropertyDef, meta *metamodel.Metamodel
 }
 
 // resolveWidget returns the appropriate widget type for a property.
-func resolveWidget(explicit string, prop metamodel.PropertyDef, meta *metamodel.Metamodel) string {
-	if explicit != "" {
-		return explicit
-	}
-
+func resolveWidget(prop metamodel.PropertyDef, meta *metamodel.Metamodel) string {
 	// Check if property is a list (multi-select) - only applies to enum types
 	_, isCustomType := meta.Types[prop.Type]
 	isEnum := prop.Type == "enum" || isCustomType
