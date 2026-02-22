@@ -28,7 +28,9 @@ type SectionEntityData struct {
 // SectionColumnData holds a resolved table cell for template rendering.
 type SectionColumnData struct {
 	Value      string
+	Values     []string // For multi-select properties
 	PropType   string
+	Widget     string
 	Link       bool
 	EntityID   string
 	EntityType string
@@ -179,21 +181,41 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 					eDef, _ := a.meta.GetEntityDef(e.Type)
 					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
 					for _, col := range sec.Columns {
-						var val string
-						var propType string
+						cell := SectionColumnData{
+							Link: col.Link, EntityID: e.ID, EntityType: e.Type,
+						}
 						if col.Relation != "" {
-							val = a.resolveRelationColumnValue(e.ID, col.Relation)
+							cell.Value = a.resolveRelationColumnValue(e.ID, col.Relation)
 						} else {
-							val = e.GetAttributeString(col.Property)
+							cell.Widget = col.Widget
 							if eDef != nil {
 								if pd, ok := eDef.Properties[col.Property]; ok {
-									propType = pd.Type
+									cell.PropType = pd.Type
 								}
 							}
+							// Handle multi-select values
+							if col.Widget == "multi-select" {
+								if prop := e.Properties[col.Property]; prop != nil {
+									switch v := prop.(type) {
+									case []string:
+										cell.Values = v
+										cell.Value = strings.Join(v, ", ")
+									case []interface{}:
+										for _, item := range v {
+											if s, ok := item.(string); ok {
+												cell.Values = append(cell.Values, s)
+											}
+										}
+										cell.Value = strings.Join(cell.Values, ", ")
+									default:
+										cell.Value = e.GetAttributeString(col.Property)
+									}
+								}
+							} else {
+								cell.Value = e.GetAttributeString(col.Property)
+							}
 						}
-						row.Cells = append(row.Cells, SectionColumnData{
-							Value: val, PropType: propType, Link: col.Link, EntityID: e.ID, EntityType: e.Type,
-						})
+						row.Cells = append(row.Cells, cell)
 					}
 					return row
 				}

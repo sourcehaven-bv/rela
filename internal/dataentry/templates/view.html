@@ -1,3 +1,11 @@
+{{- define "view-table-cell" -}}
+{{ if .Link }}<a href="/entity/{{ .EntityType }}/{{ .EntityID }}" class="cell-link"
+   hx-get="/entity/{{ .EntityType }}/{{ .EntityID }}" hx-target="#content" hx-push-url="true">{{ .Value }}</a>
+{{ else if and (eq .Widget "multi-select") (isBadgeType .PropType) }}{{ if .Values }}{{ $pt := .PropType }}{{ range .Values }}<span class="badge {{ badgeClass $pt . }}">{{ . }}</span> {{ end }}{{ else }}&mdash;{{ end }}
+{{ else if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
+{{ else }}{{ if .Value }}{{ .Value }}{{ else }}&mdash;{{ end }}{{ end }}
+{{- end -}}
+
 {{- define "view-page" -}}
 <!DOCTYPE html>
 <html lang="en">
@@ -198,12 +206,7 @@
           {{ range .Rows }}
           <tr>
             {{ range .Cells }}
-            <td>
-              {{ if .Link }}<a href="/entity/{{ .EntityType }}/{{ .EntityID }}" class="cell-link"
-                 hx-get="/entity/{{ .EntityType }}/{{ .EntityID }}" hx-target="#content" hx-push-url="true">{{ .Value }}</a>
-              {{ else if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
-              {{ else }}{{ if .Value }}{{ .Value }}{{ else }}&mdash;{{ end }}{{ end }}
-            </td>
+            <td>{{ template "view-table-cell" . }}</td>
             {{ end }}
             {{ if .EditFormID }}<td style="width:1%;white-space:nowrap;"><a href="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
                hx-get="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a>
@@ -233,12 +236,7 @@
           {{ range .Rows }}
           <tr>
             {{ range .Cells }}
-            <td>
-              {{ if .Link }}<a href="/entity/{{ .EntityType }}/{{ .EntityID }}" class="cell-link"
-                 hx-get="/entity/{{ .EntityType }}/{{ .EntityID }}" hx-target="#content" hx-push-url="true">{{ .Value }}</a>
-              {{ else if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>
-              {{ else }}{{ if .Value }}{{ .Value }}{{ else }}&mdash;{{ end }}{{ end }}
-            </td>
+            <td>{{ template "view-table-cell" . }}</td>
             {{ end }}
             {{ if .EditFormID }}<td style="width:1%;white-space:nowrap;"><a href="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" class="edit-icon"
                hx-get="/form/{{ .EditFormID }}/{{ .EntityID }}?return_to={{ urlquery $returnTo }}" hx-target="#content" hx-push-url="true" title="Edit">&#9998;</a>
