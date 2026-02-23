@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/automation"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
@@ -25,7 +26,7 @@ import (
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
-const ConfigFile = "data-entry.yaml"
+const ConfigFile = dataentryconfig.ConfigFile
 
 // uiStateFile is the filename for persisted UI state within the .rela directory.
 const uiStateFile = "ui-state.json"

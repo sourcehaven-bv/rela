@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
@@ -58,9 +58,9 @@ Examples:
 		}
 
 		// 2. Validate data-entry.yaml if it exists
-		dataEntryPath := filepath.Join(ctx.Root, dataentry.ConfigFile)
+		dataEntryPath := filepath.Join(ctx.Root, dataentryconfig.ConfigFile)
 		if _, statErr := cliFS.Stat(dataEntryPath); statErr == nil {
-			fmt.Printf("Validating %s...\n", dataentry.ConfigFile)
+			fmt.Printf("Validating %s...\n", dataentryconfig.ConfigFile)
 
 			if mm == nil {
 				fmt.Println("  ⚠ Skipping data-entry validation (metamodel has errors)")
@@ -69,11 +69,11 @@ Examples:
 					fmt.Printf("  ✗ %v\n", err)
 					hasErrors = true
 				} else {
-					fmt.Printf("  ✓ %s is valid\n", dataentry.ConfigFile)
+					fmt.Printf("  ✓ %s is valid\n", dataentryconfig.ConfigFile)
 				}
 			}
 		} else {
-			fmt.Printf("Skipping %s (file not found)\n", dataentry.ConfigFile)
+			fmt.Printf("Skipping %s (file not found)\n", dataentryconfig.ConfigFile)
 		}
 
 		if hasErrors {
@@ -93,12 +93,12 @@ func validateDataEntryConfig(path string, mm *metamodel.Metamodel) error {
 		return fmt.Errorf("reading file: %w", err)
 	}
 
-	var cfg dataentry.Config
+	var cfg dataentryconfig.Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("parsing YAML: %w", err)
 	}
 
-	return dataentry.ValidateConfig(data, &cfg, mm)
+	return dataentryconfig.ValidateConfig(data, &cfg, mm)
 }
 
 func init() {

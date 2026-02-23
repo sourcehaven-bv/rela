@@ -1,15 +1,6 @@
 package dataentry
 
-import "strings"
+import "github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 
-// ConfigValidationError collects multiple validation issues found in data-entry config.
-type ConfigValidationError struct {
-	Errors []string
-}
-
-func (e *ConfigValidationError) Error() string {
-	if len(e.Errors) == 1 {
-		return e.Errors[0]
-	}
-	return "data-entry config validation errors:\n  - " + strings.Join(e.Errors, "\n  - ")
-}
+// ConfigValidationError is re-exported from dataentryconfig.
+type ConfigValidationError = dataentryconfig.ConfigValidationError

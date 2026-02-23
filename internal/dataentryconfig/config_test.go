@@ -1,4 +1,4 @@
-package dataentry
+package dataentryconfig
 
 import "testing"
 

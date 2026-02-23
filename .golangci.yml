@@ -304,6 +304,15 @@ issues:
         - nestif        # View/section logic has nested conditionals
         - lll           # Template strings are long by design
 
+    # Data entry config validation has complex but well-tested logic
+    - path: internal/dataentryconfig/.*\.go
+      linters:
+        - funlen        # Validation functions are inherently long
+        - gocognit      # Cross-reference validation has complex control flow
+        - gocyclo       # Validation functions are inherently complex
+        - nestif        # Validation logic has nested conditionals
+        - lll           # Error message format strings are long
+
     # Gocritic evalOrder is often false positive with method calls returning commands
     - linters:
         - gocritic
