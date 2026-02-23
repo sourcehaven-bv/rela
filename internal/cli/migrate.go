@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -45,7 +45,7 @@ Examples:
 		mm, _ := metamodel.LoadWithoutMigrationCheck(ctx.MetamodelPath, cliFS)
 
 		// Define files to check
-		dataEntryPath := filepath.Join(ctx.Root, dataentry.ConfigFile)
+		dataEntryPath := filepath.Join(ctx.Root, dataentryconfig.ConfigFile)
 
 		files := []struct {
 			path     string
@@ -53,7 +53,7 @@ Examples:
 			name     string
 		}{
 			{ctx.MetamodelPath, migration.FileTypeMetamodel, "metamodel.yaml"},
-			{dataEntryPath, migration.FileTypeDataEntry, dataentry.ConfigFile},
+			{dataEntryPath, migration.FileTypeDataEntry, dataentryconfig.ConfigFile},
 		}
 
 		if migrateCheck {
