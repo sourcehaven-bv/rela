@@ -317,7 +317,7 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 				Type:        edge.Type,
 				From:        edge.From,
 				To:          edge.To,
-				Direction:   "outgoing",
+				Direction:   DirectionOutgoing,
 				TargetID:    edge.To,
 				TargetTitle: a.entityDisplayTitle(target),
 				TargetType:  target.Type,
@@ -341,7 +341,7 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 				Type:        edge.Type,
 				From:        edge.From,
 				To:          edge.To,
-				Direction:   "incoming",
+				Direction:   DirectionIncoming,
 				TargetID:    edge.From,
 				TargetTitle: a.entityDisplayTitle(source),
 				TargetType:  source.Type,
@@ -738,7 +738,7 @@ func (a *App) listOutgoingRelations(from string) []APIRelation {
 		if !found {
 			continue
 		}
-		rel := a.edgeToAPIRelation(edge, target, "outgoing", edge.To)
+		rel := a.edgeToAPIRelation(edge, target, DirectionOutgoing, edge.To)
 		relations = append(relations, rel)
 	}
 	return relations
@@ -753,7 +753,7 @@ func (a *App) listIncomingRelations(to string) []APIRelation {
 		if !found {
 			continue
 		}
-		rel := a.edgeToAPIRelation(edge, source, "incoming", edge.From)
+		rel := a.edgeToAPIRelation(edge, source, DirectionIncoming, edge.From)
 		relations = append(relations, rel)
 	}
 	return relations
@@ -768,7 +768,7 @@ func (a *App) listAllRelations() []APIRelation {
 		if !found {
 			continue
 		}
-		rel := a.edgeToAPIRelation(edge, target, "outgoing", edge.To)
+		rel := a.edgeToAPIRelation(edge, target, DirectionOutgoing, edge.To)
 		relations = append(relations, rel)
 	}
 	return relations

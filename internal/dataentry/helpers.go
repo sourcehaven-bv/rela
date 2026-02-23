@@ -140,37 +140,37 @@ func resolvePropertyValues(prop metamodel.PropertyDef, meta *metamodel.Metamodel
 func resolveWidget(prop metamodel.PropertyDef, meta *metamodel.Metamodel) string {
 	// Check if property is a list (multi-select) - only applies to enum types
 	_, isCustomType := meta.Types[prop.Type]
-	isEnum := prop.Type == "enum" || isCustomType
+	isEnum := prop.Type == metamodel.PropertyTypeEnum || isCustomType
 	if prop.List && isEnum {
-		return "multi-select"
+		return WidgetMultiSelect
 	}
 
 	switch prop.Type {
-	case "string":
-		return "text"
-	case "date":
-		return "date"
-	case "integer":
-		return "number"
-	case "boolean":
-		return "checkbox"
-	case "enum":
-		return "select"
+	case metamodel.PropertyTypeString:
+		return WidgetText
+	case metamodel.PropertyTypeDate:
+		return WidgetDate
+	case metamodel.PropertyTypeInteger:
+		return WidgetNumber
+	case metamodel.PropertyTypeBoolean:
+		return WidgetCheckbox
+	case metamodel.PropertyTypeEnum:
+		return WidgetSelect
 	default:
 		if _, ok := meta.Types[prop.Type]; ok {
-			return "select"
+			return WidgetSelect
 		}
-		return "text"
+		return WidgetText
 	}
 }
 
 // widgetToInputType maps a widget name to an HTML input type.
 func widgetToInputType(widget string) string {
 	switch widget {
-	case "textarea":
-		return "textarea"
-	case "select", "multi-select":
-		return "select"
+	case WidgetTextarea:
+		return WidgetTextarea
+	case WidgetSelect, WidgetMultiSelect:
+		return WidgetSelect
 	default:
 		return widget
 	}

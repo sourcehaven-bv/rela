@@ -371,16 +371,16 @@ func TestResolveWidget(t *testing.T) {
 		prop metamodel.PropertyDef
 		want string
 	}{
-		{"string type", metamodel.PropertyDef{Type: "string"}, "text"},
-		{"date type", metamodel.PropertyDef{Type: "date"}, "date"},
-		{"integer type", metamodel.PropertyDef{Type: "integer"}, "number"},
-		{"boolean type", metamodel.PropertyDef{Type: "boolean"}, "checkbox"},
-		{"enum type", metamodel.PropertyDef{Type: "enum"}, "select"},
-		{"custom type", metamodel.PropertyDef{Type: "priority_type"}, "select"},
-		{"unknown type", metamodel.PropertyDef{Type: "something_else"}, "text"},
-		{"list enum type", metamodel.PropertyDef{Type: "enum", List: true}, "multi-select"},
-		{"list custom type", metamodel.PropertyDef{Type: "priority_type", List: true}, "multi-select"},
-		{"list string type (not multi-select)", metamodel.PropertyDef{Type: "string", List: true}, "text"},
+		{"string type", metamodel.PropertyDef{Type: metamodel.PropertyTypeString}, WidgetText},
+		{"date type", metamodel.PropertyDef{Type: metamodel.PropertyTypeDate}, WidgetDate},
+		{"integer type", metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger}, WidgetNumber},
+		{"boolean type", metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean}, WidgetCheckbox},
+		{"enum type", metamodel.PropertyDef{Type: metamodel.PropertyTypeEnum}, WidgetSelect},
+		{"custom type", metamodel.PropertyDef{Type: "priority_type"}, WidgetSelect},
+		{"unknown type", metamodel.PropertyDef{Type: "something_else"}, WidgetText},
+		{"list enum type", metamodel.PropertyDef{Type: metamodel.PropertyTypeEnum, List: true}, WidgetMultiSelect},
+		{"list custom type", metamodel.PropertyDef{Type: "priority_type", List: true}, WidgetMultiSelect},
+		{"list string type (not multi-select)", metamodel.PropertyDef{Type: metamodel.PropertyTypeString, List: true}, WidgetText},
 	}
 
 	for _, tt := range tests {
@@ -398,13 +398,13 @@ func TestWidgetToInputType(t *testing.T) {
 		widget string
 		want   string
 	}{
-		{"textarea", "textarea"},
-		{"select", "select"},
-		{"multi-select", "select"},
-		{"text", "text"},
-		{"date", "date"},
-		{"number", "number"},
-		{"checkbox", "checkbox"},
+		{WidgetTextarea, WidgetTextarea},
+		{WidgetSelect, WidgetSelect},
+		{WidgetMultiSelect, WidgetSelect},
+		{WidgetText, WidgetText},
+		{WidgetDate, WidgetDate},
+		{WidgetNumber, WidgetNumber},
+		{WidgetCheckbox, WidgetCheckbox},
 	}
 
 	for _, tt := range tests {

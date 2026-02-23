@@ -333,7 +333,7 @@ func TestHandleForm(t *testing.T) {
 			Fields:     []FormField{{Property: "name"}},
 			Relations: []FormRelation{{
 				Relation:   "belongs_to",
-				Direction:  "incoming",
+				Direction:  DirectionIncoming,
 				TargetType: "ticket",
 				Label:      "Tickets",
 			}},
@@ -364,7 +364,7 @@ func TestHandleForm(t *testing.T) {
 			Fields:     []FormField{{Property: "title"}},
 			Relations: []FormRelation{{
 				Relation:   "depends_on",
-				Direction:  "outgoing",
+				Direction:  DirectionOutgoing,
 				TargetType: "ticket",
 				Label:      "Dependencies",
 			}},
