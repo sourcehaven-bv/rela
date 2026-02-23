@@ -145,23 +145,7 @@ func resolveWidget(prop metamodel.PropertyDef, meta *metamodel.Metamodel) string
 		return WidgetMultiSelect
 	}
 
-	switch prop.Type {
-	case metamodel.PropertyTypeString:
-		return WidgetText
-	case metamodel.PropertyTypeDate:
-		return WidgetDate
-	case metamodel.PropertyTypeInteger:
-		return WidgetNumber
-	case metamodel.PropertyTypeBoolean:
-		return WidgetCheckbox
-	case metamodel.PropertyTypeEnum:
-		return WidgetSelect
-	default:
-		if _, ok := meta.Types[prop.Type]; ok {
-			return WidgetSelect
-		}
-		return WidgetText
-	}
+	return meta.ResolveWidgetFromType(prop.Type)
 }
 
 // widgetToInputType maps a widget name to an HTML input type.

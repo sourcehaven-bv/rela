@@ -24,6 +24,8 @@ type MetamodelProvider interface {
 	GetRelationFrom(relation string) []string
 	// GetRelationTo returns the "to" entity types for a relation.
 	GetRelationTo(relation string) []string
+	// ResolveWidgetFromType returns the canonical widget for a property type.
+	ResolveWidgetFromType(propType string) string
 }
 
 // FileType identifies which project files a migration applies to.

@@ -111,6 +111,29 @@ func (m *Metamodel) GetRelationTo(relation string) []string {
 	return relDef.To
 }
 
+// ResolveWidgetFromType returns the canonical widget for a property type.
+// This is the single source of truth for the type→widget mapping used by
+// the data entry app and the migration system.
+func (m *Metamodel) ResolveWidgetFromType(propType string) string {
+	switch propType {
+	case PropertyTypeString:
+		return "text"
+	case PropertyTypeDate:
+		return "date"
+	case PropertyTypeInteger:
+		return "number"
+	case PropertyTypeBoolean:
+		return "checkbox"
+	case PropertyTypeEnum:
+		return "select"
+	default:
+		if ct, ok := m.Types[propType]; ok && len(ct.Values) > 0 {
+			return "select"
+		}
+		return "text"
+	}
+}
+
 // Schema output interface methods for EntityDef
 
 // GetLabel returns the entity label

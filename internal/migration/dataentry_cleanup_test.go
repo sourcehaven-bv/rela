@@ -97,6 +97,26 @@ func (m *mockMetamodel) GetRelationTo(relation string) []string {
 	return nil
 }
 
+func (m *mockMetamodel) ResolveWidgetFromType(propType string) string {
+	switch propType {
+	case "string":
+		return "text"
+	case "date":
+		return "date"
+	case "integer":
+		return "number"
+	case "boolean":
+		return "checkbox"
+	case "enum":
+		return "select"
+	default:
+		if ct, ok := m.types[propType]; ok && len(ct.values) > 0 {
+			return "select"
+		}
+		return "text"
+	}
+}
+
 func TestDataEntryCleanupMigration_Detect(t *testing.T) {
 	m := &DataEntryCleanupMigration{}
 
@@ -701,9 +721,9 @@ func TestResolveWidgetFromType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.propType, func(t *testing.T) {
-			got := resolveWidgetFromType(tt.propType, meta)
+			got := meta.ResolveWidgetFromType(tt.propType)
 			if got != tt.want {
-				t.Errorf("resolveWidgetFromType(%q) = %q, want %q", tt.propType, got, tt.want)
+				t.Errorf("ResolveWidgetFromType(%q) = %q, want %q", tt.propType, got, tt.want)
 			}
 		})
 	}

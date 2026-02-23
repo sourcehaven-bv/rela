@@ -175,7 +175,7 @@ func (m *DataEntryCleanupMigration) isRedundantWidget(node *yaml.Node, entityTyp
 		return false
 	}
 
-	expectedWidget := resolveWidgetFromType(propType, m.meta)
+	expectedWidget := m.meta.ResolveWidgetFromType(propType)
 	return widget == expectedWidget
 }
 
@@ -441,28 +441,6 @@ func containsStr(slice []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// resolveWidgetFromType returns the expected widget for a property type.
-func resolveWidgetFromType(propType string, meta MetamodelProvider) string {
-	switch propType {
-	case "string":
-		return "text"
-	case "date":
-		return "date"
-	case "integer":
-		return "number"
-	case "boolean":
-		return "checkbox"
-	case "enum":
-		return "select"
-	default:
-		// Check if it's a custom type with values (enum-like)
-		if meta != nil && meta.IsEnumType(propType) {
-			return "select"
-		}
-		return "text"
-	}
 }
 
 // titleCase converts snake_case or kebab-case to Title Case.
