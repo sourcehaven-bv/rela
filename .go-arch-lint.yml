@@ -1,0 +1,268 @@
+version: 3
+
+allow:
+  depOnAnyVendor: false
+  deepScan: false
+
+exclude:
+  - internal/testutil
+
+excludeFiles:
+  - "_test\\.go$"
+
+# -- Components ----------------------------------------------------------
+components:
+  # Entry points
+  cmdCli:           { in: cmd/rela }
+  cmdServer:        { in: cmd/rela-server }
+  cmdDesktop:       { in: cmd/rela-desktop }
+  mobileApi:        { in: pkg/mobileapi }
+
+  # CLI layer
+  cli:              { in: internal/cli }
+
+  # Web / UI layer
+  dataentry:        { in: internal/dataentry }
+  dataentryconfig:  { in: internal/dataentryconfig }
+  desktop:          { in: internal/desktop }
+
+  # Server protocols
+  mcp:              { in: internal/mcp }
+
+  # Domain services
+  automation:       { in: internal/automation }
+  conflict:         { in: internal/conflict }
+  importer:         { in: internal/importer }
+  rename:           { in: internal/rename }
+  repository:       { in: internal/repository }
+  views:            { in: internal/views }
+
+  # Core domain
+  graph:            { in: internal/graph }
+  metamodel:        { in: internal/metamodel }
+  migration:        { in: internal/migration }
+  model:            { in: internal/model }
+  markdown:         { in: internal/markdown }
+  filter:           { in: internal/filter }
+  search:           { in: internal/search/** }
+
+  # Infrastructure
+  attachment:       { in: internal/attachment }
+  git:              { in: internal/git }
+  output:           { in: internal/output }
+  project:          { in: internal/project }
+  storage:          { in: internal/storage }
+
+  # Shared utilities
+  errors:           { in: internal/errors }
+  natsort:          { in: internal/natsort }
+
+# -- Vendors --------------------------------------------------------------
+vendors:
+  cobra:       { in: github.com/spf13/cobra }
+  yaml:        { in: gopkg.in/yaml.v3 }
+  goldmark:
+    in:
+      - github.com/yuin/goldmark
+      - github.com/yuin/goldmark/**
+  gogit:       { in: github.com/go-git/go-git/** }
+  mcpgo:       { in: github.com/mark3labs/mcp-go/** }
+  wails:       { in: github.com/wailsapp/wails/** }
+  tablewriter: { in: github.com/olekukonko/tablewriter }
+  color:       { in: github.com/fatih/color }
+  fsnotify:    { in: github.com/fsnotify/fsnotify }
+
+# -- Common (importable by all) -------------------------------------------
+commonComponents:
+  - model
+  - errors
+  - natsort
+
+commonVendors:
+  - yaml
+
+# -- Dependency rules ------------------------------------------------------
+deps:
+  # Entry points
+  cmdCli:
+    mayDependOn:
+      - cli
+  cmdServer:
+    mayDependOn:
+      - dataentry
+      - project
+      - repository
+      - storage
+  cmdDesktop:
+    mayDependOn:
+      - dataentry
+      - desktop
+      - git
+      - metamodel
+      - project
+      - repository
+      - storage
+    canUse:
+      - wails
+  mobileApi:
+    mayDependOn:
+      - dataentry
+      - project
+      - repository
+      - storage
+    canUse:
+      - gogit
+
+  # CLI layer — orchestrates everything
+  cli:
+    mayDependOn:
+      - attachment
+      - automation
+      - dataentryconfig
+      - filter
+      - graph
+      - importer
+      - markdown
+      - mcp
+      - metamodel
+      - migration
+      - output
+      - project
+      - rename
+      - repository
+      - storage
+      - views
+    canUse:
+      - cobra
+      - color
+      - goldmark
+      - tablewriter
+
+  # Web / UI layer
+  dataentry:
+    mayDependOn:
+      - automation
+      - conflict
+      - dataentryconfig
+      - filter
+      - git
+      - graph
+      - markdown
+      - metamodel
+      - migration
+      - project
+      - repository
+      - search
+    canUse:
+      - goldmark
+      - gogit
+  dataentryconfig:
+    mayDependOn:
+      - git
+      - metamodel
+  desktop:
+    canUse:
+      - wails
+
+  # Server protocols
+  mcp:
+    mayDependOn:
+      - filter
+      - graph
+      - markdown
+      - metamodel
+      - migration
+      - project
+      - rename
+      - repository
+      - search
+      - views
+    canUse:
+      - mcpgo
+      - fsnotify
+
+  # Domain services
+  automation:
+    mayDependOn:
+      - filter
+      - metamodel
+  conflict:
+    mayDependOn:
+      - markdown
+      - metamodel
+      - project
+      - storage
+  importer:
+    mayDependOn:
+      - graph
+      - metamodel
+      - repository
+      - storage
+  rename:
+    mayDependOn:
+      - graph
+      - metamodel
+      - project
+      - repository
+  repository:
+    mayDependOn:
+      - graph
+      - markdown
+      - metamodel
+      - project
+      - storage
+      - views
+    canUse:
+      - gogit
+  views:
+    mayDependOn:
+      - filter
+      - graph
+      - metamodel
+      - storage
+
+  # Core domain
+  graph:
+    mayDependOn:
+      - storage
+  metamodel:
+    mayDependOn:
+      - migration
+      - storage
+  migration:
+    mayDependOn:
+      - storage
+  markdown:
+    mayDependOn:
+      - graph
+      - metamodel
+      - project
+      - storage
+    canUse:
+      - goldmark
+  filter:
+    mayDependOn:
+      - metamodel
+  search:
+    anyProjectDeps: true
+
+  # Infrastructure
+  attachment:
+    mayDependOn:
+      - storage
+  git:
+    canUse:
+      - gogit
+  output:
+    mayDependOn:
+      - graph
+    canUse:
+      - color
+      - tablewriter
+  project:
+    mayDependOn:
+      - storage
+  storage:
+    anyProjectDeps: true
+    canUse:
+      - fsnotify

@@ -129,6 +129,11 @@ lint:
     @echo "Running Go linter..."
     golangci-lint run
 
+# Check architecture boundaries
+arch-lint:
+    @echo "Checking architecture boundaries..."
+    go-arch-lint check
+
 # Run linter with auto-fix
 lint-fix:
     @echo "Running linter with auto-fix..."
@@ -162,8 +167,8 @@ vet:
 
 # ── CI & Checks ──
 
-# Run all checks (lint + lint-md + test)
-check: lint lint-md test
+# Run all checks (lint + arch-lint + lint-md + test)
+check: lint arch-lint lint-md test
 
 # Generate docs from rela entities via mdcomp
 docs: build-cli
@@ -192,6 +197,8 @@ install-tools:
     go install golang.org/x/tools/cmd/goimports@latest
     @echo "Installing go-test-coverage..."
     go install github.com/vladopajic/go-test-coverage/v2@latest
+    @echo "Installing go-arch-lint..."
+    go install github.com/fe3dback/go-arch-lint@latest
     @echo "Done!"
 
 # Install git hooks
