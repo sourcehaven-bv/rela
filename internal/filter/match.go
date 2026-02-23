@@ -13,6 +13,20 @@ import (
 func Match(entity *model.Entity, filter *Filter, propDef *metamodel.PropertyDef, m *metamodel.Metamodel) (bool, error) {
 	val := entity.Properties[filter.Property]
 
+	// Handle list types (multi-select) - check if any element matches
+	if list, ok := val.([]string); ok {
+		return matchList(list, filter, propDef, m)
+	}
+	if list, ok := val.([]interface{}); ok {
+		strList := make([]string, 0, len(list))
+		for _, item := range list {
+			if s, ok := item.(string); ok {
+				strList = append(strList, s)
+			}
+		}
+		return matchList(strList, filter, propDef, m)
+	}
+
 	// Handle nil/missing/empty values
 	// Semantic: missing or empty properties do NOT match any filter, except when
 	// explicitly checking for empty values with "property=" (OpEqual with empty string).
@@ -76,6 +90,41 @@ func Match(entity *model.Entity, filter *Filter, propDef *metamodel.PropertyDef,
 		// Unknown type - fall back to string comparison
 		return matchString(val, filter)
 	}
+}
+
+// matchList checks if any element in a list matches the filter.
+// For = operator: returns true if ANY element equals the filter value
+// For != operator: returns true if NO element equals the filter value
+func matchList(list []string, filter *Filter, _ *metamodel.PropertyDef, _ *metamodel.Metamodel) (bool, error) {
+	// Handle empty list
+	if len(list) == 0 {
+		if filter.Operator == OpEqual && filter.Value == "" {
+			return true, nil
+		}
+		return false, nil
+	}
+
+	// For != operator, we want to return true only if NO element matches
+	if filter.Operator == OpNotEqual {
+		for _, s := range list {
+			if s == filter.Value {
+				return false, nil // Found a match, so != is false
+			}
+		}
+		return true, nil // No element matched, so != is true
+	}
+
+	// For all other operators, check if ANY element matches
+	for _, s := range list {
+		matched, err := matchString(s, filter)
+		if err != nil {
+			return false, err
+		}
+		if matched {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // MatchAll checks if entity matches all filters (AND semantics)

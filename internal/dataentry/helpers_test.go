@@ -4,6 +4,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -74,6 +75,57 @@ func findText(n *html.Node, text string) bool {
 	return false
 }
 
+func TestPropertyContains(t *testing.T) {
+	tests := []struct {
+		name  string
+		prop  interface{}
+		value string
+		want  bool
+	}{
+		{"nil property matches empty", nil, "", true},
+		{"nil property does not match non-empty", nil, "foo", false},
+		{"string exact match", "foo", "foo", true},
+		{"string no match", "foo", "bar", false},
+		{"[]string contains", []string{"foo", "bar"}, "bar", true},
+		{"[]string does not contain", []string{"foo", "bar"}, "baz", false},
+		{"[]interface{} contains", []interface{}{"foo", "bar"}, "foo", true},
+		{"[]interface{} does not contain", []interface{}{"foo", "bar"}, "baz", false},
+		{"empty []string does not match", []string{}, "foo", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := propertyContains(tt.prop, tt.value)
+			if got != tt.want {
+				t.Errorf("propertyContains(%v, %q) = %v, want %v", tt.prop, tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPropertyIsEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		prop interface{}
+		want bool
+	}{
+		{"nil is empty", nil, true},
+		{"empty string is empty", "", true},
+		{"non-empty string is not empty", "foo", false},
+		{"empty []string is empty", []string{}, true},
+		{"non-empty []string is not empty", []string{"foo"}, false},
+		{"empty []interface{} is empty", []interface{}{}, true},
+		{"non-empty []interface{} is not empty", []interface{}{"foo"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := propertyIsEmpty(tt.prop)
+			if got != tt.want {
+				t.Errorf("propertyIsEmpty(%v) = %v, want %v", tt.prop, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestApplyFilters(t *testing.T) {
 	entities := []*model.Entity{
 		{ID: "E-001", Type: "ticket", Properties: map[string]interface{}{"status": "open", "priority": "high"}},
@@ -123,6 +175,61 @@ func TestApplyFilters(t *testing.T) {
 			name:    "nil property not equal to non-empty",
 			filters: []FilterConfig{{Property: "missing", Operator: "=", Value: "something"}},
 			wantIDs: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := applyFilters(entities, tt.filters)
+			gotIDs := make([]string, len(got))
+			for i, e := range got {
+				gotIDs[i] = e.ID
+			}
+			if len(gotIDs) != len(tt.wantIDs) {
+				t.Fatalf("got %v, want %v", gotIDs, tt.wantIDs)
+			}
+			for i, id := range gotIDs {
+				if id != tt.wantIDs[i] {
+					t.Errorf("got[%d] = %s, want %s", i, id, tt.wantIDs[i])
+				}
+			}
+		})
+	}
+}
+
+func TestApplyFiltersMultiSelect(t *testing.T) {
+	entities := []*model.Entity{
+		{ID: "E-001", Type: "clause", Properties: map[string]interface{}{"applies_to": "client"}},
+		{ID: "E-002", Type: "clause", Properties: map[string]interface{}{"applies_to": []string{"client", "provider"}}},
+		{ID: "E-003", Type: "clause", Properties: map[string]interface{}{"applies_to": []string{"provider", "employee"}}},
+		{ID: "E-004", Type: "clause", Properties: map[string]interface{}{"applies_to": "employee"}},
+		{ID: "E-005", Type: "clause", Properties: map[string]interface{}{"applies_to": []interface{}{"client", "provider"}}}, // from YAML
+	}
+
+	tests := []struct {
+		name    string
+		filters []FilterConfig
+		wantIDs []string
+	}{
+		{
+			name:    "= client matches single and list values",
+			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "client"}},
+			wantIDs: []string{"E-001", "E-002", "E-005"},
+		},
+		{
+			name:    "= provider matches list values",
+			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "provider"}},
+			wantIDs: []string{"E-002", "E-003", "E-005"},
+		},
+		{
+			name:    "= employee matches list and single",
+			filters: []FilterConfig{{Property: "applies_to", Operator: "=", Value: "employee"}},
+			wantIDs: []string{"E-003", "E-004"},
+		},
+		{
+			name:    "!= client excludes all entries containing client",
+			filters: []FilterConfig{{Property: "applies_to", Operator: "!=", Value: "client"}},
+			wantIDs: []string{"E-003", "E-004"},
 		},
 	}
 
@@ -260,26 +367,27 @@ func TestResolveWidget(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		explicit string
-		prop     metamodel.PropertyDef
-		want     string
+		name string
+		prop metamodel.PropertyDef
+		want string
 	}{
-		{"explicit override", "textarea", metamodel.PropertyDef{Type: "string"}, "textarea"},
-		{"string type", "", metamodel.PropertyDef{Type: "string"}, "text"},
-		{"date type", "", metamodel.PropertyDef{Type: "date"}, "date"},
-		{"integer type", "", metamodel.PropertyDef{Type: "integer"}, "number"},
-		{"boolean type", "", metamodel.PropertyDef{Type: "boolean"}, "checkbox"},
-		{"enum type", "", metamodel.PropertyDef{Type: "enum"}, "select"},
-		{"custom type", "", metamodel.PropertyDef{Type: "priority_type"}, "select"},
-		{"unknown type", "", metamodel.PropertyDef{Type: "something_else"}, "text"},
+		{"string type", metamodel.PropertyDef{Type: "string"}, "text"},
+		{"date type", metamodel.PropertyDef{Type: "date"}, "date"},
+		{"integer type", metamodel.PropertyDef{Type: "integer"}, "number"},
+		{"boolean type", metamodel.PropertyDef{Type: "boolean"}, "checkbox"},
+		{"enum type", metamodel.PropertyDef{Type: "enum"}, "select"},
+		{"custom type", metamodel.PropertyDef{Type: "priority_type"}, "select"},
+		{"unknown type", metamodel.PropertyDef{Type: "something_else"}, "text"},
+		{"list enum type", metamodel.PropertyDef{Type: "enum", List: true}, "multi-select"},
+		{"list custom type", metamodel.PropertyDef{Type: "priority_type", List: true}, "multi-select"},
+		{"list string type (not multi-select)", metamodel.PropertyDef{Type: "string", List: true}, "text"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveWidget(tt.explicit, tt.prop, meta)
+			got := resolveWidget(tt.prop, meta)
 			if got != tt.want {
-				t.Errorf("resolveWidget(%q, %v) = %q, want %q", tt.explicit, tt.prop.Type, got, tt.want)
+				t.Errorf("resolveWidget(%v) = %q, want %q", tt.prop.Type, got, tt.want)
 			}
 		})
 	}
@@ -801,6 +909,40 @@ func TestTemplateFuncs(t *testing.T) {
 			t.Errorf("sortedKeys empty map = %v, want empty slice", got)
 		}
 	})
+
+	t.Run("toStringSlice with []interface{}", func(t *testing.T) {
+		fn := funcs["toStringSlice"].(func(interface{}) []string)
+		got := fn([]interface{}{"a", "b", "c"})
+		want := []string{"a", "b", "c"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("toStringSlice = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("toStringSlice with []string", func(t *testing.T) {
+		fn := funcs["toStringSlice"].(func(interface{}) []string)
+		got := fn([]string{"x", "y"})
+		want := []string{"x", "y"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("toStringSlice = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("toStringSlice with scalar", func(t *testing.T) {
+		fn := funcs["toStringSlice"].(func(interface{}) []string)
+		got := fn("scalar")
+		if got != nil {
+			t.Errorf("toStringSlice scalar = %v, want nil", got)
+		}
+	})
+
+	t.Run("toStringSlice with nil", func(t *testing.T) {
+		fn := funcs["toStringSlice"].(func(interface{}) []string)
+		got := fn(nil)
+		if got != nil {
+			t.Errorf("toStringSlice nil = %v, want nil", got)
+		}
+	})
 }
 
 func TestAppendToastParam(t *testing.T) {
@@ -881,31 +1023,33 @@ func TestResolveRelationColumnValue(t *testing.T) {
 
 	app := &App{meta: meta, g: g}
 
-	t.Run("resolves multiple targets comma-separated", func(t *testing.T) {
-		got := app.resolveRelationColumnValue("ASS-001", "assessmentBy")
-		if got != "Alice, Bob" {
-			t.Errorf("got %q, want %q", got, "Alice, Bob")
+	t.Run("resolves multiple targets", func(t *testing.T) {
+		got := app.resolveRelationColumnValues("ASS-001", "assessmentBy")
+		want := []string{"Alice", "Bob"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 
 	t.Run("filters by relation type", func(t *testing.T) {
-		got := app.resolveRelationColumnValue("ASS-001", "otherRel")
-		if got != "Alice" {
-			t.Errorf("got %q, want %q", got, "Alice")
+		got := app.resolveRelationColumnValues("ASS-001", "otherRel")
+		want := []string{"Alice"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 
 	t.Run("returns empty for no matching relations", func(t *testing.T) {
-		got := app.resolveRelationColumnValue("ASS-001", "nonexistent")
-		if got != "" {
-			t.Errorf("got %q, want empty string", got)
+		got := app.resolveRelationColumnValues("ASS-001", "nonexistent")
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 
 	t.Run("returns empty for unknown entity", func(t *testing.T) {
-		got := app.resolveRelationColumnValue("UNKNOWN", "assessmentBy")
-		if got != "" {
-			t.Errorf("got %q, want empty string", got)
+		got := app.resolveRelationColumnValues("UNKNOWN", "assessmentBy")
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 }

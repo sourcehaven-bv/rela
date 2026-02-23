@@ -45,7 +45,19 @@ func ScoreText(text string, words, phrases []string) float64 {
 func ScoreEntity(e *model.Entity, words, phrases []string) float64 {
 	parts := []string{e.ID, e.Title(), e.Description(), e.Content}
 	for _, v := range e.Properties {
-		parts = append(parts, fmt.Sprintf("%v", v))
+		// Handle list values (multi-select) by adding each element separately
+		switch val := v.(type) {
+		case []string:
+			parts = append(parts, val...)
+		case []interface{}:
+			for _, item := range val {
+				if s, ok := item.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+		default:
+			parts = append(parts, fmt.Sprintf("%v", v))
+		}
 	}
 	text := strings.Join(parts, " ")
 	return ScoreText(text, words, phrases)

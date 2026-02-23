@@ -153,9 +153,26 @@ func GlobToRegex(glob string) string {
 	return result.String()
 }
 
-// MatchValue checks if a value matches the filter
+// MatchValue checks if a value matches the filter.
+// For list values ([]string, []interface{}):
+//   - For = operator: returns true if ANY element matches
+//   - For != operator: returns true if NO element matches
 func MatchValue(value interface{}, f *Filter) bool {
-	// Convert value to string for comparison
+	// Handle list types
+	switch v := value.(type) {
+	case []string:
+		return matchStringList(v, f)
+	case []interface{}:
+		strList := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				strList = append(strList, s)
+			}
+		}
+		return matchStringList(strList, f)
+	}
+
+	// Convert scalar value to string for comparison
 	var strValue string
 	switch v := value.(type) {
 	case string:
@@ -169,7 +186,36 @@ func MatchValue(value interface{}, f *Filter) bool {
 	default:
 		strValue = fmt.Sprintf("%v", v)
 	}
+	return matchStringSimple(strValue, f)
+}
 
+// matchStringList handles filter matching for string lists (multi-select values)
+func matchStringList(list []string, f *Filter) bool {
+	if len(list) == 0 {
+		return matchStringSimple("", f)
+	}
+
+	// For != operator: return true only if NO element matches the value
+	if f.Operator == OpNotEqual {
+		for _, s := range list {
+			if s == f.Value {
+				return false // Found a match, so "not equal" is false
+			}
+		}
+		return true // No element matched
+	}
+
+	// For all other operators: return true if ANY element matches
+	for _, s := range list {
+		if matchStringSimple(s, f) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchStringSimple checks if a string value matches the filter (simple version without errors)
+func matchStringSimple(strValue string, f *Filter) bool {
 	switch f.Operator {
 	case OpEqual:
 		if f.IsGlob {

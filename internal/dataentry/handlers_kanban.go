@@ -35,7 +35,7 @@ type KanbanCardData struct {
 // KanbanCardField holds a single field displayed on a card.
 type KanbanCardField struct {
 	Label    string
-	Value    string
+	Values   []string
 	PropType string
 }
 
@@ -127,7 +127,7 @@ func (a *App) handleKanban(w http.ResponseWriter, r *http.Request) {
 		filterControls = append(filterControls, ResolvedFC{
 			Property: fc.Property,
 			Label:    titleCase(fc.Property),
-			Widget:   fc.Widget,
+			Widget:   resolveWidget(prop, a.meta),
 			Values:   vals,
 			Current:  r.URL.Query().Get("filter_" + fc.Property),
 		})
@@ -241,16 +241,30 @@ func (a *App) buildKanbanCard(e *model.Entity, kanban Kanban) KanbanCardData {
 
 	// Resolve fields
 	for _, f := range kanban.Card.Fields {
-		val := e.GetAttributeString(f.Property)
-		if val == "" {
+		rawVal := e.GetAttribute(f.Property)
+		if rawVal == nil {
 			continue
 		}
 		propType := resolvePropertyType(f.Property, e.Type, a.meta)
-		card.Fields = append(card.Fields, KanbanCardField{
+		field := KanbanCardField{
 			Label:    coalesce(f.Label, titleCase(f.Property)),
-			Value:    val,
 			PropType: propType,
-		})
+		}
+
+		if vs := e.GetAttributeStrings(f.Property); vs != nil {
+			if len(vs) == 0 {
+				continue
+			}
+			field.Values = vs
+		} else {
+			val := e.GetAttributeString(f.Property)
+			if val == "" {
+				continue
+			}
+			field.Values = []string{val}
+		}
+
+		card.Fields = append(card.Fields, field)
 	}
 
 	return card

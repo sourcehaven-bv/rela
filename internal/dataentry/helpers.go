@@ -25,6 +25,51 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 )
 
+// propertyContains checks if a property value contains the given string.
+// Handles string, []string, and []interface{} property types.
+func propertyContains(prop interface{}, value string) bool {
+	if prop == nil {
+		return value == ""
+	}
+	switch v := prop.(type) {
+	case string:
+		return v == value
+	case []string:
+		for _, s := range v {
+			if s == value {
+				return true
+			}
+		}
+		return false
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok && s == value {
+				return true
+			}
+		}
+		return false
+	default:
+		return fmt.Sprintf("%v", prop) == value
+	}
+}
+
+// propertyIsEmpty checks if a property value is empty/nil.
+func propertyIsEmpty(prop interface{}) bool {
+	if prop == nil {
+		return true
+	}
+	switch v := prop.(type) {
+	case string:
+		return v == ""
+	case []string:
+		return len(v) == 0
+	case []interface{}:
+		return len(v) == 0
+	default:
+		return false
+	}
+}
+
 // applyFilters filters entities by a set of filter conditions.
 func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Entity {
 	if len(filters) == 0 {
@@ -37,14 +82,22 @@ func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Ent
 			if strings.HasPrefix(f.Value, "$") {
 				continue // skip variable substitution
 			}
-			val := e.GetAttributeString(f.Property)
+			prop := e.Properties[f.Property]
 			switch f.Operator {
 			case "=":
-				if val != f.Value {
+				if f.Value == "" {
+					if !propertyIsEmpty(prop) {
+						match = false
+					}
+				} else if !propertyContains(prop, f.Value) {
 					match = false
 				}
 			case "!=":
-				if val == f.Value {
+				if f.Value == "" {
+					if propertyIsEmpty(prop) {
+						match = false
+					}
+				} else if propertyContains(prop, f.Value) {
 					match = false
 				}
 			}
@@ -84,10 +137,14 @@ func resolvePropertyValues(prop metamodel.PropertyDef, meta *metamodel.Metamodel
 }
 
 // resolveWidget returns the appropriate widget type for a property.
-func resolveWidget(explicit string, prop metamodel.PropertyDef, meta *metamodel.Metamodel) string {
-	if explicit != "" {
-		return explicit
+func resolveWidget(prop metamodel.PropertyDef, meta *metamodel.Metamodel) string {
+	// Check if property is a list (multi-select) - only applies to enum types
+	_, isCustomType := meta.Types[prop.Type]
+	isEnum := prop.Type == "enum" || isCustomType
+	if prop.List && isEnum {
+		return "multi-select"
 	}
+
 	switch prop.Type {
 	case "string":
 		return "text"
@@ -403,6 +460,20 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 			}
 			return m
 		},
+		"toStringSlice": func(val interface{}) []string {
+			switch v := val.(type) {
+			case []string:
+				return v
+			case []interface{}:
+				result := make([]string, 0, len(v))
+				for _, item := range v {
+					result = append(result, fmt.Sprintf("%v", item))
+				}
+				return result
+			default:
+				return nil
+			}
+		},
 		"formatValue": func(val string) string {
 			if t, err := time.Parse(time.RFC3339, val); err == nil {
 				return t.Format("2006-01-02")
@@ -426,9 +497,9 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 	}
 }
 
-// resolveRelationColumnValue returns a comma-separated string of display titles
-// for all targets of the given relation type from an entity.
-func (a *App) resolveRelationColumnValue(entityID, relationType string) string {
+// resolveRelationColumnValues returns display titles for all targets of the given
+// relation type from an entity.
+func (a *App) resolveRelationColumnValues(entityID, relationType string) []string {
 	edges := a.g.OutgoingEdges(entityID)
 	titles := make([]string, 0, len(edges))
 	for _, edge := range edges {
@@ -441,7 +512,7 @@ func (a *App) resolveRelationColumnValue(entityID, relationType string) string {
 		}
 		titles = append(titles, a.entityDisplayTitle(target))
 	}
-	return strings.Join(titles, ", ")
+	return titles
 }
 
 // ScopeNav holds prev/next navigation context for browsing through a list of entities.

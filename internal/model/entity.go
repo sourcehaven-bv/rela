@@ -84,6 +84,30 @@ func (e *Entity) GetAttributeString(name string) string {
 	return fmt.Sprintf("%v", val)
 }
 
+// GetAttributeStrings returns a property value coerced to []string.
+// Handles []string, []interface{} (extracting string elements), and nil.
+// Returns nil for non-list values.
+func (e *Entity) GetAttributeStrings(name string) []string {
+	val := e.GetAttribute(name)
+	if val == nil {
+		return nil
+	}
+	switch v := val.(type) {
+	case []string:
+		return v
+	case []interface{}:
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				result = append(result, s)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
 // Relation represents a directed relationship between two entities
 type Relation struct {
 	From       string                 `json:"from" yaml:"from"`

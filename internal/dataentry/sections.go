@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -27,8 +28,9 @@ type SectionEntityData struct {
 
 // SectionColumnData holds a resolved table cell for template rendering.
 type SectionColumnData struct {
-	Value      string
+	Values     []string
 	PropType   string
+	Widget     string
 	Link       bool
 	EntityID   string
 	EntityType string
@@ -179,21 +181,27 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 					eDef, _ := a.meta.GetEntityDef(e.Type)
 					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
 					for _, col := range sec.Columns {
-						var val string
-						var propType string
+						cell := SectionColumnData{
+							Link: col.Link, EntityID: e.ID, EntityType: e.Type,
+						}
 						if col.Relation != "" {
-							val = a.resolveRelationColumnValue(e.ID, col.Relation)
+							cell.Values = a.resolveRelationColumnValues(e.ID, col.Relation)
 						} else {
-							val = e.GetAttributeString(col.Property)
+							var pd metamodel.PropertyDef
 							if eDef != nil {
-								if pd, ok := eDef.Properties[col.Property]; ok {
-									propType = pd.Type
+								if propDef, ok := eDef.Properties[col.Property]; ok {
+									pd = propDef
+									cell.PropType = pd.Type
 								}
 							}
+							cell.Widget = resolveWidget(pd, a.meta)
+							if vs := e.GetAttributeStrings(col.Property); vs != nil {
+								cell.Values = vs
+							} else if val := e.GetAttributeString(col.Property); val != "" {
+								cell.Values = []string{val}
+							}
 						}
-						row.Cells = append(row.Cells, SectionColumnData{
-							Value: val, PropType: propType, Link: col.Link, EntityID: e.ID, EntityType: e.Type,
-						})
+						row.Cells = append(row.Cells, cell)
 					}
 					return row
 				}

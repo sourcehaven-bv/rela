@@ -1,6 +1,7 @@
 package model
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -137,6 +138,35 @@ func TestEntityGetAttributeString(t *testing.T) {
 			got := e.GetAttributeString(tt.attrName)
 			if got != tt.expected {
 				t.Errorf("GetAttributeString(%q) = %q, want %q", tt.attrName, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestEntityGetAttributeStrings tests the GetAttributeStrings method
+func TestEntityGetAttributeStrings(t *testing.T) {
+	e := NewEntity("REQ-001", "requirement")
+	e.Properties["tags"] = []string{"a", "b"}
+	e.Properties["mixed"] = []interface{}{"x", "y", 42}
+	e.Properties["title"] = "scalar"
+
+	tests := []struct {
+		name     string
+		attr     string
+		expected []string
+	}{
+		{"[]string property", "tags", []string{"a", "b"}},
+		{"[]interface{} property", "mixed", []string{"x", "y"}},
+		{"scalar property returns nil", "title", nil},
+		{"missing property returns nil", "nope", nil},
+		{"id field returns nil", "id", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := e.GetAttributeStrings(tt.attr)
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("GetAttributeStrings(%q) = %v, want %v", tt.attr, got, tt.expected)
 			}
 		})
 	}
