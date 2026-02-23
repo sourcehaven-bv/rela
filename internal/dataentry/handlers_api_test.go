@@ -117,7 +117,7 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 func TestHandleAPIEntityTypes(t *testing.T) {
 	app := testAppInstance()
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/api/entity-types", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/entity-types", http.NoBody)
 
 	app.handleAPIEntityTypes(w, r)
 
@@ -152,7 +152,7 @@ func TestHandleAPIEntities(t *testing.T) {
 
 	t.Run("all entities", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/api/entities", nil)
+		r := httptest.NewRequest(http.MethodGet, "/api/entities", http.NoBody)
 		app.handleAPIEntities(w, r)
 
 		if w.Code != http.StatusOK {
@@ -170,7 +170,7 @@ func TestHandleAPIEntities(t *testing.T) {
 
 	t.Run("filtered by type", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/api/entities?type=ticket", nil)
+		r := httptest.NewRequest(http.MethodGet, "/api/entities?type=ticket", http.NoBody)
 		app.handleAPIEntities(w, r)
 
 		var entities []APIEntity
@@ -190,7 +190,7 @@ func TestHandleAPIEntity(t *testing.T) {
 
 	t.Run("found", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/api/entities/TKT-001", nil)
+		r := httptest.NewRequest(http.MethodGet, "/api/entities/TKT-001", http.NoBody)
 		app.handleAPIEntity(w, r)
 
 		if w.Code != http.StatusOK {
@@ -208,7 +208,7 @@ func TestHandleAPIEntity(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/api/entities/NONEXISTENT", nil)
+		r := httptest.NewRequest(http.MethodGet, "/api/entities/NONEXISTENT", http.NoBody)
 		app.handleAPIEntity(w, r)
 
 		if w.Code != http.StatusNotFound {
@@ -218,7 +218,7 @@ func TestHandleAPIEntity(t *testing.T) {
 
 	t.Run("missing ID", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/api/entities/", nil)
+		r := httptest.NewRequest(http.MethodGet, "/api/entities/", http.NoBody)
 		app.handleAPIEntity(w, r)
 
 		if w.Code != http.StatusBadRequest {
@@ -230,7 +230,7 @@ func TestHandleAPIEntity(t *testing.T) {
 func TestHandleAPIMetamodel(t *testing.T) {
 	app := testAppInstance()
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/api/metamodel", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/metamodel", http.NoBody)
 
 	app.handleAPIMetamodel(w, r)
 
@@ -253,7 +253,7 @@ func TestHandleAPIMetamodel(t *testing.T) {
 func TestHandleAPIEntitiesCRUD_MethodNotAllowed(t *testing.T) {
 	app := testAppInstance()
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodDelete, "/api/entities", nil)
+	r := httptest.NewRequest(http.MethodDelete, "/api/entities", http.NoBody)
 
 	app.handleAPIEntitiesCRUD(w, r)
 
@@ -265,7 +265,7 @@ func TestHandleAPIEntitiesCRUD_MethodNotAllowed(t *testing.T) {
 func TestHandleAPIEntityCRUD_MethodNotAllowed(t *testing.T) {
 	app := testAppInstance()
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/api/entities/TKT-001", nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/entities/TKT-001", http.NoBody)
 
 	app.handleAPIEntityCRUD(w, r)
 
@@ -277,7 +277,7 @@ func TestHandleAPIEntityCRUD_MethodNotAllowed(t *testing.T) {
 func TestHandleAPIRelationsCRUD_MethodNotAllowed(t *testing.T) {
 	app := testAppInstance()
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPatch, "/api/relations", nil)
+	r := httptest.NewRequest(http.MethodPatch, "/api/relations", http.NoBody)
 
 	app.handleAPIRelationsCRUD(w, r)
 
