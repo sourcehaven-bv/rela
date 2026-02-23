@@ -82,9 +82,9 @@ var validCommandContexts = map[string]bool{
 
 // Valid relation directions
 var validRelationDirections = map[string]bool{
-	"":                 true, // default (outgoing)
-	DirectionOutgoing:  true,
-	DirectionIncoming:  true,
+	"":                true, // default (outgoing)
+	DirectionOutgoing: true,
+	DirectionIncoming: true,
 }
 
 // ValidateConfig performs comprehensive validation of a data-entry config.
