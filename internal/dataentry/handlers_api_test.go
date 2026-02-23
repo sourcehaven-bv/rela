@@ -92,7 +92,7 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 
 	hasOutgoing := false
 	for _, r := range result.Relations {
-		if r.Direction == "outgoing" && r.Type == "depends_on" && r.To == "TKT-002" {
+		if r.Direction == DirectionOutgoing && r.Type == "depends_on" && r.To == "TKT-002" {
 			hasOutgoing = true
 		}
 	}
@@ -105,7 +105,7 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 	result2 := app.entityToAPI(entity2, true)
 	hasIncoming := false
 	for _, r := range result2.Relations {
-		if r.Direction == "incoming" && r.Type == "depends_on" && r.From == "TKT-001" {
+		if r.Direction == DirectionIncoming && r.Type == "depends_on" && r.From == "TKT-001" {
 			hasIncoming = true
 		}
 	}

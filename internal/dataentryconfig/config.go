@@ -12,6 +12,23 @@ import (
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
 const ConfigFile = "data-entry.yaml"
 
+// Widget type constants for form fields.
+const (
+	WidgetText        = "text"
+	WidgetSelect      = "select"
+	WidgetMultiSelect = "multi-select"
+	WidgetCheckbox    = "checkbox"
+	WidgetTextarea    = "textarea"
+	WidgetNumber      = "number"
+	WidgetDate        = "date"
+)
+
+// Relation direction constants for form relations.
+const (
+	DirectionIncoming = "incoming"
+	DirectionOutgoing = "outgoing"
+)
+
 // Config is the top-level configuration for a data entry application.
 type Config struct {
 	Version    string                       `yaml:"version"`

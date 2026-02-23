@@ -10,6 +10,20 @@ package dataentry
 
 import "github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 
+// Widget and direction constants — re-exported from dataentryconfig.
+const (
+	WidgetText        = dataentryconfig.WidgetText
+	WidgetSelect      = dataentryconfig.WidgetSelect
+	WidgetMultiSelect = dataentryconfig.WidgetMultiSelect
+	WidgetCheckbox    = dataentryconfig.WidgetCheckbox
+	WidgetTextarea    = dataentryconfig.WidgetTextarea
+	WidgetNumber      = dataentryconfig.WidgetNumber
+	WidgetDate        = dataentryconfig.WidgetDate
+
+	DirectionIncoming = dataentryconfig.DirectionIncoming
+	DirectionOutgoing = dataentryconfig.DirectionOutgoing
+)
+
 // Config type aliases — re-exported from dataentryconfig for backward compatibility.
 type (
 	Config           = dataentryconfig.Config

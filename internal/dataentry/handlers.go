@@ -453,9 +453,9 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			inFrom := containsString(relDef.From, form.EntityType)
 			inTo := containsString(relDef.To, form.EntityType)
 			if inFrom && !inTo {
-				direction = "outgoing"
+				direction = DirectionOutgoing
 			} else if inTo && !inFrom {
-				direction = "incoming"
+				direction = DirectionIncoming
 			}
 			// If in both or neither, direction remains empty (caller must specify)
 		}
@@ -463,7 +463,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		// Resolve target type from metamodel if not specified.
 		targetType := rel.TargetType
 		if targetType == "" && relDefOK {
-			if direction == "incoming" {
+			if direction == DirectionIncoming {
 				if len(relDef.From) == 1 {
 					targetType = relDef.From[0]
 				}
@@ -493,7 +493,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			Relation:      rel.Relation,
 			Label:         label,
 			Required:      rel.Required,
-			Widget:        "select",
+			Widget:        WidgetSelect,
 			TargetType:    targetType,
 			TargetLabel:   targetLabel,
 			AllowCreate:   rel.AllowCreate,
@@ -508,7 +508,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if entity != nil {
-			if direction == "incoming" {
+			if direction == DirectionIncoming {
 				for _, edge := range a.g.IncomingEdges(entity.ID) {
 					if edge.Type == rel.Relation {
 						rr.Selected = append(rr.Selected, edge.From)
@@ -710,7 +710,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 			title = a.entityDisplayTitle(target)
 			targetType = target.Type
 		}
-		rd := RelDisplay{e.Type, e.To, targetType, title, "outgoing", nil}
+		rd := RelDisplay{e.Type, e.To, targetType, title, DirectionOutgoing, nil}
 		propKeys := make([]string, 0, len(e.Properties))
 		for k := range e.Properties {
 			propKeys = append(propKeys, k)
@@ -729,7 +729,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 			title = a.entityDisplayTitle(source)
 			sourceType = source.Type
 		}
-		rd := RelDisplay{e.Type, e.From, sourceType, title, "incoming", nil}
+		rd := RelDisplay{e.Type, e.From, sourceType, title, DirectionIncoming, nil}
 		propKeys := make([]string, 0, len(e.Properties))
 		for k := range e.Properties {
 			propKeys = append(propKeys, k)
@@ -1018,7 +1018,7 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 			Relation:      rel.Relation,
 			Label:         rel.Label,
 			Required:      rel.Required,
-			Widget:        "select",
+			Widget:        WidgetSelect,
 			TargetType:    rel.TargetType,
 			TargetLabel:   targetLabel,
 			AllowCreate:   rel.AllowCreate,
@@ -1134,7 +1134,7 @@ func (a *App) populateProperties(entity *model.Entity, fields []FormField, entDe
 	for _, f := range fields {
 		prop := entDef.Properties[f.Property]
 		widget := resolveWidget(prop, a.meta)
-		if widget == "multi-select" {
+		if widget == WidgetMultiSelect {
 			values := r.Form[f.Property]
 			if len(values) > 0 {
 				entity.Properties[f.Property] = values
@@ -1175,7 +1175,7 @@ func (a *App) createFormRelations(entityID string, relations []FormRelation, ent
 				continue
 			}
 			var relation *model.Relation
-			if rel.Direction == "incoming" {
+			if rel.Direction == DirectionIncoming {
 				relation = model.NewRelation(targetID, rel.Relation, entityID)
 			} else {
 				relation = model.NewRelation(entityID, rel.Relation, targetID)
@@ -1386,7 +1386,7 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	for _, f := range form.Fields {
 		prop := entDef.Properties[f.Property]
 		widget := resolveWidget(prop, a.meta)
-		if widget == "multi-select" {
+		if widget == WidgetMultiSelect {
 			values := r.Form[f.Property]
 			if len(values) > 0 {
 				entity.Properties[f.Property] = values
@@ -1398,7 +1398,7 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			if val != "" {
 				entity.Properties[f.Property] = val
 			} else {
-				if widget == "checkbox" {
+				if widget == WidgetCheckbox {
 					entity.Properties[f.Property] = "false"
 				} else {
 					delete(entity.Properties, f.Property)
@@ -1426,7 +1426,7 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		if rel.Display != "" {
 			continue
 		}
-		if rel.Direction == "incoming" {
+		if rel.Direction == DirectionIncoming {
 			for _, edge := range a.g.IncomingEdges(entityID) {
 				if edge.Type == rel.Relation {
 					if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
@@ -1451,7 +1451,7 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			var relation *model.Relation
-			if rel.Direction == "incoming" {
+			if rel.Direction == DirectionIncoming {
 				relation = model.NewRelation(targetID, rel.Relation, entityID)
 			} else {
 				relation = model.NewRelation(entityID, rel.Relation, targetID)
@@ -1615,7 +1615,7 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 	for _, f := range form.Fields {
 		prop := entDef.Properties[f.Property]
 		widget := resolveWidget(prop, a.meta)
-		if widget == "multi-select" {
+		if widget == WidgetMultiSelect {
 			values := r.Form[f.Property]
 			if len(values) > 0 {
 				entity.Properties[f.Property] = values
@@ -1693,12 +1693,12 @@ func (a *App) handleInlineForm(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch {
-		case widget == "checkbox":
+		case widget == WidgetCheckbox:
 			sb.WriteString(fmt.Sprintf(`<div class="form-row-checkbox"><input type="checkbox" name="%s" value="true" id="ic-%s"><label for="ic-%s">%s</label></div>`, esc(f.Property), esc(f.Property), esc(f.Property), esc(label)))
-		case widget == "textarea":
+		case widget == WidgetTextarea:
 			sb.WriteString(fmt.Sprintf(`<label for="ic-%s">%s%s</label>`, esc(f.Property), esc(label), reqMark))
 			sb.WriteString(fmt.Sprintf(`<textarea name="%s" id="ic-%s" placeholder="%s" style="min-height:60px;"></textarea>`, esc(f.Property), esc(f.Property), esc(f.Placeholder)))
-		case widget == "select" || widget == "multi-select":
+		case widget == WidgetSelect || widget == WidgetMultiSelect:
 			sb.WriteString(fmt.Sprintf(`<label for="ic-%s">%s%s</label>`, esc(f.Property), esc(label), reqMark))
 			vals := resolvePropertyValues(prop, a.meta)
 			defaultVal := coalesce(f.Default, prop.Default)
