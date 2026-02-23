@@ -30,7 +30,7 @@ override:
   - path: ^internal/importer$
     threshold: 65
   - path: ^internal/dataentry$
-    threshold: 55
+    threshold: 60
   - path: ^internal/dataentryconfig$
     threshold: 70
 
