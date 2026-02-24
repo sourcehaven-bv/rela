@@ -328,6 +328,105 @@ func TestRepository_Sync(t *testing.T) {
 	}
 }
 
+func TestRepository_Sync_MissingSourceEntity(t *testing.T) {
+	repo, meta, fs := setupTestRepo(t)
+
+	// Write only target entity
+	e1 := model.NewEntity("REQ-001", "requirement")
+	e1.SetString("title", "Req 1")
+	_ = repo.WriteEntity(e1, meta)
+
+	// Write relation with missing source directly as a file
+	relContent := []byte("---\nfrom: DEC-999\nrelation: addresses\nto: REQ-001\n---\n")
+	relPath := "/project/relations/DEC-999--addresses--REQ-001.md"
+	_ = fs.WriteFile(relPath, relContent, 0o644)
+
+	g := graph.New()
+	result, err := repo.Sync(meta, g)
+	if err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	if result.EntitiesLoaded != 1 {
+		t.Errorf("EntitiesLoaded = %d, want 1", result.EntitiesLoaded)
+	}
+	if result.RelationsLoaded != 0 {
+		t.Errorf("RelationsLoaded = %d, want 0 (missing source)", result.RelationsLoaded)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("got %d errors, want 1", len(result.Errors))
+	}
+}
+
+func TestRepository_Sync_MissingTargetEntity(t *testing.T) {
+	repo, meta, fs := setupTestRepo(t)
+
+	// Write only source entity
+	e1 := model.NewEntity("DEC-001", "decision")
+	e1.SetString("title", "Dec 1")
+	_ = repo.WriteEntity(e1, meta)
+
+	// Write relation with missing target directly as a file
+	relContent := []byte("---\nfrom: DEC-001\nrelation: addresses\nto: REQ-999\n---\n")
+	relPath := "/project/relations/DEC-001--addresses--REQ-999.md"
+	_ = fs.WriteFile(relPath, relContent, 0o644)
+
+	g := graph.New()
+	result, err := repo.Sync(meta, g)
+	if err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	if result.EntitiesLoaded != 1 {
+		t.Errorf("EntitiesLoaded = %d, want 1", result.EntitiesLoaded)
+	}
+	if result.RelationsLoaded != 0 {
+		t.Errorf("RelationsLoaded = %d, want 0 (missing target)", result.RelationsLoaded)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("got %d errors, want 1", len(result.Errors))
+	}
+}
+
+func TestRepository_Sync_ClearsExistingGraph(t *testing.T) {
+	repo, meta, _ := setupTestRepo(t)
+
+	// Write one entity
+	e1 := model.NewEntity("REQ-001", "requirement")
+	e1.SetString("title", "Req 1")
+	_ = repo.WriteEntity(e1, meta)
+
+	// Pre-populate graph with different data
+	g := graph.New()
+	old := model.NewEntity("OLD-001", "old")
+	g.AddNode(old)
+
+	if g.NodeCount() != 1 {
+		t.Fatalf("pre-sync: graph has %d nodes, want 1", g.NodeCount())
+	}
+
+	result, err := repo.Sync(meta, g)
+	if err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	if result.EntitiesLoaded != 1 {
+		t.Errorf("EntitiesLoaded = %d, want 1", result.EntitiesLoaded)
+	}
+
+	// Old entity should be gone
+	if _, ok := g.GetNode("OLD-001"); ok {
+		t.Error("OLD-001 should not exist after sync (graph should be cleared)")
+	}
+	// New entity should exist
+	if _, ok := g.GetNode("REQ-001"); !ok {
+		t.Error("REQ-001 should exist after sync")
+	}
+	if g.NodeCount() != 1 {
+		t.Errorf("graph has %d nodes, want 1", g.NodeCount())
+	}
+}
+
 // --- Cache ---
 
 func TestRepository_CacheSaveAndLoad(t *testing.T) {

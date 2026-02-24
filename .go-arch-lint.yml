@@ -135,7 +135,6 @@ deps:
     canUse:
       - cobra
       - color
-      - goldmark
       - tablewriter
 
   # Web / UI layer
@@ -209,6 +208,7 @@ deps:
       - graph
       - markdown
       - metamodel
+      - migration
       - project
       - storage
       - views
@@ -227,14 +227,12 @@ deps:
       - storage
   metamodel:
     mayDependOn:
-      - migration
       - storage
   migration:
     mayDependOn:
       - storage
   markdown:
     mayDependOn:
-      - graph
       - metamodel
       - project
       - storage

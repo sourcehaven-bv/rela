@@ -8,7 +8,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -36,23 +35,10 @@ var knownTypos = map[string]string{
 // If the metamodel contains an `includes:` key, included files are recursively
 // loaded and merged. Include paths are resolved relative to the directory
 // containing the metamodel file.
-// Returns a MigrationError if the file contains deprecated syntax that needs migration.
 func Load(path string, fs storage.FS) (*Metamodel, error) {
 	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, err
-	}
-
-	// Check for deprecated syntax that needs migration
-	detections, err := migration.Detect(path, migration.FileTypeMetamodel, fs)
-	if err != nil {
-		return nil, err
-	}
-	if len(detections) > 0 {
-		return nil, &migration.Error{
-			FilePath:   path,
-			Detections: detections,
-		}
 	}
 
 	// When includes are present, parse without full validation first,

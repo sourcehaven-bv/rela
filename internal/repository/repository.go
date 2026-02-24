@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -238,7 +239,42 @@ func (r *Repository) ListRelations() ([]*model.Relation, error) {
 
 // Sync rebuilds the graph from all entity and relation files on disk.
 func (r *Repository) Sync(meta *metamodel.Metamodel, g *graph.Graph) (*model.SyncResult, error) {
-	return r.fio.SyncFromFiles(r.paths, meta, g)
+	data, err := r.fio.LoadSyncData(r.paths, meta)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &model.SyncResult{
+		Conflicted: data.Conflicted,
+	}
+
+	g.Clear()
+
+	for _, entity := range data.Entities {
+		g.AddNode(entity)
+		result.EntitiesLoaded++
+	}
+
+	for _, relation := range data.Relations {
+		if _, ok := g.GetNode(relation.From); !ok {
+			result.Errors = append(result.Errors, &model.SyncError{
+				File:    relation.FilePath,
+				Message: "source entity not found: " + relation.From,
+			})
+			continue
+		}
+		if _, ok := g.GetNode(relation.To); !ok {
+			result.Errors = append(result.Errors, &model.SyncError{
+				File:    relation.FilePath,
+				Message: "target entity not found: " + relation.To,
+			})
+			continue
+		}
+		g.AddEdge(relation)
+		result.RelationsLoaded++
+	}
+
+	return result, nil
 }
 
 // --- Cache ---
@@ -261,7 +297,18 @@ func (r *Repository) CacheExists() bool {
 // --- Metamodel ---
 
 // LoadMetamodel loads and parses the metamodel from the project's metamodel file.
+// Returns a migration.Error if the file contains deprecated syntax that needs migration.
 func (r *Repository) LoadMetamodel() (*metamodel.Metamodel, error) {
+	detections, err := migration.Detect(r.paths.MetamodelPath, migration.FileTypeMetamodel, r.fs)
+	if err != nil {
+		return nil, err
+	}
+	if len(detections) > 0 {
+		return nil, &migration.Error{
+			FilePath:   r.paths.MetamodelPath,
+			Detections: detections,
+		}
+	}
 	return metamodel.Load(r.paths.MetamodelPath, r.fs)
 }
 
