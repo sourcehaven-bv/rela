@@ -1,26 +1,19 @@
 package graph
 
 import (
-	"encoding/json"
-	"path/filepath"
-	"time"
-
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-// CacheData represents the serialized graph cache
+// CacheData holds graph data for serialization. The repository layer
+// decides how (and where) to marshal and persist this data.
 type CacheData struct {
-	Version   string            `json:"version"`
-	Timestamp time.Time         `json:"timestamp"`
-	Nodes     []*model.Entity   `json:"nodes"`
-	Edges     []*model.Relation `json:"edges"`
+	Nodes []*model.Entity
+	Edges []*model.Relation
 }
 
-const CacheVersion = "1.0"
-
-// SaveCache saves the graph to a JSON cache file using the given filesystem.
-func (g *Graph) SaveCache(path string, fs storage.FS) error {
+// Snapshot returns a copy of the graph's nodes and edges for external
+// serialization. The caller owns the returned slices.
+func (g *Graph) Snapshot() *CacheData {
 	g.mu.RLock()
 	nodes := make([]*model.Entity, 0, len(g.nodes))
 	for _, node := range g.nodes {
@@ -30,39 +23,15 @@ func (g *Graph) SaveCache(path string, fs storage.FS) error {
 	copy(edges, g.edges)
 	g.mu.RUnlock()
 
-	data := CacheData{
-		Version:   CacheVersion,
-		Timestamp: time.Now(),
-		Nodes:     nodes,
-		Edges:     edges,
+	return &CacheData{
+		Nodes: nodes,
+		Edges: edges,
 	}
-
-	jsonData, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	// Ensure directory exists
-	dir := filepath.Dir(path)
-	if err := fs.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	return fs.WriteFile(path, jsonData, 0644)
 }
 
-// LoadCache loads the graph from a JSON cache file using the given filesystem.
-func (g *Graph) LoadCache(path string, fs storage.FS) error {
-	jsonData, err := fs.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	var data CacheData
-	if err := json.Unmarshal(jsonData, &data); err != nil {
-		return err
-	}
-
+// Restore replaces the graph contents with the provided cache data.
+// It rebuilds all internal indexes (adjacency maps, property index).
+func (g *Graph) Restore(data *CacheData) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -89,21 +58,4 @@ func (g *Graph) LoadCache(path string, fs storage.FS) error {
 	for _, node := range g.nodes {
 		g.indexEntityProperties(node)
 	}
-
-	return nil
-}
-
-// CacheExists checks if a cache file exists using the given filesystem.
-func CacheExists(path string, fs storage.FS) bool {
-	_, err := fs.Stat(path)
-	return err == nil
-}
-
-// CacheTimestamp returns the timestamp of the cache file using the given filesystem.
-func CacheTimestamp(path string, fs storage.FS) (time.Time, error) {
-	info, err := fs.Stat(path)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return info.ModTime(), nil
 }

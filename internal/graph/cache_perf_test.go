@@ -2,94 +2,69 @@ package graph
 
 import (
 	"fmt"
-	"path/filepath"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-var testCacheFS = storage.NewOsFS()
-
-// BenchmarkSaveCache benchmarks saving the graph to cache
-func BenchmarkSaveCache(b *testing.B) {
+// BenchmarkSnapshot benchmarks taking a graph snapshot
+func BenchmarkSnapshot(b *testing.B) {
 	for _, size := range []int{100, 1000, 10000} {
 		b.Run(fmt.Sprintf("nodes=%d", size), func(b *testing.B) {
 			g := generateTestGraph(size, 1.0)
-			tmpDir := b.TempDir()
-			cachePath := filepath.Join(tmpDir, "cache.json")
 
 			b.ResetTimer()
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				err := g.SaveCache(cachePath, testCacheFS)
-				if err != nil {
-					b.Fatal(err)
-				}
+				_ = g.Snapshot()
 			}
 		})
 	}
 }
 
-// BenchmarkLoadCache benchmarks loading the graph from cache
-func BenchmarkLoadCache(b *testing.B) {
+// BenchmarkRestore benchmarks restoring a graph from cache data
+func BenchmarkRestore(b *testing.B) {
 	for _, size := range []int{100, 1000, 10000} {
 		b.Run(fmt.Sprintf("nodes=%d", size), func(b *testing.B) {
-			// Create and save a graph
 			g := generateTestGraph(size, 1.0)
-			tmpDir := b.TempDir()
-			cachePath := filepath.Join(tmpDir, "cache.json")
-
-			if err := g.SaveCache(cachePath, testCacheFS); err != nil {
-				b.Fatal(err)
-			}
+			snap := g.Snapshot()
 
 			b.ResetTimer()
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
 				newGraph := New()
-				err := newGraph.LoadCache(cachePath, testCacheFS)
-				if err != nil {
-					b.Fatal(err)
-				}
+				newGraph.Restore(snap)
 			}
 		})
 	}
 }
 
-// BenchmarkSaveCacheVsSyncFromFiles compares cache loading vs full sync
-// This demonstrates the performance benefit of the cache
-func BenchmarkSaveCacheVsSyncFromFiles(b *testing.B) {
+// BenchmarkSnapshotRestore benchmarks a full round-trip
+func BenchmarkSnapshotRestore(b *testing.B) {
 	for _, size := range []int{100, 1000} {
-		b.Run(fmt.Sprintf("nodes=%d/cache", size), func(b *testing.B) {
+		b.Run(fmt.Sprintf("nodes=%d", size), func(b *testing.B) {
 			g := generateTestGraph(size, 1.0)
-			tmpDir := b.TempDir()
-			cachePath := filepath.Join(tmpDir, "cache.json")
-
-			if err := g.SaveCache(cachePath, testCacheFS); err != nil {
-				b.Fatal(err)
-			}
 
 			b.ResetTimer()
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
+				snap := g.Snapshot()
 				newGraph := New()
-				_ = newGraph.LoadCache(cachePath, testCacheFS)
+				newGraph.Restore(snap)
 			}
 		})
 	}
 }
 
-// BenchmarkCacheWithLargeProperties tests cache with entities containing many properties
-func BenchmarkCacheWithLargeProperties(b *testing.B) {
+// BenchmarkRestoreWithLargeProperties tests restore with entities containing many properties
+func BenchmarkRestoreWithLargeProperties(b *testing.B) {
 	for _, numProps := range []int{5, 20, 50} {
 		b.Run(fmt.Sprintf("properties=%d", numProps), func(b *testing.B) {
 			g := New()
 
-			// Create entities with many properties
 			for i := 0; i < 1000; i++ {
 				props := make(map[string]interface{})
 				for j := 0; j < numProps; j++ {
@@ -105,28 +80,25 @@ func BenchmarkCacheWithLargeProperties(b *testing.B) {
 				})
 			}
 
-			tmpDir := b.TempDir()
-			cachePath := filepath.Join(tmpDir, "cache.json")
+			snap := g.Snapshot()
 
 			b.ResetTimer()
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				_ = g.SaveCache(cachePath, testCacheFS)
 				newGraph := New()
-				_ = newGraph.LoadCache(cachePath, testCacheFS)
+				newGraph.Restore(snap)
 			}
 		})
 	}
 }
 
-// BenchmarkCacheRebuildAdjacency benchmarks the adjacency map rebuild during load
-func BenchmarkCacheRebuildAdjacency(b *testing.B) {
+// BenchmarkRestoreRebuildAdjacency benchmarks the adjacency map rebuild during restore
+func BenchmarkRestoreRebuildAdjacency(b *testing.B) {
 	for _, numEdges := range []int{100, 1000, 10000} {
 		b.Run(fmt.Sprintf("edges=%d", numEdges), func(b *testing.B) {
 			g := New()
 
-			// Create nodes
 			for i := 0; i < 100; i++ {
 				g.AddNode(&model.Entity{
 					ID:   fmt.Sprintf("ENT-%03d", i),
@@ -134,7 +106,6 @@ func BenchmarkCacheRebuildAdjacency(b *testing.B) {
 				})
 			}
 
-			// Create edges
 			for i := 0; i < numEdges; i++ {
 				g.AddEdge(&model.Relation{
 					From: fmt.Sprintf("ENT-%03d", i%100),
@@ -143,19 +114,14 @@ func BenchmarkCacheRebuildAdjacency(b *testing.B) {
 				})
 			}
 
-			tmpDir := b.TempDir()
-			cachePath := filepath.Join(tmpDir, "cache.json")
-
-			if err := g.SaveCache(cachePath, testCacheFS); err != nil {
-				b.Fatal(err)
-			}
+			snap := g.Snapshot()
 
 			b.ResetTimer()
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
 				newGraph := New()
-				_ = newGraph.LoadCache(cachePath, testCacheFS)
+				newGraph.Restore(snap)
 			}
 		})
 	}

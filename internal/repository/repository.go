@@ -9,6 +9,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -279,19 +280,64 @@ func (r *Repository) Sync(meta *metamodel.Metamodel, g *graph.Graph) (*model.Syn
 
 // --- Cache ---
 
-// SaveCache writes the graph cache to the project's cache file.
+// cacheEnvelope is the on-disk JSON format for the graph cache.
+type cacheEnvelope struct {
+	Version   string            `json:"version"`
+	Timestamp time.Time         `json:"timestamp"`
+	Nodes     []*model.Entity   `json:"nodes"`
+	Edges     []*model.Relation `json:"edges"`
+}
+
+const cacheVersion = "1.0"
+
+// SaveCache writes the graph cache to the project's cache file as JSON.
 func (r *Repository) SaveCache(g *graph.Graph) error {
-	return g.SaveCache(r.paths.CachePath, r.fs)
+	snap := g.Snapshot()
+
+	env := cacheEnvelope{
+		Version:   cacheVersion,
+		Timestamp: time.Now(),
+		Nodes:     snap.Nodes,
+		Edges:     snap.Edges,
+	}
+
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Dir(r.paths.CachePath)
+	if err := r.fs.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	return r.fs.WriteFile(r.paths.CachePath, data, 0644)
 }
 
 // LoadCache reads the graph cache from the project's cache file.
 func (r *Repository) LoadCache(g *graph.Graph) error {
-	return g.LoadCache(r.paths.CachePath, r.fs)
+	data, err := r.fs.ReadFile(r.paths.CachePath)
+	if err != nil {
+		return err
+	}
+
+	var env cacheEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return err
+	}
+
+	g.Restore(&graph.CacheData{
+		Nodes: env.Nodes,
+		Edges: env.Edges,
+	})
+
+	return nil
 }
 
 // CacheExists returns true if the graph cache file exists.
 func (r *Repository) CacheExists() bool {
-	return graph.CacheExists(r.paths.CachePath, r.fs)
+	_, err := r.fs.Stat(r.paths.CachePath)
+	return err == nil
 }
 
 // --- Metamodel ---
