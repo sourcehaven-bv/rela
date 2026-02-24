@@ -240,7 +240,7 @@ func (r *Repository) ListRelations() ([]*model.Relation, error) {
 
 // Sync rebuilds the graph from all entity and relation files on disk.
 func (r *Repository) Sync(meta *metamodel.Metamodel, g *graph.Graph) (*model.SyncResult, error) {
-	data, err := r.fio.LoadSyncData(r.paths, meta)
+	data, err := r.fio.LoadSyncData(r.paths.EntitiesDir, r.paths.RelationsDir, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -398,13 +398,13 @@ func (r *Repository) WriteCacheFile(filename string, data []byte) error {
 // LoadEntityTemplate loads the template for the given entity type, or
 // returns nil if no template exists.
 func (r *Repository) LoadEntityTemplate(entityType string) (*markdown.Document, error) {
-	return r.fio.LoadEntityTemplate(r.paths, entityType)
+	return r.fio.LoadEntityTemplate(r.paths.EntityTemplatePath(entityType))
 }
 
 // LoadRelationTemplate loads the template for the given relation type, or
 // returns nil if no template exists.
 func (r *Repository) LoadRelationTemplate(relationType string) (*markdown.Document, error) {
-	return r.fio.LoadRelationTemplate(r.paths, relationType)
+	return r.fio.LoadRelationTemplate(r.paths.RelationTemplatePath(relationType))
 }
 
 // GenerateEntityTemplate generates a template file for the given entity type.
@@ -413,7 +413,8 @@ func (r *Repository) LoadRelationTemplate(relationType string) (*markdown.Docume
 func (r *Repository) GenerateEntityTemplate(
 	meta *metamodel.Metamodel, entityType, variant string, force bool,
 ) (bool, error) {
-	return r.fio.GenerateEntityTemplate(r.paths, meta, entityType, variant, force)
+	path := r.paths.EntityTemplateVariantPath(entityType, variant)
+	return r.fio.GenerateEntityTemplate(path, meta, entityType, force)
 }
 
 // GenerateRelationTemplate generates a template file for the given relation type.
@@ -421,12 +422,13 @@ func (r *Repository) GenerateEntityTemplate(
 func (r *Repository) GenerateRelationTemplate(
 	meta *metamodel.Metamodel, relationType string, force bool,
 ) (bool, error) {
-	return r.fio.GenerateRelationTemplate(r.paths, meta, relationType, force)
+	path := r.paths.RelationTemplatePath(relationType)
+	return r.fio.GenerateRelationTemplate(path, meta, relationType, force)
 }
 
 // DiscoverEntityTemplates returns all templates (including variants) for an entity type.
 func (r *Repository) DiscoverEntityTemplates(entityType string) ([]*markdown.EntityTemplate, error) {
-	return r.fio.DiscoverEntityTemplates(r.paths, entityType)
+	return r.fio.DiscoverEntityTemplates(r.paths.EntityTemplatesDir, entityType)
 }
 
 // --- Change Notification ---

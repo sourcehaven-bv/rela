@@ -231,7 +231,6 @@ deps:
   markdown:
     mayDependOn:
       - metamodel
-      - project
       - storage
     canUse:
       - goldmark
