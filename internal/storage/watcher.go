@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // WatchConfig configures a Watcher.
@@ -27,7 +25,7 @@ type WatchConfig struct {
 	// SkipHidden skips hidden directories (names starting with ".").
 	SkipHidden bool
 	// OnChange is called after debounce with the batched change events.
-	OnChange func(events []model.ChangeEvent)
+	OnChange func(events []ChangeEvent)
 }
 
 // Watcher watches files and directories for changes, debouncing events
@@ -37,7 +35,7 @@ type Watcher struct {
 	fsWatcher *fsnotify.Watcher
 	done      chan struct{}
 	mu        sync.Mutex
-	pending   []model.ChangeEvent
+	pending   []ChangeEvent
 	paused    bool
 }
 
@@ -98,7 +96,7 @@ func (w *Watcher) Start() {
 
 			w.mu.Lock()
 			if !w.paused {
-				w.pending = append(w.pending, model.ChangeEvent{
+				w.pending = append(w.pending, ChangeEvent{
 					Path: event.Name,
 					Op:   toChangeOp(event.Op),
 				})
@@ -191,15 +189,15 @@ func (w *Watcher) isRelevantFile(path string) bool {
 	return false
 }
 
-func toChangeOp(op fsnotify.Op) model.ChangeOp {
+func toChangeOp(op fsnotify.Op) ChangeOp {
 	switch {
 	case op.Has(fsnotify.Create):
-		return model.OpCreate
+		return OpCreate
 	case op.Has(fsnotify.Remove):
-		return model.OpDelete
+		return OpDelete
 	case op.Has(fsnotify.Rename):
-		return model.OpRename
+		return OpRename
 	default:
-		return model.OpModify
+		return OpModify
 	}
 }

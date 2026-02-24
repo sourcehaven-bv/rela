@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -279,8 +278,8 @@ status: open
 `), 0o644)
 
 	// Reload with a generic entity change (not metamodel or config)
-	app.reload([]model.ChangeEvent{
-		{Path: app.repo.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: model.OpCreate},
+	app.reload([]storage.ChangeEvent{
+		{Path: app.repo.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: storage.OpCreate},
 	})
 
 	newCount := len(app.g.AllNodes())
@@ -328,8 +327,8 @@ relations:
 `
 	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
-	app.reload([]model.ChangeEvent{
-		{Path: app.repo.Paths().MetamodelPath, Op: model.OpModify},
+	app.reload([]storage.ChangeEvent{
+		{Path: app.repo.Paths().MetamodelPath, Op: storage.OpModify},
 	})
 
 	if _, ok := app.meta.GetEntityDef("component"); !ok {
@@ -353,8 +352,8 @@ navigation: []
 	configPath := app.repo.Paths().Root + "/" + ConfigFile
 	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
 
-	app.reload([]model.ChangeEvent{
-		{Path: configPath, Op: model.OpModify},
+	app.reload([]storage.ChangeEvent{
+		{Path: configPath, Op: storage.OpModify},
 	})
 
 	if app.Cfg.App.Name == originalName {
@@ -373,8 +372,8 @@ func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
 	// Write invalid metamodel
 	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
 
-	app.reload([]model.ChangeEvent{
-		{Path: app.repo.Paths().MetamodelPath, Op: model.OpModify},
+	app.reload([]storage.ChangeEvent{
+		{Path: app.repo.Paths().MetamodelPath, Op: storage.OpModify},
 	})
 
 	// Metamodel should be unchanged
@@ -392,8 +391,8 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	// Write invalid YAML config
 	_ = fs.WriteFile(configPath, []byte(`not: valid: yaml: {{{`), 0o644)
 
-	app.reload([]model.ChangeEvent{
-		{Path: configPath, Op: model.OpModify},
+	app.reload([]storage.ChangeEvent{
+		{Path: configPath, Op: storage.OpModify},
 	})
 
 	// Config should be unchanged
@@ -439,9 +438,9 @@ relations:
 	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
 	// Reload with both config and metamodel changes at once
-	app.reload([]model.ChangeEvent{
-		{Path: configPath, Op: model.OpModify},
-		{Path: app.repo.Paths().MetamodelPath, Op: model.OpModify},
+	app.reload([]storage.ChangeEvent{
+		{Path: configPath, Op: storage.OpModify},
+		{Path: app.repo.Paths().MetamodelPath, Op: storage.OpModify},
 	})
 
 	if app.Cfg.App.Name != "Mixed Update" {

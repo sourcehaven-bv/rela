@@ -152,6 +152,7 @@ deps:
       - project
       - repository
       - search
+      - storage
     canUse:
       - goldmark
       - gogit
@@ -175,6 +176,7 @@ deps:
       - rename
       - repository
       - search
+      - storage
       - views
     canUse:
       - mcpgo

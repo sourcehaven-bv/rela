@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 func TestWatcher_NewAndStop(t *testing.T) {
@@ -178,12 +176,12 @@ func TestIsRelevantFile(t *testing.T) {
 func TestToChangeOp(t *testing.T) {
 	tests := []struct {
 		op   fsnotify.Op
-		want model.ChangeOp
+		want ChangeOp
 	}{
-		{fsnotify.Create, model.OpCreate},
-		{fsnotify.Write, model.OpModify},
-		{fsnotify.Remove, model.OpDelete},
-		{fsnotify.Rename, model.OpRename},
+		{fsnotify.Create, OpCreate},
+		{fsnotify.Write, OpModify},
+		{fsnotify.Remove, OpDelete},
+		{fsnotify.Rename, OpRename},
 	}
 
 	for _, tt := range tests {
@@ -196,14 +194,14 @@ func TestToChangeOp(t *testing.T) {
 
 func TestChangeOp_String(t *testing.T) {
 	tests := []struct {
-		op   model.ChangeOp
+		op   ChangeOp
 		want string
 	}{
-		{model.OpCreate, "CREATE"},
-		{model.OpModify, "MODIFY"},
-		{model.OpDelete, "DELETE"},
-		{model.OpRename, "RENAME"},
-		{model.ChangeOp(99), "UNKNOWN"},
+		{OpCreate, "CREATE"},
+		{OpModify, "MODIFY"},
+		{OpDelete, "DELETE"},
+		{OpRename, "RENAME"},
+		{ChangeOp(99), "UNKNOWN"},
 	}
 
 	for _, tt := range tests {
@@ -216,13 +214,13 @@ func TestChangeOp_String(t *testing.T) {
 func TestWatcher_FileChangeEvents(t *testing.T) {
 	dir := t.TempDir()
 
-	eventsChan := make(chan []model.ChangeEvent, 10)
+	eventsChan := make(chan []ChangeEvent, 10)
 
 	w, err := NewWatcher(WatchConfig{
 		Dirs:       []string{dir},
 		Extensions: []string{".md"},
 		Debounce:   50 * time.Millisecond,
-		OnChange: func(events []model.ChangeEvent) {
+		OnChange: func(events []ChangeEvent) {
 			eventsChan <- events
 		},
 	})
@@ -266,13 +264,13 @@ func TestWatcher_FileChangeEvents(t *testing.T) {
 func TestWatcher_IgnoresNonMatchingExtensions(t *testing.T) {
 	dir := t.TempDir()
 
-	eventsChan := make(chan []model.ChangeEvent, 10)
+	eventsChan := make(chan []ChangeEvent, 10)
 
 	w, err := NewWatcher(WatchConfig{
 		Dirs:       []string{dir},
 		Extensions: []string{".md"},
 		Debounce:   50 * time.Millisecond,
-		OnChange: func(events []model.ChangeEvent) {
+		OnChange: func(events []ChangeEvent) {
 			eventsChan <- events
 		},
 	})
@@ -309,13 +307,13 @@ func TestWatcher_IgnoresNonMatchingExtensions(t *testing.T) {
 func TestWatcher_AutoWatchesNewDirectories(t *testing.T) {
 	dir := t.TempDir()
 
-	eventsChan := make(chan []model.ChangeEvent, 10)
+	eventsChan := make(chan []ChangeEvent, 10)
 
 	w, err := NewWatcher(WatchConfig{
 		Dirs:       []string{dir},
 		Extensions: []string{".md"},
 		Debounce:   50 * time.Millisecond,
-		OnChange: func(events []model.ChangeEvent) {
+		OnChange: func(events []ChangeEvent) {
 			eventsChan <- events
 		},
 	})
@@ -371,13 +369,13 @@ func TestWatcher_FileModifyAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	eventsChan := make(chan []model.ChangeEvent, 10)
+	eventsChan := make(chan []ChangeEvent, 10)
 
 	w, err := NewWatcher(WatchConfig{
 		Dirs:       []string{dir},
 		Extensions: []string{".md"},
 		Debounce:   50 * time.Millisecond,
-		OnChange: func(events []model.ChangeEvent) {
+		OnChange: func(events []ChangeEvent) {
 			eventsChan <- events
 		},
 	})
@@ -401,7 +399,7 @@ func TestWatcher_FileModifyAndDelete(t *testing.T) {
 	case events := <-eventsChan:
 		found := false
 		for _, e := range events {
-			if e.Path == testFile && e.Op == model.OpModify {
+			if e.Path == testFile && e.Op == OpModify {
 				found = true
 				break
 			}
@@ -423,7 +421,7 @@ func TestWatcher_FileModifyAndDelete(t *testing.T) {
 	case events := <-eventsChan:
 		found := false
 		for _, e := range events {
-			if e.Path == testFile && e.Op == model.OpDelete {
+			if e.Path == testFile && e.Op == OpDelete {
 				found = true
 				break
 			}

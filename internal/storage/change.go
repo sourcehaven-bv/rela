@@ -1,4 +1,4 @@
-package model
+package storage
 
 // ChangeOp represents the type of change to stored data.
 type ChangeOp int

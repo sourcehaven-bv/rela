@@ -5,8 +5,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // Watcher watches entity and relation files for changes and notifies MCP clients.
@@ -20,7 +20,7 @@ type Watcher struct {
 func NewWatcher(s *Server) (*Watcher, error) {
 	w := &Watcher{server: s}
 
-	handle, err := s.repo.WatchWithHandle(repository.WatchOptions{}, func(events []model.ChangeEvent) {
+	handle, err := s.repo.WatchWithHandle(repository.WatchOptions{}, func(events []storage.ChangeEvent) {
 		for _, e := range events {
 			s.logger.Printf("File changed: %s (%s)", e.Path, e.Op)
 		}
