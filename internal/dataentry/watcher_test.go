@@ -278,8 +278,8 @@ status: open
 `), 0o644)
 
 	// Reload with a generic entity change (not metamodel or config)
-	app.reload([]storage.ChangeEvent{
-		{Path: app.repo.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: storage.OpCreate},
+	app.reload([]repository.ChangeEvent{
+		{Path: app.repo.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: repository.OpCreate},
 	})
 
 	newCount := len(app.g.AllNodes())
@@ -327,8 +327,8 @@ relations:
 `
 	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
-	app.reload([]storage.ChangeEvent{
-		{Path: app.repo.Paths().MetamodelPath, Op: storage.OpModify},
+	app.reload([]repository.ChangeEvent{
+		{Path: app.repo.Paths().MetamodelPath, Op: repository.OpModify},
 	})
 
 	if _, ok := app.meta.GetEntityDef("component"); !ok {
@@ -352,8 +352,8 @@ navigation: []
 	configPath := app.repo.Paths().Root + "/" + ConfigFile
 	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
 
-	app.reload([]storage.ChangeEvent{
-		{Path: configPath, Op: storage.OpModify},
+	app.reload([]repository.ChangeEvent{
+		{Path: configPath, Op: repository.OpModify},
 	})
 
 	if app.Cfg.App.Name == originalName {
@@ -372,8 +372,8 @@ func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
 	// Write invalid metamodel
 	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
 
-	app.reload([]storage.ChangeEvent{
-		{Path: app.repo.Paths().MetamodelPath, Op: storage.OpModify},
+	app.reload([]repository.ChangeEvent{
+		{Path: app.repo.Paths().MetamodelPath, Op: repository.OpModify},
 	})
 
 	// Metamodel should be unchanged
@@ -391,8 +391,8 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	// Write invalid YAML config
 	_ = fs.WriteFile(configPath, []byte(`not: valid: yaml: {{{`), 0o644)
 
-	app.reload([]storage.ChangeEvent{
-		{Path: configPath, Op: storage.OpModify},
+	app.reload([]repository.ChangeEvent{
+		{Path: configPath, Op: repository.OpModify},
 	})
 
 	// Config should be unchanged
@@ -438,9 +438,9 @@ relations:
 	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
 	// Reload with both config and metamodel changes at once
-	app.reload([]storage.ChangeEvent{
-		{Path: configPath, Op: storage.OpModify},
-		{Path: app.repo.Paths().MetamodelPath, Op: storage.OpModify},
+	app.reload([]repository.ChangeEvent{
+		{Path: configPath, Op: repository.OpModify},
+		{Path: app.repo.Paths().MetamodelPath, Op: repository.OpModify},
 	})
 
 	if app.Cfg.App.Name != "Mixed Update" {

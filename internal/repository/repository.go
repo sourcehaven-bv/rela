@@ -102,11 +102,11 @@ type Store interface {
 	// is called with batched change events after a debounce period. Returns a
 	// stop function to shut down the watcher. Implementations may use
 	// filesystem notifications, database triggers, polling, etc.
-	Watch(opts WatchOptions, onChange func(events []storage.ChangeEvent)) (stop func(), err error)
+	Watch(opts WatchOptions, onChange func(events []ChangeEvent)) (stop func(), err error)
 
 	// WatchWithHandle is like Watch but returns a WatchHandle that allows
 	// pausing and resuming the watcher in addition to stopping it.
-	WatchWithHandle(opts WatchOptions, onChange func(events []storage.ChangeEvent)) (*WatchHandle, error)
+	WatchWithHandle(opts WatchOptions, onChange func(events []ChangeEvent)) (*WatchHandle, error)
 
 	// --- Filesystem Access ---
 
@@ -410,7 +410,7 @@ func (h *WatchHandle) Resume() {
 // views files. The onChange callback is called with batched change events.
 // Returns a stop function to shut down the watcher.
 func (r *Repository) Watch(
-	opts WatchOptions, onChange func(events []storage.ChangeEvent),
+	opts WatchOptions, onChange func(events []ChangeEvent),
 ) (stop func(), err error) {
 	handle, err := r.WatchWithHandle(opts, onChange)
 	if err != nil {
@@ -422,7 +422,7 @@ func (r *Repository) Watch(
 // WatchWithHandle is like Watch but returns a WatchHandle that allows
 // pausing and resuming the watcher in addition to stopping it.
 func (r *Repository) WatchWithHandle(
-	opts WatchOptions, onChange func(events []storage.ChangeEvent),
+	opts WatchOptions, onChange func(events []ChangeEvent),
 ) (*WatchHandle, error) {
 	viewsPath := filepath.Join(r.paths.Root, "views.yaml")
 	files := []string{r.paths.MetamodelPath, viewsPath}
@@ -437,7 +437,9 @@ func (r *Repository) WatchWithHandle(
 		Extensions: []string{".md", ".yaml", ".yml"},
 		Debounce:   200 * time.Millisecond,
 		SkipHidden: true,
-		OnChange:   onChange,
+		OnChange: func(events []storage.ChangeEvent) {
+			onChange(convertEvents(events))
+		},
 	})
 	if err != nil {
 		return nil, err
