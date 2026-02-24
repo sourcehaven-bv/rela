@@ -7,24 +7,43 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
-func setupTestContext(t *testing.T) *project.Context {
+type testPaths struct {
+	root                 string
+	entityTemplatesDir   string
+	relationTemplatesDir string
+}
+
+func setupTestPaths(t *testing.T) testPaths {
 	t.Helper()
 	tmpDir := t.TempDir()
-	return &project.Context{
-		Root:                 tmpDir,
-		TemplatesDir:         filepath.Join(tmpDir, "templates"),
-		EntityTemplatesDir:   filepath.Join(tmpDir, "templates", "entities"),
-		RelationTemplatesDir: filepath.Join(tmpDir, "templates", "relations"),
+	return testPaths{
+		root:                 tmpDir,
+		entityTemplatesDir:   filepath.Join(tmpDir, "templates", "entities"),
+		relationTemplatesDir: filepath.Join(tmpDir, "templates", "relations"),
 	}
 }
 
-func TestLoadEntityTemplate_NotFound(t *testing.T) {
-	ctx := setupTestContext(t)
+func (p testPaths) entityTemplatePath(entityType string) string {
+	return filepath.Join(p.entityTemplatesDir, entityType+".md")
+}
 
-	doc, err := testIO.LoadEntityTemplate(ctx, "requirement")
+func (p testPaths) entityTemplateVariantPath(entityType, variant string) string {
+	if variant == "" {
+		return p.entityTemplatePath(entityType)
+	}
+	return filepath.Join(p.entityTemplatesDir, entityType+"--"+variant+".md")
+}
+
+func (p testPaths) relationTemplatePath(relationType string) string {
+	return filepath.Join(p.relationTemplatesDir, relationType+".md")
+}
+
+func TestLoadEntityTemplate_NotFound(t *testing.T) {
+	paths := setupTestPaths(t)
+
+	doc, err := testIO.LoadEntityTemplate(paths.entityTemplatePath("requirement"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -34,10 +53,10 @@ func TestLoadEntityTemplate_NotFound(t *testing.T) {
 }
 
 func TestLoadEntityTemplate_Success(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
 	// Create template directory and file
-	if err := os.MkdirAll(ctx.EntityTemplatesDir, 0755); err != nil {
+	if err := os.MkdirAll(paths.entityTemplatesDir, 0755); err != nil {
 		t.Fatalf("failed to create template dir: %v", err)
 	}
 
@@ -51,12 +70,12 @@ priority: high
 
 This is a template description.
 `
-	templatePath := ctx.EntityTemplatePath("requirement")
+	templatePath := paths.entityTemplatePath("requirement")
 	if err := os.WriteFile(templatePath, []byte(templateContent), 0644); err != nil {
 		t.Fatalf("failed to write template: %v", err)
 	}
 
-	doc, err := testIO.LoadEntityTemplate(ctx, "requirement")
+	doc, err := testIO.LoadEntityTemplate(templatePath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,9 +101,9 @@ This is a template description.
 }
 
 func TestLoadRelationTemplate_NotFound(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
-	doc, err := testIO.LoadRelationTemplate(ctx, "addresses")
+	doc, err := testIO.LoadRelationTemplate(paths.relationTemplatePath("addresses"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -196,7 +215,7 @@ func TestApplyRelationTemplate(t *testing.T) {
 }
 
 func TestGenerateEntityTemplate(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -223,7 +242,8 @@ func TestGenerateEntityTemplate(t *testing.T) {
 	}
 
 	// Generate template
-	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", "", false)
+	templatePath := paths.entityTemplatePath("requirement")
+	created, err := testIO.GenerateEntityTemplate(templatePath, meta, "requirement", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,7 +252,6 @@ func TestGenerateEntityTemplate(t *testing.T) {
 	}
 
 	// Verify file exists and has correct content
-	templatePath := ctx.EntityTemplatePath("requirement")
 	content, err := os.ReadFile(templatePath)
 	if err != nil {
 		t.Fatalf("failed to read template: %v", err)
@@ -264,7 +283,7 @@ func TestGenerateEntityTemplate(t *testing.T) {
 }
 
 func TestGenerateEntityTemplate_NoOverwrite(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -276,16 +295,17 @@ func TestGenerateEntityTemplate_NoOverwrite(t *testing.T) {
 	}
 
 	// Create existing template
-	if err := os.MkdirAll(ctx.EntityTemplatesDir, 0755); err != nil {
+	if err := os.MkdirAll(paths.entityTemplatesDir, 0755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
+	templatePath := paths.entityTemplatePath("requirement")
 	existingContent := "existing content"
-	if err := os.WriteFile(ctx.EntityTemplatePath("requirement"), []byte(existingContent), 0644); err != nil {
+	if err := os.WriteFile(templatePath, []byte(existingContent), 0644); err != nil {
 		t.Fatalf("failed to write existing template: %v", err)
 	}
 
 	// Try to generate without force
-	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", "", false)
+	created, err := testIO.GenerateEntityTemplate(templatePath, meta, "requirement", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -294,14 +314,14 @@ func TestGenerateEntityTemplate_NoOverwrite(t *testing.T) {
 	}
 
 	// Verify content unchanged
-	content, _ := os.ReadFile(ctx.EntityTemplatePath("requirement"))
+	content, _ := os.ReadFile(templatePath)
 	if string(content) != existingContent {
 		t.Errorf("content = %q, want %q (should not be overwritten)", string(content), existingContent)
 	}
 }
 
 func TestGenerateEntityTemplate_ForceOverwrite(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -313,15 +333,16 @@ func TestGenerateEntityTemplate_ForceOverwrite(t *testing.T) {
 	}
 
 	// Create existing template
-	if err := os.MkdirAll(ctx.EntityTemplatesDir, 0755); err != nil {
+	if err := os.MkdirAll(paths.entityTemplatesDir, 0755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
-	if err := os.WriteFile(ctx.EntityTemplatePath("requirement"), []byte("old"), 0644); err != nil {
+	templatePath := paths.entityTemplatePath("requirement")
+	if err := os.WriteFile(templatePath, []byte("old"), 0644); err != nil {
 		t.Fatalf("failed to write existing template: %v", err)
 	}
 
 	// Generate with force
-	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", "", true)
+	created, err := testIO.GenerateEntityTemplate(templatePath, meta, "requirement", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -330,27 +351,27 @@ func TestGenerateEntityTemplate_ForceOverwrite(t *testing.T) {
 	}
 
 	// Verify content changed
-	content, _ := os.ReadFile(ctx.EntityTemplatePath("requirement"))
+	content, _ := os.ReadFile(templatePath)
 	if string(content) == "old" {
 		t.Error("content should have been overwritten")
 	}
 }
 
 func TestGenerateEntityTemplate_UnknownType(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{},
 	}
 
-	_, err := testIO.GenerateEntityTemplate(ctx, meta, "unknown", "", false)
+	_, err := testIO.GenerateEntityTemplate(paths.entityTemplatePath("unknown"), meta, "unknown", false)
 	if err == nil {
 		t.Error("expected error for unknown entity type")
 	}
 }
 
 func TestGenerateEntityTemplate_Variant(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -370,7 +391,8 @@ func TestGenerateEntityTemplate_Variant(t *testing.T) {
 	}
 
 	// Generate variant template
-	created, err := testIO.GenerateEntityTemplate(ctx, meta, "requirement", "epic", false)
+	variantPath := paths.entityTemplateVariantPath("requirement", "epic")
+	created, err := testIO.GenerateEntityTemplate(variantPath, meta, "requirement", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -379,13 +401,12 @@ func TestGenerateEntityTemplate_Variant(t *testing.T) {
 	}
 
 	// Verify file exists at correct path (requirement--epic.md)
-	variantPath := ctx.EntityTemplateVariantPath("requirement", "epic")
 	if _, statErr := os.Stat(variantPath); os.IsNotExist(statErr) {
 		t.Error("variant template file should exist")
 	}
 
 	// Default template should NOT exist
-	defaultPath := ctx.EntityTemplatePath("requirement")
+	defaultPath := paths.entityTemplatePath("requirement")
 	if _, statErr := os.Stat(defaultPath); !os.IsNotExist(statErr) {
 		t.Error("default template should not be created when generating variant")
 	}
@@ -401,7 +422,7 @@ func TestGenerateEntityTemplate_Variant(t *testing.T) {
 }
 
 func TestGenerateRelationTemplate(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
 	meta := &metamodel.Metamodel{
 		Relations: map[string]metamodel.RelationDef{
@@ -413,7 +434,8 @@ func TestGenerateRelationTemplate(t *testing.T) {
 		},
 	}
 
-	created, err := testIO.GenerateRelationTemplate(ctx, meta, "addresses", false)
+	templatePath := paths.relationTemplatePath("addresses")
+	created, err := testIO.GenerateRelationTemplate(templatePath, meta, "addresses", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -422,29 +444,28 @@ func TestGenerateRelationTemplate(t *testing.T) {
 	}
 
 	// Verify file exists
-	templatePath := ctx.RelationTemplatePath("addresses")
 	if _, err := os.Stat(templatePath); os.IsNotExist(err) {
 		t.Error("template file should exist")
 	}
 }
 
 func TestGenerateRelationTemplate_UnknownType(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
 	meta := &metamodel.Metamodel{
 		Relations: map[string]metamodel.RelationDef{},
 	}
 
-	_, err := testIO.GenerateRelationTemplate(ctx, meta, "unknown", false)
+	_, err := testIO.GenerateRelationTemplate(paths.relationTemplatePath("unknown"), meta, "unknown", false)
 	if err == nil {
 		t.Error("expected error for unknown relation type")
 	}
 }
 
 func TestDiscoverEntityTemplates_NoTemplatesDir(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
-	templates, err := testIO.DiscoverEntityTemplates(ctx, "requirement")
+	templates, err := testIO.DiscoverEntityTemplates(paths.entityTemplatesDir, "requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -454,10 +475,10 @@ func TestDiscoverEntityTemplates_NoTemplatesDir(t *testing.T) {
 }
 
 func TestDiscoverEntityTemplates_DefaultOnly(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
 	// Create templates directory and default template
-	if err := os.MkdirAll(ctx.EntityTemplatesDir, 0755); err != nil {
+	if err := os.MkdirAll(paths.entityTemplatesDir, 0755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
@@ -467,11 +488,11 @@ priority: high
 ---
 # Default content
 `
-	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "requirement.md"), []byte(templateContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(paths.entityTemplatesDir, "requirement.md"), []byte(templateContent), 0644); err != nil {
 		t.Fatalf("failed to write template: %v", err)
 	}
 
-	templates, err := testIO.DiscoverEntityTemplates(ctx, "requirement")
+	templates, err := testIO.DiscoverEntityTemplates(paths.entityTemplatesDir, "requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -492,9 +513,9 @@ priority: high
 }
 
 func TestDiscoverEntityTemplates_WithVariants(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
-	if err := os.MkdirAll(ctx.EntityTemplatesDir, 0755); err != nil {
+	if err := os.MkdirAll(paths.entityTemplatesDir, 0755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
@@ -504,7 +525,7 @@ status: draft
 ---
 # Default
 `
-	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "requirement.md"), []byte(defaultContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(paths.entityTemplatesDir, "requirement.md"), []byte(defaultContent), 0644); err != nil {
 		t.Fatalf("failed to write default template: %v", err)
 	}
 
@@ -515,7 +536,7 @@ priority: high
 ---
 # Epic template
 `
-	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "requirement--epic.md"), []byte(epicContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(paths.entityTemplatesDir, "requirement--epic.md"), []byte(epicContent), 0644); err != nil {
 		t.Fatalf("failed to write epic template: %v", err)
 	}
 
@@ -526,16 +547,16 @@ status: draft
 # Checklist
 - [ ] Item 1
 `
-	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "requirement--checklist.md"), []byte(checklistContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(paths.entityTemplatesDir, "requirement--checklist.md"), []byte(checklistContent), 0644); err != nil {
 		t.Fatalf("failed to write checklist template: %v", err)
 	}
 
 	// Unrelated template (different entity type)
-	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "decision.md"), []byte("---\n---\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(paths.entityTemplatesDir, "decision.md"), []byte("---\n---\n"), 0644); err != nil {
 		t.Fatalf("failed to write unrelated template: %v", err)
 	}
 
-	templates, err := testIO.DiscoverEntityTemplates(ctx, "requirement")
+	templates, err := testIO.DiscoverEntityTemplates(paths.entityTemplatesDir, "requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -562,9 +583,9 @@ status: draft
 }
 
 func TestDiscoverEntityTemplates_WithRelations(t *testing.T) {
-	ctx := setupTestContext(t)
+	paths := setupTestPaths(t)
 
-	if err := os.MkdirAll(ctx.EntityTemplatesDir, 0755); err != nil {
+	if err := os.MkdirAll(paths.entityTemplatesDir, 0755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
@@ -578,11 +599,11 @@ _template_relations:
 ---
 # Template with relations
 `
-	if err := os.WriteFile(filepath.Join(ctx.EntityTemplatesDir, "requirement.md"), []byte(templateContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(paths.entityTemplatesDir, "requirement.md"), []byte(templateContent), 0644); err != nil {
 		t.Fatalf("failed to write template: %v", err)
 	}
 
-	templates, err := testIO.DiscoverEntityTemplates(ctx, "requirement")
+	templates, err := testIO.DiscoverEntityTemplates(paths.entityTemplatesDir, "requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

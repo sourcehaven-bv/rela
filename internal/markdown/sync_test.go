@@ -8,7 +8,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
@@ -42,14 +41,7 @@ func TestLoadSyncData(t *testing.T) {
 		WithRelation(rel2).
 		Build()
 
-	ctx := &project.Context{
-		Root:         testCtx.Root,
-		EntitiesDir:  testCtx.EntitiesDir,
-		RelationsDir: testCtx.RelationsDir,
-		CacheDir:     testCtx.CacheDir,
-	}
-
-	data, err := testIO.LoadSyncData(ctx, meta)
+	data, err := testIO.LoadSyncData(testCtx.EntitiesDir, testCtx.RelationsDir, meta)
 	testutil.AssertNoError(t, err)
 
 	if len(data.Entities) != 3 {
@@ -66,14 +58,7 @@ func TestLoadSyncData(t *testing.T) {
 func TestLoadSyncData_EmptyDirectories(t *testing.T) {
 	testCtx, meta, _ := testutil.NewProject(t).Build()
 
-	ctx := &project.Context{
-		Root:         testCtx.Root,
-		EntitiesDir:  testCtx.EntitiesDir,
-		RelationsDir: testCtx.RelationsDir,
-		CacheDir:     testCtx.CacheDir,
-	}
-
-	data, err := testIO.LoadSyncData(ctx, meta)
+	data, err := testIO.LoadSyncData(testCtx.EntitiesDir, testCtx.RelationsDir, meta)
 	testutil.AssertNoError(t, err)
 
 	if len(data.Entities) != 0 {
@@ -94,19 +79,13 @@ func TestLoadSyncData_LoadEntitiesError(t *testing.T) {
 
 	errorIO := NewFileIO(errFS)
 
-	ctx := &project.Context{
-		Root:         "/test",
-		EntitiesDir:  "/test/entities",
-		RelationsDir: "/test/relations",
-	}
-
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {Label: "Requirement"},
 		},
 	}
 
-	_, err := errorIO.LoadSyncData(ctx, meta)
+	_, err := errorIO.LoadSyncData("/test/entities", "/test/relations", meta)
 	if err == nil {
 		t.Error("expected error from LoadSyncData when LoadAllEntities fails")
 	}
@@ -117,17 +96,14 @@ func TestLoadSyncData_LoadEntitiesError(t *testing.T) {
 
 func TestLoadSyncData_ConflictedFiles(t *testing.T) {
 	tmpDir := t.TempDir()
-	ctx := &project.Context{
-		Root:         tmpDir,
-		EntitiesDir:  filepath.Join(tmpDir, "entities"),
-		RelationsDir: filepath.Join(tmpDir, "relations"),
-	}
+	entitiesDir := filepath.Join(tmpDir, "entities")
+	relationsDir := filepath.Join(tmpDir, "relations")
 
-	reqDir := filepath.Join(ctx.EntitiesDir, "requirement")
+	reqDir := filepath.Join(entitiesDir, "requirement")
 	if err := os.MkdirAll(reqDir, 0755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
-	if err := os.MkdirAll(ctx.RelationsDir, 0755); err != nil {
+	if err := os.MkdirAll(relationsDir, 0755); err != nil {
 		t.Fatalf("failed to create relations dir: %v", err)
 	}
 
@@ -165,7 +141,7 @@ relation: depends-on
 to: REQ-001
 ---
 `
-	if err := os.WriteFile(filepath.Join(ctx.RelationsDir, "REQ-001--depends-on--REQ-001.md"), []byte(relationContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(relationsDir, "REQ-001--depends-on--REQ-001.md"), []byte(relationContent), 0644); err != nil {
 		t.Fatalf("failed to create relation: %v", err)
 	}
 
@@ -180,7 +156,7 @@ to: REQ-003
 >>>>>>> feature-branch
 ---
 `
-	conflictedRelationPath := filepath.Join(ctx.RelationsDir, "REQ-001--addresses--conflict.md")
+	conflictedRelationPath := filepath.Join(relationsDir, "REQ-001--addresses--conflict.md")
 	if err := os.WriteFile(conflictedRelationPath, []byte(conflictedRelationContent), 0644); err != nil {
 		t.Fatalf("failed to create conflicted relation: %v", err)
 	}
@@ -191,7 +167,7 @@ to: REQ-003
 		},
 	}
 
-	data, err := testIO.LoadSyncData(ctx, meta)
+	data, err := testIO.LoadSyncData(entitiesDir, relationsDir, meta)
 	if err != nil {
 		t.Fatalf("LoadSyncData failed: %v", err)
 	}

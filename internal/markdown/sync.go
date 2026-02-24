@@ -3,7 +3,6 @@ package markdown
 import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
 // SyncData holds the raw entities and relations loaded from markdown files,
@@ -19,12 +18,12 @@ type SyncData struct {
 // them as raw data. It does NOT populate a graph — that is left to the caller.
 // Files with git conflict markers are skipped and tracked in Conflicted.
 func (f *FileIO) LoadSyncData(
-	ctx *project.Context, meta *metamodel.Metamodel,
+	entitiesDir, relationsDir string, meta *metamodel.Metamodel,
 ) (*SyncData, error) {
 	data := &SyncData{}
 
 	// Load all entities (with conflict tracking)
-	entityResult, err := f.LoadAllEntitiesWithConflicts(ctx.EntitiesDir, meta)
+	entityResult, err := f.LoadAllEntitiesWithConflicts(entitiesDir, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +31,7 @@ func (f *FileIO) LoadSyncData(
 	data.Conflicted = append(data.Conflicted, entityResult.Conflicted...)
 
 	// Load all relations (with conflict tracking)
-	relationResult, err := f.LoadAllRelationsWithConflicts(ctx.RelationsDir)
+	relationResult, err := f.LoadAllRelationsWithConflicts(relationsDir)
 	if err != nil {
 		return nil, err
 	}

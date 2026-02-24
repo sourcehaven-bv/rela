@@ -11,7 +11,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
 // ErrTemplateNotFound is returned when a template file does not exist.
@@ -34,9 +33,9 @@ type EntityTemplate struct {
 
 // LoadEntityTemplate reads an entity template file and returns the parsed document.
 // Returns nil, nil if the template file does not exist.
-func (f *FileIO) LoadEntityTemplate(ctx *project.Context, entityType string) (*Document, error) {
-	path := ctx.EntityTemplatePath(entityType)
-	doc, err := f.loadTemplate(path)
+// The templatePath should be the full path to the template file.
+func (f *FileIO) LoadEntityTemplate(templatePath string) (*Document, error) {
+	doc, err := f.loadTemplate(templatePath)
 	if errors.Is(err, ErrTemplateNotFound) {
 		return nil, nil //nolint:nilnil // nil,nil is intentional when template doesn't exist
 	}
@@ -45,9 +44,9 @@ func (f *FileIO) LoadEntityTemplate(ctx *project.Context, entityType string) (*D
 
 // LoadRelationTemplate reads a relation template file and returns the parsed document.
 // Returns nil, nil if the template file does not exist.
-func (f *FileIO) LoadRelationTemplate(ctx *project.Context, relationType string) (*Document, error) {
-	path := ctx.RelationTemplatePath(relationType)
-	doc, err := f.loadTemplate(path)
+// The templatePath should be the full path to the template file.
+func (f *FileIO) LoadRelationTemplate(templatePath string) (*Document, error) {
+	doc, err := f.loadTemplate(templatePath)
 	if errors.Is(err, ErrTemplateNotFound) {
 		return nil, nil //nolint:nilnil // nil,nil is intentional when template doesn't exist
 	}
@@ -61,8 +60,9 @@ func (f *FileIO) LoadRelationTemplate(ctx *project.Context, relationType string)
 //
 // Returns templates sorted by name (default first, then alphabetically).
 // Returns an empty slice if no templates exist (not an error).
-func (f *FileIO) DiscoverEntityTemplates(ctx *project.Context, entityType string) ([]*EntityTemplate, error) {
-	dir := ctx.EntityTemplatesDir
+// The templatesDir should be the path to the entity templates directory.
+func (f *FileIO) DiscoverEntityTemplates(templatesDir, entityType string) ([]*EntityTemplate, error) {
+	dir := templatesDir
 
 	// Check if templates directory exists
 	if _, err := f.FS.Stat(dir); os.IsNotExist(err) {
@@ -261,13 +261,12 @@ func ApplyRelationTemplate(relation *model.Relation, template *Document) {
 }
 
 // GenerateEntityTemplate creates a template file for an entity type.
-// If variant is non-empty, creates a variant template (e.g., type--variant.md).
 // Returns true if the file was created, false if it already existed (and force is false).
+// The templatePath should be the full path where the template file will be written.
 func (f *FileIO) GenerateEntityTemplate(
-	ctx *project.Context,
+	templatePath string,
 	meta *metamodel.Metamodel,
 	entityType string,
-	variant string,
 	force bool,
 ) (bool, error) {
 	entityDef, ok := meta.GetEntityDef(entityType)
@@ -275,7 +274,7 @@ func (f *FileIO) GenerateEntityTemplate(
 		return false, fmt.Errorf("unknown entity type: %s", entityType)
 	}
 
-	path := ctx.EntityTemplateVariantPath(entityType, variant)
+	path := templatePath
 
 	// Check if file exists
 	if !force {
@@ -362,8 +361,9 @@ func getPropertyDefault(prop metamodel.PropertyDef, meta *metamodel.Metamodel) i
 
 // GenerateRelationTemplate creates a template file for a relation type.
 // Returns true if the file was created, false if it already existed (and force is false).
+// The templatePath should be the full path where the template file will be written.
 func (f *FileIO) GenerateRelationTemplate(
-	ctx *project.Context,
+	templatePath string,
 	meta *metamodel.Metamodel,
 	relationType string,
 	force bool,
@@ -373,7 +373,7 @@ func (f *FileIO) GenerateRelationTemplate(
 		return false, fmt.Errorf("unknown relation type: %s", relationType)
 	}
 
-	path := ctx.RelationTemplatePath(relationType)
+	path := templatePath
 
 	// Check if file exists
 	if !force {
