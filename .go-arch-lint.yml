@@ -222,9 +222,6 @@ deps:
       - storage
 
   # Core domain
-  graph:
-    mayDependOn:
-      - storage
   metamodel:
     mayDependOn:
       - storage

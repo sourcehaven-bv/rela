@@ -384,18 +384,11 @@ func TestPropertyIndexCacheSurvival(t *testing.T) {
 				expectedCounts[te.PropName][te.PropValue]++
 			}
 
-			// Save and reload from cache
-			tmpFile := t.TempDir() + "/cache.json"
-			if err := g.SaveCache(tmpFile, testCacheFS); err != nil {
-				t.Logf("Failed to save cache: %v", err)
-				return false
-			}
+			// Snapshot and restore to verify property index rebuild
+			snap := g.Snapshot()
 
 			g2 := New()
-			if err := g2.LoadCache(tmpFile, testCacheFS); err != nil {
-				t.Logf("Failed to load cache: %v", err)
-				return false
-			}
+			g2.Restore(snap)
 
 			// Verify property index was rebuilt correctly
 			for propName, valueCounts := range expectedCounts {
