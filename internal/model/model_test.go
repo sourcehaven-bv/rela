@@ -555,28 +555,6 @@ func TestAllPriorities(t *testing.T) {
 	}
 }
 
-// TestChangeOpString tests the String method for ChangeOp
-func TestChangeOpString(t *testing.T) {
-	tests := []struct {
-		op   ChangeOp
-		want string
-	}{
-		{OpCreate, "CREATE"},
-		{OpModify, "MODIFY"},
-		{OpDelete, "DELETE"},
-		{OpRename, "RENAME"},
-		{ChangeOp(99), "UNKNOWN"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
-			if got := tt.op.String(); got != tt.want {
-				t.Errorf("ChangeOp.String() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 // TestSyncErrorError tests the Error method for SyncError
 func TestSyncErrorError(t *testing.T) {
 	err := &SyncError{

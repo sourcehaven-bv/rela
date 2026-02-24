@@ -5,7 +5,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
 
@@ -20,7 +19,7 @@ type Watcher struct {
 func NewWatcher(s *Server) (*Watcher, error) {
 	w := &Watcher{server: s}
 
-	handle, err := s.repo.WatchWithHandle(repository.WatchOptions{}, func(events []model.ChangeEvent) {
+	handle, err := s.repo.WatchWithHandle(repository.WatchOptions{}, func(events []repository.ChangeEvent) {
 		for _, e := range events {
 			s.logger.Printf("File changed: %s (%s)", e.Path, e.Op)
 		}

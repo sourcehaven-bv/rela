@@ -14,7 +14,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
 
@@ -66,7 +65,7 @@ func (a *App) StartWatching() (stop func(), err error) {
 		ExtraFiles: []string{configPath},
 		ExtraDirs:  []string{metamodelDir},
 	}
-	return a.repo.Watch(opts, func(events []model.ChangeEvent) {
+	return a.repo.Watch(opts, func(events []repository.ChangeEvent) {
 		for _, e := range events {
 			log.Printf("File changed: %s (%s)", e.Path, e.Op)
 		}
@@ -119,7 +118,7 @@ func (a *App) StartGitFetch() (stop func()) {
 // reload re-syncs the graph and optionally reloads metamodel/config when
 // the corresponding files have changed. It holds the write lock to ensure
 // no handlers are reading stale state during the swap.
-func (a *App) reload(events []model.ChangeEvent) {
+func (a *App) reload(events []repository.ChangeEvent) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

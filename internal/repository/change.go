@@ -1,4 +1,6 @@
-package model
+package repository
+
+import "github.com/Sourcehaven-BV/rela/internal/storage"
 
 // ChangeOp represents the type of change to stored data.
 type ChangeOp int
@@ -34,4 +36,16 @@ func (op ChangeOp) String() string {
 type ChangeEvent struct {
 	Path string
 	Op   ChangeOp
+}
+
+// convertEvents converts storage-level change events to repository-level events.
+func convertEvents(events []storage.ChangeEvent) []ChangeEvent {
+	result := make([]ChangeEvent, len(events))
+	for i, e := range events {
+		result[i] = ChangeEvent{
+			Path: e.Path,
+			Op:   ChangeOp(e.Op),
+		}
+	}
+	return result
 }
