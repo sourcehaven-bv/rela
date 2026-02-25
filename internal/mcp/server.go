@@ -4,52 +4,28 @@ package mcp
 import (
 	"log"
 	"os"
-	"sync"
 
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // Server wraps the MCP server with rela-specific state.
 type Server struct {
-	mcp        *server.MCPServer
-	graph      *graph.Graph
-	meta       *metamodel.Metamodel
-	metaMu     sync.RWMutex // protects meta
-	projectCtx *project.Context
-	repo       repository.Store
-	watcher    *Watcher
-	logger     *log.Logger
-}
-
-// getMeta returns the current metamodel, safe for concurrent access.
-func (s *Server) getMeta() *metamodel.Metamodel {
-	s.metaMu.RLock()
-	defer s.metaMu.RUnlock()
-	return s.meta
-}
-
-// setMeta replaces the current metamodel, safe for concurrent access.
-func (s *Server) setMeta(m *metamodel.Metamodel) {
-	s.metaMu.Lock()
-	defer s.metaMu.Unlock()
-	s.meta = m
+	mcp    *server.MCPServer
+	ws     *workspace.Workspace
+	logger *log.Logger
 }
 
 // NewServer creates a new MCP server for a rela project.
-func NewServer(g *graph.Graph, meta *metamodel.Metamodel, repo repository.Store, version string) *Server {
+func NewServer(ws *workspace.Workspace, version string) *Server {
 	logger := log.New(os.Stderr, "[rela-mcp] ", log.LstdFlags)
 
 	s := &Server{
-		graph:      g,
-		meta:       meta,
-		projectCtx: repo.Paths(),
-		repo:       repo,
-		logger:     logger,
+		ws:     ws,
+		logger: logger,
 	}
 
 	mcpServer := server.NewMCPServer(
@@ -80,19 +56,21 @@ func NewServer(g *graph.Graph, meta *metamodel.Metamodel, repo repository.Store,
 func (s *Server) Serve() error {
 	s.logger.Println("Starting rela MCP server on stdio")
 
-	// Start file watcher
-	watcher, err := NewWatcher(s)
-	if err != nil {
+	// Start file watcher via workspace
+	if err := s.ws.StartWatching(workspace.WatchOptions{
+		OnReload: func(_ []repository.ChangeEvent) {
+			s.logger.Println("Graph re-synced from file changes")
+			if s.mcp != nil {
+				s.mcp.SendNotificationToAllClients(
+					mcpgo.MethodNotificationResourcesListChanged, nil,
+				)
+			}
+		},
+	}); err != nil {
 		s.logger.Printf("Warning: file watcher not started: %v", err)
-	} else {
-		s.watcher = watcher
 	}
 
-	defer func() {
-		if s.watcher != nil {
-			s.watcher.Stop()
-		}
-	}()
+	defer s.ws.StopWatching()
 
 	return server.ServeStdio(s.mcp, server.WithErrorLogger(s.logger))
 }

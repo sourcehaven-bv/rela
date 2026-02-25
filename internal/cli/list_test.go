@@ -9,6 +9,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func setupListTestEnv() {
@@ -18,9 +21,27 @@ func setupListTestEnv() {
 		Root:          "/tmp/test-project",
 		EntitiesDir:   "/tmp/test-project/entities",
 		RelationsDir:  "/tmp/test-project/relations",
+		CacheDir:      "/tmp/test-project/.rela",
 		CachePath:     "/tmp/test-project/.rela/cache.json",
 		MetamodelPath: "/tmp/test-project/metamodel.yaml",
 	}
+}
+
+// setupWorkspaceFromMeta creates a workspace backed by a MemFS so that
+// resolveEntityType (which now delegates to ws) works in tests.
+func setupWorkspaceFromMeta(t *testing.T, m *metamodel.Metamodel) {
+	t.Helper()
+	fs := storage.NewMemFS()
+	ctx := &project.Context{
+		Root: "/tmp/test-project", MetamodelPath: "/tmp/test-project/metamodel.yaml",
+		CacheDir: "/tmp/test-project/.rela", CachePath: "/tmp/test-project/.rela/cache.json",
+		EntitiesDir: "/tmp/test-project/entities", RelationsDir: "/tmp/test-project/relations",
+	}
+	_ = fs.MkdirAll(ctx.EntitiesDir, 0o755)
+	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
+	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+	repo = repository.New(fs, ctx)
+	ws = workspace.NewWithGraph(repo, m, g)
 }
 
 func TestResolveEntityTypeWithAlias(t *testing.T) {
@@ -60,6 +81,7 @@ types:
 	if err != nil {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
+	setupWorkspaceFromMeta(t, meta)
 
 	tests := []struct {
 		name      string
@@ -217,6 +239,7 @@ types:
 	if err != nil {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
+	setupWorkspaceFromMeta(t, meta)
 
 	// Test cases that the list command should handle correctly
 	// The fix ensures that alias resolution happens BEFORE plural stripping

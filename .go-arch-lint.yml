@@ -16,7 +16,6 @@ components:
   cmdCli:           { in: cmd/rela }
   cmdServer:        { in: cmd/rela-server }
   cmdDesktop:       { in: cmd/rela-desktop }
-  mobileApi:        { in: pkg/mobileapi }
 
   # CLI layer
   cli:              { in: internal/cli }
@@ -28,6 +27,9 @@ components:
 
   # Server protocols
   mcp:              { in: internal/mcp }
+
+  # Application services
+  workspace:        { in: internal/workspace }
 
   # Domain services
   automation:       { in: internal/automation }
@@ -93,6 +95,7 @@ deps:
       - project
       - repository
       - storage
+      - workspace
   cmdDesktop:
     mayDependOn:
       - dataentry
@@ -102,22 +105,13 @@ deps:
       - project
       - repository
       - storage
+      - workspace
     canUse:
       - wails
-  mobileApi:
-    mayDependOn:
-      - dataentry
-      - project
-      - repository
-      - storage
-    canUse:
-      - gogit
-
   # CLI layer — orchestrates everything
   cli:
     mayDependOn:
       - attachment
-      - automation
       - dataentryconfig
       - filter
       - graph
@@ -128,10 +122,10 @@ deps:
       - migration
       - output
       - project
-      - rename
       - repository
       - storage
       - views
+      - workspace
     canUse:
       - cobra
       - color
@@ -140,7 +134,6 @@ deps:
   # Web / UI layer
   dataentry:
     mayDependOn:
-      - automation
       - conflict
       - dataentryconfig
       - filter
@@ -152,6 +145,7 @@ deps:
       - project
       - repository
       - search
+      - workspace
     canUse:
       - goldmark
       - gogit
@@ -170,15 +164,25 @@ deps:
       - graph
       - markdown
       - metamodel
-      - migration
-      - project
       - rename
       - repository
       - search
       - views
+      - workspace
     canUse:
       - mcpgo
       - fsnotify
+
+  # Application services
+  workspace:
+    mayDependOn:
+      - automation
+      - graph
+      - markdown
+      - metamodel
+      - migration
+      - rename
+      - repository
 
   # Domain services
   automation:

@@ -7,9 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/automation"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var (
@@ -53,157 +52,60 @@ Examples:
 			return err
 		}
 
-		// Generate or validate ID
-		var entityID string
-		if createID != "" {
-			// User provided ID
-			if validErr := model.ValidateID(createID); validErr != nil {
-				return validErr
-			}
-			// Check if ID already exists
-			if _, exists := g.GetNode(createID); exists {
-				return fmt.Errorf("entity with ID %s already exists", createID)
-			}
-			entityID = createID
-		} else {
-			// Auto-generate ID (only for auto/short ID types)
-			if entityDef.IsManualID() {
-				return fmt.Errorf("entity type %s uses manual IDs; --id is required", resolvedType)
-			}
-			prefixes := entityDef.GetIDPrefixes()
-			if len(prefixes) == 0 {
-				return fmt.Errorf("no ID prefixes defined for type %s", resolvedType)
-			}
-			prefix := prefixes[0]
-			existingIDs := g.AllIDs()
-
-			if entityDef.IsShortID() {
-				entityID = model.GenerateShortID(existingIDs, prefix, g.NodeCount())
-			} else {
-				// Auto (sequential) IDs
-				entityID = model.GenerateNextID(existingIDs, prefix)
-			}
-		}
-
-		// Create entity
-		entity := model.NewEntity(entityID, resolvedType)
-
-		// Load and apply template defaults first (if template exists)
-		template, err := repo.LoadEntityTemplate(resolvedType)
-		if err != nil {
-			return fmt.Errorf("failed to load template: %w", err)
-		}
-		if template != nil {
-			markdown.ApplyEntityTemplate(entity, template)
-		}
-
-		// Parse and apply --property flags (overrides template defaults)
+		// Build properties map
+		props := make(map[string]interface{})
 		for _, prop := range createProperties {
 			key, value, parseErr := parsePropertyFlag(prop)
 			if parseErr != nil {
 				return parseErr
 			}
-			entity.SetString(key, value)
+			props[key] = value
 		}
 
 		// Set the primary property using -t/--title flag
-		// The -t flag sets whichever property is the "primary" required string property
-		// for this entity type (typically "title", but could be "name" for stakeholder, etc.)
 		if strings.TrimSpace(createTitle) != "" {
 			primaryProp := entityDef.GetPrimaryProperty()
 			if primaryProp == "" {
-				// Fallback to "title" if no primary property found
 				primaryProp = "title"
 			}
-			entity.SetString(primaryProp, createTitle)
+			props[primaryProp] = createTitle
 		}
 
-		// Set status: CLI flag > template > metamodel default
+		// Set explicit status/priority flags
 		if createStatus != "" {
-			// CLI flag takes precedence
-			entity.SetString("status", createStatus)
-		} else if entity.GetString("status") == "" {
-			// No CLI flag and no template value, use metamodel default
-			entity.SetString("status", entityDef.GetDefaultStatus(meta))
+			props["status"] = createStatus
 		}
-		// If template set a status and no CLI flag, keep the template value
-
-		// Set priority if provided
 		if createPriority != "" {
-			entity.SetString("priority", createPriority)
+			props["priority"] = createPriority
 		}
 
-		// Set body content
+		// Read body content
 		bodyContent, err := getBodyContent(cmd)
 		if err != nil {
 			return err
 		}
-		if bodyContent != "" {
-			entity.Content = bodyContent
+
+		entity, result, err := ws.CreateEntity(resolvedType, workspace.CreateOptions{
+			ID:         createID,
+			Properties: props,
+			Content:    bodyContent,
+		})
+		if err != nil {
+			return err
 		}
 
-		// Process automations (entity created event)
-		var autoResult *automation.Result
-		if automationEngine != nil {
-			autoResult = automationEngine.Process(automation.Event{
-				Type:   automation.EventEntityCreated,
-				Entity: entity,
-			})
-
-			// Apply property changes from automations
-			for prop, val := range autoResult.PropertiesSet {
-				entity.SetString(prop, val)
-			}
-
-			// Show warnings (but continue - CLI doesn't block for warnings)
-			for _, warning := range autoResult.Warnings {
-				out.WriteWarning("Automation: %s", warning)
-			}
-
-			// Show errors (but continue - they're not fatal)
-			for _, errMsg := range autoResult.Errors {
-				out.WriteWarning("Automation error: %s", errMsg)
-			}
+		// Show automation feedback
+		for _, warning := range result.AutomationWarnings {
+			out.WriteWarning("Automation: %s", warning)
+		}
+		for _, errMsg := range result.AutomationErrors {
+			out.WriteWarning("Automation error: %s", errMsg)
+		}
+		for _, rel := range result.RelationsCreated {
+			out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
 		}
 
-		// Validate entity
-		errs := meta.ValidateEntity(entity)
-		if len(errs) > 0 {
-			var errMsgs []string
-			for _, e := range errs {
-				errMsgs = append(errMsgs, e.Error())
-			}
-			return fmt.Errorf("validation errors:\n  %s", strings.Join(errMsgs, "\n  "))
-		}
-
-		// Write to file (repo computes path and sets entity.FilePath)
-		if err := repo.WriteEntity(entity, meta); err != nil {
-			return fmt.Errorf("failed to write entity: %w", err)
-		}
-
-		// Add to graph
-		g.AddNode(entity)
-
-		// Create any relations from automations
-		if autoResult != nil && len(autoResult.RelationsToCreate) > 0 {
-			for _, rel := range autoResult.RelationsToCreate {
-				// Update the From field to use the actual entity ID
-				rel.From = entity.ID
-				if err := repo.WriteRelation(rel); err != nil {
-					out.WriteWarning("Failed to create automation relation: %v", err)
-				} else {
-					g.AddEdge(rel)
-					out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
-				}
-			}
-		}
-
-		// Save cache
-		if err := saveCache(); err != nil {
-			out.WriteWarning("Failed to save cache: %v", err)
-		}
-
-		out.WriteSuccess("Created %s %s", resolvedType, entityID)
+		out.WriteSuccess("Created %s %s", resolvedType, entity.ID)
 		if outputFormat == "json" {
 			_ = out.WriteEntities([]*model.Entity{entity})
 		}

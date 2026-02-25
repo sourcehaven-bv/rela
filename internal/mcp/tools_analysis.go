@@ -16,7 +16,8 @@ func (s *Server) handleAnalyzeOrphans(
 ) (*mcp.CallToolResult, error) {
 	entityType := request.GetString("type", "")
 
-	orphans := s.graph.FindOrphans()
+	g := s.ws.Graph()
+	orphans := g.FindOrphans()
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
 		var filtered []*model.Entity
@@ -52,7 +53,7 @@ func (s *Server) handleAnalyzeCardinality(
 ) (*mcp.CallToolResult, error) {
 	var violations []cardinalityViolation
 
-	for relName, relDef := range s.getMeta().Relations {
+	for relName, relDef := range s.ws.Meta().Relations {
 		violations = append(violations, s.checkCardinalityForRelation(relName, relDef)...)
 	}
 
@@ -89,13 +90,14 @@ func (s *Server) checkCardinalityBound(
 ) []cardinalityViolation {
 	var violations []cardinalityViolation
 
+	g := s.ws.Graph()
 	for _, entityType := range entityTypes {
-		for _, e := range s.graph.NodesByType(entityType) {
+		for _, e := range g.NodesByType(entityType) {
 			var edges []*model.Relation
 			if outgoing {
-				edges = s.graph.OutgoingEdges(e.ID)
+				edges = g.OutgoingEdges(e.ID)
 			} else {
-				edges = s.graph.IncomingEdges(e.ID)
+				edges = g.IncomingEdges(e.ID)
 			}
 			count := countEdgesByType(edges, relName)
 
@@ -133,9 +135,10 @@ func (s *Server) handleAnalyzeProperties(
 		Errors     []string `json:"errors"`
 	}
 
+	meta := s.ws.Meta()
 	var allErrors []entityErrors
-	for _, entity := range s.graph.AllNodes() {
-		errs := s.getMeta().ValidateEntity(entity)
+	for _, entity := range s.ws.Graph().AllNodes() {
+		errs := meta.ValidateEntity(entity)
 		if len(errs) > 0 {
 			errStrings := make([]string, len(errs))
 			for i, e := range errs {
@@ -169,7 +172,7 @@ func (s *Server) handleAnalyzeProperties(
 func (s *Server) handleAnalyzeValidations(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	rules := s.getMeta().Validations
+	rules := s.ws.Meta().Validations
 	if len(rules) == 0 {
 		return mcp.NewToolResultText("No custom validation rules defined in metamodel"), nil
 	}

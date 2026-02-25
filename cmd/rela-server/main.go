@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // coverage-ignore: main function - entry point
@@ -32,7 +33,12 @@ func main() {
 		log.Fatalf("Failed to initialize repository: %v", err)
 	}
 
-	app, err := dataentry.NewApp(repo)
+	ws, err := workspace.New(repo)
+	if err != nil {
+		log.Fatalf("Failed to initialize workspace: %v", err)
+	}
+
+	app, err := dataentry.NewApp(ws)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError
 		if errors.As(err, &configErr) {

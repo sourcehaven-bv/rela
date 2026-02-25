@@ -34,6 +34,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // Version is set at build time via -ldflags.
@@ -124,7 +125,15 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	app, err := dataentry.NewApp(repo)
+	ws, wsErr := workspace.New(repo)
+	if wsErr != nil {
+		d.mu.Lock()
+		d.loadErr = wsErr.Error()
+		d.mu.Unlock()
+		return wsErr.Error()
+	}
+
+	app, err := dataentry.NewApp(ws)
 	if err != nil {
 		d.mu.Lock()
 		d.loadErr = err.Error()

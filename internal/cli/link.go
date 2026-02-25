@@ -1,12 +1,7 @@
 package cli
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
-
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 var linkCmd = &cobra.Command{
@@ -24,50 +19,9 @@ Examples:
 		relationType := args[1]
 		toID := args[2]
 
-		// Check that both entities exist
-		fromEntity, ok := g.GetNode(fromID)
-		if !ok {
-			return fmt.Errorf("source entity not found: %s", fromID)
-		}
-
-		toEntity, ok := g.GetNode(toID)
-		if !ok {
-			return fmt.Errorf("target entity not found: %s", toID)
-		}
-
-		// Validate relation against metamodel
-		if err := meta.ValidateRelation(relationType, fromEntity.Type, toEntity.Type); err != nil {
-			return err
-		}
-
-		// Check if relation already exists
-		if _, exists := g.GetEdge(fromID, relationType, toID); exists {
-			return fmt.Errorf("relation already exists: %s --%s--> %s", fromID, relationType, toID)
-		}
-
-		// Create relation
-		relation := model.NewRelation(fromID, relationType, toID)
-
-		// Load and apply template defaults (if template exists)
-		template, err := repo.LoadRelationTemplate(relationType)
+		_, err := ws.CreateRelation(fromID, relationType, toID)
 		if err != nil {
-			return fmt.Errorf("failed to load template: %w", err)
-		}
-		if template != nil {
-			markdown.ApplyRelationTemplate(relation, template)
-		}
-
-		// Write to file (repo computes path and sets relation.FilePath)
-		if err := repo.WriteRelation(relation); err != nil {
-			return fmt.Errorf("failed to write relation: %w", err)
-		}
-
-		// Add to graph
-		g.AddEdge(relation)
-
-		// Save cache
-		if err := saveCache(); err != nil {
-			out.WriteWarning("Failed to save cache: %v", err)
+			return err
 		}
 
 		out.WriteSuccess("Created link: %s --%s--> %s", fromID, relationType, toID)

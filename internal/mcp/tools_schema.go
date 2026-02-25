@@ -13,7 +13,7 @@ import (
 func (s *Server) handleGetMetamodel(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	meta := s.getMeta()
+	meta := s.ws.Meta()
 	result := map[string]interface{}{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
@@ -44,7 +44,8 @@ func (s *Server) handleListEntityTypes(
 		Count      int                              `json:"count"`
 	}
 
-	meta := s.getMeta()
+	meta := s.ws.Meta()
+	g := s.ws.Graph()
 	types := meta.EntityTypes()
 	natsort.Strings(types)
 
@@ -60,7 +61,7 @@ func (s *Server) handleListEntityTypes(
 			IDType:     def.GetIDType(),
 			IDPrefixes: def.GetIDPrefixes(),
 			Properties: def.Properties,
-			Count:      len(s.graph.NodesByType(name)),
+			Count:      len(g.NodesByType(name)),
 		})
 	}
 
@@ -84,7 +85,8 @@ func (s *Server) handleListRelationTypes(
 		Count       int      `json:"count"`
 	}
 
-	meta := s.getMeta()
+	meta := s.ws.Meta()
+	g := s.ws.Graph()
 	types := meta.RelationTypes()
 	natsort.Strings(types)
 
@@ -100,7 +102,7 @@ func (s *Server) handleListRelationTypes(
 			From:        def.GetFrom(),
 			To:          def.GetTo(),
 			Description: def.GetDescription(),
-			Count:       len(s.graph.RelationsOfType(name)),
+			Count:       len(g.RelationsOfType(name)),
 		}
 		if def.Inverse != nil {
 			info.Inverse = def.Inverse.GetID()

@@ -16,7 +16,7 @@ import (
 
 func (s *Server) resolveType(typeName string) string {
 	typeName = strings.TrimSpace(typeName)
-	meta := s.getMeta()
+	meta := s.ws.Meta()
 	resolved := meta.ResolveAlias(typeName)
 	if _, ok := meta.GetEntityDef(resolved); ok {
 		return resolved
@@ -42,28 +42,11 @@ func trimID(id string) string {
 
 func (s *Server) resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
 	resolved := s.resolveType(typeName)
-	def, ok := s.getMeta().GetEntityDef(resolved)
+	def, ok := s.ws.Meta().GetEntityDef(resolved)
 	if !ok {
 		return "", nil, fmt.Errorf("unknown entity type: %s", typeName)
 	}
 	return resolved, def, nil
-}
-
-// generateEntityID generates a new ID for an entity based on its type configuration.
-// Returns empty string for manual ID types (caller must provide ID).
-func (s *Server) generateEntityID(entityDef *metamodel.EntityDef) string {
-	if entityDef.IsManualID() {
-		return ""
-	}
-	prefixes := entityDef.GetIDPrefixes()
-	if len(prefixes) == 0 {
-		return ""
-	}
-	existingIDs := s.graph.AllIDs()
-	if entityDef.IsShortID() {
-		return model.GenerateShortID(existingIDs, prefixes[0], s.graph.NodeCount())
-	}
-	return model.GenerateNextID(existingIDs, prefixes[0])
 }
 
 func (s *Server) extractProperties(request mcp.CallToolRequest) map[string]interface{} {
@@ -113,7 +96,7 @@ func filterNilAndEmpty(props map[string]interface{}) map[string]interface{} {
 }
 
 func (s *Server) validateEntity(entity *model.Entity) *mcp.CallToolResult {
-	errs := s.getMeta().ValidateEntity(entity)
+	errs := s.ws.Meta().ValidateEntity(entity)
 	if len(errs) == 0 {
 		return nil
 	}
@@ -125,13 +108,12 @@ func (s *Server) validateEntity(entity *model.Entity) *mcp.CallToolResult {
 }
 
 // validatePropertyNames checks if all property names exist in the metamodel for the given entity type.
-// Returns an error result if any unknown properties are found, nil otherwise.
 func (s *Server) validatePropertyNames(entityType string, properties map[string]interface{}) *mcp.CallToolResult {
 	if properties == nil {
 		return nil
 	}
 
-	meta := s.getMeta()
+	meta := s.ws.Meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
 		return nil // Type validation will catch this
@@ -145,7 +127,6 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 	}
 
 	if len(unknown) > 0 {
-		// Get list of valid properties for helpful error message
 		valid := make([]string, 0, len(entityDef.Properties))
 		for name := range entityDef.Properties {
 			valid = append(valid, name)
@@ -158,14 +139,6 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 	return nil
 }
 
-func (s *Server) saveCache() {
-	if s.repo != nil && s.graph != nil {
-		if err := s.repo.SaveCache(s.graph); err != nil {
-			s.logger.Printf("Warning: failed to save cache: %v", err)
-		}
-	}
-}
-
 func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
 	whenFilters, err := filter.ParseAll(rule.When)
 	if err != nil {
@@ -176,14 +149,15 @@ func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Ent
 		return nil
 	}
 
+	g := s.ws.Graph()
 	var entities []*model.Entity
 	if rule.EntityType != "" {
-		entities = s.graph.NodesByType(rule.EntityType)
+		entities = g.NodesByType(rule.EntityType)
 	} else {
-		entities = s.graph.AllNodes()
+		entities = g.AllNodes()
 	}
 
-	meta := s.getMeta()
+	meta := s.ws.Meta()
 	var violations []*model.Entity
 	for _, entity := range entities {
 		entityDef, ok := meta.GetEntityDef(entity.Type)
@@ -198,7 +172,6 @@ func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Ent
 			}
 		}
 
-		// Check property-based then conditions
 		if len(thenFilters) > 0 {
 			satisfies, matchErr := filter.MatchAll(entity, thenFilters, entityDef, meta)
 			if matchErr != nil {
@@ -211,7 +184,6 @@ func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Ent
 			}
 		}
 
-		// Check content rules
 		if rule.Content != nil {
 			if !markdown.CheckContentRule(entity, rule.Content) {
 				violations = append(violations, entity)

@@ -9,9 +9,9 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func (s *Server) handleListEntities(
@@ -22,12 +22,13 @@ func (s *Server) handleListEntities(
 	limit := request.GetInt("limit", 0)
 	offset := request.GetInt("offset", 0)
 
+	g := s.ws.Graph()
 	var entities []*model.Entity
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
-		entities = s.graph.NodesByType(resolved)
+		entities = g.NodesByType(resolved)
 	} else {
-		entities = s.graph.AllNodes()
+		entities = g.AllNodes()
 	}
 
 	// Apply filter
@@ -60,12 +61,13 @@ func (s *Server) handleShowEntity(
 	}
 	id = trimID(id)
 
-	entity, ok := s.graph.GetNode(id)
+	g := s.ws.Graph()
+	entity, ok := g.GetNode(id)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
-	text, err := convertEntity(entity, s.graph, true)
+	text, err := convertEntity(entity, g, true)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -90,12 +92,13 @@ func (s *Server) handleSearchEntities(
 		score  float64
 	}
 
+	g := s.ws.Graph()
 	var candidates []*model.Entity
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
-		candidates = s.graph.NodesByType(resolved)
+		candidates = g.NodesByType(resolved)
 	} else {
-		candidates = s.graph.AllNodes()
+		candidates = g.AllNodes()
 	}
 
 	var scoredResults []scored
@@ -140,7 +143,7 @@ func (s *Server) handleCreateEntity(
 	customID := request.GetString("id", "")
 
 	// Resolve type
-	resolvedType, entityDef, resolveErr := s.resolveEntityType(typeName)
+	resolvedType, _, resolveErr := s.resolveEntityType(typeName)
 	if resolveErr != nil {
 		return mcp.NewToolResultError(resolveErr.Error()), nil
 	}
@@ -153,66 +156,20 @@ func (s *Server) handleCreateEntity(
 		return errResult, nil
 	}
 
-	// Generate or validate ID
-	var entityID string
-	if customID != "" {
-		if validErr := model.ValidateID(customID); validErr != nil {
-			return mcp.NewToolResultError(validErr.Error()), nil
-		}
-		if _, exists := s.graph.GetNode(customID); exists {
-			return mcp.NewToolResultError(fmt.Sprintf("entity with ID %s already exists", customID)), nil
-		}
-		entityID = customID
-	} else {
-		entityID = s.generateEntityID(entityDef)
-		if entityID == "" {
-			return mcp.NewToolResultError(
-				fmt.Sprintf("entity type %s uses manual IDs; provide an 'id' parameter", resolvedType)), nil
-		}
+	entity, _, createErr := s.ws.CreateEntity(resolvedType, workspace.CreateOptions{
+		ID:         customID,
+		Properties: properties,
+		Content:    content,
+	})
+	if createErr != nil {
+		return mcp.NewToolResultError(createErr.Error()), nil
 	}
 
-	// Create entity
-	entity := model.NewEntity(entityID, resolvedType)
-
-	// Load and apply template defaults
-	template, templateErr := s.repo.LoadEntityTemplate(resolvedType)
-	if templateErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to load template: %v", templateErr)), nil
-	}
-	if template != nil {
-		markdown.ApplyEntityTemplate(entity, template)
-	}
-
-	// Apply properties (override template defaults)
-	for k, v := range properties {
-		entity.Properties[k] = v
-	}
-
-	// Set default status if not provided
-	if entity.GetString("status") == "" {
-		entity.SetString("status", entityDef.GetDefaultStatus(s.getMeta()))
-	}
-
-	entity.Content = content
-
-	// Validate
-	if errResult := s.validateEntity(entity); errResult != nil {
-		return errResult, nil
-	}
-
-	// Write to file
-	if writeErr := s.repo.WriteEntity(entity, s.getMeta()); writeErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to write entity: %v", writeErr)), nil
-	}
-
-	s.graph.AddNode(entity)
-	s.saveCache()
-
-	text, err := convertEntity(entity, s.graph, false)
+	text, err := convertEntity(entity, s.ws.Graph(), false)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Created %s %s\n\n%s", resolvedType, entityID, text)), nil
+	return mcp.NewToolResultText(fmt.Sprintf("Created %s %s\n\n%s", resolvedType, entity.ID, text)), nil
 }
 
 func (s *Server) handleUpdateEntity(
@@ -224,7 +181,8 @@ func (s *Server) handleUpdateEntity(
 	}
 	id = trimID(id)
 
-	entity, ok := s.graph.GetNode(id)
+	g := s.ws.Graph()
+	entity, ok := g.GetNode(id)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
@@ -241,6 +199,9 @@ func (s *Server) handleUpdateEntity(
 		return errResult, nil
 	}
 
+	// Clone for automation (old state)
+	oldEntity := entity.Clone()
+
 	// Apply property updates
 	for k, v := range properties {
 		entity.Properties[k] = v
@@ -249,20 +210,11 @@ func (s *Server) handleUpdateEntity(
 		entity.Content = content
 	}
 
-	// Validate
-	if errResult := s.validateEntity(entity); errResult != nil {
-		return errResult, nil
+	if _, updateErr := s.ws.UpdateEntity(entity, oldEntity); updateErr != nil {
+		return mcp.NewToolResultError(updateErr.Error()), nil
 	}
 
-	// Write to file
-	if writeErr := s.repo.WriteEntity(entity, s.getMeta()); writeErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to write entity: %v", writeErr)), nil
-	}
-
-	s.graph.AddNode(entity)
-	s.saveCache()
-
-	text, convertErr := convertEntity(entity, s.graph, true)
+	text, convertErr := convertEntity(entity, g, true)
 	if convertErr != nil {
 		return mcp.NewToolResultError(convertErr.Error()), nil
 	}
@@ -279,13 +231,15 @@ func (s *Server) handleDeleteEntity(
 	id = trimID(id)
 	cascade := request.GetBool("cascade", false)
 
-	entity, ok := s.graph.GetNode(id)
+	g := s.ws.Graph()
+	entity, ok := g.GetNode(id)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
-	incoming := s.graph.IncomingEdges(id)
-	outgoing := s.graph.OutgoingEdges(id)
+	// Check for relations (for better error message)
+	incoming := g.IncomingEdges(id)
+	outgoing := g.OutgoingEdges(id)
 	totalRelations := len(incoming) + len(outgoing)
 
 	if totalRelations > 0 && !cascade {
@@ -293,33 +247,14 @@ func (s *Server) handleDeleteEntity(
 			fmt.Sprintf("entity %s has %d relation(s); set cascade=true to delete them too", id, totalRelations)), nil
 	}
 
-	// Delete relations
-	if cascade {
-		for _, rel := range incoming {
-			if delErr := s.repo.DeleteRelation(rel.From, rel.Type, rel.To); delErr != nil {
-				s.logger.Printf("Warning: failed to delete relation file: %v", delErr)
-			}
-			s.graph.RemoveEdge(rel.From, rel.Type, rel.To)
-		}
-		for _, rel := range outgoing {
-			if delErr := s.repo.DeleteRelation(rel.From, rel.Type, rel.To); delErr != nil {
-				s.logger.Printf("Warning: failed to delete relation file: %v", delErr)
-			}
-			s.graph.RemoveEdge(rel.From, rel.Type, rel.To)
-		}
+	result, delErr := s.ws.DeleteEntity(entity.Type, id, cascade)
+	if delErr != nil {
+		return mcp.NewToolResultError(delErr.Error()), nil
 	}
-
-	// Delete entity file
-	if delErr := s.repo.DeleteEntity(entity.Type, id, s.getMeta()); delErr != nil {
-		s.logger.Printf("Warning: failed to delete entity file: %v", delErr)
-	}
-
-	s.graph.RemoveNode(id)
-	s.saveCache()
 
 	msg := fmt.Sprintf("Deleted %s", id)
-	if cascade && totalRelations > 0 {
-		msg += fmt.Sprintf(" and %d relation(s)", totalRelations)
+	if cascade && result.RelationsDeleted > 0 {
+		msg += fmt.Sprintf(" and %d relation(s)", result.RelationsDeleted)
 	}
 	return mcp.NewToolResultText(msg), nil
 }
@@ -342,25 +277,24 @@ func (s *Server) handleRenameEntity(
 	dryRun := request.GetBool("dry_run", false)
 
 	// Get entity to find type
-	entity, ok := s.graph.GetNode(oldID)
+	entity, ok := s.ws.Graph().GetNode(oldID)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", oldID)), nil
 	}
 
 	// Pause watcher during rename
-	if s.watcher != nil {
-		s.watcher.Pause()
-		defer s.watcher.Resume()
-	}
+	s.ws.PauseWatching()
+	defer s.ws.ResumeWatching()
 
-	opts := rename.Options{DryRun: dryRun}
-	result, renameErr := rename.Rename(s.repo, s.getMeta(), s.graph, entity.Type, oldID, newID, opts)
+	result, renameErr := s.ws.RenameEntity(entity.Type, oldID, newID, dryRun)
 	if renameErr != nil {
 		return mcp.NewToolResultError(renameErr.Error()), nil
 	}
 
 	if !dryRun {
-		s.saveCache()
+		if cacheErr := s.ws.SaveCache(); cacheErr != nil {
+			s.logger.Printf("Warning: failed to save cache: %v", cacheErr)
+		}
 	}
 
 	return mcp.NewToolResultText(formatRenameResult(result, dryRun)), nil

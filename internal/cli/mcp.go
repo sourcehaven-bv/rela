@@ -6,10 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // coverage-ignore: MCP command - requires stdio server
@@ -62,25 +62,12 @@ func runMCPServer() error {
 
 	mcpRepo := repository.New(cliFS, ctx)
 
-	m, err := mcpRepo.LoadMetamodel()
+	mcpWs, err := workspace.New(mcpRepo)
 	if err != nil {
-		return fmt.Errorf("failed to load metamodel: %w", err)
+		return fmt.Errorf("failed to initialize workspace: %w", err)
 	}
 
-	gr := graph.New()
-	if mcpRepo.CacheExists() {
-		if cacheErr := mcpRepo.LoadCache(gr); cacheErr != nil {
-			if _, syncErr := mcpRepo.Sync(m, gr); syncErr != nil {
-				return fmt.Errorf("failed to sync: %w", syncErr)
-			}
-		}
-	} else {
-		if _, syncErr := mcpRepo.Sync(m, gr); syncErr != nil {
-			return fmt.Errorf("failed to sync: %w", syncErr)
-		}
-	}
-
-	srv := relamcp.NewServer(gr, m, mcpRepo, Version)
+	srv := relamcp.NewServer(mcpWs, Version)
 	return srv.Serve()
 }
 

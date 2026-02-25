@@ -2,11 +2,14 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var (
@@ -62,38 +65,17 @@ Examples:
 			}
 		}
 
-		// Delete relations first if cascade
-		if deleteCascade {
-			for _, rel := range incoming {
-				if err := repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil && !os.IsNotExist(err) {
-					out.WriteWarning("Failed to delete relation file: %v", err)
-				}
-				g.RemoveEdge(rel.From, rel.Type, rel.To)
+		result, err := ws.DeleteEntity(entity.Type, entityID, deleteCascade)
+		if err != nil {
+			if errors.Is(err, workspace.ErrHasRelations) {
+				return fmt.Errorf("entity %s has relation(s); use --cascade to delete them too", entityID)
 			}
-			for _, rel := range outgoing {
-				if err := repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil && !os.IsNotExist(err) {
-					out.WriteWarning("Failed to delete relation file: %v", err)
-				}
-				g.RemoveEdge(rel.From, rel.Type, rel.To)
-			}
-		}
-
-		// Delete entity file
-		if err := repo.DeleteEntity(entity.Type, entityID, meta); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to delete entity file: %w", err)
-		}
-
-		// Remove from graph
-		g.RemoveNode(entityID)
-
-		// Save cache
-		if err := saveCache(); err != nil {
-			out.WriteWarning("Failed to save cache: %v", err)
+			return err
 		}
 
 		out.WriteSuccess("Deleted %s", entityID)
-		if deleteCascade && totalRelations > 0 {
-			out.WriteMessage("  Also deleted %d relation(s)", totalRelations)
+		if deleteCascade && result.RelationsDeleted > 0 {
+			out.WriteMessage("  Also deleted %d relation(s)", result.RelationsDeleted)
 		}
 
 		return nil

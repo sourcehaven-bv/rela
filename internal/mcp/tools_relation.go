@@ -8,7 +8,6 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -21,7 +20,7 @@ func (s *Server) handleListRelations(
 	limit := request.GetInt("limit", 0)
 	offset := request.GetInt("offset", 0)
 
-	edges := s.graph.AllEdges()
+	edges := s.ws.Graph().AllEdges()
 
 	filtered := make([]*model.Relation, 0, len(edges))
 	for _, e := range edges {
@@ -76,47 +75,10 @@ func (s *Server) handleCreateRelation(
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	toID = trimID(toID)
-	content := request.GetString("content", "")
 
-	// Check entities exist
-	fromEntity, ok := s.graph.GetNode(fromID)
-	if !ok {
-		return mcp.NewToolResultError(fmt.Sprintf("source entity not found: %s", fromID)), nil
+	if _, createErr := s.ws.CreateRelation(fromID, relType, toID); createErr != nil {
+		return mcp.NewToolResultError(createErr.Error()), nil
 	}
-	toEntity, ok := s.graph.GetNode(toID)
-	if !ok {
-		return mcp.NewToolResultError(fmt.Sprintf("target entity not found: %s", toID)), nil
-	}
-
-	// Validate relation
-	if valErr := s.getMeta().ValidateRelation(relType, fromEntity.Type, toEntity.Type); valErr != nil {
-		return mcp.NewToolResultError(valErr.Error()), nil
-	}
-
-	// Check duplicate
-	if _, exists := s.graph.GetEdge(fromID, relType, toID); exists {
-		return mcp.NewToolResultError(
-			fmt.Sprintf("relation already exists: %s --%s--> %s", fromID, relType, toID)), nil
-	}
-
-	relation := model.NewRelation(fromID, relType, toID)
-	relation.Content = content
-
-	// Load and apply template
-	template, templateErr := s.repo.LoadRelationTemplate(relType)
-	if templateErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to load template: %v", templateErr)), nil
-	}
-	if template != nil {
-		markdown.ApplyRelationTemplate(relation, template)
-	}
-
-	if writeErr := s.repo.WriteRelation(relation); writeErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to write relation: %v", writeErr)), nil
-	}
-
-	s.graph.AddEdge(relation)
-	s.saveCache()
 
 	return mcp.NewToolResultText(
 		fmt.Sprintf("Created link: %s --%s--> %s", fromID, relType, toID)), nil
@@ -141,18 +103,15 @@ func (s *Server) handleDeleteRelation(
 	}
 	toID = trimID(toID)
 
-	_, exists := s.graph.GetEdge(fromID, relType, toID)
+	_, exists := s.ws.Graph().GetEdge(fromID, relType, toID)
 	if !exists {
 		return mcp.NewToolResultError(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil
 	}
 
-	if delErr := s.repo.DeleteRelation(fromID, relType, toID); delErr != nil {
-		s.logger.Printf("Warning: failed to delete relation file: %v", delErr)
+	if delErr := s.ws.DeleteRelation(fromID, relType, toID); delErr != nil {
+		return mcp.NewToolResultError(delErr.Error()), nil
 	}
-
-	s.graph.RemoveEdge(fromID, relType, toID)
-	s.saveCache()
 
 	return mcp.NewToolResultText(
 		fmt.Sprintf("Removed link: %s --%s--> %s", fromID, relType, toID)), nil

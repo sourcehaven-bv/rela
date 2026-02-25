@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -21,23 +20,13 @@ Examples:
 		relationType := args[1]
 		toID := args[2]
 
-		// Check if relation exists
-		_, exists := g.GetEdge(fromID, relationType, toID)
-		if !exists {
+		// Check if relation exists (for better error message)
+		if _, exists := g.GetEdge(fromID, relationType, toID); !exists {
 			return fmt.Errorf("relation not found: %s --%s--> %s", fromID, relationType, toID)
 		}
 
-		// Delete file
-		if err := repo.DeleteRelation(fromID, relationType, toID); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to delete relation file: %w", err)
-		}
-
-		// Remove from graph
-		g.RemoveEdge(fromID, relationType, toID)
-
-		// Save cache
-		if err := saveCache(); err != nil {
-			out.WriteWarning("Failed to save cache: %v", err)
+		if err := ws.DeleteRelation(fromID, relationType, toID); err != nil {
+			return err
 		}
 
 		out.WriteSuccess("Removed link: %s --%s--> %s", fromID, relationType, toID)

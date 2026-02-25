@@ -17,20 +17,10 @@ import (
 func (s *Server) handleRefresh(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	// Reload metamodel in case it changed
-	newMeta, err := s.repo.LoadMetamodel()
-	if err != nil {
-		s.logger.Printf("Metamodel reload error (keeping previous version): %v", err)
-	} else {
-		s.setMeta(newMeta)
-	}
-
-	syncResult, err := s.repo.Sync(s.getMeta(), s.graph)
+	syncResult, err := s.ws.Reload()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
 	}
-
-	s.saveCache()
 
 	msg := fmt.Sprintf("Refreshed: %d entities, %d relations loaded",
 		syncResult.EntitiesLoaded, syncResult.RelationsLoaded)
@@ -49,16 +39,17 @@ func (s *Server) handleExport(
 	}
 	entityType := request.GetString("type", "")
 
+	g := s.ws.Graph()
 	var entities []*model.Entity
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
-		entities = s.graph.NodesByType(resolved)
+		entities = g.NodesByType(resolved)
 	} else {
-		entities = s.graph.AllNodes()
+		entities = g.AllNodes()
 	}
 	sortEntitiesByID(entities)
 
-	edges := s.graph.AllEdges()
+	edges := g.AllEdges()
 	sortRelations(edges)
 
 	switch format {
