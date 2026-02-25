@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 )
 
 var (
@@ -98,62 +96,20 @@ Examples:
 			return fmt.Errorf("no updates specified")
 		}
 
-		// Process automations (entity updated event)
-		var autoResult *automation.Result
-		if automationEngine != nil {
-			autoResult = automationEngine.Process(automation.Event{
-				Type:      automation.EventEntityUpdated,
-				Entity:    entity,
-				OldEntity: oldEntity,
-			})
-
-			// Apply property changes from automations
-			for prop, val := range autoResult.PropertiesSet {
-				entity.SetString(prop, val)
-			}
-
-			// Show warnings (but continue - CLI doesn't block for warnings)
-			for _, warning := range autoResult.Warnings {
-				out.WriteWarning("Automation: %s", warning)
-			}
-
-			// Show errors (but continue - they're not fatal)
-			for _, errMsg := range autoResult.Errors {
-				out.WriteWarning("Automation error: %s", errMsg)
-			}
+		result, err := ws.UpdateEntity(entity, oldEntity)
+		if err != nil {
+			return err
 		}
 
-		// Validate entity
-		errs := meta.ValidateEntity(entity)
-		if len(errs) > 0 {
-			return fmt.Errorf("validation error: %w", errs[0])
+		// Show automation feedback
+		for _, warning := range result.AutomationWarnings {
+			out.WriteWarning("Automation: %s", warning)
 		}
-
-		// Write to file (repo computes path and sets entity.FilePath)
-		if err := repo.WriteEntity(entity, meta); err != nil {
-			return fmt.Errorf("failed to write entity: %w", err)
+		for _, errMsg := range result.AutomationErrors {
+			out.WriteWarning("Automation error: %s", errMsg)
 		}
-
-		// Update in graph
-		g.AddNode(entity)
-
-		// Create any relations from automations
-		if autoResult != nil && len(autoResult.RelationsToCreate) > 0 {
-			for _, rel := range autoResult.RelationsToCreate {
-				// Ensure From field uses the entity ID
-				rel.From = entity.ID
-				if err := repo.WriteRelation(rel); err != nil {
-					out.WriteWarning("Failed to create automation relation: %v", err)
-				} else {
-					g.AddEdge(rel)
-					out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
-				}
-			}
-		}
-
-		// Save cache
-		if err := saveCache(); err != nil {
-			out.WriteWarning("Failed to save cache: %v", err)
+		for _, rel := range result.RelationsCreated {
+			out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
 		}
 
 		out.WriteSuccess("Updated %s", entityID)

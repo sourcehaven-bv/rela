@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // makeToolRequest creates a CallToolRequest with the given arguments.
@@ -873,11 +875,14 @@ func makeTestServerWithViews(t *testing.T, viewsYAML string) *Server {
 		}
 	}
 	testFS := storage.NewOsFS()
+	ctx := &project.Context{Root: tmpDir}
+	repo := repository.New(testFS, ctx)
+	g := graph.New()
+	meta := &metamodel.Metamodel{}
+	ws := workspace.NewWithGraph(repo, meta, g)
 	return &Server{
-		projectCtx: &project.Context{Root: tmpDir},
-		graph:      graph.New(),
-		meta:       &metamodel.Metamodel{},
-		repo:       repository.New(testFS, &project.Context{Root: tmpDir}),
+		ws:     ws,
+		logger: log.New(&strings.Builder{}, "", 0),
 	}
 }
 

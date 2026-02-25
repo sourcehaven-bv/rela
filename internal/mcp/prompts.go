@@ -64,20 +64,21 @@ func (s *Server) handleAnalyzeTraceabilityPrompt(
 		return nil, fmt.Errorf("id argument is required")
 	}
 
-	entity, ok := s.graph.GetNode(id)
+	g := s.ws.Graph()
+	entity, ok := g.GetNode(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
 	// Get entity details
-	entityText, err := convertEntity(entity, s.graph, true)
+	entityText, err := convertEntity(entity, g, true)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get trace trees
-	traceFrom := s.graph.TraceFrom(id, 0)
-	traceTo := s.graph.TraceTo(id, 0)
+	traceFrom := g.TraceFrom(id, 0)
+	traceTo := g.TraceTo(id, 0)
 
 	var traceFromText, traceToText string
 	if traceFrom != nil {
@@ -125,7 +126,8 @@ func (s *Server) handleReviewOrphansPrompt(
 ) (*mcp.GetPromptResult, error) {
 	entityType := request.Params.Arguments["type"]
 
-	orphans := s.graph.FindOrphans()
+	g := s.ws.Graph()
+	orphans := g.FindOrphans()
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
 		var filtered []*model.Entity
@@ -145,7 +147,7 @@ func (s *Server) handleReviewOrphansPrompt(
 	}
 
 	// Get available relation types
-	meta := s.getMeta()
+	meta := s.ws.Meta()
 	relTypes := meta.RelationTypes()
 	natsort.Strings(relTypes)
 	var relInfo strings.Builder
@@ -190,13 +192,14 @@ func (s *Server) handleSummarizeProjectPrompt(
 	_ context.Context, _ mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	// Entity counts by type
-	meta := s.getMeta()
+	meta := s.ws.Meta()
+	g := s.ws.Graph()
 	entityTypes := meta.EntityTypes()
 	natsort.Strings(entityTypes)
 	var entityCounts strings.Builder
 	totalEntities := 0
 	for _, t := range entityTypes {
-		count := len(s.graph.NodesByType(t))
+		count := len(g.NodesByType(t))
 		totalEntities += count
 		def, _ := meta.GetEntityDef(t)
 		label := t
@@ -212,13 +215,13 @@ func (s *Server) handleSummarizeProjectPrompt(
 	var relCounts strings.Builder
 	totalRelations := 0
 	for _, t := range relTypes {
-		count := len(s.graph.RelationsOfType(t))
+		count := len(g.RelationsOfType(t))
 		totalRelations += count
 		fmt.Fprintf(&relCounts, "- %s: %d\n", t, count)
 	}
 
 	// Analysis summary
-	orphanCount := len(s.graph.FindOrphans())
+	orphanCount := len(g.FindOrphans())
 
 	content := fmt.Sprintf(`Generate a comprehensive project summary based on the following data.
 
@@ -266,18 +269,19 @@ func (s *Server) handleReviewEntityPrompt(
 		return nil, fmt.Errorf("id argument is required")
 	}
 
-	entity, ok := s.graph.GetNode(id)
+	g := s.ws.Graph()
+	entity, ok := g.GetNode(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
-	entityText, err := convertEntity(entity, s.graph, true)
+	entityText, err := convertEntity(entity, g, true)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get entity type schema
-	meta := s.getMeta()
+	meta := s.ws.Meta()
 	def, _ := meta.GetEntityDef(entity.Type)
 	var schemaText string
 	if def != nil {

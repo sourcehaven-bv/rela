@@ -80,18 +80,19 @@ func (s *Server) handleExecuteView(
 			fmt.Sprintf("view not found: %s (available: %s)", viewName, strings.Join(names, ", "))), nil
 	}
 
-	meta := s.getMeta()
+	meta := s.ws.Meta()
+	g := s.ws.Graph()
 	if validationErr := viewDef.Validate(meta, viewName); validationErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("view validation failed: %v", validationErr)), nil
 	}
 
-	engine := views.NewEngine(s.graph, meta)
+	engine := views.NewEngine(g, meta)
 	result, execErr := engine.Execute(viewDef, entryID)
 	if execErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("view execution failed: %v", execErr)), nil
 	}
 
-	output, fmtErr := views.Format(result, format, s.graph, meta)
+	output, fmtErr := views.Format(result, format, g, meta)
 	if fmtErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to format output: %v", fmtErr)), nil
 	}
@@ -100,5 +101,5 @@ func (s *Server) handleExecuteView(
 }
 
 func (s *Server) loadViews() (*views.File, error) {
-	return s.repo.LoadViews()
+	return s.ws.Repo().LoadViews()
 }

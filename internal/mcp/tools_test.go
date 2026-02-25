@@ -12,13 +12,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // makeTestServer creates a Server with a populated graph for handler testing.
 func makeTestServer(t *testing.T) *Server {
 	t.Helper()
-	tmpDir := t.TempDir()
 
 	g := graph.New()
 	meta := &metamodel.Metamodel{
@@ -74,11 +73,12 @@ func makeTestServer(t *testing.T) *Server {
 	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
 	g.AddEdge(rel)
 
+	// Create workspace with pre-populated graph (no repo needed for read-only tests)
+	ws := workspace.NewWithGraph(nil, meta, g)
+
 	return &Server{
-		projectCtx: &project.Context{Root: tmpDir},
-		graph:      g,
-		meta:       meta,
-		logger:     log.New(&strings.Builder{}, "", 0),
+		ws:     ws,
+		logger: log.New(&strings.Builder{}, "", 0),
 	}
 }
 
@@ -368,7 +368,7 @@ func TestHandleListRelations_Pagination(t *testing.T) {
 	s := makeTestServer(t)
 	// Add another relation for pagination testing
 	rel := model.NewRelation("DEC-001", "addresses", "REQ-002")
-	s.graph.AddEdge(rel)
+	s.ws.Graph().AddEdge(rel)
 
 	req := makeToolRequest(map[string]interface{}{"limit": float64(1)})
 	result, err := s.handleListRelations(context.Background(), req)
@@ -524,7 +524,8 @@ func TestHandleAnalyzeCardinality_WithViolation(t *testing.T) {
 	s := makeTestServer(t)
 	// Set a minimum cardinality that won't be met
 	minVal := 5
-	s.meta.Relations["addresses"] = metamodel.RelationDef{
+	meta := s.ws.Meta()
+	meta.Relations["addresses"] = metamodel.RelationDef{
 		From:        []string{"decision"},
 		To:          []string{"requirement"},
 		MinOutgoing: &minVal,

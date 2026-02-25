@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // Minimal metamodel YAML for reload tests.
@@ -125,8 +126,11 @@ status: open
 		t.Fatalf("parsing graph templates: %v", err)
 	}
 
+	ws := workspace.NewWithGraph(repo, meta, g)
+
 	app := &App{
 		Cfg:         cfg,
+		ws:          ws,
 		meta:        meta,
 		g:           g,
 		repo:        repo,

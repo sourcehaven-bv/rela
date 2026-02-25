@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // newE2ETestApp creates a full App using a copy of the prototype project for E2E tests.
@@ -62,7 +63,11 @@ func newE2ETestApp(t *testing.T) (*App, string, func()) {
 
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	repo := repository.New(fs, ctx)
-	app, err := NewApp(repo)
+	ws, err := workspace.New(repo)
+	if err != nil {
+		t.Fatalf("creating workspace: %v", err)
+	}
+	app, err := NewApp(ws)
 	if err != nil {
 		t.Fatalf("creating app: %v", err)
 	}

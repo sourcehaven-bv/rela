@@ -13,7 +13,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -23,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -36,7 +36,9 @@ const userDefaultsFile = "user-defaults.yaml"
 
 // App is the central application struct holding config, metamodel, graph, and templates.
 type App struct {
-	Cfg  *Config
+	Cfg *Config
+	ws  *workspace.Workspace
+	// Convenience aliases set from workspace; avoid method-call overhead in hot paths.
 	meta *metamodel.Metamodel
 	g    *graph.Graph
 	repo repository.Store
@@ -49,8 +51,6 @@ type App struct {
 	userDefaults *UserDefaults
 	// gitOps provides git operations when git is enabled.
 	gitOps *git.Ops
-	// automationEngine processes automation rules.
-	automationEngine *automation.Engine
 	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
 	// during live-reload. Handlers acquire RLock; reload acquires Lock.
 	mu sync.RWMutex
@@ -58,8 +58,10 @@ type App struct {
 	broker *eventBroker
 }
 
-// NewApp creates and initializes an App using the given Store.
-func NewApp(repo repository.Store) (*App, error) {
+// NewApp creates and initializes an App using the given workspace.
+func NewApp(ws *workspace.Workspace) (*App, error) {
+	repo := ws.Repo()
+
 	// Load data-entry config from project root
 	cfgData, err := repo.ReadProjectFile(ConfigFile)
 	if err != nil {
@@ -80,24 +82,15 @@ func NewApp(repo repository.Store) (*App, error) {
 		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
 	}
 
-	// Load metamodel
-	meta, err := repo.LoadMetamodel()
-	if err != nil {
-		return nil, fmt.Errorf("loading metamodel: %w", err)
-	}
+	meta := ws.Meta()
+	g := ws.Graph()
 
 	// Validate config against metamodel
 	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
 	}
 
-	// Build graph from files
-	g := graph.New()
-	result, err := repo.Sync(meta, g)
-	if err != nil {
-		return nil, fmt.Errorf("syncing graph: %w", err)
-	}
-	log.Printf("Loaded %d entities and %d relations", result.EntitiesLoaded, result.RelationsLoaded)
+	log.Printf("Loaded %d entities and %d relations", g.NodeCount(), g.EdgeCount())
 
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(&cfg, meta)
@@ -112,15 +105,15 @@ func NewApp(repo repository.Store) (*App, error) {
 		return nil, fmt.Errorf("parsing graph templates: %w", err)
 	}
 	app := &App{
-		Cfg:              &cfg,
-		meta:             meta,
-		g:                g,
-		repo:             repo,
-		tmpl:             tmpl,
-		styleMap:         styleMap,
-		styledTypes:      styledTypes,
-		automationEngine: automation.NewEngineFromMetamodel(meta.Automations),
-		broker:           newEventBroker(),
+		Cfg:         &cfg,
+		ws:          ws,
+		meta:        meta,
+		g:           g,
+		repo:        repo,
+		tmpl:        tmpl,
+		styleMap:    styleMap,
+		styledTypes: styledTypes,
+		broker:      newEventBroker(),
 	}
 	app.userDefaults = app.loadUserDefaults()
 

@@ -12,8 +12,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
 
@@ -139,20 +137,6 @@ func (a *App) reload(events []repository.ChangeEvent) {
 		}
 	}
 
-	if needMetamodelReload {
-		newMeta, err := a.repo.LoadMetamodel()
-		if err != nil {
-			if migration.IsMigrationError(err) {
-				log.Printf("Metamodel needs migration, skipping reload: run 'rela migrate'")
-			} else {
-				log.Printf("Metamodel reload error (keeping previous version): %v", err)
-			}
-		} else {
-			a.meta = newMeta
-			log.Println("Metamodel reloaded")
-		}
-	}
-
 	if needConfigReload {
 		cfgData, err := a.repo.ReadProjectFile(ConfigFile)
 		if err != nil {
@@ -168,13 +152,14 @@ func (a *App) reload(events []repository.ChangeEvent) {
 		}
 	}
 
-	// Re-sync graph from disk
-	newGraph := graph.New()
-	result, err := a.repo.Sync(a.meta, newGraph)
+	// Reload metamodel + graph via workspace
+	result, err := a.ws.Reload()
 	if err != nil {
-		log.Printf("Graph sync error: %v", err)
+		log.Printf("Workspace reload error: %v", err)
 	} else {
-		a.g = newGraph
+		// Update convenience aliases
+		a.meta = a.ws.Meta()
+		a.g = a.ws.Graph()
 		log.Printf("Graph re-synced: %d entities, %d relations", result.EntitiesLoaded, result.RelationsLoaded)
 	}
 

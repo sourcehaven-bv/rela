@@ -11,7 +11,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/rename"
 )
 
 var (
@@ -250,7 +249,7 @@ func runRenameID(oldID, newID string) error {
 		return fmt.Errorf("entity not found: %s", oldID)
 	}
 
-	result, err := rename.Rename(repo, meta, g, entity.Type, oldID, newID, rename.Options{DryRun: renameIDDryRun})
+	result, err := ws.RenameEntity(entity.Type, oldID, newID, renameIDDryRun)
 	if err != nil {
 		return err
 	}
@@ -273,7 +272,7 @@ func runRenameID(oldID, newID string) error {
 	}
 
 	if !renameIDDryRun {
-		if saveErr := saveCache(); saveErr != nil {
+		if saveErr := ws.SaveCache(); saveErr != nil {
 			out.WriteWarning("Failed to save cache: %v", saveErr)
 		}
 		if len(result.OldFilesDeleted) > 0 {

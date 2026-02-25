@@ -61,7 +61,7 @@ func (s *Server) registerResources() {
 func (s *Server) handleReadMetamodel(
 	_ context.Context, _ mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
-	meta := s.getMeta()
+	meta := s.ws.Meta()
 	result := map[string]interface{}{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
@@ -100,7 +100,8 @@ func (s *Server) handleReadEntity(
 	}
 	entityType, id := segments[0], segments[1]
 
-	entity, ok := s.graph.GetNode(id)
+	g := s.ws.Graph()
+	entity, ok := g.GetNode(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
@@ -108,7 +109,7 @@ func (s *Server) handleReadEntity(
 		return nil, fmt.Errorf("entity %s is type %s, not %s", id, entity.Type, entityType)
 	}
 
-	text, err := convertEntity(entity, s.graph, true)
+	text, err := convertEntity(entity, g, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert entity: %w", err)
 	}
@@ -135,7 +136,7 @@ func (s *Server) handleReadView(
 	}
 	viewName, entryID := segments[0], segments[1]
 
-	viewsFile, err := s.repo.LoadViews()
+	viewsFile, err := s.ws.Repo().LoadViews()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load views: %w", err)
 	}
@@ -147,18 +148,19 @@ func (s *Server) handleReadView(
 		return nil, fmt.Errorf("view not found: %s (available: %s)", viewName, strings.Join(names, ", "))
 	}
 
-	meta := s.getMeta()
+	meta := s.ws.Meta()
+	g := s.ws.Graph()
 	if validationErr := viewDef.Validate(meta, viewName); validationErr != nil {
 		return nil, fmt.Errorf("view validation failed: %w", validationErr)
 	}
 
-	engine := views.NewEngine(s.graph, meta)
+	engine := views.NewEngine(g, meta)
 	result, execErr := engine.Execute(viewDef, entryID)
 	if execErr != nil {
 		return nil, fmt.Errorf("view execution failed: %w", execErr)
 	}
 
-	output, fmtErr := views.Format(result, "json", s.graph, meta)
+	output, fmtErr := views.Format(result, "json", g, meta)
 	if fmtErr != nil {
 		return nil, fmt.Errorf("failed to format view output: %w", fmtErr)
 	}
@@ -185,7 +187,7 @@ func (s *Server) handleReadRelation(
 	}
 	fromID, relType, toID := segments[0], segments[1], segments[2]
 
-	relation, ok := s.graph.GetEdge(fromID, relType, toID)
+	relation, ok := s.ws.Graph().GetEdge(fromID, relType, toID)
 	if !ok {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", fromID, relType, toID)
 	}

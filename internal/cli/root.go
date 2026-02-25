@@ -3,17 +3,16 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var (
@@ -27,13 +26,13 @@ var (
 	projectPath  string
 
 	// Shared state
-	projectCtx       *project.Context
-	meta             *metamodel.Metamodel
-	g                *graph.Graph
-	out              *output.Writer
-	cliFS            storage.FS = storage.NewSafeFS(storage.NewOsFS())
-	repo             repository.Store
-	automationEngine *automation.Engine
+	ws         *workspace.Workspace
+	projectCtx *project.Context
+	meta       *metamodel.Metamodel
+	g          *graph.Graph
+	out        *output.Writer
+	cliFS      storage.FS = storage.NewSafeFS(storage.NewOsFS())
+	repo       repository.Store
 )
 
 // rootCmd represents the base command
@@ -72,35 +71,17 @@ and maintain semantic relationships between them.`,
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}
 
-		// Initialize repository
+		// Initialize repository and workspace
 		repo = repository.New(cliFS, projectCtx)
 
-		// Load metamodel
-		meta, err = repo.LoadMetamodel()
+		ws, err = workspace.New(repo)
 		if err != nil {
-			return fmt.Errorf("failed to load metamodel: %w", err)
+			return fmt.Errorf("failed to initialize workspace: %w", err)
 		}
 
-		// Initialize automation engine
-		automationEngine = automation.NewEngineFromMetamodel(meta.Automations)
-
-		// Initialize graph
-		g = graph.New()
-
-		// Try to load from cache first
-		if repo.CacheExists() {
-			if err := repo.LoadCache(g); err != nil {
-				// Cache load failed, sync from files
-				if _, err := repo.Sync(meta, g); err != nil {
-					return fmt.Errorf("failed to sync: %w", err)
-				}
-			}
-		} else {
-			// No cache, sync from files
-			if _, err := repo.Sync(meta, g); err != nil {
-				return fmt.Errorf("failed to sync: %w", err)
-			}
-		}
+		// Convenience aliases for read-only commands
+		meta = ws.Meta()
+		g = ws.Graph()
 
 		// Set up output writer
 		out = output.New(output.Format(outputFormat))
@@ -134,36 +115,15 @@ func init() {
 	})
 }
 
-// saveCache saves the graph to the cache file
+// saveCache saves the graph to the cache file.
 func saveCache() error {
-	if repo != nil && g != nil {
-		return repo.SaveCache(g)
+	if ws != nil {
+		return ws.SaveCache()
 	}
 	return nil
 }
 
-// resolveEntityType resolves an entity type name (handling aliases and plurals)
+// resolveEntityType delegates to workspace.
 func resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
-	// First try to resolve directly (handles exact matches and aliases)
-	resolved := meta.ResolveAlias(typeName)
-	if def, ok := meta.GetEntityDef(resolved); ok {
-		return resolved, def, nil
-	}
-
-	// If that failed, try stripping plural suffixes and resolve again
-	// Try common plural endings in order of specificity
-	pluralSuffixes := []string{"ies", "es", "s"}
-	singularReplacements := []string{"y", "", ""}
-
-	for i, suffix := range pluralSuffixes {
-		if strings.HasSuffix(typeName, suffix) {
-			singular := strings.TrimSuffix(typeName, suffix) + singularReplacements[i]
-			resolved = meta.ResolveAlias(singular)
-			if def, ok := meta.GetEntityDef(resolved); ok {
-				return resolved, def, nil
-			}
-		}
-	}
-
-	return "", nil, fmt.Errorf("unknown entity type: %s", typeName)
+	return ws.ResolveEntityType(typeName)
 }

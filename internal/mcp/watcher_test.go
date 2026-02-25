@@ -9,49 +9,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func TestWatcherStop(t *testing.T) {
-	s := makeTestServer(t)
-
-	// Create required directories so Watch doesn't fail
-	root := s.projectCtx.Root
-	entitiesDir := filepath.Join(root, "entities")
-	relationsDir := filepath.Join(root, "relations")
-	metamodelPath := filepath.Join(root, "metamodel.yaml")
-	if err := os.MkdirAll(entitiesDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(relationsDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(metamodelPath, []byte("entities: {}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := &project.Context{
-		Root:          root,
-		EntitiesDir:   entitiesDir,
-		RelationsDir:  relationsDir,
-		MetamodelPath: metamodelPath,
-	}
-	s.repo = repository.New(storage.NewOsFS(), ctx)
-	s.projectCtx = ctx
-
-	w, err := NewWatcher(s)
-	if err != nil {
-		t.Fatalf("NewWatcher failed: %v", err)
-	}
-
-	// Stop should shut down the watcher started by Watch
-	w.Stop()
-}
-
-func TestWatcherFileChange(t *testing.T) {
-	s := makeTestServer(t)
-
-	// Create required directories and files
-	root := s.projectCtx.Root
+	root := t.TempDir()
 	entitiesDir := filepath.Join(root, "entities")
 	relationsDir := filepath.Join(root, "relations")
 	metamodelPath := filepath.Join(root, "metamodel.yaml")
@@ -66,7 +28,7 @@ func TestWatcherFileChange(t *testing.T) {
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(metamodelPath, []byte("entities: {}\nrelations: {}"), 0o644); err != nil {
+	if err := os.WriteFile(metamodelPath, []byte("entities:\n  item:\n    label: Item\n    id_type: sequential\n    id_prefix: ITEM-\n    properties:\n      title:\n        type: string\n        required: true\nrelations: {}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,21 +38,66 @@ func TestWatcherFileChange(t *testing.T) {
 		RelationsDir:  relationsDir,
 		MetamodelPath: metamodelPath,
 		CacheDir:      cacheDir,
+		CachePath:     filepath.Join(cacheDir, "cache.json"),
 	}
-	s.repo = repository.New(storage.NewOsFS(), ctx)
-	s.projectCtx = ctx
-
-	w, err := NewWatcher(s)
+	repo := repository.New(storage.NewOsFS(), ctx)
+	ws, err := workspace.New(repo)
 	if err != nil {
-		t.Fatalf("NewWatcher failed: %v", err)
+		t.Fatalf("workspace.New failed: %v", err)
 	}
-	defer w.Stop()
+
+	if err := ws.StartWatching(workspace.WatchOptions{}); err != nil {
+		t.Fatalf("StartWatching failed: %v", err)
+	}
+
+	// Stop should shut down the watcher
+	ws.StopWatching()
+}
+
+func TestWatcherFileChange(t *testing.T) {
+	root := t.TempDir()
+	entitiesDir := filepath.Join(root, "entities")
+	relationsDir := filepath.Join(root, "relations")
+	metamodelPath := filepath.Join(root, "metamodel.yaml")
+	cacheDir := filepath.Join(root, ".rela")
+
+	if err := os.MkdirAll(entitiesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(relationsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metamodelPath, []byte("entities:\n  item:\n    label: Item\n    id_type: sequential\n    id_prefix: ITEM-\n    properties:\n      title:\n        type: string\n        required: true\nrelations: {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &project.Context{
+		Root:          root,
+		EntitiesDir:   entitiesDir,
+		RelationsDir:  relationsDir,
+		MetamodelPath: metamodelPath,
+		CacheDir:      cacheDir,
+		CachePath:     filepath.Join(cacheDir, "cache.json"),
+	}
+	repo := repository.New(storage.NewOsFS(), ctx)
+	ws, err := workspace.New(repo)
+	if err != nil {
+		t.Fatalf("workspace.New failed: %v", err)
+	}
+
+	if err := ws.StartWatching(workspace.WatchOptions{}); err != nil {
+		t.Fatalf("StartWatching failed: %v", err)
+	}
+	defer ws.StopWatching()
 
 	// Wait for watcher to be ready
 	time.Sleep(100 * time.Millisecond)
 
 	// Trigger a file change event by modifying a watched file
-	if err := os.WriteFile(metamodelPath, []byte("entities: {}\nrelations: {}\n# updated"), 0o644); err != nil {
+	if err := os.WriteFile(metamodelPath, []byte("entities:\n  item:\n    label: Item\n    id_type: sequential\n    id_prefix: ITEM-\n    properties:\n      title:\n        type: string\n        required: true\nrelations: {}\n# updated"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
