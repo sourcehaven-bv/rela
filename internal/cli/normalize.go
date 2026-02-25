@@ -69,24 +69,18 @@ Examples:
 				continue
 			}
 
+			oldEntity := entity.Clone()
 			entity.Content = normalized
 
-			if err := repo.WriteEntity(entity, meta); err != nil {
+			if _, err := ws.UpdateEntity(entity, oldEntity); err != nil {
 				out.WriteWarning("Failed to write %s: %v", entity.ID, err)
 				continue
 			}
 
-			g.AddNode(entity)
 			modified++
 
 			if verbose {
 				out.WriteMessage("Normalized: %s", entity.ID)
-			}
-		}
-
-		if !normalizeDryRun && modified > 0 {
-			if err := saveCache(); err != nil {
-				out.WriteWarning("Failed to save cache: %v", err)
 			}
 		}
 

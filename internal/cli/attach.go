@@ -108,6 +108,9 @@ Examples:
 			return fmt.Errorf("no files matched")
 		}
 
+		// Clone before mutation so workspace can diff old vs new.
+		oldEntity := entity.Clone()
+
 		// Update entity property
 		// For single file, store as string; for multiple, store as list
 		if len(attachments) == 1 {
@@ -139,17 +142,9 @@ Examples:
 			entity.Properties[propName] = paths
 		}
 
-		// Write entity
-		if err := repo.WriteEntity(entity, meta); err != nil {
+		// Write through workspace (validates, persists, updates graph+cache).
+		if _, err := ws.UpdateEntity(entity, oldEntity); err != nil {
 			return fmt.Errorf("failed to update entity: %w", err)
-		}
-
-		// Update graph
-		g.UpdateNode(entity)
-
-		// Save cache
-		if err := saveCache(); err != nil {
-			out.WriteWarning("Failed to save cache: %v", err)
 		}
 
 		return nil

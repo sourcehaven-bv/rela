@@ -22,7 +22,7 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		out.WriteMessage("Syncing from markdown files...")
 
-		result, err := repo.Sync(meta, g)
+		result, err := ws.Sync()
 		if err != nil {
 			return err
 		}

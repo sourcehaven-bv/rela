@@ -114,6 +114,9 @@ Examples:
 			return fmt.Errorf("no attachments to remove")
 		}
 
+		// Clone before mutation so workspace can diff old vs new.
+		oldEntity := entity.Clone()
+
 		// Update entity property
 		if len(remaining) == 0 {
 			delete(entity.Properties, propName)
@@ -123,17 +126,9 @@ Examples:
 			entity.Properties[propName] = remaining
 		}
 
-		// Write entity
-		if err := repo.WriteEntity(entity, meta); err != nil {
+		// Write through workspace (validates, persists, updates graph+cache).
+		if _, err := ws.UpdateEntity(entity, oldEntity); err != nil {
 			return fmt.Errorf("failed to update entity: %w", err)
-		}
-
-		// Update graph
-		g.UpdateNode(entity)
-
-		// Save cache
-		if err := saveCache(); err != nil {
-			out.WriteWarning("Failed to save cache: %v", err)
 		}
 
 		for _, path := range removed {
