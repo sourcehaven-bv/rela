@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -36,8 +35,7 @@ Examples:
 		viewName := args[0]
 
 		// Load views file
-		viewsPath := filepath.Join(projectCtx.Root, "views.yaml")
-		viewsFile, err := views.Load(viewsPath, cliFS)
+		viewsFile, err := ws.LoadViews()
 		if err != nil {
 			return fmt.Errorf("failed to load views file: %w", err)
 		}

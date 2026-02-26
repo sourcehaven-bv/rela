@@ -43,8 +43,7 @@ Examples:
 		viewName := args[0]
 
 		// Load views file
-		viewsPath := filepath.Join(projectCtx.Root, "views.yaml")
-		viewsFile, err := views.Load(viewsPath, cliFS)
+		viewsFile, err := ws.LoadViews()
 		if err != nil {
 			return fmt.Errorf("failed to load views file: %w", err)
 		}
@@ -166,7 +165,7 @@ func resolveChangedFiles() ([]string, error) {
 		}
 
 		resolved := false
-		candidates := []string{path, filepath.Join(projectCtx.Root, path)}
+		candidates := []string{path, filepath.Join(ws.Paths().Root, path)}
 		for _, candidate := range candidates {
 			if id, ok := pathToEntityID[candidate]; ok {
 				ids = append(ids, id)

@@ -72,7 +72,7 @@ Examples:
 		}
 
 		// Create attachment store
-		store := attachment.NewStore(cliFS, projectCtx.Root)
+		store := attachment.NewStore(ws.FS(), ws.Paths().Root)
 
 		// Process each file
 		var attachments []*attachment.Attachment

@@ -51,7 +51,7 @@ Examples:
 
 func gcAttachmentFiles() error {
 	referencedPaths := collectReferencedAttachmentPaths()
-	store := attachment.NewStore(cliFS, projectCtx.Root)
+	store := attachment.NewStore(ws.FS(), ws.Paths().Root)
 
 	result, err := store.GC(referencedPaths)
 	if err != nil {

@@ -11,6 +11,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func setupRenameTestEnv(t *testing.T) string {
@@ -20,14 +23,15 @@ func setupRenameTestEnv(t *testing.T) string {
 	g = graph.New()
 	out = output.New(output.FormatTable)
 	projectCtx = &project.Context{
-		Root:               dir,
-		EntitiesDir:        filepath.Join(dir, "entities"),
-		RelationsDir:       filepath.Join(dir, "relations"),
-		CacheDir:           filepath.Join(dir, ".rela"),
-		CachePath:          filepath.Join(dir, ".rela", "cache.json"),
-		MetamodelPath:      filepath.Join(dir, "metamodel.yaml"),
-		TemplatesDir:       filepath.Join(dir, "templates"),
-		EntityTemplatesDir: filepath.Join(dir, "templates", "entities"),
+		Root:                 dir,
+		EntitiesDir:          filepath.Join(dir, "entities"),
+		RelationsDir:         filepath.Join(dir, "relations"),
+		CacheDir:             filepath.Join(dir, ".rela"),
+		CachePath:            filepath.Join(dir, ".rela", "cache.json"),
+		MetamodelPath:        filepath.Join(dir, "metamodel.yaml"),
+		TemplatesDir:         filepath.Join(dir, "templates"),
+		EntityTemplatesDir:   filepath.Join(dir, "templates", "entities"),
+		RelationTemplatesDir: filepath.Join(dir, "templates", "relations"),
 	}
 
 	// Create directories
@@ -68,6 +72,11 @@ relations:
 	if err != nil {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
+
+	// Set up workspace for FS access
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	repo := repository.New(fs, projectCtx)
+	ws = workspace.NewWithGraph(repo, meta, g)
 
 	return dir
 }

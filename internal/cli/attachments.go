@@ -37,7 +37,7 @@ Examples:
 		}
 
 		// Create attachment store for metadata lookup
-		store := attachment.NewStore(cliFS, projectCtx.Root)
+		store := attachment.NewStore(ws.FS(), ws.Paths().Root)
 
 		// Collect attachments from all file properties
 		type attachmentInfo struct {

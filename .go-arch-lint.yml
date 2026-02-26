@@ -119,11 +119,8 @@ deps:
       - markdown
       - mcp
       - metamodel
-      - migration
       - output
       - project
-      - repository
-      - storage
       - views
       - workspace
     canUse:
@@ -175,6 +172,7 @@ deps:
   workspace:
     mayDependOn:
       - automation
+      - dataentryconfig
       - graph
       - markdown
       - metamodel
@@ -183,6 +181,7 @@ deps:
       - rename
       - repository
       - storage
+      - views
 
   # Domain services
   automation:

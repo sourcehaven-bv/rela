@@ -3,14 +3,10 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var (
@@ -35,63 +31,27 @@ Examples:
 			startDir = os.Getenv("RELA_PROJECT")
 		}
 
-		// Discover project (we need the paths but not the metamodel)
-		ctx, err := project.Discover(startDir, cliFS)
-		if err != nil {
-			return fmt.Errorf("no project found: run 'rela init' to create one")
-		}
-
-		// Load metamodel for context-aware migrations (ignore errors - metamodel may need migration)
-		mm, _ := metamodel.LoadWithoutMigrationCheck(ctx.MetamodelPath, cliFS)
-
-		// Define files to check
-		dataEntryPath := filepath.Join(ctx.Root, dataentryconfig.ConfigFile)
-
-		files := []struct {
-			path     string
-			fileType migration.FileType
-			name     string
-		}{
-			{ctx.MetamodelPath, migration.FileTypeMetamodel, "metamodel.yaml"},
-			{dataEntryPath, migration.FileTypeDataEntry, dataentryconfig.ConfigFile},
-		}
-
 		if migrateCheck {
-			return runMigrateCheck(files, mm)
+			return runMigrateCheck(startDir)
 		}
 
-		return runMigrate(files, mm)
+		return runMigrate(startDir)
 	},
 }
 
-func runMigrateCheck(files []struct {
-	path     string
-	fileType migration.FileType
-	name     string
-}, meta *metamodel.Metamodel) error {
-	needsMigration := false
-
-	for _, f := range files {
-		// Skip files that don't exist
-		if _, err := cliFS.Stat(f.path); os.IsNotExist(err) {
-			continue
-		}
-
-		detections, err := migration.DetectWithMetamodel(f.path, f.fileType, cliFS, meta)
-		if err != nil {
-			return fmt.Errorf("checking %s: %w", f.name, err)
-		}
-
-		if len(detections) > 0 {
-			needsMigration = true
-			fmt.Printf("%s needs migration:\n", f.name)
-			for _, d := range detections {
-				fmt.Printf("  - %s\n", d.Description)
-			}
-		}
+func runMigrateCheck(startDir string) error {
+	detections, err := workspace.DetectMigrations(startDir)
+	if err != nil {
+		return err
 	}
 
-	if needsMigration {
+	if len(detections) > 0 {
+		for _, d := range detections {
+			fmt.Printf("%s needs migration:\n", d.File.Name)
+			for _, m := range d.Migrations {
+				fmt.Printf("  - %s\n", m.Description)
+			}
+		}
 		fmt.Println("\nRun 'rela migrate' to apply these migrations.")
 		os.Exit(1)
 	}
@@ -100,45 +60,32 @@ func runMigrateCheck(files []struct {
 	return nil
 }
 
-func runMigrate(files []struct {
-	path     string
-	fileType migration.FileType
-	name     string
-}, meta *metamodel.Metamodel) error {
-	filesUpdated := 0
-	totalMigrations := 0
+func runMigrate(startDir string) error {
+	result, err := workspace.Migrate(startDir)
+	if err != nil {
+		return err
+	}
 
-	for _, f := range files {
-		// Skip files that don't exist
-		if _, err := cliFS.Stat(f.path); os.IsNotExist(err) {
-			continue
-		}
-
-		result, err := migration.ApplyWithMetamodel(f.path, f.fileType, cliFS, meta)
-		if err != nil {
-			return fmt.Errorf("migrating %s: %w", f.name, err)
-		}
-
-		if result.HasErrors() {
-			return fmt.Errorf("migrating %s: %w", f.name, result.Error)
-		}
-
-		if result.NeedsMigration() {
-			filesUpdated++
-			fmt.Printf("Migrating %s...\n", f.name)
-			for _, mr := range result.Results {
+	if result.FilesUpdated == 0 {
+		fmt.Println("No migrations needed.")
+	} else {
+		for _, fr := range result.FileResults {
+			appliedCount := 0
+			for _, mr := range fr.Results {
 				if mr.Applied {
-					totalMigrations++
-					fmt.Printf("  ✓ %s: %s\n", mr.Migration.Name(), mr.Migration.Description())
+					appliedCount++
+				}
+			}
+			if appliedCount > 0 {
+				fmt.Printf("Migrating %s...\n", fr.File.Name)
+				for _, mr := range fr.Results {
+					if mr.Applied {
+						fmt.Printf("  ✓ %s: %s\n", mr.Migration.Name(), mr.Migration.Description())
+					}
 				}
 			}
 		}
-	}
-
-	if filesUpdated == 0 {
-		fmt.Println("No migrations needed.")
-	} else {
-		fmt.Printf("\nDone. %d file(s) updated with %d migration(s).\n", filesUpdated, totalMigrations)
+		fmt.Printf("\nDone. %d file(s) updated with %d migration(s).\n", result.FilesUpdated, result.TotalMigrations)
 	}
 
 	return nil

@@ -10,7 +10,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -30,9 +29,6 @@ var (
 	meta       *metamodel.Metamodel
 	g          *graph.Graph
 	out        *output.Writer
-
-	// Filesystem abstraction for commands that don't use workspace
-	cliFS storage.FS = storage.NewSafeFS(storage.NewOsFS())
 )
 
 // rootCmd represents the base command
