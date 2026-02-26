@@ -2,10 +2,12 @@ package dataentry
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // --- JSON API Handlers ---
@@ -416,65 +418,23 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entDef, ok := a.meta.GetEntityDef(req.Type)
-	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "unknown entity type: "+req.Type)
-		return
-	}
-
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Generate or validate ID
-	entityID := req.ID
-	if entityID == "" {
-		if entDef.IsManualID() {
-			writeJSONError(w, http.StatusBadRequest, "ID is required for this entity type")
+	entity, _, err := a.ws.CreateEntity(req.Type, workspace.CreateOptions{
+		ID:         req.ID,
+		Properties: req.Properties,
+		Content:    req.Content,
+	})
+	if err != nil {
+		var valErr *workspace.ValidationError
+		if errors.As(err, &valErr) {
+			writeJSONError(w, http.StatusBadRequest, "validation error: "+valErr.Errors[0].Error())
 			return
 		}
-		prefix := ""
-		prefixes := entDef.GetIDPrefixes()
-		if len(prefixes) > 0 {
-			prefix = prefixes[0]
-		}
-		if entDef.IsShortID() {
-			entityID = model.GenerateShortID(a.g.AllIDs(), prefix, a.g.NodeCount())
-		} else {
-			entityID = model.GenerateNextID(a.g.IDsByType(req.Type), prefix)
-		}
-	}
-
-	if _, exists := a.g.GetNode(entityID); exists {
-		writeJSONError(w, http.StatusConflict, "entity already exists: "+entityID)
+		writeJSONError(w, http.StatusInternalServerError, "failed to create entity: "+err.Error())
 		return
 	}
-
-	// Create entity
-	entity := &model.Entity{
-		ID:         entityID,
-		Type:       req.Type,
-		Properties: make(map[string]interface{}),
-		Content:    req.Content,
-	}
-
-	for k, v := range req.Properties {
-		entity.Properties[k] = v
-	}
-
-	// Validate entity
-	if validationErrs := a.meta.ValidateEntity(entity); len(validationErrs) > 0 {
-		writeJSONError(w, http.StatusBadRequest, "validation error: "+validationErrs[0].Error())
-		return
-	}
-
-	// Write to storage
-	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to write entity: "+err.Error())
-		return
-	}
-
-	// Add to graph
-	a.g.AddNode(entity)
 
 	// Return created entity
 	result := a.entityToAPI(entity, false)
@@ -512,6 +472,8 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	oldEntity := entity.Clone()
+
 	// Update properties
 	if req.Properties != nil {
 		for k, v := range req.Properties {
@@ -524,15 +486,13 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 		entity.Content = *req.Content
 	}
 
-	// Validate entity
-	if validationErrs := a.meta.ValidateEntity(entity); len(validationErrs) > 0 {
-		writeJSONError(w, http.StatusBadRequest, "validation error: "+validationErrs[0].Error())
-		return
-	}
-
-	// Write to storage
-	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to write entity: "+err.Error())
+	if _, err := a.ws.UpdateEntity(entity, oldEntity); err != nil {
+		var valErr *workspace.ValidationError
+		if errors.As(err, &valErr) {
+			writeJSONError(w, http.StatusBadRequest, "validation error: "+valErr.Errors[0].Error())
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to update entity: "+err.Error())
 		return
 	}
 
@@ -564,29 +524,10 @@ func (a *App) handleAPIDeleteEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete relations first
-	for _, edge := range a.g.OutgoingEdges(entity.ID) {
-		if err := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "failed to delete relation: "+err.Error())
-			return
-		}
-		a.g.RemoveEdge(edge.From, edge.Type, edge.To)
-	}
-	for _, edge := range a.g.IncomingEdges(entity.ID) {
-		if err := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "failed to delete relation: "+err.Error())
-			return
-		}
-		a.g.RemoveEdge(edge.From, edge.Type, edge.To)
-	}
-
-	// Delete entity
-	if err := a.repo.DeleteEntity(entity.Type, entity.ID, a.meta); err != nil {
+	if _, err := a.ws.DeleteEntity(entity.Type, entity.ID, true); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete entity: "+err.Error())
 		return
 	}
-
-	a.g.RemoveNode(entity.ID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -612,43 +553,16 @@ func (a *App) handleAPICreateRelation(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Verify source and target exist
-	if _, found := a.g.GetNode(req.From); !found {
-		writeJSONError(w, http.StatusBadRequest, "source entity not found: "+req.From)
+	var opts []workspace.CreateRelationOptions
+	if len(req.Properties) > 0 {
+		opts = append(opts, workspace.CreateRelationOptions{Properties: req.Properties})
+	}
+
+	relation, err := a.ws.CreateRelation(req.From, req.Type, req.To, opts...)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to create relation: "+err.Error())
 		return
 	}
-	if _, found := a.g.GetNode(req.To); !found {
-		writeJSONError(w, http.StatusBadRequest, "target entity not found: "+req.To)
-		return
-	}
-
-	// Check if relation already exists
-	for _, edge := range a.g.OutgoingEdges(req.From) {
-		if edge.Type == req.Type && edge.To == req.To {
-			writeJSONError(w, http.StatusConflict, "relation already exists")
-			return
-		}
-	}
-
-	// Create relation
-	relation := &model.Relation{
-		From:       req.From,
-		Type:       req.Type,
-		To:         req.To,
-		Properties: make(map[string]interface{}),
-	}
-
-	for k, v := range req.Properties {
-		relation.Properties[k] = v
-	}
-
-	// Write to storage
-	if err := a.repo.WriteRelation(relation); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to write relation: "+err.Error())
-		return
-	}
-
-	a.g.AddEdge(relation)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -692,13 +606,10 @@ func (a *App) handleAPIDeleteRelation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete from storage
-	if err := a.repo.DeleteRelation(from, relType, to); err != nil {
+	if err := a.ws.DeleteRelation(from, relType, to); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete relation: "+err.Error())
 		return
 	}
-
-	a.g.RemoveEdge(from, relType, to)
 
 	w.WriteHeader(http.StatusNoContent)
 }

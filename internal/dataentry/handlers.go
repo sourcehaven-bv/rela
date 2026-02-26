@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	htmltemplate "html/template"
@@ -11,13 +12,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -1109,35 +1110,18 @@ func validationErrorsToFieldMap(errs []*metamodel.ValidationError) map[string]st
 }
 
 // generateEntityID returns a new entity ID, either from a manual form field or auto-generated.
-func (a *App) generateEntityID(entDef *metamodel.EntityDef, entityType string, r *http.Request) (string, error) {
-	if entDef.IsManualID() {
-		id := r.FormValue("_entity_id")
-		if id == "" {
-			return "", fmt.Errorf("manual ID required")
-		}
-		return id, nil
-	}
-	prefix := ""
-	prefixes := entDef.GetIDPrefixes()
-	if len(prefixes) > 0 {
-		prefix = prefixes[0]
-	}
-	if entDef.IsShortID() {
-		return model.GenerateShortID(a.g.AllIDs(), prefix, a.g.NodeCount()), nil
-	}
-	return model.GenerateNextID(a.g.IDsByType(entityType), prefix), nil
-}
-
-// populateProperties reads form field values into an entity, applying the default chain
-// (user defaults → form default) for empty values.
-func (a *App) populateProperties(entity *model.Entity, fields []FormField, entDef *metamodel.EntityDef, entityType string, r *http.Request) {
+// buildProperties reads form field values into a properties map, applying the default chain
+// (user defaults → form default) for empty values. Used by create handlers to supply
+// properties to workspace.CreateEntity.
+func (a *App) buildProperties(fields []FormField, entDef *metamodel.EntityDef, entityType string, r *http.Request) map[string]interface{} {
+	props := make(map[string]interface{})
 	for _, f := range fields {
 		prop := entDef.Properties[f.Property]
 		widget := resolveWidget(prop, a.meta)
 		if widget == WidgetMultiSelect {
 			values := r.Form[f.Property]
 			if len(values) > 0 {
-				entity.Properties[f.Property] = values
+				props[f.Property] = values
 			}
 		} else {
 			val := r.FormValue(f.Property)
@@ -1151,10 +1135,11 @@ func (a *App) populateProperties(entity *model.Entity, fields []FormField, entDe
 				val = f.Default
 			}
 			if val != "" {
-				entity.Properties[f.Property] = val
+				props[f.Property] = val
 			}
 		}
 	}
+	return props
 }
 
 // createFormRelations creates relations from form relation fields, applying user-default
@@ -1174,23 +1159,28 @@ func (a *App) createFormRelations(entityID string, relations []FormRelation, ent
 			if targetID == "" {
 				continue
 			}
-			var relation *model.Relation
+			var fromID, toID string
 			if rel.Direction == DirectionIncoming {
-				relation = model.NewRelation(targetID, rel.Relation, entityID)
+				fromID, toID = targetID, entityID
 			} else {
-				relation = model.NewRelation(entityID, rel.Relation, targetID)
+				fromID, toID = entityID, targetID
 			}
+			// Collect relation properties from form.
+			relProps := make(map[string]interface{})
 			for _, rp := range rel.Properties {
 				propKey := fmt.Sprintf("_relprop_%s_%s_%s", rel.Relation, targetID, rp.Property)
 				if pv := r.FormValue(propKey); pv != "" {
-					relation.Properties[rp.Property] = pv
+					relProps[rp.Property] = pv
 				}
 			}
-			if err := a.repo.WriteRelation(relation); err != nil {
+			var opts []workspace.CreateRelationOptions
+			if len(relProps) > 0 {
+				opts = append(opts, workspace.CreateRelationOptions{Properties: relProps})
+			}
+			if _, err := a.ws.CreateRelation(fromID, rel.Relation, toID, opts...); err != nil {
 				log.Printf("Failed to write relation: %v", err)
 				continue
 			}
-			a.g.AddEdge(relation)
 		}
 	}
 }
@@ -1215,11 +1205,8 @@ func (a *App) createLinkRelation(entityID string, r *http.Request) {
 	} else {
 		fromID, toID = linkPeer, entityID
 	}
-	relation := model.NewRelation(fromID, linkRelation, toID)
-	if err := a.repo.WriteRelation(relation); err != nil {
+	if _, err := a.ws.CreateRelation(fromID, linkRelation, toID); err != nil {
 		log.Printf("Failed to write link relation: %v", err)
-	} else {
-		a.g.AddEdge(relation)
 	}
 }
 
@@ -1286,12 +1273,10 @@ func (a *App) createTemplateRelations(entityID, entityType string, r *http.Reque
 			continue
 		}
 
-		relation := model.NewRelation(fromID, tr.Relation, toID)
-		if err := a.repo.WriteRelation(relation); err != nil {
+		if _, err := a.ws.CreateRelation(fromID, tr.Relation, toID); err != nil {
 			log.Printf("Failed to write template relation: %v", err)
 			continue
 		}
-		a.g.AddEdge(relation)
 		createdRelations[key] = true
 	}
 }
@@ -1312,47 +1297,54 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	entDef, _ := a.meta.GetEntityDef(form.EntityType)
 
-	entityID, err := a.generateEntityID(entDef, form.EntityType, r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if _, exists := a.g.GetNode(entityID); exists {
-		http.Error(w, fmt.Sprintf("Entity %s already exists", entityID), http.StatusConflict)
-		return
-	}
+	// Build properties from form fields.
+	props := a.buildProperties(form.Fields, entDef, form.EntityType, r)
 
-	entity := model.NewEntity(entityID, form.EntityType)
-	a.populateProperties(entity, form.Fields, entDef, form.EntityType, r)
-
+	var content string
 	if form.Body != nil && *form.Body {
-		entity.Content = r.FormValue("_body")
+		content = r.FormValue("_body")
 	}
 
-	// Validate entity before writing
-	if validationErrs := a.meta.ValidateEntity(entity); len(validationErrs) > 0 {
-		a.renderFormWithErrors(w, r, formID, entity, validationErrorsToFieldMap(validationErrs))
+	opts := workspace.CreateOptions{
+		Properties: props,
+		Content:    content,
+	}
+
+	// Manual-ID types provide the ID directly; auto-ID types let workspace generate.
+	if entDef.IsManualID() {
+		opts.ID = r.FormValue("_entity_id")
+		if opts.ID == "" {
+			http.Error(w, "manual ID required", http.StatusBadRequest)
+			return
+		}
+	}
+
+	entity, _, err := a.ws.CreateEntity(form.EntityType, opts)
+	if err != nil {
+		var ve *workspace.ValidationError
+		if errors.As(err, &ve) {
+			// Re-render the form with validation errors.
+			stub := model.NewEntity(opts.ID, form.EntityType)
+			stub.Properties = props
+			stub.Content = content
+			a.renderFormWithErrors(w, r, formID, stub, validationErrorsToFieldMap(ve.Errors))
+			return
+		}
+		http.Error(w, fmt.Sprintf("Failed to create entity: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to write entity: %v", err), http.StatusInternalServerError)
-		return
-	}
-	entity.ModTime = time.Now()
-	a.g.AddNode(entity)
+	a.createFormRelations(entity.ID, form.Relations, form.EntityType, r)
+	a.createLinkRelation(entity.ID, r)
+	a.createTemplateRelations(entity.ID, form.EntityType, r)
 
-	a.createFormRelations(entityID, form.Relations, form.EntityType, r)
-	a.createLinkRelation(entityID, r)
-	a.createTemplateRelations(entityID, form.EntityType, r)
+	log.Printf("Created %s %s", form.EntityType, entity.ID)
 
-	log.Printf("Created %s %s", form.EntityType, entityID)
-
-	redirect := "/entity/" + form.EntityType + "/" + entityID
+	redirect := "/entity/" + form.EntityType + "/" + entity.ID
 	if returnTo := r.FormValue("_return_to"); returnTo != "" && strings.HasPrefix(returnTo, "/") {
 		redirect = returnTo
 	}
-	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Created "+entityID))
+	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Created "+entity.ID))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1383,6 +1375,9 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unknown entity type", http.StatusBadRequest)
 		return
 	}
+
+	oldEntity := entity.Clone()
+
 	for _, f := range form.Fields {
 		prop := entDef.Properties[f.Property]
 		widget := resolveWidget(prop, a.meta)
@@ -1411,17 +1406,17 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		entity.Content = r.FormValue("_body")
 	}
 
-	// Validate entity before writing
-	if validationErrs := a.meta.ValidateEntity(entity); len(validationErrs) > 0 {
-		a.renderFormWithErrors(w, r, formID, entity, validationErrorsToFieldMap(validationErrs))
-		return
-	}
-
-	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
+	if _, err := a.ws.UpdateEntity(entity, oldEntity); err != nil {
+		var ve *workspace.ValidationError
+		if errors.As(err, &ve) {
+			a.renderFormWithErrors(w, r, formID, entity, validationErrorsToFieldMap(ve.Errors))
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	// Reconcile relations: delete existing, recreate from form values.
 	for _, rel := range form.Relations {
 		if rel.Display != "" {
 			continue
@@ -1429,19 +1424,17 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		if rel.Direction == DirectionIncoming {
 			for _, edge := range a.g.IncomingEdges(entityID) {
 				if edge.Type == rel.Relation {
-					if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
-						log.Printf("Failed to delete relation file: %v", delErr)
+					if delErr := a.ws.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
+						log.Printf("Failed to delete relation: %v", delErr)
 					}
-					a.g.RemoveEdge(edge.From, edge.Type, edge.To)
 				}
 			}
 		} else {
 			for _, edge := range a.g.OutgoingEdges(entityID) {
 				if edge.Type == rel.Relation {
-					if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
-						log.Printf("Failed to delete relation file: %v", delErr)
+					if delErr := a.ws.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
+						log.Printf("Failed to delete relation: %v", delErr)
 					}
-					a.g.RemoveEdge(edge.From, edge.Type, edge.To)
 				}
 			}
 		}
@@ -1450,23 +1443,28 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			if targetID == "" {
 				continue
 			}
-			var relation *model.Relation
+			var fromID, toID string
 			if rel.Direction == DirectionIncoming {
-				relation = model.NewRelation(targetID, rel.Relation, entityID)
+				fromID, toID = targetID, entityID
 			} else {
-				relation = model.NewRelation(entityID, rel.Relation, targetID)
+				fromID, toID = entityID, targetID
 			}
+			// Collect relation properties from form.
+			relProps := make(map[string]interface{})
 			for _, rp := range rel.Properties {
 				propKey := fmt.Sprintf("_relprop_%s_%s_%s", rel.Relation, targetID, rp.Property)
 				if pv := r.FormValue(propKey); pv != "" {
-					relation.Properties[rp.Property] = pv
+					relProps[rp.Property] = pv
 				}
 			}
-			if err := a.repo.WriteRelation(relation); err != nil {
+			var opts []workspace.CreateRelationOptions
+			if len(relProps) > 0 {
+				opts = append(opts, workspace.CreateRelationOptions{Properties: relProps})
+			}
+			if _, err := a.ws.CreateRelation(fromID, rel.Relation, toID, opts...); err != nil {
 				log.Printf("Failed to write relation: %v", err)
 				continue
 			}
-			a.g.AddEdge(relation)
 		}
 	}
 
@@ -1508,8 +1506,9 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	oldEntity := entity.Clone()
 	entity.Content = newContent
-	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
+	if _, err := a.ws.UpdateEntity(entity, oldEntity); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1532,24 +1531,10 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, edge := range a.g.OutgoingEdges(entityID) {
-		if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
-			log.Printf("Failed to delete relation file: %v", delErr)
-		}
-		a.g.RemoveEdge(edge.From, edge.Type, edge.To)
-	}
-	for _, edge := range a.g.IncomingEdges(entityID) {
-		if delErr := a.repo.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
-			log.Printf("Failed to delete relation file: %v", delErr)
-		}
-		a.g.RemoveEdge(edge.From, edge.Type, edge.To)
-	}
-
-	if err := a.repo.DeleteEntity(entity.Type, entityID, a.meta); err != nil {
+	if _, err := a.ws.DeleteEntity(entity.Type, entityID, true); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to delete: %v", err), http.StatusInternalServerError)
 		return
 	}
-	a.g.RemoveNode(entityID)
 
 	log.Printf("Deleted %s", entityID)
 
@@ -1581,73 +1566,32 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 
 	entDef, _ := a.meta.GetEntityDef(form.EntityType)
 
-	var entityID string
+	opts := workspace.CreateOptions{
+		Properties: a.buildProperties(form.Fields, entDef, form.EntityType, r),
+	}
 	if entDef.IsManualID() {
-		entityID = r.FormValue("_entity_id")
-		if entityID == "" {
+		opts.ID = r.FormValue("_entity_id")
+		if opts.ID == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": "ID is required"}) //nolint:errcheck // best-effort JSON response
 			return
 		}
-	} else {
-		prefix := ""
-		prefixes := entDef.GetIDPrefixes()
-		if len(prefixes) > 0 {
-			prefix = prefixes[0]
-		}
-		if entDef.IsShortID() {
-			entityID = model.GenerateShortID(a.g.AllIDs(), prefix, a.g.NodeCount())
-		} else {
-			entityID = model.GenerateNextID(a.g.IDsByType(form.EntityType), prefix)
-		}
 	}
 
-	if _, exists := a.g.GetNode(entityID); exists {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Entity with this ID already exists"}) //nolint:errcheck // best-effort JSON response
-		return
-	}
-
-	entity := model.NewEntity(entityID, form.EntityType)
-
-	for _, f := range form.Fields {
-		prop := entDef.Properties[f.Property]
-		widget := resolveWidget(prop, a.meta)
-		if widget == WidgetMultiSelect {
-			values := r.Form[f.Property]
-			if len(values) > 0 {
-				entity.Properties[f.Property] = values
-			}
-		} else {
-			val := r.FormValue(f.Property)
-			if val == "" && a.userDefaults != nil {
-				val = a.userDefaults.ResolvePropertyDefault(form.EntityType, f.Property)
-			}
-			if val == "" && f.Default != "" {
-				val = f.Default
-			}
-			if val != "" {
-				entity.Properties[f.Property] = val
-			}
-		}
-	}
-
-	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
+	entity, _, err := a.ws.CreateEntity(form.EntityType, opts)
+	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck // best-effort JSON response
 		return
 	}
-	entity.ModTime = time.Now()
-	a.g.AddNode(entity)
 
-	log.Printf("Inline-created %s %s", form.EntityType, entityID)
+	log.Printf("Inline-created %s %s", form.EntityType, entity.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck // best-effort JSON response
-		"id":    entityID,
+		"id":    entity.ID,
 		"title": a.entityDisplayTitle(entity),
 	})
 }
@@ -1834,14 +1778,12 @@ func (a *App) handleLinkExisting(w http.ResponseWriter, r *http.Request) {
 		fromID, toID = targetID, peerID
 	}
 
-	rel := model.NewRelation(fromID, relation, toID)
-	if err := a.repo.WriteRelation(rel); err != nil {
+	if _, err := a.ws.CreateRelation(fromID, relation, toID); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck // best-effort JSON response
 		return
 	}
-	a.g.AddEdge(rel)
 
 	log.Printf("Linked %s --%s--> %s", fromID, relation, toID)
 

@@ -295,6 +295,8 @@ func (a *App) handleKanbanMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	oldEntity := entity.Clone()
+
 	// Update column property
 	entity.Properties[kanban.ColumnProperty] = column
 
@@ -303,8 +305,8 @@ func (a *App) handleKanbanMove(w http.ResponseWriter, r *http.Request) {
 		entity.Properties[kanban.SwimlaneProperty] = swimlane
 	}
 
-	// Write entity to disk
-	if err := a.repo.WriteEntity(entity, a.meta); err != nil {
+	// Write entity through workspace
+	if _, err := a.ws.UpdateEntity(entity, oldEntity); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}
