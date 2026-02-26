@@ -21,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 // ChangeEvent is re-exported from repository so consumers don't need to
@@ -648,3 +649,18 @@ func (w *Workspace) ResumeWatching() {
 // should hold this lock for the duration of the request.
 func (w *Workspace) RLock()   { w.mu.RLock() }
 func (w *Workspace) RUnlock() { w.mu.RUnlock() }
+
+// --- Views ---
+
+// LoadViews loads and parses the views.yaml file from the project root.
+func (w *Workspace) LoadViews() (*views.File, error) {
+	return w.repo.LoadViews()
+}
+
+// --- Filesystem access ---
+
+// FS returns the underlying filesystem for operations that need direct
+// file access (e.g., attachment store, writing output files).
+func (w *Workspace) FS() storage.FS {
+	return w.repo.FS()
+}

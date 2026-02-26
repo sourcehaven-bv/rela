@@ -5,8 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/attachment"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
 var (
@@ -50,12 +49,9 @@ Examples:
 }
 
 func gcAttachmentFiles() error {
-	referencedPaths := collectReferencedAttachmentPaths()
-	store := attachment.NewStore(cliFS, projectCtx.Root)
-
-	result, err := store.GC(referencedPaths)
+	result, err := ws.GCAttachments(gcDryRun)
 	if err != nil {
-		return fmt.Errorf("gc failed: %w", err)
+		return err
 	}
 
 	if len(result.Removed) == 0 {
@@ -65,67 +61,15 @@ func gcAttachmentFiles() error {
 
 	if gcDryRun {
 		out.WriteMessage("Would remove %d unreferenced attachment(s) (%s):",
-			len(result.Removed), attachment.FormatSize(result.Reclaimed))
+			len(result.Removed), output.FormatSize(result.Reclaimed))
 		for _, path := range result.Removed {
 			out.WriteMessage("  %s", path)
 		}
 		return nil
 	}
 
-	if err := store.RemoveUnreferenced(result); err != nil {
-		return fmt.Errorf("failed to remove files: %w", err)
-	}
-
 	out.WriteSuccess("Removed %d unreferenced attachment(s), reclaimed %s",
-		len(result.Removed), attachment.FormatSize(result.Reclaimed))
-
-	return nil
-}
-
-// collectReferencedAttachmentPaths returns all attachment paths referenced by entities.
-func collectReferencedAttachmentPaths() []string {
-	var paths []string
-
-	for _, entity := range g.AllNodes() {
-		entityDef, ok := meta.GetEntityDef(entity.Type)
-		if !ok {
-			continue
-		}
-
-		for propName, propDef := range entityDef.Properties {
-			if propDef.Type != metamodel.PropertyTypeFile {
-				continue
-			}
-
-			paths = append(paths, extractAttachmentPaths(entity.Properties[propName])...)
-		}
-	}
-
-	return paths
-}
-
-// extractAttachmentPaths extracts attachment paths from a property value.
-func extractAttachmentPaths(val interface{}) []string {
-	if val == nil {
-		return nil
-	}
-
-	switch v := val.(type) {
-	case string:
-		if v != "" {
-			return []string{v}
-		}
-	case []interface{}:
-		var paths []string
-		for _, item := range v {
-			if s, ok := item.(string); ok && s != "" {
-				paths = append(paths, s)
-			}
-		}
-		return paths
-	case []string:
-		return v
-	}
+		len(result.Removed), output.FormatSize(result.Reclaimed))
 
 	return nil
 }

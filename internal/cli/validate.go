@@ -3,15 +3,11 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var validateCmd = &cobra.Command{
@@ -35,45 +31,37 @@ Examples:
 			startDir = os.Getenv("RELA_PROJECT")
 		}
 
-		// Discover project (we need the paths)
-		ctx, err := project.Discover(startDir, cliFS)
+		result, err := workspace.Validate(startDir)
 		if err != nil {
-			return fmt.Errorf("no project found: run 'rela init' to create one")
+			return err
 		}
 
 		hasErrors := false
 
-		// Initialize repository
-		repoInstance := repository.New(cliFS, ctx)
-
-		// 1. Validate metamodel
+		// Report metamodel validation
 		fmt.Println("Validating metamodel.yaml...")
-		mm, err := repoInstance.LoadMetamodel()
-		if err != nil {
-			fmt.Printf("  ✗ %v\n", err)
+		if result.MetamodelError != nil {
+			fmt.Printf("  ✗ %v\n", result.MetamodelError)
 			hasErrors = true
-			mm = nil
 		} else {
 			fmt.Println("  ✓ metamodel.yaml is valid")
 		}
 
-		// 2. Validate data-entry.yaml if it exists
-		dataEntryPath := filepath.Join(ctx.Root, dataentryconfig.ConfigFile)
-		if _, statErr := cliFS.Stat(dataEntryPath); statErr == nil {
-			fmt.Printf("Validating %s...\n", dataentryconfig.ConfigFile)
-
-			if mm == nil {
+		// Report data-entry validation
+		if result.DataEntrySkipped {
+			if result.MetamodelError != nil {
 				fmt.Println("  ⚠ Skipping data-entry validation (metamodel has errors)")
 			} else {
-				if err := validateDataEntryConfig(dataEntryPath, mm); err != nil {
-					fmt.Printf("  ✗ %v\n", err)
-					hasErrors = true
-				} else {
-					fmt.Printf("  ✓ %s is valid\n", dataentryconfig.ConfigFile)
-				}
+				fmt.Printf("Skipping %s (file not found)\n", dataentryconfig.ConfigFile)
 			}
 		} else {
-			fmt.Printf("Skipping %s (file not found)\n", dataentryconfig.ConfigFile)
+			fmt.Printf("Validating %s...\n", dataentryconfig.ConfigFile)
+			if result.DataEntryError != nil {
+				fmt.Printf("  ✗ %v\n", result.DataEntryError)
+				hasErrors = true
+			} else {
+				fmt.Printf("  ✓ %s is valid\n", dataentryconfig.ConfigFile)
+			}
 		}
 
 		if hasErrors {
@@ -84,21 +72,6 @@ Examples:
 		fmt.Println("\nAll configuration files are valid.")
 		return nil
 	},
-}
-
-// validateDataEntryConfig validates the data-entry.yaml file.
-func validateDataEntryConfig(path string, mm *metamodel.Metamodel) error {
-	data, err := cliFS.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("reading file: %w", err)
-	}
-
-	var cfg dataentryconfig.Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return fmt.Errorf("parsing YAML: %w", err)
-	}
-
-	return dataentryconfig.ValidateConfig(data, &cfg, mm)
 }
 
 func init() {

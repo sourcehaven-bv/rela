@@ -83,7 +83,7 @@ Examples:
 		}
 
 		// Write DOT file
-		return cliFS.WriteFile(graphOutput, []byte(dot), 0644)
+		return os.WriteFile(graphOutput, []byte(dot), 0644)
 	},
 }
 

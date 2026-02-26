@@ -1,14 +1,11 @@
 package cli
 
 import (
-	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var initCmd = &cobra.Command{
@@ -21,56 +18,13 @@ var initCmd = &cobra.Command{
 		if targetDir == "" {
 			targetDir = os.Getenv("RELA_PROJECT")
 		}
-		if targetDir == "" {
-			var err error
-			targetDir, err = cliFS.Getwd()
-			if err != nil {
-				return err
-			}
+
+		result, err := workspace.Initialize(targetDir)
+		if err != nil {
+			return err
 		}
 
-		metamodelPath := filepath.Join(targetDir, project.MetamodelFile)
-
-		// Check if already initialized
-		if _, err := cliFS.Stat(metamodelPath); err == nil {
-			return fmt.Errorf("project already initialized (metamodel.yaml exists)")
-		}
-
-		// Create project context
-		ctx := &project.Context{
-			Root:          targetDir,
-			MetamodelPath: metamodelPath,
-			CacheDir:      filepath.Join(targetDir, project.CacheDir),
-			CachePath:     filepath.Join(targetDir, project.CacheDir, project.CacheFile),
-			EntitiesDir:   filepath.Join(targetDir, project.EntitiesDir),
-			RelationsDir:  filepath.Join(targetDir, project.RelationsDir),
-		}
-
-		// Create directories
-		if err := ctx.Initialize(cliFS); err != nil {
-			return fmt.Errorf("failed to create directories: %w", err)
-		}
-
-		// Write default metamodel
-		if err := cliFS.WriteFile(metamodelPath, []byte(metamodel.DefaultMetamodelYAML()), 0644); err != nil {
-			return fmt.Errorf("failed to write metamodel: %w", err)
-		}
-
-		// Add .rela to .gitignore if it exists
-		gitignorePath := filepath.Join(targetDir, ".gitignore")
-		if _, err := cliFS.Stat(gitignorePath); err == nil {
-			// Read existing content
-			content, err := cliFS.ReadFile(gitignorePath)
-			if err == nil {
-				// Check if .rela is already in .gitignore
-				if !contains(string(content), ".rela") {
-					updated := append(content, []byte("\n# rela cache\n.rela/\n")...)
-					_ = cliFS.WriteFile(gitignorePath, updated, 0644)
-				}
-			}
-		}
-
-		out.WriteSuccess("Initialized rela project in %s", targetDir)
+		out.WriteSuccess("Initialized rela project in %s", result.Root)
 		out.WriteMessage("  Created metamodel.yaml")
 		out.WriteMessage("  Created entities/ directory")
 		out.WriteMessage("  Created relations/ directory")
@@ -86,17 +40,4 @@ var initCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(initCmd)
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || s != "" && containsString(s, substr))
-}
-
-func containsString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

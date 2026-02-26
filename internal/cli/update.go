@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -136,7 +137,7 @@ func getUpdateBodyContent(cmd *cobra.Command) (string, error) {
 		if updateBodyFile == "-" {
 			content, err = io.ReadAll(cmd.InOrStdin())
 		} else {
-			content, err = cliFS.ReadFile(updateBodyFile)
+			content, err = os.ReadFile(updateBodyFile)
 		}
 
 		if err != nil {

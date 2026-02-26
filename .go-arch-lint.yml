@@ -111,7 +111,6 @@ deps:
   # CLI layer — orchestrates everything
   cli:
     mayDependOn:
-      - attachment
       - dataentryconfig
       - filter
       - graph
@@ -119,11 +118,8 @@ deps:
       - markdown
       - mcp
       - metamodel
-      - migration
       - output
       - project
-      - repository
-      - storage
       - views
       - workspace
     canUse:
@@ -174,7 +170,9 @@ deps:
   # Application services
   workspace:
     mayDependOn:
+      - attachment
       - automation
+      - dataentryconfig
       - graph
       - markdown
       - metamodel
@@ -183,6 +181,7 @@ deps:
       - rename
       - repository
       - storage
+      - views
 
   # Domain services
   automation:
