@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
@@ -94,9 +95,54 @@ func (w *Workspace) Meta() *metamodel.Metamodel {
 	return w.meta
 }
 
-// Repo returns the underlying repository for operations that Workspace
-// does not wrap (ReadProjectFile, WriteCacheFile, FS, etc.).
+// Repo returns the underlying repository for low-level operations not
+// wrapped by Workspace (e.g., FS access, Watch).
 func (w *Workspace) Repo() repository.Store { return w.repo }
+
+// --- Project accessors ---
+
+// Paths returns the project directory layout.
+func (w *Workspace) Paths() *project.Context { return w.repo.Paths() }
+
+// ReadProjectFile reads a file relative to the project root.
+func (w *Workspace) ReadProjectFile(name string) ([]byte, error) {
+	return w.repo.ReadProjectFile(name)
+}
+
+// ReadCacheFile reads a file from the .rela cache directory.
+func (w *Workspace) ReadCacheFile(name string) ([]byte, error) {
+	return w.repo.ReadCacheFile(name)
+}
+
+// WriteCacheFile writes a file to the .rela cache directory.
+func (w *Workspace) WriteCacheFile(name string, data []byte) error {
+	return w.repo.WriteCacheFile(name, data)
+}
+
+// DiscoverEntityTemplates returns all templates (including variants) for an entity type.
+func (w *Workspace) DiscoverEntityTemplates(entityType string) ([]*markdown.EntityTemplate, error) {
+	return w.repo.DiscoverEntityTemplates(entityType)
+}
+
+// GenerateEntityTemplate generates a template file for the given entity type.
+func (w *Workspace) GenerateEntityTemplate(entityType, variant string, force bool) (bool, error) {
+	return w.repo.GenerateEntityTemplate(w.Meta(), entityType, variant, force)
+}
+
+// GenerateRelationTemplate generates a template file for the given relation type.
+func (w *Workspace) GenerateRelationTemplate(relationType string, force bool) (bool, error) {
+	return w.repo.GenerateRelationTemplate(w.Meta(), relationType, force)
+}
+
+// FindOrphanedTempFiles returns paths of leftover .new temp files.
+func (w *Workspace) FindOrphanedTempFiles() ([]string, error) {
+	return w.repo.FindOrphanedTempFiles()
+}
+
+// CleanupOrphanedTempFiles removes leftover .new temp files.
+func (w *Workspace) CleanupOrphanedTempFiles() (int, error) {
+	return w.repo.CleanupOrphanedTempFiles()
+}
 
 // --- Lifecycle ---
 

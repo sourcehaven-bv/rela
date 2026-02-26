@@ -181,6 +181,7 @@ deps:
       - markdown
       - metamodel
       - migration
+      - project
       - rename
       - repository
 

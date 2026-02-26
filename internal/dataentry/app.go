@@ -21,7 +21,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -41,7 +40,6 @@ type App struct {
 	// Convenience aliases set from workspace; avoid method-call overhead in hot paths.
 	meta *metamodel.Metamodel
 	g    *graph.Graph
-	repo repository.Store
 	tmpl *template.Template
 	// styleMap: property type name -> value -> CSS class name
 	styleMap map[string]map[string]string
@@ -60,15 +58,13 @@ type App struct {
 
 // NewApp creates and initializes an App using the given workspace.
 func NewApp(ws *workspace.Workspace) (*App, error) {
-	repo := ws.Repo()
-
 	// Load data-entry config from project root
-	cfgData, err := repo.ReadProjectFile(ConfigFile)
+	cfgData, err := ws.ReadProjectFile(ConfigFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
 	// Check for deprecated syntax that needs migration
-	configPath := filepath.Join(repo.Paths().Root, ConfigFile)
+	configPath := filepath.Join(ws.Paths().Root, ConfigFile)
 	detections := migration.DetectBytes(cfgData, migration.FileTypeDataEntry)
 	if len(detections) > 0 {
 		return nil, &migration.Error{
@@ -109,7 +105,6 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		ws:          ws,
 		meta:        meta,
 		g:           g,
-		repo:        repo,
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
@@ -118,8 +113,8 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 	app.userDefaults = app.loadUserDefaults()
 
 	// Initialize git ops if enabled and repo is a git repository
-	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(repo.Paths().Root) {
-		app.gitOps = git.NewOps(repo.Paths().Root, *cfg.Git)
+	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(ws.Paths().Root) {
+		app.gitOps = git.NewOps(ws.Paths().Root, *cfg.Git)
 		log.Printf("Git sync enabled (mode: %s)", cfg.Git.Mode)
 	}
 
@@ -221,10 +216,10 @@ func (a *App) navElements(activeList string) []NavElement {
 // Returns an empty UIState if the file doesn't exist or can't be parsed.
 func (a *App) loadUIState() UIState {
 	state := UIState{CollapsedGroups: make(map[string]bool)}
-	if a.repo == nil {
+	if a.ws == nil {
 		return state
 	}
-	data, err := a.repo.ReadCacheFile(uiStateFile)
+	data, err := a.ws.ReadCacheFile(uiStateFile)
 	if err != nil {
 		return state
 	}
@@ -239,23 +234,23 @@ func (a *App) loadUIState() UIState {
 
 // saveUIState writes the UI state to .rela/ui-state.json.
 func (a *App) saveUIState(state UIState) error {
-	if a.repo == nil {
+	if a.ws == nil {
 		return nil
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
-	return a.repo.WriteCacheFile(uiStateFile, data)
+	return a.ws.WriteCacheFile(uiStateFile, data)
 }
 
 // loadUserDefaults reads .rela/user-defaults.yaml and returns the parsed defaults.
 // Returns nil if the file doesn't exist or can't be parsed.
 func (a *App) loadUserDefaults() *UserDefaults {
-	if a.repo == nil {
+	if a.ws == nil {
 		return nil
 	}
-	data, err := a.repo.ReadCacheFile(userDefaultsFile)
+	data, err := a.ws.ReadCacheFile(userDefaultsFile)
 	if err != nil {
 		return nil
 	}
@@ -268,14 +263,14 @@ func (a *App) loadUserDefaults() *UserDefaults {
 
 // saveUserDefaults writes the user defaults to .rela/user-defaults.yaml.
 func (a *App) saveUserDefaults(ud *UserDefaults) error {
-	if a.repo == nil {
+	if a.ws == nil {
 		return nil
 	}
 	data, err := yaml.Marshal(ud)
 	if err != nil {
 		return err
 	}
-	return a.repo.WriteCacheFile(userDefaultsFile, data)
+	return a.ws.WriteCacheFile(userDefaultsFile, data)
 }
 
 // firstNavTarget returns the first navigable item from the navigation config,
@@ -416,7 +411,7 @@ func (a *App) ProjectName() string {
 
 // ProjectRoot returns the root directory of the loaded project.
 func (a *App) ProjectRoot() string {
-	return a.repo.Paths().Root
+	return a.ws.Paths().Root
 }
 
 // colorToCSSClass maps a color name from config to a CSS class.
@@ -467,7 +462,7 @@ func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]
 
 // templatesForType returns all entity templates for a type, or nil on error.
 func (a *App) templatesForType(entityType string) []*markdown.EntityTemplate {
-	templates, err := a.repo.DiscoverEntityTemplates(entityType)
+	templates, err := a.ws.DiscoverEntityTemplates(entityType)
 	if err != nil {
 		return nil
 	}

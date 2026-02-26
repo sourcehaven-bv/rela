@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // testMeta returns a metamodel suitable for testing app-level functions.
@@ -706,7 +707,7 @@ func TestFirstNavTarget(t *testing.T) {
 }
 
 func TestUIStateLoadSave(t *testing.T) {
-	// Create an app with a real repository backed by memfs
+	// Create an app with a workspace backed by memfs
 	fs := storage.NewMemFS()
 	ctx := &project.Context{
 		Root:     "/project",
@@ -716,7 +717,7 @@ func TestUIStateLoadSave(t *testing.T) {
 	repo := repository.New(fs, ctx)
 
 	app := testAppInstance()
-	app.repo = repo
+	app.ws = workspace.NewWithGraph(repo, app.meta, app.g)
 
 	t.Run("load returns defaults when file missing", func(t *testing.T) {
 		state := app.loadUIState()
@@ -738,7 +739,7 @@ func TestUIStateLoadSave(t *testing.T) {
 
 	t.Run("UIState overrides config default", func(t *testing.T) {
 		app2 := testAppInstance()
-		app2.repo = repo
+		app2.ws = workspace.NewWithGraph(repo, app2.meta, app2.g)
 		app2.Cfg.Navigation = []NavigationEntry{
 			{
 				Group:     "Tickets",
@@ -762,9 +763,9 @@ func TestUIStateLoadSave(t *testing.T) {
 		}
 	})
 
-	t.Run("nil repo is safe", func(t *testing.T) {
+	t.Run("nil ws is safe", func(t *testing.T) {
 		app2 := testAppInstance()
-		app2.repo = nil
+		app2.ws = nil
 		state := app2.loadUIState()
 		if len(state.CollapsedGroups) != 0 {
 			t.Error("expected empty state")
@@ -785,7 +786,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 	repo := repository.New(fs, ctx)
 
 	app := testAppInstance()
-	app.repo = repo
+	app.ws = workspace.NewWithGraph(repo, app.meta, app.g)
 
 	t.Run("load returns nil when file missing", func(t *testing.T) {
 		ud := app.loadUserDefaults()
@@ -830,9 +831,9 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 		}
 	})
 
-	t.Run("nil repo is safe", func(t *testing.T) {
+	t.Run("nil ws is safe", func(t *testing.T) {
 		app2 := testAppInstance()
-		app2.repo = nil
+		app2.ws = nil
 		ud := app2.loadUserDefaults()
 		if ud != nil {
 			t.Errorf("expected nil, got %+v", ud)
