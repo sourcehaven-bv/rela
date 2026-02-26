@@ -183,3 +183,57 @@ func extractPaths(val interface{}) []string {
 
 	return nil
 }
+
+// GCAttachmentsResult contains the outcome of garbage collecting attachments.
+type GCAttachmentsResult struct {
+	Removed   []string // Paths that were (or would be) removed
+	Reclaimed int64    // Bytes reclaimed (or that would be reclaimed)
+}
+
+// GCAttachments removes unreferenced attachment files from the store.
+// If dryRun is true, it returns what would be removed without actually removing.
+func (w *Workspace) GCAttachments(dryRun bool) (*GCAttachmentsResult, error) {
+	referencedPaths := w.collectReferencedAttachmentPaths()
+	store := attachment.NewStore(w.FS(), w.Paths().Root)
+
+	gcResult, err := store.GC(referencedPaths)
+	if err != nil {
+		return nil, fmt.Errorf("gc failed: %w", err)
+	}
+
+	result := &GCAttachmentsResult{
+		Removed:   gcResult.Removed,
+		Reclaimed: gcResult.Reclaimed,
+	}
+
+	if !dryRun && len(gcResult.Removed) > 0 {
+		if err := store.RemoveUnreferenced(gcResult); err != nil {
+			return nil, fmt.Errorf("failed to remove files: %w", err)
+		}
+	}
+
+	return result, nil
+}
+
+// collectReferencedAttachmentPaths returns all attachment paths referenced by entities.
+func (w *Workspace) collectReferencedAttachmentPaths() []string {
+	var paths []string
+	meta := w.Meta()
+
+	for _, entity := range w.graph.AllNodes() {
+		entityDef, ok := meta.GetEntityDef(entity.Type)
+		if !ok {
+			continue
+		}
+
+		for propName, propDef := range entityDef.Properties {
+			if propDef.Type != metamodel.PropertyTypeFile {
+				continue
+			}
+
+			paths = append(paths, extractPaths(entity.Properties[propName])...)
+		}
+	}
+
+	return paths
+}
