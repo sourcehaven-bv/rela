@@ -8,7 +8,6 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -58,7 +57,7 @@ func (s *Server) Serve() error {
 
 	// Start file watcher via workspace
 	if err := s.ws.StartWatching(workspace.WatchOptions{
-		OnReload: func(_ []repository.ChangeEvent) {
+		OnReload: func(_ []workspace.ChangeEvent) {
 			s.logger.Println("Graph re-synced from file changes")
 			if s.mcp != nil {
 				s.mcp.SendNotificationToAllClients(
