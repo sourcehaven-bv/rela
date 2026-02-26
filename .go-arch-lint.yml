@@ -171,6 +171,7 @@ deps:
   # Application services
   workspace:
     mayDependOn:
+      - attachment
       - automation
       - dataentryconfig
       - graph

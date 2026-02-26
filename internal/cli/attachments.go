@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 var attachmentsCmd = &cobra.Command{
@@ -24,74 +23,9 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 
-		// Get entity from graph
-		entity, ok := g.GetNode(entityID)
-		if !ok {
-			return fmt.Errorf("entity not found: %s", entityID)
-		}
-
-		// Get entity definition
-		entityDef, ok := meta.GetEntityDef(entity.Type)
-		if !ok {
-			return fmt.Errorf("unknown entity type: %s", entity.Type)
-		}
-
-		// Create attachment store for metadata lookup
-		store := attachment.NewStore(ws.FS(), ws.Paths().Root)
-
-		// Collect attachments from all file properties
-		type attachmentInfo struct {
-			Property string
-			Path     string
-			Original string
-			Size     string
-		}
-
-		var infos []attachmentInfo
-
-		for propName, propDef := range entityDef.Properties {
-			if propDef.Type != metamodel.PropertyTypeFile {
-				continue
-			}
-
-			val, ok := entity.Properties[propName]
-			if !ok || val == nil {
-				continue
-			}
-
-			// Handle single value or list
-			var paths []string
-			switch v := val.(type) {
-			case string:
-				if v != "" {
-					paths = append(paths, v)
-				}
-			case []interface{}:
-				for _, item := range v {
-					if s, ok := item.(string); ok && s != "" {
-						paths = append(paths, s)
-					}
-				}
-			case []string:
-				paths = append(paths, v...)
-			}
-
-			for _, path := range paths {
-				info := attachmentInfo{
-					Property: propName,
-					Path:     path,
-					Original: "-",
-					Size:     "-",
-				}
-
-				// Try to get metadata
-				if meta, err := store.GetMetadata(path); err == nil {
-					info.Original = meta.OriginalName
-					info.Size = attachment.FormatSize(meta.Size)
-				}
-
-				infos = append(infos, info)
-			}
+		infos, err := ws.ListAttachments(entityID)
+		if err != nil {
+			return err
 		}
 
 		if len(infos) == 0 {
@@ -114,8 +48,8 @@ Examples:
 			if len(info.Path) > pathWidth {
 				pathWidth = len(info.Path)
 			}
-			if len(info.Original) > origWidth {
-				origWidth = len(info.Original)
+			if len(info.OriginalName) > origWidth {
+				origWidth = len(info.OriginalName)
 			}
 		}
 
@@ -130,7 +64,15 @@ Examples:
 
 		// Print rows
 		for _, info := range infos {
-			out.WriteMessage(format, info.Property, info.Path, info.Original, info.Size)
+			original := info.OriginalName
+			if original == "" {
+				original = "-"
+			}
+			size := "-"
+			if info.Size > 0 {
+				size = attachment.FormatSize(info.Size)
+			}
+			out.WriteMessage(format, info.Property, info.Path, original, size)
 		}
 
 		return nil
