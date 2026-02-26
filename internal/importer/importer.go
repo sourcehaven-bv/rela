@@ -28,6 +28,14 @@ const (
 	FormatCSV  Format = "csv"
 )
 
+// ParseOptions configures file parsing (format detection, related files).
+type ParseOptions struct {
+	// Format specifies the input format. If empty, auto-detected from file extension.
+	Format Format
+	// RelationsFile is the path to a separate relations CSV file (for CSV imports).
+	RelationsFile string
+}
+
 // Options configures the import behavior
 type Options struct {
 	// Format specifies the input format. If empty, auto-detected from file extension.
@@ -104,6 +112,60 @@ func NewImportSource(fs storage.FS) *ImportSource {
 // Open opens a file for reading from the import source.
 func (s *ImportSource) Open(path string) (io.ReadCloser, error) {
 	return s.fs.Open(path)
+}
+
+// ParseFile parses an import file and returns the data without importing.
+// This is used when the caller wants to handle import via workspace.Import().
+func ParseFile(path string, opts ParseOptions, source *ImportSource) (*ImportData, error) {
+	format := opts.Format
+	if format == "" {
+		format = detectFormat(path)
+		if format == "" {
+			return nil, fmt.Errorf("cannot determine format for file: %s (use --format to specify)", path)
+		}
+	}
+
+	file, err := source.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	var data *ImportData
+	switch format {
+	case FormatJSON:
+		data, err = parseJSON(file)
+	case FormatYAML:
+		data, err = parseYAML(file)
+	case FormatCSV:
+		data, err = parseCSV(file)
+		// Handle separate relations file for CSV
+		if err == nil && opts.RelationsFile != "" {
+			relData, relErr := parseRelationsCSVFromSource(opts.RelationsFile, source)
+			if relErr != nil {
+				return nil, fmt.Errorf("failed to parse relations file: %w", relErr)
+			}
+			data.Relations = relData
+		}
+	default:
+		return nil, fmt.Errorf("unsupported format: %s", format)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", format, err)
+	}
+
+	return data, nil
+}
+
+// parseRelationsCSVFromSource parses a relations CSV file from a source.
+func parseRelationsCSVFromSource(path string, source *ImportSource) ([]RelationData, error) {
+	file, err := source.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return parseRelationsCSVReader(file)
 }
 
 // Importer handles importing data into a rela project
@@ -609,8 +671,12 @@ func (imp *Importer) parseRelationsCSV(path string) ([]RelationData, error) {
 		return nil, err
 	}
 	defer file.Close()
+	return parseRelationsCSVReader(file)
+}
 
-	reader := csv.NewReader(file)
+// parseRelationsCSVReader parses relations from a CSV reader.
+func parseRelationsCSVReader(r io.Reader) ([]RelationData, error) {
+	reader := csv.NewReader(r)
 
 	// Read header
 	header, err := reader.Read()

@@ -138,8 +138,8 @@ func TestNew(t *testing.T) {
 	if ws.Meta() == nil {
 		t.Error("expected meta to be initialized")
 	}
-	if ws.Repo() == nil {
-		t.Error("expected repo to be initialized")
+	if ws.Paths() == nil {
+		t.Error("expected paths to be initialized")
 	}
 }
 

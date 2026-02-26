@@ -136,7 +136,7 @@ func (s *Server) handleReadView(
 	}
 	viewName, entryID := segments[0], segments[1]
 
-	viewsFile, err := s.ws.Repo().LoadViews()
+	viewsFile, err := s.ws.LoadViews()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load views: %w", err)
 	}

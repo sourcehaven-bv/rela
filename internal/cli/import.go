@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/importer"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var (
@@ -71,21 +72,31 @@ CSV format (relations):
 	RunE: func(cmd *cobra.Command, args []string) error {
 		filePath := args[0]
 
-		opts := importer.Options{
+		// Parse the import file
+		parseOpts := importer.ParseOptions{
 			Format:        importer.Format(importFormat),
-			DryRun:        importDryRun,
-			Update:        importUpdate,
-			SkipErrors:    importSkipErrors,
 			RelationsFile: importRelationsFile,
 		}
+		source := importer.NewImportSource(cliFS)
 
-		imp := importer.New(ws.Repo(), meta, g, opts, importer.NewImportSource(cliFS))
+		data, err := importer.ParseFile(filePath, parseOpts, source)
+		if err != nil {
+			return err
+		}
+
+		// Convert to workspace import types
+		wsData := convertImportData(data)
+		wsOpts := workspace.ImportOptions{
+			DryRun:     importDryRun,
+			Update:     importUpdate,
+			SkipErrors: importSkipErrors,
+		}
 
 		if importDryRun {
 			out.WriteInfo("Dry run - validating without creating files...")
 		}
 
-		result, err := imp.ImportFile(filePath)
+		result, err := ws.Import(wsData, wsOpts)
 		if err != nil {
 			return err
 		}
@@ -121,11 +132,6 @@ CSV format (relations):
 			if result.RelationsSkipped > 0 {
 				out.WriteWarning("Skipped %d relations (errors or duplicates)", result.RelationsSkipped)
 			}
-
-			// Save cache
-			if err := saveCache(); err != nil {
-				out.WriteWarning("Failed to save cache: %v", err)
-			}
 		}
 
 		// Report any errors
@@ -144,6 +150,33 @@ CSV format (relations):
 
 		return nil
 	},
+}
+
+// convertImportData converts importer types to workspace types.
+func convertImportData(data *importer.ImportData) *workspace.ImportData {
+	wsData := &workspace.ImportData{
+		Entities:  make([]workspace.ImportEntity, len(data.Entities)),
+		Relations: make([]workspace.ImportRelation, len(data.Relations)),
+	}
+
+	for i, e := range data.Entities {
+		wsData.Entities[i] = workspace.ImportEntity{
+			ID:         e.ID,
+			Type:       e.Type,
+			Properties: e.Properties,
+		}
+	}
+
+	for i, r := range data.Relations {
+		wsData.Relations[i] = workspace.ImportRelation{
+			From:       r.From,
+			Type:       r.Relation,
+			To:         r.To,
+			Properties: r.Properties,
+		}
+	}
+
+	return wsData
 }
 
 func init() {

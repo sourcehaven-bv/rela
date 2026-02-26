@@ -21,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 // ChangeEvent is re-exported from repository so consumers don't need to
@@ -117,10 +118,6 @@ func (w *Workspace) Meta() *metamodel.Metamodel {
 	return w.meta
 }
 
-// Repo returns the underlying repository for low-level operations not
-// wrapped by Workspace (e.g., FS access, Watch).
-func (w *Workspace) Repo() repository.Store { return w.repo }
-
 // --- Project accessors ---
 
 // Paths returns the project directory layout.
@@ -164,6 +161,12 @@ func (w *Workspace) FindOrphanedTempFiles() ([]string, error) {
 // CleanupOrphanedTempFiles removes leftover .new temp files.
 func (w *Workspace) CleanupOrphanedTempFiles() (int, error) {
 	return w.repo.CleanupOrphanedTempFiles()
+}
+
+// LoadViews loads and parses the views file from the project root.
+// Returns an empty views file if views.yaml doesn't exist (views are optional).
+func (w *Workspace) LoadViews() (*views.File, error) {
+	return w.repo.LoadViews()
 }
 
 // --- Lifecycle ---

@@ -101,5 +101,5 @@ func (s *Server) handleExecuteView(
 }
 
 func (s *Server) loadViews() (*views.File, error) {
-	return s.ws.Repo().LoadViews()
+	return s.ws.LoadViews()
 }

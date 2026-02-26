@@ -183,6 +183,7 @@ deps:
       - rename
       - repository
       - storage
+      - views
 
   # Domain services
   automation:
