@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // eventBroker manages SSE client connections for live-reload notifications.
@@ -51,24 +52,26 @@ func (b *eventBroker) broadcast(event string) {
 }
 
 // StartWatching begins file watching for live-reload of views when project
-// files change. Returns a stop function to shut down the watcher.
+// files change. The workspace handles metamodel + graph reload; this method
+// adds dataentry-specific side-effects (config reload, SSE broadcast).
+// Stop via a.ws.StopWatching().
 //
 // coverage-ignore: requires real filesystem events via fsnotify
-func (a *App) StartWatching() (stop func(), err error) {
-	paths := a.repo.Paths()
+func (a *App) StartWatching() error {
+	paths := a.ws.Repo().Paths()
 	configPath := filepath.Join(paths.Root, ConfigFile)
 	metamodelDir := filepath.Join(paths.Root, "metamodel")
 
-	opts := repository.WatchOptions{
+	return a.ws.StartWatching(workspace.WatchOptions{
 		ExtraFiles: []string{configPath},
 		ExtraDirs:  []string{metamodelDir},
-	}
-	return a.repo.Watch(opts, func(events []repository.ChangeEvent) {
-		for _, e := range events {
-			log.Printf("File changed: %s (%s)", e.Path, e.Op)
-		}
-		a.reload(events)
-		a.broker.broadcast("refresh")
+		OnReload: func(events []repository.ChangeEvent) {
+			for _, e := range events {
+				log.Printf("File changed: %s (%s)", e.Path, e.Op)
+			}
+			a.onReload(events)
+			a.broker.broadcast("refresh")
+		},
 	})
 }
 
@@ -113,14 +116,15 @@ func (a *App) StartGitFetch() (stop func()) {
 	}
 }
 
-// reload re-syncs the graph and optionally reloads metamodel/config when
-// the corresponding files have changed. It holds the write lock to ensure
-// no handlers are reading stale state during the swap.
-func (a *App) reload(events []repository.ChangeEvent) {
+// onReload handles dataentry-specific side-effects after the workspace has
+// already reloaded the metamodel and re-synced the graph. It re-reads the
+// data-entry config if changed, updates convenience aliases, and rebuilds
+// styles/templates.
+func (a *App) onReload(events []repository.ChangeEvent) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	paths := a.repo.Paths()
+	paths := a.ws.Repo().Paths()
 	configPath := filepath.Join(paths.Root, ConfigFile)
 	metamodelDir := filepath.Join(paths.Root, "metamodel") + string(filepath.Separator)
 	needConfigReload := false
@@ -138,7 +142,7 @@ func (a *App) reload(events []repository.ChangeEvent) {
 	}
 
 	if needConfigReload {
-		cfgData, err := a.repo.ReadProjectFile(ConfigFile)
+		cfgData, err := a.ws.Repo().ReadProjectFile(ConfigFile)
 		if err != nil {
 			log.Printf("Config reload error: %v", err)
 		} else {
@@ -152,16 +156,9 @@ func (a *App) reload(events []repository.ChangeEvent) {
 		}
 	}
 
-	// Reload metamodel + graph via workspace
-	result, err := a.ws.Reload()
-	if err != nil {
-		log.Printf("Workspace reload error: %v", err)
-	} else {
-		// Update convenience aliases
-		a.meta = a.ws.Meta()
-		a.g = a.ws.Graph()
-		log.Printf("Graph re-synced: %d entities, %d relations", result.EntitiesLoaded, result.RelationsLoaded)
-	}
+	// Update convenience aliases (workspace already reloaded)
+	a.meta = a.ws.Meta()
+	a.g = a.ws.Graph()
 
 	// Rebuild styles and templates if config or metamodel changed
 	if needConfigReload || needMetamodelReload {

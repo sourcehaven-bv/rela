@@ -54,7 +54,7 @@ func main() {
 	// Start file watcher for live-reload.
 	// The watcher goroutine is cleaned up on process exit; no explicit stop
 	// is needed since log.Fatal calls os.Exit.
-	if _, err := app.StartWatching(); err != nil {
+	if err := app.StartWatching(); err != nil {
 		log.Printf("Warning: file watcher not started: %v", err)
 	} else {
 		log.Println("File watcher started for live-reload")

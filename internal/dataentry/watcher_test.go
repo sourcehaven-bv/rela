@@ -264,6 +264,13 @@ func TestEventBrokerConcurrency(t *testing.T) {
 	}
 }
 
+// simulateReload mimics what workspace.StartWatching does: reload the
+// workspace (metamodel + graph), then call the dataentry onReload callback.
+func (a *App) simulateReload(events []repository.ChangeEvent) {
+	_, _ = a.ws.Reload()
+	a.onReload(events)
+}
+
 // --- reload tests ---
 
 func TestReloadEntityChanges(t *testing.T) {
@@ -282,7 +289,7 @@ status: open
 `), 0o644)
 
 	// Reload with a generic entity change (not metamodel or config)
-	app.reload([]repository.ChangeEvent{
+	app.simulateReload([]repository.ChangeEvent{
 		{Path: app.repo.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: repository.OpCreate},
 	})
 
@@ -331,7 +338,7 @@ relations:
 `
 	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
-	app.reload([]repository.ChangeEvent{
+	app.simulateReload([]repository.ChangeEvent{
 		{Path: app.repo.Paths().MetamodelPath, Op: repository.OpModify},
 	})
 
@@ -356,7 +363,7 @@ navigation: []
 	configPath := app.repo.Paths().Root + "/" + ConfigFile
 	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
 
-	app.reload([]repository.ChangeEvent{
+	app.simulateReload([]repository.ChangeEvent{
 		{Path: configPath, Op: repository.OpModify},
 	})
 
@@ -376,7 +383,7 @@ func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
 	// Write invalid metamodel
 	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
 
-	app.reload([]repository.ChangeEvent{
+	app.simulateReload([]repository.ChangeEvent{
 		{Path: app.repo.Paths().MetamodelPath, Op: repository.OpModify},
 	})
 
@@ -395,7 +402,7 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	// Write invalid YAML config
 	_ = fs.WriteFile(configPath, []byte(`not: valid: yaml: {{{`), 0o644)
 
-	app.reload([]repository.ChangeEvent{
+	app.simulateReload([]repository.ChangeEvent{
 		{Path: configPath, Op: repository.OpModify},
 	})
 
@@ -442,7 +449,7 @@ relations:
 	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
 	// Reload with both config and metamodel changes at once
-	app.reload([]repository.ChangeEvent{
+	app.simulateReload([]repository.ChangeEvent{
 		{Path: configPath, Op: repository.OpModify},
 		{Path: app.repo.Paths().MetamodelPath, Op: repository.OpModify},
 	})
