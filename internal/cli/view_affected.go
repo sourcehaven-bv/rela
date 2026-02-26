@@ -77,13 +77,13 @@ Examples:
 		if viewAffectedRoots != "" {
 			rootIDs = strings.Split(viewAffectedRoots, ",")
 		} else {
-			for _, entity := range g.NodesByType(viewDef.Entry.Type) {
+			for _, entity := range ws.EntitiesByType(viewDef.Entry.Type) {
 				rootIDs = append(rootIDs, entity.ID)
 			}
 		}
 
 		// Find affected roots
-		engine := views.NewEngine(g, meta)
+		engine := views.NewEngine(ws.Graph(), meta)
 		affected, err := engine.AffectedRoots(viewDef, changedIDs, rootIDs)
 		if err != nil {
 			return fmt.Errorf("failed to find affected roots: %w", err)
@@ -143,7 +143,7 @@ func resolveChangedFiles() ([]string, error) {
 
 	// Build reverse lookups from file path to entity/relation IDs
 	pathToEntityID := make(map[string]string)
-	for _, entity := range g.AllNodes() {
+	for _, entity := range ws.AllEntities() {
 		if entity.FilePath != "" {
 			pathToEntityID[entity.FilePath] = entity.ID
 		}
@@ -151,7 +151,7 @@ func resolveChangedFiles() ([]string, error) {
 
 	type relationEndpoints struct{ from, to string }
 	pathToRelation := make(map[string]relationEndpoints)
-	for _, rel := range g.AllEdges() {
+	for _, rel := range ws.AllRelations() {
 		if rel.FilePath != "" {
 			pathToRelation[rel.FilePath] = relationEndpoints{from: rel.From, to: rel.To}
 		}

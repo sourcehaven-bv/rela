@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func setupAnalyzeTestGraph() {
@@ -41,6 +42,7 @@ func setupAnalyzeTestGraph() {
 			},
 		},
 	}
+	ws = workspace.NewForTest(g, meta)
 	out = output.New(output.FormatTable)
 
 	// Add test entities
@@ -611,6 +613,7 @@ func TestCountPropertyErrors(t *testing.T) {
 						},
 					},
 				}
+				ws = workspace.NewForTest(g, meta)
 				out = output.New(output.FormatTable)
 
 				entity := model.NewEntity("REQ-001", "requirement")
@@ -626,6 +629,7 @@ func TestCountPropertyErrors(t *testing.T) {
 				meta = &metamodel.Metamodel{
 					Entities: map[string]metamodel.EntityDef{},
 				}
+				ws = workspace.NewForTest(g, meta)
 				out = output.New(output.FormatTable)
 			},
 			wantZero: true,
@@ -692,6 +696,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 						"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
 					},
 				}
+				ws = workspace.NewForTest(g, meta)
 				orphan := model.NewEntity("REQ-003", "requirement")
 				orphan.Properties["title"] = "Orphan Requirement"
 				g.AddNode(orphan)
@@ -716,6 +721,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 						"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
 					},
 				}
+				ws = workspace.NewForTest(g, meta)
 				e1 := model.NewEntity("REQ-001", "requirement")
 				e1.Properties["title"] = "Same Title"
 				g.AddNode(e1)
@@ -736,6 +742,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 						"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
 					},
 				}
+				ws = workspace.NewForTest(g, meta)
 				g.AddNode(model.NewEntity("REQ-001", "requirement"))
 				g.AddNode(model.NewEntity("REQ-003", "requirement"))
 			},
@@ -784,6 +791,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 						},
 					},
 				}
+				ws = workspace.NewForTest(g, meta)
 				e := model.NewEntity("REQ-001", "requirement")
 				e.Properties["status"] = "accepted"
 				g.AddNode(e)

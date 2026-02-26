@@ -126,12 +126,12 @@ func runSchemaOverview() error {
 	// Entity types with counts
 	entityNames := getSortedEntityNames(meta)
 
-	// Get entity counts from graph if available
+	// Get entity counts from workspace if available
 	entityCounts := make(map[string]int)
 	maxCount := 0
-	if g != nil {
+	if ws != nil {
 		for _, name := range entityNames {
-			count := len(g.NodesByType(name))
+			count := len(ws.EntitiesByType(name))
 			entityCounts[name] = count
 			if count > maxCount {
 				maxCount = count

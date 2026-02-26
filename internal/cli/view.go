@@ -42,7 +42,7 @@ Examples:
 		}
 
 		// Create view engine
-		engine := views.NewEngine(g, meta)
+		engine := views.NewEngine(ws.Graph(), meta)
 
 		// Execute the view
 		result, err := engine.Execute(viewDef, entryID)
@@ -56,7 +56,7 @@ Examples:
 			format = "yaml" // Default to yaml for views
 		}
 
-		output, err := views.Format(result, format, g, meta)
+		output, err := views.Format(result, format, ws.Graph(), meta)
 		if err != nil {
 			return fmt.Errorf("failed to format output: %w", err)
 		}

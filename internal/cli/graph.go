@@ -30,8 +30,8 @@ Examples:
   rela graph --types requirement,decision`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Get entities and edges
-		entities := g.AllNodes()
-		edges := g.AllEdges()
+		entities := ws.AllEntities()
+		edges := ws.AllRelations()
 
 		// Filter by types if specified
 		if len(graphTypes) > 0 {

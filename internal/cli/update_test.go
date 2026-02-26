@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func setupUpdateTestEnv() {
@@ -52,6 +53,7 @@ func setupUpdateTestEnv() {
 			},
 		},
 	}
+	ws = workspace.NewForTest(g, meta)
 }
 
 func TestUpdateCmd_PropertyFlagExists(t *testing.T) {

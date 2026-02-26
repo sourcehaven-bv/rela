@@ -55,7 +55,7 @@ var analyzeOrphansCmd = &cobra.Command{
 	Use:   "orphans",
 	Short: "Find entities with no connections",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		orphans := g.FindOrphans()
+		orphans := ws.FindOrphans()
 		filter.SortByID(orphans, false)
 
 		if writeAnalysisJSON(len(orphans), orphans,
@@ -76,7 +76,7 @@ var analyzeDuplicatesCmd = &cobra.Command{
 	Use:   "duplicates",
 	Short: "Find entities with similar titles",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		entities := g.AllNodes()
+		entities := ws.AllEntities()
 
 		// Group by normalized title
 		titleGroups := make(map[string][]*model.Entity)
@@ -154,7 +154,7 @@ since they use manually-specified IDs that are not expected to be sequential.`,
 		// Group IDs by prefix (only for sequential ID types)
 		prefixGroups := make(map[string][]int)
 
-		for _, id := range g.AllIDs() {
+		for _, id := range ws.EntityIDs() {
 			parsed, err := model.ParseEntityID(id)
 			if err != nil || parsed.Prefix == "" {
 				continue
@@ -235,10 +235,10 @@ var analyzeCardinalityCmd = &cobra.Command{
 			if relDef.MinOutgoing != nil && *relDef.MinOutgoing > 0 {
 				// For each entity type in From, check they have at least MinOutgoing outgoing relations of this type
 				for _, sourceType := range relDef.From {
-					entities := g.NodesByType(sourceType)
+					entities := ws.EntitiesByType(sourceType)
 					for _, e := range entities {
 						count := 0
-						for _, edge := range g.OutgoingEdges(e.ID) {
+						for _, edge := range ws.OutgoingRelations(e.ID) {
 							if edge.Type == relName {
 								count++
 							}
@@ -259,10 +259,10 @@ var analyzeCardinalityCmd = &cobra.Command{
 			// Check max_outgoing constraint
 			if relDef.MaxOutgoing != nil {
 				for _, sourceType := range relDef.From {
-					entities := g.NodesByType(sourceType)
+					entities := ws.EntitiesByType(sourceType)
 					for _, e := range entities {
 						count := 0
-						for _, edge := range g.OutgoingEdges(e.ID) {
+						for _, edge := range ws.OutgoingRelations(e.ID) {
 							if edge.Type == relName {
 								count++
 							}
@@ -284,10 +284,10 @@ var analyzeCardinalityCmd = &cobra.Command{
 			// For each entity type in To, check they have at least MinIncoming incoming relations of this type
 			if relDef.MinIncoming != nil && *relDef.MinIncoming > 0 {
 				for _, targetType := range relDef.To {
-					entities := g.NodesByType(targetType)
+					entities := ws.EntitiesByType(targetType)
 					for _, e := range entities {
 						count := 0
-						for _, edge := range g.IncomingEdges(e.ID) {
+						for _, edge := range ws.IncomingRelations(e.ID) {
 							if edge.Type == relName {
 								count++
 							}
@@ -313,10 +313,10 @@ var analyzeCardinalityCmd = &cobra.Command{
 			// Check max_incoming constraint
 			if relDef.MaxIncoming != nil {
 				for _, targetType := range relDef.To {
-					entities := g.NodesByType(targetType)
+					entities := ws.EntitiesByType(targetType)
 					for _, e := range entities {
 						count := 0
-						for _, edge := range g.IncomingEdges(e.ID) {
+						for _, edge := range ws.IncomingRelations(e.ID) {
 							if edge.Type == relName {
 								count++
 							}
@@ -386,7 +386,7 @@ This catches issues in manually-edited markdown files that bypass CLI validation
 
 // runPropertyValidation validates all entity properties against the metamodel
 func runPropertyValidation() error {
-	entities := g.AllNodes()
+	entities := ws.AllEntities()
 	errorCount := 0
 
 	// Group errors by entity for cleaner output
@@ -455,7 +455,7 @@ func runPropertyValidation() error {
 // countPropertyErrors counts property validation errors across all entities
 func countPropertyErrors() int {
 	count := 0
-	for _, entity := range g.AllNodes() {
+	for _, entity := range ws.AllEntities() {
 		count += len(meta.ValidateEntity(entity))
 	}
 	return count
@@ -623,9 +623,9 @@ func checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
 	// Get entities to check
 	var entities []*model.Entity
 	if rule.EntityType != "" {
-		entities = g.NodesByType(rule.EntityType)
+		entities = ws.EntitiesByType(rule.EntityType)
 	} else {
-		entities = g.AllNodes()
+		entities = ws.AllEntities()
 	}
 
 	for _, entity := range entities {
@@ -706,7 +706,7 @@ func countMinOutgoingViolations(relName string, relDef metamodel.RelationDef) in
 	}
 	violations := 0
 	for _, sourceType := range relDef.From {
-		for _, e := range g.NodesByType(sourceType) {
+		for _, e := range ws.EntitiesByType(sourceType) {
 			if countOutgoingByType(e.ID, relName) < *relDef.MinOutgoing {
 				violations++
 			}
@@ -722,7 +722,7 @@ func countMaxOutgoingViolations(relName string, relDef metamodel.RelationDef) in
 	}
 	violations := 0
 	for _, sourceType := range relDef.From {
-		for _, e := range g.NodesByType(sourceType) {
+		for _, e := range ws.EntitiesByType(sourceType) {
 			if countOutgoingByType(e.ID, relName) > *relDef.MaxOutgoing {
 				violations++
 			}
@@ -738,7 +738,7 @@ func countMinIncomingViolations(relName string, relDef metamodel.RelationDef) in
 	}
 	violations := 0
 	for _, targetType := range relDef.To {
-		for _, e := range g.NodesByType(targetType) {
+		for _, e := range ws.EntitiesByType(targetType) {
 			if countIncomingByType(e.ID, relName) < *relDef.MinIncoming {
 				violations++
 			}
@@ -754,7 +754,7 @@ func countMaxIncomingViolations(relName string, relDef metamodel.RelationDef) in
 	}
 	violations := 0
 	for _, targetType := range relDef.To {
-		for _, e := range g.NodesByType(targetType) {
+		for _, e := range ws.EntitiesByType(targetType) {
 			if countIncomingByType(e.ID, relName) > *relDef.MaxIncoming {
 				violations++
 			}
@@ -766,7 +766,7 @@ func countMaxIncomingViolations(relName string, relDef metamodel.RelationDef) in
 // countOutgoingByType counts outgoing edges of a specific relation type
 func countOutgoingByType(entityID, relName string) int {
 	count := 0
-	for _, edge := range g.OutgoingEdges(entityID) {
+	for _, edge := range ws.OutgoingRelations(entityID) {
 		if edge.Type == relName {
 			count++
 		}
@@ -777,7 +777,7 @@ func countOutgoingByType(entityID, relName string) int {
 // countIncomingByType counts incoming edges of a specific relation type
 func countIncomingByType(entityID, relName string) int {
 	count := 0
-	for _, edge := range g.IncomingEdges(entityID) {
+	for _, edge := range ws.IncomingRelations(entityID) {
 		if edge.Type == relName {
 			count++
 		}
@@ -790,13 +790,13 @@ var analyzeAllCmd = &cobra.Command{
 	Short: "Run all analyses",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Collect issue counts for summary
-		orphanCount := len(g.FindOrphans())
+		orphanCount := len(ws.FindOrphans())
 
 		// Count cardinality violations
 		cardinalityCount := countCardinalityViolations()
 
 		// Count duplicates
-		entities := g.AllNodes()
+		entities := ws.AllEntities()
 		titleGroups := make(map[string][]*model.Entity)
 		for _, e := range entities {
 			title := normalizeTitle(e.Title())
@@ -823,7 +823,7 @@ var analyzeAllCmd = &cobra.Command{
 			}
 		}
 		prefixGroups := make(map[string][]int)
-		for _, id := range g.AllIDs() {
+		for _, id := range ws.EntityIDs() {
 			parsed, err := model.ParseEntityID(id)
 			if err != nil || parsed.Prefix == "" {
 				continue

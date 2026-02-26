@@ -16,13 +16,13 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 
-		entity, ok := g.GetNode(entityID)
+		entity, ok := ws.GetEntity(entityID)
 		if !ok {
 			return &entityNotFoundError{ID: entityID}
 		}
 
-		incoming := g.IncomingEdges(entityID)
-		outgoing := g.OutgoingEdges(entityID)
+		incoming := ws.IncomingRelations(entityID)
+		outgoing := ws.OutgoingRelations(entityID)
 
 		return out.WriteEntity(entity, incoming, outgoing)
 	},

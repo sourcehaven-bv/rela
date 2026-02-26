@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func setupTestGraph() {
@@ -44,6 +45,7 @@ func setupTestGraph() {
 			},
 		},
 	}
+	ws = workspace.NewForTest(g, meta)
 	out = output.New(output.FormatTable)
 
 	// Add test entities

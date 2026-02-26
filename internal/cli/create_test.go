@@ -13,10 +13,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func setupCreateTestEnv() {
 	g = graph.New()
+	meta = nil // Will be set by individual tests
+	ws = nil   // Will be set by individual tests after meta is set
 	out = output.New(output.FormatTable)
 	projectCtx = &project.Context{
 		Root:          "/tmp/test-project",
@@ -143,6 +146,7 @@ func TestCreateEntityWithPrimaryPropertyName(t *testing.T) {
 			},
 		},
 	}
+	ws = workspace.NewForTest(g, meta)
 
 	// Test that GetPrimaryProperty returns correct property for each type
 	stakeholderDef, _ := meta.GetEntityDef("stakeholder")
@@ -180,6 +184,7 @@ func TestCreateEntityWithMultipleProperties(t *testing.T) {
 			},
 		},
 	}
+	ws = workspace.NewForTest(g, meta)
 
 	// Test that GetPrimaryProperty returns "title" for control
 	controlDef, _ := meta.GetEntityDef("control")
@@ -204,6 +209,7 @@ func TestCreateEntityTypeWithLabelProperty(t *testing.T) {
 			},
 		},
 	}
+	ws = workspace.NewForTest(g, meta)
 
 	// Test that GetPrimaryProperty returns "label" for tag
 	tagDef, _ := meta.GetEntityDef("tag")
@@ -233,6 +239,7 @@ func TestCreateEntityNoPrimaryProperty(t *testing.T) {
 			},
 		},
 	}
+	ws = workspace.NewForTest(g, meta)
 
 	// Test that GetPrimaryProperty returns empty string
 	markerDef, _ := meta.GetEntityDef("marker")

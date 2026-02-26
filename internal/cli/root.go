@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -27,7 +26,6 @@ var (
 	ws         *workspace.Workspace
 	projectCtx *project.Context // derived from ws.Paths()
 	meta       *metamodel.Metamodel
-	g          *graph.Graph
 	out        *output.Writer
 )
 
@@ -70,7 +68,6 @@ and maintain semantic relationships between them.`,
 		// Convenience aliases for read-only commands
 		projectCtx = ws.Paths()
 		meta = ws.Meta()
-		g = ws.Graph()
 
 		// Set up output writer
 		out = output.New(output.Format(outputFormat))

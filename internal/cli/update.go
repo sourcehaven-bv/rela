@@ -42,7 +42,7 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 
-		entity, ok := g.GetNode(entityID)
+		entity, ok := ws.GetEntity(entityID)
 		if !ok {
 			return &entityNotFoundError{ID: entityID}
 		}

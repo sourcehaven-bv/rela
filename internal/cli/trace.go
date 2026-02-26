@@ -34,11 +34,11 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 
-		if _, ok := g.GetNode(entityID); !ok {
+		if _, ok := ws.GetEntity(entityID); !ok {
 			return &entityNotFoundError{ID: entityID}
 		}
 
-		result := g.TraceFrom(entityID, traceMaxDepth)
+		result := ws.TraceFrom(entityID, traceMaxDepth)
 		if result == nil {
 			out.WriteMessage("No downstream dependencies found")
 			return nil
@@ -61,11 +61,11 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 
-		if _, ok := g.GetNode(entityID); !ok {
+		if _, ok := ws.GetEntity(entityID); !ok {
 			return &entityNotFoundError{ID: entityID}
 		}
 
-		result := g.TraceTo(entityID, traceMaxDepth)
+		result := ws.TraceTo(entityID, traceMaxDepth)
 		if result == nil {
 			out.WriteMessage("No upstream dependencies found")
 			return nil
@@ -87,14 +87,14 @@ Examples:
 		fromID := args[0]
 		toID := args[1]
 
-		if _, ok := g.GetNode(fromID); !ok {
+		if _, ok := ws.GetEntity(fromID); !ok {
 			return fmt.Errorf("source entity not found: %s", fromID)
 		}
-		if _, ok := g.GetNode(toID); !ok {
+		if _, ok := ws.GetEntity(toID); !ok {
 			return fmt.Errorf("target entity not found: %s", toID)
 		}
 
-		path := g.FindPath(fromID, toID)
+		path := ws.FindPath(fromID, toID)
 		if path == nil {
 			out.WriteMessage("No path found between %s and %s", fromID, toID)
 			return nil

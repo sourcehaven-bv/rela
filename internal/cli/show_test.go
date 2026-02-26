@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // setupShowTest sets up the test environment for show command tests
@@ -20,9 +21,11 @@ func setupShowTest(t *testing.T) (buf *bytes.Buffer, cleanup func()) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 
 	meta = metamodel.DefaultMetamodel()
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	buf = new(bytes.Buffer)
 	out = output.NewWithWriter(buf, output.FormatTable)
@@ -31,6 +34,7 @@ func setupShowTest(t *testing.T) (buf *bytes.Buffer, cleanup func()) {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}
 
 	return buf, cleanup
@@ -159,14 +163,17 @@ func TestShowEntityJSON(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatJSON)
