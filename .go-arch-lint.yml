@@ -113,7 +113,6 @@ deps:
     mayDependOn:
       - dataentryconfig
       - filter
-      - graph
       - importer
       - markdown
       - mcp

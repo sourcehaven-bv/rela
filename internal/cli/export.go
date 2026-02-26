@@ -108,7 +108,7 @@ Examples:
 }
 
 func exportEntities(entityType string) error {
-	entities := g.NodesByType(entityType)
+	entities := ws.EntitiesByType(entityType)
 
 	// Sort by ID for consistent output
 	sort.Slice(entities, func(i, j int) bool {
@@ -142,8 +142,8 @@ func exportEntities(entityType string) error {
 }
 
 func exportAllData() error {
-	allEntities := g.AllNodes()
-	allEdges := g.AllEdges()
+	allEntities := ws.AllEntities()
+	allEdges := ws.AllRelations()
 
 	// Sort entities by type, then ID
 	sort.Slice(allEntities, func(i, j int) bool {
@@ -215,8 +215,8 @@ func entityToExport(e *model.Entity) ExportEntity {
 }
 
 func getEntityRelations(entityID string) *ExportRelations {
-	outgoing := g.OutgoingEdges(entityID)
-	incoming := g.IncomingEdges(entityID)
+	outgoing := ws.OutgoingRelations(entityID)
+	incoming := ws.IncomingRelations(entityID)
 
 	if len(outgoing) == 0 && len(incoming) == 0 {
 		return nil
@@ -229,7 +229,7 @@ func getEntityRelations(entityID string) *ExportRelations {
 
 	for _, rel := range outgoing {
 		target := RelationTarget{ID: rel.To}
-		if node, ok := g.GetNode(rel.To); ok {
+		if node, ok := ws.GetEntity(rel.To); ok {
 			target.Title = node.Title()
 		}
 		relations.Outgoing[rel.Type] = append(relations.Outgoing[rel.Type], target)
@@ -237,7 +237,7 @@ func getEntityRelations(entityID string) *ExportRelations {
 
 	for _, rel := range incoming {
 		source := RelationTarget{ID: rel.From}
-		if node, ok := g.GetNode(rel.From); ok {
+		if node, ok := ws.GetEntity(rel.From); ok {
 			source.Title = node.Title()
 		}
 		relations.Incoming[rel.Type] = append(relations.Incoming[rel.Type], source)

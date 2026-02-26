@@ -57,13 +57,13 @@ Examples:
 			rootIDs = strings.Split(viewDepsRoots, ",")
 		} else {
 			// Use all entities of the view's entry type
-			for _, entity := range g.NodesByType(viewDef.Entry.Type) {
+			for _, entity := range ws.EntitiesByType(viewDef.Entry.Type) {
 				rootIDs = append(rootIDs, entity.ID)
 			}
 		}
 
 		// Execute and collect deps
-		engine := views.NewEngine(g, meta)
+		engine := views.NewEngine(ws.Graph(), meta)
 		ids, err := engine.CollectDeps(viewDef, rootIDs)
 		if err != nil {
 			return fmt.Errorf("failed to collect dependencies: %w", err)
@@ -72,7 +72,7 @@ Examples:
 		// Output
 		for _, id := range ids {
 			if viewDepsFiles {
-				entity, ok := g.GetNode(id)
+				entity, ok := ws.GetEntity(id)
 				if !ok || entity.FilePath == "" {
 					fmt.Fprintf(os.Stderr, "warning: entity %s has no file path\n", id)
 					continue

@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // setupSchemaTest sets up the test environment with default metamodel
@@ -19,9 +20,11 @@ func setupSchemaTest(t *testing.T) (buf *bytes.Buffer, cleanup func()) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 
 	meta = metamodel.DefaultMetamodel()
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	buf = new(bytes.Buffer)
 	out = output.NewWithWriter(buf, output.FormatTable)
@@ -30,6 +33,7 @@ func setupSchemaTest(t *testing.T) (buf *bytes.Buffer, cleanup func()) {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}
 
 	return buf, cleanup
@@ -198,10 +202,12 @@ func TestSchemaEntityWithAlias(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	// Parse the default metamodel from YAML to properly build the alias map
@@ -211,6 +217,7 @@ func TestSchemaEntityWithAlias(t *testing.T) {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -289,14 +296,17 @@ func TestSchemaOverviewJSON(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatJSON)
@@ -331,14 +341,17 @@ func TestSchemaEntitiesJSON(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatJSON)
@@ -367,14 +380,17 @@ func TestSchemaEntityJSON(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatJSON)
@@ -406,14 +422,17 @@ func TestSchemaRelationJSON(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatJSON)
@@ -445,10 +464,12 @@ func TestSchemaTypesEmpty(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	// Create metamodel with no custom types
@@ -458,6 +479,7 @@ func TestSchemaTypesEmpty(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{},
 	}
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -478,10 +500,12 @@ func TestSchemaEntitiesEmpty(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	// Create metamodel with no entities
@@ -492,6 +516,7 @@ func TestSchemaEntitiesEmpty(t *testing.T) {
 		Relations: map[string]metamodel.RelationDef{},
 	}
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -512,10 +537,12 @@ func TestSchemaRelationsEmpty(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	// Create metamodel with no relations
@@ -526,6 +553,7 @@ func TestSchemaRelationsEmpty(t *testing.T) {
 		Relations: map[string]metamodel.RelationDef{},
 	}
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -546,10 +574,12 @@ func TestSchemaWithCardinality(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	sourceMin := 1
@@ -574,6 +604,7 @@ func TestSchemaWithCardinality(t *testing.T) {
 		},
 	}
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -600,10 +631,12 @@ func TestSchemaWithSymmetricRelation(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	// Create metamodel with symmetric relation
@@ -623,6 +656,7 @@ func TestSchemaWithSymmetricRelation(t *testing.T) {
 		},
 	}
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -664,14 +698,17 @@ func TestSchemaGraphvizOutput(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -716,11 +753,13 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	oldConstraints := schemaConstraints
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 		schemaConstraints = oldConstraints
 	}()
 
@@ -745,6 +784,7 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 		},
 	}
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -770,10 +810,12 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	meta = &metamodel.Metamodel{
@@ -790,6 +832,7 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 		Relations: map[string]metamodel.RelationDef{},
 	}
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -814,10 +857,12 @@ func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
 	oldMeta := meta
 	oldG := g
 	oldOut := out
+	oldWs := ws
 	defer func() {
 		meta = oldMeta
 		g = oldG
 		out = oldOut
+		ws = oldWs
 	}()
 
 	meta = &metamodel.Metamodel{
@@ -837,6 +882,7 @@ func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
 		},
 	}
 	g = graph.New()
+	ws = workspace.NewForTest(g, meta)
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)

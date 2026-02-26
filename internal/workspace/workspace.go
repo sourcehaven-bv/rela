@@ -93,6 +93,16 @@ func NewWithGraph(repo repository.Store, meta *metamodel.Metamodel, g *graph.Gra
 	return newWorkspace(repo, meta, g)
 }
 
+// NewForTest creates a minimal workspace for testing. It has no repository,
+// so write operations will panic. Use this for unit tests that only need
+// to query the graph.
+func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
+	return &Workspace{
+		graph: g,
+		meta:  meta,
+	}
+}
+
 func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph) *Workspace {
 	var autoEngine *automation.Engine
 	if len(meta.Automations) > 0 {

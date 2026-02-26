@@ -30,14 +30,14 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 
-		entity, ok := g.GetNode(entityID)
+		entity, ok := ws.GetEntity(entityID)
 		if !ok {
 			return &entityNotFoundError{ID: entityID}
 		}
 
 		// Check for relations
-		incoming := g.IncomingEdges(entityID)
-		outgoing := g.OutgoingEdges(entityID)
+		incoming := ws.IncomingRelations(entityID)
+		outgoing := ws.OutgoingRelations(entityID)
 		totalRelations := len(incoming) + len(outgoing)
 
 		if totalRelations > 0 && !deleteCascade {

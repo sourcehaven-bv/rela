@@ -46,9 +46,9 @@ Examples:
 			if err != nil {
 				return err
 			}
-			entities = g.NodesByType(resolvedType)
+			entities = ws.EntitiesByType(resolvedType)
 		} else {
-			entities = g.AllNodes()
+			entities = ws.AllEntities()
 		}
 
 		if len(entities) == 0 {

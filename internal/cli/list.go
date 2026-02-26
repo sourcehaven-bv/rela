@@ -55,10 +55,10 @@ Examples:
 			}
 
 			entityTypeName = resolvedType
-			entities = g.NodesByType(resolvedType)
+			entities = ws.EntitiesByType(resolvedType)
 		} else {
 			// All entities
-			entities = g.AllNodes()
+			entities = ws.AllEntities()
 		}
 
 		// Parse and apply filters

@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func setupGraphTestGraph() {
@@ -33,6 +34,7 @@ func setupGraphTestGraph() {
 			},
 		},
 	}
+	ws = workspace.NewForTest(g, meta)
 	out = output.New(output.FormatTable)
 
 	// Add test entities
@@ -181,6 +183,7 @@ func TestGenerateDOT_EmptyGraph(t *testing.T) {
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{},
 	}
+	ws = workspace.NewForTest(g, meta)
 
 	entities := g.AllNodes()
 	edges := g.AllEdges()
@@ -206,6 +209,7 @@ func TestGenerateDOT_EntityWithoutTitle(t *testing.T) {
 			},
 		},
 	}
+	ws = workspace.NewForTest(g, meta)
 
 	// Add entity without title
 	entity := model.NewEntity("CMP-001", "component")

@@ -116,7 +116,7 @@ func resolveRenameEntity(oldType, newType string) (*renameEntityInfo, error) {
 		newPlural:       newPlural,
 		oldDir:          projectCtx.EntityTypeDirWithPlural(oldPlural),
 		newDir:          projectCtx.EntityTypeDirWithPlural(newPlural),
-		entityCount:     len(g.NodesByType(resolvedOld)),
+		entityCount:     len(ws.EntitiesByType(resolvedOld)),
 		relCount:        countAffectedRelations(resolvedOld),
 		oldTemplatePath: oldTemplatePath,
 		hasTemplate:     statErr == nil,
@@ -245,7 +245,7 @@ Examples:
 
 func runRenameID(oldID, newID string) error {
 	// Get entity to find type
-	entity, ok := g.GetNode(oldID)
+	entity, ok := ws.GetEntity(oldID)
 	if !ok {
 		return fmt.Errorf("entity not found: %s", oldID)
 	}

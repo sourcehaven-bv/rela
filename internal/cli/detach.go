@@ -34,8 +34,8 @@ Examples:
 			hashPrefix = args[2]
 		}
 
-		// Get entity from graph
-		entity, ok := g.GetNode(entityID)
+		// Get entity
+		entity, ok := ws.GetEntity(entityID)
 		if !ok {
 			return fmt.Errorf("entity not found: %s", entityID)
 		}

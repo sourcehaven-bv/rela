@@ -21,7 +21,7 @@ Examples:
 		toID := args[2]
 
 		// Check if relation exists (for better error message)
-		if _, exists := g.GetEdge(fromID, relationType, toID); !exists {
+		if _, exists := ws.GetRelation(fromID, relationType, toID); !exists {
 			return fmt.Errorf("relation not found: %s --%s--> %s", fromID, relationType, toID)
 		}
 

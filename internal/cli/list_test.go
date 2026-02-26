@@ -16,6 +16,8 @@ import (
 
 func setupListTestEnv() {
 	g = graph.New()
+	meta = nil // Will be set by individual tests
+	ws = nil   // Will be set by individual tests after meta is set
 	out = output.New(output.FormatTable)
 	projectCtx = &project.Context{
 		Root:          "/tmp/test-project",
@@ -170,6 +172,7 @@ types:
 	if err != nil {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
+	ws = workspace.NewForTest(g, meta)
 
 	// Add some test entities to the graph
 	g.AddNode(&model.Entity{
@@ -311,6 +314,7 @@ func TestListAllEntities(t *testing.T) {
 	setupListTestEnv()
 
 	meta = metamodel.DefaultMetamodel()
+	ws = workspace.NewForTest(g, meta)
 
 	// Add entities of different types
 	req := model.NewEntity("REQ-001", "requirement")
@@ -331,6 +335,7 @@ func TestListAllEntities(t *testing.T) {
 func TestListEmptyGraph(t *testing.T) {
 	setupListTestEnv()
 	meta = metamodel.DefaultMetamodel()
+	ws = workspace.NewForTest(g, meta)
 
 	// Empty graph
 	entities := g.AllNodes()
@@ -342,6 +347,7 @@ func TestListEmptyGraph(t *testing.T) {
 func TestListByType(t *testing.T) {
 	setupListTestEnv()
 	meta = metamodel.DefaultMetamodel()
+	ws = workspace.NewForTest(g, meta)
 
 	// Add entities
 	req1 := model.NewEntity("REQ-001", "requirement")
@@ -373,6 +379,7 @@ func TestListByType(t *testing.T) {
 func TestListCommandWithUnknownType(t *testing.T) {
 	setupListTestEnv()
 	meta = metamodel.DefaultMetamodel()
+	ws = workspace.NewForTest(g, meta)
 
 	_, _, err := resolveEntityType("nonexistent")
 	if err == nil {
