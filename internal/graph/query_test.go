@@ -136,8 +136,8 @@ func TestTraceFromIncludesIncoming(t *testing.T) {
 
 	// Collect all reachable IDs
 	reachable := make(map[string]bool)
-	var collectIDs func(r *TraceResult)
-	collectIDs = func(r *TraceResult) {
+	var collectIDs func(r *model.TraceResult)
+	collectIDs = func(r *model.TraceResult) {
 		reachable[r.ID] = true
 		for _, child := range r.Children {
 			collectIDs(child)

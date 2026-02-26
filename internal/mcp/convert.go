@@ -102,13 +102,13 @@ func convertRelation(r *model.Relation) (string, error) {
 	return marshalJSON(rj)
 }
 
-// convertTraceResult converts a graph.TraceResult to JSON string.
-func convertTraceResult(tr *graph.TraceResult) (string, error) {
+// convertTraceResult converts a model.TraceResult to JSON string.
+func convertTraceResult(tr *model.TraceResult) (string, error) {
 	node := convertTraceNode(tr)
 	return marshalJSON(node)
 }
 
-func convertTraceNode(tr *graph.TraceResult) *traceNodeJSON {
+func convertTraceNode(tr *model.TraceResult) *traceNodeJSON {
 	if tr == nil {
 		return nil
 	}
@@ -126,8 +126,8 @@ func convertTraceNode(tr *graph.TraceResult) *traceNodeJSON {
 	return node
 }
 
-// convertPathSteps converts graph.PathStep slice to JSON string.
-func convertPathSteps(steps []graph.PathStep) (string, error) {
+// convertPathSteps converts model.PathStep slice to JSON string.
+func convertPathSteps(steps []model.PathStep) (string, error) {
 	result := make([]pathStepJSON, len(steps))
 	for i, s := range steps {
 		result[i] = pathStepJSON{

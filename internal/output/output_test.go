@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -351,15 +350,15 @@ func TestWriteTrace(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
 
-	trace := &graph.TraceResult{
+	trace := &model.TraceResult{
 		ID:    "REQ-001",
 		Title: "Root",
-		Children: []*graph.TraceResult{
+		Children: []*model.TraceResult{
 			{
 				ID:       "REQ-002",
 				Title:    "Child 1",
 				Relation: "depends_on",
-				Children: []*graph.TraceResult{
+				Children: []*model.TraceResult{
 					{
 						ID:       "REQ-004",
 						Title:    "Grandchild",
@@ -398,7 +397,7 @@ func TestWriteTrace(t *testing.T) {
 	// Test trace without relation info
 	buf2 := &bytes.Buffer{}
 	w2 := NewWithWriter(buf2, FormatTable)
-	trace2 := &graph.TraceResult{
+	trace2 := &model.TraceResult{
 		ID:    "REQ-005",
 		Title: "No relations",
 	}
@@ -417,7 +416,7 @@ func TestWriteTraceJSON(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatJSON)
 
-	trace := &graph.TraceResult{
+	trace := &model.TraceResult{
 		ID:    "REQ-001",
 		Title: "Root",
 	}
@@ -427,7 +426,7 @@ func TestWriteTraceJSON(t *testing.T) {
 		t.Fatalf("WriteTrace failed: %v", err)
 	}
 
-	var result graph.TraceResult
+	var result model.TraceResult
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -441,7 +440,7 @@ func TestWritePath(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
 
-	path := []graph.PathStep{
+	path := []model.PathStep{
 		{ID: "REQ-001", Type: "requirement"},
 		{ID: "REQ-002", Type: "requirement", Relation: "depends_on"},
 		{ID: "DEC-001", Type: "decision", Relation: "implements"},
@@ -478,7 +477,7 @@ func TestWritePath(t *testing.T) {
 	}
 
 	// Test with single hop
-	path1 := []graph.PathStep{
+	path1 := []model.PathStep{
 		{ID: "REQ-001", Type: "requirement"},
 		{ID: "REQ-002", Type: "requirement", Relation: "depends_on"},
 	}
@@ -499,7 +498,7 @@ func TestWritePathEmpty(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
 
-	err := w.WritePath([]graph.PathStep{})
+	err := w.WritePath([]model.PathStep{})
 	if err != nil {
 		t.Fatalf("WritePath failed: %v", err)
 	}
@@ -515,7 +514,7 @@ func TestWritePathJSON(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatJSON)
 
-	path := []graph.PathStep{
+	path := []model.PathStep{
 		{ID: "REQ-001", Type: "requirement"},
 	}
 
@@ -524,7 +523,7 @@ func TestWritePathJSON(t *testing.T) {
 		t.Fatalf("WritePath failed: %v", err)
 	}
 
-	var result []graph.PathStep
+	var result []model.PathStep
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
