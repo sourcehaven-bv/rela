@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // newHandlerTestApp builds a full App (including parsed templates) for handler tests.
@@ -63,6 +64,8 @@ func newHandlerTestApp(t *testing.T) *App {
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
 	repo := repository.New(fs, ctx)
 
+	ws := workspace.NewWithGraph(repo, meta, g)
+
 	return &App{
 		Cfg:         cfg,
 		meta:        meta,
@@ -71,6 +74,7 @@ func newHandlerTestApp(t *testing.T) *App {
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 		repo:        repo,
+		ws:          ws,
 	}
 }
 
@@ -1468,6 +1472,9 @@ func TestHandleCreateWithValidationErrors(t *testing.T) {
 		entDef.Properties["title"] = titleProp
 		app.meta.Entities["ticket"] = entDef
 
+		// Rebuild workspace with updated repo and meta
+		app.ws = workspace.NewWithGraph(app.repo, app.meta, app.g)
+
 		// Submit form without title (required field)
 		form := url.Values{
 			"_form_id":   {"create-ticket"},
@@ -1515,6 +1522,9 @@ func TestHandleUpdateWithValidationErrors(t *testing.T) {
 		titleProp.Required = true
 		entDef.Properties["title"] = titleProp
 		app.meta.Entities["ticket"] = entDef
+
+		// Rebuild workspace with updated repo and meta
+		app.ws = workspace.NewWithGraph(app.repo, app.meta, app.g)
 
 		// Submit form with empty title (required field)
 		form := url.Values{

@@ -24,7 +24,8 @@ func testMeta() *metamodel.Metamodel {
 		},
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
-				Label: "Ticket",
+				Label:    "Ticket",
+				IDPrefix: "TKT",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":    {Type: "string", Required: true},
 					"status":   {Type: "status_type"},
@@ -32,7 +33,8 @@ func testMeta() *metamodel.Metamodel {
 				},
 			},
 			"component": {
-				Label: "Component",
+				Label:    "Component",
+				IDPrefix: "CMP",
 				Properties: map[string]metamodel.PropertyDef{
 					"name": {Type: "string", Required: true},
 				},

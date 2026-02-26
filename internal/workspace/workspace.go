@@ -186,8 +186,9 @@ func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.Entit
 
 // --- ID generation ---
 
-// GenerateID generates the next ID for the given entity type.
-func (w *Workspace) GenerateID(entityType string) (string, error) {
+// GenerateID generates the next ID for the given entity type. If prefix is
+// non-empty it is used instead of the default prefix from the metamodel.
+func (w *Workspace) GenerateID(entityType, prefix string) (string, error) {
 	meta := w.Meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
@@ -196,16 +197,19 @@ func (w *Workspace) GenerateID(entityType string) (string, error) {
 	if entityDef.IsManualID() {
 		return "", fmt.Errorf("entity type %s uses manual IDs", entityType)
 	}
-	prefixes := entityDef.GetIDPrefixes()
-	if len(prefixes) == 0 {
-		return "", fmt.Errorf("no ID prefixes defined for type %s", entityType)
+	if prefix == "" {
+		prefixes := entityDef.GetIDPrefixes()
+		if len(prefixes) == 0 {
+			return "", fmt.Errorf("no ID prefixes defined for type %s", entityType)
+		}
+		prefix = prefixes[0]
 	}
 
 	existingIDs := w.graph.AllIDs()
 	if entityDef.IsShortID() {
-		return model.GenerateShortID(existingIDs, prefixes[0], w.graph.NodeCount()), nil
+		return model.GenerateShortID(existingIDs, prefix, w.graph.NodeCount()), nil
 	}
-	return model.GenerateNextID(existingIDs, prefixes[0]), nil
+	return model.GenerateNextID(existingIDs, prefix), nil
 }
 
 // --- Entity operations ---
@@ -213,6 +217,7 @@ func (w *Workspace) GenerateID(entityType string) (string, error) {
 // CreateOptions configures entity creation.
 type CreateOptions struct {
 	ID         string                 // empty = auto-generate
+	Prefix     string                 // override default ID prefix (ignored when ID is set)
 	Properties map[string]interface{} // property values
 	Content    string                 // markdown body
 }
@@ -237,7 +242,7 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 	// Resolve ID.
 	entityID := opts.ID
 	if entityID == "" {
-		id, err := w.GenerateID(entityType)
+		id, err := w.GenerateID(entityType, opts.Prefix)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -433,9 +438,14 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 
 // --- Relation operations ---
 
+// CreateRelationOptions configures optional settings for relation creation.
+type CreateRelationOptions struct {
+	Properties map[string]interface{} // property values for the relation
+}
+
 // CreateRelation validates both endpoints exist, checks for duplicates,
 // validates against the metamodel, writes to disk, and updates the graph.
-func (w *Workspace) CreateRelation(from, relType, to string) (*model.Relation, error) {
+func (w *Workspace) CreateRelation(from, relType, to string, opts ...CreateRelationOptions) (*model.Relation, error) {
 	meta := w.Meta()
 
 	fromEntity, ok := w.graph.GetNode(from)
@@ -466,6 +476,13 @@ func (w *Workspace) CreateRelation(from, relType, to string) (*model.Relation, e
 	}
 	if template != nil {
 		markdown.ApplyRelationTemplate(rel, template)
+	}
+
+	// Apply caller-provided properties (override template defaults).
+	if len(opts) > 0 {
+		for k, v := range opts[0].Properties {
+			rel.Properties[k] = v
+		}
 	}
 
 	if err := w.repo.WriteRelation(rel); err != nil {

@@ -187,7 +187,7 @@ func TestResolveEntityType(t *testing.T) {
 func TestGenerateID(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	id, err := ws.GenerateID("requirement")
+	id, err := ws.GenerateID("requirement", "")
 	if err != nil {
 		t.Fatalf("GenerateID() error = %v", err)
 	}
@@ -199,7 +199,7 @@ func TestGenerateID(t *testing.T) {
 func TestGenerateID_ManualType(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, err := ws.GenerateID("stakeholder")
+	_, err := ws.GenerateID("stakeholder", "")
 	if err == nil {
 		t.Error("expected error for manual ID type")
 	}
@@ -208,7 +208,7 @@ func TestGenerateID_ManualType(t *testing.T) {
 func TestGenerateID_UnknownType(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, err := ws.GenerateID("nonexistent")
+	_, err := ws.GenerateID("nonexistent", "")
 	if err == nil {
 		t.Error("expected error for unknown type")
 	}
@@ -220,7 +220,7 @@ func TestGenerateID_Sequential(t *testing.T) {
 	// Add an existing entity so the next ID is REQ-002.
 	ws.graph.AddNode(&model.Entity{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "first"}})
 
-	id, err := ws.GenerateID("requirement")
+	id, err := ws.GenerateID("requirement", "")
 	if err != nil {
 		t.Fatalf("GenerateID() error = %v", err)
 	}
