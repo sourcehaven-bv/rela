@@ -40,7 +40,7 @@ func setupWorkspaceFromMeta(t *testing.T, m *metamodel.Metamodel) {
 	_ = fs.MkdirAll(ctx.EntitiesDir, 0o755)
 	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	repo = repository.New(fs, ctx)
+	repo := repository.New(fs, ctx)
 	ws = workspace.NewWithGraph(repo, m, g)
 }
 

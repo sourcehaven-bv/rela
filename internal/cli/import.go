@@ -79,7 +79,7 @@ CSV format (relations):
 			RelationsFile: importRelationsFile,
 		}
 
-		imp := importer.New(repo, meta, g, opts, importer.NewImportSource(cliFS))
+		imp := importer.New(ws.Repo(), meta, g, opts, importer.NewImportSource(cliFS))
 
 		if importDryRun {
 			out.WriteInfo("Dry run - validating without creating files...")

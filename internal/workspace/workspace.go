@@ -20,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // ChangeEvent is re-exported from repository so consumers don't need to
@@ -42,6 +43,20 @@ type Workspace struct {
 
 	// Watcher state (nil when not watching).
 	watchHandle *repository.WatchHandle
+}
+
+// DiscoverAndNew discovers a project from the given start directory and
+// creates a workspace. If startDir is empty, it uses the current working
+// directory. This is a convenience function that combines project discovery,
+// repository creation, and workspace initialization.
+func DiscoverAndNew(startDir string) (*Workspace, error) {
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	ctx, err := project.Discover(startDir, fs)
+	if err != nil {
+		return nil, err
+	}
+	repo := repository.New(fs, ctx)
+	return New(repo)
 }
 
 // New creates a workspace from a repository. It loads the metamodel,

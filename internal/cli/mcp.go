@@ -7,8 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -53,18 +51,10 @@ func runMCPServer() error {
 		startDir = os.Getenv("RELA_PROJECT")
 	}
 
-	// Discover project (standalone initialization because mcp is excluded
-	// from the root PersistentPreRunE skip list)
-	ctx, err := project.Discover(startDir, cliFS)
+	// Discover project and initialize workspace
+	mcpWs, err := workspace.DiscoverAndNew(startDir)
 	if err != nil {
 		return fmt.Errorf("no project found: run 'rela init' to create one")
-	}
-
-	mcpRepo := repository.New(cliFS, ctx)
-
-	mcpWs, err := workspace.New(mcpRepo)
-	if err != nil {
-		return fmt.Errorf("failed to initialize workspace: %w", err)
 	}
 
 	srv := relamcp.NewServer(mcpWs, Version)
