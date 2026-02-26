@@ -89,7 +89,7 @@ Examples:
 
 		// Generate entity templates
 		for _, entityType := range entityTypes {
-			created, err := repo.GenerateEntityTemplate(meta, entityType, templateVariant, templateForce)
+			created, err := ws.GenerateEntityTemplate(entityType, templateVariant, templateForce)
 			if err != nil {
 				return fmt.Errorf("failed to generate template for %s: %w", entityType, err)
 			}
@@ -110,7 +110,7 @@ Examples:
 
 		// Generate relation templates
 		for _, relationType := range relationTypes {
-			created, err := repo.GenerateRelationTemplate(meta, relationType, templateForce)
+			created, err := ws.GenerateRelationTemplate(relationType, templateForce)
 			if err != nil {
 				return fmt.Errorf("failed to generate template for %s: %w", relationType, err)
 			}

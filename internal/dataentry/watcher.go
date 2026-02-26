@@ -58,7 +58,7 @@ func (b *eventBroker) broadcast(event string) {
 //
 // coverage-ignore: requires real filesystem events via fsnotify
 func (a *App) StartWatching() error {
-	paths := a.ws.Repo().Paths()
+	paths := a.ws.Paths()
 	configPath := filepath.Join(paths.Root, ConfigFile)
 	metamodelDir := filepath.Join(paths.Root, "metamodel")
 
@@ -124,7 +124,7 @@ func (a *App) onReload(events []repository.ChangeEvent) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	paths := a.ws.Repo().Paths()
+	paths := a.ws.Paths()
 	configPath := filepath.Join(paths.Root, ConfigFile)
 	metamodelDir := filepath.Join(paths.Root, "metamodel") + string(filepath.Separator)
 	needConfigReload := false
@@ -142,7 +142,7 @@ func (a *App) onReload(events []repository.ChangeEvent) {
 	}
 
 	if needConfigReload {
-		cfgData, err := a.ws.Repo().ReadProjectFile(ConfigFile)
+		cfgData, err := a.ws.ReadProjectFile(ConfigFile)
 		if err != nil {
 			log.Printf("Config reload error: %v", err)
 		} else {

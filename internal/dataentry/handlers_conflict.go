@@ -37,9 +37,9 @@ func (a *App) handleConflicts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := &project.Context{
-		Root:         a.repo.Paths().Root,
-		EntitiesDir:  a.repo.Paths().EntitiesDir,
-		RelationsDir: a.repo.Paths().RelationsDir,
+		Root:         a.ws.Paths().Root,
+		EntitiesDir:  a.ws.Paths().EntitiesDir,
+		RelationsDir: a.ws.Paths().RelationsDir,
 	}
 
 	result, err := conflict.DetectAll(ctx)
@@ -88,7 +88,7 @@ func (a *App) handleConflictResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build absolute path
-	ctx := a.repo.Paths()
+	ctx := a.ws.Paths()
 	absPath := filepath.Join(ctx.Root, path)
 
 	// Parse the conflicted file
@@ -143,7 +143,7 @@ func (a *App) handleConflictApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	action := r.FormValue("action")
-	ctx := a.repo.Paths()
+	ctx := a.ws.Paths()
 	absPath := filepath.Join(ctx.Root, path)
 
 	// Parse the file again
@@ -211,13 +211,13 @@ func (a *App) handleConflictApply(w http.ResponseWriter, r *http.Request) {
 
 // conflictCount returns the number of conflicted files for nav badge.
 func (a *App) conflictCount() int {
-	if a.repo == nil {
+	if a.ws == nil {
 		return 0
 	}
 	ctx := &project.Context{
-		Root:         a.repo.Paths().Root,
-		EntitiesDir:  a.repo.Paths().EntitiesDir,
-		RelationsDir: a.repo.Paths().RelationsDir,
+		Root:         a.ws.Paths().Root,
+		EntitiesDir:  a.ws.Paths().EntitiesDir,
+		RelationsDir: a.ws.Paths().RelationsDir,
 	}
 
 	result, err := conflict.DetectAll(ctx)

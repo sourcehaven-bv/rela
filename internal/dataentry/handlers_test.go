@@ -73,7 +73,6 @@ func newHandlerTestApp(t *testing.T) *App {
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
-		repo:        repo,
 		ws:          ws,
 	}
 }
@@ -852,11 +851,11 @@ func TestHandleExecuteQuery(t *testing.T) {
 func TestHandleToggleGroup(t *testing.T) {
 	t.Run("toggles group collapsed state", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		// Set up a repo for UI state persistence
+		// Set up a workspace with cache dir for UI state persistence
 		fs := storage.NewMemFS()
 		ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 		_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-		app.repo = repository.New(fs, ctx)
+		app.ws = workspace.NewWithGraph(repository.New(fs, ctx), app.meta, app.g)
 
 		// Toggle "Tickets" group to collapsed
 		body := strings.NewReader("group=Tickets")
@@ -1463,7 +1462,7 @@ func TestHandleCreateWithValidationErrors(t *testing.T) {
 		app := newHandlerTestApp(t)
 		// Configure temp directory for repository to avoid writing to real filesystem
 		tmpDir := t.TempDir()
-		app.repo = newTestRepository(t, tmpDir)
+		repo := newTestRepository(t, tmpDir)
 
 		// Make title required in the metamodel
 		entDef := app.meta.Entities["ticket"]
@@ -1473,7 +1472,7 @@ func TestHandleCreateWithValidationErrors(t *testing.T) {
 		app.meta.Entities["ticket"] = entDef
 
 		// Rebuild workspace with updated repo and meta
-		app.ws = workspace.NewWithGraph(app.repo, app.meta, app.g)
+		app.ws = workspace.NewWithGraph(repo, app.meta, app.g)
 
 		// Submit form without title (required field)
 		form := url.Values{
@@ -1514,7 +1513,7 @@ func TestHandleUpdateWithValidationErrors(t *testing.T) {
 		app := newHandlerTestApp(t)
 		// Configure temp directory for repository to avoid writing to real filesystem
 		tmpDir := t.TempDir()
-		app.repo = newTestRepository(t, tmpDir)
+		repo := newTestRepository(t, tmpDir)
 
 		// Make title required in the metamodel
 		entDef := app.meta.Entities["ticket"]
@@ -1524,7 +1523,7 @@ func TestHandleUpdateWithValidationErrors(t *testing.T) {
 		app.meta.Entities["ticket"] = entDef
 
 		// Rebuild workspace with updated repo and meta
-		app.ws = workspace.NewWithGraph(app.repo, app.meta, app.g)
+		app.ws = workspace.NewWithGraph(repo, app.meta, app.g)
 
 		// Submit form with empty title (required field)
 		form := url.Values{

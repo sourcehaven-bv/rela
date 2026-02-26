@@ -131,7 +131,7 @@ func extractAttachmentPaths(val interface{}) []string {
 }
 
 func gcOrphanedTempFiles() error {
-	orphaned, err := repo.FindOrphanedTempFiles()
+	orphaned, err := ws.FindOrphanedTempFiles()
 	if err != nil {
 		return fmt.Errorf("find orphaned files: %w", err)
 	}
@@ -149,7 +149,7 @@ func gcOrphanedTempFiles() error {
 		return nil
 	}
 
-	count, err := repo.CleanupOrphanedTempFiles()
+	count, err := ws.CleanupOrphanedTempFiles()
 	if err != nil {
 		return fmt.Errorf("cleanup failed: %w", err)
 	}

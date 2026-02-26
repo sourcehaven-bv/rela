@@ -133,7 +133,6 @@ status: open
 		ws:          ws,
 		meta:        meta,
 		g:           g,
-		repo:        repo,
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
@@ -280,7 +279,7 @@ func TestReloadEntityChanges(t *testing.T) {
 	initialCount := len(app.g.AllNodes())
 
 	// Add a new entity file
-	_ = fs.WriteFile(app.repo.Paths().EntitiesDir+"/tickets/TKT-002.md", []byte(`---
+	_ = fs.WriteFile(app.ws.Paths().EntitiesDir+"/tickets/TKT-002.md", []byte(`---
 id: TKT-002
 type: ticket
 title: Second Ticket
@@ -290,7 +289,7 @@ status: open
 
 	// Reload with a generic entity change (not metamodel or config)
 	app.simulateReload([]repository.ChangeEvent{
-		{Path: app.repo.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: repository.OpCreate},
+		{Path: app.ws.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: repository.OpCreate},
 	})
 
 	newCount := len(app.g.AllNodes())
@@ -336,10 +335,10 @@ relations:
     from: [ticket]
     to: [ticket]
 `
-	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
+	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
 	app.simulateReload([]repository.ChangeEvent{
-		{Path: app.repo.Paths().MetamodelPath, Op: repository.OpModify},
+		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
 	})
 
 	if _, ok := app.meta.GetEntityDef("component"); !ok {
@@ -360,7 +359,7 @@ lists: {}
 forms: {}
 navigation: []
 `
-	configPath := app.repo.Paths().Root + "/" + ConfigFile
+	configPath := app.ws.Paths().Root + "/" + ConfigFile
 	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
 
 	app.simulateReload([]repository.ChangeEvent{
@@ -381,10 +380,10 @@ func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
 	original := app.meta
 
 	// Write invalid metamodel
-	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
+	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
 
 	app.simulateReload([]repository.ChangeEvent{
-		{Path: app.repo.Paths().MetamodelPath, Op: repository.OpModify},
+		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
 	})
 
 	// Metamodel should be unchanged
@@ -397,7 +396,7 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
 	originalName := app.Cfg.App.Name
-	configPath := app.repo.Paths().Root + "/" + ConfigFile
+	configPath := app.ws.Paths().Root + "/" + ConfigFile
 
 	// Write invalid YAML config
 	_ = fs.WriteFile(configPath, []byte(`not: valid: yaml: {{{`), 0o644)
@@ -415,7 +414,7 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 func TestReloadMixedEvents(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
-	configPath := app.repo.Paths().Root + "/" + ConfigFile
+	configPath := app.ws.Paths().Root + "/" + ConfigFile
 	updatedConfig := `version: "1.0"
 app:
   name: "Mixed Update"
@@ -446,12 +445,12 @@ relations:
     from: [ticket]
     to: [ticket]
 `
-	_ = fs.WriteFile(app.repo.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
+	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
 	// Reload with both config and metamodel changes at once
 	app.simulateReload([]repository.ChangeEvent{
 		{Path: configPath, Op: repository.OpModify},
-		{Path: app.repo.Paths().MetamodelPath, Op: repository.OpModify},
+		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
 	})
 
 	if app.Cfg.App.Name != "Mixed Update" {
