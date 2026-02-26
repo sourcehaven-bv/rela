@@ -12,7 +12,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -65,7 +64,7 @@ func (a *App) StartWatching() error {
 	return a.ws.StartWatching(workspace.WatchOptions{
 		ExtraFiles: []string{configPath},
 		ExtraDirs:  []string{metamodelDir},
-		OnReload: func(events []repository.ChangeEvent) {
+		OnReload: func(events []workspace.ChangeEvent) {
 			for _, e := range events {
 				log.Printf("File changed: %s (%s)", e.Path, e.Op)
 			}
@@ -120,7 +119,7 @@ func (a *App) StartGitFetch() (stop func()) {
 // already reloaded the metamodel and re-synced the graph. It re-reads the
 // data-entry config if changed, updates convenience aliases, and rebuilds
 // styles/templates.
-func (a *App) onReload(events []repository.ChangeEvent) {
+func (a *App) onReload(events []workspace.ChangeEvent) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

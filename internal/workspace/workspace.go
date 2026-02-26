@@ -22,6 +22,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 )
 
+// ChangeEvent is re-exported from repository so consumers don't need to
+// import repository directly for watcher callback signatures.
+type ChangeEvent = repository.ChangeEvent
+
+// ChangeOp is re-exported from repository for the same reason as ChangeEvent.
+type ChangeOp = repository.ChangeOp
+
 // Workspace is a stateful domain session that ties together the repository
 // (persistence), graph (in-memory query), metamodel (schema), and automation
 // engine. All write operations go through Workspace so that disk and memory
@@ -567,7 +574,7 @@ type WatchOptions struct {
 	ExtraDirs []string
 	// OnReload is called after workspace has reloaded metamodel and graph.
 	// Consumers use this for side-effects (SSE broadcast, MCP notifications, etc.).
-	OnReload func(events []repository.ChangeEvent)
+	OnReload func(events []ChangeEvent)
 }
 
 // StartWatching begins watching for file changes. On each change the

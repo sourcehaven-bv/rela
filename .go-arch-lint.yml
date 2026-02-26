@@ -143,7 +143,6 @@ deps:
       - metamodel
       - migration
       - project
-      - repository
       - search
       - workspace
     canUse:
@@ -165,7 +164,6 @@ deps:
       - markdown
       - metamodel
       - rename
-      - repository
       - search
       - views
       - workspace
