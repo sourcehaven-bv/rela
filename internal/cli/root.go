@@ -10,7 +10,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -25,14 +24,15 @@ var (
 	quiet        bool
 	projectPath  string
 
-	// Shared state
+	// Shared state initialized by PersistentPreRunE
 	ws         *workspace.Workspace
-	projectCtx *project.Context
+	projectCtx *project.Context // derived from ws.Paths()
 	meta       *metamodel.Metamodel
 	g          *graph.Graph
 	out        *output.Writer
-	cliFS      storage.FS = storage.NewSafeFS(storage.NewOsFS())
-	repo       repository.Store
+
+	// Filesystem abstraction for commands that don't use workspace
+	cliFS storage.FS = storage.NewSafeFS(storage.NewOsFS())
 )
 
 // rootCmd represents the base command
@@ -64,22 +64,15 @@ and maintain semantic relationships between them.`,
 			startDir = os.Getenv("RELA_PROJECT")
 		}
 
-		// Discover project
+		// Discover project and initialize workspace
 		var err error
-		projectCtx, err = project.Discover(startDir, cliFS)
+		ws, err = workspace.DiscoverAndNew(startDir)
 		if err != nil {
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}
 
-		// Initialize repository and workspace
-		repo = repository.New(cliFS, projectCtx)
-
-		ws, err = workspace.New(repo)
-		if err != nil {
-			return fmt.Errorf("failed to initialize workspace: %w", err)
-		}
-
 		// Convenience aliases for read-only commands
+		projectCtx = ws.Paths()
 		meta = ws.Meta()
 		g = ws.Graph()
 

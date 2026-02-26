@@ -182,6 +182,7 @@ deps:
       - project
       - rename
       - repository
+      - storage
 
   # Domain services
   automation:
