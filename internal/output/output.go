@@ -10,7 +10,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/olekukonko/tablewriter"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -234,7 +233,7 @@ func (w *Writer) WriteRelations(relations []*model.Relation) error {
 }
 
 // WriteTrace outputs a trace result as a tree
-func (w *Writer) WriteTrace(result *graph.TraceResult) error {
+func (w *Writer) WriteTrace(result *model.TraceResult) error {
 	if w.Format == FormatJSON {
 		return w.writeJSON(result)
 	}
@@ -243,7 +242,7 @@ func (w *Writer) WriteTrace(result *graph.TraceResult) error {
 	return nil
 }
 
-func (w *Writer) writeTraceNode(node *graph.TraceResult, prefix string, isLast bool) {
+func (w *Writer) writeTraceNode(node *model.TraceResult, prefix string, isLast bool) {
 	if node == nil {
 		return
 	}
@@ -286,7 +285,7 @@ func (w *Writer) writeTraceNode(node *graph.TraceResult, prefix string, isLast b
 }
 
 // WritePath outputs a path between nodes
-func (w *Writer) WritePath(path []graph.PathStep) error {
+func (w *Writer) WritePath(path []model.PathStep) error {
 	if w.Format == FormatJSON {
 		return w.writeJSON(path)
 	}

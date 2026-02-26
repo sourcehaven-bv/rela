@@ -4,21 +4,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
-// TraceResult represents the result of a trace operation
-type TraceResult struct {
-	ID       string
-	Type     string
-	Title    string
-	Depth    int
-	Relation string // The relation that led to this node
-	Incoming bool   // True if this node was reached via an incoming relation
-	Children []*TraceResult
-}
-
 // TraceFrom traces all dependencies from a node by following both outgoing AND incoming edges.
 // This allows tracing entities that depend on the given entity (via incoming relations)
 // as well as entities the given entity depends on (via outgoing relations).
-func (g *Graph) TraceFrom(id string, maxDepth int) *TraceResult {
+func (g *Graph) TraceFrom(id string, maxDepth int) *model.TraceResult {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
@@ -27,7 +16,7 @@ func (g *Graph) TraceFrom(id string, maxDepth int) *TraceResult {
 }
 
 // TraceTo traces all upstream dependencies to a node (following incoming edges)
-func (g *Graph) TraceTo(id string, maxDepth int) *TraceResult {
+func (g *Graph) TraceTo(id string, maxDepth int) *model.TraceResult {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
@@ -36,7 +25,7 @@ func (g *Graph) TraceTo(id string, maxDepth int) *TraceResult {
 }
 
 // TraceBoth traces both incoming and outgoing relations from a node
-func (g *Graph) TraceBoth(id string, maxDepth int) *TraceResult {
+func (g *Graph) TraceBoth(id string, maxDepth int) *model.TraceResult {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
@@ -48,7 +37,7 @@ func (g *Graph) TraceBoth(id string, maxDepth int) *TraceResult {
 // It follows both outgoing and incoming edges to traverse the full graph.
 func (g *Graph) traceBidirectional(
 	id string, depth, maxDepth int, relation string, incoming bool, visited map[string]bool,
-) *TraceResult {
+) *model.TraceResult {
 	if maxDepth > 0 && depth > maxDepth {
 		return nil
 	}
@@ -58,7 +47,7 @@ func (g *Graph) traceBidirectional(
 		return nil
 	}
 
-	result := &TraceResult{
+	result := &model.TraceResult{
 		ID:       id,
 		Type:     node.Type,
 		Title:    node.Title(),
@@ -91,7 +80,9 @@ func (g *Graph) traceBidirectional(
 	return result
 }
 
-func (g *Graph) traceToInternal(id string, depth, maxDepth int, relation string, visited map[string]bool) *TraceResult {
+func (g *Graph) traceToInternal(
+	id string, depth, maxDepth int, relation string, visited map[string]bool,
+) *model.TraceResult {
 	if maxDepth > 0 && depth > maxDepth {
 		return nil
 	}
@@ -101,7 +92,7 @@ func (g *Graph) traceToInternal(id string, depth, maxDepth int, relation string,
 		return nil
 	}
 
-	result := &TraceResult{
+	result := &model.TraceResult{
 		ID:       id,
 		Type:     node.Type,
 		Title:    node.Title(),
@@ -127,13 +118,13 @@ func (g *Graph) traceToInternal(id string, depth, maxDepth int, relation string,
 // FindPath finds a path between two nodes (BFS), traversing edges in both directions.
 // This treats the graph as undirected for path-finding purposes, allowing paths to be
 // found regardless of edge direction.
-func (g *Graph) FindPath(fromID, toID string) []PathStep {
+func (g *Graph) FindPath(fromID, toID string) []model.PathStep {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
 	if fromID == toID {
 		if node, ok := g.nodes[fromID]; ok {
-			return []PathStep{{ID: fromID, Type: node.Type, Title: node.Title()}}
+			return []model.PathStep{{ID: fromID, Type: node.Type, Title: node.Title()}}
 		}
 		return nil
 	}
@@ -141,7 +132,7 @@ func (g *Graph) FindPath(fromID, toID string) []PathStep {
 	// BFS
 	type queueItem struct {
 		id   string
-		path []PathStep
+		path []model.PathStep
 	}
 
 	visited := make(map[string]bool)
@@ -150,7 +141,7 @@ func (g *Graph) FindPath(fromID, toID string) []PathStep {
 	if node, ok := g.nodes[fromID]; ok {
 		queue = append(queue, queueItem{
 			id:   fromID,
-			path: []PathStep{{ID: fromID, Type: node.Type, Title: node.Title()}},
+			path: []model.PathStep{{ID: fromID, Type: node.Type, Title: node.Title()}},
 		})
 	}
 
@@ -184,9 +175,9 @@ func (g *Graph) FindPath(fromID, toID string) []PathStep {
 			if nb.id == toID {
 				// Found the target
 				if node, ok := g.nodes[toID]; ok {
-					finalPath := make([]PathStep, len(current.path), len(current.path)+1)
+					finalPath := make([]model.PathStep, len(current.path), len(current.path)+1)
 					copy(finalPath, current.path)
-					finalPath = append(finalPath, PathStep{
+					finalPath = append(finalPath, model.PathStep{
 						ID:       toID,
 						Type:     node.Type,
 						Title:    node.Title(),
@@ -198,9 +189,9 @@ func (g *Graph) FindPath(fromID, toID string) []PathStep {
 
 			if !visited[nb.id] {
 				if node, ok := g.nodes[nb.id]; ok {
-					newPath := make([]PathStep, len(current.path), len(current.path)+1)
+					newPath := make([]model.PathStep, len(current.path), len(current.path)+1)
 					copy(newPath, current.path)
-					newPath = append(newPath, PathStep{
+					newPath = append(newPath, model.PathStep{
 						ID:       nb.id,
 						Type:     node.Type,
 						Title:    node.Title(),
@@ -213,14 +204,6 @@ func (g *Graph) FindPath(fromID, toID string) []PathStep {
 	}
 
 	return nil // No path found
-}
-
-// PathStep represents a step in a path between nodes
-type PathStep struct {
-	ID       string
-	Type     string
-	Title    string
-	Relation string // The relation that led to this step
 }
 
 // FindOrphans returns all nodes with no connections

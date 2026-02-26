@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -61,8 +60,8 @@ func (w *Workspace) FindOrphans() []*model.Entity {
 	return w.graph.FindOrphans()
 }
 
-// TraceResult is re-exported from graph for consumers.
-type TraceResult = graph.TraceResult
+// TraceResult is re-exported from model for consumers.
+type TraceResult = model.TraceResult
 
 // TraceFrom traces all paths from the given entity (outgoing direction).
 func (w *Workspace) TraceFrom(entityID string, maxDepth int) *TraceResult {
@@ -74,8 +73,8 @@ func (w *Workspace) TraceTo(entityID string, maxDepth int) *TraceResult {
 	return w.graph.TraceTo(entityID, maxDepth)
 }
 
-// PathStep is re-exported from graph for consumers.
-type PathStep = graph.PathStep
+// PathStep is re-exported from model for consumers.
+type PathStep = model.PathStep
 
 // FindPath finds the shortest path between two entities.
 func (w *Workspace) FindPath(from, to string) []PathStep {

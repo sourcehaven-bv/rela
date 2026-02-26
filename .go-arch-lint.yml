@@ -250,8 +250,6 @@ deps:
     canUse:
       - gogit
   output:
-    mayDependOn:
-      - graph
     canUse:
       - color
       - tablewriter
