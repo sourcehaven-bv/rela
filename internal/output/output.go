@@ -386,6 +386,26 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
+// FormatSize formats a byte size as a human-readable string.
+func FormatSize(size int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	switch {
+	case size >= GB:
+		return fmt.Sprintf("%.1fGB", float64(size)/GB)
+	case size >= MB:
+		return fmt.Sprintf("%.1fMB", float64(size)/MB)
+	case size >= KB:
+		return fmt.Sprintf("%.1fKB", float64(size)/KB)
+	default:
+		return fmt.Sprintf("%dB", size)
+	}
+}
+
 // WriteSectionHeader writes a styled section header with box drawing
 func (w *Writer) WriteSectionHeader(title string) {
 	if w.NoColor {

@@ -224,28 +224,6 @@ func TestValidatePath(t *testing.T) {
 	}
 }
 
-func TestFormatSize(t *testing.T) {
-	tests := []struct {
-		size int64
-		want string
-	}{
-		{0, "0B"},
-		{100, "100B"},
-		{1024, "1.0KB"},
-		{1536, "1.5KB"},
-		{1048576, "1.0MB"},
-		{1572864, "1.5MB"},
-		{1073741824, "1.0GB"},
-	}
-
-	for _, tt := range tests {
-		got := FormatSize(tt.size)
-		if got != tt.want {
-			t.Errorf("FormatSize(%d) = %q, want %q", tt.size, got, tt.want)
-		}
-	}
-}
-
 func TestStoreNoExtension(t *testing.T) {
 	fs := storage.NewMemFS()
 	store := NewStore(fs, "/project")

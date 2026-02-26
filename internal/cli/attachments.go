@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/attachment"
+	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
 var attachmentsCmd = &cobra.Command{
@@ -70,7 +70,7 @@ Examples:
 			}
 			size := "-"
 			if info.Size > 0 {
-				size = attachment.FormatSize(info.Size)
+				size = output.FormatSize(info.Size)
 			}
 			out.WriteMessage(format, info.Property, info.Path, original, size)
 		}

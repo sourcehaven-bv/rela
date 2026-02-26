@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/attachment"
+	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
 var (
@@ -61,7 +61,7 @@ func gcAttachmentFiles() error {
 
 	if gcDryRun {
 		out.WriteMessage("Would remove %d unreferenced attachment(s) (%s):",
-			len(result.Removed), attachment.FormatSize(result.Reclaimed))
+			len(result.Removed), output.FormatSize(result.Reclaimed))
 		for _, path := range result.Removed {
 			out.WriteMessage("  %s", path)
 		}
@@ -69,7 +69,7 @@ func gcAttachmentFiles() error {
 	}
 
 	out.WriteSuccess("Removed %d unreferenced attachment(s), reclaimed %s",
-		len(result.Removed), attachment.FormatSize(result.Reclaimed))
+		len(result.Removed), output.FormatSize(result.Reclaimed))
 
 	return nil
 }
