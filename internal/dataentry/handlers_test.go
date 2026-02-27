@@ -33,7 +33,7 @@ func newHandlerTestApp(t *testing.T) *App {
 			Title: "Ticket Detail",
 			Entry: ViewEntry{Type: "ticket"},
 			Traverse: []ViewTraverse{
-				{From: "entry", Follow: "belongs_to", CollectAs: "components"},
+				{From: StringOrSlice{"entry"}, Follow: "belongs_to", CollectAs: StringOrSlice{"components"}},
 			},
 			Sections: []ViewSection{
 				{Heading: "Properties", Source: "entry", Display: "properties", Fields: []ViewSectionField{

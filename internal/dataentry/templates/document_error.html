@@ -1,0 +1,44 @@
+{{- define "document_error" -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>{{ .App.Name }} - {{ .PageTitle }}</title>
+{{ template "head" . }}
+</head>
+<body>
+{{ template "sidebar" . }}
+{{ template "conflict-bar" . }}
+<main class="main" id="content">
+{{ template "document_error-content" . }}
+</main>
+</body>
+</html>
+{{- end -}}
+
+{{- define "document_error-content" -}}
+<div class="page-header">
+  <div>
+    <h2>Document Render Error</h2>
+    <p style="font-family:var(--font-mono);font-size:13px;color:var(--text-muted);">
+      Entry: {{ .EntryID }}
+    </p>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <button class="btn btn-secondary btn-sm" onclick="window.location.reload()">Retry</button>
+  </div>
+</div>
+
+<div class="card" style="padding:20px;margin-bottom:20px;">
+  <h3 style="color:var(--error);margin-bottom:12px;">Render Command Failed</h3>
+  <pre style="background:var(--bg);padding:16px;border-radius:6px;overflow-x:auto;font-size:13px;white-space:pre-wrap;">{{ .Error }}</pre>
+</div>
+
+<details style="margin-top:20px;">
+  <summary style="cursor:pointer;padding:12px;background:var(--surface);border-radius:6px;font-weight:600;">
+    Show Context (YAML)
+  </summary>
+  <div class="card" style="margin-top:8px;padding:16px;">
+    <pre style="background:var(--bg);padding:16px;border-radius:6px;overflow-x:auto;font-size:12px;max-height:400px;overflow-y:auto;">{{ .Context }}</pre>
+  </div>
+</details>
+{{- end -}}

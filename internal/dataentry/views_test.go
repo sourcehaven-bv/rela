@@ -104,7 +104,7 @@ func TestExecuteView(t *testing.T) {
 		view := ViewConfig{
 			Entry: ViewEntry{Type: "ticket"},
 			Traverse: []ViewTraverse{
-				{From: "entry", Follow: "depends_on", CollectAs: "dependencies"},
+				{From: StringOrSlice{"entry"}, Follow: "depends_on", CollectAs: StringOrSlice{"dependencies"}},
 			},
 		}
 		result, err := app.executeView(view, "TKT-001")
@@ -125,7 +125,7 @@ func TestExecuteView(t *testing.T) {
 		view := ViewConfig{
 			Entry: ViewEntry{Type: "ticket"},
 			Traverse: []ViewTraverse{
-				{From: "entry", FollowIncoming: "depends_on", CollectAs: "dependents"},
+				{From: StringOrSlice{"entry"}, FollowIncoming: "depends_on", CollectAs: StringOrSlice{"dependents"}},
 			},
 		}
 		result, err := app.executeView(view, "TKT-002")
@@ -143,7 +143,7 @@ func TestExecuteView(t *testing.T) {
 		view := ViewConfig{
 			Entry: ViewEntry{Type: "ticket"},
 			Traverse: []ViewTraverse{
-				{From: "entry", Follow: "depends_on", CollectAs: "all_deps", Recursive: true},
+				{From: StringOrSlice{"entry"}, Follow: "depends_on", CollectAs: StringOrSlice{"all_deps"}, Recursive: true},
 			},
 		}
 		result, err := app.executeView(view, "TKT-001")
@@ -161,7 +161,7 @@ func TestExecuteView(t *testing.T) {
 		view := ViewConfig{
 			Entry: ViewEntry{Type: "ticket"},
 			Traverse: []ViewTraverse{
-				{From: "entry", Follow: "depends_on", CollectAs: "limited_deps", Recursive: true, MaxDepth: 1},
+				{From: StringOrSlice{"entry"}, Follow: "depends_on", CollectAs: StringOrSlice{"limited_deps"}, Recursive: true, MaxDepth: 1},
 			},
 		}
 		result, err := app.executeView(view, "TKT-001")
@@ -179,8 +179,8 @@ func TestExecuteView(t *testing.T) {
 		view := ViewConfig{
 			Entry: ViewEntry{Type: "ticket"},
 			Traverse: []ViewTraverse{
-				{From: "entry", Follow: "depends_on", CollectAs: "deps"},
-				{From: "*", Follow: "depends_on", CollectAs: "transitive_deps"},
+				{From: StringOrSlice{"entry"}, Follow: "depends_on", CollectAs: StringOrSlice{"deps"}},
+				{From: StringOrSlice{"*"}, Follow: "depends_on", CollectAs: StringOrSlice{"transitive_deps"}},
 			},
 		}
 		result, err := app.executeView(view, "TKT-001")
@@ -229,8 +229,8 @@ func TestExecuteView(t *testing.T) {
 		view := ViewConfig{
 			Entry: ViewEntry{Type: "ticket"},
 			Traverse: []ViewTraverse{
-				{From: "entry", Follow: "depends_on", CollectAs: "deps"},
-				{From: "entry", Follow: "belongs_to", CollectAs: "components"},
+				{From: StringOrSlice{"entry"}, Follow: "depends_on", CollectAs: StringOrSlice{"deps"}},
+				{From: StringOrSlice{"entry"}, Follow: "belongs_to", CollectAs: StringOrSlice{"components"}},
 			},
 		}
 		result, err := app.executeView(view, "TKT-001")
@@ -254,8 +254,8 @@ func TestExecuteView(t *testing.T) {
 		view := ViewConfig{
 			Entry: ViewEntry{Type: "ticket"},
 			Traverse: []ViewTraverse{
-				{From: "entry", Follow: "depends_on", CollectAs: "collected"},
-				{From: "entry", Follow: "depends_on", CollectAs: "collected"}, // same rule again
+				{From: StringOrSlice{"entry"}, Follow: "depends_on", CollectAs: StringOrSlice{"collected"}},
+				{From: StringOrSlice{"entry"}, Follow: "depends_on", CollectAs: StringOrSlice{"collected"}}, // same rule again
 			},
 		}
 		result, err := app.executeView(view, "TKT-001")
@@ -381,9 +381,9 @@ func TestExecuteViewWithWhere(t *testing.T) {
 			Entry: ViewEntry{Type: "bouwblok"},
 			Traverse: []ViewTraverse{
 				{
-					From:           "entry",
+					From:           StringOrSlice{"entry"},
 					FollowIncoming: "partOfBouwblok",
-					CollectAs:      "functions",
+					CollectAs:      StringOrSlice{"functions"},
 					Where:          "type = function",
 				},
 			},
@@ -409,9 +409,9 @@ func TestExecuteViewWithWhere(t *testing.T) {
 			Entry: ViewEntry{Type: "bouwblok"},
 			Traverse: []ViewTraverse{
 				{
-					From:           "entry",
+					From:           StringOrSlice{"entry"},
 					FollowIncoming: "partOfBouwblok",
-					CollectAs:      "usecases",
+					CollectAs:      StringOrSlice{"usecases"},
 					Where:          "type = usecase",
 				},
 			},
@@ -432,9 +432,9 @@ func TestExecuteViewWithWhere(t *testing.T) {
 			Entry: ViewEntry{Type: "bouwblok"},
 			Traverse: []ViewTraverse{
 				{
-					From:           "entry",
+					From:           StringOrSlice{"entry"},
 					FollowIncoming: "partOfBouwblok",
-					CollectAs:      "not_functions",
+					CollectAs:      StringOrSlice{"not_functions"},
 					Where:          "type != function",
 				},
 			},
@@ -460,9 +460,9 @@ func TestExecuteViewWithWhere(t *testing.T) {
 			Entry: ViewEntry{Type: "bouwblok"},
 			Traverse: []ViewTraverse{
 				{
-					From:           "entry",
+					From:           StringOrSlice{"entry"},
 					FollowIncoming: "partOfBouwblok",
-					CollectAs:      "active_items",
+					CollectAs:      StringOrSlice{"active_items"},
 					Where:          "status = active",
 				},
 			},
@@ -485,21 +485,21 @@ func TestExecuteViewWithWhere(t *testing.T) {
 			Entry: ViewEntry{Type: "bouwblok"},
 			Traverse: []ViewTraverse{
 				{
-					From:           "entry",
+					From:           StringOrSlice{"entry"},
 					FollowIncoming: "partOfBouwblok",
-					CollectAs:      "functions",
+					CollectAs:      StringOrSlice{"functions"},
 					Where:          "type = function",
 				},
 				{
-					From:           "entry",
+					From:           StringOrSlice{"entry"},
 					FollowIncoming: "partOfBouwblok",
-					CollectAs:      "usecases",
+					CollectAs:      StringOrSlice{"usecases"},
 					Where:          "type = usecase",
 				},
 				{
-					From:           "entry",
+					From:           StringOrSlice{"entry"},
 					FollowIncoming: "partOfBouwblok",
-					CollectAs:      "scenarios",
+					CollectAs:      StringOrSlice{"scenarios"},
 					Where:          "type = scenario",
 				},
 			},
@@ -524,9 +524,9 @@ func TestExecuteViewWithWhere(t *testing.T) {
 			Entry: ViewEntry{Type: "bouwblok"},
 			Traverse: []ViewTraverse{
 				{
-					From:           "entry",
+					From:           StringOrSlice{"entry"},
 					FollowIncoming: "partOfBouwblok",
-					CollectAs:      "all",
+					CollectAs:      StringOrSlice{"all"},
 					Where:          "invalid expression without operator",
 				},
 			},

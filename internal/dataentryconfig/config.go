@@ -5,6 +5,8 @@
 package dataentryconfig
 
 import (
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
@@ -39,6 +41,7 @@ type Config struct {
 	Lists      map[string]List              `yaml:"lists"`
 	Views      map[string]ViewConfig        `yaml:"views"`
 	Kanbans    map[string]Kanban            `yaml:"kanbans"`
+	Documents  map[string]DocumentConfig    `yaml:"documents,omitempty"`
 	Dashboard  *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands   map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Navigation []NavigationEntry            `yaml:"navigation"`
@@ -294,15 +297,39 @@ type ViewEntry struct {
 	Type string `yaml:"type"`
 }
 
+// StringOrSlice supports YAML unmarshaling of either a string or a list of strings.
+// When unmarshaled, if the value is a single string, it becomes a one-element slice.
+type StringOrSlice []string
+
+// UnmarshalYAML implements custom unmarshaling for StringOrSlice.
+func (s *StringOrSlice) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		// Single string value
+		*s = StringOrSlice{node.Value}
+		return nil
+	case yaml.SequenceNode:
+		// List of strings
+		var items []string
+		if err := node.Decode(&items); err != nil {
+			return err
+		}
+		*s = items
+		return nil
+	default:
+		return nil
+	}
+}
+
 // ViewTraverse defines a graph traversal rule for collecting related entities.
 type ViewTraverse struct {
-	From           string `yaml:"from"`
-	Follow         string `yaml:"follow,omitempty"`
-	FollowIncoming string `yaml:"follow_incoming,omitempty"`
-	CollectAs      string `yaml:"collect_as"`
-	Recursive      bool   `yaml:"recursive,omitempty"`
-	MaxDepth       int    `yaml:"max_depth,omitempty"`
-	Where          string `yaml:"where,omitempty"`
+	From           StringOrSlice `yaml:"from"`
+	Follow         string        `yaml:"follow,omitempty"`
+	FollowIncoming string        `yaml:"follow_incoming,omitempty"`
+	CollectAs      StringOrSlice `yaml:"collect_as"`
+	Recursive      bool          `yaml:"recursive,omitempty"`
+	MaxDepth       int           `yaml:"max_depth,omitempty"`
+	Where          string        `yaml:"where,omitempty"`
 }
 
 // ViewSection defines a section within a view.
@@ -341,4 +368,20 @@ type CommandScope struct {
 	Lists       []string `yaml:"lists,omitempty"`
 	EntityTypes []string `yaml:"entity_types,omitempty"`
 	Dashboard   bool     `yaml:"dashboard,omitempty"`
+}
+
+// DocumentConfig defines how to render a document from an entry entity.
+type DocumentConfig struct {
+	// Title is the display title for the document.
+	Title string `yaml:"title,omitempty"`
+	// View is the view name from views.yaml used to gather entities for content hashing.
+	View string `yaml:"view"`
+	// Command is the external render command. Placeholders:
+	//   {id}       - entry ID
+	//   {id_lower} - lowercase entry ID
+	Command string `yaml:"command"`
+	// EntryTypes restricts which entity types can use this document config.
+	EntryTypes []string `yaml:"entry_types,omitempty"`
+	// Timeout is the command execution timeout in seconds. Defaults to 30.
+	Timeout int `yaml:"timeout,omitempty"`
 }

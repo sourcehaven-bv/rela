@@ -44,6 +44,9 @@ type Workspace struct {
 
 	// Watcher state (nil when not watching).
 	watchHandle *repository.WatchHandle
+
+	// Document rendering cache (lazily initialized).
+	docCache *documentCache
 }
 
 // DiscoverAndNew discovers a project from the given start directory and

@@ -52,6 +52,7 @@
     <input type="hidden" name="_form_id" value="{{ .FormID }}">
     <input type="hidden" name="_entity_id" value="{{ .EntityID }}">
     <input type="hidden" name="_template" value="{{ .SelectedTemplate }}">
+    {{ if .Prefix }}<input type="hidden" name="_prefix" value="{{ .Prefix }}">{{ end }}
     {{ if .ReturnTo }}<input type="hidden" name="_return_to" value="{{ .ReturnTo }}">{{ end }}
     {{ if .LinkRelation }}<input type="hidden" name="_link_relation" value="{{ .LinkRelation }}">
     <input type="hidden" name="_link_peer" value="{{ .LinkPeer }}">

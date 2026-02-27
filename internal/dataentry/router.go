@@ -31,6 +31,7 @@ func (a *App) NewRouter() http.Handler {
 	inner.HandleFunc("/form/", a.handleForm)
 	inner.HandleFunc("/entity/", a.handleEntity)
 	inner.HandleFunc("/view/", a.handleView)
+	inner.HandleFunc("/document/preview", a.handleDocumentPreview)
 	inner.HandleFunc("/api/create", a.handleCreate)
 	inner.HandleFunc("/api/update", a.handleUpdate)
 	inner.HandleFunc("/api/delete", a.handleDelete)

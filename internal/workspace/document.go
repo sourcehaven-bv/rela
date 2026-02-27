@@ -1,0 +1,358 @@
+package workspace
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"net/url"
+	"os/exec"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/renderer/html"
+	"golang.org/x/sync/singleflight"
+
+	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
+	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/views"
+)
+
+// DocumentConfig defines how to render a document from an entry entity.
+type DocumentConfig struct {
+	// View is the view name from views.yaml used to gather entities.
+	View string
+	// Command is the external render command. Placeholders:
+	//   {id}       - entry ID
+	//   {id_lower} - lowercase entry ID
+	Command string
+	// Timeout is the command execution timeout. Defaults to 30s.
+	Timeout time.Duration
+}
+
+// DocumentResult holds the result of rendering a document.
+type DocumentResult struct {
+	// HTML is the rendered HTML content.
+	HTML string
+	// ContentHash is the hash of source entities used for cache validation.
+	ContentHash string
+	// CacheHit indicates whether the result came from cache.
+	CacheHit bool
+	// Entities contains all entities involved in the document (for dependency tracking).
+	Entities []*model.Entity
+}
+
+// documentCache holds cached document render results.
+type documentCache struct {
+	cache  sync.Map           // entryID -> *docCacheEntry
+	render singleflight.Group // dedupes concurrent renders
+}
+
+// docCacheEntry holds a cached rendered document.
+type docCacheEntry struct {
+	HTML        string
+	ContentHash string
+}
+
+// newDocumentCache creates a new document cache.
+func newDocumentCache() *documentCache {
+	return &documentCache{}
+}
+
+// RenderDocument renders a document for the given entry ID using the provided config.
+// It handles caching, request deduplication, and external command execution.
+func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*DocumentResult, error) {
+	if w.docCache == nil {
+		w.docCache = newDocumentCache()
+	}
+
+	// Compute content hash for cache validation
+	entities, contentHash, err := w.computeDocumentHash(entryID, cfg.View)
+	if err != nil {
+		return nil, fmt.Errorf("computing document hash: %w", err)
+	}
+
+	// Check cache
+	if cachedHTML, ok := w.getDocCache(entryID, contentHash); ok {
+		return &DocumentResult{
+			HTML:        cachedHTML,
+			ContentHash: contentHash,
+			CacheHit:    true,
+			Entities:    entities,
+		}, nil
+	}
+
+	// Use singleflight to dedupe concurrent render requests for the same entry
+	result, err, _ := w.docCache.render.Do(entryID, func() (interface{}, error) {
+		return w.doRenderDocument(entryID, cfg, entities, contentHash)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	docResult, _ := result.(*DocumentResult)
+	return docResult, nil
+}
+
+// doRenderDocument performs the actual rendering work.
+func (w *Workspace) doRenderDocument(
+	entryID string, cfg DocumentConfig, entities []*model.Entity, contentHash string,
+) (*DocumentResult, error) {
+	// Build command with ID substitution
+	command := cfg.Command
+	command = strings.ReplaceAll(command, "{id}", entryID)
+	command = strings.ReplaceAll(command, "{id_lower}", strings.ToLower(entryID))
+
+	// Execute render command
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	markdown, err := w.executeRenderCommand(command, timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert markdown to HTML
+	htmlContent, err := markdownToHTML(markdown)
+	if err != nil {
+		return nil, fmt.Errorf("markdown conversion: %w", err)
+	}
+
+	// Cache the result
+	w.setDocCache(entryID, contentHash, htmlContent)
+
+	return &DocumentResult{
+		HTML:        htmlContent,
+		ContentHash: contentHash,
+		CacheHit:    false,
+		Entities:    entities,
+	}, nil
+}
+
+// InvalidateDocumentCache removes cached results for an entry.
+func (w *Workspace) InvalidateDocumentCache(entryID string) {
+	if w.docCache != nil {
+		w.docCache.cache.Delete(entryID)
+	}
+}
+
+// InvalidateAllDocumentCaches clears all cached documents.
+func (w *Workspace) InvalidateAllDocumentCaches() {
+	if w.docCache != nil {
+		w.docCache.cache = sync.Map{}
+	}
+}
+
+// computeDocumentHash computes a content hash for cache validation.
+// It executes the view to get all involved entities and hashes their content.
+// Returns the entities and their hash.
+func (w *Workspace) computeDocumentHash(entryID, viewName string) ([]*model.Entity, string, error) {
+	// Load view definition
+	viewsFile, err := w.LoadViews()
+	if err != nil {
+		// If views.yaml doesn't exist, fall back to hashing just the entry entity
+		entry, ok := w.graph.GetNode(entryID)
+		if !ok {
+			return nil, "", fmt.Errorf("entry %s not found", entryID)
+		}
+		entities := []*model.Entity{entry}
+		return entities, hashEntities(entities), nil
+	}
+
+	viewDef, ok := viewsFile.Views[viewName]
+	if !ok {
+		// View not found, fall back to hashing just the entry entity
+		entry, ok := w.graph.GetNode(entryID)
+		if !ok {
+			return nil, "", fmt.Errorf("entry %s not found", entryID)
+		}
+		entities := []*model.Entity{entry}
+		return entities, hashEntities(entities), nil
+	}
+
+	// Execute view to get all entities
+	engine := views.NewEngine(w.graph, w.meta)
+	result, err := engine.Execute(viewDef, entryID)
+	if err != nil {
+		return nil, "", fmt.Errorf("executing view: %w", err)
+	}
+
+	// Collect all entities from the view result
+	var entities []*model.Entity
+	if result.Entry != nil {
+		entities = append(entities, result.Entry)
+	}
+	for _, collection := range result.Collections {
+		entities = append(entities, collection...)
+	}
+
+	return entities, hashEntities(entities), nil
+}
+
+// hashEntities computes a SHA256 hash of the given entities' content.
+func hashEntities(entities []*model.Entity) string {
+	h := sha256.New()
+
+	// Sort entities by ID for deterministic hashing
+	sorted := make([]*model.Entity, len(entities))
+	copy(sorted, entities)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].ID < sorted[j].ID
+	})
+
+	for _, e := range sorted {
+		// Hash ID, type, properties, and content
+		h.Write([]byte(e.ID))
+		h.Write([]byte(e.Type))
+		h.Write([]byte(e.Content))
+		// Hash properties in sorted order
+		propKeys := make([]string, 0, len(e.Properties))
+		for k := range e.Properties {
+			propKeys = append(propKeys, k)
+		}
+		sort.Strings(propKeys)
+		for _, k := range propKeys {
+			h.Write([]byte(k))
+			fmt.Fprintf(h, "%v", e.Properties[k])
+		}
+	}
+
+	return hex.EncodeToString(h.Sum(nil))[:16] // Use first 16 chars
+}
+
+// getDocCache retrieves a cached document if valid.
+func (w *Workspace) getDocCache(entryID, contentHash string) (string, bool) {
+	if w.docCache == nil {
+		return "", false
+	}
+	val, ok := w.docCache.cache.Load(entryID)
+	if !ok {
+		return "", false
+	}
+	entry, _ := val.(*docCacheEntry)
+	if entry.ContentHash != contentHash {
+		return "", false
+	}
+	return entry.HTML, true
+}
+
+// setDocCache stores a rendered document in the cache.
+func (w *Workspace) setDocCache(entryID, contentHash, htmlContent string) {
+	if w.docCache == nil {
+		w.docCache = newDocumentCache()
+	}
+	w.docCache.cache.Store(entryID, &docCacheEntry{
+		HTML:        htmlContent,
+		ContentHash: contentHash,
+	})
+}
+
+// executeRenderCommand runs an external command and returns its output.
+func (w *Workspace) executeRenderCommand(command string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Dir = w.Paths().Root
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("command failed: %w\nstderr: %s", err, stderr.String())
+	}
+
+	return stdout.String(), nil
+}
+
+// markdownToHTML converts markdown to HTML using goldmark.
+func markdownToHTML(markdown string) (string, error) {
+	md := goldmark.New(
+		goldmark.WithExtensions(
+			extension.GFM,
+			extension.Table,
+			extension.Strikethrough,
+			extension.TaskList,
+		),
+		goldmark.WithParserOptions(
+			parser.WithAutoHeadingID(),
+			parser.WithAttribute(), // Enable {#custom-id} syntax for headings
+		),
+		goldmark.WithRendererOptions(
+			html.WithUnsafe(), // Allow raw HTML in markdown
+		),
+	)
+
+	var buf bytes.Buffer
+	if err := md.Convert([]byte(markdown), &buf); err != nil {
+		return "", fmt.Errorf("markdown conversion: %w", err)
+	}
+
+	result := buf.String()
+
+	// Post-process: convert mermaid code blocks to mermaid-ready pre elements.
+	result = htmlutil.ConvertMermaidBlocks(result)
+
+	return result, nil
+}
+
+// editLinkRegex matches edit:// URLs in href attributes.
+var editLinkRegex = regexp.MustCompile(`href="edit://([^/]+)/([^"]+)"`)
+
+// RewriteEditLinks replaces edit:// URLs with actual form URLs.
+// The returnPath is the path to return to after editing.
+// The return URL includes the entity ID as a hash fragment for scroll preservation.
+func RewriteEditLinks(htmlContent, returnPath string) string {
+	return editLinkRegex.ReplaceAllStringFunc(htmlContent, func(match string) string {
+		parts := editLinkRegex.FindStringSubmatch(match)
+		if len(parts) != 3 {
+			return match
+		}
+		entityType := parts[1]
+		entityID := parts[2]
+		// URL format: /form/{type}/{id}?return={encoded-path-with-hash}
+		// The hash fragment is included in the encoded return value so it's sent to the server.
+		// Without encoding, browsers treat # as a page fragment and don't send it.
+		returnWithHash := returnPath + "#" + strings.ToLower(entityID)
+		return fmt.Sprintf(`href="/form/%s/%s?return=%s"`, entityType, entityID, url.QueryEscape(returnWithHash))
+	})
+}
+
+// createLinkRegex matches create:// URLs in href attributes.
+// Format: create://entity_type or create://entity_type?prop.name=value&rel.type=id
+var createLinkRegex = regexp.MustCompile(`href="create://([^"?]+)(\?[^"]*)?"`)
+
+// RewriteCreateLinks replaces create:// URLs with actual form URLs.
+// The returnPath is the path to return to after creating.
+// Query params are preserved and passed through to the form.
+func RewriteCreateLinks(htmlContent, returnPath string) string {
+	return createLinkRegex.ReplaceAllStringFunc(htmlContent, func(match string) string {
+		parts := createLinkRegex.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		entityType := parts[1]
+		queryString := ""
+		if len(parts) > 2 && parts[2] != "" {
+			// Remove leading ? and keep the rest
+			queryString = parts[2][1:]
+		}
+		// Build URL: /form/{type}?{params}&return={encoded-path}
+		var result string
+		if queryString != "" {
+			result = fmt.Sprintf(`href="/form/%s?%s&return=%s"`, entityType, queryString, url.QueryEscape(returnPath))
+		} else {
+			result = fmt.Sprintf(`href="/form/%s?return=%s"`, entityType, url.QueryEscape(returnPath))
+		}
+		return result
+	})
+}
