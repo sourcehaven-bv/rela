@@ -155,7 +155,6 @@ deps:
   mcp:
     mayDependOn:
       - filter
-      - graph
       - markdown
       - metamodel
       - rename

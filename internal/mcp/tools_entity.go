@@ -61,13 +61,12 @@ func (s *Server) handleShowEntity(
 	}
 	id = trimID(id)
 
-	g := s.ws.Graph()
-	entity, ok := g.GetNode(id)
+	entity, ok := s.ws.GetEntity(id)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
-	text, err := convertEntity(entity, g, true)
+	text, err := convertEntity(entity, s.ws, true)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -165,7 +164,7 @@ func (s *Server) handleCreateEntity(
 		return mcp.NewToolResultError(createErr.Error()), nil
 	}
 
-	text, err := convertEntity(entity, s.ws.Graph(), false)
+	text, err := convertEntity(entity, s.ws, false)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -181,8 +180,7 @@ func (s *Server) handleUpdateEntity(
 	}
 	id = trimID(id)
 
-	g := s.ws.Graph()
-	entity, ok := g.GetNode(id)
+	entity, ok := s.ws.GetEntity(id)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
@@ -214,7 +212,7 @@ func (s *Server) handleUpdateEntity(
 		return mcp.NewToolResultError(updateErr.Error()), nil
 	}
 
-	text, convertErr := convertEntity(entity, g, true)
+	text, convertErr := convertEntity(entity, s.ws, true)
 	if convertErr != nil {
 		return mcp.NewToolResultError(convertErr.Error()), nil
 	}

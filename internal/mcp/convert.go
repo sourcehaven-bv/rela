@@ -5,10 +5,17 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
+
+// relationQuerier provides relation lookup methods for entity conversion.
+// Implemented by workspace.Workspace.
+type relationQuerier interface {
+	GetEntity(id string) (*model.Entity, bool)
+	OutgoingRelations(entityID string) []*model.Relation
+	IncomingRelations(entityID string) []*model.Relation
+}
 
 // entityJSON represents an entity for JSON output in MCP responses.
 type entityJSON struct {
@@ -60,7 +67,7 @@ type pathStepJSON struct {
 }
 
 // convertEntity converts a model.Entity to JSON string with optional relations.
-func convertEntity(e *model.Entity, g *graph.Graph, includeRelations bool) (string, error) {
+func convertEntity(e *model.Entity, rq relationQuerier, includeRelations bool) (string, error) {
 	ej := entityJSON{
 		ID:         e.ID,
 		Type:       e.Type,
@@ -69,7 +76,7 @@ func convertEntity(e *model.Entity, g *graph.Graph, includeRelations bool) (stri
 	}
 
 	if includeRelations {
-		ej.Relations = buildRelations(e.ID, g)
+		ej.Relations = buildRelations(e.ID, rq)
 	}
 
 	return marshalJSON(ej)
@@ -141,9 +148,9 @@ func convertPathSteps(steps []model.PathStep) (string, error) {
 }
 
 // buildRelations builds the relations JSON for an entity.
-func buildRelations(entityID string, g *graph.Graph) *relationsJSON {
-	outgoing := g.OutgoingEdges(entityID)
-	incoming := g.IncomingEdges(entityID)
+func buildRelations(entityID string, rq relationQuerier) *relationsJSON {
+	outgoing := rq.OutgoingRelations(entityID)
+	incoming := rq.IncomingRelations(entityID)
 
 	if len(outgoing) == 0 && len(incoming) == 0 {
 		return nil
@@ -156,7 +163,7 @@ func buildRelations(entityID string, g *graph.Graph) *relationsJSON {
 
 	for _, rel := range outgoing {
 		target := relationTargetJSON{ID: rel.To}
-		if node, ok := g.GetNode(rel.To); ok {
+		if node, ok := rq.GetEntity(rel.To); ok {
 			target.Title = node.Title()
 		}
 		rels.Outgoing[rel.Type] = append(rels.Outgoing[rel.Type], target)
@@ -164,7 +171,7 @@ func buildRelations(entityID string, g *graph.Graph) *relationsJSON {
 
 	for _, rel := range incoming {
 		source := relationTargetJSON{ID: rel.From}
-		if node, ok := g.GetNode(rel.From); ok {
+		if node, ok := rq.GetEntity(rel.From); ok {
 			source.Title = node.Title()
 		}
 		rels.Incoming[rel.Type] = append(rels.Incoming[rel.Type], source)

@@ -20,6 +20,23 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
+// graphAdapter wraps *graph.Graph to implement relationQuerier for tests.
+type graphAdapter struct {
+	g *graph.Graph
+}
+
+func (a *graphAdapter) GetEntity(id string) (*model.Entity, bool) {
+	return a.g.GetNode(id)
+}
+
+func (a *graphAdapter) OutgoingRelations(entityID string) []*model.Relation {
+	return a.g.OutgoingEdges(entityID)
+}
+
+func (a *graphAdapter) IncomingRelations(entityID string) []*model.Relation {
+	return a.g.IncomingEdges(entityID)
+}
+
 // makeToolRequest creates a CallToolRequest with the given arguments.
 func makeToolRequest(args map[string]interface{}) mcp.CallToolRequest {
 	return mcp.CallToolRequest{
@@ -37,7 +54,7 @@ func TestConvertEntity_WithoutRelations(t *testing.T) {
 	e.Content = "Some content"
 	g.AddNode(e)
 
-	result, err := convertEntity(e, g, false)
+	result, err := convertEntity(e, &graphAdapter{g}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -76,7 +93,7 @@ func TestConvertEntity_WithRelations(t *testing.T) {
 	rel := model.NewRelation("SOL-001", "addresses", "REQ-001")
 	g.AddEdge(rel)
 
-	result, err := convertEntity(e1, g, true)
+	result, err := convertEntity(e1, &graphAdapter{g}, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,7 +121,7 @@ func TestConvertEntity_NoRelationsPresent(t *testing.T) {
 	e := model.NewEntity("REQ-001", "requirement")
 	g.AddNode(e)
 
-	result, err := convertEntity(e, g, true)
+	result, err := convertEntity(e, &graphAdapter{g}, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -290,7 +307,7 @@ func TestBuildRelations_NoEdges(t *testing.T) {
 	e := model.NewEntity("REQ-001", "requirement")
 	g.AddNode(e)
 
-	rels := buildRelations("REQ-001", g)
+	rels := buildRelations("REQ-001", &graphAdapter{g})
 	if rels != nil {
 		t.Error("expected nil relations for entity with no edges")
 	}
@@ -308,7 +325,7 @@ func TestBuildRelations_OutgoingOnly(t *testing.T) {
 	rel := model.NewRelation("SOL-001", "addresses", "REQ-001")
 	g.AddEdge(rel)
 
-	rels := buildRelations("SOL-001", g)
+	rels := buildRelations("SOL-001", &graphAdapter{g})
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -338,7 +355,7 @@ func TestBuildRelations_IncomingOnly(t *testing.T) {
 	rel := model.NewRelation("SOL-001", "addresses", "REQ-001")
 	g.AddEdge(rel)
 
-	rels := buildRelations("REQ-001", g)
+	rels := buildRelations("REQ-001", &graphAdapter{g})
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -368,7 +385,7 @@ func TestBuildRelations_BothDirections(t *testing.T) {
 	g.AddEdge(model.NewRelation("SOL-001", "addresses", "REQ-001"))
 	g.AddEdge(model.NewRelation("REQ-001", "motivates", "DEC-001"))
 
-	rels := buildRelations("REQ-001", g)
+	rels := buildRelations("REQ-001", &graphAdapter{g})
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -746,7 +763,7 @@ func TestConvertEntity_WithProperties(t *testing.T) {
 	e.Properties["priority"] = "high"
 	g.AddNode(e)
 
-	result, err := convertEntity(e, g, false)
+	result, err := convertEntity(e, &graphAdapter{g}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

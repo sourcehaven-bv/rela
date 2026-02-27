@@ -64,21 +64,20 @@ func (s *Server) handleAnalyzeTraceabilityPrompt(
 		return nil, fmt.Errorf("id argument is required")
 	}
 
-	g := s.ws.Graph()
-	entity, ok := g.GetNode(id)
+	entity, ok := s.ws.GetEntity(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
 	// Get entity details
-	entityText, err := convertEntity(entity, g, true)
+	entityText, err := convertEntity(entity, s.ws, true)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get trace trees
-	traceFrom := g.TraceFrom(id, 0)
-	traceTo := g.TraceTo(id, 0)
+	traceFrom := s.ws.TraceFrom(id, 0)
+	traceTo := s.ws.TraceTo(id, 0)
 
 	var traceFromText, traceToText string
 	if traceFrom != nil {
@@ -269,13 +268,12 @@ func (s *Server) handleReviewEntityPrompt(
 		return nil, fmt.Errorf("id argument is required")
 	}
 
-	g := s.ws.Graph()
-	entity, ok := g.GetNode(id)
+	entity, ok := s.ws.GetEntity(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
-	entityText, err := convertEntity(entity, g, true)
+	entityText, err := convertEntity(entity, s.ws, true)
 	if err != nil {
 		return nil, err
 	}
