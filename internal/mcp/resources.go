@@ -100,8 +100,7 @@ func (s *Server) handleReadEntity(
 	}
 	entityType, id := segments[0], segments[1]
 
-	g := s.ws.Graph()
-	entity, ok := g.GetNode(id)
+	entity, ok := s.ws.GetEntity(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
@@ -109,7 +108,7 @@ func (s *Server) handleReadEntity(
 		return nil, fmt.Errorf("entity %s is type %s, not %s", id, entity.Type, entityType)
 	}
 
-	text, err := convertEntity(entity, g, true)
+	text, err := convertEntity(entity, s.ws, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert entity: %w", err)
 	}
