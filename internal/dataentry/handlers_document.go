@@ -28,7 +28,7 @@ func (a *App) handleDocumentPreview(w http.ResponseWriter, r *http.Request) {
 
 	// Get document config
 	docName := r.URL.Query().Get("doc")
-	docCfg, err := a.getDocumentConfig(entryID, docName)
+	docCfg, err := a.getDocumentConfig(docName)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -87,10 +87,11 @@ func (a *App) handleDocumentRender(w http.ResponseWriter, _ *http.Request, entry
 	fmt.Fprintf(w, `<div class="document-content" data-render-url="%s">%s</div>`, renderURL, content)
 }
 
-// getDocumentConfig finds the appropriate document config for an entry.
+// getDocumentConfig finds the appropriate document config.
 // If docName is provided, it uses that specific config.
-// Otherwise, it finds a config that matches the entry's type.
-func (a *App) getDocumentConfig(entryID, docName string) (*DocumentConfig, error) {
+// If there's exactly one document config, it uses that.
+// Otherwise, it returns an error requiring explicit doc name.
+func (a *App) getDocumentConfig(docName string) (*DocumentConfig, error) {
 	// If explicit doc name provided, use it
 	if docName != "" {
 		if cfg, ok := a.Cfg.Documents[docName]; ok {
@@ -99,28 +100,19 @@ func (a *App) getDocumentConfig(entryID, docName string) (*DocumentConfig, error
 		return nil, fmt.Errorf("document config %q not found", docName)
 	}
 
-	// Get entry entity to check type
-	entry, ok := a.ws.GetEntity(entryID)
-	if !ok {
-		return nil, fmt.Errorf("entry %s not found", entryID)
-	}
-
-	// Find a document config that matches the entry type.
-	// Note: If multiple configs match, the first found wins (map order is non-deterministic).
-	// In practice, users should configure non-overlapping EntryTypes or use explicit doc names.
-	for _, cfg := range a.Cfg.Documents {
-		if len(cfg.EntryTypes) == 0 {
-			// No type restriction, use this config
+	// If there's exactly one document config, use it
+	if len(a.Cfg.Documents) == 1 {
+		for _, cfg := range a.Cfg.Documents {
 			return &cfg, nil
 		}
-		for _, t := range cfg.EntryTypes {
-			if t == entry.Type {
-				return &cfg, nil
-			}
-		}
 	}
 
-	return nil, fmt.Errorf("no document config found for entry type %q", entry.Type)
+	// Multiple configs require explicit selection
+	if len(a.Cfg.Documents) > 1 {
+		return nil, fmt.Errorf("multiple document configs exist, specify ?doc=<name>")
+	}
+
+	return nil, fmt.Errorf("no document configs defined")
 }
 
 // toWorkspaceDocConfig converts dataentry config to workspace config.

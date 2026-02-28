@@ -354,10 +354,6 @@ type DocumentConfig struct {
 	//   {id}       - entry ID
 	//   {id_lower} - lowercase entry ID
 	Command string `yaml:"command"`
-	// EntryTypes restricts which entity types can use this document config.
-	// This is independent of the view's entry type - it allows multiple document
-	// configs to share a view while targeting different entity types.
-	EntryTypes []string `yaml:"entry_types,omitempty"`
 	// Timeout is the command execution timeout in seconds. Defaults to 30.
 	Timeout int `yaml:"timeout,omitempty"`
 }
