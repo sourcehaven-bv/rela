@@ -310,13 +310,10 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 						listID, i, c.Relation))
 				}
 			} else if c.Property != "" {
-				// "id" is an implicit property, not in the metamodel properties map
-				if c.Property != "id" {
-					if _, ok := entDef.Properties[c.Property]; !ok {
-						errs = append(errs, fmt.Sprintf(
-							"list %q: column[%d] property %q not in metamodel for entity %q",
-							listID, i, c.Property, list.EntityType))
-					}
+				if _, ok := entDef.Properties[c.Property]; !ok {
+					errs = append(errs, fmt.Sprintf(
+						"list %q: column[%d] property %q not in metamodel for entity %q",
+						listID, i, c.Property, list.EntityType))
 				}
 			}
 		}
