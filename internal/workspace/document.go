@@ -21,7 +21,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 // docCacheDir is the subdirectory under .rela/ for document cache files.
@@ -122,22 +121,9 @@ func (w *Workspace) doRenderDocument(
 // It executes the view to get all involved entities and hashes their content.
 // Returns the entities and their hash.
 func (w *Workspace) computeDocumentHash(entryID, viewName string) ([]*model.Entity, string, error) {
-	// Load view definition - required for document rendering
-	viewsFile, err := w.LoadViews()
+	result, err := w.ExecuteView(viewName, entryID)
 	if err != nil {
-		return nil, "", fmt.Errorf("loading views.yaml: %w", err)
-	}
-
-	viewDef, ok := viewsFile.Views[viewName]
-	if !ok {
-		return nil, "", fmt.Errorf("view %q not found in views.yaml", viewName)
-	}
-
-	// Execute view to get all entities
-	engine := views.NewEngine(w.graph, w.meta)
-	result, err := engine.Execute(viewDef, entryID)
-	if err != nil {
-		return nil, "", fmt.Errorf("executing view: %w", err)
+		return nil, "", err
 	}
 
 	// Collect all entities from the view result
