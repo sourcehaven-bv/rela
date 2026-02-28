@@ -343,12 +343,12 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse prop.* and rel.* query params for pre-filling (create:// link support)
-	queryProps := make(map[string]string)
-	queryRels := make(map[string][]string) // rel type -> list of entity IDs
+	queryProps := make(map[string][]string) // prop name -> list of values (supports multi-select)
+	queryRels := make(map[string][]string)  // rel type -> list of entity IDs
 	for key, values := range r.URL.Query() {
 		if strings.HasPrefix(key, "prop.") && len(values) > 0 {
 			propName := strings.TrimPrefix(key, "prop.")
-			queryProps[propName] = values[0]
+			queryProps[propName] = append(queryProps[propName], values...)
 		} else if strings.HasPrefix(key, "rel.") && len(values) > 0 {
 			relType := strings.TrimPrefix(key, "rel.")
 			queryRels[relType] = append(queryRels[relType], values...)
@@ -393,7 +393,11 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Query param prop.* takes highest priority for create links
-		queryPropDefault := queryProps[f.Property]
+		queryPropValues := queryProps[f.Property]
+		var queryPropDefault string
+		if len(queryPropValues) > 0 {
+			queryPropDefault = queryPropValues[0]
+		}
 		rf := ResolvedField{
 			Property:    f.Property,
 			Label:       coalesce(f.Label, titleCase(f.Property)),
@@ -404,6 +408,10 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			Widget:      resolveWidget(prop, a.meta),
 			Values:      resolvePropertyValues(prop, a.meta),
 			Transitions: f.Transitions,
+		}
+		// For multi-select widgets, also populate SelectedValues from query params
+		if len(queryPropValues) > 0 && entity == nil {
+			rf.SelectedValues = queryPropValues
 		}
 		if f.Required != nil {
 			rf.Required = *f.Required

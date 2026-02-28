@@ -25,30 +25,20 @@
    */
   function init() {
     var docBody = document.getElementById('document-body');
-    var docContent = document.querySelector('.document-content');
-
-    // Get render URL from data attribute
-    if (docBody && docBody.dataset.renderUrl) {
-      renderURL = docBody.dataset.renderUrl;
-    } else if (docContent && docContent.dataset.renderUrl) {
-      renderURL = docContent.dataset.renderUrl;
+    if (!docBody || !docBody.dataset.renderUrl) {
+      return; // Not a document page
     }
 
-    if (!renderURL) {
-      return; // Not a document page or no render URL configured
-    }
+    renderURL = docBody.dataset.renderUrl;
 
     // Register refresh handler with app.js
     registerRefreshHandler();
   }
 
   /**
-   * Register the document refresh handler.
-   * Uses window._pageRefreshHandlers array if available (preferred),
-   * falls back to window._documentRefreshHandler for backward compat.
+   * Register the document refresh handler with app.js.
    */
   function registerRefreshHandler() {
-    // New: use handlers array (allows multiple handlers)
     if (!window._pageRefreshHandlers) {
       window._pageRefreshHandlers = [];
     }
@@ -56,9 +46,6 @@
       id: 'document-watcher',
       handler: handleRefresh
     });
-
-    // Legacy: also set global for backward compat with older app.js
-    window._documentRefreshHandler = handleRefresh;
 
     // Cleanup on navigation
     document.addEventListener('htmx:beforeSwap', cleanup, { once: true });
@@ -69,14 +56,11 @@
    */
   function cleanup(e) {
     if (e.detail.target && e.detail.target.id === 'content') {
-      // Remove from handlers array
       if (window._pageRefreshHandlers) {
         window._pageRefreshHandlers = window._pageRefreshHandlers.filter(function(h) {
           return h.id !== 'document-watcher';
         });
       }
-      // Clear legacy global
-      window._documentRefreshHandler = null;
     }
   }
 
@@ -143,12 +127,9 @@
    */
   function updateContent(html, scrollX, scrollY) {
     var docBody = document.getElementById('document-body');
-    var docContent = document.querySelector('.document-content');
-    var target = docBody || docContent;
+    if (!docBody) return;
 
-    if (!target) return;
-
-    target.outerHTML = html;
+    docBody.outerHTML = html;
 
     // Re-initialize mermaid for any new diagrams
     if (typeof mermaid !== 'undefined') {
@@ -160,22 +141,13 @@
     }
 
     // Process any HTMX in the new content
-    var newTarget = document.querySelector('.document-content') || document.getElementById('document-body');
-    if (newTarget && typeof htmx !== 'undefined') {
-      htmx.process(newTarget);
+    var newDocBody = document.getElementById('document-body');
+    if (newDocBody && typeof htmx !== 'undefined') {
+      htmx.process(newDocBody);
     }
 
     // Restore scroll position
     window.scrollTo(scrollX, scrollY);
-
-    // Re-read render URL from new content (in case it changed)
-    var newDocBody = document.getElementById('document-body');
-    var newDocContent = document.querySelector('.document-content');
-    if (newDocBody && newDocBody.dataset.renderUrl) {
-      renderURL = newDocBody.dataset.renderUrl;
-    } else if (newDocContent && newDocContent.dataset.renderUrl) {
-      renderURL = newDocContent.dataset.renderUrl;
-    }
   }
 
   // Initialize on DOM ready
