@@ -47,13 +47,13 @@ func (a *App) handleDocumentPreview(w http.ResponseWriter, r *http.Request) {
 	wsCfg := a.toWorkspaceDocConfig(docCfg)
 
 	// Try to get cached content
-	result, err := a.ws.RenderDocument(entryID, wsCfg)
-	if err == nil && result.CacheHit {
+	result := a.ws.GetCachedDocument(entryID, wsCfg)
+	if result != nil {
 		a.renderDocument(w, r, entryID, entry, rewriteDocumentLinks(result.HTML, entryID))
 		return
 	}
 
-	// Cache miss or error - render loading page, HTMX will trigger the actual render
+	// Cache miss - render loading page, HTMX will trigger the actual render
 	a.renderDocument(w, r, entryID, entry, "")
 }
 
@@ -71,11 +71,6 @@ func (a *App) handleDocumentRender(w http.ResponseWriter, _ *http.Request, entry
 
 	// Return the content fragment for HTMX to swap in (with wrapper)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if result.CacheHit {
-		w.Header().Set("X-Cache", "HIT")
-	} else {
-		w.Header().Set("X-Cache", "MISS")
-	}
 	renderURL := "/document/preview?entry=" + entryID + "&render=true"
 	fmt.Fprintf(w, `<div class="document-content" data-render-url="%s">%s</div>`, renderURL, content)
 }

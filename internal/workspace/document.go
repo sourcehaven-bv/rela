@@ -44,8 +44,6 @@ type DocumentResult struct {
 	HTML string
 	// ContentHash is the hash of source entities used for cache validation.
 	ContentHash string
-	// CacheHit indicates whether the result came from cache.
-	CacheHit bool
 	// Entities contains all entities involved in the document (for dependency tracking).
 	Entities []*model.Entity
 }
@@ -53,25 +51,36 @@ type DocumentResult struct {
 // docRenderGroup dedupes concurrent render requests for the same entry.
 var docRenderGroup singleflight.Group
 
-// RenderDocument renders a document for the given entry ID using the provided config.
-// It handles disk-based caching, request deduplication, and external command execution.
+// GetCachedDocument returns a cached document if available and still valid.
+// Returns nil if the cache is missing, stale, or on any error.
+func (w *Workspace) GetCachedDocument(entryID string, cfg DocumentConfig) *DocumentResult {
+	entities, contentHash, err := w.computeDocumentHash(entryID, cfg.View)
+	if err != nil {
+		return nil
+	}
+
+	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheDir, entryID, contentHash)
+	cachedHTML, _ := w.ReadCacheFile(cacheFile)
+	if cachedHTML == nil {
+		return nil
+	}
+
+	return &DocumentResult{
+		HTML:        string(cachedHTML),
+		ContentHash: contentHash,
+		Entities:    entities,
+	}
+}
+
+// RenderDocument renders a document by executing the configured command.
+// Uses singleflight to dedupe concurrent requests. Caches the result to disk.
 func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*DocumentResult, error) {
-	// Compute content hash for cache validation
 	entities, contentHash, err := w.computeDocumentHash(entryID, cfg.View)
 	if err != nil {
 		return nil, fmt.Errorf("computing document hash: %w", err)
 	}
 
-	// Check disk cache
 	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheDir, entryID, contentHash)
-	if cachedHTML, cacheErr := w.ReadCacheFile(cacheFile); cacheErr == nil {
-		return &DocumentResult{
-			HTML:        string(cachedHTML),
-			ContentHash: contentHash,
-			CacheHit:    true,
-			Entities:    entities,
-		}, nil
-	}
 
 	// Use singleflight to dedupe concurrent render requests for the same entry
 	result, err, _ := docRenderGroup.Do(entryID, func() (interface{}, error) {
@@ -89,18 +98,15 @@ func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*Documen
 func (w *Workspace) doRenderDocument(
 	entryID string, cfg DocumentConfig, entities []*model.Entity, contentHash, cacheFile string,
 ) (*DocumentResult, error) {
-	// Build command with ID substitution
 	command := cfg.Command
 	command = strings.ReplaceAll(command, "{id}", entryID)
 	command = strings.ReplaceAll(command, "{id_lower}", strings.ToLower(entryID))
 
-	// Execute render command (caller should set default timeout if needed)
 	markdown, err := w.executeCommand(command, cfg.Timeout)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert markdown to HTML
 	htmlContent, err := markdownToHTML(markdown)
 	if err != nil {
 		return nil, fmt.Errorf("markdown conversion: %w", err)
@@ -112,7 +118,6 @@ func (w *Workspace) doRenderDocument(
 	return &DocumentResult{
 		HTML:        htmlContent,
 		ContentHash: contentHash,
-		CacheHit:    false,
 		Entities:    entities,
 	}, nil
 }
