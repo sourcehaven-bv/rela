@@ -153,13 +153,13 @@ func TestRewriteEditLinks(t *testing.T) {
 			html:       `<a href="edit://requirement/REQ-001">Edit</a>`,
 			returnPath: "/document/preview?entry=DOC-001",
 			// Return path is URL-encoded including the hash so browsers send it to the server
-			expected: `<a href="/form/requirement/REQ-001?return=%2Fdocument%2Fpreview%3Fentry%3DDOC-001%23req-001">Edit</a>`,
+			expected: `<a href="/form/requirement/REQ-001?return_to=%2Fdocument%2Fpreview%3Fentry%3DDOC-001%23req-001">Edit</a>`,
 		},
 		{
 			name:       "multiple edit links",
 			html:       `<a href="edit://requirement/REQ-001">R1</a> and <a href="edit://decision/DEC-002">D2</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/requirement/REQ-001?return=%2Fdoc%23req-001">R1</a> and <a href="/form/decision/DEC-002?return=%2Fdoc%23dec-002">D2</a>`,
+			expected:   `<a href="/form/requirement/REQ-001?return_to=%2Fdoc%23req-001">R1</a> and <a href="/form/decision/DEC-002?return_to=%2Fdoc%23dec-002">D2</a>`,
 		},
 		{
 			name:       "no edit links",
@@ -171,7 +171,7 @@ func TestRewriteEditLinks(t *testing.T) {
 			name:       "mixed links",
 			html:       `<a href="edit://requirement/REQ-001">Edit</a> and <a href="/other">Other</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/requirement/REQ-001?return=%2Fdoc%23req-001">Edit</a> and <a href="/other">Other</a>`,
+			expected:   `<a href="/form/requirement/REQ-001?return_to=%2Fdoc%23req-001">Edit</a> and <a href="/other">Other</a>`,
 		},
 	}
 
@@ -196,25 +196,25 @@ func TestRewriteCreateLinks(t *testing.T) {
 			name:       "basic create link",
 			html:       `<a href="create://requirement">Add</a>`,
 			returnPath: "/document/preview?entry=DOC-001",
-			expected:   `<a href="/form/requirement?return=%2Fdocument%2Fpreview%3Fentry%3DDOC-001">Add</a>`,
+			expected:   `<a href="/form/requirement?return_to=%2Fdocument%2Fpreview%3Fentry%3DDOC-001">Add</a>`,
 		},
 		{
 			name:       "create link with props",
 			html:       `<a href="create://requirement?prop.status=draft">Add</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/requirement?prop.status=draft&return=%2Fdoc">Add</a>`,
+			expected:   `<a href="/form/requirement?prop.status=draft&return_to=%2Fdoc">Add</a>`,
 		},
 		{
 			name:       "create link with props and relations",
 			html:       `<a href="create://requirement?prop.status=draft&rel.implements=FEAT-001">Add</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/requirement?prop.status=draft&rel.implements=FEAT-001&return=%2Fdoc">Add</a>`,
+			expected:   `<a href="/form/requirement?prop.status=draft&rel.implements=FEAT-001&return_to=%2Fdoc">Add</a>`,
 		},
 		{
 			name:       "multiple create links",
 			html:       `<a href="create://requirement">R</a> and <a href="create://decision?prop.status=proposed">D</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/requirement?return=%2Fdoc">R</a> and <a href="/form/decision?prop.status=proposed&return=%2Fdoc">D</a>`,
+			expected:   `<a href="/form/requirement?return_to=%2Fdoc">R</a> and <a href="/form/decision?prop.status=proposed&return_to=%2Fdoc">D</a>`,
 		},
 		{
 			name:       "no create links",

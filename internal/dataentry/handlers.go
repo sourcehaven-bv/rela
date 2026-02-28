@@ -614,9 +614,6 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 
 	activeList := a.resolveActiveList(form.EntityType, r)
 	returnTo := r.URL.Query().Get("return_to")
-	if returnTo == "" {
-		returnTo = r.URL.Query().Get("return") // Also accept "return" from edit links
-	}
 	backURL := returnTo
 	switch {
 	case backURL != "":

@@ -234,11 +234,11 @@ func RewriteEditLinks(htmlContent, returnPath string) string {
 		}
 		entityType := parts[1]
 		entityID := parts[2]
-		// URL format: /form/{type}/{id}?return={encoded-path-with-hash}
+		// URL format: /form/{type}/{id}?return_to={encoded-path-with-hash}
 		// The hash fragment is included in the encoded return value so it's sent to the server.
 		// Without encoding, browsers treat # as a page fragment and don't send it.
 		returnWithHash := returnPath + "#" + strings.ToLower(entityID)
-		return fmt.Sprintf(`href="/form/%s/%s?return=%s"`, entityType, entityID, url.QueryEscape(returnWithHash))
+		return fmt.Sprintf(`href="/form/%s/%s?return_to=%s"`, entityType, entityID, url.QueryEscape(returnWithHash))
 	})
 }
 
@@ -261,12 +261,12 @@ func RewriteCreateLinks(htmlContent, returnPath string) string {
 			// Remove leading ? and keep the rest
 			queryString = parts[2][1:]
 		}
-		// Build URL: /form/{type}?{params}&return={encoded-path}
+		// Build URL: /form/{type}?{params}&return_to={encoded-path}
 		var result string
 		if queryString != "" {
-			result = fmt.Sprintf(`href="/form/%s?%s&return=%s"`, entityType, queryString, url.QueryEscape(returnPath))
+			result = fmt.Sprintf(`href="/form/%s?%s&return_to=%s"`, entityType, queryString, url.QueryEscape(returnPath))
 		} else {
-			result = fmt.Sprintf(`href="/form/%s?return=%s"`, entityType, url.QueryEscape(returnPath))
+			result = fmt.Sprintf(`href="/form/%s?return_to=%s"`, entityType, url.QueryEscape(returnPath))
 		}
 		return result
 	})
