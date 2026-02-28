@@ -109,8 +109,8 @@ lists:
 			expect: true,
 		},
 		{
-			name: "empty document",
-			yaml: `{}`,
+			name:   "empty document",
+			yaml:   `{}`,
 			expect: false,
 		},
 	}

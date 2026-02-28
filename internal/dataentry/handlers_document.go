@@ -18,7 +18,10 @@ func (a *App) logTemplateError(tmplName string, err error) {
 
 // handleDocument renders a document by executing an external render command.
 // URL: /document/<doc-name>/<entity-id>
-// If render=true query param is set, it does the actual rendering (called via HTMX).
+// Query params:
+//   - render=true: does the actual rendering (called via HTMX)
+//   - refresh=true: forces re-render, bypassing cache
+//
 // Otherwise it checks cache first - if valid, shows content; else shows loading spinner.
 func (a *App) handleDocument(w http.ResponseWriter, r *http.Request) {
 	// Parse path: /document/<doc-name>/<entity-id>
@@ -49,14 +52,19 @@ func (a *App) handleDocument(w http.ResponseWriter, r *http.Request) {
 	// Convert config to workspace format
 	wsCfg := a.toWorkspaceDocConfig(docCfg)
 
-	// Try to get cached content
-	result := a.ws.GetCachedDocument(entryID, wsCfg)
-	if result != nil {
-		a.renderDocument(w, r, entryID, docName, entry, rewriteDocumentLinks(result.HTML, entryID, docName))
-		return
+	// Check for refresh param - skip cache if present
+	forceRefresh := r.URL.Query().Get("refresh") == "true"
+
+	// Try to get cached content (unless refresh requested)
+	if !forceRefresh {
+		result := a.ws.GetCachedDocument(entryID, wsCfg)
+		if result != nil {
+			a.renderDocument(w, r, entryID, docName, entry, rewriteDocumentLinks(result.HTML, entryID, docName))
+			return
+		}
 	}
 
-	// Cache miss - render loading page, HTMX will trigger the actual render
+	// Cache miss or refresh requested - render loading page, HTMX will trigger the actual render
 	a.renderDocument(w, r, entryID, docName, entry, "")
 }
 

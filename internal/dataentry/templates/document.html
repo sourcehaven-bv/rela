@@ -14,6 +14,8 @@
   border-radius: 8px;
   line-height: 1.7;
 }
+/* Offset for sticky header when scrolling to anchors */
+.document-content [id] { scroll-margin-top: 80px; }
 .document-content h1 { font-size: 2em; margin: 1em 0 0.5em; border-bottom: 2px solid var(--border); padding-bottom: 0.3em; }
 .document-content h2 { font-size: 1.5em; margin: 1.5em 0 0.5em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
 .document-content h3 { font-size: 1.25em; margin: 1.2em 0 0.4em; }
@@ -124,7 +126,7 @@ if (typeof mermaid !== 'undefined') {
     <a href="/form/{{ .EntryType }}/{{ .EntryID }}?return={{ urlquery .CurrentPath }}" class="btn btn-primary btn-sm"
        hx-get="/form/{{ .EntryType }}/{{ .EntryID }}?return={{ urlquery .CurrentPath }}" hx-target="#content" hx-push-url="true">Edit Entry <kbd>E</kbd></a>
     {{ end }}
-    <button class="btn btn-secondary btn-sm" onclick="window.location.reload()">Refresh</button>
+    <button class="btn btn-secondary btn-sm" onclick="window.location.href='{{ .CurrentPath }}?refresh=true'">Refresh</button>
   </div>
 </div>
 
