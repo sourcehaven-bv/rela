@@ -49,11 +49,7 @@ func (a *App) handleDocumentPreview(w http.ResponseWriter, r *http.Request) {
 	// Try to get cached content
 	result, err := a.ws.RenderDocument(entryID, wsCfg)
 	if err == nil && result.CacheHit {
-		// Rewrite special links for UI
-		returnPath := "/document/preview?entry=" + entryID
-		content := workspace.RewriteEditLinks(result.HTML, returnPath)
-		content = workspace.RewriteCreateLinks(content, returnPath)
-		a.renderDocument(w, r, entryID, entry, content)
+		a.renderDocument(w, r, entryID, entry, rewriteDocumentLinks(result.HTML, entryID))
 		return
 	}
 
@@ -71,10 +67,7 @@ func (a *App) handleDocumentRender(w http.ResponseWriter, _ *http.Request, entry
 		return
 	}
 
-	// Rewrite special links for UI
-	returnPath := "/document/preview?entry=" + entryID
-	content := workspace.RewriteEditLinks(result.HTML, returnPath)
-	content = workspace.RewriteCreateLinks(content, returnPath)
+	content := rewriteDocumentLinks(result.HTML, entryID)
 
 	// Return the content fragment for HTMX to swap in (with wrapper)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -113,6 +106,13 @@ func (a *App) getDocumentConfig(docName string) (*DocumentConfig, error) {
 	}
 
 	return nil, fmt.Errorf("no document configs defined")
+}
+
+// rewriteDocumentLinks rewrites edit:// and create:// links to form URLs.
+func rewriteDocumentLinks(html, entryID string) string {
+	returnPath := "/document/preview?entry=" + entryID
+	content := workspace.RewriteEditLinks(html, returnPath)
+	return workspace.RewriteCreateLinks(content, returnPath)
 }
 
 // toWorkspaceDocConfig converts dataentry config to workspace config.
