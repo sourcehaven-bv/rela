@@ -3,13 +3,13 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"net/url"
 	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,9 +138,10 @@ func (w *Workspace) computeDocumentHash(entryID, viewName string) ([]*model.Enti
 	return entities, hashEntities(entities), nil
 }
 
-// hashEntities computes a SHA256 hash of the given entities' content.
+// hashEntities computes a FNV-64a hash of the given entities' content.
+// FNV is a fast non-cryptographic hash suitable for cache keys.
 func hashEntities(entities []*model.Entity) string {
-	h := sha256.New()
+	h := fnv.New64a()
 
 	// Sort entities by ID for deterministic hashing
 	sorted := make([]*model.Entity, len(entities))
@@ -166,8 +167,7 @@ func hashEntities(entities []*model.Entity) string {
 		}
 	}
 
-	// Use first 16 chars (64 bits) for cache filenames - sufficient for collision avoidance
-	return hex.EncodeToString(h.Sum(nil))[:16]
+	return strconv.FormatUint(h.Sum64(), 16)
 }
 
 // executeCommand runs an external command and returns its stdout.
