@@ -53,8 +53,7 @@ type (
 	ViewTraverse     = dataentryconfig.ViewTraverse
 	ViewSection      = dataentryconfig.ViewSection
 	ViewSectionField = dataentryconfig.ViewSectionField
-	CommandConfig    = dataentryconfig.CommandConfig
-	CommandScope     = dataentryconfig.CommandScope
-	DocumentConfig   = dataentryconfig.DocumentConfig
-	StringOrSlice    = dataentryconfig.StringOrSlice
+	CommandConfig  = dataentryconfig.CommandConfig
+	CommandScope   = dataentryconfig.CommandScope
+	DocumentConfig = dataentryconfig.DocumentConfig
 )

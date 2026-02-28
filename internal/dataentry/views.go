@@ -49,10 +49,8 @@ func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) 
 func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 	// Gather source entities
 	var sources []*model.Entity
-	seen := map[string]bool{}
-
-	// Handle special "*" case - gather from all collections
-	if len(rule.From) == 1 && rule.From[0] == "*" {
+	if rule.From == "*" {
+		seen := map[string]bool{}
 		for _, entities := range result.Collections {
 			for _, e := range entities {
 				if !seen[e.ID] {
@@ -61,18 +59,8 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 				}
 			}
 		}
-	} else {
-		// Gather from named collections
-		for _, fromName := range rule.From {
-			if entities, ok := result.Collections[fromName]; ok {
-				for _, e := range entities {
-					if !seen[e.ID] {
-						sources = append(sources, e)
-						seen[e.ID] = true
-					}
-				}
-			}
-		}
+	} else if entities, ok := result.Collections[rule.From]; ok {
+		sources = entities
 	}
 
 	// Traverse from each source
@@ -99,34 +87,18 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 		// On error, continue with unfiltered results (silent failure for robustness)
 	}
 
-	// Deduplicate into collection(s)
-	// CollectAs can specify multiple collection names to filter entities by type
-	for _, collName := range rule.CollectAs {
-		if result.Collections[collName] == nil {
-			result.Collections[collName] = []*model.Entity{}
-		}
+	// Deduplicate into collection
+	if result.Collections[rule.CollectAs] == nil {
+		result.Collections[rule.CollectAs] = []*model.Entity{}
 	}
-
-	// Build set of existing IDs per collection
-	existingByCollection := make(map[string]map[string]bool)
-	for _, collName := range rule.CollectAs {
-		existingByCollection[collName] = make(map[string]bool)
-		for _, e := range result.Collections[collName] {
-			existingByCollection[collName][e.ID] = true
-		}
+	existing := map[string]bool{}
+	for _, e := range result.Collections[rule.CollectAs] {
+		existing[e.ID] = true
 	}
-
-	// Add entities to matching collection(s)
 	for _, e := range found {
-		for _, collName := range rule.CollectAs {
-			// If there's only one collection name, all entities go there.
-			// If there are multiple, entities are filtered by type matching the collection name.
-			if len(rule.CollectAs) == 1 || e.Type == collName || pluralize(e.Type) == collName {
-				if !existingByCollection[collName][e.ID] {
-					result.Collections[collName] = append(result.Collections[collName], e)
-					existingByCollection[collName][e.ID] = true
-				}
-			}
+		if !existing[e.ID] {
+			result.Collections[rule.CollectAs] = append(result.Collections[rule.CollectAs], e)
+			existing[e.ID] = true
 		}
 	}
 }
@@ -213,24 +185,4 @@ func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*mod
 		}
 	}
 	return result, nil
-}
-
-// pluralize returns a simple pluralized form of a word by adding "s".
-// This is used to match entity types to collection names (e.g., "function" -> "functions").
-// For more complex plurals, users should configure explicit collection names.
-func pluralize(s string) string {
-	if s == "" {
-		return s
-	}
-	return s + "s"
-}
-
-// collectAsContains checks if a StringOrSlice contains a specific value.
-func collectAsContains(s StringOrSlice, target string) bool {
-	for _, v := range s {
-		if v == target {
-			return true
-		}
-	}
-	return false
 }

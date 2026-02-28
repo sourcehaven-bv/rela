@@ -854,7 +854,7 @@ func (a *App) handleView(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, rule := range view.Traverse {
-			if !collectAsContains(rule.CollectAs, sec.Source) || !collectAsContains(rule.From, "entry") {
+			if rule.CollectAs != sec.Source || rule.From != "entry" {
 				continue
 			}
 			relName := rule.Follow

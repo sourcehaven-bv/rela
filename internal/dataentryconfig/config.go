@@ -5,8 +5,6 @@
 package dataentryconfig
 
 import (
-	"gopkg.in/yaml.v3"
-
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
@@ -297,39 +295,15 @@ type ViewEntry struct {
 	Type string `yaml:"type"`
 }
 
-// StringOrSlice supports YAML unmarshaling of either a string or a list of strings.
-// When unmarshaled, if the value is a single string, it becomes a one-element slice.
-type StringOrSlice []string
-
-// UnmarshalYAML implements custom unmarshaling for StringOrSlice.
-func (s *StringOrSlice) UnmarshalYAML(node *yaml.Node) error {
-	switch node.Kind {
-	case yaml.ScalarNode:
-		// Single string value
-		*s = StringOrSlice{node.Value}
-		return nil
-	case yaml.SequenceNode:
-		// List of strings
-		var items []string
-		if err := node.Decode(&items); err != nil {
-			return err
-		}
-		*s = items
-		return nil
-	default:
-		return nil
-	}
-}
-
 // ViewTraverse defines a graph traversal rule for collecting related entities.
 type ViewTraverse struct {
-	From           StringOrSlice `yaml:"from"`
-	Follow         string        `yaml:"follow,omitempty"`
-	FollowIncoming string        `yaml:"follow_incoming,omitempty"`
-	CollectAs      StringOrSlice `yaml:"collect_as"`
-	Recursive      bool          `yaml:"recursive,omitempty"`
-	MaxDepth       int           `yaml:"max_depth,omitempty"`
-	Where          string        `yaml:"where,omitempty"`
+	From           string `yaml:"from"`
+	Follow         string `yaml:"follow,omitempty"`
+	FollowIncoming string `yaml:"follow_incoming,omitempty"`
+	CollectAs      string `yaml:"collect_as"`
+	Recursive      bool   `yaml:"recursive,omitempty"`
+	MaxDepth       int    `yaml:"max_depth,omitempty"`
+	Where          string `yaml:"where,omitempty"`
 }
 
 // ViewSection defines a section within a view.

@@ -92,7 +92,7 @@ func TestValidateConfig_ValidConfig(t *testing.T) {
 				Title: "Ticket View",
 				Entry: ViewEntry{Type: "ticket"},
 				Traverse: []ViewTraverse{
-					{From: StringOrSlice{"entry"}, Follow: "blocks", CollectAs: StringOrSlice{"blocked"}},
+					{From: "entry", Follow: "blocks", CollectAs: "blocked"},
 				},
 				Sections: []ViewSection{
 					{Source: "entry", Display: "properties"},
@@ -428,7 +428,7 @@ func TestValidateConfig_ViewTraverseUnknownCollection(t *testing.T) {
 			"test": {
 				Entry: ViewEntry{Type: "ticket"},
 				Traverse: []ViewTraverse{
-					{From: StringOrSlice{"nonexistent"}, Follow: "blocks", CollectAs: StringOrSlice{"blocked"}},
+					{From: "nonexistent", Follow: "blocks", CollectAs: "blocked"},
 				},
 			},
 		},
@@ -450,7 +450,7 @@ func TestValidateConfig_ViewTraverseUnknownRelation(t *testing.T) {
 			"test": {
 				Entry: ViewEntry{Type: "ticket"},
 				Traverse: []ViewTraverse{
-					{From: StringOrSlice{"entry"}, Follow: "block", CollectAs: StringOrSlice{"blocked"}}, // typo: block vs blocks
+					{From: "entry", Follow: "block", CollectAs: "blocked"}, // typo: block vs blocks
 				},
 			},
 		},
@@ -475,7 +475,7 @@ func TestValidateConfig_ViewTraverseMissingFollowOrFollowIncoming(t *testing.T) 
 			"test": {
 				Entry: ViewEntry{Type: "ticket"},
 				Traverse: []ViewTraverse{
-					{From: StringOrSlice{"entry"}, CollectAs: StringOrSlice{"blocked"}},
+					{From: "entry", CollectAs: "blocked"},
 				},
 			},
 		},
@@ -497,7 +497,7 @@ func TestValidateConfig_ViewTraverseBothFollowAndFollowIncoming(t *testing.T) {
 			"test": {
 				Entry: ViewEntry{Type: "ticket"},
 				Traverse: []ViewTraverse{
-					{From: StringOrSlice{"entry"}, Follow: "blocks", FollowIncoming: "blocks", CollectAs: StringOrSlice{"blocked"}},
+					{From: "entry", Follow: "blocks", FollowIncoming: "blocks", CollectAs: "blocked"},
 				},
 			},
 		},
@@ -519,7 +519,7 @@ func TestValidateConfig_ViewTraverseMissingCollectAs(t *testing.T) {
 			"test": {
 				Entry: ViewEntry{Type: "ticket"},
 				Traverse: []ViewTraverse{
-					{From: StringOrSlice{"entry"}, Follow: "blocks"},
+					{From: "entry", Follow: "blocks"},
 				},
 			},
 		},
@@ -833,8 +833,8 @@ func TestValidateConfig_ViewTraverseWildcardFrom(t *testing.T) {
 			"test": {
 				Entry: ViewEntry{Type: "ticket"},
 				Traverse: []ViewTraverse{
-					{From: StringOrSlice{"entry"}, Follow: "blocks", CollectAs: StringOrSlice{"blocked"}},
-					{From: StringOrSlice{"*"}, Follow: "belongs-to", CollectAs: StringOrSlice{"categories"}},
+					{From: "entry", Follow: "blocks", CollectAs: "blocked"},
+					{From: "*", Follow: "belongs-to", CollectAs: "categories"},
 				},
 				Sections: []ViewSection{
 					{Source: "categories", Display: "list"},
@@ -856,7 +856,7 @@ func TestValidateConfig_ViewSectionUsesPreviousCollectAs(t *testing.T) {
 			"test": {
 				Entry: ViewEntry{Type: "ticket"},
 				Traverse: []ViewTraverse{
-					{From: StringOrSlice{"entry"}, Follow: "blocks", CollectAs: StringOrSlice{"blocked"}},
+					{From: "entry", Follow: "blocks", CollectAs: "blocked"},
 				},
 				Sections: []ViewSection{
 					{Source: "blocked", Display: "table", Columns: []ListColumn{{Property: "title"}}},

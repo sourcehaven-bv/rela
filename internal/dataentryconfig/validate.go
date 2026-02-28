@@ -390,17 +390,14 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Validate traverse rules and track collections
 		for i, t := range view.Traverse {
-			// Validate from (supports single value "*" or list of collection names)
-			isWildcard := len(t.From) == 1 && t.From[0] == "*"
-			if !isWildcard {
-				for _, fromName := range t.From {
-					if _, ok := collections[fromName]; !ok {
-						validCollections := sortedMapKeys(collections)
-						validCollections = append(validCollections, "*")
-						errs = append(errs, fmt.Sprintf(
-							"view %q: traverse[%d] references unknown collection %q in from (valid: %s)",
-							viewID, i, fromName, strings.Join(validCollections, ", ")))
-					}
+			// Validate from
+			if t.From != "*" {
+				if _, ok := collections[t.From]; !ok {
+					validCollections := sortedMapKeys(collections)
+					validCollections = append(validCollections, "*")
+					errs = append(errs, fmt.Sprintf(
+						"view %q: traverse[%d] references unknown collection %q in from (valid: %s)",
+						viewID, i, t.From, strings.Join(validCollections, ", ")))
 				}
 			}
 
@@ -446,16 +443,14 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 
 			// Validate collect_as is specified
-			if len(t.CollectAs) == 0 {
+			if t.CollectAs == "" {
 				errs = append(errs, fmt.Sprintf(
 					"view %q: traverse[%d] must specify collect_as",
 					viewID, i))
 			} else {
 				// Determine target entity type for this collection
 				targetType := determineTargetType(t, relType, meta)
-				for _, collName := range t.CollectAs {
-					collections[collName] = targetType
-				}
+				collections[t.CollectAs] = targetType
 			}
 		}
 

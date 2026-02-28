@@ -321,7 +321,7 @@ func TestBuildViewInput(t *testing.T) {
 		Title: "Test View",
 		Entry: ViewEntry{Type: "ticket"},
 		Traverse: []ViewTraverse{
-			{From: StringOrSlice{"entry"}, Follow: "belongs_to", CollectAs: StringOrSlice{"components"}},
+			{From: "entry", Follow: "belongs_to", CollectAs: "components"},
 		},
 	}
 	vr, err := app.executeView(view, "TKT-001")
