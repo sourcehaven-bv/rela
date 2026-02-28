@@ -224,7 +224,9 @@ tbody tr:last-child td { border-bottom: none; }
 .markdown-body h4 { font-size: 14px; font-weight: 600; margin: 14px 0 4px; }
 .markdown-body h5 { font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
 .markdown-body p { margin: 8px 0; }
-.markdown-body ul, .markdown-body ol { margin: 8px 0; padding-left: 24px; }
+.markdown-body ul, .markdown-body ol { margin: 8px 0; padding-left: 2em; list-style-position: outside; margin-left: 0; }
+.markdown-body ul { list-style-type: disc; }
+.markdown-body ol { list-style-type: decimal; }
 .markdown-body li { margin: 2px 0; }
 .markdown-body pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; margin: 8px 0; border: 1px solid var(--border); }
 .markdown-body code { background: var(--bg); padding: 1px 4px; border-radius: 3px; font-family: var(--font-mono); font-size: 0.9em; }

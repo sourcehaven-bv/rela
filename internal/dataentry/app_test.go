@@ -69,7 +69,7 @@ func testConfig() *Config {
 				EntityType: "ticket",
 				Title:      "Tickets",
 				Columns: []ListColumn{
-					{Property: "title", Label: "Title", Link: true},
+					{Property: "title", Label: "Title", Link: "detail"},
 					{Property: "status", Label: "Status"},
 				},
 			},

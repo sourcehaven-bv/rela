@@ -128,7 +128,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		Property   string
 		PropType   string
 		Widget     string
-		Link       bool
+		Link       string // resolved link URL or empty
 		EntityID   string
 		EntityType string
 	}
@@ -144,7 +144,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		for _, col := range list.Columns {
 			cell := CellData{
 				Property:   col.Property,
-				Link:       col.Link,
+				Link:       a.resolveLinkTarget(col.Link, e.Type, e.ID),
 				EntityID:   e.ID,
 				EntityType: e.Type,
 			}
@@ -224,7 +224,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		Property string
 		Label    string
 		Sortable bool
-		Link     bool
+		Link     string
 		SortURL  string
 		IsSorted bool
 		SortDir  string
@@ -2108,9 +2108,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					cd := CellData{
 						Value:    val,
 						PropType: propType,
-					}
-					if col.Link {
-						cd.Link = "/entity/" + e.Type + "/" + e.ID
+						Link:     a.resolveLinkTarget(col.Link, e.Type, e.ID),
 					}
 					row[j] = cd
 				}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -15,19 +16,21 @@ func (a *App) logTemplateError(tmplName string, err error) {
 	log.Printf("Template %q execution error: %v", tmplName, err)
 }
 
-// handleDocumentPreview renders a document by executing an external render command.
-// URL: /document/preview?entry=<entity-id>&doc=<document-name>
+// handleDocument renders a document by executing an external render command.
+// URL: /document/<doc-name>/<entity-id>
 // If render=true query param is set, it does the actual rendering (called via HTMX).
 // Otherwise it checks cache first - if valid, shows content; else shows loading spinner.
-func (a *App) handleDocumentPreview(w http.ResponseWriter, r *http.Request) {
-	entryID := r.URL.Query().Get("entry")
-	if entryID == "" {
-		http.Error(w, "Missing 'entry' query parameter", http.StatusBadRequest)
+func (a *App) handleDocument(w http.ResponseWriter, r *http.Request) {
+	// Parse path: /document/<doc-name>/<entity-id>
+	path := strings.TrimPrefix(r.URL.Path, "/document/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		http.Error(w, "Invalid document URL, expected /document/<doc-name>/<entity-id>", http.StatusBadRequest)
 		return
 	}
+	docName, entryID := parts[0], parts[1]
 
 	// Get document config
-	docName := r.URL.Query().Get("doc")
 	docCfg, err := a.getDocumentConfig(docName)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -71,7 +74,7 @@ func (a *App) handleDocumentRender(w http.ResponseWriter, _ *http.Request, entry
 
 	// Return the content fragment for HTMX to swap in (with wrapper)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	renderURL := "/document/preview?entry=" + entryID + "&doc=" + docName + "&render=true"
+	renderURL := "/document/" + docName + "/" + entryID + "?render=true"
 	fmt.Fprintf(w, `<div class="document-content" data-render-url="%s">%s</div>`, renderURL, content)
 }
 
@@ -89,7 +92,7 @@ func (a *App) getDocumentConfig(docName string) (*DocumentConfig, error) {
 
 // rewriteDocumentLinks rewrites edit:// and create:// links to form URLs.
 func rewriteDocumentLinks(html, entryID, docName string) string {
-	returnPath := "/document/preview?entry=" + entryID + "&doc=" + docName
+	returnPath := "/document/" + docName + "/" + entryID
 	return workspace.RewriteDocumentLinks(html, returnPath)
 }
 
@@ -128,8 +131,8 @@ func (a *App) renderDocument(w http.ResponseWriter, r *http.Request, entryID, do
 		"EntryType":     entryType,
 		"EntryTitle":    entryTitle,
 		"Content":       content,
-		"CurrentPath":   "/document/preview?entry=" + entryID + "&doc=" + docName,
-		"RenderURL":     "/document/preview?entry=" + entryID + "&doc=" + docName + "&render=true",
+		"CurrentPath":   "/document/" + docName + "/" + entryID,
+		"RenderURL":     "/document/" + docName + "/" + entryID + "?render=true",
 		"IsHTMX":        r.Header.Get("HX-Request") == "true",
 		"Loading":       content == "",
 	}
@@ -150,7 +153,7 @@ func (a *App) renderDocumentErrorFragment(w http.ResponseWriter, entryID, docNam
 	data := map[string]interface{}{
 		"Error":     cmdErr.Error(),
 		"Context":   cmdContext,
-		"RenderURL": "/document/preview?entry=" + entryID + "&doc=" + docName + "&render=true",
+		"RenderURL": "/document/" + docName + "/" + entryID + "?render=true",
 	}
 	if err := a.tmpl.ExecuteTemplate(w, "document-error", data); err != nil {
 		a.logTemplateError("document-error", err)

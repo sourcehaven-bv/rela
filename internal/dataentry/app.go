@@ -344,6 +344,25 @@ func (a *App) entityDisplayTitle(e *model.Entity) string {
 	return e.ID
 }
 
+// resolveLinkTarget resolves a link configuration value to a URL.
+// Supported values:
+//   - "" or empty: no link (returns "")
+//   - "detail": link to entity detail view (/entity/{type}/{id})
+//   - "document/<name>": link to document preview (/document/<name>/{id})
+func (a *App) resolveLinkTarget(link, entityType, entityID string) string {
+	switch {
+	case link == "":
+		return ""
+	case link == "detail":
+		return "/entity/" + entityType + "/" + entityID
+	case strings.HasPrefix(link, "document/"):
+		docName := strings.TrimPrefix(link, "document/")
+		return "/document/" + docName + "/" + entityID
+	default:
+		return ""
+	}
+}
+
 // activeListForEntityType returns the first navigation list ID whose entity type
 // matches the given type, or "" if none match. Walks into groups.
 func (a *App) activeListForEntityType(entityType string) string {

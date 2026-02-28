@@ -1,6 +1,6 @@
 {{- define "view-table-cell" -}}
-{{ if .Link }}<a href="/entity/{{ .EntityType }}/{{ .EntityID }}" class="cell-link"
-   hx-get="/entity/{{ .EntityType }}/{{ .EntityID }}" hx-target="#content" hx-push-url="true">{{ join .Values ", " }}</a>
+{{ if .Link }}<a href="{{ .Link }}" class="cell-link"
+   hx-get="{{ .Link }}" hx-target="#content" hx-push-url="true">{{ join .Values ", " }}</a>
 {{ else if isBadgeType .PropType }}{{ if .Values }}{{ $pt := .PropType }}{{ range .Values }}<span class="badge {{ badgeClass $pt . }}">{{ . }}</span> {{ end }}{{ else }}&mdash;{{ end }}
 {{ else }}{{ if .Values }}{{ join .Values ", " }}{{ else }}&mdash;{{ end }}{{ end }}
 {{- end -}}

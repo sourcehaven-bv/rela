@@ -127,7 +127,7 @@ type ListColumn struct {
 	Relation string `yaml:"relation"`
 	Label    string `yaml:"label"`
 	Sortable bool   `yaml:"sortable"`
-	Link     bool   `yaml:"link"`
+	Link     string `yaml:"link"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
@@ -315,7 +315,7 @@ type ViewSection struct {
 	Columns      []ListColumn       `yaml:"columns,omitempty"`
 	GroupBy      string             `yaml:"group_by,omitempty"`
 	EmptyMessage string             `yaml:"empty_message,omitempty"`
-	Link         bool               `yaml:"link,omitempty"`
+	Link         string             `yaml:"link,omitempty"`
 }
 
 // ViewSectionField defines a field within a view section.

@@ -86,11 +86,10 @@
       <tbody>
         {{ range .Rows }}
         <tr{{ if $.EditForm }} data-edit-href="/form/{{ $.EditForm }}/{{ .EntityID }}?return_to=/list/{{ $.ListID }}"{{ end }}>
-          {{ $dlp := $.DetailLinkPrefix }}
           {{ range .Cells }}
           <td>
-            {{ if .Link }}<a href="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}&scope=list:{{ $.ListID }}{{ $.ScopeParams }}" class="cell-link"
-               hx-get="{{ $dlp }}{{ .EntityID }}?from={{ $.ListID }}&scope=list:{{ $.ListID }}{{ $.ScopeParams }}" hx-target="#content" hx-push-url="true">{{ join .Values ", " }}</a>
+            {{ if .Link }}<a href="{{ .Link }}?from={{ $.ListID }}&scope=list:{{ $.ListID }}{{ $.ScopeParams }}" class="cell-link"
+               hx-get="{{ .Link }}?from={{ $.ListID }}&scope=list:{{ $.ListID }}{{ $.ScopeParams }}" hx-target="#content" hx-push-url="true">{{ join .Values ", " }}</a>
             {{ else if isBadgeType .PropType }}{{ if .Values }}{{ $pt := .PropType }}{{ range .Values }}<span class="badge {{ badgeClass $pt . }}">{{ . }}</span> {{ end }}{{ else }}&mdash;{{ end }}
             {{ else }}{{ if .Values }}{{ join .Values ", " }}{{ else }}&mdash;{{ end }}{{ end }}
           </td>
