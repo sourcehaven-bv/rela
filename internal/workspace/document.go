@@ -122,27 +122,15 @@ func (w *Workspace) doRenderDocument(
 // It executes the view to get all involved entities and hashes their content.
 // Returns the entities and their hash.
 func (w *Workspace) computeDocumentHash(entryID, viewName string) ([]*model.Entity, string, error) {
-	// Load view definition
+	// Load view definition - required for document rendering
 	viewsFile, err := w.LoadViews()
 	if err != nil {
-		// If views.yaml doesn't exist, fall back to hashing just the entry entity
-		entry, ok := w.graph.GetNode(entryID)
-		if !ok {
-			return nil, "", fmt.Errorf("entry %s not found", entryID)
-		}
-		entities := []*model.Entity{entry}
-		return entities, hashEntities(entities), nil
+		return nil, "", fmt.Errorf("loading views.yaml: %w", err)
 	}
 
 	viewDef, ok := viewsFile.Views[viewName]
 	if !ok {
-		// View not found, fall back to hashing just the entry entity
-		entry, ok := w.graph.GetNode(entryID)
-		if !ok {
-			return nil, "", fmt.Errorf("entry %s not found", entryID)
-		}
-		entities := []*model.Entity{entry}
-		return entities, hashEntities(entities), nil
+		return nil, "", fmt.Errorf("view %q not found in views.yaml", viewName)
 	}
 
 	// Execute view to get all entities
