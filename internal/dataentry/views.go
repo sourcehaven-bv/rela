@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -216,25 +215,14 @@ func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*mod
 	return result, nil
 }
 
-// pluralize returns a simple pluralized form of a word.
+// pluralize returns a simple pluralized form of a word by adding "s".
 // This is used to match entity types to collection names (e.g., "function" -> "functions").
+// For more complex plurals, users should configure explicit collection names.
 func pluralize(s string) string {
 	if s == "" {
 		return s
 	}
-	// Simple English pluralization rules
-	switch {
-	case strings.HasSuffix(s, "s"), strings.HasSuffix(s, "x"), strings.HasSuffix(s, "ch"), strings.HasSuffix(s, "sh"):
-		return s + "es"
-	case strings.HasSuffix(s, "y") && len(s) > 1 && !isVowel(s[len(s)-2]):
-		return s[:len(s)-1] + "ies"
-	default:
-		return s + "s"
-	}
-}
-
-func isVowel(b byte) bool {
-	return b == 'a' || b == 'e' || b == 'i' || b == 'o' || b == 'u'
+	return s + "s"
 }
 
 // collectAsContains checks if a StringOrSlice contains a specific value.

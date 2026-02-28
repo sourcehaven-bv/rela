@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/yuin/goldmark"
@@ -24,6 +23,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/views"
 )
+
+// docCacheDir is the subdirectory under .rela/ for document cache files.
+const docCacheDir = "documents"
 
 // DocumentConfig defines how to render a document from an entry entity.
 type DocumentConfig struct {
@@ -49,40 +51,23 @@ type DocumentResult struct {
 	Entities []*model.Entity
 }
 
-// documentCache holds cached document render results.
-type documentCache struct {
-	cache  sync.Map           // entryID -> *docCacheEntry
-	render singleflight.Group // dedupes concurrent renders
-}
-
-// docCacheEntry holds a cached rendered document.
-type docCacheEntry struct {
-	HTML        string
-	ContentHash string
-}
-
-// newDocumentCache creates a new document cache.
-func newDocumentCache() *documentCache {
-	return &documentCache{}
-}
+// docRenderGroup dedupes concurrent render requests for the same entry.
+var docRenderGroup singleflight.Group
 
 // RenderDocument renders a document for the given entry ID using the provided config.
-// It handles caching, request deduplication, and external command execution.
+// It handles disk-based caching, request deduplication, and external command execution.
 func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*DocumentResult, error) {
-	if w.docCache == nil {
-		w.docCache = newDocumentCache()
-	}
-
 	// Compute content hash for cache validation
 	entities, contentHash, err := w.computeDocumentHash(entryID, cfg.View)
 	if err != nil {
 		return nil, fmt.Errorf("computing document hash: %w", err)
 	}
 
-	// Check cache
-	if cachedHTML, ok := w.getDocCache(entryID, contentHash); ok {
+	// Check disk cache
+	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheDir, entryID, contentHash)
+	if cachedHTML, cacheErr := w.ReadCacheFile(cacheFile); cacheErr == nil {
 		return &DocumentResult{
-			HTML:        cachedHTML,
+			HTML:        string(cachedHTML),
 			ContentHash: contentHash,
 			CacheHit:    true,
 			Entities:    entities,
@@ -90,8 +75,8 @@ func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*Documen
 	}
 
 	// Use singleflight to dedupe concurrent render requests for the same entry
-	result, err, _ := w.docCache.render.Do(entryID, func() (interface{}, error) {
-		return w.doRenderDocument(entryID, cfg, entities, contentHash)
+	result, err, _ := docRenderGroup.Do(entryID, func() (interface{}, error) {
+		return w.doRenderDocument(entryID, cfg, entities, contentHash, cacheFile)
 	})
 	if err != nil {
 		return nil, err
@@ -103,19 +88,15 @@ func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*Documen
 
 // doRenderDocument performs the actual rendering work.
 func (w *Workspace) doRenderDocument(
-	entryID string, cfg DocumentConfig, entities []*model.Entity, contentHash string,
+	entryID string, cfg DocumentConfig, entities []*model.Entity, contentHash, cacheFile string,
 ) (*DocumentResult, error) {
 	// Build command with ID substitution
 	command := cfg.Command
 	command = strings.ReplaceAll(command, "{id}", entryID)
 	command = strings.ReplaceAll(command, "{id_lower}", strings.ToLower(entryID))
 
-	// Execute render command
-	timeout := cfg.Timeout
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-	markdown, err := w.executeRenderCommand(command, timeout)
+	// Execute render command (caller should set default timeout if needed)
+	markdown, err := w.executeCommand(command, cfg.Timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -126,8 +107,8 @@ func (w *Workspace) doRenderDocument(
 		return nil, fmt.Errorf("markdown conversion: %w", err)
 	}
 
-	// Cache the result
-	w.setDocCache(entryID, contentHash, htmlContent)
+	// Cache the result to disk (ignore write errors, cache is optional)
+	_ = w.WriteCacheFile(cacheFile, []byte(htmlContent))
 
 	return &DocumentResult{
 		HTML:        htmlContent,
@@ -135,20 +116,6 @@ func (w *Workspace) doRenderDocument(
 		CacheHit:    false,
 		Entities:    entities,
 	}, nil
-}
-
-// InvalidateDocumentCache removes cached results for an entry.
-func (w *Workspace) InvalidateDocumentCache(entryID string) {
-	if w.docCache != nil {
-		w.docCache.cache.Delete(entryID)
-	}
-}
-
-// InvalidateAllDocumentCaches clears all cached documents.
-func (w *Workspace) InvalidateAllDocumentCaches() {
-	if w.docCache != nil {
-		w.docCache.cache = sync.Map{}
-	}
 }
 
 // computeDocumentHash computes a content hash for cache validation.
@@ -225,38 +192,12 @@ func hashEntities(entities []*model.Entity) string {
 		}
 	}
 
-	return hex.EncodeToString(h.Sum(nil))[:16] // Use first 16 chars
+	// Use first 16 chars (64 bits) for cache filenames - sufficient for collision avoidance
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// getDocCache retrieves a cached document if valid.
-func (w *Workspace) getDocCache(entryID, contentHash string) (string, bool) {
-	if w.docCache == nil {
-		return "", false
-	}
-	val, ok := w.docCache.cache.Load(entryID)
-	if !ok {
-		return "", false
-	}
-	entry, _ := val.(*docCacheEntry)
-	if entry.ContentHash != contentHash {
-		return "", false
-	}
-	return entry.HTML, true
-}
-
-// setDocCache stores a rendered document in the cache.
-func (w *Workspace) setDocCache(entryID, contentHash, htmlContent string) {
-	if w.docCache == nil {
-		w.docCache = newDocumentCache()
-	}
-	w.docCache.cache.Store(entryID, &docCacheEntry{
-		HTML:        htmlContent,
-		ContentHash: contentHash,
-	})
-}
-
-// executeRenderCommand runs an external command and returns its output.
-func (w *Workspace) executeRenderCommand(command string, timeout time.Duration) (string, error) {
+// executeCommand runs an external command and returns its stdout.
+func (w *Workspace) executeCommand(command string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

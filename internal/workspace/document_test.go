@@ -234,95 +234,49 @@ func TestRewriteCreateLinks(t *testing.T) {
 	}
 }
 
-func TestDocumentCache(t *testing.T) {
+func TestDocumentDiskCache(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	// Create a test entity
-	_, _, err := ws.CreateEntity("requirement", CreateOptions{
-		Properties: map[string]interface{}{
-			"title": "Test Requirement",
-		},
-	})
-	if err != nil {
-		t.Fatalf("failed to create entity: %v", err)
-	}
-
-	t.Run("cache miss then hit", func(t *testing.T) {
+	t.Run("cache file naming", func(t *testing.T) {
+		// Test that cache files are written to .rela/documents/
 		entryID := "REQ-001"
-		contentHash := "testhash123"
+		hash := "abc123"
+		cacheFile := docCacheDir + "/" + entryID + "-" + hash + ".html"
+		content := "<p>Test HTML</p>"
 
-		// Initially cache should miss
-		_, ok := ws.getDocCache(entryID, contentHash)
-		if ok {
-			t.Error("expected cache miss on first access")
+		// Write to cache
+		err := ws.WriteCacheFile(cacheFile, []byte(content))
+		if err != nil {
+			t.Fatalf("failed to write cache file: %v", err)
 		}
 
-		// Set cache
-		ws.setDocCache(entryID, contentHash, "<p>Cached HTML</p>")
-
-		// Now should hit
-		html, ok := ws.getDocCache(entryID, contentHash)
-		if !ok {
-			t.Error("expected cache hit after set")
+		// Read back
+		data, err := ws.ReadCacheFile(cacheFile)
+		if err != nil {
+			t.Fatalf("failed to read cache file: %v", err)
 		}
-		if html != "<p>Cached HTML</p>" {
-			t.Errorf("unexpected cached HTML: %s", html)
+		if string(data) != content {
+			t.Errorf("expected %q, got %q", content, string(data))
 		}
 	})
 
-	t.Run("cache invalidation by hash change", func(t *testing.T) {
+	t.Run("different hash creates different file", func(t *testing.T) {
 		entryID := "REQ-002"
-		oldHash := "oldhash"
-		newHash := "newhash"
+		hash1 := "hash1"
+		hash2 := "hash2"
+		cacheFile1 := docCacheDir + "/" + entryID + "-" + hash1 + ".html"
+		cacheFile2 := docCacheDir + "/" + entryID + "-" + hash2 + ".html"
 
-		ws.setDocCache(entryID, oldHash, "<p>Old content</p>")
+		// Write both
+		_ = ws.WriteCacheFile(cacheFile1, []byte("content1"))
+		_ = ws.WriteCacheFile(cacheFile2, []byte("content2"))
 
-		// Different hash should miss
-		_, ok := ws.getDocCache(entryID, newHash)
-		if ok {
-			t.Error("expected cache miss for different hash")
-		}
+		// Read and verify they're independent
+		data1, _ := ws.ReadCacheFile(cacheFile1)
+		data2, _ := ws.ReadCacheFile(cacheFile2)
 
-		// Old hash should still hit
-		_, ok = ws.getDocCache(entryID, oldHash)
-		if !ok {
-			t.Error("expected cache hit for old hash")
-		}
-	})
-
-	t.Run("explicit invalidation", func(t *testing.T) {
-		entryID := "REQ-003"
-		hash := "somehash"
-
-		ws.setDocCache(entryID, hash, "<p>Content</p>")
-
-		// Verify it's cached
-		_, ok := ws.getDocCache(entryID, hash)
-		if !ok {
-			t.Fatal("expected cache hit before invalidation")
-		}
-
-		// Invalidate
-		ws.InvalidateDocumentCache(entryID)
-
-		// Should now miss
-		_, ok = ws.getDocCache(entryID, hash)
-		if ok {
-			t.Error("expected cache miss after invalidation")
-		}
-	})
-
-	t.Run("invalidate all caches", func(t *testing.T) {
-		ws.setDocCache("A", "hash1", "content1")
-		ws.setDocCache("B", "hash2", "content2")
-
-		ws.InvalidateAllDocumentCaches()
-
-		_, okA := ws.getDocCache("A", "hash1")
-		_, okB := ws.getDocCache("B", "hash2")
-
-		if okA || okB {
-			t.Error("expected all caches to be invalidated")
+		if string(data1) != "content1" || string(data2) != "content2" {
+			t.Error("cache files should be independent")
 		}
 	})
 }

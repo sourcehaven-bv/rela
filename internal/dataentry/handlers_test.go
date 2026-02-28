@@ -1557,9 +1557,36 @@ func TestHandleUpdateWithValidationErrors(t *testing.T) {
 	})
 }
 
+// newDocumentTestApp creates a test app with document config for the given entry types.
+func newDocumentTestApp(t *testing.T, entryTypes []string) *App {
+	t.Helper()
+	app := newHandlerTestApp(t)
+	app.Cfg.Documents = map[string]DocumentConfig{
+		"test-doc": {View: "test", Command: "echo test", EntryTypes: entryTypes},
+	}
+	return app
+}
+
 func TestHandleDocumentPreview(t *testing.T) {
+	t.Run("happy path shows loading page", func(t *testing.T) {
+		app := newDocumentTestApp(t, []string{"ticket"})
+		r := httptest.NewRequest(http.MethodGet, "/document/preview?entry=TKT-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleDocumentPreview(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "loading-spinner") {
+			t.Error("expected loading spinner in response")
+		}
+		if !strings.Contains(body, "render=true") {
+			t.Error("expected render URL in response")
+		}
+	})
+
 	t.Run("missing entry param returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app := newDocumentTestApp(t, []string{"ticket"})
 		r := httptest.NewRequest(http.MethodGet, "/document/preview", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleDocumentPreview(w, r)
@@ -1573,7 +1600,6 @@ func TestHandleDocumentPreview(t *testing.T) {
 
 	t.Run("no document config returns 400", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		// No documents configured
 		app.Cfg.Documents = nil
 		r := httptest.NewRequest(http.MethodGet, "/document/preview?entry=TKT-001", http.NoBody)
 		w := httptest.NewRecorder()
@@ -1584,10 +1610,7 @@ func TestHandleDocumentPreview(t *testing.T) {
 	})
 
 	t.Run("unknown doc config returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
-		app.Cfg.Documents = map[string]DocumentConfig{
-			"test-doc": {View: "test", Command: "echo test"},
-		}
+		app := newDocumentTestApp(t, []string{"ticket"})
 		r := httptest.NewRequest(http.MethodGet, "/document/preview?entry=TKT-001&doc=nonexistent", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleDocumentPreview(w, r)
@@ -1599,19 +1622,13 @@ func TestHandleDocumentPreview(t *testing.T) {
 		}
 	})
 
-	t.Run("entry not found shows loading page (error on render)", func(t *testing.T) {
-		// When entry doesn't exist, the handler shows a loading page.
-		// The error will appear when render=true is requested.
-		app := newHandlerTestApp(t)
-		app.Cfg.Documents = map[string]DocumentConfig{
-			"test-doc": {View: "test", Command: "echo test", EntryTypes: []string{"nonexistent-type"}},
-		}
-		// Request for existing entity but wrong type - config mismatch
-		r := httptest.NewRequest(http.MethodGet, "/document/preview?entry=TKT-001&doc=wrong-doc", http.NoBody)
+	t.Run("wrong entry type returns 400", func(t *testing.T) {
+		app := newDocumentTestApp(t, []string{"nonexistent-type"})
+		r := httptest.NewRequest(http.MethodGet, "/document/preview?entry=TKT-001", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleDocumentPreview(w, r)
 		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400 for wrong doc name, got %d", w.Code)
+			t.Errorf("expected 400 for wrong entity type, got %d", w.Code)
 		}
 	})
 }

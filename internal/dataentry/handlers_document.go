@@ -2,13 +2,18 @@ package dataentry
 
 import (
 	"fmt"
-	"html"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
+
+// logTemplateError logs template execution errors.
+func (a *App) logTemplateError(tmplName string, err error) {
+	log.Printf("Template %q execution error: %v", tmplName, err)
+}
 
 // handleDocumentPreview renders a document by executing an external render command.
 // URL: /document/preview?entry=<entity-id>&doc=<document-name>
@@ -36,7 +41,7 @@ func (a *App) handleDocumentPreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the entry entity for page title
-	entry, _ := a.g.GetNode(entryID)
+	entry, _ := a.ws.GetEntity(entryID)
 
 	// Convert config to workspace format
 	wsCfg := a.toWorkspaceDocConfig(docCfg)
@@ -48,12 +53,12 @@ func (a *App) handleDocumentPreview(w http.ResponseWriter, r *http.Request) {
 		returnPath := "/document/preview?entry=" + entryID
 		content := workspace.RewriteEditLinks(result.HTML, returnPath)
 		content = workspace.RewriteCreateLinks(content, returnPath)
-		a.renderDocumentPage(w, r, entryID, entry, content)
+		a.renderDocument(w, r, entryID, entry, content)
 		return
 	}
 
 	// Cache miss or error - render loading page, HTMX will trigger the actual render
-	a.renderDocumentLoading(w, r, entryID, entry)
+	a.renderDocument(w, r, entryID, entry, "")
 }
 
 // handleDocumentRender does the actual document rendering (called async via HTMX).
@@ -95,20 +100,21 @@ func (a *App) getDocumentConfig(entryID, docName string) (*DocumentConfig, error
 	}
 
 	// Get entry entity to check type
-	entry, ok := a.g.GetNode(entryID)
+	entry, ok := a.ws.GetEntity(entryID)
 	if !ok {
 		return nil, fmt.Errorf("entry %s not found", entryID)
 	}
 
-	// Find a document config that matches the entry type
-	for name, cfg := range a.Cfg.Documents {
+	// Find a document config that matches the entry type.
+	// Note: If multiple configs match, the first found wins (map order is non-deterministic).
+	// In practice, users should configure non-overlapping EntryTypes or use explicit doc names.
+	for _, cfg := range a.Cfg.Documents {
 		if len(cfg.EntryTypes) == 0 {
-			// No type restriction, first match wins
+			// No type restriction, use this config
 			return &cfg, nil
 		}
 		for _, t := range cfg.EntryTypes {
 			if t == entry.Type {
-				_ = name // Use name if needed for logging
 				return &cfg, nil
 			}
 		}
@@ -130,8 +136,8 @@ func (a *App) toWorkspaceDocConfig(cfg *DocumentConfig) workspace.DocumentConfig
 	}
 }
 
-// renderDocumentPage renders the document HTML in a page template.
-func (a *App) renderDocumentPage(w http.ResponseWriter, r *http.Request, entryID string, entry *model.Entity, content string) {
+// renderDocument renders the document page. If content is empty, shows loading state.
+func (a *App) renderDocument(w http.ResponseWriter, r *http.Request, entryID string, entry *model.Entity, content string) {
 	pageTitle := "Document Preview"
 	entryType := ""
 	entryTitle := ""
@@ -155,71 +161,28 @@ func (a *App) renderDocumentPage(w http.ResponseWriter, r *http.Request, entryID
 		"CurrentPath":   "/document/preview?entry=" + entryID,
 		"RenderURL":     "/document/preview?entry=" + entryID + "&render=true",
 		"IsHTMX":        r.Header.Get("HX-Request") == "true",
+		"Loading":       content == "",
 	}
 	a.addGitData(data)
 
+	tmplName := "document"
 	if r.Header.Get("HX-Request") == "true" {
-		a.tmpl.ExecuteTemplate(w, "document-content", data) //nolint:errcheck // template errors logged by http
-	} else {
-		a.tmpl.ExecuteTemplate(w, "document", data) //nolint:errcheck // template errors logged by http
+		tmplName = "document-content"
 	}
-}
-
-// renderDocumentLoading renders a loading page that triggers async rendering via HTMX.
-func (a *App) renderDocumentLoading(w http.ResponseWriter, r *http.Request, entryID string, entry *model.Entity) {
-	pageTitle := "Document Preview"
-	entryType := ""
-	entryTitle := ""
-
-	if entry != nil {
-		entryType = entry.Type
-		entryTitle = a.entityDisplayTitle(entry)
-		pageTitle = entryTitle
-	}
-
-	data := map[string]interface{}{
-		"App":           a.Cfg.App,
-		"ConflictCount": a.conflictCount(),
-		"Navigation":    a.navElements("_document"),
-		"ActiveList":    "_document",
-		"PageTitle":     pageTitle,
-		"EntryID":       entryID,
-		"EntryType":     entryType,
-		"EntryTitle":    entryTitle,
-		"CurrentPath":   "/document/preview?entry=" + entryID,
-		"RenderURL":     "/document/preview?entry=" + entryID + "&render=true",
-		"IsHTMX":        r.Header.Get("HX-Request") == "true",
-		"Loading":       true,
-	}
-	a.addGitData(data)
-
-	if r.Header.Get("HX-Request") == "true" {
-		a.tmpl.ExecuteTemplate(w, "document-content", data) //nolint:errcheck // template errors logged by http
-	} else {
-		a.tmpl.ExecuteTemplate(w, "document", data) //nolint:errcheck // template errors logged by http
+	if err := a.tmpl.ExecuteTemplate(w, tmplName, data); err != nil {
+		a.logTemplateError(tmplName, err)
 	}
 }
 
 // renderDocumentErrorFragment renders an error fragment for HTMX swap.
-func (a *App) renderDocumentErrorFragment(w http.ResponseWriter, _ string, cmdErr error, context string) {
+func (a *App) renderDocumentErrorFragment(w http.ResponseWriter, entryID string, cmdErr error, cmdContext string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	errMsg := html.EscapeString(cmdErr.Error())
-	context = html.EscapeString(context)
-	fmt.Fprintf(w, `<div class="document-content">
-<div class="card" style="padding:20px;margin-bottom:20px;">
-  <h3 style="color:var(--error);margin-bottom:12px;">Render Command Failed</h3>
-  <pre style="background:var(--bg);padding:16px;border-radius:6px;overflow-x:auto;font-size:13px;white-space:pre-wrap;">%s</pre>
-</div>
-<details style="margin-top:20px;">
-  <summary style="cursor:pointer;padding:12px;background:var(--surface);border-radius:6px;font-weight:600;">
-    Show Command
-  </summary>
-  <div class="card" style="margin-top:8px;padding:16px;">
-    <pre style="background:var(--bg);padding:16px;border-radius:6px;overflow-x:auto;font-size:12px;">%s</pre>
-  </div>
-</details>
-<div style="margin-top:16px;">
-  <button class="btn btn-secondary btn-sm" onclick="htmx.trigger('#document-body', 'load')">Retry</button>
-</div>
-</div>`, errMsg, context)
+	data := map[string]interface{}{
+		"Error":     cmdErr.Error(),
+		"Context":   cmdContext,
+		"RenderURL": "/document/preview?entry=" + entryID + "&render=true",
+	}
+	if err := a.tmpl.ExecuteTemplate(w, "document-error", data); err != nil {
+		a.logTemplateError("document-error", err)
+	}
 }

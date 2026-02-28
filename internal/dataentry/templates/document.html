@@ -145,3 +145,23 @@ if (typeof mermaid !== 'undefined') {
 </div>
 {{ end }}
 {{- end -}}
+
+{{- define "document-error" -}}
+<div class="document-content" id="document-body" data-render-url="{{ .RenderURL }}">
+  <div class="card" style="padding:20px;margin-bottom:20px;">
+    <h3 style="color:var(--error);margin-bottom:12px;">Render Command Failed</h3>
+    <pre style="background:var(--bg);padding:16px;border-radius:6px;overflow-x:auto;font-size:13px;white-space:pre-wrap;">{{ .Error }}</pre>
+  </div>
+  <details style="margin-top:20px;">
+    <summary style="cursor:pointer;padding:12px;background:var(--surface);border-radius:6px;font-weight:600;">
+      Show Command
+    </summary>
+    <div class="card" style="margin-top:8px;padding:16px;">
+      <pre style="background:var(--bg);padding:16px;border-radius:6px;overflow-x:auto;font-size:12px;">{{ .Context }}</pre>
+    </div>
+  </details>
+  <div style="margin-top:16px;">
+    <button class="btn btn-secondary btn-sm" onclick="htmx.trigger('#document-body', 'load')">Retry</button>
+  </div>
+</div>
+{{- end -}}
