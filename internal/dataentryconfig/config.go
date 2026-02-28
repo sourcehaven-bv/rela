@@ -39,6 +39,7 @@ type Config struct {
 	Lists      map[string]List              `yaml:"lists"`
 	Views      map[string]ViewConfig        `yaml:"views"`
 	Kanbans    map[string]Kanban            `yaml:"kanbans"`
+	Documents  map[string]DocumentConfig    `yaml:"documents,omitempty"`
 	Dashboard  *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands   map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Navigation []NavigationEntry            `yaml:"navigation"`
@@ -126,7 +127,7 @@ type ListColumn struct {
 	Relation string `yaml:"relation"`
 	Label    string `yaml:"label"`
 	Sortable bool   `yaml:"sortable"`
-	Link     bool   `yaml:"link"`
+	Link     string `yaml:"link"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
@@ -314,7 +315,7 @@ type ViewSection struct {
 	Columns      []ListColumn       `yaml:"columns,omitempty"`
 	GroupBy      string             `yaml:"group_by,omitempty"`
 	EmptyMessage string             `yaml:"empty_message,omitempty"`
-	Link         bool               `yaml:"link,omitempty"`
+	Link         string             `yaml:"link,omitempty"`
 }
 
 // ViewSectionField defines a field within a view section.
@@ -341,4 +342,18 @@ type CommandScope struct {
 	Lists       []string `yaml:"lists,omitempty"`
 	EntityTypes []string `yaml:"entity_types,omitempty"`
 	Dashboard   bool     `yaml:"dashboard,omitempty"`
+}
+
+// DocumentConfig defines how to render a document from an entry entity.
+type DocumentConfig struct {
+	// Title is the display title for the document.
+	Title string `yaml:"title,omitempty"`
+	// View is the view name from views.yaml used to gather entities for content hashing.
+	View string `yaml:"view"`
+	// Command is the external render command. Placeholders:
+	//   {id}       - entry ID
+	//   {id_lower} - lowercase entry ID
+	Command string `yaml:"command"`
+	// Timeout is the command execution timeout in seconds. Defaults to 30.
+	Timeout int `yaml:"timeout,omitempty"`
 }

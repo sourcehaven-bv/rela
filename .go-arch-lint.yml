@@ -57,6 +57,7 @@ components:
 
   # Shared utilities
   errors:           { in: internal/errors }
+  htmlutil:         { in: internal/htmlutil }
   natsort:          { in: internal/natsort }
 
 # -- Vendors --------------------------------------------------------------
@@ -73,6 +74,7 @@ vendors:
   tablewriter: { in: github.com/olekukonko/tablewriter }
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
+  singleflight: { in: golang.org/x/sync/singleflight }
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
@@ -134,6 +136,7 @@ deps:
       - filter
       - git
       - graph
+      - htmlutil
       - markdown
       - metamodel
       - migration
@@ -172,6 +175,7 @@ deps:
       - automation
       - dataentryconfig
       - graph
+      - htmlutil
       - markdown
       - metamodel
       - migration
@@ -180,6 +184,9 @@ deps:
       - repository
       - storage
       - views
+    canUse:
+      - goldmark
+      - singleflight
 
   # Domain services
   automation:

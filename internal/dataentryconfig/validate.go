@@ -20,6 +20,7 @@ var validTopLevelKeys = map[string]bool{
 	"lists":      true,
 	"views":      true,
 	"kanbans":    true,
+	"documents":  true,
 	"dashboard":  true,
 	"commands":   true,
 	"navigation": true,
@@ -104,6 +105,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateKanbans(cfg, meta)...)
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
+	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
@@ -798,6 +800,22 @@ func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
 						"command %q: available_on references unknown entity type %q", cmdID, et))
 				}
 			}
+		}
+	}
+
+	return errs
+}
+
+// validateDocuments validates document configurations.
+func validateDocuments(cfg *Config) []string {
+	var errs []string
+
+	for docID, doc := range cfg.Documents {
+		if doc.Command == "" {
+			errs = append(errs, fmt.Sprintf("document %q: command is required", docID))
+		}
+		if doc.View == "" {
+			errs = append(errs, fmt.Sprintf("document %q: view is required", docID))
 		}
 	}
 

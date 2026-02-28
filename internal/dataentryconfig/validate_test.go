@@ -871,6 +871,56 @@ func TestValidateConfig_ViewSectionUsesPreviousCollectAs(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_DocumentMissingCommand(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Documents: map[string]DocumentConfig{
+			"spec": {View: "spec-view"},
+		},
+	}
+
+	err := ValidateConfig(nil, cfg, meta)
+	if err == nil {
+		t.Error("expected error for document with missing command")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "command is required") {
+		t.Errorf("expected 'command is required' error, got: %s", errStr)
+	}
+}
+
+func TestValidateConfig_DocumentMissingView(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Documents: map[string]DocumentConfig{
+			"spec": {Command: "render.sh"},
+		},
+	}
+
+	err := ValidateConfig(nil, cfg, meta)
+	if err == nil {
+		t.Error("expected error for document with missing view")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "view is required") {
+		t.Errorf("expected 'view is required' error, got: %s", errStr)
+	}
+}
+
+func TestValidateConfig_DocumentValid(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Documents: map[string]DocumentConfig{
+			"spec": {Command: "render.sh", View: "spec-view"},
+		},
+	}
+
+	err := ValidateConfig(nil, cfg, meta)
+	if err != nil {
+		t.Errorf("expected valid document config to pass, got: %v", err)
+	}
+}
+
 func TestConfigValidationError_SingleError(t *testing.T) {
 	err := &ConfigValidationError{Errors: []string{"single error"}}
 	if err.Error() != "single error" {

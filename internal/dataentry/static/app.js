@@ -569,6 +569,11 @@ document.addEventListener('click', function(e) {
   function onRefresh() {
     // Refresh git status when files change
     if (typeof refreshGitStatus === 'function') refreshGitStatus();
+    // Check for page-specific refresh handlers (e.g., document watcher)
+    if (window._pageRefreshHandlers && window._pageRefreshHandlers.length > 0) {
+      window._pageRefreshHandlers.forEach(function(h) { h.handler(); });
+      return;
+    }
     if (isOnForm()) {
       showUpdateBanner();
     } else {

@@ -208,7 +208,7 @@ func TestHandleList(t *testing.T) {
 			EntityType: "ticket",
 			Title:      "Tickets",
 			Columns: []ListColumn{
-				{Property: "title", Label: "Title", Link: true},
+				{Property: "title", Label: "Title", Link: "detail"},
 				{Property: "applies_to", Label: "Applies To"},
 			},
 		}

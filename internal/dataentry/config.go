@@ -55,4 +55,5 @@ type (
 	ViewSectionField = dataentryconfig.ViewSectionField
 	CommandConfig    = dataentryconfig.CommandConfig
 	CommandScope     = dataentryconfig.CommandScope
+	DocumentConfig   = dataentryconfig.DocumentConfig
 )

@@ -128,7 +128,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		Property   string
 		PropType   string
 		Widget     string
-		Link       bool
+		Link       string // resolved link URL or empty
 		EntityID   string
 		EntityType string
 	}
@@ -144,7 +144,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		for _, col := range list.Columns {
 			cell := CellData{
 				Property:   col.Property,
-				Link:       col.Link,
+				Link:       a.resolveLinkTarget(col.Link, e.Type, e.ID),
 				EntityID:   e.ID,
 				EntityType: e.Type,
 			}
@@ -224,7 +224,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		Property string
 		Label    string
 		Sortable bool
-		Link     bool
+		Link     string
 		SortURL  string
 		IsSorted bool
 		SortDir  string
@@ -342,6 +342,19 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Parse prop.* and rel.* query params for pre-filling (create:// link support)
+	queryProps := make(map[string][]string) // prop name -> list of values (supports multi-select)
+	queryRels := make(map[string][]string)  // rel type -> list of entity IDs
+	for key, values := range r.URL.Query() {
+		if strings.HasPrefix(key, "prop.") && len(values) > 0 {
+			propName := strings.TrimPrefix(key, "prop.")
+			queryProps[propName] = append(queryProps[propName], values...)
+		} else if strings.HasPrefix(key, "rel.") && len(values) > 0 {
+			relType := strings.TrimPrefix(key, "rel.")
+			queryRels[relType] = append(queryRels[relType], values...)
+		}
+	}
+
 	// Resolve fields
 	type ResolvedField struct {
 		Property       string
@@ -379,16 +392,26 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 				templateDefault = fmt.Sprintf("%v", val)
 			}
 		}
+		// Query param prop.* takes highest priority for create links
+		queryPropValues := queryProps[f.Property]
+		var queryPropDefault string
+		if len(queryPropValues) > 0 {
+			queryPropDefault = queryPropValues[0]
+		}
 		rf := ResolvedField{
 			Property:    f.Property,
 			Label:       coalesce(f.Label, titleCase(f.Property)),
 			Placeholder: f.Placeholder,
 			Help:        f.Help,
-			Default:     coalesce(userDefault, templateDefault, f.Default, prop.Default),
+			Default:     coalesce(queryPropDefault, userDefault, templateDefault, f.Default, prop.Default),
 			Hidden:      f.Hidden,
 			Widget:      resolveWidget(prop, a.meta),
 			Values:      resolvePropertyValues(prop, a.meta),
 			Transitions: f.Transitions,
+		}
+		// For multi-select widgets, also populate SelectedValues from query params
+		if len(queryPropValues) > 0 && entity == nil {
+			rf.SelectedValues = queryPropValues
 		}
 		if f.Required != nil {
 			rf.Required = *f.Required
@@ -542,8 +565,15 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Prefill relation from rel.* query params (highest priority for create:// links).
+		if entity == nil {
+			if targets, ok := queryRels[rel.Relation]; ok && len(targets) > 0 {
+				rr.Selected = append(rr.Selected, targets...)
+			}
+		}
+
 		// Prefill relation from link params (when creating from a view's "Add" button).
-		if entity == nil && linkPeer != "" && linkRelation != "" {
+		if entity == nil && len(rr.Selected) == 0 && linkPeer != "" && linkRelation != "" {
 			if a.isRelationLinked(rel.Relation, linkRelation) {
 				rr.Selected = append(rr.Selected, linkPeer)
 			}
@@ -638,6 +668,7 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		"LinkRelation":      r.URL.Query().Get("link_relation"),
 		"LinkPeer":          r.URL.Query().Get("link_peer"),
 		"LinkAs":            r.URL.Query().Get("link_as"),
+		"Prefix":            r.URL.Query().Get("prefix"),
 		"IsHTMX":            r.Header.Get("HX-Request") == "true",
 		"SidePanelSections": sidePanelSections,
 		"Templates":         templateOptions,
@@ -1308,6 +1339,7 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	opts := workspace.CreateOptions{
 		Properties: props,
 		Content:    content,
+		Prefix:     r.FormValue("_prefix"),
 	}
 
 	// Manual-ID types provide the ID directly; auto-ID types let workspace generate.
@@ -1343,6 +1375,10 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 	redirect := "/entity/" + form.EntityType + "/" + entity.ID
 	if returnTo := r.FormValue("_return_to"); returnTo != "" && strings.HasPrefix(returnTo, "/") {
 		redirect = returnTo
+		// Add hash fragment to scroll to new entity (if no hash already present)
+		if !strings.Contains(redirect, "#") {
+			redirect = redirect + "#" + strings.ToLower(entity.ID)
+		}
 	}
 	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Created "+entity.ID))
 	w.WriteHeader(http.StatusOK)
@@ -2072,9 +2108,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					cd := CellData{
 						Value:    val,
 						PropType: propType,
-					}
-					if col.Link {
-						cd.Link = "/entity/" + e.Type + "/" + e.ID
+						Link:     a.resolveLinkTarget(col.Link, e.Type, e.ID),
 					}
 					row[j] = cd
 				}

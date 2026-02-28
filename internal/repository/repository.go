@@ -385,12 +385,13 @@ func (r *Repository) ReadCacheFile(filename string) ([]byte, error) {
 }
 
 // WriteCacheFile writes a file relative to the cache directory (.rela/).
-// Creates the cache directory if it doesn't exist.
+// Creates the cache directory and any subdirectories if they don't exist.
 func (r *Repository) WriteCacheFile(filename string, data []byte) error {
-	if err := r.fs.MkdirAll(r.paths.CacheDir, 0o755); err != nil {
+	fullPath := filepath.Join(r.paths.CacheDir, filename)
+	if err := r.fs.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return err
 	}
-	return r.fs.WriteFile(filepath.Join(r.paths.CacheDir, filename), data, 0o644)
+	return r.fs.WriteFile(fullPath, data, 0o644)
 }
 
 // --- Templates ---

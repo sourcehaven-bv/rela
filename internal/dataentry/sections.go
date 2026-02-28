@@ -31,7 +31,7 @@ type SectionColumnData struct {
 	Values     []string
 	PropType   string
 	Widget     string
-	Link       bool
+	Link       string // resolved link URL or empty
 	EntityID   string
 	EntityType string
 }
@@ -88,7 +88,7 @@ type SectionData struct {
 	IsGrouped    bool
 	EmptyMessage string
 	IsEmpty      bool
-	Link         bool
+	Link         string // section-level link configuration (currently unused in templates)
 	Content      string
 	HasContent   bool
 	AddInfo      *SectionAddInfo
@@ -182,7 +182,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
 					for _, col := range sec.Columns {
 						cell := SectionColumnData{
-							Link: col.Link, EntityID: e.ID, EntityType: e.Type,
+							Link: a.resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
 						}
 						if col.Relation != "" {
 							cell.Values = a.resolveRelationColumnValues(e.ID, col.Relation)
