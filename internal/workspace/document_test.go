@@ -141,7 +141,7 @@ func TestMarkdownToHTML(t *testing.T) {
 	}
 }
 
-func TestRewriteEditLinks(t *testing.T) {
+func TestRewriteDocumentLinks(t *testing.T) {
 	tests := []struct {
 		name       string
 		html       string
@@ -162,36 +162,11 @@ func TestRewriteEditLinks(t *testing.T) {
 			expected:   `<a href="/form/requirement/REQ-001?return_to=%2Fdoc%23req-001">R1</a> and <a href="/form/decision/DEC-002?return_to=%2Fdoc%23dec-002">D2</a>`,
 		},
 		{
-			name:       "no edit links",
-			html:       `<a href="http://example.com">Normal link</a>`,
-			returnPath: "/doc",
-			expected:   `<a href="http://example.com">Normal link</a>`,
-		},
-		{
-			name:       "mixed links",
+			name:       "edit link mixed with normal",
 			html:       `<a href="edit://requirement/REQ-001">Edit</a> and <a href="/other">Other</a>`,
 			returnPath: "/doc",
 			expected:   `<a href="/form/requirement/REQ-001?return_to=%2Fdoc%23req-001">Edit</a> and <a href="/other">Other</a>`,
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := RewriteEditLinks(tt.html, tt.returnPath)
-			if result != tt.expected {
-				t.Errorf("RewriteEditLinks() =\n%s\nwant:\n%s", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestRewriteCreateLinks(t *testing.T) {
-	tests := []struct {
-		name       string
-		html       string
-		returnPath string
-		expected   string
-	}{
 		{
 			name:       "basic create link",
 			html:       `<a href="create://requirement">Add</a>`,
@@ -216,8 +191,16 @@ func TestRewriteCreateLinks(t *testing.T) {
 			returnPath: "/doc",
 			expected:   `<a href="/form/requirement?return_to=%2Fdoc">R</a> and <a href="/form/decision?prop.status=proposed&return_to=%2Fdoc">D</a>`,
 		},
+		// mixed edit and create
 		{
-			name:       "no create links",
+			name:       "mixed edit and create links",
+			html:       `<a href="edit://requirement/REQ-001">Edit</a> <a href="create://decision">New</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/form/requirement/REQ-001?return_to=%2Fdoc%23req-001">Edit</a> <a href="/form/decision?return_to=%2Fdoc">New</a>`,
+		},
+		// no custom links
+		{
+			name:       "no custom links",
 			html:       `<a href="http://example.com">Normal link</a>`,
 			returnPath: "/doc",
 			expected:   `<a href="http://example.com">Normal link</a>`,
@@ -226,9 +209,9 @@ func TestRewriteCreateLinks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := RewriteCreateLinks(tt.html, tt.returnPath)
+			result := RewriteDocumentLinks(tt.html, tt.returnPath)
 			if result != tt.expected {
-				t.Errorf("RewriteCreateLinks() =\n%s\nwant:\n%s", result, tt.expected)
+				t.Errorf("RewriteDocumentLinks() =\n%s\nwant:\n%s", result, tt.expected)
 			}
 		})
 	}

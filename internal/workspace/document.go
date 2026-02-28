@@ -225,54 +225,67 @@ func markdownToHTML(markdown string) (string, error) {
 	return result, nil
 }
 
-// editLinkRegex matches edit:// URLs in href attributes.
-var editLinkRegex = regexp.MustCompile(`href="edit://([^/]+)/([^"]+)"`)
+// customLinkRegex matches edit:// and create:// URLs in href attributes.
+// Format: edit://type/id or create://type or create://type?params
+var customLinkRegex = regexp.MustCompile(`href="(edit|create)://([^"]+)"`)
 
-// RewriteEditLinks replaces edit:// URLs with actual form URLs.
-// The returnPath is the path to return to after editing.
-// The return URL includes the entity ID as a hash fragment for scroll preservation.
-func RewriteEditLinks(htmlContent, returnPath string) string {
-	return editLinkRegex.ReplaceAllStringFunc(htmlContent, func(match string) string {
-		parts := editLinkRegex.FindStringSubmatch(match)
-		if len(parts) != 3 {
-			return match
-		}
-		entityType := parts[1]
-		entityID := parts[2]
-		// URL format: /form/{type}/{id}?return_to={encoded-path-with-hash}
-		// The hash fragment is included in the encoded return value so it's sent to the server.
-		// Without encoding, browsers treat # as a page fragment and don't send it.
-		returnWithHash := returnPath + "#" + strings.ToLower(entityID)
-		return fmt.Sprintf(`href="/form/%s/%s?return_to=%s"`, entityType, entityID, url.QueryEscape(returnWithHash))
+// RewriteDocumentLinks replaces edit:// and create:// URLs with actual form URLs.
+// For edit links, the return URL includes the entity ID as a hash fragment for scroll preservation.
+// For create links, query params are preserved and passed through to the form.
+func RewriteDocumentLinks(htmlContent, returnPath string) string {
+	return customLinkRegex.ReplaceAllStringFunc(htmlContent, func(match string) string {
+		return rewriteDocumentLink(match, returnPath)
 	})
 }
 
-// createLinkRegex matches create:// URLs in href attributes.
-// Format: create://entity_type or create://entity_type?prop.name=value&rel.type=id
-var createLinkRegex = regexp.MustCompile(`href="create://([^"?]+)(\?[^"]*)?"`)
+// rewriteDocumentLink rewrites a single edit:// or create:// link match.
+func rewriteDocumentLink(match, returnPath string) string {
+	parts := customLinkRegex.FindStringSubmatch(match)
+	if len(parts) != 3 {
+		return match
+	}
 
-// RewriteCreateLinks replaces create:// URLs with actual form URLs.
-// The returnPath is the path to return to after creating.
+	scheme := parts[1]
+	rawURL := scheme + "://" + parts[2]
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return match
+	}
+
+	entityType := parsed.Host
+	if entityType == "" {
+		return match
+	}
+
+	switch scheme {
+	case "edit":
+		return buildEditLink(entityType, parsed.Path, returnPath)
+	case "create":
+		return buildCreateLink(entityType, parsed.RawQuery, returnPath)
+	default:
+		return match
+	}
+}
+
+// buildEditLink builds a form link for editing an existing entity.
+// The return URL includes the entity ID as a hash fragment for scroll preservation.
+func buildEditLink(entityType, path, returnPath string) string {
+	entityID := strings.TrimPrefix(path, "/")
+	if entityID == "" {
+		return ""
+	}
+	// Include hash fragment in encoded return value so it's sent to the server.
+	// Without encoding, browsers treat # as a page fragment and don't send it.
+	returnWithHash := returnPath + "#" + strings.ToLower(entityID)
+	return fmt.Sprintf(`href="/form/%s/%s?return_to=%s"`, entityType, entityID, url.QueryEscape(returnWithHash))
+}
+
+// buildCreateLink builds a form link for creating a new entity.
 // Query params are preserved and passed through to the form.
-func RewriteCreateLinks(htmlContent, returnPath string) string {
-	return createLinkRegex.ReplaceAllStringFunc(htmlContent, func(match string) string {
-		parts := createLinkRegex.FindStringSubmatch(match)
-		if len(parts) < 2 {
-			return match
-		}
-		entityType := parts[1]
-		queryString := ""
-		if len(parts) > 2 && parts[2] != "" {
-			// Remove leading ? and keep the rest
-			queryString = parts[2][1:]
-		}
-		// Build URL: /form/{type}?{params}&return_to={encoded-path}
-		var result string
-		if queryString != "" {
-			result = fmt.Sprintf(`href="/form/%s?%s&return_to=%s"`, entityType, queryString, url.QueryEscape(returnPath))
-		} else {
-			result = fmt.Sprintf(`href="/form/%s?return_to=%s"`, entityType, url.QueryEscape(returnPath))
-		}
-		return result
-	})
+func buildCreateLink(entityType, queryString, returnPath string) string {
+	if queryString != "" {
+		return fmt.Sprintf(`href="/form/%s?%s&return_to=%s"`, entityType, queryString, url.QueryEscape(returnPath))
+	}
+	return fmt.Sprintf(`href="/form/%s?return_to=%s"`, entityType, url.QueryEscape(returnPath))
 }

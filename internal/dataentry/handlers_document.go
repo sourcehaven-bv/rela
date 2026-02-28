@@ -36,7 +36,7 @@ func (a *App) handleDocumentPreview(w http.ResponseWriter, r *http.Request) {
 
 	// Check if this is the async render request
 	if r.URL.Query().Get("render") == "true" {
-		a.handleDocumentRender(w, r, entryID, docCfg)
+		a.handleDocumentRender(w, r, entryID, docName, docCfg)
 		return
 	}
 
@@ -49,65 +49,48 @@ func (a *App) handleDocumentPreview(w http.ResponseWriter, r *http.Request) {
 	// Try to get cached content
 	result := a.ws.GetCachedDocument(entryID, wsCfg)
 	if result != nil {
-		a.renderDocument(w, r, entryID, entry, rewriteDocumentLinks(result.HTML, entryID))
+		a.renderDocument(w, r, entryID, docName, entry, rewriteDocumentLinks(result.HTML, entryID, docName))
 		return
 	}
 
 	// Cache miss - render loading page, HTMX will trigger the actual render
-	a.renderDocument(w, r, entryID, entry, "")
+	a.renderDocument(w, r, entryID, docName, entry, "")
 }
 
 // handleDocumentRender does the actual document rendering (called async via HTMX).
-func (a *App) handleDocumentRender(w http.ResponseWriter, _ *http.Request, entryID string, docCfg *DocumentConfig) {
+func (a *App) handleDocumentRender(w http.ResponseWriter, _ *http.Request, entryID, docName string, docCfg *DocumentConfig) {
 	wsCfg := a.toWorkspaceDocConfig(docCfg)
 
 	result, err := a.ws.RenderDocument(entryID, wsCfg)
 	if err != nil {
-		a.renderDocumentErrorFragment(w, entryID, err, "Command: "+docCfg.Command)
+		a.renderDocumentErrorFragment(w, entryID, docName, err, "Command: "+docCfg.Command)
 		return
 	}
 
-	content := rewriteDocumentLinks(result.HTML, entryID)
+	content := rewriteDocumentLinks(result.HTML, entryID, docName)
 
 	// Return the content fragment for HTMX to swap in (with wrapper)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	renderURL := "/document/preview?entry=" + entryID + "&render=true"
+	renderURL := "/document/preview?entry=" + entryID + "&doc=" + docName + "&render=true"
 	fmt.Fprintf(w, `<div class="document-content" data-render-url="%s">%s</div>`, renderURL, content)
 }
 
-// getDocumentConfig finds the appropriate document config.
-// If docName is provided, it uses that specific config.
-// If there's exactly one document config, it uses that.
-// Otherwise, it returns an error requiring explicit doc name.
+// getDocumentConfig finds a document config by name.
+// The docName parameter is required.
 func (a *App) getDocumentConfig(docName string) (*DocumentConfig, error) {
-	// If explicit doc name provided, use it
-	if docName != "" {
-		if cfg, ok := a.Cfg.Documents[docName]; ok {
-			return &cfg, nil
-		}
-		return nil, fmt.Errorf("document config %q not found", docName)
+	if docName == "" {
+		return nil, fmt.Errorf("missing 'doc' query parameter")
 	}
-
-	// If there's exactly one document config, use it
-	if len(a.Cfg.Documents) == 1 {
-		for _, cfg := range a.Cfg.Documents {
-			return &cfg, nil
-		}
+	if cfg, ok := a.Cfg.Documents[docName]; ok {
+		return &cfg, nil
 	}
-
-	// Multiple configs require explicit selection
-	if len(a.Cfg.Documents) > 1 {
-		return nil, fmt.Errorf("multiple document configs exist, specify ?doc=<name>")
-	}
-
-	return nil, fmt.Errorf("no document configs defined")
+	return nil, fmt.Errorf("document config %q not found", docName)
 }
 
 // rewriteDocumentLinks rewrites edit:// and create:// links to form URLs.
-func rewriteDocumentLinks(html, entryID string) string {
-	returnPath := "/document/preview?entry=" + entryID
-	content := workspace.RewriteEditLinks(html, returnPath)
-	return workspace.RewriteCreateLinks(content, returnPath)
+func rewriteDocumentLinks(html, entryID, docName string) string {
+	returnPath := "/document/preview?entry=" + entryID + "&doc=" + docName
+	return workspace.RewriteDocumentLinks(html, returnPath)
 }
 
 // toWorkspaceDocConfig converts dataentry config to workspace config.
@@ -124,7 +107,7 @@ func (a *App) toWorkspaceDocConfig(cfg *DocumentConfig) workspace.DocumentConfig
 }
 
 // renderDocument renders the document page. If content is empty, shows loading state.
-func (a *App) renderDocument(w http.ResponseWriter, r *http.Request, entryID string, entry *model.Entity, content string) {
+func (a *App) renderDocument(w http.ResponseWriter, r *http.Request, entryID, docName string, entry *model.Entity, content string) {
 	pageTitle := "Document Preview"
 	entryType := ""
 	entryTitle := ""
@@ -145,8 +128,8 @@ func (a *App) renderDocument(w http.ResponseWriter, r *http.Request, entryID str
 		"EntryType":     entryType,
 		"EntryTitle":    entryTitle,
 		"Content":       content,
-		"CurrentPath":   "/document/preview?entry=" + entryID,
-		"RenderURL":     "/document/preview?entry=" + entryID + "&render=true",
+		"CurrentPath":   "/document/preview?entry=" + entryID + "&doc=" + docName,
+		"RenderURL":     "/document/preview?entry=" + entryID + "&doc=" + docName + "&render=true",
 		"IsHTMX":        r.Header.Get("HX-Request") == "true",
 		"Loading":       content == "",
 	}
@@ -162,12 +145,12 @@ func (a *App) renderDocument(w http.ResponseWriter, r *http.Request, entryID str
 }
 
 // renderDocumentErrorFragment renders an error fragment for HTMX swap.
-func (a *App) renderDocumentErrorFragment(w http.ResponseWriter, entryID string, cmdErr error, cmdContext string) {
+func (a *App) renderDocumentErrorFragment(w http.ResponseWriter, entryID, docName string, cmdErr error, cmdContext string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := map[string]interface{}{
 		"Error":     cmdErr.Error(),
 		"Context":   cmdContext,
-		"RenderURL": "/document/preview?entry=" + entryID + "&render=true",
+		"RenderURL": "/document/preview?entry=" + entryID + "&doc=" + docName + "&render=true",
 	}
 	if err := a.tmpl.ExecuteTemplate(w, "document-error", data); err != nil {
 		a.logTemplateError("document-error", err)
