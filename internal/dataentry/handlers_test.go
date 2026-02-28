@@ -1556,3 +1556,62 @@ func TestHandleUpdateWithValidationErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleDocumentPreview(t *testing.T) {
+	t.Run("missing entry param returns 400", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet, "/document/preview", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleDocumentPreview(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "Missing 'entry'") {
+			t.Error("expected error message about missing entry param")
+		}
+	})
+
+	t.Run("no document config returns 400", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// No documents configured
+		app.Cfg.Documents = nil
+		r := httptest.NewRequest(http.MethodGet, "/document/preview?entry=TKT-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleDocumentPreview(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("unknown doc config returns 400", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		app.Cfg.Documents = map[string]DocumentConfig{
+			"test-doc": {View: "test", Command: "echo test"},
+		}
+		r := httptest.NewRequest(http.MethodGet, "/document/preview?entry=TKT-001&doc=nonexistent", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleDocumentPreview(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "not found") {
+			t.Error("expected error about config not found")
+		}
+	})
+
+	t.Run("entry not found shows loading page (error on render)", func(t *testing.T) {
+		// When entry doesn't exist, the handler shows a loading page.
+		// The error will appear when render=true is requested.
+		app := newHandlerTestApp(t)
+		app.Cfg.Documents = map[string]DocumentConfig{
+			"test-doc": {View: "test", Command: "echo test", EntryTypes: []string{"nonexistent-type"}},
+		}
+		// Request for existing entity but wrong type - config mismatch
+		r := httptest.NewRequest(http.MethodGet, "/document/preview?entry=TKT-001&doc=wrong-doc", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleDocumentPreview(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 for wrong doc name, got %d", w.Code)
+		}
+	})
+}

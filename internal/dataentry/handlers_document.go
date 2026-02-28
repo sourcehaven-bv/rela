@@ -2,8 +2,8 @@ package dataentry
 
 import (
 	"fmt"
+	"html"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -46,9 +46,9 @@ func (a *App) handleDocumentPreview(w http.ResponseWriter, r *http.Request) {
 	if err == nil && result.CacheHit {
 		// Rewrite special links for UI
 		returnPath := "/document/preview?entry=" + entryID
-		html := workspace.RewriteEditLinks(result.HTML, returnPath)
-		html = workspace.RewriteCreateLinks(html, returnPath)
-		a.renderDocumentPage(w, r, entryID, entry, html)
+		content := workspace.RewriteEditLinks(result.HTML, returnPath)
+		content = workspace.RewriteCreateLinks(content, returnPath)
+		a.renderDocumentPage(w, r, entryID, entry, content)
 		return
 	}
 
@@ -68,8 +68,8 @@ func (a *App) handleDocumentRender(w http.ResponseWriter, _ *http.Request, entry
 
 	// Rewrite special links for UI
 	returnPath := "/document/preview?entry=" + entryID
-	html := workspace.RewriteEditLinks(result.HTML, returnPath)
-	html = workspace.RewriteCreateLinks(html, returnPath)
+	content := workspace.RewriteEditLinks(result.HTML, returnPath)
+	content = workspace.RewriteCreateLinks(content, returnPath)
 
 	// Return the content fragment for HTMX to swap in (with wrapper)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -79,7 +79,7 @@ func (a *App) handleDocumentRender(w http.ResponseWriter, _ *http.Request, entry
 		w.Header().Set("X-Cache", "MISS")
 	}
 	renderURL := "/document/preview?entry=" + entryID + "&render=true"
-	fmt.Fprintf(w, `<div class="document-content" data-render-url="%s">%s</div>`, renderURL, html)
+	fmt.Fprintf(w, `<div class="document-content" data-render-url="%s">%s</div>`, renderURL, content)
 }
 
 // getDocumentConfig finds the appropriate document config for an entry.
@@ -203,12 +203,8 @@ func (a *App) renderDocumentLoading(w http.ResponseWriter, r *http.Request, entr
 // renderDocumentErrorFragment renders an error fragment for HTMX swap.
 func (a *App) renderDocumentErrorFragment(w http.ResponseWriter, _ string, cmdErr error, context string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	errMsg := cmdErr.Error()
-	// Escape HTML in error message
-	errMsg = strings.ReplaceAll(errMsg, "<", "&lt;")
-	errMsg = strings.ReplaceAll(errMsg, ">", "&gt;")
-	context = strings.ReplaceAll(context, "<", "&lt;")
-	context = strings.ReplaceAll(context, ">", "&gt;")
+	errMsg := html.EscapeString(cmdErr.Error())
+	context = html.EscapeString(context)
 	fmt.Fprintf(w, `<div class="document-content">
 <div class="card" style="padding:20px;margin-bottom:20px;">
   <h3 style="color:var(--error);margin-bottom:12px;">Render Command Failed</h3>
