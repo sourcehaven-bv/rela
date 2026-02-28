@@ -58,6 +58,12 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 				To:       a.CreateRelation.To,
 			}
 		}
+		if a.Run != nil {
+			action.Run = &RunAction{
+				Script: a.Run.Script,
+				Args:   a.Run.Args,
+			}
+		}
 		auto.Do[i] = action
 	}
 
@@ -82,6 +88,7 @@ func (e *Engine) Process(event Event) *Result {
 	result := &Result{
 		PropertiesSet:     make(map[string]string),
 		RelationsToCreate: make([]*model.Relation, 0),
+		ScriptsToRun:      make([]ScriptToRun, 0),
 		Warnings:          make([]string, 0),
 		Errors:            make([]string, 0),
 	}
@@ -190,6 +197,17 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 			rel := model.NewRelation(event.Entity.ID, action.CreateRelation.Relation, targetID)
 			result.RelationsToCreate = append(result.RelationsToCreate, rel)
 		}
+	}
+
+	if action.Run != nil {
+		args := make([]string, len(action.Run.Args))
+		for i, arg := range action.Run.Args {
+			args[i] = e.interpolate(arg, event)
+		}
+		result.ScriptsToRun = append(result.ScriptsToRun, ScriptToRun{
+			Script: action.Run.Script,
+			Args:   args,
+		})
 	}
 }
 

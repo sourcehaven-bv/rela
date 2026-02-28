@@ -261,12 +261,19 @@ type AutomationAction struct {
 	Set            string                `yaml:"set,omitempty"`
 	Value          string                `yaml:"value,omitempty"`
 	CreateRelation *CreateRelationAction `yaml:"create_relation,omitempty"`
+	Run            *RunAction            `yaml:"run,omitempty"`
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
 type CreateRelationAction struct {
 	Relation string `yaml:"relation"`
 	To       string `yaml:"to"`
+}
+
+// RunAction specifies a script to execute.
+type RunAction struct {
+	Script string   `yaml:"script"`
+	Args   []string `yaml:"args,omitempty"`
 }
 
 // AutomationCheck specifies a validation condition.

@@ -6,8 +6,12 @@
 package workspace
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"log"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -306,6 +310,15 @@ type CreateResult struct {
 	AutomationWarnings []string
 	AutomationErrors   []string
 	RelationsCreated   []*model.Relation
+	ScriptsRun         []ScriptResult
+}
+
+// ScriptResult contains the outcome of running an automation script.
+type ScriptResult struct {
+	Script   string // Script that was executed
+	ExitCode int    // Exit code (0 = success)
+	Output   string // Combined stdout/stderr
+	Error    string // Error message if execution failed
 }
 
 // CreateEntity generates an ID (unless provided), applies templates and
@@ -388,8 +401,9 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 	}
 	w.graph.AddNode(entity)
 
-	// Create automation relations (re-run to pick up RelationsToCreate;
-	// the first run above only captured property changes).
+	// Create automation relations and run scripts (re-run to pick up
+	// RelationsToCreate and ScriptsToRun; the first run above only
+	// captured property changes).
 	if w.automation != nil {
 		autoResult := w.automation.Process(automation.Event{
 			Type:   automation.EventEntityCreated,
@@ -404,6 +418,8 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 			w.graph.AddEdge(rel)
 			result.RelationsCreated = append(result.RelationsCreated, rel)
 		}
+		// Run scripts after all entity operations complete
+		result.ScriptsRun = w.runScripts(autoResult.ScriptsToRun)
 	}
 
 	w.saveCacheQuietly()
@@ -415,6 +431,7 @@ type UpdateResult struct {
 	AutomationWarnings []string
 	AutomationErrors   []string
 	RelationsCreated   []*model.Relation
+	ScriptsRun         []ScriptResult
 }
 
 // UpdateEntity validates and writes an existing entity, runs automation,
@@ -430,6 +447,7 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 	result := &UpdateResult{}
 
 	// Run automation.
+	var scriptsToRun []automation.ScriptToRun
 	if w.automation != nil && oldEntity != nil {
 		autoResult := w.automation.Process(automation.Event{
 			Type:      automation.EventEntityUpdated,
@@ -451,6 +469,7 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 			w.graph.AddEdge(rel)
 			result.RelationsCreated = append(result.RelationsCreated, rel)
 		}
+		scriptsToRun = autoResult.ScriptsToRun
 	}
 
 	// Write to disk + update graph.
@@ -458,6 +477,9 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 	w.graph.AddNode(entity)
+
+	// Run scripts after all entity operations complete
+	result.ScriptsRun = w.runScripts(scriptsToRun)
 
 	w.saveCacheQuietly()
 	return result, nil
@@ -682,6 +704,53 @@ func (w *Workspace) ExecuteView(viewName, entryID string) (*views.ViewResult, er
 
 	engine := views.NewEngine(w.graph, w.meta)
 	return engine.Execute(viewDef, entryID)
+}
+
+// --- Script execution ---
+
+// runScripts executes automation scripts and returns the results.
+func (w *Workspace) runScripts(scripts []automation.ScriptToRun) []ScriptResult {
+	if len(scripts) == 0 {
+		return nil
+	}
+
+	results := make([]ScriptResult, 0, len(scripts))
+	projectRoot := w.Paths().Root
+
+	for _, script := range scripts {
+		result := ScriptResult{Script: script.Script}
+
+		// Resolve script path relative to project root
+		scriptPath := script.Script
+		if !filepath.IsAbs(scriptPath) {
+			scriptPath = filepath.Join(projectRoot, scriptPath)
+		}
+
+		// Execute the script
+		cmd := exec.Command(scriptPath, script.Args...)
+		cmd.Dir = projectRoot
+
+		var output bytes.Buffer
+		cmd.Stdout = &output
+		cmd.Stderr = &output
+
+		err := cmd.Run()
+		result.Output = output.String()
+
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				result.ExitCode = exitErr.ExitCode()
+			} else {
+				result.ExitCode = -1
+				result.Error = err.Error()
+			}
+		}
+
+		results = append(results, result)
+	}
+
+	return results
 }
 
 // --- Filesystem access ---

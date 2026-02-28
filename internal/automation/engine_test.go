@@ -375,3 +375,85 @@ func TestEngine_RelationCreated(t *testing.T) {
 		t.Error("expected trigger on relation created")
 	}
 }
+
+func TestEngine_RunScript(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "run-on-complete",
+			On: Trigger{
+				Entity:   []string{"task"},
+				Property: "status",
+				Becomes:  "done",
+			},
+			Do: []Action{
+				{
+					Run: &RunAction{
+						Script: "scripts/on-complete.sh",
+						Args:   []string{"{{entity.id}}", "{{new.status}}"},
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	oldEntity := model.NewEntity("T-001", "task")
+	oldEntity.Properties["status"] = "in-progress"
+
+	newEntity := model.NewEntity("T-001", "task")
+	newEntity.Properties["status"] = "done"
+
+	result := engine.Process(Event{
+		Type:      EventEntityUpdated,
+		Entity:    newEntity,
+		OldEntity: oldEntity,
+	})
+
+	if len(result.ScriptsToRun) != 1 {
+		t.Fatalf("expected 1 script to run, got %d", len(result.ScriptsToRun))
+	}
+	script := result.ScriptsToRun[0]
+	if script.Script != "scripts/on-complete.sh" {
+		t.Errorf("expected script=scripts/on-complete.sh, got %q", script.Script)
+	}
+	if len(script.Args) != 2 || script.Args[0] != "T-001" || script.Args[1] != "done" {
+		t.Errorf("unexpected args: %v", script.Args)
+	}
+}
+
+func TestEngine_RunScript_OnCreate(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "notify-on-create",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					Run: &RunAction{
+						Script: "scripts/notify.sh",
+						Args:   []string{"{{entity.type}}", "{{entity.id}}"},
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := model.NewEntity("T-123", "ticket")
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.ScriptsToRun) != 1 {
+		t.Fatalf("expected 1 script to run, got %d", len(result.ScriptsToRun))
+	}
+	script := result.ScriptsToRun[0]
+	if script.Args[0] != "ticket" || script.Args[1] != "T-123" {
+		t.Errorf("unexpected args: %v", script.Args)
+	}
+}

@@ -32,12 +32,19 @@ type Action struct {
 	Set            string
 	Value          string
 	CreateRelation *CreateRelationAction
+	Run            *RunAction
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
 type CreateRelationAction struct {
 	Relation string
 	To       string
+}
+
+// RunAction specifies a script to execute.
+type RunAction struct {
+	Script string   // Path to script (relative to project root)
+	Args   []string // Arguments with template interpolation
 }
 
 // Validation specifies a condition to check.
@@ -95,11 +102,20 @@ type Result struct {
 	// RelationsToCreate contains relations that should be created.
 	RelationsToCreate []*model.Relation
 
+	// ScriptsToRun contains scripts that should be executed.
+	ScriptsToRun []ScriptToRun
+
 	// Warnings contains validation warnings (allow save, show message).
 	Warnings []string
 
 	// Errors contains validation errors (should block save in strict mode).
 	Errors []string
+}
+
+// ScriptToRun contains a script to execute after entity operations complete.
+type ScriptToRun struct {
+	Script string   // Path to script (relative to project root)
+	Args   []string // Interpolated arguments
 }
 
 // HasWarnings returns true if there are any warnings.
