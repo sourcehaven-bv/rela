@@ -105,6 +105,20 @@ Examples:
 		for _, rel := range result.RelationsCreated {
 			out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
 		}
+		for _, script := range result.ScriptsRun {
+			if script.ExitCode != 0 || script.Error != "" {
+				if script.Error != "" {
+					out.WriteError("Script %s failed: %s", script.Script, script.Error)
+				} else {
+					out.WriteError("Script %s exited with code %d", script.Script, script.ExitCode)
+				}
+				if script.Output != "" {
+					out.WriteMessage("  Output: %s", script.Output)
+				}
+			} else if verbose {
+				out.WriteInfo("Script %s completed", script.Script)
+			}
+		}
 
 		out.WriteSuccess("Created %s %s", resolvedType, entity.ID)
 		if outputFormat == "json" {

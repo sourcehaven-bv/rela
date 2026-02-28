@@ -400,6 +400,20 @@ type APICreateRelationRequest struct {
 	Properties map[string]interface{} `json:"properties,omitempty"`
 }
 
+// APIScriptError represents a script execution failure.
+type APIScriptError struct {
+	Script   string `json:"script"`
+	ExitCode int    `json:"exitCode,omitempty"`
+	Output   string `json:"output,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// APIEntityResponse wraps an entity with optional script errors.
+type APIEntityResponse struct {
+	APIEntity
+	ScriptErrors []APIScriptError `json:"scriptErrors,omitempty"`
+}
+
 // handleAPICreateEntity handles POST /api/entities to create a new entity.
 func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -421,7 +435,7 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	entity, _, err := a.ws.CreateEntity(req.Type, workspace.CreateOptions{
+	entity, createResult, err := a.ws.CreateEntity(req.Type, workspace.CreateOptions{
 		ID:         req.ID,
 		Properties: req.Properties,
 		Content:    req.Content,
@@ -436,8 +450,9 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return created entity
-	result := a.entityToAPI(entity, false)
+	// Return created entity with script errors if any
+	result := APIEntityResponse{APIEntity: a.entityToAPI(entity, false)}
+	result.ScriptErrors = collectScriptErrors(createResult.ScriptsRun)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(result)
@@ -486,7 +501,8 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 		entity.Content = *req.Content
 	}
 
-	if _, err := a.ws.UpdateEntity(entity, oldEntity); err != nil {
+	updateResult, err := a.ws.UpdateEntity(entity, oldEntity)
+	if err != nil {
 		var valErr *workspace.ValidationError
 		if errors.As(err, &valErr) {
 			writeJSONError(w, http.StatusBadRequest, "validation error: "+valErr.Errors[0].Error())
@@ -496,8 +512,9 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return updated entity
-	result := a.entityToAPI(entity, false)
+	// Return updated entity with script errors if any
+	result := APIEntityResponse{APIEntity: a.entityToAPI(entity, false)}
+	result.ScriptErrors = collectScriptErrors(updateResult.ScriptsRun)
 	writeJSON(w, result)
 }
 
@@ -703,4 +720,20 @@ func (a *App) edgeToAPIRelation(edge *model.Relation, relatedEntity *model.Entit
 		}
 	}
 	return rel
+}
+
+// collectScriptErrors converts script results to API errors (only failures).
+func collectScriptErrors(scripts []workspace.ScriptResult) []APIScriptError {
+	var result []APIScriptError
+	for _, s := range scripts {
+		if s.ExitCode != 0 || s.Error != "" {
+			result = append(result, APIScriptError{
+				Script:   s.Script,
+				ExitCode: s.ExitCode,
+				Output:   s.Output,
+				Error:    s.Error,
+			})
+		}
+	}
+	return result
 }

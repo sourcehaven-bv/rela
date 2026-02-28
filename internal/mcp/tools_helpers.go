@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func (s *Server) resolveType(typeName string) string {
@@ -246,4 +247,24 @@ func applyPagination[T any](items []T, offset, limit int) []T {
 		items = items[:limit]
 	}
 	return items
+}
+
+// formatScriptResults formats script execution results for MCP output.
+// Only failed scripts are shown to avoid cluttering successful responses.
+func formatScriptResults(scripts []workspace.ScriptResult) string {
+	var sb strings.Builder
+	for _, script := range scripts {
+		if script.ExitCode != 0 || script.Error != "" {
+			sb.WriteString("\n---\n")
+			if script.Error != "" {
+				sb.WriteString(fmt.Sprintf("Script %s failed: %s\n", script.Script, script.Error))
+			} else {
+				sb.WriteString(fmt.Sprintf("Script %s exited with code %d\n", script.Script, script.ExitCode))
+			}
+			if script.Output != "" {
+				sb.WriteString(fmt.Sprintf("Output: %s\n", script.Output))
+			}
+		}
+	}
+	return sb.String()
 }

@@ -306,12 +306,20 @@ func (a *App) handleKanbanMove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Write entity through workspace
-	if _, err := a.ws.UpdateEntity(entity, oldEntity); err != nil {
+	updateResult, err := a.ws.UpdateEntity(entity, oldEntity)
+	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	log.Printf("Moved %s to %s=%s", entityID, kanban.ColumnProperty, column)
+
+	// Log script errors if any
+	for _, script := range updateResult.ScriptsRun {
+		if script.ExitCode != 0 || script.Error != "" {
+			log.Printf("Script %s failed: exitCode=%d error=%s", script.Script, script.ExitCode, script.Error)
+		}
+	}
 
 	// Re-render the kanban board
 	r.URL.Path = "/kanban/" + kanbanID

@@ -155,7 +155,7 @@ func (s *Server) handleCreateEntity(
 		return errResult, nil
 	}
 
-	entity, _, createErr := s.ws.CreateEntity(resolvedType, workspace.CreateOptions{
+	entity, result, createErr := s.ws.CreateEntity(resolvedType, workspace.CreateOptions{
 		ID:         customID,
 		Properties: properties,
 		Content:    content,
@@ -168,7 +168,10 @@ func (s *Server) handleCreateEntity(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Created %s %s\n\n%s", resolvedType, entity.ID, text)), nil
+
+	output := fmt.Sprintf("Created %s %s\n\n%s", resolvedType, entity.ID, text)
+	output += formatScriptResults(result.ScriptsRun)
+	return mcp.NewToolResultText(output), nil
 }
 
 func (s *Server) handleUpdateEntity(
@@ -208,7 +211,8 @@ func (s *Server) handleUpdateEntity(
 		entity.Content = content
 	}
 
-	if _, updateErr := s.ws.UpdateEntity(entity, oldEntity); updateErr != nil {
+	result, updateErr := s.ws.UpdateEntity(entity, oldEntity)
+	if updateErr != nil {
 		return mcp.NewToolResultError(updateErr.Error()), nil
 	}
 
@@ -216,7 +220,10 @@ func (s *Server) handleUpdateEntity(
 	if convertErr != nil {
 		return mcp.NewToolResultError(convertErr.Error()), nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Updated %s\n\n%s", id, text)), nil
+
+	output := fmt.Sprintf("Updated %s\n\n%s", id, text)
+	output += formatScriptResults(result.ScriptsRun)
+	return mcp.NewToolResultText(output), nil
 }
 
 func (s *Server) handleDeleteEntity(

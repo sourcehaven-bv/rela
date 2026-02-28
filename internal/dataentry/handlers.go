@@ -1351,7 +1351,7 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	entity, _, err := a.ws.CreateEntity(form.EntityType, opts)
+	entity, createResult, err := a.ws.CreateEntity(form.EntityType, opts)
 	if err != nil {
 		var ve *workspace.ValidationError
 		if errors.As(err, &ve) {
@@ -1380,7 +1380,11 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 			redirect = redirect + "#" + strings.ToLower(entity.ID)
 		}
 	}
-	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Created "+entity.ID))
+	toastMsg := "Created " + entity.ID
+	if scriptErr := formatScriptErrorsForToast(createResult.ScriptsRun); scriptErr != "" {
+		toastMsg += " | " + scriptErr
+	}
+	w.Header().Set("HX-Redirect", appendToastParam(redirect, toastMsg))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1442,7 +1446,8 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		entity.Content = r.FormValue("_body")
 	}
 
-	if _, err := a.ws.UpdateEntity(entity, oldEntity); err != nil {
+	updateResult, err := a.ws.UpdateEntity(entity, oldEntity)
+	if err != nil {
 		var ve *workspace.ValidationError
 		if errors.As(err, &ve) {
 			a.renderFormWithErrors(w, r, formID, entity, validationErrorsToFieldMap(ve.Errors))
@@ -1497,8 +1502,8 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			if len(relProps) > 0 {
 				opts = append(opts, workspace.CreateRelationOptions{Properties: relProps})
 			}
-			if _, err := a.ws.CreateRelation(fromID, rel.Relation, toID, opts...); err != nil {
-				log.Printf("Failed to write relation: %v", err)
+			if _, relErr := a.ws.CreateRelation(fromID, rel.Relation, toID, opts...); relErr != nil {
+				log.Printf("Failed to write relation: %v", relErr)
 				continue
 			}
 		}
@@ -1510,7 +1515,11 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if returnTo := r.FormValue("_return_to"); returnTo != "" && strings.HasPrefix(returnTo, "/") {
 		redirect = returnTo
 	}
-	w.Header().Set("HX-Redirect", appendToastParam(redirect, "Saved "+entityID))
+	toastMsg := "Saved " + entityID
+	if scriptErr := formatScriptErrorsForToast(updateResult.ScriptsRun); scriptErr != "" {
+		toastMsg += " | " + scriptErr
+	}
+	w.Header().Set("HX-Redirect", appendToastParam(redirect, toastMsg))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1615,7 +1624,7 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	entity, _, err := a.ws.CreateEntity(form.EntityType, opts)
+	entity, createResult, err := a.ws.CreateEntity(form.EntityType, opts)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1625,11 +1634,15 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Inline-created %s %s", form.EntityType, entity.ID)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck // best-effort JSON response
+	response := map[string]interface{}{
 		"id":    entity.ID,
 		"title": a.entityDisplayTitle(entity),
-	})
+	}
+	if scriptErr := formatScriptErrorsForToast(createResult.ScriptsRun); scriptErr != "" {
+		response["scriptError"] = scriptErr
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response) //nolint:errcheck // best-effort JSON response
 }
 
 func (a *App) handleInlineForm(w http.ResponseWriter, r *http.Request) {
@@ -1999,6 +2012,25 @@ func appendToastParam(redirectURL, message string) string {
 		base += "#" + fragment
 	}
 	return base
+}
+
+// formatScriptErrorsForToast formats script failures for display in a toast message.
+// Returns empty string if no failures occurred.
+func formatScriptErrorsForToast(scripts []workspace.ScriptResult) string {
+	var failures []string
+	for _, s := range scripts {
+		if s.ExitCode != 0 || s.Error != "" {
+			if s.Error != "" {
+				failures = append(failures, fmt.Sprintf("Script %s: %s", s.Script, s.Error))
+			} else {
+				failures = append(failures, fmt.Sprintf("Script %s exited with code %d", s.Script, s.ExitCode))
+			}
+		}
+	}
+	if len(failures) == 0 {
+		return ""
+	}
+	return strings.Join(failures, "; ")
 }
 
 // coverage-ignore: dashboard handler - tested via integration/manual testing
