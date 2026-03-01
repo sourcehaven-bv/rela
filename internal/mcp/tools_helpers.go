@@ -249,11 +249,29 @@ func applyPagination[T any](items []T, offset, limit int) []T {
 	return items
 }
 
-// formatScriptResults formats script execution results for MCP output.
-// Only failed scripts are shown to avoid cluttering successful responses.
-func formatScriptResults(scripts []workspace.ScriptResult) string {
+// AutomationResult is implemented by workspace.CreateResult and workspace.UpdateResult.
+type AutomationResult interface {
+	GetAutomationWarnings() []string
+	GetAutomationErrors() []string
+	GetRelationsCreated() []*model.Relation
+	GetScriptsRun() []workspace.ScriptResult
+}
+
+// formatAutomationFeedback formats all automation feedback for MCP output.
+// Only non-empty results are shown to avoid cluttering successful responses.
+func formatAutomationFeedback(result AutomationResult) string {
 	var sb strings.Builder
-	for _, script := range scripts {
+
+	for _, warning := range result.GetAutomationWarnings() {
+		sb.WriteString(fmt.Sprintf("\n⚠️ Automation: %s", warning))
+	}
+	for _, errMsg := range result.GetAutomationErrors() {
+		sb.WriteString(fmt.Sprintf("\n⚠️ Automation error: %s", errMsg))
+	}
+	for _, rel := range result.GetRelationsCreated() {
+		sb.WriteString(fmt.Sprintf("\nAutomation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To))
+	}
+	for _, script := range result.GetScriptsRun() {
 		if script.ExitCode != 0 || script.Error != "" {
 			sb.WriteString("\n---\n")
 			if script.Error != "" {

@@ -170,7 +170,7 @@ func (s *Server) handleCreateEntity(
 	}
 
 	output := fmt.Sprintf("Created %s %s\n\n%s", resolvedType, entity.ID, text)
-	output += formatScriptResults(result.ScriptsRun)
+	output += formatAutomationFeedback(result)
 	return mcp.NewToolResultText(output), nil
 }
 
@@ -222,7 +222,7 @@ func (s *Server) handleUpdateEntity(
 	}
 
 	output := fmt.Sprintf("Updated %s\n\n%s", id, text)
-	output += formatScriptResults(result.ScriptsRun)
+	output += formatAutomationFeedback(result)
 	return mcp.NewToolResultText(output), nil
 }
 
