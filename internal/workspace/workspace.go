@@ -325,6 +325,12 @@ func (r *CreateResult) GetRelationsCreated() []*model.Relation { return r.Relati
 // GetScriptsRun returns script execution results.
 func (r *CreateResult) GetScriptsRun() []ScriptResult { return r.ScriptsRun }
 
+// FormatErrors returns a concise error summary for display (e.g., in toasts).
+// Returns empty string if no errors occurred.
+func (r *CreateResult) FormatErrors() string {
+	return formatAutomationErrors(r.AutomationErrors, r.ScriptsRun)
+}
+
 // ScriptResult contains the outcome of running an automation script.
 type ScriptResult struct {
 	Script   string // Script that was executed
@@ -457,6 +463,12 @@ func (r *UpdateResult) GetRelationsCreated() []*model.Relation { return r.Relati
 
 // GetScriptsRun returns script execution results.
 func (r *UpdateResult) GetScriptsRun() []ScriptResult { return r.ScriptsRun }
+
+// FormatErrors returns a concise error summary for display (e.g., in toasts).
+// Returns empty string if no errors occurred.
+func (r *UpdateResult) FormatErrors() string {
+	return formatAutomationErrors(r.AutomationErrors, r.ScriptsRun)
+}
 
 // UpdateEntity validates and writes an existing entity, runs automation,
 // and updates the graph.
@@ -783,4 +795,24 @@ func (w *Workspace) runScripts(scripts []automation.ScriptToRun) []ScriptResult 
 // file access (e.g., attachment store, writing output files).
 func (w *Workspace) FS() storage.FS {
 	return w.repo.FS()
+}
+
+// formatAutomationErrors formats automation errors and script failures into
+// a concise string for display in toasts or similar UI elements.
+func formatAutomationErrors(automationErrors []string, scripts []ScriptResult) string {
+	failures := make([]string, 0, len(automationErrors)+len(scripts))
+	failures = append(failures, automationErrors...)
+	for _, s := range scripts {
+		if s.ExitCode != 0 || s.Error != "" {
+			if s.Error != "" {
+				failures = append(failures, fmt.Sprintf("Script %s: %s", s.Script, s.Error))
+			} else {
+				failures = append(failures, fmt.Sprintf("Script %s exited with code %d", s.Script, s.ExitCode))
+			}
+		}
+	}
+	if len(failures) == 0 {
+		return ""
+	}
+	return strings.Join(failures, "; ")
 }

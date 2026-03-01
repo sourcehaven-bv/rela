@@ -1381,8 +1381,8 @@ func (a *App) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	toastMsg := "Created " + entity.ID
-	if scriptErr := formatScriptErrorsForToast(createResult.ScriptsRun); scriptErr != "" {
-		toastMsg += " | " + scriptErr
+	if errMsg := createResult.FormatErrors(); errMsg != "" {
+		toastMsg += " | " + errMsg
 	}
 	w.Header().Set("HX-Redirect", appendToastParam(redirect, toastMsg))
 	w.WriteHeader(http.StatusOK)
@@ -1516,8 +1516,8 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		redirect = returnTo
 	}
 	toastMsg := "Saved " + entityID
-	if scriptErr := formatScriptErrorsForToast(updateResult.ScriptsRun); scriptErr != "" {
-		toastMsg += " | " + scriptErr
+	if errMsg := updateResult.FormatErrors(); errMsg != "" {
+		toastMsg += " | " + errMsg
 	}
 	w.Header().Set("HX-Redirect", appendToastParam(redirect, toastMsg))
 	w.WriteHeader(http.StatusOK)
@@ -1638,8 +1638,8 @@ func (a *App) handleInlineCreate(w http.ResponseWriter, r *http.Request) {
 		"id":    entity.ID,
 		"title": a.entityDisplayTitle(entity),
 	}
-	if scriptErr := formatScriptErrorsForToast(createResult.ScriptsRun); scriptErr != "" {
-		response["scriptError"] = scriptErr
+	if errMsg := createResult.FormatErrors(); errMsg != "" {
+		response["scriptError"] = errMsg
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response) //nolint:errcheck // best-effort JSON response
@@ -2012,25 +2012,6 @@ func appendToastParam(redirectURL, message string) string {
 		base += "#" + fragment
 	}
 	return base
-}
-
-// formatScriptErrorsForToast formats script failures for display in a toast message.
-// Returns empty string if no failures occurred.
-func formatScriptErrorsForToast(scripts []workspace.ScriptResult) string {
-	var failures []string
-	for _, s := range scripts {
-		if s.ExitCode != 0 || s.Error != "" {
-			if s.Error != "" {
-				failures = append(failures, fmt.Sprintf("Script %s: %s", s.Script, s.Error))
-			} else {
-				failures = append(failures, fmt.Sprintf("Script %s exited with code %d", s.Script, s.ExitCode))
-			}
-		}
-	}
-	if len(failures) == 0 {
-		return ""
-	}
-	return strings.Join(failures, "; ")
 }
 
 // coverage-ignore: dashboard handler - tested via integration/manual testing
