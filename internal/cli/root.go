@@ -7,10 +7,19 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
+
+// AutomationResult is implemented by workspace.CreateResult and workspace.UpdateResult.
+type AutomationResult interface {
+	GetAutomationWarnings() []string
+	GetAutomationErrors() []string
+	GetRelationsCreated() []*model.Relation
+	GetScriptsRun() []workspace.ScriptResult
+}
 
 var (
 	// Version is set at build time
@@ -112,4 +121,31 @@ func saveCache() error {
 // resolveEntityType delegates to workspace.
 func resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
 	return ws.ResolveEntityType(typeName)
+}
+
+// showAutomationFeedback displays automation warnings, errors, relations, and script results.
+func showAutomationFeedback(result AutomationResult) {
+	for _, warning := range result.GetAutomationWarnings() {
+		out.WriteWarning("Automation: %s", warning)
+	}
+	for _, errMsg := range result.GetAutomationErrors() {
+		out.WriteWarning("Automation error: %s", errMsg)
+	}
+	for _, rel := range result.GetRelationsCreated() {
+		out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
+	}
+	for _, script := range result.GetScriptsRun() {
+		if script.ExitCode != 0 || script.Error != "" {
+			if script.Error != "" {
+				out.WriteError("Script %s failed: %s", script.Script, script.Error)
+			} else {
+				out.WriteError("Script %s exited with code %d", script.Script, script.ExitCode)
+			}
+			if script.Output != "" {
+				out.WriteMessage("  Output: %s", script.Output)
+			}
+		} else if verbose {
+			out.WriteInfo("Script %s completed", script.Script)
+		}
+	}
 }

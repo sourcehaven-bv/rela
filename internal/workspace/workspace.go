@@ -313,6 +313,18 @@ type CreateResult struct {
 	ScriptsRun         []ScriptResult
 }
 
+// GetAutomationWarnings returns automation warnings.
+func (r *CreateResult) GetAutomationWarnings() []string { return r.AutomationWarnings }
+
+// GetAutomationErrors returns automation errors.
+func (r *CreateResult) GetAutomationErrors() []string { return r.AutomationErrors }
+
+// GetRelationsCreated returns relations created by automation.
+func (r *CreateResult) GetRelationsCreated() []*model.Relation { return r.RelationsCreated }
+
+// GetScriptsRun returns script execution results.
+func (r *CreateResult) GetScriptsRun() []ScriptResult { return r.ScriptsRun }
+
 // ScriptResult contains the outcome of running an automation script.
 type ScriptResult struct {
 	Script   string // Script that was executed
@@ -433,6 +445,18 @@ type UpdateResult struct {
 	RelationsCreated   []*model.Relation
 	ScriptsRun         []ScriptResult
 }
+
+// GetAutomationWarnings returns automation warnings.
+func (r *UpdateResult) GetAutomationWarnings() []string { return r.AutomationWarnings }
+
+// GetAutomationErrors returns automation errors.
+func (r *UpdateResult) GetAutomationErrors() []string { return r.AutomationErrors }
+
+// GetRelationsCreated returns relations created by automation.
+func (r *UpdateResult) GetRelationsCreated() []*model.Relation { return r.RelationsCreated }
+
+// GetScriptsRun returns script execution results.
+func (r *UpdateResult) GetScriptsRun() []ScriptResult { return r.ScriptsRun }
 
 // UpdateEntity validates and writes an existing entity, runs automation,
 // and updates the graph.
