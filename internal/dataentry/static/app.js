@@ -5,8 +5,8 @@ document.addEventListener('keydown', function(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
   var nav = document.querySelector('.scope-nav');
   if (!nav) return;
-  if (e.key === 'ArrowLeft') { var btn = nav.querySelector('a.scope-nav-btn'); if (btn) btn.click(); }
-  if (e.key === 'ArrowRight') { var btns = nav.querySelectorAll('a.scope-nav-btn'); if (btns.length > 0) btns[btns.length-1].click(); }
+  if (e.key === 'ArrowLeft') { var btn = nav.querySelector('a[data-scope-dir="prev"]'); if (btn) btn.click(); }
+  if (e.key === 'ArrowRight') { var btn = nav.querySelector('a[data-scope-dir="next"]'); if (btn) btn.click(); }
 });
 
 // Sticky detection for filter-bar
@@ -1164,9 +1164,9 @@ document.addEventListener('click', function(e) {
     // Cmd/Ctrl+Enter: scan DOM for a matching <kbd> on a submit button
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       var kbdMap = scanKbdShortcuts();
-      if (kbdMap['meta+enter']) {
+      if (kbdMap['meta+Enter']) {
         e.preventDefault();
-        kbdMap['meta+enter'].click();
+        kbdMap['meta+Enter'].click();
       }
       return;
     }

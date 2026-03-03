@@ -19,16 +19,16 @@
 {{- define "scope-nav" -}}
 {{ if .Scope }}
 <div class="scope-nav">
-  <a href="{{ .Scope.BackURL }}" hx-get="{{ .Scope.BackURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">&larr; Back <kbd>Esc</kbd></a>
+  <a href="{{ .Scope.BackURL }}" hx-get="{{ .Scope.BackURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">Back <kbd>Esc</kbd></a>
   {{ if .Scope.PrevURL }}
-  <a href="{{ .Scope.PrevURL }}" hx-get="{{ .Scope.PrevURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">Prev</a>
+  <a href="{{ .Scope.PrevURL }}" hx-get="{{ .Scope.PrevURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn" data-scope-dir="prev">&larr; Prev</a>
   {{ else }}
   <span class="scope-nav-disabled">Prev</span>
   {{ end }}
   <span class="scope-nav-progress">{{ .Scope.Progress }}</span>
   <span class="scope-nav-label">{{ .Scope.Label }}</span>
   {{ if .Scope.NextURL }}
-  <a href="{{ .Scope.NextURL }}" hx-get="{{ .Scope.NextURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn">Next &rarr;</a>
+  <a href="{{ .Scope.NextURL }}" hx-get="{{ .Scope.NextURL }}" hx-target="#content" hx-push-url="true" class="scope-nav-btn" data-scope-dir="next">Next &rarr;</a>
   {{ else }}
   <span class="scope-nav-disabled">Next &rarr;</span>
   {{ end }}
