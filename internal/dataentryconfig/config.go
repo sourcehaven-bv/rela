@@ -145,6 +145,8 @@ type FilterConfig struct {
 // FilterControl defines a user-facing filter control in a list.
 type FilterControl struct {
 	Property string `yaml:"property"`
+	Relation string `yaml:"relation"` // filter by outgoing relation target title
+	Label    string `yaml:"label"`    // optional display label override
 }
 
 // Kanban defines a kanban board view for an entity type.

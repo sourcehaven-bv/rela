@@ -499,6 +499,53 @@ func (a *App) resolveRelationColumnValues(entityID, relationType string) []strin
 	return titles
 }
 
+// filterByRelation filters entities to those that have an outgoing edge of the given
+// relation type pointing to a target whose display title matches value.
+func (a *App) filterByRelation(entities []*model.Entity, relationType, value string) []*model.Entity {
+	var result []*model.Entity
+	for _, e := range entities {
+		for _, edge := range a.g.OutgoingEdges(e.ID) {
+			if edge.Type != relationType {
+				continue
+			}
+			target, ok := a.g.GetNode(edge.To)
+			if !ok {
+				continue
+			}
+			if a.entityDisplayTitle(target) == value {
+				result = append(result, e)
+				break
+			}
+		}
+	}
+	return result
+}
+
+// resolveRelationFilterValues returns sorted, unique display titles of all entities
+// reachable via the given relation type from any of the provided entities.
+func (a *App) resolveRelationFilterValues(entities []*model.Entity, relationType string) []string {
+	seen := make(map[string]bool)
+	var vals []string
+	for _, e := range entities {
+		for _, edge := range a.g.OutgoingEdges(e.ID) {
+			if edge.Type != relationType {
+				continue
+			}
+			target, ok := a.g.GetNode(edge.To)
+			if !ok {
+				continue
+			}
+			title := a.entityDisplayTitle(target)
+			if !seen[title] {
+				seen[title] = true
+				vals = append(vals, title)
+			}
+		}
+	}
+	sort.Strings(vals)
+	return vals
+}
+
 // ScopeNav holds prev/next navigation context for browsing through a list of entities.
 type ScopeNav struct {
 	PrevURL  string // URL for previous entity (empty if at first)
@@ -533,13 +580,18 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 
 		// Apply dynamic filter params (same as handleList)
 		for _, fc := range list.FilterControls {
-			val := r.URL.Query().Get("filter_" + fc.Property)
-			if val != "" {
-				entities = applyFilters(entities, []FilterConfig{{
-					Property: fc.Property,
-					Operator: "=",
-					Value:    val,
-				}})
+			if fc.Relation != "" {
+				if val := r.URL.Query().Get("filter_" + fc.Relation); val != "" {
+					entities = a.filterByRelation(entities, fc.Relation, val)
+				}
+			} else {
+				if val := r.URL.Query().Get("filter_" + fc.Property); val != "" {
+					entities = applyFilters(entities, []FilterConfig{{
+						Property: fc.Property,
+						Operator: "=",
+						Value:    val,
+					}})
+				}
 			}
 		}
 
