@@ -185,6 +185,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		Current  string
 	}
 	filterControls := make([]ResolvedFC, 0, len(list.FilterControls))
+	var allEntities []*model.Entity // lazily initialized for relation filters
 	for _, fc := range list.FilterControls {
 		label := fc.Label
 		if label == "" {
@@ -196,9 +197,11 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 			Current:  r.URL.Query().Get("filter_" + fc.Key()),
 		}
 		if fc.IsRelation() {
-			allEntities := a.g.NodesByType(list.EntityType)
+			if allEntities == nil {
+				allEntities = a.g.NodesByType(list.EntityType)
+			}
 			rfc.Values = a.resolveRelationFilterValues(allEntities, fc.Relation)
-			rfc.Widget = "select"
+			rfc.Widget = WidgetSelect
 		} else {
 			prop := entDef.Properties[fc.Property]
 			rfc.Values = resolvePropertyValues(prop, a.meta)

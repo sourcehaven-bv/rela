@@ -353,11 +353,23 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Validate filter_controls
 		for i, fc := range list.FilterControls {
+			if fc.Property == "" && fc.Relation == "" {
+				errs = append(errs, fmt.Sprintf(
+					"list %q: filter_controls[%d] must specify either property or relation",
+					listID, i))
+			}
 			if fc.Property != "" {
 				if _, ok := entDef.Properties[fc.Property]; !ok {
 					errs = append(errs, fmt.Sprintf(
 						"list %q: filter_controls[%d] references unknown property %q",
 						listID, i, fc.Property))
+				}
+			}
+			if fc.Relation != "" {
+				if _, ok := meta.GetRelationDef(fc.Relation); !ok {
+					errs = append(errs, fmt.Sprintf(
+						"list %q: filter_controls[%d] references unknown relation %q",
+						listID, i, fc.Relation))
 				}
 			}
 		}
@@ -693,11 +705,23 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Validate filter_controls
 		for i, fc := range kanban.FilterControls {
+			if fc.Property == "" && fc.Relation == "" {
+				errs = append(errs, fmt.Sprintf(
+					"kanban %q: filter_controls[%d] must specify either property or relation",
+					kanbanID, i))
+			}
 			if fc.Property != "" {
 				if _, ok := entDef.Properties[fc.Property]; !ok {
 					errs = append(errs, fmt.Sprintf(
 						"kanban %q: filter_controls[%d] references unknown property %q",
 						kanbanID, i, fc.Property))
+				}
+			}
+			if fc.Relation != "" {
+				if _, ok := meta.GetRelationDef(fc.Relation); !ok {
+					errs = append(errs, fmt.Sprintf(
+						"kanban %q: filter_controls[%d] references unknown relation %q",
+						kanbanID, i, fc.Relation))
 				}
 			}
 		}
