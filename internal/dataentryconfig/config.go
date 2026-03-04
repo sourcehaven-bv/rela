@@ -5,6 +5,8 @@
 package dataentryconfig
 
 import (
+	"net/url"
+
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
@@ -143,8 +145,39 @@ type FilterConfig struct {
 }
 
 // FilterControl defines a user-facing filter control in a list.
+// Exactly one of Property or Relation must be set:
+//   - Property: filter on a scalar property of the entity.
+//   - Relation: filter by the target title of an outgoing relation; the
+//     relation name must exist in the metamodel.
+//
+// Label is an optional display label override for the control.
 type FilterControl struct {
-	Property string `yaml:"property"`
+	Property string `yaml:"property,omitempty"`
+	Relation string `yaml:"relation,omitempty"`
+	Label    string `yaml:"label,omitempty"`
+}
+
+// Key returns the filter key (Relation if set, otherwise Property).
+func (fc FilterControl) Key() string {
+	if fc.Relation != "" {
+		return fc.Relation
+	}
+	return fc.Property
+}
+
+// IsRelation returns true if this filter control filters by relation.
+func (fc FilterControl) IsRelation() bool {
+	return fc.Relation != ""
+}
+
+// QueryParamKey returns the URL query parameter key for this filter control.
+func (fc FilterControl) QueryParamKey() string {
+	return "filter_" + fc.Key()
+}
+
+// CurrentValue returns the current filter value from the given query parameters.
+func (fc FilterControl) CurrentValue(query url.Values) string {
+	return query.Get(fc.QueryParamKey())
 }
 
 // Kanban defines a kanban board view for an entity type.

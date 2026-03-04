@@ -935,3 +935,102 @@ func TestConfigValidationError_MultipleErrors(t *testing.T) {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
 }
+
+func TestValidateConfig_FilterControlMissingPropertyAndRelation(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Lists: map[string]List{
+			"test": {
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for filter_control with neither property nor relation")
+	}
+	if !strings.Contains(err.Error(), "must specify either property or relation") {
+		t.Errorf("expected error about missing property or relation, got: %v", err)
+	}
+}
+
+func TestValidateConfig_FilterControlUnknownRelation(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Lists: map[string]List{
+			"test": {
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Relation: "unknown_rel"}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for filter_control with unknown relation")
+	}
+	if !strings.Contains(err.Error(), `references unknown relation "unknown_rel"`) {
+		t.Errorf("expected error about unknown relation, got: %v", err)
+	}
+}
+
+func TestValidateConfig_FilterControlValidRelation(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Lists: map[string]List{
+			"test": {
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Relation: "belongs-to"}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err != nil {
+		t.Errorf("expected valid filter_control relation to pass, got: %v", err)
+	}
+}
+
+func TestValidateConfig_KanbanFilterControlMissingPropertyAndRelation(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Kanbans: map[string]Kanban{
+			"test": {
+				EntityType:     "ticket",
+				ColumnProperty: "status",
+				FilterControls: []FilterControl{{}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for kanban filter_control with neither property nor relation")
+	}
+	if !strings.Contains(err.Error(), "must specify either property or relation") {
+		t.Errorf("expected error about missing property or relation, got: %v", err)
+	}
+}
+
+func TestValidateConfig_KanbanFilterControlUnknownRelation(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Kanbans: map[string]Kanban{
+			"test": {
+				EntityType:     "ticket",
+				ColumnProperty: "status",
+				FilterControls: []FilterControl{{Relation: "unknown_rel"}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for kanban filter_control with unknown relation")
+	}
+	if !strings.Contains(err.Error(), `references unknown relation "unknown_rel"`) {
+		t.Errorf("expected error about unknown relation, got: %v", err)
+	}
+}

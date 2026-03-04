@@ -270,6 +270,169 @@ func TestHandleList(t *testing.T) {
 			t.Error("expected 'feature' in multi-select column")
 		}
 	})
+
+	t.Run("relation-based filter control filters list", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Add relation to existing tickets
+		app.g.AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
+
+		// Configure list with relation-based filter
+		app.Cfg.Lists["tickets"] = List{
+			EntityType: "ticket",
+			Title:      "Tickets",
+			Columns: []ListColumn{
+				{Property: "title", Label: "Title"},
+			},
+			FilterControls: []FilterControl{
+				{Relation: "belongs_to"},
+			},
+		}
+
+		// Request with relation filter
+		r := httptest.NewRequest(http.MethodGet, "/list/tickets?filter_belongs_to=Frontend", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleList(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// TKT-001 belongs to CMP-001 (Frontend), so should be in results
+		if !strings.Contains(body, "TKT-001") {
+			t.Error("expected TKT-001 in filtered results")
+		}
+		// TKT-002 does not belong to Frontend
+		if strings.Contains(body, "TKT-002") {
+			t.Error("TKT-002 should be filtered out")
+		}
+	})
+
+	t.Run("relation-based filter shows select with target titles", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Add relation to existing tickets
+		app.g.AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
+
+		// Configure list with relation-based filter
+		app.Cfg.Lists["tickets"] = List{
+			EntityType: "ticket",
+			Title:      "Tickets",
+			Columns: []ListColumn{
+				{Property: "title", Label: "Title"},
+			},
+			FilterControls: []FilterControl{
+				{Relation: "belongs_to"},
+			},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleList(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should show "Frontend" as a filter option (CMP-001's name)
+		if !strings.Contains(body, "Frontend") {
+			t.Error("expected 'Frontend' as filter option in relation filter control")
+		}
+	})
+
+	t.Run("filter control with custom label", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Configure list with property filter and custom label
+		app.Cfg.Lists["tickets"] = List{
+			EntityType: "ticket",
+			Title:      "Tickets",
+			Columns: []ListColumn{
+				{Property: "title", Label: "Title"},
+			},
+			FilterControls: []FilterControl{
+				{Property: "status", Label: "Ticket Status"},
+			},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleList(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should use custom label
+		if !strings.Contains(body, "Ticket Status") {
+			t.Error("expected custom label 'Ticket Status' in filter control")
+		}
+	})
+
+	t.Run("relation filter control with custom label", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Add relation to existing tickets
+		app.g.AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
+
+		// Configure list with relation filter and custom label
+		app.Cfg.Lists["tickets"] = List{
+			EntityType: "ticket",
+			Title:      "Tickets",
+			Columns: []ListColumn{
+				{Property: "title", Label: "Title"},
+			},
+			FilterControls: []FilterControl{
+				{Relation: "belongs_to", Label: "Component"},
+			},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleList(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should use custom label "Component" instead of "Belongs To"
+		if !strings.Contains(body, "Component") {
+			t.Error("expected custom label 'Component' in relation filter control")
+		}
+	})
+
+	t.Run("filter params preserved in pagination links", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Add more tickets for pagination
+		for i := 3; i <= 5; i++ {
+			e := model.NewEntity("TKT-00"+string(rune('0'+i)), "ticket")
+			e.SetString("title", "Ticket "+string(rune('0'+i)))
+			e.SetString("status", "open")
+			app.g.AddNode(e)
+		}
+
+		// Configure list with pagination and filter
+		app.Cfg.Lists["tickets"] = List{
+			EntityType: "ticket",
+			Title:      "Tickets",
+			PageSize:   2,
+			Columns: []ListColumn{
+				{Property: "title", Label: "Title"},
+			},
+			FilterControls: []FilterControl{
+				{Property: "status"},
+			},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/list/tickets?filter_status=open", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleList(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Pagination links should preserve filter params
+		if !strings.Contains(body, "filter_status=open") {
+			t.Error("expected filter_status=open in pagination or list links")
+		}
+	})
 }
 
 func TestHandleForm(t *testing.T) {

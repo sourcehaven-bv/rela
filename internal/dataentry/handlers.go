@@ -59,24 +59,24 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 	entities := a.g.NodesByType(list.EntityType)
 	entities = applyFilters(entities, list.Filters)
 
-	// Apply query param filters
+	// Apply query param filters and build filter params for URL construction
+	query := r.URL.Query()
+	var filterParams string
 	for _, fc := range list.FilterControls {
-		val := r.URL.Query().Get("filter_" + fc.Property)
-		if val != "" {
+		val := fc.CurrentValue(query)
+		if val == "" {
+			continue
+		}
+		if fc.IsRelation() {
+			entities = a.filterByRelation(entities, fc.Relation, val)
+		} else {
 			entities = applyFilters(entities, []FilterConfig{{
 				Property: fc.Property,
 				Operator: "=",
 				Value:    val,
 			}})
 		}
-	}
-
-	// Build active filter query params for URL construction
-	var filterParams string
-	for _, fc := range list.FilterControls {
-		if val := r.URL.Query().Get("filter_" + fc.Property); val != "" {
-			filterParams += "&filter_" + url.QueryEscape(fc.Property) + "=" + url.QueryEscape(val)
-		}
+		filterParams += "&" + url.QueryEscape(fc.QueryParamKey()) + "=" + url.QueryEscape(val)
 	}
 
 	// Resolve effective sort (query params override config default)
@@ -180,16 +180,29 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		Current  string
 	}
 	filterControls := make([]ResolvedFC, 0, len(list.FilterControls))
+	var allEntities []*model.Entity // lazily initialized for relation filters
 	for _, fc := range list.FilterControls {
-		prop := entDef.Properties[fc.Property]
-		vals := resolvePropertyValues(prop, a.meta)
-		filterControls = append(filterControls, ResolvedFC{
-			Property: fc.Property,
-			Label:    titleCase(fc.Property),
-			Widget:   resolveWidget(prop, a.meta),
-			Values:   vals,
-			Current:  r.URL.Query().Get("filter_" + fc.Property),
-		})
+		label := fc.Label
+		if label == "" {
+			label = titleCase(fc.Key())
+		}
+		rfc := ResolvedFC{
+			Property: fc.Key(),
+			Label:    label,
+			Current:  fc.CurrentValue(query),
+		}
+		if fc.IsRelation() {
+			if allEntities == nil {
+				allEntities = a.g.NodesByType(list.EntityType)
+			}
+			rfc.Values = a.resolveRelationFilterValues(allEntities, fc.Relation)
+			rfc.Widget = WidgetSelect
+		} else {
+			prop := entDef.Properties[fc.Property]
+			rfc.Values = resolvePropertyValues(prop, a.meta)
+			rfc.Widget = resolveWidget(prop, a.meta)
+		}
+		filterControls = append(filterControls, rfc)
 	}
 
 	// Resolve relation data for display
@@ -1180,6 +1193,19 @@ func (a *App) createFormRelations(entityID string, relations []FormRelation, ent
 		if rel.Display != "" {
 			continue
 		}
+		// Resolve direction from metamodel if not specified in config (mirrors handleForm logic).
+		direction := rel.Direction
+		if direction == "" {
+			if relDef, ok := a.meta.GetRelationDef(rel.Relation); ok {
+				inFrom := containsString(relDef.From, entityType)
+				inTo := containsString(relDef.To, entityType)
+				if inFrom && !inTo {
+					direction = DirectionOutgoing
+				} else if inTo && !inFrom {
+					direction = DirectionIncoming
+				}
+			}
+		}
 		values := r.Form[rel.Relation]
 		if len(values) == 0 && a.userDefaults != nil {
 			if defaultTarget := a.userDefaults.ResolveRelationDefault(entityType, rel.Relation); defaultTarget != "" {
@@ -1191,7 +1217,7 @@ func (a *App) createFormRelations(entityID string, relations []FormRelation, ent
 				continue
 			}
 			var fromID, toID string
-			if rel.Direction == DirectionIncoming {
+			if direction == DirectionIncoming {
 				fromID, toID = targetID, entityID
 			} else {
 				fromID, toID = entityID, targetID
@@ -1457,7 +1483,20 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		if rel.Display != "" {
 			continue
 		}
-		if rel.Direction == DirectionIncoming {
+		// Resolve direction from metamodel if not specified in config (mirrors handleForm logic).
+		direction := rel.Direction
+		if direction == "" {
+			if relDef, ok := a.meta.GetRelationDef(rel.Relation); ok {
+				inFrom := containsString(relDef.From, form.EntityType)
+				inTo := containsString(relDef.To, form.EntityType)
+				if inFrom && !inTo {
+					direction = DirectionOutgoing
+				} else if inTo && !inFrom {
+					direction = DirectionIncoming
+				}
+			}
+		}
+		if direction == DirectionIncoming {
 			for _, edge := range a.g.IncomingEdges(entityID) {
 				if edge.Type == rel.Relation {
 					if delErr := a.ws.DeleteRelation(edge.From, edge.Type, edge.To); delErr != nil {
@@ -1480,7 +1519,7 @@ func (a *App) handleUpdate(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			var fromID, toID string
-			if rel.Direction == DirectionIncoming {
+			if direction == DirectionIncoming {
 				fromID, toID = targetID, entityID
 			} else {
 				fromID, toID = entityID, targetID
