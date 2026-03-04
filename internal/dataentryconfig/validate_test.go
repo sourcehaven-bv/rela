@@ -241,6 +241,26 @@ func TestValidateConfig_InvalidRelationDirection(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_InvalidRelationWidget(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Forms: map[string]Form{
+			"test": {
+				EntityType: "ticket",
+				Relations:  []FormRelation{{Relation: "blocks", Widget: "banana"}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for invalid widget")
+	}
+	if !strings.Contains(err.Error(), `invalid widget "banana"`) {
+		t.Errorf("expected error about invalid widget, got: %v", err)
+	}
+}
+
 func TestValidateConfig_FormRelationUnknownCreateForm(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{

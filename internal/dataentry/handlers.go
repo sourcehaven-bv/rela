@@ -526,11 +526,23 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			targetLabel = targetDef.Label
 		}
 
+		// Determine widget based on explicit config or cardinality
+		widget := WidgetSelect
+		if rel.Widget != "" {
+			widget = rel.Widget
+		} else if relDefOK {
+			if direction == DirectionIncoming && (relDef.MaxIncoming == nil || *relDef.MaxIncoming > 1) {
+				widget = WidgetMultiSelect
+			} else if direction == DirectionOutgoing && (relDef.MaxOutgoing == nil || *relDef.MaxOutgoing > 1) {
+				widget = WidgetMultiSelect
+			}
+		}
+
 		rr := ResolvedRelation{
 			Relation:      rel.Relation,
 			Label:         label,
 			Required:      rel.Required,
-			Widget:        WidgetSelect,
+			Widget:        widget,
 			TargetType:    targetType,
 			TargetLabel:   targetLabel,
 			AllowCreate:   rel.AllowCreate,
