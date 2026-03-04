@@ -145,10 +145,16 @@ type FilterConfig struct {
 }
 
 // FilterControl defines a user-facing filter control in a list.
+// Exactly one of Property or Relation must be set:
+//   - Property: filter on a scalar property of the entity.
+//   - Relation: filter by the target title of an outgoing relation; the
+//     relation name must exist in the metamodel.
+//
+// Label is an optional display label override for the control.
 type FilterControl struct {
-	Property string `yaml:"property"`
-	Relation string `yaml:"relation"` // filter by outgoing relation target title
-	Label    string `yaml:"label"`    // optional display label override
+	Property string `yaml:"property,omitempty"`
+	Relation string `yaml:"relation,omitempty"`
+	Label    string `yaml:"label,omitempty"`
 }
 
 // Key returns the filter key (Relation if set, otherwise Property).
