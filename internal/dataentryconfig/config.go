@@ -5,6 +5,8 @@
 package dataentryconfig
 
 import (
+	"net/url"
+
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
@@ -160,6 +162,16 @@ func (fc FilterControl) Key() string {
 // IsRelation returns true if this filter control filters by relation.
 func (fc FilterControl) IsRelation() bool {
 	return fc.Relation != ""
+}
+
+// QueryParamKey returns the URL query parameter key for this filter control.
+func (fc FilterControl) QueryParamKey() string {
+	return "filter_" + fc.Key()
+}
+
+// CurrentValue returns the current filter value from the given query parameters.
+func (fc FilterControl) CurrentValue(query url.Values) string {
+	return query.Get(fc.QueryParamKey())
 }
 
 // Kanban defines a kanban board view for an entity type.

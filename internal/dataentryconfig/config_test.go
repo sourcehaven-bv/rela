@@ -173,3 +173,45 @@ func TestFilterControlIsRelation(t *testing.T) {
 		}
 	})
 }
+
+func TestFilterControlQueryParamKey(t *testing.T) {
+	t.Run("property filter", func(t *testing.T) {
+		fc := FilterControl{Property: "status"}
+		if got := fc.QueryParamKey(); got != "filter_status" {
+			t.Errorf("expected 'filter_status', got %q", got)
+		}
+	})
+
+	t.Run("relation filter", func(t *testing.T) {
+		fc := FilterControl{Relation: "belongs_to"}
+		if got := fc.QueryParamKey(); got != "filter_belongs_to" {
+			t.Errorf("expected 'filter_belongs_to', got %q", got)
+		}
+	})
+}
+
+func TestFilterControlCurrentValue(t *testing.T) {
+	t.Run("returns value when present", func(t *testing.T) {
+		fc := FilterControl{Property: "status"}
+		query := map[string][]string{"filter_status": {"open"}}
+		if got := fc.CurrentValue(query); got != "open" {
+			t.Errorf("expected 'open', got %q", got)
+		}
+	})
+
+	t.Run("returns empty when not present", func(t *testing.T) {
+		fc := FilterControl{Property: "status"}
+		query := map[string][]string{}
+		if got := fc.CurrentValue(query); got != "" {
+			t.Errorf("expected empty, got %q", got)
+		}
+	})
+
+	t.Run("relation filter", func(t *testing.T) {
+		fc := FilterControl{Relation: "belongs_to"}
+		query := map[string][]string{"filter_belongs_to": {"category-1"}}
+		if got := fc.CurrentValue(query); got != "category-1" {
+			t.Errorf("expected 'category-1', got %q", got)
+		}
+	})
+}

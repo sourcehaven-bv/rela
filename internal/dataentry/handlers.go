@@ -59,9 +59,11 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 	entities := a.g.NodesByType(list.EntityType)
 	entities = applyFilters(entities, list.Filters)
 
-	// Apply query param filters
+	// Apply query param filters and build filter params for URL construction
+	query := r.URL.Query()
+	var filterParams string
 	for _, fc := range list.FilterControls {
-		val := r.URL.Query().Get("filter_" + fc.Key())
+		val := fc.CurrentValue(query)
 		if val == "" {
 			continue
 		}
@@ -74,14 +76,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 				Value:    val,
 			}})
 		}
-	}
-
-	// Build active filter query params for URL construction
-	var filterParams string
-	for _, fc := range list.FilterControls {
-		if val := r.URL.Query().Get("filter_" + fc.Key()); val != "" {
-			filterParams += "&filter_" + url.QueryEscape(fc.Key()) + "=" + url.QueryEscape(val)
-		}
+		filterParams += "&" + url.QueryEscape(fc.QueryParamKey()) + "=" + url.QueryEscape(val)
 	}
 
 	// Resolve effective sort (query params override config default)
@@ -194,7 +189,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 		rfc := ResolvedFC{
 			Property: fc.Key(),
 			Label:    label,
-			Current:  r.URL.Query().Get("filter_" + fc.Key()),
+			Current:  fc.CurrentValue(query),
 		}
 		if fc.IsRelation() {
 			if allEntities == nil {
