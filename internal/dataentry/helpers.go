@@ -580,18 +580,18 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 
 		// Apply dynamic filter params (same as handleList)
 		for _, fc := range list.FilterControls {
-			if fc.Relation != "" {
-				if val := r.URL.Query().Get("filter_" + fc.Relation); val != "" {
-					entities = a.filterByRelation(entities, fc.Relation, val)
-				}
+			val := r.URL.Query().Get("filter_" + fc.Key())
+			if val == "" {
+				continue
+			}
+			if fc.IsRelation() {
+				entities = a.filterByRelation(entities, fc.Relation, val)
 			} else {
-				if val := r.URL.Query().Get("filter_" + fc.Property); val != "" {
-					entities = applyFilters(entities, []FilterConfig{{
-						Property: fc.Property,
-						Operator: "=",
-						Value:    val,
-					}})
-				}
+				entities = applyFilters(entities, []FilterConfig{{
+					Property: fc.Property,
+					Operator: "=",
+					Value:    val,
+				}})
 			}
 		}
 

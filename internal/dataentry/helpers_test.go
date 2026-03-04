@@ -1115,6 +1115,211 @@ func TestIsRelationLinked(t *testing.T) {
 	}
 }
 
+func TestFilterByRelation(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string"},
+				},
+			},
+			"component": {
+				Properties: map[string]metamodel.PropertyDef{
+					"name": {Type: "string", Required: true},
+				},
+			},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"belongs_to": {
+				Label: "belongs to",
+				From:  []string{"ticket"},
+				To:    []string{"component"},
+			},
+		},
+	}
+
+	g := graph.New()
+
+	// Create components
+	cmp1 := model.NewEntity("CMP-001", "component")
+	cmp1.SetString("name", "Frontend")
+	g.AddNode(cmp1)
+
+	cmp2 := model.NewEntity("CMP-002", "component")
+	cmp2.SetString("name", "Backend")
+	g.AddNode(cmp2)
+
+	// Create tickets with relations to components
+	t1 := model.NewEntity("TKT-001", "ticket")
+	t1.SetString("title", "Frontend bug")
+	g.AddNode(t1)
+	g.AddEdge(&model.Relation{From: "TKT-001", Type: "belongs_to", To: "CMP-001"})
+
+	t2 := model.NewEntity("TKT-002", "ticket")
+	t2.SetString("title", "Backend bug")
+	g.AddNode(t2)
+	g.AddEdge(&model.Relation{From: "TKT-002", Type: "belongs_to", To: "CMP-002"})
+
+	t3 := model.NewEntity("TKT-003", "ticket")
+	t3.SetString("title", "Another frontend bug")
+	g.AddNode(t3)
+	g.AddEdge(&model.Relation{From: "TKT-003", Type: "belongs_to", To: "CMP-001"})
+
+	t4 := model.NewEntity("TKT-004", "ticket")
+	t4.SetString("title", "No component ticket")
+	g.AddNode(t4)
+	// No relation for t4
+
+	app := &App{meta: meta, g: g}
+	allTickets := g.NodesByType("ticket")
+
+	t.Run("filters by relation target title", func(t *testing.T) {
+		got := app.filterByRelation(allTickets, "belongs_to", "Frontend")
+		gotIDs := collectIDs(got)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 results, got %d: %v", len(got), gotIDs)
+		}
+		if !sliceContainsStr(gotIDs, "TKT-001") || !sliceContainsStr(gotIDs, "TKT-003") {
+			t.Errorf("expected TKT-001 and TKT-003, got %v", gotIDs)
+		}
+	})
+
+	t.Run("filters by different relation target", func(t *testing.T) {
+		got := app.filterByRelation(allTickets, "belongs_to", "Backend")
+		gotIDs := collectIDs(got)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 result, got %d: %v", len(got), gotIDs)
+		}
+		if gotIDs[0] != "TKT-002" {
+			t.Errorf("expected TKT-002, got %v", gotIDs)
+		}
+	})
+
+	t.Run("returns empty for non-matching value", func(t *testing.T) {
+		got := app.filterByRelation(allTickets, "belongs_to", "Nonexistent")
+		if len(got) != 0 {
+			t.Errorf("expected 0 results, got %d", len(got))
+		}
+	})
+
+	t.Run("returns empty for unknown relation type", func(t *testing.T) {
+		got := app.filterByRelation(allTickets, "unknown_relation", "Frontend")
+		if len(got) != 0 {
+			t.Errorf("expected 0 results, got %d", len(got))
+		}
+	})
+
+	t.Run("handles entities without relations", func(t *testing.T) {
+		got := app.filterByRelation(allTickets, "belongs_to", "Frontend")
+		for _, e := range got {
+			if e.ID == "TKT-004" {
+				t.Error("TKT-004 should not be in results (has no belongs_to relation)")
+			}
+		}
+	})
+}
+
+func TestResolveRelationFilterValues(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string"},
+				},
+			},
+			"component": {
+				Properties: map[string]metamodel.PropertyDef{
+					"name": {Type: "string", Required: true},
+				},
+			},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"belongs_to": {
+				Label: "belongs to",
+				From:  []string{"ticket"},
+				To:    []string{"component"},
+			},
+		},
+	}
+
+	g := graph.New()
+
+	// Create components
+	cmp1 := model.NewEntity("CMP-001", "component")
+	cmp1.SetString("name", "Frontend")
+	g.AddNode(cmp1)
+
+	cmp2 := model.NewEntity("CMP-002", "component")
+	cmp2.SetString("name", "Backend")
+	g.AddNode(cmp2)
+
+	cmp3 := model.NewEntity("CMP-003", "component")
+	cmp3.SetString("name", "API")
+	g.AddNode(cmp3)
+
+	// Create tickets with relations
+	t1 := model.NewEntity("TKT-001", "ticket")
+	t1.SetString("title", "Ticket 1")
+	g.AddNode(t1)
+	g.AddEdge(&model.Relation{From: "TKT-001", Type: "belongs_to", To: "CMP-001"})
+
+	t2 := model.NewEntity("TKT-002", "ticket")
+	t2.SetString("title", "Ticket 2")
+	g.AddNode(t2)
+	g.AddEdge(&model.Relation{From: "TKT-002", Type: "belongs_to", To: "CMP-002"})
+
+	t3 := model.NewEntity("TKT-003", "ticket")
+	t3.SetString("title", "Ticket 3")
+	g.AddNode(t3)
+	g.AddEdge(&model.Relation{From: "TKT-003", Type: "belongs_to", To: "CMP-001"}) // duplicate Frontend
+
+	// TKT-004 has no relation
+	t4 := model.NewEntity("TKT-004", "ticket")
+	t4.SetString("title", "Ticket 4")
+	g.AddNode(t4)
+
+	app := &App{meta: meta, g: g}
+	allTickets := g.NodesByType("ticket")
+
+	t.Run("returns unique sorted values", func(t *testing.T) {
+		got := app.resolveRelationFilterValues(allTickets, "belongs_to")
+		// Only Frontend and Backend are referenced, API is not
+		// Should be sorted: Backend, Frontend
+		if len(got) != 2 {
+			t.Fatalf("expected 2 values, got %d: %v", len(got), got)
+		}
+		if got[0] != "Backend" {
+			t.Errorf("expected first value 'Backend', got %q", got[0])
+		}
+		if got[1] != "Frontend" {
+			t.Errorf("expected second value 'Frontend', got %q", got[1])
+		}
+	})
+
+	t.Run("returns empty for unknown relation type", func(t *testing.T) {
+		got := app.resolveRelationFilterValues(allTickets, "unknown_relation")
+		if len(got) != 0 {
+			t.Errorf("expected 0 values, got %d", len(got))
+		}
+	})
+
+	t.Run("returns empty for empty entities list", func(t *testing.T) {
+		got := app.resolveRelationFilterValues([]*model.Entity{}, "belongs_to")
+		if len(got) != 0 {
+			t.Errorf("expected 0 values, got %d", len(got))
+		}
+	})
+}
+
+func sliceContainsStr(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 func TestResolveScope(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -1321,6 +1526,69 @@ func TestResolveScope(t *testing.T) {
 		got := app.resolveScope("T-002", r)
 		if got != nil {
 			t.Errorf("expected nil for search with no results, got %+v", got)
+		}
+	})
+
+	t.Run("list scope with relation filter narrows results", func(t *testing.T) {
+		// Create an app with relation-based filter
+		relMeta := &metamodel.Metamodel{
+			Entities: map[string]metamodel.EntityDef{
+				"ticket": {
+					Properties: map[string]metamodel.PropertyDef{
+						"title": {Type: "string"},
+					},
+				},
+				"component": {
+					Properties: map[string]metamodel.PropertyDef{
+						"name": {Type: "string", Required: true},
+					},
+				},
+			},
+			Relations: map[string]metamodel.RelationDef{
+				"belongs_to": {From: []string{"ticket"}, To: []string{"component"}},
+			},
+		}
+
+		relGraph := graph.New()
+		cmp := model.NewEntity("CMP-001", "component")
+		cmp.SetString("name", "Frontend")
+		relGraph.AddNode(cmp)
+
+		for _, e := range []*model.Entity{
+			{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Ticket 1"}},
+			{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Ticket 2"}},
+			{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"title": "Ticket 3"}},
+		} {
+			relGraph.AddNode(e)
+		}
+		// Only T-001 and T-002 belong to Frontend
+		relGraph.AddEdge(&model.Relation{From: "T-001", Type: "belongs_to", To: "CMP-001"})
+		relGraph.AddEdge(&model.Relation{From: "T-002", Type: "belongs_to", To: "CMP-001"})
+
+		relApp := &App{
+			meta: relMeta,
+			g:    relGraph,
+			Cfg: &Config{
+				Lists: map[string]List{
+					"tickets": {
+						EntityType: "ticket",
+						Title:      "Tickets",
+						FilterControls: []FilterControl{
+							{Relation: "belongs_to"},
+						},
+					},
+				},
+			},
+		}
+
+		r := makeRequest("/entity/ticket/T-001?scope=list:tickets&filter_belongs_to=Frontend")
+		got := relApp.resolveScope("T-001", r)
+		if got == nil {
+			t.Fatal("expected non-nil scope")
+		}
+		// Filter to Frontend should give only T-001 and T-002 (2 tickets)
+		if got.Label != "2 Tickets" {
+			t.Errorf("Label = %q, want %q", got.Label, "2 Tickets")
 		}
 	})
 

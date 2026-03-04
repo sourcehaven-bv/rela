@@ -134,3 +134,42 @@ func TestUserDefaultsResolveRelationDefault(t *testing.T) {
 		}
 	})
 }
+
+func TestFilterControlKey(t *testing.T) {
+	t.Run("returns relation when set", func(t *testing.T) {
+		fc := FilterControl{Relation: "belongs_to", Property: "status"}
+		if got := fc.Key(); got != "belongs_to" {
+			t.Errorf("expected 'belongs_to', got %q", got)
+		}
+	})
+
+	t.Run("returns property when relation empty", func(t *testing.T) {
+		fc := FilterControl{Property: "status"}
+		if got := fc.Key(); got != "status" {
+			t.Errorf("expected 'status', got %q", got)
+		}
+	})
+
+	t.Run("returns empty when both empty", func(t *testing.T) {
+		fc := FilterControl{}
+		if got := fc.Key(); got != "" {
+			t.Errorf("expected empty, got %q", got)
+		}
+	})
+}
+
+func TestFilterControlIsRelation(t *testing.T) {
+	t.Run("true when relation set", func(t *testing.T) {
+		fc := FilterControl{Relation: "belongs_to"}
+		if !fc.IsRelation() {
+			t.Error("expected true")
+		}
+	})
+
+	t.Run("false when relation empty", func(t *testing.T) {
+		fc := FilterControl{Property: "status"}
+		if fc.IsRelation() {
+			t.Error("expected false")
+		}
+	})
+}

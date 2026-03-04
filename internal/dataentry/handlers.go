@@ -61,30 +61,26 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 
 	// Apply query param filters
 	for _, fc := range list.FilterControls {
-		if fc.Relation != "" {
-			if val := r.URL.Query().Get("filter_" + fc.Relation); val != "" {
-				entities = a.filterByRelation(entities, fc.Relation, val)
-			}
+		val := r.URL.Query().Get("filter_" + fc.Key())
+		if val == "" {
+			continue
+		}
+		if fc.IsRelation() {
+			entities = a.filterByRelation(entities, fc.Relation, val)
 		} else {
-			if val := r.URL.Query().Get("filter_" + fc.Property); val != "" {
-				entities = applyFilters(entities, []FilterConfig{{
-					Property: fc.Property,
-					Operator: "=",
-					Value:    val,
-				}})
-			}
+			entities = applyFilters(entities, []FilterConfig{{
+				Property: fc.Property,
+				Operator: "=",
+				Value:    val,
+			}})
 		}
 	}
 
 	// Build active filter query params for URL construction
 	var filterParams string
 	for _, fc := range list.FilterControls {
-		key := fc.Property
-		if fc.Relation != "" {
-			key = fc.Relation
-		}
-		if val := r.URL.Query().Get("filter_" + key); val != "" {
-			filterParams += "&filter_" + url.QueryEscape(key) + "=" + url.QueryEscape(val)
+		if val := r.URL.Query().Get("filter_" + fc.Key()); val != "" {
+			filterParams += "&filter_" + url.QueryEscape(fc.Key()) + "=" + url.QueryEscape(val)
 		}
 	}
 
@@ -190,35 +186,25 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	filterControls := make([]ResolvedFC, 0, len(list.FilterControls))
 	for _, fc := range list.FilterControls {
-		if fc.Relation != "" {
+		label := fc.Label
+		if label == "" {
+			label = titleCase(fc.Key())
+		}
+		rfc := ResolvedFC{
+			Property: fc.Key(),
+			Label:    label,
+			Current:  r.URL.Query().Get("filter_" + fc.Key()),
+		}
+		if fc.IsRelation() {
 			allEntities := a.g.NodesByType(list.EntityType)
-			vals := a.resolveRelationFilterValues(allEntities, fc.Relation)
-			label := fc.Label
-			if label == "" {
-				label = titleCase(fc.Relation)
-			}
-			filterControls = append(filterControls, ResolvedFC{
-				Property: fc.Relation,
-				Label:    label,
-				Widget:   "select",
-				Values:   vals,
-				Current:  r.URL.Query().Get("filter_" + fc.Relation),
-			})
+			rfc.Values = a.resolveRelationFilterValues(allEntities, fc.Relation)
+			rfc.Widget = "select"
 		} else {
 			prop := entDef.Properties[fc.Property]
-			vals := resolvePropertyValues(prop, a.meta)
-			label := fc.Label
-			if label == "" {
-				label = titleCase(fc.Property)
-			}
-			filterControls = append(filterControls, ResolvedFC{
-				Property: fc.Property,
-				Label:    label,
-				Widget:   resolveWidget(prop, a.meta),
-				Values:   vals,
-				Current:  r.URL.Query().Get("filter_" + fc.Property),
-			})
+			rfc.Values = resolvePropertyValues(prop, a.meta)
+			rfc.Widget = resolveWidget(prop, a.meta)
 		}
+		filterControls = append(filterControls, rfc)
 	}
 
 	// Resolve relation data for display

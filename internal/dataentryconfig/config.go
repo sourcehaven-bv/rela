@@ -149,6 +149,19 @@ type FilterControl struct {
 	Label    string `yaml:"label"`    // optional display label override
 }
 
+// Key returns the filter key (Relation if set, otherwise Property).
+func (fc FilterControl) Key() string {
+	if fc.Relation != "" {
+		return fc.Relation
+	}
+	return fc.Property
+}
+
+// IsRelation returns true if this filter control filters by relation.
+func (fc FilterControl) IsRelation() bool {
+	return fc.Relation != ""
+}
+
 // Kanban defines a kanban board view for an entity type.
 type Kanban struct {
 	EntityType       string           `yaml:"entity_type"`
