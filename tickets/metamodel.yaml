@@ -105,7 +105,7 @@ entities:
     label: Idea
     aliases: [brainstorm]
     id_prefix: "IDEA-"
-    id_type: sequential
+    id_type: short
     color: "#F3E5F5"
     border_color: "#9C27B0"
     properties:
@@ -178,7 +178,7 @@ entities:
     label: Decision
     aliases: [dec, adr]
     id_prefix: "DEC-"
-    id_type: sequential
+    id_type: short
     color: "#FFF3E0"
     border_color: "#F57C00"
     properties:
@@ -205,7 +205,7 @@ entities:
   feature:
     label: Feature
     id_prefix: "FEAT-"
-    id_type: sequential
+    id_type: short
     color: "#E8F5E9"
     border_color: "#388E3C"
     properties:
@@ -229,7 +229,7 @@ entities:
     label: Bug
     aliases: [defect]
     id_prefix: "BUG-"
-    id_type: sequential
+    id_type: short
     color: "#FFCDD2"
     border_color: "#D32F2F"
     properties:
@@ -270,7 +270,7 @@ entities:
     label: Ticket
     aliases: [task, issue]
     id_prefix: "TKT-"
-    id_type: sequential
+    id_type: short
     color: "#FFFDE7"
     border_color: "#FBC02D"
     properties:
@@ -298,7 +298,7 @@ entities:
   risk:
     label: Risk
     id_prefix: "RISK-"
-    id_type: sequential
+    id_type: short
     color: "#FFEBEE"
     border_color: "#D32F2F"
     properties:
@@ -331,7 +331,7 @@ entities:
     label: Test Case
     aliases: [test]
     id_prefix: "TC-"
-    id_type: sequential
+    id_type: short
     color: "#F3E5F5"
     border_color: "#7B1FA2"
     properties:
@@ -359,7 +359,7 @@ entities:
     label: Test Suite
     aliases: [suite]
     id_prefix: "TS-"
-    id_type: sequential
+    id_type: short
     color: "#EDE7F6"
     border_color: "#512DA8"
     properties:
@@ -380,7 +380,7 @@ entities:
     label: QA Report
     aliases: [qa]
     id_prefix: "QA-"
-    id_type: sequential
+    id_type: short
     color: "#FCE4EC"
     border_color: "#C2185B"
     properties:
@@ -535,7 +535,7 @@ entities:
   doc-task:
     label: Doc Task
     id_prefix: "DOC-"
-    id_type: sequential
+    id_type: short
     color: "#ECEFF1"
     border_color: "#546E7A"
     properties:
