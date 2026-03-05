@@ -51,6 +51,37 @@ func TestNewRouterStaticFiles(t *testing.T) {
 	}
 }
 
+func TestNewRouterStaticFilesNoCacheHeader(t *testing.T) {
+	app := newHandlerTestApp(t)
+	app.broker = newEventBroker()
+	handler := app.NewRouter()
+
+	// Static files should NOT have no-cache header (they bypass the middleware)
+	r := httptest.NewRequest(http.MethodGet, "/static/htmx.min.js", http.NoBody)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if cc := w.Header().Get("Cache-Control"); cc != "" {
+		t.Errorf("static files should not have Cache-Control header, got %q", cc)
+	}
+}
+
+func TestNewRouterAPIHasNoCacheHeader(t *testing.T) {
+	app := newHandlerTestApp(t)
+	app.broker = newEventBroker()
+	handler := app.NewRouter()
+
+	// API/HTML routes should have no-cache header
+	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	cc := w.Header().Get("Cache-Control")
+	if cc != "no-cache, no-store, must-revalidate" {
+		t.Errorf("expected Cache-Control header on API routes, got %q", cc)
+	}
+}
+
 func TestNewRouterSSEEndpoint(t *testing.T) {
 	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
