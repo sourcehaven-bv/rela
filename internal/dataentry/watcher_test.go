@@ -596,6 +596,25 @@ func TestReloadLockMiddleware(t *testing.T) {
 	}
 }
 
+func TestReloadLockMiddlewareSetsNoCacheHeader(t *testing.T) {
+	app, _ := setupReloadTestApp(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := app.reloadLockMiddleware(inner)
+	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, r)
+
+	cc := w.Header().Get("Cache-Control")
+	if cc != "no-cache, no-store, must-revalidate" {
+		t.Errorf("expected Cache-Control header, got %q", cc)
+	}
+}
+
 func TestReloadLockMiddlewareBlocksDuringReload(t *testing.T) {
 	app, _ := setupReloadTestApp(t)
 

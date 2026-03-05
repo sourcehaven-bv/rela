@@ -210,11 +210,16 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 // reloadLockMiddleware wraps an http.Handler so that every request holds
 // the App's read-lock, preventing concurrent reloads from swapping state
-// mid-request.
+// mid-request. It also sets no-cache headers to ensure browsers always
+// fetch fresh data after file changes trigger a reload.
+//
+// Note: Static files (/static/*) are served separately and bypass this
+// middleware, so they retain normal caching behavior.
 func (a *App) reloadLockMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a.mu.RLock()
 		defer a.mu.RUnlock()
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		next.ServeHTTP(w, r)
 	})
 }
