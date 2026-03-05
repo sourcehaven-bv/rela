@@ -91,6 +91,7 @@ type FormRelation struct {
 	TargetType   string             `yaml:"target_type"`
 	Label        string             `yaml:"label"`
 	Required     bool               `yaml:"required"`
+	Widget       string             `yaml:"widget"`
 	Display      string             `yaml:"display"`
 	AllowCreate  bool               `yaml:"allow_create"`
 	CreateForm   string             `yaml:"create_form"`

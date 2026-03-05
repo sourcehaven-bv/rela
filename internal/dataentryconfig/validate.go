@@ -88,6 +88,13 @@ var validRelationDirections = map[string]bool{
 	DirectionIncoming: true,
 }
 
+// Valid relation widgets
+var validRelationWidgets = map[string]bool{
+	"":                true, // default (auto-detect from cardinality)
+	WidgetSelect:      true,
+	WidgetMultiSelect: true,
+}
+
 // ValidateConfig performs comprehensive validation of a data-entry config.
 // It returns a ConfigValidationError containing all validation issues,
 // or nil if the config is valid.
@@ -229,6 +236,13 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, fmt.Sprintf(
 					"form %q: relation[%d] has invalid direction %q (valid: outgoing, incoming)",
 					formID, i, r.Direction))
+			}
+
+			// Validate widget
+			if !validRelationWidgets[r.Widget] {
+				errs = append(errs, fmt.Sprintf(
+					"form %q: relation[%d] has invalid widget %q (valid: select, multi-select)",
+					formID, i, r.Widget))
 			}
 
 			// Validate create_form reference

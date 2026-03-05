@@ -627,6 +627,173 @@ func TestHandleForm(t *testing.T) {
 			t.Error("expected TKT-001 to be pre-selected in the dependency_of relation")
 		}
 	})
+
+	t.Run("relation widget auto-selects multi-select for unlimited incoming cardinality", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Set MaxIncoming to nil (unlimited) for belongs_to relation
+		rel := app.meta.Relations["belongs_to"]
+		rel.MaxIncoming = nil // unlimited
+		app.meta.Relations["belongs_to"] = rel
+
+		// Add form for component with incoming belongs_to relation
+		app.Cfg.Forms["edit-component-multi"] = Form{
+			EntityType: "component",
+			Mode:       "edit",
+			Fields:     []FormField{{Property: "name"}},
+			Relations: []FormRelation{{
+				Relation:   "belongs_to",
+				Direction:  DirectionIncoming,
+				TargetType: "ticket",
+				Label:      "Tickets",
+			}},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/form/edit-component-multi/CMP-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should render as multi-select (multiple attribute present)
+		if !strings.Contains(body, "multiple") {
+			t.Error("expected multi-select widget for unlimited incoming cardinality")
+		}
+	})
+
+	t.Run("relation widget auto-selects multi-select for unlimited outgoing cardinality", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Set MaxOutgoing to nil (unlimited) for depends_on relation
+		rel := app.meta.Relations["depends_on"]
+		rel.MaxOutgoing = nil // unlimited
+		app.meta.Relations["depends_on"] = rel
+
+		// Add form for ticket with outgoing depends_on relation
+		app.Cfg.Forms["edit-ticket-deps"] = Form{
+			EntityType: "ticket",
+			Mode:       "edit",
+			Fields:     []FormField{{Property: "title"}},
+			Relations: []FormRelation{{
+				Relation:   "depends_on",
+				Direction:  DirectionOutgoing,
+				TargetType: "ticket",
+				Label:      "Dependencies",
+			}},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket-deps/TKT-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should render as multi-select (multiple attribute present)
+		if !strings.Contains(body, "multiple") {
+			t.Error("expected multi-select widget for unlimited outgoing cardinality")
+		}
+	})
+
+	t.Run("relation widget uses single-select when max cardinality is 1", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Set MaxOutgoing to 1 for belongs_to relation
+		one := 1
+		rel := app.meta.Relations["belongs_to"]
+		rel.MaxOutgoing = &one
+		app.meta.Relations["belongs_to"] = rel
+
+		// Add form for ticket with outgoing belongs_to relation
+		app.Cfg.Forms["edit-ticket-component"] = Form{
+			EntityType: "ticket",
+			Mode:       "edit",
+			Fields:     []FormField{{Property: "title"}},
+			Relations: []FormRelation{{
+				Relation:   "belongs_to",
+				Direction:  DirectionOutgoing,
+				TargetType: "component",
+				Label:      "Component",
+			}},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket-component/TKT-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should render as single-select (no multiple attribute)
+		if strings.Contains(body, "multiple") {
+			t.Error("expected single-select widget when max cardinality is 1")
+		}
+	})
+
+	t.Run("explicit widget config overrides auto-detection", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Set MaxOutgoing to nil (unlimited) which would auto-select multi-select
+		rel := app.meta.Relations["depends_on"]
+		rel.MaxOutgoing = nil
+		app.meta.Relations["depends_on"] = rel
+
+		// Add form with explicit widget: select override
+		app.Cfg.Forms["edit-ticket-force-single"] = Form{
+			EntityType: "ticket",
+			Mode:       "edit",
+			Fields:     []FormField{{Property: "title"}},
+			Relations: []FormRelation{{
+				Relation:   "depends_on",
+				Direction:  DirectionOutgoing,
+				TargetType: "ticket",
+				Label:      "Dependencies",
+				Widget:     WidgetSelect, // explicit override
+			}},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket-force-single/TKT-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should render as single-select despite unlimited cardinality
+		if strings.Contains(body, "multiple") {
+			t.Error("expected explicit widget config to override auto-detection")
+		}
+	})
+
+	t.Run("relation widget defaults to single-select when relation not in metamodel", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+
+		// Add form with a relation that doesn't exist in the metamodel
+		app.Cfg.Forms["edit-ticket-unknown-rel"] = Form{
+			EntityType: "ticket",
+			Mode:       "edit",
+			Fields:     []FormField{{Property: "title"}},
+			Relations: []FormRelation{{
+				Relation:   "nonexistent_relation",
+				Direction:  DirectionOutgoing,
+				TargetType: "ticket",
+				Label:      "Unknown",
+			}},
+		}
+
+		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket-unknown-rel/TKT-001", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should default to single-select when relation not found in metamodel
+		if strings.Contains(body, "multiple") {
+			t.Error("expected single-select widget when relation not in metamodel")
+		}
+	})
 }
 
 func TestHandleEntity(t *testing.T) {
