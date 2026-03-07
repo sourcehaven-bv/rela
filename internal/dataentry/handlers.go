@@ -2458,3 +2458,212 @@ func (a *App) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Redirect", appendToastParam("/settings", "Settings saved"))
 	w.WriteHeader(http.StatusOK)
 }
+
+// PropertyHelp holds documentation for a single property.
+type PropertyHelp struct {
+	Name        string
+	Type        string
+	Required    bool
+	Description htmltemplate.HTML
+}
+
+// RelationHelp holds documentation for a single relation.
+type RelationHelp struct {
+	Name        string
+	Label       string
+	TargetType  string // target type for outgoing, source type for incoming
+	Cardinality string
+	Description htmltemplate.HTML
+}
+
+// handleEntityHelp returns HTML fragment with documentation for an entity type.
+// GET /api/help/{entityType}
+func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
+	entityType := strings.TrimPrefix(r.URL.Path, "/api/help/")
+	if entityType == "" {
+		http.Error(w, "entity type required", http.StatusBadRequest)
+		return
+	}
+
+	entDef, ok := a.meta.GetEntityDef(entityType)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Gather property documentation
+	props := make([]PropertyHelp, 0, len(entDef.Properties))
+	for name, prop := range entDef.Properties {
+		ph := PropertyHelp{
+			Name:     name,
+			Type:     prop.Type,
+			Required: prop.Required,
+		}
+		if prop.Description != "" {
+			ph.Description = simpleMarkdownToHTML(prop.Description)
+		}
+		props = append(props, ph)
+	}
+	// Sort properties alphabetically
+	sort.Slice(props, func(i, j int) bool { return props[i].Name < props[j].Name })
+
+	// Gather outgoing relations (where this entity type is in "from")
+	outgoingRels := make([]RelationHelp, 0, len(a.meta.Relations))
+	for name, rel := range a.meta.Relations {
+		if !containsString(rel.From, entityType) {
+			continue
+		}
+		rh := RelationHelp{
+			Name:        name,
+			Label:       rel.Label,
+			TargetType:  strings.Join(rel.To, ", "),
+			Cardinality: formatCardinality(rel.MinOutgoing, rel.MaxOutgoing),
+		}
+		if rel.Description != "" {
+			rh.Description = simpleMarkdownToHTML(rel.Description)
+		}
+		outgoingRels = append(outgoingRels, rh)
+	}
+	sort.Slice(outgoingRels, func(i, j int) bool { return outgoingRels[i].Name < outgoingRels[j].Name })
+
+	// Gather incoming relations (where this entity type is in "to")
+	incomingRels := make([]RelationHelp, 0, len(a.meta.Relations))
+	for name, rel := range a.meta.Relations {
+		if !containsString(rel.To, entityType) {
+			continue
+		}
+		rh := RelationHelp{
+			Name:        name,
+			Label:       rel.Label,
+			TargetType:  strings.Join(rel.From, ", "),
+			Cardinality: formatCardinality(rel.MinIncoming, rel.MaxIncoming),
+		}
+		if rel.Description != "" {
+			rh.Description = simpleMarkdownToHTML(rel.Description)
+		}
+		incomingRels = append(incomingRels, rh)
+	}
+	sort.Slice(incomingRels, func(i, j int) bool { return incomingRels[i].Name < incomingRels[j].Name })
+
+	// Render entity description
+	var entityDesc htmltemplate.HTML
+	if entDef.Description != "" {
+		entityDesc = simpleMarkdownToHTML(entDef.Description)
+	}
+
+	// Build HTML response
+	var sb strings.Builder
+	sb.WriteString(`<div class="help-content">`)
+
+	// Entity description
+	if entityDesc != "" {
+		sb.WriteString(`<div class="help-section help-entity-desc">`)
+		sb.WriteString(string(entityDesc))
+		sb.WriteString(`</div>`)
+	}
+
+	// Properties section
+	if len(props) > 0 {
+		sb.WriteString(`<div class="help-section"><h4>Properties</h4>`)
+		for _, p := range props {
+			sb.WriteString(`<div class="help-item">`)
+			sb.WriteString(`<div class="help-item-header">`)
+			sb.WriteString(`<code>`)
+			sb.WriteString(html.EscapeString(p.Name))
+			sb.WriteString(`</code>`)
+			sb.WriteString(`<span class="help-item-meta">`)
+			sb.WriteString(html.EscapeString(p.Type))
+			if p.Required {
+				sb.WriteString(` <span class="help-required">required</span>`)
+			}
+			sb.WriteString(`</span>`)
+			sb.WriteString(`</div>`)
+			if p.Description != "" {
+				sb.WriteString(`<div class="help-item-desc">`)
+				sb.WriteString(string(p.Description))
+				sb.WriteString(`</div>`)
+			}
+			sb.WriteString(`</div>`)
+		}
+		sb.WriteString(`</div>`)
+	}
+
+	// Outgoing relations section
+	writeRelationSection(&sb, "Outgoing Relations", "Relations from this entity to others", "→", outgoingRels)
+
+	// Incoming relations section
+	writeRelationSection(&sb, "Incoming Relations", "Relations from other entities to this one", "←", incomingRels)
+
+	// No documentation message
+	if entityDesc == "" && len(props) == 0 && len(outgoingRels) == 0 && len(incomingRels) == 0 {
+		sb.WriteString(`<p class="help-empty">No documentation available for this entity type.</p>`)
+	}
+
+	sb.WriteString(`</div>`)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(sb.String()))
+}
+
+// writeRelationSection writes a section of relations to the string builder.
+func writeRelationSection(sb *strings.Builder, title, hint, arrow string, rels []RelationHelp) {
+	if len(rels) == 0 {
+		return
+	}
+	sb.WriteString(`<div class="help-section"><h4>`)
+	sb.WriteString(title)
+	sb.WriteString(`</h4>`)
+	sb.WriteString(`<p class="help-section-hint">`)
+	sb.WriteString(hint)
+	sb.WriteString(`</p>`)
+	for _, r := range rels {
+		sb.WriteString(`<div class="help-item">`)
+		sb.WriteString(`<div class="help-item-header">`)
+		sb.WriteString(`<code>`)
+		sb.WriteString(html.EscapeString(r.Name))
+		sb.WriteString(`</code>`)
+		sb.WriteString(`<span class="help-item-meta">`)
+		sb.WriteString(arrow)
+		sb.WriteString(` `)
+		sb.WriteString(html.EscapeString(r.TargetType))
+		if r.Cardinality != "" {
+			sb.WriteString(` (`)
+			sb.WriteString(html.EscapeString(r.Cardinality))
+			sb.WriteString(`)`)
+		}
+		sb.WriteString(`</span>`)
+		sb.WriteString(`</div>`)
+		if r.Description != "" {
+			sb.WriteString(`<div class="help-item-desc">`)
+			sb.WriteString(string(r.Description))
+			sb.WriteString(`</div>`)
+		}
+		sb.WriteString(`</div>`)
+	}
+	sb.WriteString(`</div>`)
+}
+
+// formatCardinality formats min/max constraints as a human-readable string.
+func formatCardinality(minC, maxC *int) string {
+	if minC == nil && maxC == nil {
+		return ""
+	}
+	minVal := 0
+	if minC != nil {
+		minVal = *minC
+	}
+	if maxC == nil {
+		if minVal == 0 {
+			return ""
+		}
+		return fmt.Sprintf("min %d", minVal)
+	}
+	maxVal := *maxC
+	if minVal == maxVal {
+		return fmt.Sprintf("exactly %d", minVal)
+	}
+	if minVal == 0 {
+		return fmt.Sprintf("max %d", maxVal)
+	}
+	return fmt.Sprintf("%d-%d", minVal, maxVal)
+}

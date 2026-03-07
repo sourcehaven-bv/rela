@@ -1593,6 +1593,45 @@ function submitInlineCreate() {
     .catch(function(e) { alert('Error creating: ' + e); });
 }
 
+// Help modal
+function openHelpModal(entityType) {
+  var modal = document.getElementById('help-modal');
+  var title = document.getElementById('help-modal-title');
+  var body = document.getElementById('help-modal-body');
+  if (!modal || !body) return;
+
+  title.textContent = entityType + ' — Help';
+  body.innerHTML = '<p style="color:var(--text-muted);text-align:center;">Loading...</p>';
+  modal.style.display = 'flex';
+
+  fetch('/api/help/' + encodeURIComponent(entityType))
+    .then(function(r) {
+      if (!r.ok) throw new Error('Not found');
+      return r.text();
+    })
+    .then(function(html) {
+      body.innerHTML = html;
+    })
+    .catch(function() {
+      body.innerHTML = '<p style="color:var(--danger);text-align:center;">Failed to load help.</p>';
+    });
+}
+
+function closeHelpModal() {
+  var modal = document.getElementById('help-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+// Close help modal on Escape key
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    var modal = document.getElementById('help-modal');
+    if (modal && modal.style.display === 'flex') {
+      closeHelpModal();
+    }
+  }
+});
+
 // Side panel toggle (mobile)
 function toggleSidePanel(btn) {
   var chevron = btn.querySelector('.sp-chevron');
