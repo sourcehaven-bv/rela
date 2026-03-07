@@ -482,15 +482,27 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 }
 
 // resolveRelationColumnValues returns display titles for all targets of the given
-// relation type from an entity.
-func (a *App) resolveRelationColumnValues(entityID, relationType string) []string {
-	edges := a.g.OutgoingEdges(entityID)
+// relation type from an entity. Direction can be "incoming" to follow edges pointing
+// to the entity, or "outgoing" (the default) to follow edges from the entity.
+func (a *App) resolveRelationColumnValues(entityID, relationType, direction string) []string {
+	var edges []*model.Relation
+	if direction == "incoming" {
+		edges = a.g.IncomingEdges(entityID)
+	} else {
+		edges = a.g.OutgoingEdges(entityID)
+	}
 	titles := make([]string, 0, len(edges))
 	for _, edge := range edges {
 		if edge.Type != relationType {
 			continue
 		}
-		target, ok := a.g.GetNode(edge.To)
+		var targetID string
+		if direction == "incoming" {
+			targetID = edge.From
+		} else {
+			targetID = edge.To
+		}
+		target, ok := a.g.GetNode(targetID)
 		if !ok {
 			continue
 		}

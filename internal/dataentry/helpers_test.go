@@ -1024,7 +1024,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	app := &App{meta: meta, g: g}
 
 	t.Run("resolves multiple targets", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("ASS-001", "assessmentBy")
+		got := app.resolveRelationColumnValues("ASS-001", "assessmentBy", "")
 		want := []string{"Alice", "Bob"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -1032,7 +1032,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("filters by relation type", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("ASS-001", "otherRel")
+		got := app.resolveRelationColumnValues("ASS-001", "otherRel", "")
 		want := []string{"Alice"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -1040,14 +1040,48 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("returns empty for no matching relations", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("ASS-001", "nonexistent")
+		got := app.resolveRelationColumnValues("ASS-001", "nonexistent", "")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 
 	t.Run("returns empty for unknown entity", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("UNKNOWN", "assessmentBy")
+		got := app.resolveRelationColumnValues("UNKNOWN", "assessmentBy", "")
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty slice", got)
+		}
+	})
+
+	t.Run("direction outgoing explicit", func(t *testing.T) {
+		got := app.resolveRelationColumnValues("ASS-001", "assessmentBy", "outgoing")
+		want := []string{"Alice", "Bob"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("direction incoming returns sources", func(t *testing.T) {
+		// PER-001 has an incoming edge from ASS-001 via assessmentBy
+		// Assessment title is not required, so falls back to ID
+		got := app.resolveRelationColumnValues("PER-001", "assessmentBy", "incoming")
+		want := []string{"ASS-001"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("direction incoming returns multiple sources", func(t *testing.T) {
+		// PER-001 is target of both assessmentBy and otherRel from ASS-001
+		got := app.resolveRelationColumnValues("PER-001", "otherRel", "incoming")
+		want := []string{"ASS-001"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("direction incoming no matches", func(t *testing.T) {
+		got := app.resolveRelationColumnValues("ASS-001", "assessmentBy", "incoming")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}

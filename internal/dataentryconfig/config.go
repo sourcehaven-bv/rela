@@ -124,13 +124,16 @@ type List struct {
 
 // ListColumn defines a column in a list view.
 // A column references either a Property (entity property) or a Relation
-// (outgoing relation type whose target titles are shown comma-separated).
+// (relation type whose target titles are shown comma-separated).
+// For relation columns, Direction controls whether to show outgoing (default)
+// or incoming edges. Use "incoming" to display entities that point to the current row.
 type ListColumn struct {
-	Property string `yaml:"property"`
-	Relation string `yaml:"relation"`
-	Label    string `yaml:"label"`
-	Sortable bool   `yaml:"sortable"`
-	Link     string `yaml:"link"`
+	Property  string `yaml:"property"`
+	Relation  string `yaml:"relation"`
+	Direction string `yaml:"direction"` // "outgoing" (default) or "incoming"
+	Label     string `yaml:"label"`
+	Sortable  bool   `yaml:"sortable"`
+	Link      string `yaml:"link"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
