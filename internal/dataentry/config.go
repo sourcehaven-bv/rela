@@ -28,6 +28,7 @@ const (
 type (
 	Config           = dataentryconfig.Config
 	AppConfig        = dataentryconfig.AppConfig
+	Direction        = dataentryconfig.Direction
 	Form             = dataentryconfig.Form
 	SidePanelConfig  = dataentryconfig.SidePanelConfig
 	FormField        = dataentryconfig.FormField

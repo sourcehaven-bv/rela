@@ -755,7 +755,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		TargetID    string
 		TargetType  string
 		TargetTitle string
-		Direction   string
+		Direction   Direction
 		Properties  []RelPropDisplay
 	}
 	rels := make([]RelDisplay, 0, len(outgoing)+len(incoming))

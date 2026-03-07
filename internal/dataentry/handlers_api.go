@@ -28,7 +28,7 @@ type APIRelation struct {
 	Type        string                 `json:"type"`
 	From        string                 `json:"from"`
 	To          string                 `json:"to"`
-	Direction   string                 `json:"direction"` // "outgoing" or "incoming"
+	Direction   Direction              `json:"direction"` // "outgoing" or "incoming"
 	TargetID    string                 `json:"targetId"`
 	TargetTitle string                 `json:"targetTitle"`
 	TargetType  string                 `json:"targetType"`
@@ -686,7 +686,7 @@ func (a *App) listAllRelations() []APIRelation {
 }
 
 // edgeToAPIRelation converts a graph edge to an APIRelation.
-func (a *App) edgeToAPIRelation(edge *model.Relation, relatedEntity *model.Entity, direction, targetID string) APIRelation {
+func (a *App) edgeToAPIRelation(edge *model.Relation, relatedEntity *model.Entity, direction Direction, targetID string) APIRelation {
 	rel := APIRelation{
 		Type:        edge.Type,
 		From:        edge.From,

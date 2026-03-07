@@ -17,6 +17,7 @@ import (
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -482,11 +483,11 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 }
 
 // resolveRelationColumnValues returns display titles for all targets of the given
-// relation type from an entity. Direction can be "incoming" to follow edges pointing
-// to the entity, or "outgoing" (the default) to follow edges from the entity.
-func (a *App) resolveRelationColumnValues(entityID, relationType, direction string) []string {
+// relation type from an entity. Direction controls whether to follow edges pointing
+// to the entity (incoming) or from the entity (outgoing, the default).
+func (a *App) resolveRelationColumnValues(entityID, relationType string, direction dataentryconfig.Direction) []string {
 	var edges []*model.Relation
-	if direction == "incoming" {
+	if direction.IsIncoming() {
 		edges = a.g.IncomingEdges(entityID)
 	} else {
 		edges = a.g.OutgoingEdges(entityID)
@@ -497,7 +498,7 @@ func (a *App) resolveRelationColumnValues(entityID, relationType, direction stri
 			continue
 		}
 		var targetID string
-		if direction == "incoming" {
+		if direction.IsIncoming() {
 			targetID = edge.From
 		} else {
 			targetID = edge.To

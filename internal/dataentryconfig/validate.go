@@ -82,7 +82,7 @@ var validCommandContexts = map[string]bool{
 }
 
 // Valid relation directions
-var validRelationDirections = map[string]bool{
+var validRelationDirections = map[Direction]bool{
 	"":                true, // default (outgoing)
 	DirectionOutgoing: true,
 	DirectionIncoming: true,

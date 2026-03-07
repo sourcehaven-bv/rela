@@ -5,7 +5,10 @@
 package dataentryconfig
 
 import (
+	"fmt"
 	"net/url"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -25,11 +28,36 @@ const (
 	WidgetDate        = "date"
 )
 
-// Relation direction constants for form relations.
+// Direction represents the edge direction for relation columns and form relations.
+type Direction string
+
+// Relation direction constants.
 const (
-	DirectionIncoming = "incoming"
-	DirectionOutgoing = "outgoing"
+	DirectionIncoming Direction = "incoming"
+	DirectionOutgoing Direction = "outgoing"
 )
+
+// UnmarshalYAML validates the direction value during YAML parsing.
+func (d *Direction) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil {
+		return err
+	}
+	switch s {
+	case "", "outgoing":
+		*d = DirectionOutgoing
+	case "incoming":
+		*d = DirectionIncoming
+	default:
+		return fmt.Errorf("invalid direction %q (must be 'outgoing' or 'incoming')", s)
+	}
+	return nil
+}
+
+// IsIncoming returns true if the direction is incoming.
+func (d Direction) IsIncoming() bool {
+	return d == DirectionIncoming
+}
 
 // Config is the top-level configuration for a data entry application.
 type Config struct {
@@ -87,7 +115,7 @@ type FormField struct {
 // FormRelation defines a relation field in a form.
 type FormRelation struct {
 	Relation     string             `yaml:"relation"`
-	Direction    string             `yaml:"direction"`
+	Direction    Direction          `yaml:"direction"`
 	TargetType   string             `yaml:"target_type"`
 	Label        string             `yaml:"label"`
 	Required     bool               `yaml:"required"`
@@ -128,12 +156,12 @@ type List struct {
 // For relation columns, Direction controls whether to show outgoing (default)
 // or incoming edges. Use "incoming" to display entities that point to the current row.
 type ListColumn struct {
-	Property  string `yaml:"property"`
-	Relation  string `yaml:"relation"`
-	Direction string `yaml:"direction"` // "outgoing" (default) or "incoming"
-	Label     string `yaml:"label"`
-	Sortable  bool   `yaml:"sortable"`
-	Link      string `yaml:"link"`
+	Property  string    `yaml:"property"`
+	Relation  string    `yaml:"relation"`
+	Direction Direction `yaml:"direction"` // "outgoing" (default) or "incoming"
+	Label     string    `yaml:"label"`
+	Sortable  bool      `yaml:"sortable"`
+	Link      string    `yaml:"link"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
