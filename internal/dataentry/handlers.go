@@ -2554,99 +2554,16 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 		entityDesc = simpleMarkdownToHTML(entDef.Description)
 	}
 
-	// Build HTML response
-	var sb strings.Builder
-	sb.WriteString(`<div class="help-content">`)
-
-	// Entity description
-	if entityDesc != "" {
-		sb.WriteString(`<div class="help-section help-entity-desc">`)
-		sb.WriteString(string(entityDesc))
-		sb.WriteString(`</div>`)
+	// Render template
+	data := map[string]interface{}{
+		"EntityDescription": entityDesc,
+		"Properties":        props,
+		"OutgoingRelations": outgoingRels,
+		"IncomingRelations": incomingRels,
 	}
-
-	// Properties section
-	if len(props) > 0 {
-		sb.WriteString(`<div class="help-section"><h4>Properties</h4>`)
-		for _, p := range props {
-			sb.WriteString(`<div class="help-item">`)
-			sb.WriteString(`<div class="help-item-header">`)
-			sb.WriteString(`<code>`)
-			sb.WriteString(html.EscapeString(p.Name))
-			sb.WriteString(`</code>`)
-			sb.WriteString(`<span class="help-item-meta">`)
-			sb.WriteString(html.EscapeString(p.Type))
-			if p.Required {
-				sb.WriteString(` <span class="help-required">required</span>`)
-			}
-			sb.WriteString(`</span>`)
-			sb.WriteString(`</div>`)
-			if p.Description != "" {
-				sb.WriteString(`<div class="help-item-desc">`)
-				sb.WriteString(string(p.Description))
-				sb.WriteString(`</div>`)
-			}
-			sb.WriteString(`</div>`)
-		}
-		sb.WriteString(`</div>`)
-	}
-
-	// Outgoing relations section
-	writeRelationSection(&sb, "Outgoing Relations", "Relations from this entity to others", "→", outgoingRels)
-
-	// Incoming relations section
-	writeRelationSection(&sb, "Incoming Relations", "Relations from other entities to this one", "←", incomingRels)
-
-	// No documentation message
-	if entityDesc == "" && len(props) == 0 && len(outgoingRels) == 0 && len(incomingRels) == 0 {
-		sb.WriteString(`<p class="help-empty">No documentation available for this entity type.</p>`)
-	}
-
-	sb.WriteString(`</div>`)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(sb.String()))
-}
-
-// writeRelationSection writes a section of relations to the string builder.
-func writeRelationSection(sb *strings.Builder, title, hint, arrow string, rels []RelationHelp) {
-	if len(rels) == 0 {
-		return
-	}
-	sb.WriteString(`<div class="help-section"><h4>`)
-	sb.WriteString(title)
-	sb.WriteString(`</h4>`)
-	sb.WriteString(`<p class="help-section-hint">`)
-	sb.WriteString(hint)
-	sb.WriteString(`</p>`)
-	for _, r := range rels {
-		sb.WriteString(`<div class="help-item">`)
-		sb.WriteString(`<div class="help-item-header">`)
-		sb.WriteString(`<code>`)
-		sb.WriteString(html.EscapeString(r.Name))
-		sb.WriteString(`</code>`)
-		if r.Required {
-			sb.WriteString(` <span class="help-required">required</span>`)
-		}
-		sb.WriteString(`<span class="help-item-meta">`)
-		sb.WriteString(arrow)
-		sb.WriteString(` `)
-		sb.WriteString(html.EscapeString(r.TargetType))
-		if r.Cardinality != "" {
-			sb.WriteString(` (`)
-			sb.WriteString(html.EscapeString(r.Cardinality))
-			sb.WriteString(`)`)
-		}
-		sb.WriteString(`</span>`)
-		sb.WriteString(`</div>`)
-		if r.Description != "" {
-			sb.WriteString(`<div class="help-item-desc">`)
-			sb.WriteString(string(r.Description))
-			sb.WriteString(`</div>`)
-		}
-		sb.WriteString(`</div>`)
-	}
-	sb.WriteString(`</div>`)
+	a.tmpl.ExecuteTemplate(w, "help-content", data) //nolint:errcheck // template errors logged by http
 }
 
 // formatCardinality formats min/max constraints as a human-readable string.
