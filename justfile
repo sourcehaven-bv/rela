@@ -142,12 +142,12 @@ lint-fix:
 # Lint markdown files
 lint-md:
     @echo "Linting markdown files..."
-    npx markdownlint-cli2 "**/*.md" "#node_modules"
+    npx markdownlint-cli2 "**/*.md" "#node_modules" "#**/node_modules"
 
 # Lint and fix markdown files
 lint-md-fix:
     @echo "Linting and fixing markdown files..."
-    npx markdownlint-cli2 --fix "**/*.md" "#node_modules"
+    npx markdownlint-cli2 --fix "**/*.md" "#node_modules" "#**/node_modules"
 
 # Format markdown files with prettier
 fmt-md:

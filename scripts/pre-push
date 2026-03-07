@@ -1,21 +1,60 @@
 #!/bin/bash
-# Pre-push hook: verify generated docs are up to date.
+# Pre-push hook: verify generated docs are up to date and rela tickets exist.
 #
-# This runs 'just docs-check' which:
-# 1. Builds rela
-# 2. Regenerates docs from entities via mdcomp
-# 3. Fails if the output differs from what's committed
+# This runs:
+# 1. Docs check if doc sources changed
+# 2. Rela tickets check if code changed (requires bug/feature/ticket entity)
 
 set -e
 
-echo "pre-push: checking docs are up to date..."
+# Read push info from stdin (format: local_ref local_sha remote_ref remote_sha)
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Skip branch deletions
+    if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        continue
+    fi
 
-# Only check if docs-project or templates changed
-DOCS_CHANGED=$(git diff --cached --name-only HEAD@{1}..HEAD 2>/dev/null | grep -E '^(docs-project/|docs/templates/)' || true)
+    # Determine base ref for comparison
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        # New branch - compare against develop
+        BASE_REF="origin/develop"
+    else
+        BASE_REF="$remote_sha"
+    fi
 
-if [ -n "$DOCS_CHANGED" ]; then
-    echo "pre-push: doc sources changed, verifying generated output..."
-    just docs-check
-else
-    echo "pre-push: no doc source changes, skipping docs-check."
-fi
+    # Check if docs changed
+    DOCS_CHANGED=$(git diff --name-only "$BASE_REF"..."$local_sha" 2>/dev/null | grep -E '^(docs-project/|docs/templates/)' || true)
+    if [ -n "$DOCS_CHANGED" ]; then
+        echo "🔍 pre-push: doc sources changed, verifying generated output..."
+        just docs-check
+    fi
+
+    # Check if code changed (excluding tickets directory)
+    CODE_CHANGED=$(git diff --name-only "$BASE_REF"..."$local_sha" 2>/dev/null | grep -vE '^tickets/' | grep -E '\.(go|yaml|yml|md)$' || true)
+
+    if [ -n "$CODE_CHANGED" ]; then
+        # Code changed - verify a ticket/bug/feature entity was added
+        ADDED_ENTITIES=$(git diff --name-only --diff-filter=A "$BASE_REF"..."$local_sha" -- \
+            'tickets/entities/bugs/*.md' \
+            'tickets/entities/features/*.md' \
+            'tickets/entities/tickets/*.md' 2>/dev/null || true)
+
+        if [ -z "$ADDED_ENTITIES" ]; then
+            echo ""
+            echo "❌ pre-push: Code changes require a rela ticket!"
+            echo ""
+            echo "   Create one with:"
+            echo "     rela create bug --project tickets -t 'Title'"
+            echo "     rela create feature --project tickets -t 'Title'"
+            echo "     rela create ticket --project tickets -t 'Title'"
+            echo ""
+            echo "   Or use MCP tools: mcp__rela-issues-and-design-tickets__create_entity"
+            echo ""
+            exit 1
+        fi
+
+        echo "✅ pre-push: Found ticket(s): $(echo "$ADDED_ENTITIES" | xargs basename -a | tr '\n' ' ')"
+    fi
+done
+
+echo "✅ pre-push: All checks passed!"
