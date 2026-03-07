@@ -2508,45 +2508,9 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 	// Sort properties alphabetically
 	sort.Slice(props, func(i, j int) bool { return props[i].Name < props[j].Name })
 
-	// Gather outgoing relations (where this entity type is in "from")
-	outgoingRels := make([]RelationHelp, 0, len(a.meta.Relations))
-	for name, rel := range a.meta.Relations {
-		if !containsString(rel.From, entityType) {
-			continue
-		}
-		rh := RelationHelp{
-			Name:        name,
-			Label:       rel.Label,
-			TargetType:  strings.Join(rel.To, ", "),
-			Cardinality: formatCardinality(rel.MinOutgoing, rel.MaxOutgoing),
-			Required:    rel.MinOutgoing != nil && *rel.MinOutgoing >= 1,
-		}
-		if rel.Description != "" {
-			rh.Description = simpleMarkdownToHTML(rel.Description)
-		}
-		outgoingRels = append(outgoingRels, rh)
-	}
-	sort.Slice(outgoingRels, func(i, j int) bool { return outgoingRels[i].Name < outgoingRels[j].Name })
-
-	// Gather incoming relations (where this entity type is in "to")
-	incomingRels := make([]RelationHelp, 0, len(a.meta.Relations))
-	for name, rel := range a.meta.Relations {
-		if !containsString(rel.To, entityType) {
-			continue
-		}
-		rh := RelationHelp{
-			Name:        name,
-			Label:       rel.Label,
-			TargetType:  strings.Join(rel.From, ", "),
-			Cardinality: formatCardinality(rel.MinIncoming, rel.MaxIncoming),
-			Required:    rel.MinIncoming != nil && *rel.MinIncoming >= 1,
-		}
-		if rel.Description != "" {
-			rh.Description = simpleMarkdownToHTML(rel.Description)
-		}
-		incomingRels = append(incomingRels, rh)
-	}
-	sort.Slice(incomingRels, func(i, j int) bool { return incomingRels[i].Name < incomingRels[j].Name })
+	// Gather outgoing and incoming relations
+	outgoingRels := a.gatherRelations(entityType, true)
+	incomingRels := a.gatherRelations(entityType, false)
 
 	// Render entity description
 	var entityDesc htmltemplate.HTML
@@ -2564,6 +2528,40 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	a.tmpl.ExecuteTemplate(w, "help-content", data) //nolint:errcheck // template errors logged by http
+}
+
+// gatherRelations collects relation documentation for an entity type.
+// If outgoing is true, gathers relations where entityType is in "from";
+// otherwise gathers relations where entityType is in "to".
+func (a *App) gatherRelations(entityType string, outgoing bool) []RelationHelp {
+	rels := make([]RelationHelp, 0, len(a.meta.Relations))
+	for name, rel := range a.meta.Relations {
+		var matchTypes, targetTypes []string
+		var minCard, maxCard *int
+		if outgoing {
+			matchTypes, targetTypes = rel.From, rel.To
+			minCard, maxCard = rel.MinOutgoing, rel.MaxOutgoing
+		} else {
+			matchTypes, targetTypes = rel.To, rel.From
+			minCard, maxCard = rel.MinIncoming, rel.MaxIncoming
+		}
+		if !containsString(matchTypes, entityType) {
+			continue
+		}
+		rh := RelationHelp{
+			Name:        name,
+			Label:       rel.Label,
+			TargetType:  strings.Join(targetTypes, ", "),
+			Cardinality: formatCardinality(minCard, maxCard),
+			Required:    minCard != nil && *minCard >= 1,
+		}
+		if rel.Description != "" {
+			rh.Description = simpleMarkdownToHTML(rel.Description)
+		}
+		rels = append(rels, rh)
+	}
+	sort.Slice(rels, func(i, j int) bool { return rels[i].Name < rels[j].Name })
+	return rels
 }
 
 // formatCardinality formats min/max constraints as a human-readable string.
