@@ -2473,6 +2473,7 @@ type RelationHelp struct {
 	Label       string
 	TargetType  string // target type for outgoing, source type for incoming
 	Cardinality string
+	Required    bool // true if min cardinality >= 1
 	Description htmltemplate.HTML
 }
 
@@ -2518,6 +2519,7 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 			Label:       rel.Label,
 			TargetType:  strings.Join(rel.To, ", "),
 			Cardinality: formatCardinality(rel.MinOutgoing, rel.MaxOutgoing),
+			Required:    rel.MinOutgoing != nil && *rel.MinOutgoing >= 1,
 		}
 		if rel.Description != "" {
 			rh.Description = simpleMarkdownToHTML(rel.Description)
@@ -2537,6 +2539,7 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 			Label:       rel.Label,
 			TargetType:  strings.Join(rel.From, ", "),
 			Cardinality: formatCardinality(rel.MinIncoming, rel.MaxIncoming),
+			Required:    rel.MinIncoming != nil && *rel.MinIncoming >= 1,
 		}
 		if rel.Description != "" {
 			rh.Description = simpleMarkdownToHTML(rel.Description)
@@ -2622,6 +2625,9 @@ func writeRelationSection(sb *strings.Builder, title, hint, arrow string, rels [
 		sb.WriteString(`<code>`)
 		sb.WriteString(html.EscapeString(r.Name))
 		sb.WriteString(`</code>`)
+		if r.Required {
+			sb.WriteString(` <span class="help-required">required</span>`)
+		}
 		sb.WriteString(`<span class="help-item-meta">`)
 		sb.WriteString(arrow)
 		sb.WriteString(` `)
