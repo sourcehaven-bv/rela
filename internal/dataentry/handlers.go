@@ -149,7 +149,7 @@ func (a *App) handleList(w http.ResponseWriter, r *http.Request) {
 				EntityType: e.Type,
 			}
 			if col.Relation != "" {
-				cell.Values = a.resolveRelationColumnValues(e.ID, col.Relation)
+				cell.Values = a.resolveRelationColumnValues(e.ID, col.Relation, col.Direction)
 			} else {
 				// Get property definition from metamodel
 				var propDef metamodel.PropertyDef
@@ -755,7 +755,7 @@ func (a *App) handleEntity(w http.ResponseWriter, r *http.Request) {
 		TargetID    string
 		TargetType  string
 		TargetTitle string
-		Direction   string
+		Direction   Direction
 		Properties  []RelPropDisplay
 	}
 	rels := make([]RelDisplay, 0, len(outgoing)+len(incoming))
@@ -2149,7 +2149,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					var val string
 					var propType string
 					if col.Relation != "" {
-						val = strings.Join(a.resolveRelationColumnValues(e.ID, col.Relation), ", ")
+						val = strings.Join(a.resolveRelationColumnValues(e.ID, col.Relation, col.Direction), ", ")
 					} else {
 						if v := e.Properties[col.Property]; v != nil {
 							val = fmt.Sprintf("%v", v)

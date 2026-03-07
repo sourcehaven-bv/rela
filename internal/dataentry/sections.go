@@ -185,7 +185,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 							Link: a.resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
 						}
 						if col.Relation != "" {
-							cell.Values = a.resolveRelationColumnValues(e.ID, col.Relation)
+							cell.Values = a.resolveRelationColumnValues(e.ID, col.Relation, col.Direction)
 						} else {
 							var pd metamodel.PropertyDef
 							if eDef != nil {

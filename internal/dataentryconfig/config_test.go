@@ -1,6 +1,11 @@
 package dataentryconfig
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
 
 func TestUserDefaultsResolvePropertyDefault(t *testing.T) {
 	ud := &UserDefaults{
@@ -212,6 +217,86 @@ func TestFilterControlCurrentValue(t *testing.T) {
 		query := map[string][]string{"filter_belongs_to": {"category-1"}}
 		if got := fc.CurrentValue(query); got != "category-1" {
 			t.Errorf("expected 'category-1', got %q", got)
+		}
+	})
+}
+
+func TestDirection_UnmarshalYAML(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		want    Direction
+		wantErr string
+	}{
+		{
+			name: "empty defaults to outgoing",
+			yaml: `direction: ""`,
+			want: DirectionOutgoing,
+		},
+		{
+			name: "outgoing",
+			yaml: `direction: outgoing`,
+			want: DirectionOutgoing,
+		},
+		{
+			name: "incoming",
+			yaml: `direction: incoming`,
+			want: DirectionIncoming,
+		},
+		{
+			name:    "invalid direction",
+			yaml:    `direction: both`,
+			wantErr: `invalid direction "both"`,
+		},
+		{
+			name:    "invalid direction sideways",
+			yaml:    `direction: sideways`,
+			wantErr: `invalid direction "sideways"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg struct {
+				Direction Direction `yaml:"direction"`
+			}
+			err := yaml.Unmarshal([]byte(tt.yaml), &cfg)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.Direction != tt.want {
+				t.Errorf("got %q, want %q", cfg.Direction, tt.want)
+			}
+		})
+	}
+}
+
+func TestDirection_IsIncoming(t *testing.T) {
+	t.Run("incoming returns true", func(t *testing.T) {
+		if !DirectionIncoming.IsIncoming() {
+			t.Error("expected true")
+		}
+	})
+
+	t.Run("outgoing returns false", func(t *testing.T) {
+		if DirectionOutgoing.IsIncoming() {
+			t.Error("expected false")
+		}
+	})
+
+	t.Run("empty returns false", func(t *testing.T) {
+		var d Direction
+		if d.IsIncoming() {
+			t.Error("expected false")
 		}
 	})
 }

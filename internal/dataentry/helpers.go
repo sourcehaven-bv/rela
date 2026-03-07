@@ -17,6 +17,7 @@ import (
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -482,15 +483,27 @@ func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string
 }
 
 // resolveRelationColumnValues returns display titles for all targets of the given
-// relation type from an entity.
-func (a *App) resolveRelationColumnValues(entityID, relationType string) []string {
-	edges := a.g.OutgoingEdges(entityID)
+// relation type from an entity. Direction controls whether to follow edges pointing
+// to the entity (incoming) or from the entity (outgoing, the default).
+func (a *App) resolveRelationColumnValues(entityID, relationType string, direction dataentryconfig.Direction) []string {
+	var edges []*model.Relation
+	if direction.IsIncoming() {
+		edges = a.g.IncomingEdges(entityID)
+	} else {
+		edges = a.g.OutgoingEdges(entityID)
+	}
 	titles := make([]string, 0, len(edges))
 	for _, edge := range edges {
 		if edge.Type != relationType {
 			continue
 		}
-		target, ok := a.g.GetNode(edge.To)
+		var targetID string
+		if direction.IsIncoming() {
+			targetID = edge.From
+		} else {
+			targetID = edge.To
+		}
+		target, ok := a.g.GetNode(targetID)
 		if !ok {
 			continue
 		}
