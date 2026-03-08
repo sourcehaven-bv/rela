@@ -406,6 +406,7 @@ relations:
 | `required` | bool   | Must be filled                            |
 
 Widget types are auto-detected from the metamodel property type if not specified:
+
 - `string` → text input
 - `enum`/custom type → dropdown select
 - `boolean` → checkbox
@@ -416,7 +417,7 @@ Widget types are auto-detected from the metamodel property type if not specified
 When a relation type has properties or content defined, the UI displays relations as **cards**
 instead of a simple tag-style picker:
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │ Blocks                                    [+ Add]   │
 ├─────────────────────────────────────────────────────┤
