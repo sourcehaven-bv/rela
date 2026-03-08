@@ -27,6 +27,58 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 )
 
+// ResolvedField represents a form field with all values resolved for rendering.
+// Used by form templates to render property inputs consistently.
+type ResolvedField struct {
+	Name           string              // HTML input name attribute (defaults to Property if empty)
+	Property       string              // Property name (used for IDs)
+	Label          string              // Display label
+	Placeholder    string              // Input placeholder
+	Help           string              // Help text shown below field
+	Required       bool                // Field is required
+	Default        string              // Default value
+	Value          string              // Current value
+	SelectedValues []string            // For multi-select widgets
+	Hidden         bool                // Field is hidden (rendered as hidden input)
+	Widget         string              // Widget type: text, textarea, select, multi-select, checkbox
+	InputType      string              // HTML input type: text, date, number, etc.
+	Values         []string            // Allowed values for select/multi-select
+	Transitions    map[string][]string // Status transitions (for workflow fields)
+	Error          string              // Validation error message
+}
+
+// resolveFieldFromProperty creates a ResolvedField from a metamodel property definition.
+// This provides consistent field rendering for both entity properties and relation properties.
+func resolveFieldFromProperty(
+	propName string,
+	propDef metamodel.PropertyDef,
+	meta *metamodel.Metamodel,
+	value string,
+) ResolvedField {
+	widget := resolveWidget(propDef, meta)
+	values := resolvePropertyValues(propDef, meta)
+
+	inputType := "text"
+	switch propDef.Type {
+	case metamodel.PropertyTypeDate:
+		inputType = "date"
+	case metamodel.PropertyTypeInteger:
+		inputType = "number"
+	}
+
+	return ResolvedField{
+		Property:  propName,
+		Label:     titleCase(propName),
+		Help:      propDef.Description,
+		Required:  propDef.Required,
+		Default:   propDef.Default,
+		Value:     value,
+		Widget:    widget,
+		InputType: inputType,
+		Values:    values,
+	}
+}
+
 // propertyContains checks if a property value contains the given string.
 // Handles string, []string, and []interface{} property types.
 func propertyContains(prop interface{}, value string) bool {

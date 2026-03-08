@@ -1,0 +1,67 @@
+{{/* Reusable template partials */}}
+
+{{/* field-value: renders a field value with badge styling when applicable */}}
+{{/* Expects: .Label, .Value, .PropType */}}
+{{- define "field-value" -}}
+{{ if .Value }}{{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>{{ else }}{{ .Value }}{{ end }}{{ end }}
+{{- end -}}
+
+{{/* field-row: renders a label + value row with badge styling */}}
+{{/* Expects: .Label, .Value, .PropType */}}
+{{- define "field-row" -}}
+{{ if .Value }}<div class="field-row"><span class="field-label">{{ .Label }}:</span> {{ template "field-value" . }}</div>{{ end }}
+{{- end -}}
+
+{{/* card-props: renders relation property values for display on cards */}}
+{{/* Expects: []SectionFieldData (passed directly, not wrapped) */}}
+{{- define "card-props" -}}
+{{ range . }}{{ template "field-value" . }} {{ end }}
+{{- end -}}
+
+{{/* relprops-form: renders relation property fields for the edit modal */}}
+{{- define "relprops-form" -}}
+{{ if and (not .Fields) (not .ShowContent) }}
+<p style="color:var(--text-muted);font-size:13px;">No additional properties to edit.</p>
+{{ else }}
+{{ range .Fields }}
+{{ if eq .Widget "checkbox" }}
+<div class="form-group">
+  <div class="form-row-checkbox">
+    <input type="checkbox" name="{{ .Name }}" value="true" id="rp-{{ .Property }}"{{ if eq .Value "true" }} checked{{ end }}>
+    <label for="rp-{{ .Property }}">{{ .Label }}</label>
+  </div>
+  {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
+</div>
+{{ else if eq .Widget "textarea" }}
+<div class="form-group">
+  <label for="rp-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
+  <textarea name="{{ .Name }}" id="rp-{{ .Property }}" placeholder="{{ .Placeholder }}"{{ if .Required }} required{{ end }}>{{ .Value }}</textarea>
+  {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
+</div>
+{{ else if or (eq .Widget "select") (eq .Widget "multi-select") }}
+<div class="form-group">
+  <label for="rp-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
+  <select name="{{ .Name }}" id="rp-{{ .Property }}"{{ if eq .Widget "multi-select" }} multiple{{ end }}{{ if .Required }} required{{ end }}>
+    {{ if ne .Widget "multi-select" }}<option value="">Select...</option>{{ end }}
+    {{ $val := .Value }}{{ $selectedVals := .SelectedValues }}{{ $isMulti := eq .Widget "multi-select" }}
+    {{ range .Values }}<option value="{{ . }}"{{ if $isMulti }}{{ if contains $selectedVals . }} selected{{ end }}{{ else }}{{ if eq . $val }} selected{{ end }}{{ end }}>{{ . }}</option>{{ end }}
+  </select>
+  {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
+</div>
+{{ else }}
+<div class="form-group">
+  <label for="rp-{{ .Property }}">{{ .Label }}{{ if .Required }}<span class="required">*</span>{{ end }}</label>
+  <input type="{{ .InputType }}" name="{{ .Name }}" id="rp-{{ .Property }}"
+         placeholder="{{ .Placeholder }}" value="{{ .Value }}"{{ if .Required }} required{{ end }}>
+  {{ if .Help }}<p class="help-text">{{ .Help }}</p>{{ end }}
+</div>
+{{ end }}
+{{ end }}
+{{ if .ShowContent }}
+<div class="form-group">
+  <label for="rp-content">Content</label>
+  <textarea name="{{ .ContentName }}" id="rp-content" rows="4">{{ .Content }}</textarea>
+</div>
+{{ end }}
+{{ end }}
+{{- end -}}

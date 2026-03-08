@@ -479,6 +479,13 @@ type PropertyValidationResult struct {
 	Errors     []string `json:"errors"`
 }
 
+// RelationPropertyValidationResult represents validation errors for a relation
+type RelationPropertyValidationResult struct {
+	RelationKey  string   `json:"relation_key"` // from--type--to
+	RelationType string   `json:"relation_type"`
+	Errors       []string `json:"errors"`
+}
+
 // AnalysisResult represents the result of an analysis command for JSON output
 type AnalysisResult struct {
 	Status  string      `json:"status"` // "success", "warning", "error"

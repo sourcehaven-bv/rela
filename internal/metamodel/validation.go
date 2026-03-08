@@ -31,24 +31,15 @@ func (e *ValidationError) Error() string {
 	return e.Message
 }
 
-// ValidateEntity validates an entity against the metamodel.
-// Returns a slice of *ValidationError for structured error handling.
-func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
+// ValidateProperties validates a properties map against a PropertySchema.
+// This is shared between entity and relation validation.
+func (m *Metamodel) ValidateProperties(props map[string]interface{}, schema PropertySchema) []*ValidationError {
 	var errs []*ValidationError
 
-	def, ok := m.GetEntityDef(entity.Type)
-	if !ok {
-		errs = append(errs, &ValidationError{
-			Type:    ValidationErrorUnknownType,
-			Message: fmt.Sprintf("unknown entity type: %s", entity.Type),
-		})
-		return errs
-	}
-
 	// Check required properties
-	for propName, propDef := range def.Properties {
+	for propName, propDef := range schema.PropertyDefs() {
 		if propDef.Required {
-			val, exists := entity.Properties[propName]
+			val, exists := props[propName]
 			if !exists || val == nil || val == "" {
 				errs = append(errs, &ValidationError{
 					Type:     ValidationErrorRequired,
@@ -60,8 +51,8 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
 	}
 
 	// Validate property types
-	for propName, propDef := range def.Properties {
-		val, exists := entity.Properties[propName]
+	for propName, propDef := range schema.PropertyDefs() {
+		val, exists := props[propName]
 		if !exists || val == nil {
 			continue
 		}
@@ -76,6 +67,26 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
 			errs = append(errs, err)
 		}
 	}
+
+	return errs
+}
+
+// ValidateEntity validates an entity against the metamodel.
+// Returns a slice of *ValidationError for structured error handling.
+func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
+	var errs []*ValidationError
+
+	def, ok := m.GetEntityDef(entity.Type)
+	if !ok {
+		errs = append(errs, &ValidationError{
+			Type:    ValidationErrorUnknownType,
+			Message: fmt.Sprintf("unknown entity type: %s", entity.Type),
+		})
+		return errs
+	}
+
+	// Validate properties using shared function
+	errs = append(errs, m.ValidateProperties(entity.Properties, def)...)
 
 	// Validate ID matches prefix
 	prefixes := def.GetIDPrefixes()
@@ -101,6 +112,21 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
 // ValidateRelation validates that a relation is allowed by the metamodel
 func (m *Metamodel) ValidateRelationEntities(relationType string, from, to *model.Entity) error {
 	return m.ValidateRelation(relationType, from.Type, to.Type)
+}
+
+// ValidateRelationProperties validates a relation's properties against the metamodel.
+// Returns nil if the relation type has no properties defined.
+func (m *Metamodel) ValidateRelationProperties(rel *model.Relation) []*ValidationError {
+	def, ok := m.Relations[rel.Type]
+	if !ok {
+		return nil // Unknown type - handled elsewhere
+	}
+
+	if len(def.Properties) == 0 {
+		return nil // No properties defined for this relation type
+	}
+
+	return m.ValidateProperties(rel.Properties, &def)
 }
 
 // ValidatePropertyValue validates a single property value against its definition.

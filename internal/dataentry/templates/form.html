@@ -126,7 +126,41 @@
         {{ if .AllowCreate }}
         <button type="button" class="btn-icon" onclick="openInlineCreate('{{ .CreateForm }}', '{{ .Relation }}', '{{ .TargetLabel }}')" title="Add new {{ .TargetLabel }}">+</button>
         {{ end }}
+        {{ if .AdvancedMode }}<span class="badge badge-info" style="font-size:10px;">props</span>{{ end }}
       </div>
+      {{/* Advanced mode: relation cards with properties/content */}}
+      {{ if .AdvancedMode }}
+      <div class="relation-cards" data-relation="{{ .Relation }}" data-target-type="{{ .TargetType }}">
+        {{ $rel := . }}
+        {{ $selected := .Selected }}
+        {{ range .Options }}
+        {{ if contains $selected .ID }}
+        <div class="relation-card" data-target-id="{{ .ID }}">
+          <div class="relation-card-header">
+            <span class="relation-card-title">{{ .Title }}</span>
+            <span class="relation-card-id">{{ .ID }}</span>
+          </div>
+          {{/* Display existing relation properties from SelectedProps */}}
+          {{ $fields := index $rel.SelectedProps .ID }}
+          {{ if $fields }}
+          <div class="relation-card-props">
+            {{ template "card-props" $fields }}
+          </div>
+          {{ end }}
+          <div class="relation-card-actions">
+            <button type="button" class="btn btn-sm btn-ghost" onclick="editRelationCard(this, '{{ $rel.Relation }}', '{{ .ID }}')" title="Edit relation properties">Edit</button>
+            <button type="button" class="btn btn-sm btn-danger-outline" onclick="removeRelationCard(this, '{{ $rel.Relation }}', '{{ .ID }}')" title="Remove relation">Remove</button>
+          </div>
+          <input type="hidden" name="{{ $rel.Relation }}" value="{{ .ID }}">
+        </div>
+        {{ end }}
+        {{ end }}
+        <button type="button" class="relation-add-btn" onclick="openRelationPicker('{{ .Relation }}', '{{ .TargetType }}', '{{ .TargetLabel }}')" title="Add {{ .TargetLabel }}">
+          <span>+</span> Add {{ .TargetLabel }}
+        </button>
+      </div>
+      {{/* Simple mode: standard select/multi-select */}}
+      {{ else }}
       {{ if eq .Widget "multi-select" }}
       <select name="{{ .Relation }}" id="r-{{ .Relation }}" multiple{{ if .Required }} required{{ end }}>
         {{ $selected := .Selected }}
@@ -158,6 +192,7 @@
         </div>
         {{ end }}
       </div>
+      {{ end }}
       {{ end }}
       <p class="field-meta">{{ .Relation }} &rarr; {{ .TargetType }}</p>
     </div>
@@ -333,6 +368,37 @@
   </div>{{/* close .side-panel-sections */}}
 </aside>
 {{ end }}
+
+{{/* Relation picker modal (advanced mode) */}}
+<div id="rel-picker-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeRelationPicker()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="rel-picker-title">Add Relation</h3>
+      <button class="modal-close" onclick="closeRelationPicker()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="rel-picker-search" class="form-control" placeholder="Search..." oninput="searchRelationCandidates()" style="margin-bottom:12px;">
+      <div id="rel-picker-results" style="max-height:300px;overflow-y:auto;"></div>
+    </div>
+  </div>
+</div>
+
+{{/* Relation edit modal (advanced mode) */}}
+<div id="rel-edit-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeRelationEdit()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="rel-edit-title">Edit Relation</h3>
+      <button class="modal-close" onclick="closeRelationEdit()">&times;</button>
+    </div>
+    <div class="modal-body" id="rel-edit-body">
+      <p style="color:var(--text-muted);">Loading...</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary btn-sm" onclick="closeRelationEdit()">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="saveRelationEdit()">Save</button>
+    </div>
+  </div>
+</div>
 
 <div id="inline-create-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeInlineCreate()">
   <div class="modal">

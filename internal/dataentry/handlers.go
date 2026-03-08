@@ -460,18 +460,21 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve relation fields
 	type ResolvedRelation struct {
-		Relation      string
-		Label         string
-		Required      bool
-		Widget        string
-		TargetType    string
-		TargetLabel   string
-		Options       []struct{ ID, Title string }
-		Selected      []string
-		AllowCreate   bool
-		CreateForm    string
-		Properties    []RelationProperty
-		SelectedProps map[string]map[string]string
+		Relation       string
+		Label          string
+		Required       bool
+		Widget         string
+		TargetType     string
+		TargetLabel    string
+		Options        []struct{ ID, Title string }
+		Selected       []string
+		AllowCreate    bool
+		CreateForm     string
+		Properties     []RelationProperty
+		SelectedProps  map[string][]SectionFieldData    // relation properties for display on cards
+		AdvancedMode   bool                             // true if relation has properties or content in metamodel
+		ContentEnabled bool                             // true if relation supports markdown content
+		PropertyDefs   map[string]metamodel.PropertyDef // property definitions from metamodel
 	}
 	linkRelation := r.URL.Query().Get("link_relation")
 	linkPeer := r.URL.Query().Get("link_peer")
@@ -538,17 +541,30 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Check if relation has advanced features (properties or content in metamodel)
+		advancedMode := false
+		contentEnabled := false
+		var propertyDefs map[string]metamodel.PropertyDef
+		if relDefOK {
+			advancedMode = relDef.HasAdvancedFeatures()
+			contentEnabled = relDef.Content
+			propertyDefs = relDef.Properties
+		}
+
 		rr := ResolvedRelation{
-			Relation:      rel.Relation,
-			Label:         label,
-			Required:      rel.Required,
-			Widget:        widget,
-			TargetType:    targetType,
-			TargetLabel:   targetLabel,
-			AllowCreate:   rel.AllowCreate,
-			CreateForm:    rel.CreateForm,
-			Properties:    rel.Properties,
-			SelectedProps: make(map[string]map[string]string),
+			Relation:       rel.Relation,
+			Label:          label,
+			Required:       rel.Required,
+			Widget:         widget,
+			TargetType:     targetType,
+			TargetLabel:    targetLabel,
+			AllowCreate:    rel.AllowCreate,
+			CreateForm:     rel.CreateForm,
+			Properties:     rel.Properties,
+			SelectedProps:  make(map[string][]SectionFieldData),
+			AdvancedMode:   advancedMode,
+			ContentEnabled: contentEnabled,
+			PropertyDefs:   propertyDefs,
 		}
 
 		targets := a.g.NodesByType(targetType)
@@ -562,13 +578,21 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 					if edge.Type == rel.Relation {
 						rr.Selected = append(rr.Selected, edge.From)
 						if len(rel.Properties) > 0 {
-							props := make(map[string]string)
+							var fields []SectionFieldData
 							for _, rp := range rel.Properties {
 								if v, ok := edge.Properties[rp.Property]; ok {
-									props[rp.Property] = fmt.Sprintf("%v", v)
+									propType := ""
+									if pdef, exists := propertyDefs[rp.Property]; exists {
+										propType = pdef.Type
+									}
+									fields = append(fields, SectionFieldData{
+										Label:    titleCase(rp.Property),
+										Value:    fmt.Sprintf("%v", v),
+										PropType: propType,
+									})
 								}
 							}
-							rr.SelectedProps[edge.From] = props
+							rr.SelectedProps[edge.From] = fields
 						}
 					}
 				}
@@ -577,13 +601,21 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 					if edge.Type == rel.Relation {
 						rr.Selected = append(rr.Selected, edge.To)
 						if len(rel.Properties) > 0 {
-							props := make(map[string]string)
+							var fields []SectionFieldData
 							for _, rp := range rel.Properties {
 								if v, ok := edge.Properties[rp.Property]; ok {
-									props[rp.Property] = fmt.Sprintf("%v", v)
+									propType := ""
+									if pdef, exists := propertyDefs[rp.Property]; exists {
+										propType = pdef.Type
+									}
+									fields = append(fields, SectionFieldData{
+										Label:    titleCase(rp.Property),
+										Value:    fmt.Sprintf("%v", v),
+										PropType: propType,
+									})
 								}
 							}
-							rr.SelectedProps[edge.To] = props
+							rr.SelectedProps[edge.To] = fields
 						}
 					}
 				}
@@ -1043,18 +1075,21 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 
 	// Resolve relation fields (similar to handleForm but using form values)
 	type ResolvedRelation struct {
-		Relation      string
-		Label         string
-		Required      bool
-		Widget        string
-		TargetType    string
-		TargetLabel   string
-		Options       []struct{ ID, Title string }
-		Selected      []string
-		AllowCreate   bool
-		CreateForm    string
-		Properties    []RelationProperty
-		SelectedProps map[string]map[string]string
+		Relation       string
+		Label          string
+		Required       bool
+		Widget         string
+		TargetType     string
+		TargetLabel    string
+		Options        []struct{ ID, Title string }
+		Selected       []string
+		AllowCreate    bool
+		CreateForm     string
+		Properties     []RelationProperty
+		SelectedProps  map[string][]SectionFieldData    // relation properties for display on cards
+		AdvancedMode   bool                             // true if relation has properties or content in metamodel
+		ContentEnabled bool                             // true if relation supports markdown content
+		PropertyDefs   map[string]metamodel.PropertyDef // property definitions from metamodel
 	}
 	linkRelation := r.FormValue("_link_relation")
 	linkPeer := r.FormValue("_link_peer")
@@ -1071,17 +1106,30 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 			targetLabel = targetDef.Label
 		}
 
+		// Check if relation has advanced features (properties or content in metamodel)
+		advancedMode := false
+		contentEnabled := false
+		var propertyDefs map[string]metamodel.PropertyDef
+		if relDef, ok := a.meta.GetRelationDef(rel.Relation); ok {
+			advancedMode = relDef.HasAdvancedFeatures()
+			contentEnabled = relDef.Content
+			propertyDefs = relDef.Properties
+		}
+
 		rr := ResolvedRelation{
-			Relation:      rel.Relation,
-			Label:         rel.Label,
-			Required:      rel.Required,
-			Widget:        WidgetSelect,
-			TargetType:    rel.TargetType,
-			TargetLabel:   targetLabel,
-			AllowCreate:   rel.AllowCreate,
-			CreateForm:    rel.CreateForm,
-			Properties:    rel.Properties,
-			SelectedProps: make(map[string]map[string]string),
+			Relation:       rel.Relation,
+			Label:          rel.Label,
+			Required:       rel.Required,
+			Widget:         WidgetSelect,
+			TargetType:     rel.TargetType,
+			TargetLabel:    targetLabel,
+			AllowCreate:    rel.AllowCreate,
+			CreateForm:     rel.CreateForm,
+			Properties:     rel.Properties,
+			SelectedProps:  make(map[string][]SectionFieldData),
+			AdvancedMode:   advancedMode,
+			ContentEnabled: contentEnabled,
+			PropertyDefs:   propertyDefs,
 		}
 
 		targets := a.g.NodesByType(rel.TargetType)
@@ -1876,6 +1924,144 @@ func (a *App) handleLinkExisting(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"ok": "true"}) //nolint:errcheck // best-effort JSON response
+}
+
+// handleRelationCandidates returns candidate entities for a relation picker (advanced mode).
+func (a *App) handleRelationCandidates(w http.ResponseWriter, r *http.Request) {
+	entityType := r.URL.Query().Get("type")
+	q := strings.ToLower(r.URL.Query().Get("q"))
+	excludeStr := r.URL.Query().Get("exclude")
+
+	if entityType == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing entity type"}) //nolint:errcheck // best-effort JSON response
+		return
+	}
+
+	// Parse excluded IDs
+	excluded := map[string]bool{}
+	if excludeStr != "" {
+		for _, id := range strings.Split(excludeStr, ",") {
+			excluded[strings.TrimSpace(id)] = true
+		}
+	}
+
+	type candidate struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	nodes := a.g.NodesByType(entityType)
+	candidates := make([]candidate, 0, len(nodes))
+	for _, e := range nodes {
+		if excluded[e.ID] {
+			continue
+		}
+		title := a.entityDisplayTitle(e)
+		if q != "" && !strings.Contains(strings.ToLower(title), q) && !strings.Contains(strings.ToLower(e.ID), q) {
+			continue
+		}
+		candidates = append(candidates, candidate{ID: e.ID, Title: title})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(candidates) //nolint:errcheck // best-effort JSON response
+}
+
+// handleRelationPropsForm returns HTML form fields for editing relation properties (advanced mode).
+func (a *App) handleRelationPropsForm(w http.ResponseWriter, r *http.Request) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	relation := r.URL.Query().Get("relation")
+	targetID := r.URL.Query().Get("target")
+	formID := r.URL.Query().Get("form_id")
+
+	relDef, ok := a.meta.GetRelationDef(relation)
+	if !ok {
+		http.Error(w, "Unknown relation type", http.StatusBadRequest)
+		return
+	}
+
+	// Get current property values if this is an existing relation
+	// (For now we just render empty fields, values will be populated via JS)
+	_ = targetID
+	_ = formID
+
+	// Build resolved fields from relation properties
+	fields := make([]ResolvedField, 0, len(relDef.Properties))
+	for propName, propDef := range relDef.Properties {
+		field := resolveFieldFromProperty(propName, propDef, a.meta, "")
+		field.Name = fmt.Sprintf("_relprop_%s__%s", relation, propName)
+		fields = append(fields, field)
+	}
+
+	// Sort fields by property name for consistent ordering
+	sort.Slice(fields, func(i, j int) bool {
+		return fields[i].Property < fields[j].Property
+	})
+
+	data := struct {
+		Fields      []ResolvedField
+		ShowContent bool
+		ContentName string
+		Content     string
+	}{
+		Fields:      fields,
+		ShowContent: relDef.Content,
+		ContentName: fmt.Sprintf("_relprop_%s__content", relation),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := a.tmpl.ExecuteTemplate(w, "relprops-form", data); err != nil {
+		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleRelationPropsDisplay renders relation property values for display on cards.
+// GET /api/relation-props-display?relation=<relType>&<propName>=<value>&...
+func (a *App) handleRelationPropsDisplay(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	relation := r.URL.Query().Get("relation")
+	if relation == "" {
+		http.Error(w, "Missing relation parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Get relation definition to find property types
+	relDef, ok := a.meta.GetRelationDef(relation)
+	if !ok {
+		http.Error(w, "Unknown relation type", http.StatusBadRequest)
+		return
+	}
+
+	// Collect fields from query params using relation property definitions
+	var fields []SectionFieldData
+	for propName, propDef := range relDef.Properties {
+		val := r.URL.Query().Get(propName)
+		if val != "" {
+			fields = append(fields, SectionFieldData{
+				Label:    titleCase(propName),
+				Value:    val,
+				PropType: propDef.Type,
+			})
+		}
+	}
+	// Sort fields by label for consistent ordering
+	sort.Slice(fields, func(i, j int) bool {
+		return fields[i].Label < fields[j].Label
+	})
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := a.tmpl.ExecuteTemplate(w, "card-props", fields); err != nil {
+		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {

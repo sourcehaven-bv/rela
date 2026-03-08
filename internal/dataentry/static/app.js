@@ -1632,6 +1632,215 @@ document.addEventListener('keydown', function(e) {
   }
 });
 
+// --- Relation cards (advanced mode) ---
+var _relPickerState = { relation: '', targetType: '', targetLabel: '', cardsContainer: null };
+var _relEditState = { relation: '', targetID: '', card: null };
+
+function openRelationPicker(relation, targetType, targetLabel) {
+  _relPickerState.relation = relation;
+  _relPickerState.targetType = targetType;
+  _relPickerState.targetLabel = targetLabel;
+  _relPickerState.cardsContainer = document.querySelector('.relation-cards[data-relation="' + relation + '"]');
+
+  document.getElementById('rel-picker-title').textContent = 'Add ' + targetLabel;
+  document.getElementById('rel-picker-search').value = '';
+  document.getElementById('rel-picker-results').innerHTML = '<p style="color:var(--text-muted);text-align:center;">Loading...</p>';
+  document.getElementById('rel-picker-modal').style.display = 'flex';
+  searchRelationCandidates();
+  setTimeout(function() { document.getElementById('rel-picker-search').focus(); }, 100);
+}
+
+function closeRelationPicker() {
+  document.getElementById('rel-picker-modal').style.display = 'none';
+  document.getElementById('rel-picker-results').innerHTML = '';
+}
+
+var _relPickerDebounce = null;
+function searchRelationCandidates() {
+  clearTimeout(_relPickerDebounce);
+  _relPickerDebounce = setTimeout(function() {
+    var q = document.getElementById('rel-picker-search').value;
+    // Get already selected IDs to exclude
+    var existing = [];
+    if (_relPickerState.cardsContainer) {
+      _relPickerState.cardsContainer.querySelectorAll('.relation-card').forEach(function(card) {
+        existing.push(card.getAttribute('data-target-id'));
+      });
+    }
+    var url = '/api/relation-candidates?type=' + encodeURIComponent(_relPickerState.targetType) +
+      '&q=' + encodeURIComponent(q) +
+      '&exclude=' + encodeURIComponent(existing.join(','));
+    fetch(url)
+      .then(function(r) { return r.json(); })
+      .then(function(candidates) {
+        var container = document.getElementById('rel-picker-results');
+        if (!candidates || candidates.length === 0) {
+          container.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:16px 0;">No candidates found</p>';
+          return;
+        }
+        var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
+        candidates.forEach(function(c) {
+          html += '<div class="rel-picker-item" onclick="selectRelationCandidate(\'' + _escRelAttr(c.id) + '\', \'' + _escRelAttr(c.title) + '\')">' +
+            '<div>' +
+            '<div style="font-weight:500;font-size:14px;">' + _escRelHtml(c.title) + '</div>' +
+            '<div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">' + _escRelHtml(c.id) + '</div>' +
+            '</div>' +
+            '<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();selectRelationCandidate(\'' + _escRelAttr(c.id) + '\', \'' + _escRelAttr(c.title) + '\')">Add</button>' +
+            '</div>';
+        });
+        html += '</div>';
+        container.innerHTML = html;
+      })
+      .catch(function() {
+        document.getElementById('rel-picker-results').innerHTML = '<p style="color:var(--danger);text-align:center;">Failed to load candidates.</p>';
+      });
+  }, 200);
+}
+
+function selectRelationCandidate(id, title) {
+  if (!_relPickerState.cardsContainer) return;
+  // Create a new card
+  var card = document.createElement('div');
+  card.className = 'relation-card';
+  card.setAttribute('data-target-id', id);
+  card.innerHTML =
+    '<div class="relation-card-header">' +
+      '<span class="relation-card-title">' + _escRelHtml(title) + '</span>' +
+      '<span class="relation-card-id">' + _escRelHtml(id) + '</span>' +
+    '</div>' +
+    '<div class="relation-card-actions">' +
+      '<button type="button" class="btn btn-sm btn-ghost" onclick="editRelationCard(this, \'' + _escRelAttr(_relPickerState.relation) + '\', \'' + _escRelAttr(id) + '\')" title="Edit relation properties">Edit</button>' +
+      '<button type="button" class="btn btn-sm btn-danger-outline" onclick="removeRelationCard(this, \'' + _escRelAttr(_relPickerState.relation) + '\', \'' + _escRelAttr(id) + '\')" title="Remove relation">Remove</button>' +
+    '</div>' +
+    '<input type="hidden" name="' + _escRelAttr(_relPickerState.relation) + '" value="' + _escRelAttr(id) + '">';
+  // Insert before the add button
+  var addBtn = _relPickerState.cardsContainer.querySelector('.relation-add-btn');
+  _relPickerState.cardsContainer.insertBefore(card, addBtn);
+  closeRelationPicker();
+}
+
+function removeRelationCard(btn, relation, targetID) {
+  var card = btn.closest('.relation-card');
+  if (card) {
+    card.remove();
+  }
+}
+
+function editRelationCard(btn, relation, targetID) {
+  var card = btn.closest('.relation-card');
+  _relEditState.relation = relation;
+  _relEditState.targetID = targetID;
+  _relEditState.card = card;
+
+  // Get the relation definition to build the form
+  var cardsContainer = card.closest('.relation-cards');
+  var targetType = cardsContainer ? cardsContainer.getAttribute('data-target-type') : '';
+
+  // Fetch relation properties schema and current values
+  var formID = document.querySelector('input[name="_form_id"]');
+  var url = '/api/relation-props-form?relation=' + encodeURIComponent(relation) +
+    '&target=' + encodeURIComponent(targetID) +
+    '&form_id=' + encodeURIComponent(formID ? formID.value : '');
+
+  document.getElementById('rel-edit-title').textContent = 'Edit Relation: ' + targetID;
+  document.getElementById('rel-edit-body').innerHTML = '<p style="color:var(--text-muted);">Loading...</p>';
+  document.getElementById('rel-edit-modal').style.display = 'flex';
+
+  fetch(url)
+    .then(function(r) { return r.text(); })
+    .then(function(html) {
+      var body = document.getElementById('rel-edit-body');
+      body.innerHTML = html;
+      // Initialize SlimSelect for any select elements in the modal
+      enhanceSelects(body);
+    })
+    .catch(function() {
+      document.getElementById('rel-edit-body').innerHTML = '<p style="color:var(--danger);">Failed to load form.</p>';
+    });
+}
+
+function closeRelationEdit() {
+  document.getElementById('rel-edit-modal').style.display = 'none';
+  document.getElementById('rel-edit-body').innerHTML = '';
+}
+
+function saveRelationEdit() {
+  var body = document.getElementById('rel-edit-body');
+  var inputs = body.querySelectorAll('input, textarea, select');
+  var props = {};
+  inputs.forEach(function(inp) {
+    if (inp.name && inp.name.indexOf('_relprop_') === 0) {
+      // Extract property name from _relprop_relation__property format
+      var parts = inp.name.split('__');
+      if (parts.length === 2) {
+        var propName = parts[1];
+        if (inp.type === 'checkbox') {
+          props[propName] = inp.checked ? 'true' : '';
+        } else {
+          props[propName] = inp.value;
+        }
+      }
+    }
+  });
+
+  // Update the card's props display via server-rendered HTML
+  if (_relEditState.card) {
+    var hasProps = Object.keys(props).some(function(k) { return props[k]; });
+    if (hasProps) {
+      // Fetch server-rendered props HTML
+      var url = '/api/relation-props-display?relation=' + encodeURIComponent(_relEditState.relation);
+      for (var key in props) {
+        if (props[key]) {
+          url += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(props[key]);
+        }
+      }
+      var card = _relEditState.card;
+      fetch(url)
+        .then(function(r) {
+          if (!r.ok) throw new Error('Server error');
+          return r.text();
+        })
+        .then(function(html) {
+          var propsEl = card.querySelector('.relation-card-props');
+          if (!propsEl) {
+            propsEl = document.createElement('div');
+            propsEl.className = 'relation-card-props';
+            // insertBefore(node, null) appends if actionsEl doesn't exist
+            var actionsEl = card.querySelector('.relation-card-actions');
+            card.insertBefore(propsEl, actionsEl);
+          }
+          propsEl.innerHTML = html;
+        })
+        .catch(function() {
+          console.error('Failed to update relation properties display');
+        });
+    } else {
+      // No props - remove the props div
+      var propsEl = _relEditState.card.querySelector('.relation-card-props');
+      if (propsEl) propsEl.remove();
+    }
+
+    // Store props as hidden inputs on the card
+    // Remove old prop inputs
+    _relEditState.card.querySelectorAll('input[name^="_relprop_"]').forEach(function(inp) { inp.remove(); });
+    // Add new ones
+    for (var key in props) {
+      if (props[key]) {
+        var inp = document.createElement('input');
+        inp.type = 'hidden';
+        inp.name = '_relprop_' + _relEditState.relation + '__' + _relEditState.targetID + '__' + key;
+        inp.value = props[key];
+        _relEditState.card.appendChild(inp);
+      }
+    }
+  }
+
+  closeRelationEdit();
+}
+
+function _escRelHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function _escRelAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
 // Side panel toggle (mobile)
 function toggleSidePanel(btn) {
   var chevron = btn.querySelector('.sp-chevron');

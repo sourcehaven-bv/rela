@@ -1886,3 +1886,138 @@ func TestHandleUpdateWithValidationErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleRelationPropsDisplay(t *testing.T) {
+	t.Run("returns 400 for missing relation parameter", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet, "/api/relation-props-display", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleRelationPropsDisplay(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("returns 400 for unknown relation type", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet, "/api/relation-props-display?relation=unknown_type", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleRelationPropsDisplay(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("returns 405 for non-GET method", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodPost, "/api/relation-props-display?relation=depends_on", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleRelationPropsDisplay(w, r)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("expected 405, got %d", w.Code)
+		}
+	})
+
+	t.Run("returns empty HTML for relation without properties", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet, "/api/relation-props-display?relation=depends_on", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleRelationPropsDisplay(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		// depends_on has no properties, so response should be minimal
+		if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("expected text/html content-type, got %q", ct)
+		}
+	})
+
+	t.Run("returns badge HTML for relation with properties", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// Add a relation with properties
+		app.meta.Relations["requires_skill"] = metamodel.RelationDef{
+			Label: "requires skill",
+			From:  []string{"ticket"},
+			To:    []string{"component"},
+			Properties: map[string]metamodel.PropertyDef{
+				"level": {Type: "status_type"}, // Uses existing status_type
+			},
+		}
+
+		r := httptest.NewRequest(
+			http.MethodGet,
+			"/api/relation-props-display?relation=requires_skill&level=open",
+			http.NoBody,
+		)
+		w := httptest.NewRecorder()
+		app.handleRelationPropsDisplay(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should contain badge class for styled enum
+		if !strings.Contains(body, "badge") {
+			t.Errorf("expected badge class in response, got: %s", body)
+		}
+	})
+}
+
+func TestHandleRelationPropsForm(t *testing.T) {
+	t.Run("returns 400 for unknown relation type", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(http.MethodGet, "/api/relation-props-form?relation=unknown_type", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleRelationPropsForm(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("returns form fields for relation with properties", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// Add a relation with properties
+		app.meta.Relations["requires_skill"] = metamodel.RelationDef{
+			Label: "requires skill",
+			From:  []string{"ticket"},
+			To:    []string{"component"},
+			Properties: map[string]metamodel.PropertyDef{
+				"level": {Type: "status_type"},
+			},
+		}
+
+		r := httptest.NewRequest(
+			http.MethodGet,
+			"/api/relation-props-form?relation=requires_skill&target=CMP-001&form_id=test",
+			http.NoBody,
+		)
+		w := httptest.NewRecorder()
+		app.handleRelationPropsForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should contain form elements
+		if !strings.Contains(body, "select") && !strings.Contains(body, "input") {
+			t.Errorf("expected form elements in response, got: %s", body)
+		}
+	})
+
+	t.Run("returns message for relation without properties", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		r := httptest.NewRequest(
+			http.MethodGet,
+			"/api/relation-props-form?relation=depends_on&target=TKT-002&form_id=test",
+			http.NoBody,
+		)
+		w := httptest.NewRecorder()
+		app.handleRelationPropsForm(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		// Should say no properties to edit
+		if !strings.Contains(body, "No additional properties") {
+			t.Errorf("expected 'No additional properties' message, got: %s", body)
+		}
+	})
+}

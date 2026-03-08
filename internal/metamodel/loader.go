@@ -144,6 +144,7 @@ func validate(m *Metamodel) error {
 
 	validationErrors = append(validationErrors, validateEntitySemantics(m)...)
 	validationErrors = append(validationErrors, validateRelationReferences(m)...)
+	validationErrors = append(validationErrors, validateRelationProperties(m)...)
 
 	if len(validationErrors) > 0 {
 		return &SchemaValidationError{Errors: validationErrors}
@@ -277,6 +278,61 @@ func validateRelationReferences(m *Metamodel) []string {
 			if _, ok := m.Entities[toType]; !ok {
 				errs = append(errs, fmt.Sprintf(
 					"relation %q: references unknown entity type %q in 'to'", name, toType))
+			}
+		}
+	}
+
+	return errs
+}
+
+// validateRelationProperties validates property definitions on relation types.
+// Reserved property names for relations are: from, relation, to (used in YAML frontmatter).
+func validateRelationProperties(m *Metamodel) []string {
+	var errs []string
+
+	// Reserved property names for relations
+	reservedRelProps := map[string]bool{
+		"from":     true,
+		"relation": true,
+		"to":       true,
+	}
+
+	relNames := sortedKeys(m.Relations)
+	for _, name := range relNames {
+		rel := m.Relations[name]
+
+		for propName, propDef := range rel.Properties {
+			// Check for reserved property names
+			if reservedRelProps[propName] {
+				errs = append(errs, fmt.Sprintf(
+					"relation %q: property %q is reserved and cannot be used", name, propName))
+				continue
+			}
+
+			// Check property type is specified
+			if propDef.Type == "" {
+				errs = append(errs, fmt.Sprintf(
+					"relation %q: property %q has no type specified", name, propName))
+				continue
+			}
+
+			// Check property type is known
+			if !isKnownPropertyType(propDef.Type, m) {
+				if propDef.Type == "number" || propDef.Type == "float" {
+					errs = append(errs, fmt.Sprintf(
+						"relation %q: property %q has type %q which is not supported; use \"integer\" instead",
+						name, propName, propDef.Type))
+				} else {
+					errs = append(errs, fmt.Sprintf(
+						"relation %q: property %q has unknown type %q (not a built-in type and not defined in 'types')",
+						name, propName, propDef.Type))
+				}
+			}
+
+			// Check enum has values
+			if propDef.Type == PropertyTypeEnum && len(propDef.Values) == 0 {
+				errs = append(errs, fmt.Sprintf(
+					"relation %q: property %q is type \"enum\" but has no 'values' list", name, propName))
 			}
 		}
 	}
