@@ -379,6 +379,51 @@ relations:
 | `widget`   | string | Input widget (`text`, `textarea`) |
 | `required` | bool   | Must be filled                    |
 
+### Help Modal
+
+Every form displays a help icon (?) next to the title. Clicking it opens a modal with
+documentation for the entity type, pulled from the metamodel:
+
+- **Entity description**: The `description` field from the entity definition (supports markdown)
+- **Properties**: All properties with their types and descriptions
+- **Outgoing relations**: Relations from this entity to others, with cardinality constraints
+- **Incoming relations**: Relations from other entities to this one, with cardinality constraints
+
+Relations with minimum cardinality >= 1 are marked as "required" in the help modal, indicating
+that at least one relation of that type must be created.
+
+To populate the help modal, add descriptions to your metamodel:
+
+```yaml
+entities:
+  ticket:
+    label: Ticket
+    description: |
+      A ticket represents a unit of work to be completed.
+
+      Use tickets for:
+      - Bug reports
+      - Feature requests
+      - Tasks and chores
+    properties:
+      title:
+        type: string
+        required: true
+        description: "Brief summary of the ticket"
+      priority:
+        type: priority
+        description: "How urgently this ticket needs attention"
+
+relations:
+  blocks:
+    label: blocks
+    description: "Indicates this ticket must be resolved before another can proceed"
+    from: [ticket]
+    to: [ticket]
+    min_outgoing: 0
+    max_outgoing: 10
+```
+
 ## Lists
 
 Lists display entities in a sortable, filterable table with optional create/edit actions.

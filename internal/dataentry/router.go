@@ -39,6 +39,7 @@ func (a *App) NewRouter() http.Handler {
 	inner.HandleFunc("/api/toggle-checkbox", a.handleToggleCheckbox)
 	inner.HandleFunc("/api/inline-create", a.handleInlineCreate)
 	inner.HandleFunc("/api/inline-form/", a.handleInlineForm)
+	inner.HandleFunc("/api/help/", a.handleEntityHelp)
 	inner.HandleFunc("/api/link-candidates", a.handleLinkCandidates)
 	inner.HandleFunc("/api/link-existing", a.handleLinkExisting)
 	inner.HandleFunc("/graph", a.handleGraph)

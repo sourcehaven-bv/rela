@@ -634,3 +634,28 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
 .analyze-section thead th { padding: 8px 16px; font-size: 11px; }
 .analyze-section tbody td { padding: 8px 16px; vertical-align: top; }
 .analyze-section-ok { padding: 16px; color: #166534; font-size: 13px; font-weight: 500; border-top: 1px solid var(--border); }
+
+/* Help modal and content */
+.btn-help { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); font-size: 13px; font-weight: 600; cursor: pointer; margin-left: 8px; vertical-align: middle; transition: all 0.15s; }
+.btn-help:hover { background: var(--primary-light); border-color: var(--primary); color: var(--primary); }
+.modal-help { width: 560px; max-height: 80vh; }
+.help-content { font-size: 14px; line-height: 1.6; }
+.help-content p { margin: 0 0 12px; }
+.help-content ul, .help-content ol { margin: 0 0 12px; padding-left: 20px; }
+.help-content li { margin-bottom: 4px; }
+.help-content code { background: var(--bg); padding: 2px 6px; border-radius: 4px; font-size: 13px; font-family: var(--font-mono); }
+.help-content h2 { font-size: 16px; font-weight: 600; margin: 16px 0 8px; }
+.help-content h3 { font-size: 14px; font-weight: 600; margin: 12px 0 6px; }
+.help-entity-desc { padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.help-section { margin-bottom: 20px; }
+.help-section h4 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 0 0 12px; }
+.help-section-hint { font-size: 12px; color: var(--text-muted); margin: -8px 0 12px; }
+.help-item { padding: 10px 12px; background: var(--bg); border-radius: 6px; margin-bottom: 8px; }
+.help-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.help-item-header code { background: var(--bg-card); font-weight: 600; }
+.help-item-meta { font-size: 12px; color: var(--text-muted); }
+.help-required { background: var(--danger-light); color: var(--danger); padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
+.help-item-desc { font-size: 13px; color: var(--text); }
+.help-item-desc p { margin: 0; }
+.help-item-desc p + p { margin-top: 8px; }
+.help-empty { text-align: center; color: var(--text-muted); padding: 24px 0; }

@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"errors"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -136,16 +137,18 @@ func testGraph() *graph.Graph {
 	return g
 }
 
-// testAppInstance creates a minimal App without templates for testing app-level methods.
+// testAppInstance creates a minimal App with templates for testing app-level methods.
 func testAppInstance() *App {
 	cfg := testConfig()
 	meta := testMeta()
 	g := testGraph()
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
+	tmpl, _ := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
 	return &App{
 		Cfg:         cfg,
 		meta:        meta,
 		g:           g,
+		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 	}

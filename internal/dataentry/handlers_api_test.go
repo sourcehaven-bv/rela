@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -285,3 +286,81 @@ func TestHandleAPIRelationsCRUD_MethodNotAllowed(t *testing.T) {
 		t.Errorf("expected 405, got %d", w.Code)
 	}
 }
+
+func TestHandleEntityHelp(t *testing.T) {
+	app := testAppInstance()
+
+	t.Run("valid entity type", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/api/help/ticket", http.NoBody)
+		app.handleEntityHelp(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "help-content") {
+			t.Error("expected help-content class in response")
+		}
+		// Should contain properties section
+		if !strings.Contains(body, "Properties") {
+			t.Error("expected Properties section in response")
+		}
+		// Should contain title property (required)
+		if !strings.Contains(body, "title") {
+			t.Error("expected title property in response")
+		}
+		// Should contain outgoing relations
+		if !strings.Contains(body, "Outgoing Relations") {
+			t.Error("expected Outgoing Relations section in response")
+		}
+	})
+
+	t.Run("entity not found", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/api/help/nonexistent", http.NoBody)
+		app.handleEntityHelp(w, r)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", w.Code)
+		}
+	})
+
+	t.Run("missing entity type", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/api/help/", http.NoBody)
+		app.handleEntityHelp(w, r)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+}
+
+func TestFormatCardinality(t *testing.T) {
+	tests := []struct {
+		name     string
+		min, max *int
+		want     string
+	}{
+		{"nil both", nil, nil, ""},
+		{"min only zero", intPtr(0), nil, ""},
+		{"min only nonzero", intPtr(1), nil, "min 1"},
+		{"max only", nil, intPtr(5), "max 5"},
+		{"exact", intPtr(3), intPtr(3), "exactly 3"},
+		{"range", intPtr(1), intPtr(5), "1-5"},
+		{"zero to max", intPtr(0), intPtr(3), "max 3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatCardinality(tt.min, tt.max)
+			if got != tt.want {
+				t.Errorf("formatCardinality(%v, %v) = %q, want %q", tt.min, tt.max, got, tt.want)
+			}
+		})
+	}
+}
+
+func intPtr(i int) *int { return &i }

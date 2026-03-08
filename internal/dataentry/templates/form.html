@@ -19,7 +19,9 @@
 {{ if .SidePanelSections }}<div class="form-column">{{ end }}
 <div class="page-header">
   <div>
-    <h2>{{ .Form.Title }}{{ if .EntityID }} — {{ .EntityID }}{{ end }}</h2>
+    <h2>{{ .Form.Title }}{{ if .EntityID }} — {{ .EntityID }}{{ end }}
+      <button type="button" class="btn-help" onclick="openHelpModal('{{ .EntityType }}')" title="Help for {{ .Form.Title }}">?</button>
+    </h2>
     {{ if .Form.Description }}<p>{{ .Form.Description }}</p>{{ end }}
   </div>
   <a href="{{ .BackURL }}" class="btn btn-secondary btn-sm"
@@ -344,6 +346,18 @@
     <div class="modal-footer">
       <button class="btn btn-secondary btn-sm" onclick="closeInlineCreate()">Cancel</button>
       <button class="btn btn-primary btn-sm" onclick="submitInlineCreate()">Create</button>
+    </div>
+  </div>
+</div>
+
+<div id="help-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeHelpModal()">
+  <div class="modal modal-help">
+    <div class="modal-header">
+      <h3 id="help-modal-title">Help</h3>
+      <button class="modal-close" onclick="closeHelpModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="help-modal-body">
+      <p style="color:var(--text-muted);">Loading...</p>
     </div>
   </div>
 </div>

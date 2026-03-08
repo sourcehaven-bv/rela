@@ -71,7 +71,8 @@ type CustomType struct {
 type EntityDef struct {
 	Label       string                 `yaml:"label"`
 	LabelPlural string                 `yaml:"label_plural,omitempty"`
-	Plural      string                 `yaml:"plural,omitempty"` // Used for directory names (e.g., "policies" for "policy")
+	Description string                 `yaml:"description,omitempty"` // Documentation explaining intent/usage
+	Plural      string                 `yaml:"plural,omitempty"`      // Used for directory names (e.g., "policies" for "policy")
 	Aliases     []string               `yaml:"aliases,omitempty"`
 	IDType      string                 `yaml:"id_type,omitempty"`     // "auto" (default) or "manual"
 	IDPrefix    string                 `yaml:"id_prefix,omitempty"`   // Single ID prefix (sugar for single-element id_prefixes)

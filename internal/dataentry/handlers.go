@@ -2458,3 +2458,133 @@ func (a *App) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Redirect", appendToastParam("/settings", "Settings saved"))
 	w.WriteHeader(http.StatusOK)
 }
+
+// PropertyHelp holds documentation for a single property.
+type PropertyHelp struct {
+	Name        string
+	Type        string
+	Required    bool
+	Description htmltemplate.HTML
+}
+
+// RelationHelp holds documentation for a single relation.
+type RelationHelp struct {
+	Name        string
+	Label       string
+	TargetType  string // target type for outgoing, source type for incoming
+	Cardinality string
+	Required    bool // true if min cardinality >= 1
+	Description htmltemplate.HTML
+}
+
+// handleEntityHelp returns HTML fragment with documentation for an entity type.
+// GET /api/help/{entityType}
+func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
+	entityType := strings.TrimPrefix(r.URL.Path, "/api/help/")
+	if entityType == "" {
+		http.Error(w, "entity type required", http.StatusBadRequest)
+		return
+	}
+
+	entDef, ok := a.meta.GetEntityDef(entityType)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Gather property documentation
+	props := make([]PropertyHelp, 0, len(entDef.Properties))
+	for name, prop := range entDef.Properties {
+		ph := PropertyHelp{
+			Name:     name,
+			Type:     prop.Type,
+			Required: prop.Required,
+		}
+		if prop.Description != "" {
+			ph.Description = simpleMarkdownToHTML(prop.Description)
+		}
+		props = append(props, ph)
+	}
+	// Sort properties alphabetically
+	sort.Slice(props, func(i, j int) bool { return props[i].Name < props[j].Name })
+
+	// Gather outgoing and incoming relations
+	outgoingRels := a.gatherRelations(entityType, true)
+	incomingRels := a.gatherRelations(entityType, false)
+
+	// Render entity description
+	var entityDesc htmltemplate.HTML
+	if entDef.Description != "" {
+		entityDesc = simpleMarkdownToHTML(entDef.Description)
+	}
+
+	// Render template
+	data := map[string]interface{}{
+		"EntityDescription": entityDesc,
+		"Properties":        props,
+		"OutgoingRelations": outgoingRels,
+		"IncomingRelations": incomingRels,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	a.tmpl.ExecuteTemplate(w, "help-content", data) //nolint:errcheck // template errors logged by http
+}
+
+// gatherRelations collects relation documentation for an entity type.
+// If outgoing is true, gathers relations where entityType is in "from";
+// otherwise gathers relations where entityType is in "to".
+func (a *App) gatherRelations(entityType string, outgoing bool) []RelationHelp {
+	rels := make([]RelationHelp, 0, len(a.meta.Relations))
+	for name, rel := range a.meta.Relations {
+		var matchTypes, targetTypes []string
+		var minCard, maxCard *int
+		if outgoing {
+			matchTypes, targetTypes = rel.From, rel.To
+			minCard, maxCard = rel.MinOutgoing, rel.MaxOutgoing
+		} else {
+			matchTypes, targetTypes = rel.To, rel.From
+			minCard, maxCard = rel.MinIncoming, rel.MaxIncoming
+		}
+		if !containsString(matchTypes, entityType) {
+			continue
+		}
+		rh := RelationHelp{
+			Name:        name,
+			Label:       rel.Label,
+			TargetType:  strings.Join(targetTypes, ", "),
+			Cardinality: formatCardinality(minCard, maxCard),
+			Required:    minCard != nil && *minCard >= 1,
+		}
+		if rel.Description != "" {
+			rh.Description = simpleMarkdownToHTML(rel.Description)
+		}
+		rels = append(rels, rh)
+	}
+	sort.Slice(rels, func(i, j int) bool { return rels[i].Name < rels[j].Name })
+	return rels
+}
+
+// formatCardinality formats min/max constraints as a human-readable string.
+func formatCardinality(minC, maxC *int) string {
+	if minC == nil && maxC == nil {
+		return ""
+	}
+	minVal := 0
+	if minC != nil {
+		minVal = *minC
+	}
+	if maxC == nil {
+		if minVal == 0 {
+			return ""
+		}
+		return fmt.Sprintf("min %d", minVal)
+	}
+	maxVal := *maxC
+	if minVal == maxVal {
+		return fmt.Sprintf("exactly %d", minVal)
+	}
+	if minVal == 0 {
+		return fmt.Sprintf("max %d", maxVal)
+	}
+	return fmt.Sprintf("%d-%d", minVal, maxVal)
+}

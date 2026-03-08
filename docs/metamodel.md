@@ -181,6 +181,7 @@ Each entity type defines:
 | Field         | Description                                               |
 | ------------- | --------------------------------------------------------- |
 | `label`       | Display name                                              |
+| `description` | Documentation explaining intent and usage (optional)      |
 | `aliases`     | Alternative names for CLI (e.g., `req` for `requirement`) |
 | `id_type`     | `auto` (default) or `manual` - controls ID generation     |
 | `id_patterns` | ID prefixes (e.g., `REQ-`, `ADR-`)                        |
@@ -237,6 +238,32 @@ rela create requirement -t "User authentication"
 rela create component --id auth-service -t "Authentication Service"
 # Creates auth-service
 ```
+
+### Entity Descriptions
+
+Add a `description` field to document the intent and usage of an entity type. Descriptions
+support markdown and are surfaced in the data-entry UI via help modals:
+
+```yaml
+entities:
+  decision:
+    label: Decision
+    description: |
+      A decision records an important architectural choice and its rationale.
+
+      Use decisions when:
+      - Making technology choices (frameworks, databases, etc.)
+      - Defining patterns or conventions
+      - Resolving requirement conflicts
+
+      Each decision should address one or more requirements.
+    properties:
+      # ...
+```
+
+In the data-entry UI, a help icon (?) appears next to the entity form title. Clicking it
+opens a modal showing the entity description, all properties with their descriptions, and
+available relations with cardinality constraints.
 
 ### Example Entity Type
 
