@@ -126,16 +126,16 @@
         {{ if .AllowCreate }}
         <button type="button" class="btn-icon" onclick="openInlineCreate('{{ .CreateForm }}', '{{ .Relation }}', '{{ .TargetLabel }}')" title="Add new {{ .TargetLabel }}">+</button>
         {{ end }}
-        {{ if .AdvancedMode }}<span class="badge badge-info" style="font-size:10px;">props</span>{{ end }}
+        {{ if eq .Widget "cards" }}<span class="badge badge-info" style="font-size:10px;">props</span>{{ end }}
       </div>
-      {{/* Advanced mode: relation cards with properties/content */}}
-      {{ if .AdvancedMode }}
+      {{/* Cards widget: relation cards with properties/content */}}
+      {{ if eq .Widget "cards" }}
       <div class="relation-cards" data-relation="{{ .Relation }}" data-target-type="{{ .TargetType }}">
         {{ $rel := . }}
         {{ $selected := .Selected }}
         {{ range .Options }}
         {{ if contains $selected .ID }}
-        <div class="relation-card" data-target-id="{{ .ID }}">
+        <div class="relation-card" id="rel-card-{{ $rel.Relation }}-{{ .ID }}" data-target-id="{{ .ID }}">
           <div class="relation-card-header">
             <span class="relation-card-title">{{ .Title }}</span>
             <span class="relation-card-id">{{ .ID }}</span>
@@ -147,9 +147,19 @@
             {{ template "card-props" $fields }}
           </div>
           {{ end }}
+          {{/* Hidden inputs for relation props */}}
+          {{ $props := index $rel.SelectedPropsMap .ID }}
+          {{- range $key, $val := $props }}
+          <input type="hidden" name="_relprop_{{ $rel.Relation }}__{{ $.ID }}__{{ $key }}" value="{{ $val }}">
+          {{- end }}
           <div class="relation-card-actions">
-            <button type="button" class="btn btn-sm btn-ghost" onclick="editRelationCard(this, '{{ $rel.Relation }}', '{{ .ID }}')" title="Edit relation properties">Edit</button>
-            <button type="button" class="btn btn-sm btn-danger-outline" onclick="removeRelationCard(this, '{{ $rel.Relation }}', '{{ .ID }}')" title="Remove relation">Remove</button>
+            <button type="button" class="btn btn-sm btn-ghost"
+                    hx-get="/api/relation-edit-form?relation={{ $rel.Relation }}&target={{ .ID }}"
+                    hx-target="#rel-edit-body"
+                    hx-swap="innerHTML"
+                    onclick="document.getElementById('rel-edit-title').textContent='Edit: {{ .ID }}';document.getElementById('rel-edit-modal').style.display='flex'"
+                    title="Edit relation properties">Edit</button>
+            <button type="button" class="btn btn-sm btn-danger-outline" onclick="this.closest('.relation-card').remove()" title="Remove relation">Remove</button>
           </div>
           <input type="hidden" name="{{ $rel.Relation }}" value="{{ .ID }}">
         </div>
@@ -383,7 +393,7 @@
   </div>
 </div>
 
-{{/* Relation edit modal (advanced mode) */}}
+{{/* Relation edit modal (advanced mode) - form content loaded via HTMX */}}
 <div id="rel-edit-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeRelationEdit()">
   <div class="modal">
     <div class="modal-header">
@@ -393,10 +403,7 @@
     <div class="modal-body" id="rel-edit-body">
       <p style="color:var(--text-muted);">Loading...</p>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary btn-sm" onclick="closeRelationEdit()">Cancel</button>
-      <button class="btn btn-primary btn-sm" onclick="saveRelationEdit()">Save</button>
-    </div>
+    {{/* Footer buttons are now inside the form loaded via HTMX */}}
   </div>
 </div>
 

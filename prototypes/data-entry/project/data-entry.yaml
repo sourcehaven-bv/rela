@@ -82,11 +82,10 @@ forms:
         create_form: create_label
       - relation: blocks
         direction: outgoing
-        widget: search
+        widget: multi-select
         properties:
           - property: reason
             label: "Block Reason"
-
     side_panel:
       traverse:
         - from: entry
@@ -128,7 +127,6 @@ forms:
             - property: due_date
             - property: estimated_hours
               label: "Est. Hours"
-
   create_category:
     entity_type: category
     title: "New Category"
@@ -158,7 +156,7 @@ lists:
     columns:
       - property: title
         sortable: true
-        link: true
+        link: detail
       - property: status
         sortable: true
       - property: priority
@@ -179,7 +177,7 @@ lists:
       - property: priority
         widget: select
       - property: assignee
-        widget: search
+        widget: select
     create_form: create_ticket
     edit_form: edit_ticket
     detail_view: ticket_report
@@ -190,7 +188,7 @@ lists:
     columns:
       - property: title
         sortable: true
-        link: true
+        link: detail
       - property: priority
         sortable: true
       - property: assignee
@@ -213,7 +211,7 @@ lists:
     title: "My Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: status
         sortable: true
@@ -238,7 +236,7 @@ lists:
     columns:
       - property: name
         sortable: true
-        link: true
+        link: detail
       - property: description
     sort:
       - property: name
@@ -292,7 +290,7 @@ views:
         display: table
         columns:
           - property: title
-            link: true
+            link: detail
           - property: status
           - property: priority
           - property: assignee
@@ -387,7 +385,7 @@ dashboard:
       display: table
       columns:
         - property: title
-          link: true
+          link: detail
         - property: status
         - property: assignee
       sort:
@@ -399,7 +397,7 @@ dashboard:
       display: table
       columns:
         - property: title
-          link: true
+          link: detail
         - property: priority
         - property: assignee
       limit: 5
@@ -452,9 +450,9 @@ kanbans:
     column_property: status
     columns:
       - value: open
-        label: "📥 To Do"
+        label: "\U0001F4E5 To Do"
       - value: in-progress
-        label: "🔧 In Progress"
+        label: "\U0001F527 In Progress"
       - value: resolved
         label: "✅ Done"
     card:

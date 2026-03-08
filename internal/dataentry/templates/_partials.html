@@ -18,8 +18,55 @@
 {{ range . }}{{ template "field-value" . }} {{ end }}
 {{- end -}}
 
-{{/* relprops-form: renders relation property fields for the edit modal */}}
-{{- define "relprops-form" -}}
+{{/* relation-card: renders a complete relation card with props and hidden inputs */}}
+{{/* Expects: .ID, .Title, .Relation, .Fields ([]SectionFieldData), .Props (map[string]string) */}}
+{{- define "relation-card" -}}
+<div class="relation-card" id="rel-card-{{ .Relation }}-{{ .ID }}" data-target-id="{{ .ID }}">
+  <div class="relation-card-header">
+    <span class="relation-card-title">{{ .Title }}</span>
+    <span class="relation-card-id">{{ .ID }}</span>
+  </div>
+  {{ if .Fields }}
+  <div class="relation-card-props">
+    {{ template "card-props" .Fields }}
+  </div>
+  {{ end }}
+  <div class="relation-card-actions">
+    <button type="button" class="btn btn-sm btn-ghost"
+            hx-get="/api/relation-edit-form?relation={{ .Relation }}&target={{ .ID }}"
+            hx-target="#rel-edit-body"
+            hx-swap="innerHTML"
+            onclick="document.getElementById('rel-edit-title').textContent='Edit: {{ .ID }}';document.getElementById('rel-edit-modal').style.display='flex'"
+            title="Edit relation properties">Edit</button>
+    <button type="button" class="btn btn-sm btn-danger-outline" onclick="this.closest('.relation-card').remove()" title="Remove relation">Remove</button>
+  </div>
+  <input type="hidden" name="{{ .Relation }}" value="{{ .ID }}">
+  {{- range $key, $val := .Props }}
+  <input type="hidden" name="_relprop_{{ $.Relation }}__{{ $.ID }}__{{ $key }}" value="{{ $val }}">
+  {{- end }}
+</div>
+{{- end -}}
+
+{{/* relprops-modal: wraps form fields with HTMX form for the edit modal */}}
+{{/* Expects: .Relation, .Target, .Title, .Fields, .ShowContent, .ContentName, .Content */}}
+{{- define "relprops-modal" -}}
+<form hx-post="/api/relation-card-update"
+      hx-target="#rel-card-{{ .Relation }}-{{ .Target }}"
+      hx-swap="outerHTML"
+      hx-on::after-request="closeRelationEdit()">
+  <input type="hidden" name="relation" value="{{ .Relation }}">
+  <input type="hidden" name="target" value="{{ .Target }}">
+  <input type="hidden" name="title" value="{{ .Title }}">
+  {{ template "relprops-fields" . }}
+  <div class="modal-footer" style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);">
+    <button type="button" class="btn btn-secondary btn-sm" onclick="closeRelationEdit()">Cancel</button>
+    <button type="submit" class="btn btn-primary btn-sm">Save</button>
+  </div>
+</form>
+{{- end -}}
+
+{{/* relprops-fields: renders just the form fields (used by relprops-modal) */}}
+{{- define "relprops-fields" -}}
 {{ if and (not .Fields) (not .ShowContent) }}
 <p style="color:var(--text-muted);font-size:13px;">No additional properties to edit.</p>
 {{ else }}

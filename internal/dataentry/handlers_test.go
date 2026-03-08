@@ -1962,12 +1962,12 @@ func TestHandleRelationPropsDisplay(t *testing.T) {
 	})
 }
 
-func TestHandleRelationPropsForm(t *testing.T) {
+func TestHandleRelationEditForm(t *testing.T) {
 	t.Run("returns 400 for unknown relation type", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		r := httptest.NewRequest(http.MethodGet, "/api/relation-props-form?relation=unknown_type", http.NoBody)
+		r := httptest.NewRequest(http.MethodGet, "/api/relation-edit-form?relation=unknown_type", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleRelationPropsForm(w, r)
+		app.handleRelationEditForm(w, r)
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", w.Code)
 		}
@@ -1987,11 +1987,11 @@ func TestHandleRelationPropsForm(t *testing.T) {
 
 		r := httptest.NewRequest(
 			http.MethodGet,
-			"/api/relation-props-form?relation=requires_skill&target=CMP-001&form_id=test",
+			"/api/relation-edit-form?relation=requires_skill&target=CMP-001&form_id=test",
 			http.NoBody,
 		)
 		w := httptest.NewRecorder()
-		app.handleRelationPropsForm(w, r)
+		app.handleRelationEditForm(w, r)
 		if w.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d", w.Code)
 		}
@@ -2006,11 +2006,11 @@ func TestHandleRelationPropsForm(t *testing.T) {
 		app := newHandlerTestApp(t)
 		r := httptest.NewRequest(
 			http.MethodGet,
-			"/api/relation-props-form?relation=depends_on&target=TKT-002&form_id=test",
+			"/api/relation-edit-form?relation=depends_on&target=TKT-002&form_id=test",
 			http.NoBody,
 		)
 		w := httptest.NewRecorder()
-		app.handleRelationPropsForm(w, r)
+		app.handleRelationEditForm(w, r)
 		if w.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d", w.Code)
 		}

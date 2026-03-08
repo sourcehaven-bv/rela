@@ -376,6 +376,8 @@ Relations define how entity types can be connected:
 | `max_outgoing`   | Maximum outgoing relations per from-side entity    |
 | `min_incoming`   | Minimum incoming relations per to-side entity      |
 | `max_incoming`   | Maximum incoming relations per to-side entity      |
+| `properties`     | Typed properties attached to the relation          |
+| `content`        | `true` to enable markdown body content             |
 
 ### Example Relation
 
@@ -445,6 +447,153 @@ relations:
     to: [requirement, decision]
     symmetric: true
 ```
+
+### Relation Properties
+
+Relations can have their own typed properties, just like entities. This is useful when the
+relationship itself carries data beyond just connecting two entities.
+
+```yaml
+relations:
+  blocks:
+    label: blocks
+    from: [ticket]
+    to: [ticket]
+    inverse: blockedBy
+    properties:
+      reason:
+        type: string
+        description: Why this ticket blocks the other
+      severity:
+        type: enum
+        values: [critical, high, medium, low]
+```
+
+Relation properties use the same `PropertyDef` structure as entity properties. All property
+types are supported: `string`, `date`, `integer`, `boolean`, `enum`, and custom types.
+
+| Field         | Description                                          |
+| ------------- | ---------------------------------------------------- |
+| `type`        | Property type (same as entity properties)            |
+| `required`    | Property must have a value                           |
+| `values`      | Allowed values for inline enum types                 |
+| `default`     | Default value                                        |
+| `description` | Documentation for the property                       |
+| `format`      | Date format (Go layout string)                       |
+
+#### Storage
+
+Relation properties are stored in the relation's markdown frontmatter:
+
+```markdown
+---
+from: TKT-001
+type: blocks
+to: TKT-002
+reason: "Database schema change required first"
+severity: high
+---
+```
+
+#### Example Use Cases
+
+**Blocking relationships with context:**
+
+```yaml
+blocks:
+  label: blocks
+  from: [ticket]
+  to: [ticket]
+  properties:
+    reason:
+      type: string
+      required: true
+    severity:
+      type: enum
+      values: [critical, high, medium, low]
+```
+
+**Dependencies with version constraints:**
+
+```yaml
+dependsOn:
+  label: depends on
+  from: [component]
+  to: [component]
+  properties:
+    version:
+      type: string
+      description: "Required version constraint (e.g., >=1.0.0)"
+    optional:
+      type: boolean
+      default: false
+```
+
+**Evidence links with audit metadata:**
+
+```yaml
+evidencedBy:
+  label: evidenced by
+  from: [control]
+  to: [evidence]
+  properties:
+    verified_by:
+      type: string
+    verified_date:
+      type: date
+    notes:
+      type: string
+```
+
+### Relation Content
+
+Relations can optionally support markdown body content, similar to entities. Enable this
+with the `content: true` field:
+
+```yaml
+relations:
+  implements:
+    label: implements
+    from: [solution]
+    to: [decision]
+    content: true
+    properties:
+      status:
+        type: enum
+        values: [planned, in-progress, done]
+```
+
+When `content: true`, the relation's markdown file can include body content below the frontmatter:
+
+```markdown
+---
+from: SOL-001
+type: implements
+to: DEC-005
+status: in-progress
+---
+
+## Implementation Notes
+
+This solution implements the decision by:
+
+1. Adding a caching layer in front of the database
+2. Using Redis for session storage
+3. Implementing cache invalidation on write operations
+
+### Progress
+
+- [x] Redis integration
+- [ ] Cache invalidation logic
+- [ ] Performance testing
+```
+
+This is useful for:
+
+- **Implementation notes** on how a solution implements a decision
+- **Justification** for why a requirement addresses a risk
+- **Audit trails** documenting evidence collection
+- **Migration notes** for dependency upgrades
 
 ## Default Metamodel
 

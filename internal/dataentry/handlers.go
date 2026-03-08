@@ -460,21 +460,21 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve relation fields
 	type ResolvedRelation struct {
-		Relation       string
-		Label          string
-		Required       bool
-		Widget         string
-		TargetType     string
-		TargetLabel    string
-		Options        []struct{ ID, Title string }
-		Selected       []string
-		AllowCreate    bool
-		CreateForm     string
-		Properties     []RelationProperty
-		SelectedProps  map[string][]SectionFieldData    // relation properties for display on cards
-		AdvancedMode   bool                             // true if relation has properties or content in metamodel
-		ContentEnabled bool                             // true if relation supports markdown content
-		PropertyDefs   map[string]metamodel.PropertyDef // property definitions from metamodel
+		Relation         string
+		Label            string
+		Required         bool
+		Widget           string
+		TargetType       string
+		TargetLabel      string
+		Options          []struct{ ID, Title string }
+		Selected         []string
+		AllowCreate      bool
+		CreateForm       string
+		Properties       []RelationProperty
+		SelectedProps    map[string][]SectionFieldData    // relation properties for display on cards
+		SelectedPropsMap map[string]map[string]string     // raw property values for hidden inputs
+		ContentEnabled   bool                             // true if relation supports markdown content
+		PropertyDefs     map[string]metamodel.PropertyDef // property definitions from metamodel
 	}
 	linkRelation := r.URL.Query().Get("link_relation")
 	linkPeer := r.URL.Query().Get("link_peer")
@@ -529,42 +529,39 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 			targetLabel = targetDef.Label
 		}
 
-		// Determine widget based on explicit config or cardinality
+		// Determine widget based on explicit config, cardinality, or advanced features
 		widget := WidgetSelect
-		if rel.Widget != "" {
-			widget = rel.Widget
-		} else if relDefOK {
-			if direction == DirectionIncoming && (relDef.MaxIncoming == nil || *relDef.MaxIncoming > 1) {
-				widget = WidgetMultiSelect
-			} else if direction == DirectionOutgoing && (relDef.MaxOutgoing == nil || *relDef.MaxOutgoing > 1) {
-				widget = WidgetMultiSelect
-			}
-		}
-
-		// Check if relation has advanced features (properties or content in metamodel)
-		advancedMode := false
 		contentEnabled := false
 		var propertyDefs map[string]metamodel.PropertyDef
+		switch {
+		case rel.Widget != "":
+			widget = rel.Widget
+		case relDefOK && relDef.HasAdvancedFeatures():
+			widget = WidgetCards
+		case relDefOK && direction == DirectionIncoming && (relDef.MaxIncoming == nil || *relDef.MaxIncoming > 1):
+			widget = WidgetMultiSelect
+		case relDefOK && direction == DirectionOutgoing && (relDef.MaxOutgoing == nil || *relDef.MaxOutgoing > 1):
+			widget = WidgetMultiSelect
+		}
 		if relDefOK {
-			advancedMode = relDef.HasAdvancedFeatures()
 			contentEnabled = relDef.Content
 			propertyDefs = relDef.Properties
 		}
 
 		rr := ResolvedRelation{
-			Relation:       rel.Relation,
-			Label:          label,
-			Required:       rel.Required,
-			Widget:         widget,
-			TargetType:     targetType,
-			TargetLabel:    targetLabel,
-			AllowCreate:    rel.AllowCreate,
-			CreateForm:     rel.CreateForm,
-			Properties:     rel.Properties,
-			SelectedProps:  make(map[string][]SectionFieldData),
-			AdvancedMode:   advancedMode,
-			ContentEnabled: contentEnabled,
-			PropertyDefs:   propertyDefs,
+			Relation:         rel.Relation,
+			Label:            label,
+			Required:         rel.Required,
+			Widget:           widget,
+			TargetType:       targetType,
+			TargetLabel:      targetLabel,
+			AllowCreate:      rel.AllowCreate,
+			CreateForm:       rel.CreateForm,
+			Properties:       rel.Properties,
+			SelectedProps:    make(map[string][]SectionFieldData),
+			SelectedPropsMap: make(map[string]map[string]string),
+			ContentEnabled:   contentEnabled,
+			PropertyDefs:     propertyDefs,
 		}
 
 		targets := a.g.NodesByType(targetType)
@@ -573,51 +570,42 @@ func (a *App) handleForm(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if entity != nil {
+			var edges []*model.Relation
 			if direction == DirectionIncoming {
-				for _, edge := range a.g.IncomingEdges(entity.ID) {
-					if edge.Type == rel.Relation {
-						rr.Selected = append(rr.Selected, edge.From)
-						if len(rel.Properties) > 0 {
-							var fields []SectionFieldData
-							for _, rp := range rel.Properties {
-								if v, ok := edge.Properties[rp.Property]; ok {
-									propType := ""
-									if pdef, exists := propertyDefs[rp.Property]; exists {
-										propType = pdef.Type
-									}
-									fields = append(fields, SectionFieldData{
-										Label:    titleCase(rp.Property),
-										Value:    fmt.Sprintf("%v", v),
-										PropType: propType,
-									})
-								}
-							}
-							rr.SelectedProps[edge.From] = fields
-						}
-					}
-				}
+				edges = a.g.IncomingEdges(entity.ID)
 			} else {
-				for _, edge := range a.g.OutgoingEdges(entity.ID) {
-					if edge.Type == rel.Relation {
-						rr.Selected = append(rr.Selected, edge.To)
-						if len(rel.Properties) > 0 {
-							var fields []SectionFieldData
-							for _, rp := range rel.Properties {
-								if v, ok := edge.Properties[rp.Property]; ok {
-									propType := ""
-									if pdef, exists := propertyDefs[rp.Property]; exists {
-										propType = pdef.Type
-									}
-									fields = append(fields, SectionFieldData{
-										Label:    titleCase(rp.Property),
-										Value:    fmt.Sprintf("%v", v),
-										PropType: propType,
-									})
-								}
+				edges = a.g.OutgoingEdges(entity.ID)
+			}
+			for _, edge := range edges {
+				if edge.Type != rel.Relation {
+					continue
+				}
+				peerID := edge.To
+				if direction == DirectionIncoming {
+					peerID = edge.From
+				}
+				rr.Selected = append(rr.Selected, peerID)
+				if len(rel.Properties) > 0 || len(edge.Properties) > 0 {
+					var fields []SectionFieldData
+					rawProps := make(map[string]string)
+					for _, rp := range rel.Properties {
+						if v, ok := edge.Properties[rp.Property]; ok {
+							propType := ""
+							if pdef, exists := propertyDefs[rp.Property]; exists {
+								propType = pdef.Type
 							}
-							rr.SelectedProps[edge.To] = fields
+							fields = append(fields, SectionFieldData{
+								Label:    titleCase(rp.Property),
+								Value:    fmt.Sprintf("%v", v),
+								PropType: propType,
+							})
 						}
 					}
+					for k, v := range edge.Properties {
+						rawProps[k] = fmt.Sprintf("%v", v)
+					}
+					rr.SelectedProps[peerID] = fields
+					rr.SelectedPropsMap[peerID] = rawProps
 				}
 			}
 		}
@@ -1075,21 +1063,21 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 
 	// Resolve relation fields (similar to handleForm but using form values)
 	type ResolvedRelation struct {
-		Relation       string
-		Label          string
-		Required       bool
-		Widget         string
-		TargetType     string
-		TargetLabel    string
-		Options        []struct{ ID, Title string }
-		Selected       []string
-		AllowCreate    bool
-		CreateForm     string
-		Properties     []RelationProperty
-		SelectedProps  map[string][]SectionFieldData    // relation properties for display on cards
-		AdvancedMode   bool                             // true if relation has properties or content in metamodel
-		ContentEnabled bool                             // true if relation supports markdown content
-		PropertyDefs   map[string]metamodel.PropertyDef // property definitions from metamodel
+		Relation         string
+		Label            string
+		Required         bool
+		Widget           string
+		TargetType       string
+		TargetLabel      string
+		Options          []struct{ ID, Title string }
+		Selected         []string
+		AllowCreate      bool
+		CreateForm       string
+		Properties       []RelationProperty
+		SelectedProps    map[string][]SectionFieldData    // relation properties for display on cards
+		SelectedPropsMap map[string]map[string]string     // raw property values for hidden inputs
+		ContentEnabled   bool                             // true if relation supports markdown content
+		PropertyDefs     map[string]metamodel.PropertyDef // property definitions from metamodel
 	}
 	linkRelation := r.FormValue("_link_relation")
 	linkPeer := r.FormValue("_link_peer")
@@ -1106,30 +1094,32 @@ func (a *App) renderFormWithErrors(w http.ResponseWriter, r *http.Request, formI
 			targetLabel = targetDef.Label
 		}
 
-		// Check if relation has advanced features (properties or content in metamodel)
-		advancedMode := false
+		// Determine widget and check for advanced features
+		widget := WidgetSelect
 		contentEnabled := false
 		var propertyDefs map[string]metamodel.PropertyDef
 		if relDef, ok := a.meta.GetRelationDef(rel.Relation); ok {
-			advancedMode = relDef.HasAdvancedFeatures()
+			if relDef.HasAdvancedFeatures() {
+				widget = WidgetCards
+			}
 			contentEnabled = relDef.Content
 			propertyDefs = relDef.Properties
 		}
 
 		rr := ResolvedRelation{
-			Relation:       rel.Relation,
-			Label:          rel.Label,
-			Required:       rel.Required,
-			Widget:         WidgetSelect,
-			TargetType:     rel.TargetType,
-			TargetLabel:    targetLabel,
-			AllowCreate:    rel.AllowCreate,
-			CreateForm:     rel.CreateForm,
-			Properties:     rel.Properties,
-			SelectedProps:  make(map[string][]SectionFieldData),
-			AdvancedMode:   advancedMode,
-			ContentEnabled: contentEnabled,
-			PropertyDefs:   propertyDefs,
+			Relation:         rel.Relation,
+			Label:            rel.Label,
+			Required:         rel.Required,
+			Widget:           widget,
+			TargetType:       rel.TargetType,
+			TargetLabel:      targetLabel,
+			AllowCreate:      rel.AllowCreate,
+			CreateForm:       rel.CreateForm,
+			Properties:       rel.Properties,
+			SelectedProps:    make(map[string][]SectionFieldData),
+			SelectedPropsMap: make(map[string]map[string]string),
+			ContentEnabled:   contentEnabled,
+			PropertyDefs:     propertyDefs,
 		}
 
 		targets := a.g.NodesByType(rel.TargetType)
@@ -1968,14 +1958,14 @@ func (a *App) handleRelationCandidates(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(candidates) //nolint:errcheck // best-effort JSON response
 }
 
-// handleRelationPropsForm returns HTML form fields for editing relation properties (advanced mode).
-func (a *App) handleRelationPropsForm(w http.ResponseWriter, r *http.Request) {
+// handleRelationEditForm returns HTML form for editing relation properties (advanced mode).
+// The form submits via HTMX to /api/relation-card-update which returns the updated card.
+func (a *App) handleRelationEditForm(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
 	relation := r.URL.Query().Get("relation")
 	targetID := r.URL.Query().Get("target")
-	formID := r.URL.Query().Get("form_id")
 
 	relDef, ok := a.meta.GetRelationDef(relation)
 	if !ok {
@@ -1983,37 +1973,117 @@ func (a *App) handleRelationPropsForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get current property values if this is an existing relation
-	// (For now we just render empty fields, values will be populated via JS)
-	_ = targetID
-	_ = formID
+	// Get the target entity's title for display
+	targetTitle := targetID
+	if e, ok := a.g.GetNode(targetID); ok {
+		targetTitle = a.entityDisplayTitle(e)
+	}
 
 	// Build resolved fields from relation properties
 	fields := make([]ResolvedField, 0, len(relDef.Properties))
 	for propName, propDef := range relDef.Properties {
 		field := resolveFieldFromProperty(propName, propDef, a.meta, "")
-		field.Name = fmt.Sprintf("_relprop_%s__%s", relation, propName)
+		field.Name = propName // Simple name - the card update handler will namespace it
 		fields = append(fields, field)
 	}
 
-	// Sort fields by property name for consistent ordering
+	// Sort fields by label for consistent ordering
 	sort.Slice(fields, func(i, j int) bool {
-		return fields[i].Property < fields[j].Property
+		return fields[i].Label < fields[j].Label
 	})
 
 	data := struct {
+		Relation    string
+		Target      string
+		Title       string
 		Fields      []ResolvedField
 		ShowContent bool
 		ContentName string
 		Content     string
 	}{
+		Relation:    relation,
+		Target:      targetID,
+		Title:       targetTitle,
 		Fields:      fields,
 		ShowContent: relDef.Content,
-		ContentName: fmt.Sprintf("_relprop_%s__content", relation),
+		ContentName: "_content",
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := a.tmpl.ExecuteTemplate(w, "relprops-form", data); err != nil {
+	if err := a.tmpl.ExecuteTemplate(w, "relprops-modal", data); err != nil {
+		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleRelationCardUpdate handles form submission and returns the updated relation card.
+// POST /api/relation-card-update with relation, target, title, and property fields.
+func (a *App) handleRelationCardUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	relation := r.FormValue("relation")
+	targetID := r.FormValue("target")
+	title := r.FormValue("title")
+
+	relDef, ok := a.meta.GetRelationDef(relation)
+	if !ok {
+		http.Error(w, "Unknown relation type", http.StatusBadRequest)
+		return
+	}
+
+	// Collect property values from form
+	props := make(map[string]string)
+	for propName := range relDef.Properties {
+		if val := r.FormValue(propName); val != "" {
+			props[propName] = val
+		}
+	}
+
+	// Build display fields for the card
+	displayFields := make([]SectionFieldData, 0, len(relDef.Properties))
+	for propName, propDef := range relDef.Properties {
+		val := props[propName]
+		if val == "" {
+			continue
+		}
+		displayFields = append(displayFields, SectionFieldData{
+			Label:    titleCase(propName),
+			Value:    val,
+			PropType: propDef.Type,
+		})
+	}
+
+	// Sort by label for consistent display
+	sort.Slice(displayFields, func(i, j int) bool {
+		return displayFields[i].Label < displayFields[j].Label
+	})
+
+	data := struct {
+		ID       string
+		Title    string
+		Relation string
+		Fields   []SectionFieldData
+		Props    map[string]string
+	}{
+		ID:       targetID,
+		Title:    title,
+		Relation: relation,
+		Fields:   displayFields,
+		Props:    props,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := a.tmpl.ExecuteTemplate(w, "relation-card", data); err != nil {
 		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
 	}
 }

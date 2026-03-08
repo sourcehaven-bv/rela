@@ -355,29 +355,187 @@ Each entry in `relations:` configures a relation picker:
 the relation picker. Clicking it opens a modal with the referenced form, and the newly created
 entity is automatically linked.
 
-### Relation Properties
+### Relation Properties and Content
 
-Relations can have their own editable properties:
+Relations can have their own editable properties and markdown content, defined in the metamodel.
+When a relation type has properties or content enabled, the data-entry UI automatically switches
+to an **advanced card-based interface** with edit modals.
+
+#### Metamodel Configuration
+
+First, define properties on the relation in `metamodel.yaml`:
+
+```yaml
+relations:
+  blocks:
+    label: blocks
+    from: [ticket]
+    to: [ticket]
+    inverse: blockedBy
+    properties:
+      reason:
+        type: string
+        description: Why this ticket blocks the other
+      severity:
+        type: enum
+        values: [critical, high, medium, low]
+    content: true  # Optional: enable markdown body
+```
+
+#### Form Configuration
+
+Then reference the properties in your form's `relations:` section:
 
 ```yaml
 relations:
   - relation: blocks
     direction: outgoing
-    target_type: ticket
-    label: "Blocks"
-    widget: search
+    widget: multi-select
     properties:
       - property: reason
         label: "Block Reason"
-        widget: text
+      - property: severity
+        label: "Severity"
 ```
 
-| Field      | Type   | Description                       |
-| ---------- | ------ | --------------------------------- |
-| `property` | string | Relation property name            |
-| `label`    | string | Display label                     |
-| `widget`   | string | Input widget (`text`, `textarea`) |
-| `required` | bool   | Must be filled                    |
+| Field      | Type   | Description                               |
+| ---------- | ------ | ----------------------------------------- |
+| `property` | string | Relation property name (from metamodel)   |
+| `label`    | string | Display label (optional)                  |
+| `widget`   | string | Input widget (`text`, `textarea`, `select`) |
+| `required` | bool   | Must be filled                            |
+
+Widget types are auto-detected from the metamodel property type if not specified:
+- `string` → text input
+- `enum`/custom type → dropdown select
+- `boolean` → checkbox
+- `date` → date picker
+
+#### Advanced UI: Relation Cards
+
+When a relation type has properties or content defined, the UI displays relations as **cards**
+instead of a simple tag-style picker:
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Blocks                                    [+ Add]   │
+├─────────────────────────────────────────────────────┤
+│ ┌─────────────────────────────────────────────────┐ │
+│ │ TKT-002: Fix login bug           [Edit] [Remove]│ │
+│ │ severity: high  reason: Schema change required  │ │
+│ └─────────────────────────────────────────────────┘ │
+│ ┌─────────────────────────────────────────────────┐ │
+│ │ TKT-003: Update API docs         [Edit] [Remove]│ │
+│ │ severity: low                                   │ │
+│ └─────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────┘
+```
+
+**Card features:**
+
+- **Entity title** with ID badge linking to the detail view
+- **Property badges** showing current property values with color coding
+- **Edit button** opens a modal to edit relation properties
+- **Remove button** deletes the relation (with confirmation)
+- **+ Add button** opens a picker modal to add new relations
+
+#### Picker Modal
+
+Clicking **+ Add** opens a modal with:
+
+1. **Search input** to filter available target entities
+2. **Candidate list** showing matching entities with badges
+3. Click a candidate to create the relation
+
+If the relation has properties, the edit modal opens immediately after adding.
+
+#### Edit Modal
+
+Clicking **Edit** on a card opens a modal with:
+
+1. **Property fields** for all configured relation properties
+2. **Content editor** if the relation type has `content: true`
+3. **Save button** to persist changes
+
+The modal uses the same form widgets as entity forms, including SlimSelect for dropdowns.
+
+#### Example: Ticket Blocking
+
+A complete example showing relation properties in use:
+
+**metamodel.yaml:**
+
+```yaml
+relations:
+  blocks:
+    label: blocks
+    from: [ticket]
+    to: [ticket]
+    inverse: blockedBy
+    properties:
+      reason:
+        type: string
+        description: Why this ticket blocks the other
+      severity:
+        type: enum
+        values: [critical, high, medium, low]
+```
+
+**data-entry.yaml:**
+
+```yaml
+forms:
+  edit_ticket:
+    entity_type: ticket
+    title: "Edit Ticket"
+    mode: edit
+    fields:
+      - property: title
+      - property: status
+      - property: priority
+    relations:
+      - relation: blocks
+        direction: outgoing
+        widget: multi-select
+        properties:
+          - property: reason
+            label: "Block Reason"
+          - property: severity
+            label: "Severity"
+```
+
+When editing a ticket, the "Blocks" section shows cards for each blocked ticket. Each card
+displays the severity badge and reason text. Clicking Edit opens a modal to update these values.
+
+#### Side Panel Integration
+
+Advanced relations work with the side panel too. Configure traversals to show related entities:
+
+```yaml
+side_panel:
+  traverse:
+    - from: entry
+      follow_incoming: blocks
+      collect_as: blocked_by
+    - from: entry
+      follow: blocks
+      collect_as: blocks
+  sections:
+    - heading: "Blocked By"
+      source: blocked_by
+      display: cards
+      fields:
+        - property: status
+        - property: priority
+      empty_message: "Not blocked"
+    - heading: "Blocks"
+      source: blocks
+      display: cards
+      fields:
+        - property: status
+        - property: priority
+      empty_message: "Does not block any tickets"
+```
 
 ### Help Modal
 

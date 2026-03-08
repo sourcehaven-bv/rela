@@ -659,3 +659,38 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
 .help-item-desc p { margin: 0; }
 .help-item-desc p + p { margin-top: 8px; }
 .help-empty { text-align: center; color: var(--text-muted); padding: 24px 0; }
+
+/* Relation cards (advanced mode) */
+.relation-cards { display: flex; flex-direction: column; gap: 8px; }
+.relation-card { border: 1px solid var(--border); border-radius: 6px; padding: 12px; background: var(--bg); position: relative; transition: border-color 0.15s; }
+.relation-card:hover { border-color: var(--primary); }
+.relation-card-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.relation-card-title { font-weight: 600; font-size: 14px; }
+.relation-card-id { color: var(--text-muted); font-size: 12px; font-family: var(--font-mono); }
+.relation-card-props { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.relation-card-props dt { color: var(--text-muted); }
+.relation-card-props dd { font-weight: 500; }
+.relation-card-content { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-muted); }
+.relation-card-actions { display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.relation-add-btn { display: flex; align-items: center; gap: 6px; padding: 10px; width: 100%; border: 1px dashed var(--border); border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 13px; transition: all 0.15s; }
+.relation-add-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+.relation-add-btn span { font-size: 18px; font-weight: 300; }
+
+/* Relation modal */
+.relation-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: opacity 0.2s, visibility 0.2s; }
+.relation-modal-overlay.active { opacity: 1; visibility: visible; }
+.relation-modal { background: var(--bg-card); border-radius: 8px; width: 100%; max-width: 500px; max-height: 90vh; overflow: auto; transform: translateY(-20px); transition: transform 0.2s; box-shadow: 0 10px 40px rgba(0,0,0,0.2); }
+.relation-modal-overlay.active .relation-modal { transform: translateY(0); }
+.relation-modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.relation-modal-header h3 { font-size: 16px; font-weight: 600; margin: 0; }
+.relation-modal-close { background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-muted); line-height: 1; padding: 0 4px; }
+.relation-modal-close:hover { color: var(--text); }
+.relation-modal-body { padding: 20px; }
+.relation-modal-footer { padding: 16px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Relation picker items */
+.rel-picker-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: background 0.1s, border-color 0.1s; }
+.rel-picker-item:hover { background: var(--primary-light); border-color: var(--primary); }
+
+/* Badge variants */
+.badge-info { background: var(--primary-light); color: var(--primary); }

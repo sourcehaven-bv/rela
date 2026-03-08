@@ -19,6 +19,7 @@ const (
 	WidgetTextarea    = dataentryconfig.WidgetTextarea
 	WidgetNumber      = dataentryconfig.WidgetNumber
 	WidgetDate        = dataentryconfig.WidgetDate
+	WidgetCards       = dataentryconfig.WidgetCards
 
 	DirectionIncoming = dataentryconfig.DirectionIncoming
 	DirectionOutgoing = dataentryconfig.DirectionOutgoing

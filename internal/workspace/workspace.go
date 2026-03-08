@@ -520,6 +520,7 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 // CreateRelationOptions configures optional settings for relation creation.
 type CreateRelationOptions struct {
 	Properties map[string]interface{} // property values for the relation
+	Content    string                 // markdown body content for the relation
 }
 
 // CreateRelation validates both endpoints exist, checks for duplicates,
@@ -557,10 +558,13 @@ func (w *Workspace) CreateRelation(from, relType, to string, opts ...CreateRelat
 		markdown.ApplyRelationTemplate(rel, template)
 	}
 
-	// Apply caller-provided properties (override template defaults).
+	// Apply caller-provided properties and content (override template defaults).
 	if len(opts) > 0 {
 		for k, v := range opts[0].Properties {
 			rel.Properties[k] = v
+		}
+		if opts[0].Content != "" {
+			rel.Content = opts[0].Content
 		}
 	}
 

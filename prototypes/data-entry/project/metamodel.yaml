@@ -69,3 +69,10 @@ relations:
     from: [ticket]
     to: [ticket]
     inverse: blockedBy
+    properties:
+      reason:
+        type: string
+        description: Why this ticket blocks the other
+      severity:
+        type: enum
+        values: [critical, high, medium, low]
