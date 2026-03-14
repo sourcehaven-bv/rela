@@ -125,4 +125,26 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-color, #e2e8f0);
   border-left: none;
 }
+
+/* Fullscreen mode - ensure it covers everything including sidebar */
+.markdown-editor :deep(.EasyMDEContainer.fullscreen) {
+  z-index: 9999 !important;
+}
+
+.markdown-editor :deep(.editor-toolbar.fullscreen) {
+  z-index: 9999 !important;
+}
+
+.markdown-editor :deep(.CodeMirror-fullscreen) {
+  z-index: 9999 !important;
+}
+
+.markdown-editor :deep(.editor-preview-side.fullscreen) {
+  z-index: 9999 !important;
+}
+
+/* Side-by-side fullscreen mode */
+.markdown-editor :deep(.EasyMDEContainer.fullscreen .CodeMirror-sided) {
+  z-index: 9999 !important;
+}
 </style>

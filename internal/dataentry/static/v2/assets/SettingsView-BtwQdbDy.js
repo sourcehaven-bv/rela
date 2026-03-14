@@ -1,0 +1,1 @@
+import{_ as t,a as n,c as a,b as s}from"./index-B6zMSA-4.js";const c={},o={class:"settings-view"};function i(r,e){return n(),a("div",o,[...e[0]||(e[0]=[s("h1",null,"Settings",-1),s("p",{class:"placeholder"},"Settings component coming in Phase 14",-1)])])}const d=t(c,[["render",i],["__scopeId","data-v-4caf6a2d"]]);export{d as default};
