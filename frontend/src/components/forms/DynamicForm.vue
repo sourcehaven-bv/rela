@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
-import type { PropertyDef } from '@/types'
+import type { PropertyDef, FormFieldOrRelation } from '@/types'
 import FieldRenderer from './FieldRenderer.vue'
 import RelationPicker from './RelationPicker.vue'
 
@@ -41,12 +41,15 @@ const title = computed(() => {
   return isEdit.value ? `Edit ${label}` : `New ${label}`
 })
 
-const fields = computed(() => {
+const fields = computed((): FormFieldOrRelation[] => {
   if (!formConfig.value) return []
   if (formConfig.value.sections?.length) {
-    return formConfig.value.sections.flatMap((s) => s.fields)
+    return formConfig.value.sections.flatMap((s) => s.fields) as FormFieldOrRelation[]
   }
-  return formConfig.value.fields || []
+  // Combine property fields and relation fields into a single list
+  const propFields = (formConfig.value.fields || []) as FormFieldOrRelation[]
+  const relFields = (formConfig.value.relations || []) as FormFieldOrRelation[]
+  return [...propFields, ...relFields]
 })
 
 // Methods
@@ -269,7 +272,7 @@ onBeforeUnmount(() => {
           <div class="form-fields">
             <template v-for="field in section.fields" :key="field.property || field.relation">
               <FieldRenderer
-                v-if="field.property"
+                v-if="field.property && !field.hidden"
                 :field="field"
                 :property-def="getPropertyDef(field.property)"
                 :value="formData[field.property]"
@@ -292,7 +295,7 @@ onBeforeUnmount(() => {
       <div v-else class="form-fields">
         <template v-for="field in fields" :key="field.property || field.relation">
           <FieldRenderer
-            v-if="field.property"
+            v-if="field.property && !field.hidden"
             :field="field"
             :property-def="getPropertyDef(field.property)"
             :value="formData[field.property]"

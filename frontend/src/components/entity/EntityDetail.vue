@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import type { Entity } from '@/types'
+import { getEditFormId } from '@/types'
 import Badge from '@/components/common/Badge.vue'
 
 const props = defineProps<{
@@ -23,6 +24,7 @@ const showDeleteConfirm = ref(false)
 
 // Computed
 const typeDef = computed(() => schemaStore.getEntityType(props.entityType))
+const editFormId = computed(() => getEditFormId(schemaStore, props.entityType))
 
 const properties = computed(() => {
   if (!entity.value || !typeDef.value) return []
@@ -82,7 +84,11 @@ async function loadEntity() {
 }
 
 function editEntity() {
-  router.push(`/form/${props.entityType}/${props.entityId}`)
+  if (editFormId.value) {
+    router.push(`/form/${editFormId.value}/${props.entityId}`)
+  } else {
+    uiStore.error('No edit form configured for this entity type')
+  }
 }
 
 async function deleteEntity() {
@@ -157,7 +163,7 @@ onMounted(() => loadEntity())
           <h1>{{ entity.properties.title || entity.id }}</h1>
         </div>
         <div class="header-actions">
-          <button class="btn btn-secondary" @click="editEntity">
+          <button v-if="editFormId" class="btn btn-secondary" @click="editEntity">
             Edit
           </button>
           <button class="btn btn-danger" @click="showDeleteConfirm = true">

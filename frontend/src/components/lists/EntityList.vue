@@ -161,7 +161,8 @@ onMounted(() => {
     <header class="list-header">
       <h1>{{ listConfig.title || listConfig.entity }}</h1>
       <router-link
-        :to="`/form/${listConfig.entity}`"
+        v-if="listConfig.create_form"
+        :to="`/form/${listConfig.create_form}`"
         class="btn btn-primary"
       >
         + New
@@ -184,7 +185,7 @@ onMounted(() => {
 
       <div v-else-if="entities.length === 0" class="empty-state">
         <p>No {{ listConfig.entity }}s found.</p>
-        <router-link :to="`/form/${listConfig.entity}`" class="btn btn-secondary">
+        <router-link v-if="listConfig.create_form" :to="`/form/${listConfig.create_form}`" class="btn btn-secondary">
           Create one
         </router-link>
       </div>

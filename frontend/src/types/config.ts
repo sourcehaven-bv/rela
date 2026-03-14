@@ -17,25 +17,61 @@ export interface AppConfig {
 export interface FormConfig {
   entity: string
   title?: string
+  description?: string
+  mode?: 'edit' | string
+  body?: boolean
   sections?: FormSection[]
   fields?: FormField[]
+  relations?: FormRelation[]
 }
 
 export interface FormSection {
   title?: string
   description?: string
-  fields: FormField[]
+  fields: FormFieldOrRelation[]
 }
 
 export interface FormField {
   property?: string
-  relation?: string
   widget?: string
   label?: string
   placeholder?: string
   help?: string
   default?: unknown
   readonly?: boolean
+  hidden?: boolean
+}
+
+export interface FormRelation {
+  relation: string
+  direction?: 'outgoing' | 'incoming'
+  target_type?: string
+  label?: string
+  required?: boolean
+  widget?: string
+  allow_create?: boolean
+  create_form?: string
+}
+
+// Unified type for form fields that can be either property fields or relation fields
+export interface FormFieldOrRelation {
+  // Property field props
+  property?: string
+  placeholder?: string
+  help?: string
+  default?: unknown
+  readonly?: boolean
+  hidden?: boolean
+  // Relation field props
+  relation?: string
+  direction?: 'outgoing' | 'incoming'
+  target_type?: string
+  required?: boolean
+  allow_create?: boolean
+  create_form?: string
+  // Common props
+  label?: string
+  widget?: string
 }
 
 export interface ListConfig {
@@ -50,6 +86,22 @@ export interface ListConfig {
   edit_form?: string
   detail_view?: string
   page_size?: number
+}
+
+// Helper to get edit form for an entity type
+export function getEditFormId(schemaStore: { forms: Map<string, FormConfig> }, entityType: string): string | undefined {
+  for (const [formId, config] of schemaStore.forms) {
+    if (config.entity === entityType && config.mode === 'edit') {
+      return formId
+    }
+  }
+  // Fallback to any form for this entity type
+  for (const [formId, config] of schemaStore.forms) {
+    if (config.entity === entityType) {
+      return formId
+    }
+  }
+  return undefined
 }
 
 export interface FilterControl {

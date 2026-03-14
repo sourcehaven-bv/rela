@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { FormField, PropertyDef } from '@/types'
+import type { FormFieldOrRelation, PropertyDef } from '@/types'
 
 const props = defineProps<{
-  field: FormField
+  field: FormFieldOrRelation
   propertyDef?: PropertyDef
   value: unknown
   error?: string

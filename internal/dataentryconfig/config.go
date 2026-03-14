@@ -106,6 +106,7 @@ type FormField struct {
 	Label       string              `yaml:"label" json:"label,omitempty"`
 	Placeholder string              `yaml:"placeholder" json:"placeholder,omitempty"`
 	Help        string              `yaml:"help" json:"help,omitempty"`
+	Widget      string              `yaml:"widget" json:"widget,omitempty"`
 	Required    *bool               `yaml:"required,omitempty" json:"required,omitempty"`
 	Default     string              `yaml:"default" json:"default,omitempty"`
 	Hidden      bool                `yaml:"hidden" json:"hidden,omitempty"`

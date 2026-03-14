@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
-import type { FormField, Entity } from '@/types'
+import type { FormFieldOrRelation, Entity } from '@/types'
 
 const props = defineProps<{
-  field: FormField
+  field: FormFieldOrRelation
   entityType: string
   value: string[]
 }>()
