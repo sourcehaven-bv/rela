@@ -154,6 +154,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_analyze", a.handleV1Analyze)
 	mux.HandleFunc("/api/v1/_git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
+	mux.HandleFunc("/api/v1/_settings", a.handleAPISettingsCRUD)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)

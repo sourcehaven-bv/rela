@@ -704,3 +704,201 @@ func (a *App) edgeToAPIRelation(edge *model.Relation, relatedEntity *model.Entit
 	}
 	return rel
 }
+
+// --- Settings API ---
+
+// APISettingsData contains all data needed for the settings page.
+type APISettingsData struct {
+	UserDefaults  APIUserDefaults  `json:"userDefaults"`
+	AllProperties []APIPropertyDef `json:"allProperties"`
+	AllRelations  []APIRelationDef `json:"allRelations"`
+	EntityTypes   []string         `json:"entityTypes"`
+}
+
+// APIUserDefaults is the JSON representation of user defaults.
+type APIUserDefaults struct {
+	Defaults         map[string]string    `json:"defaults"`
+	RelationDefaults map[string]string    `json:"relationDefaults"`
+	Overrides        []APIDefaultOverride `json:"overrides"`
+}
+
+// APIDefaultOverride is the JSON representation of a default override.
+type APIDefaultOverride struct {
+	Types            []string          `json:"types"`
+	Defaults         map[string]string `json:"defaults"`
+	RelationDefaults map[string]string `json:"relationDefaults"`
+}
+
+// APIPropertyDef describes a property for the settings page.
+type APIPropertyDef struct {
+	Name   string   `json:"name"`
+	Type   string   `json:"type"`
+	Values []string `json:"values"`
+}
+
+// APIRelationDef describes a relation for the settings page.
+type APIRelationDef struct {
+	Name       string              `json:"name"`
+	Label      string              `json:"label"`
+	TargetType string              `json:"targetType"`
+	Targets    []APIRelationTarget `json:"targets"`
+}
+
+// APIRelationTarget is a possible target for a relation.
+type APIRelationTarget struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+// handleAPISettingsCRUD routes /api/v1/settings requests based on HTTP method.
+func (a *App) handleAPISettingsCRUD(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		a.handleAPIGetSettings(w, r)
+	case http.MethodPut, http.MethodPost:
+		a.handleAPISaveSettings(w, r)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleAPIGetSettings returns the settings data for the settings page.
+func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	ud := a.userDefaults
+	if ud == nil {
+		ud = &UserDefaults{}
+	}
+
+	// Convert user defaults to API format
+	apiDefaults := APIUserDefaults{
+		Defaults:         ud.Defaults,
+		RelationDefaults: ud.RelationDefaults,
+	}
+	if apiDefaults.Defaults == nil {
+		apiDefaults.Defaults = make(map[string]string)
+	}
+	if apiDefaults.RelationDefaults == nil {
+		apiDefaults.RelationDefaults = make(map[string]string)
+	}
+	for _, o := range ud.Overrides {
+		apiOverride := APIDefaultOverride{
+			Types:            o.Types,
+			Defaults:         o.Defaults,
+			RelationDefaults: o.RelationDefaults,
+		}
+		if apiOverride.Defaults == nil {
+			apiOverride.Defaults = make(map[string]string)
+		}
+		if apiOverride.RelationDefaults == nil {
+			apiOverride.RelationDefaults = make(map[string]string)
+		}
+		apiDefaults.Overrides = append(apiDefaults.Overrides, apiOverride)
+	}
+
+	// Collect all properties across entity types
+	propMap := make(map[string]APIPropertyDef)
+	for _, entTypeName := range a.meta.EntityTypes() {
+		entDef, ok := a.meta.GetEntityDef(entTypeName)
+		if !ok {
+			continue
+		}
+		for propName, propDef := range entDef.Properties {
+			if _, exists := propMap[propName]; !exists {
+				propMap[propName] = APIPropertyDef{
+					Name:   propName,
+					Type:   propDef.Type,
+					Values: resolvePropertyValues(propDef, a.meta),
+				}
+			} else {
+				// Merge values for properties that appear on multiple types
+				existing := propMap[propName]
+				seen := make(map[string]bool)
+				for _, v := range existing.Values {
+					seen[v] = true
+				}
+				for _, v := range resolvePropertyValues(propDef, a.meta) {
+					if !seen[v] {
+						existing.Values = append(existing.Values, v)
+						seen[v] = true
+					}
+				}
+				propMap[propName] = existing
+			}
+		}
+	}
+	allProperties := make([]APIPropertyDef, 0, len(propMap))
+	for _, p := range propMap {
+		allProperties = append(allProperties, p)
+	}
+
+	// Collect all relation types with their targets
+	allRelations := make([]APIRelationDef, 0)
+	for _, relName := range a.meta.RelationTypes() {
+		relDef, ok := a.meta.GetRelationDef(relName)
+		if !ok {
+			continue
+		}
+		rd := APIRelationDef{
+			Name:  relName,
+			Label: relDef.Label,
+		}
+		if len(relDef.To) > 0 {
+			rd.TargetType = relDef.To[0]
+			for _, targetType := range relDef.To {
+				for _, e := range a.g.NodesByType(targetType) {
+					rd.Targets = append(rd.Targets, APIRelationTarget{
+						ID:    e.ID,
+						Title: a.entityDisplayTitle(e),
+					})
+				}
+			}
+		}
+		allRelations = append(allRelations, rd)
+	}
+
+	data := APISettingsData{
+		UserDefaults:  apiDefaults,
+		AllProperties: allProperties,
+		AllRelations:  allRelations,
+		EntityTypes:   a.meta.EntityTypes(),
+	}
+
+	writeJSON(w, data)
+}
+
+// handleAPISaveSettings saves the user defaults from JSON input.
+func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
+	var input APIUserDefaults
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	// Convert API format to internal UserDefaults
+	ud := UserDefaults{
+		Defaults:         input.Defaults,
+		RelationDefaults: input.RelationDefaults,
+	}
+	for _, o := range input.Overrides {
+		ud.Overrides = append(ud.Overrides, DefaultOverride{
+			Types:            o.Types,
+			Defaults:         o.Defaults,
+			RelationDefaults: o.RelationDefaults,
+		})
+	}
+
+	// Save to file
+	if err := a.saveUserDefaults(&ud); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to save settings: "+err.Error())
+		return
+	}
+
+	a.mu.Lock()
+	a.userDefaults = &ud
+	a.mu.Unlock()
+
+	writeJSON(w, map[string]bool{"ok": true})
+}

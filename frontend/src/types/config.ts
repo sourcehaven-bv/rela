@@ -189,16 +189,18 @@ export interface DashboardCard {
   limit?: number
 }
 
+export interface AnalyzeIssue {
+  entityId: string
+  entityType: string
+  message: string
+  severity: 'error' | 'warning'
+  checkType: string
+}
+
 export interface AnalyzeResult {
   errors: number
   warnings: number
-  issues: Array<{
-    entityId: string
-    entityType: string
-    message: string
-    severity: 'error' | 'warning'
-    checkType: string
-  }>
+  issues: AnalyzeIssue[]
   byCheck: Record<string, number>
 }
 
