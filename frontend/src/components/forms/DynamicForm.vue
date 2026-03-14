@@ -5,6 +5,7 @@ import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import type { PropertyDef, FormFieldOrRelation } from '@/types'
 import FieldRenderer from './FieldRenderer.vue'
 import RelationPicker from './RelationPicker.vue'
+import MarkdownEditor from './MarkdownEditor.vue'
 
 const props = defineProps<{
   formId: string
@@ -316,13 +317,11 @@ onBeforeUnmount(() => {
       <!-- Content field (markdown body) -->
       <div class="form-field content-field">
         <label for="content">Content</label>
-        <textarea
-          id="content"
-          v-model="content"
-          @input="updateContent(($event.target as HTMLTextAreaElement).value)"
-          rows="10"
+        <MarkdownEditor
+          :model-value="content"
+          @update:model-value="updateContent"
           placeholder="Markdown content..."
-        ></textarea>
+        />
       </div>
 
       <div class="form-actions">
@@ -432,21 +431,6 @@ onBeforeUnmount(() => {
   margin-bottom: 24px;
 }
 
-.content-field textarea {
-  width: 100%;
-  padding: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-family: monospace;
-  font-size: 14px;
-  resize: vertical;
-}
-
-.content-field textarea:focus {
-  outline: none;
-  border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
-}
 
 .form-actions {
   display: flex;
