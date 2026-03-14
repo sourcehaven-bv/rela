@@ -1,0 +1,1 @@
+import{_ as t,o as n,c as o,a as s}from"./index-CUKvgnlR.js";const a={},c={class:"settings-view"};function i(r,e){return n(),o("div",c,[...e[0]||(e[0]=[s("h1",null,"Settings",-1),s("p",{class:"placeholder"},"Settings component coming in Phase 14",-1)])])}const d=t(a,[["render",i],["__scopeId","data-v-4caf6a2d"]]);export{d as default};

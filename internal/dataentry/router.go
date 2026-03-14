@@ -3,6 +3,7 @@ package dataentry
 import (
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 // NewRouter returns an http.Handler with all data entry routes registered.
@@ -16,6 +17,40 @@ func (a *App) NewRouter() http.Handler {
 		panic("embedded static filesystem: " + err.Error())
 	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+
+	// Vue SPA (v2) - serve static assets or fall back to index.html for SPA routing
+	v2FS, err := fs.Sub(staticFiles, "static/v2")
+	if err != nil {
+		panic("embedded v2 filesystem: " + err.Error())
+	}
+	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+		// Strip /v2 prefix
+		path := strings.TrimPrefix(r.URL.Path, "/v2")
+		if path == "" {
+			path = "/"
+		}
+
+		// Try to serve static file first
+		if path != "/" && path != "/index.html" {
+			// Check if file exists in v2 directory
+			f, err := v2FS.Open(strings.TrimPrefix(path, "/"))
+			if err == nil {
+				f.Close()
+				http.StripPrefix("/v2", http.FileServer(http.FS(v2FS))).ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Fall back to index.html for SPA routing
+		indexHTML, err := fs.ReadFile(v2FS, "index.html")
+		if err != nil {
+			http.Error(w, "index.html not found", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		_, _ = w.Write(indexHTML)
+	})
 
 	// SSE endpoints — excluded from reload-lock (long-lived connection)
 	mux.HandleFunc("/api/events", a.handleSSE)

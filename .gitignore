@@ -33,3 +33,7 @@ e2e/dist/
 e2e/test-results/
 e2e/playwright-report/
 e2e/.playwright/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/

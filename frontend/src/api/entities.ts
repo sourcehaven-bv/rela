@@ -1,0 +1,41 @@
+import { api } from './client'
+import type { Entity, CreateEntity, ListResponse, ListParams } from '@/types'
+import { useSchemaStore } from '@/stores/schema'
+
+function getPlural(type: string): string {
+  const schema = useSchemaStore()
+  const entityType = schema.entityTypes.get(type)
+  return entityType?.plural ?? type + 's'
+}
+
+export async function listEntities(
+  type: string,
+  params?: ListParams
+): Promise<ListResponse<Entity>> {
+  return api.get<ListResponse<Entity>>(`/${getPlural(type)}`, params as Record<string, unknown>)
+}
+
+export async function getEntity(
+  type: string,
+  id: string,
+  params?: { include?: string; fields?: string }
+): Promise<Entity> {
+  return api.get<Entity>(`/${getPlural(type)}/${id}`, params)
+}
+
+export async function createEntity(type: string, entity: CreateEntity): Promise<Entity> {
+  return api.post<Entity>(`/${getPlural(type)}`, entity)
+}
+
+export async function updateEntity(
+  type: string,
+  id: string,
+  patch: Partial<Entity>,
+  etag?: string
+): Promise<Entity> {
+  return api.patch<Entity>(`/${getPlural(type)}/${id}`, patch, etag)
+}
+
+export async function deleteEntity(type: string, id: string): Promise<void> {
+  return api.delete(`/${getPlural(type)}/${id}`)
+}

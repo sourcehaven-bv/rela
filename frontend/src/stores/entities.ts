@@ -1,0 +1,186 @@
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import { listEntities, getEntity, createEntity, updateEntity, deleteEntity } from '@/api/entities'
+import type { Entity, CreateEntity, ListParams, ListMeta } from '@/types'
+
+interface EntityCache {
+  entity: Entity
+  timestamp: number
+  etag?: string
+}
+
+const CACHE_TTL = 60 * 1000 // 1 minute
+
+export const useEntitiesStore = defineStore('entities', () => {
+  // State
+  const cache = ref<Map<string, EntityCache>>(new Map())
+  const listCache = ref<Map<string, { data: Entity[]; meta: ListMeta; timestamp: number }>>(
+    new Map()
+  )
+  const loading = ref<Set<string>>(new Set())
+  const errors = ref<Map<string, string>>(new Map())
+
+  // Helpers
+  function cacheKey(type: string, id: string): string {
+    return `${type}:${id}`
+  }
+
+  function listCacheKey(type: string, params?: ListParams): string {
+    return `${type}:${JSON.stringify(params || {})}`
+  }
+
+  function isCacheValid(timestamp: number): boolean {
+    return Date.now() - timestamp < CACHE_TTL
+  }
+
+  // Getters
+  const getCached = computed(() => (type: string, id: string) => {
+    const key = cacheKey(type, id)
+    const cached = cache.value.get(key)
+    if (cached && isCacheValid(cached.timestamp)) {
+      return cached.entity
+    }
+    return undefined
+  })
+
+  const isLoading = computed(() => (type: string, id?: string) => {
+    if (id) {
+      return loading.value.has(cacheKey(type, id))
+    }
+    return Array.from(loading.value).some((k) => k.startsWith(type + ':'))
+  })
+
+  const getError = computed(() => (type: string, id: string) => {
+    return errors.value.get(cacheKey(type, id))
+  })
+
+  // Actions
+  async function fetchList(type: string, params?: ListParams): Promise<{ data: Entity[]; meta: ListMeta }> {
+    const key = listCacheKey(type, params)
+    const cached = listCache.value.get(key)
+
+    if (cached && isCacheValid(cached.timestamp)) {
+      return { data: cached.data, meta: cached.meta }
+    }
+
+    loading.value.add(`list:${type}`)
+    try {
+      const response = await listEntities(type, params)
+
+      // Cache list result
+      listCache.value.set(key, {
+        data: response.data,
+        meta: response.meta,
+        timestamp: Date.now(),
+      })
+
+      // Also cache individual entities
+      for (const entity of response.data) {
+        cache.value.set(cacheKey(type, entity.id), {
+          entity,
+          timestamp: Date.now(),
+        })
+      }
+
+      return { data: response.data, meta: response.meta }
+    } finally {
+      loading.value.delete(`list:${type}`)
+    }
+  }
+
+  async function fetchEntity(type: string, id: string, force = false): Promise<Entity> {
+    const key = cacheKey(type, id)
+
+    if (!force) {
+      const cached = cache.value.get(key)
+      if (cached && isCacheValid(cached.timestamp)) {
+        return cached.entity
+      }
+    }
+
+    loading.value.add(key)
+    errors.value.delete(key)
+
+    try {
+      const entity = await getEntity(type, id)
+      cache.value.set(key, {
+        entity,
+        timestamp: Date.now(),
+      })
+      return entity
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to fetch entity'
+      errors.value.set(key, message)
+      throw err
+    } finally {
+      loading.value.delete(key)
+    }
+  }
+
+  async function create(type: string, data: CreateEntity): Promise<Entity> {
+    const entity = await createEntity(type, data)
+    cache.value.set(cacheKey(type, entity.id), {
+      entity,
+      timestamp: Date.now(),
+    })
+    // Invalidate list cache for this type
+    invalidateListCache(type)
+    return entity
+  }
+
+  async function update(
+    type: string,
+    id: string,
+    data: Partial<Entity>,
+    etag?: string
+  ): Promise<Entity> {
+    const entity = await updateEntity(type, id, data, etag)
+    cache.value.set(cacheKey(type, id), {
+      entity,
+      timestamp: Date.now(),
+    })
+    // Invalidate list cache for this type
+    invalidateListCache(type)
+    return entity
+  }
+
+  async function remove(type: string, id: string): Promise<void> {
+    await deleteEntity(type, id)
+    cache.value.delete(cacheKey(type, id))
+    // Invalidate list cache for this type
+    invalidateListCache(type)
+  }
+
+  function invalidateListCache(type: string) {
+    for (const key of listCache.value.keys()) {
+      if (key.startsWith(type + ':')) {
+        listCache.value.delete(key)
+      }
+    }
+  }
+
+  function invalidateAll() {
+    cache.value.clear()
+    listCache.value.clear()
+  }
+
+  return {
+    // State
+    cache,
+    loading,
+    errors,
+
+    // Getters
+    getCached,
+    isLoading,
+    getError,
+
+    // Actions
+    fetchList,
+    fetchEntity,
+    create,
+    update,
+    remove,
+    invalidateAll,
+  }
+})
