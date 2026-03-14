@@ -17,8 +17,12 @@ func (a *App) NewRouter() http.Handler {
 	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
-	// SSE endpoint — excluded from reload-lock (long-lived connection)
+	// SSE endpoints — excluded from reload-lock (long-lived connection)
 	mux.HandleFunc("/api/events", a.handleSSE)
+	mux.HandleFunc("/api/v1/_events", a.handleSSE)
+
+	// API v1 routes (new REST API)
+	a.registerAPIV1Routes(mux)
 
 	// All other routes are wrapped with the reload-lock middleware
 	inner := http.NewServeMux()
