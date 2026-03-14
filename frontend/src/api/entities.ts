@@ -39,3 +39,14 @@ export async function updateEntity(
 export async function deleteEntity(type: string, id: string): Promise<void> {
   return api.delete(`/${getPlural(type)}/${id}`)
 }
+
+export async function searchEntities(
+  query: string,
+  type?: string
+): Promise<ListResponse<Entity>> {
+  const params: Record<string, string> = { q: query }
+  if (type) {
+    params.type = type
+  }
+  return api.get<ListResponse<Entity>>('/_search', params)
+}
