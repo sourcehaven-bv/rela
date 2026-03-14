@@ -11,19 +11,24 @@ const route = useRoute()
 const appName = computed(() => schemaStore.app.name)
 const navigation = computed(() => schemaStore.navigation)
 
+function getHref(entry: NavigationEntry): string {
+  if (entry.list) return `/list/${entry.list}`
+  if (entry.kanban) return `/kanban/${entry.kanban}`
+  if (entry.dashboard) return '/'
+  if (entry.graph) return '/graph'
+  return '/'
+}
+
 function isActive(href: string): boolean {
   return route.path === href || route.path.startsWith(href + '/')
 }
 
 function getIcon(entry: NavigationEntry): string {
   if (entry.icon) return entry.icon
-  if (entry.href?.startsWith('/list/')) return '📋'
-  if (entry.href?.startsWith('/kanban/')) return '📊'
-  if (entry.href?.startsWith('/dashboard')) return '🏠'
-  if (entry.href?.startsWith('/search')) return '🔍'
-  if (entry.href?.startsWith('/graph')) return '🕸️'
-  if (entry.href?.startsWith('/analyze')) return '⚠️'
-  if (entry.href?.startsWith('/settings')) return '⚙️'
+  if (entry.list) return '📋'
+  if (entry.kanban) return '📊'
+  if (entry.dashboard) return '🏠'
+  if (entry.graph) return '🕸️'
   return '📄'
 }
 </script>
@@ -44,29 +49,24 @@ function getIcon(entry: NavigationEntry): string {
 
     <nav class="sidebar-nav">
       <template v-for="(entry, index) in navigation" :key="index">
-        <div v-if="entry.type === 'divider'" class="nav-divider"></div>
-
-        <div v-else-if="entry.type === 'section'" class="nav-section">
-          <div class="nav-section-title">{{ entry.label }}</div>
-          <template v-if="entry.items">
-            <RouterLink
-              v-for="(item, itemIndex) in entry.items"
-              :key="itemIndex"
-              :to="item.href || '/'"
-              class="nav-item"
-              :class="{ active: isActive(item.href || '') }"
-            >
-              <span class="nav-icon">{{ getIcon(item) }}</span>
-              <span class="nav-label">{{ item.label }}</span>
-            </RouterLink>
-          </template>
+        <div v-if="entry.group" class="nav-section">
+          <div class="nav-section-title">{{ entry.group }}</div>
+          <RouterLink
+            v-for="(item, itemIndex) in entry.items"
+            :key="itemIndex"
+            :to="getHref(item)"
+            class="nav-item"
+            :class="{ active: isActive(getHref(item)) }"
+          >
+            <span class="nav-icon">{{ getIcon(item) }}</span>
+            <span class="nav-label">{{ item.label }}</span>
+          </RouterLink>
         </div>
-
         <RouterLink
-          v-else-if="entry.type === 'link' && entry.href"
-          :to="entry.href"
+          v-else
+          :to="getHref(entry)"
           class="nav-item"
-          :class="{ active: isActive(entry.href) }"
+          :class="{ active: isActive(getHref(entry)) }"
         >
           <span class="nav-icon">{{ getIcon(entry) }}</span>
           <span class="nav-label">{{ entry.label }}</span>

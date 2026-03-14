@@ -1,0 +1,1 @@
+import{_ as s,o,c,a}from"./index-DtO3QLgP.js";const r={},t={class:"graph-view"};function n(d,e){return o(),c("div",t,[...e[0]||(e[0]=[a("h1",null,"Graph",-1),a("p",{class:"placeholder"},"Graph visualization coming in Phase 11",-1)])])}const l=s(r,[["render",n],["__scopeId","data-v-d42dd3cf"]]);export{l as default};

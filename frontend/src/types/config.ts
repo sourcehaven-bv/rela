@@ -41,10 +41,21 @@ export interface FormField {
 export interface ListConfig {
   entity: string
   title?: string
+  description?: string
   columns: ListColumn[]
   filters?: ListFilter[]
+  filter_controls?: FilterControl[]
   default_sort?: SortSpec[]
+  create_form?: string
+  edit_form?: string
+  detail_view?: string
   page_size?: number
+}
+
+export interface FilterControl {
+  property?: string
+  relation?: string
+  label?: string
 }
 
 export interface ListColumn {
@@ -53,6 +64,7 @@ export interface ListColumn {
   direction?: 'outgoing' | 'incoming'
   label?: string
   sortable?: boolean
+  link?: string
   width?: string
 }
 
@@ -98,9 +110,15 @@ export interface KanbanCard {
 }
 
 export interface NavigationEntry {
-  type: 'link' | 'section' | 'divider'
+  // Direct item fields
   label?: string
+  list?: string
+  dashboard?: boolean
+  graph?: boolean
+  kanban?: string
   icon?: string
-  href?: string
+  // Group fields
+  group?: string
+  collapsed?: boolean
   items?: NavigationEntry[]
 }
