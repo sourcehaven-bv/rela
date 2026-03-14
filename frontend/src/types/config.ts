@@ -6,6 +6,7 @@ export interface Config {
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>
   kanbans: Record<string, KanbanConfig>
+  dashboard?: DashboardConfig
   navigation: NavigationEntry[]
 }
 
@@ -159,6 +160,35 @@ export interface KanbanCard {
   title: string
   subtitle?: string
   badges?: string[]
+}
+
+export interface DashboardConfig {
+  title?: string
+  description?: string
+  cards: DashboardCard[]
+}
+
+export interface DashboardCard {
+  title: string
+  query: string
+  display: 'count' | 'breakdown' | 'table'
+  group_by?: string
+  columns?: Array<{ property?: string; relation?: string; label?: string; link?: string }>
+  sort?: Array<{ property: string; direction: 'asc' | 'desc' }>
+  limit?: number
+}
+
+export interface AnalyzeResult {
+  errors: number
+  warnings: number
+  issues: Array<{
+    entityId: string
+    entityType: string
+    message: string
+    severity: 'error' | 'warning'
+    checkType: string
+  }>
+  byCheck: Record<string, number>
 }
 
 export interface NavigationEntry {

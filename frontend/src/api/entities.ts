@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Entity, CreateEntity, ListResponse, ListParams } from '@/types'
+import type { Entity, CreateEntity, ListResponse, ListParams, AnalyzeResult } from '@/types'
 import { useSchemaStore } from '@/stores/schema'
 
 function getPlural(type: string): string {
@@ -49,4 +49,8 @@ export async function searchEntities(
     params.type = type
   }
   return api.get<ListResponse<Entity>>('/_search', params)
+}
+
+export async function analyze(): Promise<AnalyzeResult> {
+  return api.get<AnalyzeResult>('/_analyze')
 }
