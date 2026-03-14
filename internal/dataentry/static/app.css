@@ -367,6 +367,8 @@ tbody tr.row-selected { background: #dbeafe; outline: 2px solid var(--primary); 
 .status-bar .git-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status-bar .git-spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.status-bar .version-link { font-size: 12px; opacity: 0.6; padding: 2px 8px; background: rgba(99,102,241,0.2); border-radius: 4px; }
+.status-bar .version-link:hover { opacity: 1; background: rgba(99,102,241,0.3); }
 
 /* Command palette */
 .cmd-palette-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; display: flex; align-items: flex-start; justify-content: center; padding-top: 15vh; animation: fadeIn 0.1s; }

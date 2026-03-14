@@ -92,6 +92,7 @@
   <div class="status-bar-left">
     <a href="/settings"{{ if eq $.ActiveList "_settings" }} class="active"{{ end }}
        hx-get="/settings" hx-target="#content" hx-push-url="true">&#9881; Settings</a>
+    <a href="/v2/" class="version-link" title="Try the new Vue interface (beta)">v2 ↗</a>
   </div>
   <div class="status-bar-right">
     {{ if .GitEnabled }}
