@@ -77,16 +77,16 @@ function initializePositions() {
 
   nodePositions.value = new Map()
 
-  // Initialize in a circle
+  // Initialize in a larger circle with random jitter
   const centerX = width / 2
   const centerY = height / 2
-  const radius = Math.min(width, height) / 3
+  const radius = Math.min(width, height) * 0.35
 
   nodes.forEach((node, i) => {
     const angle = (2 * Math.PI * i) / nodes.length
     nodePositions.value.set(node.id, {
-      x: centerX + radius * Math.cos(angle) + (Math.random() - 0.5) * 50,
-      y: centerY + radius * Math.sin(angle) + (Math.random() - 0.5) * 50,
+      x: centerX + radius * Math.cos(angle) + (Math.random() - 0.5) * 80,
+      y: centerY + radius * Math.sin(angle) + (Math.random() - 0.5) * 80,
       vx: 0,
       vy: 0,
     })
@@ -115,14 +115,14 @@ function startSimulation() {
     for (const node of nodes) {
       const pos = nodePositions.value.get(node.id)
       if (pos) {
-        pos.vx *= 0.9
-        pos.vy *= 0.9
+        pos.vx *= 0.85
+        pos.vy *= 0.85
         pos.x += pos.vx
         pos.y += pos.vy
 
-        // Keep in bounds
-        pos.x = Math.max(50, Math.min(750, pos.x))
-        pos.y = Math.max(50, Math.min(550, pos.y))
+        // Keep in bounds (accounting for node size)
+        pos.x = Math.max(60, Math.min(740, pos.x))
+        pos.y = Math.max(40, Math.min(560, pos.y))
       }
     }
 
@@ -134,7 +134,7 @@ function startSimulation() {
 }
 
 function applyRepulsion(nodes: GraphNode[], alpha: number) {
-  const strength = 200 * alpha
+  const strength = 2000 * alpha
 
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
@@ -146,7 +146,8 @@ function applyRepulsion(nodes: GraphNode[], alpha: number) {
       const dy = posB.y - posA.y
       const dist = Math.sqrt(dx * dx + dy * dy) || 1
 
-      const force = strength / (dist * dist)
+      // Apply repulsion to all nodes
+      const force = strength / (dist * dist + 100)
       const fx = (dx / dist) * force
       const fy = (dy / dist) * force
 
@@ -159,7 +160,8 @@ function applyRepulsion(nodes: GraphNode[], alpha: number) {
 }
 
 function applyAttraction(edges: GraphEdge[], alpha: number) {
-  const strength = 0.1 * alpha
+  const strength = 0.15 * alpha
+  const targetDistance = 120
 
   for (const edge of edges) {
     const posA = nodePositions.value.get(edge.source)
@@ -170,7 +172,8 @@ function applyAttraction(edges: GraphEdge[], alpha: number) {
     const dy = posB.y - posA.y
     const dist = Math.sqrt(dx * dx + dy * dy) || 1
 
-    const force = (dist - 100) * strength
+    // Pull together when too far, push apart when too close
+    const force = (dist - targetDistance) * strength
     const fx = (dx / dist) * force
     const fy = (dy / dist) * force
 
@@ -182,7 +185,7 @@ function applyAttraction(edges: GraphEdge[], alpha: number) {
 }
 
 function applyCenter(nodes: GraphNode[], alpha: number) {
-  const strength = 0.05 * alpha
+  const strength = 0.02 * alpha
   const centerX = 400
   const centerY = 300
 
@@ -338,6 +341,18 @@ watch(mode, () => {
       <!-- SVG Canvas -->
       <div class="graph-canvas">
         <svg ref="svgRef" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <marker
+              id="arrowhead"
+              markerWidth="8"
+              markerHeight="6"
+              refX="50"
+              refY="3"
+              orient="auto"
+            >
+              <polygon points="0 0, 8 3, 0 6" fill="#64748b" />
+            </marker>
+          </defs>
           <!-- Edges -->
           <g class="edges">
             <line
@@ -349,6 +364,7 @@ watch(mode, () => {
               :y2="getNodePosition(edge.target).y"
               class="edge"
               :class="{ dimmed: selectedRelationTypes.size > 0 && !selectedRelationTypes.has(edge.type) }"
+              marker-end="url(#arrowhead)"
             />
           </g>
 
@@ -363,12 +379,20 @@ watch(mode, () => {
               @click="selectNode(node)"
               @dblclick="openNode(node)"
             >
-              <circle
-                r="20"
+              <rect
+                x="-45"
+                y="-20"
+                width="90"
+                height="40"
+                rx="6"
+                ry="6"
                 :fill="nodeColorMap.get(node.type) || '#6366f1'"
               />
-              <text dy="5" text-anchor="middle" class="node-label">
-                {{ node.title.slice(0, 8) }}{{ node.title.length > 8 ? '...' : '' }}
+              <text dy="-4" text-anchor="middle" class="node-id">
+                {{ node.id }}
+              </text>
+              <text dy="10" text-anchor="middle" class="node-title">
+                {{ node.title.slice(0, 12) }}{{ node.title.length > 12 ? '...' : '' }}
               </text>
             </g>
           </g>
@@ -617,38 +641,46 @@ watch(mode, () => {
 }
 
 .edge {
-  stroke: #cbd5e1;
-  stroke-width: 1.5;
-  opacity: 0.6;
+  stroke: #94a3b8;
+  stroke-width: 2;
+  opacity: 0.8;
 }
 
 .edge.dimmed {
-  opacity: 0.2;
+  opacity: 0.3;
+  stroke: #e2e8f0;
 }
 
 .node {
   cursor: pointer;
 }
 
-.node circle {
-  stroke: white;
-  stroke-width: 2;
+.node rect {
+  stroke: rgba(0, 0, 0, 0.2);
+  stroke-width: 1;
   transition: all 0.15s;
 }
 
-.node:hover circle {
-  stroke-width: 3;
+.node:hover rect {
+  stroke-width: 2;
   filter: brightness(1.1);
 }
 
-.node.selected circle {
+.node.selected rect {
   stroke: #1e293b;
   stroke-width: 3;
 }
 
-.node-label {
-  fill: white;
+.node-id {
+  fill: rgba(255, 255, 255, 0.8);
   font-size: 8px;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+.node-title {
+  fill: white;
+  font-size: 10px;
   font-weight: 600;
   pointer-events: none;
 }
