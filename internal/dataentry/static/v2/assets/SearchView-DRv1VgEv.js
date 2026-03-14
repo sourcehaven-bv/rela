@@ -1,0 +1,1 @@
+import{_ as a,o as s,c as o,a as c}from"./index-BQH9I6Ys.js";const r={},n={class:"search-view"};function t(_,e){return s(),o("div",n,[...e[0]||(e[0]=[c("h1",null,"Search",-1),c("p",{class:"placeholder"},"Search component coming in Phase 6",-1)])])}const d=a(r,[["render",t],["__scopeId","data-v-5eb85526"]]);export{d as default};
