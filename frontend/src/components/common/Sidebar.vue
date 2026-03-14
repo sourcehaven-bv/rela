@@ -1,15 +1,32 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { computed, onMounted, onUnmounted } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import type { NavigationEntry } from '@/types'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const route = useRoute()
+const router = useRouter()
 
 const appName = computed(() => schemaStore.app.name)
 const navigation = computed(() => schemaStore.navigation)
+
+// Keyboard shortcut for search
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
+    e.preventDefault()
+    router.push('/search')
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', handleKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
+})
 
 function getHref(entry: NavigationEntry): string {
   if (entry.list) return `/list/${entry.list}`
@@ -47,6 +64,19 @@ function getIcon(entry: NavigationEntry): string {
       </button>
     </div>
 
+    <!-- Fixed top items: Search and Analysis -->
+    <div class="sidebar-top-items">
+      <RouterLink to="/search" class="nav-item" :class="{ active: route.path === '/search' }">
+        <span class="nav-icon">🔍</span>
+        <span class="nav-label">Search</span>
+        <span class="nav-shortcut" v-if="!uiStore.sidebarCollapsed">/</span>
+      </RouterLink>
+      <RouterLink to="/analyze" class="nav-item" :class="{ active: route.path === '/analyze' }">
+        <span class="nav-icon">⚠️</span>
+        <span class="nav-label">Analysis</span>
+      </RouterLink>
+    </div>
+
     <nav class="sidebar-nav">
       <template v-for="(entry, index) in navigation" :key="index">
         <div v-if="entry.group" class="nav-section">
@@ -75,6 +105,10 @@ function getIcon(entry: NavigationEntry): string {
     </nav>
 
     <div class="sidebar-footer">
+      <RouterLink to="/settings" class="settings-link" :class="{ active: route.path === '/settings' }">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Settings</span>
+      </RouterLink>
       <a href="/" class="version-switch" title="Switch to v1">
         v1 ↗
       </a>
@@ -135,10 +169,24 @@ function getIcon(entry: NavigationEntry): string {
   opacity: 1;
 }
 
+.sidebar-top-items {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 .sidebar-nav {
   flex: 1;
   overflow-y: auto;
   padding: 8px 0;
+}
+
+.nav-shortcut {
+  margin-left: auto;
+  background: rgba(255, 255, 255, 0.15);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: monospace;
 }
 
 .nav-divider {
@@ -193,8 +241,42 @@ function getIcon(entry: NavigationEntry): string {
 }
 
 .sidebar-footer {
-  padding: 16px;
+  padding: 12px 0;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-link {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  color: inherit;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.settings-link:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.settings-link.active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.settings-link .nav-icon {
+  width: 24px;
+  margin-right: 12px;
+  text-align: center;
+}
+
+.sidebar.collapsed .settings-link .nav-label {
+  display: none;
+}
+
+.sidebar.collapsed .settings-link .nav-icon {
+  margin-right: 0;
 }
 
 .version-switch {
@@ -202,6 +284,7 @@ function getIcon(entry: NavigationEntry): string {
   color: inherit;
   opacity: 0.6;
   text-decoration: none;
+  padding: 4px 16px;
 }
 
 .version-switch:hover {

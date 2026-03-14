@@ -2,9 +2,10 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [vue()],
-  base: '/v2/',
+  // Use /v2/ base in production build, root in dev for simpler URLs
+  base: command === 'build' ? '/v2/' : '/',
   build: {
     outDir: '../internal/dataentry/static/v2',
     emptyOutDir: true,
@@ -15,6 +16,7 @@ export default defineConfig({
     },
   },
   server: {
+    port: 5173,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
@@ -22,4 +24,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

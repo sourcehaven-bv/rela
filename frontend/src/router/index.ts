@@ -69,7 +69,8 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({
-  history: createWebHistory('/v2/'),
+  // Use Vite's BASE_URL which is '/' in dev, '/v2/' in production
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
 })
 

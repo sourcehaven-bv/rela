@@ -104,7 +104,15 @@ function validate(): boolean {
 
   if (!entityType.value) return true
 
+  // Only validate properties that are shown in the form (not hidden)
+  const formPropertyNames = new Set(
+    fields.value.filter((f) => f.property && !f.hidden).map((f) => f.property!)
+  )
+
   for (const [propName, propDef] of Object.entries(entityType.value.properties)) {
+    // Skip properties not in the form - backend will validate them
+    if (!formPropertyNames.has(propName)) continue
+
     const value = formData.value[propName]
 
     // Required check
@@ -155,6 +163,7 @@ async function handleSubmit() {
     } else {
       const entity = await entitiesStore.create(formConfig.value.entity, payload)
       uiStore.success('Entity created successfully')
+      dirty.value = false
       router.push(`/entity/${formConfig.value.entity}/${entity.id}`)
       return
     }

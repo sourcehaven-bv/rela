@@ -297,3 +297,22 @@ dev project="prototypes/data-entry/project" port="8080":
 [no-exit-message]
 dev-catalog port="8282":
     go run ./cmd/rela-server -project prototypes/data-entry/catalog -port {{port}}
+
+# ── Frontend Dev ──
+
+# Run Vue dev server with hot-reloading (requires Go server running on :8080)
+[no-exit-message]
+dev-frontend:
+    cd frontend && npm run dev
+
+# Build Vue frontend for production
+build-frontend:
+    cd frontend && npm run build
+
+# Type-check Vue frontend
+typecheck-frontend:
+    cd frontend && npm run typecheck
+
+# Lint Vue frontend
+lint-frontend:
+    cd frontend && npm run lint
