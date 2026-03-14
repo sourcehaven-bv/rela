@@ -145,9 +145,15 @@ export interface ViewSection {
 export interface KanbanConfig {
   entity: string
   title?: string
-  group_by: string
-  columns: KanbanColumn[]
+  column_property: string
+  columns?: KanbanColumn[]
+  swimlane_property?: string
+  swimlanes?: KanbanSwimlane[]
   card: KanbanCard
+  edit_form?: string
+  create_form?: string
+  filters?: Array<{ property: string; operator: string; value: string }>
+  filter_controls?: FilterControl[]
 }
 
 export interface KanbanColumn {
@@ -156,10 +162,15 @@ export interface KanbanColumn {
   color?: string
 }
 
+export interface KanbanSwimlane {
+  value: string
+  label?: string
+}
+
 export interface KanbanCard {
   title: string
   subtitle?: string
-  badges?: string[]
+  fields?: Array<{ property?: string; relation?: string }>
 }
 
 export interface DashboardConfig {

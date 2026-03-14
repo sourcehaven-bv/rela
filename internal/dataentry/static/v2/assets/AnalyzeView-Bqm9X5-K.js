@@ -1,1 +1,0 @@
-import{_ as n,a as o,c as s,b as a}from"./index-B6zMSA-4.js";const c={},t={class:"analyze-view"};function l(r,e){return o(),s("div",t,[...e[0]||(e[0]=[a("h1",null,"Analyze",-1),a("p",{class:"placeholder"},"Analyze component coming later",-1)])])}const d=n(c,[["render",l],["__scopeId","data-v-737644ed"]]);export{d as default};
