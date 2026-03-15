@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
+import { useListKeyboard } from '@/composables/useListKeyboard'
 import type { Entity, ListMeta, EntityType, ListParams } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
@@ -23,6 +24,43 @@ const loading = ref(true)
 const filters = ref<Record<string, string>>({})
 const sortField = ref<string | null>(null)
 const sortDesc = ref(false)
+
+// Computed for keyboard navigation
+const itemCount = computed(() => entities.value.length)
+const hasPrevPage = computed(() => meta.value.page > 1)
+const hasNextPage = computed(() => meta.value.has_more || meta.value.page * meta.value.per_page < meta.value.total)
+
+// Keyboard navigation
+const { selectedIndex, clearSelection } = useListKeyboard({
+  itemCount,
+  hasPrevPage,
+  hasNextPage,
+  onOpen: (index) => {
+    const entity = entities.value[index]
+    if (entity) navigateToEntity(entity)
+  },
+  onEdit: (index) => {
+    const entity = entities.value[index]
+    if (entity && listConfig.value?.edit_form) {
+      router.push(`/form/${listConfig.value.edit_form}/${entity.id}`)
+    }
+  },
+  onCreate: () => {
+    if (listConfig.value?.create_form) {
+      router.push(`/form/${listConfig.value.create_form}`)
+    }
+  },
+  onPrevPage: () => {
+    if (hasPrevPage.value) {
+      handlePageChange(meta.value.page - 1)
+    }
+  },
+  onNextPage: () => {
+    if (hasNextPage.value) {
+      handlePageChange(meta.value.page + 1)
+    }
+  },
+})
 
 // Computed
 const listConfig = computed(() => schemaStore.getList(props.listId))
@@ -147,7 +185,13 @@ watch(() => props.listId, () => {
   sortField.value = null
   sortDesc.value = false
   meta.value.page = 1
+  clearSelection()
   loadEntities()
+})
+
+// Clear selection when entities change
+watch(entities, () => {
+  clearSelection()
 })
 
 // Lifecycle
@@ -165,7 +209,7 @@ onMounted(() => {
         :to="`/form/${listConfig.create_form}`"
         class="btn btn-primary"
       >
-        + New
+        + New <kbd>N</kbd>
       </router-link>
     </header>
 
@@ -212,10 +256,11 @@ onMounted(() => {
         </thead>
         <tbody>
           <tr
-            v-for="entity in entities"
+            v-for="(entity, index) in entities"
             :key="entity.id"
             @click="navigateToEntity(entity)"
             class="entity-row"
+            :class="{ selected: index === selectedIndex }"
           >
             <td
               v-for="column in listConfig.columns"
@@ -378,6 +423,16 @@ onMounted(() => {
 
 .entity-row:hover {
   background: #f8fafc;
+}
+
+.entity-row.selected {
+  background: #e0e7ff;
+  outline: 2px solid var(--accent-color, #6366f1);
+  outline-offset: -2px;
+}
+
+.entity-row.selected:hover {
+  background: #c7d2fe;
 }
 
 .error-state {

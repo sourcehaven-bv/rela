@@ -60,11 +60,11 @@ function goToPage(page: number) {
 
     <div class="pagination-controls">
       <button
-        class="pagination-btn"
+        class="pagination-btn pagination-nav"
         :disabled="meta.page === 1"
         @click="goToPage(meta.page - 1)"
       >
-        &larr;
+        &larr; <kbd>H</kbd>
       </button>
 
       <template v-for="(page, index) in visiblePages" :key="index">
@@ -80,11 +80,11 @@ function goToPage(page: number) {
       </template>
 
       <button
-        class="pagination-btn"
+        class="pagination-btn pagination-nav"
         :disabled="!meta.has_more"
         @click="goToPage(meta.page + 1)"
       >
-        &rarr;
+        <kbd>L</kbd> &rarr;
       </button>
     </div>
   </div>
@@ -144,5 +144,19 @@ function goToPage(page: number) {
 .pagination-ellipsis {
   padding: 0 8px;
   color: #64748b;
+}
+
+.pagination-nav {
+  gap: 4px;
+}
+
+.pagination-nav kbd {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #64748b;
+}
+
+.pagination-nav:disabled kbd {
+  opacity: 0.5;
 }
 </style>

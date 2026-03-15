@@ -69,7 +69,7 @@ function getIcon(entry: NavigationEntry): string {
       <RouterLink to="/search" class="nav-item" :class="{ active: route.path === '/search' }">
         <span class="nav-icon">🔍</span>
         <span class="nav-label">Search</span>
-        <span class="nav-shortcut" v-if="!uiStore.sidebarCollapsed">/</span>
+        <kbd v-if="!uiStore.sidebarCollapsed">/</kbd>
       </RouterLink>
       <RouterLink to="/analyze" class="nav-item" :class="{ active: route.path === '/analyze' }">
         <span class="nav-icon">⚠️</span>

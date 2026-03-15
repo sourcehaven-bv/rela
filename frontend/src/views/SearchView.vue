@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchEntities } from '@/api'
 import { useSchemaStore } from '@/stores'
@@ -9,12 +9,17 @@ const route = useRoute()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 
+// Refs
+const searchInputRef = ref<HTMLInputElement | null>(null)
+
 // State
 const query = ref('')
 const typeFilter = ref('')
 const results = ref<Entity[]>([])
 const loading = ref(false)
 const searched = ref(false)
+const selectedIndex = ref(-1)
+const inResults = ref(false)
 
 // Computed
 const entityTypes = computed(() => {
@@ -64,6 +69,97 @@ function getEntityTypeLabel(type: string): string {
   return def?.label || type
 }
 
+// Keyboard navigation
+function handleKeydown(e: KeyboardEvent) {
+  // If we're in the input and user presses Tab or ArrowDown, enter results mode
+  if (document.activeElement === searchInputRef.value) {
+    if ((e.key === 'Tab' || e.key === 'ArrowDown') && results.value.length > 0) {
+      e.preventDefault()
+      inResults.value = true
+      selectedIndex.value = 0
+      searchInputRef.value?.blur()
+      return
+    }
+  }
+
+  // If not in input (in results mode)
+  if (inResults.value && results.value.length > 0) {
+    switch (e.key) {
+      case 'j':
+      case 'ArrowDown':
+        e.preventDefault()
+        selectedIndex.value = Math.min(results.value.length - 1, selectedIndex.value + 1)
+        scrollSelectedIntoView()
+        break
+
+      case 'k':
+      case 'ArrowUp':
+        e.preventDefault()
+        selectedIndex.value = Math.max(0, selectedIndex.value - 1)
+        scrollSelectedIntoView()
+        break
+
+      case 'Enter':
+      case 'o':
+        if (selectedIndex.value >= 0) {
+          e.preventDefault()
+          navigateToResult(selectedIndex.value)
+        }
+        break
+
+      case 'Escape':
+      case '/':
+        e.preventDefault()
+        focusInput()
+        break
+    }
+  }
+}
+
+function scrollSelectedIntoView() {
+  nextTick(() => {
+    const items = document.querySelectorAll('.result-item')
+    const selected = items[selectedIndex.value]
+    if (selected) {
+      selected.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  })
+}
+
+function focusInput() {
+  inResults.value = false
+  selectedIndex.value = -1
+  nextTick(() => {
+    searchInputRef.value?.focus()
+    searchInputRef.value?.select()
+  })
+}
+
+function navigateToResult(index: number) {
+  const entity = results.value[index]
+  if (entity) {
+    router.push(`/entity/${entity.type}/${entity.id}`)
+  }
+}
+
+// Clear selection when results change
+watch(results, () => {
+  selectedIndex.value = -1
+  inResults.value = false
+})
+
+// Auto-focus on mount
+onMounted(() => {
+  document.addEventListener('keydown', handleKeydown)
+  nextTick(() => {
+    searchInputRef.value?.focus()
+  })
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handleKeydown)
+})
+
 // Initialize from URL params
 watch(
   () => route.query,
@@ -85,11 +181,13 @@ watch(
     <div class="search-form">
       <div class="search-input-row">
         <input
+          ref="searchInputRef"
           v-model="query"
           type="text"
           placeholder="Search entities..."
           class="search-input"
           @keyup.enter="search"
+          @focus="inResults = false"
         />
         <select v-model="typeFilter" class="type-filter">
           <option value="">All types</option>
@@ -116,16 +214,17 @@ watch(
       <p class="results-count">{{ results.length }} result{{ results.length !== 1 ? 's' : '' }} found</p>
 
       <div class="results-list">
-        <router-link
-          v-for="entity in results"
+        <div
+          v-for="(entity, index) in results"
           :key="entity.id"
-          :to="`/entity/${entity.type}/${entity.id}`"
           class="result-item"
+          :class="{ selected: index === selectedIndex }"
+          @click="navigateToResult(index)"
         >
           <span class="result-type">{{ getEntityTypeLabel(entity.type) }}</span>
           <span class="result-id">{{ entity.id }}</span>
           <span class="result-title">{{ getEntityLabel(entity) }}</span>
-        </router-link>
+        </div>
       </div>
     </div>
   </div>
@@ -249,11 +348,23 @@ h1 {
   text-decoration: none;
   color: inherit;
   transition: all 0.15s;
+  cursor: pointer;
 }
 
 .result-item:hover {
   border-color: var(--accent-color, #6366f1);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.result-item.selected {
+  background: #e0e7ff;
+  border-color: var(--accent-color, #6366f1);
+  outline: 2px solid var(--accent-color, #6366f1);
+  outline-offset: -2px;
+}
+
+.result-item.selected:hover {
+  background: #c7d2fe;
 }
 
 .result-type {

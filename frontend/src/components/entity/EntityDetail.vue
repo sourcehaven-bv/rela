@@ -164,7 +164,7 @@ onMounted(() => loadEntity())
         </div>
         <div class="header-actions">
           <button v-if="editFormId" class="btn btn-secondary" @click="editEntity">
-            Edit
+            Edit <kbd>E</kbd>
           </button>
           <button class="btn btn-danger" @click="showDeleteConfirm = true">
             Delete

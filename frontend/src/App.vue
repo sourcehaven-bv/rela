@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
+import { useKeyboardShortcuts, shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
 import Sidebar from '@/components/common/Sidebar.vue'
 import Toast from '@/components/common/Toast.vue'
+import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal.vue'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const loading = ref(true)
 const error = ref<string | null>(null)
+
+// Initialize global keyboard shortcuts
+useKeyboardShortcuts()
 
 onMounted(async () => {
   try {
@@ -39,6 +44,10 @@ onMounted(async () => {
       <RouterView />
     </main>
     <Toast />
+    <KeyboardShortcutsModal
+      :open="shortcutsModalOpen"
+      @close="shortcutsModalOpen = false"
+    />
   </div>
 </template>
 
@@ -127,5 +136,51 @@ body {
   .main-content {
     margin-left: 0;
   }
+}
+
+/* Keyboard shortcut hints */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+kbd + kbd {
+  margin-left: 2px;
+}
+
+.btn kbd,
+button kbd {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 10px;
+  height: 16px;
+  min-width: 16px;
+  margin-left: 4px;
+}
+
+.btn-secondary kbd {
+  background: var(--bg-color);
+  border-color: var(--border-color);
+  color: #64748b;
+}
+
+.sidebar kbd {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.4);
 }
 </style>

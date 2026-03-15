@@ -247,12 +247,22 @@ function handleBeforeUnload(e: BeforeUnloadEvent) {
   }
 }
 
+// Cmd/Ctrl+Enter to submit
+function handleKeydown(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault()
+    handleSubmit()
+  }
+}
+
 onMounted(() => {
   window.addEventListener('beforeunload', handleBeforeUnload)
+  document.addEventListener('keydown', handleKeydown)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
+  document.removeEventListener('keydown', handleKeydown)
 })
 </script>
 
@@ -340,14 +350,14 @@ onBeforeUnmount(() => {
           @click="handleCancel"
           :disabled="saving"
         >
-          Cancel
+          Cancel <kbd>Esc</kbd>
         </button>
         <button
           type="submit"
           class="btn btn-primary"
           :disabled="saving"
         >
-          {{ saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Create') }}
+          {{ saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Create') }} <kbd>&#8984;&#8629;</kbd>
         </button>
       </div>
     </form>
