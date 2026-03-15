@@ -134,14 +134,21 @@ async function deleteEntity() {
 
 function navigateToRelation(targetId: string) {
   // Try to determine target type from ID prefix
-  const prefix = targetId.split('-')[0]
   for (const [typeName, typeDef] of schemaStore.entityTypeList) {
-    if (typeDef.id_prefix === prefix || typeName.toUpperCase().startsWith(prefix)) {
+    // Check if the ID starts with this entity type's prefix
+    if (typeDef.id_prefix && targetId.startsWith(typeDef.id_prefix)) {
       router.push(`/entity/${typeName}/${targetId}`)
       return
     }
   }
-  // Fallback: try to find entity in cache
+  // Fallback for manual IDs without prefix: try matching type name
+  const prefix = targetId.split('-')[0].toUpperCase()
+  for (const [typeName] of schemaStore.entityTypeList) {
+    if (typeName.toUpperCase().startsWith(prefix)) {
+      router.push(`/entity/${typeName}/${targetId}`)
+      return
+    }
+  }
   uiStore.warning(`Could not determine entity type for ${targetId}`)
 }
 
