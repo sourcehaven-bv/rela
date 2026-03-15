@@ -2,6 +2,10 @@ version: "1.0"
 app:
   name: "Support Tickets"
   description: "Internal ticket management system"
+git:
+  enabled: true
+  mode: direct
+  branch: develop
 # Colors for enum/custom type values from the metamodel.
 # Referenced by type name — applies everywhere that value appears.
 styles:
