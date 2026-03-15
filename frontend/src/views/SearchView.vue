@@ -459,8 +459,8 @@ watch(
         type="button"
         class="help-btn"
         :class="{ active: showHelp }"
-        @click="showHelp = !showHelp"
         title="Show search syntax help"
+        @click="showHelp = !showHelp"
       >
         ?
       </button>
@@ -521,11 +521,11 @@ watch(
         />
 
         <!-- Filter button with dropdown -->
-        <div class="filter-dropdown" ref="filterMenuRef">
+        <div ref="filterMenuRef" class="filter-dropdown">
           <button
             class="btn btn-secondary filter-btn"
-            @click.stop="toggleFilterMenu"
             type="button"
+            @click.stop="toggleFilterMenu"
           >
             + Filter <kbd>F</kbd>
           </button>
@@ -562,7 +562,7 @@ watch(
             <!-- Value selection -->
             <template v-else>
               <div class="filter-header">
-                <button class="back-btn" @click="selectedFilterOption = null" type="button">
+                <button class="back-btn" type="button" @click="selectedFilterOption = null">
                   &larr;
                 </button>
                 <span>{{ selectedFilterOption.label }}</span>
@@ -593,9 +593,9 @@ watch(
                 />
                 <button
                   class="btn btn-primary btn-sm"
-                  @click="applyFilter(filterValueInput)"
                   :disabled="!filterValueInput"
                   type="button"
+                  @click="applyFilter(filterValueInput)"
                 >
                   Apply
                 </button>
@@ -604,7 +604,7 @@ watch(
           </div>
         </div>
 
-        <button class="btn btn-primary" @click="search" :disabled="loading">
+        <button class="btn btn-primary" :disabled="loading" @click="search">
           {{ loading ? 'Searching...' : 'Search' }}
         </button>
       </div>
@@ -618,16 +618,16 @@ watch(
           class="filter-chip"
         >
           <span>{{ filter.label }}</span>
-          <button class="chip-remove" @click="removeFilter(filter.id)" type="button">&times;</button>
+          <button class="chip-remove" type="button" @click="removeFilter(filter.id)">&times;</button>
         </div>
-        <button class="clear-filters" @click="clearAllFilters" type="button">
+        <button class="clear-filters" type="button" @click="clearAllFilters">
           Clear all
         </button>
       </div>
     </div>
 
     <div v-if="loading" class="loading-state">
-      <div class="spinner"></div>
+      <div class="spinner"/>
       <span>Searching...</span>
     </div>
 

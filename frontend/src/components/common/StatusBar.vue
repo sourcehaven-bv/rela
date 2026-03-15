@@ -30,9 +30,9 @@ async function handleSync() {
     <!-- Left side: Git status -->
     <div class="status-left">
       <div v-if="gitStore.isAvailable" class="git-status" :class="gitStore.statusClass">
-        <div class="status-item" @click="handleSync" :title="gitStore.syncing ? 'Syncing...' : 'Click to sync'">
+        <div class="status-item" :title="gitStore.syncing ? 'Syncing...' : 'Click to sync'" @click="handleSync">
           <span class="git-branch">{{ gitStore.branch }}</span>
-          <span class="git-dot"></span>
+          <span class="git-dot"/>
           <span class="git-status-text">{{ gitStore.statusText }}</span>
         </div>
         <RouterLink
@@ -57,8 +57,8 @@ async function handleSync() {
       </RouterLink>
       <button
         class="status-item"
-        @click="shortcutsModalOpen = true"
         title="Keyboard shortcuts"
+        @click="shortcutsModalOpen = true"
       >
         <kbd>?</kbd> Shortcuts
       </button>

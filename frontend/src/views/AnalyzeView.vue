@@ -122,19 +122,19 @@ onMounted(() => {
         <h1>Analysis</h1>
         <p class="subtitle">Validation checks across all entities and relations</p>
       </div>
-      <button class="btn btn-secondary" @click="loadAnalysis" :disabled="loading">
+      <button class="btn btn-secondary" :disabled="loading" @click="loadAnalysis">
         {{ loading ? 'Refreshing...' : 'Refresh' }}
       </button>
     </header>
 
     <div v-if="loading" class="loading-state">
-      <div class="spinner"></div>
+      <div class="spinner"/>
       <span>Running analysis...</span>
     </div>
 
     <template v-else-if="result">
       <!-- Summary badge -->
-      <div class="summary-badge" v-if="result.errors > 0 || result.warnings > 0">
+      <div v-if="result.errors > 0 || result.warnings > 0" class="summary-badge">
         <span v-if="result.errors > 0" class="badge error">
           {{ result.errors }} {{ result.errors === 1 ? 'error' : 'errors' }}
         </span>
@@ -166,7 +166,7 @@ onMounted(() => {
           </div>
 
           <template v-else>
-            <table class="issues-table" v-if="shouldShowIssues(checkType.key) && getFilteredIssuesForCheck(checkType.key).length > 0">
+            <table v-if="shouldShowIssues(checkType.key) && getFilteredIssuesForCheck(checkType.key).length > 0" class="issues-table">
               <thead>
                 <tr>
                   <th>Entity</th>

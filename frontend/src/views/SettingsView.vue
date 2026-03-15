@@ -172,7 +172,7 @@ onMounted(() => {
     </div>
 
     <div v-if="loading" class="loading-state">
-      <div class="spinner"></div>
+      <div class="spinner"/>
       <span>Loading settings...</span>
     </div>
 
@@ -219,22 +219,22 @@ onMounted(() => {
                 </select>
                 <input
                   v-else-if="getPropertyDef(propName as string)?.type === 'date'"
-                  type="date"
                   v-model="propertyDefaults[propName as string]"
+                  type="date"
                 />
                 <input
                   v-else-if="getPropertyDef(propName as string)?.type === 'integer'"
-                  type="number"
                   v-model="propertyDefaults[propName as string]"
+                  type="number"
                 />
                 <input
                   v-else
-                  type="text"
                   v-model="propertyDefaults[propName as string]"
+                  type="text"
                 />
               </template>
               <template v-else>
-                <input type="text" v-model="propertyDefaults[propName as string]" />
+                <input v-model="propertyDefaults[propName as string]" type="text" />
                 <span class="stale-badge">unknown</span>
               </template>
             </div>
@@ -284,7 +284,7 @@ onMounted(() => {
                 </select>
               </template>
               <template v-else>
-                <input type="text" v-model="relationDefaults[relName as string]" readonly />
+                <input v-model="relationDefaults[relName as string]" type="text" readonly />
                 <span class="stale-badge">unknown</span>
               </template>
             </div>
@@ -373,18 +373,18 @@ onMounted(() => {
                       </select>
                       <input
                         v-else-if="getPropertyDef(propName as string)?.type === 'date'"
-                        type="date"
                         v-model="override.defaults[propName as string]"
+                        type="date"
                       />
                       <input
                         v-else-if="getPropertyDef(propName as string)?.type === 'integer'"
-                        type="number"
                         v-model="override.defaults[propName as string]"
+                        type="number"
                       />
-                      <input v-else type="text" v-model="override.defaults[propName as string]" />
+                      <input v-else v-model="override.defaults[propName as string]" type="text" />
                     </template>
                     <template v-else>
-                      <input type="text" v-model="override.defaults[propName as string]" />
+                      <input v-model="override.defaults[propName as string]" type="text" />
                       <span class="stale-badge">unknown</span>
                     </template>
                   </div>
@@ -436,8 +436,8 @@ onMounted(() => {
                     </template>
                     <template v-else>
                       <input
-                        type="text"
                         v-model="override.relationDefaults[relName as string]"
+                        type="text"
                         readonly
                       />
                       <span class="stale-badge">unknown</span>
@@ -482,7 +482,7 @@ onMounted(() => {
             <span class="info-label">App Name</span>
             <span class="info-value">{{ schemaStore.app.name }}</span>
           </div>
-          <div class="info-row" v-if="schemaStore.app.description">
+          <div v-if="schemaStore.app.description" class="info-row">
             <span class="info-label">Description</span>
             <span class="info-value">{{ schemaStore.app.description }}</span>
           </div>

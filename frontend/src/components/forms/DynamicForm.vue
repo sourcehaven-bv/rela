@@ -66,7 +66,7 @@ async function loadEntity() {
       props.entityId
     )
     formData.value = { ...entity.properties }
-    relations.value = { ...entity.relations } || {}
+    relations.value = entity.relations ? { ...entity.relations } : {}
     content.value = entity.content || ''
     originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
   } catch (err) {
@@ -270,22 +270,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="form-layout" :class="{ 'with-sidepanel': isEdit }" v-if="formConfig">
+  <div v-if="formConfig" class="form-layout" :class="{ 'with-sidepanel': isEdit }">
     <div class="dynamic-form">
       <header class="form-header">
         <h1>{{ title }}</h1>
         <button
           type="button"
           class="help-btn"
-          @click="helpModalOpen = true"
           title="Show help for this entity type"
+          @click="helpModalOpen = true"
         >
           ?
         </button>
       </header>
 
       <div v-if="loading" class="loading-state">
-        <div class="spinner"></div>
+        <div class="spinner"/>
         <span>Loading...</span>
       </div>
 
@@ -350,8 +350,8 @@ onBeforeUnmount(() => {
           <label for="content">Content</label>
           <MarkdownEditor
             :model-value="content"
-            @update:model-value="updateContent"
             placeholder="Markdown content..."
+            @update:model-value="updateContent"
           />
         </div>
 
@@ -359,8 +359,8 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="btn btn-secondary"
-            @click="handleCancel"
             :disabled="saving"
+            @click="handleCancel"
           >
             Cancel <kbd>Esc</kbd>
           </button>

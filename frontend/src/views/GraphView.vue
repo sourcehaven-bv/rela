@@ -266,17 +266,17 @@ watch(mode, () => {
           <option value="content">Content</option>
           <option value="metamodel">Metamodel</option>
         </select>
-        <button class="btn btn-secondary" @click="clearFilters" v-if="selectedEntityTypes.size > 0 || selectedRelationTypes.size > 0">
+        <button v-if="selectedEntityTypes.size > 0 || selectedRelationTypes.size > 0" class="btn btn-secondary" @click="clearFilters">
           Clear Filters
         </button>
-        <button class="btn btn-secondary" @click="loadGraphData" :disabled="loading">
+        <button class="btn btn-secondary" :disabled="loading" @click="loadGraphData">
           {{ loading ? 'Loading...' : 'Refresh' }}
         </button>
       </div>
     </header>
 
     <div v-if="loading" class="loading-state">
-      <div class="spinner"></div>
+      <div class="spinner"/>
       <span>Loading graph...</span>
     </div>
 
@@ -292,7 +292,7 @@ watch(mode, () => {
               class="filter-item"
               :class="{ active: selectedEntityTypes.size === 0 || selectedEntityTypes.has(et.type) }"
             >
-              <span class="color-dot" :style="{ background: et.color }"></span>
+              <span class="color-dot" :style="{ background: et.color }"/>
               <span class="filter-label">{{ et.label }}</span>
               <span class="filter-count">{{ et.count }}</span>
               <input
@@ -334,8 +334,8 @@ watch(mode, () => {
                 <span class="control-value">{{ repulsionStrength }}</span>
               </label>
               <input
-                type="range"
                 v-model.number="repulsionStrength"
+                type="range"
                 min="500"
                 max="5000"
                 step="100"
@@ -347,8 +347,8 @@ watch(mode, () => {
                 <span class="control-value">{{ linkDistance }}px</span>
               </label>
               <input
-                type="range"
                 v-model.number="linkDistance"
+                type="range"
                 min="60"
                 max="250"
                 step="10"
@@ -360,8 +360,8 @@ watch(mode, () => {
                 <span class="control-value">{{ (centerStrength * 100).toFixed(0) }}%</span>
               </label>
               <input
-                type="range"
                 v-model.number="centerStrength"
+                type="range"
                 min="0"
                 max="0.1"
                 step="0.005"
@@ -380,13 +380,13 @@ watch(mode, () => {
             <span class="detail-type">{{ selectedNode.type }}</span>
             <span class="detail-id">{{ selectedNode.id }}</span>
           </p>
-          <div class="detail-properties" v-if="Object.keys(selectedNode.properties).length > 0">
+          <div v-if="Object.keys(selectedNode.properties).length > 0" class="detail-properties">
             <div v-for="(value, key) in selectedNode.properties" :key="key" class="detail-prop">
               <span class="prop-key">{{ key }}:</span>
               <span class="prop-value">{{ value }}</span>
             </div>
           </div>
-          <button class="btn btn-primary btn-sm" @click="openNode(selectedNode)" v-if="mode === 'content'">
+          <button v-if="mode === 'content'" class="btn btn-primary btn-sm" @click="openNode(selectedNode)">
             Open Details
           </button>
         </div>

@@ -70,10 +70,10 @@ function hasActiveFilters(): boolean {
         <input
           v-else
           :id="`filter-${filter.property}`"
-          type="text"
           v-model="localFilters[filter.property]"
-          @input="handleFilterChange"
+          type="text"
           :placeholder="`Filter by ${filter.label || filter.property}`"
+          @input="handleFilterChange"
         />
       </div>
     </div>

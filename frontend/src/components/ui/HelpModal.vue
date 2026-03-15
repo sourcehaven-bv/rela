@@ -61,14 +61,14 @@ function handleOverlayClick(e: MouseEvent) {
         </div>
         <div class="help-body">
           <div v-if="loading" class="loading-state">
-            <div class="spinner"></div>
+            <div class="spinner"/>
             <span>Loading...</span>
           </div>
           <div v-else-if="error" class="error-state">
             {{ error }}
           </div>
           <!-- eslint-disable-next-line vue/no-v-html -->
-          <div v-else class="help-content-wrapper" v-html="helpContent"></div>
+          <div v-else class="help-content-wrapper" v-html="helpContent"/>
         </div>
       </div>
     </div>

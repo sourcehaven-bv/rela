@@ -270,15 +270,15 @@ onMounted(() => {
           <h3>Content</h3>
           <div class="resolve-content-choice">
             <label>
-              <input type="radio" v-model="contentChoice" value="ours" />
+              <input v-model="contentChoice" type="radio" value="ours" />
               Use Ours
             </label>
             <label>
-              <input type="radio" v-model="contentChoice" value="theirs" />
+              <input v-model="contentChoice" type="radio" value="theirs" />
               Use Theirs
             </label>
             <label>
-              <input type="radio" v-model="contentChoice" value="manual" />
+              <input v-model="contentChoice" type="radio" value="manual" />
               Edit Manually
             </label>
           </div>
@@ -294,15 +294,15 @@ onMounted(() => {
           </div>
           <div v-if="contentChoice === 'manual'" class="resolve-manual-edit">
             <label>Manual Content</label>
-            <textarea v-model="manualContent" rows="10"></textarea>
+            <textarea v-model="manualContent" rows="10"/>
           </div>
         </div>
 
         <div class="resolve-actions-bottom">
           <button
             class="btn btn-primary"
-            @click="applyResolution"
             :disabled="resolving"
+            @click="applyResolution"
           >
             {{ resolving ? 'Applying...' : 'Apply Resolution' }}
           </button>

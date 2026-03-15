@@ -73,7 +73,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="markdown-editor">
-    <textarea ref="textareaRef"></textarea>
+    <textarea ref="textareaRef"/>
   </div>
 </template>
 

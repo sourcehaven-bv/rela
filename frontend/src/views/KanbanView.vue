@@ -251,7 +251,7 @@ watch(() => props.id, () => {
     </div>
 
     <div v-if="loading" class="loading-state">
-      <div class="spinner"></div>
+      <div class="spinner"/>
       <span>Loading board...</span>
     </div>
 

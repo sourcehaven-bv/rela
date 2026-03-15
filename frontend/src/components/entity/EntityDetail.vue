@@ -84,7 +84,7 @@ const renderedContent = computed(() => {
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/`(.+?)`/g, '<code>$1</code>')
-    .replace(/^\- (.+)$/gm, '<li>$1</li>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
     .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
     .replace(/\n\n/g, '</p><p>')
     .replace(/^([^<].*)$/gm, '<p>$1</p>')
@@ -183,7 +183,7 @@ onMounted(() => loadEntity())
 <template>
   <div class="entity-detail">
     <div v-if="loading" class="loading-state">
-      <div class="spinner"></div>
+      <div class="spinner"/>
       <span>Loading...</span>
     </div>
 
@@ -245,7 +245,7 @@ onMounted(() => loadEntity())
       <!-- Content Section -->
       <section v-if="entity.content" class="detail-section">
         <h2>Content</h2>
-        <div class="content-body" v-html="renderedContent"></div>
+        <div class="content-body" v-html="renderedContent"/>
       </section>
 
       <!-- Delete Confirmation Modal -->
@@ -259,15 +259,15 @@ onMounted(() => loadEntity())
           <div class="modal-actions">
             <button
               class="btn btn-secondary"
-              @click="showDeleteConfirm = false"
               :disabled="deleting"
+              @click="showDeleteConfirm = false"
             >
               Cancel
             </button>
             <button
               class="btn btn-danger"
-              @click="deleteEntity"
               :disabled="deleting"
+              @click="deleteEntity"
             >
               {{ deleting ? 'Deleting...' : 'Delete' }}
             </button>

@@ -32,7 +32,7 @@ onMounted(async () => {
 
 <template>
   <div v-if="loading" class="loading-screen">
-    <div class="spinner"></div>
+    <div class="spinner"/>
     <p>Loading...</p>
   </div>
 

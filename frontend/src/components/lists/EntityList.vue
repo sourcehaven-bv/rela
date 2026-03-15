@@ -216,7 +216,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="entity-list" v-if="listConfig">
+  <div v-if="listConfig" class="entity-list">
     <header class="list-header">
       <h1>{{ listConfig.title || listConfig.entity }}</h1>
       <router-link
@@ -238,7 +238,7 @@ onMounted(() => {
 
     <div class="list-content">
       <div v-if="loading" class="loading-state">
-        <div class="spinner"></div>
+        <div class="spinner"/>
         <span>Loading...</span>
       </div>
 
@@ -267,16 +267,16 @@ onMounted(() => {
                 {{ sortDesc ? '▼' : '▲' }}
               </span>
             </th>
-            <th class="actions-column"></th>
+            <th class="actions-column"/>
           </tr>
         </thead>
         <tbody>
           <tr
             v-for="(entity, index) in entities"
             :key="entity.id"
-            @click="navigateToEntity(entity)"
             class="entity-row"
             :class="{ selected: index === selectedIndex }"
+            @click="navigateToEntity(entity)"
           >
             <td
               v-for="column in listConfig.columns"

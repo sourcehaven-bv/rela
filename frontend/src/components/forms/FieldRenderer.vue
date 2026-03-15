@@ -125,7 +125,7 @@ function handleMultiSelect(event: Event) {
       :disabled="readonly"
       rows="4"
       @input="handleInput"
-    ></textarea>
+    />
 
     <!-- Multi-select -->
     <select

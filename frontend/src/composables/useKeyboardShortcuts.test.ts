@@ -157,7 +157,7 @@ describe('useKeyboardShortcuts', () => {
       document.body.appendChild(input)
       input.focus()
 
-      const pushSpy = vi.spyOn(router, 'push')
+      vi.spyOn(router, 'push')
       document.dispatchEvent(createKeyEvent('?'))
 
       // Should not open modal

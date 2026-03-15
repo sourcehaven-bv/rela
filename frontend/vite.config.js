@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { fileURLToPath, URL } from 'node:url';
 export default defineConfig(function (_a) {
-    var command = _a.command;
+    const command = _a.command;
     return ({
         plugins: [vue()],
         // Use /v2/ base in production build, root in dev for simpler URLs

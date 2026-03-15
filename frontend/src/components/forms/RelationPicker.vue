@@ -123,7 +123,7 @@ watch(showDropdown, (show) => {
     </label>
 
     <!-- Selected entities -->
-    <div class="selected-entities" v-if="selectedEntities.length">
+    <div v-if="selectedEntities.length" class="selected-entities">
       <div
         v-for="entity in selectedEntities"
         :key="entity.id"
@@ -140,8 +140,8 @@ watch(showDropdown, (show) => {
     <!-- Search input -->
     <div class="search-wrapper">
       <input
-        type="text"
         v-model="searchQuery"
+        type="text"
         :placeholder="`Search ${targetTypes.join(', ')}...`"
         @focus="showDropdown = true"
         @input="showDropdown = true"
@@ -153,8 +153,8 @@ watch(showDropdown, (show) => {
           No matching entities found
         </div>
         <div
-          v-else
           v-for="entity in filteredCandidates.slice(0, 10)"
+          v-else
           :key="entity.id"
           class="dropdown-item"
           @click="selectEntity(entity)"

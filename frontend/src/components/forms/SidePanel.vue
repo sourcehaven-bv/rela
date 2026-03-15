@@ -74,7 +74,7 @@ onMounted(() => loadSidePanel())
 <template>
   <aside v-if="hasSections || loading" class="side-panel">
     <div v-if="loading" class="loading-state">
-      <div class="spinner"></div>
+      <div class="spinner"/>
     </div>
 
     <div v-else-if="error" class="error-state">

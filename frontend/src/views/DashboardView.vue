@@ -124,7 +124,7 @@ onMounted(() => {
     </header>
 
     <div v-if="loading" class="loading-state">
-      <div class="spinner"></div>
+      <div class="spinner"/>
       <span>Loading dashboard...</span>
     </div>
 
@@ -163,7 +163,7 @@ onMounted(() => {
                 <div
                   class="breakdown-bar-fill"
                   :style="{ width: `${item.percentage}%` }"
-                ></div>
+                />
               </div>
               <span class="breakdown-count">{{ item.count }}</span>
             </div>
