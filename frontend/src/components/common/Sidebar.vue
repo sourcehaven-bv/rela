@@ -1,16 +1,32 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
-import type { NavigationEntry } from '@/types'
+import { shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
+import { getSidebar } from '@/api'
+import type { SidebarGroup } from '@/types'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const route = useRoute()
 const router = useRouter()
 
-const appName = computed(() => schemaStore.app.name)
-const navigation = computed(() => schemaStore.navigation)
+// Sidebar data from API
+const sidebarGroups = ref<SidebarGroup[]>([])
+const sidebarAppName = ref('')
+
+const appName = computed(() => sidebarAppName.value || schemaStore.app.name)
+
+// Load sidebar data
+async function loadSidebar() {
+  try {
+    const data = await getSidebar()
+    sidebarAppName.value = data.app.name
+    sidebarGroups.value = data.navigation
+  } catch (err) {
+    console.error('Failed to load sidebar:', err)
+  }
+}
 
 // Keyboard shortcut for search
 function handleKeydown(e: KeyboardEvent) {
@@ -22,31 +38,25 @@ function handleKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   document.addEventListener('keydown', handleKeydown)
+  loadSidebar()
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeydown)
 })
 
-function getHref(entry: NavigationEntry): string {
-  if (entry.list) return `/list/${entry.list}`
-  if (entry.kanban) return `/kanban/${entry.kanban}`
-  if (entry.dashboard) return '/'
-  if (entry.graph) return '/graph'
-  return '/'
-}
-
 function isActive(href: string): boolean {
   return route.path === href || route.path.startsWith(href + '/')
 }
 
-function getIcon(entry: NavigationEntry): string {
-  if (entry.icon) return entry.icon
-  if (entry.list) return '📋'
-  if (entry.kanban) return '📊'
-  if (entry.dashboard) return '🏠'
-  if (entry.graph) return '🕸️'
-  return '📄'
+function getIconEmoji(icon?: string): string {
+  switch (icon) {
+    case 'list': return '📋'
+    case 'kanban': return '📊'
+    case 'dashboard': return '🏠'
+    case 'graph': return '🕸️'
+    default: return '📄'
+  }
 }
 </script>
 
@@ -78,29 +88,34 @@ function getIcon(entry: NavigationEntry): string {
     </div>
 
     <nav class="sidebar-nav">
-      <template v-for="(entry, index) in navigation" :key="index">
-        <div v-if="entry.group" class="nav-section">
-          <div class="nav-section-title">{{ entry.group }}</div>
+      <template v-for="(group, index) in sidebarGroups" :key="index">
+        <div v-if="group.group" class="nav-section">
+          <div class="nav-section-title">{{ group.group }}</div>
           <RouterLink
-            v-for="(item, itemIndex) in entry.items"
-            :key="itemIndex"
-            :to="getHref(item)"
+            v-for="item in group.items"
+            :key="item.href"
+            :to="item.href"
             class="nav-item"
-            :class="{ active: isActive(getHref(item)) }"
+            :class="{ active: isActive(item.href) }"
           >
-            <span class="nav-icon">{{ getIcon(item) }}</span>
+            <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
             <span class="nav-label">{{ item.label }}</span>
+            <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
           </RouterLink>
         </div>
-        <RouterLink
-          v-else
-          :to="getHref(entry)"
-          class="nav-item"
-          :class="{ active: isActive(getHref(entry)) }"
-        >
-          <span class="nav-icon">{{ getIcon(entry) }}</span>
-          <span class="nav-label">{{ entry.label }}</span>
-        </RouterLink>
+        <template v-else>
+          <RouterLink
+            v-for="item in group.items"
+            :key="item.href"
+            :to="item.href"
+            class="nav-item"
+            :class="{ active: isActive(item.href) }"
+          >
+            <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
+            <span class="nav-label">{{ item.label }}</span>
+            <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
+          </RouterLink>
+        </template>
       </template>
     </nav>
 
@@ -109,9 +124,9 @@ function getIcon(entry: NavigationEntry): string {
         <span class="nav-icon">⚙️</span>
         <span class="nav-label">Settings</span>
       </RouterLink>
-      <a href="/" class="version-switch" title="Switch to v1">
-        v1 ↗
-      </a>
+      <button class="shortcuts-btn" @click="shortcutsModalOpen = true" title="Keyboard shortcuts">
+        <kbd>?</kbd> <span class="nav-label">Shortcuts</span>
+      </button>
     </div>
   </aside>
 </template>
@@ -238,57 +253,88 @@ function getIcon(entry: NavigationEntry): string {
 
 .nav-label {
   font-size: 14px;
+  flex: 1;
+}
+
+.nav-count {
+  background: rgba(255, 255, 255, 0.15);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  min-width: 20px;
+  text-align: center;
 }
 
 .sidebar-footer {
-  padding: 12px 0;
+  padding: 8px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .settings-link {
   display: flex;
   align-items: center;
-  padding: 10px 16px;
+  gap: 6px;
+  padding: 6px 8px;
   color: inherit;
   text-decoration: none;
-  transition: background 0.15s ease;
+  font-size: 13px;
+  opacity: 0.7;
+  border-radius: 4px;
+  transition: all 0.15s ease;
 }
 
 .settings-link:hover {
+  opacity: 1;
   background: rgba(255, 255, 255, 0.1);
 }
 
 .settings-link.active {
+  opacity: 1;
   background: rgba(255, 255, 255, 0.15);
 }
 
 .settings-link .nav-icon {
-  width: 24px;
-  margin-right: 12px;
-  text-align: center;
+  font-size: 14px;
 }
 
 .sidebar.collapsed .settings-link .nav-label {
   display: none;
 }
 
-.sidebar.collapsed .settings-link .nav-icon {
-  margin-right: 0;
-}
-
-.version-switch {
-  font-size: 12px;
+.shortcuts-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
   color: inherit;
   opacity: 0.6;
-  text-decoration: none;
-  padding: 4px 16px;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
 }
 
-.version-switch:hover {
+.shortcuts-btn:hover {
   opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.shortcuts-btn kbd {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.sidebar.collapsed .shortcuts-btn .nav-label {
+  display: none;
+}
+
+.sidebar.collapsed .sidebar-footer {
+  justify-content: center;
 }
 
 /* Mobile overlay */

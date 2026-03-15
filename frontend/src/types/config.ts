@@ -63,6 +63,7 @@ export interface FormFieldOrRelation {
   default?: unknown
   readonly?: boolean
   hidden?: boolean
+  transitions?: Record<string, string[]>
   // Relation field props
   relation?: string
   direction?: 'outgoing' | 'incoming'
@@ -216,4 +217,23 @@ export interface NavigationEntry {
   group?: string
   collapsed?: boolean
   items?: NavigationEntry[]
+}
+
+// Sidebar API types (denormalized navigation with counts)
+export interface SidebarItem {
+  label: string
+  href: string
+  icon?: string
+  count?: number
+}
+
+export interface SidebarGroup {
+  group?: string
+  collapsed?: boolean
+  items: SidebarItem[]
+}
+
+export interface SidebarData {
+  app: AppConfig
+  navigation: SidebarGroup[]
 }

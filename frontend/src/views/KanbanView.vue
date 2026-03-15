@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useSchemaStore } from '@/stores'
 import { listEntities, updateEntity } from '@/api'
 import type { Entity, KanbanConfig } from '@/types'
+import Badge from '@/components/common/Badge.vue'
 
 const props = defineProps<{
   id: string
@@ -20,6 +21,11 @@ const draggedCard = ref<Entity | null>(null)
 
 // Computed
 const kanbanConfig = computed(() => schemaStore.getKanban(props.id) as KanbanConfig | undefined)
+
+const entityType = computed(() => {
+  if (!kanbanConfig.value) return undefined
+  return schemaStore.getEntityType(kanbanConfig.value.entity)
+})
 
 const columns = computed(() => {
   if (!kanbanConfig.value) return []
@@ -134,6 +140,12 @@ function getCardFieldValue(entity: Entity, field: { property?: string }): string
 
 function getCardFieldLabel(field: { property?: string }): string {
   return field.property || ''
+}
+
+function isEnumField(field: { property?: string }): boolean {
+  if (!field.property || !entityType.value) return false
+  const propDef = entityType.value.properties[field.property]
+  return propDef?.type === 'enum' || (propDef?.values?.length ?? 0) > 0
 }
 
 function onDragStart(event: DragEvent, entity: Entity) {
@@ -275,7 +287,13 @@ watch(() => props.id, () => {
                 class="card-field"
               >
                 <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
-                <span class="field-value">{{ getCardFieldValue(entity, field) || '-' }}</span>
+                <Badge
+                  v-if="isEnumField(field)"
+                  :value="getCardFieldValue(entity, field)"
+                  :property="field.property"
+                  :entity-type="entityType"
+                />
+                <span v-else class="field-value">{{ getCardFieldValue(entity, field) || '-' }}</span>
               </div>
             </div>
           </div>

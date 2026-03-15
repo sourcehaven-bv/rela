@@ -156,6 +156,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
 	mux.HandleFunc("/api/v1/_settings", a.handleAPISettingsCRUD)
 	mux.HandleFunc("/api/v1/_sidepanel/", a.handleV1SidePanel)
+	mux.HandleFunc("/api/v1/_sidebar", a.handleV1Sidebar)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
@@ -1337,4 +1338,114 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeV1JSON(w, http.StatusOK, result)
+}
+
+// --- Sidebar API ---
+
+// V1SidebarItem represents a navigation item with count.
+type V1SidebarItem struct {
+	Label string `json:"label"`
+	Href  string `json:"href"`
+	Icon  string `json:"icon,omitempty"`
+	Count *int   `json:"count,omitempty"`
+}
+
+// V1SidebarGroup represents a navigation group with items.
+type V1SidebarGroup struct {
+	Group     string          `json:"group,omitempty"`
+	Collapsed bool            `json:"collapsed,omitempty"`
+	Items     []V1SidebarItem `json:"items"`
+}
+
+// V1SidebarResponse contains the sidebar data with app info and navigation.
+type V1SidebarResponse struct {
+	App        V1AppConfig      `json:"app"`
+	Navigation []V1SidebarGroup `json:"navigation"`
+}
+
+// handleV1Sidebar returns denormalized sidebar data with entity counts.
+func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	// Build entity type counts
+	counts := make(map[string]int)
+	for _, entityType := range a.meta.EntityTypes() {
+		counts[entityType] = len(a.g.NodesByType(entityType))
+	}
+
+	// Build navigation with counts
+	navigation := make([]V1SidebarGroup, 0)
+
+	for _, entry := range a.Cfg.Navigation {
+		if entry.IsGroup() {
+			group := V1SidebarGroup{
+				Group:     entry.Group,
+				Collapsed: entry.Collapsed,
+				Items:     make([]V1SidebarItem, 0),
+			}
+			for _, item := range entry.Items {
+				sidebarItem := a.navEntryToSidebarItem(item, counts)
+				group.Items = append(group.Items, sidebarItem)
+			}
+			navigation = append(navigation, group)
+		} else {
+			// Top-level item without group
+			item := a.navEntryToSidebarItem(entry, counts)
+			navigation = append(navigation, V1SidebarGroup{
+				Items: []V1SidebarItem{item},
+			})
+		}
+	}
+
+	resp := V1SidebarResponse{
+		App: V1AppConfig{
+			Name:        a.Cfg.App.Name,
+			Description: a.Cfg.App.Description,
+		},
+		Navigation: navigation,
+	}
+
+	writeV1JSON(w, http.StatusOK, resp)
+}
+
+// navEntryToSidebarItem converts a navigation entry to a sidebar item with count.
+func (a *App) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, counts map[string]int) V1SidebarItem {
+	item := V1SidebarItem{
+		Label: entry.Label,
+	}
+
+	switch {
+	case entry.List != "":
+		item.Href = "/list/" + entry.List
+		item.Icon = "list"
+		// Look up entity type from list config
+		if list, ok := a.Cfg.Lists[entry.List]; ok {
+			if count, ok := counts[list.EntityType]; ok {
+				item.Count = &count
+			}
+		}
+	case entry.Kanban != "":
+		item.Href = "/kanban/" + entry.Kanban
+		item.Icon = "kanban"
+		// Look up entity type from kanban config
+		if kanban, ok := a.Cfg.Kanbans[entry.Kanban]; ok {
+			if count, ok := counts[kanban.EntityType]; ok {
+				item.Count = &count
+			}
+		}
+	case entry.Dashboard:
+		item.Href = "/"
+		item.Icon = "dashboard"
+	case entry.Graph:
+		item.Href = "/graph"
+		item.Icon = "graph"
+	}
+
+	return item
 }

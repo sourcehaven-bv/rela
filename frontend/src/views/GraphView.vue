@@ -25,6 +25,11 @@ interface NodePosition {
 const nodePositions = ref<Map<string, NodePosition>>(new Map())
 let animationFrame: number | null = null
 
+// Layout controls
+const repulsionStrength = ref(2000)
+const linkDistance = ref(120)
+const centerStrength = ref(0.02)
+
 // Computed
 const entityTypes = computed(() => graphData.value?.entityTypes || [])
 const relationTypes = computed(() => graphData.value?.relationTypes || [])
@@ -134,7 +139,7 @@ function startSimulation() {
 }
 
 function applyRepulsion(nodes: GraphNode[], alpha: number) {
-  const strength = 2000 * alpha
+  const strength = repulsionStrength.value * alpha
 
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
@@ -161,7 +166,7 @@ function applyRepulsion(nodes: GraphNode[], alpha: number) {
 
 function applyAttraction(edges: GraphEdge[], alpha: number) {
   const strength = 0.15 * alpha
-  const targetDistance = 120
+  const targetDistance = linkDistance.value
 
   for (const edge of edges) {
     const posA = nodePositions.value.get(edge.source)
@@ -185,7 +190,7 @@ function applyAttraction(edges: GraphEdge[], alpha: number) {
 }
 
 function applyCenter(nodes: GraphNode[], alpha: number) {
-  const strength = 0.02 * alpha
+  const strength = centerStrength.value * alpha
   const centerX = 400
   const centerY = 300
 
@@ -316,6 +321,55 @@ watch(mode, () => {
                 @change="toggleRelationType(rt.type)"
               />
             </label>
+          </div>
+        </div>
+
+        <!-- Layout controls -->
+        <div class="filter-section">
+          <h4>Layout Controls</h4>
+          <div class="layout-controls">
+            <div class="control-group">
+              <label>
+                <span class="control-label">Repulsion</span>
+                <span class="control-value">{{ repulsionStrength }}</span>
+              </label>
+              <input
+                type="range"
+                v-model.number="repulsionStrength"
+                min="500"
+                max="5000"
+                step="100"
+              />
+            </div>
+            <div class="control-group">
+              <label>
+                <span class="control-label">Link Distance</span>
+                <span class="control-value">{{ linkDistance }}px</span>
+              </label>
+              <input
+                type="range"
+                v-model.number="linkDistance"
+                min="60"
+                max="250"
+                step="10"
+              />
+            </div>
+            <div class="control-group">
+              <label>
+                <span class="control-label">Center Force</span>
+                <span class="control-value">{{ (centerStrength * 100).toFixed(0) }}%</span>
+              </label>
+              <input
+                type="range"
+                v-model.number="centerStrength"
+                min="0"
+                max="0.1"
+                step="0.005"
+              />
+            </div>
+            <button class="btn btn-secondary btn-sm relayout-btn" @click="startSimulation">
+              Re-layout
+            </button>
           </div>
         </div>
 
@@ -571,6 +625,58 @@ watch(mode, () => {
 .filter-count {
   color: #94a3b8;
   font-size: 12px;
+}
+
+.layout-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.control-group label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+
+.control-label {
+  color: #475569;
+}
+
+.control-value {
+  color: #94a3b8;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.control-group input[type="range"] {
+  width: 100%;
+  height: 4px;
+  appearance: none;
+  background: #e2e8f0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.control-group input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent-color, #6366f1);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.relayout-btn {
+  margin-top: 4px;
+  width: 100%;
 }
 
 .detail-panel {

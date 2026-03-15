@@ -38,6 +38,7 @@ const loading = ref(false)
 const searched = ref(false)
 const selectedIndex = ref(-1)
 const inResults = ref(false)
+const showHelp = ref(false)
 
 // Filter state
 const activeFilters = ref<ActiveFilter[]>([])
@@ -452,7 +453,60 @@ watch(
 
 <template>
   <div class="search-view">
-    <h1>Search</h1>
+    <header class="search-header">
+      <h1>Search</h1>
+      <button
+        type="button"
+        class="help-btn"
+        :class="{ active: showHelp }"
+        @click="showHelp = !showHelp"
+        title="Show search syntax help"
+      >
+        ?
+      </button>
+    </header>
+
+    <!-- Search syntax help panel -->
+    <div v-if="showHelp" class="help-panel">
+      <h3>Search Syntax</h3>
+      <div class="help-content">
+        <div class="help-section">
+          <h4>Text Search</h4>
+          <p>Simply type keywords to search across all entity titles and content.</p>
+          <code class="example">bug login</code>
+        </div>
+
+        <div class="help-section">
+          <h4>Filter by Type</h4>
+          <p>Use <code>type:</code> to filter by entity type.</p>
+          <code class="example">type:ticket bug</code>
+        </div>
+
+        <div class="help-section">
+          <h4>Filter by Property</h4>
+          <p>Use <code>prop:property=value</code> to filter by property values.</p>
+          <code class="example">prop:status=open</code>
+          <code class="example">prop:priority=high bug</code>
+        </div>
+
+        <div class="help-section">
+          <h4>Combine Filters</h4>
+          <p>Combine multiple filters and text search together.</p>
+          <code class="example">type:ticket prop:status=open prop:priority=high</code>
+        </div>
+
+        <div class="help-section">
+          <h4>Keyboard Shortcuts</h4>
+          <ul class="shortcut-list">
+            <li><kbd>F</kbd> Open filter menu</li>
+            <li><kbd>Tab</kbd> / <kbd>&darr;</kbd> Enter results navigation</li>
+            <li><kbd>j</kbd> / <kbd>k</kbd> Navigate results</li>
+            <li><kbd>Enter</kbd> / <kbd>o</kbd> Open selected result</li>
+            <li><kbd>/</kbd> Focus search input</li>
+          </ul>
+        </div>
+      </div>
+    </div>
 
     <div class="search-form">
       <div class="search-input-row">
@@ -606,8 +660,135 @@ watch(
   max-width: 800px;
 }
 
-h1 {
+.search-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 24px;
+}
+
+.search-header h1 {
+  margin: 0;
+}
+
+.help-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--bg-color, #f8fafc);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.help-btn:hover,
+.help-btn.active {
+  background: var(--accent-color, #6366f1);
+  border-color: var(--accent-color, #6366f1);
+  color: white;
+}
+
+.help-panel {
+  background: #f8fafc;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.help-panel h3 {
+  margin: 0 0 16px;
+  font-size: 16px;
+  color: #1e293b;
+}
+
+.help-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+}
+
+.help-section {
+  background: white;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px;
+  padding: 14px;
+}
+
+.help-section h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.help-section p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.help-section code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.help-section code.example {
+  display: block;
+  padding: 8px 10px;
+  margin-top: 6px;
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 4px;
+}
+
+.help-section code.example + code.example {
+  margin-top: 4px;
+}
+
+.shortcut-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shortcut-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #64748b;
+  padding: 4px 0;
+}
+
+.shortcut-list kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 6px;
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: #374151;
+  box-shadow: 0 1px 0 #d1d5db;
 }
 
 .search-form {

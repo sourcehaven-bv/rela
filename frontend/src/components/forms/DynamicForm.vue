@@ -7,6 +7,7 @@ import FieldRenderer from './FieldRenderer.vue'
 import RelationPicker from './RelationPicker.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 import SidePanel from './SidePanel.vue'
+import HelpModal from '@/components/ui/HelpModal.vue'
 
 const props = defineProps<{
   formId: string
@@ -27,6 +28,7 @@ const saving = ref(false)
 const dirty = ref(false)
 const errors = ref<Record<string, string>>({})
 const originalData = ref<string>('')
+const helpModalOpen = ref(false)
 
 // Computed
 const formConfig = computed(() => schemaStore.getForm(props.formId))
@@ -272,6 +274,14 @@ onBeforeUnmount(() => {
     <div class="dynamic-form">
       <header class="form-header">
         <h1>{{ title }}</h1>
+        <button
+          type="button"
+          class="help-btn"
+          @click="helpModalOpen = true"
+          title="Show help for this entity type"
+        >
+          ?
+        </button>
       </header>
 
       <div v-if="loading" class="loading-state">
@@ -377,6 +387,15 @@ onBeforeUnmount(() => {
     <h2>Form not found</h2>
     <p>The form "{{ formId }}" does not exist in the configuration.</p>
   </div>
+
+  <!-- Help Modal -->
+  <HelpModal
+    v-if="formConfig"
+    :open="helpModalOpen"
+    :entity-type="formConfig.entity"
+    :entity-label="entityType?.label"
+    @close="helpModalOpen = false"
+  />
 </template>
 
 <style scoped>
@@ -396,10 +415,36 @@ onBeforeUnmount(() => {
 
 .form-header {
   margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .form-header h1 {
   margin: 0;
+}
+
+.help-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--bg-color, #f8fafc);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.help-btn:hover {
+  background: var(--accent-color, #6366f1);
+  border-color: var(--accent-color, #6366f1);
+  color: white;
 }
 
 .loading-state {

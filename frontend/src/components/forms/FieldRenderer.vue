@@ -50,6 +50,15 @@ const isCheckbox = computed(() => {
 
 const options = computed(() => props.propertyDef?.values || [])
 
+const hasTransitions = computed(() => {
+  return props.field.transitions && Object.keys(props.field.transitions).length > 0
+})
+
+const transitionEntries = computed(() => {
+  if (!props.field.transitions) return []
+  return Object.entries(props.field.transitions).sort((a, b) => a[0].localeCompare(b[0]))
+})
+
 const stringValue = computed(() => {
   if (props.value === null || props.value === undefined) return ''
   return String(props.value)
@@ -149,6 +158,16 @@ function handleMultiSelect(event: Event) {
         {{ opt }}
       </option>
     </select>
+
+    <!-- Transitions info -->
+    <div v-if="hasTransitions" class="transitions-info">
+      <p class="transitions-title">Allowed transitions</p>
+      <div v-for="[from, tos] in transitionEntries" :key="from" class="transitions-row">
+        <span class="transitions-from">{{ from }}</span>
+        <span class="transitions-arrow">&rarr;</span>
+        <span class="transitions-to">{{ tos.join(', ') }}</span>
+      </div>
+    </div>
 
     <!-- Standard input -->
     <input
@@ -252,5 +271,43 @@ select[multiple] {
   font-size: 13px;
   color: var(--error-color, #ef4444);
   margin: 0;
+}
+
+.transitions-info {
+  margin-top: 8px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px;
+}
+
+.transitions-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+  margin: 0 0 8px;
+}
+
+.transitions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.transitions-from {
+  font-weight: 500;
+  color: #374151;
+}
+
+.transitions-arrow {
+  color: #94a3b8;
+}
+
+.transitions-to {
+  color: #64748b;
 }
 </style>

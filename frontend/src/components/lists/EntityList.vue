@@ -179,6 +179,21 @@ function isEnumProperty(column: { property?: string }, entityType?: EntityType):
   return propDef?.type === 'enum' || (propDef?.values?.length ?? 0) > 0
 }
 
+async function handleDelete(entity: Entity, event: Event) {
+  event.stopPropagation()
+  const confirmed = window.confirm(`Are you sure you want to delete "${entity.id}"?`)
+  if (!confirmed) return
+
+  try {
+    await entitiesStore.remove(entity.type, entity.id)
+    uiStore.success(`Deleted ${entity.id}`)
+    loadEntities()
+  } catch (err) {
+    uiStore.error('Failed to delete entity')
+    console.error(err)
+  }
+}
+
 // Watchers
 watch(() => props.listId, () => {
   filters.value = {}
@@ -252,6 +267,7 @@ onMounted(() => {
                 {{ sortDesc ? '▼' : '▲' }}
               </span>
             </th>
+            <th class="actions-column"></th>
           </tr>
         </thead>
         <tbody>
@@ -275,6 +291,18 @@ onMounted(() => {
               <span v-else>
                 {{ formatCellValue(getCellValue(entity, column), column, entityType) }}
               </span>
+            </td>
+            <td class="actions-cell">
+              <button
+                class="delete-btn"
+                title="Delete"
+                @click="handleDelete(entity, $event)"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                </svg>
+              </button>
             </td>
           </tr>
         </tbody>
@@ -442,6 +470,35 @@ onMounted(() => {
 }
 
 .error-state h2 {
+  color: var(--error-color, #ef4444);
+}
+
+.actions-column {
+  width: 40px;
+}
+
+.actions-cell {
+  width: 40px;
+  white-space: nowrap;
+}
+
+.delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.delete-btn:hover {
+  background: #fee2e2;
   color: var(--error-color, #ef4444);
 }
 </style>
