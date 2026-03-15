@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useSchemaStore } from '@/stores'
+import { useSchemaStore, useUIStore } from '@/stores'
 import { getSettings, saveSettings } from '@/api'
 import type {
   SettingsData,
@@ -9,14 +9,15 @@ import type {
   UserDefaults,
   DefaultOverride,
 } from '@/api/settings'
+import TagSelect from '@/components/ui/TagSelect.vue'
 
 const schemaStore = useSchemaStore()
+const uiStore = useUIStore()
 
 // State
 const loading = ref(true)
 const saving = ref(false)
 const error = ref<string | null>(null)
-const success = ref(false)
 
 const allProperties = ref<SettingsPropertyDef[]>([])
 const allRelations = ref<SettingsRelationDef[]>([])
@@ -75,7 +76,6 @@ async function loadSettings() {
 async function handleSave() {
   saving.value = true
   error.value = null
-  success.value = false
   try {
     const userDefaults: UserDefaults = {
       defaults: { ...propertyDefaults.value },
@@ -87,11 +87,9 @@ async function handleSave() {
       })),
     }
     await saveSettings(userDefaults)
-    success.value = true
-    setTimeout(() => {
-      success.value = false
-    }, 3000)
+    uiStore.success('Settings saved successfully')
   } catch (err) {
+    uiStore.error('Failed to save settings')
     error.value = err instanceof Error ? err.message : 'Failed to save settings'
   } finally {
     saving.value = false
@@ -184,8 +182,6 @@ onMounted(() => {
     </div>
 
     <form v-else class="settings-form" @submit.prevent="handleSave">
-      <div v-if="success" class="success-message">Settings saved successfully!</div>
-
       <!-- Property Defaults -->
       <div class="settings-card">
         <h3>Property Defaults</h3>
@@ -328,11 +324,11 @@ onMounted(() => {
             <div class="override-header">
               <div class="override-types">
                 <label>Entity Types</label>
-                <select v-model="override.types" multiple>
-                  <option v-for="et in entityTypes" :key="et" :value="et">
-                    {{ et }}
-                  </option>
-                </select>
+                <TagSelect
+                  v-model="override.types"
+                  :options="entityTypes"
+                  placeholder="Select entity types..."
+                />
               </div>
               <button
                 type="button"
@@ -682,15 +678,6 @@ h1 {
   margin-bottom: 6px;
 }
 
-.override-types select {
-  width: 100%;
-  min-height: 80px;
-  padding: 8px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 6px;
-  font-size: 13px;
-}
-
 .override-section {
   margin-top: 12px;
 }
@@ -810,14 +797,5 @@ h1 {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.success-message {
-  background: #f0fdf4;
-  color: #16a34a;
-  padding: 12px 16px;
-  border-radius: 8px;
-  margin-bottom: 16px;
-  font-size: 14px;
 }
 </style>

@@ -340,6 +340,7 @@ issues:
     - testdata
     - legacy-reference
     - prototypes
+    - node_modules
 
   max-issues-per-linter: 0
   max-same-issues: 0
