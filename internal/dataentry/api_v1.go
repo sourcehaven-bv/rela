@@ -155,6 +155,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
 	mux.HandleFunc("/api/v1/_settings", a.handleAPISettingsCRUD)
+	mux.HandleFunc("/api/v1/_sidepanel/", a.handleV1SidePanel)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
@@ -1218,4 +1219,122 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 	}
 
 	_ = json.NewEncoder(w).Encode(err)
+}
+
+// --- Side Panel API ---
+
+// V1SidePanelSection represents a section in the side panel response.
+type V1SidePanelSection struct {
+	Heading      string              `json:"heading"`
+	SectionID    string              `json:"sectionId"`
+	Display      string              `json:"display"`
+	IsEmpty      bool                `json:"isEmpty"`
+	EmptyMessage string              `json:"emptyMessage,omitempty"`
+	Fields       []V1SectionField    `json:"fields,omitempty"`
+	Entities     []V1SidePanelEntity `json:"entities,omitempty"`
+}
+
+// V1SectionField represents a field in a side panel section.
+type V1SectionField struct {
+	Label    string `json:"label"`
+	Value    string `json:"value"`
+	PropType string `json:"propType,omitempty"`
+}
+
+// V1SidePanelEntity represents an entity in a side panel section.
+type V1SidePanelEntity struct {
+	ID         string           `json:"id"`
+	Title      string           `json:"title"`
+	Type       string           `json:"type"`
+	EditFormID string           `json:"editFormId,omitempty"`
+	Fields     []V1SectionField `json:"fields,omitempty"`
+	Content    string           `json:"content,omitempty"`
+	HasContent bool             `json:"hasContent"`
+}
+
+// handleV1SidePanel handles GET /api/v1/_sidepanel/{formId}/{entityId}.
+func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+
+	// Parse path: /api/v1/_sidepanel/{formId}/{entityId}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_sidepanel/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_sidepanel/{formId}/{entityId}", "")
+		return
+	}
+
+	formID := parts[0]
+	entityID := parts[1]
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	// Get form config
+	form, ok := a.Cfg.Forms[formID]
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "form_not_found", "Form not found", "")
+		return
+	}
+
+	// Check if form has side panel
+	if form.SidePanel == nil {
+		writeV1JSON(w, http.StatusOK, []V1SidePanelSection{})
+		return
+	}
+
+	// Execute side panel traversal
+	sections := a.executeSidePanel(form.SidePanel, entityID, form.EntityType)
+	if sections == nil {
+		writeV1JSON(w, http.StatusOK, []V1SidePanelSection{})
+		return
+	}
+
+	// Convert to API response format
+	result := make([]V1SidePanelSection, 0, len(sections))
+	for _, sec := range sections {
+		apiSec := V1SidePanelSection{
+			Heading:      sec.Heading,
+			SectionID:    sec.SectionID,
+			Display:      sec.Display,
+			IsEmpty:      sec.IsEmpty,
+			EmptyMessage: sec.EmptyMessage,
+		}
+
+		// Convert fields
+		for _, f := range sec.Fields {
+			apiSec.Fields = append(apiSec.Fields, V1SectionField{
+				Label:    f.Label,
+				Value:    f.Value,
+				PropType: f.PropType,
+			})
+		}
+
+		// Convert entities
+		for _, e := range sec.Entities {
+			apiEnt := V1SidePanelEntity{
+				ID:         e.ID,
+				Title:      e.Title,
+				Type:       e.Type,
+				EditFormID: e.EditFormID,
+				Content:    e.Content,
+				HasContent: e.HasContent,
+			}
+			for _, f := range e.Fields {
+				apiEnt.Fields = append(apiEnt.Fields, V1SectionField{
+					Label:    f.Label,
+					Value:    f.Value,
+					PropType: f.PropType,
+				})
+			}
+			apiSec.Entities = append(apiSec.Entities, apiEnt)
+		}
+
+		result = append(result, apiSec)
+	}
+
+	writeV1JSON(w, http.StatusOK, result)
 }

@@ -45,3 +45,30 @@ export interface ListParams {
   include?: string
   [key: `filter[${string}]`]: string | undefined
 }
+
+// Side panel types
+export interface SidePanelField {
+  label: string
+  value: string
+  propType?: string
+}
+
+export interface SidePanelEntity {
+  id: string
+  title: string
+  type: string
+  editFormId?: string
+  fields?: SidePanelField[]
+  content?: string
+  hasContent: boolean
+}
+
+export interface SidePanelSection {
+  heading: string
+  sectionId: string
+  display: 'cards' | 'list' | 'properties'
+  isEmpty: boolean
+  emptyMessage?: string
+  fields?: SidePanelField[]
+  entities?: SidePanelEntity[]
+}

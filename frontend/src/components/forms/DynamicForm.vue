@@ -6,6 +6,7 @@ import type { PropertyDef, FormFieldOrRelation } from '@/types'
 import FieldRenderer from './FieldRenderer.vue'
 import RelationPicker from './RelationPicker.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
+import SidePanel from './SidePanel.vue'
 
 const props = defineProps<{
   formId: string
@@ -267,100 +268,109 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="dynamic-form" v-if="formConfig">
-    <header class="form-header">
-      <h1>{{ title }}</h1>
-    </header>
+  <div class="form-layout" :class="{ 'with-sidepanel': isEdit }" v-if="formConfig">
+    <div class="dynamic-form">
+      <header class="form-header">
+        <h1>{{ title }}</h1>
+      </header>
 
-    <div v-if="loading" class="loading-state">
-      <div class="spinner"></div>
-      <span>Loading...</span>
+      <div v-if="loading" class="loading-state">
+        <div class="spinner"></div>
+        <span>Loading...</span>
+      </div>
+
+      <form v-else @submit.prevent="handleSubmit">
+        <template v-if="formConfig.sections?.length">
+          <div
+            v-for="section in formConfig.sections"
+            :key="section.title"
+            class="form-section"
+          >
+            <h2 v-if="section.title">{{ section.title }}</h2>
+            <p v-if="section.description" class="section-description">
+              {{ section.description }}
+            </p>
+
+            <div class="form-fields">
+              <template v-for="field in section.fields" :key="field.property || field.relation">
+                <FieldRenderer
+                  v-if="field.property && !field.hidden"
+                  :field="field"
+                  :property-def="getPropertyDef(field.property)"
+                  :value="formData[field.property]"
+                  :error="errors[field.property]"
+                  :readonly="field.readonly"
+                  @update="updateField(field.property!, $event)"
+                />
+                <RelationPicker
+                  v-else-if="field.relation"
+                  :field="field"
+                  :entity-type="formConfig.entity"
+                  :value="relations[field.relation] || []"
+                  @update="updateRelation(field.relation!, $event)"
+                />
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <div v-else class="form-fields">
+          <template v-for="field in fields" :key="field.property || field.relation">
+            <FieldRenderer
+              v-if="field.property && !field.hidden"
+              :field="field"
+              :property-def="getPropertyDef(field.property)"
+              :value="formData[field.property]"
+              :error="errors[field.property]"
+              :readonly="field.readonly"
+              @update="updateField(field.property!, $event)"
+            />
+            <RelationPicker
+              v-else-if="field.relation"
+              :field="field"
+              :entity-type="formConfig.entity"
+              :value="relations[field.relation] || []"
+              @update="updateRelation(field.relation!, $event)"
+            />
+          </template>
+        </div>
+
+        <!-- Content field (markdown body) -->
+        <div class="form-field content-field">
+          <label for="content">Content</label>
+          <MarkdownEditor
+            :model-value="content"
+            @update:model-value="updateContent"
+            placeholder="Markdown content..."
+          />
+        </div>
+
+        <div class="form-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            @click="handleCancel"
+            :disabled="saving"
+          >
+            Cancel <kbd>Esc</kbd>
+          </button>
+          <button
+            type="submit"
+            class="btn btn-primary"
+            :disabled="saving"
+          >
+            {{ saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Create') }} <kbd>&#8984;&#8629;</kbd>
+          </button>
+        </div>
+      </form>
     </div>
 
-    <form v-else @submit.prevent="handleSubmit">
-      <template v-if="formConfig.sections?.length">
-        <div
-          v-for="section in formConfig.sections"
-          :key="section.title"
-          class="form-section"
-        >
-          <h2 v-if="section.title">{{ section.title }}</h2>
-          <p v-if="section.description" class="section-description">
-            {{ section.description }}
-          </p>
-
-          <div class="form-fields">
-            <template v-for="field in section.fields" :key="field.property || field.relation">
-              <FieldRenderer
-                v-if="field.property && !field.hidden"
-                :field="field"
-                :property-def="getPropertyDef(field.property)"
-                :value="formData[field.property]"
-                :error="errors[field.property]"
-                :readonly="field.readonly"
-                @update="updateField(field.property!, $event)"
-              />
-              <RelationPicker
-                v-else-if="field.relation"
-                :field="field"
-                :entity-type="formConfig.entity"
-                :value="relations[field.relation] || []"
-                @update="updateRelation(field.relation!, $event)"
-              />
-            </template>
-          </div>
-        </div>
-      </template>
-
-      <div v-else class="form-fields">
-        <template v-for="field in fields" :key="field.property || field.relation">
-          <FieldRenderer
-            v-if="field.property && !field.hidden"
-            :field="field"
-            :property-def="getPropertyDef(field.property)"
-            :value="formData[field.property]"
-            :error="errors[field.property]"
-            :readonly="field.readonly"
-            @update="updateField(field.property!, $event)"
-          />
-          <RelationPicker
-            v-else-if="field.relation"
-            :field="field"
-            :entity-type="formConfig.entity"
-            :value="relations[field.relation] || []"
-            @update="updateRelation(field.relation!, $event)"
-          />
-        </template>
-      </div>
-
-      <!-- Content field (markdown body) -->
-      <div class="form-field content-field">
-        <label for="content">Content</label>
-        <MarkdownEditor
-          :model-value="content"
-          @update:model-value="updateContent"
-          placeholder="Markdown content..."
-        />
-      </div>
-
-      <div class="form-actions">
-        <button
-          type="button"
-          class="btn btn-secondary"
-          @click="handleCancel"
-          :disabled="saving"
-        >
-          Cancel <kbd>Esc</kbd>
-        </button>
-        <button
-          type="submit"
-          class="btn btn-primary"
-          :disabled="saving"
-        >
-          {{ saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Create') }} <kbd>&#8984;&#8629;</kbd>
-        </button>
-      </div>
-    </form>
+    <!-- Side panel for edit mode -->
+    <SidePanel
+      v-if="isEdit && entityId"
+      :form-id="formId"
+      :entity-id="entityId"
+    />
   </div>
 
   <div v-else class="error-state">
@@ -370,6 +380,16 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.form-layout {
+  display: flex;
+  gap: 24px;
+}
+
+.form-layout.with-sidepanel .dynamic-form {
+  flex: 1;
+  min-width: 0;
+}
+
 .dynamic-form {
   max-width: 800px;
 }
