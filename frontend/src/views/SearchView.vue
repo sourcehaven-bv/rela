@@ -3,23 +3,49 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchEntities } from '@/api'
 import { useSchemaStore } from '@/stores'
-import type { Entity } from '@/types'
+import type { Entity, PropertyDef } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 
+// Types
+interface ActiveFilter {
+  id: string
+  type: 'type' | 'property'
+  property: string
+  value: string
+  label: string
+}
+
+interface FilterOption {
+  category: 'type' | 'property'
+  property: string
+  label: string
+  propertyDef?: PropertyDef
+  entityType?: string
+}
+
 // Refs
 const searchInputRef = ref<HTMLInputElement | null>(null)
+const filterMenuRef = ref<HTMLDivElement | null>(null)
+const filterSearchRef = ref<HTMLInputElement | null>(null)
 
 // State
 const query = ref('')
-const typeFilter = ref('')
 const results = ref<Entity[]>([])
 const loading = ref(false)
 const searched = ref(false)
 const selectedIndex = ref(-1)
 const inResults = ref(false)
+
+// Filter state
+const activeFilters = ref<ActiveFilter[]>([])
+const showFilterMenu = ref(false)
+const filterSearch = ref('')
+const selectedFilterOption = ref<FilterOption | null>(null)
+const filterValueInput = ref('')
+const filterMenuIndex = ref(0)
 
 // Computed
 const entityTypes = computed(() => {
@@ -30,9 +56,99 @@ const entityTypes = computed(() => {
   return types
 })
 
+// Get all filterable properties across entity types
+const filterOptions = computed((): FilterOption[] => {
+  const options: FilterOption[] = []
+  const seenProperties = new Set<string>()
+
+  // Add type filter option
+  options.push({
+    category: 'type',
+    property: 'type',
+    label: 'Entity Type',
+  })
+
+  // Add property filters from all entity types
+  for (const [typeName, typeDef] of schemaStore.entityTypes) {
+    for (const [propName, propDef] of Object.entries(typeDef.properties)) {
+      // Skip if already seen (properties with same name across types)
+      const key = propName
+      if (seenProperties.has(key)) continue
+      seenProperties.add(key)
+
+      options.push({
+        category: 'property',
+        property: propName,
+        label: propName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        propertyDef: propDef,
+        entityType: typeName,
+      })
+    }
+  }
+
+  return options
+})
+
+// Filter the options based on search
+const filteredOptions = computed(() => {
+  if (!filterSearch.value) return filterOptions.value
+
+  const search = filterSearch.value.toLowerCase()
+  return filterOptions.value.filter(opt =>
+    opt.label.toLowerCase().includes(search) ||
+    opt.property.toLowerCase().includes(search)
+  )
+})
+
+// Get values for a property (for enum dropdowns)
+const selectedPropertyValues = computed((): string[] => {
+  if (!selectedFilterOption.value) return []
+
+  if (selectedFilterOption.value.category === 'type') {
+    return entityTypes.value.map(t => t.value)
+  }
+
+  const propDef = selectedFilterOption.value.propertyDef
+  if (propDef?.values?.length) {
+    return propDef.values
+  }
+
+  // For non-enum properties, check all entity types for possible values
+  const allValues = new Set<string>()
+  for (const [, typeDef] of schemaStore.entityTypes) {
+    const prop = typeDef.properties[selectedFilterOption.value.property]
+    if (prop?.values) {
+      prop.values.forEach(v => allValues.add(v))
+    }
+  }
+  return Array.from(allValues)
+})
+
+// Build full search query including filters
+const fullSearchQuery = computed(() => {
+  const parts: string[] = []
+
+  // Add text query
+  if (query.value.trim()) {
+    parts.push(query.value.trim())
+  }
+
+  // Add active filters
+  for (const filter of activeFilters.value) {
+    if (filter.type === 'type') {
+      parts.push(`type:${filter.value}`)
+    } else {
+      parts.push(`prop:${filter.property}=${filter.value}`)
+    }
+  }
+
+  return parts.join(' ')
+})
+
 // Methods
 async function search() {
-  if (!query.value.trim()) {
+  const searchQuery = fullSearchQuery.value
+  if (!searchQuery) {
     results.value = []
     searched.value = false
     return
@@ -42,7 +158,7 @@ async function search() {
   searched.value = true
 
   try {
-    const response = await searchEntities(query.value, typeFilter.value || undefined)
+    const response = await searchEntities(searchQuery)
     results.value = response.data
   } catch (err) {
     console.error('Search error:', err)
@@ -52,12 +168,119 @@ async function search() {
   }
 
   // Update URL with query params
-  router.replace({
-    query: {
-      q: query.value,
-      ...(typeFilter.value ? { type: typeFilter.value } : {}),
-    },
+  const urlParams: Record<string, string> = {}
+  if (query.value.trim()) {
+    urlParams.q = query.value
+  }
+  for (const filter of activeFilters.value) {
+    if (filter.type === 'type') {
+      urlParams.type = filter.value
+    } else {
+      urlParams[`filter_${filter.property}`] = filter.value
+    }
+  }
+  router.replace({ query: urlParams })
+}
+
+// Filter menu methods
+function toggleFilterMenu() {
+  showFilterMenu.value = !showFilterMenu.value
+  if (showFilterMenu.value) {
+    filterSearch.value = ''
+    filterMenuIndex.value = 0
+    selectedFilterOption.value = null
+    nextTick(() => filterSearchRef.value?.focus())
+  }
+}
+
+function closeFilterMenu() {
+  showFilterMenu.value = false
+  selectedFilterOption.value = null
+  filterValueInput.value = ''
+  filterSearch.value = ''
+}
+
+function selectFilterOption(option: FilterOption) {
+  selectedFilterOption.value = option
+  filterValueInput.value = ''
+  filterMenuIndex.value = 0
+}
+
+function applyFilter(value: string) {
+  if (!selectedFilterOption.value || !value) return
+
+  const filterId = `${selectedFilterOption.value.property}-${Date.now()}`
+  const label = selectedFilterOption.value.category === 'type'
+    ? entityTypes.value.find(t => t.value === value)?.label || value
+    : value
+
+  activeFilters.value.push({
+    id: filterId,
+    type: selectedFilterOption.value.category,
+    property: selectedFilterOption.value.property,
+    value,
+    label: `${selectedFilterOption.value.label}: ${label}`,
   })
+
+  closeFilterMenu()
+  search()
+}
+
+function removeFilter(filterId: string) {
+  activeFilters.value = activeFilters.value.filter(f => f.id !== filterId)
+  search()
+}
+
+function clearAllFilters() {
+  activeFilters.value = []
+  search()
+}
+
+function handleFilterKeydown(e: KeyboardEvent) {
+  if (!showFilterMenu.value) return
+
+  const options = selectedFilterOption.value ? selectedPropertyValues.value : filteredOptions.value
+
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault()
+      filterMenuIndex.value = Math.min(options.length - 1, filterMenuIndex.value + 1)
+      break
+    case 'ArrowUp':
+      e.preventDefault()
+      filterMenuIndex.value = Math.max(0, filterMenuIndex.value - 1)
+      break
+    case 'Enter':
+      e.preventDefault()
+      if (selectedFilterOption.value) {
+        const value = selectedPropertyValues.value[filterMenuIndex.value]
+        if (value) applyFilter(value)
+      } else {
+        const option = filteredOptions.value[filterMenuIndex.value]
+        if (option) selectFilterOption(option)
+      }
+      break
+    case 'Escape':
+      e.preventDefault()
+      if (selectedFilterOption.value) {
+        selectedFilterOption.value = null
+      } else {
+        closeFilterMenu()
+      }
+      break
+    case 'Backspace':
+      if (!filterSearch.value && selectedFilterOption.value) {
+        selectedFilterOption.value = null
+      }
+      break
+  }
+}
+
+// Click outside to close menu
+function handleClickOutside(e: MouseEvent) {
+  if (filterMenuRef.value && !filterMenuRef.value.contains(e.target as Node)) {
+    closeFilterMenu()
+  }
 }
 
 function getEntityLabel(entity: Entity): string {
@@ -71,6 +294,19 @@ function getEntityTypeLabel(type: string): string {
 
 // Keyboard navigation
 function handleKeydown(e: KeyboardEvent) {
+  // Don't intercept if in filter menu
+  if (showFilterMenu.value) return
+
+  const target = e.target as HTMLElement
+  const isInInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
+
+  // F key to open filter menu (when not in input)
+  if (e.key === 'f' && !isInInput && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault()
+    toggleFilterMenu()
+    return
+  }
+
   // If we're in the input and user presses Tab or ArrowDown, enter results mode
   if (document.activeElement === searchInputRef.value) {
     if ((e.key === 'Tab' || e.key === 'ArrowDown') && results.value.length > 0) {
@@ -151,6 +387,7 @@ watch(results, () => {
 // Auto-focus on mount
 onMounted(() => {
   document.addEventListener('keydown', handleKeydown)
+  document.addEventListener('click', handleClickOutside)
   nextTick(() => {
     searchInputRef.value?.focus()
   })
@@ -158,15 +395,54 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('click', handleClickOutside)
 })
 
 // Initialize from URL params
 watch(
   () => route.query,
   (newQuery) => {
+    // Restore text query
     if (newQuery.q && typeof newQuery.q === 'string') {
       query.value = newQuery.q
-      typeFilter.value = (newQuery.type as string) || ''
+    }
+
+    // Restore filters from URL
+    const restoredFilters: ActiveFilter[] = []
+
+    // Type filter
+    if (newQuery.type && typeof newQuery.type === 'string') {
+      const typeLabel = entityTypes.value.find(t => t.value === newQuery.type)?.label || newQuery.type
+      restoredFilters.push({
+        id: `type-${Date.now()}`,
+        type: 'type',
+        property: 'type',
+        value: newQuery.type,
+        label: `Entity Type: ${typeLabel}`,
+      })
+    }
+
+    // Property filters (filter_<prop>=value)
+    for (const [key, value] of Object.entries(newQuery)) {
+      if (key.startsWith('filter_') && typeof value === 'string') {
+        const propName = key.replace('filter_', '')
+        const propLabel = propName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+        restoredFilters.push({
+          id: `${propName}-${Date.now()}`,
+          type: 'property',
+          property: propName,
+          value,
+          label: `${propLabel}: ${value}`,
+        })
+      }
+    }
+
+    if (restoredFilters.length > 0) {
+      activeFilters.value = restoredFilters
+    }
+
+    // Trigger search if we have query or filters
+    if (query.value || activeFilters.value.length > 0) {
       search()
     }
   },
@@ -189,14 +465,109 @@ watch(
           @keyup.enter="search"
           @focus="inResults = false"
         />
-        <select v-model="typeFilter" class="type-filter">
-          <option value="">All types</option>
-          <option v-for="type in entityTypes" :key="type.value" :value="type.value">
-            {{ type.label }}
-          </option>
-        </select>
+
+        <!-- Filter button with dropdown -->
+        <div class="filter-dropdown" ref="filterMenuRef">
+          <button
+            class="btn btn-secondary filter-btn"
+            @click.stop="toggleFilterMenu"
+            type="button"
+          >
+            + Filter <kbd>F</kbd>
+          </button>
+
+          <div v-if="showFilterMenu" class="filter-menu" @click.stop @keydown="handleFilterKeydown">
+            <!-- Property/Type selection -->
+            <template v-if="!selectedFilterOption">
+              <input
+                ref="filterSearchRef"
+                v-model="filterSearch"
+                type="text"
+                placeholder="Search properties..."
+                class="filter-search"
+                @keydown="handleFilterKeydown"
+              />
+              <div class="filter-options">
+                <div
+                  v-for="(option, index) in filteredOptions"
+                  :key="option.property"
+                  class="filter-option"
+                  :class="{ highlighted: index === filterMenuIndex }"
+                  @click="selectFilterOption(option)"
+                  @mouseenter="filterMenuIndex = index"
+                >
+                  <span class="option-category">{{ option.category }}</span>
+                  <span class="option-label">{{ option.label }}</span>
+                </div>
+                <div v-if="filteredOptions.length === 0" class="filter-empty">
+                  No matching properties
+                </div>
+              </div>
+            </template>
+
+            <!-- Value selection -->
+            <template v-else>
+              <div class="filter-header">
+                <button class="back-btn" @click="selectedFilterOption = null" type="button">
+                  &larr;
+                </button>
+                <span>{{ selectedFilterOption.label }}</span>
+              </div>
+
+              <!-- Enum/predefined values -->
+              <div v-if="selectedPropertyValues.length > 0" class="filter-options">
+                <div
+                  v-for="(value, index) in selectedPropertyValues"
+                  :key="value"
+                  class="filter-option"
+                  :class="{ highlighted: index === filterMenuIndex }"
+                  @click="applyFilter(value)"
+                  @mouseenter="filterMenuIndex = index"
+                >
+                  {{ value }}
+                </div>
+              </div>
+
+              <!-- Free text input for non-enum -->
+              <div v-else class="filter-text-input">
+                <input
+                  v-model="filterValueInput"
+                  type="text"
+                  placeholder="Enter value..."
+                  class="filter-search"
+                  @keydown.enter="applyFilter(filterValueInput)"
+                />
+                <button
+                  class="btn btn-primary btn-sm"
+                  @click="applyFilter(filterValueInput)"
+                  :disabled="!filterValueInput"
+                  type="button"
+                >
+                  Apply
+                </button>
+              </div>
+            </template>
+          </div>
+        </div>
+
         <button class="btn btn-primary" @click="search" :disabled="loading">
           {{ loading ? 'Searching...' : 'Search' }}
+        </button>
+      </div>
+
+      <!-- Active filters chips -->
+      <div v-if="activeFilters.length > 0" class="active-filters">
+        <span class="filters-label">Filters:</span>
+        <div
+          v-for="filter in activeFilters"
+          :key="filter.id"
+          class="filter-chip"
+        >
+          <span>{{ filter.label }}</span>
+          <button class="chip-remove" @click="removeFilter(filter.id)" type="button">&times;</button>
+        </div>
+        <button class="clear-filters" @click="clearAllFilters" type="button">
+          Clear all
         </button>
       </div>
     </div>
@@ -262,12 +633,189 @@ h1 {
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
 }
 
-.type-filter {
-  padding: 10px 14px;
+/* Filter dropdown */
+.filter-dropdown {
+  position: relative;
+}
+
+.filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 280px;
+  background: white;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.filter-search {
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  font-size: 14px;
+  outline: none;
+}
+
+.filter-search:focus {
+  background: #f8fafc;
+}
+
+.filter-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  background: #f8fafc;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.back-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.back-btn:hover {
+  background: #e2e8f0;
+}
+
+.filter-options {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.filter-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.1s;
+}
+
+.filter-option:hover,
+.filter-option.highlighted {
+  background: #f1f5f9;
+}
+
+.option-category {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: #64748b;
+  background: #e2e8f0;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.option-label {
+  flex: 1;
+}
+
+.filter-empty {
+  padding: 16px;
+  text-align: center;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.filter-text-input {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+}
+
+.filter-text-input .filter-search {
+  flex: 1;
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 6px;
-  font-size: 14px;
-  min-width: 140px;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+/* Active filters chips */
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.filters-label {
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 10px;
+  background: #e0e7ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 16px;
+  font-size: 13px;
+  color: #4338ca;
+}
+
+.chip-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  color: #6366f1;
+  opacity: 0.7;
+}
+
+.chip-remove:hover {
+  opacity: 1;
+}
+
+.clear-filters {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: #64748b;
+  padding: 4px 8px;
+}
+
+.clear-filters:hover {
+  color: #ef4444;
+  text-decoration: underline;
+}
+
+.btn-secondary {
+  background: var(--border-color, #e2e8f0);
+  color: var(--text-color, #1e293b);
+}
+
+.btn-secondary:hover {
+  background: #cbd5e1;
 }
 
 .btn {
