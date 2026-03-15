@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import type { Entity } from '@/types'
 import { getEditFormId } from '@/types'
+import { isInputFocused } from '@/utils/dom'
 import Badge from '@/components/common/Badge.vue'
 
 const props = defineProps<{
@@ -15,14 +16,6 @@ const router = useRouter()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
-
-// Keyboard shortcut: 'e' to edit
-function isInputFocused(): boolean {
-  const el = document.activeElement
-  if (!el) return false
-  const tag = el.tagName
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el as HTMLElement).isContentEditable
-}
 
 function handleKeydown(e: KeyboardEvent) {
   if (isInputFocused()) return

@@ -1,5 +1,6 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { isInputFocused } from '@/utils/dom'
 
 export const shortcutsModalOpen = ref(false)
 
@@ -10,17 +11,6 @@ export function useKeyboardShortcuts() {
   // G-sequence state
   let gPending = false
   let gTimer: ReturnType<typeof setTimeout> | null = null
-
-  function isInputFocused(): boolean {
-    const el = document.activeElement
-    if (!el) return false
-    const tag = el.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
-    if ((el as HTMLElement).isContentEditable) return true
-    // Check for CodeMirror (EasyMDE)
-    if (el.closest && el.closest('.CodeMirror')) return true
-    return false
-  }
 
   function isFormPage(): boolean {
     return route.name === 'form-create' || route.name === 'form-edit'

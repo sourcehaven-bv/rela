@@ -1,4 +1,5 @@
 import { ref, onMounted, onBeforeUnmount, type Ref } from 'vue'
+import { isInputFocused } from '@/utils/dom'
 
 interface UseListKeyboardOptions {
   itemCount: Ref<number>
@@ -14,16 +15,6 @@ interface UseListKeyboardOptions {
 
 export function useListKeyboard(options: UseListKeyboardOptions) {
   const selectedIndex = ref(-1)
-
-  function isInputFocused(): boolean {
-    const el = document.activeElement
-    if (!el) return false
-    const tag = el.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
-    if ((el as HTMLElement).isContentEditable) return true
-    if (el.closest && el.closest('.CodeMirror')) return true
-    return false
-  }
 
   function moveSelection(delta: number) {
     const count = options.itemCount.value
