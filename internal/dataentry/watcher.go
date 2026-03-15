@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
@@ -15,31 +16,43 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
+// sseEvent represents a Server-Sent Event with optional JSON data.
+type sseEvent struct {
+	Type string // Event type (e.g., "refresh", "entity:created", "git:status")
+	Data string // JSON data payload (empty for simple events)
+}
+
 // eventBroker manages SSE client connections for live-reload notifications.
 type eventBroker struct {
 	mu      sync.Mutex
-	clients map[chan string]struct{}
+	clients map[chan sseEvent]struct{}
 }
 
 func newEventBroker() *eventBroker {
-	return &eventBroker{clients: make(map[chan string]struct{})}
+	return &eventBroker{clients: make(map[chan sseEvent]struct{})}
 }
 
-func (b *eventBroker) subscribe() chan string {
-	ch := make(chan string, 1)
+func (b *eventBroker) subscribe() chan sseEvent {
+	ch := make(chan sseEvent, 4)
 	b.mu.Lock()
 	b.clients[ch] = struct{}{}
 	b.mu.Unlock()
 	return ch
 }
 
-func (b *eventBroker) unsubscribe(ch chan string) {
+func (b *eventBroker) unsubscribe(ch chan sseEvent) {
 	b.mu.Lock()
 	delete(b.clients, ch)
 	b.mu.Unlock()
 }
 
-func (b *eventBroker) broadcast(event string) {
+// broadcast sends a simple event (backward compatible).
+func (b *eventBroker) broadcast(eventType string) {
+	b.broadcastEvent(sseEvent{Type: eventType, Data: eventType})
+}
+
+// broadcastEvent sends an event with optional JSON data.
+func (b *eventBroker) broadcastEvent(event sseEvent) {
 	b.mu.Lock()
 	for ch := range b.clients {
 		select {
@@ -48,6 +61,23 @@ func (b *eventBroker) broadcast(event string) {
 		}
 	}
 	b.mu.Unlock()
+}
+
+// broadcastEntityEvent sends an entity mutation event (create/update/delete).
+func (b *eventBroker) broadcastEntityEvent(action, entityType, entityID string) {
+	data, _ := json.Marshal(map[string]string{
+		"type": entityType,
+		"id":   entityID,
+	})
+	b.broadcastEvent(sseEvent{
+		Type: "entity:" + action,
+		Data: string(data),
+	})
+}
+
+// broadcastGitStatus sends a git status update event.
+func (b *eventBroker) broadcastGitStatus() {
+	b.broadcastEvent(sseEvent{Type: "git:status", Data: "{}"})
 }
 
 // StartWatching begins file watching for live-reload of views when project
@@ -177,7 +207,14 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 }
 
 // handleSSE serves Server-Sent Events for live-reload notifications.
-// Connected browsers receive "refresh" events when project files change.
+// Connected browsers receive events when project files change or entities are modified.
+// Event types:
+//   - refresh: Files changed, reload needed
+//   - git: Git status changed
+//   - git:status: Git status update (with empty JSON data)
+//   - entity:created: Entity created (data: {"type": "...", "id": "..."})
+//   - entity:updated: Entity updated (data: {"type": "...", "id": "..."})
+//   - entity:deleted: Entity deleted (data: {"type": "...", "id": "..."})
 func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -200,7 +237,7 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case event := <-ch:
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, event)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, event.Data)
 			flusher.Flush()
 		case <-r.Context().Done():
 			return

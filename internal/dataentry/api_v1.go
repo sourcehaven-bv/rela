@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -157,6 +160,8 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_settings", a.handleAPISettingsCRUD)
 	mux.HandleFunc("/api/v1/_sidepanel/", a.handleV1SidePanel)
 	mux.HandleFunc("/api/v1/_sidebar", a.handleV1Sidebar)
+	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
+	mux.HandleFunc("/api/v1/_conflicts/", a.handleV1ConflictRoutes)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
@@ -333,6 +338,9 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// Set Location header
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, entity.ID))
 
+	// Broadcast entity creation event
+	a.broker.broadcastEntityEvent("created", typeName, entity.ID)
+
 	writeV1JSON(w, http.StatusCreated, result)
 }
 
@@ -442,6 +450,9 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	newETag := a.computeEntityETag(entity)
 	w.Header().Set("ETag", newETag)
 
+	// Broadcast entity update event
+	a.broker.broadcastEntityEvent("updated", typeName, entityID)
+
 	writeV1JSON(w, http.StatusOK, result)
 }
 
@@ -473,6 +484,9 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 		writeV1Error(w, r, http.StatusInternalServerError, "delete_failed", "Failed to delete entity", err.Error())
 		return
 	}
+
+	// Broadcast entity deletion event
+	a.broker.broadcastEntityEvent("deleted", typeName, entityID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1448,4 +1462,188 @@ func (a *App) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, count
 	}
 
 	return item
+}
+
+// --- Conflicts API ---
+
+// V1ConflictItem represents a conflicted file.
+type V1ConflictItem struct {
+	Path        string `json:"path"`
+	EntityType  string `json:"entity_type,omitempty"`
+	EntityID    string `json:"entity_id,omitempty"`
+	MarkerCount int    `json:"marker_count"`
+}
+
+// V1ConflictsResponse contains the list of conflicts.
+type V1ConflictsResponse struct {
+	Conflicts []V1ConflictItem `json:"conflicts"`
+	Count     int              `json:"count"`
+}
+
+// V1PropertyDiff represents a property difference.
+type V1PropertyDiff struct {
+	Property    string `json:"property"`
+	OursValue   string `json:"ours_value"`
+	TheirsValue string `json:"theirs_value"`
+	IsSame      bool   `json:"is_same"`
+}
+
+// V1ConflictDetail contains detailed info for resolving a conflict.
+type V1ConflictDetail struct {
+	Path          string           `json:"path"`
+	EntityType    string           `json:"entity_type,omitempty"`
+	EntityID      string           `json:"entity_id,omitempty"`
+	PropertyDiffs []V1PropertyDiff `json:"property_diffs"`
+	ContentSame   bool             `json:"content_same"`
+	ContentOurs   string           `json:"content_ours,omitempty"`
+	ContentTheirs string           `json:"content_theirs,omitempty"`
+}
+
+// V1ConflictResolveRequest contains the resolution choices.
+type V1ConflictResolveRequest struct {
+	Path            string            `json:"path"`
+	PropertyChoices map[string]string `json:"property_choices"`
+	ContentChoice   string            `json:"content_choice"`
+	ManualContent   string            `json:"manual_content,omitempty"`
+}
+
+// handleV1Conflicts returns the list of conflicted files as JSON.
+func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+
+	ctx := &project.Context{
+		Root:         a.ws.Paths().Root,
+		EntitiesDir:  a.ws.Paths().EntitiesDir,
+		RelationsDir: a.ws.Paths().RelationsDir,
+	}
+
+	result, err := conflict.DetectAll(ctx)
+	if err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "conflict_detection_failed", "Failed to detect conflicts", err.Error())
+		return
+	}
+
+	items := make([]V1ConflictItem, 0, len(result.Files))
+	for _, cf := range result.Files {
+		relPath, _ := filepath.Rel(ctx.Root, cf.Path)
+		items = append(items, V1ConflictItem{
+			Path:        relPath,
+			EntityType:  cf.EntityType,
+			EntityID:    cf.EntityID,
+			MarkerCount: len(cf.Markers),
+		})
+	}
+
+	writeV1JSON(w, http.StatusOK, V1ConflictsResponse{
+		Conflicts: items,
+		Count:     len(items),
+	})
+}
+
+// handleV1ConflictRoutes handles GET /api/v1/_conflicts/{path} and POST /api/v1/_conflicts/resolve.
+func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_conflicts/")
+
+	if path == "resolve" && r.Method == http.MethodPost {
+		a.handleV1ConflictResolve(w, r)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+
+	// Get conflict details
+	ctx := a.ws.Paths()
+	absPath := filepath.Join(ctx.Root, path)
+
+	cf, err := conflict.ParseConflictedFile(absPath, a.meta)
+	if err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "parse_failed", "Failed to parse conflict", err.Error())
+		return
+	}
+
+	info := conflict.AnalyzeConflict(cf)
+
+	diffs := make([]V1PropertyDiff, 0, len(info.PropertyDiffs))
+	for _, d := range info.PropertyDiffs {
+		diffs = append(diffs, V1PropertyDiff{
+			Property:    d.Property,
+			OursValue:   fmt.Sprintf("%v", d.OursValue),
+			TheirsValue: fmt.Sprintf("%v", d.TheirsValue),
+			IsSame:      d.IsSame,
+		})
+	}
+
+	detail := V1ConflictDetail{
+		Path:          path,
+		EntityType:    cf.EntityType,
+		EntityID:      cf.EntityID,
+		PropertyDiffs: diffs,
+		ContentSame:   info.ContentSame,
+		ContentOurs:   info.ContentDiffOurs,
+		ContentTheirs: info.ContentDiffTheirs,
+	}
+
+	writeV1JSON(w, http.StatusOK, detail)
+}
+
+// handleV1ConflictResolve applies a conflict resolution.
+func (a *App) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
+	var req V1ConflictResolveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid JSON", err.Error())
+		return
+	}
+
+	if req.Path == "" {
+		writeV1Error(w, r, http.StatusBadRequest, "missing_path", "Path is required", "")
+		return
+	}
+
+	ctx := a.ws.Paths()
+	absPath := filepath.Join(ctx.Root, req.Path)
+
+	cf, err := conflict.ParseConflictedFile(absPath, a.meta)
+	if err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "parse_failed", "Failed to parse conflict", err.Error())
+		return
+	}
+
+	resolution := &conflict.Resolution{
+		PropertyChoices: make(map[string]conflict.Side),
+	}
+
+	// Map property choices
+	for prop, choice := range req.PropertyChoices {
+		if choice == "theirs" {
+			resolution.PropertyChoices[prop] = conflict.SideTheirs
+		} else {
+			resolution.PropertyChoices[prop] = conflict.SideOurs
+		}
+	}
+
+	// Map content choice
+	switch req.ContentChoice {
+	case "theirs":
+		resolution.ContentChoice = conflict.SideTheirs
+	case "manual":
+		resolution.ManualContent = req.ManualContent
+	default:
+		resolution.ContentChoice = conflict.SideOurs
+	}
+
+	if err := conflict.ResolveAndWrite(cf, resolution, a.meta); err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
+		return
+	}
+
+	writeV1JSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"path":    req.Path,
+	})
 }

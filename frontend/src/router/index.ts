@@ -66,6 +66,11 @@ const routes: RouteRecordRaw[] = [
     name: 'graph',
     component: () => import('@/views/GraphView.vue'),
   },
+  {
+    path: '/conflicts',
+    name: 'conflicts',
+    component: () => import('@/views/ConflictsView.vue'),
+  },
 ]
 
 const router = createRouter({

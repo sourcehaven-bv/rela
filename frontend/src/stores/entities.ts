@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { listEntities, getEntity, createEntity, updateEntity, deleteEntity } from '@/api/entities'
 import type { Entity, CreateEntity, ListParams, ListMeta } from '@/types'
+import { useGitStore } from './git'
 
 interface EntityCache {
   entity: Entity
@@ -10,6 +11,14 @@ interface EntityCache {
 }
 
 const CACHE_TTL = 60 * 1000 // 1 minute
+
+// Refresh git status after mutations (non-blocking)
+function refreshGitStatus() {
+  const gitStore = useGitStore()
+  gitStore.fetchStatus().catch(() => {
+    // Ignore errors - git status refresh is best-effort
+  })
+}
 
 export const useEntitiesStore = defineStore('entities', () => {
   // State
@@ -125,6 +134,8 @@ export const useEntitiesStore = defineStore('entities', () => {
     })
     // Invalidate list cache for this type
     invalidateListCache(type)
+    // Refresh git status (non-blocking)
+    refreshGitStatus()
     return entity
   }
 
@@ -141,6 +152,8 @@ export const useEntitiesStore = defineStore('entities', () => {
     })
     // Invalidate list cache for this type
     invalidateListCache(type)
+    // Refresh git status (non-blocking)
+    refreshGitStatus()
     return entity
   }
 
@@ -149,6 +162,8 @@ export const useEntitiesStore = defineStore('entities', () => {
     cache.value.delete(cacheKey(type, id))
     // Invalidate list cache for this type
     invalidateListCache(type)
+    // Refresh git status (non-blocking)
+    refreshGitStatus()
   }
 
   function invalidateListCache(type: string) {

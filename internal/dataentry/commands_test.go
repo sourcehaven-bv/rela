@@ -926,16 +926,16 @@ func TestContains(t *testing.T) {
 
 // --- Helpers ---
 
-type sseEvent struct {
+type testSSEEvent struct {
 	event string
 	data  string
 }
 
-func parseSSEEvents(t *testing.T, body io.Reader) []sseEvent {
+func parseSSEEvents(t *testing.T, body io.Reader) []testSSEEvent {
 	t.Helper()
-	var events []sseEvent
+	var events []testSSEEvent
 	scanner := bufio.NewScanner(body)
-	var current sseEvent
+	var current testSSEEvent
 	for scanner.Scan() {
 		line := scanner.Text()
 		switch {
@@ -945,7 +945,7 @@ func parseSSEEvents(t *testing.T, body io.Reader) []sseEvent {
 			current.data = strings.TrimPrefix(line, "data: ")
 		case line == "" && current.event != "":
 			events = append(events, current)
-			current = sseEvent{}
+			current = testSSEEvent{}
 		}
 	}
 	if current.event != "" {

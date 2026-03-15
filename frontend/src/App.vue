@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { useKeyboardShortcuts, shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
+import { useKeyboardShortcuts, shortcutsModalOpen, useEvents } from '@/composables'
 import Sidebar from '@/components/common/Sidebar.vue'
+import StatusBar from '@/components/common/StatusBar.vue'
 import Toast from '@/components/common/Toast.vue'
 import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal.vue'
 
@@ -13,6 +14,9 @@ const error = ref<string | null>(null)
 
 // Initialize global keyboard shortcuts
 useKeyboardShortcuts()
+
+// Initialize SSE connection for real-time updates
+useEvents()
 
 onMounted(async () => {
   try {
@@ -43,6 +47,7 @@ onMounted(async () => {
     <main class="main-content" :class="{ 'sidebar-collapsed': uiStore.sidebarCollapsed }">
       <RouterView />
     </main>
+    <StatusBar />
     <Toast />
     <KeyboardShortcutsModal
       :open="shortcutsModalOpen"
@@ -87,6 +92,7 @@ body {
   flex: 1;
   margin-left: 240px;
   padding: 24px;
+  padding-bottom: 48px; /* Account for status bar */
   transition: margin-left 0.2s ease;
 }
 

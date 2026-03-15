@@ -185,8 +185,8 @@ func TestEventBrokerBroadcast(t *testing.T) {
 
 	select {
 	case msg := <-ch1:
-		if msg != "refresh" {
-			t.Errorf("ch1: expected 'refresh', got %q", msg)
+		if msg.Type != "refresh" {
+			t.Errorf("ch1: expected 'refresh', got %q", msg.Type)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Error("ch1: timed out waiting for broadcast")
@@ -194,8 +194,8 @@ func TestEventBrokerBroadcast(t *testing.T) {
 
 	select {
 	case msg := <-ch2:
-		if msg != "refresh" {
-			t.Errorf("ch2: expected 'refresh', got %q", msg)
+		if msg.Type != "refresh" {
+			t.Errorf("ch2: expected 'refresh', got %q", msg.Type)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Error("ch2: timed out waiting for broadcast")
@@ -206,20 +206,23 @@ func TestEventBrokerBroadcastSkipsSlowClient(t *testing.T) {
 	b := newEventBroker()
 	ch := b.subscribe()
 
-	// Fill the channel buffer (capacity 1)
+	// Fill the channel buffer (capacity 4)
 	b.broadcast("first")
-	// Second broadcast should not block — slow client is skipped
 	b.broadcast("second")
+	b.broadcast("third")
+	b.broadcast("fourth")
+	// Fifth broadcast should not block — slow client is skipped
+	b.broadcast("fifth")
 
-	msg := <-ch
-	if msg != "first" {
-		t.Errorf("expected 'first', got %q", msg)
+	// Drain all 4 buffered messages
+	for i := 0; i < 4; i++ {
+		<-ch
 	}
 
-	// Channel should be empty now (second was dropped)
+	// Channel should be empty now (fifth was dropped)
 	select {
 	case extra := <-ch:
-		t.Errorf("expected no more messages, got %q", extra)
+		t.Errorf("expected no more messages, got %q", extra.Type)
 	default:
 		// expected
 	}

@@ -2,7 +2,6 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
 import { getSidebar } from '@/api'
 import type { SidebarGroup } from '@/types'
 
@@ -119,22 +118,13 @@ function getIconEmoji(icon?: string): string {
       </template>
     </nav>
 
-    <div class="sidebar-footer">
-      <RouterLink to="/settings" class="settings-link" :class="{ active: route.path === '/settings' }">
-        <span class="nav-icon">⚙️</span>
-        <span class="nav-label">Settings</span>
-      </RouterLink>
-      <button class="shortcuts-btn" @click="shortcutsModalOpen = true" title="Keyboard shortcuts">
-        <kbd>?</kbd> <span class="nav-label">Shortcuts</span>
-      </button>
-    </div>
-  </aside>
+    </aside>
 </template>
 
 <style scoped>
 .sidebar {
   width: 240px;
-  height: 100vh;
+  height: calc(100vh - 24px); /* Account for status bar */
   background: var(--sidebar-bg, #1a1a2e);
   color: var(--sidebar-text, #e8e8e8);
   display: flex;
@@ -264,77 +254,6 @@ function getIconEmoji(icon?: string): string {
   font-weight: 500;
   min-width: 20px;
   text-align: center;
-}
-
-.sidebar-footer {
-  padding: 8px 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.settings-link {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  color: inherit;
-  text-decoration: none;
-  font-size: 13px;
-  opacity: 0.7;
-  border-radius: 4px;
-  transition: all 0.15s ease;
-}
-
-.settings-link:hover {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.settings-link.active {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.15);
-}
-
-.settings-link .nav-icon {
-  font-size: 14px;
-}
-
-.sidebar.collapsed .settings-link .nav-label {
-  display: none;
-}
-
-.shortcuts-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  color: inherit;
-  opacity: 0.6;
-  font-size: 12px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-.shortcuts-btn:hover {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.shortcuts-btn kbd {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.25);
-}
-
-.sidebar.collapsed .shortcuts-btn .nav-label {
-  display: none;
-}
-
-.sidebar.collapsed .sidebar-footer {
-  justify-content: center;
 }
 
 /* Mobile overlay */
