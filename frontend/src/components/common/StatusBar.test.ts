@@ -49,6 +49,7 @@ describe('StatusBar', () => {
         branch: 'main',
         local_changes: 3,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       }
@@ -66,6 +67,7 @@ describe('StatusBar', () => {
         branch: '',
         local_changes: 0,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       }
@@ -82,6 +84,7 @@ describe('StatusBar', () => {
         branch: 'develop',
         local_changes: 0,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       }
@@ -99,6 +102,7 @@ describe('StatusBar', () => {
         branch: 'main',
         local_changes: 5,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       }
@@ -115,6 +119,7 @@ describe('StatusBar', () => {
         branch: 'main',
         local_changes: 0,
         remote_ahead: 0,
+        syncing: false,
         conflict: true,
         conflict_files: ['file1.md'],
       }
@@ -136,12 +141,12 @@ describe('StatusBar', () => {
         branch: 'main',
         local_changes: 3,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       }
       const syncSpy = vi.spyOn(gitStore, 'sync').mockResolvedValue({
         success: true,
-        message: 'OK',
         conflict_files: [],
       })
 
@@ -160,12 +165,12 @@ describe('StatusBar', () => {
         branch: 'main',
         local_changes: 3,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       }
       vi.spyOn(gitStore, 'sync').mockResolvedValue({
         success: true,
-        message: 'Conflicts detected',
         conflict_files: ['file1.md', 'file2.md'],
       })
       const pushSpy = vi.spyOn(router, 'push')

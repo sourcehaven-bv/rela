@@ -42,6 +42,7 @@ describe('Git Store', () => {
         branch: 'main',
         local_changes: 3,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       }
@@ -71,6 +72,7 @@ describe('Git Store', () => {
         branch: 'main',
         local_changes: 0,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       })
@@ -96,6 +98,7 @@ describe('Git Store', () => {
         branch: 'feature/test',
         local_changes: 5,
         remote_ahead: 2,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       })
@@ -134,6 +137,7 @@ describe('Git Store', () => {
         branch: 'main',
         local_changes: 1,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       })
@@ -148,6 +152,7 @@ describe('Git Store', () => {
         branch: 'main',
         local_changes: 0,
         remote_ahead: 3,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       })
@@ -162,6 +167,7 @@ describe('Git Store', () => {
         branch: 'main',
         local_changes: 0,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       })
@@ -177,6 +183,7 @@ describe('Git Store', () => {
         branch: 'main',
         local_changes: 0,
         remote_ahead: 0,
+        syncing: false,
         conflict: true,
         conflict_files: ['file1.md', 'file2.md'],
       })
@@ -194,6 +201,7 @@ describe('Git Store', () => {
         branch: 'main',
         local_changes: 0,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       })
@@ -210,7 +218,6 @@ describe('Git Store', () => {
     it('syncs and refreshes status', async () => {
       const mockSyncResponse = {
         success: true,
-        message: 'Synced successfully',
         conflict_files: [],
       }
       vi.mocked(api.syncGit).mockResolvedValue(mockSyncResponse)
@@ -219,6 +226,7 @@ describe('Git Store', () => {
         branch: 'main',
         local_changes: 0,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       })
@@ -243,6 +251,7 @@ describe('Git Store', () => {
         branch: 'main',
         local_changes: 0,
         remote_ahead: 0,
+        syncing: false,
         conflict: false,
         conflict_files: [],
       })
@@ -250,7 +259,7 @@ describe('Git Store', () => {
       const syncPromise = store.sync()
       expect(store.syncing).toBe(true)
 
-      resolveSync!({ success: true, message: 'OK', conflict_files: [] })
+      resolveSync!({ success: true, conflict_files: [] })
       await syncPromise
 
       expect(store.syncing).toBe(false)

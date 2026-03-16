@@ -20,6 +20,8 @@
   "dependencies": {
     "axios": "^1.6.7",
     "easymde": "^2.20.0",
+    "marked": "^17.0.4",
+    "mermaid": "^11.13.0",
     "pinia": "^2.1.7",
     "slim-select": "^3.4.3",
     "vue": "^3.4.21",

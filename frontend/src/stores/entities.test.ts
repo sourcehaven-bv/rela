@@ -123,7 +123,7 @@ describe('Entities Store', () => {
         { id: 'TKT-001', type: 'ticket', properties: { title: 'First' }, relations: {} },
         { id: 'TKT-002', type: 'ticket', properties: { title: 'Second' }, relations: {} },
       ],
-      meta: { total: 2, limit: 20, offset: 0 },
+      meta: { total: 2, page: 1, per_page: 20, has_more: false },
     }
 
     it('fetches list and caches entities', async () => {
@@ -152,8 +152,8 @@ describe('Entities Store', () => {
     it('respects params in cache key', async () => {
       vi.mocked(entitiesApi.listEntities).mockResolvedValue(mockResponse)
 
-      await store.fetchList('ticket', { where: 'status=open' })
-      await store.fetchList('ticket', { where: 'status=closed' })
+      await store.fetchList('ticket', { 'filter[status]': 'open' })
+      await store.fetchList('ticket', { 'filter[status]': 'closed' })
 
       expect(entitiesApi.listEntities).toHaveBeenCalledTimes(2)
     })
@@ -170,9 +170,11 @@ describe('Entities Store', () => {
     it('creates entity and caches it', async () => {
       vi.mocked(entitiesApi.createEntity).mockResolvedValue(newEntity)
 
-      const result = await store.create('ticket', { title: 'New Ticket' })
+      const result = await store.create('ticket', { properties: { title: 'New Ticket' } })
 
-      expect(entitiesApi.createEntity).toHaveBeenCalledWith('ticket', { title: 'New Ticket' })
+      expect(entitiesApi.createEntity).toHaveBeenCalledWith('ticket', {
+        properties: { title: 'New Ticket' },
+      })
       expect(result).toEqual(newEntity)
       expect(store.getCached('ticket', 'TKT-003')).toEqual(newEntity)
     })
@@ -189,12 +191,12 @@ describe('Entities Store', () => {
     it('updates entity and refreshes cache', async () => {
       vi.mocked(entitiesApi.updateEntity).mockResolvedValue(updatedEntity)
 
-      const result = await store.update('ticket', 'TKT-001', { title: 'Updated Title' })
+      const result = await store.update('ticket', 'TKT-001', { properties: { title: 'Updated Title' } })
 
       expect(entitiesApi.updateEntity).toHaveBeenCalledWith(
         'ticket',
         'TKT-001',
-        { title: 'Updated Title' },
+        { properties: { title: 'Updated Title' } },
         undefined
       )
       expect(result).toEqual(updatedEntity)
@@ -204,12 +206,12 @@ describe('Entities Store', () => {
     it('passes etag for optimistic locking', async () => {
       vi.mocked(entitiesApi.updateEntity).mockResolvedValue(updatedEntity)
 
-      await store.update('ticket', 'TKT-001', { title: 'Updated' }, 'etag-123')
+      await store.update('ticket', 'TKT-001', { properties: { title: 'Updated' } }, 'etag-123')
 
       expect(entitiesApi.updateEntity).toHaveBeenCalledWith(
         'ticket',
         'TKT-001',
-        { title: 'Updated' },
+        { properties: { title: 'Updated' } },
         'etag-123'
       )
     })
@@ -241,7 +243,7 @@ describe('Entities Store', () => {
     it('clears all caches', async () => {
       vi.mocked(entitiesApi.listEntities).mockResolvedValue({
         data: [{ id: 'TKT-001', type: 'ticket', properties: {}, relations: {} }],
-        meta: { total: 1, limit: 20, offset: 0 },
+        meta: { total: 1, page: 1, per_page: 20, has_more: false },
       })
 
       await store.fetchList('ticket')

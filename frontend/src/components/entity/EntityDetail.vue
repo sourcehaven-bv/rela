@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import type { Entity } from '@/types'
 import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
+import { renderMarkdown, renderMermaidDiagrams } from '@/utils/markdown'
 import Badge from '@/components/common/Badge.vue'
 
 const props = defineProps<{
@@ -67,24 +68,19 @@ const relations = computed(() => {
   }))
 })
 
+const contentRef = ref<HTMLElement | null>(null)
+
 const renderedContent = computed(() => {
   if (!entity.value?.content) return ''
-  // Simple markdown-to-html conversion for basic elements
-  return entity.value.content
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code>$1</code>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/^([^<].*)$/gm, '<p>$1</p>')
-    .replace(/<p><\/p>/g, '')
-    // Handle checkboxes
-    .replace(/\[ \]/g, '<input type="checkbox" disabled />')
-    .replace(/\[x\]/gi, '<input type="checkbox" checked disabled />')
+  return renderMarkdown(entity.value.content)
+})
+
+// Render mermaid diagrams after content is mounted
+watch(renderedContent, async () => {
+  await nextTick()
+  if (contentRef.value) {
+    await renderMermaidDiagrams(contentRef.value)
+  }
 })
 
 // Methods
@@ -238,7 +234,7 @@ onMounted(() => loadEntity())
       <!-- Content Section -->
       <section v-if="entity.content" class="detail-section">
         <h2>Content</h2>
-        <div class="content-body" v-html="renderedContent"/>
+        <div ref="contentRef" class="content-body" v-html="renderedContent"/>
       </section>
 
       <!-- Delete Confirmation Modal -->
