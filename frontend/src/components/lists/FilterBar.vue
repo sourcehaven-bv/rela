@@ -45,7 +45,7 @@ function hasActiveFilters(): boolean {
   <div class="filter-bar">
     <div class="filters">
       <div
-        v-for="filter in config.filters"
+        v-for="filter in config.filter_controls"
         :key="filter.property"
         class="filter-item"
       >

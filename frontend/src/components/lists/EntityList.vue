@@ -229,7 +229,7 @@ onMounted(() => {
     </header>
 
     <FilterBar
-      v-if="listConfig.filters?.length"
+      v-if="listConfig.filter_controls?.length"
       :config="listConfig"
       :entity-type="entityType"
       :filters="filters"
