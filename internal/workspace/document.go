@@ -123,21 +123,31 @@ func (w *Workspace) doRenderDocument(
 }
 
 // computeDocumentHash computes a content hash for cache validation.
-// It executes the view to get all involved entities and hashes their content.
+// If viewName is provided, it executes the view to get all involved entities.
+// If viewName is empty, it just uses the entry entity for hashing.
 // Returns the entities and their hash.
 func (w *Workspace) computeDocumentHash(entryID, viewName string) ([]*model.Entity, string, error) {
-	result, err := w.ExecuteView(viewName, entryID)
-	if err != nil {
-		return nil, "", err
-	}
-
-	// Collect all entities from the view result
 	var entities []*model.Entity
-	if result.Entry != nil {
-		entities = append(entities, result.Entry)
-	}
-	for _, collection := range result.Collections {
-		entities = append(entities, collection...)
+
+	if viewName != "" {
+		// Execute the view to get all involved entities
+		result, err := w.ExecuteView(viewName, entryID)
+		if err != nil {
+			return nil, "", err
+		}
+		if result.Entry != nil {
+			entities = append(entities, result.Entry)
+		}
+		for _, collection := range result.Collections {
+			entities = append(entities, collection...)
+		}
+	} else {
+		// No view specified, just use the entry entity
+		entity, ok := w.Graph().GetNode(entryID)
+		if !ok {
+			return nil, "", fmt.Errorf("entity %q not found", entryID)
+		}
+		entities = []*model.Entity{entity}
 	}
 
 	return entities, hashEntities(entities), nil

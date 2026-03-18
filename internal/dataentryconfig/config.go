@@ -413,13 +413,17 @@ type CommandScope struct {
 // DocumentConfig defines how to render a document from an entry entity.
 type DocumentConfig struct {
 	// Title is the display title for the document.
-	Title string `yaml:"title,omitempty"`
+	Title string `yaml:"title,omitempty" json:"title,omitempty"`
+	// EntityType specifies which entity types this document applies to.
+	// Used by the frontend to filter which documents to show for a given entity.
+	EntityType string `yaml:"entity_type,omitempty" json:"entity_type,omitempty"`
 	// View is the view name from views.yaml used to gather entities for content hashing.
-	View string `yaml:"view"`
+	// If empty, only the entry entity is used for cache validation.
+	View string `yaml:"view,omitempty" json:"view,omitempty"`
 	// Command is the external render command. Placeholders:
 	//   {id}       - entry ID
 	//   {id_lower} - lowercase entry ID
-	Command string `yaml:"command"`
+	Command string `yaml:"command" json:"command"`
 	// Timeout is the command execution timeout in seconds. Defaults to 30.
-	Timeout int `yaml:"timeout,omitempty"`
+	Timeout int `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 }
