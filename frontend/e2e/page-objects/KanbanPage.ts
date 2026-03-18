@@ -62,11 +62,13 @@ export class KanbanPage extends BasePage {
   }
 
   async waitForLoad(): Promise<void> {
-    await this.kanbanContainer.waitFor({ state: 'visible', timeout: 10000 })
-    // Wait for loading to complete and the board to appear
-    await this.page
-      .locator('.kanban-board')
-      .waitFor({ state: 'visible', timeout: 10000 })
+    await this.kanbanContainer.waitFor({ state: 'visible' })
+    // Wait for loading indicator to disappear (if present)
+    await this.loadingState.waitFor({ state: 'hidden' }).catch(() => {
+      // Loading state may already be hidden or never shown
+    })
+    // Wait for the board to appear
+    await this.boardContainer.waitFor({ state: 'visible' })
   }
 
   // Actions

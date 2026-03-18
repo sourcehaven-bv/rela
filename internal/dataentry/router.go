@@ -17,8 +17,10 @@ func (a *App) NewRouter() http.Handler {
 	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
-	// SSE endpoint — excluded from reload-lock (long-lived connection)
+	// SSE endpoints — excluded from reload-lock (long-lived connection)
+	// Both paths point to same handler for compatibility
 	mux.HandleFunc("/api/events", a.handleSSE)
+	mux.HandleFunc("/api/v1/_events", a.handleSSE)
 
 	// All other routes are wrapped with the reload-lock middleware
 	inner := http.NewServeMux()
@@ -67,9 +69,8 @@ func (a *App) NewRouter() http.Handler {
 	inner.HandleFunc("/api/search", a.handleAPISearch)
 	inner.HandleFunc("/api/openapi.json", a.handleV1OpenAPI)
 
-	// REST API v1 - RESTful endpoints with entity type in path
-	// /api/v1/{entity-type-plural}[/{id}[/relations[/{rel-type}[/{target-id}]]]]
-	inner.HandleFunc("/api/v1/", a.handleRESTEntities)
+	// REST API v1 - registers all /api/v1/ routes including system endpoints
+	a.registerAPIV1Routes(inner)
 
 	locked := a.reloadLockMiddleware(inner)
 	mux.Handle("/", locked)

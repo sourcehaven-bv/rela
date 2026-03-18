@@ -7,6 +7,7 @@ import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
 import { renderMarkdown, renderMermaidDiagrams } from '@/utils/markdown'
 import Badge from '@/components/common/Badge.vue'
+import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 
 const props = defineProps<{
   entityType: string
@@ -230,6 +231,9 @@ onMounted(() => loadEntity())
           </div>
         </div>
       </section>
+
+      <!-- Documents Section -->
+      <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
 
       <!-- Content Section -->
       <section v-if="entity.content" class="detail-section">

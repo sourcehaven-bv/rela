@@ -58,8 +58,8 @@ test.describe('Kanban Board', () => {
     const kanbanPage = pages.kanban('ticket_board')
     await kanbanPage.visit()
 
-    // Wait for cards to load
-    await kanbanPage.page.waitForTimeout(1000)
+    // Wait for at least one card to appear
+    await kanbanPage.cards.first().waitFor({ state: 'visible' })
 
     // Check that cards are in columns
     const cardCount = await kanbanPage.getCardCount()
@@ -70,7 +70,8 @@ test.describe('Kanban Board', () => {
     const kanbanPage = pages.kanban('ticket_board')
     await kanbanPage.visit()
 
-    await kanbanPage.page.waitForTimeout(1000)
+    // Wait for at least one card to appear
+    await kanbanPage.cards.first().waitFor({ state: 'visible' })
 
     // Find a card with our test ticket title
     expect(await kanbanPage.hasCardWithText('Kanban Test:')).toBeTruthy()
@@ -80,28 +81,28 @@ test.describe('Kanban Board', () => {
     const kanbanPage = pages.kanban('ticket_board')
     await kanbanPage.visit()
 
-    await kanbanPage.page.waitForTimeout(1000)
+    // Wait for at least one card to appear
+    await kanbanPage.cards.first().waitFor({ state: 'visible' })
 
     // Cards should show priority and assignee fields per config
     const cards = kanbanPage.cards
-    if (await cards.first().isVisible()) {
-      const cardContent = await cards.first().textContent()
-      // Cards should show priority
-      expect(cardContent?.toLowerCase()).toMatch(/high|medium|low|critical/)
-    }
+    const cardContent = await cards.first().textContent()
+    // Cards should show priority
+    expect(cardContent?.toLowerCase()).toMatch(/high|medium|low|critical/)
   })
 
   test('clicking card navigates to detail or edit', async ({ pages, apiPage }) => {
     const kanbanPage = pages.kanban('ticket_board')
     await kanbanPage.visit()
 
-    await kanbanPage.page.waitForTimeout(1000)
+    // Wait for at least one card to appear
+    await kanbanPage.cards.first().waitFor({ state: 'visible' })
 
     // Click on a card
     await kanbanPage.clickCard('Kanban Test')
 
     // Should navigate to entity detail or edit form
-    await apiPage.waitForTimeout(1000)
+    await apiPage.waitForURL(/\/entity\/ticket\/|\/form\/edit_ticket\//)
     const url = apiPage.url()
     expect(url).toMatch(/\/entity\/ticket\/|\/form\/edit_ticket\//)
   })
@@ -147,7 +148,8 @@ test.describe('Priority Board (with swimlanes)', () => {
       const kanbanPage = pages.kanban('priority_board')
       await kanbanPage.visit()
 
-      await kanbanPage.page.waitForTimeout(1000)
+      // Wait for board to be ready
+      await kanbanPage.boardContainer.waitFor({ state: 'visible' })
 
       // Closed ticket should NOT appear (filtered out per config)
       const content = await kanbanPage.getPageContent()
@@ -182,7 +184,8 @@ test.describe('Kanban Drag and Drop', () => {
     const kanbanPage = pages.kanban('ticket_board')
     await kanbanPage.visit()
 
-    await kanbanPage.page.waitForTimeout(1000)
+    // Wait for cards to appear
+    await kanbanPage.cards.first().waitFor({ state: 'visible' })
 
     // Find the card with our test ticket
     const card = kanbanPage.page.locator(`.kanban-card:has-text("Drag Test"), .card:has-text("Drag Test")`).first()
@@ -195,7 +198,16 @@ test.describe('Kanban Drag and Drop', () => {
         // Perform drag and drop
         await card.dragTo(targetColumn)
 
-        await kanbanPage.page.waitForTimeout(1000)
+        // Wait for the API call to complete (poll until status changes)
+        await kanbanPage.page.waitForFunction(
+          async (ticketId) => {
+            const response = await fetch(`/api/v1/tickets/${ticketId}`)
+            const ticket = await response.json()
+            return ticket.properties.status === 'in-progress'
+          },
+          testTicketId!,
+          { timeout: 10000 }
+        )
 
         // Verify the ticket status was updated via API
         const ticket = await api.getEntity('tickets', testTicketId!)

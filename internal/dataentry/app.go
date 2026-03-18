@@ -21,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -49,6 +50,8 @@ type App struct {
 	userDefaults *UserDefaults
 	// gitOps provides git operations when git is enabled.
 	gitOps *git.Ops
+	// openAPIGen generates OpenAPI specs from the metamodel.
+	openAPIGen *openapi.Generator
 	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
 	// during live-reload. Handlers acquire RLock; reload acquires Lock.
 	mu sync.RWMutex
@@ -109,6 +112,11 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 		broker:      newEventBroker(),
+		openAPIGen: openapi.New(meta, openapi.Config{
+			Title:       cfg.App.Name + " API",
+			Description: cfg.App.Description,
+			Version:     "1.0.0",
+		}),
 	}
 	app.userDefaults = app.loadUserDefaults()
 

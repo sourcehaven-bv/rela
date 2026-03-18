@@ -203,6 +203,10 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 				a.tmpl = tmpl
 			}
 		}
+		// Update OpenAPI generator with new metamodel
+		if a.openAPIGen != nil {
+			a.openAPIGen.UpdateMetamodel(a.meta)
+		}
 	}
 }
 
@@ -220,6 +224,13 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
 		return
+	}
+
+	// CORS headers for cross-origin EventSource (e.g., e2e tests with separate backend)
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")

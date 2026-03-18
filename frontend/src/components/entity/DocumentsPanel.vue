@@ -24,8 +24,9 @@ let eventSource: EventSource | null = null
 const availableDocuments = computed(() => {
   const docs: Array<{ name: string; config: DocumentConfig }> = []
   for (const [name, config] of schemaStore.documents) {
-    // Documents specify which view they apply to (entity type)
-    if (config.view === props.entityType) {
+    // Use entity_type for filtering if available, fallback to view for backward compatibility
+    const targetType = config.entity_type || config.view
+    if (targetType === props.entityType) {
       docs.push({ name, config })
     }
   }
@@ -49,14 +50,17 @@ watch([selectedDoc, () => props.entityId], async () => {
 async function loadDocument(refresh = false) {
   if (!selectedDoc.value) return
 
+  console.log('[DocumentsPanel] loadDocument called, refresh:', refresh)
   loading.value = true
   docContent.value = ''
 
   try {
     const result = await renderDocument(selectedDoc.value, props.entityId, refresh)
+    console.log('[DocumentsPanel] Document rendered, entity_ids:', result.entity_ids)
     docContent.value = result.html
     isCached.value = result.cached
     entityIds.value = result.entity_ids || []
+    console.log('[DocumentsPanel] Updated entityIds:', entityIds.value)
   } catch (err) {
     console.error('Failed to render document:', err)
     uiStore.error('Failed to render document')
@@ -67,26 +71,52 @@ async function loadDocument(refresh = false) {
   }
 }
 
+// Get API base URL - prefer runtime injection (for tests) over build-time env var
+function getApiBaseUrl(): string {
+  // Check for runtime injection (used by e2e tests to bypass Vite proxy)
+  if (typeof window !== 'undefined' && (window as { __RELA_API_BASE__?: string }).__RELA_API_BASE__) {
+    return (window as { __RELA_API_BASE__?: string }).__RELA_API_BASE__!
+  }
+  // Fall back to build-time env var
+  return import.meta.env.VITE_API_BASE || ''
+}
+
 // SSE subscription for live updates
 function setupSSE() {
   if (eventSource) return // Already connected
 
-  const baseUrl = import.meta.env.VITE_API_BASE || ''
-  eventSource = new EventSource(`${baseUrl}/api/v1/_events`)
+  const baseUrl = getApiBaseUrl()
+  const sseUrl = `${baseUrl}/api/v1/_events`
+  console.log('[DocumentsPanel] Setting up SSE connection to:', sseUrl)
+  console.log('[DocumentsPanel] Current entityIds:', entityIds.value)
+  eventSource = new EventSource(sseUrl)
+
+  eventSource.onopen = () => {
+    console.log('[DocumentsPanel] SSE connection opened')
+  }
+
+  eventSource.onerror = (e) => {
+    console.log('[DocumentsPanel] SSE connection error:', e)
+  }
 
   // Handle entity change events
   const entityEvents = ['entity:created', 'entity:updated', 'entity:deleted']
   for (const eventType of entityEvents) {
     eventSource.addEventListener(eventType, (event: MessageEvent) => {
+      console.log('[DocumentsPanel] SSE event received:', eventType, event.data)
       try {
         const data = JSON.parse(event.data) as { type?: string; id?: string }
+        console.log('[DocumentsPanel] Parsed event data:', data)
+        console.log('[DocumentsPanel] Current entityIds:', entityIds.value)
+        console.log('[DocumentsPanel] ID match:', data.id && entityIds.value.includes(data.id))
         // Check if this entity is involved in our document
         if (data.id && entityIds.value.includes(data.id)) {
+          console.log('[DocumentsPanel] Refreshing document due to entity change')
           // Refetch document (will re-render if stale)
           loadDocument(true)
         }
-      } catch {
-        // Ignore parse errors
+      } catch (err) {
+        console.log('[DocumentsPanel] SSE parse error:', err)
       }
     })
   }

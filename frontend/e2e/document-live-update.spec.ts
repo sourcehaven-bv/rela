@@ -30,6 +30,13 @@ test.describe('Document Live Updates', () => {
   })
 
   test('document updates when entity is modified via API', async ({ pages, api, apiPage }) => {
+    // Capture browser console messages for debugging
+    apiPage.on('console', (msg) => {
+      if (msg.text().includes('[DocumentsPanel]')) {
+        console.log(`[browser] ${msg.text()}`)
+      }
+    })
+
     // Step 1: Create a test ticket via API
     const created = await api.createEntity('tickets', {
       properties: {

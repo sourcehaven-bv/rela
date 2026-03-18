@@ -1,6 +1,7 @@
 export * from './client'
 export * from './schema'
 export * from './entities'
+export * from './documents'
 export * from './graph'
 export * from './settings'
 export * from './git'

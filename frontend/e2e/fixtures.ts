@@ -126,6 +126,31 @@ function ensureServerBinary(): string {
 }
 
 /**
+ * Build the rela CLI binary if it doesn't exist (needed for document rendering)
+ */
+function ensureRelaCLI(): string {
+  const relaBinary = path.join(PROJECT_ROOT, 'bin/rela')
+  if (!fs.existsSync(relaBinary)) {
+    console.log('Building rela CLI...')
+    execSync('go build -o bin/rela ./cmd/rela', {
+      cwd: PROJECT_ROOT,
+      stdio: 'inherit',
+    })
+  }
+  return relaBinary
+}
+
+/**
+ * Set up .rela/bin directory with the rela CLI for document rendering
+ */
+function setupRelaBin(tempDir: string, relaBinary: string): void {
+  const relaBinDir = path.join(tempDir, '.rela', 'bin')
+  fs.mkdirSync(relaBinDir, { recursive: true })
+  fs.copyFileSync(relaBinary, path.join(relaBinDir, 'rela'))
+  fs.chmodSync(path.join(relaBinDir, 'rela'), 0o755)
+}
+
+/**
  * Shared API response types
  */
 export interface EntityResponse {
@@ -195,13 +220,14 @@ export interface TestFixtures {
  */
 export interface WorkerFixtures {
   serverBinary: string
+  relaCLI: string
 }
 
 /**
  * Create extended test with backend fixtures
  */
 export const test = base.extend<TestFixtures, WorkerFixtures>({
-  // Worker-scoped: ensure binary is built once per worker
+  // Worker-scoped: ensure binaries are built once per worker
   serverBinary: [
     // eslint-disable-next-line no-empty-pattern
     async ({}, use) => {
@@ -211,11 +237,23 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { scope: 'worker' },
   ],
 
+  relaCLI: [
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, use) => {
+      const binary = ensureRelaCLI()
+      await use(binary)
+    },
+    { scope: 'worker' },
+  ],
+
   // Test-scoped: each test gets its own backend instance
-  backend: async ({ serverBinary }, use) => {
+  backend: async ({ serverBinary, relaCLI }, use) => {
     // Create temp project directory
     const tempDir = path.join(fs.realpathSync(os.tmpdir()), `${TEMP_PROJECT_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`)
     copyDirSync(DATA_ENTRY_PROJECT, tempDir)
+
+    // Set up .rela/bin with the rela CLI for document rendering
+    setupRelaBin(tempDir, relaCLI)
 
     // Find a free port
     const port = await findFreePort()
@@ -302,6 +340,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
   // Convenience fixture: page with API routing already configured
   apiPage: async ({ page, backend }, use) => {
+    // Inject the API base URL for components that use EventSource (SSE)
+    // This bypasses the Vite proxy which would otherwise intercept SSE connections
+    await page.addInitScript((baseUrl) => {
+      ;(window as { __RELA_API_BASE__?: string }).__RELA_API_BASE__ = baseUrl
+    }, backend.baseUrl)
+
     // Route all /api/v1/* requests to the test's backend
     // Use a specific pattern to avoid matching source files like /src/api/*.ts
     // Route all /api/* requests to the test's backend

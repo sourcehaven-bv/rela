@@ -106,13 +106,14 @@ type V1CustomType struct {
 
 // V1Config is the JSON representation of the UI config.
 type V1Config struct {
-	App        V1AppConfig                           `json:"app"`
-	Forms      map[string]dataentryconfig.Form       `json:"forms"`
-	Lists      map[string]dataentryconfig.List       `json:"lists"`
-	Views      map[string]dataentryconfig.ViewConfig `json:"views"`
-	Kanbans    map[string]dataentryconfig.Kanban     `json:"kanbans"`
-	Dashboard  *dataentryconfig.DashboardConfig      `json:"dashboard,omitempty"`
-	Navigation []dataentryconfig.NavigationEntry     `json:"navigation"`
+	App        V1AppConfig                               `json:"app"`
+	Forms      map[string]dataentryconfig.Form           `json:"forms"`
+	Lists      map[string]dataentryconfig.List           `json:"lists"`
+	Views      map[string]dataentryconfig.ViewConfig     `json:"views"`
+	Kanbans    map[string]dataentryconfig.Kanban         `json:"kanbans"`
+	Dashboard  *dataentryconfig.DashboardConfig          `json:"dashboard,omitempty"`
+	Navigation []dataentryconfig.NavigationEntry         `json:"navigation"`
+	Documents  map[string]dataentryconfig.DocumentConfig `json:"documents,omitempty"`
 }
 
 // V1AppConfig is the JSON representation of the app config.
@@ -162,12 +163,16 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_sidebar", a.handleV1Sidebar)
 	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
 	mux.HandleFunc("/api/v1/_conflicts/", a.handleV1ConflictRoutes)
+	mux.HandleFunc("/api/v1/_documents/", a.handleV1Documents)
+	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
 }
 
 // handleV1DynamicRoutes routes requests to the appropriate entity handler based on URL.
+// Note: This handler is called under reloadLockMiddleware which already holds RLock.
+// Write operations (create, update, delete) will release/reacquire the lock as needed.
 func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 	// Skip system routes (already handled)
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
@@ -176,8 +181,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.RLock()
-	defer a.mu.RUnlock()
+	// Note: RLock is held by reloadLockMiddleware - don't acquire another one
 
 	// Parse path: {plural}[/{id}[/relations[/{relType}[/{targetId}]]]]
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -844,6 +848,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Kanbans:    a.Cfg.Kanbans,
 		Dashboard:  a.Cfg.Dashboard,
 		Navigation: a.Cfg.Navigation,
+		Documents:  a.Cfg.Documents,
 	}
 
 	writeV1JSON(w, http.StatusOK, config)
@@ -1646,4 +1651,108 @@ func (a *App) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"path":    req.Path,
 	})
+}
+
+// --- Documents API ---
+
+// V1DocumentResponse contains the rendered document content.
+type V1DocumentResponse struct {
+	HTML      string   `json:"html"`
+	Cached    bool     `json:"cached"`
+	EntityIDs []string `json:"entity_ids"` // IDs of entities involved in this document (for SSE filtering)
+}
+
+// handleV1Documents handles GET /api/v1/_documents/{docName}/{entityId}.
+// Returns JSON with rendered HTML content for Vue SPA consumption.
+func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+
+	// Parse path: /api/v1/_documents/{docName}/{entityId}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_documents/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_documents/{docName}/{entityId}", "")
+		return
+	}
+
+	docName, entityID := parts[0], parts[1]
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	// Get document config
+	docCfg, ok := a.Cfg.Documents[docName]
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
+		return
+	}
+
+	// Convert config to workspace format
+	wsCfg := a.toWorkspaceDocConfig(&docCfg)
+
+	// Check for refresh param - skip cache if present
+	forceRefresh := r.URL.Query().Get("refresh") == "true"
+
+	// Try to get cached content (unless refresh requested)
+	if !forceRefresh {
+		result := a.ws.GetCachedDocument(entityID, wsCfg)
+		if result != nil {
+			html := workspace.RewriteDocumentLinks(result.HTML, "")
+			writeV1JSON(w, http.StatusOK, V1DocumentResponse{
+				HTML:      html,
+				Cached:    true,
+				EntityIDs: extractEntityIDs(result.Entities),
+			})
+			return
+		}
+	}
+
+	// Render the document
+	result, err := a.ws.RenderDocument(entityID, wsCfg)
+	if err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "render_failed", "Document rendering failed", err.Error())
+		return
+	}
+
+	html := workspace.RewriteDocumentLinks(result.HTML, "")
+	writeV1JSON(w, http.StatusOK, V1DocumentResponse{
+		HTML:      html,
+		Cached:    false,
+		EntityIDs: extractEntityIDs(result.Entities),
+	})
+}
+
+// extractEntityIDs extracts IDs from a slice of entities.
+func extractEntityIDs(entities []*model.Entity) []string {
+	ids := make([]string, len(entities))
+	for i, e := range entities {
+		ids[i] = e.ID
+	}
+	return ids
+}
+
+// --- OpenAPI Spec ---
+
+// handleV1OpenAPI serves the OpenAPI 3.1 specification.
+func (a *App) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	data, err := a.openAPIGen.GenerateJSON()
+	if err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "generation_failed", "Failed to generate OpenAPI spec", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	_, _ = w.Write(data)
 }

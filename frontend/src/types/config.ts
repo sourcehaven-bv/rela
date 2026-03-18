@@ -8,6 +8,7 @@ export interface Config {
   kanbans: Record<string, KanbanConfig>
   dashboard?: DashboardConfig
   navigation: NavigationEntry[]
+  documents?: Record<string, DocumentConfig>
 }
 
 export interface AppConfig {
@@ -236,4 +237,20 @@ export interface SidebarGroup {
 export interface SidebarData {
   app: AppConfig
   navigation: SidebarGroup[]
+}
+
+// Document config for external rendering via shell commands
+export interface DocumentConfig {
+  title?: string
+  entity_type?: string // Entity type this document applies to (for frontend filtering)
+  view?: string // View name from views.yaml for cache hashing (optional)
+  command: string
+  timeout?: number
+}
+
+// Response from document render API
+export interface DocumentRenderResponse {
+  html: string
+  cached: boolean
+  entity_ids: string[] // IDs of entities involved in this document (for SSE filtering)
 }
