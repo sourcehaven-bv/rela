@@ -165,6 +165,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_conflicts/", a.handleV1ConflictRoutes)
 	mux.HandleFunc("/api/v1/_documents/", a.handleV1Documents)
 	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
+	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
@@ -1738,6 +1739,52 @@ func extractEntityIDs(entities []*model.Entity) []string {
 		ids[i] = e.ID
 	}
 	return ids
+}
+
+// --- Commands API ---
+
+// V1Command is the JSON representation of an available command.
+type V1Command struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Confirm  string `json:"confirm,omitempty"`
+	Context  string `json:"context"`
+	AutoOpen *bool  `json:"auto_open,omitempty"`
+}
+
+// handleV1Commands returns available commands for a given page context.
+// Query params:
+//   - page_type: "entity", "list", "view", or "dashboard"
+//   - qualifier: specific list ID or view ID (optional)
+//   - entity_type: the entity type shown on the page (optional)
+func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	query := r.URL.Query()
+	pageType := query.Get("page_type")
+	qualifier := query.Get("qualifier")
+	entityType := query.Get("entity_type")
+
+	resolved := a.resolveCommands(pageType, qualifier, entityType)
+
+	commands := make([]V1Command, 0, len(resolved))
+	for _, cmd := range resolved {
+		commands = append(commands, V1Command{
+			ID:       cmd.ID,
+			Label:    cmd.Label,
+			Confirm:  cmd.Confirm,
+			Context:  cmd.Context,
+			AutoOpen: cmd.AutoOpen,
+		})
+	}
+
+	writeV1JSON(w, http.StatusOK, commands)
 }
 
 // --- OpenAPI Spec ---

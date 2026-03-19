@@ -254,3 +254,12 @@ export interface DocumentRenderResponse {
   cached: boolean
   entity_ids: string[] // IDs of entities involved in this document (for SSE filtering)
 }
+
+// Command available for a page context
+export interface Command {
+  id: string
+  label: string
+  confirm?: string
+  context: 'entity' | 'list' | 'view' | 'global'
+  auto_open?: boolean
+}
