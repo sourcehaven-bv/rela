@@ -11,7 +11,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/search"
 )
 
 func (s *Server) resolveType(typeName string) string {
@@ -192,16 +191,6 @@ func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Ent
 	}
 
 	return violations
-}
-
-// scoreSearch splits the query into words and returns a relevance score using
-// OR logic with fuzzy matching. Returns 0 if nothing matches.
-func scoreSearch(e *model.Entity, queryLower string) float64 {
-	words := strings.Fields(queryLower)
-	if len(words) == 0 {
-		return 0
-	}
-	return search.ScoreEntity(e, words, nil)
 }
 
 func countEdgesByType(edges []*model.Relation, relType string) int {

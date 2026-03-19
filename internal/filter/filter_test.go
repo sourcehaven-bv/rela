@@ -122,6 +122,29 @@ func TestParse(t *testing.T) {
 			input:   "title=~[invalid",
 			wantErr: true,
 		},
+
+		// Fuzzy operator
+		{
+			name:     "fuzzy operator",
+			input:    "id~foo",
+			wantProp: "id",
+			wantOp:   OpFuzzy,
+			wantVal:  "foo",
+		},
+		{
+			name:     "fuzzy with spaces",
+			input:    "  title ~ auth  ",
+			wantProp: "title",
+			wantOp:   OpFuzzy,
+			wantVal:  "auth",
+		},
+		{
+			name:     "regex still works (=~ not ~)",
+			input:    "title=~access.*policy",
+			wantProp: "title",
+			wantOp:   OpRegex,
+			wantVal:  "access.*policy",
+		},
 	}
 
 	for _, tt := range tests {
@@ -212,12 +235,43 @@ func TestOperatorString(t *testing.T) {
 		{OpGreater, ">"},
 		{OpGreaterEqual, ">="},
 		{OpRegex, "=~"},
+		{OpFuzzy, "~"},
 	}
 
 	for _, tt := range tests {
 		if got := tt.op.String(); got != tt.want {
 			t.Errorf("Operator(%d).String() = %q, want %q", tt.op, got, tt.want)
 		}
+	}
+}
+
+func TestParseFuzzyWithWildcard(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		wantFuzzyTarget string
+		wantHasWildcard bool
+	}{
+		{"fuzzy only", "id~foo", "foo", false},
+		{"fuzzy with suffix", "id~foo*", "foo", true},
+		{"fuzzy with question", "id~auth?", "auth", true},
+		{"fuzzy with escaped", "id~test\\*val*", "test*val", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.input, err)
+			}
+			if f.FuzzyTarget != tt.wantFuzzyTarget {
+				t.Errorf("FuzzyTarget = %q, want %q", f.FuzzyTarget, tt.wantFuzzyTarget)
+			}
+			hasWildcard := f.WildcardRe != nil
+			if hasWildcard != tt.wantHasWildcard {
+				t.Errorf("hasWildcard = %v, want %v", hasWildcard, tt.wantHasWildcard)
+			}
+		})
 	}
 }
 
