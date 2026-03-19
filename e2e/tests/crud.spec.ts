@@ -91,6 +91,56 @@ test.describe('Entity CRUD Operations', () => {
       await listPage.expectRowContains('FEAT-002');
       await listPage.expectRowContains('Dashboard Analytics');
     });
+
+    test('can navigate via relation links', async ({ appPage, serverUrl }) => {
+      // Create a feature
+      const featureResp = await appPage.request.post(`${serverUrl}/api/v1/features`, {
+        data: {
+          properties: {
+            title: 'RelationTestFeature',
+            status: 'draft',
+            priority: 'high',
+          },
+        },
+      });
+      expect(featureResp.ok()).toBeTruthy();
+      const feature = await featureResp.json();
+
+      // Create a task that implements the feature
+      const taskResp = await appPage.request.post(`${serverUrl}/api/v1/tasks`, {
+        data: {
+          properties: {
+            title: 'Relation Navigation Test Task',
+            status: 'draft',
+            assignee: 'e2e-test',
+          },
+        },
+      });
+      expect(taskResp.ok()).toBeTruthy();
+      const task = await taskResp.json();
+
+      // Create relation from task to feature (implements)
+      // V1 API: POST /api/v1/{plural}/{id}/relations/{relType} with { id: targetId }
+      const relResp = await appPage.request.post(
+        `${serverUrl}/api/v1/tasks/${task.id}/relations/implements`,
+        { data: { id: feature.id } }
+      );
+      expect(relResp.ok()).toBeTruthy();
+
+      // Navigate to the task entity page
+      await appPage.goto(`${serverUrl}/v2/entity/task/${task.id}`);
+      await expect(appPage.locator('h1').filter({ hasText: 'Relation Navigation Test Task' })).toBeVisible({ timeout: 10000 });
+
+      // Find and click the relation link to the feature
+      const relationLink = appPage.locator('button.relation-link').filter({ hasText: feature.id });
+      await expect(relationLink).toBeVisible({ timeout: 5000 });
+      await relationLink.click();
+
+      // Should navigate to the feature entity page
+      await expect(appPage).toHaveURL(new RegExp(`/entity/feature/${feature.id}`), { timeout: 10000 });
+      await expect(appPage.locator('.entity-type-badge, [class*="badge"]').filter({ hasText: /feature/i })).toBeVisible({ timeout: 5000 });
+      await expect(appPage.locator('h1').filter({ hasText: 'RelationTestFeature' })).toBeVisible();
+    });
   });
 
   test.describe('Update Entity', () => {

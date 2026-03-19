@@ -122,16 +122,36 @@ async function deleteEntity() {
   }
 }
 
-function navigateToRelation(targetId: string) {
-  // Try to determine target type from ID prefix
+function navigateToRelation(relationType: string, targetId: string) {
+  // First, try to use the relation type definition to determine target type
+  const relDef = schemaStore.getRelationType(relationType)
+  if (relDef && relDef.to.length > 0) {
+    // If the relation type specifies a single target type, use it
+    if (relDef.to.length === 1) {
+      router.push(`/entity/${relDef.to[0]}/${targetId}`)
+      return
+    }
+    // Multiple possible target types - try to match by ID prefix within those types
+    for (const typeName of relDef.to) {
+      const typeDef = schemaStore.getEntityType(typeName)
+      if (typeDef?.id_prefix && targetId.startsWith(typeDef.id_prefix)) {
+        router.push(`/entity/${typeName}/${targetId}`)
+        return
+      }
+    }
+    // No prefix match - just use the first valid target type
+    router.push(`/entity/${relDef.to[0]}/${targetId}`)
+    return
+  }
+
+  // Fallback: try to determine target type from ID prefix (for unknown relation types)
   for (const [typeName, typeDef] of schemaStore.entityTypeList) {
-    // Check if the ID starts with this entity type's prefix
     if (typeDef.id_prefix && targetId.startsWith(typeDef.id_prefix)) {
       router.push(`/entity/${typeName}/${targetId}`)
       return
     }
   }
-  // Fallback for manual IDs without prefix: try matching type name
+  // Last resort: try matching type name from ID prefix
   const prefix = targetId.split('-')[0].toUpperCase()
   for (const [typeName] of schemaStore.entityTypeList) {
     if (typeName.toUpperCase().startsWith(prefix)) {
@@ -223,7 +243,7 @@ onMounted(() => loadEntity())
                 v-for="target in rel.targets"
                 :key="target"
                 class="relation-link"
-                @click="navigateToRelation(target)"
+                @click="navigateToRelation(rel.type, target)"
               >
                 {{ target }}
               </button>
