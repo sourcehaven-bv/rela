@@ -166,6 +166,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_documents/", a.handleV1Documents)
 	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
+	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
@@ -1785,6 +1786,69 @@ func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeV1JSON(w, http.StatusOK, commands)
+}
+
+// V1Template represents a template for API responses.
+type V1Template struct {
+	Name       string                 `json:"name"`
+	Properties map[string]interface{} `json:"properties"`
+	Content    string                 `json:"content"`
+	Relations  []V1TemplateRelation   `json:"relations"`
+}
+
+// V1TemplateRelation represents a pre-filled relation in a template.
+type V1TemplateRelation struct {
+	Relation string `json:"relation"`
+	Target   string `json:"target"`
+}
+
+// handleV1Templates returns templates for an entity type.
+// GET /api/v1/_templates/{entityType}
+func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	// Extract entity type from path: /api/v1/_templates/{entityType}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_templates/")
+	entityType := strings.TrimSuffix(path, "/")
+
+	if entityType == "" {
+		writeV1Error(w, r, http.StatusBadRequest, "missing_entity_type", "Entity type is required", "")
+		return
+	}
+
+	// Check if entity type exists
+	if _, ok := a.meta.Entities[entityType]; !ok {
+		writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found",
+			fmt.Sprintf("Entity type '%s' not found", entityType), "")
+		return
+	}
+
+	templates := a.templatesForType(entityType)
+	result := make([]V1Template, 0, len(templates))
+
+	for _, t := range templates {
+		relations := make([]V1TemplateRelation, 0, len(t.Relations))
+		for _, rel := range t.Relations {
+			relations = append(relations, V1TemplateRelation{
+				Relation: rel.Relation,
+				Target:   rel.Target,
+			})
+		}
+		result = append(result, V1Template{
+			Name:       t.Name,
+			Properties: t.Properties,
+			Content:    t.Content,
+			Relations:  relations,
+		})
+	}
+
+	writeV1JSON(w, http.StatusOK, result)
 }
 
 // --- OpenAPI Spec ---

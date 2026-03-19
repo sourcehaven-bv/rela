@@ -2,7 +2,8 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
-import type { PropertyDef, FormFieldOrRelation } from '@/types'
+import type { PropertyDef, FormFieldOrRelation, Template } from '@/types'
+import { getTemplates } from '@/api'
 import FieldRenderer from './FieldRenderer.vue'
 import RelationPicker from './RelationPicker.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
@@ -29,6 +30,8 @@ const dirty = ref(false)
 const errors = ref<Record<string, string>>({})
 const originalData = ref<string>('')
 const helpModalOpen = ref(false)
+const templates = ref<Template[]>([])
+const selectedTemplate = ref<string>('')
 
 // Computed
 const formConfig = computed(() => schemaStore.getForm(props.formId))
@@ -100,6 +103,59 @@ function initializeDefaults() {
   }
 
   originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+}
+
+async function loadTemplates() {
+  if (!formConfig.value) return
+  try {
+    templates.value = await getTemplates(formConfig.value.entity)
+    if (templates.value.length > 0) {
+      // Select first template by default
+      selectedTemplate.value = templates.value[0].name
+      applyTemplate(templates.value[0])
+    }
+  } catch (err) {
+    // Templates are optional, ignore errors
+    console.warn('Failed to load templates:', err)
+  }
+}
+
+function applyTemplate(template: Template) {
+  // Apply template properties
+  for (const [key, value] of Object.entries(template.properties)) {
+    formData.value[key] = value
+  }
+  // Apply template content
+  content.value = template.content
+  // Apply template relations
+  for (const rel of template.relations) {
+    if (!relations.value[rel.relation]) {
+      relations.value[rel.relation] = []
+    }
+    if (!relations.value[rel.relation].includes(rel.target)) {
+      relations.value[rel.relation].push(rel.target)
+    }
+  }
+  originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+}
+
+function selectTemplate(name: string) {
+  selectedTemplate.value = name
+  const template = templates.value.find((t) => t.name === name)
+  if (template) {
+    // Reset to defaults first
+    formData.value = {}
+    relations.value = {}
+    content.value = ''
+    initializeDefaults()
+    applyTemplate(template)
+  }
+}
+
+function getTemplateLabel(name: string): string {
+  if (name === '') return 'Default'
+  // Capitalize first letter
+  return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
 function validate(): boolean {
@@ -227,6 +283,7 @@ onMounted(async () => {
     await loadEntity()
   } else {
     initializeDefaults()
+    await loadTemplates()
   }
   loading.value = false
 })
@@ -283,6 +340,20 @@ onBeforeUnmount(() => {
           ?
         </button>
       </header>
+
+      <!-- Template selector (create mode only) -->
+      <div v-if="!isEdit && templates.length > 1" class="template-selector">
+        <button
+          v-for="tpl in templates"
+          :key="tpl.name"
+          type="button"
+          class="template-pill"
+          :class="{ active: selectedTemplate === tpl.name }"
+          @click="selectTemplate(tpl.name)"
+        >
+          {{ getTemplateLabel(tpl.name) }}
+        </button>
+      </div>
 
       <div v-if="loading" class="loading-state">
         <div class="spinner"/>
@@ -564,5 +635,34 @@ onBeforeUnmount(() => {
 
 .error-state h2 {
   color: var(--error-color, #ef4444);
+}
+
+.template-selector {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.template-pill {
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-color, #f8fafc);
+  color: var(--text-color, #1e293b);
+  transition: all 0.15s;
+}
+
+.template-pill:hover {
+  border-color: var(--accent-color, #6366f1);
+  background: white;
+}
+
+.template-pill.active {
+  background: var(--accent-color, #6366f1);
+  border-color: var(--accent-color, #6366f1);
+  color: white;
 }
 </style>

@@ -54,3 +54,15 @@ export interface SortSpec {
   field: string
   direction: 'asc' | 'desc'
 }
+
+export interface Template {
+  name: string
+  properties: Record<string, unknown>
+  content: string
+  relations: TemplateRelation[]
+}
+
+export interface TemplateRelation {
+  relation: string
+  target: string
+}

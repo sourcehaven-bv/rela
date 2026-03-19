@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Entity, CreateEntity, ListResponse, ListParams, AnalyzeResult } from '@/types'
+import type { Entity, CreateEntity, ListResponse, ListParams, AnalyzeResult, Template } from '@/types'
 import { useSchemaStore } from '@/stores/schema'
 
 function getPlural(type: string): string {
@@ -53,4 +53,8 @@ export async function searchEntities(
 
 export async function analyze(): Promise<AnalyzeResult> {
   return api.get<AnalyzeResult>('/_analyze')
+}
+
+export async function getTemplates(entityType: string): Promise<Template[]> {
+  return api.get<Template[]>(`/_templates/${entityType}`)
 }
