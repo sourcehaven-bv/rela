@@ -482,6 +482,8 @@ onBeforeUnmount(() => {
 
 .dynamic-form {
   max-width: 800px;
+  min-width: 500px;
+  width: 100%;
 }
 
 .form-header {
