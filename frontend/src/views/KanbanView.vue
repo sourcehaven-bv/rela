@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useSchemaStore } from '@/stores'
+import { useSchemaStore, useEntitiesStore } from '@/stores'
 import { listEntities, updateEntity } from '@/api'
 import type { Entity, KanbanConfig } from '@/types'
 import Badge from '@/components/common/Badge.vue'
@@ -12,6 +12,7 @@ const props = defineProps<{
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
+const entitiesStore = useEntitiesStore()
 
 // State
 const loading = ref(true)
@@ -218,6 +219,11 @@ onMounted(() => {
 })
 
 watch(() => props.id, () => {
+  loadEntities()
+})
+
+// Watch for SSE cache invalidation to reload entities
+watch(() => entitiesStore.cacheVersion, () => {
   loadEntities()
 })
 </script>

@@ -28,6 +28,7 @@ export const useEntitiesStore = defineStore('entities', () => {
   )
   const loading = ref<Set<string>>(new Set())
   const errors = ref<Map<string, string>>(new Map())
+  const cacheVersion = ref(0) // Incremented on invalidateAll for SSE live updates
 
   // Helpers
   function cacheKey(type: string, id: string): string {
@@ -177,6 +178,7 @@ export const useEntitiesStore = defineStore('entities', () => {
   function invalidateAll() {
     cache.value.clear()
     listCache.value.clear()
+    cacheVersion.value++
   }
 
   return {
@@ -184,6 +186,7 @@ export const useEntitiesStore = defineStore('entities', () => {
     cache,
     loading,
     errors,
+    cacheVersion,
 
     // Getters
     getCached,

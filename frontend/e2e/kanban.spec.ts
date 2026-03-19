@@ -160,6 +160,58 @@ test.describe('Priority Board (with swimlanes)', () => {
   })
 })
 
+test.describe('Kanban Live Updates (SSE)', () => {
+  let testTicketId: string | null = null
+
+  test.afterEach(async ({ api }) => {
+    if (testTicketId) {
+      await api.deleteEntity('tickets', testTicketId)
+      testTicketId = null
+    }
+  })
+
+  test('board updates when entity is modified via API', async ({ pages, api, apiPage }) => {
+    const categoryId = await api.getOrCreateCategory()
+
+    // Create a ticket in "open" status
+    const ticket = await api.createEntity('tickets', {
+      properties: {
+        title: 'SSE Update Test Ticket',
+        status: 'open',
+        priority: 'high',
+        reporter: 'e2e-test',
+      },
+      relations: { 'belongs-to': [categoryId] },
+    })
+    testTicketId = ticket.id
+
+    // Open kanban board
+    const kanbanPage = pages.kanban('ticket_board')
+    await kanbanPage.visit()
+
+    // Wait for cards to load
+    await kanbanPage.cards.first().waitFor({ state: 'visible' })
+
+    // Verify our ticket is in the "open" column (To Do)
+    const openColumn = apiPage.locator('.kanban-column:has-text("To Do"), .kanban-column:has-text("Open")')
+    await expect(openColumn.locator('.kanban-card:has-text("SSE Update Test")')).toBeVisible()
+
+    // Update the ticket status via API (simulating another user/window)
+    await api.updateEntity('tickets', testTicketId!, { status: 'in-progress' })
+
+    // Wait for the card to appear in the "In Progress" column via SSE
+    const inProgressColumn = apiPage.locator('.kanban-column:has-text("In Progress")')
+    await expect(
+      inProgressColumn.locator('.kanban-card:has-text("SSE Update Test")')
+    ).toBeVisible({ timeout: 10000 })
+
+    // Verify the card is no longer in the "open" column
+    await expect(
+      openColumn.locator('.kanban-card:has-text("SSE Update Test")')
+    ).toBeHidden()
+  })
+})
+
 test.describe('Kanban Drag and Drop', () => {
   let testTicketId: string | null = null
 
