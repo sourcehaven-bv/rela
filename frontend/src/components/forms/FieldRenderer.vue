@@ -171,7 +171,7 @@ function handleMultiSelect(event: Event) {
 
     <!-- Standard input -->
     <input
-      v-else
+      v-if="!isCheckbox && !isTextarea && !isMultiSelect && !isSelect"
       :id="`field-${field.property}`"
       :type="inputType"
       :value="stringValue"
