@@ -502,13 +502,24 @@ onMounted(() => loadEntity())
   margin: 0 0 12px;
 }
 
-.content-body :deep(ul) {
-  margin: 0 0 12px;
-  padding-left: 24px;
+.content-body :deep(ul),
+.content-body :deep(ol) {
+  margin: 0 0 16px;
+  padding-left: 28px;
+}
+
+.content-body :deep(ol) {
+  list-style-type: decimal;
 }
 
 .content-body :deep(li) {
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  line-height: 1.6;
+}
+
+.content-body :deep(li::marker) {
+  color: #64748b;
+  font-weight: 500;
 }
 
 .content-body :deep(code) {
