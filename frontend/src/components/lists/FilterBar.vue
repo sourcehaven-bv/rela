@@ -12,12 +12,25 @@ const emit = defineEmits<{
   filter: [filters: Record<string, string>]
 }>()
 
-const localFilters = ref<Record<string, string>>({ ...props.filters })
+// Initialize local filters with empty strings for each filter control
+// This ensures selects show "All" by default instead of blank
+function initializeFilters(existingFilters: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const control of props.config.filter_controls || []) {
+    const key = control.property || control.relation
+    if (key) {
+      result[key] = existingFilters[key] ?? ''
+    }
+  }
+  return result
+}
+
+const localFilters = ref<Record<string, string>>(initializeFilters(props.filters))
 
 watch(
   () => props.filters,
   (newFilters) => {
-    localFilters.value = { ...newFilters }
+    localFilters.value = initializeFilters(newFilters)
   }
 )
 
@@ -46,35 +59,37 @@ function hasActiveFilters(): boolean {
     <div class="filters">
       <div
         v-for="filter in config.filter_controls"
-        :key="filter.property"
+        :key="filter.property ?? filter.relation ?? 'unknown'"
         class="filter-item"
       >
-        <label :for="`filter-${filter.property}`">
-          {{ filter.label || filter.property }}
-        </label>
-        <select
-          v-if="getFilterOptions(filter.property).length"
-          :id="`filter-${filter.property}`"
-          v-model="localFilters[filter.property]"
-          @change="handleFilterChange"
-        >
-          <option value="">All</option>
-          <option
-            v-for="option in getFilterOptions(filter.property)"
-            :key="option"
-            :value="option"
+        <template v-if="filter.property">
+          <label :for="`filter-${filter.property}`">
+            {{ filter.label || filter.property }}
+          </label>
+          <select
+            v-if="getFilterOptions(filter.property).length"
+            :id="`filter-${filter.property}`"
+            v-model="localFilters[filter.property]"
+            @change="handleFilterChange"
           >
-            {{ option }}
-          </option>
-        </select>
-        <input
-          v-else
-          :id="`filter-${filter.property}`"
-          v-model="localFilters[filter.property]"
-          type="text"
-          :placeholder="`Filter by ${filter.label || filter.property}`"
-          @input="handleFilterChange"
-        />
+            <option value="">All</option>
+            <option
+              v-for="option in getFilterOptions(filter.property)"
+              :key="option"
+              :value="option"
+            >
+              {{ option }}
+            </option>
+          </select>
+          <input
+            v-else
+            :id="`filter-${filter.property}`"
+            v-model="localFilters[filter.property]"
+            type="text"
+            :placeholder="`Filter by ${filter.label || filter.property}`"
+            @input="handleFilterChange"
+          />
+        </template>
       </div>
     </div>
     <button

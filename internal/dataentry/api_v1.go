@@ -1464,6 +1464,12 @@ func (a *App) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, count
 	case entry.Graph:
 		item.Href = "/graph"
 		item.Icon = "graph"
+	case entry.Search:
+		item.Href = "/search"
+		item.Icon = "search"
+	case entry.Settings:
+		item.Href = "/settings"
+		item.Icon = "settings"
 	}
 
 	return item

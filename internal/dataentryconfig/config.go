@@ -256,6 +256,8 @@ type NavigationEntry struct {
 	Dashboard bool   `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
 	Graph     bool   `yaml:"graph,omitempty" json:"graph,omitempty"`
 	Kanban    string `yaml:"kanban,omitempty" json:"kanban,omitempty"`
+	Search    bool   `yaml:"search,omitempty" json:"search,omitempty"`
+	Settings  bool   `yaml:"settings,omitempty" json:"settings,omitempty"`
 
 	// Group fields
 	Group     string            `yaml:"group,omitempty" json:"group,omitempty"`

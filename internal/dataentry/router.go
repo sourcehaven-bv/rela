@@ -3,6 +3,7 @@ package dataentry
 import (
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 // NewRouter returns an http.Handler with all data entry routes registered.
@@ -16,6 +17,13 @@ func (a *App) NewRouter() http.Handler {
 		panic("embedded static filesystem: " + err.Error())
 	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+
+	// Vue v2 SPA - serve from /v2/ prefix
+	v2FS, err := fs.Sub(staticFiles, "static/v2")
+	if err != nil {
+		panic("embedded v2 filesystem: " + err.Error())
+	}
+	mux.Handle("/v2/", http.StripPrefix("/v2/", spaHandler(v2FS)))
 
 	// SSE endpoints — excluded from reload-lock (long-lived connection)
 	// Both paths point to same handler for compatibility
@@ -76,4 +84,24 @@ func (a *App) NewRouter() http.Handler {
 	mux.Handle("/", locked)
 
 	return mux
+}
+
+// spaHandler wraps a filesystem and serves index.html for any path that doesn't
+// match an existing file. This enables client-side routing in SPAs.
+func spaHandler(fsys fs.FS) http.Handler {
+	fileServer := http.FileServer(http.FS(fsys))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if path == "" || path == "/" {
+			path = "index.html"
+		}
+
+		// Check if the file exists
+		if _, err := fs.Stat(fsys, strings.TrimPrefix(path, "/")); err != nil {
+			// File doesn't exist, serve index.html for SPA routing
+			r.URL.Path = "/"
+		}
+
+		fileServer.ServeHTTP(w, r)
+	})
 }
