@@ -24,6 +24,7 @@ import (
 type V1Entity struct {
 	ID         string                 `json:"id"`
 	Type       string                 `json:"type"`
+	Title      string                 `json:"_title,omitempty"`
 	Properties map[string]interface{} `json:"properties"`
 	Content    string                 `json:"content,omitempty"`
 	Relations  map[string][]string    `json:"relations,omitempty"`
@@ -945,6 +946,7 @@ func (a *App) entityToV1(e *model.Entity, plural string, includeRelations, inclu
 	v1 := V1Entity{
 		ID:         e.ID,
 		Type:       e.Type,
+		Title:      a.entityDisplayTitle(e),
 		Properties: make(map[string]interface{}),
 		Content:    e.Content,
 		Self:       fmt.Sprintf("/api/v1/%s/%s", plural, e.ID),

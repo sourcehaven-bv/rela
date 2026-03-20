@@ -373,12 +373,8 @@ function closeCommandModal() {
 
 function getRelationTitle(targetId: string): string {
   const included = entity.value?.included?.[targetId]
-  if (included) {
-    // Use title property if available, otherwise fall back to ID
-    const title = included.properties?.title
-    if (title && typeof title === 'string') {
-      return `${title} (${targetId})`
-    }
+  if (included?._title && included._title !== targetId) {
+    return `${included._title} (${targetId})`
   }
   return targetId
 }

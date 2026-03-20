@@ -1,6 +1,7 @@
 export interface Entity {
   id: string
   type: string
+  _title?: string
   properties: Record<string, unknown>
   content?: string
   relations?: Record<string, string[]>
