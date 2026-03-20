@@ -69,6 +69,22 @@ const entityType = computed(() => {
   return schemaStore.getEntityType(listConfig.value.entity)
 })
 
+// Pre-configured filters from list config
+const configuredFilters = computed(() => {
+  return listConfig.value?.filters?.filter(f => f.operator && f.value) || []
+})
+
+// Map operator symbols to API operator names
+const operatorMap: Record<string, string> = {
+  '!=': 'ne',
+  '=': 'eq',
+  '>': 'gt',
+  '>=': 'gte',
+  '<': 'lt',
+  '<=': 'lte',
+  '~': 'contains',
+}
+
 // Build query params
 const queryParams = computed((): ListParams => {
   const params: ListParams = {
@@ -76,7 +92,21 @@ const queryParams = computed((): ListParams => {
     per_page: listConfig.value?.page_size || 25,
   }
 
-  // Add filters
+  // Add pre-configured filters from list config
+  for (const filter of configuredFilters.value) {
+    const apiOp = operatorMap[filter.operator || '='] || 'eq'
+    const key = `filter[${filter.property}][${apiOp}]`
+    const filterValue = filter.value
+    // Append to existing filter or create new
+    const existing = (params as Record<string, string | number | undefined>)[key]
+    if (existing) {
+      (params as Record<string, string | number | undefined>)[key] = `${existing},${filterValue}`
+    } else {
+      (params as Record<string, string | number | undefined>)[key] = filterValue as string
+    }
+  }
+
+  // Add user-selected filters
   for (const [key, value] of Object.entries(filters.value)) {
     if (value) {
       (params as Record<string, string | number | undefined>)[`filter[${key}]`] = value
@@ -236,6 +266,16 @@ onMounted(() => {
       @filter="handleFilter"
     />
 
+    <div v-if="configuredFilters.length" class="configured-filters">
+      <span
+        v-for="filter in configuredFilters"
+        :key="`${filter.property}-${filter.operator}-${filter.value}`"
+        class="filter-chip"
+      >
+        {{ filter.property }} {{ filter.operator }} {{ filter.value }}
+      </span>
+    </div>
+
     <div class="list-content">
       <div v-if="loading" class="loading-state">
         <div class="spinner"/>
@@ -368,6 +408,25 @@ onMounted(() => {
 
 .btn-secondary:hover {
   background: #cbd5e1;
+}
+
+.configured-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  margin-bottom: 20px;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  font-size: 12px;
+  color: #475569;
 }
 
 .list-content {
