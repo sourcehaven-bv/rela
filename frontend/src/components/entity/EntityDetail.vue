@@ -253,6 +253,18 @@ function closeCommandModal() {
   commandRunning.value = false
 }
 
+function getRelationTitle(targetId: string): string {
+  const included = entity.value?.included?.[targetId]
+  if (included) {
+    // Use title property if available, otherwise fall back to ID
+    const title = included.properties?.title
+    if (title && typeof title === 'string') {
+      return `${title} (${targetId})`
+    }
+  }
+  return targetId
+}
+
 function navigateToRelation(relationType: string, targetId: string) {
   // First, try to use the relation type definition to determine target type
   const relDef = schemaStore.getRelationType(relationType)
@@ -384,7 +396,7 @@ onMounted(() => loadEntity())
                 class="relation-link"
                 @click="navigateToRelation(rel.type, target)"
               >
-                {{ target }}
+                {{ getRelationTitle(target) }}
               </button>
             </div>
           </div>

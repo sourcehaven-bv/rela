@@ -107,7 +107,7 @@ function hasActiveFilters(): boolean {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 12px 0;
   background: #f8fafc;
   border-bottom: 1px solid var(--border-color, #e2e8f0);
 }

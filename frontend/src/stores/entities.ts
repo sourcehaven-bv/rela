@@ -112,7 +112,8 @@ export const useEntitiesStore = defineStore('entities', () => {
     errors.value.delete(key)
 
     try {
-      const entity = await getEntity(type, id)
+      // Request include=* to get titles for all related entities
+      const entity = await getEntity(type, id, { include: '*' })
       cache.value.set(key, {
         entity,
         timestamp: Date.now(),

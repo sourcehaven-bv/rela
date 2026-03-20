@@ -126,6 +126,8 @@ export interface ListColumn {
 
 export interface ListFilter {
   property: string
+  operator?: string
+  value?: string
   label?: string
   operators?: string[]
 }

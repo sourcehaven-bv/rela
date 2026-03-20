@@ -257,6 +257,84 @@ func TestV1Filtering(t *testing.T) {
 	}
 }
 
+func TestV1FilteringNEMultipleValues(t *testing.T) {
+	app := newTestAppV1(t)
+
+	// Add test entities with various statuses
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Open Ticket",
+			"status": "open",
+		},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-002",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Completed Ticket",
+			"status": "completed",
+		},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-003",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Superseded Ticket",
+			"status": "superseded",
+		},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-004",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "In Progress Ticket",
+			"status": "in_progress",
+		},
+	})
+
+	// Test filtering with ne operator and comma-separated values (NOT IN semantics)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status][ne]=completed,superseded", http.NoBody)
+	rec := httptest.NewRecorder()
+
+	app.mu.RLock()
+	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.mu.RUnlock()
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+
+	var resp V1ListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Should return only TKT-001 (open) and TKT-004 (in_progress), excluding completed and superseded
+	if len(resp.Data) != 2 {
+		t.Errorf("expected 2 filtered entities, got %d", len(resp.Data))
+	}
+
+	ids := make(map[string]bool)
+	for _, e := range resp.Data {
+		ids[e.ID] = true
+	}
+
+	if !ids["TKT-001"] {
+		t.Errorf("expected TKT-001 (open) to be in results")
+	}
+	if !ids["TKT-004"] {
+		t.Errorf("expected TKT-004 (in_progress) to be in results")
+	}
+	if ids["TKT-002"] {
+		t.Errorf("TKT-002 (completed) should have been filtered out")
+	}
+	if ids["TKT-003"] {
+		t.Errorf("TKT-003 (superseded) should have been filtered out")
+	}
+}
+
 func TestV1Sorting(t *testing.T) {
 	app := newTestAppV1(t)
 

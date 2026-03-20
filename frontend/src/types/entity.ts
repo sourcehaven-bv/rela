@@ -4,6 +4,7 @@ export interface Entity {
   properties: Record<string, unknown>
   content?: string
   relations?: Record<string, string[]>
+  included?: Record<string, Entity>
   _self?: string
   _actions?: EntityActions
 }

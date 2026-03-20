@@ -1008,6 +1008,31 @@ func (a *App) computeEntityActions(e *model.Entity) *V1Actions {
 func (a *App) resolveV1Includes(entity *model.Entity, includes string) map[string]V1Entity {
 	included := make(map[string]V1Entity)
 
+	// Support include=* to include all related entities
+	if includes == "*" {
+		// Include all outgoing relations
+		for _, edge := range a.g.OutgoingEdges(entity.ID) {
+			target, found := a.g.GetNode(edge.To)
+			if !found {
+				continue
+			}
+			entityDef := a.meta.Entities[target.Type]
+			plural := entityDef.GetDirPlural(target.Type)
+			included[target.ID] = a.entityToV1(target, plural, false, false)
+		}
+		// Include all incoming relations
+		for _, edge := range a.g.IncomingEdges(entity.ID) {
+			source, found := a.g.GetNode(edge.From)
+			if !found {
+				continue
+			}
+			entityDef := a.meta.Entities[source.Type]
+			plural := entityDef.GetDirPlural(source.Type)
+			included[source.ID] = a.entityToV1(source, plural, false, false)
+		}
+		return included
+	}
+
 	parts := strings.Split(includes, ",")
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
@@ -1082,7 +1107,16 @@ func (a *App) applyV1Filters(entities []*model.Entity, query map[string][]string
 					newFiltered = append(newFiltered, e)
 				}
 			case "ne":
-				if propStr != value {
+				// Support comma-separated values as NOT IN
+				vals := strings.Split(value, ",")
+				excluded := false
+				for _, v := range vals {
+					if propStr == strings.TrimSpace(v) {
+						excluded = true
+						break
+					}
+				}
+				if !excluded {
 					newFiltered = append(newFiltered, e)
 				}
 			case "contains":
