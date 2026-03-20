@@ -51,7 +51,7 @@ export interface CustomType {
 }
 
 export interface SortSpec {
-  field: string
+  property: string
   direction: 'asc' | 'desc'
 }
 

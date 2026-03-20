@@ -118,7 +118,7 @@ const queryParams = computed((): ListParams => {
     params.sort = sortDesc.value ? `-${sortField.value}` : sortField.value
   } else if (listConfig.value?.default_sort?.length) {
     const defaultSort = listConfig.value.default_sort
-      .map((s) => (s.direction === 'desc' ? `-${s.field}` : s.field))
+      .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
       .join(',')
     params.sort = defaultSort
   }
