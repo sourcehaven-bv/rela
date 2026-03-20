@@ -2,6 +2,7 @@ import type { SortSpec } from './schema'
 
 export interface Config {
   app: AppConfig
+  styles?: Record<string, Record<string, string>>
   forms: Record<string, FormConfig>
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>

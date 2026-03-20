@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useSchemaStore } from '@/stores/schema'
 import type { EntityType } from '@/types'
 
 const props = defineProps<{
@@ -8,60 +9,47 @@ const props = defineProps<{
   entityType?: EntityType
 }>()
 
-// Map common status/priority values to colors
-const colorMap: Record<string, string> = {
-  // Status colors
-  open: '#3b82f6',
-  'in-progress': '#f59e0b',
-  done: '#10b981',
-  closed: '#6b7280',
-  draft: '#94a3b8',
-  pending: '#f59e0b',
-  approved: '#10b981',
-  rejected: '#ef4444',
-  blocked: '#ef4444',
-  ready: '#3b82f6',
-  accepted: '#10b981',
-  deprecated: '#6b7280',
+const schemaStore = useSchemaStore()
 
-  // Priority colors
-  low: '#94a3b8',
-  medium: '#3b82f6',
-  high: '#f59e0b',
-  critical: '#ef4444',
-  urgent: '#ef4444',
-
-  // Boolean-like
-  yes: '#10b981',
-  no: '#ef4444',
-  true: '#10b981',
-  false: '#ef4444',
+// Map badge class names to inline styles
+const badgeClassMap: Record<string, { backgroundColor: string; color: string }> = {
+  'badge-blue': { backgroundColor: '#dbeafe', color: '#1e40af' },
+  'badge-purple': { backgroundColor: '#e9d5ff', color: '#6b21a8' },
+  'badge-green': { backgroundColor: '#dcfce7', color: '#166534' },
+  'badge-gray': { backgroundColor: '#e2e8f0', color: '#475569' },
+  'badge-red': { backgroundColor: '#fee2e2', color: '#991b1b' },
+  'badge-orange': { backgroundColor: '#fed7aa', color: '#9a3412' },
+  'badge-yellow': { backgroundColor: '#fef08a', color: '#854d0e' },
 }
 
-const badgeColor = computed(() => {
-  const key = props.value.toLowerCase().replace(/[_\s]/g, '-')
-  return colorMap[key] || '#6b7280'
-})
+const defaultStyle = { backgroundColor: '#e2e8f0', color: '#475569' }
 
-const textColor = computed(() => {
-  // Determine if we need light or dark text based on background
-  const hex = badgeColor.value.replace('#', '')
-  const r = parseInt(hex.slice(0, 2), 16)
-  const g = parseInt(hex.slice(2, 4), 16)
-  const b = parseInt(hex.slice(4, 6), 16)
-  const brightness = (r * 299 + g * 587 + b * 114) / 1000
-  return brightness > 128 ? '#1e293b' : '#ffffff'
+// Look up style: first try by property name, then search all properties
+const badgeStyle = computed(() => {
+  const valueKey = props.value.toLowerCase().replace(/[_\s]/g, '-')
+  const styles = schemaStore.styles
+
+  // Try looking up by property name first if provided
+  if (props.property) {
+    const propStyles = styles[props.property]
+    if (propStyles && propStyles[valueKey]) {
+      return badgeClassMap[propStyles[valueKey]] || defaultStyle
+    }
+  }
+
+  // Search all properties for this value
+  for (const propStyles of Object.values(styles)) {
+    if (propStyles && propStyles[valueKey]) {
+      return badgeClassMap[propStyles[valueKey]] || defaultStyle
+    }
+  }
+
+  return defaultStyle
 })
 </script>
 
 <template>
-  <span
-    class="badge"
-    :style="{
-      backgroundColor: badgeColor,
-      color: textColor,
-    }"
-  >
+  <span class="badge" :style="badgeStyle">
     {{ value }}
   </span>
 </template>

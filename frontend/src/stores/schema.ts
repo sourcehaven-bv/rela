@@ -28,6 +28,7 @@ export const useSchemaStore = defineStore('schema', () => {
   const dashboard = ref<DashboardConfig | undefined>(undefined)
   const navigation = ref<NavigationEntry[]>([])
   const app = ref<AppConfig>({ name: 'rela' })
+  const styles = ref<Record<string, Record<string, string>>>({})
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -60,6 +61,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
       // Config
       app.value = configData.app || { name: 'rela' }
+      styles.value = configData.styles || {}
       forms.value = new Map(Object.entries(configData.forms || {}))
       lists.value = new Map(Object.entries(configData.lists || {}))
       views.value = new Map(Object.entries(configData.views || {}))
@@ -95,6 +97,7 @@ export const useSchemaStore = defineStore('schema', () => {
     dashboard,
     navigation,
     app,
+    styles,
     loaded,
     loading,
     error,

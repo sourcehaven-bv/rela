@@ -107,6 +107,7 @@ type V1CustomType struct {
 // V1Config is the JSON representation of the UI config.
 type V1Config struct {
 	App        V1AppConfig                               `json:"app"`
+	Styles     map[string]map[string]string              `json:"styles"`
 	Forms      map[string]dataentryconfig.Form           `json:"forms"`
 	Lists      map[string]dataentryconfig.List           `json:"lists"`
 	Views      map[string]dataentryconfig.ViewConfig     `json:"views"`
@@ -844,6 +845,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			Name:        a.Cfg.App.Name,
 			Description: a.Cfg.App.Description,
 		},
+		Styles:     a.styleMap,
 		Forms:      a.Cfg.Forms,
 		Lists:      a.Cfg.Lists,
 		Views:      a.Cfg.Views,
