@@ -26,7 +26,8 @@ const defaultStyle = { backgroundColor: '#e2e8f0', color: '#475569' }
 
 // Look up style: first try by property name, then search all properties
 const badgeStyle = computed(() => {
-  const valueKey = props.value.toLowerCase().replace(/[_\s]/g, '-')
+  // Normalize: lowercase, spaces to underscores (keep underscores as-is)
+  const valueKey = props.value.toLowerCase().replace(/\s/g, '_')
   const styles = schemaStore.styles
 
   // Try looking up by property name first if provided

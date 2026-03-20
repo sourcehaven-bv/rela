@@ -670,13 +670,11 @@ onMounted(() => loadEntity())
 
 .entity-type-badge {
   display: inline-block;
-  padding: 4px 10px;
-  background: var(--accent-color);
-  color: white;
-  border-radius: 4px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
 }
 
 .header-info h1 {
@@ -1011,10 +1009,7 @@ onMounted(() => loadEntity())
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
   background: #f8fafc;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 8px;
   margin-bottom: 20px;
 }
 
