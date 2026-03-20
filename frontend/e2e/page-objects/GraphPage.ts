@@ -133,15 +133,31 @@ export class GraphPage extends BasePage {
 
   /**
    * Get the number of visible nodes
+   * Uses data-node-count attribute for canvas-based graphs, falls back to DOM count
    */
   async getNodeCount(): Promise<number> {
+    // First try to get from data attribute (for canvas-based graphs like Cytoscape)
+    const container = this.page.locator('.cy-container[data-node-count]')
+    if (await container.count() > 0) {
+      const count = await container.getAttribute('data-node-count')
+      if (count) return parseInt(count, 10)
+    }
+    // Fall back to DOM elements
     return this.nodes.count()
   }
 
   /**
    * Get the number of visible edges
+   * Uses data-edge-count attribute for canvas-based graphs, falls back to DOM count
    */
   async getEdgeCount(): Promise<number> {
+    // First try to get from data attribute (for canvas-based graphs like Cytoscape)
+    const container = this.page.locator('.cy-container[data-edge-count]')
+    if (await container.count() > 0) {
+      const count = await container.getAttribute('data-edge-count')
+      if (count) return parseInt(count, 10)
+    }
+    // Fall back to DOM elements
     return this.edges.count()
   }
 

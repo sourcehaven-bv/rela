@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import cytoscape from 'cytoscape'
+import type { Core, NodeSingular, EdgeSingular } from 'cytoscape'
 import { getGraphData } from '@/api'
-import type { GraphData, GraphNode, GraphEdge } from '@/api/graph'
+import type { GraphData, GraphNode } from '@/api/graph'
 
 const router = useRouter()
 
@@ -10,237 +12,439 @@ const router = useRouter()
 const loading = ref(true)
 const graphData = ref<GraphData | null>(null)
 const mode = ref<'content' | 'metamodel'>('content')
-const selectedEntityTypes = ref<Set<string>>(new Set())
-const selectedRelationTypes = ref<Set<string>>(new Set())
 const selectedNode = ref<GraphNode | null>(null)
-const svgRef = ref<SVGSVGElement | null>(null)
+const cyContainer = ref<HTMLElement | null>(null)
 
-// Force simulation state
-interface NodePosition {
-  x: number
-  y: number
-  vx: number
-  vy: number
-}
-const nodePositions = ref<Map<string, NodePosition>>(new Map())
-let animationFrame: number | null = null
+// Graph instance
+let cy: Core | null = null
 
-// Layout controls
-const repulsionStrength = ref(2000)
-const linkDistance = ref(120)
-const centerStrength = ref(0.02)
+// Layout settings
+const currentLayout = ref('force')
+const edgeLabelsVisible = ref(false)
+const focusMode = ref(false)
+const depth = ref(2)
+
+// Filter state
+const hiddenEntityTypes = ref<Set<string>>(new Set())
+const hiddenRelationTypes = ref<Set<string>>(new Set())
 
 // Computed
 const entityTypes = computed(() => graphData.value?.entityTypes || [])
 const relationTypes = computed(() => graphData.value?.relationTypes || [])
-
-const filteredNodes = computed(() => {
-  if (!graphData.value) return []
-  if (selectedEntityTypes.value.size === 0) return graphData.value.nodes
-  return graphData.value.nodes.filter((n) => selectedEntityTypes.value.has(n.type))
-})
-
-const filteredEdges = computed(() => {
-  if (!graphData.value) return []
-  const nodeIds = new Set(filteredNodes.value.map((n) => n.id))
-
-  return graphData.value.edges.filter((e) => {
-    const typeMatch = selectedRelationTypes.value.size === 0 || selectedRelationTypes.value.has(e.type)
-    const nodesMatch = nodeIds.has(e.source) && nodeIds.has(e.target)
-    return typeMatch && nodesMatch
-  })
-})
-
-const nodeColorMap = computed(() => {
-  const map = new Map<string, string>()
+const typeColors = computed(() => {
+  const map: Record<string, string> = {}
   for (const et of entityTypes.value) {
-    map.set(et.type, et.color)
+    map[et.type] = et.color
   }
   return map
 })
 
+const visibleNodeCount = computed(() => {
+  if (!graphData.value) return 0
+  // Count nodes not hidden by entity type filter
+  return graphData.value.nodes.filter(n => !hiddenEntityTypes.value.has(n.type)).length
+})
+
+const visibleEdgeCount = computed(() => {
+  if (!graphData.value) return 0
+  // Count edges not hidden by relation type filter
+  return graphData.value.edges.filter(e => !hiddenRelationTypes.value.has(e.type)).length
+})
+
+// Connected edges for selected node
+const outgoingRelations = computed((): EdgeSingular[] => {
+  if (!cy || !selectedNode.value) return []
+  const node = cy.getElementById(selectedNode.value.id)
+  return node.connectedEdges().filter((e: EdgeSingular) => e.source().id() === selectedNode.value!.id).toArray() as EdgeSingular[]
+})
+
+const incomingRelations = computed((): EdgeSingular[] => {
+  if (!cy || !selectedNode.value) return []
+  const node = cy.getElementById(selectedNode.value.id)
+  return node.connectedEdges().filter((e: EdgeSingular) => e.target().id() === selectedNode.value!.id).toArray() as EdgeSingular[]
+})
+
+// Layout configurations
+const layouts: Record<string, cytoscape.LayoutOptions> = {
+  force: {
+    name: 'cose',
+    animate: true,
+    animationDuration: 800,
+    nodeRepulsion: () => 12000,
+    idealEdgeLength: () => 100,
+    gravity: 0.3,
+    padding: 50,
+  } as cytoscape.LayoutOptions,
+  hierarchy: {
+    name: 'breadthfirst',
+    animate: true,
+    animationDuration: 800,
+    directed: true,
+    spacingFactor: 1.0,
+    padding: 50,
+  } as cytoscape.LayoutOptions,
+  circle: {
+    name: 'circle',
+    animate: true,
+    animationDuration: 800,
+    padding: 50,
+  } as cytoscape.LayoutOptions,
+  grid: {
+    name: 'grid',
+    animate: true,
+    animationDuration: 800,
+    padding: 50,
+  } as cytoscape.LayoutOptions,
+}
+
 // Methods
 async function loadGraphData() {
   loading.value = true
+  selectedNode.value = null
+  focusMode.value = false
+
   try {
     graphData.value = await getGraphData(mode.value)
-    initializePositions()
-    startSimulation()
   } catch (err) {
     console.error('Graph load error:', err)
   } finally {
     loading.value = false
+    // Wait for DOM to render the cy-container after loading=false
+    await nextTick()
+    buildGraph()
   }
 }
 
-function initializePositions() {
-  if (!graphData.value) return
+function buildGraph() {
+  if (!graphData.value || !cyContainer.value) return
 
-  const width = 800
-  const height = 600
-  const nodes = graphData.value.nodes
+  const elements: cytoscape.ElementDefinition[] = []
 
-  nodePositions.value = new Map()
-
-  // Initialize in a larger circle with random jitter
-  const centerX = width / 2
-  const centerY = height / 2
-  const radius = Math.min(width, height) * 0.35
-
-  nodes.forEach((node, i) => {
-    const angle = (2 * Math.PI * i) / nodes.length
-    nodePositions.value.set(node.id, {
-      x: centerX + radius * Math.cos(angle) + (Math.random() - 0.5) * 80,
-      y: centerY + radius * Math.sin(angle) + (Math.random() - 0.5) * 80,
-      vx: 0,
-      vy: 0,
+  // Add nodes
+  for (const node of graphData.value.nodes) {
+    elements.push({
+      data: {
+        id: node.id,
+        label: `${node.id}\n${node.title}`,
+        type: node.type,
+        title: node.title,
+        properties: node.properties || {},
+      },
     })
+  }
+
+  // Add edges
+  graphData.value.edges.forEach((edge, i) => {
+    elements.push({
+      data: {
+        id: `e${i}`,
+        source: edge.source,
+        target: edge.target,
+        label: edge.type,
+        relType: edge.type,
+      },
+    })
+  })
+
+  // Destroy existing instance
+  if (cy) {
+    cy.destroy()
+  }
+
+  // Create new cytoscape instance
+  cy = cytoscape({
+    container: cyContainer.value,
+    elements,
+    style: [
+      {
+        selector: 'node',
+        style: {
+          label: 'data(label)',
+          'text-wrap': 'wrap',
+          'text-max-width': '100px',
+          'font-size': '8px',
+          'font-weight': 500,
+          'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          width: '110px',
+          height: '42px',
+          shape: 'roundrectangle',
+          'background-color': (ele: NodeSingular) => typeColors.value[ele.data('type')] || '#888',
+          'background-opacity': 0.85,
+          color: '#fff',
+          'border-width': 0,
+          'text-outline-width': 0,
+          'overlay-padding': '4px',
+          'overlay-opacity': 0,
+          'shadow-blur': 8,
+          'shadow-color': (ele: NodeSingular) => typeColors.value[ele.data('type')] || '#888',
+          'shadow-offset-y': 3,
+          'shadow-opacity': 0.12,
+          'transition-property': 'background-opacity, opacity, width, height, shadow-blur, shadow-opacity',
+          'transition-duration': 250,
+        } as cytoscape.Css.Node,
+      },
+      {
+        selector: 'node:selected',
+        style: {
+          'border-width': 2.5,
+          'border-color': '#fff',
+          'shadow-blur': 18,
+          'shadow-opacity': 0.3,
+          width: '118px',
+          height: '46px',
+        } as cytoscape.Css.Node,
+      },
+      {
+        selector: 'node.hover',
+        style: {
+          'shadow-blur': 14,
+          'shadow-opacity': 0.25,
+          'background-opacity': 1,
+        } as cytoscape.Css.Node,
+      },
+      {
+        selector: 'node.faded',
+        style: {
+          opacity: 0.08,
+        } as cytoscape.Css.Node,
+      },
+      {
+        selector: 'node.highlighted',
+        style: {
+          'border-width': 2,
+          'border-color': '#fff',
+          'shadow-blur': 16,
+          'shadow-opacity': 0.3,
+        } as cytoscape.Css.Node,
+      },
+      {
+        selector: 'edge',
+        style: {
+          width: 1,
+          'line-color': '#c7cdd6',
+          'target-arrow-color': '#c7cdd6',
+          'target-arrow-shape': 'triangle',
+          'arrow-scale': 0.6,
+          'curve-style': 'bezier',
+          opacity: 0.6,
+          'transition-property': 'line-color, target-arrow-color, width, opacity',
+          'transition-duration': 250,
+        } as cytoscape.Css.Edge,
+      },
+      {
+        selector: 'edge.faded',
+        style: {
+          opacity: 0.03,
+        } as cytoscape.Css.Edge,
+      },
+      {
+        selector: 'edge.highlighted',
+        style: {
+          width: 2,
+          'line-color': '#6366f1',
+          'target-arrow-color': '#6366f1',
+          opacity: 0.9,
+        } as cytoscape.Css.Edge,
+      },
+      {
+        selector: 'edge.show-label',
+        style: {
+          label: 'data(label)',
+          'font-size': '7px',
+          'font-weight': 500,
+          'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          color: '#64748b',
+          'text-background-color': '#fff',
+          'text-background-opacity': 0.85,
+          'text-background-padding': '2px',
+          'text-rotation': 'autorotate',
+          'text-margin-y': -6,
+        } as cytoscape.Css.Edge,
+      },
+    ],
+    layout: layouts.force,
+    wheelSensitivity: 0.3,
+    minZoom: 0.15,
+    maxZoom: 3,
+  })
+
+  // Reset filters
+  hiddenEntityTypes.value = new Set()
+  hiddenRelationTypes.value = new Set()
+
+  // Apply edge labels if enabled
+  if (edgeLabelsVisible.value) {
+    cy.edges().addClass('show-label')
+  }
+
+  // Event handlers
+  cy.on('tap', 'node', (evt) => {
+    const node = evt.target as NodeSingular
+    const data = node.data()
+    selectedNode.value = {
+      id: data.id,
+      type: data.type,
+      title: data.title,
+      properties: data.properties,
+    }
+    highlightNeighborhood(node)
+  })
+
+  cy.on('tap', (evt) => {
+    if (evt.target === cy) {
+      clearHighlight()
+      selectedNode.value = null
+    }
+  })
+
+  cy.on('mouseover', 'node', (evt) => {
+    if (!selectedNode.value) {
+      (evt.target as NodeSingular).addClass('hover')
+    }
+  })
+
+  cy.on('mouseout', 'node', (evt) => {
+    (evt.target as NodeSingular).removeClass('hover')
   })
 }
 
-function startSimulation() {
-  if (animationFrame) cancelAnimationFrame(animationFrame)
+function highlightNeighborhood(node: NodeSingular) {
+  if (!cy) return
+  cy.elements().addClass('faded')
 
-  let iterations = 0
-  const maxIterations = 300
-
-  function tick() {
-    if (iterations >= maxIterations || !graphData.value) return
-
-    const nodes = filteredNodes.value
-    const edges = filteredEdges.value
-    const alpha = 1 - iterations / maxIterations
-
-    // Apply forces
-    applyRepulsion(nodes, alpha)
-    applyAttraction(edges, alpha)
-    applyCenter(nodes, alpha)
-
-    // Update positions
-    for (const node of nodes) {
-      const pos = nodePositions.value.get(node.id)
-      if (pos) {
-        pos.vx *= 0.85
-        pos.vy *= 0.85
-        pos.x += pos.vx
-        pos.y += pos.vy
-
-        // Keep in bounds (accounting for node size)
-        pos.x = Math.max(60, Math.min(740, pos.x))
-        pos.y = Math.max(40, Math.min(560, pos.y))
-      }
-    }
-
-    iterations++
-    animationFrame = requestAnimationFrame(tick)
+  let collected = node.closedNeighborhood()
+  for (let i = 1; i < depth.value; i++) {
+    collected = collected.closedNeighborhood()
   }
 
-  tick()
+  collected.removeClass('faded').addClass('highlighted')
+  node.removeClass('faded').addClass('highlighted')
 }
 
-function applyRepulsion(nodes: GraphNode[], alpha: number) {
-  const strength = repulsionStrength.value * alpha
+function clearHighlight() {
+  if (!cy) return
+  cy.elements().removeClass('faded highlighted')
+}
 
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) {
-      const posA = nodePositions.value.get(nodes[i].id)
-      const posB = nodePositions.value.get(nodes[j].id)
-      if (!posA || !posB) continue
+function setLayout(name: string) {
+  if (!cy) return
+  currentLayout.value = name
+  cy.elements(':visible').layout(layouts[name]).run()
+}
 
-      const dx = posB.x - posA.x
-      const dy = posB.y - posA.y
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1
+function fitGraph() {
+  if (!cy) return
+  cy.animate({ fit: { eles: cy.elements(':visible'), padding: 30 } }, { duration: 400 })
+}
 
-      // Apply repulsion to all nodes
-      const force = strength / (dist * dist + 100)
-      const fx = (dx / dist) * force
-      const fy = (dy / dist) * force
-
-      posA.vx -= fx
-      posA.vy -= fy
-      posB.vx += fx
-      posB.vy += fy
-    }
+function toggleEdgeLabels() {
+  if (!cy) return
+  edgeLabelsVisible.value = !edgeLabelsVisible.value
+  if (edgeLabelsVisible.value) {
+    cy.edges().addClass('show-label')
+  } else {
+    cy.edges().removeClass('show-label')
   }
 }
 
-function applyAttraction(edges: GraphEdge[], alpha: number) {
-  const strength = 0.15 * alpha
-  const targetDistance = linkDistance.value
+function toggleFocusMode() {
+  if (!cy) return
+  focusMode.value = !focusMode.value
 
-  for (const edge of edges) {
-    const posA = nodePositions.value.get(edge.source)
-    const posB = nodePositions.value.get(edge.target)
-    if (!posA || !posB) continue
-
-    const dx = posB.x - posA.x
-    const dy = posB.y - posA.y
-    const dist = Math.sqrt(dx * dx + dy * dy) || 1
-
-    // Pull together when too far, push apart when too close
-    const force = (dist - targetDistance) * strength
-    const fx = (dx / dist) * force
-    const fy = (dy / dist) * force
-
-    posA.vx += fx
-    posA.vy += fy
-    posB.vx -= fx
-    posB.vy -= fy
+  if (focusMode.value && selectedNode.value) {
+    const node = cy.getElementById(selectedNode.value.id)
+    highlightNeighborhood(node as NodeSingular)
+    cy.elements('.faded').style('display', 'none')
+    cy.animate({ fit: { eles: cy.elements(':visible'), padding: 30 } }, { duration: 400 })
+  } else {
+    restoreFilterVisibility()
+    clearHighlight()
   }
-}
-
-function applyCenter(nodes: GraphNode[], alpha: number) {
-  const strength = centerStrength.value * alpha
-  const centerX = 400
-  const centerY = 300
-
-  for (const node of nodes) {
-    const pos = nodePositions.value.get(node.id)
-    if (!pos) continue
-
-    pos.vx += (centerX - pos.x) * strength
-    pos.vy += (centerY - pos.y) * strength
-  }
-}
-
-function getNodePosition(id: string) {
-  const pos = nodePositions.value.get(id)
-  return pos ? { x: pos.x, y: pos.y } : { x: 400, y: 300 }
 }
 
 function toggleEntityType(type: string) {
-  if (selectedEntityTypes.value.has(type)) {
-    selectedEntityTypes.value.delete(type)
+  if (hiddenEntityTypes.value.has(type)) {
+    hiddenEntityTypes.value.delete(type)
   } else {
-    selectedEntityTypes.value.add(type)
+    hiddenEntityTypes.value.add(type)
   }
-  selectedEntityTypes.value = new Set(selectedEntityTypes.value)
-  startSimulation()
+  hiddenEntityTypes.value = new Set(hiddenEntityTypes.value)
+  applyFilters()
 }
 
 function toggleRelationType(type: string) {
-  if (selectedRelationTypes.value.has(type)) {
-    selectedRelationTypes.value.delete(type)
+  if (hiddenRelationTypes.value.has(type)) {
+    hiddenRelationTypes.value.delete(type)
   } else {
-    selectedRelationTypes.value.add(type)
+    hiddenRelationTypes.value.add(type)
   }
-  selectedRelationTypes.value = new Set(selectedRelationTypes.value)
+  hiddenRelationTypes.value = new Set(hiddenRelationTypes.value)
+  applyFilters()
 }
 
-function selectNode(node: GraphNode) {
-  selectedNode.value = selectedNode.value?.id === node.id ? null : node
+function applyFilters() {
+  if (!cy) return
+
+  cy.nodes().forEach((n: NodeSingular) => {
+    const hidden = hiddenEntityTypes.value.has(n.data('type'))
+    n.style('display', hidden ? 'none' : 'element')
+  })
+
+  cy.edges().forEach((e: EdgeSingular) => {
+    const hidden = hiddenRelationTypes.value.has(e.data('relType'))
+    e.style('display', hidden ? 'none' : 'element')
+  })
+
+  // Re-layout after filtering
+  setTimeout(() => {
+    if (cy) {
+      const opts = { ...layouts[currentLayout.value], animationDuration: 500 } as cytoscape.LayoutOptions
+      cy.elements(':visible').layout(opts).run()
+    }
+  }, 200)
 }
 
-function openNode(node: GraphNode) {
-  if (mode.value === 'content') {
-    router.push(`/entity/${node.type}/${node.id}`)
+function restoreFilterVisibility() {
+  if (!cy) return
+
+  cy.nodes().forEach((n: NodeSingular) => {
+    const hidden = hiddenEntityTypes.value.has(n.data('type'))
+    n.style('display', hidden ? 'none' : 'element')
+  })
+
+  cy.edges().forEach((e: EdgeSingular) => {
+    const hidden = hiddenRelationTypes.value.has(e.data('relType'))
+    e.style('display', hidden ? 'none' : 'element')
+  })
+}
+
+function selectRelatedNode(nodeId: string) {
+  if (!cy) return
+  const node = cy.getElementById(nodeId) as NodeSingular
+  if (node.length) {
+    cy.animate({ center: { eles: node }, zoom: 1.5 }, { duration: 400 })
+    node.select()
+    const data = node.data()
+    selectedNode.value = {
+      id: data.id,
+      type: data.type,
+      title: data.title,
+      properties: data.properties,
+    }
+    highlightNeighborhood(node)
   }
 }
 
-function clearFilters() {
-  selectedEntityTypes.value = new Set()
-  selectedRelationTypes.value = new Set()
-  startSimulation()
+function openNodeDetail() {
+  if (!selectedNode.value || mode.value !== 'content') return
+  router.push(`/entity/${selectedNode.value.type}/${selectedNode.value.id}`)
+}
+
+function closeDetailPanel() {
+  selectedNode.value = null
+  clearHighlight()
 }
 
 // Lifecycle
@@ -249,11 +453,21 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (animationFrame) cancelAnimationFrame(animationFrame)
+  if (cy) {
+    cy.destroy()
+    cy = null
+  }
 })
 
 watch(mode, () => {
   loadGraphData()
+})
+
+watch(depth, () => {
+  if (selectedNode.value && cy) {
+    const node = cy.getElementById(selectedNode.value.id) as NodeSingular
+    highlightNeighborhood(node)
+  }
 })
 </script>
 
@@ -266,9 +480,10 @@ watch(mode, () => {
           <option value="content">Content</option>
           <option value="metamodel">Metamodel</option>
         </select>
-        <button v-if="selectedEntityTypes.size > 0 || selectedRelationTypes.size > 0" class="btn btn-secondary" @click="clearFilters">
-          Clear Filters
-        </button>
+        <div class="graph-stats">
+          <strong>{{ visibleNodeCount }}</strong> nodes &middot;
+          <strong>{{ visibleEdgeCount }}</strong> edges
+        </div>
         <button class="btn btn-secondary" :disabled="loading" @click="loadGraphData">
           {{ loading ? 'Loading...' : 'Refresh' }}
         </button>
@@ -276,7 +491,7 @@ watch(mode, () => {
     </header>
 
     <div v-if="loading" class="loading-state">
-      <div class="spinner"/>
+      <div class="spinner" />
       <span>Loading graph...</span>
     </div>
 
@@ -290,16 +505,12 @@ watch(mode, () => {
               v-for="et in entityTypes"
               :key="et.type"
               class="filter-item"
-              :class="{ active: selectedEntityTypes.size === 0 || selectedEntityTypes.has(et.type) }"
+              :class="{ inactive: hiddenEntityTypes.has(et.type) }"
+              @click="toggleEntityType(et.type)"
             >
-              <span class="color-dot" :style="{ background: et.color }"/>
+              <span class="color-dot" :style="{ background: et.color }" />
               <span class="filter-label">{{ et.label }}</span>
               <span class="filter-count">{{ et.count }}</span>
-              <input
-                type="checkbox"
-                :checked="selectedEntityTypes.has(et.type)"
-                @change="toggleEntityType(et.type)"
-              />
             </label>
           </div>
         </div>
@@ -311,146 +522,116 @@ watch(mode, () => {
               v-for="rt in relationTypes"
               :key="rt.type"
               class="filter-item"
-              :class="{ active: selectedRelationTypes.size === 0 || selectedRelationTypes.has(rt.type) }"
+              :class="{ inactive: hiddenRelationTypes.has(rt.type) }"
+              @click="toggleRelationType(rt.type)"
             >
               <span class="filter-label">{{ rt.label }}</span>
               <span class="filter-count">{{ rt.count }}</span>
-              <input
-                type="checkbox"
-                :checked="selectedRelationTypes.has(rt.type)"
-                @change="toggleRelationType(rt.type)"
-              />
             </label>
           </div>
         </div>
 
-        <!-- Layout controls -->
+        <!-- Depth control -->
         <div class="filter-section">
-          <h4>Layout Controls</h4>
-          <div class="layout-controls">
-            <div class="control-group">
-              <label>
-                <span class="control-label">Repulsion</span>
-                <span class="control-value">{{ repulsionStrength }}</span>
-              </label>
-              <input
-                v-model.number="repulsionStrength"
-                type="range"
-                min="500"
-                max="5000"
-                step="100"
-              />
-            </div>
-            <div class="control-group">
-              <label>
-                <span class="control-label">Link Distance</span>
-                <span class="control-value">{{ linkDistance }}px</span>
-              </label>
-              <input
-                v-model.number="linkDistance"
-                type="range"
-                min="60"
-                max="250"
-                step="10"
-              />
-            </div>
-            <div class="control-group">
-              <label>
-                <span class="control-label">Center Force</span>
-                <span class="control-value">{{ (centerStrength * 100).toFixed(0) }}%</span>
-              </label>
-              <input
-                v-model.number="centerStrength"
-                type="range"
-                min="0"
-                max="0.1"
-                step="0.005"
-              />
-            </div>
-            <button class="btn btn-secondary btn-sm relayout-btn" @click="startSimulation">
-              Re-layout
-            </button>
+          <h4>Neighborhood Depth</h4>
+          <div class="depth-control">
+            <input v-model.number="depth" type="range" min="1" max="5" />
+            <span class="depth-value">{{ depth }}</span>
           </div>
         </div>
 
         <!-- Node detail panel -->
         <div v-if="selectedNode" class="detail-panel">
-          <h4>{{ selectedNode.title }}</h4>
-          <p class="detail-meta">
-            <span class="detail-type">{{ selectedNode.type }}</span>
-            <span class="detail-id">{{ selectedNode.id }}</span>
-          </p>
+          <div class="detail-header">
+            <span class="detail-badge" :style="{ background: typeColors[selectedNode.type] }">
+              {{ selectedNode.type }}
+            </span>
+            <button class="close-btn" @click="closeDetailPanel">&times;</button>
+          </div>
+          <h3>{{ selectedNode.title }}</h3>
+          <p class="detail-id">{{ selectedNode.id }}</p>
+
           <div v-if="Object.keys(selectedNode.properties).length > 0" class="detail-properties">
             <div v-for="(value, key) in selectedNode.properties" :key="key" class="detail-prop">
               <span class="prop-key">{{ key }}:</span>
               <span class="prop-value">{{ value }}</span>
             </div>
           </div>
-          <button v-if="mode === 'content'" class="btn btn-primary btn-sm" @click="openNode(selectedNode)">
-            Open Details
+
+          <!-- Outgoing relations -->
+          <div v-if="outgoingRelations.length" class="relations-section">
+            <h4>Outgoing ({{ outgoingRelations.length }})</h4>
+            <div
+              v-for="edge in outgoingRelations"
+              :key="edge.id()"
+              class="rel-item"
+              @click="selectRelatedNode(edge.target().id())"
+            >
+              <span
+                class="rel-dot"
+                :style="{ background: typeColors[edge.target().data('type')] || '#888' }"
+              />
+              <div>
+                <div class="rel-type">{{ edge.data('relType') }}</div>
+                <div class="rel-name">{{ edge.target().data('id') }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Incoming relations -->
+          <div v-if="incomingRelations.length" class="relations-section">
+            <h4>Incoming ({{ incomingRelations.length }})</h4>
+            <div
+              v-for="edge in incomingRelations"
+              :key="edge.id()"
+              class="rel-item"
+              @click="selectRelatedNode(edge.source().id())"
+            >
+              <span
+                class="rel-dot"
+                :style="{ background: typeColors[edge.source().data('type')] || '#888' }"
+              />
+              <div>
+                <div class="rel-type">{{ edge.data('relType') }}</div>
+                <div class="rel-name">{{ edge.source().data('id') }}</div>
+              </div>
+            </div>
+          </div>
+
+          <button v-if="mode === 'content'" class="btn btn-primary btn-sm" @click="openNodeDetail">
+            View Details
           </button>
         </div>
       </aside>
 
-      <!-- SVG Canvas -->
+      <!-- Cytoscape canvas -->
       <div class="graph-canvas">
-        <svg ref="svgRef" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid meet">
-          <defs>
-            <marker
-              id="arrowhead"
-              markerWidth="8"
-              markerHeight="6"
-              refX="50"
-              refY="3"
-              orient="auto"
-            >
-              <polygon points="0 0, 8 3, 0 6" fill="#64748b" />
-            </marker>
-          </defs>
-          <!-- Edges -->
-          <g class="edges">
-            <line
-              v-for="(edge, i) in filteredEdges"
-              :key="`edge-${i}`"
-              :x1="getNodePosition(edge.source).x"
-              :y1="getNodePosition(edge.source).y"
-              :x2="getNodePosition(edge.target).x"
-              :y2="getNodePosition(edge.target).y"
-              class="edge"
-              :class="{ dimmed: selectedRelationTypes.size > 0 && !selectedRelationTypes.has(edge.type) }"
-              marker-end="url(#arrowhead)"
-            />
-          </g>
+        <div
+          ref="cyContainer"
+          class="cy-container"
+          :data-node-count="visibleNodeCount"
+          :data-edge-count="visibleEdgeCount"
+        />
 
-          <!-- Nodes -->
-          <g class="nodes">
-            <g
-              v-for="node in filteredNodes"
-              :key="node.id"
-              class="node"
-              :class="{ selected: selectedNode?.id === node.id }"
-              :transform="`translate(${getNodePosition(node.id).x}, ${getNodePosition(node.id).y})`"
-              @click="selectNode(node)"
-              @dblclick="openNode(node)"
-            >
-              <rect
-                x="-45"
-                y="-20"
-                width="90"
-                height="40"
-                rx="6"
-                ry="6"
-                :fill="nodeColorMap.get(node.type) || '#6366f1'"
-              />
-              <text dy="-4" text-anchor="middle" class="node-id">
-                {{ node.id }}
-              </text>
-              <text dy="10" text-anchor="middle" class="node-title">
-                {{ node.title.slice(0, 12) }}{{ node.title.length > 12 ? '...' : '' }}
-              </text>
-            </g>
-          </g>
-        </svg>
+        <!-- Toolbar -->
+        <div class="graph-toolbar">
+          <button :class="{ active: currentLayout === 'force' }" @click="setLayout('force')">
+            Force
+          </button>
+          <button :class="{ active: currentLayout === 'hierarchy' }" @click="setLayout('hierarchy')">
+            Hierarchy
+          </button>
+          <button :class="{ active: currentLayout === 'circle' }" @click="setLayout('circle')">
+            Circle
+          </button>
+          <button :class="{ active: currentLayout === 'grid' }" @click="setLayout('grid')">
+            Grid
+          </button>
+          <div class="sep" />
+          <button @click="fitGraph">Fit</button>
+          <button :class="{ active: edgeLabelsVisible }" @click="toggleEdgeLabels">Labels</button>
+          <button :class="{ active: focusMode }" @click="toggleFocusMode">Focus</button>
+        </div>
       </div>
     </div>
   </div>
@@ -485,6 +666,16 @@ watch(mode, () => {
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 6px;
   font-size: 14px;
+}
+
+.graph-stats {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.graph-stats strong {
+  color: var(--accent-color, #6366f1);
+  font-weight: 700;
 }
 
 .btn {
@@ -556,7 +747,7 @@ watch(mode, () => {
 }
 
 .graph-sidebar {
-  width: 240px;
+  width: 260px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -573,10 +764,11 @@ watch(mode, () => {
 
 .filter-section h4 {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: #64748b;
   text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .filter-list {
@@ -590,27 +782,23 @@ watch(mode, () => {
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
-  transition: background 0.15s;
+  transition: all 0.15s;
 }
 
 .filter-item:hover {
   background: #f8fafc;
 }
 
-.filter-item.active {
-  background: #f1f5f9;
-}
-
-.filter-item input {
-  margin-left: auto;
+.filter-item.inactive {
+  opacity: 0.4;
 }
 
 .color-dot {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -624,105 +812,106 @@ watch(mode, () => {
 
 .filter-count {
   color: #94a3b8;
-  font-size: 12px;
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 1px 6px;
+  border-radius: 10px;
 }
 
-.layout-controls {
+.depth-control {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 12px;
 }
 
-.control-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.depth-control input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent-color, #6366f1);
 }
 
-.control-group label {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-}
-
-.control-label {
-  color: #475569;
-}
-
-.control-value {
-  color: #94a3b8;
-  font-family: monospace;
-  font-size: 11px;
-}
-
-.control-group input[type="range"] {
-  width: 100%;
-  height: 4px;
-  appearance: none;
-  background: #e2e8f0;
-  border-radius: 2px;
-  cursor: pointer;
-}
-
-.control-group input[type="range"]::-webkit-slider-thumb {
-  appearance: none;
-  width: 14px;
-  height: 14px;
+.depth-value {
   background: var(--accent-color, #6366f1);
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.relayout-btn {
-  margin-top: 4px;
-  width: 100%;
+  color: white;
+  font-weight: 700;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
 }
 
 .detail-panel {
   background: white;
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 8px;
-  padding: 12px;
+  padding: 16px;
 }
 
-.detail-panel h4 {
-  margin: 0 0 8px;
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.detail-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: white;
+}
+
+.close-btn {
+  background: rgba(0, 0, 0, 0.05);
+  border: none;
   font-size: 14px;
+  cursor: pointer;
+  color: #64748b;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #1e293b;
+}
+
+.detail-panel h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
   font-weight: 600;
 }
 
-.detail-meta {
-  display: flex;
-  gap: 8px;
-  margin: 0 0 12px;
-  font-size: 12px;
-}
-
-.detail-type {
-  background: #f1f5f9;
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: #64748b;
-  text-transform: uppercase;
-}
-
 .detail-id {
-  font-family: monospace;
+  font-size: 12px;
   color: #64748b;
+  font-family: monospace;
+  margin: 0 0 12px;
 }
 
 .detail-properties {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
   margin-bottom: 12px;
 }
 
 .detail-prop {
-  font-size: 12px;
   display: flex;
-  gap: 4px;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  font-size: 12px;
+}
+
+.detail-prop:last-child {
+  border: none;
 }
 
 .prop-key {
@@ -730,64 +919,118 @@ watch(mode, () => {
 }
 
 .prop-value {
-  color: #1e293b;
+  font-weight: 500;
+  text-align: right;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.relations-section {
+  margin-top: 12px;
+}
+
+.relations-section h4 {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+
+.rel-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-bottom: 2px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.rel-item:hover {
+  background: rgba(0, 0, 0, 0.03);
+  transform: translateX(3px);
+}
+
+.rel-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rel-type {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.rel-name {
+  font-weight: 500;
 }
 
 .graph-canvas {
   flex: 1;
+  position: relative;
   background: white;
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 8px;
   overflow: hidden;
 }
 
-.graph-canvas svg {
+.cy-container {
   width: 100%;
-  height: 100%;
+  height: calc(100% - 60px);
 }
 
-.edge {
-  stroke: #94a3b8;
-  stroke-width: 2;
-  opacity: 0.8;
+.graph-toolbar {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  padding: 5px;
+  border-radius: 12px;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
-.edge.dimmed {
-  opacity: 0.3;
-  stroke: #e2e8f0;
-}
-
-.node {
-  cursor: pointer;
-}
-
-.node rect {
-  stroke: rgba(0, 0, 0, 0.2);
-  stroke-width: 1;
-  transition: all 0.15s;
-}
-
-.node:hover rect {
-  stroke-width: 2;
-  filter: brightness(1.1);
-}
-
-.node.selected rect {
-  stroke: #1e293b;
-  stroke-width: 3;
-}
-
-.node-id {
-  fill: rgba(255, 255, 255, 0.8);
-  font-size: 8px;
-  font-weight: 500;
-  pointer-events: none;
-}
-
-.node-title {
-  fill: white;
-  font-size: 10px;
+.graph-toolbar button {
+  padding: 6px 14px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  font-size: 11px;
   font-weight: 600;
-  pointer-events: none;
+  cursor: pointer;
+  color: #64748b;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.graph-toolbar button:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: #1e293b;
+}
+
+.graph-toolbar button.active {
+  background: var(--accent-color, #6366f1);
+  color: white;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+}
+
+.graph-toolbar .sep {
+  width: 1px;
+  height: 18px;
+  background: rgba(0, 0, 0, 0.06);
+  margin: 0 2px;
 }
 </style>
