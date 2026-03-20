@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
-import type { Entity, Command } from '@/types'
+import type { Entity, Command, ListParams } from '@/types'
 import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
 import { renderMarkdown, renderMermaidDiagrams } from '@/utils/markdown'
@@ -16,15 +16,43 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
+
+// Scope navigation types
+interface ScopeNav {
+  backUrl: string
+  prevId: string | null
+  nextId: string | null
+  current: number
+  total: number
+  label: string
+}
+
+// Scope navigation state
+const scopeNav = ref<ScopeNav | null>(null)
 
 function handleKeydown(e: KeyboardEvent) {
   if (isInputFocused()) return
   if (e.key === 'e' || e.key === 'E') {
     e.preventDefault()
     editEntity()
+  }
+  // Scope navigation: j/k (left/right on keyboard) or arrow keys
+  if ((e.key === 'j' || e.key === 'ArrowUp') && scopeNav.value?.prevId) {
+    e.preventDefault()
+    navigateScope('prev')
+  }
+  if ((e.key === 'k' || e.key === 'ArrowDown') && scopeNav.value?.nextId) {
+    e.preventDefault()
+    navigateScope('next')
+  }
+  // Escape to go back
+  if (e.key === 'Escape' && scopeNav.value) {
+    e.preventDefault()
+    router.push(scopeNav.value.backUrl)
   }
 }
 
@@ -98,13 +126,103 @@ async function loadEntity() {
   loading.value = true
   try {
     entity.value = await entitiesStore.fetchEntity(props.entityType, props.entityId, true)
-    await loadCommands()
+    await Promise.all([loadCommands(), loadScopeNav()])
   } catch (err) {
     uiStore.error(`Failed to load ${props.entityType}`)
     console.error(err)
   } finally {
     loading.value = false
   }
+}
+
+// Scope navigation
+async function loadScopeNav() {
+  const fromListId = route.query.from as string | undefined
+  if (!fromListId) {
+    scopeNav.value = null
+    return
+  }
+
+  const listConfig = schemaStore.getList(fromListId)
+  if (!listConfig) {
+    scopeNav.value = null
+    return
+  }
+
+  try {
+    // Build query params matching what EntityList uses
+    const params: ListParams = {
+      per_page: 1000, // Fetch all to get accurate position
+    }
+
+    // Add sort from query params or list default
+    const sort = route.query.sort as string | undefined
+    if (sort) {
+      params.sort = sort
+    } else if (listConfig.default_sort?.length) {
+      params.sort = listConfig.default_sort
+        .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
+        .join(',')
+    }
+
+    // Add pre-configured filters from list config
+    const operatorMap: Record<string, string> = {
+      '!=': 'ne',
+      '=': 'eq',
+      '>': 'gt',
+      '>=': 'gte',
+      '<': 'lt',
+      '<=': 'lte',
+      '~': 'contains',
+    }
+    for (const filter of listConfig.filters || []) {
+      if (filter.operator && filter.value) {
+        const apiOp = operatorMap[filter.operator] || 'eq'
+        params[`filter[${filter.property}][${apiOp}]`] = filter.value
+      }
+    }
+
+    // Add user-selected filters from query
+    for (const [key, value] of Object.entries(route.query)) {
+      if (key.startsWith('filter_') && value) {
+        const prop = key.replace('filter_', '')
+        params[`filter[${prop}]`] = value as string
+      }
+    }
+
+    const result = await entitiesStore.fetchList(listConfig.entity, params)
+    const ids = result.data.map((e) => e.id)
+    const currentIndex = ids.indexOf(props.entityId)
+
+    if (currentIndex === -1) {
+      scopeNav.value = null
+      return
+    }
+
+    scopeNav.value = {
+      backUrl: `/list/${fromListId}`,
+      prevId: currentIndex > 0 ? ids[currentIndex - 1] : null,
+      nextId: currentIndex < ids.length - 1 ? ids[currentIndex + 1] : null,
+      current: currentIndex + 1,
+      total: ids.length,
+      label: listConfig.title || fromListId,
+    }
+  } catch {
+    scopeNav.value = null
+  }
+}
+
+function navigateScope(direction: 'prev' | 'next') {
+  if (!scopeNav.value) return
+
+  const targetId = direction === 'prev' ? scopeNav.value.prevId : scopeNav.value.nextId
+  if (!targetId) return
+
+  // Preserve all query params for consistent navigation
+  router.push({
+    path: `/entity/${props.entityType}/${targetId}`,
+    query: route.query,
+  })
 }
 
 function editEntity() {
@@ -341,6 +459,31 @@ onMounted(() => loadEntity())
     </div>
 
     <template v-else-if="entity">
+      <!-- Scope Navigation Bar -->
+      <div v-if="scopeNav" class="scope-nav">
+        <router-link :to="scopeNav.backUrl" class="scope-nav-btn">
+          Back <kbd>Esc</kbd>
+        </router-link>
+        <button
+          v-if="scopeNav.prevId"
+          class="scope-nav-btn"
+          @click="navigateScope('prev')"
+        >
+          ← Prev <kbd>J</kbd>
+        </button>
+        <span v-else class="scope-nav-btn disabled">← Prev</span>
+        <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
+        <span class="scope-nav-label">{{ scopeNav.label }}</span>
+        <button
+          v-if="scopeNav.nextId"
+          class="scope-nav-btn"
+          @click="navigateScope('next')"
+        >
+          Next → <kbd>K</kbd>
+        </button>
+        <span v-else class="scope-nav-btn disabled">Next →</span>
+      </div>
+
       <header class="detail-header">
         <div class="header-info">
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
@@ -865,5 +1008,64 @@ onMounted(() => loadEntity())
 
 .file-btn:hover {
   background: #64748b;
+}
+
+/* Scope Navigation Bar */
+.scope-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.scope-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: white;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-color, #1e293b);
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+
+.scope-nav-btn:hover:not(.disabled) {
+  background: #f1f5f9;
+  border-color: var(--accent-color, #6366f1);
+}
+
+.scope-nav-btn.disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+  background: #f8fafc;
+}
+
+.scope-nav-btn kbd {
+  padding: 2px 5px;
+  font-size: 10px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+.scope-nav-progress {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  font-family: monospace;
+}
+
+.scope-nav-label {
+  flex: 1;
+  font-size: 13px;
+  color: #64748b;
 }
 </style>

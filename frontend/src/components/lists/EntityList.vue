@@ -169,7 +169,32 @@ function handlePageChange(page: number) {
 }
 
 function navigateToEntity(entity: Entity) {
-  router.push(`/entity/${entity.type}/${entity.id}`)
+  // Build query params to preserve navigation context
+  const query: Record<string, string> = {
+    from: props.listId,
+    scope: `list:${props.listId}`,
+  }
+
+  // Include sort if active
+  if (sortField.value) {
+    query.sort = sortDesc.value ? `-${sortField.value}` : sortField.value
+  } else if (listConfig.value?.default_sort?.length) {
+    query.sort = listConfig.value.default_sort
+      .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
+      .join(',')
+  }
+
+  // Include active filters
+  for (const [key, value] of Object.entries(filters.value)) {
+    if (value) {
+      query[`filter_${key}`] = value
+    }
+  }
+
+  router.push({
+    path: `/entity/${entity.type}/${entity.id}`,
+    query,
+  })
 }
 
 function getCellValue(entity: Entity, column: { property?: string; relation?: string; direction?: string }): unknown {
