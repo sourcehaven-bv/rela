@@ -193,7 +193,9 @@ function formatCellValue(value: unknown, column: { property?: string; relation?:
   if (column.property && entityType) {
     const propDef = entityType.properties[column.property]
     if (propDef?.type === 'date' && typeof value === 'string') {
-      return new Date(value).toLocaleDateString()
+      const date = new Date(value)
+      if (isNaN(date.getTime())) return '—'
+      return date.toLocaleDateString()
     }
     if (propDef?.type === 'boolean') {
       return value ? 'Yes' : 'No'
