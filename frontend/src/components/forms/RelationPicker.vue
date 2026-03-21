@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import type { FormFieldOrRelation, Entity } from '@/types'
+import InlineCreateModal from './InlineCreateModal.vue'
 
 const props = defineProps<{
   field: FormFieldOrRelation
@@ -21,6 +22,8 @@ const loading = ref(false)
 const candidates = ref<Entity[]>([])
 const searchQuery = ref('')
 const showDropdown = ref(false)
+const showCreateModal = ref(false)
+const createTargetType = ref('')
 
 // Computed
 const relationType = computed(() => {
@@ -92,6 +95,22 @@ function removeEntity(entityId: string) {
 
 function getEntityLabel(entity: Entity): string {
   return String(entity.properties.title || entity.id)
+}
+
+function openCreateModal(targetType: string) {
+  createTargetType.value = targetType
+  showCreateModal.value = true
+  showDropdown.value = false
+}
+
+function handleEntityCreated(entity: Entity) {
+  // Add to candidates and select it
+  candidates.value.push(entity)
+  if (isMulti.value) {
+    emit('update', [...props.value, entity.id])
+  } else {
+    emit('update', [entity.id])
+  }
 }
 
 // Lifecycle
@@ -176,6 +195,18 @@ onBeforeUnmount(() => {
         <div v-if="filteredCandidates.length > 10" class="dropdown-more">
           +{{ filteredCandidates.length - 10 }} more...
         </div>
+        <!-- Add new buttons -->
+        <div v-if="targetTypes.length > 0" class="dropdown-actions">
+          <button
+            v-for="targetType in targetTypes"
+            :key="targetType"
+            type="button"
+            class="add-new-btn"
+            @click.stop="openCreateModal(targetType)"
+          >
+            + Add new {{ schemaStore.getEntityType(targetType)?.label || targetType }}
+          </button>
+        </div>
       </div>
 
       <div v-if="loading" class="loading-indicator">
@@ -184,6 +215,14 @@ onBeforeUnmount(() => {
     </div>
 
     <p v-if="help" class="field-help">{{ help }}</p>
+
+    <!-- Inline Create Modal -->
+    <InlineCreateModal
+      :show="showCreateModal"
+      :entity-type="createTargetType"
+      @close="showCreateModal = false"
+      @created="handleEntityCreated"
+    />
   </div>
 </template>
 
@@ -319,6 +358,35 @@ onBeforeUnmount(() => {
   text-align: center;
   color: var(--muted-text);
   font-size: 13px;
+}
+
+.dropdown-actions {
+  border-top: 1px solid var(--border-color);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.add-new-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  background: var(--hover-bg);
+  border: 1px dashed var(--border-color);
+  border-radius: 4px;
+  color: var(--accent-color, #6366f1);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.add-new-btn:hover {
+  background: var(--accent-color, #6366f1);
+  border-color: var(--accent-color, #6366f1);
+  color: white;
 }
 
 .loading-indicator {
