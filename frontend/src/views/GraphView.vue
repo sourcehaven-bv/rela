@@ -54,14 +54,16 @@ const visibleEdgeCount = computed(() => {
 // Connected edges for selected node
 const outgoingRelations = computed((): EdgeSingular[] => {
   if (!cy || !selectedNode.value) return []
-  const node = cy.getElementById(selectedNode.value.id)
-  return node.connectedEdges().filter((e: EdgeSingular) => e.source().id() === selectedNode.value!.id).toArray() as EdgeSingular[]
+  const nodeId = selectedNode.value.id
+  const node = cy.getElementById(nodeId)
+  return node.connectedEdges().filter((e: EdgeSingular) => e.source().id() === nodeId).toArray() as EdgeSingular[]
 })
 
 const incomingRelations = computed((): EdgeSingular[] => {
   if (!cy || !selectedNode.value) return []
-  const node = cy.getElementById(selectedNode.value.id)
-  return node.connectedEdges().filter((e: EdgeSingular) => e.target().id() === selectedNode.value!.id).toArray() as EdgeSingular[]
+  const nodeId = selectedNode.value.id
+  const node = cy.getElementById(nodeId)
+  return node.connectedEdges().filter((e: EdgeSingular) => e.target().id() === nodeId).toArray() as EdgeSingular[]
 })
 
 // Layout configurations
@@ -74,7 +76,7 @@ const layouts: Record<string, cytoscape.LayoutOptions> = {
     idealEdgeLength: () => 100,
     gravity: 0.3,
     padding: 50,
-  } as cytoscape.LayoutOptions,
+  },
   hierarchy: {
     name: 'breadthfirst',
     animate: true,
@@ -82,19 +84,19 @@ const layouts: Record<string, cytoscape.LayoutOptions> = {
     directed: true,
     spacingFactor: 1.0,
     padding: 50,
-  } as cytoscape.LayoutOptions,
+  },
   circle: {
     name: 'circle',
     animate: true,
     animationDuration: 800,
     padding: 50,
-  } as cytoscape.LayoutOptions,
+  },
   grid: {
     name: 'grid',
     animate: true,
     animationDuration: 800,
     padding: 50,
-  } as cytoscape.LayoutOptions,
+  },
 }
 
 // Methods
@@ -152,6 +154,8 @@ function buildGraph() {
   }
 
   // Create new cytoscape instance
+  /* eslint-disable @typescript-eslint/consistent-type-assertions */
+  // Cytoscape style definitions require type assertions for dynamic style functions
   cy = cytoscape({
     container: cyContainer.value,
     elements,
@@ -269,6 +273,7 @@ function buildGraph() {
     minZoom: 0.15,
     maxZoom: 3,
   })
+  /* eslint-enable @typescript-eslint/consistent-type-assertions */
 
   // Reset filters
   hiddenEntityTypes.value = new Set()
@@ -397,10 +402,10 @@ function applyFilters() {
     e.style('display', hidden ? 'none' : 'element')
   })
 
-  // Re-layout after filtering
+  // Re-layout after filtering (200ms delay for CSS transitions)
   setTimeout(() => {
     if (cy) {
-      const opts = { ...layouts[currentLayout.value], animationDuration: 500 } as cytoscape.LayoutOptions
+      const opts: cytoscape.LayoutOptions = { ...layouts[currentLayout.value], animationDuration: 500 }
       cy.elements(':visible').layout(opts).run()
     }
   }, 200)
@@ -644,21 +649,9 @@ watch(depth, () => {
   flex-direction: column;
 }
 
+/* Uses global .page-header, .header-actions from App.vue */
 .page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   margin-bottom: 16px;
-}
-
-.page-header h1 {
-  margin: 0;
-}
-
-.header-actions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
 }
 
 .mode-select {
@@ -678,66 +671,7 @@ watch(depth, () => {
   font-weight: 700;
 }
 
-.btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-}
-
-.btn-sm {
-  padding: 6px 12px;
-  font-size: 13px;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  background: var(--hover-bg);
-  color: var(--text-color);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  filter: brightness(0.95);
-}
-
-.btn-primary {
-  background: var(--accent-color, #6366f1);
-  color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #4f46e5;
-}
-
-.loading-state {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 48px;
-  color: var(--muted-text);
-}
-
-.spinner {
-  width: 24px;
-  height: 24px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* Uses global .btn, .btn-sm, .btn-secondary, .btn-primary, .loading-state, .spinner from App.vue */
 
 .graph-container {
   flex: 1;

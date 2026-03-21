@@ -48,7 +48,7 @@ test.describe('Navigation', () => {
     // Find a collapsible group
     const groupHeader = apiPage.locator('.nav-group-header, .nav-group > button, [data-collapsed]').first()
     if (await groupHeader.isVisible()) {
-      const initialState = await groupHeader.getAttribute('data-collapsed')
+      const _initialState = await groupHeader.getAttribute('data-collapsed')
 
       // Click to toggle
       await groupHeader.click()

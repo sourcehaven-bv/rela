@@ -3,7 +3,9 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
-import type { Entity, ListMeta, EntityType, ListParams } from '@/types'
+import { toApiOperator } from '@/utils/filters'
+import { getCellValue, formatCellValue, isEnumPropertyDef } from '@/utils/format'
+import type { Entity, ListMeta, ListParams } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import Badge from '@/components/common/Badge.vue'
@@ -74,17 +76,6 @@ const configuredFilters = computed(() => {
   return listConfig.value?.filters?.filter(f => f.operator && f.value) || []
 })
 
-// Map operator symbols to API operator names
-const operatorMap: Record<string, string> = {
-  '!=': 'ne',
-  '=': 'eq',
-  '>': 'gt',
-  '>=': 'gte',
-  '<': 'lt',
-  '<=': 'lte',
-  '~': 'contains',
-}
-
 // Build query params
 const queryParams = computed((): ListParams => {
   const params: ListParams = {
@@ -94,7 +85,7 @@ const queryParams = computed((): ListParams => {
 
   // Add pre-configured filters from list config
   for (const filter of configuredFilters.value) {
-    const apiOp = operatorMap[filter.operator || '='] || 'eq'
+    const apiOp = toApiOperator(filter.operator)
     const key = `filter[${filter.property}][${apiOp}]`
     const filterValue = filter.value
     // Append to existing filter or create new
@@ -197,43 +188,14 @@ function navigateToEntity(entity: Entity) {
   })
 }
 
-function getCellValue(entity: Entity, column: { property?: string; relation?: string; direction?: string }): unknown {
-  if (column.property) {
-    if (column.property === 'id') return entity.id
-    return entity.properties[column.property]
-  }
-  if (column.relation && entity.relations) {
-    return entity.relations[column.relation] || []
-  }
-  return ''
+function isEnumColumn(column: { property?: string }): boolean {
+  if (!column.property || !entityType.value) return false
+  return isEnumPropertyDef(entityType.value.properties[column.property])
 }
 
-function formatCellValue(value: unknown, column: { property?: string; relation?: string }, entityType?: EntityType): string {
-  if (value === null || value === undefined) return ''
-
-  if (Array.isArray(value)) {
-    return value.join(', ')
-  }
-
-  if (column.property && entityType) {
-    const propDef = entityType.properties[column.property]
-    if (propDef?.type === 'date' && typeof value === 'string') {
-      const date = new Date(value)
-      if (isNaN(date.getTime())) return '—'
-      return date.toLocaleDateString()
-    }
-    if (propDef?.type === 'boolean') {
-      return value ? 'Yes' : 'No'
-    }
-  }
-
-  return String(value)
-}
-
-function isEnumProperty(column: { property?: string }, entityType?: EntityType): boolean {
-  if (!column.property || !entityType) return false
-  const propDef = entityType.properties[column.property]
-  return propDef?.type === 'enum' || (propDef?.values?.length ?? 0) > 0
+function getFormattedCellValue(entity: Entity, column: { property?: string; relation?: string }): string {
+  const value = getCellValue(entity, column)
+  return formatCellValue(value, column.property, entityType.value)
 }
 
 async function handleDelete(entity: Entity, event: Event) {
@@ -349,13 +311,13 @@ onMounted(() => {
               :key="column.property || column.relation"
             >
               <Badge
-                v-if="isEnumProperty(column, entityType)"
+                v-if="isEnumColumn(column)"
                 :value="String(getCellValue(entity, column) || '')"
                 :property="column.property"
                 :entity-type="entityType"
               />
               <span v-else>
-                {{ formatCellValue(getCellValue(entity, column), column, entityType) }}
+                {{ getFormattedCellValue(entity, column) }}
               </span>
             </td>
             <td class="actions-cell">

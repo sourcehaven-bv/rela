@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
-import type { Entity, Command, ListParams } from '@/types'
+import { useScopeNavigation } from '@/composables'
+import type { Entity, Command } from '@/types'
 import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
 import { renderMarkdown, renderMermaidDiagrams } from '@/utils/markdown'
+import { formatValue, isEnumProperty } from '@/utils/format'
 import { getCommands } from '@/api'
 import Badge from '@/components/common/Badge.vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
+import CommandModal from '@/components/entity/CommandModal.vue'
 
 const props = defineProps<{
   entityType: string
@@ -16,23 +19,18 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
-const route = useRoute()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
 
-// Scope navigation types
-interface ScopeNav {
-  backUrl: string
-  prevId: string | null
-  nextId: string | null
-  current: number
-  total: number
-  label: string
-}
+// Scope navigation
+const { scopeNav, loadScopeNav, navigateScope, goBack } = useScopeNavigation(
+  () => props.entityType,
+  () => props.entityId
+)
 
-// Scope navigation state
-const scopeNav = ref<ScopeNav | null>(null)
+// Command modal ref
+const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
 
 function handleKeydown(e: KeyboardEvent) {
   if (isInputFocused()) return
@@ -40,7 +38,7 @@ function handleKeydown(e: KeyboardEvent) {
     e.preventDefault()
     editEntity()
   }
-  // Scope navigation: j/k (left/right on keyboard) or arrow keys
+  // Scope navigation: j/k or arrow keys
   if ((e.key === 'j' || e.key === 'ArrowUp') && scopeNav.value?.prevId) {
     e.preventDefault()
     navigateScope('prev')
@@ -52,7 +50,7 @@ function handleKeydown(e: KeyboardEvent) {
   // Escape to go back
   if (e.key === 'Escape' && scopeNav.value) {
     e.preventDefault()
-    router.push(scopeNav.value.backUrl)
+    goBack()
   }
 }
 
@@ -60,7 +58,7 @@ onMounted(() => {
   document.addEventListener('keydown', handleKeydown)
 })
 
-onUnmounted(() => {
+onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)
 })
 
@@ -72,11 +70,6 @@ const showDeleteConfirm = ref(false)
 
 // Commands state
 const commands = ref<Command[]>([])
-const showCommandModal = ref(false)
-const activeCommand = ref<Command | null>(null)
-const commandRunning = ref(false)
-const commandOutput = ref<Array<{ type: 'text' | 'file'; text?: string; path?: string; label?: string }>>([])
-const commandSuccess = ref<boolean | null>(null)
 
 // Computed
 const typeDef = computed(() => schemaStore.getEntityType(props.entityType))
@@ -135,96 +128,6 @@ async function loadEntity() {
   }
 }
 
-// Scope navigation
-async function loadScopeNav() {
-  const fromListId = route.query.from as string | undefined
-  if (!fromListId) {
-    scopeNav.value = null
-    return
-  }
-
-  const listConfig = schemaStore.getList(fromListId)
-  if (!listConfig) {
-    scopeNav.value = null
-    return
-  }
-
-  try {
-    // Build query params matching what EntityList uses
-    const params: ListParams = {
-      per_page: 1000, // Fetch all to get accurate position
-    }
-
-    // Add sort from query params or list default
-    const sort = route.query.sort as string | undefined
-    if (sort) {
-      params.sort = sort
-    } else if (listConfig.default_sort?.length) {
-      params.sort = listConfig.default_sort
-        .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
-        .join(',')
-    }
-
-    // Add pre-configured filters from list config
-    const operatorMap: Record<string, string> = {
-      '!=': 'ne',
-      '=': 'eq',
-      '>': 'gt',
-      '>=': 'gte',
-      '<': 'lt',
-      '<=': 'lte',
-      '~': 'contains',
-    }
-    for (const filter of listConfig.filters || []) {
-      if (filter.operator && filter.value) {
-        const apiOp = operatorMap[filter.operator] || 'eq'
-        params[`filter[${filter.property}][${apiOp}]`] = filter.value
-      }
-    }
-
-    // Add user-selected filters from query
-    for (const [key, value] of Object.entries(route.query)) {
-      if (key.startsWith('filter_') && value) {
-        const prop = key.replace('filter_', '')
-        params[`filter[${prop}]`] = value as string
-      }
-    }
-
-    const result = await entitiesStore.fetchList(listConfig.entity, params)
-    const ids = result.data.map((e) => e.id)
-    const currentIndex = ids.indexOf(props.entityId)
-
-    if (currentIndex === -1) {
-      scopeNav.value = null
-      return
-    }
-
-    scopeNav.value = {
-      backUrl: `/list/${fromListId}`,
-      prevId: currentIndex > 0 ? ids[currentIndex - 1] : null,
-      nextId: currentIndex < ids.length - 1 ? ids[currentIndex + 1] : null,
-      current: currentIndex + 1,
-      total: ids.length,
-      label: listConfig.title || fromListId,
-    }
-  } catch {
-    scopeNav.value = null
-  }
-}
-
-function navigateScope(direction: 'prev' | 'next') {
-  if (!scopeNav.value) return
-
-  const targetId = direction === 'prev' ? scopeNav.value.prevId : scopeNav.value.nextId
-  if (!targetId) return
-
-  // Preserve all query params for consistent navigation
-  router.push({
-    path: `/entity/${props.entityType}/${targetId}`,
-    query: route.query,
-  })
-}
-
 function editEntity() {
   if (editFormId.value) {
     router.push(`/form/${editFormId.value}/${props.entityId}`)
@@ -263,113 +166,8 @@ async function loadCommands() {
   }
 }
 
-async function runCommand(cmd: Command) {
-  if (cmd.confirm && !confirm(cmd.confirm)) {
-    return
-  }
-
-  activeCommand.value = cmd
-  commandRunning.value = true
-  commandOutput.value = []
-  commandSuccess.value = null
-  showCommandModal.value = true
-
-  const params = new URLSearchParams()
-  params.set('entity_id', props.entityId)
-
-  const url = `/api/command/${cmd.id}?${params.toString()}`
-
-  try {
-    const response = await fetch(url)
-    if (!response.ok) {
-      const text = await response.text()
-      throw new Error(text || response.statusText)
-    }
-
-    const reader = response.body?.getReader()
-    if (!reader) throw new Error('No response body')
-
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let currentEvent = 'message'
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          currentEvent = line.substring(7).trim()
-        } else if (line.startsWith('data: ')) {
-          const data = line.substring(6)
-          processSSEEvent(currentEvent, data, cmd)
-          currentEvent = 'message'
-        }
-      }
-    }
-
-    // Stream ended without done event
-    if (commandSuccess.value === null) {
-      commandSuccess.value = true
-      commandRunning.value = false
-    }
-  } catch (err) {
-    commandOutput.value.push({ type: 'text', text: `Error: ${err instanceof Error ? err.message : 'Connection failed'}` })
-    commandSuccess.value = false
-    commandRunning.value = false
-  }
-}
-
-function processSSEEvent(eventType: string, rawData: string, cmd: Command) {
-  try {
-    const data = JSON.parse(rawData)
-    switch (eventType) {
-      case 'message':
-      case 'log':
-        commandOutput.value.push({ type: 'text', text: data.text || '' })
-        break
-      case 'file':
-        commandOutput.value.push({
-          type: 'file',
-          path: data.path,
-          label: data.label || data.path.split('/').pop() || 'File',
-        })
-        if (cmd.auto_open !== false && data.path) {
-          // Auto-open file via API
-          fetch(`/api/open-file?path=${encodeURIComponent(data.path)}&action=open`, { method: 'POST' })
-        }
-        break
-      case 'error':
-        commandOutput.value.push({ type: 'text', text: `Error: ${data.text || 'Command error'}` })
-        commandSuccess.value = false
-        commandRunning.value = false
-        break
-      case 'done':
-        commandSuccess.value = !!data.success
-        commandRunning.value = false
-        break
-    }
-  } catch {
-    // Ignore parse errors
-  }
-}
-
-function openFile(path: string) {
-  fetch(`/api/open-file?path=${encodeURIComponent(path)}&action=open`, { method: 'POST' })
-}
-
-function revealFile(path: string) {
-  fetch(`/api/open-file?path=${encodeURIComponent(path)}&action=reveal`, { method: 'POST' })
-}
-
-function closeCommandModal() {
-  showCommandModal.value = false
-  activeCommand.value = null
-  commandRunning.value = false
+function runCommand(cmd: Command) {
+  commandModalRef.value?.runCommand(cmd)
 }
 
 function getRelationTitle(targetId: string): string {
@@ -418,24 +216,6 @@ function navigateToRelation(relationType: string, targetId: string) {
     }
   }
   uiStore.warning(`Could not determine entity type for ${targetId}`)
-}
-
-function formatValue(value: unknown, type: string): string {
-  if (value === null || value === undefined) return '-'
-  if (type === 'date' && typeof value === 'string') {
-    return new Date(value).toLocaleDateString()
-  }
-  if (type === 'boolean') {
-    return value ? 'Yes' : 'No'
-  }
-  if (Array.isArray(value)) {
-    return value.join(', ')
-  }
-  return String(value)
-}
-
-function isEnumProperty(prop: { type: string; values?: string[] }): boolean {
-  return prop.type === 'enum' || (prop.values?.length ?? 0) > 0
 }
 
 // Watchers
@@ -580,39 +360,7 @@ onMounted(() => loadEntity())
       </div>
 
       <!-- Command Execution Modal -->
-      <div v-if="showCommandModal" class="modal-overlay" @click.self="!commandRunning && closeCommandModal()">
-        <div class="modal command-modal">
-          <div class="command-header">
-            <h3>{{ activeCommand?.label }}</h3>
-            <span v-if="commandRunning" class="command-status running">Running...</span>
-            <span v-else-if="commandSuccess === true" class="command-status success">Completed</span>
-            <span v-else-if="commandSuccess === false" class="command-status error">Failed</span>
-          </div>
-          <div class="command-output">
-            <template v-if="commandOutput.length === 0">
-              <div class="output-line">Starting...</div>
-            </template>
-            <template v-for="(item, idx) in commandOutput" :key="idx">
-              <div v-if="item.type === 'text'" class="output-line">{{ item.text }}</div>
-              <div v-else-if="item.type === 'file'" class="output-file">
-                <span class="file-icon">📄</span>
-                <span class="file-label">{{ item.label }}</span>
-                <button class="file-btn" @click="openFile(item.path!)">Open</button>
-                <button class="file-btn" @click="revealFile(item.path!)">Reveal</button>
-              </div>
-            </template>
-          </div>
-          <div class="modal-actions">
-            <button
-              class="btn btn-secondary"
-              :disabled="commandRunning"
-              @click="closeCommandModal"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
+      <CommandModal ref="commandModalRef" :entity-id="entityId" />
     </template>
 
     <div v-else class="error-state">
@@ -630,31 +378,7 @@ onMounted(() => loadEntity())
   max-width: 900px;
 }
 
-.loading-state,
-.error-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 48px;
-  gap: 16px;
-  color: var(--muted-text);
-}
-
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* Uses global .loading-state, .error-state, .spinner from App.vue */
 
 .detail-header {
   display: flex;
@@ -687,39 +411,7 @@ onMounted(() => loadEntity())
   gap: 8px;
 }
 
-.btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-  text-decoration: none;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  background: var(--border-color, #e2e8f0);
-  color: var(--text-color, #1e293b);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  filter: brightness(0.9);
-}
-
-.btn-danger {
-  background: var(--error-color, #ef4444);
-  color: white;
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: #dc2626;
-}
+/* Uses global .btn, .btn-secondary, .btn-danger from App.vue */
 
 .detail-section {
   background: var(--card-bg);
@@ -858,40 +550,7 @@ onMounted(() => loadEntity())
   margin-right: 8px;
 }
 
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal {
-  background: var(--card-bg);
-  border-radius: 12px;
-  padding: 24px;
-  max-width: 400px;
-  width: 90%;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
-}
-
-.modal h3 {
-  margin: 0 0 12px;
-  color: var(--text-color);
-}
-
-.modal p {
-  margin: 0 0 24px;
-  color: var(--muted-text);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
+/* Uses global .modal-overlay, .modal, .modal-actions from App.vue */
 
 .btn-command {
   background: var(--accent-color, #3b82f6);
@@ -899,112 +558,7 @@ onMounted(() => loadEntity())
 }
 
 .btn-command:hover:not(:disabled) {
-  background: #2563eb;
-}
-
-.command-modal {
-  max-width: 600px;
-  width: 90%;
-}
-
-.command-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.command-header h3 {
-  margin: 0;
-  flex: 1;
-}
-
-.command-status {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-.command-status.running {
-  background: color-mix(in srgb, var(--warning-color, #f59e0b) 20%, transparent);
-  color: var(--warning-color, #f59e0b);
-}
-
-.command-status.success {
-  background: color-mix(in srgb, var(--success-color, #10b981) 20%, transparent);
-  color: var(--success-color, #10b981);
-}
-
-.command-status.error {
-  background: color-mix(in srgb, var(--error-color, #ef4444) 20%, transparent);
-  color: var(--error-color, #ef4444);
-}
-
-.command-output {
-  background: #1e293b;
-  border-radius: 6px;
-  padding: 16px;
-  max-height: 400px;
-  overflow: auto;
-  margin-bottom: 16px;
-}
-
-.command-output pre {
-  margin: 0;
-}
-
-.command-output code {
-  color: #e2e8f0;
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.output-line {
-  color: #e2e8f0;
-  font-size: 13px;
-  line-height: 1.6;
-  font-family: monospace;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.output-file {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  margin: 4px 0;
-  background: #334155;
-  border-radius: 4px;
-}
-
-.file-icon {
-  font-size: 14px;
-}
-
-.file-label {
-  flex: 1;
-  color: #e2e8f0;
-  font-size: 13px;
-  font-family: monospace;
-}
-
-.file-btn {
-  padding: 4px 10px;
-  background: #475569;
-  color: #e2e8f0;
-  border: none;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.file-btn:hover {
-  background: #64748b;
+  filter: brightness(1.1);
 }
 
 /* Scope Navigation Bar */

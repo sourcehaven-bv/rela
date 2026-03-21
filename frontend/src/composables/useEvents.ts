@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useGitStore, useEntitiesStore } from '@/stores'
 
 export type SSEEventType =
@@ -20,7 +20,13 @@ export interface SSEConnectionState {
   error: string | null
 }
 
-// Singleton state - shared across all components
+/**
+ * Singleton state - shared across all components.
+ * This is intentional for SSE because:
+ * 1. We only want one EventSource connection to the server
+ * 2. Multiple components can subscribe to the same events
+ * 3. Connection state should be consistent across the app
+ */
 const connectionState = ref<SSEConnectionState>({
   connected: false,
   reconnecting: false,
@@ -164,27 +170,41 @@ export function useEvents() {
     }, delay)
   }
 
+  // Track handlers registered by this component instance for cleanup
+  const localHandlers: Array<{ type: SSEEventType; handler: EventHandler }> = []
+
   // Lifecycle management
   onMounted(() => {
     connect()
   })
 
-  onUnmounted(() => {
-    // Don't disconnect - keep SSE alive for other components
-    // The connection is shared across the app
+  onBeforeUnmount(() => {
+    // Clean up handlers registered by this component instance
+    for (const { type, handler } of localHandlers) {
+      eventHandlers.get(type)?.delete(handler)
+    }
+    localHandlers.length = 0
+    // Don't disconnect SSE - keep alive for other components (shared connection)
   })
 
   // Subscribe to specific event types
   function on(eventType: SSEEventType, handler: EventHandler) {
-    if (!eventHandlers.has(eventType)) {
-      eventHandlers.set(eventType, new Set())
+    let handlers = eventHandlers.get(eventType)
+    if (!handlers) {
+      handlers = new Set()
+      eventHandlers.set(eventType, handlers)
     }
-    eventHandlers.get(eventType)!.add(handler)
+    handlers.add(handler)
+    // Track for cleanup on unmount
+    localHandlers.push({ type: eventType, handler })
   }
 
   // Unsubscribe from specific event types
   function off(eventType: SSEEventType, handler: EventHandler) {
     eventHandlers.get(eventType)?.delete(handler)
+    // Remove from local tracking
+    const idx = localHandlers.findIndex((h) => h.type === eventType && h.handler === handler)
+    if (idx >= 0) localHandlers.splice(idx, 1)
   }
 
   return {
@@ -194,13 +214,4 @@ export function useEvents() {
     on,
     off,
   }
-}
-
-/**
- * Initialize SSE connection at app startup.
- * Call this once in App.vue or main.ts.
- */
-export function initEvents() {
-  const { connect } = useEvents()
-  connect()
 }

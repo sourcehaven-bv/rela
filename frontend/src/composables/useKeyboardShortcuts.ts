@@ -2,8 +2,21 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { isInputFocused } from '@/utils/dom'
 
+/**
+ * Shared state for keyboard shortcuts modal.
+ * Intentionally module-level to ensure single modal instance across app.
+ * This is safe because:
+ * 1. Only one modal should ever be open at a time
+ * 2. The modal is rendered at App.vue level
+ * 3. Multiple components may need to check/toggle this state
+ */
 export const shortcutsModalOpen = ref(false)
 
+/**
+ * Global keyboard shortcuts composable.
+ * Should be called once at App.vue level to register global handlers.
+ * Handles G-prefix navigation sequences and modal toggling.
+ */
 export function useKeyboardShortcuts() {
   const router = useRouter()
   const route = useRoute()

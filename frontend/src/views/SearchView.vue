@@ -995,61 +995,7 @@ watch(
   text-decoration: underline;
 }
 
-.btn-secondary {
-  background: var(--border-color);
-  color: var(--text-color);
-}
-
-.btn-secondary:hover {
-  background: var(--hover-bg);
-}
-
-.btn {
-  padding: 10px 20px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: var(--accent-color, #6366f1);
-  color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  filter: brightness(0.9);
-}
-
-.loading-state {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 24px;
-  color: var(--muted-text);
-}
-
-.spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* Uses global .btn, .btn-secondary, .btn-primary, .loading-state, .spinner from App.vue */
 
 .empty-state {
   padding: 48px 24px;

@@ -165,7 +165,9 @@ function validate(): boolean {
 
   // Only validate properties that are shown in the form (not hidden)
   const formPropertyNames = new Set(
-    fields.value.filter((f) => f.property && !f.hidden).map((f) => f.property!)
+    fields.value
+      .filter((f): f is typeof f & { property: string } => !!f.property && !f.hidden)
+      .map((f) => f.property)
   )
 
   for (const [propName, propDef] of Object.entries(entityType.value.properties)) {
@@ -520,29 +522,7 @@ onBeforeRouteLeave((_to, _from, next) => {
   color: white;
 }
 
-.loading-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 48px;
-  gap: 16px;
-  color: var(--muted-text);
-}
-
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* Uses global .loading-state and .spinner from App.vue */
 
 .form-section {
   background: var(--card-bg);
@@ -597,38 +577,7 @@ onBeforeRouteLeave((_to, _from, next) => {
   padding-top: 24px;
 }
 
-.btn {
-  padding: 10px 20px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: var(--accent-color, #6366f1);
-  color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  filter: brightness(0.9);
-}
-
-.btn-secondary {
-  background: var(--border-color);
-  color: var(--text-color);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--hover-bg);
-}
+/* Uses global .btn, .btn-primary, .btn-secondary from App.vue */
 
 .error-state {
   padding: 48px;

@@ -582,44 +582,5 @@ onMounted(() => {
   justify-content: flex-end;
 }
 
-.btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s ease;
-}
-
-.btn-primary {
-  background: #6366f1;
-  color: white;
-}
-
-.btn-primary:hover {
-  background: #5558e6;
-}
-
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  background: var(--card-bg, #fff);
-  border: 1px solid var(--border-color, #e5e7eb);
-  color: inherit;
-}
-
-.btn-secondary:hover {
-  background: var(--hover-bg, #f3f4f6);
-}
-
-kbd {
-  background: rgba(0, 0, 0, 0.1);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 11px;
-  margin-left: 6px;
-}
+/* Uses global .btn, .btn-primary, .btn-secondary, kbd from App.vue */
 </style>

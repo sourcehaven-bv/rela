@@ -13,6 +13,11 @@ interface UseListKeyboardOptions {
   hasNextPage?: Ref<boolean>
 }
 
+/**
+ * Keyboard navigation composable for list views.
+ * Handles j/k navigation, Enter/o to open, e to edit, n to create.
+ * Uses DOM queries for scroll behavior - tied to .entity-row class convention.
+ */
 export function useListKeyboard(options: UseListKeyboardOptions) {
   const selectedIndex = ref(-1)
 

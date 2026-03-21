@@ -185,21 +185,6 @@ function getIconEmoji(icon?: string): string {
   padding: 8px 0;
 }
 
-.nav-shortcut {
-  margin-left: auto;
-  background: rgba(255, 255, 255, 0.15);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: monospace;
-}
-
-.nav-divider {
-  height: 1px;
-  background: rgba(255, 255, 255, 0.1);
-  margin: 8px 16px;
-}
-
 .nav-section {
   margin-bottom: 8px;
 }
