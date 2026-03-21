@@ -93,9 +93,10 @@ func Interpolate(template string, vars TemplateVars, entity, oldEntity *model.En
 		result = strings.ReplaceAll(result, key, value)
 	}
 
-	// Handle dynamic property references: {{old.prop}} and {{new.prop}}
+	// Handle dynamic property references: {{old.prop}}, {{new.prop}}, and {{entity.prop}}
 	result = interpolatePropertyRefs(result, "old.", oldEntity)
 	result = interpolatePropertyRefs(result, "new.", entity)
+	result = interpolatePropertyRefs(result, "entity.", entity)
 
 	return result
 }

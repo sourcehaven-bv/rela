@@ -262,12 +262,21 @@ type AutomationAction struct {
 	Set            string                `yaml:"set,omitempty"`
 	Value          string                `yaml:"value,omitempty"`
 	CreateRelation *CreateRelationAction `yaml:"create_relation,omitempty"`
+	CreateEntity   *CreateEntityAction   `yaml:"create_entity,omitempty"`
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
 type CreateRelationAction struct {
 	Relation string `yaml:"relation"`
 	To       string `yaml:"to"`
+}
+
+// CreateEntityAction specifies parameters for creating a new entity.
+type CreateEntityAction struct {
+	Type       string            `yaml:"type"`
+	ID         string            `yaml:"id,omitempty"`
+	Properties map[string]string `yaml:"properties,omitempty"`
+	Content    string            `yaml:"content,omitempty"`
 }
 
 // AutomationCheck specifies a validation condition.
