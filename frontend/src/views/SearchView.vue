@@ -468,40 +468,30 @@ watch(
 
     <!-- Search syntax help panel -->
     <div v-if="showHelp" class="help-panel">
-      <h3>Search Syntax</h3>
+      <h3>How to Search</h3>
       <div class="help-content">
         <div class="help-section">
           <h4>Text Search</h4>
-          <p>Simply type keywords to search across all entity titles and content.</p>
-          <code class="example">bug login</code>
+          <p>Type keywords in the search box to find matching entities by title or content.</p>
         </div>
 
         <div class="help-section">
-          <h4>Filter by Type</h4>
-          <p>Use <code>type:</code> to filter by entity type.</p>
-          <code class="example">type:ticket bug</code>
+          <h4>Add Filters</h4>
+          <p>Click <strong>+ Filter</strong> or press <kbd>F</kbd> to filter by entity type or property values.</p>
         </div>
 
         <div class="help-section">
-          <h4>Filter by Property</h4>
-          <p>Use <code>prop:property=value</code> to filter by property values.</p>
-          <code class="example">prop:status=open</code>
-          <code class="example">prop:priority=high bug</code>
+          <h4>Combine Search &amp; Filters</h4>
+          <p>Use text search together with multiple filters for precise results.</p>
         </div>
 
-        <div class="help-section">
-          <h4>Combine Filters</h4>
-          <p>Combine multiple filters and text search together.</p>
-          <code class="example">type:ticket prop:status=open prop:priority=high</code>
-        </div>
-
-        <div class="help-section">
+        <div class="help-section shortcuts-section">
           <h4>Keyboard Shortcuts</h4>
           <ul class="shortcut-list">
             <li><kbd>F</kbd> Open filter menu</li>
-            <li><kbd>Tab</kbd> / <kbd>&darr;</kbd> Enter results navigation</li>
+            <li><kbd>Tab</kbd> / <kbd>&darr;</kbd> Enter results</li>
             <li><kbd>j</kbd> / <kbd>k</kbd> Navigate results</li>
-            <li><kbd>Enter</kbd> / <kbd>o</kbd> Open selected result</li>
+            <li><kbd>Enter</kbd> / <kbd>o</kbd> Open selected</li>
             <li><kbd>/</kbd> Focus search input</li>
           </ul>
         </div>
@@ -738,25 +728,21 @@ watch(
   line-height: 1.4;
 }
 
-.help-section code {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
-  background: var(--hover-bg);
-  padding: 2px 6px;
+.help-section kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-}
-
-.help-section code.example {
-  display: block;
-  padding: 8px 10px;
-  margin-top: 6px;
-  background: var(--sidebar-bg);
-  color: var(--sidebar-text);
-  border-radius: 4px;
-}
-
-.help-section code.example + code.example {
-  margin-top: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-color);
+  box-shadow: 0 1px 0 var(--border-color);
 }
 
 .shortcut-list {
@@ -798,11 +784,19 @@ watch(
 .search-input-row {
   display: flex;
   gap: 12px;
+  align-items: stretch;
+}
+
+.search-input-row .btn {
+  height: 42px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .search-input {
   flex: 1;
-  padding: 10px 14px;
+  height: 42px;
+  padding: 0 14px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 15px;
