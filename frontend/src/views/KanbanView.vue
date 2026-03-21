@@ -511,7 +511,7 @@ watch(() => entitiesStore.cacheVersion, () => {
 }
 
 .empty-column {
-  color: #94a3b8;
+  color: var(--muted-text);
   font-size: 13px;
   text-align: center;
   padding: 24px;

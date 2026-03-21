@@ -276,29 +276,6 @@ function getPropertyDef(property: string): PropertyDef | undefined {
   return entityType.value?.properties[property]
 }
 
-// Lifecycle & Navigation Guards
-onMounted(async () => {
-  loading.value = true
-  if (isEdit.value) {
-    await loadEntity()
-  } else {
-    initializeDefaults()
-    await loadTemplates()
-  }
-  loading.value = false
-})
-
-onBeforeRouteLeave((_to, _from, next) => {
-  if (dirty.value) {
-    const answer = window.confirm('You have unsaved changes. Are you sure you want to leave?')
-    if (!answer) {
-      next(false)
-      return
-    }
-  }
-  next()
-})
-
 // Warn before browser close
 function handleBeforeUnload(e: BeforeUnloadEvent) {
   if (dirty.value) {
@@ -315,14 +292,37 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => {
+// Lifecycle & Navigation Guards
+onMounted(async () => {
+  // Setup event listeners
   window.addEventListener('beforeunload', handleBeforeUnload)
   document.addEventListener('keydown', handleKeydown)
+
+  // Load form data
+  loading.value = true
+  if (isEdit.value) {
+    await loadEntity()
+  } else {
+    initializeDefaults()
+    await loadTemplates()
+  }
+  loading.value = false
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('keydown', handleKeydown)
+})
+
+onBeforeRouteLeave((_to, _from, next) => {
+  if (dirty.value) {
+    const answer = window.confirm('You have unsaved changes. Are you sure you want to leave?')
+    if (!answer) {
+      next(false)
+      return
+    }
+  }
+  next()
 })
 </script>
 

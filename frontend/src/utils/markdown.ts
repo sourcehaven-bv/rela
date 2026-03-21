@@ -1,11 +1,12 @@
 import { marked } from 'marked'
 import mermaid from 'mermaid'
+import DOMPurify from 'dompurify'
 
-// Initialize mermaid
+// Initialize mermaid with strict security
 mermaid.initialize({
   startOnLoad: false,
   theme: 'default',
-  securityLevel: 'loose',
+  securityLevel: 'strict',
 })
 
 // Counter for unique mermaid diagram IDs
@@ -13,15 +14,17 @@ let mermaidCounter = 0
 
 /**
  * Render markdown to HTML with GFM support.
- * Returns HTML string synchronously (mermaid diagrams are placeholders).
+ * Returns sanitized HTML string (mermaid diagrams are placeholders).
  */
 export function renderMarkdown(content: string): string {
   if (!content) return ''
 
-  return marked.parse(content, {
+  const rawHtml = marked.parse(content, {
     gfm: true,
     breaks: true,
   }) as string
+
+  return DOMPurify.sanitize(rawHtml)
 }
 
 /**

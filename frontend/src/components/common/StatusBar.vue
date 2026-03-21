@@ -11,7 +11,9 @@ const router = useRouter()
 
 // Initial fetch - SSE handles subsequent updates
 onMounted(() => {
-  gitStore.fetchStatus()
+  gitStore.fetchStatus().catch(() => {
+    // Errors are already handled by the store
+  })
 })
 
 async function handleSync() {
@@ -128,7 +130,7 @@ async function handleSync() {
 }
 
 .status-warning {
-  color: #f59e0b;
+  color: var(--warning-color, #f59e0b);
 }
 
 .git-status {

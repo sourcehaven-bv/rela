@@ -68,6 +68,9 @@ export default tseslint.config(
       'vue/attributes-order': 'error',
       'vue/order-in-components': 'error',
 
+      // Security: Warn on v-html usage (XSS risk)
+      'vue/no-v-html': 'warn',
+
       // TypeScript
       '@typescript-eslint/no-unused-vars': [
         'error',
@@ -76,6 +79,14 @@ export default tseslint.config(
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-non-null-assertion': 'warn',
+      // Prefer type guards over type assertions
+      '@typescript-eslint/consistent-type-assertions': [
+        'warn',
+        {
+          assertionStyle: 'as',
+          objectLiteralTypeAssertions: 'allow-as-parameter',
+        },
+      ],
 
       // General
       'no-console': ['warn', { allow: ['warn', 'error'] }],
@@ -85,12 +96,44 @@ export default tseslint.config(
     },
   },
 
+  // Large file warnings (catches god components)
+  {
+    files: ['**/*.vue'],
+    rules: {
+      'max-lines': ['warn', { max: 500, skipBlankLines: true, skipComments: true }],
+    },
+  },
+
   // Test files - relaxed rules
   {
     files: ['**/*.test.ts', '**/*.spec.ts', '**/test/**/*.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
       'no-console': 'off',
+    },
+  },
+
+  // E2E test files - further relaxed (Playwright patterns)
+  {
+    files: ['e2e/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      'no-console': 'off',
+    },
+  },
+
+  // Config files
+  {
+    files: ['*.config.js', '*.config.ts'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+      },
+    },
+    rules: {
+      'no-var': 'off', // Allow var in config files for compatibility
     },
   }
 )

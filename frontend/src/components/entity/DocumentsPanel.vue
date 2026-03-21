@@ -2,7 +2,9 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { renderDocument } from '@/api/documents'
+import { useEvents } from '@/composables/useEvents'
 import type { DocumentConfig } from '@/types'
+import DOMPurify from 'dompurify'
 
 const props = defineProps<{
   entityType: string
@@ -11,6 +13,7 @@ const props = defineProps<{
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { on, off } = useEvents()
 
 // State
 const selectedDoc = ref<string | null>(null)
@@ -18,7 +21,9 @@ const docContent = ref<string>('')
 const loading = ref(false)
 const isCached = ref(false)
 const entityIds = ref<string[]>([]) // Entity IDs involved in current document
-let eventSource: EventSource | null = null
+
+// Sanitized content for safe rendering
+const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
 
 // Find documents that apply to this entity type
 const availableDocuments = computed(() => {
@@ -50,19 +55,15 @@ watch([selectedDoc, () => props.entityId], async () => {
 async function loadDocument(refresh = false) {
   if (!selectedDoc.value) return
 
-  console.log('[DocumentsPanel] loadDocument called, refresh:', refresh)
   loading.value = true
   docContent.value = ''
 
   try {
     const result = await renderDocument(selectedDoc.value, props.entityId, refresh)
-    console.log('[DocumentsPanel] Document rendered, entity_ids:', result.entity_ids)
     docContent.value = result.html
     isCached.value = result.cached
     entityIds.value = result.entity_ids || []
-    console.log('[DocumentsPanel] Updated entityIds:', entityIds.value)
-  } catch (err) {
-    console.error('Failed to render document:', err)
+  } catch {
     uiStore.error('Failed to render document')
     docContent.value = ''
     entityIds.value = []
@@ -71,70 +72,23 @@ async function loadDocument(refresh = false) {
   }
 }
 
-// Get API base URL - prefer runtime injection (for tests) over build-time env var
-function getApiBaseUrl(): string {
-  // Check for runtime injection (used by e2e tests to bypass Vite proxy)
-  if (typeof window !== 'undefined' && (window as { __RELA_API_BASE__?: string }).__RELA_API_BASE__) {
-    return (window as { __RELA_API_BASE__?: string }).__RELA_API_BASE__!
-  }
-  // Fall back to build-time env var
-  return import.meta.env.VITE_API_BASE || ''
-}
-
-// SSE subscription for live updates
-function setupSSE() {
-  if (eventSource) return // Already connected
-
-  const baseUrl = getApiBaseUrl()
-  const sseUrl = `${baseUrl}/api/v1/_events`
-  console.log('[DocumentsPanel] Setting up SSE connection to:', sseUrl)
-  console.log('[DocumentsPanel] Current entityIds:', entityIds.value)
-  eventSource = new EventSource(sseUrl)
-
-  eventSource.onopen = () => {
-    console.log('[DocumentsPanel] SSE connection opened')
-  }
-
-  eventSource.onerror = (e) => {
-    console.log('[DocumentsPanel] SSE connection error:', e)
-  }
-
-  // Handle entity change events
-  const entityEvents = ['entity:created', 'entity:updated', 'entity:deleted']
-  for (const eventType of entityEvents) {
-    eventSource.addEventListener(eventType, (event: MessageEvent) => {
-      console.log('[DocumentsPanel] SSE event received:', eventType, event.data)
-      try {
-        const data = JSON.parse(event.data) as { type?: string; id?: string }
-        console.log('[DocumentsPanel] Parsed event data:', data)
-        console.log('[DocumentsPanel] Current entityIds:', entityIds.value)
-        console.log('[DocumentsPanel] ID match:', data.id && entityIds.value.includes(data.id))
-        // Check if this entity is involved in our document
-        if (data.id && entityIds.value.includes(data.id)) {
-          console.log('[DocumentsPanel] Refreshing document due to entity change')
-          // Refetch document (will re-render if stale)
-          loadDocument(true)
-        }
-      } catch (err) {
-        console.log('[DocumentsPanel] SSE parse error:', err)
-      }
-    })
-  }
-}
-
-function cleanupSSE() {
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
+// Handle entity change events via centralized SSE
+function handleEntityChange(data: { id?: string }) {
+  if (data.id && entityIds.value.includes(data.id)) {
+    loadDocument(true)
   }
 }
 
 onMounted(() => {
-  setupSSE()
+  on('entity:created', handleEntityChange)
+  on('entity:updated', handleEntityChange)
+  on('entity:deleted', handleEntityChange)
 })
 
 onUnmounted(() => {
-  cleanupSSE()
+  off('entity:created', handleEntityChange)
+  off('entity:updated', handleEntityChange)
+  off('entity:deleted', handleEntityChange)
 })
 
 function getDocTitle(name: string, config: DocumentConfig): string {
@@ -163,8 +117,8 @@ function getDocTitle(name: string, config: DocumentConfig): string {
         <button
           class="btn btn-sm btn-secondary"
           :disabled="loading"
-          @click="loadDocument(true)"
           title="Refresh document"
+          @click="loadDocument(true)"
         >
           <span v-if="loading" class="spinner-sm" />
           <span v-else>Refresh</span>
@@ -179,7 +133,7 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
-      <div class="document-body" v-html="docContent" />
+      <div class="document-body" v-html="sanitizedContent" />
     </div>
 
     <div v-else class="empty-state">

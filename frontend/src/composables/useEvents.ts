@@ -33,6 +33,10 @@ let reconnectAttempts = 0
 const MAX_RECONNECT_DELAY = 30000 // 30 seconds max
 const BASE_RECONNECT_DELAY = 1000 // 1 second base
 
+// Custom event handlers registry
+type EventHandler = (data: EntityEventData) => void
+const eventHandlers: Map<SSEEventType, Set<EventHandler>> = new Map()
+
 /**
  * Composable for Server-Sent Events from the backend.
  * Handles connection lifecycle, auto-reconnection, and event dispatching to stores.
@@ -107,34 +111,20 @@ export function useEvents() {
       })
 
       // Handle entity events
-      // For now, we invalidate all caches on any entity change.
-      // Future: use the event data to invalidate only affected caches.
-      eventSource.addEventListener('entity:created', (event: MessageEvent) => {
-        try {
-          JSON.parse(event.data) as EntityEventData // validate format
-          entitiesStore.invalidateAll()
-        } catch {
-          console.warn('Failed to parse entity:created event data')
-        }
-      })
-
-      eventSource.addEventListener('entity:updated', (event: MessageEvent) => {
-        try {
-          JSON.parse(event.data) as EntityEventData
-          entitiesStore.invalidateAll()
-        } catch {
-          console.warn('Failed to parse entity:updated event data')
-        }
-      })
-
-      eventSource.addEventListener('entity:deleted', (event: MessageEvent) => {
-        try {
-          JSON.parse(event.data) as EntityEventData
-          entitiesStore.invalidateAll()
-        } catch {
-          console.warn('Failed to parse entity:deleted event data')
-        }
-      })
+      // Invalidate caches and dispatch to custom handlers
+      const entityEventTypes: SSEEventType[] = ['entity:created', 'entity:updated', 'entity:deleted']
+      for (const eventType of entityEventTypes) {
+        eventSource.addEventListener(eventType, (event: MessageEvent) => {
+          try {
+            const data = JSON.parse(event.data) as EntityEventData
+            entitiesStore.invalidateAll()
+            // Dispatch to custom handlers
+            eventHandlers.get(eventType)?.forEach((handler) => handler(data))
+          } catch {
+            console.warn(`Failed to parse ${eventType} event data`)
+          }
+        })
+      }
     } catch (err) {
       connectionState.value = {
         connected: false,
@@ -184,10 +174,25 @@ export function useEvents() {
     // The connection is shared across the app
   })
 
+  // Subscribe to specific event types
+  function on(eventType: SSEEventType, handler: EventHandler) {
+    if (!eventHandlers.has(eventType)) {
+      eventHandlers.set(eventType, new Set())
+    }
+    eventHandlers.get(eventType)!.add(handler)
+  }
+
+  // Unsubscribe from specific event types
+  function off(eventType: SSEEventType, handler: EventHandler) {
+    eventHandlers.get(eventType)?.delete(handler)
+  }
+
   return {
     connectionState,
     connect,
     disconnect,
+    on,
+    off,
   }
 }
 

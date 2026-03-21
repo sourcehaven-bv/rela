@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import type { FormFieldOrRelation, Entity } from '@/types'
 
@@ -114,6 +114,11 @@ watch(showDropdown, (show) => {
     document.removeEventListener('click', handleClickOutside)
   }
 })
+
+// Clean up event listener on unmount
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleClickOutside)
+})
 </script>
 
 <template>
@@ -142,13 +147,17 @@ watch(showDropdown, (show) => {
       <input
         v-model="searchQuery"
         type="text"
+        role="combobox"
+        :aria-expanded="showDropdown"
+        aria-haspopup="listbox"
+        aria-autocomplete="list"
         :placeholder="`Search ${targetTypes.join(', ')}...`"
         @focus="showDropdown = true"
         @input="showDropdown = true"
       />
 
       <!-- Dropdown -->
-      <div v-if="showDropdown && !loading" class="dropdown">
+      <div v-if="showDropdown && !loading" class="dropdown" role="listbox">
         <div v-if="filteredCandidates.length === 0" class="dropdown-empty">
           No matching entities found
         </div>
@@ -157,6 +166,7 @@ watch(showDropdown, (show) => {
           v-else
           :key="entity.id"
           class="dropdown-item"
+          role="option"
           @click="selectEntity(entity)"
         >
           <span class="entity-type">{{ entity.type }}</span>

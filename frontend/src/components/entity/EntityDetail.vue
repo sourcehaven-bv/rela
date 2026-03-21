@@ -927,18 +927,18 @@ onMounted(() => loadEntity())
 }
 
 .command-status.running {
-  background: #fef3c7;
-  color: #92400e;
+  background: color-mix(in srgb, var(--warning-color, #f59e0b) 20%, transparent);
+  color: var(--warning-color, #f59e0b);
 }
 
 .command-status.success {
-  background: #d1fae5;
-  color: #065f46;
+  background: color-mix(in srgb, var(--success-color, #10b981) 20%, transparent);
+  color: var(--success-color, #10b981);
 }
 
 .command-status.error {
-  background: #fee2e2;
-  color: #991b1b;
+  background: color-mix(in srgb, var(--error-color, #ef4444) 20%, transparent);
+  color: var(--error-color, #ef4444);
 }
 
 .command-output {
