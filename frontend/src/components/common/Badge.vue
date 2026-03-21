@@ -11,22 +11,20 @@ const props = defineProps<{
 
 const schemaStore = useSchemaStore()
 
-// Map badge class names to inline styles
-// Using colors that work in both light and dark modes
-const badgeClassMap: Record<string, { backgroundColor: string; color: string }> = {
-  'badge-blue': { backgroundColor: 'color-mix(in srgb, #3b82f6 20%, transparent)', color: '#60a5fa' },
-  'badge-purple': { backgroundColor: 'color-mix(in srgb, #8b5cf6 20%, transparent)', color: '#a78bfa' },
-  'badge-green': { backgroundColor: 'color-mix(in srgb, #22c55e 20%, transparent)', color: '#4ade80' },
-  'badge-gray': { backgroundColor: 'var(--hover-bg)', color: 'var(--muted-text)' },
-  'badge-red': { backgroundColor: 'color-mix(in srgb, #ef4444 20%, transparent)', color: '#f87171' },
-  'badge-orange': { backgroundColor: 'color-mix(in srgb, #f97316 20%, transparent)', color: '#fb923c' },
-  'badge-yellow': { backgroundColor: 'color-mix(in srgb, #eab308 20%, transparent)', color: '#facc15' },
+// Map badge class names to CSS class names for styling
+// Colors are defined in CSS variables for light/dark mode support
+const badgeClassNames: Record<string, string> = {
+  'badge-blue': 'badge--blue',
+  'badge-purple': 'badge--purple',
+  'badge-green': 'badge--green',
+  'badge-gray': 'badge--gray',
+  'badge-red': 'badge--red',
+  'badge-orange': 'badge--orange',
+  'badge-yellow': 'badge--yellow',
 }
 
-const defaultStyle = { backgroundColor: 'var(--hover-bg)', color: 'var(--muted-text)' }
-
 // Look up style: first try by property name, then search all properties
-const badgeStyle = computed(() => {
+const badgeClass = computed(() => {
   // Normalize: lowercase, spaces to underscores (keep underscores as-is)
   const valueKey = props.value.toLowerCase().replace(/\s/g, '_')
   const styles = schemaStore.styles
@@ -35,23 +33,23 @@ const badgeStyle = computed(() => {
   if (props.property) {
     const propStyles = styles[props.property]
     if (propStyles && propStyles[valueKey]) {
-      return badgeClassMap[propStyles[valueKey]] || defaultStyle
+      return badgeClassNames[propStyles[valueKey]] || 'badge--gray'
     }
   }
 
   // Search all properties for this value
   for (const propStyles of Object.values(styles)) {
     if (propStyles && propStyles[valueKey]) {
-      return badgeClassMap[propStyles[valueKey]] || defaultStyle
+      return badgeClassNames[propStyles[valueKey]] || 'badge--gray'
     }
   }
 
-  return defaultStyle
+  return 'badge--gray'
 })
 </script>
 
 <template>
-  <span class="badge" :style="badgeStyle">
+  <span class="badge" :class="badgeClass">
     {{ value }}
   </span>
 </template>
@@ -65,5 +63,72 @@ const badgeStyle = computed(() => {
   font-size: 12px;
   font-weight: 500;
   text-transform: capitalize;
+}
+
+/* Light mode colors - darker text for better contrast */
+.badge--blue {
+  background-color: color-mix(in srgb, #3b82f6 18%, transparent);
+  color: #1d4ed8;
+}
+
+.badge--purple {
+  background-color: color-mix(in srgb, #8b5cf6 18%, transparent);
+  color: #6d28d9;
+}
+
+.badge--green {
+  background-color: color-mix(in srgb, #22c55e 18%, transparent);
+  color: #15803d;
+}
+
+.badge--gray {
+  background-color: var(--hover-bg);
+  color: var(--muted-text);
+}
+
+.badge--red {
+  background-color: color-mix(in srgb, #ef4444 18%, transparent);
+  color: #b91c1c;
+}
+
+.badge--orange {
+  background-color: color-mix(in srgb, #f97316 18%, transparent);
+  color: #c2410c;
+}
+
+.badge--yellow {
+  background-color: color-mix(in srgb, #eab308 18%, transparent);
+  color: #a16207;
+}
+
+/* Dark mode colors - lighter text (applied via .dark class on html) */
+:global(.dark) .badge--blue {
+  background-color: color-mix(in srgb, #3b82f6 20%, transparent);
+  color: #60a5fa;
+}
+
+:global(.dark) .badge--purple {
+  background-color: color-mix(in srgb, #8b5cf6 22%, transparent);
+  color: #c4b5fd;
+}
+
+:global(.dark) .badge--green {
+  background-color: color-mix(in srgb, #22c55e 20%, transparent);
+  color: #4ade80;
+}
+
+:global(.dark) .badge--red {
+  background-color: color-mix(in srgb, #ef4444 20%, transparent);
+  color: #f87171;
+}
+
+:global(.dark) .badge--orange {
+  background-color: color-mix(in srgb, #f97316 20%, transparent);
+  color: #fb923c;
+}
+
+:global(.dark) .badge--yellow {
+  background-color: color-mix(in srgb, #eab308 20%, transparent);
+  color: #fde047;
 }
 </style>
