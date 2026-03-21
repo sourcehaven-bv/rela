@@ -67,3 +67,20 @@ export async function createRelation(
 ): Promise<void> {
   return api.post(`/${getPlural(type)}/${entityId}/relations/${relationName}`, { id: targetId })
 }
+
+export async function toggleCheckbox(entityId: string, index: number): Promise<string> {
+  const formData = new FormData()
+  formData.append('entity_id', entityId)
+  formData.append('index', String(index))
+
+  const response = await fetch('/api/toggle-checkbox', {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    throw new Error('Failed to toggle checkbox')
+  }
+
+  return response.text()
+}

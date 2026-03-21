@@ -15,6 +15,7 @@ let mermaidCounter = 0
 /**
  * Render markdown to HTML with GFM support.
  * Returns sanitized HTML string (mermaid diagrams are placeholders).
+ * Checkboxes get data-cb-idx attributes for toggle support.
  */
 export function renderMarkdown(content: string): string {
   if (!content) return ''
@@ -24,7 +25,33 @@ export function renderMarkdown(content: string): string {
     breaks: true,
   }) as string
 
-  return DOMPurify.sanitize(rawHtml)
+  // Add data-cb-idx to checkboxes for toggle support
+  let cbIdx = 0
+  const htmlWithCbIdx = rawHtml.replace(
+    /<input\s+type="checkbox"([^>]*)>/gi,
+    (_match, attrs) => `<input type="checkbox" data-cb-idx="${cbIdx++}"${attrs}>`
+  )
+
+  // Allow data-cb-idx attribute through DOMPurify
+  return DOMPurify.sanitize(htmlWithCbIdx, {
+    ADD_ATTR: ['data-cb-idx'],
+  })
+}
+
+/**
+ * Get checkbox stats from content (checked/total).
+ */
+export function getCheckboxStats(content: string): { checked: number; total: number } | null {
+  if (!content) return null
+
+  const checkboxPattern = /^\s*- \[([ xX])\]/gm
+  const matches = content.match(checkboxPattern)
+  if (!matches || matches.length === 0) return null
+
+  const total = matches.length
+  const checked = matches.filter((m) => /\[[xX]\]/.test(m)).length
+
+  return { checked, total }
 }
 
 /**

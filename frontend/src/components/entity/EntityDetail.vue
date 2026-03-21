@@ -6,9 +6,9 @@ import { useScopeNavigation } from '@/composables'
 import type { Entity, Command } from '@/types'
 import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
-import { renderMarkdown, renderMermaidDiagrams } from '@/utils/markdown'
+import { renderMarkdown, renderMermaidDiagrams, getCheckboxStats } from '@/utils/markdown'
 import { formatValue, isEnumProperty } from '@/utils/format'
-import { getCommands } from '@/api'
+import { getCommands, toggleCheckbox } from '@/api'
 import Badge from '@/components/common/Badge.vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
@@ -106,13 +106,49 @@ const renderedContent = computed(() => {
   return renderMarkdown(entity.value.content)
 })
 
-// Render mermaid diagrams after content is mounted
+const checkboxStats = computed(() => {
+  if (!entity.value?.content) return null
+  return getCheckboxStats(entity.value.content)
+})
+
+// Render mermaid diagrams and setup checkbox handlers after content is mounted
 watch(renderedContent, async () => {
   await nextTick()
   if (contentRef.value) {
     await renderMermaidDiagrams(contentRef.value)
+    setupCheckboxHandlers()
   }
 })
+
+function setupCheckboxHandlers() {
+  if (!contentRef.value) return
+
+  const checkboxes = contentRef.value.querySelectorAll('input[type="checkbox"][data-cb-idx]')
+  checkboxes.forEach((cb) => {
+    const checkbox = cb as HTMLInputElement
+    // Remove any existing handler
+    checkbox.onclick = null
+    // Add click handler
+    checkbox.addEventListener('click', async (e) => {
+      e.preventDefault()
+      const idx = parseInt(checkbox.dataset.cbIdx || '0', 10)
+      await handleCheckboxToggle(idx)
+    })
+  })
+}
+
+async function handleCheckboxToggle(index: number) {
+  if (!entity.value) return
+
+  try {
+    await toggleCheckbox(entity.value.id, index)
+    // Reload entity to get updated content
+    entity.value = await entitiesStore.fetchEntity(props.entityType, props.entityId, true)
+  } catch (err) {
+    uiStore.error('Failed to toggle checkbox')
+    console.error(err)
+  }
+}
 
 // Methods
 async function loadEntity() {
@@ -328,7 +364,10 @@ onMounted(() => loadEntity())
 
       <!-- Content Section -->
       <section v-if="entity.content" class="detail-section">
-        <h2>Content</h2>
+        <h2>
+          Content
+          <span v-if="checkboxStats" class="cb-stats">({{ checkboxStats.checked }}/{{ checkboxStats.total }})</span>
+        </h2>
         <div ref="contentRef" class="content-body" v-html="renderedContent"/>
       </section>
 
@@ -548,6 +587,14 @@ onMounted(() => loadEntity())
 
 .content-body :deep(input[type="checkbox"]) {
   margin-right: 8px;
+  cursor: pointer;
+}
+
+.cb-stats {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted-text);
+  margin-left: 8px;
 }
 
 /* Uses global .modal-overlay, .modal, .modal-actions from App.vue */
