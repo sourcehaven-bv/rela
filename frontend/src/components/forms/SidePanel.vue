@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
-import type { SidePanelSection, SidePanelEntity } from '@/types'
+import type { SidePanelSection, SidePanelEntity, SidePanelAddTarget } from '@/types'
 import Badge from '@/components/common/Badge.vue'
 
 const props = defineProps<{
@@ -60,6 +60,17 @@ function navigateToEntity(entity: SidePanelEntity) {
   } else {
     router.push(`/entity/${entity.type}/${entity.id}`)
   }
+}
+
+function createNewForSection(section: SidePanelSection, target: SidePanelAddTarget) {
+  if (!section.addInfo) return
+  // Navigate to create form with relation context
+  const query: Record<string, string> = {
+    _relation: section.addInfo.relation,
+    _linkAs: section.addInfo.linkAs,
+    _peerId: section.addInfo.peerId,
+  }
+  router.push({ path: `/form/${target.formId}`, query })
 }
 
 watch(
@@ -153,6 +164,30 @@ onMounted(() => loadSidePanel())
               </div>
             </div>
           </template>
+
+          <!-- Add button -->
+          <div v-if="section.addInfo?.targets?.length" class="section-actions">
+            <template v-if="section.addInfo.targets.length === 1">
+              <button
+                class="btn-add"
+                @click="createNewForSection(section, section.addInfo.targets[0])"
+              >
+                + {{ section.addInfo.targets[0].label }}
+              </button>
+            </template>
+            <template v-else>
+              <div class="btn-group">
+                <button
+                  v-for="target in section.addInfo.targets"
+                  :key="target.entityType"
+                  class="btn-add btn-add-sm"
+                  @click="createNewForSection(section, target)"
+                >
+                  + {{ target.label }}
+                </button>
+              </div>
+            </template>
+          </div>
         </div>
       </div>
     </template>
@@ -345,6 +380,43 @@ onMounted(() => loadSidePanel())
 
 .field-value {
   color: var(--text-color);
+}
+
+/* Section actions */
+.section-actions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.btn-add {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--hover-bg);
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  color: var(--muted-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-add:hover {
+  background: var(--card-bg);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.btn-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.btn-add-sm {
+  width: auto;
+  flex: 1;
+  min-width: 80px;
 }
 
 /* Responsive: mobile overlay */

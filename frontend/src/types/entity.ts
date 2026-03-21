@@ -65,6 +65,29 @@ export interface SidePanelEntity {
   hasContent: boolean
 }
 
+// Add target for side panel (reusable)
+export interface SidePanelAddTarget {
+  entityType: string
+  formId: string
+  label: string
+}
+
+// Add button info for side panel
+export interface SidePanelAddInfo {
+  relation: string
+  linkAs: 'from' | 'to'
+  peerId: string
+  targets: SidePanelAddTarget[]
+}
+
+// Link existing button info for side panel
+export interface SidePanelLinkInfo {
+  relation: string
+  linkAs: 'from' | 'to'
+  peerId: string
+  entityTypes: string[]
+}
+
 export interface SidePanelSection {
   heading: string
   sectionId: string
@@ -73,4 +96,6 @@ export interface SidePanelSection {
   emptyMessage?: string
   fields?: SidePanelField[]
   entities?: SidePanelEntity[]
+  addInfo?: SidePanelAddInfo
+  linkInfo?: SidePanelLinkInfo
 }

@@ -1293,6 +1293,8 @@ type V1SidePanelSection struct {
 	EmptyMessage string              `json:"emptyMessage,omitempty"`
 	Fields       []V1SectionField    `json:"fields,omitempty"`
 	Entities     []V1SidePanelEntity `json:"entities,omitempty"`
+	AddInfo      *V1ViewAddInfo      `json:"addInfo,omitempty"`
+	LinkInfo     *V1ViewLinkInfo     `json:"linkInfo,omitempty"`
 }
 
 // V1SectionField represents a field in a side panel section.
@@ -1347,12 +1349,27 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get the entry entity
+	entry, found := a.g.GetNode(entityID)
+	if !found {
+		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
+		return
+	}
+
 	// Execute side panel traversal
 	sections := a.executeSidePanel(form.SidePanel, entityID, form.EntityType)
 	if sections == nil {
 		writeV1JSON(w, http.StatusOK, []V1SidePanelSection{})
 		return
 	}
+
+	// Build a synthetic ViewConfig to resolve add/link buttons
+	viewConfig := ViewConfig{
+		Entry:    ViewEntry{Type: form.EntityType},
+		Traverse: form.SidePanel.Traverse,
+		Sections: form.SidePanel.Sections,
+	}
+	a.resolveSectionButtonsWithTraverse(viewConfig, sections, entry)
 
 	// Convert to API response format
 	result := make([]V1SidePanelSection, 0, len(sections))
@@ -1384,6 +1401,30 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 				apiEnt.Fields = append(apiEnt.Fields, V1SectionField(f))
 			}
 			apiSec.Entities = append(apiSec.Entities, apiEnt)
+		}
+
+		// Convert add/link info
+		if sec.AddInfo != nil {
+			apiSec.AddInfo = &V1ViewAddInfo{
+				Relation: sec.AddInfo.Relation,
+				LinkAs:   sec.AddInfo.LinkAs,
+				PeerID:   sec.AddInfo.PeerID,
+			}
+			for _, t := range sec.AddInfo.Targets {
+				apiSec.AddInfo.Targets = append(apiSec.AddInfo.Targets, V1ViewAddTarget{
+					EntityType: t.EntityType,
+					FormID:     t.FormID,
+					Label:      t.Label,
+				})
+			}
+		}
+		if sec.LinkInfo != nil {
+			apiSec.LinkInfo = &V1ViewLinkInfo{
+				Relation:    sec.LinkInfo.Relation,
+				LinkAs:      sec.LinkInfo.LinkAs,
+				PeerID:      sec.LinkInfo.PeerID,
+				EntityTypes: sec.LinkInfo.EntityTypes,
+			}
 		}
 
 		result = append(result, apiSec)
