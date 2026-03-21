@@ -405,7 +405,8 @@ function applyFilters() {
   // Re-layout after filtering (200ms delay for CSS transitions)
   setTimeout(() => {
     if (cy) {
-      const opts: cytoscape.LayoutOptions = { ...layouts[currentLayout.value], animationDuration: 500 }
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      const opts = { ...layouts[currentLayout.value], animationDuration: 500 } as cytoscape.LayoutOptions
       cy.elements(':visible').layout(opts).run()
     }
   }, 200)
