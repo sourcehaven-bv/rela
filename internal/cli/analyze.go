@@ -2,16 +2,24 @@ package cli
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
+)
+
+var (
+	analyzeViewName string
+	analyzeEntryID  string
+
+	// cachedOpts holds the resolved scope to avoid re-executing the view multiple times.
+	// Set by the first call to resolveAnalyzeOpts() in a command invocation.
+	cachedOpts     *workspace.AnalyzeOptions
+	cachedOptsOnce bool
 )
 
 var analyzeCmd = &cobra.Command{
@@ -55,7 +63,12 @@ var analyzeOrphansCmd = &cobra.Command{
 	Use:   "orphans",
 	Short: "Find entities with no connections",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		orphans := ws.FindOrphans()
+		opts, err := resolveAnalyzeOpts()
+		if err != nil {
+			return err
+		}
+
+		orphans := ws.FindOrphansWithScope(*opts)
 		filter.SortByID(orphans, false)
 
 		if writeAnalysisJSON(len(orphans), orphans,
@@ -76,24 +89,12 @@ var analyzeDuplicatesCmd = &cobra.Command{
 	Use:   "duplicates",
 	Short: "Find entities with similar titles",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		entities := ws.AllEntities()
-
-		// Group by normalized title
-		titleGroups := make(map[string][]*model.Entity)
-		for _, e := range entities {
-			title := normalizeTitle(e.Title())
-			if title != "" {
-				titleGroups[title] = append(titleGroups[title], e)
-			}
+		opts, err := resolveAnalyzeOpts()
+		if err != nil {
+			return err
 		}
 
-		// Find duplicates
-		var duplicates [][]*model.Entity
-		for _, group := range titleGroups {
-			if len(group) > 1 {
-				duplicates = append(duplicates, group)
-			}
-		}
+		duplicates := ws.FindDuplicates(*opts)
 
 		// Handle JSON output format
 		if out.Format == "json" {
@@ -104,8 +105,8 @@ var analyzeDuplicatesCmd = &cobra.Command{
 			var details []duplicateGroup
 			for _, group := range duplicates {
 				details = append(details, duplicateGroup{
-					Title:    group[0].Title(),
-					Entities: group,
+					Title:    group.Title,
+					Entities: group.Entities,
 				})
 			}
 			writeAnalysisJSON(len(duplicates), details,
@@ -121,8 +122,8 @@ var analyzeDuplicatesCmd = &cobra.Command{
 		out.WriteWarning("Found %d groups of potential duplicates:", len(duplicates))
 		for _, group := range duplicates {
 			out.WriteMessage("")
-			out.WriteMessage("  Title: %s", group[0].Title())
-			for _, e := range group {
+			out.WriteMessage("  Title: %s", group.Title)
+			for _, e := range group.Entities {
 				out.WriteMessage("    - %s (%s)", e.ID, e.Type)
 			}
 		}
@@ -139,65 +140,12 @@ var analyzeGapsCmd = &cobra.Command{
 Entity types configured with id_type: string are excluded from gap analysis
 since they use manually-specified IDs that are not expected to be sequential.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Build a set of prefixes that belong to manual ID types (should be skipped)
-		stringIDPrefixes := make(map[string]bool)
-		for _, entityDef := range meta.Entities {
-			if entityDef.IsManualID() {
-				for _, idPrefix := range entityDef.GetIDPrefixes() {
-					// Normalize prefix (remove trailing dash if present)
-					prefix := strings.TrimSuffix(idPrefix, "-")
-					stringIDPrefixes[prefix] = true
-				}
-			}
+		opts, err := resolveAnalyzeOpts()
+		if err != nil {
+			return err
 		}
 
-		// Group IDs by prefix (only for sequential ID types)
-		prefixGroups := make(map[string][]int)
-
-		for _, id := range ws.EntityIDs() {
-			parsed, err := model.ParseEntityID(id)
-			if err != nil || parsed.Prefix == "" {
-				continue
-			}
-			// Skip if this prefix belongs to a string ID type
-			if stringIDPrefixes[strings.TrimSuffix(parsed.Prefix, "-")] {
-				continue
-			}
-			prefixGroups[parsed.Prefix] = append(prefixGroups[parsed.Prefix], parsed.Number)
-		}
-
-		// Collect all gaps
-		type gapResult struct {
-			Prefix  string   `json:"prefix"`
-			Missing []string `json:"missing"`
-		}
-		var allGaps []gapResult
-
-		for prefix, numbers := range prefixGroups {
-			sort.Ints(numbers)
-
-			// Find gaps
-			var gaps []int
-			for i := 1; i < len(numbers); i++ {
-				expected := numbers[i-1] + 1
-				if numbers[i] != expected {
-					for j := expected; j < numbers[i]; j++ {
-						gaps = append(gaps, j)
-					}
-				}
-			}
-
-			if len(gaps) > 0 {
-				gapStrs := make([]string, len(gaps))
-				for i, n := range gaps {
-					gapStrs[i] = fmt.Sprintf("%s%03d", prefix, n)
-				}
-				allGaps = append(allGaps, gapResult{
-					Prefix:  prefix,
-					Missing: gapStrs,
-				})
-			}
-		}
+		allGaps := ws.FindGaps(*opts)
 
 		if writeAnalysisJSON(len(allGaps), allGaps,
 			"No ID sequence gaps found", "Found gaps in %d ID sequences") {
@@ -221,131 +169,19 @@ var analyzeCardinalityCmd = &cobra.Command{
 	Use:   "cardinality",
 	Short: "Check relation cardinality constraints",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		type cardinalityViolation struct {
-			EntityID     string `json:"entity_id"`
-			RelationType string `json:"relation_type"`
-			Constraint   string `json:"constraint"`
-			Required     int    `json:"required"`
-			Actual       int    `json:"actual"`
-		}
-		var allViolations []cardinalityViolation
-
-		for relName, relDef := range meta.Relations {
-			// Check min_outgoing constraint
-			if relDef.MinOutgoing != nil && *relDef.MinOutgoing > 0 {
-				// For each entity type in From, check they have at least MinOutgoing outgoing relations of this type
-				for _, sourceType := range relDef.From {
-					entities := ws.EntitiesByType(sourceType)
-					for _, e := range entities {
-						count := 0
-						for _, edge := range ws.OutgoingRelations(e.ID) {
-							if edge.Type == relName {
-								count++
-							}
-						}
-						if count < *relDef.MinOutgoing {
-							allViolations = append(allViolations, cardinalityViolation{
-								EntityID:     e.ID,
-								RelationType: relName,
-								Constraint:   "min_outgoing",
-								Required:     *relDef.MinOutgoing,
-								Actual:       count,
-							})
-						}
-					}
-				}
-			}
-
-			// Check max_outgoing constraint
-			if relDef.MaxOutgoing != nil {
-				for _, sourceType := range relDef.From {
-					entities := ws.EntitiesByType(sourceType)
-					for _, e := range entities {
-						count := 0
-						for _, edge := range ws.OutgoingRelations(e.ID) {
-							if edge.Type == relName {
-								count++
-							}
-						}
-						if count > *relDef.MaxOutgoing {
-							allViolations = append(allViolations, cardinalityViolation{
-								EntityID:     e.ID,
-								RelationType: relName,
-								Constraint:   "max_outgoing",
-								Required:     *relDef.MaxOutgoing,
-								Actual:       count,
-							})
-						}
-					}
-				}
-			}
-
-			// Check min_incoming constraint
-			// For each entity type in To, check they have at least MinIncoming incoming relations of this type
-			if relDef.MinIncoming != nil && *relDef.MinIncoming > 0 {
-				for _, targetType := range relDef.To {
-					entities := ws.EntitiesByType(targetType)
-					for _, e := range entities {
-						count := 0
-						for _, edge := range ws.IncomingRelations(e.ID) {
-							if edge.Type == relName {
-								count++
-							}
-						}
-						if count < *relDef.MinIncoming {
-							// Get the inverse relation name for the message if available
-							relLabel := relName
-							if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
-								relLabel = relDef.Inverse.GetID()
-							}
-							allViolations = append(allViolations, cardinalityViolation{
-								EntityID:     e.ID,
-								RelationType: relLabel,
-								Constraint:   "min_incoming",
-								Required:     *relDef.MinIncoming,
-								Actual:       count,
-							})
-						}
-					}
-				}
-			}
-
-			// Check max_incoming constraint
-			if relDef.MaxIncoming != nil {
-				for _, targetType := range relDef.To {
-					entities := ws.EntitiesByType(targetType)
-					for _, e := range entities {
-						count := 0
-						for _, edge := range ws.IncomingRelations(e.ID) {
-							if edge.Type == relName {
-								count++
-							}
-						}
-						if count > *relDef.MaxIncoming {
-							// Get the inverse relation name for the message if available
-							relLabel := relName
-							if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
-								relLabel = relDef.Inverse.GetID()
-							}
-							allViolations = append(allViolations, cardinalityViolation{
-								EntityID:     e.ID,
-								RelationType: relLabel,
-								Constraint:   "max_incoming",
-								Required:     *relDef.MaxIncoming,
-								Actual:       count,
-							})
-						}
-					}
-				}
-			}
+		opts, err := resolveAnalyzeOpts()
+		if err != nil {
+			return err
 		}
 
-		if writeAnalysisJSON(len(allViolations), allViolations,
+		violations := ws.CheckCardinality(*opts)
+
+		if writeAnalysisJSON(len(violations), violations,
 			"All cardinality constraints satisfied", "Found %d cardinality violations") {
 			return nil
 		}
 
-		for _, v := range allViolations {
+		for _, v := range violations {
 			if strings.HasPrefix(v.Constraint, "min_") {
 				out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
 					v.EntityID, v.Required, v.RelationType, v.Actual)
@@ -355,10 +191,10 @@ var analyzeCardinalityCmd = &cobra.Command{
 			}
 		}
 
-		if len(allViolations) == 0 {
+		if len(violations) == 0 {
 			out.WriteSuccess("All cardinality constraints satisfied")
 		} else {
-			out.WriteWarning("Found %d cardinality violations", len(allViolations))
+			out.WriteWarning("Found %d cardinality violations", len(violations))
 		}
 
 		return nil
@@ -380,41 +216,33 @@ Checks for:
 
 This catches issues in manually-edited markdown files that bypass CLI validation.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runPropertyValidation()
+		opts, err := resolveAnalyzeOpts()
+		if err != nil {
+			return err
+		}
+		return runPropertyValidation(*opts)
 	},
 }
 
-// runPropertyValidation validates all entity properties against the metamodel
-func runPropertyValidation() error {
-	entities := ws.AllEntities()
+// runPropertyValidation validates entity properties against the metamodel.
+func runPropertyValidation(opts workspace.AnalyzeOptions) error {
+	allErrors := ws.ValidateProperties(opts)
 	errorCount := 0
-
-	// Group errors by entity for cleaner output
-	type entityErrors struct {
-		entity *model.Entity
-		errs   []*metamodel.ValidationError
-	}
-	var allErrors []entityErrors
-
-	for _, entity := range entities {
-		errs := meta.ValidateEntity(entity)
-		if len(errs) > 0 {
-			allErrors = append(allErrors, entityErrors{entity: entity, errs: errs})
-			errorCount += len(errs)
-		}
+	for _, ee := range allErrors {
+		errorCount += len(ee.Errors)
 	}
 
 	// Handle JSON output format
 	if out.Format == "json" {
 		var results []output.PropertyValidationResult
 		for _, ee := range allErrors {
-			errStrings := make([]string, len(ee.errs))
-			for i, err := range ee.errs {
+			errStrings := make([]string, len(ee.Errors))
+			for i, err := range ee.Errors {
 				errStrings[i] = err.Message
 			}
 			results = append(results, output.PropertyValidationResult{
-				EntityID:   ee.entity.ID,
-				EntityType: ee.entity.Type,
+				EntityID:   ee.EntityID,
+				EntityType: ee.EntityType,
 				Errors:     errStrings,
 			})
 		}
@@ -443,22 +271,13 @@ func runPropertyValidation() error {
 	out.WriteError("Found %d property errors across %d entities:", errorCount, len(allErrors))
 	for _, ee := range allErrors {
 		out.WriteMessage("")
-		out.WriteMessage("  %s (%s):", ee.entity.ID, ee.entity.Type)
-		for _, err := range ee.errs {
+		out.WriteMessage("  %s (%s):", ee.EntityID, ee.EntityType)
+		for _, err := range ee.Errors {
 			out.WriteMessage("    - %s", err.Error())
 		}
 	}
 
 	return nil
-}
-
-// countPropertyErrors counts property validation errors across all entities
-func countPropertyErrors() int {
-	count := 0
-	for _, entity := range ws.AllEntities() {
-		count += len(meta.ValidateEntity(entity))
-	}
-	return count
 }
 
 var analyzeValidationsCmd = &cobra.Command{
@@ -483,86 +302,16 @@ Example metamodel configuration:
         - "priority!="
       severity: error`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runValidations()
+		opts, err := resolveAnalyzeOpts()
+		if err != nil {
+			return err
+		}
+		return runValidations(*opts)
 	},
 }
 
-// runValidations executes custom validation rules and returns error/warning counts
-// validationViolation represents a single validation rule violation for JSON output
-type validationViolation struct {
-	RuleName    string `json:"rule_name"`
-	Description string `json:"description"`
-	Severity    string `json:"severity"`
-	EntityID    string `json:"entity_id"`
-	EntityTitle string `json:"entity_title"`
-}
-
-// collectValidationViolations collects all validation violations and counts
-func collectValidationViolations(
-	rules []metamodel.ValidationRule,
-) (violations []validationViolation, errorCount, warningCount int) {
-	for _, rule := range rules {
-		ruleViolations := checkValidationRule(rule)
-		severity := rule.GetSeverity()
-		for _, v := range ruleViolations {
-			violations = append(violations, validationViolation{
-				RuleName:    rule.Name,
-				Description: rule.Description,
-				Severity:    severity,
-				EntityID:    v.ID,
-				EntityTitle: v.Title(),
-			})
-			if severity == "error" {
-				errorCount++
-			} else {
-				warningCount++
-			}
-		}
-	}
-	return violations, errorCount, warningCount
-}
-
-// writeValidationsTextOutput writes validation results in text format
-func writeValidationsTextOutput(
-	rules []metamodel.ValidationRule,
-	errorCount, warningCount int,
-) {
-	// Group violations by rule
-	ruleViolations := make(map[string][]*model.Entity)
-	for _, rule := range rules {
-		violations := checkValidationRule(rule)
-		if len(violations) > 0 {
-			ruleViolations[rule.Name] = violations
-		}
-	}
-
-	for _, rule := range rules {
-		violations := ruleViolations[rule.Name]
-		if len(violations) > 0 {
-			if rule.GetSeverity() == "error" {
-				out.WriteError("%s (%d):", rule.Description, len(violations))
-			} else {
-				out.WriteWarning("%s (%d):", rule.Description, len(violations))
-			}
-			for _, v := range violations {
-				out.WriteMessage("  %s: %s", v.ID, v.Title())
-			}
-		}
-	}
-
-	if errorCount == 0 && warningCount == 0 {
-		out.WriteSuccess("All %d validation rules passed", len(rules))
-		return
-	}
-	if errorCount > 0 {
-		out.WriteError("Found %d errors, %d warnings across %d rules", errorCount, warningCount, len(rules))
-	} else {
-		out.WriteWarning("Found %d warnings across %d rules", warningCount, len(rules))
-	}
-}
-
-// runValidations executes custom validation rules and returns error/warning counts
-func runValidations() error {
+// runValidations executes custom validation rules.
+func runValidations(opts workspace.AnalyzeOptions) error {
 	rules := meta.Validations
 	if len(rules) == 0 {
 		if out.Format == "json" {
@@ -577,7 +326,17 @@ func runValidations() error {
 		return nil
 	}
 
-	allViolations, errorCount, warningCount := collectValidationViolations(rules)
+	violations := ws.RunValidations(opts)
+
+	// Count by severity
+	errorCount, warningCount := 0, 0
+	for _, v := range violations {
+		if v.Severity == "error" {
+			errorCount++
+		} else {
+			warningCount++
+		}
+	}
 
 	if out.Format == "json" {
 		status := "success"
@@ -594,260 +353,53 @@ func runValidations() error {
 			Status:  status,
 			Message: message,
 			Count:   errorCount + warningCount,
-			Details: allViolations,
+			Details: violations,
 		})
 	}
 
-	writeValidationsTextOutput(rules, errorCount, warningCount)
-	return nil
-}
-
-// checkValidationRule checks a single validation rule against all applicable entities
-func checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
-	var violations []*model.Entity
-
-	// Parse when filters (conditions that select which entities to check)
-	whenFilters, err := filter.ParseAll(rule.When)
-	if err != nil {
-		out.WriteError("Invalid 'when' filter in rule %q: %v", rule.Name, err)
-		return nil
+	// Group violations by rule for text output
+	ruleViolations := make(map[string][]workspace.ValidationViolation)
+	for _, v := range violations {
+		ruleViolations[v.RuleName] = append(ruleViolations[v.RuleName], v)
 	}
 
-	// Parse then filters (conditions that matched entities must satisfy)
-	thenFilters, err := filter.ParseAll(rule.Then)
-	if err != nil {
-		out.WriteError("Invalid 'then' filter in rule %q: %v", rule.Name, err)
-		return nil
+	for _, rule := range rules {
+		vs := ruleViolations[rule.Name]
+		if len(vs) > 0 {
+			if rule.GetSeverity() == "error" {
+				out.WriteError("%s (%d):", rule.Description, len(vs))
+			} else {
+				out.WriteWarning("%s (%d):", rule.Description, len(vs))
+			}
+			for _, v := range vs {
+				out.WriteMessage("  %s: %s", v.EntityID, v.EntityTitle)
+			}
+		}
 	}
 
-	// Get entities to check
-	var entities []*model.Entity
-	if rule.EntityType != "" {
-		entities = ws.EntitiesByType(rule.EntityType)
+	if errorCount == 0 && warningCount == 0 {
+		out.WriteSuccess("All %d validation rules passed", len(rules))
+		return nil
+	}
+	if errorCount > 0 {
+		out.WriteError("Found %d errors, %d warnings across %d rules", errorCount, warningCount, len(rules))
 	} else {
-		entities = ws.AllEntities()
+		out.WriteWarning("Found %d warnings across %d rules", warningCount, len(rules))
 	}
-
-	for _, entity := range entities {
-		// Get entity definition
-		entityDef, ok := meta.GetEntityDef(entity.Type)
-		if !ok {
-			continue
-		}
-
-		// Check if entity matches the 'when' conditions
-		if len(whenFilters) > 0 {
-			matches, err := filter.MatchAll(entity, whenFilters, entityDef, meta)
-			if err != nil {
-				// Skip entities where filter can't be evaluated (e.g., missing property)
-				continue
-			}
-			if !matches {
-				// Entity doesn't match the conditions, rule doesn't apply
-				continue
-			}
-		}
-
-		// Entity matches - now check if it satisfies the 'then' conditions
-		if len(thenFilters) > 0 {
-			satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, meta)
-			if err != nil {
-				// If we can't evaluate the then filter, treat as violation
-				violations = append(violations, entity)
-				continue
-			}
-
-			if !satisfies {
-				violations = append(violations, entity)
-				continue
-			}
-		}
-
-		// Check content rules
-		if rule.Content != nil {
-			if !markdown.CheckContentRule(entity, rule.Content) {
-				violations = append(violations, entity)
-			}
-		}
-	}
-
-	return violations
-}
-
-// countValidationIssues counts errors and warnings from validation rules
-func countValidationIssues() (errors, warnings int) {
-	for _, rule := range meta.Validations {
-		violations := checkValidationRule(rule)
-		if rule.IsError() {
-			errors += len(violations)
-		} else {
-			warnings += len(violations)
-		}
-	}
-	return
-}
-
-// countCardinalityViolations counts cardinality constraint violations
-func countCardinalityViolations() int {
-	violations := 0
-	for relName, relDef := range meta.Relations {
-		violations += countMinOutgoingViolations(relName, relDef)
-		violations += countMaxOutgoingViolations(relName, relDef)
-		violations += countMinIncomingViolations(relName, relDef)
-		violations += countMaxIncomingViolations(relName, relDef)
-	}
-	return violations
-}
-
-// countMinOutgoingViolations checks min_outgoing constraint violations
-func countMinOutgoingViolations(relName string, relDef metamodel.RelationDef) int {
-	if relDef.MinOutgoing == nil || *relDef.MinOutgoing == 0 {
-		return 0
-	}
-	violations := 0
-	for _, sourceType := range relDef.From {
-		for _, e := range ws.EntitiesByType(sourceType) {
-			if countOutgoingByType(e.ID, relName) < *relDef.MinOutgoing {
-				violations++
-			}
-		}
-	}
-	return violations
-}
-
-// countMaxOutgoingViolations checks max_outgoing constraint violations
-func countMaxOutgoingViolations(relName string, relDef metamodel.RelationDef) int {
-	if relDef.MaxOutgoing == nil {
-		return 0
-	}
-	violations := 0
-	for _, sourceType := range relDef.From {
-		for _, e := range ws.EntitiesByType(sourceType) {
-			if countOutgoingByType(e.ID, relName) > *relDef.MaxOutgoing {
-				violations++
-			}
-		}
-	}
-	return violations
-}
-
-// countMinIncomingViolations checks min_incoming constraint violations
-func countMinIncomingViolations(relName string, relDef metamodel.RelationDef) int {
-	if relDef.MinIncoming == nil || *relDef.MinIncoming == 0 {
-		return 0
-	}
-	violations := 0
-	for _, targetType := range relDef.To {
-		for _, e := range ws.EntitiesByType(targetType) {
-			if countIncomingByType(e.ID, relName) < *relDef.MinIncoming {
-				violations++
-			}
-		}
-	}
-	return violations
-}
-
-// countMaxIncomingViolations checks max_incoming constraint violations
-func countMaxIncomingViolations(relName string, relDef metamodel.RelationDef) int {
-	if relDef.MaxIncoming == nil {
-		return 0
-	}
-	violations := 0
-	for _, targetType := range relDef.To {
-		for _, e := range ws.EntitiesByType(targetType) {
-			if countIncomingByType(e.ID, relName) > *relDef.MaxIncoming {
-				violations++
-			}
-		}
-	}
-	return violations
-}
-
-// countOutgoingByType counts outgoing edges of a specific relation type
-func countOutgoingByType(entityID, relName string) int {
-	count := 0
-	for _, edge := range ws.OutgoingRelations(entityID) {
-		if edge.Type == relName {
-			count++
-		}
-	}
-	return count
-}
-
-// countIncomingByType counts incoming edges of a specific relation type
-func countIncomingByType(entityID, relName string) int {
-	count := 0
-	for _, edge := range ws.IncomingRelations(entityID) {
-		if edge.Type == relName {
-			count++
-		}
-	}
-	return count
+	return nil
 }
 
 var analyzeAllCmd = &cobra.Command{
 	Use:   "all",
 	Short: "Run all analyses",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Collect issue counts for summary
-		orphanCount := len(ws.FindOrphans())
-
-		// Count cardinality violations
-		cardinalityCount := countCardinalityViolations()
-
-		// Count duplicates
-		entities := ws.AllEntities()
-		titleGroups := make(map[string][]*model.Entity)
-		for _, e := range entities {
-			title := normalizeTitle(e.Title())
-			if title != "" {
-				titleGroups[title] = append(titleGroups[title], e)
-			}
-		}
-		duplicateCount := 0
-		for _, group := range titleGroups {
-			if len(group) > 1 {
-				duplicateCount++
-			}
+		opts, err := resolveAnalyzeOpts()
+		if err != nil {
+			return err
 		}
 
-		// Count gap sequences with gaps (only for auto ID types)
-		gapCount := 0
-		stringIDPrefixes := make(map[string]bool)
-		for _, entityDef := range meta.Entities {
-			if entityDef.IsManualID() {
-				for _, idPrefix := range entityDef.GetIDPrefixes() {
-					prefix := strings.TrimSuffix(idPrefix, "-")
-					stringIDPrefixes[prefix] = true
-				}
-			}
-		}
-		prefixGroups := make(map[string][]int)
-		for _, id := range ws.EntityIDs() {
-			parsed, err := model.ParseEntityID(id)
-			if err != nil || parsed.Prefix == "" {
-				continue
-			}
-			if stringIDPrefixes[strings.TrimSuffix(parsed.Prefix, "-")] {
-				continue
-			}
-			prefixGroups[parsed.Prefix] = append(prefixGroups[parsed.Prefix], parsed.Number)
-		}
-		for _, numbers := range prefixGroups {
-			sort.Ints(numbers)
-			for i := 1; i < len(numbers); i++ {
-				if numbers[i] != numbers[i-1]+1 {
-					gapCount++
-					break
-				}
-			}
-		}
-
-		// Count property errors
-		propertyErrorCount := countPropertyErrors()
-
-		// Count validation issues
-		validationErrors, validationWarnings := countValidationIssues()
+		// Get summary from workspace
+		summary := ws.AnalyzeAll(*opts)
 
 		// Handle JSON output format
 		if out.Format == "json" {
@@ -861,89 +413,105 @@ var analyzeAllCmd = &cobra.Command{
 				ValidationWarnings int `json:"validation_warnings"`
 			}
 
-			summary := allAnalysisSummary{
-				Orphans:            orphanCount,
-				Cardinality:        cardinalityCount,
-				Duplicates:         duplicateCount,
-				Gaps:               gapCount,
-				Properties:         propertyErrorCount,
-				ValidationErrors:   validationErrors,
-				ValidationWarnings: validationWarnings,
+			jsonSummary := allAnalysisSummary{
+				Orphans:            summary.Orphans,
+				Cardinality:        summary.Cardinality,
+				Duplicates:         summary.Duplicates,
+				Gaps:               summary.Gaps,
+				Properties:         summary.PropertyErrors,
+				ValidationErrors:   summary.ValidationErrors,
+				ValidationWarnings: summary.ValidationWarnings,
 			}
 
-			totalIssues := orphanCount + cardinalityCount + duplicateCount +
-				gapCount + propertyErrorCount + validationErrors
+			totalIssues := summary.Orphans + summary.Cardinality + summary.Duplicates +
+				summary.Gaps + summary.PropertyErrors + summary.ValidationErrors
 			status := "success"
 			message := "All analyses passed"
-			if validationErrors > 0 || propertyErrorCount > 0 {
+			if summary.ValidationErrors > 0 || summary.PropertyErrors > 0 {
 				status = "error"
 				message = fmt.Sprintf("Found %d issues requiring attention", totalIssues)
-			} else if totalIssues > 0 || validationWarnings > 0 {
+			} else if totalIssues > 0 || summary.ValidationWarnings > 0 {
 				status = "warning"
-				message = fmt.Sprintf("Found %d issues and %d warnings", totalIssues, validationWarnings)
+				message = fmt.Sprintf("Found %d issues and %d warnings", totalIssues, summary.ValidationWarnings)
 			}
 
 			return out.WriteAnalysisResult(output.AnalysisResult{
 				Status:  status,
 				Message: message,
-				Count:   totalIssues + validationWarnings,
-				Details: summary,
+				Count:   totalIssues + summary.ValidationWarnings,
+				Details: jsonSummary,
 			})
 		}
 
 		// Text output format
 		summaryItems := []string{
-			fmt.Sprintf("Orphans: %d", orphanCount),
-			fmt.Sprintf("Cardinality: %d", cardinalityCount),
-			fmt.Sprintf("Duplicates: %d", duplicateCount),
-			fmt.Sprintf("Gaps: %d", gapCount),
-			fmt.Sprintf("Properties: %d", propertyErrorCount),
+			fmt.Sprintf("Orphans: %d", summary.Orphans),
+			fmt.Sprintf("Cardinality: %d", summary.Cardinality),
+			fmt.Sprintf("Duplicates: %d", summary.Duplicates),
+			fmt.Sprintf("Gaps: %d", summary.Gaps),
+			fmt.Sprintf("Properties: %d", summary.PropertyErrors),
 		}
 		if len(meta.Validations) > 0 {
-			summaryItems = append(summaryItems, fmt.Sprintf("Validation Errors: %d", validationErrors))
-			summaryItems = append(summaryItems, fmt.Sprintf("Validation Warnings: %d", validationWarnings))
+			summaryItems = append(summaryItems, fmt.Sprintf("Validation Errors: %d", summary.ValidationErrors))
+			summaryItems = append(summaryItems, fmt.Sprintf("Validation Warnings: %d", summary.ValidationWarnings))
 		}
 		out.WriteSummaryBox(summaryItems)
 		out.WriteMessage("")
 
+		var errs []error
+
 		out.WriteSectionHeader("Orphan Analysis")
-		_ = analyzeOrphansCmd.RunE(cmd, args)
+		if err := analyzeOrphansCmd.RunE(cmd, args); err != nil {
+			errs = append(errs, fmt.Errorf("orphan analysis: %w", err))
+		}
 
 		out.WriteMessage("")
 		out.WriteSectionHeader("Duplicate Analysis")
-		_ = analyzeDuplicatesCmd.RunE(cmd, args)
+		if err := analyzeDuplicatesCmd.RunE(cmd, args); err != nil {
+			errs = append(errs, fmt.Errorf("duplicate analysis: %w", err))
+		}
 
 		out.WriteMessage("")
 		out.WriteSectionHeader("ID Gap Analysis")
-		_ = analyzeGapsCmd.RunE(cmd, args)
+		if err := analyzeGapsCmd.RunE(cmd, args); err != nil {
+			errs = append(errs, fmt.Errorf("gap analysis: %w", err))
+		}
 
 		out.WriteMessage("")
 		out.WriteSectionHeader("Cardinality Analysis")
-		_ = analyzeCardinalityCmd.RunE(cmd, args)
+		if err := analyzeCardinalityCmd.RunE(cmd, args); err != nil {
+			errs = append(errs, fmt.Errorf("cardinality analysis: %w", err))
+		}
 
 		out.WriteMessage("")
 		out.WriteSectionHeader("Property Validation")
-		_ = runPropertyValidation()
+		if err := runPropertyValidation(*opts); err != nil {
+			errs = append(errs, fmt.Errorf("property validation: %w", err))
+		}
 
 		if len(meta.Validations) > 0 {
 			out.WriteMessage("")
 			out.WriteSectionHeader("Custom Validations")
-			_ = runValidations()
+			if err := runValidations(*opts); err != nil {
+				errs = append(errs, fmt.Errorf("custom validations: %w", err))
+			}
+		}
+
+		if len(errs) > 0 {
+			return errs[0]
 		}
 
 		return nil
 	},
 }
 
-func normalizeTitle(s string) string {
-	s = strings.ToLower(s)
-	s = strings.TrimSpace(s)
-	// Remove extra whitespace
-	fields := strings.Fields(s)
-	return strings.Join(fields, " ")
-}
-
 func init() {
+	// Scope flags (inherited by all subcommands)
+	analyzeCmd.PersistentFlags().StringVar(&analyzeViewName, "view", "",
+		"Scope analysis to entities in a view")
+	analyzeCmd.PersistentFlags().StringVar(&analyzeEntryID, "entry", "",
+		"Entry entity ID for the view (required with --view)")
+
 	analyzeCmd.AddCommand(analyzeOrphansCmd)
 	analyzeCmd.AddCommand(analyzeDuplicatesCmd)
 	analyzeCmd.AddCommand(analyzeGapsCmd)
@@ -953,4 +521,47 @@ func init() {
 	analyzeCmd.AddCommand(analyzeAllCmd)
 
 	rootCmd.AddCommand(analyzeCmd)
+}
+
+// resolveAnalyzeOpts resolves the --view and --entry flags to AnalyzeOptions.
+// Returns cached result to avoid re-executing the view when called from multiple subcommands.
+func resolveAnalyzeOpts() (*workspace.AnalyzeOptions, error) {
+	// Return cached result if already resolved
+	if cachedOptsOnce {
+		return cachedOpts, nil
+	}
+
+	opts, err := doResolveAnalyzeOpts()
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	cachedOpts = opts
+	cachedOptsOnce = true
+	return opts, nil
+}
+
+// doResolveAnalyzeOpts performs the actual scope resolution.
+func doResolveAnalyzeOpts() (*workspace.AnalyzeOptions, error) {
+	if analyzeViewName == "" {
+		return &workspace.AnalyzeOptions{}, nil
+	}
+
+	if analyzeEntryID == "" {
+		return nil, fmt.Errorf("--entry is required when using --view")
+	}
+
+	scope, err := ws.ResolveViewScope(analyzeViewName, analyzeEntryID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &workspace.AnalyzeOptions{Scope: scope}, nil
+}
+
+// resetAnalyzeOptsCache clears the cached options. Called at the start of analyze commands.
+func resetAnalyzeOptsCache() {
+	cachedOpts = nil
+	cachedOptsOnce = false
 }
