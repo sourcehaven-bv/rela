@@ -5,10 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/validation"
 	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
@@ -325,92 +324,13 @@ func (w *Workspace) ValidateProperties(opts AnalyzeOptions) []PropertyError {
 
 // --- Custom Validations ---
 
-// ValidationViolation represents a custom validation rule violation.
-type ValidationViolation struct {
-	RuleName    string
-	Description string
-	Severity    string // "error" or "warning"
-	EntityID    string
-	EntityTitle string
-}
+// ValidationViolation is re-exported from the validation package.
+type ValidationViolation = validation.Violation
 
 // RunValidations executes custom validation rules from the metamodel, filtered by scope.
 func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
-	var violations []ValidationViolation
-
-	for _, rule := range w.meta.Validations {
-		ruleViolations := w.checkValidationRule(rule, opts.Scope)
-		severity := rule.GetSeverity()
-		for _, entity := range ruleViolations {
-			violations = append(violations, ValidationViolation{
-				RuleName:    rule.Name,
-				Description: rule.Description,
-				Severity:    severity,
-				EntityID:    entity.ID,
-				EntityTitle: entity.Title(),
-			})
-		}
-	}
-
-	return violations
-}
-
-func (w *Workspace) checkValidationRule(rule metamodel.ValidationRule, scope map[string]bool) []*model.Entity {
-	var violations []*model.Entity
-
-	// Parse when filters
-	whenFilters, err := filter.ParseAll(rule.When)
-	if err != nil {
-		return nil // Invalid filter, skip this rule
-	}
-
-	// Parse then filters
-	thenFilters, err := filter.ParseAll(rule.Then)
-	if err != nil {
-		return nil // Invalid filter, skip this rule
-	}
-
-	// Get entities to check
-	var entities []*model.Entity
-	if rule.EntityType != "" {
-		entities = w.graph.NodesByType(rule.EntityType)
-	} else {
-		entities = w.graph.AllNodes()
-	}
-	entities = filterByScope(entities, scope)
-
-	for _, entity := range entities {
-		entityDef, ok := w.meta.GetEntityDef(entity.Type)
-		if !ok {
-			continue
-		}
-
-		// Check if entity matches the 'when' conditions
-		if len(whenFilters) > 0 {
-			matches, err := filter.MatchAll(entity, whenFilters, entityDef, w.meta)
-			if err != nil || !matches {
-				continue
-			}
-		}
-
-		// Entity matches - check if it satisfies the 'then' conditions
-		if len(thenFilters) > 0 {
-			satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, w.meta)
-			if err != nil || !satisfies {
-				violations = append(violations, entity)
-				continue
-			}
-		}
-
-		// Check content rules
-		if rule.Content != nil {
-			if !markdown.CheckContentRule(entity, rule.Content) {
-				violations = append(violations, entity)
-			}
-		}
-	}
-
-	return violations
+	svc := validation.New(w.meta)
+	return svc.Check(w.graph.AllNodes(), opts.Scope)
 }
 
 // --- Summary Analysis ---
@@ -441,13 +361,8 @@ func (w *Workspace) AnalyzeAll(opts AnalyzeOptions) *AnalysisSummary {
 	}
 
 	// Count validation issues by severity
-	for _, v := range w.RunValidations(opts) {
-		if v.Severity == "error" {
-			summary.ValidationErrors++
-		} else {
-			summary.ValidationWarnings++
-		}
-	}
+	violations := w.RunValidations(opts)
+	summary.ValidationErrors, summary.ValidationWarnings = validation.CountBySeverity(violations)
 
 	return summary
 }

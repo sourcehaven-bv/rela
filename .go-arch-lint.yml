@@ -37,6 +37,7 @@ components:
   importer:         { in: internal/importer }
   rename:           { in: internal/rename }
   repository:       { in: internal/repository }
+  validation:       { in: internal/validation }
   views:            { in: internal/views }
 
   # Core domain
@@ -174,7 +175,6 @@ deps:
       - attachment
       - automation
       - dataentryconfig
-      - filter
       - graph
       - htmlutil
       - markdown
@@ -184,6 +184,7 @@ deps:
       - rename
       - repository
       - storage
+      - validation
       - views
     canUse:
       - goldmark
@@ -223,6 +224,11 @@ deps:
       - views
     canUse:
       - gogit
+  validation:
+    mayDependOn:
+      - filter
+      - markdown
+      - metamodel
   views:
     mayDependOn:
       - filter
