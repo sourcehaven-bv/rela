@@ -77,6 +77,27 @@ const filteredEntities = computed(() => {
   return result
 })
 
+// Swimlanes (rows in 2D grid layout)
+const swimlanes = computed(() => {
+  if (!kanbanConfig.value?.swimlane_property) return []
+
+  // Use defined swimlanes or generate from unique values
+  if (kanbanConfig.value.swimlanes?.length) {
+    return kanbanConfig.value.swimlanes
+  }
+
+  // Fallback: extract unique values from entities
+  const property = kanbanConfig.value.swimlane_property
+  const values = new Set<string>()
+  for (const entity of entities.value) {
+    const val = String(entity.properties[property] || '')
+    if (val) values.add(val)
+  }
+  return Array.from(values).sort().map((v) => ({ value: v, label: v }))
+})
+
+const hasSwimmlanes = computed(() => swimlanes.value.length > 0)
+
 const entitiesByColumn = computed(() => {
   const grouped: Record<string, Entity[]> = {}
   const property = kanbanConfig.value?.column_property || ''
@@ -93,6 +114,42 @@ const entitiesByColumn = computed(() => {
   }
 
   return grouped
+})
+
+// 2D grouping for swimlane mode: entitiesByCell[column][swimlane] = entities
+const entitiesByCell = computed(() => {
+  if (!hasSwimmlanes.value) return {}
+
+  const cells: Record<string, Record<string, Entity[]>> = {}
+  const colProp = kanbanConfig.value?.column_property || ''
+  const swimProp = kanbanConfig.value?.swimlane_property || ''
+
+  // Initialize all cells
+  for (const column of columns.value) {
+    cells[column.value] = {}
+    for (const swimlane of swimlanes.value) {
+      cells[column.value][swimlane.value] = []
+    }
+  }
+
+  // Group entities into cells
+  for (const entity of filteredEntities.value) {
+    const colVal = String(entity.properties[colProp] || '')
+    const swimVal = String(entity.properties[swimProp] || '')
+    if (cells[colVal] && cells[colVal][swimVal]) {
+      cells[colVal][swimVal].push(entity)
+    }
+  }
+
+  return cells
+})
+
+// CSS grid style for swimlane board
+const swimlaneGridStyle = computed(() => {
+  const colCount = columns.value.length
+  return {
+    gridTemplateColumns: `auto repeat(${colCount}, minmax(240px, 1fr))`,
+  }
 })
 
 const filterOptions = computed(() => {
@@ -164,31 +221,51 @@ function onDragOver(event: DragEvent) {
   }
 }
 
-async function onDrop(event: DragEvent, columnValue: string) {
+async function onDrop(event: DragEvent, columnValue: string, swimlaneValue?: string) {
   event.preventDefault()
 
   if (!draggedCard.value || !kanbanConfig.value) return
 
   const entity = draggedCard.value
-  const property = kanbanConfig.value.column_property
+  const colProp = kanbanConfig.value.column_property
+  const swimProp = kanbanConfig.value.swimlane_property
 
-  // Don't update if same column
-  if (String(entity.properties[property] || '') === columnValue) {
+  const currentCol = String(entity.properties[colProp] || '')
+  const currentSwim = swimProp ? String(entity.properties[swimProp] || '') : undefined
+
+  // Don't update if same position
+  const sameColumn = currentCol === columnValue
+  const sameSwimmlane = !swimProp || currentSwim === swimlaneValue
+  if (sameColumn && sameSwimmlane) {
     draggedCard.value = null
     return
   }
 
-  // Optimistic update
-  const oldValue = entity.properties[property]
-  entity.properties[property] = columnValue
+  // Build update payload
+  const updates: Record<string, string> = {}
+  const oldValues: Record<string, unknown> = {}
+
+  if (!sameColumn) {
+    oldValues[colProp] = entity.properties[colProp]
+    entity.properties[colProp] = columnValue
+    updates[colProp] = columnValue
+  }
+
+  if (swimProp && swimlaneValue !== undefined && !sameSwimmlane) {
+    oldValues[swimProp] = entity.properties[swimProp]
+    entity.properties[swimProp] = swimlaneValue
+    updates[swimProp] = swimlaneValue
+  }
 
   try {
     await updateEntity(kanbanConfig.value.entity, entity.id, {
-      properties: { [property]: columnValue },
+      properties: updates,
     })
   } catch (err) {
     // Revert on error
-    entity.properties[property] = oldValue
+    for (const [prop, val] of Object.entries(oldValues)) {
+      entity.properties[prop] = val
+    }
     console.error('Failed to update entity:', err)
   }
 
@@ -261,7 +338,8 @@ watch(() => entitiesStore.cacheVersion, () => {
       <span>Loading board...</span>
     </div>
 
-    <div v-else class="kanban-board">
+    <!-- Simple board (columns only) -->
+    <div v-else-if="!hasSwimmlanes" class="kanban-board">
       <div
         v-for="column in columns"
         :key="column.value"
@@ -306,6 +384,71 @@ watch(() => entitiesStore.cacheVersion, () => {
 
           <div v-if="!entitiesByColumn[column.value]?.length" class="empty-column">
             No items
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Swimlane board (2D grid layout) -->
+    <div v-else class="kanban-swimlane-board" :style="swimlaneGridStyle">
+      <!-- Column headers -->
+      <div class="swimlane-header-row">
+        <div class="swimlane-label-cell" />
+        <div
+          v-for="column in columns"
+          :key="column.value"
+          class="swimlane-column-header"
+        >
+          <span class="column-title">{{ column.label || column.value }}</span>
+        </div>
+      </div>
+
+      <!-- Swimlane rows -->
+      <div
+        v-for="swimlane in swimlanes"
+        :key="swimlane.value"
+        class="swimlane-row"
+      >
+        <div class="swimlane-label-cell">
+          <span class="swimlane-label">{{ swimlane.label || swimlane.value }}</span>
+        </div>
+        <div
+          v-for="column in columns"
+          :key="column.value"
+          class="swimlane-cell"
+          @dragover="onDragOver"
+          @drop="onDrop($event, column.value, swimlane.value)"
+        >
+          <div
+            v-for="entity in entitiesByCell[column.value]?.[swimlane.value] || []"
+            :key="entity.id"
+            class="kanban-card"
+            draggable="true"
+            @dragstart="onDragStart($event, entity)"
+            @dragend="onDragEnd"
+            @click="openCard(entity)"
+          >
+            <div class="card-id">{{ entity.id }}</div>
+            <div class="card-title">{{ getCardTitle(entity) }}</div>
+            <div v-if="kanbanConfig?.card.fields?.length" class="card-fields">
+              <div
+                v-for="field in kanbanConfig.card.fields"
+                :key="field.property"
+                class="card-field"
+              >
+                <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
+                <Badge
+                  v-if="isEnumField(field)"
+                  :value="getCardFieldValue(entity, field)"
+                  :property="field.property"
+                  :entity-type="entityType"
+                />
+                <span v-else class="field-value">{{ getCardFieldValue(entity, field) || '-' }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-if="!(entitiesByCell[column.value]?.[swimlane.value]?.length)" class="empty-cell">
+            —
           </div>
         </div>
       </div>
@@ -515,5 +658,71 @@ watch(() => entitiesStore.cacheVersion, () => {
   font-size: 13px;
   text-align: center;
   padding: 24px;
+}
+
+/* Swimlane board styles (2D grid layout) */
+.kanban-swimlane-board {
+  display: grid;
+  /* grid-template-columns set via inline style */
+  gap: 1px;
+  background: var(--border-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 400px;
+}
+
+.swimlane-header-row {
+  display: contents;
+}
+
+.swimlane-label-cell {
+  background: var(--hover-bg);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  min-width: 120px;
+  max-width: 180px;
+}
+
+.swimlane-column-header {
+  background: var(--hover-bg);
+  padding: 12px 16px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.swimlane-row {
+  display: contents;
+}
+
+.swimlane-label {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-color);
+  writing-mode: horizontal-tb;
+}
+
+.swimlane-cell {
+  background: var(--card-bg);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 100px;
+  overflow-y: auto;
+}
+
+.swimlane-cell:hover {
+  background: var(--hover-bg);
+}
+
+.empty-cell {
+  color: var(--muted-text);
+  font-size: 12px;
+  text-align: center;
+  padding: 8px;
+  opacity: 0.5;
 }
 </style>
