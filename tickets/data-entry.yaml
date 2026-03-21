@@ -3,14 +3,31 @@ app:
   name: "Rela Development"
   description: "Architecture, features, tickets, and ideas for rela"
 styles:
-  # Ticket/Bug statuses
+  # Ticket statuses
   ticket_status:
     backlog: gray
     ready: blue
+    planning: cyan
     in-progress: purple
-    blocked: red
+    review: orange
     done: green
     wont-fix: gray
+    blocked: red
+  # Bug statuses
+  bug_status:
+    backlog: gray
+    ready: blue
+    analyzing: cyan
+    in-progress: purple
+    review: orange
+    done: green
+    wont-fix: gray
+    blocked: red
+  # Checklist statuses
+  checklist_status:
+    pending: gray
+    in-progress: purple
+    done: green
   # Feature statuses
   feature_status:
     proposed: gray
@@ -402,10 +419,12 @@ forms:
       - property: status
         transitions:
           backlog: [ready, wont-fix]
-          ready: [backlog, in-progress, wont-fix]
-          in-progress: [ready, blocked, done]
-          blocked: [in-progress, wont-fix]
-          done: [in-progress]
+          ready: [backlog, planning, wont-fix]
+          planning: [ready, in-progress, blocked]
+          in-progress: [planning, review, blocked]
+          review: [in-progress, done, blocked]
+          done: [review]
+          blocked: [planning, in-progress, review, wont-fix]
           wont-fix: [backlog]
     relations:
       - relation: implements
@@ -416,6 +435,22 @@ forms:
         widget: multi-select
       - relation: depends-on
         widget: multi-select
+      - relation: has-planning
+        label: "Planning Checklist"
+        widget: select
+        inline_create: create_planning_checklist
+      - relation: has-implementation
+        label: "Implementation Checklist"
+        widget: select
+        inline_create: create_implementation_checklist
+      - relation: has-review
+        label: "Review Checklist"
+        widget: select
+        inline_create: create_review_checklist
+      - relation: has-docs
+        label: "Docs Checklist"
+        widget: select
+        inline_create: create_docs_checklist
   # ─────────────────────────────────────────────────
   # Bugs
   # ─────────────────────────────────────────────────
@@ -477,10 +512,12 @@ forms:
       - property: status
         transitions:
           backlog: [ready, wont-fix]
-          ready: [backlog, in-progress, wont-fix]
-          in-progress: [ready, blocked, done]
-          blocked: [in-progress, wont-fix]
-          done: [in-progress]
+          ready: [backlog, analyzing, wont-fix]
+          analyzing: [ready, in-progress, blocked]
+          in-progress: [analyzing, review, blocked]
+          review: [in-progress, done, blocked]
+          done: [review]
+          blocked: [analyzing, in-progress, review, wont-fix]
           wont-fix: [backlog]
     relations:
       - relation: fixes
@@ -493,6 +530,18 @@ forms:
         widget: multi-select
       - relation: adds-measure
         widget: multi-select
+      - relation: has-bug-analysis
+        label: "Analysis Checklist"
+        widget: select
+        inline_create: create_bug_analysis_checklist
+      - relation: has-implementation
+        label: "Implementation Checklist"
+        widget: select
+        inline_create: create_implementation_checklist
+      - relation: has-review
+        label: "Review Checklist"
+        widget: select
+        inline_create: create_review_checklist
   # ─────────────────────────────────────────────────
   # Concepts
   # ─────────────────────────────────────────────────
@@ -581,6 +630,69 @@ forms:
         widget: multi-select
       - relation: supersedes
         widget: search
+  # ─────────────────────────────────────────────────
+  # Workflow Checklists
+  # ─────────────────────────────────────────────────
+  create_planning_checklist:
+    entity_type: planning-checklist
+    title: "Create Planning Checklist"
+    description: "Planning checklist for a ticket or feature"
+    body: true
+    fields:
+      - property: title
+      - property: status
+        transitions:
+          pending: [in-progress]
+          in-progress: [done, pending]
+          done: []
+  create_bug_analysis_checklist:
+    entity_type: bug-analysis-checklist
+    title: "Create Bug Analysis Checklist"
+    description: "Root cause analysis checklist for a bug"
+    body: true
+    fields:
+      - property: title
+      - property: status
+        transitions:
+          pending: [in-progress]
+          in-progress: [done, pending]
+          done: []
+  create_implementation_checklist:
+    entity_type: implementation-checklist
+    title: "Create Implementation Checklist"
+    description: "Implementation checklist for a ticket or bug"
+    body: true
+    fields:
+      - property: title
+      - property: status
+        transitions:
+          pending: [in-progress]
+          in-progress: [done, pending]
+          done: []
+  create_review_checklist:
+    entity_type: review-checklist
+    title: "Create Review Checklist"
+    description: "Review checklist before marking work as done"
+    body: true
+    fields:
+      - property: title
+      - property: status
+        transitions:
+          pending: [in-progress]
+          in-progress: [done, pending]
+          done: []
+  create_docs_checklist:
+    entity_type: docs-checklist
+    title: "Create Documentation Checklist"
+    description: "Documentation checklist for enhancements"
+    body: true
+    fields:
+      - property: title
+      - property: status
+        transitions:
+          pending: [in-progress]
+          in-progress: [done, pending]
+          done: []
 # ══════════════════════════════════════════════════
 # Lists
 # ══════════════════════════════════════════════════

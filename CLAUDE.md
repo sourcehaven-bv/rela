@@ -378,3 +378,83 @@ Bug tickets use the 5-whys method for root cause analysis:
 
 Done bugs require at least 3 levels (why1-why3). The goal is to reach systemic causes
 that can be addressed with process/tooling improvements documented in `prevention`.
+
+### Workflow Checklists
+
+Tickets and bugs use workflow checklists to ensure thorough planning, execution, and review.
+Each phase has a dedicated checklist entity with standard items from templates.
+
+**Ticket Workflow:**
+
+```
+backlog → ready → planning → in-progress → review → done
+                     │            │           │
+                     ▼            ▼           ▼
+              planning-      implementation-  review-checklist
+              checklist      checklist        (+ docs-checklist
+                                              for enhancements)
+```
+
+**Bug Workflow:**
+
+```
+backlog → ready → analyzing → in-progress → review → done
+                     │            │           │
+                     ▼            ▼           ▼
+              bug-analysis-  implementation-  review-checklist
+              checklist      checklist
+```
+
+**Checklist Types:**
+
+| Checklist | Purpose | Required For |
+|-----------|---------|--------------|
+| `planning-checklist` | Understanding, approach, risk assessment | Tickets entering `in-progress` |
+| `bug-analysis-checklist` | Reproduction, root cause, fix planning | Bugs entering `in-progress` |
+| `implementation-checklist` | Development, quality checks | Tickets/bugs entering `review` |
+| `review-checklist` | Automated checks, manual review, verification | Tickets/bugs entering `done` |
+| `docs-checklist` | Code docs, project docs, external docs | Enhancement/docs tickets entering `done` |
+
+**Agent Workflow for Tickets:**
+
+1. **Start Planning** (status: `planning`)
+   - Create `planning-checklist` from template (inline create or `rela create planning-checklist`)
+   - Link to ticket via `has-planning` relation
+   - Work through checklist items, checking each as done
+   - Mark checklist `status=done` when complete
+
+2. **Start Implementation** (status: `in-progress`)
+   - Create `implementation-checklist` from template
+   - Link via `has-implementation` relation
+   - Work through development and quality items
+
+3. **Start Review** (status: `review`)
+   - Create `review-checklist` from template
+   - Link via `has-review` relation
+   - If enhancement or docs ticket, also create `docs-checklist`
+   - Complete all checks before marking done
+
+4. **Complete** (status: `done`)
+   - All linked checklists must have `status=done`
+   - All checklist items must be checked or skipped with reason
+
+**Skipping Checklist Items:**
+
+When an item doesn't apply, use strikethrough with a reason in parentheses:
+
+```markdown
+- [x] ~~API docs updated~~ (N/A: no API changes)
+- [x] ~~Performance check~~ (N/A: documentation-only change)
+```
+
+Items without reasons will fail validation.
+
+**Templates:**
+
+Checklist templates are in `tickets/templates/entities/`:
+
+- `planning-checklist.md`
+- `bug-analysis-checklist.md`
+- `implementation-checklist.md`
+- `review-checklist.md`
+- `docs-checklist.md`
