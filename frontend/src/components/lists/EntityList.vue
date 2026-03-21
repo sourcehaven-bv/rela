@@ -24,8 +24,13 @@ const entities = ref<Entity[]>([])
 const meta = ref<ListMeta>({ total: 0, page: 1, per_page: 25, has_more: false })
 const loading = ref(true)
 const filters = ref<Record<string, string>>({})
-const sortField = ref<string | null>(null)
-const sortDesc = ref(false)
+
+// Sort specs: array of { property, direction } for multi-field sorting
+interface SortSpec {
+  property: string
+  direction: 'asc' | 'desc'
+}
+const sortSpecs = ref<SortSpec[]>([])
 
 // Computed for keyboard navigation
 const itemCount = computed(() => entities.value.length)
@@ -104,9 +109,11 @@ const queryParams = computed((): ListParams => {
     }
   }
 
-  // Add sorting
-  if (sortField.value) {
-    params.sort = sortDesc.value ? `-${sortField.value}` : sortField.value
+  // Add sorting - supports multi-field sorting
+  if (sortSpecs.value.length > 0) {
+    params.sort = sortSpecs.value
+      .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
+      .join(',')
   } else if (listConfig.value?.default_sort?.length) {
     const defaultSort = listConfig.value.default_sort
       .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
@@ -137,15 +144,44 @@ async function loadEntities() {
   }
 }
 
-function handleSort(field: string) {
-  if (sortField.value === field) {
-    sortDesc.value = !sortDesc.value
+function handleSort(field: string, event: MouseEvent) {
+  const existingIndex = sortSpecs.value.findIndex((s) => s.property === field)
+
+  if (event.shiftKey) {
+    // Multi-sort: add/toggle field while keeping others
+    if (existingIndex >= 0) {
+      // Toggle direction if already in list
+      const spec = sortSpecs.value[existingIndex]
+      if (spec.direction === 'asc') {
+        spec.direction = 'desc'
+      } else {
+        // Remove from sort if clicking desc again
+        sortSpecs.value.splice(existingIndex, 1)
+      }
+    } else {
+      // Add new sort field
+      sortSpecs.value.push({ property: field, direction: 'asc' })
+    }
   } else {
-    sortField.value = field
-    sortDesc.value = false
+    // Single-sort: replace all with just this field
+    if (existingIndex >= 0 && sortSpecs.value.length === 1) {
+      // Toggle direction if already the only sort
+      sortSpecs.value[0].direction = sortSpecs.value[0].direction === 'asc' ? 'desc' : 'asc'
+    } else {
+      // Replace all sorts with just this field
+      sortSpecs.value = [{ property: field, direction: 'asc' }]
+    }
   }
+
   meta.value.page = 1
   loadEntities()
+}
+
+// Helper to get sort index and direction for a field
+function getSortInfo(field: string): { index: number; direction: 'asc' | 'desc' | null } {
+  const idx = sortSpecs.value.findIndex((s) => s.property === field)
+  if (idx < 0) return { index: -1, direction: null }
+  return { index: idx, direction: sortSpecs.value[idx].direction }
 }
 
 function handleFilter(newFilters: Record<string, string>) {
@@ -167,8 +203,10 @@ function navigateToEntity(entity: Entity) {
   }
 
   // Include sort if active
-  if (sortField.value) {
-    query.sort = sortDesc.value ? `-${sortField.value}` : sortField.value
+  if (sortSpecs.value.length > 0) {
+    query.sort = sortSpecs.value
+      .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
+      .join(',')
   } else if (listConfig.value?.default_sort?.length) {
     query.sort = listConfig.value.default_sort
       .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
@@ -216,8 +254,7 @@ async function handleDelete(entity: Entity, event: Event) {
 // Watchers
 watch(() => props.listId, () => {
   filters.value = {}
-  sortField.value = null
-  sortDesc.value = false
+  sortSpecs.value = []
   meta.value.page = 1
   clearSelection()
   loadEntities()
@@ -285,14 +322,15 @@ onMounted(() => {
               :key="column.property || column.relation"
               :class="{
                 sortable: column.sortable !== false && column.property,
-                sorted: sortField === column.property,
-                'sorted-desc': sortField === column.property && sortDesc,
+                sorted: getSortInfo(column.property || '').index >= 0,
+                'sorted-desc': getSortInfo(column.property || '').direction === 'desc',
               }"
-              @click="column.sortable !== false && column.property && handleSort(column.property)"
+              @click="column.sortable !== false && column.property && handleSort(column.property, $event)"
             >
               {{ column.label || column.property || column.relation }}
-              <span v-if="sortField === column.property" class="sort-indicator">
-                {{ sortDesc ? '▼' : '▲' }}
+              <span v-if="getSortInfo(column.property || '').index >= 0" class="sort-indicator">
+                <span v-if="sortSpecs.length > 1" class="sort-order">{{ getSortInfo(column.property || '').index + 1 }}</span>
+                {{ getSortInfo(column.property || '').direction === 'desc' ? '▼' : '▲' }}
               </span>
             </th>
             <th class="actions-column"/>
@@ -483,6 +521,15 @@ onMounted(() => {
 .sort-indicator {
   margin-left: 4px;
   font-size: 10px;
+}
+
+.sort-order {
+  font-size: 9px;
+  background: var(--accent-color);
+  color: white;
+  padding: 1px 4px;
+  border-radius: 8px;
+  margin-right: 2px;
 }
 
 .entity-table td {
