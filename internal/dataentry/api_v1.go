@@ -1366,11 +1366,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 
 		// Convert fields
 		for _, f := range sec.Fields {
-			apiSec.Fields = append(apiSec.Fields, V1SectionField{
-				Label:    f.Label,
-				Value:    f.Value,
-				PropType: f.PropType,
-			})
+			apiSec.Fields = append(apiSec.Fields, V1SectionField(f))
 		}
 
 		// Convert entities
@@ -1384,11 +1380,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 				HasContent: e.HasContent,
 			}
 			for _, f := range e.Fields {
-				apiEnt.Fields = append(apiEnt.Fields, V1SectionField{
-					Label:    f.Label,
-					Value:    f.Value,
-					PropType: f.PropType,
-				})
+				apiEnt.Fields = append(apiEnt.Fields, V1SectionField(f))
 			}
 			apiSec.Entities = append(apiSec.Entities, apiEnt)
 		}
@@ -1814,13 +1806,7 @@ func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
 
 	commands := make([]V1Command, 0, len(resolved))
 	for _, cmd := range resolved {
-		commands = append(commands, V1Command{
-			ID:       cmd.ID,
-			Label:    cmd.Label,
-			Confirm:  cmd.Confirm,
-			Context:  cmd.Context,
-			AutoOpen: cmd.AutoOpen,
-		})
+		commands = append(commands, V1Command(cmd))
 	}
 
 	writeV1JSON(w, http.StatusOK, commands)
