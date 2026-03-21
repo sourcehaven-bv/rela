@@ -12,6 +12,17 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/views"
+)
+
+var (
+	analyzeViewName string
+	analyzeEntryID  string
+
+	// cachedScope holds the resolved scope to avoid re-executing the view multiple times.
+	// Set by the first call to resolveAnalysisScope() in a command invocation.
+	cachedScope     map[string]bool
+	cachedScopeOnce bool
 )
 
 var analyzeCmd = &cobra.Command{
@@ -55,7 +66,13 @@ var analyzeOrphansCmd = &cobra.Command{
 	Use:   "orphans",
 	Short: "Find entities with no connections",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		scope, err := resolveAnalysisScope()
+		if err != nil {
+			return err
+		}
+
 		orphans := ws.FindOrphans()
+		orphans = filterByScope(orphans, scope)
 		filter.SortByID(orphans, false)
 
 		if writeAnalysisJSON(len(orphans), orphans,
@@ -76,7 +93,13 @@ var analyzeDuplicatesCmd = &cobra.Command{
 	Use:   "duplicates",
 	Short: "Find entities with similar titles",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		scope, err := resolveAnalysisScope()
+		if err != nil {
+			return err
+		}
+
 		entities := ws.AllEntities()
+		entities = filterByScope(entities, scope)
 
 		// Group by normalized title
 		titleGroups := make(map[string][]*model.Entity)
@@ -139,6 +162,11 @@ var analyzeGapsCmd = &cobra.Command{
 Entity types configured with id_type: string are excluded from gap analysis
 since they use manually-specified IDs that are not expected to be sequential.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		scope, err := resolveAnalysisScope()
+		if err != nil {
+			return err
+		}
+
 		// Build a set of prefixes that belong to manual ID types (should be skipped)
 		stringIDPrefixes := make(map[string]bool)
 		for _, entityDef := range meta.Entities {
@@ -155,6 +183,10 @@ since they use manually-specified IDs that are not expected to be sequential.`,
 		prefixGroups := make(map[string][]int)
 
 		for _, id := range ws.EntityIDs() {
+			// Filter by scope if specified
+			if !inScope(id, scope) {
+				continue
+			}
 			parsed, err := model.ParseEntityID(id)
 			if err != nil || parsed.Prefix == "" {
 				continue
@@ -221,6 +253,11 @@ var analyzeCardinalityCmd = &cobra.Command{
 	Use:   "cardinality",
 	Short: "Check relation cardinality constraints",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		scope, err := resolveAnalysisScope()
+		if err != nil {
+			return err
+		}
+
 		type cardinalityViolation struct {
 			EntityID     string `json:"entity_id"`
 			RelationType string `json:"relation_type"`
@@ -235,7 +272,7 @@ var analyzeCardinalityCmd = &cobra.Command{
 			if relDef.MinOutgoing != nil && *relDef.MinOutgoing > 0 {
 				// For each entity type in From, check they have at least MinOutgoing outgoing relations of this type
 				for _, sourceType := range relDef.From {
-					entities := ws.EntitiesByType(sourceType)
+					entities := filterByScope(ws.EntitiesByType(sourceType), scope)
 					for _, e := range entities {
 						count := 0
 						for _, edge := range ws.OutgoingRelations(e.ID) {
@@ -259,7 +296,7 @@ var analyzeCardinalityCmd = &cobra.Command{
 			// Check max_outgoing constraint
 			if relDef.MaxOutgoing != nil {
 				for _, sourceType := range relDef.From {
-					entities := ws.EntitiesByType(sourceType)
+					entities := filterByScope(ws.EntitiesByType(sourceType), scope)
 					for _, e := range entities {
 						count := 0
 						for _, edge := range ws.OutgoingRelations(e.ID) {
@@ -284,7 +321,7 @@ var analyzeCardinalityCmd = &cobra.Command{
 			// For each entity type in To, check they have at least MinIncoming incoming relations of this type
 			if relDef.MinIncoming != nil && *relDef.MinIncoming > 0 {
 				for _, targetType := range relDef.To {
-					entities := ws.EntitiesByType(targetType)
+					entities := filterByScope(ws.EntitiesByType(targetType), scope)
 					for _, e := range entities {
 						count := 0
 						for _, edge := range ws.IncomingRelations(e.ID) {
@@ -313,7 +350,7 @@ var analyzeCardinalityCmd = &cobra.Command{
 			// Check max_incoming constraint
 			if relDef.MaxIncoming != nil {
 				for _, targetType := range relDef.To {
-					entities := ws.EntitiesByType(targetType)
+					entities := filterByScope(ws.EntitiesByType(targetType), scope)
 					for _, e := range entities {
 						count := 0
 						for _, edge := range ws.IncomingRelations(e.ID) {
@@ -380,13 +417,18 @@ Checks for:
 
 This catches issues in manually-edited markdown files that bypass CLI validation.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runPropertyValidation()
+		scope, err := resolveAnalysisScope()
+		if err != nil {
+			return err
+		}
+		return runPropertyValidation(scope)
 	},
 }
 
-// runPropertyValidation validates all entity properties against the metamodel
-func runPropertyValidation() error {
-	entities := ws.AllEntities()
+// runPropertyValidation validates entity properties against the metamodel.
+// If scope is non-nil, only entities in the scope are validated.
+func runPropertyValidation(scope map[string]bool) error {
+	entities := filterByScope(ws.AllEntities(), scope)
 	errorCount := 0
 
 	// Group errors by entity for cleaner output
@@ -452,10 +494,11 @@ func runPropertyValidation() error {
 	return nil
 }
 
-// countPropertyErrors counts property validation errors across all entities
-func countPropertyErrors() int {
+// countPropertyErrors counts property validation errors across entities.
+// If scope is non-nil, only entities in the scope are counted.
+func countPropertyErrors(scope map[string]bool) int {
 	count := 0
-	for _, entity := range ws.AllEntities() {
+	for _, entity := range filterByScope(ws.AllEntities(), scope) {
 		count += len(meta.ValidateEntity(entity))
 	}
 	return count
@@ -483,7 +526,11 @@ Example metamodel configuration:
         - "priority!="
       severity: error`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runValidations()
+		scope, err := resolveAnalysisScope()
+		if err != nil {
+			return err
+		}
+		return runValidations(scope)
 	},
 }
 
@@ -497,12 +544,14 @@ type validationViolation struct {
 	EntityTitle string `json:"entity_title"`
 }
 
-// collectValidationViolations collects all validation violations and counts
+// collectValidationViolations collects all validation violations and counts.
+// If scope is non-nil, only violations for entities in the scope are collected.
 func collectValidationViolations(
 	rules []metamodel.ValidationRule,
+	scope map[string]bool,
 ) (violations []validationViolation, errorCount, warningCount int) {
 	for _, rule := range rules {
-		ruleViolations := checkValidationRule(rule)
+		ruleViolations := checkValidationRule(rule, scope)
 		severity := rule.GetSeverity()
 		for _, v := range ruleViolations {
 			violations = append(violations, validationViolation{
@@ -522,15 +571,17 @@ func collectValidationViolations(
 	return violations, errorCount, warningCount
 }
 
-// writeValidationsTextOutput writes validation results in text format
+// writeValidationsTextOutput writes validation results in text format.
+// If scope is non-nil, only violations for entities in the scope are shown.
 func writeValidationsTextOutput(
 	rules []metamodel.ValidationRule,
+	scope map[string]bool,
 	errorCount, warningCount int,
 ) {
 	// Group violations by rule
 	ruleViolations := make(map[string][]*model.Entity)
 	for _, rule := range rules {
-		violations := checkValidationRule(rule)
+		violations := checkValidationRule(rule, scope)
 		if len(violations) > 0 {
 			ruleViolations[rule.Name] = violations
 		}
@@ -561,8 +612,9 @@ func writeValidationsTextOutput(
 	}
 }
 
-// runValidations executes custom validation rules and returns error/warning counts
-func runValidations() error {
+// runValidations executes custom validation rules and returns error/warning counts.
+// If scope is non-nil, only entities in the scope are validated.
+func runValidations(scope map[string]bool) error {
 	rules := meta.Validations
 	if len(rules) == 0 {
 		if out.Format == "json" {
@@ -577,7 +629,7 @@ func runValidations() error {
 		return nil
 	}
 
-	allViolations, errorCount, warningCount := collectValidationViolations(rules)
+	allViolations, errorCount, warningCount := collectValidationViolations(rules, scope)
 
 	if out.Format == "json" {
 		status := "success"
@@ -598,12 +650,13 @@ func runValidations() error {
 		})
 	}
 
-	writeValidationsTextOutput(rules, errorCount, warningCount)
+	writeValidationsTextOutput(rules, scope, errorCount, warningCount)
 	return nil
 }
 
-// checkValidationRule checks a single validation rule against all applicable entities
-func checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
+// checkValidationRule checks a single validation rule against applicable entities.
+// If scope is non-nil, only entities in the scope are checked.
+func checkValidationRule(rule metamodel.ValidationRule, scope map[string]bool) []*model.Entity {
 	var violations []*model.Entity
 
 	// Parse when filters (conditions that select which entities to check)
@@ -627,6 +680,7 @@ func checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
 	} else {
 		entities = ws.AllEntities()
 	}
+	entities = filterByScope(entities, scope)
 
 	for _, entity := range entities {
 		// Get entity definition
@@ -674,10 +728,11 @@ func checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
 	return violations
 }
 
-// countValidationIssues counts errors and warnings from validation rules
-func countValidationIssues() (errors, warnings int) {
+// countValidationIssues counts errors and warnings from validation rules.
+// If scope is non-nil, only entities in the scope are counted.
+func countValidationIssues(scope map[string]bool) (errors, warnings int) {
 	for _, rule := range meta.Validations {
-		violations := checkValidationRule(rule)
+		violations := checkValidationRule(rule, scope)
 		if rule.IsError() {
 			errors += len(violations)
 		} else {
@@ -687,26 +742,28 @@ func countValidationIssues() (errors, warnings int) {
 	return
 }
 
-// countCardinalityViolations counts cardinality constraint violations
-func countCardinalityViolations() int {
+// countCardinalityViolations counts cardinality constraint violations.
+// If scope is non-nil, only entities in the scope are counted.
+func countCardinalityViolations(scope map[string]bool) int {
 	violations := 0
 	for relName, relDef := range meta.Relations {
-		violations += countMinOutgoingViolations(relName, relDef)
-		violations += countMaxOutgoingViolations(relName, relDef)
-		violations += countMinIncomingViolations(relName, relDef)
-		violations += countMaxIncomingViolations(relName, relDef)
+		violations += countMinOutgoingViolations(relName, relDef, scope)
+		violations += countMaxOutgoingViolations(relName, relDef, scope)
+		violations += countMinIncomingViolations(relName, relDef, scope)
+		violations += countMaxIncomingViolations(relName, relDef, scope)
 	}
 	return violations
 }
 
-// countMinOutgoingViolations checks min_outgoing constraint violations
-func countMinOutgoingViolations(relName string, relDef metamodel.RelationDef) int {
+// countMinOutgoingViolations checks min_outgoing constraint violations.
+// If scope is non-nil, only entities in the scope are counted.
+func countMinOutgoingViolations(relName string, relDef metamodel.RelationDef, scope map[string]bool) int {
 	if relDef.MinOutgoing == nil || *relDef.MinOutgoing == 0 {
 		return 0
 	}
 	violations := 0
 	for _, sourceType := range relDef.From {
-		for _, e := range ws.EntitiesByType(sourceType) {
+		for _, e := range filterByScope(ws.EntitiesByType(sourceType), scope) {
 			if countOutgoingByType(e.ID, relName) < *relDef.MinOutgoing {
 				violations++
 			}
@@ -715,14 +772,15 @@ func countMinOutgoingViolations(relName string, relDef metamodel.RelationDef) in
 	return violations
 }
 
-// countMaxOutgoingViolations checks max_outgoing constraint violations
-func countMaxOutgoingViolations(relName string, relDef metamodel.RelationDef) int {
+// countMaxOutgoingViolations checks max_outgoing constraint violations.
+// If scope is non-nil, only entities in the scope are counted.
+func countMaxOutgoingViolations(relName string, relDef metamodel.RelationDef, scope map[string]bool) int {
 	if relDef.MaxOutgoing == nil {
 		return 0
 	}
 	violations := 0
 	for _, sourceType := range relDef.From {
-		for _, e := range ws.EntitiesByType(sourceType) {
+		for _, e := range filterByScope(ws.EntitiesByType(sourceType), scope) {
 			if countOutgoingByType(e.ID, relName) > *relDef.MaxOutgoing {
 				violations++
 			}
@@ -731,14 +789,15 @@ func countMaxOutgoingViolations(relName string, relDef metamodel.RelationDef) in
 	return violations
 }
 
-// countMinIncomingViolations checks min_incoming constraint violations
-func countMinIncomingViolations(relName string, relDef metamodel.RelationDef) int {
+// countMinIncomingViolations checks min_incoming constraint violations.
+// If scope is non-nil, only entities in the scope are counted.
+func countMinIncomingViolations(relName string, relDef metamodel.RelationDef, scope map[string]bool) int {
 	if relDef.MinIncoming == nil || *relDef.MinIncoming == 0 {
 		return 0
 	}
 	violations := 0
 	for _, targetType := range relDef.To {
-		for _, e := range ws.EntitiesByType(targetType) {
+		for _, e := range filterByScope(ws.EntitiesByType(targetType), scope) {
 			if countIncomingByType(e.ID, relName) < *relDef.MinIncoming {
 				violations++
 			}
@@ -747,14 +806,15 @@ func countMinIncomingViolations(relName string, relDef metamodel.RelationDef) in
 	return violations
 }
 
-// countMaxIncomingViolations checks max_incoming constraint violations
-func countMaxIncomingViolations(relName string, relDef metamodel.RelationDef) int {
+// countMaxIncomingViolations checks max_incoming constraint violations.
+// If scope is non-nil, only entities in the scope are counted.
+func countMaxIncomingViolations(relName string, relDef metamodel.RelationDef, scope map[string]bool) int {
 	if relDef.MaxIncoming == nil {
 		return 0
 	}
 	violations := 0
 	for _, targetType := range relDef.To {
-		for _, e := range ws.EntitiesByType(targetType) {
+		for _, e := range filterByScope(ws.EntitiesByType(targetType), scope) {
 			if countIncomingByType(e.ID, relName) > *relDef.MaxIncoming {
 				violations++
 			}
@@ -789,14 +849,19 @@ var analyzeAllCmd = &cobra.Command{
 	Use:   "all",
 	Short: "Run all analyses",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		scope, err := resolveAnalysisScope()
+		if err != nil {
+			return err
+		}
+
 		// Collect issue counts for summary
-		orphanCount := len(ws.FindOrphans())
+		orphanCount := len(filterByScope(ws.FindOrphans(), scope))
 
 		// Count cardinality violations
-		cardinalityCount := countCardinalityViolations()
+		cardinalityCount := countCardinalityViolations(scope)
 
 		// Count duplicates
-		entities := ws.AllEntities()
+		entities := filterByScope(ws.AllEntities(), scope)
 		titleGroups := make(map[string][]*model.Entity)
 		for _, e := range entities {
 			title := normalizeTitle(e.Title())
@@ -824,6 +889,10 @@ var analyzeAllCmd = &cobra.Command{
 		}
 		prefixGroups := make(map[string][]int)
 		for _, id := range ws.EntityIDs() {
+			// Filter by scope
+			if !inScope(id, scope) {
+				continue
+			}
 			parsed, err := model.ParseEntityID(id)
 			if err != nil || parsed.Prefix == "" {
 				continue
@@ -844,10 +913,10 @@ var analyzeAllCmd = &cobra.Command{
 		}
 
 		// Count property errors
-		propertyErrorCount := countPropertyErrors()
+		propertyErrorCount := countPropertyErrors(scope)
 
 		// Count validation issues
-		validationErrors, validationWarnings := countValidationIssues()
+		validationErrors, validationWarnings := countValidationIssues(scope)
 
 		// Handle JSON output format
 		if out.Format == "json" {
@@ -906,29 +975,48 @@ var analyzeAllCmd = &cobra.Command{
 		out.WriteSummaryBox(summaryItems)
 		out.WriteMessage("")
 
+		var errs []error
+
 		out.WriteSectionHeader("Orphan Analysis")
-		_ = analyzeOrphansCmd.RunE(cmd, args)
+		if err := analyzeOrphansCmd.RunE(cmd, args); err != nil {
+			errs = append(errs, fmt.Errorf("orphan analysis: %w", err))
+		}
 
 		out.WriteMessage("")
 		out.WriteSectionHeader("Duplicate Analysis")
-		_ = analyzeDuplicatesCmd.RunE(cmd, args)
+		if err := analyzeDuplicatesCmd.RunE(cmd, args); err != nil {
+			errs = append(errs, fmt.Errorf("duplicate analysis: %w", err))
+		}
 
 		out.WriteMessage("")
 		out.WriteSectionHeader("ID Gap Analysis")
-		_ = analyzeGapsCmd.RunE(cmd, args)
+		if err := analyzeGapsCmd.RunE(cmd, args); err != nil {
+			errs = append(errs, fmt.Errorf("gap analysis: %w", err))
+		}
 
 		out.WriteMessage("")
 		out.WriteSectionHeader("Cardinality Analysis")
-		_ = analyzeCardinalityCmd.RunE(cmd, args)
+		if err := analyzeCardinalityCmd.RunE(cmd, args); err != nil {
+			errs = append(errs, fmt.Errorf("cardinality analysis: %w", err))
+		}
 
 		out.WriteMessage("")
 		out.WriteSectionHeader("Property Validation")
-		_ = runPropertyValidation()
+		if err := runPropertyValidation(scope); err != nil {
+			errs = append(errs, fmt.Errorf("property validation: %w", err))
+		}
 
 		if len(meta.Validations) > 0 {
 			out.WriteMessage("")
 			out.WriteSectionHeader("Custom Validations")
-			_ = runValidations()
+			if err := runValidations(scope); err != nil {
+				errs = append(errs, fmt.Errorf("custom validations: %w", err))
+			}
+		}
+
+		if len(errs) > 0 {
+			// Return first error (all have been logged via their respective output)
+			return errs[0]
 		}
 
 		return nil
@@ -944,6 +1032,12 @@ func normalizeTitle(s string) string {
 }
 
 func init() {
+	// Scope flags (inherited by all subcommands)
+	analyzeCmd.PersistentFlags().StringVar(&analyzeViewName, "view", "",
+		"Scope analysis to entities in a view")
+	analyzeCmd.PersistentFlags().StringVar(&analyzeEntryID, "entry", "",
+		"Entry entity ID for the view (required with --view)")
+
 	analyzeCmd.AddCommand(analyzeOrphansCmd)
 	analyzeCmd.AddCommand(analyzeDuplicatesCmd)
 	analyzeCmd.AddCommand(analyzeGapsCmd)
@@ -953,4 +1047,93 @@ func init() {
 	analyzeCmd.AddCommand(analyzeAllCmd)
 
 	rootCmd.AddCommand(analyzeCmd)
+}
+
+// resolveAnalysisScope resolves the --view and --entry flags to a set of entity IDs.
+// Returns nil scope if no view is specified (analyze full graph).
+// The result is cached to avoid re-executing the view when called from multiple subcommands.
+func resolveAnalysisScope() (map[string]bool, error) {
+	// Return cached result if already resolved
+	if cachedScopeOnce {
+		return cachedScope, nil
+	}
+
+	scope, err := doResolveAnalysisScope()
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	cachedScope = scope
+	cachedScopeOnce = true
+	return scope, nil
+}
+
+// resetAnalysisScopeCache clears the cached scope. Called at the start of analyze commands.
+func resetAnalysisScopeCache() {
+	cachedScope = nil
+	cachedScopeOnce = false
+}
+
+// doResolveAnalysisScope performs the actual scope resolution.
+func doResolveAnalysisScope() (map[string]bool, error) {
+	if analyzeViewName == "" {
+		return nil, nil //nolint:nilnil // nil scope means no filtering
+	}
+
+	if analyzeEntryID == "" {
+		return nil, fmt.Errorf("--entry is required when using --view")
+	}
+
+	// Load views file
+	viewsFile, err := ws.LoadViews()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load views: %w", err)
+	}
+
+	// Get the view definition
+	viewDef, ok := viewsFile.GetView(analyzeViewName)
+	if !ok {
+		return nil, fmt.Errorf("view not found: %s", analyzeViewName)
+	}
+
+	// Validate the view against the metamodel
+	if validationErr := viewDef.Validate(meta, analyzeViewName); validationErr != nil {
+		return nil, fmt.Errorf("view validation failed: %w", validationErr)
+	}
+
+	// Create view engine and execute
+	engine := views.NewEngine(ws.Graph(), meta)
+	result, err := engine.Execute(viewDef, analyzeEntryID)
+	if err != nil {
+		return nil, fmt.Errorf("view execution failed: %w", err)
+	}
+
+	return result.EntityIDs(), nil
+}
+
+// filterByScope filters entities to only those in the scope.
+// If scope is nil, returns the original slice unchanged (no copy made).
+// If scope is non-nil, returns a new slice containing only entities whose IDs are in the scope.
+func filterByScope(entities []*model.Entity, scope map[string]bool) []*model.Entity {
+	if scope == nil {
+		return entities
+	}
+	result := make([]*model.Entity, 0, len(entities))
+	for _, e := range entities {
+		if scope[e.ID] {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+// inScope checks if an entity ID is in the scope.
+// Returns true if scope is nil (no filtering) or if the ID exists in the scope map.
+func inScope(entityID string, scope map[string]bool) bool {
+	if scope == nil {
+		return true
+	}
+	_, exists := scope[entityID]
+	return exists
 }

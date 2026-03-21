@@ -2,6 +2,7 @@ package views
 
 import (
 	"fmt"
+	"iter"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
@@ -615,4 +616,44 @@ type ExportedRelation struct {
 	Type     string
 	Content  string
 	Relation *model.Relation
+}
+
+// Entities returns a lazy iterator over all unique entities in the view result.
+// This includes the entry entity and all entities from all collections.
+//
+// Note: The iteration order is not guaranteed due to map iteration.
+// The ViewResult must not be modified while iterating.
+func (r *ViewResult) Entities() iter.Seq[*model.Entity] {
+	return func(yield func(*model.Entity) bool) {
+		seen := make(map[string]bool)
+
+		// Yield entry entity first
+		if r.Entry != nil && !seen[r.Entry.ID] {
+			seen[r.Entry.ID] = true
+			if !yield(r.Entry) {
+				return
+			}
+		}
+
+		// Yield entities from all collections
+		for _, entities := range r.Collections {
+			for _, e := range entities {
+				if !seen[e.ID] {
+					seen[e.ID] = true
+					if !yield(e) {
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// EntityIDs returns a set of all entity IDs in the view result.
+func (r *ViewResult) EntityIDs() map[string]bool {
+	ids := make(map[string]bool)
+	for e := range r.Entities() {
+		ids[e.ID] = true
+	}
+	return ids
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -306,7 +307,7 @@ func TestCountMinOutgoingViolations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := countMinOutgoingViolations(tt.relName, tt.relDef)
+			got := countMinOutgoingViolations(tt.relName, tt.relDef, nil)
 			if got != tt.want {
 				t.Errorf("countMinOutgoingViolations(%q, ...) = %d, want %d",
 					tt.relName, got, tt.want)
@@ -372,7 +373,7 @@ func TestCountMaxOutgoingViolations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := countMaxOutgoingViolations(tt.relName, tt.relDef)
+			got := countMaxOutgoingViolations(tt.relName, tt.relDef, nil)
 			if got != tt.want {
 				t.Errorf("countMaxOutgoingViolations(%q, ...) = %d, want %d",
 					tt.relName, got, tt.want)
@@ -437,7 +438,7 @@ func TestCountMinIncomingViolations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := countMinIncomingViolations(tt.relName, tt.relDef)
+			got := countMinIncomingViolations(tt.relName, tt.relDef, nil)
 			if got != tt.want {
 				t.Errorf("countMinIncomingViolations(%q, ...) = %d, want %d",
 					tt.relName, got, tt.want)
@@ -503,7 +504,7 @@ func TestCountMaxIncomingViolations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := countMaxIncomingViolations(tt.relName, tt.relDef)
+			got := countMaxIncomingViolations(tt.relName, tt.relDef, nil)
 			if got != tt.want {
 				t.Errorf("countMaxIncomingViolations(%q, ...) = %d, want %d",
 					tt.relName, got, tt.want)
@@ -584,7 +585,7 @@ func TestCountCardinalityViolations(t *testing.T) {
 			tt.setup()
 			meta.Relations = tt.relations
 
-			got := countCardinalityViolations()
+			got := countCardinalityViolations(nil)
 			if got != tt.want {
 				t.Errorf("countCardinalityViolations() = %d, want %d", got, tt.want)
 			}
@@ -639,7 +640,7 @@ func TestCountPropertyErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setup()
-			got := countPropertyErrors()
+			got := countPropertyErrors(nil)
 			if tt.wantZero && got != 0 {
 				t.Errorf("countPropertyErrors() = %d, want 0", got)
 			}
@@ -796,7 +797,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 				e.Properties["status"] = "accepted"
 				g.AddNode(e)
 			},
-			run:        runValidations,
+			run:        func() error { return runValidations(nil) },
 			wantStatus: "error",
 			wantCount:  1,
 		},
@@ -812,6 +813,170 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runJSONTest(t, tt.name, tt.setup, tt.run, tt.wantStatus, tt.wantCount)
+		})
+	}
+}
+
+func TestFilterByScope(t *testing.T) {
+	entities := []*model.Entity{
+		{ID: "REQ-001", Type: "requirement"},
+		{ID: "REQ-002", Type: "requirement"},
+		{ID: "DEC-001", Type: "decision"},
+	}
+
+	tests := []struct {
+		name    string
+		scope   map[string]bool
+		wantIDs []string
+	}{
+		{
+			name:    "nil scope returns all entities",
+			scope:   nil,
+			wantIDs: []string{"REQ-001", "REQ-002", "DEC-001"},
+		},
+		{
+			name:    "empty scope returns no entities",
+			scope:   map[string]bool{},
+			wantIDs: []string{},
+		},
+		{
+			name:    "scope filters to matching entities",
+			scope:   map[string]bool{"REQ-001": true, "DEC-001": true},
+			wantIDs: []string{"REQ-001", "DEC-001"},
+		},
+		{
+			name:    "scope with single entity",
+			scope:   map[string]bool{"REQ-002": true},
+			wantIDs: []string{"REQ-002"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterByScope(entities, tt.scope)
+
+			if len(got) != len(tt.wantIDs) {
+				t.Errorf("filterByScope() returned %d entities, want %d", len(got), len(tt.wantIDs))
+				return
+			}
+
+			gotIDs := make([]string, len(got))
+			for i, e := range got {
+				gotIDs[i] = e.ID
+			}
+
+			for i, wantID := range tt.wantIDs {
+				if gotIDs[i] != wantID {
+					t.Errorf("filterByScope()[%d].ID = %s, want %s", i, gotIDs[i], wantID)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveAnalysisScopeErrors(t *testing.T) {
+	// Save and restore original flag values
+	origView := analyzeViewName
+	origEntry := analyzeEntryID
+	defer func() {
+		analyzeViewName = origView
+		analyzeEntryID = origEntry
+		resetAnalysisScopeCache()
+	}()
+
+	tests := []struct {
+		name      string
+		view      string
+		entry     string
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name:    "no view returns nil scope",
+			view:    "",
+			entry:   "",
+			wantErr: false,
+		},
+		{
+			name:      "view without entry returns error",
+			view:      "some-view",
+			entry:     "",
+			wantErr:   true,
+			errSubstr: "--entry is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetAnalysisScopeCache()
+			analyzeViewName = tt.view
+			analyzeEntryID = tt.entry
+
+			scope, err := resolveAnalysisScope()
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("resolveAnalysisScope() expected error, got nil")
+				} else if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("resolveAnalysisScope() error = %q, want substring %q", err.Error(), tt.errSubstr)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("resolveAnalysisScope() unexpected error: %v", err)
+				}
+				if tt.view == "" && scope != nil {
+					t.Error("resolveAnalysisScope() expected nil scope when no view specified")
+				}
+			}
+		})
+	}
+}
+
+func TestInScope(t *testing.T) {
+	tests := []struct {
+		name     string
+		entityID string
+		scope    map[string]bool
+		want     bool
+	}{
+		{
+			name:     "nil scope always returns true",
+			entityID: "REQ-001",
+			scope:    nil,
+			want:     true,
+		},
+		{
+			name:     "entity in scope returns true",
+			entityID: "REQ-001",
+			scope:    map[string]bool{"REQ-001": true, "REQ-002": true},
+			want:     true,
+		},
+		{
+			name:     "entity not in scope returns false",
+			entityID: "REQ-003",
+			scope:    map[string]bool{"REQ-001": true, "REQ-002": true},
+			want:     false,
+		},
+		{
+			name:     "empty scope returns false",
+			entityID: "REQ-001",
+			scope:    map[string]bool{},
+			want:     false,
+		},
+		{
+			name:     "entity in scope with false value still returns true",
+			entityID: "REQ-001",
+			scope:    map[string]bool{"REQ-001": false},
+			want:     true, // Key exists, so entity is in scope
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := inScope(tt.entityID, tt.scope)
+			if got != tt.want {
+				t.Errorf("inScope(%q, scope) = %v, want %v", tt.entityID, got, tt.want)
+			}
 		})
 	}
 }

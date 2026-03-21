@@ -293,3 +293,120 @@ func TestViewDefValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestViewResultEntities(t *testing.T) {
+	entry := &model.Entity{ID: "DOC-001", Type: "document"}
+	sec1 := &model.Entity{ID: "SEC-001", Type: "section"}
+	sec2 := &model.Entity{ID: "SEC-002", Type: "section"}
+
+	tests := []struct {
+		name    string
+		result  *ViewResult
+		wantIDs []string
+	}{
+		{
+			name: "entry only",
+			result: &ViewResult{
+				Entry:       entry,
+				Collections: map[string][]*model.Entity{},
+			},
+			wantIDs: []string{"DOC-001"},
+		},
+		{
+			name: "entry and collections",
+			result: &ViewResult{
+				Entry: entry,
+				Collections: map[string][]*model.Entity{
+					"sections": {sec1, sec2},
+				},
+			},
+			wantIDs: []string{"DOC-001", "SEC-001", "SEC-002"},
+		},
+		{
+			name: "deduplication across collections",
+			result: &ViewResult{
+				Entry: entry,
+				Collections: map[string][]*model.Entity{
+					"sections":  {sec1, sec2},
+					"all_items": {entry, sec1}, // entry and sec1 duplicated
+				},
+			},
+			wantIDs: []string{"DOC-001", "SEC-001", "SEC-002"},
+		},
+		{
+			name: "nil entry",
+			result: &ViewResult{
+				Entry: nil,
+				Collections: map[string][]*model.Entity{
+					"sections": {sec1, sec2},
+				},
+			},
+			wantIDs: []string{"SEC-001", "SEC-002"},
+		},
+		{
+			name: "empty result - nil entry and empty collections",
+			result: &ViewResult{
+				Entry:       nil,
+				Collections: map[string][]*model.Entity{},
+			},
+			wantIDs: []string{},
+		},
+		{
+			name: "empty result - nil entry and nil collections",
+			result: &ViewResult{
+				Entry:       nil,
+				Collections: nil,
+			},
+			wantIDs: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotIDs []string
+			for e := range tt.result.Entities() {
+				gotIDs = append(gotIDs, e.ID)
+			}
+
+			if len(gotIDs) != len(tt.wantIDs) {
+				t.Errorf("Entities() returned %d items, want %d", len(gotIDs), len(tt.wantIDs))
+				return
+			}
+
+			// Check all expected IDs are present (order may vary due to map iteration)
+			gotSet := make(map[string]bool)
+			for _, id := range gotIDs {
+				gotSet[id] = true
+			}
+			for _, wantID := range tt.wantIDs {
+				if !gotSet[wantID] {
+					t.Errorf("Entities() missing expected ID %s", wantID)
+				}
+			}
+		})
+	}
+}
+
+func TestViewResultEntityIDs(t *testing.T) {
+	entry := &model.Entity{ID: "DOC-001", Type: "document"}
+	sec1 := &model.Entity{ID: "SEC-001", Type: "section"}
+
+	result := &ViewResult{
+		Entry: entry,
+		Collections: map[string][]*model.Entity{
+			"sections": {sec1},
+		},
+	}
+
+	ids := result.EntityIDs()
+
+	if len(ids) != 2 {
+		t.Errorf("EntityIDs() returned %d IDs, want 2", len(ids))
+	}
+	if !ids["DOC-001"] {
+		t.Error("EntityIDs() missing DOC-001")
+	}
+	if !ids["SEC-001"] {
+		t.Error("EntityIDs() missing SEC-001")
+	}
+}
