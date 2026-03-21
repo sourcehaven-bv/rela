@@ -41,8 +41,8 @@ func TestNewRouterStaticFiles(t *testing.T) {
 
 	handler := app.NewRouter()
 
-	// Request a known embedded static file
-	r := httptest.NewRequest(http.MethodGet, "/static/htmx.min.js", http.NoBody)
+	// Request a known embedded static file (favicon is the only static file now)
+	r := httptest.NewRequest(http.MethodGet, "/static/favicon.svg", http.NoBody)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 
@@ -57,7 +57,7 @@ func TestNewRouterStaticFilesNoCacheHeader(t *testing.T) {
 	handler := app.NewRouter()
 
 	// Static files should NOT have no-cache header (they bypass the middleware)
-	r := httptest.NewRequest(http.MethodGet, "/static/htmx.min.js", http.NoBody)
+	r := httptest.NewRequest(http.MethodGet, "/static/favicon.svg", http.NoBody)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 
@@ -71,8 +71,8 @@ func TestNewRouterAPIHasNoCacheHeader(t *testing.T) {
 	app.broker = newEventBroker()
 	handler := app.NewRouter()
 
-	// API/HTML routes should have no-cache header
-	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	// API routes should have no-cache header
+	r := httptest.NewRequest(http.MethodGet, "/api/graph-data", http.NoBody)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 

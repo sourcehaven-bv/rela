@@ -3,7 +3,6 @@ package dataentry
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
 	"net/url"
@@ -34,14 +33,13 @@ const uiStateFile = "ui-state.json"
 // userDefaultsFile is the filename for user-specific default values within the .rela directory.
 const userDefaultsFile = "user-defaults.yaml"
 
-// App is the central application struct holding config, metamodel, graph, and templates.
+// App is the central application struct holding config, metamodel, and graph.
 type App struct {
 	Cfg *Config
 	ws  *workspace.Workspace
 	// Convenience aliases set from workspace; avoid method-call overhead in hot paths.
 	meta *metamodel.Metamodel
 	g    *graph.Graph
-	tmpl *template.Template
 	// styleMap: property type name -> value -> CSS class name
 	styleMap map[string]map[string]string
 	// styledTypes: set of property type names that have style entries
@@ -94,21 +92,11 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(&cfg, meta)
 
-	// Parse templates with style-aware funcs
-	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
-	if err != nil {
-		return nil, fmt.Errorf("parsing templates: %w", err)
-	}
-	tmpl, err = tmpl.Parse(graphTemplates)
-	if err != nil {
-		return nil, fmt.Errorf("parsing graph templates: %w", err)
-	}
 	app := &App{
 		Cfg:         &cfg,
 		ws:          ws,
 		meta:        meta,
 		g:           g,
-		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 		broker:      newEventBroker(),
@@ -152,26 +140,6 @@ type NavGroup struct {
 type NavElement struct {
 	Item  *NavItem
 	Group *NavGroup
-}
-
-// gitTemplateData returns git-related fields for templates.
-// Returns GitEnabled=true and GitBranch if git is configured.
-func (a *App) gitTemplateData() (enabled bool, branch string) {
-	if a.gitOps == nil {
-		return false, ""
-	}
-	status, err := a.gitOps.GetStatus()
-	if err != nil || !status.Available {
-		return false, ""
-	}
-	return true, status.Branch
-}
-
-// addGitData adds git-related fields to a template data map.
-func (a *App) addGitData(data map[string]interface{}) {
-	enabled, branch := a.gitTemplateData()
-	data["GitEnabled"] = enabled
-	data["GitBranch"] = branch
 }
 
 // enrichNavEntry resolves a single NavigationEntry into a NavItem with entity type and count.

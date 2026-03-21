@@ -575,22 +575,6 @@ commands:
 			t.Errorf("expected export auto_open to be nil, got %v", *export.AutoOpen)
 		}
 	})
-
-	t.Run("boolTrue template func", func(t *testing.T) {
-		funcs := templateFuncs(nil, nil)
-		fn := funcs["boolTrue"].(func(*bool) bool)
-		trueVal := true
-		falseVal := false
-		if !fn(&trueVal) {
-			t.Error("boolTrue(&true) should be true")
-		}
-		if fn(&falseVal) {
-			t.Error("boolTrue(&false) should be false")
-		}
-		if fn(nil) {
-			t.Error("boolTrue(nil) should be false")
-		}
-	})
 }
 
 // --- SSE Handler integration test ---

@@ -241,58 +241,6 @@ func (a *App) handleAPIMetamodel(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, result)
 }
 
-// handleAPIAnalyze returns analysis/validation results.
-func (a *App) handleAPIAnalyze(w http.ResponseWriter, _ *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	analysisResult := a.runAnalysis()
-
-	result := APIAnalysisResult{
-		Errors:   analysisResult.ErrorCount,
-		Warnings: analysisResult.WarningCount,
-		Issues:   make([]APIIssue, 0),
-		ByCheck:  make(map[string]int),
-	}
-
-	for _, section := range analysisResult.Sections {
-		for _, issue := range section.Issues {
-			result.Issues = append(result.Issues, APIIssue{
-				EntityID:   issue.EntityID,
-				EntityType: issue.EntityType,
-				Message:    issue.Message,
-				Severity:   issue.Severity,
-				CheckType:  section.Name,
-			})
-			result.ByCheck[section.Name]++
-		}
-	}
-
-	writeJSON(w, result)
-}
-
-// handleAPISearch performs a search and returns matching entities.
-func (a *App) handleAPISearch(w http.ResponseWriter, r *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		writeJSON(w, []APIEntity{})
-		return
-	}
-
-	// Use the existing executeQuery method
-	entities := a.executeQuery(query)
-
-	result := make([]APIEntity, 0, len(entities))
-	for _, e := range entities {
-		result = append(result, a.entityToAPI(e, false))
-	}
-
-	writeJSON(w, result)
-}
-
 // entityToAPI converts a model.Entity to APIEntity.
 func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 	api := APIEntity{

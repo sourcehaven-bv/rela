@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"errors"
-	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -136,19 +135,17 @@ func testGraph(meta *metamodel.Metamodel) (*graph.Graph, testEntities) {
 	return g, testEntities{ticket1: t1, ticket2: t2, component: c1}
 }
 
-// testAppInstance creates a minimal App with templates for testing app-level methods.
+// testAppInstance creates a minimal App for testing app-level methods.
 // Returns the app and the test entities for direct use without graph lookups.
 func testAppInstance() (*App, testEntities) {
 	cfg := testConfig()
 	meta := testMeta()
 	g, entities := testGraph(meta)
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	tmpl, _ := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
 	return &App{
 		Cfg:         cfg,
 		meta:        meta,
 		g:           g,
-		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 	}, entities

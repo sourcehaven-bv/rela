@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"context"
-	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,14 +116,6 @@ status: open
 	}
 
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
-	if err != nil {
-		t.Fatalf("parsing templates: %v", err)
-	}
-	tmpl, err = tmpl.Parse(graphTemplates)
-	if err != nil {
-		t.Fatalf("parsing graph templates: %v", err)
-	}
 
 	ws := workspace.NewWithGraph(repo, meta, g)
 
@@ -133,7 +124,6 @@ status: open
 		ws:          ws,
 		meta:        meta,
 		g:           g,
-		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 		broker:      newEventBroker(),

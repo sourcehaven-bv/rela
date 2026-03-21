@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -10,7 +9,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -400,95 +398,6 @@ func (a *App) executeQuery(query string) []*model.Entity {
 	}
 
 	return results
-}
-
-// templateFuncs returns the template.FuncMap used by all HTML templates.
-func templateFuncs(styleMap map[string]map[string]string, styledTypes map[string]bool) template.FuncMap {
-	return template.FuncMap{
-		"join": strings.Join,
-		"json": func(v interface{}) string {
-			b, _ := json.Marshal(v)
-			return string(b)
-		},
-		"jsJSON": func(v interface{}) template.JS {
-			b, _ := json.Marshal(v)
-			return template.JS(b) //nolint:gosec // controlled data from metamodel
-		},
-		"contains": func(slice []string, val string) bool {
-			for _, s := range slice {
-				if s == val {
-					return true
-				}
-			}
-			return false
-		},
-		"badgeClass": func(propType, val string) string {
-			if vals, ok := styleMap[propType]; ok {
-				if cls, ok := vals[val]; ok {
-					return cls
-				}
-			}
-			return "badge-gray"
-		},
-		"accentColor": func(propType, val string) string {
-			if vals, ok := styleMap[propType]; ok {
-				if cls, ok := vals[val]; ok {
-					return strings.TrimPrefix(cls, "badge-")
-				}
-			}
-			return "gray"
-		},
-		"isBadgeType": func(propType string) bool {
-			return styledTypes[propType]
-		},
-		"add":            func(a, b int) int { return a + b },
-		"boolTrue":       func(b *bool) bool { return b != nil && *b },
-		"safeHTML":       func(s string) template.HTML { return template.HTML(s) }, //nolint:gosec // used for pre-rendered HTML
-		"renderMarkdown": simpleMarkdownToHTML,
-		"checkboxStats":  checkboxStats,
-		"map": func(pairs ...interface{}) map[string]interface{} {
-			m := make(map[string]interface{}, len(pairs)/2)
-			for i := 0; i+1 < len(pairs); i += 2 {
-				key, _ := pairs[i].(string)
-				m[key] = pairs[i+1]
-			}
-			return m
-		},
-		"toStringSlice": func(val interface{}) []string {
-			switch v := val.(type) {
-			case []string:
-				return v
-			case []interface{}:
-				result := make([]string, 0, len(v))
-				for _, item := range v {
-					result = append(result, fmt.Sprintf("%v", item))
-				}
-				return result
-			default:
-				return nil
-			}
-		},
-		"formatValue": func(val string) string {
-			if t, err := time.Parse(time.RFC3339, val); err == nil {
-				return t.Format("2006-01-02")
-			}
-			if t, err := time.Parse("2006-01-02 15:04:05 -0700 MST", val); err == nil {
-				return t.Format("2006-01-02")
-			}
-			if t, err := time.Parse("2006-01-02 15:04:05 +0000 UTC", val); err == nil {
-				return t.Format("2006-01-02")
-			}
-			return val
-		},
-		"sortedKeys": func(m map[string]interface{}) []string {
-			keys := make([]string, 0, len(m))
-			for k := range m {
-				keys = append(keys, k)
-			}
-			natsort.Strings(keys)
-			return keys
-		},
-	}
 }
 
 // resolveRelationColumnValues returns display titles for all targets of the given

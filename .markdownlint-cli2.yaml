@@ -6,4 +6,5 @@ ignores:
   - docs/templates/**
   - .claude/**
   - .ignored/**
+  - "**/.ignored/**"
   - tickets/**

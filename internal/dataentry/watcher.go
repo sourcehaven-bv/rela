@@ -3,7 +3,6 @@ package dataentry
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -189,20 +188,9 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 	a.meta = a.ws.Meta()
 	a.g = a.ws.Graph()
 
-	// Rebuild styles and templates if config or metamodel changed
+	// Rebuild styles if config or metamodel changed
 	if needConfigReload || needMetamodelReload {
 		a.styleMap, a.styledTypes = buildStyleMap(a.Cfg, a.meta)
-		tmpl, err := template.New("").Funcs(templateFuncs(a.styleMap, a.styledTypes)).Parse(allTemplates())
-		if err != nil {
-			log.Printf("Template re-parse error: %v", err)
-		} else {
-			tmpl, err = tmpl.Parse(graphTemplates)
-			if err != nil {
-				log.Printf("Graph template re-parse error: %v", err)
-			} else {
-				a.tmpl = tmpl
-			}
-		}
 		// Update OpenAPI generator with new metamodel
 		if a.openAPIGen != nil {
 			a.openAPIGen.UpdateMetamodel(a.meta)

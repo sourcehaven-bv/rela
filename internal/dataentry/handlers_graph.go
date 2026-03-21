@@ -8,17 +8,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
-// handleGraph serves the full-page graph visualization.
-func (a *App) handleGraph(w http.ResponseWriter, _ *http.Request) {
-	data := map[string]interface{}{
-		"App":           a.Cfg.App,
-		"ConflictCount": a.conflictCount(),
-		"Navigation":    a.navElements("_graph"),
-		"ActiveList":    "_graph",
-	}
-	a.tmpl.ExecuteTemplate(w, "graph-page", data) //nolint:errcheck // template errors logged by http
-}
-
 // graphNode is a JSON-serializable node for the graph visualization.
 type graphNode struct {
 	ID         string            `json:"id"`
