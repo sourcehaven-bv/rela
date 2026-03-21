@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import type { ListConfig, EntityType } from '@/types'
+import { ref, watch, computed } from 'vue'
+import type { ListConfig, EntityType, FilterControl, PropertyDef } from '@/types'
 
 const props = defineProps<{
   config: ListConfig
@@ -12,8 +12,61 @@ const emit = defineEmits<{
   filter: [filters: Record<string, string>]
 }>()
 
+// Resolved filter control with computed widget type and options
+interface ResolvedFilter {
+  key: string
+  label: string
+  widget: 'select' | 'multi-select' | 'text'
+  options: string[]
+  isRelation: boolean
+}
+
+const resolvedFilters = computed((): ResolvedFilter[] => {
+  if (!props.config.filter_controls) return []
+  return props.config.filter_controls.map((fc) => resolveFilter(fc))
+})
+
+function resolveFilter(fc: FilterControl): ResolvedFilter {
+  const key = fc.relation || fc.property || ''
+  const label = fc.label || titleCase(key)
+
+  if (fc.relation) {
+    // Relation filters: use text input for now (could be enhanced to select with targets)
+    return { key, label, widget: 'text', options: [], isRelation: true }
+  }
+
+  // Property filter
+  const propDef = props.entityType?.properties[fc.property || '']
+  if (!propDef) {
+    return { key, label, widget: 'text', options: [], isRelation: false }
+  }
+
+  const options = propDef.values || []
+  const widget = resolveWidgetType(propDef, options)
+
+  return { key, label, widget, options, isRelation: false }
+}
+
+function resolveWidgetType(propDef: PropertyDef, options: string[]): 'select' | 'multi-select' | 'text' {
+  // Multi-select for list properties with enum values
+  if (propDef.list && options.length > 0) {
+    return 'multi-select'
+  }
+  // Select for properties with defined values (enums)
+  if (options.length > 0) {
+    return 'select'
+  }
+  // Text for everything else
+  return 'text'
+}
+
+function titleCase(str: string): string {
+  return str
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 // Initialize local filters with empty strings for each filter control
-// This ensures selects show "All" by default instead of blank
 function initializeFilters(existingFilters: Record<string, string>): Record<string, string> {
   const result: Record<string, string> = {}
   for (const control of props.config.filter_controls || []) {
@@ -38,15 +91,22 @@ function handleFilterChange() {
   emit('filter', { ...localFilters.value })
 }
 
+function handleMultiSelectChange(key: string, event: Event) {
+  const select = event.target as HTMLSelectElement
+  const selected = Array.from(select.selectedOptions).map((opt) => opt.value)
+  localFilters.value[key] = selected.join(',')
+  emit('filter', { ...localFilters.value })
+}
+
+function getMultiSelectValues(key: string): string[] {
+  const val = localFilters.value[key]
+  if (!val) return []
+  return val.split(',').filter(Boolean)
+}
+
 function clearFilters() {
   localFilters.value = {}
   emit('filter', {})
-}
-
-function getFilterOptions(property: string): string[] {
-  if (!props.entityType) return []
-  const propDef = props.entityType.properties[property]
-  return propDef?.values || []
 }
 
 function hasActiveFilters(): boolean {
@@ -58,38 +118,58 @@ function hasActiveFilters(): boolean {
   <div class="filter-bar">
     <div class="filters">
       <div
-        v-for="filter in config.filter_controls"
-        :key="filter.property ?? filter.relation ?? 'unknown'"
+        v-for="filter in resolvedFilters"
+        :key="filter.key"
         class="filter-item"
       >
-        <template v-if="filter.property">
-          <label :for="`filter-${filter.property}`">
-            {{ filter.label || filter.property }}
-          </label>
-          <select
-            v-if="getFilterOptions(filter.property).length"
-            :id="`filter-${filter.property}`"
-            v-model="localFilters[filter.property]"
-            @change="handleFilterChange"
+        <label :for="`filter-${filter.key}`">
+          {{ filter.label }}
+        </label>
+
+        <!-- Select widget -->
+        <select
+          v-if="filter.widget === 'select'"
+          :id="`filter-${filter.key}`"
+          v-model="localFilters[filter.key]"
+          @change="handleFilterChange"
+        >
+          <option value="">All</option>
+          <option
+            v-for="option in filter.options"
+            :key="option"
+            :value="option"
           >
-            <option value="">All</option>
-            <option
-              v-for="option in getFilterOptions(filter.property)"
-              :key="option"
-              :value="option"
-            >
-              {{ option }}
-            </option>
-          </select>
-          <input
-            v-else
-            :id="`filter-${filter.property}`"
-            v-model="localFilters[filter.property]"
-            type="text"
-            :placeholder="`Filter by ${filter.label || filter.property}`"
-            @input="handleFilterChange"
-          />
-        </template>
+            {{ option }}
+          </option>
+        </select>
+
+        <!-- Multi-select widget -->
+        <select
+          v-else-if="filter.widget === 'multi-select'"
+          :id="`filter-${filter.key}`"
+          multiple
+          :class="{ 'has-selection': getMultiSelectValues(filter.key).length > 0 }"
+          @change="(e) => handleMultiSelectChange(filter.key, e)"
+        >
+          <option
+            v-for="option in filter.options"
+            :key="option"
+            :value="option"
+            :selected="getMultiSelectValues(filter.key).includes(option)"
+          >
+            {{ option }}
+          </option>
+        </select>
+
+        <!-- Text widget (default) -->
+        <input
+          v-else
+          :id="`filter-${filter.key}`"
+          v-model="localFilters[filter.key]"
+          type="text"
+          :placeholder="`Filter by ${filter.label}`"
+          @input="handleFilterChange"
+        />
       </div>
     </div>
     <button
@@ -163,5 +243,15 @@ function hasActiveFilters(): boolean {
 .clear-filters:hover {
   background: var(--hover-bg);
   color: var(--text-color);
+}
+
+/* Multi-select specific styles */
+.filter-item select[multiple] {
+  min-height: 80px;
+  max-height: 120px;
+}
+
+.filter-item select[multiple].has-selection {
+  border-color: var(--accent-color);
 }
 </style>
