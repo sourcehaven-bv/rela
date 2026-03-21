@@ -32,21 +32,12 @@ type Action struct {
 	Set            string
 	Value          string
 	CreateRelation *CreateRelationAction
-	CreateEntity   *CreateEntityAction
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
 type CreateRelationAction struct {
 	Relation string
 	To       string
-}
-
-// CreateEntityAction specifies parameters for creating a new entity.
-type CreateEntityAction struct {
-	Type       string
-	ID         string            // Optional, auto-generated if empty
-	Properties map[string]string // Property values (supports template interpolation)
-	Content    string            // Optional markdown body content
 }
 
 // Validation specifies a condition to check.
@@ -103,9 +94,6 @@ type Result struct {
 
 	// RelationsToCreate contains relations that should be created.
 	RelationsToCreate []*model.Relation
-
-	// EntitiesToCreate contains entity specs that should be created.
-	EntitiesToCreate []*CreateEntityAction
 
 	// Warnings contains validation warnings (allow save, show message).
 	Warnings []string

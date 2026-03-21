@@ -58,14 +58,6 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 				To:       a.CreateRelation.To,
 			}
 		}
-		if a.CreateEntity != nil {
-			action.CreateEntity = &CreateEntityAction{
-				Type:       a.CreateEntity.Type,
-				ID:         a.CreateEntity.ID,
-				Properties: a.CreateEntity.Properties,
-				Content:    a.CreateEntity.Content,
-			}
-		}
 		auto.Do[i] = action
 	}
 
@@ -90,7 +82,6 @@ func (e *Engine) Process(event Event) *Result {
 	result := &Result{
 		PropertiesSet:     make(map[string]string),
 		RelationsToCreate: make([]*model.Relation, 0),
-		EntitiesToCreate:  make([]*CreateEntityAction, 0),
 		Warnings:          make([]string, 0),
 		Errors:            make([]string, 0),
 	}
@@ -200,29 +191,6 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 			result.RelationsToCreate = append(result.RelationsToCreate, rel)
 		}
 	}
-
-	if action.CreateEntity != nil {
-		entitySpec := e.buildEntitySpec(action.CreateEntity, event)
-		if entitySpec.Type != "" {
-			result.EntitiesToCreate = append(result.EntitiesToCreate, entitySpec)
-		}
-	}
-}
-
-// buildEntitySpec creates an entity spec with interpolated values.
-func (e *Engine) buildEntitySpec(action *CreateEntityAction, event Event) *CreateEntityAction {
-	spec := &CreateEntityAction{
-		Type:       action.Type,
-		ID:         e.interpolate(action.ID, event),
-		Content:    e.interpolate(action.Content, event),
-		Properties: make(map[string]string, len(action.Properties)),
-	}
-
-	for key, value := range action.Properties {
-		spec.Properties[key] = e.interpolate(value, event)
-	}
-
-	return spec
 }
 
 // evaluateValidation checks a validation and adds warnings/errors to the result.

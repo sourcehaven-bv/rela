@@ -6,7 +6,6 @@
 package workspace
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -427,7 +426,6 @@ type CreateResult struct {
 	AutomationWarnings []string
 	AutomationErrors   []string
 	RelationsCreated   []*model.Relation
-	EntitiesCreated    []*model.Entity
 }
 
 // CreateEntity generates an ID (unless provided), applies templates and
@@ -511,14 +509,22 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 	w.graph.AddNode(entity)
 	w.indexEntity(entity)
 
-	// Create automation relations and entities (re-run to pick up RelationsToCreate
-	// and EntitiesToCreate; the first run above only captured property changes).
+	// Create automation relations (re-run to pick up RelationsToCreate;
+	// the first run above only captured property changes).
 	if w.automation != nil {
 		autoResult := w.automation.Process(automation.Event{
 			Type:   automation.EventEntityCreated,
 			Entity: entity,
 		})
-		w.processAutomationSideEffects(autoResult, entity.ID, result)
+		for _, rel := range autoResult.RelationsToCreate {
+			rel.From = entity.ID
+			if writeErr := w.repo.WriteRelation(rel); writeErr != nil {
+				log.Printf("Failed to create automation relation: %v", writeErr)
+				continue
+			}
+			w.graph.AddEdge(rel)
+			result.RelationsCreated = append(result.RelationsCreated, rel)
+		}
 	}
 
 	w.saveCacheQuietly()
@@ -530,55 +536,6 @@ type UpdateResult struct {
 	AutomationWarnings []string
 	AutomationErrors   []string
 	RelationsCreated   []*model.Relation
-	EntitiesCreated    []*model.Entity
-}
-
-// automationSideEffects is an interface for results that can hold automation side-effects.
-type automationSideEffects interface {
-	addRelation(rel *model.Relation)
-	addEntity(entity *model.Entity)
-}
-
-// Implement automationSideEffects for CreateResult
-func (r *CreateResult) addRelation(rel *model.Relation) {
-	r.RelationsCreated = append(r.RelationsCreated, rel)
-}
-func (r *CreateResult) addEntity(e *model.Entity) {
-	r.EntitiesCreated = append(r.EntitiesCreated, e)
-}
-
-// Implement automationSideEffects for UpdateResult
-func (r *UpdateResult) addRelation(rel *model.Relation) {
-	r.RelationsCreated = append(r.RelationsCreated, rel)
-}
-func (r *UpdateResult) addEntity(e *model.Entity) {
-	r.EntitiesCreated = append(r.EntitiesCreated, e)
-}
-
-// processAutomationSideEffects creates relations and entities from automation results.
-func (w *Workspace) processAutomationSideEffects(
-	autoResult *automation.Result, fromID string, result automationSideEffects,
-) {
-	for _, rel := range autoResult.RelationsToCreate {
-		rel.From = fromID
-		if writeErr := w.repo.WriteRelation(rel); writeErr != nil {
-			log.Printf("Failed to create automation relation: %v", writeErr)
-			continue
-		}
-		w.graph.AddEdge(rel)
-		result.addRelation(rel)
-	}
-	for _, spec := range autoResult.EntitiesToCreate {
-		created, err := w.createEntityFromAutomation(spec)
-		if errors.Is(err, errEntityAlreadyExists) {
-			continue // Skip silently - already logged
-		}
-		if err != nil {
-			log.Printf("Failed to create automation entity: %v", err)
-			continue
-		}
-		result.addEntity(created)
-	}
 }
 
 // UpdateEntity validates and writes an existing entity, runs automation,
@@ -606,7 +563,15 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
 
-		w.processAutomationSideEffects(autoResult, entity.ID, result)
+		for _, rel := range autoResult.RelationsToCreate {
+			rel.From = entity.ID
+			if writeErr := w.repo.WriteRelation(rel); writeErr != nil {
+				log.Printf("Failed to create automation relation: %v", writeErr)
+				continue
+			}
+			w.graph.AddEdge(rel)
+			result.RelationsCreated = append(result.RelationsCreated, rel)
+		}
 	}
 
 	// Write to disk + update graph + search index.
@@ -620,76 +585,6 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 	return result, nil
 }
 
-// createEntityFromAutomation creates an entity from an automation spec.
-// Entities created this way do NOT trigger further automations (no chaining).
-func (w *Workspace) createEntityFromAutomation(spec *automation.CreateEntityAction) (*model.Entity, error) {
-	meta := w.Meta()
-
-	// Check if entity type exists
-	entityDef, ok := meta.GetEntityDef(spec.Type)
-	if !ok {
-		return nil, fmt.Errorf("unknown entity type: %s", spec.Type)
-	}
-
-	// Check if entity already exists
-	if spec.ID != "" {
-		if _, exists := w.graph.GetNode(spec.ID); exists {
-			log.Printf("Automation: entity %s already exists, skipping creation", spec.ID)
-			return nil, errEntityAlreadyExists
-		}
-	}
-
-	// Generate ID if not provided
-	id := spec.ID
-	if id == "" {
-		var err error
-		id, err = w.GenerateID(spec.Type, "")
-		if err != nil {
-			return nil, fmt.Errorf("generate ID: %w", err)
-		}
-	}
-
-	// Build entity
-	entity := model.NewEntity(id, spec.Type)
-
-	// Apply template defaults
-	template, err := w.repo.LoadEntityTemplate(spec.Type)
-	if err != nil {
-		return nil, fmt.Errorf("load template: %w", err)
-	}
-	if template != nil {
-		markdown.ApplyEntityTemplate(entity, template)
-	}
-
-	// Apply properties from automation (override template defaults)
-	for key, value := range spec.Properties {
-		entity.SetString(key, value)
-	}
-
-	// Apply content from automation (override template)
-	if spec.Content != "" {
-		entity.Content = spec.Content
-	}
-
-	// Set default status if not set
-	if entity.GetString("status") == "" {
-		entity.SetString("status", entityDef.GetDefaultStatus(meta))
-	}
-
-	// Validate
-	if errs := meta.ValidateEntity(entity); len(errs) > 0 {
-		return nil, newValidationError(errs)
-	}
-
-	// Write to disk + update graph (no automation triggered)
-	if err := w.repo.WriteEntity(entity, meta); err != nil {
-		return nil, fmt.Errorf("write entity: %w", err)
-	}
-	w.graph.AddNode(entity)
-
-	return entity, nil
-}
-
 // DeleteResult contains info about what was deleted.
 type DeleteResult struct {
 	RelationsDeleted int
@@ -698,10 +593,6 @@ type DeleteResult struct {
 // ErrHasRelations is returned by DeleteEntity when cascade is false but
 // the entity has relations.
 var ErrHasRelations = fmt.Errorf("entity has relations; set cascade=true to delete")
-
-// errEntityAlreadyExists is returned by createEntityFromAutomation when
-// the entity already exists. This is not a real error, just signals to skip.
-var errEntityAlreadyExists = fmt.Errorf("entity already exists")
 
 // DeleteEntity removes an entity and optionally cascades to its relations.
 func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteResult, error) {
