@@ -151,6 +151,93 @@ jobs:
 
           echo "Coverage baseline check passed — no coverage was lowered."
 
+  frontend-baseline-guard:
+    name: Frontend Coverage Baseline Guard
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check frontend coverage baseline not lowered
+        run: |
+          set -euo pipefail
+
+          BASE_REF="${{ github.event.pull_request.base.sha }}"
+
+          # Get the baseline from the base branch
+          if ! git show "${BASE_REF}:frontend/.coverage-baseline" > /tmp/base-baseline 2>/dev/null; then
+            echo "No frontend/.coverage-baseline on base branch — nothing to guard."
+            exit 0
+          fi
+
+          # If the PR didn't touch the baseline, nothing to check
+          if ! git diff --name-only "${BASE_REF}"...HEAD | grep -q '^frontend/\.coverage-baseline$'; then
+            echo "frontend/.coverage-baseline not modified in this PR — OK."
+            exit 0
+          fi
+
+          PR_BASELINE="frontend/.coverage-baseline"
+          VIOLATIONS=""
+          VIOLATION_COUNT=0
+
+          # Build a map of base coverage: file -> covered_lines
+          declare -A BASE_COVERED
+          declare -A BASE_TOTAL
+          while IFS=';' read -r file total covered; do
+            [[ -z "$file" ]] && continue
+            BASE_COVERED["$file"]="$covered"
+            BASE_TOTAL["$file"]="$total"
+          done < /tmp/base-baseline
+
+          # Check each file in the PR baseline against the base
+          while IFS=';' read -r file total covered; do
+            [[ -z "$file" ]] && continue
+
+            # Skip files not in the base baseline (new files are fine)
+            if [[ -z "${BASE_COVERED[$file]+x}" ]]; then
+              continue
+            fi
+
+            base_covered="${BASE_COVERED[$file]}"
+            base_total="${BASE_TOTAL[$file]}"
+
+            # If base had 0 total lines, skip (avoid division issues)
+            if [[ "$base_total" -eq 0 ]]; then
+              continue
+            fi
+
+            # Compare covered lines: PR must not have fewer covered lines
+            if [[ "$covered" -lt "$base_covered" ]]; then
+              base_pct=$(awk "BEGIN {printf \"%.1f\", ($base_covered/$base_total)*100}")
+              if [[ "$total" -eq 0 ]]; then
+                pr_pct="0.0"
+              else
+                pr_pct=$(awk "BEGIN {printf \"%.1f\", ($covered/$total)*100}")
+              fi
+              VIOLATIONS="${VIOLATIONS}\n  ${file}: ${base_covered}/${base_total} (${base_pct}%) -> ${covered}/${total} (${pr_pct}%)"
+              VIOLATION_COUNT=$((VIOLATION_COUNT + 1))
+            fi
+          done < "$PR_BASELINE"
+
+          if [[ "$VIOLATION_COUNT" -gt 0 ]]; then
+            echo ""
+            echo "ERROR: Frontend coverage baseline was lowered for ${VIOLATION_COUNT} file(s)!"
+            echo ""
+            echo "The frontend/.coverage-baseline file must not be manually edited to lower coverage."
+            echo "It is automatically updated by CI after merging to the base branch."
+            echo ""
+            echo "Violations:"
+            echo -e "$VIOLATIONS"
+            echo ""
+            echo "To fix: remove your changes to frontend/.coverage-baseline and improve test"
+            echo "coverage instead, or remove the source files if they are no longer needed."
+            exit 1
+          fi
+
+          echo "Frontend coverage baseline check passed — no coverage was lowered."
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -225,8 +312,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Test
-        run: npm run test:run
+      - name: Test with coverage
+        run: npm run test:coverage
+
+      - name: Check coverage baseline (ratchet)
+        run: npm run coverage:check
 
       - name: Build
         run: npm run build

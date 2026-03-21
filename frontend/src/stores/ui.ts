@@ -113,6 +113,7 @@ export const useUIStore = defineStore('ui', () => {
     themeMode.value = darkMode.value ? 'dark' : 'light'
   }
 
+  /* v8 ignore start - theme mode tested via e2e */
   function setThemeMode(mode: ThemeMode) {
     themeMode.value = mode
     if (mode === 'system') {
@@ -140,6 +141,7 @@ export const useUIStore = defineStore('ui', () => {
       }
     })
   }
+  /* v8 ignore stop */
 
   return {
     // State

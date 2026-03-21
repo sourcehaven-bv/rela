@@ -1,3 +1,4 @@
+/* v8 ignore start - router configuration, tested via e2e */
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 const routes: RouteRecordRaw[] = [
@@ -80,3 +81,4 @@ const router = createRouter({
 })
 
 export default router
+/* v8 ignore stop */

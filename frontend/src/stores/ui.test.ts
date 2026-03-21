@@ -13,6 +13,17 @@ describe('UI Store', () => {
     vi.useRealTimers()
   })
 
+  describe('dark mode', () => {
+    it('toggles dark mode and sets explicit theme mode', () => {
+      const initialDark = store.darkMode
+
+      store.toggleDarkMode()
+
+      expect(store.darkMode).toBe(!initialDark)
+      expect(store.themeMode).toBe(store.darkMode ? 'dark' : 'light')
+    })
+  })
+
   describe('sidebar state', () => {
     it('starts with sidebar expanded', () => {
       expect(store.sidebarCollapsed).toBe(false)

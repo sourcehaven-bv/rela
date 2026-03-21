@@ -125,6 +125,17 @@ describe('useKeyboardShortcuts', () => {
       // Should not navigate because g-sequence expired
       expect(pushSpy).not.toHaveBeenCalledWith('/dashboard')
     })
+
+    it('ignores invalid g-sequence keys', async () => {
+      await mountWithRouter()
+      const pushSpy = vi.spyOn(router, 'push')
+
+      document.dispatchEvent(createKeyEvent('g'))
+      document.dispatchEvent(createKeyEvent('x')) // Invalid key
+
+      // Should not navigate anywhere
+      expect(pushSpy).not.toHaveBeenCalled()
+    })
   })
 
   describe('search shortcut', () => {

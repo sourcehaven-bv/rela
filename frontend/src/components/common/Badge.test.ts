@@ -42,9 +42,7 @@ describe('Badge', () => {
         props: { value: 'open' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      // badge-blue uses text color #60a5fa
-      expect(style).toContain('color: #60a5fa')
+      expect(wrapper.find('.badge').classes()).toContain('badge--blue')
     })
 
     it('uses property-specific styles when property is provided', () => {
@@ -62,9 +60,7 @@ describe('Badge', () => {
         props: { value: 'high', property: 'priority' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      // badge-red uses text color #f87171
-      expect(style).toContain('color: #f87171')
+      expect(wrapper.find('.badge').classes()).toContain('badge--red')
     })
 
     it('falls back to searching all properties when property not specified', () => {
@@ -79,24 +75,20 @@ describe('Badge', () => {
         props: { value: 'done' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      // badge-green uses text color #4ade80
-      expect(style).toContain('color: #4ade80')
+      expect(wrapper.find('.badge').classes()).toContain('badge--green')
     })
   })
 
   describe('fallback color', () => {
-    it('uses CSS variable fallback for unknown values', () => {
+    it('uses gray class for unknown values', () => {
       const wrapper = mount(Badge, {
         props: { value: 'unknown-status' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      expect(style).toContain('var(--hover-bg)')
-      expect(style).toContain('var(--muted-text)')
+      expect(wrapper.find('.badge').classes()).toContain('badge--gray')
     })
 
-    it('uses CSS variable fallback when schema has no matching style', () => {
+    it('uses gray class when schema has no matching style', () => {
       const schemaStore = useSchemaStore()
       schemaStore.styles = {
         status: {
@@ -108,8 +100,7 @@ describe('Badge', () => {
         props: { value: 'closed' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      expect(style).toContain('var(--hover-bg)')
+      expect(wrapper.find('.badge').classes()).toContain('badge--gray')
     })
   })
 
@@ -135,9 +126,7 @@ describe('Badge', () => {
         props: { value: 'OPEN' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      // badge-blue uses text color #60a5fa
-      expect(style).toContain('color: #60a5fa')
+      expect(wrapper.find('.badge').classes()).toContain('badge--blue')
     })
 
     it('handles underscores in value lookup', () => {
@@ -145,9 +134,7 @@ describe('Badge', () => {
         props: { value: 'in_progress' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      // badge-orange uses text color #fb923c
-      expect(style).toContain('color: #fb923c')
+      expect(wrapper.find('.badge').classes()).toContain('badge--orange')
     })
 
     it('converts spaces to underscores for lookup', () => {
@@ -155,9 +142,7 @@ describe('Badge', () => {
         props: { value: 'in progress' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      // badge-orange uses text color #fb923c
-      expect(style).toContain('color: #fb923c')
+      expect(wrapper.find('.badge').classes()).toContain('badge--orange')
     })
 
     it('handles mixed case with underscores', () => {
@@ -165,22 +150,19 @@ describe('Badge', () => {
         props: { value: 'In_Progress' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      // badge-orange uses text color #fb923c
-      expect(style).toContain('color: #fb923c')
+      expect(wrapper.find('.badge').classes()).toContain('badge--orange')
     })
   })
 
   describe('badge class to style mapping', () => {
-    // Note: jsdom doesn't support color-mix so we test text colors instead
     it.each([
-      ['badge-blue', '#60a5fa'],
-      ['badge-purple', '#a78bfa'],
-      ['badge-green', '#4ade80'],
-      ['badge-red', '#f87171'],
-      ['badge-orange', '#fb923c'],
-      ['badge-yellow', '#facc15'],
-    ])('maps %s to correct text color %s', (badgeClass, textColor) => {
+      ['badge-blue', 'badge--blue'],
+      ['badge-purple', 'badge--purple'],
+      ['badge-green', 'badge--green'],
+      ['badge-red', 'badge--red'],
+      ['badge-orange', 'badge--orange'],
+      ['badge-yellow', 'badge--yellow'],
+    ])('maps %s to CSS class %s', (badgeClass, cssClass) => {
       const schemaStore = useSchemaStore()
       schemaStore.styles = {
         test: {
@@ -192,11 +174,10 @@ describe('Badge', () => {
         props: { value: 'value' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      expect(style).toContain(`color: ${textColor}`)
+      expect(wrapper.find('.badge').classes()).toContain(cssClass)
     })
 
-    it('maps badge-gray to CSS variables', () => {
+    it('maps badge-gray to badge--gray CSS class', () => {
       const schemaStore = useSchemaStore()
       schemaStore.styles = {
         test: {
@@ -208,9 +189,7 @@ describe('Badge', () => {
         props: { value: 'value' },
       })
 
-      const style = wrapper.find('.badge').attributes('style')
-      expect(style).toContain('var(--hover-bg)')
-      expect(style).toContain('var(--muted-text)')
+      expect(wrapper.find('.badge').classes()).toContain('badge--gray')
     })
   })
 })

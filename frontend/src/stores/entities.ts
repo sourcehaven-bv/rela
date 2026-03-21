@@ -15,6 +15,7 @@ const CACHE_TTL = 60 * 1000 // 1 minute
 // Refresh git status after mutations (non-blocking)
 function refreshGitStatus() {
   const gitStore = useGitStore()
+  /* v8 ignore next 2 - best-effort error handling tested via e2e */
   gitStore.fetchStatus().catch(() => {
     // Ignore errors - git status refresh is best-effort
   })

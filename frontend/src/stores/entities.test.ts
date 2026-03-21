@@ -255,6 +255,54 @@ describe('Entities Store', () => {
     })
   })
 
+  describe('isLoading', () => {
+    it('checks loading state by type without id', async () => {
+      let resolvePromise: (value: unknown) => void
+      vi.mocked(entitiesApi.getEntity).mockReturnValue(
+        new Promise((resolve) => {
+          resolvePromise = resolve
+        })
+      )
+
+      const fetchPromise = store.fetchEntity('ticket', 'TKT-001')
+
+      // Check loading by type only (no id)
+      expect(store.isLoading('ticket')).toBe(true)
+      expect(store.isLoading('bug')).toBe(false)
+
+      resolvePromise!({ id: 'TKT-001', type: 'ticket', properties: {}, relations: {} })
+      await fetchPromise
+
+      expect(store.isLoading('ticket')).toBe(false)
+    })
+  })
+
+  describe('list cache invalidation on mutations', () => {
+    it('invalidates list cache when creating entity', async () => {
+      vi.mocked(entitiesApi.listEntities).mockResolvedValue({
+        data: [{ id: 'TKT-001', type: 'ticket', properties: {}, relations: {} }],
+        meta: { total: 1, page: 1, per_page: 20, has_more: false },
+      })
+      vi.mocked(entitiesApi.createEntity).mockResolvedValue({
+        id: 'TKT-002',
+        type: 'ticket',
+        properties: { title: 'New' },
+        relations: {},
+      })
+
+      // Cache the list
+      await store.fetchList('ticket')
+      expect(entitiesApi.listEntities).toHaveBeenCalledTimes(1)
+
+      // Create should invalidate list cache
+      await store.create('ticket', { properties: { title: 'New' } })
+
+      // Fetching list again should call API (cache was invalidated)
+      await store.fetchList('ticket')
+      expect(entitiesApi.listEntities).toHaveBeenCalledTimes(2)
+    })
+  })
+
   describe('cache expiration', () => {
     it('expires cache after TTL', async () => {
       vi.useFakeTimers()
