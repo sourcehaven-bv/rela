@@ -224,7 +224,7 @@ onMounted(() => {
 .subtitle {
   margin: 0;
   font-size: 14px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .btn {
@@ -243,12 +243,12 @@ onMounted(() => {
 }
 
 .btn-secondary {
-  background: #f1f5f9;
-  color: #475569;
+  background: var(--hover-bg);
+  color: var(--text-color);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #e2e8f0;
+  background: var(--border-color);
 }
 
 .loading-state {
@@ -256,7 +256,7 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
   padding: 48px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .spinner {
@@ -290,13 +290,13 @@ onMounted(() => {
 }
 
 .badge.error {
-  background: #fef2f2;
-  color: #dc2626;
+  background: color-mix(in srgb, var(--error-color) 15%, transparent);
+  color: var(--error-color);
 }
 
 .badge.warning {
-  background: #fffbeb;
-  color: #d97706;
+  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
+  color: var(--warning-color);
 }
 
 /* Check cards */
@@ -307,8 +307,8 @@ onMounted(() => {
 }
 
 .check-card {
-  background: white;
-  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -325,12 +325,12 @@ onMounted(() => {
   margin: 0 0 4px;
   font-size: 16px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .check-count {
-  background: #e2e8f0;
-  color: #64748b;
+  background: var(--border-color);
+  color: var(--muted-text);
   padding: 2px 10px;
   border-radius: 12px;
   font-size: 13px;
@@ -338,14 +338,14 @@ onMounted(() => {
 }
 
 .check-count.has-issues {
-  background: #fef3c7;
-  color: #d97706;
+  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
+  color: var(--warning-color);
 }
 
 .check-description {
   margin: 0;
   font-size: 13px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .no-issues {
@@ -353,7 +353,7 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 16px 20px;
-  color: #16a34a;
+  color: var(--success-color);
   font-size: 14px;
 }
 
@@ -370,18 +370,18 @@ onMounted(() => {
 .issues-table th {
   text-align: left;
   padding: 10px 16px;
-  background: #f8fafc;
+  background: var(--hover-bg);
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #64748b;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  color: var(--muted-text);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .issues-table td {
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  border-bottom: 1px solid var(--border-color);
   font-size: 14px;
 }
 
@@ -391,7 +391,7 @@ onMounted(() => {
 }
 
 .issue-row:hover {
-  background: #f8fafc;
+  background: var(--hover-bg);
 }
 
 .issue-row:last-child td {
@@ -412,22 +412,22 @@ onMounted(() => {
 .entity-id {
   font-family: monospace;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--muted-text);
 }
 
 .type-badge {
   display: inline-block;
   padding: 4px 8px;
-  background: #f1f5f9;
+  background: var(--hover-bg);
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .message-cell {
-  color: #475569;
+  color: var(--text-color);
 }
 
 .severity-badge {
@@ -439,12 +439,12 @@ onMounted(() => {
 }
 
 .severity-badge.error {
-  background: #fef2f2;
-  color: #dc2626;
+  background: color-mix(in srgb, var(--error-color) 15%, transparent);
+  color: var(--error-color);
 }
 
 .severity-badge.warning {
-  background: #fef3c7;
-  color: #d97706;
+  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
+  color: var(--warning-color);
 }
 </style>

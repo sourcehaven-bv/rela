@@ -1,11 +1,29 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 export interface Toast {
   id: string
   type: 'success' | 'error' | 'warning' | 'info'
   message: string
   timeout?: number
+}
+
+type ThemeMode = 'light' | 'dark' | 'system'
+
+function getInitialDarkMode(): boolean {
+  const stored = localStorage.getItem('theme')
+  if (stored === 'dark') return true
+  if (stored === 'light') return false
+  // Default to system preference
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+function getInitialThemeMode(): ThemeMode {
+  const stored = localStorage.getItem('theme')
+  if (stored === 'dark' || stored === 'light' || stored === 'system') {
+    return stored
+  }
+  return 'system'
 }
 
 export const useUIStore = defineStore('ui', () => {
@@ -16,11 +34,15 @@ export const useUIStore = defineStore('ui', () => {
   const toasts = ref<Toast[]>([])
   const currentModal = ref<string | null>(null)
   const modalData = ref<unknown>(null)
+  const themeMode = ref<ThemeMode>(getInitialThemeMode())
+  const darkMode = ref(getInitialDarkMode())
 
   // Getters
   const isSidebarVisible = computed(
     () => !sidebarCollapsed.value || sidebarMobileOpen.value
   )
+
+  const isDark = computed(() => darkMode.value)
 
   // Actions
   function toggleSidebar() {
@@ -85,6 +107,40 @@ export const useUIStore = defineStore('ui', () => {
     return showToast('info', message)
   }
 
+  function toggleDarkMode() {
+    // Toggle cycles: current -> opposite, sets mode to explicit (not system)
+    darkMode.value = !darkMode.value
+    themeMode.value = darkMode.value ? 'dark' : 'light'
+  }
+
+  function setThemeMode(mode: ThemeMode) {
+    themeMode.value = mode
+    if (mode === 'system') {
+      darkMode.value = window.matchMedia('(prefers-color-scheme: dark)').matches
+    } else {
+      darkMode.value = mode === 'dark'
+    }
+  }
+
+  // Apply dark mode class and persist
+  watch(
+    [darkMode, themeMode],
+    ([dark, mode]) => {
+      document.documentElement.classList.toggle('dark', dark)
+      localStorage.setItem('theme', mode)
+    },
+    { immediate: true }
+  )
+
+  // Listen for system preference changes when in system mode
+  if (typeof window !== 'undefined') {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+      if (themeMode.value === 'system') {
+        darkMode.value = e.matches
+      }
+    })
+  }
+
   return {
     // State
     sidebarCollapsed,
@@ -93,9 +149,12 @@ export const useUIStore = defineStore('ui', () => {
     toasts,
     currentModal,
     modalData,
+    darkMode,
+    themeMode,
 
     // Getters
     isSidebarVisible,
+    isDark,
 
     // Actions
     toggleSidebar,
@@ -110,5 +169,7 @@ export const useUIStore = defineStore('ui', () => {
     error,
     warning,
     info,
+    toggleDarkMode,
+    setThemeMode,
   }
 })

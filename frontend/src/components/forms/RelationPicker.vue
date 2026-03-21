@@ -187,7 +187,7 @@ watch(showDropdown, (show) => {
 .form-field label {
   font-size: 14px;
   font-weight: 500;
-  color: #374151;
+  color: var(--text-color);
 }
 
 .selected-entities {
@@ -202,7 +202,7 @@ watch(showDropdown, (show) => {
   align-items: center;
   gap: 6px;
   padding: 4px 8px 4px 10px;
-  background: #f1f5f9;
+  background: var(--hover-bg);
   border-radius: 4px;
   font-size: 13px;
 }
@@ -210,20 +210,20 @@ watch(showDropdown, (show) => {
 .selected-entity .entity-type {
   font-size: 10px;
   text-transform: uppercase;
-  color: #64748b;
-  background: #e2e8f0;
+  color: var(--muted-text);
+  background: var(--border-color);
   padding: 2px 4px;
   border-radius: 2px;
 }
 
 .selected-entity .entity-label {
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .remove-btn {
   background: none;
   border: none;
-  color: #94a3b8;
+  color: var(--muted-text);
   font-size: 18px;
   cursor: pointer;
   padding: 0 2px;
@@ -241,14 +241,16 @@ watch(showDropdown, (show) => {
 .search-wrapper input {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 14px;
+  background: var(--input-bg);
+  color: var(--text-color);
 }
 
 .search-wrapper input:focus {
   outline: none;
-  border-color: var(--accent-color, #6366f1);
+  border-color: var(--accent-color);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
 }
 
@@ -257,7 +259,7 @@ watch(showDropdown, (show) => {
   top: 100%;
   left: 0;
   right: 0;
-  background: white;
+  background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
@@ -277,14 +279,14 @@ watch(showDropdown, (show) => {
 }
 
 .dropdown-item:hover {
-  background: #f8fafc;
+  background: var(--hover-bg);
 }
 
 .dropdown-item .entity-type {
   font-size: 10px;
   text-transform: uppercase;
-  color: #64748b;
-  background: #e2e8f0;
+  color: var(--muted-text);
+  background: var(--border-color);
   padding: 2px 4px;
   border-radius: 2px;
 }
@@ -292,32 +294,32 @@ watch(showDropdown, (show) => {
 .dropdown-item .entity-id {
   font-family: monospace;
   font-size: 12px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .dropdown-item .entity-label {
   flex: 1;
   font-size: 14px;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .dropdown-empty,
 .dropdown-more {
   padding: 12px;
   text-align: center;
-  color: #64748b;
+  color: var(--muted-text);
   font-size: 13px;
 }
 
 .loading-indicator {
   padding: 8px 12px;
-  color: #64748b;
+  color: var(--muted-text);
   font-size: 13px;
 }
 
 .field-help {
   font-size: 13px;
-  color: #64748b;
+  color: var(--muted-text);
   margin: 0;
 }
 </style>

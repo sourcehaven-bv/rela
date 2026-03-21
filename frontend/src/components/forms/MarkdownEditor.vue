@@ -87,43 +87,73 @@ onBeforeUnmount(() => {
 }
 
 .markdown-editor :deep(.CodeMirror) {
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 0 0 6px 6px;
   font-family: monospace;
   font-size: 14px;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.markdown-editor :deep(.CodeMirror-cursor) {
+  border-left-color: var(--text-color);
+}
+
+.markdown-editor :deep(.CodeMirror-selected) {
+  background: var(--accent-color) !important;
+  opacity: 0.3;
 }
 
 .markdown-editor :deep(.CodeMirror-focused) {
-  border-color: var(--accent-color, #6366f1);
+  border-color: var(--accent-color);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
 }
 
 .markdown-editor :deep(.editor-toolbar) {
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-bottom: none;
   border-radius: 6px 6px 0 0;
+  background: var(--card-bg);
 }
 
 .markdown-editor :deep(.editor-toolbar button) {
-  color: #64748b;
+  color: var(--muted-text) !important;
 }
 
 .markdown-editor :deep(.editor-toolbar button:hover) {
-  background: #f1f5f9;
+  background: var(--hover-bg);
 }
 
 .markdown-editor :deep(.editor-toolbar button.active) {
-  background: #e2e8f0;
+  background: var(--border-color);
+}
+
+.markdown-editor :deep(.editor-toolbar i.separator) {
+  border-left-color: var(--border-color);
+  border-right-color: var(--border-color);
 }
 
 .markdown-editor :deep(.editor-preview) {
   padding: 16px;
-  background: #fafafa;
+  background: var(--card-bg);
+  color: var(--text-color);
 }
 
 .markdown-editor :deep(.editor-preview-side) {
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-left: none;
+  background: var(--card-bg);
+  color: var(--text-color);
+}
+
+/* CodeMirror line numbers and gutters */
+.markdown-editor :deep(.CodeMirror-gutters) {
+  background: var(--hover-bg);
+  border-right-color: var(--border-color);
+}
+
+.markdown-editor :deep(.CodeMirror-linenumber) {
+  color: var(--muted-text);
 }
 
 /* Fullscreen mode - ensure it covers everything including sidebar */

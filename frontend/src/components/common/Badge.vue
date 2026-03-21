@@ -12,17 +12,18 @@ const props = defineProps<{
 const schemaStore = useSchemaStore()
 
 // Map badge class names to inline styles
+// Using colors that work in both light and dark modes
 const badgeClassMap: Record<string, { backgroundColor: string; color: string }> = {
-  'badge-blue': { backgroundColor: '#dbeafe', color: '#1e40af' },
-  'badge-purple': { backgroundColor: '#e9d5ff', color: '#6b21a8' },
-  'badge-green': { backgroundColor: '#dcfce7', color: '#166534' },
-  'badge-gray': { backgroundColor: '#e2e8f0', color: '#475569' },
-  'badge-red': { backgroundColor: '#fee2e2', color: '#991b1b' },
-  'badge-orange': { backgroundColor: '#fed7aa', color: '#9a3412' },
-  'badge-yellow': { backgroundColor: '#fef08a', color: '#854d0e' },
+  'badge-blue': { backgroundColor: 'color-mix(in srgb, #3b82f6 20%, transparent)', color: '#60a5fa' },
+  'badge-purple': { backgroundColor: 'color-mix(in srgb, #8b5cf6 20%, transparent)', color: '#a78bfa' },
+  'badge-green': { backgroundColor: 'color-mix(in srgb, #22c55e 20%, transparent)', color: '#4ade80' },
+  'badge-gray': { backgroundColor: 'var(--hover-bg)', color: 'var(--muted-text)' },
+  'badge-red': { backgroundColor: 'color-mix(in srgb, #ef4444 20%, transparent)', color: '#f87171' },
+  'badge-orange': { backgroundColor: 'color-mix(in srgb, #f97316 20%, transparent)', color: '#fb923c' },
+  'badge-yellow': { backgroundColor: 'color-mix(in srgb, #eab308 20%, transparent)', color: '#facc15' },
 }
 
-const defaultStyle = { backgroundColor: '#e2e8f0', color: '#475569' }
+const defaultStyle = { backgroundColor: 'var(--hover-bg)', color: 'var(--muted-text)' }
 
 // Look up style: first try by property name, then search all properties
 const badgeStyle = computed(() => {

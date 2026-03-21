@@ -195,7 +195,7 @@ function handleMultiSelect(event: Event) {
 .form-field label {
   font-size: 14px;
   font-weight: 500;
-  color: #374151;
+  color: var(--text-color);
 }
 
 .required {
@@ -224,9 +224,11 @@ input[type="date"],
 textarea,
 select {
   padding: 10px 12px;
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 14px;
+  background: var(--input-bg);
+  color: var(--text-color);
   transition: all 0.15s;
 }
 
@@ -241,7 +243,7 @@ select:focus {
 input:disabled,
 textarea:disabled,
 select:disabled {
-  background: #f8fafc;
+  background: var(--hover-bg);
   cursor: not-allowed;
 }
 
@@ -263,7 +265,7 @@ select[multiple] {
 
 .field-help {
   font-size: 13px;
-  color: #64748b;
+  color: var(--muted-text);
   margin: 0;
 }
 
@@ -276,8 +278,8 @@ select[multiple] {
 .transitions-info {
   margin-top: 8px;
   padding: 12px;
-  background: #f8fafc;
-  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
 }
 
@@ -286,7 +288,7 @@ select[multiple] {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #64748b;
+  color: var(--muted-text);
   margin: 0 0 8px;
 }
 
@@ -300,14 +302,14 @@ select[multiple] {
 
 .transitions-from {
   font-weight: 500;
-  color: #374151;
+  color: var(--text-color);
 }
 
 .transitions-arrow {
-  color: #94a3b8;
+  color: var(--muted-text);
 }
 
 .transitions-to {
-  color: #64748b;
+  color: var(--muted-text);
 }
 </style>

@@ -285,14 +285,6 @@ onMounted(() => {
       </router-link>
     </header>
 
-    <FilterBar
-      v-if="listConfig.filter_controls?.length"
-      :config="listConfig"
-      :entity-type="entityType"
-      :filters="filters"
-      @filter="handleFilter"
-    />
-
     <div v-if="configuredFilters.length" class="configured-filters">
       <span
         v-for="filter in configuredFilters"
@@ -304,6 +296,13 @@ onMounted(() => {
     </div>
 
     <div class="list-content">
+      <FilterBar
+        v-if="listConfig.filter_controls?.length"
+        :config="listConfig"
+        :entity-type="entityType"
+        :filters="filters"
+        @filter="handleFilter"
+      />
       <div v-if="loading" class="loading-state">
         <div class="spinner"/>
         <span>Loading...</span>
@@ -425,16 +424,16 @@ onMounted(() => {
 }
 
 .btn-primary:hover {
-  background: #4f46e5;
+  filter: brightness(0.9);
 }
 
 .btn-secondary {
-  background: var(--border-color, #e2e8f0);
-  color: var(--text-color, #1e293b);
+  background: var(--border-color);
+  color: var(--text-color);
 }
 
 .btn-secondary:hover {
-  background: #cbd5e1;
+  background: var(--hover-bg);
 }
 
 .configured-filters {
@@ -449,15 +448,15 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   padding: 4px 10px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
   border-radius: 16px;
   font-size: 12px;
-  color: #475569;
+  color: var(--text-color);
 }
 
 .list-content {
-  background: white;
+  background: var(--card-bg);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   overflow: hidden;
@@ -471,7 +470,7 @@ onMounted(() => {
   justify-content: center;
   padding: 48px;
   gap: 16px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .spinner {
@@ -497,13 +496,13 @@ onMounted(() => {
 .entity-table th {
   text-align: left;
   padding: 12px 16px;
-  background: #f8fafc;
+  background: var(--hover-bg);
   border-bottom: 1px solid var(--border-color);
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .entity-table th.sortable {
@@ -512,7 +511,7 @@ onMounted(() => {
 }
 
 .entity-table th.sortable:hover {
-  background: #f1f5f9;
+  filter: brightness(0.95);
 }
 
 .entity-table th.sorted {
@@ -536,23 +535,23 @@ onMounted(() => {
 }
 
 .entity-row:hover {
-  background: #f8fafc;
+  background: var(--hover-bg);
 }
 
 .entity-row.selected {
-  background: #e0e7ff;
-  outline: 2px solid var(--accent-color, #6366f1);
+  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
+  outline: 2px solid var(--accent-color);
   outline-offset: -2px;
 }
 
 .entity-row.selected:hover {
-  background: #c7d2fe;
+  background: color-mix(in srgb, var(--accent-color) 25%, transparent);
 }
 
 .error-state {
   padding: 48px;
   text-align: center;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .error-state h2 {
@@ -578,13 +577,13 @@ onMounted(() => {
   background: transparent;
   border: none;
   border-radius: 4px;
-  color: #94a3b8;
+  color: var(--muted-text);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .delete-btn:hover {
-  background: #fee2e2;
-  color: var(--error-color, #ef4444);
+  background: color-mix(in srgb, var(--error-color) 15%, transparent);
+  color: var(--error-color);
 }
 </style>

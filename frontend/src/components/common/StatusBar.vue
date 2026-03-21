@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { useGitStore } from '@/stores'
+import { useGitStore, useUIStore } from '@/stores'
 import { shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
 
 const gitStore = useGitStore()
+const uiStore = useUIStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -46,8 +47,16 @@ async function handleSync() {
       </div>
     </div>
 
-    <!-- Right side: Settings and shortcuts -->
+    <!-- Right side: Theme, Settings, and shortcuts -->
     <div class="status-right">
+      <button
+        class="status-item theme-toggle"
+        :title="uiStore.isDark ? 'Switch to light mode' : 'Switch to dark mode'"
+        @click="uiStore.toggleDarkMode()"
+      >
+        <span v-if="uiStore.isDark" class="theme-icon">☀️</span>
+        <span v-else class="theme-icon">🌙</span>
+      </button>
       <RouterLink
         to="/settings"
         class="status-item"
@@ -162,5 +171,14 @@ async function handleSync() {
   padding: 1px 4px;
   font-size: 10px;
   color: rgba(255, 255, 255, 0.6);
+}
+
+.theme-toggle {
+  padding: 2px 6px;
+}
+
+.theme-icon {
+  font-size: 14px;
+  line-height: 1;
 }
 </style>

@@ -107,9 +107,8 @@ function hasActiveFilters(): boolean {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 0;
-  background: #f8fafc;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .filters {
@@ -129,7 +128,7 @@ function hasActiveFilters(): boolean {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .filter-item select,
@@ -139,6 +138,8 @@ function hasActiveFilters(): boolean {
   border-radius: 4px;
   font-size: 14px;
   min-width: 150px;
+  background: var(--input-bg);
+  color: var(--text-color);
 }
 
 .filter-item select:focus,
@@ -154,13 +155,13 @@ function hasActiveFilters(): boolean {
   border: 1px solid var(--border-color);
   border-radius: 4px;
   font-size: 13px;
-  color: #64748b;
+  color: var(--muted-text);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .clear-filters:hover {
-  background: white;
+  background: var(--hover-bg);
   color: var(--text-color);
 }
 </style>

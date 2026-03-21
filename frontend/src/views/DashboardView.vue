@@ -250,7 +250,7 @@ onMounted(() => {
 }
 
 .description {
-  color: #64748b;
+  color: var(--muted-text);
   margin: 0;
 }
 
@@ -259,7 +259,7 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
   padding: 48px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .spinner {
@@ -285,8 +285,8 @@ onMounted(() => {
 }
 
 .dashboard-card {
-  background: white;
-  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 16px;
 }
@@ -302,11 +302,11 @@ onMounted(() => {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .card-link {
-  color: #64748b;
+  color: var(--muted-text);
   text-decoration: none;
   font-size: 14px;
 }
@@ -323,7 +323,7 @@ onMounted(() => {
 .count-number {
   font-size: 48px;
   font-weight: 700;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 /* Breakdown display */
@@ -342,13 +342,13 @@ onMounted(() => {
 .breakdown-label {
   min-width: 80px;
   font-size: 13px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .breakdown-bar-track {
   flex: 1;
   height: 8px;
-  background: #f1f5f9;
+  background: var(--hover-bg);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -365,7 +365,7 @@ onMounted(() => {
   text-align: right;
   font-size: 13px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 /* Table display */
@@ -384,13 +384,13 @@ onMounted(() => {
   padding: 8px;
   border-bottom: 1px solid var(--border-color);
   font-weight: 600;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .card-table td {
   padding: 8px;
   border-bottom: 1px solid var(--border-color);
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .cell-link {
@@ -403,15 +403,15 @@ onMounted(() => {
 }
 
 .no-data {
-  color: #64748b;
+  color: var(--muted-text);
   font-size: 13px;
   padding: 8px 0;
 }
 
 /* Validation card */
 .validation-card {
-  background: white;
-  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 16px;
 }
@@ -423,7 +423,7 @@ onMounted(() => {
 }
 
 .validation-success {
-  color: #166534;
+  color: var(--success-color);
   font-weight: 600;
   font-size: 14px;
 }
@@ -436,13 +436,13 @@ onMounted(() => {
 }
 
 .badge-error {
-  background: #fee2e2;
-  color: #dc2626;
+  background: color-mix(in srgb, var(--error-color) 15%, transparent);
+  color: var(--error-color);
 }
 
 .badge-warning {
-  background: #fef3c7;
-  color: #d97706;
+  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
+  color: var(--warning-color);
 }
 
 .view-details {

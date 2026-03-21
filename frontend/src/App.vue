@@ -68,6 +68,27 @@ onMounted(async () => {
   --error-color: #ef4444;
   --warning-color: #f59e0b;
   --info-color: #3b82f6;
+  --card-bg: #ffffff;
+  --input-bg: #ffffff;
+  --hover-bg: #f1f5f9;
+  --muted-text: #64748b;
+}
+
+:root.dark {
+  --sidebar-bg: #0f0f1a;
+  --sidebar-text: #e8e8e8;
+  --accent-color: #818cf8;
+  --bg-color: #121218;
+  --text-color: #e2e8f0;
+  --border-color: #2d2d3a;
+  --success-color: #34d399;
+  --error-color: #f87171;
+  --warning-color: #fbbf24;
+  --info-color: #60a5fa;
+  --card-bg: #1a1a24;
+  --input-bg: #1e1e28;
+  --hover-bg: #252530;
+  --muted-text: #94a3b8;
 }
 
 * {
@@ -81,6 +102,7 @@ body {
   background: var(--bg-color);
   color: var(--text-color);
   line-height: 1.5;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .app-layout {
@@ -152,13 +174,13 @@ kbd {
   min-width: 18px;
   height: 18px;
   padding: 0 4px;
-  background: var(--bg-color);
+  background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-bottom-width: 2px;
   border-radius: 3px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 10px;
-  color: #64748b;
+  color: var(--muted-text);
   line-height: 1;
   vertical-align: middle;
 }
@@ -181,7 +203,7 @@ button kbd {
 .btn-secondary kbd {
   background: var(--bg-color);
   border-color: var(--border-color);
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .sidebar kbd {

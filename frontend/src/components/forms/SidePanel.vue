@@ -163,8 +163,7 @@ onMounted(() => loadSidePanel())
 .side-panel {
   width: 280px;
   min-width: 280px;
-  background: var(--card-bg, #f8fafc);
-  border-left: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-color);
   padding: 16px;
   overflow-y: auto;
   max-height: calc(100vh - 64px);
@@ -199,9 +198,9 @@ onMounted(() => loadSidePanel())
 
 .panel-section {
   margin-bottom: 16px;
-  background: white;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   overflow: hidden;
 }
 
@@ -216,18 +215,18 @@ onMounted(() => loadSidePanel())
   cursor: pointer;
   font-size: 14px;
   font-weight: 600;
-  color: #374151;
+  color: var(--text-color);
   text-align: left;
   transition: background 0.15s;
 }
 
 .section-header:hover {
-  background: #f1f5f9;
+  background: var(--hover-bg);
 }
 
 .collapse-icon {
   font-size: 16px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .section-content {
@@ -236,7 +235,7 @@ onMounted(() => loadSidePanel())
 
 .empty-state {
   font-size: 13px;
-  color: #94a3b8;
+  color: var(--muted-text);
   font-style: italic;
 }
 
@@ -260,14 +259,14 @@ onMounted(() => loadSidePanel())
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  color: #64748b;
+  color: var(--muted-text);
   letter-spacing: 0.5px;
 }
 
 .property-item dd {
   margin: 0;
   font-size: 14px;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 /* List display */
@@ -298,16 +297,16 @@ onMounted(() => loadSidePanel())
 
 .entity-card {
   padding: 12px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .entity-card:hover {
-  border-color: var(--accent-color, #6366f1);
-  background: #f1f5f9;
+  border-color: var(--accent-color);
+  filter: brightness(0.95);
 }
 
 .card-header {
@@ -317,13 +316,13 @@ onMounted(() => loadSidePanel())
 .card-id {
   font-size: 11px;
   font-family: monospace;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .card-title {
   font-size: 14px;
   font-weight: 500;
-  color: #1e293b;
+  color: var(--text-color);
   margin-bottom: 8px;
 }
 
@@ -341,11 +340,11 @@ onMounted(() => loadSidePanel())
 }
 
 .field-label {
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .field-value {
-  color: #374151;
+  color: var(--text-color);
 }
 
 /* Responsive: mobile overlay */

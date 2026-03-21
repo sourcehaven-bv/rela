@@ -637,7 +637,7 @@ onMounted(() => loadEntity())
   justify-content: center;
   padding: 48px;
   gap: 16px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .spinner {
@@ -674,7 +674,7 @@ onMounted(() => loadEntity())
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .header-info h1 {
@@ -708,7 +708,7 @@ onMounted(() => loadEntity())
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #cbd5e1;
+  filter: brightness(0.9);
 }
 
 .btn-danger {
@@ -721,9 +721,9 @@ onMounted(() => loadEntity())
 }
 
 .detail-section {
-  background: white;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   padding: 24px;
   margin-bottom: 24px;
 }
@@ -731,7 +731,7 @@ onMounted(() => loadEntity())
 .detail-section h2 {
   margin: 0 0 16px;
   font-size: 18px;
-  color: #374151;
+  color: var(--text-color);
 }
 
 .properties-grid {
@@ -750,13 +750,13 @@ onMounted(() => loadEntity())
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .property-item dd {
   margin: 0;
   font-size: 14px;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .relations-list {
@@ -769,7 +769,7 @@ onMounted(() => loadEntity())
   margin: 0 0 8px;
   font-size: 14px;
   font-weight: 600;
-  color: #64748b;
+  color: var(--muted-text);
   text-transform: capitalize;
 }
 
@@ -781,8 +781,8 @@ onMounted(() => loadEntity())
 
 .relation-link {
   padding: 6px 12px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   font-size: 13px;
   font-family: monospace;
@@ -792,21 +792,21 @@ onMounted(() => loadEntity())
 }
 
 .relation-link:hover {
-  background: #e2e8f0;
+  filter: brightness(0.95);
   border-color: var(--accent-color);
 }
 
 .content-body {
   font-size: 15px;
   line-height: 1.7;
-  color: #374151;
+  color: var(--text-color);
 }
 
 .content-body :deep(h1),
 .content-body :deep(h2),
 .content-body :deep(h3) {
   margin: 24px 0 12px;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .content-body :deep(h1) {
@@ -841,15 +841,16 @@ onMounted(() => loadEntity())
 }
 
 .content-body :deep(li::marker) {
-  color: #64748b;
+  color: var(--muted-text);
   font-weight: 500;
 }
 
 .content-body :deep(code) {
-  background: #f1f5f9;
+  background: var(--hover-bg);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 13px;
+  color: var(--text-color);
 }
 
 .content-body :deep(input[type="checkbox"]) {
@@ -867,21 +868,22 @@ onMounted(() => loadEntity())
 }
 
 .modal {
-  background: white;
+  background: var(--card-bg);
   border-radius: 12px;
   padding: 24px;
   max-width: 400px;
   width: 90%;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
 }
 
 .modal h3 {
   margin: 0 0 12px;
+  color: var(--text-color);
 }
 
 .modal p {
   margin: 0 0 24px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .modal-actions {
@@ -1009,7 +1011,6 @@ onMounted(() => loadEntity())
   display: flex;
   align-items: center;
   gap: 12px;
-  background: #f8fafc;
   margin-bottom: 20px;
 }
 
@@ -1018,31 +1019,31 @@ onMounted(() => loadEntity())
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: white;
-  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 13px;
-  color: var(--text-color, #1e293b);
+  color: var(--text-color);
   cursor: pointer;
   text-decoration: none;
   transition: all 0.15s;
 }
 
 .scope-nav-btn:hover:not(.disabled) {
-  background: #f1f5f9;
-  border-color: var(--accent-color, #6366f1);
+  filter: brightness(0.95);
+  border-color: var(--accent-color);
 }
 
 .scope-nav-btn.disabled {
-  color: #94a3b8;
+  color: var(--muted-text);
   cursor: not-allowed;
-  background: #f8fafc;
+  opacity: 0.6;
 }
 
 .scope-nav-btn kbd {
   padding: 2px 5px;
   font-size: 10px;
-  background: #e2e8f0;
+  background: var(--border-color);
   border-radius: 3px;
   font-family: monospace;
 }
@@ -1050,13 +1051,13 @@ onMounted(() => loadEntity())
 .scope-nav-progress {
   font-size: 13px;
   font-weight: 600;
-  color: #475569;
+  color: var(--text-color);
   font-family: monospace;
 }
 
 .scope-nav-label {
   flex: 1;
   font-size: 13px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 </style>

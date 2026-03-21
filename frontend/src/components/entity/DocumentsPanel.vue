@@ -190,9 +190,9 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 
 <style scoped>
 .documents-panel {
-  background: white;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   margin-bottom: 24px;
   overflow: hidden;
 }
@@ -202,13 +202,13 @@ function getDocTitle(name: string, config: DocumentConfig): string {
   align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .panel-header h2 {
   margin: 0;
   font-size: 18px;
-  color: #374151;
+  color: var(--text-color);
 }
 
 .header-controls {
@@ -219,9 +219,10 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 
 .doc-select {
   padding: 6px 12px;
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: white;
+  background: var(--input-bg);
+  color: var(--text-color);
   font-size: 14px;
   cursor: pointer;
 }
@@ -258,7 +259,7 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #cbd5e1;
+  filter: brightness(0.9);
 }
 
 .loading-state,
@@ -269,7 +270,7 @@ function getDocTitle(name: string, config: DocumentConfig): string {
   justify-content: center;
   padding: 48px;
   gap: 16px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .spinner {
@@ -307,17 +308,17 @@ function getDocTitle(name: string, config: DocumentConfig): string {
   top: 12px;
   right: 12px;
   padding: 2px 8px;
-  background: #f1f5f9;
+  background: var(--hover-bg);
   border-radius: 4px;
   font-size: 11px;
-  color: #64748b;
+  color: var(--muted-text);
   text-transform: uppercase;
 }
 
 .document-body {
   font-size: 15px;
   line-height: 1.7;
-  color: #374151;
+  color: var(--text-color);
 }
 
 /* Style injected HTML content */
@@ -325,7 +326,7 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 .document-body :deep(h2),
 .document-body :deep(h3) {
   margin: 24px 0 12px;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .document-body :deep(h1:first-child),
@@ -361,8 +362,8 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 }
 
 .document-body :deep(pre) {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 12px;
   overflow-x: auto;
@@ -370,7 +371,8 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 }
 
 .document-body :deep(code) {
-  background: #f1f5f9;
+  background: var(--hover-bg);
+  color: var(--text-color);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 13px;
@@ -391,26 +393,26 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 .document-body :deep(td) {
   padding: 8px 12px;
   text-align: left;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-color);
 }
 
 .document-body :deep(th) {
-  background: #f8fafc;
+  background: var(--hover-bg);
   font-weight: 600;
 }
 
 .document-body :deep(hr) {
   border: none;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border-color);
   margin: 24px 0;
 }
 
 .document-body :deep(blockquote) {
   margin: 12px 0;
   padding: 12px 16px;
-  background: #f8fafc;
+  background: var(--hover-bg);
   border-left: 4px solid var(--accent-color);
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .document-body :deep(img) {

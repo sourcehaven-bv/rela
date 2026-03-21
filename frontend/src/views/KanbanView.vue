@@ -359,7 +359,7 @@ watch(() => entitiesStore.cacheVersion, () => {
   gap: 16px;
   margin-bottom: 20px;
   padding: 12px 16px;
-  background: #f8fafc;
+  background: var(--card-bg);
   border-radius: 8px;
 }
 
@@ -372,16 +372,18 @@ watch(() => entitiesStore.cacheVersion, () => {
 .filter-group label {
   font-size: 12px;
   font-weight: 500;
-  color: #64748b;
+  color: var(--muted-text);
   text-transform: uppercase;
 }
 
 .filter-group select {
   padding: 6px 10px;
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 14px;
   min-width: 120px;
+  background: var(--input-bg);
+  color: var(--text-color);
 }
 
 .loading-state {
@@ -389,7 +391,7 @@ watch(() => entitiesStore.cacheVersion, () => {
   align-items: center;
   gap: 12px;
   padding: 48px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .spinner {
@@ -418,7 +420,7 @@ watch(() => entitiesStore.cacheVersion, () => {
   flex: 1;
   min-width: 280px;
   max-width: 350px;
-  background: #f1f5f9;
+  background: var(--hover-bg);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
@@ -429,18 +431,18 @@ watch(() => entitiesStore.cacheVersion, () => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .column-title {
   font-size: 14px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .column-count {
-  background: #e2e8f0;
-  color: #64748b;
+  background: var(--border-color);
+  color: var(--muted-text);
   padding: 2px 8px;
   border-radius: 12px;
   font-size: 12px;
@@ -457,8 +459,8 @@ watch(() => entitiesStore.cacheVersion, () => {
 }
 
 .kanban-card {
-  background: white;
-  border: 1px solid #e2e8f0;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 12px;
   cursor: grab;
@@ -477,14 +479,14 @@ watch(() => entitiesStore.cacheVersion, () => {
 .card-id {
   font-family: monospace;
   font-size: 11px;
-  color: #64748b;
+  color: var(--muted-text);
   margin-bottom: 4px;
 }
 
 .card-title {
   font-size: 14px;
   font-weight: 500;
-  color: #1e293b;
+  color: var(--text-color);
   margin-bottom: 8px;
 }
 
@@ -501,11 +503,11 @@ watch(() => entitiesStore.cacheVersion, () => {
 }
 
 .field-label {
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .field-value {
-  color: #475569;
+  color: var(--text-color);
 }
 
 .empty-column {

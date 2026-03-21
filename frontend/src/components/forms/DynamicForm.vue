@@ -504,12 +504,12 @@ onBeforeUnmount(() => {
   width: 28px;
   height: 28px;
   padding: 0;
-  background: var(--bg-color, #f8fafc);
-  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
   border-radius: 50%;
   font-size: 14px;
   font-weight: 600;
-  color: #64748b;
+  color: var(--muted-text);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -526,7 +526,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 48px;
   gap: 16px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .spinner {
@@ -545,7 +545,7 @@ onBeforeUnmount(() => {
 }
 
 .form-section {
-  background: white;
+  background: var(--card-bg);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   padding: 24px;
@@ -558,7 +558,7 @@ onBeforeUnmount(() => {
 }
 
 .section-description {
-  color: #64748b;
+  color: var(--muted-text);
   margin-bottom: 24px;
 }
 
@@ -577,11 +577,11 @@ onBeforeUnmount(() => {
 .form-field label {
   font-size: 14px;
   font-weight: 500;
-  color: #374151;
+  color: var(--text-color);
 }
 
 .content-field {
-  background: white;
+  background: var(--card-bg);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   padding: 24px;
@@ -618,22 +618,22 @@ onBeforeUnmount(() => {
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #4f46e5;
+  filter: brightness(0.9);
 }
 
 .btn-secondary {
-  background: var(--border-color, #e2e8f0);
-  color: var(--text-color, #1e293b);
+  background: var(--border-color);
+  color: var(--text-color);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #cbd5e1;
+  background: var(--hover-bg);
 }
 
 .error-state {
   padding: 48px;
   text-align: center;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .error-state h2 {
