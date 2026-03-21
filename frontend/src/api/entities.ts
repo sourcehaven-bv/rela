@@ -58,3 +58,12 @@ export async function analyze(): Promise<AnalyzeResult> {
 export async function getTemplates(entityType: string): Promise<Template[]> {
   return api.get<Template[]>(`/_templates/${entityType}`)
 }
+
+export async function createRelation(
+  type: string,
+  entityId: string,
+  relationName: string,
+  targetId: string
+): Promise<void> {
+  return api.post(`/${getPlural(type)}/${entityId}/relations/${relationName}`, { id: targetId })
+}

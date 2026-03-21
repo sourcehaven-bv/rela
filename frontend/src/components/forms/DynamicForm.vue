@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter, onBeforeRouteLeave } from 'vue-router'
+import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import type { PropertyDef, FormFieldOrRelation, Template } from '@/types'
-import { getTemplates } from '@/api'
+import { getTemplates, createRelation } from '@/api'
 import FieldRenderer from './FieldRenderer.vue'
 import RelationPicker from './RelationPicker.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
@@ -16,9 +16,19 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
+
+// Link params for auto-linking after create (from custom views / side panels)
+interface LinkParams {
+  relation: string
+  peer: string
+  as: 'from' | 'to'
+}
+const linkParams = ref<LinkParams | null>(null)
+const returnTo = ref<string | null>(null)
 
 // State
 const formData = ref<Record<string, unknown>>({})
@@ -59,6 +69,19 @@ const fields = computed((): FormFieldOrRelation[] => {
   return [...propFields, ...relFields]
 })
 
+// Helper to look up entity type from ID prefix (e.g., "TKT-001" -> "ticket")
+function getTypeFromId(entityId: string): string | undefined {
+  const prefix = entityId.split('-')[0]
+  if (!prefix) return undefined
+
+  for (const [typeName, typeDef] of schemaStore.entityTypes) {
+    if (typeDef.id_prefix?.toUpperCase() === prefix.toUpperCase()) {
+      return typeName
+    }
+  }
+  return undefined
+}
+
 // Methods
 async function loadEntity() {
   if (!props.entityId || !formConfig.value) return
@@ -81,13 +104,42 @@ async function loadEntity() {
 function initializeDefaults() {
   if (!entityType.value || isEdit.value) return
 
+  // Parse query params for pre-filling (prop.*, rel.*, link_*, return_to)
+  const query = route.query
+  const queryProps: Record<string, string> = {}
+  const queryRels: Record<string, string[]> = {}
+
+  for (const [key, value] of Object.entries(query)) {
+    if (typeof value !== 'string') continue
+
+    if (key.startsWith('prop.')) {
+      const propName = key.slice(5) // Remove 'prop.' prefix
+      queryProps[propName] = value
+    } else if (key.startsWith('rel.')) {
+      const relType = key.slice(4) // Remove 'rel.' prefix
+      if (!queryRels[relType]) {
+        queryRels[relType] = []
+      }
+      queryRels[relType].push(value)
+    } else if (key === 'link_relation' && typeof query.link_peer === 'string') {
+      linkParams.value = {
+        relation: value,
+        peer: query.link_peer,
+        as: (query.link_as as 'from' | 'to') || 'to',
+      }
+    } else if (key === 'return_to') {
+      returnTo.value = value
+    }
+  }
+
+  // Apply metamodel defaults
   for (const [propName, propDef] of Object.entries(entityType.value.properties)) {
     if (propDef.default !== undefined) {
       formData.value[propName] = propDef.default
     }
   }
 
-  // Also apply form-level defaults
+  // Apply form-level defaults
   for (const field of fields.value) {
     if (field.property && field.default !== undefined) {
       formData.value[field.property] = field.default
@@ -99,6 +151,32 @@ function initializeDefaults() {
       } else {
         relations.value[field.relation] = [defaultValue as string]
       }
+    }
+  }
+
+  // Apply query param overrides (highest priority)
+  for (const [propName, value] of Object.entries(queryProps)) {
+    formData.value[propName] = value
+  }
+  for (const [relType, targets] of Object.entries(queryRels)) {
+    if (!relations.value[relType]) {
+      relations.value[relType] = []
+    }
+    for (const target of targets) {
+      if (!relations.value[relType].includes(target)) {
+        relations.value[relType].push(target)
+      }
+    }
+  }
+
+  // Pre-fill relation from link params (but this is usually auto-created, not shown)
+  if (linkParams.value) {
+    const rel = linkParams.value.relation
+    if (!relations.value[rel]) {
+      relations.value[rel] = []
+    }
+    if (!relations.value[rel].includes(linkParams.value.peer)) {
+      relations.value[rel].push(linkParams.value.peer)
     }
   }
 
@@ -223,15 +301,45 @@ async function handleSubmit() {
       uiStore.success('Entity updated successfully')
     } else {
       const entity = await entitiesStore.create(formConfig.value.entity, payload)
+
+      // Handle auto-linking from link_* params (e.g., from custom view "Add" buttons)
+      // For link_as=to, the relation is already included in relations.value (pre-filled)
+      // For link_as=from, we need to create the reverse relation: peer --relation--> new_entity
+      if (linkParams.value && linkParams.value.as === 'from') {
+        try {
+          const { relation, peer } = linkParams.value
+          // Look up peer type from ID prefix
+          const peerType = getTypeFromId(peer)
+          if (peerType) {
+            await createRelation(peerType, peer, relation, entity.id)
+          }
+        } catch (linkErr) {
+          console.warn('Auto-link failed:', linkErr)
+          // Continue with navigation even if link fails
+        }
+      }
+
       uiStore.success('Entity created successfully')
       dirty.value = false
-      router.push(`/entity/${formConfig.value.entity}/${entity.id}`)
+
+      // Navigate to return_to or entity detail
+      if (returnTo.value && returnTo.value.startsWith('/')) {
+        router.push(returnTo.value)
+      } else {
+        router.push(`/entity/${formConfig.value.entity}/${entity.id}`)
+      }
       return
     }
 
     dirty.value = false
     originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
-    router.back()
+
+    // Navigate to return_to or back
+    if (returnTo.value && returnTo.value.startsWith('/')) {
+      router.push(returnTo.value)
+    } else {
+      router.back()
+    }
   } catch (err) {
     if (err && typeof err === 'object' && 'errors' in err) {
       const problemErrors = (err as { errors: Array<{ field?: string; message?: string; detail?: string }> }).errors
