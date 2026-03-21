@@ -233,10 +233,12 @@ function navigateToEntity(entity: Entity) {
     }
   }
 
-  router.push({
-    path: `/entity/${entity.type}/${entity.id}`,
-    query,
-  })
+  // Use detail_view if configured, otherwise entity detail page
+  const path = listConfig.value?.detail_view
+    ? `/view/${listConfig.value.detail_view}/${entity.id}`
+    : `/entity/${entity.type}/${entity.id}`
+
+  router.push({ path, query })
 }
 
 function isEnumColumn(column: { property?: string }): boolean {
