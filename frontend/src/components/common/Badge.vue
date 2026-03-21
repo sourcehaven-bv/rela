@@ -101,33 +101,36 @@ const badgeClass = computed(() => {
   color: #a16207;
 }
 
-/* Dark mode colors - lighter text (applied via .dark class on html) */
-:global(.dark) .badge--blue {
+</style>
+
+<!-- Dark mode: unscoped with higher specificity to override scoped [data-v-*] -->
+<style>
+.dark .badge.badge--blue {
   background-color: color-mix(in srgb, #3b82f6 20%, transparent);
   color: #60a5fa;
 }
 
-:global(.dark) .badge--purple {
+.dark .badge.badge--purple {
   background-color: color-mix(in srgb, #8b5cf6 22%, transparent);
   color: #c4b5fd;
 }
 
-:global(.dark) .badge--green {
+.dark .badge.badge--green {
   background-color: color-mix(in srgb, #22c55e 20%, transparent);
   color: #4ade80;
 }
 
-:global(.dark) .badge--red {
+.dark .badge.badge--red {
   background-color: color-mix(in srgb, #ef4444 20%, transparent);
   color: #f87171;
 }
 
-:global(.dark) .badge--orange {
+.dark .badge.badge--orange {
   background-color: color-mix(in srgb, #f97316 20%, transparent);
   color: #fb923c;
 }
 
-:global(.dark) .badge--yellow {
+.dark .badge.badge--yellow {
   background-color: color-mix(in srgb, #eab308 20%, transparent);
   color: #fde047;
 }
