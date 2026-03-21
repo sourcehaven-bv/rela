@@ -2,8 +2,6 @@ package search
 
 import (
 	"testing"
-
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 func TestNewIndex(t *testing.T) {
@@ -19,19 +17,22 @@ func TestNewIndex(t *testing.T) {
 	}
 }
 
-func TestIndexEntity(t *testing.T) {
+func TestIndex(t *testing.T) {
 	idx, err := NewIndex()
 	if err != nil {
 		t.Fatalf("NewIndex() error: %v", err)
 	}
 	defer idx.Close()
 
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "User Authentication"
-	e.Content = "Users must be able to log in"
+	doc := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "User Authentication",
+		Content: "Users must be able to log in",
+	}
 
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 }
 
@@ -42,10 +43,13 @@ func TestSearch_ByID(t *testing.T) {
 	}
 	defer idx.Close()
 
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Something"
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	doc := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "Something",
+	}
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 
 	// ID is in the "all" field which uses standard analyzer (case insensitive)
@@ -58,17 +62,20 @@ func TestSearch_ByID(t *testing.T) {
 	}
 }
 
-func TestSearch_ByTitle(t *testing.T) {
+func TestSearch_ByPrimary(t *testing.T) {
 	idx, err := NewIndex()
 	if err != nil {
 		t.Fatalf("NewIndex() error: %v", err)
 	}
 	defer idx.Close()
 
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "User Authentication Feature"
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	doc := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "User Authentication Feature",
+	}
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 
 	results, searchErr := idx.Search([]string{"authentication"}, nil, 10)
@@ -76,7 +83,7 @@ func TestSearch_ByTitle(t *testing.T) {
 		t.Fatalf("Search() error: %v", searchErr)
 	}
 	if len(results) == 0 {
-		t.Error("expected match by title")
+		t.Error("expected match by primary field")
 	}
 }
 
@@ -87,10 +94,13 @@ func TestSearch_Fuzzy(t *testing.T) {
 	}
 	defer idx.Close()
 
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Authentication System"
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	doc := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "Authentication System",
+	}
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 
 	// Typo: "autentication" (missing 'h')
@@ -110,10 +120,13 @@ func TestSearch_Wildcard(t *testing.T) {
 	}
 	defer idx.Close()
 
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Authentication System"
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	doc := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "Authentication System",
+	}
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 
 	results, searchErr := idx.Search([]string{"auth*"}, nil, 10)
@@ -132,10 +145,13 @@ func TestSearch_NoMatch(t *testing.T) {
 	}
 	defer idx.Close()
 
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Something Else"
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	doc := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "Something Else",
+	}
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 
 	results, searchErr := idx.Search([]string{"nonexistent"}, nil, 10)
@@ -147,28 +163,20 @@ func TestSearch_NoMatch(t *testing.T) {
 	}
 }
 
-func TestIndexAll(t *testing.T) {
+func TestIndexBatch(t *testing.T) {
 	idx, err := NewIndex()
 	if err != nil {
 		t.Fatalf("NewIndex() error: %v", err)
 	}
 	defer idx.Close()
 
-	entities := []*model.Entity{
-		func() *model.Entity {
-			e := model.NewEntity("REQ-001", "requirement")
-			e.Properties["title"] = "First"
-			return e
-		}(),
-		func() *model.Entity {
-			e := model.NewEntity("REQ-002", "requirement")
-			e.Properties["title"] = "Second"
-			return e
-		}(),
+	docs := []Document{
+		{ID: "REQ-001", Type: "requirement", Primary: "First"},
+		{ID: "REQ-002", Type: "requirement", Primary: "Second"},
 	}
 
-	if indexErr := idx.IndexAll(entities); indexErr != nil {
-		t.Fatalf("IndexAll() error: %v", indexErr)
+	if indexErr := idx.IndexBatch(docs); indexErr != nil {
+		t.Fatalf("IndexBatch() error: %v", indexErr)
 	}
 
 	results, searchErr := idx.Search([]string{"first"}, nil, 10)
@@ -180,33 +188,36 @@ func TestIndexAll(t *testing.T) {
 	}
 }
 
-func TestRemoveEntity(t *testing.T) {
+func TestRemove(t *testing.T) {
 	idx, err := NewIndex()
 	if err != nil {
 		t.Fatalf("NewIndex() error: %v", err)
 	}
 	defer idx.Close()
 
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "ToBeDeleted"
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	doc := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "ToBeDeleted",
+	}
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 
 	// Verify it's found
 	results, _ := idx.Search([]string{"tobedeleted"}, nil, 10)
 	if len(results) == 0 {
-		t.Fatal("entity should be found before removal")
+		t.Fatal("document should be found before removal")
 	}
 
 	// Remove and verify gone
-	if removeErr := idx.RemoveEntity("REQ-001"); removeErr != nil {
-		t.Fatalf("RemoveEntity() error: %v", removeErr)
+	if removeErr := idx.Remove("REQ-001"); removeErr != nil {
+		t.Fatalf("Remove() error: %v", removeErr)
 	}
 
 	results, _ = idx.Search([]string{"tobedeleted"}, nil, 10)
 	if len(results) != 0 {
-		t.Error("entity should not be found after removal")
+		t.Error("document should not be found after removal")
 	}
 }
 
@@ -217,16 +228,22 @@ func TestSearch_Phrase(t *testing.T) {
 	}
 	defer idx.Close()
 
-	e1 := model.NewEntity("REQ-001", "requirement")
-	e1.Properties["title"] = "User Authentication System"
-	if indexErr := idx.IndexEntity(e1); indexErr != nil {
-		t.Fatalf("IndexEntity(e1) error: %v", indexErr)
+	doc1 := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "User Authentication System",
+	}
+	if indexErr := idx.Index(doc1); indexErr != nil {
+		t.Fatalf("Index(doc1) error: %v", indexErr)
 	}
 
-	e2 := model.NewEntity("REQ-002", "requirement")
-	e2.Properties["title"] = "User Management and Authentication"
-	if indexErr := idx.IndexEntity(e2); indexErr != nil {
-		t.Fatalf("IndexEntity(e2) error: %v", indexErr)
+	doc2 := Document{
+		ID:      "REQ-002",
+		Type:    "requirement",
+		Primary: "User Management and Authentication",
+	}
+	if indexErr := idx.Index(doc2); indexErr != nil {
+		t.Fatalf("Index(doc2) error: %v", indexErr)
 	}
 
 	// Phrase search should only match exact phrase
@@ -249,16 +266,22 @@ func TestSearch_PhraseAndWords(t *testing.T) {
 	}
 	defer idx.Close()
 
-	e1 := model.NewEntity("REQ-001", "requirement")
-	e1.Properties["title"] = "User Authentication System Login"
-	if indexErr := idx.IndexEntity(e1); indexErr != nil {
-		t.Fatalf("IndexEntity(e1) error: %v", indexErr)
+	doc1 := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "User Authentication System Login",
+	}
+	if indexErr := idx.Index(doc1); indexErr != nil {
+		t.Fatalf("Index(doc1) error: %v", indexErr)
 	}
 
-	e2 := model.NewEntity("REQ-002", "requirement")
-	e2.Properties["title"] = "User Authentication System"
-	if indexErr := idx.IndexEntity(e2); indexErr != nil {
-		t.Fatalf("IndexEntity(e2) error: %v", indexErr)
+	doc2 := Document{
+		ID:      "REQ-002",
+		Type:    "requirement",
+		Primary: "User Authentication System",
+	}
+	if indexErr := idx.Index(doc2); indexErr != nil {
+		t.Fatalf("Index(doc2) error: %v", indexErr)
 	}
 
 	// Search with words AND phrase - both must match
@@ -281,10 +304,13 @@ func TestReindex_Update(t *testing.T) {
 	}
 	defer idx.Close()
 
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Original Title"
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	doc := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "Original Title",
+	}
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 
 	// Verify original is found
@@ -293,10 +319,10 @@ func TestReindex_Update(t *testing.T) {
 		t.Fatal("original title should be found")
 	}
 
-	// Update the entity
-	e.Properties["title"] = "Updated Title"
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	// Update the document
+	doc.Primary = "Updated Title"
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 
 	// Old title should NOT be found
@@ -319,10 +345,13 @@ func TestSearchSimple(t *testing.T) {
 	}
 	defer idx.Close()
 
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Authentication System"
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	doc := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "Authentication System",
+	}
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 
 	// SearchSimple should work with multi-word query
@@ -342,10 +371,13 @@ func TestSearch_CaseInsensitive(t *testing.T) {
 	}
 	defer idx.Close()
 
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Authentication System"
-	if indexErr := idx.IndexEntity(e); indexErr != nil {
-		t.Fatalf("IndexEntity() error: %v", indexErr)
+	doc := Document{
+		ID:      "REQ-001",
+		Type:    "requirement",
+		Primary: "Authentication System",
+	}
+	if indexErr := idx.Index(doc); indexErr != nil {
+		t.Fatalf("Index() error: %v", indexErr)
 	}
 
 	// Search with different case should still match

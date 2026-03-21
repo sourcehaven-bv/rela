@@ -1,5 +1,7 @@
 package metamodel
 
+import "github.com/Sourcehaven-BV/rela/internal/model"
+
 // GetPlural returns the plural label for an entity type
 func (e *EntityDef) GetPlural() string {
 	if e.LabelPlural != "" {
@@ -85,6 +87,17 @@ func (e *EntityDef) GetPrimaryProperty() string {
 	}
 
 	return ""
+}
+
+// DisplayTitle returns the display title for an entity using this entity type's primary property.
+// Falls back to entity ID if no primary property value is set.
+func (e *EntityDef) DisplayTitle(entity *model.Entity) string {
+	if primary := e.GetPrimaryProperty(); primary != "" {
+		if val := entity.GetString(primary); val != "" {
+			return val
+		}
+	}
+	return entity.ID
 }
 
 // GetIDType returns the ID type for this entity, defaulting to "short".

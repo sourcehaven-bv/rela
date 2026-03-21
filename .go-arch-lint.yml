@@ -46,6 +46,7 @@ components:
   model:            { in: internal/model }
   markdown:         { in: internal/markdown }
   filter:           { in: internal/filter }
+  pattern:          { in: internal/pattern }
   search:           { in: internal/search/** }
 
   # Infrastructure
@@ -62,6 +63,7 @@ components:
 
 # -- Vendors --------------------------------------------------------------
 vendors:
+  bleve:       { in: github.com/blevesearch/bleve/** }
   cobra:       { in: github.com/spf13/cobra }
   yaml:        { in: gopkg.in/yaml.v3 }
   goldmark:
@@ -182,6 +184,7 @@ deps:
       - project
       - rename
       - repository
+      - search
       - storage
       - views
     canUse:
@@ -245,8 +248,10 @@ deps:
   filter:
     mayDependOn:
       - metamodel
+      - pattern
   search:
-    anyProjectDeps: true
+    canUse:
+      - bleve
 
   # Infrastructure
   attachment:

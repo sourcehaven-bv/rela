@@ -1,6 +1,10 @@
 package metamodel
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/model"
+)
 
 // rebuildAliasMap rebuilds the alias map from all entity definitions.
 // Called after merging includes to ensure aliases from included files are registered.
@@ -37,6 +41,15 @@ func (m *Metamodel) GetEntityDef(entityType string) (*EntityDef, bool) {
 		return &def, true
 	}
 	return nil, false
+}
+
+// DisplayTitle returns the display title for an entity using its type's primary property.
+// Falls back to entity ID if no entity definition found or no primary property value is set.
+func (m *Metamodel) DisplayTitle(entity *model.Entity) string {
+	if def, ok := m.GetEntityDef(entity.Type); ok {
+		return def.DisplayTitle(entity)
+	}
+	return entity.ID
 }
 
 // GetRelationDef returns the relation definition

@@ -10,6 +10,7 @@ package repository
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -288,6 +289,8 @@ type cacheEnvelope struct {
 	Edges     []*model.Relation `json:"edges"`
 }
 
+// cacheVersion should be incremented when the cache format changes.
+// v1.0 - initial format
 const cacheVersion = "1.0"
 
 // SaveCache writes the graph cache to the project's cache file as JSON.
@@ -314,7 +317,11 @@ func (r *Repository) SaveCache(g *graph.Graph) error {
 	return r.fs.WriteFile(r.paths.CachePath, data, 0644)
 }
 
+// ErrCacheVersionMismatch is returned when the cache version doesn't match the current version.
+var ErrCacheVersionMismatch = errors.New("cache version mismatch")
+
 // LoadCache reads the graph cache from the project's cache file.
+// Returns ErrCacheVersionMismatch if the cache was created with a different version.
 func (r *Repository) LoadCache(g *graph.Graph) error {
 	data, err := r.fs.ReadFile(r.paths.CachePath)
 	if err != nil {
@@ -324,6 +331,10 @@ func (r *Repository) LoadCache(g *graph.Graph) error {
 	var env cacheEnvelope
 	if err := json.Unmarshal(data, &env); err != nil {
 		return err
+	}
+
+	if env.Version != cacheVersion {
+		return fmt.Errorf("%w: cache is v%s, need v%s", ErrCacheVersionMismatch, env.Version, cacheVersion)
 	}
 
 	g.Restore(&graph.CacheData{

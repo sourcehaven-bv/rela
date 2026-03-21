@@ -6,8 +6,10 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 
@@ -74,15 +76,22 @@ func New(repo repository.Store) (*Workspace, error) {
 	g := graph.New()
 
 	// Try cache first, fall back to full sync.
-	if repo.CacheExists() {
+	needsSync := !repo.CacheExists()
+	if !needsSync {
 		if cacheErr := repo.LoadCache(g); cacheErr != nil {
-			if _, syncErr := repo.Sync(meta, g); syncErr != nil {
-				return nil, fmt.Errorf("sync: %w", syncErr)
+			if errors.Is(cacheErr, repository.ErrCacheVersionMismatch) {
+				log.Printf("Cache outdated, rebuilding: %v", cacheErr)
 			}
+			needsSync = true
 		}
-	} else {
+	}
+	if needsSync {
 		if _, syncErr := repo.Sync(meta, g); syncErr != nil {
 			return nil, fmt.Errorf("sync: %w", syncErr)
+		}
+		// Save the new cache after sync
+		if saveErr := repo.SaveCache(g); saveErr != nil {
+			log.Printf("Warning: failed to save cache: %v", saveErr)
 		}
 	}
 
@@ -109,7 +118,8 @@ func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
 	if err != nil {
 		log.Printf("Warning: failed to create test search index: %v", err)
 	} else {
-		if indexErr := idx.IndexAll(g.AllNodes()); indexErr != nil {
+		docs := entitiesToSearchDocuments(g.AllNodes(), meta)
+		if indexErr := idx.IndexBatch(docs); indexErr != nil {
 			log.Printf("Warning: failed to index test entities: %v", indexErr)
 		}
 		ws.searchIdx = idx
@@ -129,7 +139,8 @@ func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Gra
 	if err != nil {
 		log.Printf("Warning: failed to create search index: %v", err)
 	} else {
-		if err := searchIdx.IndexAll(g.AllNodes()); err != nil {
+		docs := entitiesToSearchDocuments(g.AllNodes(), meta)
+		if err := searchIdx.IndexBatch(docs); err != nil {
 			log.Printf("Warning: failed to index entities: %v", err)
 		}
 	}
@@ -298,7 +309,8 @@ func (w *Workspace) rebuildSearchIndex() {
 		w.searchIdx = nil
 		return
 	}
-	if err := idx.IndexAll(w.graph.AllNodes()); err != nil {
+	docs := entitiesToSearchDocuments(w.graph.AllNodes(), w.meta)
+	if err := idx.IndexBatch(docs); err != nil {
 		log.Printf("Warning: failed to index entities: %v", err)
 	}
 	w.searchIdx = idx
@@ -308,10 +320,12 @@ func (w *Workspace) rebuildSearchIndex() {
 func (w *Workspace) indexEntity(entity *model.Entity) {
 	w.mu.RLock()
 	idx := w.searchIdx
+	meta := w.meta
 	w.mu.RUnlock()
 
 	if idx != nil {
-		if err := idx.IndexEntity(entity); err != nil {
+		doc := entityToSearchDocument(entity, meta)
+		if err := idx.Index(doc); err != nil {
 			log.Printf("Warning: failed to index entity %s: %v", entity.ID, err)
 		}
 	}
@@ -324,7 +338,7 @@ func (w *Workspace) removeFromIndex(id string) {
 	w.mu.RUnlock()
 
 	if idx != nil {
-		if err := idx.RemoveEntity(id); err != nil {
+		if err := idx.Remove(id); err != nil {
 			log.Printf("Warning: failed to remove entity %s from index: %v", id, err)
 		}
 	}
@@ -814,4 +828,57 @@ func (w *Workspace) ExecuteView(viewName, entryID string) (*views.ViewResult, er
 // file access (e.g., attachment store, writing output files).
 func (w *Workspace) FS() storage.FS {
 	return w.repo.FS()
+}
+
+// --- Search document conversion ---
+
+// entityToSearchDocument converts an entity to a search.Document.
+func entityToSearchDocument(e *model.Entity, meta *metamodel.Metamodel) search.Document {
+	return search.Document{
+		ID:          e.ID,
+		Type:        e.Type,
+		Primary:     meta.DisplayTitle(e),
+		Description: e.Description(),
+		Content:     e.Content,
+		Properties:  flattenProperties(e.Properties),
+	}
+}
+
+// entitiesToSearchDocuments converts a slice of entities to search documents.
+func entitiesToSearchDocuments(entities []*model.Entity, meta *metamodel.Metamodel) []search.Document {
+	docs := make([]search.Document, len(entities))
+	for i, e := range entities {
+		docs[i] = entityToSearchDocument(e, meta)
+	}
+	return docs
+}
+
+// flattenProperties extracts all property values as a single searchable string.
+func flattenProperties(props map[string]interface{}) string {
+	// Sort keys for deterministic output.
+	keys := make([]string, 0, len(props))
+	for k := range props {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var parts []string
+	for _, k := range keys {
+		v := props[k]
+		switch val := v.(type) {
+		case string:
+			parts = append(parts, val)
+		case []string:
+			parts = append(parts, val...)
+		case []interface{}:
+			for _, item := range val {
+				if s, ok := item.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+		default:
+			parts = append(parts, fmt.Sprintf("%v", v))
+		}
+	}
+	return strings.Join(parts, " ")
 }

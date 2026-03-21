@@ -330,18 +330,9 @@ func (a *App) createFormForType(entityType string) string {
 	return fallback
 }
 
-// entityDisplayTitle returns the display title for an entity using the metamodel's primary property.
+// entityDisplayTitle returns the display title for an entity.
 func (a *App) entityDisplayTitle(e *model.Entity) string {
-	entDef, ok := a.meta.GetEntityDef(e.Type)
-	if ok {
-		primary := entDef.GetPrimaryProperty()
-		if primary != "" {
-			if val := e.GetString(primary); val != "" {
-				return val
-			}
-		}
-	}
-	return e.ID
+	return a.meta.DisplayTitle(e)
 }
 
 // resolveLinkTarget resolves a link configuration value to a URL.

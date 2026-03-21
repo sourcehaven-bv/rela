@@ -364,15 +364,8 @@ func (a *App) executeQuery(query string) []*model.Entity {
 			}
 
 			// Apply property filters
-			if len(sq.PropertyFilters) > 0 {
-				entDef, ok := a.meta.GetEntityDef(e.Type)
-				if !ok {
-					continue
-				}
-				matched, err := filter.MatchAll(e, sq.PropertyFilters, entDef, a.meta)
-				if err != nil || !matched {
-					continue
-				}
+			if !a.matchesPropertyFilters(e, sq.PropertyFilters) {
+				continue
 			}
 
 			scoredResults = append(scoredResults, scored{entity: e, score: scores[i]})
@@ -389,15 +382,8 @@ func (a *App) executeQuery(query string) []*model.Entity {
 		}
 
 		for _, e := range candidates {
-			if len(sq.PropertyFilters) > 0 {
-				entDef, ok := a.meta.GetEntityDef(e.Type)
-				if !ok {
-					continue
-				}
-				matched, err := filter.MatchAll(e, sq.PropertyFilters, entDef, a.meta)
-				if err != nil || !matched {
-					continue
-				}
+			if !a.matchesPropertyFilters(e, sq.PropertyFilters) {
+				continue
 			}
 			scoredResults = append(scoredResults, scored{entity: e, score: 1.0})
 		}
@@ -707,6 +693,20 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 	}
 
 	return nav
+}
+
+// matchesPropertyFilters checks whether an entity matches the given property filters.
+// Returns true if no filters are specified or all filters match.
+func (a *App) matchesPropertyFilters(e *model.Entity, filters []*filter.Filter) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	entDef, ok := a.meta.GetEntityDef(e.Type)
+	if !ok {
+		return false
+	}
+	matched, err := filter.MatchAll(e, filters, entDef, a.meta)
+	return err == nil && matched
 }
 
 // isRelationLinked checks whether a form relation field (formRel) corresponds

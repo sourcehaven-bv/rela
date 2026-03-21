@@ -426,3 +426,137 @@ func TestMatchValue(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchValueRegex(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		regex string
+		match bool
+	}{
+		{"regex match", "hello world", "hello.*", true},
+		{"regex no match", "hello world", "^world", false},
+		{"regex case sensitive", "Hello", "hello", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := Parse("field=~" + tt.regex)
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			got := MatchValue(tt.value, f)
+			if got != tt.match {
+				t.Errorf("MatchValue() = %v, want %v", got, tt.match)
+			}
+		})
+	}
+}
+
+func TestMatchValueGlob(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		glob  string
+		match bool
+	}{
+		{"glob match star", "A.9.1.2", "A.9.*", true},
+		{"glob no match star", "A.10.1", "A.9.*", false},
+		{"glob match question", "test1", "test?", true},
+		{"glob no match question", "test12", "test?", false},
+		{"glob match prefix", "prefix-suffix", "prefix*", true},
+		{"glob match suffix", "prefix-suffix", "*suffix", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := Parse("field=" + tt.glob)
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			got := MatchValue(tt.value, f)
+			if got != tt.match {
+				t.Errorf("MatchValue(%q, glob=%q) = %v, want %v", tt.value, tt.glob, got, tt.match)
+			}
+		})
+	}
+}
+
+func TestMatchValueFuzzy(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		fuzzy string
+		match bool
+	}{
+		// Fuzzy matches similar strings (typos)
+		{"fuzzy typo match", "autentication", "authentication", true}, // intentional typo
+		{"fuzzy exact match", "hello", "hello", true},
+		{"fuzzy no match", "something", "authentication", false},
+		// Fuzzy with wildcard suffix - matches pattern then checks prefix similarity
+		{"fuzzy wildcard match", "hello-world", "hell*", true},
+		{"fuzzy wildcard no match pattern", "goodbye", "hell*", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := Parse("field~" + tt.fuzzy)
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			got := MatchValue(tt.value, f)
+			if got != tt.match {
+				t.Errorf("MatchValue(%q, fuzzy=%q) = %v, want %v", tt.value, tt.fuzzy, got, tt.match)
+			}
+		})
+	}
+}
+
+func TestMatchValueNilRegex(t *testing.T) {
+	// Test that nil regex returns false
+	f := &Filter{
+		Property: "test",
+		Operator: OpRegex,
+		Value:    "pattern",
+		Regex:    nil,
+	}
+	if MatchValue("test", f) {
+		t.Error("MatchValue with nil Regex should return false")
+	}
+
+	// Test nil regex with glob
+	f = &Filter{
+		Property: "test",
+		Operator: OpEqual,
+		Value:    "pat*",
+		IsGlob:   true,
+		Regex:    nil,
+	}
+	if MatchValue("pattern", f) {
+		t.Error("MatchValue with nil Regex for glob should return false")
+	}
+
+	// Test nil regex with glob and NotEqual
+	f = &Filter{
+		Property: "test",
+		Operator: OpNotEqual,
+		Value:    "pat*",
+		IsGlob:   true,
+		Regex:    nil,
+	}
+	if MatchValue("pattern", f) {
+		t.Error("MatchValue with nil Regex for glob NotEqual should return false")
+	}
+}
+
+func TestMatchValueFuzzyEmptyTarget(t *testing.T) {
+	f := &Filter{
+		Property:    "test",
+		Operator:    OpFuzzy,
+		Value:       "",
+		FuzzyTarget: "",
+	}
+	if MatchValue("test", f) {
+		t.Error("MatchValue with empty FuzzyTarget should return false")
+	}
+}

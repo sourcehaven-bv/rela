@@ -1,9 +1,9 @@
 // Package search provides full-text search using Bleve.
+// It is decoupled from the domain model - callers provide Document structs.
 package search
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/blevesearch/bleve/v2"
@@ -11,24 +11,33 @@ import (
 	"github.com/blevesearch/bleve/v2/analysis/analyzer/standard"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search/query"
-
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
-// Index wraps a Bleve index for entity search.
+// Document represents a searchable document.
+// Callers are responsible for constructing this from their domain objects.
+type Document struct {
+	ID          string // unique identifier
+	Type        string // document type (for filtering)
+	Primary     string // primary display field (title/name/label)
+	Description string // description text
+	Content     string // body content
+	Properties  string // all property values joined
+}
+
+// Index wraps a Bleve index for document search.
 type Index struct {
 	index bleve.Index
 }
 
-// entityDoc is the document structure indexed by Bleve.
-type entityDoc struct {
+// bleveDoc is the internal document structure indexed by Bleve.
+type bleveDoc struct {
 	ID          string `json:"id"`
 	Type        string `json:"type"`
-	Title       string `json:"title"`
+	Primary     string `json:"primary"`
 	Description string `json:"description"`
 	Content     string `json:"content"`
-	Properties  string `json:"properties"` // all property values joined
-	All         string `json:"all"`        // everything combined for simple queries
+	Properties  string `json:"properties"`
+	All         string `json:"all"` // everything combined for simple queries
 }
 
 // Result represents a search result with score.
@@ -61,7 +70,7 @@ func buildMapping() *mapping.IndexMappingImpl {
 	docMapping := bleve.NewDocumentMapping()
 	docMapping.AddFieldMappingsAt("id", keywordFieldMapping)
 	docMapping.AddFieldMappingsAt("type", keywordFieldMapping)
-	docMapping.AddFieldMappingsAt("title", textFieldMapping)
+	docMapping.AddFieldMappingsAt("primary", textFieldMapping)
 	docMapping.AddFieldMappingsAt("description", textFieldMapping)
 	docMapping.AddFieldMappingsAt("content", textFieldMapping)
 	docMapping.AddFieldMappingsAt("properties", textFieldMapping)
@@ -74,63 +83,68 @@ func buildMapping() *mapping.IndexMappingImpl {
 	return indexMapping
 }
 
-// IndexEntity adds or updates an entity in the index.
-func (idx *Index) IndexEntity(e *model.Entity) error {
-	doc := entityToDoc(e)
-	return idx.index.Index(e.ID, doc)
+// Index adds or updates a document in the index.
+func (idx *Index) Index(doc Document) error {
+	return idx.index.Index(doc.ID, toBleveDoc(doc))
 }
 
-// IndexAll indexes multiple entities (for initial load).
-func (idx *Index) IndexAll(entities []*model.Entity) error {
+// IndexBatch indexes multiple documents (for initial load).
+func (idx *Index) IndexBatch(docs []Document) error {
 	batch := idx.index.NewBatch()
-	for _, e := range entities {
-		doc := entityToDoc(e)
-		if err := batch.Index(e.ID, doc); err != nil {
-			return fmt.Errorf("failed to batch index %s: %w", e.ID, err)
+	for _, doc := range docs {
+		if err := batch.Index(doc.ID, toBleveDoc(doc)); err != nil {
+			return fmt.Errorf("failed to batch index %s: %w", doc.ID, err)
 		}
 	}
 	return idx.index.Batch(batch)
 }
 
-// RemoveEntity removes an entity from the index.
-func (idx *Index) RemoveEntity(id string) error {
+// Remove removes a document from the index.
+func (idx *Index) Remove(id string) error {
 	return idx.index.Delete(id)
+}
+
+// Field boost weights for search ranking.
+const (
+	boostID         = 5.0 // ID field gets highest boost (exact match)
+	boostPrimary    = 3.0 // Primary field (title/name/label) gets high boost
+	boostProperties = 2.0 // Other properties get medium boost
+	boostContent    = 1.0 // Body content gets base boost
+)
+
+// boostedFields defines the fields to search with their boost weights.
+var boostedFields = []struct {
+	field string
+	boost float64
+}{
+	{"id", boostID},
+	{"primary", boostPrimary},
+	{"properties", boostProperties},
+	{"content", boostContent},
+	{"all", boostContent},
 }
 
 // Search performs a search query and returns scored results.
 // words are OR'd together with fuzzy matching.
 // phrases must all match exactly (AND logic).
+// Results are ranked with field boosting: primary (3x) > properties (2x) > content (1x).
 func (idx *Index) Search(words, phrases []string, limit int) ([]Result, error) {
 	if len(words) == 0 && len(phrases) == 0 {
 		return nil, nil
 	}
 
-	var queries []query.Query
+	queries := make([]query.Query, 0, len(words))
 
-	// Add fuzzy queries for each word (OR logic within words)
+	// Add boosted queries for each word across fields
 	for _, word := range words {
 		word = strings.ToLower(word)
-
-		// Check for wildcard patterns
-		if strings.ContainsAny(word, "*?") {
-			wq := bleve.NewWildcardQuery(word)
-			wq.SetField("all")
-			queries = append(queries, wq)
-		} else {
-			// Fuzzy match with edit distance 1
-			fq := bleve.NewFuzzyQuery(word)
-			fq.SetFuzziness(1)
-			fq.SetField("all")
-			queries = append(queries, fq)
-		}
+		queries = append(queries, buildBoostedWordQuery(word))
 	}
 
 	// Add phrase queries (must all match - AND logic)
 	phraseQueries := make([]query.Query, 0, len(phrases))
 	for _, phrase := range phrases {
-		pq := bleve.NewMatchPhraseQuery(phrase)
-		pq.SetField("all")
-		phraseQueries = append(phraseQueries, pq)
+		phraseQueries = append(phraseQueries, buildBoostedPhraseQuery(phrase))
 	}
 
 	var finalQuery query.Query
@@ -168,6 +182,54 @@ func (idx *Index) Search(words, phrases []string, limit int) ([]Result, error) {
 	return results, nil
 }
 
+// buildBoostedWordQuery creates a disjunction query across fields with boosting.
+// ID field is boosted 5x, primary 3x, properties 2x, content 1x.
+func buildBoostedWordQuery(word string) query.Query {
+	isWildcard := strings.ContainsAny(word, "*?")
+	queries := make([]query.Query, 0, len(boostedFields))
+
+	for _, f := range boostedFields {
+		var q query.Query
+		if isWildcard {
+			wq := bleve.NewWildcardQuery(word)
+			wq.SetField(f.field)
+			wq.SetBoost(f.boost)
+			q = wq
+		} else {
+			fq := bleve.NewFuzzyQuery(word)
+			fq.SetField(f.field)
+			fq.SetFuzziness(1)
+			fq.SetBoost(f.boost)
+			q = fq
+		}
+		queries = append(queries, q)
+	}
+
+	return bleve.NewDisjunctionQuery(queries...)
+}
+
+// phraseFields defines the fields to search for phrase queries (excludes ID and all).
+var phraseFields = []struct {
+	field string
+	boost float64
+}{
+	{"primary", boostPrimary},
+	{"properties", boostProperties},
+	{"content", boostContent},
+}
+
+// buildBoostedPhraseQuery creates a phrase query across fields with boosting.
+func buildBoostedPhraseQuery(phrase string) query.Query {
+	queries := make([]query.Query, 0, len(phraseFields))
+	for _, f := range phraseFields {
+		pq := bleve.NewMatchPhraseQuery(phrase)
+		pq.SetField(f.field)
+		pq.SetBoost(f.boost)
+		queries = append(queries, pq)
+	}
+	return bleve.NewDisjunctionQuery(queries...)
+}
+
 // SearchSimple performs a simple text search (convenience method).
 func (idx *Index) SearchSimple(queryStr string, limit int) ([]Result, error) {
 	words := strings.Fields(queryStr)
@@ -179,50 +241,23 @@ func (idx *Index) Close() error {
 	return idx.index.Close()
 }
 
-// entityToDoc converts an entity to an indexable document.
-func entityToDoc(e *model.Entity) entityDoc {
-	// Sort property keys for deterministic output.
-	keys := make([]string, 0, len(e.Properties))
-	for k := range e.Properties {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	var propParts []string
-	for _, k := range keys {
-		v := e.Properties[k]
-		switch val := v.(type) {
-		case string:
-			propParts = append(propParts, val)
-		case []string:
-			propParts = append(propParts, val...)
-		case []interface{}:
-			for _, item := range val {
-				if s, ok := item.(string); ok {
-					propParts = append(propParts, s)
-				}
-			}
-		default:
-			propParts = append(propParts, fmt.Sprintf("%v", v))
-		}
-	}
-
-	properties := strings.Join(propParts, " ")
+// toBleveDoc converts a Document to the internal Bleve document format.
+func toBleveDoc(doc Document) bleveDoc {
 	all := strings.Join([]string{
-		e.ID,
-		e.Title(),
-		e.Description(),
-		e.Content,
-		properties,
+		doc.ID,
+		doc.Primary,
+		doc.Description,
+		doc.Content,
+		doc.Properties,
 	}, " ")
 
-	return entityDoc{
-		ID:          e.ID,
-		Type:        e.Type,
-		Title:       e.Title(),
-		Description: e.Description(),
-		Content:     e.Content,
-		Properties:  properties,
+	return bleveDoc{
+		ID:          doc.ID,
+		Type:        doc.Type,
+		Primary:     doc.Primary,
+		Description: doc.Description,
+		Content:     doc.Content,
+		Properties:  doc.Properties,
 		All:         all,
 	}
 }
