@@ -1,5 +1,5 @@
 ---
-description: Remove accidentally committed .planning docs and test-results cache files.
+description: 'Remove accidentally committed files: .planning docs, test-results cache, tsbuildinfo, and built Vue frontend assets. Update justfile to build frontend on demand.'
 id: TKT-xofi
 kind: chore
 priority: low

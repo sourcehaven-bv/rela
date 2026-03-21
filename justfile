@@ -15,8 +15,8 @@ build-cli:
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela ./cmd/rela
 
-# Build the data entry server
-build-server:
+# Build the data entry server (includes Vue frontend)
+build-server: build-frontend
     @echo "Building rela-server..."
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server ./cmd/rela-server
