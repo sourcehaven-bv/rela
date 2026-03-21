@@ -329,6 +329,7 @@ function processSSEEvent(eventType: string, rawData: string, cmd: Command) {
     const data = JSON.parse(rawData)
     switch (eventType) {
       case 'message':
+      case 'log':
         commandOutput.value.push({ type: 'text', text: data.text || '' })
         break
       case 'file':
