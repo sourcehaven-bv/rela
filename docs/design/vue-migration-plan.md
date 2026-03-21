@@ -22,7 +22,7 @@ metamodel definitions, providing type-safe endpoints for all entity types.
 
 The API uses the metamodel to dynamically generate endpoints per entity type:
 
-```
+```text
 /api/v1/{type}          # Collection (list, create)
 /api/v1/{type}/{id}     # Resource (get, update, delete)
 ```
@@ -78,7 +78,7 @@ for typeName, entityDef := range a.meta.Entities {
 
 Relations can be accessed as nested resources:
 
-```
+```text
 /api/v1/{type}/{id}/relations                    # All relations for entity
 /api/v1/{type}/{id}/relations/{relation-type}    # Relations of specific type
 ```
@@ -96,7 +96,7 @@ Relations can be accessed as nested resources:
 
 Standard filtering, sorting, pagination:
 
-```
+```text
 GET /api/v1/tickets?status=open&priority=high     # Filter
 GET /api/v1/tickets?sort=-created,title           # Sort (- = desc)
 GET /api/v1/tickets?page=2&per_page=25            # Pagination (offset-based)
@@ -192,6 +192,7 @@ Link: </api/v1/tickets?cursor=eyJpZCI6IlRLVC0wMjUifQ&per_page=25>; rel="next"
 Cursor is base64-encoded `{"id": "TKT-025", "sort": [...]}`.
 
 Support both modes:
+
 - `?page=N` - offset-based (simple, but unstable for large sets)
 - `?cursor=X` - cursor-based (stable, recommended for >1000 items)
 
@@ -458,11 +459,13 @@ operations, and clients load it once via `GET /_schema`.
 ```
 
 **`_actions` provides runtime constraints** that the static schema can't express:
+
 - Can't delete if entity has dependents (graph constraint)
 - Valid status transitions from current state (state machine)
 - Permission-based restrictions (future auth)
 
 **What we skip:**
+
 - Links to related resources (client constructs from `relations` + schema)
 - Links to collection (client knows the pattern)
 - Full HAL/JSON-API `_links` structure (over-engineering)
@@ -552,7 +555,7 @@ entity types:
 
 Actions on specific entities use `_actions` sub-path:
 
-```
+```text
 POST /api/v1/tickets/TKT-001/_actions/clone    # Clone entity
 POST /api/v1/tickets/TKT-001/_actions/archive  # Archive entity
 ```
@@ -692,7 +695,7 @@ func (a *App) validateEntity(typeName string, data map[string]any) []ValidationE
 
 ### Project Structure
 
-```
+```text
 frontend/
 ├── src/
 │   ├── api/
@@ -1033,7 +1036,7 @@ export const router = createRouter({
 
 During migration, both versions run simultaneously in the same server instance:
 
-```
+```text
 /           → v1 (HTMX)      # Original app
 /v2/        → v2 (Vue)       # New app under development
 /api/       → v1 API         # Existing JSON endpoints
@@ -1050,7 +1053,7 @@ This allows direct comparison of features side-by-side. Open two browser tabs:
 Each feature must pass Puppeteer tests before considered complete. Tests run
 against both v1 and v2 to verify parity.
 
-```
+```text
 frontend/
 ├── e2e/
 │   ├── fixtures/           # Test data setup
@@ -1523,7 +1526,7 @@ interface ParityResult {
 
 **Files to remove:**
 
-```
+```text
 internal/dataentry/templates/*.html     # All 13 template files
 internal/dataentry/static/app.js        # 2,058 lines
 internal/dataentry/static/htmx.min.js   # HTMX library
@@ -1532,7 +1535,7 @@ internal/dataentry/handlers.go          # HTML handlers (2,590 lines)
 
 **Code to remove from:**
 
-```
+```text
 internal/dataentry/router.go            # v1 route registrations
 internal/dataentry/helpers.go           # Template helper functions
 internal/dataentry/templates.go         # Template embedding

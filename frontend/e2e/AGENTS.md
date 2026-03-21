@@ -112,6 +112,7 @@ export class MyNewPage extends BasePage {
 ### Selector Best Practices
 
 1. **Use multiple fallback selectors** for resilience:
+
    ```typescript
    get submitButton(): Locator {
      return this.page.locator('button[type="submit"], .btn-submit, button:has-text("Save")').first()
@@ -123,6 +124,7 @@ export class MyNewPage extends BasePage {
    - Avoid: `.btn-primary.mt-2`, `div > span:nth-child(3)`
 
 3. **Use `data-testid` attributes** when available:
+
    ```typescript
    get searchResults(): Locator {
      return this.page.locator('[data-testid="search-results"]')
@@ -164,6 +166,7 @@ test('my test', async ({ api, apiPage }) => {
 When creating entities, include ALL required fields per the metamodel:
 
 **Tickets require:**
+
 - `title` (required)
 - `status` (required)
 - `priority` (required)
@@ -171,10 +174,12 @@ When creating entities, include ALL required fields per the metamodel:
 - `belongs-to` relation to a category
 
 **Categories require:**
+
 - `name` (required)
 - `id` (required for manual ID types) - Use `\`e2e-cat-${Date.now()}\``
 
 **Labels require:**
+
 - `name` (required)
 - `id` (required) - Use `\`e2e-label-${Date.now()}\``
 
@@ -201,6 +206,7 @@ await page.waitForTimeout(1000)  // Flaky!
 ## When to Update Page Objects
 
 Update page objects when:
+
 - UI structure changes (update selectors)
 - New interactions are added (add new action methods)
 - New assertions are needed (add state query methods)
