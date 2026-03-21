@@ -169,6 +169,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
+	mux.HandleFunc("/api/v1/_views/", a.handleV1Views)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
@@ -1896,4 +1897,297 @@ func (a *App) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write(data)
+}
+
+// --- Views API ---
+
+// V1ViewResponse contains the executed view data.
+type V1ViewResponse struct {
+	Entry    V1Entity        `json:"entry"`
+	Sections []V1ViewSection `json:"sections"`
+}
+
+// V1ViewSection represents a section with resolved data.
+type V1ViewSection struct {
+	Heading      string           `json:"heading"`
+	SectionID    string           `json:"sectionId"`
+	Display      string           `json:"display"`
+	IsEmpty      bool             `json:"isEmpty"`
+	EmptyMessage string           `json:"emptyMessage,omitempty"`
+	Fields       []V1SectionField `json:"fields,omitempty"`
+	Entities     []V1ViewEntity   `json:"entities,omitempty"`
+	Columns      []V1ViewColumn   `json:"columns,omitempty"`
+	Rows         []V1ViewRow      `json:"rows,omitempty"`
+	Groups       []V1ViewGroup    `json:"groups,omitempty"`
+	IsGrouped    bool             `json:"isGrouped"`
+	Content      string           `json:"content,omitempty"`
+	HasContent   bool             `json:"hasContent"`
+	AddInfo      *V1ViewAddInfo   `json:"addInfo,omitempty"`
+	LinkInfo     *V1ViewLinkInfo  `json:"linkInfo,omitempty"`
+}
+
+// V1ViewEntity represents an entity in a view section.
+type V1ViewEntity struct {
+	ID         string           `json:"id"`
+	Title      string           `json:"title"`
+	Type       string           `json:"type"`
+	EditFormID string           `json:"editFormId,omitempty"`
+	Fields     []V1SectionField `json:"fields,omitempty"`
+	Content    string           `json:"content,omitempty"`
+	HasContent bool             `json:"hasContent"`
+}
+
+// V1ViewColumn represents a column definition.
+type V1ViewColumn struct {
+	Property string `json:"property,omitempty"`
+	Label    string `json:"label,omitempty"`
+	Relation string `json:"relation,omitempty"`
+	Link     string `json:"link,omitempty"`
+}
+
+// V1ViewRow represents a table row.
+type V1ViewRow struct {
+	EntityID   string       `json:"entityId"`
+	EntityType string       `json:"entityType"`
+	EditFormID string       `json:"editFormId,omitempty"`
+	Cells      []V1ViewCell `json:"cells"`
+	Content    string       `json:"content,omitempty"`
+}
+
+// V1ViewCell represents a table cell.
+type V1ViewCell struct {
+	Values     []string `json:"values"`
+	PropType   string   `json:"propType,omitempty"`
+	Widget     string   `json:"widget,omitempty"`
+	Link       string   `json:"link,omitempty"`
+	EntityID   string   `json:"entityId,omitempty"`
+	EntityType string   `json:"entityType,omitempty"`
+}
+
+// V1ViewGroup represents a group of rows.
+type V1ViewGroup struct {
+	GroupName string         `json:"groupName"`
+	Rows      []V1ViewRow    `json:"rows,omitempty"`
+	Entities  []V1ViewEntity `json:"entities,omitempty"`
+}
+
+// V1ViewAddInfo describes an add button configuration.
+type V1ViewAddInfo struct {
+	Relation string            `json:"relation"`
+	LinkAs   string            `json:"linkAs"`
+	PeerID   string            `json:"peerId"`
+	Targets  []V1ViewAddTarget `json:"targets"`
+}
+
+// V1ViewAddTarget represents a possible target for add action.
+type V1ViewAddTarget struct {
+	EntityType string `json:"entityType"`
+	FormID     string `json:"formId"`
+	Label      string `json:"label"`
+}
+
+// V1ViewLinkInfo describes a link existing button configuration.
+type V1ViewLinkInfo struct {
+	Relation    string   `json:"relation"`
+	LinkAs      string   `json:"linkAs"`
+	PeerID      string   `json:"peerId"`
+	EntityTypes []string `json:"entityTypes"`
+}
+
+// handleV1Views handles GET /api/v1/_views/{viewId}/{entityId}.
+// Returns JSON with executed view data including entry and sections.
+func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
+		return
+	}
+
+	// Parse path: /api/v1/_views/{viewId}/{entityId}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_views/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_views/{viewId}/{entityId}", "")
+		return
+	}
+
+	viewID, entityID := parts[0], parts[1]
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	// Get view config
+	viewCfg, ok := a.Cfg.Views[viewID]
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "view_not_found", "View not found", "")
+		return
+	}
+
+	// Execute view
+	result, err := a.executeView(viewCfg, entityID)
+	if err != nil {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed", "View execution failed", err.Error())
+		return
+	}
+
+	// Build sections
+	sections := a.buildSections(viewCfg.Sections, result)
+
+	// Resolve add/link info for sections
+	a.resolveSectionButtonsWithTraverse(viewCfg, sections, result.Entry)
+
+	// Build response
+	entityDef := a.meta.Entities[result.Entry.Type]
+	plural := entityDef.GetDirPlural(result.Entry.Type)
+
+	resp := V1ViewResponse{
+		Entry:    a.entityToV1(result.Entry, plural, true, false),
+		Sections: make([]V1ViewSection, 0, len(sections)),
+	}
+
+	for _, sec := range sections {
+		v1Sec := V1ViewSection{
+			Heading:      sec.Heading,
+			SectionID:    sec.SectionID,
+			Display:      sec.Display,
+			IsEmpty:      sec.IsEmpty,
+			EmptyMessage: sec.EmptyMessage,
+			IsGrouped:    sec.IsGrouped,
+			Content:      sec.Content,
+			HasContent:   sec.HasContent,
+		}
+
+		// Convert fields
+		for _, f := range sec.Fields {
+			v1Sec.Fields = append(v1Sec.Fields, V1SectionField{
+				Label:    f.Label,
+				Value:    f.Value,
+				PropType: f.PropType,
+			})
+		}
+
+		// Convert entities
+		for _, e := range sec.Entities {
+			v1Ent := V1ViewEntity{
+				ID:         e.ID,
+				Title:      e.Title,
+				Type:       e.Type,
+				EditFormID: e.EditFormID,
+				Content:    e.Content,
+				HasContent: e.HasContent,
+			}
+			for _, f := range e.Fields {
+				v1Ent.Fields = append(v1Ent.Fields, V1SectionField{
+					Label:    f.Label,
+					Value:    f.Value,
+					PropType: f.PropType,
+				})
+			}
+			v1Sec.Entities = append(v1Sec.Entities, v1Ent)
+		}
+
+		// Convert columns
+		for _, col := range sec.Columns {
+			v1Sec.Columns = append(v1Sec.Columns, V1ViewColumn{
+				Property: col.Property,
+				Label:    col.Label,
+				Relation: col.Relation,
+				Link:     col.Link,
+			})
+		}
+
+		// Convert rows
+		for _, row := range sec.Rows {
+			v1Row := V1ViewRow{
+				EntityID:   row.EntityID,
+				EntityType: row.EntityType,
+				EditFormID: row.EditFormID,
+				Content:    row.Content,
+			}
+			for _, cell := range row.Cells {
+				v1Row.Cells = append(v1Row.Cells, V1ViewCell{
+					Values:     cell.Values,
+					PropType:   cell.PropType,
+					Widget:     cell.Widget,
+					Link:       cell.Link,
+					EntityID:   cell.EntityID,
+					EntityType: cell.EntityType,
+				})
+			}
+			v1Sec.Rows = append(v1Sec.Rows, v1Row)
+		}
+
+		// Convert groups
+		for _, grp := range sec.Groups {
+			v1Grp := V1ViewGroup{
+				GroupName: grp.GroupName,
+			}
+			for _, row := range grp.Rows {
+				v1Row := V1ViewRow{
+					EntityID:   row.EntityID,
+					EntityType: row.EntityType,
+					EditFormID: row.EditFormID,
+					Content:    row.Content,
+				}
+				for _, cell := range row.Cells {
+					v1Row.Cells = append(v1Row.Cells, V1ViewCell{
+						Values:     cell.Values,
+						PropType:   cell.PropType,
+						Widget:     cell.Widget,
+						Link:       cell.Link,
+						EntityID:   cell.EntityID,
+						EntityType: cell.EntityType,
+					})
+				}
+				v1Grp.Rows = append(v1Grp.Rows, v1Row)
+			}
+			for _, e := range grp.Entities {
+				v1Ent := V1ViewEntity{
+					ID:         e.ID,
+					Title:      e.Title,
+					Type:       e.Type,
+					EditFormID: e.EditFormID,
+					Content:    e.Content,
+					HasContent: e.HasContent,
+				}
+				for _, f := range e.Fields {
+					v1Ent.Fields = append(v1Ent.Fields, V1SectionField{
+						Label:    f.Label,
+						Value:    f.Value,
+						PropType: f.PropType,
+					})
+				}
+				v1Grp.Entities = append(v1Grp.Entities, v1Ent)
+			}
+			v1Sec.Groups = append(v1Sec.Groups, v1Grp)
+		}
+
+		// Convert add/link info
+		if sec.AddInfo != nil {
+			v1Sec.AddInfo = &V1ViewAddInfo{
+				Relation: sec.AddInfo.Relation,
+				LinkAs:   sec.AddInfo.LinkAs,
+				PeerID:   sec.AddInfo.PeerID,
+			}
+			for _, t := range sec.AddInfo.Targets {
+				v1Sec.AddInfo.Targets = append(v1Sec.AddInfo.Targets, V1ViewAddTarget{
+					EntityType: t.EntityType,
+					FormID:     t.FormID,
+					Label:      t.Label,
+				})
+			}
+		}
+
+		if sec.LinkInfo != nil {
+			v1Sec.LinkInfo = &V1ViewLinkInfo{
+				Relation:    sec.LinkInfo.Relation,
+				LinkAs:      sec.LinkInfo.LinkAs,
+				PeerID:      sec.LinkInfo.PeerID,
+				EntityTypes: sec.LinkInfo.EntityTypes,
+			}
+		}
+
+		resp.Sections = append(resp.Sections, v1Sec)
+	}
+
+	writeV1JSON(w, http.StatusOK, resp)
 }

@@ -296,3 +296,66 @@ func (a *App) executeSidePanel(panel *SidePanelConfig, entityID, entityType stri
 
 	return a.buildSections(panel.Sections, result)
 }
+
+// resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo using full view config.
+func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections []SectionData, entry *model.Entity) {
+	for i, sec := range viewConfig.Sections {
+		if sec.Source == "entry" {
+			continue
+		}
+		for _, rule := range viewConfig.Traverse {
+			if rule.CollectAs != sec.Source || rule.From != "entry" {
+				continue
+			}
+			relName := rule.Follow
+			linkAs := "to" // new entity is the target (outgoing from entry)
+			if rule.FollowIncoming != "" {
+				relName = rule.FollowIncoming
+				linkAs = "from" // new entity is the source (incoming to entry)
+			}
+			relDef, ok := a.meta.GetRelationDef(relName)
+			if !ok {
+				break
+			}
+			// Determine valid target types for creation
+			var candidateTypes []string
+			if linkAs == "to" {
+				candidateTypes = relDef.To
+			} else {
+				candidateTypes = relDef.From
+			}
+			var targets []SectionAddTarget
+			for _, et := range candidateTypes {
+				formID := a.createFormForType(et)
+				if formID == "" {
+					continue
+				}
+				label := et
+				if ed, ok := a.meta.GetEntityDef(et); ok && ed.Label != "" {
+					label = ed.Label
+				}
+				targets = append(targets, SectionAddTarget{
+					EntityType: et, FormID: formID, Label: label,
+				})
+			}
+			if len(targets) > 0 {
+				sections[i].AddInfo = &SectionAddInfo{
+					Relation: relName,
+					LinkAs:   linkAs,
+					PeerID:   entry.ID,
+					Targets:  targets,
+				}
+			}
+			// Link existing: always available when candidate types exist
+			if len(candidateTypes) > 0 {
+				sections[i].LinkInfo = &SectionLinkInfo{
+					Relation:    relName,
+					LinkAs:      linkAs,
+					PeerID:      entry.ID,
+					EntityTypes: candidateTypes,
+				}
+			}
+			break
+		}
+	}
+}
