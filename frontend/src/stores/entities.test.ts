@@ -52,7 +52,7 @@ describe('Entities Store', () => {
 
       const result = await store.fetchEntity('ticket', 'TKT-001')
 
-      expect(entitiesApi.getEntity).toHaveBeenCalledWith('ticket', 'TKT-001')
+      expect(entitiesApi.getEntity).toHaveBeenCalledWith('ticket', 'TKT-001', { include: '*' })
       expect(result).toEqual(mockEntity)
       expect(store.getCached('ticket', 'TKT-001')).toEqual(mockEntity)
     })
