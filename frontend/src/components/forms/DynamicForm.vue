@@ -660,7 +660,7 @@ onBeforeUnmount(() => {
 
 .template-pill:hover {
   border-color: var(--accent-color, #6366f1);
-  background: white;
+  background: var(--card-bg);
 }
 
 .template-pill.active {

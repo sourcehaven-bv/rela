@@ -670,7 +670,7 @@ watch(depth, () => {
 
 .graph-stats {
   font-size: 12px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .graph-stats strong {
@@ -699,12 +699,12 @@ watch(depth, () => {
 }
 
 .btn-secondary {
-  background: #f1f5f9;
-  color: #475569;
+  background: var(--hover-bg);
+  color: var(--text-color);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #e2e8f0;
+  filter: brightness(0.95);
 }
 
 .btn-primary {
@@ -721,7 +721,7 @@ watch(depth, () => {
   align-items: center;
   gap: 12px;
   padding: 48px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .spinner {
@@ -756,7 +756,7 @@ watch(depth, () => {
 }
 
 .filter-section {
-  background: white;
+  background: var(--card-bg);
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 8px;
   padding: 12px;
@@ -766,7 +766,7 @@ watch(depth, () => {
   margin: 0 0 8px;
   font-size: 11px;
   font-weight: 600;
-  color: #64748b;
+  color: var(--muted-text);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -789,7 +789,7 @@ watch(depth, () => {
 }
 
 .filter-item:hover {
-  background: #f8fafc;
+  background: var(--hover-bg);
 }
 
 .filter-item.inactive {
@@ -811,9 +811,9 @@ watch(depth, () => {
 }
 
 .filter-count {
-  color: #94a3b8;
+  color: var(--muted-text);
   font-size: 11px;
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--hover-bg);
   padding: 1px 6px;
   border-radius: 10px;
 }
@@ -843,7 +843,7 @@ watch(depth, () => {
 }
 
 .detail-panel {
-  background: white;
+  background: var(--card-bg);
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 8px;
   padding: 16px;
@@ -867,11 +867,11 @@ watch(depth, () => {
 }
 
 .close-btn {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--hover-bg);
   border: none;
   font-size: 14px;
   cursor: pointer;
-  color: #64748b;
+  color: var(--muted-text);
   width: 24px;
   height: 24px;
   border-radius: 6px;
@@ -881,8 +881,8 @@ watch(depth, () => {
 }
 
 .close-btn:hover {
-  background: rgba(0, 0, 0, 0.1);
-  color: #1e293b;
+  filter: brightness(0.9);
+  color: var(--text-color);
 }
 
 .detail-panel h3 {
@@ -893,7 +893,7 @@ watch(depth, () => {
 
 .detail-id {
   font-size: 12px;
-  color: #64748b;
+  color: var(--muted-text);
   font-family: monospace;
   margin: 0 0 12px;
 }
@@ -906,7 +906,7 @@ watch(depth, () => {
   display: flex;
   justify-content: space-between;
   padding: 4px 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  border-bottom: 1px solid var(--border-color);
   font-size: 12px;
 }
 
@@ -915,7 +915,7 @@ watch(depth, () => {
 }
 
 .prop-key {
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .prop-value {
@@ -934,7 +934,7 @@ watch(depth, () => {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #64748b;
+  color: var(--muted-text);
   font-weight: 700;
   margin: 0 0 6px;
 }
@@ -952,7 +952,7 @@ watch(depth, () => {
 }
 
 .rel-item:hover {
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--hover-bg);
   transform: translateX(3px);
 }
 
@@ -965,7 +965,7 @@ watch(depth, () => {
 
 .rel-type {
   font-size: 10px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .rel-name {
@@ -975,7 +975,7 @@ watch(depth, () => {
 .graph-canvas {
   flex: 1;
   position: relative;
-  background: white;
+  background: var(--card-bg);
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 8px;
   overflow: hidden;
@@ -994,13 +994,13 @@ watch(depth, () => {
   display: flex;
   align-items: center;
   gap: 3px;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--card-bg);
   backdrop-filter: blur(10px);
   padding: 5px;
   border-radius: 12px;
   box-shadow:
-    0 4px 24px rgba(0, 0, 0, 0.08),
-    0 0 0 1px rgba(0, 0, 0, 0.06);
+    0 4px 24px rgba(0, 0, 0, 0.15),
+    0 0 0 1px var(--border-color);
 }
 
 .graph-toolbar button {
@@ -1011,14 +1011,14 @@ watch(depth, () => {
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  color: #64748b;
+  color: var(--muted-text);
   transition: all 0.15s;
   white-space: nowrap;
 }
 
 .graph-toolbar button:hover {
-  background: rgba(0, 0, 0, 0.04);
-  color: #1e293b;
+  background: var(--hover-bg);
+  color: var(--text-color);
 }
 
 .graph-toolbar button.active {
@@ -1030,7 +1030,7 @@ watch(depth, () => {
 .graph-toolbar .sep {
   width: 1px;
   height: 18px;
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--border-color);
   margin: 0 2px;
 }
 </style>

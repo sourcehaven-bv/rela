@@ -49,6 +49,8 @@ function handleUpdate(value: string[]) {
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 6px;
   min-height: 38px;
+  background: var(--input-bg);
+  color: var(--text-color);
 }
 
 .ss-main:focus-within {
@@ -60,27 +62,37 @@ function handleUpdate(value: string[]) {
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  background: var(--card-bg);
+}
+
+.ss-option {
+  color: var(--text-color);
 }
 
 .ss-option.ss-highlighted {
-  background: #f1f5f9;
+  background: var(--hover-bg);
 }
 
 .ss-option.ss-selected {
-  background: #e0e7ff;
-  color: #4338ca;
+  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
+  color: var(--accent-color);
 }
 
 .ss-value {
-  background: #e0e7ff;
-  color: #4338ca;
+  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
+  color: var(--accent-color);
 }
 
 .ss-value-delete {
-  color: #6366f1;
+  color: var(--accent-color);
 }
 
 .ss-value-delete:hover {
-  color: #dc2626;
+  color: var(--error-color, #dc2626);
+}
+
+.ss-search input {
+  background: var(--input-bg);
+  color: var(--text-color);
 }
 </style>

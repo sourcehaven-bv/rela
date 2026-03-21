@@ -101,7 +101,7 @@ function handleOverlayClick(e: MouseEvent) {
 }
 
 .shortcuts-modal {
-  background: white;
+  background: var(--card-bg);
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
   max-width: 600px;
@@ -130,14 +130,14 @@ function handleOverlayClick(e: MouseEvent) {
   background: none;
   border: none;
   font-size: 24px;
-  color: #64748b;
+  color: var(--muted-text);
   cursor: pointer;
   padding: 0;
   line-height: 1;
 }
 
 .close-btn:hover {
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .shortcuts-body {
@@ -153,7 +153,7 @@ function handleOverlayClick(e: MouseEvent) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #64748b;
+  color: var(--muted-text);
   margin: 0 0 12px;
 }
 
@@ -167,7 +167,7 @@ function handleOverlayClick(e: MouseEvent) {
 
 .shortcut-description {
   font-size: 13px;
-  color: #374151;
+  color: var(--text-color);
 }
 
 .shortcut-keys {
@@ -182,15 +182,15 @@ function handleOverlayClick(e: MouseEvent) {
   padding: 2px 6px;
   font-size: 11px;
   font-family: ui-monospace, monospace;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  color: #475569;
+  color: var(--text-color);
 }
 
 .key-separator {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--muted-text);
   margin: 0 2px;
 }
 </style>

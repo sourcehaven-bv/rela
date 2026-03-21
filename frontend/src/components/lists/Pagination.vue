@@ -101,7 +101,7 @@ function goToPage(page: number) {
 
 .pagination-info {
   font-size: 14px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .pagination-controls {
@@ -117,16 +117,17 @@ function goToPage(page: number) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: white;
+  background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 4px;
   font-size: 14px;
+  color: var(--text-color);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .pagination-btn:hover:not(:disabled) {
-  background: #f8fafc;
+  background: var(--hover-bg);
   border-color: var(--accent-color);
 }
 
@@ -143,7 +144,7 @@ function goToPage(page: number) {
 
 .pagination-ellipsis {
   padding: 0 8px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .pagination-nav {
@@ -151,9 +152,9 @@ function goToPage(page: number) {
 }
 
 .pagination-nav kbd {
-  background: #f1f5f9;
-  border-color: #e2e8f0;
-  color: #64748b;
+  background: var(--hover-bg);
+  border-color: var(--border-color);
+  color: var(--muted-text);
 }
 
 .pagination-nav:disabled kbd {

@@ -87,7 +87,7 @@ function handleOverlayClick(e: MouseEvent) {
 }
 
 .help-modal {
-  background: white;
+  background: var(--card-bg);
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
   max-width: 700px;
@@ -116,14 +116,14 @@ function handleOverlayClick(e: MouseEvent) {
   background: none;
   border: none;
   font-size: 24px;
-  color: #64748b;
+  color: var(--muted-text);
   cursor: pointer;
   padding: 0;
   line-height: 1;
 }
 
 .close-btn:hover {
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .help-body {
@@ -137,7 +137,7 @@ function handleOverlayClick(e: MouseEvent) {
   justify-content: center;
   gap: 12px;
   padding: 40px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .spinner {
@@ -164,7 +164,7 @@ function handleOverlayClick(e: MouseEvent) {
 /* Styles for help content from server */
 .help-content-wrapper :deep(.help-content) {
   font-size: 14px;
-  color: #374151;
+  color: var(--text-color);
 }
 
 .help-content-wrapper :deep(.help-section) {
@@ -177,7 +177,7 @@ function handleOverlayClick(e: MouseEvent) {
 
 .help-content-wrapper :deep(.help-entity-desc) {
   font-size: 15px;
-  color: #475569;
+  color: var(--text-color);
   line-height: 1.6;
 }
 
@@ -186,7 +186,7 @@ function handleOverlayClick(e: MouseEvent) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #64748b;
+  color: var(--muted-text);
   margin: 0 0 12px;
 }
 
@@ -198,7 +198,7 @@ function handleOverlayClick(e: MouseEvent) {
 
 .help-content-wrapper :deep(.help-item) {
   padding: 10px 12px;
-  background: #f8fafc;
+  background: var(--hover-bg);
   border-radius: 6px;
   margin-bottom: 8px;
 }
@@ -218,12 +218,12 @@ function handleOverlayClick(e: MouseEvent) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--text-color);
 }
 
 .help-content-wrapper :deep(.help-item-meta) {
   font-size: 12px;
-  color: #64748b;
+  color: var(--muted-text);
 }
 
 .help-content-wrapper :deep(.help-required) {
@@ -239,7 +239,7 @@ function handleOverlayClick(e: MouseEvent) {
 .help-content-wrapper :deep(.help-item-desc) {
   margin-top: 6px;
   font-size: 13px;
-  color: #64748b;
+  color: var(--muted-text);
   line-height: 1.5;
 }
 
