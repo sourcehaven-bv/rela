@@ -23,7 +23,7 @@ function refreshGitStatus() {
 export const useEntitiesStore = defineStore('entities', () => {
   // State
   const cache = ref<Map<string, EntityCache>>(new Map())
-  const listCache = ref<Map<string, { data: Entity[]; meta: ListMeta; timestamp: number }>>(
+  const listCache = ref<Map<string, { data: Entity[]; meta: ListMeta; included?: Record<string, Entity>; timestamp: number }>>(
     new Map()
   )
   const loading = ref<Set<string>>(new Set())
@@ -65,12 +65,12 @@ export const useEntitiesStore = defineStore('entities', () => {
   })
 
   // Actions
-  async function fetchList(type: string, params?: ListParams): Promise<{ data: Entity[]; meta: ListMeta }> {
+  async function fetchList(type: string, params?: ListParams): Promise<{ data: Entity[]; meta: ListMeta; included?: Record<string, Entity> }> {
     const key = listCacheKey(type, params)
     const cached = listCache.value.get(key)
 
     if (cached && isCacheValid(cached.timestamp)) {
-      return { data: cached.data, meta: cached.meta }
+      return { data: cached.data, meta: cached.meta, included: cached.included }
     }
 
     loading.value.add(`list:${type}`)
@@ -81,6 +81,7 @@ export const useEntitiesStore = defineStore('entities', () => {
       listCache.value.set(key, {
         data: response.data,
         meta: response.meta,
+        included: response.included,
         timestamp: Date.now(),
       })
 
@@ -92,7 +93,7 @@ export const useEntitiesStore = defineStore('entities', () => {
         })
       }
 
-      return { data: response.data, meta: response.meta }
+      return { data: response.data, meta: response.meta, included: response.included }
     } finally {
       loading.value.delete(`list:${type}`)
     }

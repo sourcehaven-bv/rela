@@ -286,10 +286,23 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	}
 	entities = entities[start:end]
 
-	// Build response
+	// Check if includes are requested (for relation columns)
+	includes := query.Get("include")
+	wantIncludes := includes != ""
+
+	// Build response - always include relations for relation column support
 	data := make([]V1Entity, 0, len(entities))
+	included := make(map[string]V1Entity)
 	for _, e := range entities {
-		data = append(data, a.entityToV1(e, plural, false, false))
+		v1Entity := a.entityToV1(e, plural, true, false)
+		data = append(data, v1Entity)
+
+		// Resolve includes if requested
+		if wantIncludes {
+			for id, inc := range a.resolveV1Includes(e, includes) {
+				included[id] = inc
+			}
+		}
 	}
 
 	resp := V1ListResponse{
@@ -308,6 +321,23 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	w.Header().Set("X-Total-Count", strconv.Itoa(total))
 	w.Header().Set("X-Page", strconv.Itoa(page))
 	w.Header().Set("X-Per-Page", strconv.Itoa(perPage))
+
+	// If includes were requested, add them to response
+	if len(included) > 0 {
+		// For list responses with includes, we need a different response structure
+		// Encode as JSON with additional "included" field
+		type listWithIncludes struct {
+			Data     []V1Entity          `json:"data"`
+			Meta     V1ListMeta          `json:"meta"`
+			Included map[string]V1Entity `json:"included,omitempty"`
+		}
+		writeV1JSON(w, http.StatusOK, listWithIncludes{
+			Data:     resp.Data,
+			Meta:     resp.Meta,
+			Included: included,
+		})
+		return
+	}
 
 	writeV1JSON(w, http.StatusOK, resp)
 }

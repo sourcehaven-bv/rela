@@ -24,6 +24,7 @@ const entities = ref<Entity[]>([])
 const meta = ref<ListMeta>({ total: 0, page: 1, per_page: 25, has_more: false })
 const loading = ref(true)
 const filters = ref<Record<string, string>>({})
+const includedEntities = ref<Record<string, Entity>>({})
 
 // Sort specs: array of { property, direction } for multi-field sorting
 interface SortSpec {
@@ -81,6 +82,11 @@ const configuredFilters = computed(() => {
   return listConfig.value?.filters?.filter(f => f.operator && f.value) || []
 })
 
+// Check if any columns reference relations (need to include related entities)
+const hasRelationColumns = computed(() => {
+  return listConfig.value?.columns?.some(col => col.relation) || false
+})
+
 // Build query params
 const queryParams = computed((): ListParams => {
   const params: ListParams = {
@@ -121,6 +127,11 @@ const queryParams = computed((): ListParams => {
     params.sort = defaultSort
   }
 
+  // Include related entities for relation columns
+  if (hasRelationColumns.value) {
+    params.include = '*'
+  }
+
   return params
 })
 
@@ -136,6 +147,8 @@ async function loadEntities() {
     )
     entities.value = result.data
     meta.value = result.meta
+    // Store included entities for relation column rendering
+    includedEntities.value = result.included || {}
   } catch (err) {
     uiStore.error('Failed to load entities')
     console.error(err)
@@ -232,6 +245,16 @@ function isEnumColumn(column: { property?: string }): boolean {
 }
 
 function getFormattedCellValue(entity: Entity, column: { property?: string; relation?: string }): string {
+  // For relation columns, resolve IDs to titles using included entities
+  if (column.relation) {
+    const relationIds = entity.relations?.[column.relation] || []
+    const titles = relationIds.map((id) => {
+      const included = includedEntities.value[id]
+      return included?._title || included?.properties?.title || id
+    })
+    return titles.join(', ')
+  }
+
   const value = getCellValue(entity, column)
   return formatCellValue(value, column.property, entityType.value)
 }

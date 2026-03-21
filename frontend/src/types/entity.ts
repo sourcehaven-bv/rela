@@ -28,6 +28,7 @@ export interface CreateEntity {
 export interface ListResponse<T> {
   data: T[]
   meta: ListMeta
+  included?: Record<string, T>
 }
 
 export interface ListMeta {
