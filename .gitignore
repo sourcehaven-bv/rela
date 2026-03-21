@@ -40,4 +40,5 @@ frontend/dist/
 frontend/.e2e-server-info.json
 frontend/test-results/
 frontend/playwright-report/
+*.tsbuildinfo
 prototypes/data-entry/remote.git/
