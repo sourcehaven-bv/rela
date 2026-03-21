@@ -54,6 +54,19 @@ const hasTransitions = computed(() => {
   return props.field.transitions && Object.keys(props.field.transitions).length > 0
 })
 
+// Check if an option is disabled due to transition rules
+function isOptionDisabled(opt: string): boolean {
+  if (!hasTransitions.value || !props.field.transitions) {
+    return false
+  }
+  const currentVal = stringValue.value
+  if (!currentVal || opt === currentVal) {
+    return false
+  }
+  const allowedTransitions = props.field.transitions[currentVal] || []
+  return !allowedTransitions.includes(opt)
+}
+
 const transitionEntries = computed(() => {
   if (!props.field.transitions) return []
   return Object.entries(props.field.transitions).sort((a, b) => a[0].localeCompare(b[0]))
@@ -154,8 +167,14 @@ function handleMultiSelect(event: Event) {
       @change="handleInput"
     >
       <option value="">Select...</option>
-      <option v-for="opt in options" :key="opt" :value="opt">
-        {{ opt }}
+      <option
+        v-for="opt in options"
+        :key="opt"
+        :value="opt"
+        :disabled="isOptionDisabled(opt)"
+        :class="{ 'disabled-transition': isOptionDisabled(opt) }"
+      >
+        {{ opt }}{{ isOptionDisabled(opt) ? ' (not allowed)' : '' }}
       </option>
     </select>
 
@@ -311,5 +330,10 @@ select[multiple] {
 
 .transitions-to {
   color: var(--muted-text);
+}
+
+.disabled-transition {
+  color: var(--muted-text);
+  font-style: italic;
 }
 </style>
