@@ -50,7 +50,7 @@ describe('format', () => {
 
   describe('formatCellValue', () => {
     const mockEntityType: EntityType = {
-      name: 'test',
+      label: 'Test',
       description: '',
       properties: {
         created_at: { type: 'date' },

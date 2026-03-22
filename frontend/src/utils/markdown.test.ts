@@ -151,6 +151,7 @@ describe('markdown', () => {
       const mermaid = await import('mermaid')
       vi.spyOn(mermaid.default, 'render').mockResolvedValue({
         svg: '<svg>mocked</svg>',
+        diagramType: 'flowchart',
         bindFunctions: vi.fn(),
       })
 

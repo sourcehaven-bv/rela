@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useEntitiesStore } from './entities'
 import * as entitiesApi from '@/api/entities'
+import type { Entity } from '@/types'
 
 vi.mock('@/api/entities', () => ({
   listEntities: vi.fn(),
@@ -257,7 +258,7 @@ describe('Entities Store', () => {
 
   describe('isLoading', () => {
     it('checks loading state by type without id', async () => {
-      let resolvePromise: (value: unknown) => void
+      let resolvePromise: (value: Entity) => void
       vi.mocked(entitiesApi.getEntity).mockReturnValue(
         new Promise((resolve) => {
           resolvePromise = resolve

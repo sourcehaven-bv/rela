@@ -42,14 +42,14 @@ describe('Schema Store', () => {
 
       vi.mocked(getSchema).mockResolvedValue({
         entities: {
-          task: { name: 'task', description: 'A task', properties: {} },
-          bug: { name: 'bug', description: 'A bug', properties: {} },
+          task: { label: 'Task', description: 'A task', properties: {} },
+          bug: { label: 'Bug', description: 'A bug', properties: {} },
         },
         relations: {
-          blocks: { name: 'blocks', from: 'task', to: 'task' },
+          blocks: { label: 'blocks', from: ['task'], to: ['task'] },
         },
         types: {
-          priority: { name: 'priority', values: ['low', 'medium', 'high'] },
+          priority: { values: ['low', 'medium', 'high'] },
         },
       })
 
@@ -74,7 +74,7 @@ describe('Schema Store', () => {
 
       // Check schema
       expect(store.entityTypes.size).toBe(2)
-      expect(store.entityTypes.get('task')).toEqual({ name: 'task', description: 'A task', properties: {} })
+      expect(store.entityTypes.get('task')).toEqual({ label: 'Task', description: 'A task', properties: {} })
       expect(store.relationTypes.size).toBe(1)
       expect(store.customTypes.size).toBe(1)
 
@@ -163,8 +163,8 @@ describe('Schema Store', () => {
     it('handles missing optional fields', async () => {
       const { getSchema, getConfig } = await import('@/api/schema')
 
-      vi.mocked(getSchema).mockResolvedValue({})
-      vi.mocked(getConfig).mockResolvedValue({})
+      vi.mocked(getSchema).mockResolvedValue({ entities: {}, relations: {}, types: {} })
+      vi.mocked(getConfig).mockResolvedValue({ app: { name: 'rela' }, forms: {}, lists: {}, views: {}, kanbans: {}, navigation: [] })
 
       const store = useSchemaStore()
       await store.load()
@@ -182,7 +182,7 @@ describe('Schema Store', () => {
       const { getSchema, getConfig } = await import('@/api/schema')
 
       vi.mocked(getSchema).mockResolvedValue({
-        entities: { task: { name: 'task', description: '', properties: {} } },
+        entities: { task: { label: 'Task', description: '', properties: {} } },
         relations: {},
         types: {},
       })
@@ -206,10 +206,10 @@ describe('Schema Store', () => {
 
       vi.mocked(getSchema).mockResolvedValue({
         entities: {
-          task: { name: 'task', description: 'A task', properties: {} },
+          task: { label: 'Task', description: 'A task', properties: {} },
         },
         relations: {
-          blocks: { name: 'blocks', from: 'task', to: 'task' },
+          blocks: { label: 'blocks', from: ['task'], to: ['task'] },
         },
         types: {},
       })
@@ -228,7 +228,7 @@ describe('Schema Store', () => {
       const store = useSchemaStore()
       await store.load()
 
-      expect(store.getEntityType('task')).toEqual({ name: 'task', description: 'A task', properties: {} })
+      expect(store.getEntityType('task')).toEqual({ label: 'Task', description: 'A task', properties: {} })
       expect(store.getEntityType('nonexistent')).toBeUndefined()
     })
 
@@ -236,7 +236,7 @@ describe('Schema Store', () => {
       const store = useSchemaStore()
       await store.load()
 
-      expect(store.getRelationType('blocks')).toEqual({ name: 'blocks', from: 'task', to: 'task' })
+      expect(store.getRelationType('blocks')).toEqual({ label: 'blocks', from: ['task'], to: ['task'] })
       expect(store.getRelationType('nonexistent')).toBeUndefined()
     })
 
@@ -281,7 +281,7 @@ describe('Schema Store', () => {
       await store.load()
 
       expect(store.entityTypeList).toEqual([
-        ['task', { name: 'task', description: 'A task', properties: {} }],
+        ['task', { label: 'Task', description: 'A task', properties: {} }],
       ])
     })
 
@@ -290,7 +290,7 @@ describe('Schema Store', () => {
       await store.load()
 
       expect(store.relationTypeList).toEqual([
-        ['blocks', { name: 'blocks', from: 'task', to: 'task' }],
+        ['blocks', { label: 'blocks', from: ['task'], to: ['task'] }],
       ])
     })
   })
