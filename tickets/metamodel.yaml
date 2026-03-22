@@ -1873,3 +1873,95 @@ validations:
           - "severity=significant"
         max: 0
     severity: error
+# ===================
+# Automations
+# ===================
+# Automatically create workflow checklists when tickets/bugs transition to specific statuses.
+# Uses if_exists: skip to avoid creating duplicates if the relation already exists.
+automations:
+  # --- Ticket Workflow ---
+  - name: ticket-planning-checklist
+    description: Create planning checklist when ticket enters planning
+    on:
+      entity: [ticket]
+      property: status
+      becomes: planning
+    do:
+      - create_entity:
+          type: planning-checklist
+          properties:
+            title: "Planning: {{new.title}}"
+            status: in-progress
+          relation: has-planning
+          if_exists: skip
+  - name: ticket-implementation-checklist
+    description: Create implementation checklist when ticket enters in-progress
+    on:
+      entity: [ticket]
+      property: status
+      becomes: in-progress
+    do:
+      - create_entity:
+          type: implementation-checklist
+          properties:
+            title: "Implementation: {{new.title}}"
+            status: in-progress
+          relation: has-implementation
+          if_exists: skip
+  - name: ticket-review-checklist
+    description: Create review checklist when ticket enters review
+    on:
+      entity: [ticket]
+      property: status
+      becomes: review
+    do:
+      - create_entity:
+          type: review-checklist
+          properties:
+            title: "Review: {{new.title}}"
+            status: in-progress
+          relation: has-review
+          if_exists: skip
+  # --- Bug Workflow ---
+  - name: bug-analysis-checklist
+    description: Create bug analysis checklist when bug enters analyzing
+    on:
+      entity: [bug]
+      property: status
+      becomes: analyzing
+    do:
+      - create_entity:
+          type: bug-analysis-checklist
+          properties:
+            title: "Analysis: {{new.title}}"
+            status: in-progress
+          relation: has-bug-analysis
+          if_exists: skip
+  - name: bug-implementation-checklist
+    description: Create implementation checklist when bug enters in-progress
+    on:
+      entity: [bug]
+      property: status
+      becomes: in-progress
+    do:
+      - create_entity:
+          type: implementation-checklist
+          properties:
+            title: "Implementation: {{new.title}}"
+            status: in-progress
+          relation: has-implementation
+          if_exists: skip
+  - name: bug-review-checklist
+    description: Create review checklist when bug enters review
+    on:
+      entity: [bug]
+      property: status
+      becomes: review
+    do:
+      - create_entity:
+          type: review-checklist
+          properties:
+            title: "Review: {{new.title}}"
+            status: in-progress
+          relation: has-review
+          if_exists: skip

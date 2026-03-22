@@ -417,26 +417,32 @@ backlog → ready → analyzing → in-progress → review → done
 
 **Agent Workflow for Tickets:**
 
+Checklists are **automatically created** when tickets/bugs transition to specific statuses.
+The `create_entity` automation with `if_exists: skip` ensures no duplicates.
+
 1. **Start Planning** (status: `planning`)
-   - Create `planning-checklist` from template (inline create or `rela create planning-checklist`)
-   - Link to ticket via `has-planning` relation
+   - ✨ `planning-checklist` is auto-created and linked via `has-planning`
    - Work through checklist items, checking each as done
    - Mark checklist `status=done` when complete
 
 2. **Start Implementation** (status: `in-progress`)
-   - Create `implementation-checklist` from template
-   - Link via `has-implementation` relation
+   - ✨ `implementation-checklist` is auto-created and linked via `has-implementation`
    - Work through development and quality items
 
 3. **Start Review** (status: `review`)
-   - Create `review-checklist` from template
-   - Link via `has-review` relation
-   - If enhancement or docs ticket, also create `docs-checklist`
+   - ✨ `review-checklist` is auto-created and linked via `has-review`
+   - If enhancement or docs ticket, manually create `docs-checklist`
    - Complete all checks before marking done
 
 4. **Complete** (status: `done`)
    - All linked checklists must have `status=done`
    - All checklist items must be checked or skipped with reason
+
+**Bug Workflow Automations:**
+
+- `analyzing` → auto-creates `bug-analysis-checklist` via `has-bug-analysis`
+- `in-progress` → auto-creates `implementation-checklist` via `has-implementation`
+- `review` → auto-creates `review-checklist` via `has-review`
 
 **Skipping Checklist Items:**
 
