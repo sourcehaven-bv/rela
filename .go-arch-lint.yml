@@ -250,6 +250,8 @@ deps:
       - metamodel
       - pattern
   search:
+    mayDependOn:
+      - filter
     canUse:
       - bleve
 
