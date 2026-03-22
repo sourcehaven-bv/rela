@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -655,7 +656,7 @@ func TestCreateEntity_AutomationWithIfExistsError(t *testing.T) {
 	ws := setupTestWorkspaceWithCreateEntityAutomation(t, "error")
 
 	// Create a requirement - this triggers automation to create checklist.
-	_, result, err := ws.CreateEntity("requirement", CreateOptions{
+	req, result, err := ws.CreateEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -667,33 +668,46 @@ func TestCreateEntity_AutomationWithIfExistsError(t *testing.T) {
 		t.Fatalf("expected 1 entity created, got %d", len(result.EntitiesCreated))
 	}
 	checklist1 := result.EntitiesCreated[0]
-
-	// Create another requirement that would try to use same relation pattern.
-	// Actually, for this test we need to trigger the automation again on the same entity.
-	// Let's manually create another entity and relation to test the error case.
-
-	// Create a second checklist manually and link it.
-	_, _, err = ws.CreateEntity("checklist", CreateOptions{
-		ID:         "CHK-manual",
-		Properties: map[string]interface{}{"title": "Manual Checklist"},
-	})
-	if err != nil {
-		t.Fatalf("CreateEntity checklist error = %v", err)
-	}
-
-	// Create a new requirement that already has a checklist linked.
-	_, _, err = ws.CreateEntity("requirement", CreateOptions{
-		Properties: map[string]interface{}{"title": "Test Req 2"},
-	})
-	if err != nil {
-		t.Fatalf("CreateEntity req2 error = %v", err)
-	}
-
-	// The if_exists:error case is tested when the relation already exists.
-	// Since automation runs on created, and we can't easily re-trigger on same entity,
-	// let's just verify the first checklist was created correctly.
 	if checklist1.Type != "checklist" {
 		t.Errorf("expected checklist type, got %s", checklist1.Type)
+	}
+
+	// Make a copy of the old state for property change detection.
+	oldReq := model.NewEntity(req.ID, req.Type)
+	for k, v := range req.Properties {
+		oldReq.Properties[k] = v
+	}
+
+	// Update the same requirement to trigger automation again.
+	// With if_exists:error, this should produce an error.
+	req.SetString("status", "approved")
+	updateResult, err := ws.UpdateEntity(req, oldReq)
+	if err != nil {
+		t.Fatalf("UpdateEntity error = %v", err)
+	}
+
+	// With if_exists:error, should get an error about existing entity.
+	if len(updateResult.AutomationErrors) == 0 {
+		t.Fatal("expected automation error for if_exists:error, got none")
+	}
+
+	// Verify the error message mentions the existing relation.
+	foundExpectedError := false
+	for _, errMsg := range updateResult.AutomationErrors {
+		if strings.Contains(errMsg, "already exists via") && strings.Contains(errMsg, "has-checklist") {
+			foundExpectedError = true
+			break
+		}
+	}
+
+	if !foundExpectedError {
+		t.Errorf("expected error about existing relation, got: %v", updateResult.AutomationErrors)
+	}
+
+	// No new entity should be created.
+	if len(updateResult.EntitiesCreated) != 0 {
+		t.Errorf("expected 0 entities created with if_exists:error, got %d",
+			len(updateResult.EntitiesCreated))
 	}
 }
 
@@ -750,6 +764,60 @@ func TestCreateEntity_AutomationWithIfExistsReplace(t *testing.T) {
 	// Old checklist should be gone from graph.
 	if _, ok := ws.graph.GetNode(checklist1.ID); ok {
 		t.Errorf("old checklist %s should be deleted from graph", checklist1.ID)
+	}
+}
+
+func TestCreateEntity_AutomationWithIfExistsUnknown(t *testing.T) {
+	// Test that unknown if_exists values produce an error when the relation exists.
+	ws := setupTestWorkspaceWithCreateEntityAutomation(t, "invalid_value")
+
+	// Create a requirement - this triggers automation to create checklist.
+	req, result, err := ws.CreateEntity("requirement", CreateOptions{
+		Properties: map[string]interface{}{"title": "Test Req"},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	// First creation should succeed (no existing relation to check).
+	if len(result.EntitiesCreated) != 1 {
+		t.Fatalf("expected 1 entity created, got %d", len(result.EntitiesCreated))
+	}
+
+	// Make a copy of the old state for property change detection.
+	oldReq := model.NewEntity(req.ID, req.Type)
+	for k, v := range req.Properties {
+		oldReq.Properties[k] = v
+	}
+
+	// Update the same requirement to trigger automation again.
+	// With unknown if_exists value, this should produce an error.
+	req.SetString("status", "approved")
+	updateResult, err := ws.UpdateEntity(req, oldReq)
+	if err != nil {
+		t.Fatalf("UpdateEntity error = %v", err)
+	}
+
+	// Should get an error about unknown if_exists value.
+	if len(updateResult.AutomationErrors) == 0 {
+		t.Fatal("expected automation error for unknown if_exists value, got none")
+	}
+
+	foundExpectedError := false
+	for _, errMsg := range updateResult.AutomationErrors {
+		if strings.Contains(errMsg, "unknown if_exists value") {
+			foundExpectedError = true
+			break
+		}
+	}
+	if !foundExpectedError {
+		t.Errorf("expected error about unknown if_exists value, got: %v", updateResult.AutomationErrors)
+	}
+
+	// No new entity should be created.
+	if len(updateResult.EntitiesCreated) != 0 {
+		t.Errorf("expected 0 entities created with unknown if_exists, got %d",
+			len(updateResult.EntitiesCreated))
 	}
 }
 

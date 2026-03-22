@@ -279,13 +279,6 @@ type CreateEntityAction struct {
 	IfExists   string            `yaml:"if_exists,omitempty"`  // Behavior when relation already exists: skip (default), error, replace
 }
 
-// IfExists constants for CreateEntityAction behavior.
-const (
-	IfExistsSkip    = "skip"    // Skip creation if relation already exists (default)
-	IfExistsError   = "error"   // Return error if relation already exists
-	IfExistsReplace = "replace" // Delete existing and create new
-)
-
 // AutomationCheck specifies a validation condition.
 type AutomationCheck struct {
 	Check    string `yaml:"check"`

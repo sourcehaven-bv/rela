@@ -803,6 +803,10 @@ func (w *Workspace) handleIfExists(
 				fmt.Sprintf("failed to delete existing entity for replace: %v", err))
 			return true
 		}
+	default:
+		effects.Errors = append(effects.Errors,
+			fmt.Sprintf("unknown if_exists value %q, skipping entity creation", toCreate.IfExists))
+		return true
 	}
 	return false
 }
