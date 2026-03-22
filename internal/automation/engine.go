@@ -58,6 +58,14 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 				To:       a.CreateRelation.To,
 			}
 		}
+		if a.CreateEntity != nil {
+			action.CreateEntity = &CreateEntityAction{
+				Type:       a.CreateEntity.Type,
+				Properties: a.CreateEntity.Properties,
+				Relation:   a.CreateEntity.Relation,
+				IfExists:   a.CreateEntity.IfExists,
+			}
+		}
 		auto.Do[i] = action
 	}
 
@@ -82,6 +90,7 @@ func (e *Engine) Process(event Event) *Result {
 	result := &Result{
 		PropertiesSet:     make(map[string]string),
 		RelationsToCreate: make([]*model.Relation, 0),
+		EntitiesToCreate:  make([]EntityToCreate, 0),
 		Warnings:          make([]string, 0),
 		Errors:            make([]string, 0),
 	}
@@ -190,6 +199,32 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 			rel := model.NewRelation(event.Entity.ID, action.CreateRelation.Relation, targetID)
 			result.RelationsToCreate = append(result.RelationsToCreate, rel)
 		}
+	}
+
+	if action.CreateEntity != nil {
+		entityType := action.CreateEntity.Type
+		if entityType == "" {
+			result.Errors = append(result.Errors, "create_entity action requires 'type' field")
+			return
+		}
+
+		props := make(map[string]interface{})
+		for k, v := range action.CreateEntity.Properties {
+			props[k] = e.interpolate(v, event)
+		}
+
+		// Default to skip if not specified.
+		ifExists := action.CreateEntity.IfExists
+		if ifExists == "" {
+			ifExists = IfExistsSkip
+		}
+
+		result.EntitiesToCreate = append(result.EntitiesToCreate, EntityToCreate{
+			Type:                entityType,
+			Properties:          props,
+			RelationFromTrigger: action.CreateEntity.Relation,
+			IfExists:            ifExists,
+		})
 	}
 }
 

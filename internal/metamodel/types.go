@@ -262,6 +262,7 @@ type AutomationAction struct {
 	Set            string                `yaml:"set,omitempty"`
 	Value          string                `yaml:"value,omitempty"`
 	CreateRelation *CreateRelationAction `yaml:"create_relation,omitempty"`
+	CreateEntity   *CreateEntityAction   `yaml:"create_entity,omitempty"`
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
@@ -269,6 +270,21 @@ type CreateRelationAction struct {
 	Relation string `yaml:"relation"`
 	To       string `yaml:"to"`
 }
+
+// CreateEntityAction specifies parameters for creating a new entity.
+type CreateEntityAction struct {
+	Type       string            `yaml:"type"`                 // Entity type to create
+	Properties map[string]string `yaml:"properties,omitempty"` // Properties (values support interpolation)
+	Relation   string            `yaml:"relation,omitempty"`   // Optional: relation FROM trigger TO created entity
+	IfExists   string            `yaml:"if_exists,omitempty"`  // Behavior when relation already exists: skip (default), error, replace
+}
+
+// IfExists constants for CreateEntityAction behavior.
+const (
+	IfExistsSkip    = "skip"    // Skip creation if relation already exists (default)
+	IfExistsError   = "error"   // Return error if relation already exists
+	IfExistsReplace = "replace" // Delete existing and create new
+)
 
 // AutomationCheck specifies a validation condition.
 type AutomationCheck struct {

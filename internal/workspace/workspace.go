@@ -426,6 +426,7 @@ type CreateResult struct {
 	AutomationWarnings []string
 	AutomationErrors   []string
 	RelationsCreated   []*model.Relation
+	EntitiesCreated    []*model.Entity
 }
 
 // CreateEntity generates an ID (unless provided), applies templates and
@@ -483,13 +484,15 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 		entity.SetString("status", entityDef.GetDefaultStatus(meta))
 	}
 
-	// Run automation.
+	// Run automation once and collect all results.
 	result := &CreateResult{}
+	var autoResult *automation.Result
 	if w.automation != nil {
-		autoResult := w.automation.Process(automation.Event{
+		autoResult = w.automation.Process(automation.Event{
 			Type:   automation.EventEntityCreated,
 			Entity: entity,
 		})
+		// Apply property changes before validation.
 		for prop, val := range autoResult.PropertiesSet {
 			entity.SetString(prop, val)
 		}
@@ -509,22 +512,12 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 	w.graph.AddNode(entity)
 	w.indexEntity(entity)
 
-	// Create automation relations (re-run to pick up RelationsToCreate;
-	// the first run above only captured property changes).
-	if w.automation != nil {
-		autoResult := w.automation.Process(automation.Event{
-			Type:   automation.EventEntityCreated,
-			Entity: entity,
-		})
-		for _, rel := range autoResult.RelationsToCreate {
-			rel.From = entity.ID
-			if writeErr := w.repo.WriteRelation(rel); writeErr != nil {
-				log.Printf("Failed to create automation relation: %v", writeErr)
-				continue
-			}
-			w.graph.AddEdge(rel)
-			result.RelationsCreated = append(result.RelationsCreated, rel)
-		}
+	// Apply automation side effects (relations, entities) after entity is written.
+	if autoResult != nil {
+		effects := w.applyAutomationSideEffects(entity, autoResult)
+		result.RelationsCreated = effects.RelationsCreated
+		result.EntitiesCreated = effects.EntitiesCreated
+		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
 	}
 
 	w.saveCacheQuietly()
@@ -536,6 +529,7 @@ type UpdateResult struct {
 	AutomationWarnings []string
 	AutomationErrors   []string
 	RelationsCreated   []*model.Relation
+	EntitiesCreated    []*model.Entity
 }
 
 // UpdateEntity validates and writes an existing entity, runs automation,
@@ -563,15 +557,10 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
 
-		for _, rel := range autoResult.RelationsToCreate {
-			rel.From = entity.ID
-			if writeErr := w.repo.WriteRelation(rel); writeErr != nil {
-				log.Printf("Failed to create automation relation: %v", writeErr)
-				continue
-			}
-			w.graph.AddEdge(rel)
-			result.RelationsCreated = append(result.RelationsCreated, rel)
-		}
+		effects := w.applyAutomationSideEffects(entity, autoResult)
+		result.RelationsCreated = effects.RelationsCreated
+		result.EntitiesCreated = effects.EntitiesCreated
+		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
 	}
 
 	// Write to disk + update graph + search index.
@@ -636,6 +625,210 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 
 	w.saveCacheQuietly()
 	return result, nil
+}
+
+// createEntityNoAutomation creates an entity without triggering further automations.
+// This is used by automation-triggered entity creation to prevent infinite recursion.
+func (w *Workspace) createEntityNoAutomation(entityType string, props map[string]interface{}) (*model.Entity, error) {
+	meta := w.Meta()
+	entityDef, ok := meta.GetEntityDef(entityType)
+	if !ok {
+		return nil, fmt.Errorf("unknown entity type: %s", entityType)
+	}
+
+	// Generate ID.
+	entityID, err := w.GenerateID(entityType, "")
+	if err != nil {
+		return nil, err
+	}
+
+	entity := model.NewEntity(entityID, entityType)
+
+	// Apply template defaults.
+	template, err := w.repo.LoadEntityTemplate(entityType)
+	if err != nil {
+		return nil, fmt.Errorf("load template: %w", err)
+	}
+	if template != nil {
+		markdown.ApplyEntityTemplate(entity, template)
+	}
+
+	// Apply provided properties (override template defaults).
+	for k, v := range props {
+		entity.Properties[k] = v
+	}
+
+	// Set default status if not set.
+	if entity.GetString("status") == "" {
+		entity.SetString("status", entityDef.GetDefaultStatus(meta))
+	}
+
+	// Validate.
+	if errs := meta.ValidateEntity(entity); len(errs) > 0 {
+		return nil, newValidationError(errs)
+	}
+
+	// Write to disk + update graph.
+	if err := w.repo.WriteEntity(entity, meta); err != nil {
+		return nil, fmt.Errorf("write entity: %w", err)
+	}
+	w.graph.AddNode(entity)
+
+	return entity, nil
+}
+
+// automationSideEffects holds entities and relations created by automation.
+type automationSideEffects struct {
+	RelationsCreated []*model.Relation
+	EntitiesCreated  []*model.Entity
+	Errors           []string
+}
+
+// findExistingRelationTarget finds an existing entity of the given type that is
+// the target of a relation from the source entity with the given relation type.
+// Returns nil if no such entity exists.
+func (w *Workspace) findExistingRelationTarget(sourceID, relationType, targetType string) *model.Entity {
+	for _, rel := range w.graph.OutgoingEdges(sourceID) {
+		if rel.Type == relationType {
+			if target, ok := w.graph.GetNode(rel.To); ok && target.Type == targetType {
+				return target
+			}
+		}
+	}
+	return nil
+}
+
+// applyAutomationSideEffects creates relations and entities from automation results.
+// This helper is used by both CreateEntity and UpdateEntity to reduce duplication.
+func (w *Workspace) applyAutomationSideEffects(
+	triggerEntity *model.Entity,
+	autoResult *automation.Result,
+) *automationSideEffects {
+	effects := &automationSideEffects{}
+
+	w.applyRelationCreations(triggerEntity, autoResult.RelationsToCreate, effects)
+	w.applyEntityCreations(triggerEntity, autoResult.EntitiesToCreate, effects)
+
+	return effects
+}
+
+// applyRelationCreations creates relations from automation results.
+func (w *Workspace) applyRelationCreations(
+	triggerEntity *model.Entity,
+	relations []*model.Relation,
+	effects *automationSideEffects,
+) {
+	meta := w.Meta()
+
+	for _, rel := range relations {
+		rel.From = triggerEntity.ID
+
+		targetEntity, ok := w.graph.GetNode(rel.To)
+		if !ok {
+			effects.Errors = append(effects.Errors,
+				fmt.Sprintf("automation relation target not found: %s", rel.To))
+			continue
+		}
+		if err := meta.ValidateRelation(rel.Type, triggerEntity.Type, targetEntity.Type); err != nil {
+			effects.Errors = append(effects.Errors,
+				fmt.Sprintf("automation relation invalid: %v", err))
+			continue
+		}
+
+		if writeErr := w.repo.WriteRelation(rel); writeErr != nil {
+			effects.Errors = append(effects.Errors,
+				fmt.Sprintf("failed to create automation relation: %v", writeErr))
+			continue
+		}
+		w.graph.AddEdge(rel)
+		effects.RelationsCreated = append(effects.RelationsCreated, rel)
+	}
+}
+
+// applyEntityCreations creates entities from automation results, handling if_exists behavior.
+func (w *Workspace) applyEntityCreations(
+	triggerEntity *model.Entity,
+	toCreateList []automation.EntityToCreate,
+	effects *automationSideEffects,
+) {
+	for _, toCreate := range toCreateList {
+		if skip := w.handleIfExists(triggerEntity, toCreate, effects); skip {
+			continue
+		}
+
+		created, createErr := w.createEntityNoAutomation(toCreate.Type, toCreate.Properties)
+		if createErr != nil {
+			effects.Errors = append(effects.Errors,
+				fmt.Sprintf("failed to create automation entity %s: %v", toCreate.Type, createErr))
+			continue
+		}
+		effects.EntitiesCreated = append(effects.EntitiesCreated, created)
+
+		if toCreate.RelationFromTrigger != "" {
+			w.createTriggerRelation(triggerEntity, created, toCreate.RelationFromTrigger, effects)
+		}
+	}
+}
+
+// handleIfExists checks if_exists behavior for entity creation.
+// Returns true if the entity creation should be skipped.
+func (w *Workspace) handleIfExists(
+	triggerEntity *model.Entity,
+	toCreate automation.EntityToCreate,
+	effects *automationSideEffects,
+) bool {
+	if toCreate.RelationFromTrigger == "" {
+		return false
+	}
+
+	existingTarget := w.findExistingRelationTarget(
+		triggerEntity.ID, toCreate.RelationFromTrigger, toCreate.Type)
+
+	if existingTarget == nil {
+		return false
+	}
+
+	switch toCreate.IfExists {
+	case automation.IfExistsSkip:
+		effects.EntitiesCreated = append(effects.EntitiesCreated, existingTarget)
+		return true
+	case automation.IfExistsError:
+		effects.Errors = append(effects.Errors,
+			fmt.Sprintf("entity already exists via %s relation: %s",
+				toCreate.RelationFromTrigger, existingTarget.ID))
+		return true
+	case automation.IfExistsReplace:
+		if _, err := w.DeleteEntity(existingTarget.Type, existingTarget.ID, true); err != nil {
+			effects.Errors = append(effects.Errors,
+				fmt.Sprintf("failed to delete existing entity for replace: %v", err))
+			return true
+		}
+	}
+	return false
+}
+
+// createTriggerRelation creates a relation from the trigger entity to a newly created entity.
+func (w *Workspace) createTriggerRelation(
+	triggerEntity, created *model.Entity,
+	relationType string,
+	effects *automationSideEffects,
+) {
+	meta := w.Meta()
+
+	if err := meta.ValidateRelation(relationType, triggerEntity.Type, created.Type); err != nil {
+		effects.Errors = append(effects.Errors,
+			fmt.Sprintf("automation relation invalid: %v", err))
+		return
+	}
+
+	rel := model.NewRelation(triggerEntity.ID, relationType, created.ID)
+	if writeErr := w.repo.WriteRelation(rel); writeErr != nil {
+		effects.Errors = append(effects.Errors,
+			fmt.Sprintf("failed to create automation relation: %v", writeErr))
+		return
+	}
+	w.graph.AddEdge(rel)
+	effects.RelationsCreated = append(effects.RelationsCreated, rel)
 }
 
 // --- Relation operations ---

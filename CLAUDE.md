@@ -458,3 +458,130 @@ Checklist templates are in `tickets/templates/entities/`:
 - `implementation-checklist.md`
 - `review-checklist.md`
 - `docs-checklist.md`
+
+### Review Response Protocol
+
+When using the cranky-code-reviewer agent, track ALL findings as `review-response` entities:
+
+**Creating Review Responses:**
+
+For each finding from code review:
+1. Create a `review-response` entity with:
+   - `title`: Brief description of the finding
+   - `finding`: Full description of the issue
+   - `severity`: `critical` | `significant` | `minor` | `nit`
+   - `status`: `open`
+2. Link to ticket/bug via `has-review-response` relation
+
+**Addressing Review Responses:**
+
+| Severity | Required Action |
+|----------|-----------------|
+| critical | MUST be fixed before done |
+| significant | MUST be fixed before done |
+| minor | Should fix, can defer with reason |
+| nit | Optional, can wont-fix with reason |
+
+When addressing a finding:
+- Fix the issue in code
+- Update status to `addressed`
+- Document the `resolution` (how it was fixed)
+
+When not addressing:
+- Set status to `wont-fix` or `deferred`
+- Document the `reason` (justification required)
+
+**Validation Gates:**
+
+Tickets/bugs cannot be marked `done` if they have:
+- Open critical review responses
+- Open significant review responses
+
+Minor/nit findings may remain open with warnings.
+
+### Workflow Verification Scripts
+
+Custom scripts in `tickets/scripts/` for workflow checkpoints:
+
+| Script | Purpose |
+|--------|---------|
+| `verify-planning-syntax.sh` | Check planning docs for common issues |
+| `verify-tests-exist.sh` | Ensure modified code has test coverage |
+| `verify-review-responses.sh` | Check review responses are addressed |
+
+Use the `/verify` slash command to run appropriate checks at workflow transitions.
+
+### Automation Actions
+
+The automation engine supports these action types in `metamodel.yaml`:
+
+**set**: Set a property value on the triggering entity
+
+```yaml
+automations:
+  - name: set-date-on-done
+    on:
+      entity: [ticket]
+      property: status
+      becomes: done
+    do:
+      - set: completed_at
+        value: "{{today}}"
+```
+
+**create_relation**: Create a relation from the triggering entity
+
+```yaml
+automations:
+  - name: link-on-assignment
+    on:
+      entity: [ticket]
+      property: assignee
+    do:
+      - create_relation:
+          relation: assigned-to
+          to: "{{new.assignee}}"
+```
+
+**create_entity**: Create a new entity (with optional relation to trigger)
+
+```yaml
+automations:
+  - name: create-checklist-on-ready
+    on:
+      entity: [ticket]
+      property: status
+      becomes: ready
+    do:
+      - create_entity:
+          type: planning-checklist
+          properties:
+            title: "Planning: {{new.title}}"
+            status: open
+          relation: has-planning    # Creates relation FROM trigger TO new entity
+          if_exists: skip           # What to do if relation already exists
+```
+
+**if_exists options** (for `create_entity` with `relation`):
+
+| Value | Behavior |
+|-------|----------|
+| `skip` | Skip creation if relation to same entity type exists (default) |
+| `error` | Return error if relation to same entity type exists |
+| `replace` | Delete existing target entity and create new one |
+
+The `if_exists` check uses the relation to detect duplicates: if the trigger entity
+already has a relation of the specified type pointing to an entity of the same type
+being created, the action is considered a duplicate.
+
+### Interpolation Syntax
+
+Automation properties support template interpolation:
+
+| Pattern | Description |
+|---------|-------------|
+| `{{new.property}}` | Property from new/current entity |
+| `{{entity.id}}` | ID of the triggering entity |
+| `{{today}}` | Current date (YYYY-MM-DD) |
+
+Common mistake: `{{entity.title}}` is WRONG, use `{{new.title}}` instead.

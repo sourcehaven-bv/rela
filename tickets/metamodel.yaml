@@ -23,6 +23,12 @@ types:
   checklist_status:
     values: [pending, in-progress, done]
     default: pending
+  review_response_status:
+    values: [open, addressed, wont-fix, deferred]
+    default: open
+  review_response_severity:
+    values: [critical, significant, minor, nit]
+    default: minor
   risk_status:
     values: [identified, mitigated, accepted, resolved]
     default: identified
@@ -653,6 +659,39 @@ entities:
       required-headers:
         - "## Code Documentation"
         - "## Project Documentation"
+  # ===================
+  # Code Review Tracking
+  # ===================
+  review-response:
+    label: Review Response
+    aliases: [review-finding, code-review-item]
+    id_prefix: "RR-"
+    id_type: short
+    color: "#FFF8E1"
+    border_color: "#FF8F00"
+    description: Tracks code review findings and their resolutions
+    properties:
+      title:
+        type: string
+        required: true
+        description: Brief description of the review finding
+      finding:
+        type: string
+        required: true
+        description: The specific issue identified in code review
+      severity:
+        type: review_response_severity
+        required: true
+        description: How critical is this finding?
+      resolution:
+        type: string
+        description: How this finding was addressed (required when status != open)
+      reason:
+        type: string
+        description: Justification for wont-fix or deferred status
+      status:
+        type: review_response_status
+        required: true
 relations:
   # ===================
   # Ticket → Work Relations
@@ -959,6 +998,12 @@ relations:
     to: [docs-checklist]
     inverse: docs-for
     max_outgoing: 1
+  has-review-response:
+    label: has review response
+    description: Code review finding that needs to be addressed
+    from: [ticket, bug]
+    to: [review-response]
+    inverse: responds-to
 # ===================
 # Validation Rules
 # ===================
@@ -1752,4 +1797,79 @@ validations:
         where:
           - "status=done"
         min: 1
+    severity: error
+  # --- Review response completeness ---
+  - name: addressed-review-response-needs-resolution
+    description: "Addressed review responses must document how they were fixed"
+    entity_type: review-response
+    when:
+      - "status=addressed"
+    then:
+      - "resolution!="
+    severity: error
+  - name: wontfix-review-response-needs-reason
+    description: "Won't-fix review responses must justify the decision"
+    entity_type: review-response
+    when:
+      - "status=wont-fix"
+    then:
+      - "reason!="
+    severity: error
+  - name: deferred-review-response-needs-reason
+    description: "Deferred review responses must explain when/why deferred"
+    entity_type: review-response
+    when:
+      - "status=deferred"
+    then:
+      - "reason!="
+    severity: error
+  # --- Ticket review response gates ---
+  - name: done-ticket-no-open-critical-responses
+    description: "Done tickets cannot have open critical review responses"
+    entity_type: ticket
+    when:
+      - "status=done"
+    relations:
+      has-review-response:
+        where:
+          - "status=open"
+          - "severity=critical"
+        max: 0
+    severity: error
+  - name: done-ticket-no-open-significant-responses
+    description: "Done tickets cannot have open significant review responses"
+    entity_type: ticket
+    when:
+      - "status=done"
+    relations:
+      has-review-response:
+        where:
+          - "status=open"
+          - "severity=significant"
+        max: 0
+    severity: error
+  # --- Bug review response gates ---
+  - name: done-bug-no-open-critical-responses
+    description: "Done bugs cannot have open critical review responses"
+    entity_type: bug
+    when:
+      - "status=done"
+    relations:
+      has-review-response:
+        where:
+          - "status=open"
+          - "severity=critical"
+        max: 0
+    severity: error
+  - name: done-bug-no-open-significant-responses
+    description: "Done bugs cannot have open significant review responses"
+    entity_type: bug
+    when:
+      - "status=done"
+    relations:
+      has-review-response:
+        where:
+          - "status=open"
+          - "severity=significant"
+        max: 0
     severity: error

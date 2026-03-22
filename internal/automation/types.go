@@ -32,6 +32,7 @@ type Action struct {
 	Set            string
 	Value          string
 	CreateRelation *CreateRelationAction
+	CreateEntity   *CreateEntityAction
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
@@ -39,6 +40,21 @@ type CreateRelationAction struct {
 	Relation string
 	To       string
 }
+
+// CreateEntityAction specifies parameters for creating a new entity.
+type CreateEntityAction struct {
+	Type       string            // Entity type to create (e.g., "planning-checklist")
+	Properties map[string]string // Properties to set (values support interpolation)
+	Relation   string            // Optional: relation type FROM triggering entity TO created entity
+	IfExists   string            // Behavior when relation exists: skip (default), error, replace
+}
+
+// IfExists constants for CreateEntityAction behavior.
+const (
+	IfExistsSkip    = "skip"    // Skip creation if relation already exists (default)
+	IfExistsError   = "error"   // Return error if relation already exists
+	IfExistsReplace = "replace" // Delete existing and create new
+)
 
 // Validation specifies a condition to check.
 type Validation struct {
@@ -87,6 +103,14 @@ const (
 	EventRelationRemoved
 )
 
+// EntityToCreate specifies an entity to be created by automation.
+type EntityToCreate struct {
+	Type                string                 // Entity type to create
+	Properties          map[string]interface{} // Properties for the new entity
+	RelationFromTrigger string                 // Optional: relation type from triggering entity
+	IfExists            string                 // Behavior when relation exists: skip (default), error, replace
+}
+
 // Result represents the outcome of running automations.
 type Result struct {
 	// PropertiesSet contains properties that were automatically set.
@@ -94,6 +118,9 @@ type Result struct {
 
 	// RelationsToCreate contains relations that should be created.
 	RelationsToCreate []*model.Relation
+
+	// EntitiesToCreate contains entities that should be created.
+	EntitiesToCreate []EntityToCreate
 
 	// Warnings contains validation warnings (allow save, show message).
 	Warnings []string
