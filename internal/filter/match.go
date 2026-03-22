@@ -2,7 +2,6 @@ package filter
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -56,7 +55,7 @@ func Match(entity *model.Entity, filter *Filter, propDef *metamodel.PropertyDef,
 		case OpNotEqual:
 			// property!= means "is not empty" - value exists and is not empty
 			return true, nil
-		case OpLess, OpLessEqual, OpGreater, OpGreaterEqual, OpRegex:
+		case OpLess, OpLessEqual, OpGreater, OpGreaterEqual, OpRegex, OpFuzzy:
 			// For other operators with empty value, fall through to type-specific matching
 			// which will return an appropriate error
 		}
@@ -169,7 +168,7 @@ func validateOperatorForType(op Operator, propDef *metamodel.PropertyDef, m *met
 
 	case metamodel.PropertyTypeDate, metamodel.PropertyTypeInteger:
 		// Date and integer support: =, !=, <, <=, >, >=
-		if op == OpRegex {
+		if op == OpRegex || op == OpFuzzy {
 			return fmt.Errorf("operator %q not supported for %s property", op, propType)
 		}
 
@@ -201,29 +200,60 @@ func matchString(val interface{}, filter *Filter) (bool, error) {
 	switch filter.Operator {
 	case OpEqual:
 		if filter.IsGlob {
-			// Convert glob to regex and match
-			pattern := GlobToRegex(filter.Value)
-			re, err := regexp.Compile(pattern)
-			if err != nil {
-				return false, fmt.Errorf("invalid glob pattern: %w", err)
+			// Use pre-compiled regex from finalizeFilter
+			if filter.Regex == nil {
+				return false, fmt.Errorf("glob pattern not compiled")
 			}
-			return re.MatchString(s), nil
+			return filter.Regex.MatchString(s), nil
 		}
 		return s == filter.Value, nil
 
 	case OpNotEqual:
 		if filter.IsGlob {
-			pattern := GlobToRegex(filter.Value)
-			re, err := regexp.Compile(pattern)
-			if err != nil {
-				return false, fmt.Errorf("invalid glob pattern: %w", err)
+			// Use pre-compiled regex from finalizeFilter
+			if filter.Regex == nil {
+				return false, fmt.Errorf("glob pattern not compiled")
 			}
-			return !re.MatchString(s), nil
+			return !filter.Regex.MatchString(s), nil
 		}
 		return s != filter.Value, nil
 
 	case OpRegex:
 		return filter.Regex.MatchString(s), nil
+
+	case OpFuzzy:
+		// Use FuzzyTarget for fuzzy matching (populated by finalizeFilter)
+		target := filter.FuzzyTarget
+		if target == "" {
+			// Empty fuzzy target - no match possible
+			return false, nil
+		}
+
+		// If wildcard pattern exists, use a two-phase match:
+		// 1. The value must match the full glob pattern (fuzzyTarget + wildcards)
+		// 2. The prefix of the value (same length as fuzzyTarget) must be similar to fuzzyTarget
+		if filter.WildcardRe != nil {
+			// First: value must match the glob pattern
+			if !filter.WildcardRe.MatchString(s) {
+				return false, nil
+			}
+
+			// Second: compare fuzzy target against a prefix of the value
+			// Use the length of the fuzzy target to extract the prefix
+			targetRunes := []rune(target)
+			valueRunes := []rune(s)
+			if len(valueRunes) < len(targetRunes) {
+				// Value is shorter than target - no match possible
+				return false, nil
+			}
+			prefix := string(valueRunes[:len(targetRunes)])
+			similarity := TrigramSimilarity(prefix, target)
+			return similarity >= DefaultFuzzyThreshold, nil
+		}
+
+		// No wildcard: pure fuzzy matching against the whole value
+		similarity := TrigramSimilarity(s, target)
+		return similarity >= DefaultFuzzyThreshold, nil
 
 	default:
 		return false, fmt.Errorf("operator %q not supported for string", filter.Operator)

@@ -576,32 +576,6 @@ func TestMarshalJSON_Indented(t *testing.T) {
 	}
 }
 
-func TestScoreSearch(t *testing.T) {
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Authentication Feature"
-	e.Properties["status"] = "draft"
-	e.Content = "Users should be able to log in"
-
-	// Match by ID
-	if scoreSearch(e, "req-001") <= 0 {
-		t.Error("expected match by ID")
-	}
-	// Match by property
-	if scoreSearch(e, "authentication") <= 0 {
-		t.Error("expected match by property value")
-	}
-	// Match by content (two words, OR logic)
-	if scoreSearch(e, "log in") <= 0 {
-		t.Error("expected match by content")
-	}
-	// No match
-	if scoreSearch(e, "nonexistent") > 0 {
-		t.Error("expected no match for nonexistent query")
-	}
-	// Non-string property should not match
-	e.Properties["priority"] = 5
-}
-
 func TestCountEdgesByType(t *testing.T) {
 	edges := []*model.Relation{
 		model.NewRelation("A", "addresses", "B"),
@@ -701,57 +675,6 @@ func TestConvertTraceResult_DeepNesting(t *testing.T) {
 	}
 	if grandchild.Depth != 2 {
 		t.Errorf("expected grandchild depth 2, got %d", grandchild.Depth)
-	}
-}
-
-func TestScoreSearch_ByIDCaseInsensitive(t *testing.T) {
-	e := model.NewEntity("REQ-001", "requirement")
-
-	if scoreSearch(e, "req") <= 0 {
-		t.Error("expected case-insensitive ID match")
-	}
-	if scoreSearch(e, "req-001") <= 0 {
-		t.Error("expected full ID match")
-	}
-}
-
-func TestScoreSearch_ByContent(t *testing.T) {
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Content = "This is about Authentication"
-
-	if scoreSearch(e, "authentication") <= 0 {
-		t.Error("expected case-insensitive content match")
-	}
-}
-
-func TestScoreSearch_NoMatch(t *testing.T) {
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Something"
-	e.Content = "Other content"
-
-	if scoreSearch(e, "zzznomatch") > 0 {
-		t.Error("expected no match")
-	}
-}
-
-func TestScoreSearch_MultipleWords(t *testing.T) {
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Authentication Feature"
-	e.Content = "OAuth 2.0 API integration"
-
-	// Both words match → higher score
-	scoreBoth := scoreSearch(e, "authentication oauth")
-	// One word matches
-	scoreOne := scoreSearch(e, "authentication elephant")
-
-	if scoreBoth <= 0 {
-		t.Error("expected match for both words")
-	}
-	if scoreOne <= 0 {
-		t.Error("expected match for one word")
-	}
-	if scoreBoth <= scoreOne {
-		t.Errorf("both-match score (%f) should be higher than one-match (%f)", scoreBoth, scoreOne)
 	}
 }
 

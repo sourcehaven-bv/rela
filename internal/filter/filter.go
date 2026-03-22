@@ -17,6 +17,7 @@ const (
 	OpGreater                      // >
 	OpGreaterEqual                 // >=
 	OpRegex                        // =~
+	OpFuzzy                        // ~
 )
 
 // String returns the string representation of an operator
@@ -36,6 +37,8 @@ func (o Operator) String() string {
 		return ">="
 	case OpRegex:
 		return "=~"
+	case OpFuzzy:
+		return "~"
 	default:
 		return "?"
 	}
@@ -43,11 +46,13 @@ func (o Operator) String() string {
 
 // Filter represents a parsed filter expression
 type Filter struct {
-	Property string
-	Operator Operator
-	Value    string
-	Regex    *regexp.Regexp // Compiled regex if Operator is OpRegex
-	IsGlob   bool           // True if Value contains glob patterns (for string equality)
+	Property    string
+	Operator    Operator
+	Value       string
+	Regex       *regexp.Regexp // Compiled regex if Operator is OpRegex or IsGlob
+	IsGlob      bool           // True if Value contains glob patterns (for string equality)
+	FuzzyTarget string         // For OpFuzzy: fuzzy portion (before first wildcard)
+	WildcardRe  *regexp.Regexp // For OpFuzzy: compiled wildcard suffix pattern (if any)
 }
 
 // Parse parses a filter string like "status=draft" or "valid_until<2025-02-01"
@@ -74,6 +79,7 @@ func Parse(s string) (*Filter, error) {
 		{">=", OpGreaterEqual},
 		{"!=", OpNotEqual},
 		{"=~", OpRegex},
+		{"~", OpFuzzy},
 		{"<", OpLess},
 		{">", OpGreater},
 		{"=", OpEqual},
@@ -81,39 +87,81 @@ func Parse(s string) (*Filter, error) {
 
 	for _, op := range operators {
 		idx := strings.Index(s, op.str)
-		if idx > 0 {
-			property := strings.TrimSpace(s[:idx])
-			value := strings.TrimSpace(s[idx+len(op.str):])
-
-			if property == "" {
-				return nil, fmt.Errorf("missing property name in filter: %s", s)
-			}
-
-			f := &Filter{
-				Property: property,
-				Operator: op.op,
-				Value:    value,
-			}
-
-			// Compile regex if needed
-			if op.op == OpRegex {
-				re, err := regexp.Compile(value)
-				if err != nil {
-					return nil, fmt.Errorf("invalid regex pattern %q: %w", value, err)
-				}
-				f.Regex = re
-			}
-
-			// Check for glob patterns in equality operator
-			if op.op == OpEqual && strings.Contains(value, "*") {
-				f.IsGlob = true
-			}
-
-			return f, nil
+		if idx <= 0 {
+			continue
 		}
+
+		property := strings.TrimSpace(s[:idx])
+		value := strings.TrimSpace(s[idx+len(op.str):])
+
+		if property == "" {
+			return nil, fmt.Errorf("missing property name in filter: %s", s)
+		}
+
+		f := &Filter{
+			Property: property,
+			Operator: op.op,
+			Value:    value,
+		}
+
+		if err := finalizeFilter(f); err != nil {
+			return nil, err
+		}
+
+		return f, nil
 	}
 
 	return nil, fmt.Errorf("invalid filter expression (missing operator): %s", s)
+}
+
+// finalizeFilter compiles regex patterns and validates glob patterns.
+func finalizeFilter(f *Filter) error {
+	// Compile regex if needed
+	if f.Operator == OpRegex {
+		re, err := regexp.Compile(f.Value)
+		if err != nil {
+			return fmt.Errorf("invalid regex pattern %q: %w", f.Value, err)
+		}
+		f.Regex = re
+	}
+
+	// Check for glob patterns in equality operator
+	// Pre-compile the regex to avoid recompilation on every match
+	if f.Operator == OpEqual && ContainsUnescapedGlob(f.Value) {
+		if err := ValidatePattern(f.Value); err != nil {
+			return fmt.Errorf("invalid glob pattern %q: %w", f.Value, err)
+		}
+		regexPattern := GlobToRegex(f.Value)
+		re, err := regexp.Compile(regexPattern)
+		if err != nil {
+			return fmt.Errorf("failed to compile glob pattern %q: %w", f.Value, err)
+		}
+		f.Regex = re
+		f.IsGlob = true
+	}
+
+	// Handle fuzzy operator with optional wildcard suffix
+	if f.Operator == OpFuzzy {
+		fuzzyPart, _, hasWildcard := SplitFuzzyWildcard(f.Value)
+		f.FuzzyTarget = fuzzyPart
+
+		if hasWildcard {
+			// Validate and compile full pattern as glob
+			if err := ValidatePattern(f.Value); err != nil {
+				return fmt.Errorf("invalid fuzzy+wildcard pattern %q: %w", f.Value, err)
+			}
+			// Compile the FULL value as a glob regex
+			// This combines the fuzzy prefix with wildcard suffix for final matching
+			regexPattern := GlobToRegex(f.Value)
+			re, err := regexp.Compile(regexPattern)
+			if err != nil {
+				return fmt.Errorf("failed to compile pattern %q: %w", f.Value, err)
+			}
+			f.WildcardRe = re
+		}
+	}
+
+	return nil
 }
 
 // ParseAll parses multiple filter strings
@@ -127,30 +175,6 @@ func ParseAll(filters []string) ([]*Filter, error) {
 		result = append(result, f)
 	}
 	return result, nil
-}
-
-// GlobToRegex converts a glob pattern to a regex pattern
-func GlobToRegex(glob string) string {
-	var result strings.Builder
-	result.WriteString("^")
-
-	for i := 0; i < len(glob); i++ {
-		c := glob[i]
-		switch c {
-		case '*':
-			result.WriteString(".*")
-		case '?':
-			result.WriteString(".")
-		case '.', '+', '(', ')', '[', ']', '{', '}', '^', '$', '|', '\\':
-			result.WriteByte('\\')
-			result.WriteByte(c)
-		default:
-			result.WriteByte(c)
-		}
-	}
-
-	result.WriteString("$")
-	return result.String()
 }
 
 // MatchValue checks if a value matches the filter.
@@ -219,24 +243,21 @@ func matchStringSimple(strValue string, f *Filter) bool {
 	switch f.Operator {
 	case OpEqual:
 		if f.IsGlob {
-			// Convert glob to regex and match
-			pattern := GlobToRegex(f.Value)
-			re, err := regexp.Compile(pattern)
-			if err != nil {
+			// Use pre-compiled regex from finalizeFilter
+			if f.Regex == nil {
 				return false
 			}
-			return re.MatchString(strValue)
+			return f.Regex.MatchString(strValue)
 		}
 		return strValue == f.Value
 
 	case OpNotEqual:
 		if f.IsGlob {
-			pattern := GlobToRegex(f.Value)
-			re, err := regexp.Compile(pattern)
-			if err != nil {
+			// Use pre-compiled regex from finalizeFilter
+			if f.Regex == nil {
 				return false
 			}
-			return !re.MatchString(strValue)
+			return !f.Regex.MatchString(strValue)
 		}
 		return strValue != f.Value
 
@@ -257,6 +278,29 @@ func matchStringSimple(strValue string, f *Filter) bool {
 			return false
 		}
 		return f.Regex.MatchString(strValue)
+
+	case OpFuzzy:
+		// Inline fuzzy matching logic to avoid error handling complexity
+		target := f.FuzzyTarget
+		if target == "" {
+			return false
+		}
+
+		if f.WildcardRe != nil {
+			// Two-phase match: glob pattern + fuzzy prefix
+			if !f.WildcardRe.MatchString(strValue) {
+				return false
+			}
+			targetRunes := []rune(target)
+			valueRunes := []rune(strValue)
+			if len(valueRunes) < len(targetRunes) {
+				return false
+			}
+			prefix := string(valueRunes[:len(targetRunes)])
+			return TrigramSimilarity(prefix, target) >= DefaultFuzzyThreshold
+		}
+
+		return TrigramSimilarity(strValue, target) >= DefaultFuzzyThreshold
 
 	default:
 		return false

@@ -4,7 +4,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -84,44 +83,32 @@ func (s *Server) handleSearchEntities(
 	const defaultSearchLimit = 20
 	limit := request.GetInt("limit", defaultSearchLimit)
 
-	queryLower := strings.ToLower(query)
-
-	type scored struct {
-		entity *model.Entity
-		score  float64
+	// Search via Bleve index (returns results sorted by relevance).
+	// Fetch extra when type filtering is needed since some results may be discarded.
+	words := strings.Fields(query)
+	fetchLimit := limit
+	if entityType != "" {
+		fetchLimit = limit * 2
+	}
+	entities, _, err := s.ws.Search(words, nil, fetchLimit)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
 
-	g := s.ws.Graph()
-	var candidates []*model.Entity
+	// Filter by type if specified.
+	var results []*model.Entity
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
-		candidates = g.NodesByType(resolved)
+		for _, e := range entities {
+			if e.Type == resolved {
+				results = append(results, e)
+				if len(results) >= limit {
+					break
+				}
+			}
+		}
 	} else {
-		candidates = g.AllNodes()
-	}
-
-	var scoredResults []scored
-	for _, e := range candidates {
-		sc := scoreSearch(e, queryLower)
-		if sc > 0 {
-			scoredResults = append(scoredResults, scored{entity: e, score: sc})
-		}
-	}
-
-	// Sort by relevance score (descending), then by ID for stability
-	sort.SliceStable(scoredResults, func(i, j int) bool {
-		if scoredResults[i].score != scoredResults[j].score {
-			return scoredResults[i].score > scoredResults[j].score
-		}
-		return scoredResults[i].entity.ID < scoredResults[j].entity.ID
-	})
-
-	results := make([]*model.Entity, len(scoredResults))
-	for i, sr := range scoredResults {
-		results[i] = sr.entity
-	}
-	if limit > 0 && limit < len(results) {
-		results = results[:limit]
+		results = entities
 	}
 
 	text, err := convertEntitiesList(results)

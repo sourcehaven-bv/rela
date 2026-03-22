@@ -6,8 +6,10 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/views"
 )
@@ -40,6 +43,7 @@ type Workspace struct {
 	graph      *graph.Graph
 	meta       *metamodel.Metamodel
 	automation *automation.Engine
+	searchIdx  *search.Index
 	mu         sync.RWMutex
 
 	// Watcher state (nil when not watching).
@@ -72,15 +76,22 @@ func New(repo repository.Store) (*Workspace, error) {
 	g := graph.New()
 
 	// Try cache first, fall back to full sync.
-	if repo.CacheExists() {
+	needsSync := !repo.CacheExists()
+	if !needsSync {
 		if cacheErr := repo.LoadCache(g); cacheErr != nil {
-			if _, syncErr := repo.Sync(meta, g); syncErr != nil {
-				return nil, fmt.Errorf("sync: %w", syncErr)
+			if errors.Is(cacheErr, repository.ErrCacheVersionMismatch) {
+				log.Printf("Cache outdated, rebuilding: %v", cacheErr)
 			}
+			needsSync = true
 		}
-	} else {
+	}
+	if needsSync {
 		if _, syncErr := repo.Sync(meta, g); syncErr != nil {
 			return nil, fmt.Errorf("sync: %w", syncErr)
+		}
+		// Save the new cache after sync
+		if saveErr := repo.SaveCache(g); saveErr != nil {
+			log.Printf("Warning: failed to save cache: %v", saveErr)
 		}
 	}
 
@@ -95,12 +106,26 @@ func NewWithGraph(repo repository.Store, meta *metamodel.Metamodel, g *graph.Gra
 
 // NewForTest creates a minimal workspace for testing. It has no repository,
 // so write operations will panic. Use this for unit tests that only need
-// to query the graph.
+// to query the graph. It initializes a search index with all entities.
 func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
-	return &Workspace{
+	ws := &Workspace{
 		graph: g,
 		meta:  meta,
 	}
+
+	// Initialize search index for test workspaces.
+	idx, err := search.NewIndex()
+	if err != nil {
+		log.Printf("Warning: failed to create test search index: %v", err)
+	} else {
+		docs := entitiesToSearchDocuments(g.AllNodes(), meta)
+		if indexErr := idx.IndexBatch(docs); indexErr != nil {
+			log.Printf("Warning: failed to index test entities: %v", indexErr)
+		}
+		ws.searchIdx = idx
+	}
+
+	return ws
 }
 
 func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph) *Workspace {
@@ -108,11 +133,24 @@ func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Gra
 	if len(meta.Automations) > 0 {
 		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
 	}
+
+	// Create search index and index all entities.
+	searchIdx, err := search.NewIndex()
+	if err != nil {
+		log.Printf("Warning: failed to create search index: %v", err)
+	} else {
+		docs := entitiesToSearchDocuments(g.AllNodes(), meta)
+		if err := searchIdx.IndexBatch(docs); err != nil {
+			log.Printf("Warning: failed to index entities: %v", err)
+		}
+	}
+
 	return &Workspace{
 		repo:       repo,
 		graph:      g,
 		meta:       meta,
 		automation: autoEngine,
+		searchIdx:  searchIdx,
 	}
 }
 
@@ -131,6 +169,37 @@ func (w *Workspace) Meta() *metamodel.Metamodel {
 // Repo returns the underlying repository for low-level operations not
 // wrapped by Workspace (e.g., FS access, Watch).
 func (w *Workspace) Repo() repository.Store { return w.repo }
+
+// Search performs a full-text search and returns matching entities with scores.
+// words are OR'd together with fuzzy matching; phrases must all match exactly.
+func (w *Workspace) Search(words, phrases []string, limit int) ([]*model.Entity, []float64, error) {
+	w.mu.RLock()
+	idx := w.searchIdx
+	w.mu.RUnlock()
+
+	if idx == nil {
+		return nil, nil, fmt.Errorf("search index not available")
+	}
+	results, err := idx.Search(words, phrases, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	entities := make([]*model.Entity, 0, len(results))
+	scores := make([]float64, 0, len(results))
+	for _, r := range results {
+		if e, ok := w.graph.GetNode(r.ID); ok {
+			entities = append(entities, e)
+			scores = append(scores, r.Score)
+		}
+	}
+	return entities, scores, nil
+}
+
+// SearchSimple performs a simple text search (convenience method).
+func (w *Workspace) SearchSimple(query string, limit int) ([]*model.Entity, error) {
+	entities, _, err := w.Search(strings.Fields(query), nil, limit)
+	return entities, err
+}
 
 // --- Project accessors ---
 
@@ -219,8 +288,60 @@ func (w *Workspace) reloadLocked() (*model.SyncResult, error) {
 		return nil, fmt.Errorf("sync: %w", err)
 	}
 
+	// Rebuild search index.
+	w.rebuildSearchIndex()
+
 	w.saveCacheQuietly()
 	return result, nil
+}
+
+// rebuildSearchIndex recreates and repopulates the search index.
+// Caller must hold w.mu.Lock.
+func (w *Workspace) rebuildSearchIndex() {
+	if w.searchIdx != nil {
+		if err := w.searchIdx.Close(); err != nil {
+			log.Printf("Warning: failed to close search index: %v", err)
+		}
+	}
+	idx, err := search.NewIndex()
+	if err != nil {
+		log.Printf("Warning: failed to create search index: %v", err)
+		w.searchIdx = nil
+		return
+	}
+	docs := entitiesToSearchDocuments(w.graph.AllNodes(), w.meta)
+	if err := idx.IndexBatch(docs); err != nil {
+		log.Printf("Warning: failed to index entities: %v", err)
+	}
+	w.searchIdx = idx
+}
+
+// indexEntity adds or updates an entity in the search index.
+func (w *Workspace) indexEntity(entity *model.Entity) {
+	w.mu.RLock()
+	idx := w.searchIdx
+	meta := w.meta
+	w.mu.RUnlock()
+
+	if idx != nil {
+		doc := entityToSearchDocument(entity, meta)
+		if err := idx.Index(doc); err != nil {
+			log.Printf("Warning: failed to index entity %s: %v", entity.ID, err)
+		}
+	}
+}
+
+// removeFromIndex removes an entity from the search index.
+func (w *Workspace) removeFromIndex(id string) {
+	w.mu.RLock()
+	idx := w.searchIdx
+	w.mu.RUnlock()
+
+	if idx != nil {
+		if err := idx.Remove(id); err != nil {
+			log.Printf("Warning: failed to remove entity %s from index: %v", id, err)
+		}
+	}
 }
 
 // SaveCache persists the graph to the cache file.
@@ -382,11 +503,12 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 		return nil, nil, newValidationError(errs)
 	}
 
-	// Write to disk + update graph.
+	// Write to disk + update graph + search index.
 	if err := w.repo.WriteEntity(entity, meta); err != nil {
 		return nil, nil, fmt.Errorf("write entity: %w", err)
 	}
 	w.graph.AddNode(entity)
+	w.indexEntity(entity)
 
 	// Create automation relations (re-run to pick up RelationsToCreate;
 	// the first run above only captured property changes).
@@ -453,11 +575,12 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		}
 	}
 
-	// Write to disk + update graph.
+	// Write to disk + update graph + search index.
 	if err := w.repo.WriteEntity(entity, meta); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 	w.graph.AddNode(entity)
+	w.indexEntity(entity)
 
 	w.saveCacheQuietly()
 	return result, nil
@@ -510,6 +633,7 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 		return nil, fmt.Errorf("delete entity: %w", err)
 	}
 	w.graph.RemoveNode(id)
+	w.removeFromIndex(id)
 
 	w.saveCacheQuietly()
 	return result, nil
@@ -638,6 +762,20 @@ func (w *Workspace) StopWatching() {
 	}
 }
 
+// Close releases resources held by the workspace (search index, watcher).
+func (w *Workspace) Close() error {
+	w.StopWatching()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.searchIdx != nil {
+		if err := w.searchIdx.Close(); err != nil {
+			return fmt.Errorf("close search index: %w", err)
+		}
+		w.searchIdx = nil
+	}
+	return nil
+}
+
 // PauseWatching temporarily suppresses file change events.
 func (w *Workspace) PauseWatching() {
 	if w.watchHandle != nil {
@@ -690,4 +828,57 @@ func (w *Workspace) ExecuteView(viewName, entryID string) (*views.ViewResult, er
 // file access (e.g., attachment store, writing output files).
 func (w *Workspace) FS() storage.FS {
 	return w.repo.FS()
+}
+
+// --- Search document conversion ---
+
+// entityToSearchDocument converts an entity to a search.Document.
+func entityToSearchDocument(e *model.Entity, meta *metamodel.Metamodel) search.Document {
+	return search.Document{
+		ID:          e.ID,
+		Type:        e.Type,
+		Primary:     meta.DisplayTitle(e),
+		Description: e.Description(),
+		Content:     e.Content,
+		Properties:  flattenProperties(e.Properties),
+	}
+}
+
+// entitiesToSearchDocuments converts a slice of entities to search documents.
+func entitiesToSearchDocuments(entities []*model.Entity, meta *metamodel.Metamodel) []search.Document {
+	docs := make([]search.Document, len(entities))
+	for i, e := range entities {
+		docs[i] = entityToSearchDocument(e, meta)
+	}
+	return docs
+}
+
+// flattenProperties extracts all property values as a single searchable string.
+func flattenProperties(props map[string]interface{}) string {
+	// Sort keys for deterministic output.
+	keys := make([]string, 0, len(props))
+	for k := range props {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var parts []string
+	for _, k := range keys {
+		v := props[k]
+		switch val := v.(type) {
+		case string:
+			parts = append(parts, val)
+		case []string:
+			parts = append(parts, val...)
+		case []interface{}:
+			for _, item := range val {
+				if s, ok := item.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+		default:
+			parts = append(parts, fmt.Sprintf("%v", v))
+		}
+	}
+	return strings.Join(parts, " ")
 }

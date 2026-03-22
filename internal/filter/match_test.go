@@ -990,6 +990,181 @@ func TestMatchAllUnknownProperty(t *testing.T) {
 	}
 }
 
+// TestMatchFuzzy tests fuzzy matching with the ~ operator
+func TestMatchFuzzy(t *testing.T) {
+	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name    string
+		value   interface{}
+		filter  string
+		want    bool
+		wantErr bool
+	}{
+		// Exact match (similarity = 1.0)
+		{"exact match", "REQ", "id~REQ", true, false},
+		// Case insensitive exact match (similarity = 1.0)
+		{"case insensitive", "req", "id~REQ", true, false},
+		// Similar strings with typo (similarity >= 0.4)
+		{"typo match", "authentication", "id~autentication", true, false},
+		// Similar strings - REQ-001 vs REQ-002 has ~0.67 similarity
+		{"similar IDs", "REQ-001", "id~REQ-002", true, false},
+		// Below threshold - completely different strings
+		{"below threshold", "completely-different", "id~REQ", false, false},
+		// Empty filter value
+		{"empty filter value", "test", "id~", false, false},
+		// Empty entity value
+		{"empty entity value", "", "id~test", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entity := &model.Entity{
+				ID:         "TEST-001",
+				Type:       "test",
+				Properties: map[string]interface{}{"id": tt.value},
+			}
+
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+
+			got, err := Match(entity, f, propDef, mm)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMatchFuzzyWithWildcard tests fuzzy+wildcard matching
+func TestMatchFuzzyWithWildcard(t *testing.T) {
+	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name   string
+		value  interface{}
+		filter string
+		want   bool
+	}{
+		// foo* should match values that start with foo (exact or similar prefix) and have more chars
+		{"fuzzy+wildcard exact prefix", "foo-001", "id~foo*", true},
+		{"fuzzy+wildcard exact prefix 2", "foobar", "id~foo*", true},
+		{"fuzzy+wildcard no match wrong prefix", "bar", "id~foo*", false}, // doesn't match glob ^foo.*$
+
+		// Question mark wildcard - matches exactly one char after prefix
+		{"fuzzy+question mark match", "foo-X", "id~foo-?", true},
+		{"fuzzy+question mark no match too many", "foo-XY", "id~foo-?", false},
+
+		// Pure fuzzy (no wildcard) - requires whole-string similarity >= 0.4
+		// REQ-001 vs REQ-002 have high similarity (~0.67 jaccard)
+		{"pure fuzzy matches similar IDs", "REQ-001", "id~REQ-002", true},
+		{"pure fuzzy exact match", "authentication", "id~authentication", true},
+		{"pure fuzzy with typo", "authentication", "id~autentication", true},
+		// XYZABC vs foo have 0 overlap - no match
+		{"pure fuzzy no match different", "XYZABC", "id~foo", false},
+
+		// Complex patterns with mid-wildcard
+		{"fuzzy+mid wildcard match", "AUTH-IZE", "id~AUTH*IZE", true},
+		// AUTH-ORIZE also matches glob AUTH*IZE (AUTH + -OR + IZE), so it should match
+		{"fuzzy+mid wildcard also matches", "AUTH-ORIZE", "id~AUTH*IZE", true},
+		// But something that doesn't end in IZE won't match
+		{"fuzzy+mid wildcard no match wrong suffix", "AUTH-FOO", "id~AUTH*IZE", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entity := &model.Entity{
+				ID:         "TEST-001",
+				Type:       "test",
+				Properties: map[string]interface{}{"id": tt.value},
+			}
+
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+
+			got, err := Match(entity, f, propDef, mm)
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Match(%q, %q) = %v, want %v", tt.value, tt.filter, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMatchFuzzyOperatorValidation tests that fuzzy operator is rejected for non-string types
+func TestMatchFuzzyOperatorValidation(t *testing.T) {
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name    string
+		propDef *metamodel.PropertyDef
+		filter  string
+		wantErr bool
+	}{
+		{
+			name:    "fuzzy on integer fails",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger},
+			filter:  "score~5",
+			wantErr: true,
+		},
+		{
+			name:    "fuzzy on date fails",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate, Format: "2006-01-02"},
+			filter:  "date~2025",
+			wantErr: true,
+		},
+		{
+			name:    "fuzzy on boolean fails",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean},
+			filter:  "flag~true",
+			wantErr: true,
+		},
+		{
+			name:    "fuzzy on enum fails",
+			propDef: &metamodel.PropertyDef{Type: metamodel.PropertyTypeEnum, Values: []string{"a", "b"}},
+			filter:  "status~a",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entity := &model.Entity{
+				ID:         "TEST-001",
+				Type:       "test",
+				Properties: map[string]interface{}{"score": 5, "date": "2025-01-01", "flag": true, "status": "a"},
+			}
+
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+
+			_, err = Match(entity, f, tt.propDef, mm)
+			if tt.wantErr && err == nil {
+				t.Error("expected error for fuzzy on non-string type")
+			}
+		})
+	}
+}
+
 // TestMatchEmptyFilterValueNonStringTypes tests that "property!=" (not empty check)
 // works correctly for non-string types like integers, dates, and booleans.
 // This is issue #152: validation rules with property!="" fail for non-string values

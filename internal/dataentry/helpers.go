@@ -23,7 +23,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
-	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 )
 
@@ -327,21 +326,14 @@ func checkboxStats(content string) CheckboxStats {
 
 // executeQuery parses a search query and returns all matching entities from the graph.
 // It supports the same query syntax as the search page: type:, prop:, status:, and free text.
-// Free-text words use OR logic with relevance scoring; results are ranked by score.
+// Free-text words use OR logic with fuzzy matching via Bleve; results are ranked by score.
 func (a *App) executeQuery(query string) []*model.Entity {
 	sq := searchparser.ParseQuery(query)
 	if sq.IsEmpty() {
 		return nil
 	}
 
-	var candidates []*model.Entity
-	if len(sq.EntityTypes) > 0 {
-		for _, t := range sq.EntityTypes {
-			candidates = append(candidates, a.g.NodesByType(t)...)
-		}
-	} else {
-		candidates = a.g.AllNodes()
-	}
+	const maxSearchResults = 1000
 
 	type scored struct {
 		entity *model.Entity
@@ -349,25 +341,50 @@ func (a *App) executeQuery(query string) []*model.Entity {
 	}
 	var scoredResults []scored
 
-	for _, e := range candidates {
-		if len(sq.PropertyFilters) > 0 {
-			entDef, ok := a.meta.GetEntityDef(e.Type)
-			if !ok {
-				continue
-			}
-			matched, err := filter.MatchAll(e, sq.PropertyFilters, entDef, a.meta)
-			if err != nil || !matched {
-				continue
-			}
+	// If there's free text, search via Bleve first
+	if sq.HasFreeText() {
+		entities, scores, err := a.ws.Search(sq.FreeTextWords, sq.FreeTextPhrases, maxSearchResults)
+		if err != nil {
+			return nil
 		}
 
-		if sq.HasFreeText() {
-			sc := search.ScoreEntity(e, sq.FreeTextWords, sq.FreeTextPhrases)
-			if sc <= 0 {
+		for i, e := range entities {
+			// Filter by entity type if specified
+			if len(sq.EntityTypes) > 0 {
+				typeMatch := false
+				for _, t := range sq.EntityTypes {
+					if e.Type == t {
+						typeMatch = true
+						break
+					}
+				}
+				if !typeMatch {
+					continue
+				}
+			}
+
+			// Apply property filters
+			if !a.matchesPropertyFilters(e, sq.PropertyFilters) {
 				continue
 			}
-			scoredResults = append(scoredResults, scored{entity: e, score: sc})
+
+			scoredResults = append(scoredResults, scored{entity: e, score: scores[i]})
+		}
+	} else {
+		// No free text - get candidates from graph and filter
+		var candidates []*model.Entity
+		if len(sq.EntityTypes) > 0 {
+			for _, t := range sq.EntityTypes {
+				candidates = append(candidates, a.g.NodesByType(t)...)
+			}
 		} else {
+			candidates = a.g.AllNodes()
+		}
+
+		for _, e := range candidates {
+			if !a.matchesPropertyFilters(e, sq.PropertyFilters) {
+				continue
+			}
 			scoredResults = append(scoredResults, scored{entity: e, score: 1.0})
 		}
 	}
@@ -377,17 +394,9 @@ func (a *App) executeQuery(query string) []*model.Entity {
 		results[i] = sr.entity
 	}
 
-	// Apply sort from query syntax, or rank by relevance for free-text queries
+	// Apply sort from query syntax (Bleve results are already ranked by relevance)
 	if sq.HasSort() {
 		a.sortEntitiesMulti(results, sq.SortClauses)
-	} else if sq.HasFreeText() {
-		sort.SliceStable(results, func(i, j int) bool {
-			si, sj := scoredResults[i].score, scoredResults[j].score
-			if si != sj {
-				return si > sj
-			}
-			return results[i].ID < results[j].ID
-		})
 	}
 
 	return results
@@ -684,6 +693,20 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 	}
 
 	return nav
+}
+
+// matchesPropertyFilters checks whether an entity matches the given property filters.
+// Returns true if no filters are specified or all filters match.
+func (a *App) matchesPropertyFilters(e *model.Entity, filters []*filter.Filter) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	entDef, ok := a.meta.GetEntityDef(e.Type)
+	if !ok {
+		return false
+	}
+	matched, err := filter.MatchAll(e, filters, entDef, a.meta)
+	return err == nil && matched
 }
 
 // isRelationLinked checks whether a form relation field (formRel) corresponds
