@@ -50,6 +50,13 @@ type Workspace struct {
 	watchHandle *repository.WatchHandle
 }
 
+// maxAutomationDepth limits recursive automation triggering. When an entity
+// is created by automation, it can trigger further automations up to this
+// depth. Beyond this limit, entities are still created but automations are
+// skipped with a warning. This prevents infinite loops from misconfigured
+// automations while allowing useful chaining (e.g., ticket → checklist → items).
+const maxAutomationDepth = 50
+
 // DiscoverAndNew discovers a project from the given start directory and
 // creates a workspace. If startDir is empty, it uses the current working
 // directory. This is a convenience function that combines project discovery,
@@ -515,10 +522,11 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 
 	// Apply automation side effects (relations, entities) after entity is written.
 	if autoResult != nil {
-		effects := w.applyAutomationSideEffects(entity, autoResult)
+		effects := w.applyAutomationSideEffects(0, entity, autoResult)
 		result.RelationsCreated = effects.RelationsCreated
 		result.EntitiesCreated = effects.EntitiesCreated
 		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
+		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
 	}
 
 	w.saveCacheQuietly()
@@ -558,10 +566,11 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
 
-		effects := w.applyAutomationSideEffects(entity, autoResult)
+		effects := w.applyAutomationSideEffects(0, entity, autoResult)
 		result.RelationsCreated = effects.RelationsCreated
 		result.EntitiesCreated = effects.EntitiesCreated
 		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
+		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
 	}
 
 	// Write to disk + update graph + search index.
@@ -628,23 +637,24 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 	return result, nil
 }
 
-// createEntityNoAutomation creates an entity without triggering further automations.
-// This is used by automation-triggered entity creation to prevent infinite recursion.
+// createEntityForAutomation creates an entity and runs automations if under depth limit.
 // If templateVariant is non-empty, loads <type>--<variant>.md instead of <type>.md.
-func (w *Workspace) createEntityNoAutomation(
+// Returns the created entity, any nested automation effects, and an error if creation failed.
+func (w *Workspace) createEntityForAutomation(
+	depth int,
 	entityType, templateVariant string,
 	props map[string]interface{},
-) (*model.Entity, error) {
+) (*model.Entity, *automationSideEffects, error) {
 	meta := w.Meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
-		return nil, fmt.Errorf("unknown entity type: %s", entityType)
+		return nil, nil, fmt.Errorf("unknown entity type: %s", entityType)
 	}
 
 	// Generate ID.
 	entityID, err := w.GenerateID(entityType, "")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	entity := model.NewEntity(entityID, entityType)
@@ -652,11 +662,11 @@ func (w *Workspace) createEntityNoAutomation(
 	// Apply template defaults (use variant if specified).
 	template, err := w.repo.LoadEntityTemplateVariant(entityType, templateVariant)
 	if err != nil {
-		return nil, fmt.Errorf("load template: %w", err)
+		return nil, nil, fmt.Errorf("load template: %w", err)
 	}
 	// If a variant was explicitly specified but not found, that's an error.
 	if templateVariant != "" && template == nil {
-		return nil, fmt.Errorf("template variant %q not found for entity type %s", templateVariant, entityType)
+		return nil, nil, fmt.Errorf("template variant %q not found for entity type %s", templateVariant, entityType)
 	}
 	if template != nil {
 		markdown.ApplyEntityTemplate(entity, template)
@@ -672,18 +682,51 @@ func (w *Workspace) createEntityNoAutomation(
 		entity.SetString("status", entityDef.GetDefaultStatus(meta))
 	}
 
-	// Validate.
-	if errs := meta.ValidateEntity(entity); len(errs) > 0 {
-		return nil, newValidationError(errs)
+	// Run automation if under depth limit.
+	var effects *automationSideEffects
+	if w.automation != nil && depth < maxAutomationDepth {
+		autoResult := w.automation.Process(automation.Event{
+			Type:   automation.EventEntityCreated,
+			Entity: entity,
+		})
+		// Apply property changes before validation.
+		for prop, val := range autoResult.PropertiesSet {
+			entity.SetString(prop, val)
+		}
+		// Validate after automation property changes.
+		if errs := meta.ValidateEntity(entity); len(errs) > 0 {
+			return nil, nil, newValidationError(errs)
+		}
+		// Write to disk + update graph.
+		if err := w.repo.WriteEntity(entity, meta); err != nil {
+			return nil, nil, fmt.Errorf("write entity: %w", err)
+		}
+		w.graph.AddNode(entity)
+		// Apply nested automation side effects.
+		effects = w.applyAutomationSideEffects(depth, entity, autoResult)
+		effects.Warnings = append(effects.Warnings, autoResult.Warnings...)
+		effects.Errors = append(effects.Errors, autoResult.Errors...)
+	} else {
+		// At or beyond depth limit: create entity but skip automation.
+		if depth >= maxAutomationDepth {
+			effects = &automationSideEffects{
+				Warnings: []string{fmt.Sprintf(
+					"automation depth limit (%d) reached for %s; skipping further automations",
+					maxAutomationDepth, entity.ID)},
+			}
+		}
+		// Validate.
+		if errs := meta.ValidateEntity(entity); len(errs) > 0 {
+			return nil, nil, newValidationError(errs)
+		}
+		// Write to disk + update graph.
+		if err := w.repo.WriteEntity(entity, meta); err != nil {
+			return nil, nil, fmt.Errorf("write entity: %w", err)
+		}
+		w.graph.AddNode(entity)
 	}
 
-	// Write to disk + update graph.
-	if err := w.repo.WriteEntity(entity, meta); err != nil {
-		return nil, fmt.Errorf("write entity: %w", err)
-	}
-	w.graph.AddNode(entity)
-
-	return entity, nil
+	return entity, effects, nil
 }
 
 // automationSideEffects holds entities and relations created by automation.
@@ -691,6 +734,7 @@ type automationSideEffects struct {
 	RelationsCreated []*model.Relation
 	EntitiesCreated  []*model.Entity
 	Errors           []string
+	Warnings         []string
 }
 
 // findExistingRelationTarget finds an existing entity of the given type that is
@@ -709,14 +753,16 @@ func (w *Workspace) findExistingRelationTarget(sourceID, relationType, targetTyp
 
 // applyAutomationSideEffects creates relations and entities from automation results.
 // This helper is used by both CreateEntity and UpdateEntity to reduce duplication.
+// The depth parameter tracks automation recursion depth to prevent infinite loops.
 func (w *Workspace) applyAutomationSideEffects(
+	depth int,
 	triggerEntity *model.Entity,
 	autoResult *automation.Result,
 ) *automationSideEffects {
 	effects := &automationSideEffects{}
 
 	w.applyRelationCreations(triggerEntity, autoResult.RelationsToCreate, effects)
-	w.applyEntityCreations(triggerEntity, autoResult.EntitiesToCreate, effects)
+	w.applyEntityCreations(depth, triggerEntity, autoResult.EntitiesToCreate, effects)
 
 	return effects
 }
@@ -755,7 +801,9 @@ func (w *Workspace) applyRelationCreations(
 }
 
 // applyEntityCreations creates entities from automation results, handling if_exists behavior.
+// The depth parameter is the current automation depth; created entities run at depth+1.
 func (w *Workspace) applyEntityCreations(
+	depth int,
 	triggerEntity *model.Entity,
 	toCreateList []automation.EntityToCreate,
 	effects *automationSideEffects,
@@ -765,13 +813,22 @@ func (w *Workspace) applyEntityCreations(
 			continue
 		}
 
-		created, createErr := w.createEntityNoAutomation(toCreate.Type, toCreate.Template, toCreate.Properties)
+		created, nestedEffects, createErr := w.createEntityForAutomation(
+			depth+1, toCreate.Type, toCreate.Template, toCreate.Properties)
 		if createErr != nil {
 			effects.Errors = append(effects.Errors,
 				fmt.Sprintf("failed to create automation entity %s: %v", toCreate.Type, createErr))
 			continue
 		}
 		effects.EntitiesCreated = append(effects.EntitiesCreated, created)
+
+		// Aggregate nested automation effects.
+		if nestedEffects != nil {
+			effects.EntitiesCreated = append(effects.EntitiesCreated, nestedEffects.EntitiesCreated...)
+			effects.RelationsCreated = append(effects.RelationsCreated, nestedEffects.RelationsCreated...)
+			effects.Errors = append(effects.Errors, nestedEffects.Errors...)
+			effects.Warnings = append(effects.Warnings, nestedEffects.Warnings...)
+		}
 
 		if toCreate.RelationFromTrigger != "" {
 			w.createTriggerRelation(triggerEntity, created, toCreate.RelationFromTrigger, effects)

@@ -1099,3 +1099,264 @@ automations:
 
 	return ws, fs, ctx
 }
+
+// --- Automation recursion depth limit tests ---
+
+func TestCreateEntity_AutomationDepthLimit(t *testing.T) {
+	// This test verifies that recursive automations are limited to maxAutomationDepth.
+	// We set up a chain where:
+	// - Creating a "starter" triggers creation of a "chain" entity
+	// - Creating a "chain" triggers creation of another "chain" entity
+	// This would be infinite without the depth limit.
+
+	metamodelYAML := `version: "1.0"
+entities:
+  starter:
+    label: Starter
+    plural: starters
+    id_prefix: "START-"
+    id_type: short
+    properties:
+      title:
+        type: string
+  chain:
+    label: Chain
+    plural: chains
+    id_prefix: "CHAIN-"
+    id_type: short
+    properties:
+      title:
+        type: string
+      depth:
+        type: string
+relations:
+  triggers:
+    label: triggers
+    from: [starter, chain]
+    to: [chain]
+automations:
+  - name: starter-creates-chain
+    on:
+      entity: [starter]
+      created: true
+    do:
+      - create_entity:
+          type: chain
+          relation: triggers
+          properties:
+            title: "Chain from starter"
+            depth: "1"
+  - name: chain-creates-chain
+    on:
+      entity: [chain]
+      created: true
+    do:
+      - create_entity:
+          type: chain
+          relation: triggers
+          properties:
+            title: "Chain from chain"
+`
+
+	fs := storage.NewMemFS()
+	root := "/project"
+	ctx := &project.Context{
+		Root:                 root,
+		MetamodelPath:        root + "/metamodel.yaml",
+		CacheDir:             root + "/.rela",
+		CachePath:            root + "/.rela/cache.json",
+		EntitiesDir:          root + "/entities",
+		RelationsDir:         root + "/relations",
+		TemplatesDir:         root + "/templates",
+		EntityTemplatesDir:   root + "/templates/entities",
+		RelationTemplatesDir: root + "/templates/relations",
+	}
+
+	_ = fs.MkdirAll(ctx.EntitiesDir+"/starters", 0o755)
+	_ = fs.MkdirAll(ctx.EntitiesDir+"/chains", 0o755)
+	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
+	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+	_ = fs.WriteFile(ctx.MetamodelPath, []byte(metamodelYAML), 0o644)
+
+	meta, err := metamodel.Parse([]byte(metamodelYAML))
+	if err != nil {
+		t.Fatalf("failed to parse test metamodel: %v", err)
+	}
+
+	repo := repository.New(fs, ctx)
+	g := graph.New()
+	ws := NewWithGraph(repo, meta, g)
+
+	// Create starter entity - this should trigger a chain of automations.
+	_, result, err := ws.CreateEntity("starter", CreateOptions{
+		Properties: map[string]interface{}{"title": "Test Starter"},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	// Should have created multiple chain entities (limited by maxAutomationDepth).
+	// At depth 0: starter created, automation creates chain at depth 1
+	// At depth 1: chain created, automation creates chain at depth 2
+	// ... up to maxAutomationDepth
+	chainCount := 0
+	for _, e := range result.EntitiesCreated {
+		if e.Type == "chain" {
+			chainCount++
+		}
+	}
+
+	// We should have exactly maxAutomationDepth chain entities.
+	// Depth 0 creates at depth 1, depth 1 creates at depth 2, etc.
+	// So entities are created at depths 1 through maxAutomationDepth.
+	if chainCount != maxAutomationDepth {
+		t.Errorf("expected %d chain entities (depth limit), got %d", maxAutomationDepth, chainCount)
+	}
+
+	// Should have a warning about depth limit being reached.
+	hasDepthWarning := false
+	for _, w := range result.AutomationWarnings {
+		if strings.Contains(w, "depth limit") {
+			hasDepthWarning = true
+			break
+		}
+	}
+	if !hasDepthWarning {
+		t.Errorf("expected warning about depth limit, got warnings: %v", result.AutomationWarnings)
+	}
+
+	// Verify graph is consistent - all entities should be in the graph.
+	allNodes := g.AllNodes()
+	// 1 starter + maxAutomationDepth chains
+	expectedTotal := 1 + maxAutomationDepth
+	if len(allNodes) != expectedTotal {
+		t.Errorf("expected %d total nodes in graph, got %d", expectedTotal, len(allNodes))
+	}
+}
+
+func TestCreateEntity_AutomationChainWithoutLoop(t *testing.T) {
+	// This test verifies that non-looping chains work correctly.
+	// A → B → C (3 levels, well under the limit)
+
+	metamodelYAML := `version: "1.0"
+entities:
+  alpha:
+    label: Alpha
+    plural: alphas
+    id_prefix: "A-"
+    id_type: short
+    properties:
+      title:
+        type: string
+  beta:
+    label: Beta
+    plural: betas
+    id_prefix: "B-"
+    id_type: short
+    properties:
+      title:
+        type: string
+  gamma:
+    label: Gamma
+    plural: gammas
+    id_prefix: "G-"
+    id_type: short
+    properties:
+      title:
+        type: string
+relations:
+  creates:
+    label: creates
+    from: [alpha, beta]
+    to: [beta, gamma]
+automations:
+  - name: alpha-creates-beta
+    on:
+      entity: [alpha]
+      created: true
+    do:
+      - create_entity:
+          type: beta
+          relation: creates
+          properties:
+            title: "Beta from Alpha"
+  - name: beta-creates-gamma
+    on:
+      entity: [beta]
+      created: true
+    do:
+      - create_entity:
+          type: gamma
+          relation: creates
+          properties:
+            title: "Gamma from Beta"
+`
+
+	fs := storage.NewMemFS()
+	root := "/project"
+	ctx := &project.Context{
+		Root:                 root,
+		MetamodelPath:        root + "/metamodel.yaml",
+		CacheDir:             root + "/.rela",
+		CachePath:            root + "/.rela/cache.json",
+		EntitiesDir:          root + "/entities",
+		RelationsDir:         root + "/relations",
+		TemplatesDir:         root + "/templates",
+		EntityTemplatesDir:   root + "/templates/entities",
+		RelationTemplatesDir: root + "/templates/relations",
+	}
+
+	_ = fs.MkdirAll(ctx.EntitiesDir+"/alphas", 0o755)
+	_ = fs.MkdirAll(ctx.EntitiesDir+"/betas", 0o755)
+	_ = fs.MkdirAll(ctx.EntitiesDir+"/gammas", 0o755)
+	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
+	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+	_ = fs.WriteFile(ctx.MetamodelPath, []byte(metamodelYAML), 0o644)
+
+	meta, err := metamodel.Parse([]byte(metamodelYAML))
+	if err != nil {
+		t.Fatalf("failed to parse test metamodel: %v", err)
+	}
+
+	repo := repository.New(fs, ctx)
+	g := graph.New()
+	ws := NewWithGraph(repo, meta, g)
+
+	// Create alpha - should trigger beta creation, which triggers gamma creation.
+	_, result, err := ws.CreateEntity("alpha", CreateOptions{
+		Properties: map[string]interface{}{"title": "Test Alpha"},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	// Should have created 1 beta and 1 gamma.
+	betaCount := 0
+	gammaCount := 0
+	for _, e := range result.EntitiesCreated {
+		switch e.Type {
+		case "beta":
+			betaCount++
+		case "gamma":
+			gammaCount++
+		}
+	}
+
+	if betaCount != 1 {
+		t.Errorf("expected 1 beta entity, got %d", betaCount)
+	}
+	if gammaCount != 1 {
+		t.Errorf("expected 1 gamma entity, got %d", gammaCount)
+	}
+
+	// Should have no warnings (well under depth limit).
+	if len(result.AutomationWarnings) > 0 {
+		t.Errorf("expected no warnings, got: %v", result.AutomationWarnings)
+	}
+
+	// Verify relations: alpha → beta → gamma.
+	allNodes := g.AllNodes()
+	if len(allNodes) != 3 {
+		t.Errorf("expected 3 nodes in graph, got %d", len(allNodes))
+	}
+}
