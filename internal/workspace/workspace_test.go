@@ -1213,16 +1213,16 @@ automations:
 		t.Errorf("expected %d chain entities (depth limit), got %d", maxAutomationDepth, chainCount)
 	}
 
-	// Should have a warning about depth limit being reached.
-	hasDepthWarning := false
+	// Should have a warning about iteration limit being reached.
+	hasLimitWarning := false
 	for _, w := range result.AutomationWarnings {
-		if strings.Contains(w, "depth limit") {
-			hasDepthWarning = true
+		if strings.Contains(w, "iteration limit") {
+			hasLimitWarning = true
 			break
 		}
 	}
-	if !hasDepthWarning {
-		t.Errorf("expected warning about depth limit, got warnings: %v", result.AutomationWarnings)
+	if !hasLimitWarning {
+		t.Errorf("expected warning about iteration limit, got warnings: %v", result.AutomationWarnings)
 	}
 
 	// Verify graph is consistent - all entities should be in the graph.
