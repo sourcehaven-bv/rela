@@ -289,8 +289,6 @@ entities:
       title:
         type: string
         required: true
-      description:
-        type: string
       kind:
         type: ticket_kind
         required: true
@@ -307,6 +305,9 @@ entities:
     default_sort:
       - property: priority
       - property: status
+    content:
+      required-headers:
+        - "## Description"
   risk:
     label: Risk
     id_prefix: "RISK-"
@@ -1009,14 +1010,6 @@ relations:
 # ===================
 validations:
   # --- Ticket completeness (progressive) ---
-  - name: backlog-tickets-should-have-description
-    description: "Backlog tickets should have a description"
-    entity_type: ticket
-    when:
-      - "status=backlog"
-    then:
-      - "description!="
-    severity: warning
   - name: ready-tickets-need-effort
     description: "Ready tickets must have effort estimated"
     entity_type: ticket
@@ -1033,14 +1026,6 @@ validations:
     then:
       - "priority!="
     severity: error
-  - name: ready-tickets-need-description
-    description: "Ready tickets must have a description"
-    entity_type: ticket
-    when:
-      - "status=ready"
-    then:
-      - "description!="
-    severity: error
   - name: in-progress-tickets-need-priority
     description: "In-progress tickets must have priority set"
     entity_type: ticket
@@ -1048,14 +1033,6 @@ validations:
       - "status=in-progress"
     then:
       - "priority!="
-    severity: error
-  - name: done-tickets-need-description
-    description: "Done tickets must have a description"
-    entity_type: ticket
-    when:
-      - "status=done"
-    then:
-      - "description!="
     severity: error
   # --- Bug completeness (progressive) ---
   - name: bugs-should-have-description

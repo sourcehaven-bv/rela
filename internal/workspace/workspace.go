@@ -629,7 +629,11 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 
 // createEntityNoAutomation creates an entity without triggering further automations.
 // This is used by automation-triggered entity creation to prevent infinite recursion.
-func (w *Workspace) createEntityNoAutomation(entityType string, props map[string]interface{}) (*model.Entity, error) {
+// If templateVariant is non-empty, loads <type>--<variant>.md instead of <type>.md.
+func (w *Workspace) createEntityNoAutomation(
+	entityType, templateVariant string,
+	props map[string]interface{},
+) (*model.Entity, error) {
 	meta := w.Meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
@@ -644,10 +648,14 @@ func (w *Workspace) createEntityNoAutomation(entityType string, props map[string
 
 	entity := model.NewEntity(entityID, entityType)
 
-	// Apply template defaults.
-	template, err := w.repo.LoadEntityTemplate(entityType)
+	// Apply template defaults (use variant if specified).
+	template, err := w.repo.LoadEntityTemplateVariant(entityType, templateVariant)
 	if err != nil {
 		return nil, fmt.Errorf("load template: %w", err)
+	}
+	// If a variant was explicitly specified but not found, that's an error.
+	if templateVariant != "" && template == nil {
+		return nil, fmt.Errorf("template variant %q not found for entity type %s", templateVariant, entityType)
 	}
 	if template != nil {
 		markdown.ApplyEntityTemplate(entity, template)
@@ -756,7 +764,7 @@ func (w *Workspace) applyEntityCreations(
 			continue
 		}
 
-		created, createErr := w.createEntityNoAutomation(toCreate.Type, toCreate.Properties)
+		created, createErr := w.createEntityNoAutomation(toCreate.Type, toCreate.Template, toCreate.Properties)
 		if createErr != nil {
 			effects.Errors = append(effects.Errors,
 				fmt.Sprintf("failed to create automation entity %s: %v", toCreate.Type, createErr))

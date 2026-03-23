@@ -11,12 +11,12 @@ status: pending
 
 ## Code Review
 
-- [ ] Critical code review completed (use cranky-code-reviewer agent)
-- [ ] All critical/significant issues from review addressed
+- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [ ] All critical review-responses addressed
+- [ ] All significant review-responses addressed
 - [ ] Self-reviewed the diff for unrelated changes
 
-**Code Review Summary:**
-<!-- Paste summary of code review findings and how they were addressed -->
+**Review Responses:** <!-- List IDs of review-response entities created, e.g., RR-xxxx -->
 
 ## Acceptance Verification
 
@@ -31,3 +31,11 @@ status: pending
 - [ ] Commit message explains the why, not just what
 - [ ] No TODOs or FIXMEs left unaddressed
 - [ ] Ready for another developer to use
+
+## Pull Request
+
+- [ ] Run `/pr` command to create PR and monitor CI
+- [ ] All CI checks pass
+- [ ] PR URL documented below
+
+**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->

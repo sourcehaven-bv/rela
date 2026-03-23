@@ -913,3 +913,189 @@ automations:
 
 	return ws
 }
+
+// --- Template variant integration tests ---
+
+func TestCreateEntity_AutomationWithTemplate(t *testing.T) {
+	ws, fs, ctx := setupTestWorkspaceWithTemplateAutomation(t)
+
+	// Create the template variant file.
+	enhancementTemplate := `---
+title: Enhancement Checklist
+status: pending
+---
+## Enhancement Tasks
+`
+	_ = fs.WriteFile(ctx.EntityTemplatesDir+"/checklist--enhancement.md",
+		[]byte(enhancementTemplate), 0o644)
+
+	// Create a requirement with kind=enhancement - triggers automation with template.
+	_, result, err := ws.CreateEntity("requirement", CreateOptions{
+		Properties: map[string]interface{}{
+			"title": "Test Req",
+			"kind":  "enhancement",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	// Automation should have created a checklist with template defaults.
+	if len(result.EntitiesCreated) != 1 {
+		t.Fatalf("expected 1 entity created by automation, got %d", len(result.EntitiesCreated))
+	}
+	checklist := result.EntitiesCreated[0]
+	if checklist.Type != "checklist" {
+		t.Errorf("expected checklist type, got %s", checklist.Type)
+	}
+
+	// Verify template was applied - should have title from template.
+	if checklist.GetString("title") != "Enhancement Checklist" {
+		t.Errorf("expected title from template, got %q", checklist.GetString("title"))
+	}
+	if checklist.GetString("status") != "pending" {
+		t.Errorf("expected status from template, got %q", checklist.GetString("status"))
+	}
+}
+
+func TestCreateEntity_AutomationWithMissingTemplate(t *testing.T) {
+	ws, _, _ := setupTestWorkspaceWithTemplateAutomation(t)
+
+	// Create a requirement with kind=nonexistent - template doesn't exist.
+	_, result, err := ws.CreateEntity("requirement", CreateOptions{
+		Properties: map[string]interface{}{
+			"title": "Test Req",
+			"kind":  "nonexistent",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	// Automation should report error for missing template variant.
+	if len(result.AutomationErrors) == 0 {
+		t.Error("expected error for missing template variant")
+	}
+
+	// No entity should be created when template is missing.
+	if len(result.EntitiesCreated) != 0 {
+		t.Errorf("expected 0 entities created, got %d", len(result.EntitiesCreated))
+	}
+}
+
+func TestCreateEntity_AutomationWithEmptyTemplate(t *testing.T) {
+	ws, fs, ctx := setupTestWorkspaceWithTemplateAutomation(t)
+
+	// Create the default template file (no variant).
+	defaultTemplate := `---
+title: Default Checklist
+status: open
+---
+## Default Tasks
+`
+	_ = fs.WriteFile(ctx.EntityTemplatesDir+"/checklist.md",
+		[]byte(defaultTemplate), 0o644)
+
+	// Create a requirement with empty kind - should use default template.
+	_, result, err := ws.CreateEntity("requirement", CreateOptions{
+		Properties: map[string]interface{}{
+			"title": "Test Req",
+			// kind not set - empty string
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	// Should succeed with default template.
+	if len(result.AutomationErrors) != 0 {
+		t.Errorf("unexpected errors: %v", result.AutomationErrors)
+	}
+
+	// Entity should be created with default template.
+	if len(result.EntitiesCreated) != 1 {
+		t.Fatalf("expected 1 entity created, got %d", len(result.EntitiesCreated))
+	}
+	checklist := result.EntitiesCreated[0]
+	if checklist.GetString("title") != "Default Checklist" {
+		t.Errorf("expected title from default template, got %q", checklist.GetString("title"))
+	}
+}
+
+func setupTestWorkspaceWithTemplateAutomation(t *testing.T) (*Workspace, storage.FS, *project.Context) {
+	t.Helper()
+
+	metamodelYAML := `version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    plural: requirements
+    id_prefix: "REQ-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+        required: true
+      kind:
+        type: string
+  checklist:
+    label: Checklist
+    plural: checklists
+    id_prefix: "CHK-"
+    id_type: short
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: string
+relations:
+  has-checklist:
+    label: has checklist
+    from: [requirement]
+    to: [checklist]
+automations:
+  - name: create-checklist-with-template
+    on:
+      entity: [requirement]
+      created: true
+    do:
+      - create_entity:
+          type: checklist
+          template: "{{new.kind}}"
+          relation: has-checklist
+`
+
+	fs := storage.NewMemFS()
+	root := "/project"
+	ctx := &project.Context{
+		Root:                 root,
+		MetamodelPath:        root + "/metamodel.yaml",
+		CacheDir:             root + "/.rela",
+		CachePath:            root + "/.rela/cache.json",
+		EntitiesDir:          root + "/entities",
+		RelationsDir:         root + "/relations",
+		TemplatesDir:         root + "/templates",
+		EntityTemplatesDir:   root + "/templates/entities",
+		RelationTemplatesDir: root + "/templates/relations",
+	}
+
+	_ = fs.MkdirAll(ctx.EntitiesDir+"/requirements", 0o755)
+	_ = fs.MkdirAll(ctx.EntitiesDir+"/checklists", 0o755)
+	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
+	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+	_ = fs.MkdirAll(ctx.EntityTemplatesDir, 0o755)
+	_ = fs.MkdirAll(ctx.RelationTemplatesDir, 0o755)
+	_ = fs.WriteFile(ctx.MetamodelPath, []byte(metamodelYAML), 0o644)
+
+	meta, err := metamodel.Parse([]byte(metamodelYAML))
+	if err != nil {
+		t.Fatalf("failed to parse test metamodel: %v", err)
+	}
+
+	repo := repository.New(fs, ctx)
+	g := graph.New()
+	ws := NewWithGraph(repo, meta, g)
+
+	return ws, fs, ctx
+}

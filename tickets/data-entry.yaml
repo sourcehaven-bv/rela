@@ -145,7 +145,6 @@ forms:
       - relation: inspires
         widget: multi-select
       - relation: promotes-to
-        widget: search
         label: "Promoted To"
     side_panel:
       traverse:
@@ -334,7 +333,6 @@ forms:
         label: "Requires Concepts"
         widget: multi-select
       - relation: refines
-        widget: search
     side_panel:
       traverse:
         - from: entry
@@ -397,7 +395,6 @@ forms:
     relations:
       - relation: implements
         label: "Implements Feature"
-        widget: search
         required: true
       - relation: affects
         label: "Affects Concepts"
@@ -429,7 +426,6 @@ forms:
     relations:
       - relation: implements
         label: "Implements Feature"
-        widget: search
       - relation: affects
         label: "Affects Concepts"
         widget: multi-select
@@ -437,19 +433,15 @@ forms:
         widget: multi-select
       - relation: has-planning
         label: "Planning Checklist"
-        widget: select
         inline_create: create_planning_checklist
       - relation: has-implementation
         label: "Implementation Checklist"
-        widget: select
         inline_create: create_implementation_checklist
       - relation: has-review
         label: "Review Checklist"
-        widget: select
         inline_create: create_review_checklist
       - relation: has-docs
         label: "Docs Checklist"
-        widget: select
         inline_create: create_docs_checklist
   # ─────────────────────────────────────────────────
   # Bugs
@@ -470,7 +462,6 @@ forms:
     relations:
       - relation: fixes
         label: "Fixes Feature"
-        widget: search
         required: true
       - relation: affects
         label: "Affects Concepts"
@@ -522,7 +513,6 @@ forms:
     relations:
       - relation: fixes
         label: "Fixes Feature"
-        widget: search
       - relation: affects
         label: "Affects Concepts"
         widget: multi-select
@@ -532,15 +522,12 @@ forms:
         widget: multi-select
       - relation: has-bug-analysis
         label: "Analysis Checklist"
-        widget: select
         inline_create: create_bug_analysis_checklist
       - relation: has-implementation
         label: "Implementation Checklist"
-        widget: select
         inline_create: create_implementation_checklist
       - relation: has-review
         label: "Review Checklist"
-        widget: select
         inline_create: create_review_checklist
   # ─────────────────────────────────────────────────
   # Concepts
@@ -629,7 +616,6 @@ forms:
         label: "Decides Concepts"
         widget: multi-select
       - relation: supersedes
-        widget: search
   # ─────────────────────────────────────────────────
   # Workflow Checklists
   # ─────────────────────────────────────────────────
@@ -707,7 +693,7 @@ lists:
     columns:
       - property: title
         sortable: true
-        link: true
+        link: detail
       - property: category
         sortable: true
       - property: status
@@ -737,7 +723,7 @@ lists:
     description: "Ideas being explored or validated"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: category
         sortable: true
@@ -760,7 +746,7 @@ lists:
     description: "High-value ideas"
     columns:
       - property: title
-        link: true
+        link: detail
       - property: category
       - property: status
       - property: effort
@@ -782,7 +768,7 @@ lists:
     description: "Possibilities being explored"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: status
         sortable: true
@@ -811,7 +797,7 @@ lists:
     title: "All Features"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: status
         sortable: true
@@ -837,7 +823,7 @@ lists:
     title: "All Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: kind
         sortable: true
@@ -865,7 +851,7 @@ lists:
     title: "Active Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: kind
       - property: priority
@@ -885,7 +871,7 @@ lists:
     title: "All Bugs"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: status
         sortable: true
@@ -911,7 +897,7 @@ lists:
     title: "Concepts"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: layer
         sortable: true
@@ -935,7 +921,7 @@ lists:
     title: "Decisions"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: date
         sortable: true
@@ -1134,7 +1120,7 @@ views:
         display: table
         columns:
           - property: title
-            link: true
+            link: detail
           - property: status
           - property: priority
           - property: effort
@@ -1144,7 +1130,7 @@ views:
         display: table
         columns:
           - property: title
-            link: true
+            link: detail
           - property: status
           - property: priority
         empty_message: "No bugs"
@@ -1212,7 +1198,7 @@ views:
         display: table
         columns:
           - property: title
-            link: true
+            link: detail
           - property: status
           - property: priority
         empty_message: "No tickets or bugs affect this"
@@ -1406,7 +1392,7 @@ dashboard:
       display: table
       columns:
         - property: title
-          link: true
+          link: detail
         - property: category
         - property: status
         - property: effort
@@ -1416,7 +1402,7 @@ dashboard:
       display: table
       columns:
         - property: title
-          link: true
+          link: detail
         - property: effort
         - property: value
       limit: 5
@@ -1425,7 +1411,7 @@ dashboard:
       display: table
       columns:
         - property: title
-          link: true
+          link: detail
         - property: status
       limit: 5
 # ══════════════════════════════════════════════════

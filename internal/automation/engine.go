@@ -61,6 +61,7 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 		if a.CreateEntity != nil {
 			action.CreateEntity = &CreateEntityAction{
 				Type:       a.CreateEntity.Type,
+				Template:   a.CreateEntity.Template,
 				Properties: a.CreateEntity.Properties,
 				Relation:   a.CreateEntity.Relation,
 				IfExists:   a.CreateEntity.IfExists,
@@ -208,6 +209,16 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 			return
 		}
 
+		// Interpolate template name (allows {{new.kind}} etc.)
+		template := e.interpolate(action.CreateEntity.Template, event)
+
+		// Validate template name using whitelist (alphanumeric, hyphen, underscore only).
+		if !isValidTemplateName(template) {
+			result.Errors = append(result.Errors,
+				"create_entity template name contains invalid characters (only alphanumeric, hyphen, underscore allowed)")
+			return
+		}
+
 		props := make(map[string]interface{})
 		for k, v := range action.CreateEntity.Properties {
 			props[k] = e.interpolate(v, event)
@@ -221,6 +232,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 
 		result.EntitiesToCreate = append(result.EntitiesToCreate, EntityToCreate{
 			Type:                entityType,
+			Template:            template,
 			Properties:          props,
 			RelationFromTrigger: action.CreateEntity.Relation,
 			IfExists:            ifExists,
@@ -273,4 +285,25 @@ func matchSimple(val interface{}, f *filter.Filter) bool {
 // interpolate replaces template variables in a string.
 func (e *Engine) interpolate(template string, event Event) string {
 	return Interpolate(template, e.vars, event.Entity, event.OldEntity)
+}
+
+// isValidTemplateName validates that a template name contains only safe identifier characters.
+// Uses a whitelist approach: only alphanumeric, hyphen, and underscore are allowed.
+// Empty template names are valid (means use default template).
+func isValidTemplateName(name string) bool {
+	if name == "" {
+		return true
+	}
+	// Whitelist approach: only allow identifier-like characters.
+	// This is safer than blacklisting dangerous patterns (path separators, .., null bytes, etc.)
+	for _, ch := range name {
+		isLower := ch >= 'a' && ch <= 'z'
+		isUpper := ch >= 'A' && ch <= 'Z'
+		isDigit := ch >= '0' && ch <= '9'
+		isAllowed := isLower || isUpper || isDigit || ch == '-' || ch == '_'
+		if !isAllowed {
+			return false
+		}
+	}
+	return true
 }

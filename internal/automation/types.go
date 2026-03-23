@@ -44,6 +44,7 @@ type CreateRelationAction struct {
 // CreateEntityAction specifies parameters for creating a new entity.
 type CreateEntityAction struct {
 	Type       string            // Entity type to create (e.g., "planning-checklist")
+	Template   string            // Optional: template variant name, supports interpolation (e.g., "{{new.kind}}" loads <type>--<kind>.md)
 	Properties map[string]string // Properties to set (values support interpolation)
 	Relation   string            // Optional: relation type FROM triggering entity TO created entity
 	IfExists   string            // Behavior when relation exists: skip (default), error, replace
@@ -106,6 +107,7 @@ const (
 // EntityToCreate specifies an entity to be created by automation.
 type EntityToCreate struct {
 	Type                string                 // Entity type to create
+	Template            string                 // Optional: template variant name
 	Properties          map[string]interface{} // Properties for the new entity
 	RelationFromTrigger string                 // Optional: relation type from triggering entity
 	IfExists            string                 // Behavior when relation exists: skip (default), error, replace

@@ -386,18 +386,21 @@ Each phase has a dedicated checklist entity with standard items from templates.
 
 **Ticket Workflow:**
 
-```
+```text
 backlog → ready → planning → in-progress → review → done
                      │            │           │
                      ▼            ▼           ▼
               planning-      implementation-  review-checklist
               checklist      checklist        (+ docs-checklist
-                                              for enhancements)
+                 │                            for enhancements)
+                 ▼
+           /design-review
+           (before impl)
 ```
 
 **Bug Workflow:**
 
-```
+```text
 backlog → ready → analyzing → in-progress → review → done
                      │            │           │
                      ▼            ▼           ▼
@@ -409,11 +412,18 @@ backlog → ready → analyzing → in-progress → review → done
 
 | Checklist | Purpose | Required For |
 |-----------|---------|--------------|
-| `planning-checklist` | Understanding, approach, risk assessment | Tickets entering `in-progress` |
+| `planning-checklist` | Understanding, research, approach, security, risk assessment | Tickets entering `in-progress` |
 | `bug-analysis-checklist` | Reproduction, root cause, fix planning | Bugs entering `in-progress` |
 | `implementation-checklist` | Development, quality checks | Tickets/bugs entering `review` |
-| `review-checklist` | Automated checks, manual review, verification | Tickets/bugs entering `done` |
+| `review-checklist` | Automated checks, code review, verification | Tickets/bugs entering `done` |
 | `docs-checklist` | Code docs, project docs, external docs | Enhancement/docs tickets entering `done` |
+
+**Review Commands:**
+
+| Command | When to Use | Creates |
+|---------|-------------|---------|
+| `/design-review` | After planning, before implementation | `review-response` entities for design issues |
+| `/code-review` | During review phase, after implementation | `review-response` entities for code issues |
 
 **Agent Workflow for Tickets:**
 
@@ -422,7 +432,9 @@ The `create_entity` automation with `if_exists: skip` ensures no duplicates.
 
 1. **Start Planning** (status: `planning`)
    - ✨ `planning-checklist` is auto-created and linked via `has-planning`
-   - Work through checklist items, checking each as done
+   - Work through checklist items: understanding, approach, security, test plan
+   - Run `/design-review` to catch issues before implementation
+   - Address all critical/significant design findings
    - Mark checklist `status=done` when complete
 
 2. **Start Implementation** (status: `in-progress`)
@@ -431,12 +443,20 @@ The `create_entity` automation with `if_exists: skip` ensures no duplicates.
 
 3. **Start Review** (status: `review`)
    - ✨ `review-checklist` is auto-created and linked via `has-review`
+   - Run `/code-review` to perform thorough code review
+   - Address all critical/significant code review findings
    - If enhancement or docs ticket, manually create `docs-checklist`
    - Complete all checks before marking done
 
-4. **Complete** (status: `done`)
+4. **Create PR** (before `done`)
+   - Run `/pr` to create PR and monitor CI until all checks pass
+   - Fixes any CI failures (lint, test, coverage) automatically
+   - Document PR URL in review-checklist
+
+5. **Complete** (status: `done`)
    - All linked checklists must have `status=done`
    - All checklist items must be checked or skipped with reason
+   - PR merged or ready to merge
 
 **Bug Workflow Automations:**
 
@@ -467,11 +487,18 @@ Checklist templates are in `tickets/templates/entities/`:
 
 ### Review Response Protocol
 
-When using the cranky-code-reviewer agent, track ALL findings as `review-response` entities:
+**Triggering Code Review:**
+
+When a ticket/bug enters `review` status, run the `/code-review` command. This invokes the
+cranky-code-reviewer agent to perform a thorough code review and automatically creates
+`review-response` entities for each finding.
+
+Alternatively, invoke the cranky-code-reviewer agent directly for ad-hoc reviews.
 
 **Creating Review Responses:**
 
 For each finding from code review:
+
 1. Create a `review-response` entity with:
    - `title`: Brief description of the finding
    - `finding`: Full description of the issue
@@ -489,17 +516,20 @@ For each finding from code review:
 | nit | Optional, can wont-fix with reason |
 
 When addressing a finding:
+
 - Fix the issue in code
 - Update status to `addressed`
 - Document the `resolution` (how it was fixed)
 
 When not addressing:
+
 - Set status to `wont-fix` or `deferred`
 - Document the `reason` (justification required)
 
 **Validation Gates:**
 
 Tickets/bugs cannot be marked `done` if they have:
+
 - Open critical review responses
 - Open significant review responses
 

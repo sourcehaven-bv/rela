@@ -274,6 +274,7 @@ type CreateRelationAction struct {
 // CreateEntityAction specifies parameters for creating a new entity.
 type CreateEntityAction struct {
 	Type       string            `yaml:"type"`                 // Entity type to create
+	Template   string            `yaml:"template,omitempty"`   // Optional: template variant, supports interpolation (e.g., "{{new.kind}}")
 	Properties map[string]string `yaml:"properties,omitempty"` // Properties (values support interpolation)
 	Relation   string            `yaml:"relation,omitempty"`   // Optional: relation FROM trigger TO created entity
 	IfExists   string            `yaml:"if_exists,omitempty"`  // Behavior when relation already exists: skip (default), error, replace
