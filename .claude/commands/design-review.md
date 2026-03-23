@@ -24,7 +24,7 @@ Catch design issues early when they're cheap to fix. This review focuses on:
 
    **Security:**
    - Where does input come from? Is it trusted?
-   - Is validation whitelist (safe) or blacklist (dangerous)?
+   - Is validation allowlist (safe) or blocklist (dangerous)?
    - Could an attacker abuse this feature? (path traversal, injection, auth bypass)
    - Do error messages leak sensitive information?
    - Are there TOCTOU (time-of-check/time-of-use) races?
@@ -77,7 +77,7 @@ Catch design issues early when they're cheap to fix. This review focuses on:
 
 **Template parameter feature** - what design review would have caught:
 
-1. "Template names come from `{{new.kind}}` which is user-controlled. Plan says 'reject path separators' but doesn't specify allowed characters. **Use whitelist (alphanumeric + hyphen + underscore) instead of blacklist.**" (significant)
+1. "Template names come from `{{new.kind}}` which is user-controlled. Plan says 'reject path separators' but doesn't specify allowed characters. **Use allowlist (alphanumeric + hyphen + underscore) instead of blocklist.**" (significant)
 
 2. "Plan doesn't address what happens if template file doesn't exist. Should this error or fall back to default?" (significant)
 

@@ -212,7 +212,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 		// Interpolate template name (allows {{new.kind}} etc.)
 		template := e.interpolate(action.CreateEntity.Template, event)
 
-		// Validate template name using whitelist (alphanumeric, hyphen, underscore only).
+		// Validate template name using allowlist (alphanumeric, hyphen, underscore only).
 		if !isValidTemplateName(template) {
 			result.Errors = append(result.Errors,
 				"create_entity template name contains invalid characters (only alphanumeric, hyphen, underscore allowed)")
@@ -288,14 +288,14 @@ func (e *Engine) interpolate(template string, event Event) string {
 }
 
 // isValidTemplateName validates that a template name contains only safe identifier characters.
-// Uses a whitelist approach: only alphanumeric, hyphen, and underscore are allowed.
+// Uses an allowlist approach: only alphanumeric, hyphen, and underscore are allowed.
 // Empty template names are valid (means use default template).
 func isValidTemplateName(name string) bool {
 	if name == "" {
 		return true
 	}
-	// Whitelist approach: only allow identifier-like characters.
-	// This is safer than blacklisting dangerous patterns (path separators, .., null bytes, etc.)
+	// Allowlist approach: only allow identifier-like characters.
+	// This is safer than blocklisting dangerous patterns (path separators, .., null bytes, etc.)
 	for _, ch := range name {
 		isLower := ch >= 'a' && ch <= 'z'
 		isUpper := ch >= 'A' && ch <= 'Z'

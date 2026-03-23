@@ -782,7 +782,7 @@ func TestEngine_CreateEntity_TemplatePathTraversal(t *testing.T) {
 		wantErr  bool
 		template string
 	}{
-		// Valid templates (whitelist: a-z, A-Z, 0-9, -, _)
+		// Valid templates (allowlist: a-z, A-Z, 0-9, -, _)
 		{"valid template", "enhancement", false, "enhancement"},
 		{"valid with hyphen", "my-template", false, "my-template"},
 		{"valid with underscore", "template_v2", false, "template_v2"},
@@ -800,7 +800,7 @@ func TestEngine_CreateEntity_TemplatePathTraversal(t *testing.T) {
 		{"null byte injection", "valid\x00../etc/passwd", true, ""},
 		{"null byte only", "\x00", true, ""},
 
-		// Invalid: special characters blocked by whitelist
+		// Invalid: special characters blocked by allowlist
 		{"dots only", "...", true, ""},
 		{"single dot", ".", true, ""},
 		{"unicode characters", "template-名前", true, ""},

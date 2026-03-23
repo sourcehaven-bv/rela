@@ -47,7 +47,7 @@ status: pending
 ## Security Considerations
 
 - [ ] Input sources identified (user input, config, external APIs)
-- [ ] Input validation approach defined (whitelist preferred over blacklist)
+- [ ] Input validation approach defined (allowlist preferred over blocklist)
 - [ ] Security-sensitive operations identified (file access, auth, crypto)
 - [ ] Error handling doesn't leak sensitive information
 
