@@ -246,9 +246,9 @@ could indicate:
 - Deleted entities
 - Numbering mistakes
 
-**Note:** Gap analysis only applies to entity types with auto-generated IDs (the default).
-Entity types configured with `id_type: manual` in the metamodel are excluded since
-they use manually-specified IDs that aren't expected to follow a numeric sequence.
+**Note:** Gap analysis only applies to entity types with `id_type: sequential`.
+Entity types with `short` (default) or `manual` IDs are excluded since they don't
+follow numeric sequences.
 
 ### Duplicate Detection
 

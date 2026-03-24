@@ -74,7 +74,7 @@ type EntityDef struct {
 	Description string                 `yaml:"description,omitempty"` // Documentation explaining intent/usage
 	Plural      string                 `yaml:"plural,omitempty"`      // Used for directory names (e.g., "policies" for "policy")
 	Aliases     []string               `yaml:"aliases,omitempty"`
-	IDType      string                 `yaml:"id_type,omitempty"`     // "auto" (default) or "manual"
+	IDType      string                 `yaml:"id_type,omitempty"`     // "short" (default), "sequential", or "manual"
 	IDPrefix    string                 `yaml:"id_prefix,omitempty"`   // Single ID prefix (sugar for single-element id_prefixes)
 	IDPrefixes  []string               `yaml:"id_prefixes,omitempty"` // Multiple ID prefixes
 	RDFType     string                 `yaml:"rdf_type,omitempty"`

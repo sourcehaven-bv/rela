@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Tutorial: Building an ISO 27001 ISMS with Rela
 
 This comprehensive tutorial walks you through implementing a complete

@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # MCP Server
 
 Rela includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server
