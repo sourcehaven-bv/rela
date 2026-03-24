@@ -1,3 +1,4 @@
+<!-- @managed: claude-workflow v1 -->
 ---
 title: Bug Analysis
 status: pending

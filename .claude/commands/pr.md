@@ -1,3 +1,4 @@
+<!-- @managed: claude-workflow v1 -->
 # Create PR and Monitor CI
 
 Create a pull request and monitor CI checks until they pass, fixing any issues found.

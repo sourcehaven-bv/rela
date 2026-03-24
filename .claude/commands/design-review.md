@@ -1,6 +1,7 @@
+<!-- @managed: claude-workflow v1 -->
 # Design Review
 
-Review the planning checklist and technical approach BEFORE implementation begins.
+Review the planning/design and technical approach BEFORE implementation begins.
 
 ## Purpose
 
@@ -12,9 +13,9 @@ Catch design issues early when they're cheap to fix. This review focuses on:
 
 ## Instructions
 
-1. **Find the planning checklist** for the current ticket using `rela-issues-and-design-tickets`.
+1. **Find the planning documentation** for the current work item.
 
-2. **Review the planning checklist** critically, asking:
+2. **Review the plan** critically, asking:
 
    **Research:**
    - Was a library search done? Is there an existing solution?
@@ -47,17 +48,14 @@ Catch design issues early when they're cheap to fix. This review focuses on:
    - Is the scope clear (what's in/out)?
    - Are alternatives documented with reasoning?
 
-3. **For each finding**, create a `review-response` entity with:
+3. **For each finding**, document with:
    - `title`: Brief description
    - `finding`: What's wrong or missing in the plan
    - `severity`: `critical` | `significant` | `minor` | `nit`
-   - `status`: `open`
 
-4. **Link findings to the ticket** via `has-review-response` relation.
+4. **Update the plan** to address findings before implementation.
 
-5. **Update the planning checklist** to address findings before implementation.
-
-## Severity Guide for Design Review
+## Severity Guide
 
 | Severity | Examples |
 |----------|----------|
@@ -69,8 +67,7 @@ Catch design issues early when they're cheap to fix. This review focuses on:
 ## After Design Review
 
 - Address critical and significant findings by updating the plan
-- Update review-response status to `addressed`
-- Only move to `in-progress` when design is solid
+- Only move to implementation when design is solid
 - Implementation should be "mechanical" - no design decisions left
 
 ## Example Findings

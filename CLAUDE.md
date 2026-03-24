@@ -324,6 +324,8 @@ Place temporary working documents in the `.ignored/` directory:
 
 This directory is gitignored. Never commit design docs, tickets, or reports to the repository.
 
+<!-- @managed: claude-workflow start -->
+
 ## Rela for Planning & Issue Tracking
 
 This project uses two rela instances via MCP for design and issue tracking:
@@ -431,18 +433,18 @@ Checklists are **automatically created** when tickets/bugs transition to specifi
 The `create_entity` automation with `if_exists: skip` ensures no duplicates.
 
 1. **Start Planning** (status: `planning`)
-   - ✨ `planning-checklist` is auto-created and linked via `has-planning`
+   - Planning checklist is auto-created and linked via `has-planning`
    - Work through checklist items: understanding, approach, security, test plan
    - Run `/design-review` to catch issues before implementation
    - Address all critical/significant design findings
    - Mark checklist `status=done` when complete
 
 2. **Start Implementation** (status: `in-progress`)
-   - ✨ `implementation-checklist` is auto-created and linked via `has-implementation`
+   - Implementation checklist is auto-created and linked via `has-implementation`
    - Work through development and quality items
 
 3. **Start Review** (status: `review`)
-   - ✨ `review-checklist` is auto-created and linked via `has-review`
+   - Review checklist is auto-created and linked via `has-review`
    - Run `/code-review` to perform thorough code review
    - Address all critical/significant code review findings
    - If enhancement or docs ticket, manually create `docs-checklist`
@@ -474,16 +476,6 @@ When an item doesn't apply, use strikethrough with a reason in parentheses:
 ```
 
 Items without reasons will fail validation.
-
-**Templates:**
-
-Checklist templates are in `tickets/templates/entities/`:
-
-- `planning-checklist.md`
-- `bug-analysis-checklist.md`
-- `implementation-checklist.md`
-- `review-checklist.md`
-- `docs-checklist.md`
 
 ### Review Response Protocol
 
@@ -534,18 +526,6 @@ Tickets/bugs cannot be marked `done` if they have:
 - Open significant review responses
 
 Minor/nit findings may remain open with warnings.
-
-### Workflow Verification Scripts
-
-Custom scripts in `tickets/scripts/` for workflow checkpoints:
-
-| Script | Purpose |
-|--------|---------|
-| `verify-planning-syntax.sh` | Check planning docs for common issues |
-| `verify-tests-exist.sh` | Ensure modified code has test coverage |
-| `verify-review-responses.sh` | Check review responses are addressed |
-
-Use the `/verify` slash command to run appropriate checks at workflow transitions.
 
 ### Automation Actions
 
@@ -621,3 +601,4 @@ Automation properties support template interpolation:
 | `{{today}}` | Current date (YYYY-MM-DD) |
 
 Common mistake: `{{entity.title}}` is WRONG, use `{{new.title}}` instead.
+<!-- @managed: claude-workflow end -->

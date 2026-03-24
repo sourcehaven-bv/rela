@@ -1,3 +1,4 @@
+<!-- @managed: claude-workflow v1 -->
 # Code Review
 
 Perform a thorough code review of recent changes using the cranky-code-reviewer agent.
@@ -14,15 +15,13 @@ Perform a thorough code review of recent changes using the cranky-code-reviewer 
    - Performance issues
    - Code quality and maintainability
 
-3. **For each finding**, create a `review-response` entity in `rela-issues-and-design-tickets` with:
+3. **For each finding**, document with:
    - `title`: Brief description of the finding
    - `finding`: Detailed explanation of the issue
    - `severity`: `critical` | `significant` | `minor` | `nit`
    - `status`: `open`
 
-4. **Link findings to the ticket/bug** using the `has-review-response` relation.
-
-5. **Summarize findings** by severity for the user.
+4. **Summarize findings** by severity for the user.
 
 ## Severity Guide
 
@@ -35,6 +34,5 @@ Perform a thorough code review of recent changes using the cranky-code-reviewer 
 
 ## After Review
 
-- Address critical and significant findings before marking ticket as done
+- Address critical and significant findings before completing work
 - Minor/nit findings can be deferred with documented reason
-- Update review-response status to `addressed` or `wont-fix` as appropriate

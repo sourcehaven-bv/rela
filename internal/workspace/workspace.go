@@ -730,7 +730,6 @@ func (w *Workspace) applyAutomationSideEffects(
 	autoResult *automation.Result,
 ) *automationSideEffects {
 	effects := &automationSideEffects{}
-	meta := w.Meta()
 
 	// BFS queue of pending automation results to process.
 	queue := []automationQueueItem{{triggerEntity, autoResult}}
@@ -749,52 +748,9 @@ func (w *Workspace) applyAutomationSideEffects(
 		effects.Warnings = append(effects.Warnings, item.autoResult.Warnings...)
 		effects.Errors = append(effects.Errors, item.autoResult.Errors...)
 
-		// Process entity creations.
-		for _, toCreate := range item.autoResult.EntitiesToCreate {
-			if skip := w.handleIfExists(item.trigger, toCreate, effects); skip {
-				continue
-			}
-
-			// Create entity (no automation yet).
-			created, createErr := w.createEntityCore(toCreate.Type, toCreate.Template, toCreate.Properties)
-			if createErr != nil {
-				effects.Errors = append(effects.Errors,
-					fmt.Sprintf("failed to create automation entity %s: %v", toCreate.Type, createErr))
-				continue
-			}
-			effects.EntitiesCreated = append(effects.EntitiesCreated, created)
-
-			// Create relation from trigger if specified.
-			if toCreate.RelationFromTrigger != "" {
-				w.createTriggerRelation(item.trigger, created, toCreate.RelationFromTrigger, effects)
-			}
-
-			// Run automation on newly created entity and queue results.
-			if w.automation != nil {
-				newAutoResult := w.automation.Process(automation.Event{
-					Type:   automation.EventEntityCreated,
-					Entity: created,
-				})
-
-				// Apply property changes from automation.
-				if len(newAutoResult.PropertiesSet) > 0 {
-					for prop, val := range newAutoResult.PropertiesSet {
-						created.SetString(prop, val)
-					}
-					// Re-write entity with updated properties.
-					if err := w.repo.WriteEntity(created, meta); err != nil {
-						effects.Errors = append(effects.Errors,
-							fmt.Sprintf("failed to update automation entity %s: %v", created.ID, err))
-					}
-				}
-
-				// Queue for processing if there's more work to do.
-				if len(newAutoResult.EntitiesToCreate) > 0 || len(newAutoResult.RelationsToCreate) > 0 ||
-					len(newAutoResult.Warnings) > 0 || len(newAutoResult.Errors) > 0 {
-					queue = append(queue, automationQueueItem{created, newAutoResult})
-				}
-			}
-		}
+		// Process entity creations and collect any new queue items.
+		newItems := w.processEntityCreations(item.trigger, item.autoResult.EntitiesToCreate, effects)
+		queue = append(queue, newItems...)
 	}
 
 	// Warn if we hit the limit with work remaining.
@@ -805,6 +761,82 @@ func (w *Workspace) applyAutomationSideEffects(
 	}
 
 	return effects
+}
+
+// processEntityCreations handles entity creation from automation and returns new queue items.
+func (w *Workspace) processEntityCreations(
+	trigger *model.Entity,
+	toCreateList []automation.EntityToCreate,
+	effects *automationSideEffects,
+) []automationQueueItem {
+	var newItems []automationQueueItem
+	meta := w.Meta()
+
+	for _, toCreate := range toCreateList {
+		if skip := w.handleIfExists(trigger, toCreate, effects); skip {
+			continue
+		}
+
+		// Create entity (no automation yet).
+		created, createErr := w.createEntityCore(toCreate.Type, toCreate.Template, toCreate.Properties)
+		if createErr != nil {
+			effects.Errors = append(effects.Errors,
+				fmt.Sprintf("failed to create automation entity %s: %v", toCreate.Type, createErr))
+
+			continue
+		}
+		effects.EntitiesCreated = append(effects.EntitiesCreated, created)
+
+		// Create relation from trigger if specified.
+		if toCreate.RelationFromTrigger != "" {
+			w.createTriggerRelation(trigger, created, toCreate.RelationFromTrigger, effects)
+		}
+
+		// Run automation on newly created entity.
+		newItem := w.runCreatedEntityAutomation(created, meta, effects)
+		if newItem != nil {
+			newItems = append(newItems, *newItem)
+		}
+	}
+
+	return newItems
+}
+
+// runCreatedEntityAutomation runs automation on a newly created entity and returns a queue item if needed.
+func (w *Workspace) runCreatedEntityAutomation(
+	created *model.Entity,
+	meta *metamodel.Metamodel,
+	effects *automationSideEffects,
+) *automationQueueItem {
+	if w.automation == nil {
+		return nil
+	}
+
+	newAutoResult := w.automation.Process(automation.Event{
+		Type:   automation.EventEntityCreated,
+		Entity: created,
+	})
+
+	// Apply property changes from automation.
+	if len(newAutoResult.PropertiesSet) > 0 {
+		for prop, val := range newAutoResult.PropertiesSet {
+			created.SetString(prop, val)
+		}
+		// Re-write entity with updated properties.
+		if err := w.repo.WriteEntity(created, meta); err != nil {
+			effects.Errors = append(effects.Errors,
+				fmt.Sprintf("failed to update automation entity %s: %v", created.ID, err))
+		}
+	}
+
+	// Return queue item if there's more work to do.
+	hasWork := len(newAutoResult.EntitiesToCreate) > 0 || len(newAutoResult.RelationsToCreate) > 0 ||
+		len(newAutoResult.Warnings) > 0 || len(newAutoResult.Errors) > 0
+	if hasWork {
+		return &automationQueueItem{created, newAutoResult}
+	}
+
+	return nil
 }
 
 // applyRelationCreations creates relations from automation results.
