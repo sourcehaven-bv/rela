@@ -45,7 +45,7 @@ types:
 entities:
   requirement:
     label: Requirement
-    id_patterns: ["REQ-"]
+    id_prefix: REQ-
     properties:
       title:
         type: string
@@ -70,7 +70,7 @@ types:
 entities:
   control:
     label: Control
-    id_patterns: ["CTL-"]
+    id_prefix: CTL-
     properties:
       title:
         type: string
@@ -180,14 +180,19 @@ cannot define custom type "string": name is reserved for built-in type
 
 Each entity type defines:
 
-| Field         | Description                                               |
-| ------------- | --------------------------------------------------------- |
-| `label`       | Display name                                              |
-| `description` | Documentation explaining intent and usage (optional)      |
-| `aliases`     | Alternative names for CLI (e.g., `req` for `requirement`) |
-| `id_type`     | `short` (default), `sequential`, or `manual` - controls ID generation |
-| `id_patterns` | ID prefixes (e.g., `REQ-`, `ADR-`)                        |
-| `properties`  | Property definitions                                      |
+| Field          | Description                                               |
+| -------------- | --------------------------------------------------------- |
+| `label`        | Display name                                              |
+| `label_plural` | Plural display name (defaults to label + "s")             |
+| `description`  | Documentation explaining intent and usage (optional)      |
+| `aliases`      | Alternative names for CLI (e.g., `req` for `requirement`) |
+| `id_type`      | `short` (default), `sequential`, or `manual` - controls ID generation |
+| `id_prefix`    | Single ID prefix (e.g., `REQ-`)                           |
+| `id_prefixes`  | Multiple ID prefixes (e.g., `["DEC-", "ADR-"]`)           |
+| `properties`   | Property definitions                                      |
+| `default_sort` | Default sort order for list views                         |
+| `color`        | Fill color for graph visualizations (hex or named)        |
+| `border_color` | Border color for graph visualizations                     |
 
 ### ID Types
 
@@ -285,6 +290,40 @@ In the data-entry UI, a help icon (?) appears next to the entity form title. Cli
 opens a modal showing the entity description, all properties with their descriptions, and
 available relations with cardinality constraints.
 
+### Entity Styling
+
+Customize how entity types appear in graph visualizations with `color` and `border_color`:
+
+```yaml
+entities:
+  risk:
+    label: Risk
+    id_prefix: RISK-
+    color: "#FFEBEE"         # Light red fill
+    border_color: "#C62828"  # Dark red border
+    properties:
+      # ...
+
+  control:
+    label: Control
+    id_prefix: CTL-
+    color: "#E8F5E9"         # Light green fill
+    border_color: "#2E7D32"  # Dark green border
+    properties:
+      # ...
+```
+
+Colors can be specified as:
+
+- Hex codes: `#FF5722`, `#4CAF50`
+- Named colors: `red`, `green`, `lightblue`
+
+These colors are used in:
+
+- `rela graph` DOT output
+- `rela schema --graphviz` visualization
+- Data-entry graph views
+
 ### Example Entity Type
 
 ```yaml
@@ -292,7 +331,7 @@ entities:
   requirement:
     label: Requirement
     aliases: [req]
-    id_patterns: ["REQ-"]
+    id_prefix: REQ-
     properties:
       title:
         type: string
@@ -315,15 +354,18 @@ entities:
 | `integer`  | Whole number                            | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
 | `boolean`  | True or false                           | `=`, `!=`                           |
 | `enum`     | Inline enum with `values`               | `=`, `!=`                           |
+| `file`     | File attachment (stored in `.rela/attachments/`) | N/A                          |
 | `<custom>` | Reference to a type defined in `types:` | `=`, `!=`                           |
 
 ### Property Options
 
-| Option           | Description                                        |
-| ---------------- | -------------------------------------------------- |
-| `required: true` | Property must be provided                          |
-| `format`         | Date format (Go layout string, e.g., `2006-01-02`) |
-| `description`    | Documentation for the property                     |
+| Option           | Description                                          |
+| ---------------- | ---------------------------------------------------- |
+| `required: true` | Property must be provided                            |
+| `default`        | Default value for the property                       |
+| `format`         | Date format (Go layout string, e.g., `2006-01-02`)   |
+| `description`    | Documentation for the property                       |
+| `list: true`     | Allow multiple values (multi-select for enum types)  |
 
 ### Date Formats
 
@@ -378,6 +420,17 @@ properties:
   status:
     type: status
     required: true
+
+  # File attachment
+  screenshot:
+    type: file
+    description: "Screenshot of the issue"
+
+  # Multi-select enum (list: true)
+  tags:
+    type: enum
+    values: [frontend, backend, api, database, security]
+    list: true  # Allows selecting multiple values
 ```
 
 ## Relations
@@ -486,7 +539,7 @@ entities:
   requirement:
     label: Requirement
     aliases: [req]
-    id_patterns: ["REQ-"]
+    id_prefix: REQ-
     properties:
       title:
         type: string
@@ -502,7 +555,7 @@ entities:
   decision:
     label: Decision
     aliases: [dec, adr]
-    id_patterns: ["DEC-", "ADR-"]
+    id_prefixes: ["DEC-", "ADR-"]
     properties:
       title:
         type: string
@@ -516,7 +569,7 @@ entities:
   solution:
     label: Solution
     aliases: [sol]
-    id_patterns: ["SOL-"]
+    id_prefix: SOL-
     properties:
       title:
         type: string
@@ -529,7 +582,7 @@ entities:
   component:
     label: Component
     aliases: [comp]
-    id_patterns: ["COMP-", "AC-", "TC-"]
+    id_prefixes: ["COMP-", "AC-", "TC-"]
     properties:
       title:
         type: string
@@ -572,7 +625,7 @@ relations:
 entities:
   risk:
     label: Risk
-    id_patterns: ["RISK-"]
+    id_prefix: RISK-
     properties:
       title:
         type: string
@@ -599,7 +652,7 @@ entities:
   stakeholder:
     label: Stakeholder
     aliases: [stk]
-    id_patterns: ["STK-"]
+    id_prefix: STK-
     properties:
       name:
         type: string
@@ -624,7 +677,7 @@ entities:
   requirement:
     label: Requirement
     aliases: [req]
-    id_patterns: ["REQ-", "FR-", "NFR-"] # Functional and non-functional
+    id_prefixes: ["REQ-", "FR-", "NFR-"]  # Functional and non-functional
 ```
 
 ## After Modifying the Metamodel
@@ -961,3 +1014,168 @@ Found 2 errors, 1 warnings across 2 rules
 2. **Use specific entity types**: Narrow rules to specific types when possible for clearer error messages
 3. **Combine with cardinality**: Use cardinality constraints for relation rules, validations for property rules
 4. **Check for empty values**: Use `property!=` to require that a property has any value
+
+## Automations
+
+Automations are trigger-action rules that execute when entities change. They enable
+workflow automation, automatic property updates, and entity creation based on state
+transitions.
+
+### Automation Structure
+
+```yaml
+automations:
+  - name: automation-name
+    description: "Human-readable description"
+    on:
+      # Trigger conditions
+    do:
+      # Actions to perform
+```
+
+### Triggers
+
+Automations fire based on entity changes:
+
+| Trigger Field     | Description                                    | Example                   |
+| ----------------- | ---------------------------------------------- | ------------------------- |
+| `entity`          | Entity types to watch (string or list)         | `[ticket, bug]`           |
+| `property`        | Property name to monitor                       | `status`                  |
+| `becomes`         | Value the property changed to                  | `in-progress`             |
+| `from`            | Value the property changed from                | `backlog`                 |
+| `created`         | Fires when entity is created                   | `true`                    |
+| `relation_created`| Fires when this relation type is created       | `implements`              |
+| `relation_removed`| Fires when this relation type is removed       | `implements`              |
+
+### Actions
+
+Actions execute when triggers match:
+
+**Set Property**:
+
+```yaml
+do:
+  - set: started_at
+    value: "{{today}}"
+```
+
+**Create Relation**:
+
+```yaml
+do:
+  - create_relation:
+      relation: implements
+      to: "{{entity.parent}}"
+```
+
+**Create Entity** (with optional relation):
+
+```yaml
+do:
+  - create_entity:
+      type: checklist
+      properties:
+        title: "Planning: {{new.title}}"
+        status: in-progress
+      relation: has-planning
+      if_exists: skip
+```
+
+### Template Variables
+
+Automation values support template substitution:
+
+| Variable          | Description                              |
+| ----------------- | ---------------------------------------- |
+| `{{today}}`       | Current date in ISO 8601 format          |
+| `{{new.title}}`   | Property value from the changed entity   |
+| `{{new.status}}`  | Any property from the changed entity     |
+| `{{entity.id}}`   | Entity ID                                |
+| `{{user.name}}`   | Current user's name                      |
+
+### Example: Workflow Checklists
+
+Automatically create workflow checklists when tickets transition through stages:
+
+```yaml
+automations:
+  # Create planning checklist when ticket enters planning
+  - name: ticket-planning-checklist
+    description: Create planning checklist when ticket enters planning
+    on:
+      entity: [ticket]
+      property: status
+      becomes: planning
+    do:
+      - create_entity:
+          type: planning-checklist
+          properties:
+            title: "Planning: {{new.title}}"
+            status: in-progress
+          relation: has-planning
+          if_exists: skip
+
+  # Create implementation checklist when ticket enters in-progress
+  - name: ticket-implementation-checklist
+    description: Create implementation checklist when ticket starts
+    on:
+      entity: [ticket, bug]
+      property: status
+      becomes: in-progress
+    do:
+      - create_entity:
+          type: implementation-checklist
+          properties:
+            title: "Implementation: {{new.title}}"
+            status: in-progress
+          relation: has-implementation
+          if_exists: skip
+
+  # Create review checklist when ticket enters review
+  - name: ticket-review-checklist
+    description: Create review checklist when ticket enters review
+    on:
+      entity: [ticket, bug]
+      property: status
+      becomes: review
+    do:
+      - create_entity:
+          type: review-checklist
+          properties:
+            title: "Review: {{new.title}}"
+            status: in-progress
+          relation: has-review
+          if_exists: skip
+```
+
+### Example: Status Tracking
+
+Track when work started and by whom:
+
+```yaml
+automations:
+  - name: track-started
+    description: Record when work started
+    on:
+      entity: [ticket, bug]
+      property: status
+      becomes: in-progress
+    do:
+      - set: started_at
+        value: "{{today}}"
+      - set: started_by
+        value: "{{user.name}}"
+```
+
+### Automation Options
+
+| Field      | Description                                           |
+| ---------- | ----------------------------------------------------- |
+| `if_exists`| Behavior when `create_entity` target exists: `skip`   |
+
+### Best Practices
+
+1. **Use descriptive names**: Name automations after what they accomplish
+2. **Keep actions focused**: Each automation should do one logical thing
+3. **Use `if_exists: skip`**: Prevent duplicate entities when re-entering states
+4. **Document with description**: Explain the workflow the automation supports
