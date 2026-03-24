@@ -324,6 +324,8 @@ Place temporary working documents in the `.ignored/` directory:
 
 This directory is gitignored. Never commit design docs, tickets, or reports to the repository.
 
+<!-- @managed: claude-workflow start -->
+
 ## Rela for Planning & Issue Tracking
 
 This project uses two rela instances via MCP for design and issue tracking:
@@ -378,3 +380,225 @@ Bug tickets use the 5-whys method for root cause analysis:
 
 Done bugs require at least 3 levels (why1-why3). The goal is to reach systemic causes
 that can be addressed with process/tooling improvements documented in `prevention`.
+
+### Workflow Checklists
+
+Tickets and bugs use workflow checklists to ensure thorough planning, execution, and review.
+Each phase has a dedicated checklist entity with standard items from templates.
+
+**Ticket Workflow:**
+
+```text
+backlog → ready → planning → in-progress → review → done
+                     │            │           │
+                     ▼            ▼           ▼
+              planning-      implementation-  review-checklist
+              checklist      checklist        (+ docs-checklist
+                 │                            for enhancements)
+                 ▼
+           /design-review
+           (before impl)
+```
+
+**Bug Workflow:**
+
+```text
+backlog → ready → analyzing → in-progress → review → done
+                     │            │           │
+                     ▼            ▼           ▼
+              bug-analysis-  implementation-  review-checklist
+              checklist      checklist
+```
+
+**Checklist Types:**
+
+| Checklist | Purpose | Required For |
+|-----------|---------|--------------|
+| `planning-checklist` | Understanding, research, approach, security, risk assessment | Tickets entering `in-progress` |
+| `bug-analysis-checklist` | Reproduction, root cause, fix planning | Bugs entering `in-progress` |
+| `implementation-checklist` | Development, quality checks | Tickets/bugs entering `review` |
+| `review-checklist` | Automated checks, code review, verification | Tickets/bugs entering `done` |
+| `docs-checklist` | Code docs, project docs, external docs | Enhancement/docs tickets entering `done` |
+
+**Review Commands:**
+
+| Command | When to Use | Creates |
+|---------|-------------|---------|
+| `/design-review` | After planning, before implementation | `review-response` entities for design issues |
+| `/code-review` | During review phase, after implementation | `review-response` entities for code issues |
+
+**Agent Workflow for Tickets:**
+
+Checklists are **automatically created** when tickets/bugs transition to specific statuses.
+The `create_entity` automation with `if_exists: skip` ensures no duplicates.
+
+1. **Start Planning** (status: `planning`)
+   - Planning checklist is auto-created and linked via `has-planning`
+   - Work through checklist items: understanding, approach, security, test plan
+   - Run `/design-review` to catch issues before implementation
+   - Address all critical/significant design findings
+   - Mark checklist `status=done` when complete
+
+2. **Start Implementation** (status: `in-progress`)
+   - Implementation checklist is auto-created and linked via `has-implementation`
+   - Work through development and quality items
+
+3. **Start Review** (status: `review`)
+   - Review checklist is auto-created and linked via `has-review`
+   - Run `/code-review` to perform thorough code review
+   - Address all critical/significant code review findings
+   - If enhancement or docs ticket, manually create `docs-checklist`
+   - Complete all checks before marking done
+
+4. **Create PR** (before `done`)
+   - Run `/pr` to create PR and monitor CI until all checks pass
+   - Fixes any CI failures (lint, test, coverage) automatically
+   - Document PR URL in review-checklist
+
+5. **Complete** (status: `done`)
+   - All linked checklists must have `status=done`
+   - All checklist items must be checked or skipped with reason
+   - PR merged or ready to merge
+
+**Bug Workflow Automations:**
+
+- `analyzing` → auto-creates `bug-analysis-checklist` via `has-bug-analysis`
+- `in-progress` → auto-creates `implementation-checklist` via `has-implementation`
+- `review` → auto-creates `review-checklist` via `has-review`
+
+**Skipping Checklist Items:**
+
+When an item doesn't apply, use strikethrough with a reason in parentheses:
+
+```markdown
+- [x] ~~API docs updated~~ (N/A: no API changes)
+- [x] ~~Performance check~~ (N/A: documentation-only change)
+```
+
+Items without reasons will fail validation.
+
+### Review Response Protocol
+
+**Triggering Code Review:**
+
+When a ticket/bug enters `review` status, run the `/code-review` command. This invokes the
+cranky-code-reviewer agent to perform a thorough code review and automatically creates
+`review-response` entities for each finding.
+
+Alternatively, invoke the cranky-code-reviewer agent directly for ad-hoc reviews.
+
+**Creating Review Responses:**
+
+For each finding from code review:
+
+1. Create a `review-response` entity with:
+   - `title`: Brief description of the finding
+   - `finding`: Full description of the issue
+   - `severity`: `critical` | `significant` | `minor` | `nit`
+   - `status`: `open`
+2. Link to ticket/bug via `has-review-response` relation
+
+**Addressing Review Responses:**
+
+| Severity | Required Action |
+|----------|-----------------|
+| critical | MUST be fixed before done |
+| significant | MUST be fixed before done |
+| minor | Should fix, can defer with reason |
+| nit | Optional, can wont-fix with reason |
+
+When addressing a finding:
+
+- Fix the issue in code
+- Update status to `addressed`
+- Document the `resolution` (how it was fixed)
+
+When not addressing:
+
+- Set status to `wont-fix` or `deferred`
+- Document the `reason` (justification required)
+
+**Validation Gates:**
+
+Tickets/bugs cannot be marked `done` if they have:
+
+- Open critical review responses
+- Open significant review responses
+
+Minor/nit findings may remain open with warnings.
+
+### Automation Actions
+
+The automation engine supports these action types in `metamodel.yaml`:
+
+**set**: Set a property value on the triggering entity
+
+```yaml
+automations:
+  - name: set-date-on-done
+    on:
+      entity: [ticket]
+      property: status
+      becomes: done
+    do:
+      - set: completed_at
+        value: "{{today}}"
+```
+
+**create_relation**: Create a relation from the triggering entity
+
+```yaml
+automations:
+  - name: link-on-assignment
+    on:
+      entity: [ticket]
+      property: assignee
+    do:
+      - create_relation:
+          relation: assigned-to
+          to: "{{new.assignee}}"
+```
+
+**create_entity**: Create a new entity (with optional relation to trigger)
+
+```yaml
+automations:
+  - name: create-checklist-on-ready
+    on:
+      entity: [ticket]
+      property: status
+      becomes: ready
+    do:
+      - create_entity:
+          type: planning-checklist
+          properties:
+            title: "Planning: {{new.title}}"
+            status: open
+          relation: has-planning    # Creates relation FROM trigger TO new entity
+          if_exists: skip           # What to do if relation already exists
+```
+
+**if_exists options** (for `create_entity` with `relation`):
+
+| Value | Behavior |
+|-------|----------|
+| `skip` | Skip creation if relation to same entity type exists (default) |
+| `error` | Return error if relation to same entity type exists |
+| `replace` | Delete existing target entity and create new one |
+
+The `if_exists` check uses the relation to detect duplicates: if the trigger entity
+already has a relation of the specified type pointing to an entity of the same type
+being created, the action is considered a duplicate.
+
+### Interpolation Syntax
+
+Automation properties support template interpolation:
+
+| Pattern | Description |
+|---------|-------------|
+| `{{new.property}}` | Property from new/current entity |
+| `{{entity.id}}` | ID of the triggering entity |
+| `{{today}}` | Current date (YYYY-MM-DD) |
+
+Common mistake: `{{entity.title}}` is WRONG, use `{{new.title}}` instead.
+<!-- @managed: claude-workflow end -->
