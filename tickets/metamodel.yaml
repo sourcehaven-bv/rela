@@ -1,3 +1,4 @@
+# @managed: claude-workflow v1
 # Metamodel for rela's own development
 # Dogfooding: using rela to track architecture, features, tickets, QA, and docs
 
@@ -15,8 +16,20 @@ types:
     values: [proposed, planned, in-progress, implemented, removed]
     default: proposed
   ticket_status:
-    values: [backlog, ready, in-progress, blocked, done, wont-fix]
+    values: [backlog, ready, planning, in-progress, review, done, wont-fix, blocked]
     default: backlog
+  bug_status:
+    values: [backlog, ready, analyzing, in-progress, review, done, wont-fix, blocked]
+    default: backlog
+  checklist_status:
+    values: [pending, in-progress, done]
+    default: pending
+  review_response_status:
+    values: [open, addressed, wont-fix, deferred]
+    default: open
+  review_response_severity:
+    values: [critical, significant, minor, nit]
+    default: minor
   risk_status:
     values: [identified, mitigated, accepted, resolved]
     default: identified
@@ -261,7 +274,7 @@ entities:
         type: string
         description: How to prevent similar bugs
       status:
-        type: ticket_status
+        type: bug_status
         required: true
     default_sort:
       - property: priority
@@ -277,8 +290,6 @@ entities:
       title:
         type: string
         required: true
-      description:
-        type: string
       kind:
         type: ticket_kind
         required: true
@@ -295,6 +306,9 @@ entities:
     default_sort:
       - property: priority
       - property: status
+    content:
+      required-headers:
+        - "## Description"
   risk:
     label: Risk
     id_prefix: "RISK-"
@@ -552,6 +566,134 @@ entities:
     default_sort:
       - property: priority
       - property: status
+  # ===================
+  # Workflow Checklists
+  # ===================
+  planning-checklist:
+    label: Planning Checklist
+    id_prefix: "PLAN-"
+    id_type: short
+    color: "#E3F2FD"
+    border_color: "#1976D2"
+    properties:
+      title:
+        type: string
+        required: true
+        default: "Planning"
+      status:
+        type: checklist_status
+        required: true
+    content:
+      required-headers:
+        - "## Understanding"
+        - "## Approach"
+        - "## Risk Assessment"
+  bug-analysis-checklist:
+    label: Bug Analysis Checklist
+    id_prefix: "BUGA-"
+    id_type: short
+    color: "#FFCDD2"
+    border_color: "#D32F2F"
+    properties:
+      title:
+        type: string
+        required: true
+        default: "Bug Analysis"
+      status:
+        type: checklist_status
+        required: true
+    content:
+      required-headers:
+        - "## Reproduction"
+        - "## Root Cause"
+        - "## Fix Planning"
+  implementation-checklist:
+    label: Implementation Checklist
+    id_prefix: "IMPL-"
+    id_type: short
+    color: "#E8F5E9"
+    border_color: "#388E3C"
+    properties:
+      title:
+        type: string
+        required: true
+        default: "Implementation"
+      status:
+        type: checklist_status
+        required: true
+    content:
+      required-headers:
+        - "## Development"
+        - "## Quality"
+  review-checklist:
+    label: Review Checklist
+    id_prefix: "REV-"
+    id_type: short
+    color: "#FFF3E0"
+    border_color: "#F57C00"
+    properties:
+      title:
+        type: string
+        required: true
+        default: "Review"
+      status:
+        type: checklist_status
+        required: true
+    content:
+      required-headers:
+        - "## Automated Checks"
+        - "## Manual Review"
+  docs-checklist:
+    label: Documentation Checklist
+    id_prefix: "DOCS-"
+    id_type: short
+    color: "#E0F7FA"
+    border_color: "#0097A7"
+    properties:
+      title:
+        type: string
+        required: true
+        default: "Documentation"
+      status:
+        type: checklist_status
+        required: true
+    content:
+      required-headers:
+        - "## Code Documentation"
+        - "## Project Documentation"
+  # ===================
+  # Code Review Tracking
+  # ===================
+  review-response:
+    label: Review Response
+    aliases: [review-finding, code-review-item]
+    id_prefix: "RR-"
+    id_type: short
+    color: "#FFF8E1"
+    border_color: "#FF8F00"
+    description: Tracks code review findings and their resolutions
+    properties:
+      title:
+        type: string
+        required: true
+        description: Brief description of the review finding
+      finding:
+        type: string
+        required: true
+        description: The specific issue identified in code review
+      severity:
+        type: review_response_severity
+        required: true
+        description: How critical is this finding?
+      resolution:
+        type: string
+        description: How this finding was addressed (required when status != open)
+      reason:
+        type: string
+        description: Justification for wont-fix or deferred status
+      status:
+        type: review_response_status
+        required: true
 relations:
   # ===================
   # Ticket → Work Relations
@@ -820,19 +962,55 @@ relations:
     to: [ticket, bug, feature, decision]
     inverse: triggers
     min_outgoing: 1 # Doc tasks must be triggered by something
+  # ===================
+  # Workflow Checklist Relations
+  # ===================
+  has-planning:
+    label: has planning
+    description: Ticket's planning checklist
+    from: [ticket, feature]
+    to: [planning-checklist]
+    inverse: plans
+    max_outgoing: 1
+  has-bug-analysis:
+    label: has analysis
+    description: Bug's root cause analysis checklist
+    from: [bug]
+    to: [bug-analysis-checklist]
+    inverse: analyzes
+    max_outgoing: 1
+  has-implementation:
+    label: has implementation
+    description: Implementation checklist for this work
+    from: [ticket, bug]
+    to: [implementation-checklist]
+    inverse: implementation-for
+    max_outgoing: 1
+  has-review:
+    label: has review
+    description: Review checklist for this work
+    from: [ticket, bug, feature]
+    to: [review-checklist]
+    inverse: reviews
+    max_outgoing: 1
+  has-docs:
+    label: has docs
+    description: Documentation checklist for this work
+    from: [ticket, bug, feature]
+    to: [docs-checklist]
+    inverse: docs-for
+    max_outgoing: 1
+  has-review-response:
+    label: has review response
+    description: Code review finding that needs to be addressed
+    from: [ticket, bug]
+    to: [review-response]
+    inverse: responds-to
 # ===================
 # Validation Rules
 # ===================
 validations:
   # --- Ticket completeness (progressive) ---
-  - name: backlog-tickets-should-have-description
-    description: "Backlog tickets should have a description"
-    entity_type: ticket
-    when:
-      - "status=backlog"
-    then:
-      - "description!="
-    severity: warning
   - name: ready-tickets-need-effort
     description: "Ready tickets must have effort estimated"
     entity_type: ticket
@@ -849,14 +1027,6 @@ validations:
     then:
       - "priority!="
     severity: error
-  - name: ready-tickets-need-description
-    description: "Ready tickets must have a description"
-    entity_type: ticket
-    when:
-      - "status=ready"
-    then:
-      - "description!="
-    severity: error
   - name: in-progress-tickets-need-priority
     description: "In-progress tickets must have priority set"
     entity_type: ticket
@@ -864,14 +1034,6 @@ validations:
       - "status=in-progress"
     then:
       - "priority!="
-    severity: error
-  - name: done-tickets-need-description
-    description: "Done tickets must have a description"
-    entity_type: ticket
-    when:
-      - "status=done"
-    then:
-      - "description!="
     severity: error
   # --- Bug completeness (progressive) ---
   - name: bugs-should-have-description
@@ -1419,3 +1581,365 @@ validations:
     then:
       - "description!="
     severity: error
+  # --- Checklist completeness (planning) ---
+  - name: done-planning-checklist-no-unchecked
+    description: "Done planning checklists cannot have unchecked items"
+    entity_type: planning-checklist
+    when:
+      - "status=done"
+    body:
+      pattern: "^- \\[ \\]"
+      max_matches: 0
+    severity: error
+  - name: planning-checklist-skipped-needs-reason
+    description: "Skipped items must include a reason in parentheses"
+    entity_type: planning-checklist
+    body:
+      pattern: "^- \\[x\\] ~~[^~]+~~\\s*$"
+      max_matches: 0
+    severity: error
+  # --- Checklist completeness (bug-analysis) ---
+  - name: done-bug-analysis-checklist-no-unchecked
+    description: "Done bug analysis checklists cannot have unchecked items"
+    entity_type: bug-analysis-checklist
+    when:
+      - "status=done"
+    body:
+      pattern: "^- \\[ \\]"
+      max_matches: 0
+    severity: error
+  - name: bug-analysis-checklist-skipped-needs-reason
+    description: "Skipped items must include a reason in parentheses"
+    entity_type: bug-analysis-checklist
+    body:
+      pattern: "^- \\[x\\] ~~[^~]+~~\\s*$"
+      max_matches: 0
+    severity: error
+  # --- Checklist completeness (implementation) ---
+  - name: done-implementation-checklist-no-unchecked
+    description: "Done implementation checklists cannot have unchecked items"
+    entity_type: implementation-checklist
+    when:
+      - "status=done"
+    body:
+      pattern: "^- \\[ \\]"
+      max_matches: 0
+    severity: error
+  - name: implementation-checklist-skipped-needs-reason
+    description: "Skipped items must include a reason in parentheses"
+    entity_type: implementation-checklist
+    body:
+      pattern: "^- \\[x\\] ~~[^~]+~~\\s*$"
+      max_matches: 0
+    severity: error
+  # --- Checklist completeness (review) ---
+  - name: done-review-checklist-no-unchecked
+    description: "Done review checklists cannot have unchecked items"
+    entity_type: review-checklist
+    when:
+      - "status=done"
+    body:
+      pattern: "^- \\[ \\]"
+      max_matches: 0
+    severity: error
+  - name: review-checklist-skipped-needs-reason
+    description: "Skipped items must include a reason in parentheses"
+    entity_type: review-checklist
+    body:
+      pattern: "^- \\[x\\] ~~[^~]+~~\\s*$"
+      max_matches: 0
+    severity: error
+  # --- Checklist completeness (docs) ---
+  - name: done-docs-checklist-no-unchecked
+    description: "Done docs checklists cannot have unchecked items"
+    entity_type: docs-checklist
+    when:
+      - "status=done"
+    body:
+      pattern: "^- \\[ \\]"
+      max_matches: 0
+    severity: error
+  - name: docs-checklist-skipped-needs-reason
+    description: "Skipped items must include a reason in parentheses"
+    entity_type: docs-checklist
+    body:
+      pattern: "^- \\[x\\] ~~[^~]+~~\\s*$"
+      max_matches: 0
+    severity: error
+  # --- Ticket workflow gates ---
+  - name: planning-ticket-needs-checklist
+    description: "Planning tickets must have a planning checklist"
+    entity_type: ticket
+    when:
+      - "status=planning"
+    relations:
+      has-planning:
+        min: 1
+    severity: error
+  - name: in-progress-ticket-needs-planning-done
+    description: "In-progress tickets require completed planning checklist"
+    entity_type: ticket
+    when:
+      - "status=in-progress"
+    relations:
+      has-planning:
+        where:
+          - "status=done"
+        min: 1
+    severity: error
+  - name: review-ticket-needs-implementation-done
+    description: "Review tickets must have completed implementation checklist"
+    entity_type: ticket
+    when:
+      - "status=review"
+    relations:
+      has-implementation:
+        where:
+          - "status=done"
+        min: 1
+    severity: error
+  - name: done-ticket-needs-review-done
+    description: "Done tickets must have completed review checklist"
+    entity_type: ticket
+    when:
+      - "status=done"
+    relations:
+      has-review:
+        where:
+          - "status=done"
+        min: 1
+    severity: error
+  - name: done-enhancement-needs-docs-done
+    description: "Done enhancement tickets must have completed docs checklist"
+    entity_type: ticket
+    when:
+      - "status=done"
+      - "kind=enhancement"
+    relations:
+      has-docs:
+        where:
+          - "status=done"
+        min: 1
+    severity: error
+  - name: done-docs-ticket-needs-docs-done
+    description: "Done docs tickets must have completed docs checklist"
+    entity_type: ticket
+    when:
+      - "status=done"
+      - "kind=docs"
+    relations:
+      has-docs:
+        where:
+          - "status=done"
+        min: 1
+    severity: error
+  # --- Bug workflow gates ---
+  - name: analyzing-bug-needs-checklist
+    description: "Analyzing bugs must have a bug analysis checklist"
+    entity_type: bug
+    when:
+      - "status=analyzing"
+    relations:
+      has-bug-analysis:
+        min: 1
+    severity: error
+  - name: in-progress-bug-needs-analysis-done
+    description: "In-progress bugs require completed analysis checklist"
+    entity_type: bug
+    when:
+      - "status=in-progress"
+    relations:
+      has-bug-analysis:
+        where:
+          - "status=done"
+        min: 1
+    severity: error
+  - name: review-bug-needs-implementation-done
+    description: "Review bugs must have completed implementation checklist"
+    entity_type: bug
+    when:
+      - "status=review"
+    relations:
+      has-implementation:
+        where:
+          - "status=done"
+        min: 1
+    severity: error
+  - name: done-bug-needs-review-done
+    description: "Done bugs must have completed review checklist"
+    entity_type: bug
+    when:
+      - "status=done"
+    relations:
+      has-review:
+        where:
+          - "status=done"
+        min: 1
+    severity: error
+  # --- Review response completeness ---
+  - name: addressed-review-response-needs-resolution
+    description: "Addressed review responses must document how they were fixed"
+    entity_type: review-response
+    when:
+      - "status=addressed"
+    then:
+      - "resolution!="
+    severity: error
+  - name: wontfix-review-response-needs-reason
+    description: "Won't-fix review responses must justify the decision"
+    entity_type: review-response
+    when:
+      - "status=wont-fix"
+    then:
+      - "reason!="
+    severity: error
+  - name: deferred-review-response-needs-reason
+    description: "Deferred review responses must explain when/why deferred"
+    entity_type: review-response
+    when:
+      - "status=deferred"
+    then:
+      - "reason!="
+    severity: error
+  # --- Ticket review response gates ---
+  - name: done-ticket-no-open-critical-responses
+    description: "Done tickets cannot have open critical review responses"
+    entity_type: ticket
+    when:
+      - "status=done"
+    relations:
+      has-review-response:
+        where:
+          - "status=open"
+          - "severity=critical"
+        max: 0
+    severity: error
+  - name: done-ticket-no-open-significant-responses
+    description: "Done tickets cannot have open significant review responses"
+    entity_type: ticket
+    when:
+      - "status=done"
+    relations:
+      has-review-response:
+        where:
+          - "status=open"
+          - "severity=significant"
+        max: 0
+    severity: error
+  # --- Bug review response gates ---
+  - name: done-bug-no-open-critical-responses
+    description: "Done bugs cannot have open critical review responses"
+    entity_type: bug
+    when:
+      - "status=done"
+    relations:
+      has-review-response:
+        where:
+          - "status=open"
+          - "severity=critical"
+        max: 0
+    severity: error
+  - name: done-bug-no-open-significant-responses
+    description: "Done bugs cannot have open significant review responses"
+    entity_type: bug
+    when:
+      - "status=done"
+    relations:
+      has-review-response:
+        where:
+          - "status=open"
+          - "severity=significant"
+        max: 0
+    severity: error
+# ===================
+# Automations
+# ===================
+# Automatically create workflow checklists when tickets/bugs transition to specific statuses.
+# Uses if_exists: skip to avoid creating duplicates if the relation already exists.
+automations:
+  # --- Ticket Workflow ---
+  - name: ticket-planning-checklist
+    description: Create planning checklist when ticket enters planning
+    on:
+      entity: [ticket]
+      property: status
+      becomes: planning
+    do:
+      - create_entity:
+          type: planning-checklist
+          properties:
+            title: "Planning: {{new.title}}"
+            status: in-progress
+          relation: has-planning
+          if_exists: skip
+  - name: ticket-implementation-checklist
+    description: Create implementation checklist when ticket enters in-progress
+    on:
+      entity: [ticket]
+      property: status
+      becomes: in-progress
+    do:
+      - create_entity:
+          type: implementation-checklist
+          properties:
+            title: "Implementation: {{new.title}}"
+            status: in-progress
+          relation: has-implementation
+          if_exists: skip
+  - name: ticket-review-checklist
+    description: Create review checklist when ticket enters review
+    on:
+      entity: [ticket]
+      property: status
+      becomes: review
+    do:
+      - create_entity:
+          type: review-checklist
+          properties:
+            title: "Review: {{new.title}}"
+            status: in-progress
+          relation: has-review
+          if_exists: skip
+  # --- Bug Workflow ---
+  - name: bug-analysis-checklist
+    description: Create bug analysis checklist when bug enters analyzing
+    on:
+      entity: [bug]
+      property: status
+      becomes: analyzing
+    do:
+      - create_entity:
+          type: bug-analysis-checklist
+          properties:
+            title: "Analysis: {{new.title}}"
+            status: in-progress
+          relation: has-bug-analysis
+          if_exists: skip
+  - name: bug-implementation-checklist
+    description: Create implementation checklist when bug enters in-progress
+    on:
+      entity: [bug]
+      property: status
+      becomes: in-progress
+    do:
+      - create_entity:
+          type: implementation-checklist
+          properties:
+            title: "Implementation: {{new.title}}"
+            status: in-progress
+          relation: has-implementation
+          if_exists: skip
+  - name: bug-review-checklist
+    description: Create review checklist when bug enters review
+    on:
+      entity: [bug]
+      property: status
+      becomes: review
+    do:
+      - create_entity:
+          type: review-checklist
+          properties:
+            title: "Review: {{new.title}}"
+            status: in-progress
+          relation: has-review
+          if_exists: skip
