@@ -183,22 +183,30 @@ Each entity type defines:
 | `label`       | Display name                                              |
 | `description` | Documentation explaining intent and usage (optional)      |
 | `aliases`     | Alternative names for CLI (e.g., `req` for `requirement`) |
-| `id_type`     | `auto` (default) or `manual` - controls ID generation     |
+| `id_type`     | `short` (default), `sequential`, or `manual` - controls ID generation |
 | `id_patterns` | ID prefixes (e.g., `REQ-`, `ADR-`)                        |
 | `properties`  | Property definitions                                      |
 
 ### ID Types
 
-Entity IDs can be either auto-generated or manually specified:
+Entity IDs can be auto-generated or manually specified:
 
-| Type     | Description                          | Example IDs                     |
-| -------- | ------------------------------------ | ------------------------------- |
-| `auto`   | Auto-generated numeric IDs (default) | `REQ-001`, `REQ-002`, `DEC-003` |
-| `manual` | Manually specified string IDs        | `auth-module`, `user-service`   |
+| Type         | Description                              | Example IDs                     |
+| ------------ | ---------------------------------------- | ------------------------------- |
+| `short`      | Random base36 IDs (default)              | `REQ-a3f8`, `REQ-k2m9`          |
+| `sequential` | Auto-incremented numeric IDs             | `REQ-001`, `REQ-002`, `DEC-003` |
+| `manual`     | Manually specified string IDs            | `auth-module`, `user-service`   |
 
-**Auto IDs** (default):
+**Short IDs** (default):
 
-- Automatically generated when creating entities
+- Automatically generated random base36 strings
+- Format: `PREFIX-XXXX` (e.g., `REQ-a3f8`)
+- Compact and collision-resistant
+- Excluded from gap analysis (no sequence to track)
+
+**Sequential IDs**:
+
+- Auto-incremented numeric suffix
 - Format: `PREFIX-NNN` (e.g., `REQ-001`)
 - Gap analysis detects missing numbers in sequences
 
@@ -210,31 +218,41 @@ Entity IDs can be either auto-generated or manually specified:
 
 ```yaml
 entities:
-  # Auto IDs (default behavior)
+  # Short IDs (default behavior)
   requirement:
     label: Requirement
-    id_patterns: ["REQ-"]
-    # id_type: sequential  # This is the default
+    id_prefix: REQ-
+    # id_type: short  # This is the default
+
+  # Sequential IDs for numbered tracking
+  decision:
+    label: Decision
+    id_prefix: ADR-
+    id_type: sequential
 
   # Manual IDs for components/modules
   component:
     label: Component
     id_type: manual
-    id_patterns: [] # Patterns are optional for manual IDs
+    # id_prefix not needed for manual IDs
     properties:
       name:
         type: string
         required: true
 ```
 
-Creating entities with string IDs:
+Creating entities:
 
 ```bash
-# Sequential (auto-generated)
+# Short ID (default, auto-generated)
 rela create requirement -t "User authentication"
-# Creates REQ-001
+# Creates REQ-a3f8
 
-# String (requires --id)
+# Sequential ID (auto-incremented)
+rela create decision -t "Use PostgreSQL for persistence"
+# Creates ADR-001
+
+# Manual ID (requires --id)
 rela create component --id auth-service -t "Authentication Service"
 # Creates auth-service
 ```
