@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Concepts
 
 This document explains the core concepts behind traceability and

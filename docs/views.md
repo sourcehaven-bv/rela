@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Views - Declarative Context Generation
 
 Views provide a declarative way to generate complete context from your rela graph by defining

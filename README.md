@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Rela
 
 A database layer on top of markdown. Define entities, link them together, and query their

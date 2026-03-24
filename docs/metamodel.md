@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Metamodel Reference
 
 The metamodel defines your project's entity types, properties, and relations.

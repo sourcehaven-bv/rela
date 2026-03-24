@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # CLI Reference
 
 Complete reference for all rela commands.
