@@ -1,16 +1,34 @@
+# @managed: claude-workflow v1
 version: "1.0"
 app:
   name: "Rela Development"
   description: "Architecture, features, tickets, and ideas for rela"
 styles:
-  # Ticket/Bug statuses
+  # Ticket statuses
   ticket_status:
     backlog: gray
     ready: blue
+    planning: cyan
     in-progress: purple
-    blocked: red
+    review: orange
     done: green
     wont-fix: gray
+    blocked: red
+  # Bug statuses
+  bug_status:
+    backlog: gray
+    ready: blue
+    analyzing: cyan
+    in-progress: purple
+    review: orange
+    done: green
+    wont-fix: gray
+    blocked: red
+  # Checklist statuses
+  checklist_status:
+    pending: gray
+    in-progress: purple
+    done: green
   # Feature statuses
   feature_status:
     proposed: gray
@@ -128,7 +146,6 @@ forms:
       - relation: inspires
         widget: multi-select
       - relation: promotes-to
-        widget: search
         label: "Promoted To"
     side_panel:
       traverse:
@@ -317,7 +334,6 @@ forms:
         label: "Requires Concepts"
         widget: multi-select
       - relation: refines
-        widget: search
     side_panel:
       traverse:
         - from: entry
@@ -380,7 +396,6 @@ forms:
     relations:
       - relation: implements
         label: "Implements Feature"
-        widget: search
         required: true
       - relation: affects
         label: "Affects Concepts"
@@ -402,20 +417,33 @@ forms:
       - property: status
         transitions:
           backlog: [ready, wont-fix]
-          ready: [backlog, in-progress, wont-fix]
-          in-progress: [ready, blocked, done]
-          blocked: [in-progress, wont-fix]
-          done: [in-progress]
+          ready: [backlog, planning, wont-fix]
+          planning: [ready, in-progress, blocked]
+          in-progress: [planning, review, blocked]
+          review: [in-progress, done, blocked]
+          done: [review]
+          blocked: [planning, in-progress, review, wont-fix]
           wont-fix: [backlog]
     relations:
       - relation: implements
         label: "Implements Feature"
-        widget: search
       - relation: affects
         label: "Affects Concepts"
         widget: multi-select
       - relation: depends-on
         widget: multi-select
+      - relation: has-planning
+        label: "Planning Checklist"
+        inline_create: create_planning_checklist
+      - relation: has-implementation
+        label: "Implementation Checklist"
+        inline_create: create_implementation_checklist
+      - relation: has-review
+        label: "Review Checklist"
+        inline_create: create_review_checklist
+      - relation: has-docs
+        label: "Docs Checklist"
+        inline_create: create_docs_checklist
   # ─────────────────────────────────────────────────
   # Bugs
   # ─────────────────────────────────────────────────
@@ -435,7 +463,6 @@ forms:
     relations:
       - relation: fixes
         label: "Fixes Feature"
-        widget: search
         required: true
       - relation: affects
         label: "Affects Concepts"
@@ -477,15 +504,16 @@ forms:
       - property: status
         transitions:
           backlog: [ready, wont-fix]
-          ready: [backlog, in-progress, wont-fix]
-          in-progress: [ready, blocked, done]
-          blocked: [in-progress, wont-fix]
-          done: [in-progress]
+          ready: [backlog, analyzing, wont-fix]
+          analyzing: [ready, in-progress, blocked]
+          in-progress: [analyzing, review, blocked]
+          review: [in-progress, done, blocked]
+          done: [review]
+          blocked: [analyzing, in-progress, review, wont-fix]
           wont-fix: [backlog]
     relations:
       - relation: fixes
         label: "Fixes Feature"
-        widget: search
       - relation: affects
         label: "Affects Concepts"
         widget: multi-select
@@ -493,6 +521,15 @@ forms:
         widget: multi-select
       - relation: adds-measure
         widget: multi-select
+      - relation: has-bug-analysis
+        label: "Analysis Checklist"
+        inline_create: create_bug_analysis_checklist
+      - relation: has-implementation
+        label: "Implementation Checklist"
+        inline_create: create_implementation_checklist
+      - relation: has-review
+        label: "Review Checklist"
+        inline_create: create_review_checklist
   # ─────────────────────────────────────────────────
   # Concepts
   # ─────────────────────────────────────────────────
@@ -580,7 +617,69 @@ forms:
         label: "Decides Concepts"
         widget: multi-select
       - relation: supersedes
-        widget: search
+  # ─────────────────────────────────────────────────
+  # Workflow Checklists
+  # ─────────────────────────────────────────────────
+  create_planning_checklist:
+    entity_type: planning-checklist
+    title: "Create Planning Checklist"
+    description: "Planning checklist for a ticket or feature"
+    body: true
+    fields:
+      - property: title
+      - property: status
+        transitions:
+          pending: [in-progress]
+          in-progress: [done, pending]
+          done: []
+  create_bug_analysis_checklist:
+    entity_type: bug-analysis-checklist
+    title: "Create Bug Analysis Checklist"
+    description: "Root cause analysis checklist for a bug"
+    body: true
+    fields:
+      - property: title
+      - property: status
+        transitions:
+          pending: [in-progress]
+          in-progress: [done, pending]
+          done: []
+  create_implementation_checklist:
+    entity_type: implementation-checklist
+    title: "Create Implementation Checklist"
+    description: "Implementation checklist for a ticket or bug"
+    body: true
+    fields:
+      - property: title
+      - property: status
+        transitions:
+          pending: [in-progress]
+          in-progress: [done, pending]
+          done: []
+  create_review_checklist:
+    entity_type: review-checklist
+    title: "Create Review Checklist"
+    description: "Review checklist before marking work as done"
+    body: true
+    fields:
+      - property: title
+      - property: status
+        transitions:
+          pending: [in-progress]
+          in-progress: [done, pending]
+          done: []
+  create_docs_checklist:
+    entity_type: docs-checklist
+    title: "Create Documentation Checklist"
+    description: "Documentation checklist for enhancements"
+    body: true
+    fields:
+      - property: title
+      - property: status
+        transitions:
+          pending: [in-progress]
+          in-progress: [done, pending]
+          done: []
 # ══════════════════════════════════════════════════
 # Lists
 # ══════════════════════════════════════════════════
@@ -595,7 +694,7 @@ lists:
     columns:
       - property: title
         sortable: true
-        link: true
+        link: detail
       - property: category
         sortable: true
       - property: status
@@ -625,7 +724,7 @@ lists:
     description: "Ideas being explored or validated"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: category
         sortable: true
@@ -648,7 +747,7 @@ lists:
     description: "High-value ideas"
     columns:
       - property: title
-        link: true
+        link: detail
       - property: category
       - property: status
       - property: effort
@@ -670,7 +769,7 @@ lists:
     description: "Possibilities being explored"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: status
         sortable: true
@@ -699,7 +798,7 @@ lists:
     title: "All Features"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: status
         sortable: true
@@ -725,7 +824,7 @@ lists:
     title: "All Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: kind
         sortable: true
@@ -753,7 +852,7 @@ lists:
     title: "Active Tickets"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: kind
       - property: priority
@@ -773,7 +872,7 @@ lists:
     title: "All Bugs"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: status
         sortable: true
@@ -799,7 +898,7 @@ lists:
     title: "Concepts"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: layer
         sortable: true
@@ -823,7 +922,7 @@ lists:
     title: "Decisions"
     columns:
       - property: title
-        link: true
+        link: detail
         sortable: true
       - property: date
         sortable: true
@@ -1022,7 +1121,7 @@ views:
         display: table
         columns:
           - property: title
-            link: true
+            link: detail
           - property: status
           - property: priority
           - property: effort
@@ -1032,7 +1131,7 @@ views:
         display: table
         columns:
           - property: title
-            link: true
+            link: detail
           - property: status
           - property: priority
         empty_message: "No bugs"
@@ -1100,7 +1199,7 @@ views:
         display: table
         columns:
           - property: title
-            link: true
+            link: detail
           - property: status
           - property: priority
         empty_message: "No tickets or bugs affect this"
@@ -1294,7 +1393,7 @@ dashboard:
       display: table
       columns:
         - property: title
-          link: true
+          link: detail
         - property: category
         - property: status
         - property: effort
@@ -1304,7 +1403,7 @@ dashboard:
       display: table
       columns:
         - property: title
-          link: true
+          link: detail
         - property: effort
         - property: value
       limit: 5
@@ -1313,7 +1412,7 @@ dashboard:
       display: table
       columns:
         - property: title
-          link: true
+          link: detail
         - property: status
       limit: 5
 # ══════════════════════════════════════════════════
