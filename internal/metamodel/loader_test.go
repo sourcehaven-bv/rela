@@ -1036,3 +1036,165 @@ func TestSchemaValidationError_MultipleErrors(t *testing.T) {
 	expected := "metamodel validation errors:\n  - first problem\n  - second problem"
 	assertEqual(t, err.Error(), expected)
 }
+
+func TestParse_CustomTypeWithValidations(t *testing.T) {
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  semver:
+    description: "Semantic version"
+    validations:
+      - pattern: '^\d+\.\d+\.\d+$'
+        error: "Must be valid semver (e.g., 1.2.3)"
+entities:
+  component:
+    label: Component
+    id_prefix: "COMP-"
+    properties:
+      name:
+        type: string
+        required: true
+      version:
+        type: semver
+`
+	meta, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+
+	if meta == nil {
+		t.Fatal("expected metamodel, got nil")
+	}
+
+	// Verify the type was loaded
+	semver, ok := meta.Types["semver"]
+	if !ok {
+		t.Fatal("expected semver type to be defined")
+	}
+	if semver.Description != "Semantic version" {
+		t.Errorf("expected description 'Semantic version', got %q", semver.Description)
+	}
+	if len(semver.Validations) != 1 {
+		t.Fatalf("expected 1 validation, got %d", len(semver.Validations))
+	}
+	if semver.Validations[0].Pattern != `^\d+\.\d+\.\d+$` {
+		t.Errorf("unexpected pattern: %s", semver.Validations[0].Pattern)
+	}
+	if semver.Validations[0].Error != "Must be valid semver (e.g., 1.2.3)" {
+		t.Errorf("unexpected error message: %s", semver.Validations[0].Error)
+	}
+}
+
+func TestParse_CustomTypeWithInvalidRegex(t *testing.T) {
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  bad_type:
+    validations:
+      - pattern: '[invalid(regex'
+        error: "This won't work"
+entities:
+  item:
+    label: Item
+    id_prefix: "ITEM-"
+    properties:
+      name:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for invalid regex pattern")
+	}
+	if !strings.Contains(err.Error(), "invalid regex pattern") {
+		t.Errorf("expected 'invalid regex pattern' in error, got: %v", err)
+	}
+}
+
+func TestParse_CustomTypeWithEmptyPattern(t *testing.T) {
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  bad_type:
+    validations:
+      - pattern: ""
+        error: "Empty pattern"
+entities:
+  item:
+    label: Item
+    id_prefix: "ITEM-"
+    properties:
+      name:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for empty pattern")
+	}
+	if !strings.Contains(err.Error(), "empty pattern") {
+		t.Errorf("expected 'empty pattern' in error, got: %v", err)
+	}
+}
+
+func TestParse_CustomTypeWithEmptyError(t *testing.T) {
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  bad_type:
+    validations:
+      - pattern: "^test$"
+        error: ""
+entities:
+  item:
+    label: Item
+    id_prefix: "ITEM-"
+    properties:
+      name:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for empty error message")
+	}
+	if !strings.Contains(err.Error(), "empty error message") {
+		t.Errorf("expected 'empty error message' in error, got: %v", err)
+	}
+}
+
+func TestParse_CustomTypeWithEnumAndValidations(t *testing.T) {
+	// A type can have both enum values AND regex validations
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  constrained_status:
+    values: [draft, review, published]
+    validations:
+      - pattern: '^[a-z]+$'
+        error: "Must be lowercase"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: constrained_status
+`
+	meta, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+
+	ct := meta.Types["constrained_status"]
+	if len(ct.Values) != 3 {
+		t.Errorf("expected 3 enum values, got %d", len(ct.Values))
+	}
+	if len(ct.Validations) != 1 {
+		t.Errorf("expected 1 validation, got %d", len(ct.Validations))
+	}
+}

@@ -1,6 +1,7 @@
 package metamodel
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -536,5 +537,307 @@ func TestValidatePropertyValue_UnknownType(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "nonexistent") {
 		t.Errorf("expected 'nonexistent' in error, got: %v", err)
+	}
+}
+
+func TestValidatePropertyValue_RegexValidation(t *testing.T) {
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"semver": {
+				Validations: []TypeValidation{
+					{
+						Pattern: `^\d+\.\d+\.\d+$`,
+						Error:   "Must be valid semver (e.g., 1.2.3)",
+					},
+				},
+			},
+		},
+	}
+	propDef := &PropertyDef{Type: "semver"}
+
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+		errMsg  string
+	}{
+		{"valid semver", "1.2.3", false, ""},
+		{"valid semver zeros", "0.0.0", false, ""},
+		{"valid semver large", "123.456.789", false, ""},
+		{"invalid no dots", "123", true, "Must be valid semver"},
+		{"invalid one dot", "1.2", true, "Must be valid semver"},
+		{"invalid letters", "1.2.x", true, "Must be valid semver"},
+		{"invalid extra dots", "1.2.3.4", true, "Must be valid semver"},
+		{"empty string skipped", "", false, ""}, // Empty strings skip regex validation
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := meta.ValidatePropertyValue("version", propDef, tt.value)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for %q, got nil", tt.value)
+				} else if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("expected error containing %q, got %q", tt.errMsg, err.Error())
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error for %q: %v", tt.value, err)
+			}
+		})
+	}
+}
+
+func TestValidatePropertyValue_MultipleRegexValidations(t *testing.T) {
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"rrule": {
+				Description: "iCal recurrence rule",
+				Validations: []TypeValidation{
+					{
+						Pattern: `^FREQ=`,
+						Error:   "Must start with FREQ=",
+					},
+					{
+						Pattern: `FREQ=(YEARLY|MONTHLY|WEEKLY|DAILY)`,
+						Error:   "FREQ must be YEARLY, MONTHLY, WEEKLY, or DAILY",
+					},
+				},
+			},
+		},
+	}
+	propDef := &PropertyDef{Type: "rrule"}
+
+	tests := []struct {
+		name        string
+		value       string
+		wantErr     bool
+		errCount    int
+		errContains []string
+	}{
+		{
+			name:    "valid weekly",
+			value:   "FREQ=WEEKLY;BYDAY=MO",
+			wantErr: false,
+		},
+		{
+			name:    "valid daily",
+			value:   "FREQ=DAILY",
+			wantErr: false,
+		},
+		{
+			name:        "missing FREQ prefix",
+			value:       "BYDAY=MO",
+			wantErr:     true,
+			errCount:    2,
+			errContains: []string{"Must start with FREQ=", "FREQ must be"},
+		},
+		{
+			name:        "invalid frequency",
+			value:       "FREQ=HOURLY",
+			wantErr:     true,
+			errCount:    1,
+			errContains: []string{"FREQ must be YEARLY, MONTHLY, WEEKLY, or DAILY"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := meta.ValidatePropertyValue("schedule", propDef, tt.value)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for %q, got nil", tt.value)
+					return
+				}
+				// Check error count
+				errParts := strings.Split(err.Error(), "; ")
+				if tt.errCount > 0 && len(errParts) != tt.errCount {
+					t.Errorf("expected %d error(s), got %d: %q", tt.errCount, len(errParts), err.Error())
+				}
+				// Check error contains expected messages
+				for _, msg := range tt.errContains {
+					if !strings.Contains(err.Error(), msg) {
+						t.Errorf("expected error to contain %q, got %q", msg, err.Error())
+					}
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error for %q: %v", tt.value, err)
+			}
+		})
+	}
+}
+
+func TestValidatePropertyValue_EnumWithRegexValidation(t *testing.T) {
+	// A type can have both enum values AND regex validations
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"constrained_status": {
+				Values: []string{"draft", "review", "published"},
+				Validations: []TypeValidation{
+					{
+						Pattern: `^[a-z]+$`,
+						Error:   "Must be lowercase letters only",
+					},
+				},
+			},
+		},
+	}
+	propDef := &PropertyDef{Type: "constrained_status"}
+
+	// Valid enum value that also passes regex
+	err := meta.ValidatePropertyValue("status", propDef, "draft")
+	if err != nil {
+		t.Errorf("expected valid value to pass, got: %v", err)
+	}
+
+	// Invalid enum value (not in list)
+	err = meta.ValidatePropertyValue("status", propDef, "pending")
+	if err == nil {
+		t.Error("expected error for invalid enum value")
+	}
+	if !strings.Contains(err.Error(), "allowed") {
+		t.Errorf("expected enum error, got: %v", err)
+	}
+}
+
+func TestValidatePropertyValue_TypeWithNoValidation(t *testing.T) {
+	// A custom type with no values and no validations should accept any string
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"alias_string": {
+				Description: "Just an alias for string",
+				// No Values, no Validations
+			},
+		},
+	}
+	propDef := &PropertyDef{Type: "alias_string"}
+
+	// Any string should be valid
+	err := meta.ValidatePropertyValue("field", propDef, "anything goes here!")
+	if err != nil {
+		t.Errorf("expected any string to be valid, got: %v", err)
+	}
+
+	// But non-strings should fail
+	err = meta.ValidatePropertyValue("field", propDef, 123)
+	if err == nil {
+		t.Error("expected error for non-string value")
+	}
+}
+
+func TestValidatePropertyValue_RegexOnStringList(t *testing.T) {
+	// Compile regexes to populate the cache (normally done by loader)
+	semverType := CustomType{
+		Validations: []TypeValidation{
+			{Pattern: `^\d+\.\d+\.\d+$`, Error: "Must be semver"},
+		},
+	}
+	re, _ := regexp.Compile(semverType.Validations[0].Pattern)
+	semverType.Validations[0].SetCompiled(re)
+
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"semver": semverType,
+		},
+	}
+	propDef := &PropertyDef{Type: "semver", List: true}
+
+	// All valid
+	err := meta.ValidatePropertyValue("versions", propDef, []string{"1.0.0", "2.0.0"})
+	if err != nil {
+		t.Errorf("expected valid list, got: %v", err)
+	}
+
+	// One invalid
+	err = meta.ValidatePropertyValue("versions", propDef, []string{"1.0.0", "bad"})
+	if err == nil {
+		t.Fatal("expected error for invalid list item")
+	}
+	if !strings.Contains(err.Error(), "item[1]") {
+		t.Errorf("expected error to mention item index, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Must be semver") {
+		t.Errorf("expected error to mention validation message, got: %v", err)
+	}
+
+	// Multiple invalid - should report all errors
+	err = meta.ValidatePropertyValue("versions", propDef, []string{"bad1", "1.0.0", "bad2"})
+	if err == nil {
+		t.Fatal("expected error for invalid list items")
+	}
+	if !strings.Contains(err.Error(), "item[0]") {
+		t.Errorf("expected error to mention item[0], got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "item[2]") {
+		t.Errorf("expected error to mention item[2], got: %v", err)
+	}
+}
+
+func TestValidatePropertyValue_RegexOnInterfaceList(t *testing.T) {
+	// Compile regexes to populate the cache (normally done by loader)
+	semverType := CustomType{
+		Validations: []TypeValidation{
+			{Pattern: `^\d+\.\d+\.\d+$`, Error: "Must be semver"},
+		},
+	}
+	re, _ := regexp.Compile(semverType.Validations[0].Pattern)
+	semverType.Validations[0].SetCompiled(re)
+
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"semver": semverType,
+		},
+	}
+	propDef := &PropertyDef{Type: "semver", List: true}
+
+	// All valid ([]interface{} as from YAML parsing)
+	err := meta.ValidatePropertyValue("versions", propDef, []interface{}{"1.0.0", "2.0.0"})
+	if err != nil {
+		t.Errorf("expected valid list, got: %v", err)
+	}
+
+	// One invalid
+	err = meta.ValidatePropertyValue("versions", propDef, []interface{}{"1.0.0", "bad"})
+	if err == nil {
+		t.Fatal("expected error for invalid list item")
+	}
+	if !strings.Contains(err.Error(), "item[1]") {
+		t.Errorf("expected error to mention item index, got: %v", err)
+	}
+
+	// Non-string item in list
+	err = meta.ValidatePropertyValue("versions", propDef, []interface{}{"1.0.0", 123})
+	if err == nil {
+		t.Fatal("expected error for non-string list item")
+	}
+	if !strings.Contains(err.Error(), "item[1]") {
+		t.Errorf("expected error to mention item index, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "must be a string") {
+		t.Errorf("expected error to mention type issue, got: %v", err)
+	}
+}
+
+func TestValidatePropertyValue_EmptyListWithRegexOnly(t *testing.T) {
+	// A regex-only type (no enum values) with an empty list should pass
+	// (let 'required' handle empty lists if needed)
+	semverType := CustomType{
+		Validations: []TypeValidation{
+			{Pattern: `^\d+\.\d+\.\d+$`, Error: "Must be semver"},
+		},
+	}
+	re, _ := regexp.Compile(semverType.Validations[0].Pattern)
+	semverType.Validations[0].SetCompiled(re)
+
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"semver": semverType,
+		},
+	}
+	propDef := &PropertyDef{Type: "semver", List: true}
+
+	// Empty list should pass for regex-only types
+	err := meta.ValidatePropertyValue("versions", propDef, []string{})
+	if err != nil {
+		t.Errorf("expected empty list to pass for regex-only type, got: %v", err)
 	}
 }
