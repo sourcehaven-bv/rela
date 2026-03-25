@@ -212,20 +212,6 @@ Each validation requires:
 - Patterns are easier to write and maintain
 - No mega-regex with opaque errors
 
-### Combined Enum and Regex
-
-A type can have both enum values and regex validations. The value must be in
-the allowed list AND pass all regex validations:
-
-```yaml
-types:
-  lowercase_status:
-    values: [draft, review, published]
-    validations:
-      - pattern: "^[a-z]+$"
-        error: "Must be lowercase letters only"
-```
-
 ### Empty Values
 
 - **Enum types**: Empty string is not a valid value (fails validation)
