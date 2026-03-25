@@ -988,6 +988,36 @@ Checks for:
 
 This catches issues in manually-edited markdown files that bypass CLI validation.
 
+#### rela analyze schema
+
+Analyze metamodel schema usage to find unused or underused types.
+
+```bash
+rela analyze schema
+rela analyze schema --threshold 2
+rela analyze schema --cleanup --dry-run
+```
+
+Shows:
+
+- Entity types with no instances
+- Relation types with no instances
+- Custom types (enums) not referenced by any property
+- Types with few instances (when `--threshold` is set)
+
+**Flags:**
+
+| Flag          | Description                                                    |
+| ------------- | -------------------------------------------------------------- |
+| `--threshold` | Show types with instance count <= threshold (0 = only unused)  |
+| `--cleanup`   | Remove unused types from metamodel.yaml                        |
+| `--dry-run`   | Preview cleanup changes without modifying files                |
+
+The cleanup operation only removes types that have no instances AND no references in
+configuration files (data-entry.yaml, views.yaml, validations, automations). Types
+referenced in forms, lists, views, or validations will not be removed even if they
+have zero instances.
+
 #### rela analyze all
 
 Run all analysis checks.
