@@ -3,6 +3,7 @@ package metamodel
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -142,6 +143,7 @@ func validate(m *Metamodel) error {
 		validationErrors = append(validationErrors, "metamodel has no entity types defined")
 	}
 
+	validationErrors = append(validationErrors, validateCustomTypes(m)...)
 	validationErrors = append(validationErrors, validateEntitySemantics(m)...)
 	validationErrors = append(validationErrors, validateRelationReferences(m)...)
 
@@ -257,6 +259,46 @@ func validateDefaultSort(entityName string, def EntityDef) []string {
 				entityName, i, ss.Direction))
 		}
 	}
+	return errs
+}
+
+// validateCustomTypes validates custom type definitions, compiles regex patterns,
+// and stores the compiled regexes for use during validation.
+func validateCustomTypes(m *Metamodel) []string {
+	var errs []string
+
+	typeNames := sortedKeys(m.Types)
+	for _, typeName := range typeNames {
+		customType := m.Types[typeName]
+
+		for i := range customType.Validations {
+			validation := &customType.Validations[i]
+
+			if validation.Pattern == "" {
+				errs = append(errs, fmt.Sprintf(
+					"type %q: validation[%d] has empty pattern", typeName, i))
+				continue
+			}
+			if validation.Error == "" {
+				errs = append(errs, fmt.Sprintf(
+					"type %q: validation[%d] has empty error message", typeName, i))
+			}
+
+			re, err := regexp.Compile(validation.Pattern)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf(
+					"type %q: validation[%d] has invalid regex pattern %q: %v",
+					typeName, i, validation.Pattern, err))
+			} else {
+				// Cache the compiled regex for use during validation
+				validation.SetCompiled(re)
+			}
+		}
+
+		// Write back the modified type with compiled regexes
+		m.Types[typeName] = customType
+	}
+
 	return errs
 }
 

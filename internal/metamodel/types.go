@@ -1,6 +1,10 @@
 package metamodel
 
-import "github.com/Sourcehaven-BV/rela/internal/model"
+import (
+	"regexp"
+
+	"github.com/Sourcehaven-BV/rela/internal/model"
+)
 
 // Metamodel represents the full metamodel configuration
 type Metamodel struct {
@@ -61,10 +65,33 @@ func (v *ValidationRule) IsError() bool {
 	return v.GetSeverity() == "error"
 }
 
-// CustomType defines a reusable enum type
+// TypeValidation defines a regex validation for a custom type.
+type TypeValidation struct {
+	Pattern string `yaml:"pattern"` // Regex pattern that values must match
+	Error   string `yaml:"error"`   // User-friendly error message if pattern doesn't match
+
+	// compiled is the pre-compiled regex, populated during metamodel load.
+	// Not exported to prevent YAML serialization issues.
+	compiled *regexp.Regexp
+}
+
+// Compiled returns the pre-compiled regex pattern.
+// Returns nil if the pattern hasn't been compiled yet.
+func (tv *TypeValidation) Compiled() *regexp.Regexp {
+	return tv.compiled
+}
+
+// SetCompiled sets the pre-compiled regex pattern.
+func (tv *TypeValidation) SetCompiled(re *regexp.Regexp) {
+	tv.compiled = re
+}
+
+// CustomType defines a reusable type with optional enum values and/or regex validations.
 type CustomType struct {
-	Values  []string `yaml:"values"`
-	Default string   `yaml:"default,omitempty"`
+	Values      []string         `yaml:"values,omitempty"`      // Allowed values (makes this an enum type)
+	Default     string           `yaml:"default,omitempty"`     // Default value
+	Description string           `yaml:"description,omitempty"` // Documentation for the type
+	Validations []TypeValidation `yaml:"validations,omitempty"` // Regex validations with error messages
 }
 
 // EntityDef defines an entity type in the metamodel

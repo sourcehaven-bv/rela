@@ -148,7 +148,12 @@ To resolve conflicts, rename one of the definitions or move it to a shared file.
 
 ## Custom Types
 
-Define reusable enum types that can be used in entity properties:
+Define reusable types that can be used in entity properties. Custom types support
+enum values, regex validations, or both.
+
+### Enum Types
+
+Define allowed values for a property:
 
 ```yaml
 types:
@@ -159,6 +164,53 @@ types:
   priority:
     values: [critical, high, medium, low]
 ```
+
+### Regex Validations
+
+Define validation patterns with user-friendly error messages. Multiple patterns
+can be combined—all must pass for a value to be valid:
+
+```yaml
+types:
+  semver:
+    description: "Semantic version number"
+    validations:
+      - pattern: '^\d+\.\d+\.\d+$'
+        error: "Must be valid semver (e.g., 1.2.3)"
+
+  rrule:
+    description: "iCal recurrence rule (RFC 5545)"
+    validations:
+      - pattern: "^FREQ=(YEARLY|MONTHLY|WEEKLY|DAILY)"
+        error: "Must start with valid FREQ"
+      - pattern: "^(?!.*COUNT=.*UNTIL=)"
+        error: "Cannot specify both COUNT and UNTIL"
+
+  email:
+    validations:
+      - pattern: "^[^@]+@[^@]+\\.[^@]+$"
+        error: "Must be a valid email address"
+```
+
+Each validation requires:
+
+| Field     | Description                                        |
+| --------- | -------------------------------------------------- |
+| `pattern` | Regex pattern that values must match               |
+| `error`   | User-friendly error message shown when validation fails |
+
+**Benefits of multiple simple patterns vs one complex regex:**
+
+- Each pattern has its own clear error message
+- Users see exactly which validation failed
+- Patterns are easier to write and maintain
+- No mega-regex with opaque errors
+
+### Empty Values
+
+- **Enum types**: Empty string is not a valid value (fails validation)
+- **Regex-only types**: Empty strings skip validation (let `required` handle it)
+- **List properties**: Each item in the list is validated independently
 
 ### Reserved Type Names
 
