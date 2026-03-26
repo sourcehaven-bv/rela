@@ -6,9 +6,12 @@ import (
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/schema"
 )
 
 func (s *Server) handleAnalyzeOrphans(
@@ -210,4 +213,52 @@ func (s *Server) handleAnalyzeValidations(
 	}
 	return mcp.NewToolResultText(
 		fmt.Sprintf("Found validation issues:\n\n%s", text)), nil
+}
+
+func (s *Server) handleAnalyzeSchema(
+	_ context.Context, request mcp.CallToolRequest,
+) (*mcp.CallToolResult, error) {
+	threshold := request.GetInt("threshold", 0)
+
+	// Load optional config files
+	dataEntry := s.loadDataEntryConfig()
+	viewsFile, _ := s.loadViews()
+
+	// Run analysis
+	analysis := schema.Analyze(s.ws.Meta(), s.ws.Graph(), dataEntry, viewsFile, threshold)
+
+	if !analysis.HasIssues() {
+		return mcp.NewToolResultText("All schema types are in use"), nil
+	}
+
+	text, err := marshalJSON(analysis)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	totalUnused := analysis.TotalUnused()
+	totalLowUsage := analysis.TotalLowUsage()
+
+	var message string
+	if totalLowUsage > 0 {
+		message = fmt.Sprintf("Found %d unused types and %d low-usage types:\n\n%s",
+			totalUnused, totalLowUsage, text)
+	} else {
+		message = fmt.Sprintf("Found %d unused types:\n\n%s", totalUnused, text)
+	}
+
+	return mcp.NewToolResultText(message), nil
+}
+
+// loadDataEntryConfig loads data-entry.yaml if it exists.
+func (s *Server) loadDataEntryConfig() *dataentryconfig.Config {
+	data, err := s.ws.ReadProjectFile(dataentryconfig.ConfigFile)
+	if err != nil {
+		return nil
+	}
+	var cfg dataentryconfig.Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+	return &cfg
 }

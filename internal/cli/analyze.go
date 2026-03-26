@@ -2,13 +2,18 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/schema"
+	"github.com/Sourcehaven-BV/rela/internal/views"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -20,6 +25,11 @@ var (
 	// Set by the first call to resolveAnalyzeOpts() in a command invocation.
 	cachedOpts     *workspace.AnalyzeOptions
 	cachedOptsOnce bool
+
+	// Schema analysis flags
+	schemaThreshold int
+	schemaCleanup   bool
+	schemaDryRun    bool
 )
 
 var analyzeCmd = &cobra.Command{
@@ -34,6 +44,7 @@ Subcommands:
   cardinality - Check relation cardinality constraints
   properties  - Validate entity property values against metamodel
   validations - Run custom validation rules from metamodel
+  schema      - Analyze metamodel schema usage (find unused types)
   all         - Run all analyses`,
 }
 
@@ -505,12 +516,244 @@ var analyzeAllCmd = &cobra.Command{
 	},
 }
 
+var analyzeSchemaCmd = &cobra.Command{
+	Use:   "schema",
+	Short: "Analyze metamodel schema usage",
+	Long: `Analyze metamodel schema usage to find unused or underused types.
+
+Shows:
+  - Entity types with no instances
+  - Relation types with no instances
+  - Custom types (enums) not referenced by any property
+  - Types with few instances (when --threshold is set)
+
+Use --cleanup to remove unused types from metamodel.yaml and update
+data-entry.yaml and views.yaml accordingly.
+
+Examples:
+  rela analyze schema              # Show unused types
+  rela analyze schema --threshold 2   # Include types with ≤2 instances
+  rela analyze schema --cleanup       # Remove unused types
+  rela analyze schema --cleanup --dry-run  # Preview cleanup changes`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if schemaThreshold < 0 {
+			return fmt.Errorf("--threshold must be non-negative")
+		}
+
+		// Load optional config files
+		dataEntry := loadDataEntryConfig()
+		viewsFile := loadViewsFile()
+
+		// Run analysis
+		analysis := schema.Analyze(meta, ws.Graph(), dataEntry, viewsFile, schemaThreshold)
+
+		// Handle cleanup mode
+		if schemaCleanup {
+			return runSchemaCleanup(analysis)
+		}
+
+		// Output results
+		return outputSchemaAnalysis(analysis)
+	},
+}
+
+// loadDataEntryConfig loads data-entry.yaml if it exists.
+func loadDataEntryConfig() *dataentryconfig.Config {
+	data, err := ws.ReadProjectFile(dataentryconfig.ConfigFile)
+	if err != nil {
+		return nil // File doesn't exist or can't be read
+	}
+	var cfg dataentryconfig.Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil // Invalid YAML
+	}
+	return &cfg
+}
+
+// loadViewsFile loads views.yaml if it exists.
+func loadViewsFile() *views.File {
+	viewsFile, err := ws.LoadViews()
+	if err != nil {
+		return nil
+	}
+	return viewsFile
+}
+
+// runSchemaCleanup executes the cleanup plan.
+func runSchemaCleanup(analysis *schema.Analysis) error {
+	plan := schema.PlanCleanup(analysis)
+
+	if plan.IsEmpty() {
+		if out.Format == "json" {
+			return out.WriteAnalysisResult(output.AnalysisResult{
+				Status:  "success",
+				Message: "No unused types to clean up",
+				Count:   0,
+				Details: plan,
+			})
+		}
+		out.WriteSuccess("No unused types to clean up")
+		return nil
+	}
+
+	// Output the plan
+	if out.Format == "json" {
+		status := "success"
+		message := fmt.Sprintf("Planned %d changes", plan.TotalChanges())
+		if schemaDryRun {
+			message = fmt.Sprintf("Would make %d changes (dry-run)", plan.TotalChanges())
+		}
+		return out.WriteAnalysisResult(output.AnalysisResult{
+			Status:  status,
+			Message: message,
+			Count:   plan.TotalChanges(),
+			Details: plan,
+		})
+	}
+
+	// Text output
+	if schemaDryRun {
+		out.WriteMessage("Dry-run: would make the following changes:")
+	} else {
+		out.WriteMessage("Making the following changes:")
+	}
+
+	for _, change := range plan.MetamodelChanges {
+		out.WriteMessage("  %s: %s %s", change.File, change.Action, change.Target)
+	}
+	for _, change := range plan.DataEntryChanges {
+		out.WriteMessage("  %s: %s %s", change.File, change.Action, change.Target)
+	}
+	for _, change := range plan.ViewsChanges {
+		out.WriteMessage("  %s: %s %s", change.File, change.Action, change.Target)
+	}
+
+	if schemaDryRun {
+		out.WriteSuccess("Would make %d changes (dry-run, no files modified)", plan.TotalChanges())
+		return nil
+	}
+
+	// Execute cleanup
+	projectRoot := filepath.Dir(ws.Paths().MetamodelPath)
+	if err := schema.ExecuteCleanup(plan, projectRoot, false); err != nil {
+		return err
+	}
+
+	out.WriteSuccess("Made %d changes", plan.TotalChanges())
+	return nil
+}
+
+// outputSchemaAnalysis outputs the schema analysis results.
+func outputSchemaAnalysis(analysis *schema.Analysis) error {
+	totalUnused := analysis.TotalUnused()
+	totalLowUsage := analysis.TotalLowUsage()
+	totalIssues := totalUnused + totalLowUsage
+
+	if out.Format == "json" {
+		return outputSchemaAnalysisJSON(analysis, totalUnused, totalLowUsage, totalIssues)
+	}
+	return outputSchemaAnalysisText(analysis, totalUnused, totalLowUsage, totalIssues)
+}
+
+// outputSchemaAnalysisJSON outputs schema analysis in JSON format.
+func outputSchemaAnalysisJSON(analysis *schema.Analysis, totalUnused, totalLowUsage, totalIssues int) error {
+	status := "success"
+	message := "All schema types are in use"
+	if totalUnused > 0 {
+		status = "warning"
+		message = fmt.Sprintf("Found %d unused types", totalUnused)
+		if totalLowUsage > 0 {
+			message = fmt.Sprintf("Found %d unused types and %d low-usage types", totalUnused, totalLowUsage)
+		}
+	} else if totalLowUsage > 0 {
+		status = "warning"
+		message = fmt.Sprintf("Found %d low-usage types", totalLowUsage)
+	}
+	return out.WriteAnalysisResult(output.AnalysisResult{
+		Status:  status,
+		Message: message,
+		Count:   totalIssues,
+		Details: analysis,
+	})
+}
+
+// outputSchemaAnalysisText outputs schema analysis in text format.
+func outputSchemaAnalysisText(analysis *schema.Analysis, totalUnused, totalLowUsage, totalIssues int) error {
+	if totalIssues == 0 {
+		out.WriteSuccess("All schema types are in use")
+		return nil
+	}
+
+	outputUnusedTypes("Unused Entity Types", analysis.UnusedEntityTypes)
+	outputUnusedTypes("Unused Relation Types", analysis.UnusedRelationTypes)
+	outputUnusedCustomTypes(analysis.UnusedCustomTypes)
+	outputLowUsageTypes("Low-Usage Entity Types", analysis.LowUsageEntityTypes)
+	outputLowUsageTypes("Low-Usage Relation Types", analysis.LowUsageRelationTypes)
+
+	out.WriteWarning("Found %d unused types and %d low-usage types", totalUnused, totalLowUsage)
+	if totalUnused > 0 {
+		out.WriteMessage("Run with --cleanup to remove unused types")
+	}
+	return nil
+}
+
+// outputUnusedTypes outputs a section of unused types with their references.
+func outputUnusedTypes(header string, usages []schema.TypeUsage) {
+	if len(usages) == 0 {
+		return
+	}
+	out.WriteSectionHeader(header)
+	for _, usage := range usages {
+		if len(usage.References) == 0 {
+			out.WriteWarning("  %s (0 instances, can be removed)", usage.Name)
+		} else {
+			out.WriteWarning("  %s (0 instances, %d references)", usage.Name, len(usage.References))
+			for _, ref := range usage.References {
+				out.WriteMessage("    - %s: %s (%s)", ref.File, ref.Section, ref.Kind)
+			}
+		}
+	}
+	out.WriteMessage("")
+}
+
+// outputUnusedCustomTypes outputs unused custom types (no references to show).
+func outputUnusedCustomTypes(usages []schema.TypeUsage) {
+	if len(usages) == 0 {
+		return
+	}
+	out.WriteSectionHeader("Unused Custom Types")
+	for _, usage := range usages {
+		out.WriteWarning("  %s (not referenced, can be removed)", usage.Name)
+	}
+	out.WriteMessage("")
+}
+
+// outputLowUsageTypes outputs a section of low-usage types.
+func outputLowUsageTypes(header string, usages []schema.TypeUsage) {
+	if len(usages) == 0 {
+		return
+	}
+	out.WriteSectionHeader(header)
+	for _, usage := range usages {
+		out.WriteMessage("  %s (%d instances)", usage.Name, usage.Count)
+	}
+	out.WriteMessage("")
+}
+
 func init() {
 	// Scope flags (inherited by all subcommands)
 	analyzeCmd.PersistentFlags().StringVar(&analyzeViewName, "view", "",
 		"Scope analysis to entities in a view")
 	analyzeCmd.PersistentFlags().StringVar(&analyzeEntryID, "entry", "",
 		"Entry entity ID for the view (required with --view)")
+
+	// Schema subcommand flags
+	analyzeSchemaCmd.Flags().IntVar(&schemaThreshold, "threshold", 0,
+		"Show types with instance count <= threshold (0 = only unused)")
+	analyzeSchemaCmd.Flags().BoolVar(&schemaCleanup, "cleanup", false,
+		"Remove unused types from metamodel and config files")
+	analyzeSchemaCmd.Flags().BoolVar(&schemaDryRun, "dry-run", false,
+		"Preview cleanup changes without modifying files")
 
 	analyzeCmd.AddCommand(analyzeOrphansCmd)
 	analyzeCmd.AddCommand(analyzeDuplicatesCmd)
@@ -519,6 +762,7 @@ func init() {
 	analyzeCmd.AddCommand(analyzePropertiesCmd)
 	analyzeCmd.AddCommand(analyzeValidationsCmd)
 	analyzeCmd.AddCommand(analyzeAllCmd)
+	analyzeCmd.AddCommand(analyzeSchemaCmd)
 
 	rootCmd.AddCommand(analyzeCmd)
 }
