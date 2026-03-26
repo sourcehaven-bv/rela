@@ -686,6 +686,94 @@ entities:
 	}
 }
 
+func TestParse_IDCapsOnNonShortType(t *testing.T) {
+	// id_caps should warn when set on non-short ID types
+	tests := []struct {
+		name       string
+		yaml       string
+		wantErr    bool
+		wantErrStr string
+	}{
+		{
+			name: "id_caps on sequential type warns",
+			yaml: `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: sequential
+    id_caps: upper
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`,
+			wantErr:    true,
+			wantErrStr: "'id_caps' has no effect (only applies to 'id_type: short')",
+		},
+		{
+			name: "id_caps on manual type warns",
+			yaml: `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: manual
+    id_caps: lower
+    properties:
+      title:
+        type: string
+`,
+			wantErr:    true,
+			wantErrStr: "'id_caps' has no effect (only applies to 'id_type: short')",
+		},
+		{
+			name: "id_caps on default type (short) is valid",
+			yaml: `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_caps: upper
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`,
+			wantErr: false, // default id_type is "short", so id_caps is valid
+		},
+		{
+			name: "id_caps on short type is valid",
+			yaml: `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: short
+    id_caps: upper
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.yaml))
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.wantErrStr)
+					return
+				}
+				if !strings.Contains(err.Error(), tt.wantErrStr) {
+					t.Errorf("expected error containing %q, got: %v", tt.wantErrStr, err)
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestParse_UnknownTopLevelKeys(t *testing.T) {
 	tests := []struct {
 		name    string

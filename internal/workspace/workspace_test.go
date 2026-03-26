@@ -229,6 +229,119 @@ func TestGenerateID_Sequential(t *testing.T) {
 	}
 }
 
+func TestGenerateID_ShortWithIDCaps(t *testing.T) {
+	// Test that id_caps configuration affects short ID generation
+	shortIDMetamodel := `version: "1.0"
+entities:
+  ticket-upper:
+    label: Ticket (Uppercase)
+    plural: tickets-upper
+    id_prefix: "TKT-"
+    id_type: short
+    id_caps: upper
+    properties:
+      title:
+        type: string
+        required: true
+  ticket-lower:
+    label: Ticket (Lowercase)
+    plural: tickets-lower
+    id_prefix: "TKT-"
+    id_type: short
+    id_caps: lower
+    properties:
+      title:
+        type: string
+        required: true
+  ticket-default:
+    label: Ticket (Default)
+    plural: tickets-default
+    id_prefix: "TKT-"
+    id_type: short
+    properties:
+      title:
+        type: string
+        required: true
+relations: {}
+`
+	fs := storage.NewMemFS()
+	root := "/project"
+	ctx := &project.Context{
+		Root:                 root,
+		MetamodelPath:        root + "/metamodel.yaml",
+		CacheDir:             root + "/.rela",
+		CachePath:            root + "/.rela/cache.json",
+		EntitiesDir:          root + "/entities",
+		RelationsDir:         root + "/relations",
+		TemplatesDir:         root + "/templates",
+		EntityTemplatesDir:   root + "/templates/entities",
+		RelationTemplatesDir: root + "/templates/relations",
+	}
+
+	_ = fs.MkdirAll(ctx.EntitiesDir+"/tickets-upper", 0o755)
+	_ = fs.MkdirAll(ctx.EntitiesDir+"/tickets-lower", 0o755)
+	_ = fs.MkdirAll(ctx.EntitiesDir+"/tickets-default", 0o755)
+	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
+	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+	_ = fs.WriteFile(ctx.MetamodelPath, []byte(shortIDMetamodel), 0o644)
+
+	meta, err := metamodel.Parse([]byte(shortIDMetamodel))
+	if err != nil {
+		t.Fatalf("failed to parse metamodel: %v", err)
+	}
+
+	repo := repository.New(fs, ctx)
+	g := graph.New()
+	ws := NewWithGraph(repo, meta, g)
+
+	tests := []struct {
+		entityType  string
+		expectUpper bool
+	}{
+		{"ticket-upper", true},
+		{"ticket-lower", false},
+		{"ticket-default", true}, // default is uppercase
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.entityType, func(t *testing.T) {
+			id, err := ws.GenerateID(tt.entityType, "")
+			if err != nil {
+				t.Fatalf("GenerateID() error = %v", err)
+			}
+
+			// ID should start with TKT-
+			if !hasPrefix(id, "TKT-") {
+				t.Errorf("GenerateID() = %q, expected prefix TKT-", id)
+			}
+
+			// Get the random suffix (everything after TKT-)
+			suffix := id[4:]
+			if suffix == "" {
+				t.Fatalf("GenerateID() = %q, no suffix generated", id)
+			}
+
+			// Check case of the random suffix
+			for _, c := range suffix {
+				if c >= 'A' && c <= 'Z' {
+					if !tt.expectUpper {
+						t.Errorf("GenerateID() = %q, expected lowercase suffix but found uppercase char %q", id, c)
+					}
+				} else if c >= 'a' && c <= 'z' {
+					if tt.expectUpper {
+						t.Errorf("GenerateID() = %q, expected uppercase suffix but found lowercase char %q", id, c)
+					}
+				}
+				// digits 0-9 are case-neutral, ignore them
+			}
+		})
+	}
+}
+
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
 // --- CreateEntity ---
 
 func TestCreateEntity(t *testing.T) {

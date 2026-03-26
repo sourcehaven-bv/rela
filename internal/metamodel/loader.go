@@ -211,6 +211,10 @@ func validateEntitySemantics(m *Metamodel) []string {
 			errs = append(errs, fmt.Sprintf(
 				"entity %q: no ID prefix defined (set 'id_prefix' or 'id_prefixes', or use 'id_type: manual')", name))
 		}
+		if def.IDCaps != "" && def.GetIDType() != IDTypeShort {
+			errs = append(errs, fmt.Sprintf(
+				"entity %q: 'id_caps' has no effect (only applies to 'id_type: short')", name))
+		}
 
 		for propName, propDef := range def.Properties {
 			if propDef.Type == "" {
