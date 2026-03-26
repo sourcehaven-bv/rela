@@ -64,8 +64,8 @@ func TestPlanCleanup_SafeRemoval(t *testing.T) {
 	}
 }
 
-func TestPlanCleanup_PreservesReferencedTypes(t *testing.T) {
-	// Type with no instances but referenced in form - should NOT be removed
+func TestPlanCleanup_CascadesReferencedTypes(t *testing.T) {
+	// Type with no instances but referenced in form - should be removed with cascade
 	analysis := &Analysis{
 		UnusedEntityTypes: []TypeUsage{
 			{
@@ -80,23 +80,43 @@ func TestPlanCleanup_PreservesReferencedTypes(t *testing.T) {
 
 	plan := PlanCleanup(analysis)
 
+	// Entity type should be removed from metamodel
+	var foundEntityRemoval bool
 	for _, change := range plan.MetamodelChanges {
-		if change.Target == "referenced-type" {
-			t.Error("should not plan removal of referenced type")
+		if change.Action == "remove_entity_type" && change.Target == "referenced-type" {
+			foundEntityRemoval = true
+			break
 		}
+	}
+	if !foundEntityRemoval {
+		t.Error("expected entity type to be removed")
+	}
+
+	// Form should be cascade-removed from data-entry.yaml
+	var foundFormRemoval bool
+	for _, change := range plan.DataEntryChanges {
+		if change.Action == "remove_form" && change.Target == "my-form" {
+			foundFormRemoval = true
+			break
+		}
+	}
+	if !foundFormRemoval {
+		t.Error("expected form to be cascade-removed")
 	}
 }
 
-func TestPlanCleanup_AllowsRelationReferences(t *testing.T) {
-	// Type referenced only by relation from/to - CAN be removed
+func TestPlanCleanup_CascadeMultipleReferences(t *testing.T) {
+	// Type with multiple references - all should be cascade-removed
 	analysis := &Analysis{
 		UnusedEntityTypes: []TypeUsage{
 			{
-				Name:  "relation-only-type",
+				Name:  "multi-ref-type",
 				Count: 0,
 				References: []Reference{
+					{File: "data-entry.yaml", Section: "forms.type-form", Kind: "form"},
+					{File: "data-entry.yaml", Section: "lists.type-list", Kind: "list"},
+					{File: "views.yaml", Section: "views.type-view", Kind: "view"},
 					{File: "metamodel.yaml", Section: "relations.some-rel.from", Kind: "relation_from"},
-					{File: "metamodel.yaml", Section: "relations.other-rel.to", Kind: "relation_to"},
 				},
 			},
 		},
@@ -104,15 +124,45 @@ func TestPlanCleanup_AllowsRelationReferences(t *testing.T) {
 
 	plan := PlanCleanup(analysis)
 
-	found := false
+	// Entity type should be removed
+	var foundEntityRemoval bool
 	for _, change := range plan.MetamodelChanges {
-		if change.Action == "remove_entity_type" && change.Target == "relation-only-type" {
-			found = true
+		if change.Action == "remove_entity_type" && change.Target == "multi-ref-type" {
+			foundEntityRemoval = true
 			break
 		}
 	}
-	if !found {
-		t.Error("expected removal of type only referenced by relations")
+	if !foundEntityRemoval {
+		t.Error("expected entity type to be removed")
+	}
+
+	// Form and list should be cascade-removed from data-entry.yaml
+	var foundForm, foundList bool
+	for _, change := range plan.DataEntryChanges {
+		if change.Action == "remove_form" && change.Target == "type-form" {
+			foundForm = true
+		}
+		if change.Action == "remove_list" && change.Target == "type-list" {
+			foundList = true
+		}
+	}
+	if !foundForm {
+		t.Error("expected form to be cascade-removed")
+	}
+	if !foundList {
+		t.Error("expected list to be cascade-removed")
+	}
+
+	// View should be cascade-removed from views.yaml
+	var foundView bool
+	for _, change := range plan.ViewsChanges {
+		if change.Action == "remove_view" && change.Target == "type-view" {
+			foundView = true
+			break
+		}
+	}
+	if !foundView {
+		t.Error("expected view to be cascade-removed")
 	}
 }
 
@@ -314,6 +364,160 @@ func TestExecuteCleanup_EmptyPlan(t *testing.T) {
 	}
 }
 
+func TestExecuteCleanup_CascadeDataEntry(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create metamodel.yaml
+	metamodelContent := `entities:
+  requirement:
+    properties:
+      title:
+        type: string
+  to-remove:
+    properties:
+      title:
+        type: string
+`
+	metamodelPath := filepath.Join(tmpDir, "metamodel.yaml")
+	if err := os.WriteFile(metamodelPath, []byte(metamodelContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create data-entry.yaml with form and list for to-remove type
+	dataEntryContent := `forms:
+  requirement-form:
+    entity_type: requirement
+  to-remove-form:
+    entity_type: to-remove
+lists:
+  requirement-list:
+    entity_type: requirement
+  to-remove-list:
+    entity_type: to-remove
+`
+	dataEntryPath := filepath.Join(tmpDir, "data-entry.yaml")
+	if err := os.WriteFile(dataEntryPath, []byte(dataEntryContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := &CleanupPlan{
+		MetamodelChanges: []Change{
+			{File: "metamodel.yaml", Action: "remove_entity_type", Target: "to-remove"},
+		},
+		DataEntryChanges: []Change{
+			{File: "data-entry.yaml", Action: "remove_form", Target: "to-remove-form"},
+			{File: "data-entry.yaml", Action: "remove_list", Target: "to-remove-list"},
+		},
+	}
+
+	if err := ExecuteCleanup(plan, tmpDir, false); err != nil {
+		t.Fatalf("ExecuteCleanup failed: %v", err)
+	}
+
+	// Check metamodel.yaml
+	metamodelData, err := os.ReadFile(metamodelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(metamodelData), "to-remove:") {
+		t.Error("entity type 'to-remove' should have been removed from metamodel")
+	}
+
+	// Check data-entry.yaml
+	dataEntryData, err := os.ReadFile(dataEntryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataEntryStr := string(dataEntryData)
+	if strings.Contains(dataEntryStr, "to-remove-form:") {
+		t.Error("form 'to-remove-form' should have been removed")
+	}
+	if strings.Contains(dataEntryStr, "to-remove-list:") {
+		t.Error("list 'to-remove-list' should have been removed")
+	}
+	if !strings.Contains(dataEntryStr, "requirement-form:") {
+		t.Error("form 'requirement-form' should be preserved")
+	}
+	if !strings.Contains(dataEntryStr, "requirement-list:") {
+		t.Error("list 'requirement-list' should be preserved")
+	}
+}
+
+func TestExecuteCleanup_CascadeViews(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create metamodel.yaml
+	metamodelContent := `entities:
+  requirement:
+    properties:
+      title:
+        type: string
+`
+	metamodelPath := filepath.Join(tmpDir, "metamodel.yaml")
+	if err := os.WriteFile(metamodelPath, []byte(metamodelContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create views.yaml
+	viewsContent := `views:
+  req-context:
+    entry:
+      type: requirement
+  to-remove-view:
+    entry:
+      type: to-remove
+`
+	viewsPath := filepath.Join(tmpDir, "views.yaml")
+	if err := os.WriteFile(viewsPath, []byte(viewsContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := &CleanupPlan{
+		ViewsChanges: []Change{
+			{File: "views.yaml", Action: "remove_view", Target: "to-remove-view"},
+		},
+	}
+
+	if err := ExecuteCleanup(plan, tmpDir, false); err != nil {
+		t.Fatalf("ExecuteCleanup failed: %v", err)
+	}
+
+	viewsData, err := os.ReadFile(viewsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewsStr := string(viewsData)
+	if strings.Contains(viewsStr, "to-remove-view:") {
+		t.Error("view 'to-remove-view' should have been removed")
+	}
+	if !strings.Contains(viewsStr, "req-context:") {
+		t.Error("view 'req-context' should be preserved")
+	}
+}
+
+func TestExtractName(t *testing.T) {
+	tests := []struct {
+		section string
+		prefix  string
+		want    string
+	}{
+		{"forms.my-form", "forms.", "my-form"},
+		{"lists.my-list", "lists.", "my-list"},
+		{"views.my-view", "views.", "my-view"},
+		{"forms.my-form.relations", "forms.", "my-form"},
+		{"validations.my-val", "validations.", "my-val"},
+		{"unknown", "forms.", "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.section, func(t *testing.T) {
+			if got := extractName(tt.section, tt.prefix); got != tt.want {
+				t.Errorf("extractName(%q, %q) = %q, want %q", tt.section, tt.prefix, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCanSafelyRemove(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -331,87 +535,16 @@ func TestCanSafelyRemove(t *testing.T) {
 			want:  false,
 		},
 		{
-			name: "only relation references",
-			usage: TypeUsage{
-				Count: 0,
-				References: []Reference{
-					{Kind: "relation_from"},
-					{Kind: "relation_to"},
-				},
-			},
-			want: true,
-		},
-		{
-			name: "has form reference",
+			name: "no instances with references - still removable",
 			usage: TypeUsage{
 				Count: 0,
 				References: []Reference{
 					{Kind: "form"},
-				},
-			},
-			want: false,
-		},
-		{
-			name: "has list reference",
-			usage: TypeUsage{
-				Count: 0,
-				References: []Reference{
 					{Kind: "list"},
-				},
-			},
-			want: false,
-		},
-		{
-			name: "has view reference",
-			usage: TypeUsage{
-				Count: 0,
-				References: []Reference{
 					{Kind: "view"},
 				},
 			},
-			want: false,
-		},
-		{
-			name: "has validation reference",
-			usage: TypeUsage{
-				Count: 0,
-				References: []Reference{
-					{Kind: "validation"},
-				},
-			},
-			want: false,
-		},
-		{
-			name: "has automation reference",
-			usage: TypeUsage{
-				Count: 0,
-				References: []Reference{
-					{Kind: "automation"},
-				},
-			},
-			want: false,
-		},
-		{
-			name: "has kanban reference",
-			usage: TypeUsage{
-				Count: 0,
-				References: []Reference{
-					{Kind: "kanban"},
-				},
-			},
-			want: false,
-		},
-		{
-			name: "mixed references - one blocking",
-			usage: TypeUsage{
-				Count: 0,
-				References: []Reference{
-					{Kind: "relation_from"},
-					{Kind: "form"}, // This blocks
-					{Kind: "relation_to"},
-				},
-			},
-			want: false,
+			want: true, // References are cascade-removed
 		},
 	}
 

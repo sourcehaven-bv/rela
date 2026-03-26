@@ -35,12 +35,12 @@ func (p *CleanupPlan) IsEmpty() bool {
 }
 
 // PlanCleanup creates a cleanup plan based on the analysis results.
-// Only types with zero instances AND zero references (except in the files being cleaned)
-// can be safely removed.
+// Types with zero instances are removed along with all their references
+// in config files (cascade cleanup).
 func PlanCleanup(analysis *Analysis) *CleanupPlan {
 	plan := &CleanupPlan{}
 
-	// Plan removal of unused entity types (only those with no references)
+	// Plan removal of unused entity types and their references
 	for _, usage := range analysis.UnusedEntityTypes {
 		if canSafelyRemove(usage) {
 			plan.MetamodelChanges = append(plan.MetamodelChanges, Change{
@@ -48,10 +48,12 @@ func PlanCleanup(analysis *Analysis) *CleanupPlan {
 				Action: "remove_entity_type",
 				Target: usage.Name,
 			})
+			// Cascade: remove references in config files
+			planEntityTypeCascade(plan, usage)
 		}
 	}
 
-	// Plan removal of unused relation types (only those with no references)
+	// Plan removal of unused relation types and their references
 	for _, usage := range analysis.UnusedRelationTypes {
 		if canSafelyRemove(usage) {
 			plan.MetamodelChanges = append(plan.MetamodelChanges, Change{
@@ -59,12 +61,13 @@ func PlanCleanup(analysis *Analysis) *CleanupPlan {
 				Action: "remove_relation_type",
 				Target: usage.Name,
 			})
+			// Cascade: remove references in config files
+			planRelationTypeCascade(plan, usage)
 		}
 	}
 
 	// Plan removal of unused custom types (they have no instances by definition)
 	for _, usage := range analysis.UnusedCustomTypes {
-		// UnusedCustomTypes already have no references
 		plan.MetamodelChanges = append(plan.MetamodelChanges, Change{
 			File:   "metamodel.yaml",
 			Action: "remove_custom_type",
@@ -75,31 +78,94 @@ func PlanCleanup(analysis *Analysis) *CleanupPlan {
 	return plan
 }
 
-// canSafelyRemove returns true if a type can be safely removed.
-// A type can be safely removed if it has no instances and no references
-// in configuration files (data-entry.yaml, views.yaml, validations, automations).
-func canSafelyRemove(usage TypeUsage) bool {
-	// Must have zero instances
-	if usage.Count > 0 {
-		return false
-	}
-
-	// Check if any references would prevent removal
+// planEntityTypeCascade adds cascade changes for an entity type's references.
+func planEntityTypeCascade(plan *CleanupPlan, usage TypeUsage) {
 	for _, ref := range usage.References {
-		// References in relation from/to are okay - they'll be cleaned up when
-		// we remove the entity type. But other references prevent removal.
 		switch ref.Kind {
+		case "form":
+			plan.DataEntryChanges = append(plan.DataEntryChanges, Change{
+				File:   ref.File,
+				Action: "remove_form",
+				Target: extractName(ref.Section, "forms."),
+			})
+		case "list":
+			plan.DataEntryChanges = append(plan.DataEntryChanges, Change{
+				File:   ref.File,
+				Action: "remove_list",
+				Target: extractName(ref.Section, "lists."),
+			})
+		case "kanban":
+			plan.DataEntryChanges = append(plan.DataEntryChanges, Change{
+				File:   ref.File,
+				Action: "remove_kanban",
+				Target: extractName(ref.Section, "kanbans."),
+			})
+		case "view":
+			if ref.File == "views.yaml" {
+				plan.ViewsChanges = append(plan.ViewsChanges, Change{
+					File:   ref.File,
+					Action: "remove_view",
+					Target: extractName(ref.Section, "views."),
+				})
+			} else {
+				plan.DataEntryChanges = append(plan.DataEntryChanges, Change{
+					File:   ref.File,
+					Action: "remove_data_entry_view",
+					Target: extractName(ref.Section, "views."),
+				})
+			}
+		case "validation":
+			plan.MetamodelChanges = append(plan.MetamodelChanges, Change{
+				File:   ref.File,
+				Action: "remove_validation",
+				Target: extractName(ref.Section, "validations."),
+			})
+		case "automation":
+			plan.MetamodelChanges = append(plan.MetamodelChanges, Change{
+				File:   ref.File,
+				Action: "remove_automation",
+				Target: extractName(ref.Section, "automations."),
+			})
 		case "relation_from", "relation_to":
-			// These are okay - the relation definition references the entity type
-			// but if the entity type has no instances, it's safe to remove
-			continue
-		default:
-			// Any other reference (form, list, view, validation, automation) prevents removal
-			return false
+			// These will be handled when the relation type itself is cleaned up
+			// or when we clean up the entity type from relation definitions
 		}
 	}
+}
 
-	return true
+// planRelationTypeCascade adds cascade changes for a relation type's references.
+// Currently a no-op: relation type references in forms/views/automations require
+// surgical removal (just the relation field, not the whole config) which is complex.
+// TODO: Implement surgical removal of relation references.
+func planRelationTypeCascade(_ *CleanupPlan, _ TypeUsage) {
+	// Relation references are more complex to cascade:
+	// - form.relations[].relation - remove just that relation entry
+	// - view.traverse[].follow - remove just that traverse rule
+	// - automation triggers/actions - remove just the relation reference
+	// For now, unused relation types are removed but their config references remain
+	// (which may cause validation errors until manually cleaned up)
+}
+
+// extractName extracts the name from a section path like "forms.my-form" -> "my-form".
+func extractName(section, prefix string) string {
+	if len(section) > len(prefix) && section[:len(prefix)] == prefix {
+		name := section[len(prefix):]
+		// Handle nested paths like "forms.my-form.relations" -> "my-form"
+		for i, c := range name {
+			if c == '.' {
+				return name[:i]
+			}
+		}
+		return name
+	}
+	return section
+}
+
+// canSafelyRemove returns true if a type can be safely removed.
+// A type can be safely removed if it has no instances. References in config
+// files (forms, lists, views, etc.) will be cascade-removed along with the type.
+func canSafelyRemove(usage TypeUsage) bool {
+	return usage.Count == 0
 }
 
 // ExecuteCleanup applies the cleanup plan to the project files.
@@ -110,13 +176,28 @@ func ExecuteCleanup(plan *CleanupPlan, projectRoot string, dryRun bool) error {
 		return nil
 	}
 
-	// Group changes by file
 	metamodelPath := filepath.Join(projectRoot, "metamodel.yaml")
+	dataEntryPath := filepath.Join(projectRoot, "data-entry.yaml")
+	viewsPath := filepath.Join(projectRoot, "views.yaml")
 
 	// Apply metamodel changes
 	if len(plan.MetamodelChanges) > 0 {
 		if err := applyMetamodelChanges(metamodelPath, plan.MetamodelChanges, dryRun); err != nil {
 			return fmt.Errorf("failed to update metamodel.yaml: %w", err)
+		}
+	}
+
+	// Apply data-entry.yaml changes
+	if len(plan.DataEntryChanges) > 0 {
+		if err := applyDataEntryChanges(dataEntryPath, plan.DataEntryChanges, dryRun); err != nil {
+			return fmt.Errorf("failed to update data-entry.yaml: %w", err)
+		}
+	}
+
+	// Apply views.yaml changes
+	if len(plan.ViewsChanges) > 0 {
+		if err := applyViewsChanges(viewsPath, plan.ViewsChanges, dryRun); err != nil {
+			return fmt.Errorf("failed to update views.yaml: %w", err)
 		}
 	}
 
@@ -168,6 +249,108 @@ func applyMetamodelChanges(path string, changes []Change, dryRun bool) error {
 	}
 
 	// Write back
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, out, 0o644)
+}
+
+// applyDataEntryChanges applies changes to data-entry.yaml using AST manipulation.
+func applyDataEntryChanges(path string, changes []Change, dryRun bool) error {
+	// Check if file exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil // No data-entry.yaml, nothing to clean
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	var doc yaml.Node
+	if unmarshalErr := yaml.Unmarshal(data, &doc); unmarshalErr != nil {
+		return unmarshalErr
+	}
+
+	root := migration.GetDocumentRoot(&doc)
+	if root == nil {
+		return fmt.Errorf("failed to get document root")
+	}
+
+	for _, change := range changes {
+		switch change.Action {
+		case "remove_form":
+			forms := migration.GetMapValue(root, "forms")
+			if forms != nil {
+				migration.DeleteMapKey(forms, change.Target)
+			}
+		case "remove_list":
+			lists := migration.GetMapValue(root, "lists")
+			if lists != nil {
+				migration.DeleteMapKey(lists, change.Target)
+			}
+		case "remove_kanban":
+			kanbans := migration.GetMapValue(root, "kanbans")
+			if kanbans != nil {
+				migration.DeleteMapKey(kanbans, change.Target)
+			}
+		case "remove_data_entry_view":
+			views := migration.GetMapValue(root, "views")
+			if views != nil {
+				migration.DeleteMapKey(views, change.Target)
+			}
+		}
+	}
+
+	if dryRun {
+		return nil
+	}
+
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, out, 0o644)
+}
+
+// applyViewsChanges applies changes to views.yaml using AST manipulation.
+func applyViewsChanges(path string, changes []Change, dryRun bool) error {
+	// Check if file exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil // No views.yaml, nothing to clean
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	var doc yaml.Node
+	if unmarshalErr := yaml.Unmarshal(data, &doc); unmarshalErr != nil {
+		return unmarshalErr
+	}
+
+	root := migration.GetDocumentRoot(&doc)
+	if root == nil {
+		return fmt.Errorf("failed to get document root")
+	}
+
+	for _, change := range changes {
+		if change.Action == "remove_view" {
+			views := migration.GetMapValue(root, "views")
+			if views != nil {
+				migration.DeleteMapKey(views, change.Target)
+			}
+		}
+	}
+
+	if dryRun {
+		return nil
+	}
+
 	out, err := yaml.Marshal(&doc)
 	if err != nil {
 		return err
