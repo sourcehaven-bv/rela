@@ -3,7 +3,7 @@ effort: s
 id: TKT-o02q
 kind: enhancement
 priority: medium
-status: in-progress
+status: done
 title: Allow configuration of short ID capitalization
 type: ticket
 ---
