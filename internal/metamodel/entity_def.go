@@ -123,6 +123,14 @@ func (e *EntityDef) IsManualID() bool {
 	return e.GetIDType() == IDTypeManual
 }
 
+// GetIDCaps returns the ID capitalization mode for short IDs, defaulting to "upper".
+func (e *EntityDef) GetIDCaps() string {
+	if e.IDCaps == "" {
+		return IDCapsUpper
+	}
+	return e.IDCaps
+}
+
 // GetIDPrefixes returns the effective ID prefixes for this entity type.
 // It normalizes id_prefix (singular) and id_prefixes (plural) into a single list.
 func (e *EntityDef) GetIDPrefixes() []string {

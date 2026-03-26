@@ -102,6 +102,7 @@ type EntityDef struct {
 	Plural      string                 `yaml:"plural,omitempty"`      // Used for directory names (e.g., "policies" for "policy")
 	Aliases     []string               `yaml:"aliases,omitempty"`
 	IDType      string                 `yaml:"id_type,omitempty"`     // "short" (default), "sequential", or "manual"
+	IDCaps      string                 `yaml:"id_caps,omitempty"`     // "upper" (default) or "lower" - capitalization for short ID suffix
 	IDPrefix    string                 `yaml:"id_prefix,omitempty"`   // Single ID prefix (sugar for single-element id_prefixes)
 	IDPrefixes  []string               `yaml:"id_prefixes,omitempty"` // Multiple ID prefixes
 	RDFType     string                 `yaml:"rdf_type,omitempty"`
@@ -140,6 +141,12 @@ const (
 
 	// Deprecated alias (still accepted for backwards compatibility)
 	IDTypeString = "string" // Deprecated: use "manual" instead
+)
+
+// ID capitalization modes for short IDs
+const (
+	IDCapsUpper = "upper" // Random suffix is uppercase (e.g., REQ-A3F8) - default
+	IDCapsLower = "lower" // Random suffix is lowercase (e.g., REQ-a3f8)
 )
 
 // ReservedPropertyNames contains property names that cannot be used in metamodel definitions

@@ -158,7 +158,8 @@ const (
 // GenerateShortID generates a random base36 ID with the given prefix.
 // Length is adaptive based on entityCount to minimize collision probability.
 // The function retries with progressively longer IDs if collisions occur.
-func GenerateShortID(existingIDs []string, prefix string, entityCount int) string {
+// The caps parameter controls suffix capitalization: "upper" or "lower".
+func GenerateShortID(existingIDs []string, prefix string, entityCount int, caps string) string {
 	// Build a set for fast lookup
 	existing := make(map[string]struct{}, len(existingIDs))
 	for _, id := range existingIDs {
@@ -168,7 +169,7 @@ func GenerateShortID(existingIDs []string, prefix string, entityCount int) strin
 	length := calculateIDLength(entityCount)
 
 	for attempts := 0; attempts < shortIDMaxAttempts; attempts++ {
-		id := generateRandomBase36(prefix, length)
+		id := generateRandomBase36(prefix, length, caps)
 		if _, exists := existing[id]; !exists {
 			return id
 		}
@@ -179,7 +180,7 @@ func GenerateShortID(existingIDs []string, prefix string, entityCount int) strin
 	}
 
 	// Final fallback: use maximum length
-	return generateRandomBase36(prefix, maxShortIDLength)
+	return generateRandomBase36(prefix, maxShortIDLength, caps)
 }
 
 // calculateIDLength determines the optimal ID length based on entity count.
@@ -200,7 +201,8 @@ func calculateIDLength(entityCount int) int {
 }
 
 // generateRandomBase36 generates a random ID with the given prefix and length.
-func generateRandomBase36(prefix string, length int) string {
+// The caps parameter controls suffix capitalization: "upper" (default) or "lower".
+func generateRandomBase36(prefix string, length int, caps string) string {
 	b := make([]byte, length)
 	if _, err := rand.Read(b); err != nil {
 		// Fallback to less random but functional approach
@@ -216,5 +218,10 @@ func generateRandomBase36(prefix string, length int) string {
 	if !strings.HasSuffix(prefix, "-") {
 		prefix += "-"
 	}
-	return strings.ToUpper(prefix) + string(b)
+
+	suffix := string(b)
+	if caps != "lower" {
+		suffix = strings.ToUpper(suffix)
+	}
+	return prefix + suffix
 }
