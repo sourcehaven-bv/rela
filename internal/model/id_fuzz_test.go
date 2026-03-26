@@ -274,13 +274,13 @@ func FuzzFormatWithPadding(f *testing.F) {
 // FuzzGenerateShortID tests short random ID generation
 func FuzzGenerateShortID(f *testing.F) {
 	// Seed with various prefixes and entity counts
-	f.Add("TKT", "", 0)
-	f.Add("REQ-", "REQ-a1b2", 10)
-	f.Add("DEC", "DEC-xxxx,DEC-yyyy,DEC-zzzz", 100)
-	f.Add("COMP-", "", 1000)
-	f.Add("A", "", 10000)
+	f.Add("TKT", "", 0, "upper")
+	f.Add("REQ-", "REQ-A1B2", 10, "upper")
+	f.Add("DEC", "DEC-xxxx,DEC-yyyy,DEC-zzzz", 100, "lower")
+	f.Add("COMP-", "", 1000, "upper")
+	f.Add("A", "", 10000, "lower")
 
-	f.Fuzz(func(t *testing.T, prefix, existingJoined string, entityCount int) {
+	f.Fuzz(func(t *testing.T, prefix, existingJoined string, entityCount int, caps string) {
 		// Skip very long prefixes
 		if len(prefix) > 50 {
 			return
@@ -304,13 +304,18 @@ func FuzzGenerateShortID(f *testing.F) {
 			entityCount = 100000
 		}
 
+		// Normalize caps to valid values
+		if caps != "lower" {
+			caps = "upper"
+		}
+
 		var existing []string
 		if existingJoined != "" {
 			existing = strings.Split(existingJoined, ",")
 		}
 
 		// Should never panic
-		result := GenerateShortID(existing, prefix, entityCount)
+		result := GenerateShortID(existing, prefix, entityCount, caps)
 
 		// Result should be non-empty
 		if result == "" {
@@ -318,8 +323,8 @@ func FuzzGenerateShortID(f *testing.F) {
 			return
 		}
 
-		// Result should start with uppercased prefix + dash
-		expectedPrefix := strings.ToUpper(strings.TrimSuffix(prefix, "-")) + "-"
+		// Result should start with prefix (as-is) + dash if not already present
+		expectedPrefix := strings.TrimSuffix(prefix, "-") + "-"
 		if !strings.HasPrefix(result, expectedPrefix) {
 			t.Errorf("GenerateShortID result %q doesn't have expected prefix %q",
 				result, expectedPrefix)
@@ -337,12 +342,19 @@ func FuzzGenerateShortID(f *testing.F) {
 			t.Errorf("GenerateShortID returned invalid ID %q: %v", result, err)
 		}
 
-		// Random part should only contain base36 characters
+		// Random part should only contain base36 characters with correct case
 		randomPart := strings.TrimPrefix(result, expectedPrefix)
 		for _, c := range randomPart {
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
-				t.Errorf("GenerateShortID random part %q contains invalid char %q",
-					randomPart, c)
+			if caps == "upper" {
+				if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z')) {
+					t.Errorf("GenerateShortID random part %q contains invalid char %q (expected uppercase)",
+						randomPart, c)
+				}
+			} else {
+				if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+					t.Errorf("GenerateShortID random part %q contains invalid char %q (expected lowercase)",
+						randomPart, c)
+				}
 			}
 		}
 	})
@@ -350,17 +362,22 @@ func FuzzGenerateShortID(f *testing.F) {
 
 // FuzzGenerateShortIDCollision stress tests collision resistance
 func FuzzGenerateShortIDCollision(f *testing.F) {
-	f.Add("TKT", 100)
-	f.Add("REQ", 500)
-	f.Add("X", 1000)
+	f.Add("TKT", 100, "upper")
+	f.Add("REQ", 500, "lower")
+	f.Add("X", 1000, "upper")
 
-	f.Fuzz(func(t *testing.T, prefix string, count int) {
+	f.Fuzz(func(t *testing.T, prefix string, count int, caps string) {
 		// Skip invalid inputs
 		if prefix == "" || len(prefix) > 20 {
 			return
 		}
 		if count < 1 || count > 1000 {
 			return
+		}
+
+		// Normalize caps to valid values
+		if caps != "lower" {
+			caps = "upper"
 		}
 
 		// Generate many IDs and verify no collisions
@@ -372,7 +389,7 @@ func FuzzGenerateShortIDCollision(f *testing.F) {
 				existing = append(existing, id)
 			}
 
-			id := GenerateShortID(existing, prefix, len(seen))
+			id := GenerateShortID(existing, prefix, len(seen), caps)
 			if _, exists := seen[id]; exists {
 				t.Errorf("GenerateShortID produced collision: %q (iteration %d)", id, i)
 				return

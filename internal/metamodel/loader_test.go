@@ -605,6 +605,87 @@ func TestInvalidIDTypeError_Error(t *testing.T) {
 	}
 }
 
+func TestInvalidIDCapsError_Error(t *testing.T) {
+	err := &InvalidIDCapsError{
+		EntityType: "task",
+		IDCaps:     "mixed",
+	}
+
+	expected := `invalid id_caps for entity task: mixed (must be 'upper' or 'lower')`
+	if err.Error() != expected {
+		t.Errorf("expected %q, got %q", expected, err.Error())
+	}
+}
+
+func TestParse_InvalidIDCaps(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: short
+    id_caps: mixed
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`
+
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	var idCapsErr *InvalidIDCapsError
+	if !errors.As(err, &idCapsErr) {
+		t.Errorf("expected InvalidIDCapsError, got %T: %v", err, err)
+	}
+}
+
+func TestParse_ValidIDCaps(t *testing.T) {
+	tests := []struct {
+		name     string
+		idCaps   string
+		expected string
+	}{
+		{"upper", "upper", "upper"},
+		{"lower", "lower", "lower"},
+		{"empty defaults to upper", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml := fmt.Sprintf(`version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: short
+    id_caps: %s
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`, tt.idCaps)
+			if tt.idCaps == "" {
+				yaml = `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: short
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`
+			}
+
+			meta, err := Parse([]byte(yaml))
+			assertNoError(t, err)
+
+			if meta.Entities["task"].IDCaps != tt.expected {
+				t.Errorf("expected IDCaps=%q, got %q", tt.expected, meta.Entities["task"].IDCaps)
+			}
+		})
+	}
+}
+
 func TestParse_UnknownTopLevelKeys(t *testing.T) {
 	tests := []struct {
 		name    string

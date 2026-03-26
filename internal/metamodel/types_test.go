@@ -324,6 +324,39 @@ func TestEntityDef_GetIDType(t *testing.T) {
 	}
 }
 
+func TestEntityDef_GetIDCaps(t *testing.T) {
+	tests := []struct {
+		name string
+		def  EntityDef
+		want string
+	}{
+		{
+			name: "empty defaults to upper",
+			def:  EntityDef{},
+			want: IDCapsUpper,
+		},
+		{
+			name: "explicit upper",
+			def:  EntityDef{IDCaps: IDCapsUpper},
+			want: IDCapsUpper,
+		},
+		{
+			name: "explicit lower",
+			def:  EntityDef{IDCaps: IDCapsLower},
+			want: IDCapsLower,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.def.GetIDCaps()
+			if got != tt.want {
+				t.Errorf("GetIDCaps() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEntityDef_IsShortID(t *testing.T) {
 	tests := []struct {
 		name string

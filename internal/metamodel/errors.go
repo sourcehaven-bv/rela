@@ -33,6 +33,16 @@ func (e *InvalidIDTypeError) Error() string {
 	return "invalid id_type for entity " + e.EntityType + ": " + e.IDType + " (must be 'short', 'sequential', or 'manual')"
 }
 
+// InvalidIDCapsError is returned when an entity has an invalid id_caps value.
+type InvalidIDCapsError struct {
+	EntityType string
+	IDCaps     string
+}
+
+func (e *InvalidIDCapsError) Error() string {
+	return "invalid id_caps for entity " + e.EntityType + ": " + e.IDCaps + " (must be 'upper' or 'lower')"
+}
+
 // ReservedPropertyError is returned when a property name conflicts with a reserved name.
 type ReservedPropertyError struct {
 	EntityType   string
