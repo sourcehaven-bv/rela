@@ -43,6 +43,7 @@ components:
 
   # Core domain
   graph:            { in: internal/graph }
+  lua:              { in: internal/lua }
   metamodel:        { in: internal/metamodel }
   migration:        { in: internal/migration }
   model:            { in: internal/model }
@@ -73,6 +74,7 @@ vendors:
       - github.com/yuin/goldmark
       - github.com/yuin/goldmark/**
   gogit:       { in: github.com/go-git/go-git/** }
+  gopherlua:   { in: github.com/yuin/gopher-lua }
   mcpgo:       { in: github.com/mark3labs/mcp-go/** }
   wails:       { in: github.com/wailsapp/wails/** }
   tablewriter: { in: github.com/olekukonko/tablewriter }
@@ -120,6 +122,7 @@ deps:
       - dataentryconfig
       - filter
       - importer
+      - lua
       - markdown
       - mcp
       - metamodel
@@ -267,6 +270,13 @@ deps:
     mayDependOn:
       - metamodel
       - pattern
+  lua:
+    mayDependOn:
+      - filter
+      - metamodel
+      - workspace
+    canUse:
+      - gopherlua
   search:
     mayDependOn:
       - filter
