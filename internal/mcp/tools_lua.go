@@ -21,8 +21,8 @@ func toolLuaEval() mcp.Tool {
 				"Use rela.output(data) to return results as JSON. "+
 				"Available functions: get_entity, list_entities, search, create_entity, update_entity, "+
 				"delete_entity, get_relations, create_relation, delete_relation, trace_from, trace_to, "+
-				"find_path, refresh, write_file. "+
-				"Context: rela.project_root."),
+				"find_path, refresh, write_file, get_entity_types, get_relation_types. "+
+				"Context: rela.project_root, rela.args."),
 		mcp.WithString("code", mcp.Required(),
 			mcp.Description("Lua code to execute")),
 	)

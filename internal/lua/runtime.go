@@ -109,6 +109,10 @@ func (r *Runtime) registerBindings() {
 	// Utility functions
 	r.L.SetField(rela, "refresh", r.L.NewFunction(r.luaRefresh))
 
+	// Schema introspection
+	r.L.SetField(rela, "get_entity_types", r.L.NewFunction(r.luaGetEntityTypes))
+	r.L.SetField(rela, "get_relation_types", r.L.NewFunction(r.luaGetRelationTypes))
+
 	// Context
 	r.L.SetField(rela, "project_root", lua.LString(r.projectRoot))
 	r.L.SetField(rela, "args", r.L.NewTable()) // Will be set before running script
@@ -692,4 +696,74 @@ func luaTableToGoMap(t *lua.LTable) map[string]interface{} {
 		m[key] = luaValueToGo(v)
 	})
 	return m
+}
+
+// luaGetEntityTypes implements rela.get_entity_types() -> table
+// Returns a table of entity type definitions with their properties.
+func (r *Runtime) luaGetEntityTypes(ls *lua.LState) int {
+	result := ls.NewTable()
+
+	for name, et := range r.meta.Entities {
+		typeTable := ls.NewTable()
+		typeTable.RawSetString("name", lua.LString(name))
+		typeTable.RawSetString("label", lua.LString(et.Label))
+		typeTable.RawSetString("plural", lua.LString(et.Plural))
+
+		// Properties
+		propsTable := ls.NewTable()
+		for propName, prop := range et.Properties {
+			propTable := ls.NewTable()
+			propTable.RawSetString("name", lua.LString(propName))
+			propTable.RawSetString("type", lua.LString(prop.Type))
+			propTable.RawSetString("required", lua.LBool(prop.Required))
+			if prop.Default != "" {
+				propTable.RawSetString("default", lua.LString(prop.Default))
+			}
+			if len(prop.Values) > 0 {
+				valuesTable := ls.NewTable()
+				for i, val := range prop.Values {
+					valuesTable.RawSetInt(i+1, lua.LString(val))
+				}
+				propTable.RawSetString("values", valuesTable)
+			}
+			propsTable.RawSetString(propName, propTable)
+		}
+		typeTable.RawSetString("properties", propsTable)
+
+		result.RawSetString(name, typeTable)
+	}
+
+	ls.Push(result)
+	return 1
+}
+
+// luaGetRelationTypes implements rela.get_relation_types() -> table
+// Returns a table of relation type definitions with their constraints.
+func (r *Runtime) luaGetRelationTypes(ls *lua.LState) int {
+	result := ls.NewTable()
+
+	for name, rt := range r.meta.Relations {
+		typeTable := ls.NewTable()
+		typeTable.RawSetString("name", lua.LString(name))
+		typeTable.RawSetString("label", lua.LString(rt.Label))
+
+		// From constraints
+		fromTable := ls.NewTable()
+		for i, f := range rt.From {
+			fromTable.RawSetInt(i+1, lua.LString(f))
+		}
+		typeTable.RawSetString("from", fromTable)
+
+		// To constraints
+		toTable := ls.NewTable()
+		for i, t := range rt.To {
+			toTable.RawSetInt(i+1, lua.LString(t))
+		}
+		typeTable.RawSetString("to", toTable)
+
+		result.RawSetString(name, typeTable)
+	}
+
+	ls.Push(result)
+	return 1
 }

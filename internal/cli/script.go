@@ -33,6 +33,10 @@ Mutation functions:
   rela.delete_relation(from, type, to)            Delete relation
   rela.refresh()                                  Reload graph from disk
 
+Schema introspection:
+  rela.get_entity_types()            Get all entity types with properties
+  rela.get_relation_types()          Get all relation types with constraints
+
 Output functions:
   rela.output(data)                Output data as JSON to stdout
   rela.write_file(path, content)   Write content to file
