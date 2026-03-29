@@ -67,29 +67,36 @@ func (f *FileIO) ReadEntity(path string, meta *metamodel.Metamodel) (*model.Enti
 	return entity, nil
 }
 
-// WriteEntity writes an entity to a markdown file.
-func (f *FileIO) WriteEntity(entity *model.Entity, path string) error {
+// FormatEntity returns the formatted markdown content for an entity.
+// The optional propertyOrder specifies the order for entity properties (after id and type).
+func FormatEntity(entity *model.Entity, propertyOrder []string) (string, error) {
 	frontmatter := make(map[string]interface{})
 	frontmatter["id"] = entity.ID
 	frontmatter["type"] = entity.Type
 
-	// Add properties in a consistent order
-	// First the common ones
-	if title := entity.GetString("title"); title != "" {
-		frontmatter["title"] = title
-	}
-	if status := entity.GetString("status"); status != "" {
-		frontmatter["status"] = status
-	}
-
-	// Then the rest
+	// Copy all properties
 	for key, value := range entity.Properties {
-		if key != "title" && key != "status" {
-			frontmatter[key] = value
-		}
+		frontmatter[key] = value
 	}
 
-	content, err := FormatDocument(frontmatter, entity.Content)
+	// Build key order: id, type, then property order (or alphabetical for remaining)
+	keyOrder := []string{"id", "type"}
+	if len(propertyOrder) > 0 {
+		keyOrder = append(keyOrder, propertyOrder...)
+	}
+
+	return FormatDocumentOrdered(frontmatter, entity.Content, keyOrder)
+}
+
+// WriteEntity writes an entity to a markdown file.
+// The optional propertyOrder specifies the order for entity properties (after id and type).
+func (f *FileIO) WriteEntity(entity *model.Entity, path string, propertyOrder ...[]string) error {
+	var order []string
+	if len(propertyOrder) > 0 {
+		order = propertyOrder[0]
+	}
+
+	content, err := FormatEntity(entity, order)
 	if err != nil {
 		return err
 	}

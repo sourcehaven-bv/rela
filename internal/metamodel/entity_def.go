@@ -161,3 +161,15 @@ func (e *EntityDef) MatchesID(id string) bool {
 	}
 	return false
 }
+
+// GetPropertyOrder returns the property names in their definition order.
+// If PropertyOrder was not populated during loading, returns nil.
+// Returns a copy to prevent external modification.
+func (e *EntityDef) GetPropertyOrder() []string {
+	if e.PropertyOrder == nil {
+		return nil
+	}
+	result := make([]string, len(e.PropertyOrder))
+	copy(result, e.PropertyOrder)
+	return result
+}

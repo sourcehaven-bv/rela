@@ -126,7 +126,76 @@ func parseRaw(data []byte) (*Metamodel, error) {
 		}
 	}
 
+	// Extract property order from YAML (maps lose key order during unmarshaling)
+	extractPropertyOrder(data, &m)
+
 	return &m, nil
+}
+
+// extractPropertyOrder parses the YAML using yaml.Node to extract property key order
+// for each entity definition. This allows WriteEntity to output properties in the
+// same order as defined in the metamodel.
+//
+// This is a best-effort enhancement: if yaml.Node parsing fails, we silently
+// continue without property ordering. The main struct parsing already succeeded,
+// so the metamodel is valid - we just won't have property order information.
+func extractPropertyOrder(data []byte, m *Metamodel) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		// Best-effort: property order is nice-to-have, not required
+		return
+	}
+
+	// root is a document node, get its content
+	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
+		return
+	}
+	doc := root.Content[0]
+	if doc.Kind != yaml.MappingNode {
+		return
+	}
+
+	// Find the "entities" key
+	for i := 0; i < len(doc.Content)-1; i += 2 {
+		keyNode := doc.Content[i]
+		valueNode := doc.Content[i+1]
+		if keyNode.Value == "entities" && valueNode.Kind == yaml.MappingNode {
+			extractEntityPropertyOrder(valueNode, m)
+			break
+		}
+	}
+}
+
+// extractEntityPropertyOrder extracts property order from the entities mapping node.
+func extractEntityPropertyOrder(entitiesNode *yaml.Node, m *Metamodel) {
+	// Iterate over entity definitions
+	for i := 0; i < len(entitiesNode.Content)-1; i += 2 {
+		entityNameNode := entitiesNode.Content[i]
+		entityDefNode := entitiesNode.Content[i+1]
+
+		entityName := entityNameNode.Value
+		entityDef, ok := m.Entities[entityName]
+		if !ok || entityDefNode.Kind != yaml.MappingNode {
+			continue
+		}
+
+		// Find the "properties" key within this entity definition
+		for j := 0; j < len(entityDefNode.Content)-1; j += 2 {
+			keyNode := entityDefNode.Content[j]
+			valueNode := entityDefNode.Content[j+1]
+			if keyNode.Value == "properties" && valueNode.Kind == yaml.MappingNode {
+				// Extract property names in order
+				var order []string
+				for k := 0; k < len(valueNode.Content)-1; k += 2 {
+					propNameNode := valueNode.Content[k]
+					order = append(order, propNameNode.Value)
+				}
+				entityDef.PropertyOrder = order
+				m.Entities[entityName] = entityDef
+				break
+			}
+		}
+	}
 }
 
 // validate performs structural and semantic validation on a fully assembled metamodel.

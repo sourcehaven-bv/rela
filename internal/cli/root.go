@@ -1,11 +1,13 @@
 package cli
 
 import (
+	stderrors "errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -80,6 +82,11 @@ and maintain semantic relationships between them.`,
 // coverage-ignore: CLI entry point - tested via integration tests
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		// Check for ExitError to use custom exit code
+		var exitErr *errors.ExitError
+		if stderrors.As(err, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

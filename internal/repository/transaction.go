@@ -62,7 +62,13 @@ func (tx *transaction) WriteEntity(entity *model.Entity, meta *metamodel.Metamod
 	tempPath := filePath + ".new"
 	entity.FilePath = filePath
 
-	if err := tx.repo.fio.WriteEntity(entity, tempPath); err != nil {
+	// Get property order from metamodel if available
+	var propertyOrder []string
+	if entityDef, ok := meta.GetEntityDef(entity.Type); ok {
+		propertyOrder = entityDef.GetPropertyOrder()
+	}
+
+	if err := tx.repo.fio.WriteEntity(entity, tempPath, propertyOrder); err != nil {
 		return fmt.Errorf("write staged entity: %w", err)
 	}
 

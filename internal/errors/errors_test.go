@@ -52,3 +52,27 @@ func TestValidationError(t *testing.T) {
 		t.Error("ValidationError should wrap ErrValidation")
 	}
 }
+
+func TestExitError(t *testing.T) {
+	err := NewExitError(42)
+
+	if err.Code != 42 {
+		t.Errorf("expected code 42, got %d", err.Code)
+	}
+
+	if err.Error() != "exit status 42" {
+		t.Errorf("unexpected error message: %s", err.Error())
+	}
+}
+
+func TestExitErrorZero(t *testing.T) {
+	err := NewExitError(0)
+
+	if err.Code != 0 {
+		t.Errorf("expected code 0, got %d", err.Code)
+	}
+
+	if err.Error() != "exit status 0" {
+		t.Errorf("unexpected error message: %s", err.Error())
+	}
+}
