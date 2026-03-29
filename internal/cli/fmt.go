@@ -1,12 +1,9 @@
 package cli
 
 import (
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/errors"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -54,30 +51,18 @@ Examples:
 			return nil
 		}
 
+		// For --check mode, use dry-run behavior internally
+		dryRun := fmtDryRun || fmtCheck
+
 		modified := 0
 		for _, entity := range entities {
-			// Get property order from metamodel
-			var propertyOrder []string
-			if entityDef, ok := meta.GetEntityDef(entity.Type); ok {
-				propertyOrder = entityDef.GetPropertyOrder()
-			}
-
-			// Generate formatted content
-			formatted, err := markdown.FormatEntity(entity, propertyOrder)
+			changed, err := ws.FormatEntity(entity, dryRun)
 			if err != nil {
 				out.WriteWarning("Failed to format %s: %v", entity.ID, err)
 				continue
 			}
 
-			// Read current file content
-			currentContent, err := os.ReadFile(entity.FilePath)
-			if err != nil {
-				out.WriteWarning("Failed to read %s: %v", entity.ID, err)
-				continue
-			}
-
-			// Compare
-			if formatted == string(currentContent) {
+			if !changed {
 				continue
 			}
 
@@ -85,21 +70,9 @@ Examples:
 
 			if fmtCheck {
 				out.WriteMessage("Needs formatting: %s", entity.ID)
-				continue
-			}
-
-			if fmtDryRun {
+			} else if fmtDryRun {
 				out.WriteMessage("Would format: %s", entity.ID)
-				continue
-			}
-
-			// Write formatted content
-			if err := os.WriteFile(entity.FilePath, []byte(formatted), 0644); err != nil {
-				out.WriteWarning("Failed to write %s: %v", entity.ID, err)
-				continue
-			}
-
-			if verbose {
+			} else if verbose {
 				out.WriteMessage("Formatted: %s", entity.ID)
 			}
 		}
