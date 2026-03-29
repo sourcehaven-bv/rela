@@ -135,15 +135,10 @@ func parseRaw(data []byte) (*Metamodel, error) {
 // extractPropertyOrder parses the YAML using yaml.Node to extract property key order
 // for each entity definition. This allows WriteEntity to output properties in the
 // same order as defined in the metamodel.
-//
-// This is a best-effort enhancement: if yaml.Node parsing fails, we silently
-// continue without property ordering. The main struct parsing already succeeded,
-// so the metamodel is valid - we just won't have property order information.
 func extractPropertyOrder(data []byte, m *Metamodel) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
-		// Best-effort: property order is nice-to-have, not required
-		return
+		return // Defensive: shouldn't fail since struct parsing succeeded
 	}
 
 	// root is a document node, get its content
