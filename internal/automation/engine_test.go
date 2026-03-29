@@ -377,6 +377,491 @@ func TestEngine_RelationCreated(t *testing.T) {
 	}
 }
 
+func TestEngine_CreateEntity_OnPropertyChange(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "create-planning-checklist",
+			On: Trigger{
+				Entity:   []string{"ticket"},
+				Property: "status",
+				Becomes:  "planning",
+			},
+			Do: []Action{
+				{
+					CreateEntity: &CreateEntityAction{
+						Type: "planning-checklist",
+						Properties: map[string]string{
+							"title":  "Planning: {{new.title}}",
+							"status": "pending",
+						},
+						Relation: "has-planning",
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	oldEntity := model.NewEntity("T-001", "ticket")
+	oldEntity.Properties["status"] = "backlog"
+	oldEntity.Properties["title"] = "Implement feature X"
+
+	newEntity := model.NewEntity("T-001", "ticket")
+	newEntity.Properties["status"] = "planning"
+	newEntity.Properties["title"] = "Implement feature X"
+
+	result := engine.Process(Event{
+		Type:      EventEntityUpdated,
+		Entity:    newEntity,
+		OldEntity: oldEntity,
+	})
+
+	if len(result.EntitiesToCreate) != 1 {
+		t.Fatalf("expected 1 entity to create, got %d", len(result.EntitiesToCreate))
+	}
+
+	toCreate := result.EntitiesToCreate[0]
+	if toCreate.Type != "planning-checklist" {
+		t.Errorf("expected type planning-checklist, got %s", toCreate.Type)
+	}
+	if toCreate.Properties["title"] != "Planning: Implement feature X" {
+		t.Errorf("expected interpolated title, got %v", toCreate.Properties["title"])
+	}
+	if toCreate.Properties["status"] != "pending" {
+		t.Errorf("expected status pending, got %v", toCreate.Properties["status"])
+	}
+	if toCreate.RelationFromTrigger != "has-planning" {
+		t.Errorf("expected relation has-planning, got %s", toCreate.RelationFromTrigger)
+	}
+}
+
+func TestEngine_CreateEntity_OnCreated(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "create-default-checklist",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					CreateEntity: &CreateEntityAction{
+						Type: "checklist",
+						Properties: map[string]string{
+							"title": "Checklist for {{entity.id}}",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := model.NewEntity("T-001", "ticket")
+	entity.Properties["title"] = "New ticket"
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.EntitiesToCreate) != 1 {
+		t.Fatalf("expected 1 entity to create, got %d", len(result.EntitiesToCreate))
+	}
+
+	toCreate := result.EntitiesToCreate[0]
+	if toCreate.Type != "checklist" {
+		t.Errorf("expected type checklist, got %s", toCreate.Type)
+	}
+	if toCreate.Properties["title"] != "Checklist for T-001" {
+		t.Errorf("expected interpolated title with entity ID, got %v", toCreate.Properties["title"])
+	}
+}
+
+func TestEngine_CreateEntity_NoRelation(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "create-without-relation",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					CreateEntity: &CreateEntityAction{
+						Type: "note",
+						Properties: map[string]string{
+							"content": "Auto-generated note",
+						},
+						// No Relation specified
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := model.NewEntity("T-001", "ticket")
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.EntitiesToCreate) != 1 {
+		t.Fatalf("expected 1 entity to create, got %d", len(result.EntitiesToCreate))
+	}
+
+	toCreate := result.EntitiesToCreate[0]
+	if toCreate.RelationFromTrigger != "" {
+		t.Errorf("expected no relation, got %s", toCreate.RelationFromTrigger)
+	}
+}
+
+func TestEngine_CreateEntity_MissingType(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "create-invalid",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					CreateEntity: &CreateEntityAction{
+						// Type is missing
+						Properties: map[string]string{
+							"title": "Should fail",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := model.NewEntity("T-001", "ticket")
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.EntitiesToCreate) != 0 {
+		t.Error("expected no entities to create when type is missing")
+	}
+	if len(result.Errors) != 1 {
+		t.Errorf("expected 1 error, got %d", len(result.Errors))
+	}
+}
+
+func TestEngine_CreateEntity_IfExistsDefaultsToSkip(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "create-checklist",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					CreateEntity: &CreateEntityAction{
+						Type:     "checklist",
+						Relation: "has-checklist",
+						// IfExists not specified - should default to skip
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := model.NewEntity("T-001", "ticket")
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.EntitiesToCreate) != 1 {
+		t.Fatalf("expected 1 entity to create, got %d", len(result.EntitiesToCreate))
+	}
+
+	toCreate := result.EntitiesToCreate[0]
+	if toCreate.IfExists != IfExistsSkip {
+		t.Errorf("expected IfExists to default to 'skip', got %q", toCreate.IfExists)
+	}
+}
+
+func TestEngine_CreateEntity_IfExistsExplicit(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "create-with-error",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					CreateEntity: &CreateEntityAction{
+						Type:     "checklist",
+						Relation: "has-checklist",
+						IfExists: IfExistsError,
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := model.NewEntity("T-001", "ticket")
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.EntitiesToCreate) != 1 {
+		t.Fatalf("expected 1 entity to create, got %d", len(result.EntitiesToCreate))
+	}
+
+	toCreate := result.EntitiesToCreate[0]
+	if toCreate.IfExists != IfExistsError {
+		t.Errorf("expected IfExists to be 'error', got %q", toCreate.IfExists)
+	}
+}
+
+func TestEngine_CreateEntity_WithTemplate(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "create-checklist-with-template",
+			On: Trigger{
+				Entity:   []string{"ticket"},
+				Property: "status",
+				Becomes:  "planning",
+			},
+			Do: []Action{
+				{
+					CreateEntity: &CreateEntityAction{
+						Type:     "planning-checklist",
+						Template: "{{new.kind}}", // Interpolate from entity property
+						Properties: map[string]string{
+							"title": "Planning: {{new.title}}",
+						},
+						Relation: "has-planning",
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	oldEntity := model.NewEntity("T-001", "ticket")
+	oldEntity.Properties["status"] = "backlog"
+	oldEntity.Properties["kind"] = "enhancement"
+	oldEntity.Properties["title"] = "Add new feature"
+
+	newEntity := model.NewEntity("T-001", "ticket")
+	newEntity.Properties["status"] = "planning"
+	newEntity.Properties["kind"] = "enhancement"
+	newEntity.Properties["title"] = "Add new feature"
+
+	result := engine.Process(Event{
+		Type:      EventEntityUpdated,
+		Entity:    newEntity,
+		OldEntity: oldEntity,
+	})
+
+	if len(result.EntitiesToCreate) != 1 {
+		t.Fatalf("expected 1 entity to create, got %d", len(result.EntitiesToCreate))
+	}
+
+	toCreate := result.EntitiesToCreate[0]
+	if toCreate.Template != "enhancement" {
+		t.Errorf("expected template 'enhancement', got %q", toCreate.Template)
+	}
+	if toCreate.Properties["title"] != "Planning: Add new feature" {
+		t.Errorf("expected interpolated title, got %v", toCreate.Properties["title"])
+	}
+}
+
+func TestEngine_CreateEntity_TemplateEmpty(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "create-checklist-no-template",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					CreateEntity: &CreateEntityAction{
+						Type: "checklist",
+						// Template not specified - should be empty
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := model.NewEntity("T-001", "ticket")
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.EntitiesToCreate) != 1 {
+		t.Fatalf("expected 1 entity to create, got %d", len(result.EntitiesToCreate))
+	}
+
+	toCreate := result.EntitiesToCreate[0]
+	if toCreate.Template != "" {
+		t.Errorf("expected empty template, got %q", toCreate.Template)
+	}
+}
+
+func TestEngine_CreateEntity_TemplateMissingProperty(t *testing.T) {
+	// When the property used in template interpolation doesn't exist,
+	// the template becomes empty string (uses default template).
+	automations := []Automation{
+		{
+			Name: "create-with-missing-property",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					CreateEntity: &CreateEntityAction{
+						Type:     "checklist",
+						Template: "{{new.kind}}", // kind property not set on entity
+					},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := model.NewEntity("T-001", "ticket")
+	// Note: kind property is NOT set
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.Errors) != 0 {
+		t.Errorf("unexpected errors: %v", result.Errors)
+	}
+
+	if len(result.EntitiesToCreate) != 1 {
+		t.Fatalf("expected 1 entity to create, got %d", len(result.EntitiesToCreate))
+	}
+
+	toCreate := result.EntitiesToCreate[0]
+	// Missing property interpolates to empty string -> uses default template
+	if toCreate.Template != "" {
+		t.Errorf("expected empty template for missing property, got %q", toCreate.Template)
+	}
+}
+
+func TestEngine_CreateEntity_TemplatePathTraversal(t *testing.T) {
+	tests := []struct {
+		name     string
+		kind     string
+		wantErr  bool
+		template string
+	}{
+		// Valid templates (allowlist: a-z, A-Z, 0-9, -, _)
+		{"valid template", "enhancement", false, "enhancement"},
+		{"valid with hyphen", "my-template", false, "my-template"},
+		{"valid with underscore", "template_v2", false, "template_v2"},
+		{"valid uppercase", "MyTemplate", false, "MyTemplate"},
+		{"valid mixed", "Template-V2_final", false, "Template-V2_final"},
+		{"empty kind becomes empty template", "", false, ""},
+
+		// Invalid: path traversal attempts
+		{"path traversal with ..", "../../../etc/passwd", true, ""},
+		{"path with forward slash", "foo/bar", true, ""},
+		{"path with backslash", "foo\\bar", true, ""},
+		{"double dots in middle", "foo..bar", true, ""},
+
+		// Invalid: null byte injection
+		{"null byte injection", "valid\x00../etc/passwd", true, ""},
+		{"null byte only", "\x00", true, ""},
+
+		// Invalid: special characters blocked by allowlist
+		{"dots only", "...", true, ""},
+		{"single dot", ".", true, ""},
+		{"unicode characters", "template-名前", true, ""},
+		{"space in name", "my template", true, ""},
+		{"colon in name", "foo:bar", true, ""},
+		{"semicolon in name", "foo;bar", true, ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			automations := []Automation{
+				{
+					Name: "create-with-template",
+					On: Trigger{
+						Entity:  []string{"ticket"},
+						Created: true,
+					},
+					Do: []Action{
+						{
+							CreateEntity: &CreateEntityAction{
+								Type:     "checklist",
+								Template: "{{new.kind}}", // Interpolate from entity property
+							},
+						},
+					},
+				},
+			}
+
+			engine := NewEngine(automations)
+
+			entity := model.NewEntity("T-001", "ticket")
+			entity.Properties["kind"] = tc.kind
+
+			result := engine.Process(Event{
+				Type:   EventEntityCreated,
+				Entity: entity,
+			})
+
+			hasError := len(result.Errors) > 0
+			entityCount := len(result.EntitiesToCreate)
+
+			if tc.wantErr && !hasError {
+				t.Error("expected error for path traversal attempt")
+			}
+			if tc.wantErr && entityCount != 0 {
+				t.Error("expected no entities to create on error")
+			}
+			if !tc.wantErr && hasError {
+				t.Errorf("unexpected errors: %v", result.Errors)
+			}
+			if !tc.wantErr && entityCount != 1 {
+				t.Fatalf("expected 1 entity, got %d", entityCount)
+			}
+			if !tc.wantErr && entityCount == 1 && result.EntitiesToCreate[0].Template != tc.template {
+				t.Errorf("expected template %q, got %q", tc.template, result.EntitiesToCreate[0].Template)
+			}
+		})
+	}
+}
+
 func TestEngine_WhenConditionMet(t *testing.T) {
 	automations := []Automation{
 		{

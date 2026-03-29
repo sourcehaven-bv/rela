@@ -73,6 +73,15 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 				To:       a.CreateRelation.To,
 			}
 		}
+		if a.CreateEntity != nil {
+			action.CreateEntity = &CreateEntityAction{
+				Type:       a.CreateEntity.Type,
+				Template:   a.CreateEntity.Template,
+				Properties: a.CreateEntity.Properties,
+				Relation:   a.CreateEntity.Relation,
+				IfExists:   a.CreateEntity.IfExists,
+			}
+		}
 		auto.Do[i] = action
 	}
 
@@ -97,6 +106,7 @@ func (e *Engine) Process(event Event) *Result {
 	result := &Result{
 		PropertiesSet:     make(map[string]string),
 		RelationsToCreate: make([]*model.Relation, 0),
+		EntitiesToCreate:  make([]EntityToCreate, 0),
 		Warnings:          make([]string, 0),
 		Errors:            make([]string, 0),
 	}
@@ -230,6 +240,43 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 			result.RelationsToCreate = append(result.RelationsToCreate, rel)
 		}
 	}
+
+	if action.CreateEntity != nil {
+		entityType := action.CreateEntity.Type
+		if entityType == "" {
+			result.Errors = append(result.Errors, "create_entity action requires 'type' field")
+			return
+		}
+
+		// Interpolate template name (allows {{new.kind}} etc.)
+		template := e.interpolate(action.CreateEntity.Template, event)
+
+		// Validate template name using allowlist (alphanumeric, hyphen, underscore only).
+		if !isValidTemplateName(template) {
+			result.Errors = append(result.Errors,
+				"create_entity template name contains invalid characters (only alphanumeric, hyphen, underscore allowed)")
+			return
+		}
+
+		props := make(map[string]interface{})
+		for k, v := range action.CreateEntity.Properties {
+			props[k] = e.interpolate(v, event)
+		}
+
+		// Default to skip if not specified.
+		ifExists := action.CreateEntity.IfExists
+		if ifExists == "" {
+			ifExists = IfExistsSkip
+		}
+
+		result.EntitiesToCreate = append(result.EntitiesToCreate, EntityToCreate{
+			Type:                entityType,
+			Template:            template,
+			Properties:          props,
+			RelationFromTrigger: action.CreateEntity.Relation,
+			IfExists:            ifExists,
+		})
+	}
 }
 
 // evaluateValidation checks a validation and adds warnings/errors to the result.
@@ -277,4 +324,25 @@ func matchSimple(val interface{}, f *filter.Filter) bool {
 // interpolate replaces template variables in a string.
 func (e *Engine) interpolate(template string, event Event) string {
 	return Interpolate(template, e.vars, event.Entity, event.OldEntity)
+}
+
+// isValidTemplateName validates that a template name contains only safe identifier characters.
+// Uses an allowlist approach: only alphanumeric, hyphen, and underscore are allowed.
+// Empty template names are valid (means use default template).
+func isValidTemplateName(name string) bool {
+	if name == "" {
+		return true
+	}
+	// Allowlist approach: only allow identifier-like characters.
+	// This is safer than blocklisting dangerous patterns (path separators, .., null bytes, etc.)
+	for _, ch := range name {
+		isLower := ch >= 'a' && ch <= 'z'
+		isUpper := ch >= 'A' && ch <= 'Z'
+		isDigit := ch >= '0' && ch <= '9'
+		isAllowed := isLower || isUpper || isDigit || ch == '-' || ch == '_'
+		if !isAllowed {
+			return false
+		}
+	}
+	return true
 }

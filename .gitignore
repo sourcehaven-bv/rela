@@ -20,7 +20,8 @@ BUG-FIX-*.md
 *-BUGFIXES.md
 test-tui*.sh
 other-ci.yml
-.claude/
+# Claude Code (share commands, ignore local settings)
+.claude/settings.local.json
 .ignored/
 
 # Icon generation temp files

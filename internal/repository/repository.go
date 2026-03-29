@@ -85,7 +85,13 @@ type Store interface {
 
 	// --- Templates ---
 
+	// LoadEntityTemplate loads the default template for the given entity type.
+	// Returns nil if no template exists (templates are optional).
 	LoadEntityTemplate(entityType string) (*markdown.Document, error)
+	// LoadEntityTemplateVariant loads a template variant for the given entity type.
+	// If variant is empty, loads the default template (<type>.md).
+	// Otherwise loads <type>--<variant>.md.
+	LoadEntityTemplateVariant(entityType, variant string) (*markdown.Document, error)
 	LoadRelationTemplate(relationType string) (*markdown.Document, error)
 	GenerateEntityTemplate(meta *metamodel.Metamodel, entityType, variant string, force bool) (bool, error)
 	GenerateRelationTemplate(meta *metamodel.Metamodel, relationType string, force bool) (bool, error)
@@ -411,6 +417,13 @@ func (r *Repository) WriteCacheFile(filename string, data []byte) error {
 // returns nil if no template exists.
 func (r *Repository) LoadEntityTemplate(entityType string) (*markdown.Document, error) {
 	return r.fio.LoadEntityTemplate(r.paths.EntityTemplatePath(entityType))
+}
+
+// LoadEntityTemplateVariant loads a template variant for the given entity type.
+// If variant is empty, loads the default template (<type>.md).
+// Otherwise loads <type>--<variant>.md.
+func (r *Repository) LoadEntityTemplateVariant(entityType, variant string) (*markdown.Document, error) {
+	return r.fio.LoadEntityTemplate(r.paths.EntityTemplateVariantPath(entityType, variant))
 }
 
 // LoadRelationTemplate loads the template for the given relation type, or
