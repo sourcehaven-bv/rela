@@ -1,11 +1,17 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSchemaStore } from '@/stores'
+import { useScopeNavigation } from '@/composables'
 import { fetchView } from '@/api'
 import type { ViewResponse } from '@/api'
 import { getEditFormId } from '@/types'
+import { isInputFocused } from '@/utils/dom'
+import { renderMarkdown } from '@/utils/markdown'
 import Badge from '@/components/common/Badge.vue'
+import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
+import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
+import type { ViewSectionField } from '@/api'
 
 const props = defineProps<{
   id: string
@@ -14,6 +20,44 @@ const props = defineProps<{
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
+
+// Scope navigation
+const entryType = computed(() => viewData.value?.entry?.type || '')
+const { scopeNav, loadScopeNav, navigateScope, goBack } = useScopeNavigation(
+  () => entryType.value,
+  () => props.entityId
+)
+
+// Keyboard shortcuts
+function handleKeydown(e: KeyboardEvent) {
+  if (isInputFocused()) return
+  if (e.key === 'e' || e.key === 'E') {
+    e.preventDefault()
+    editEntry()
+  }
+  // Scope navigation: p/n for prev/next
+  if (e.key === 'p' && scopeNav.value?.prevId) {
+    e.preventDefault()
+    navigateScope('prev')
+  }
+  if (e.key === 'n' && scopeNav.value?.nextId) {
+    e.preventDefault()
+    navigateScope('next')
+  }
+  // Escape to go back
+  if (e.key === 'Escape' && scopeNav.value) {
+    e.preventDefault()
+    goBack()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', handleKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handleKeydown)
+})
 
 // State
 const loading = ref(false)
@@ -35,11 +79,22 @@ async function loadView() {
 
   try {
     viewData.value = await fetchView(props.id, props.entityId)
+    // Load scope nav after we have the entry type
+    await loadScopeNav()
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load view'
     console.error('Failed to load view:', err)
   } finally {
     loading.value = false
+  }
+}
+
+// Edit entry
+function editEntry() {
+  if (!viewData.value?.entry) return
+  const formId = getEditFormId(schemaStore, viewData.value.entry.type)
+  if (formId) {
+    navigateToEdit(formId, viewData.value.entry.id)
   }
 }
 
@@ -49,7 +104,7 @@ function navigateToEntity(entityId: string) {
 }
 
 function navigateToEdit(formId: string, entityId: string) {
-  router.push({ name: 'form', params: { id: formId, entityId } })
+  router.push({ name: 'form-edit', params: { id: formId, entityId } })
 }
 
 function navigateToCreate(formId: string, relationInfo?: { relation: string; linkAs: string; peerId: string }) {
@@ -59,10 +114,21 @@ function navigateToCreate(formId: string, relationInfo?: { relation: string; lin
     query.linkAs = relationInfo.linkAs
     query.linkPeer = relationInfo.peerId
   }
-  router.push({ name: 'form', params: { id: formId }, query })
+  router.push({ name: 'form-create', params: { id: formId }, query })
 }
 
-// Check if value should use badge styling
+// Map ViewSectionField[] to PropertyItem[] for PropertyDisplay
+function mapFieldsToProperties(fields: ViewSectionField[] | undefined): PropertyItem[] {
+  if (!fields) return []
+  return fields.map((field) => ({
+    name: field.label.toLowerCase().replace(/\s+/g, '_'),
+    label: field.label,
+    value: field.value,
+    propType: field.propType,
+  }))
+}
+
+// Check if value should use badge styling (used for tables/lists)
 function shouldUseBadge(value: string, propType?: string): boolean {
   // Use badge for enum types or known styled values
   return !!propType && !!value
@@ -83,16 +149,14 @@ watch(
   { immediate: false }
 )
 
-onMounted(() => {
-  loadView()
-})
+onMounted(() => loadView())
 </script>
 
 <template>
   <div class="custom-view">
     <!-- Loading state -->
     <div v-if="loading" class="loading">
-      <div class="spinner"></div>
+      <div class="spinner"/>
       <p>Loading view...</p>
     </div>
 
@@ -105,6 +169,31 @@ onMounted(() => {
 
     <!-- View content -->
     <template v-else-if="viewData">
+      <!-- Scope Navigation Bar -->
+      <div v-if="scopeNav" class="scope-nav">
+        <router-link :to="scopeNav.backUrl" class="scope-nav-btn">
+          Back <kbd>Esc</kbd>
+        </router-link>
+        <button
+          v-if="scopeNav.prevId"
+          class="scope-nav-btn"
+          @click="navigateScope('prev')"
+        >
+          ← Prev <kbd>P</kbd>
+        </button>
+        <span v-else class="scope-nav-btn disabled">← Prev</span>
+        <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
+        <span class="scope-nav-label">{{ scopeNav.label }}</span>
+        <button
+          v-if="scopeNav.nextId"
+          class="scope-nav-btn"
+          @click="navigateScope('next')"
+        >
+          Next → <kbd>N</kbd>
+        </button>
+        <span v-else class="scope-nav-btn disabled">Next →</span>
+      </div>
+
       <!-- Header -->
       <header class="view-header">
         <div class="header-content">
@@ -113,9 +202,9 @@ onMounted(() => {
             <button
               v-if="viewData.entry && getEditFormId(schemaStore, viewData.entry.type)"
               class="btn btn-secondary"
-              @click="navigateToEdit(getEditFormId(schemaStore, viewData.entry.type)!, viewData.entry.id)"
+              @click="editEntry"
             >
-              Edit
+              Edit <kbd>E</kbd>
             </button>
           </div>
         </div>
@@ -137,8 +226,8 @@ onMounted(() => {
       <div class="sections">
         <section
           v-for="section in viewData.sections"
-          :key="section.sectionId"
           :id="section.sectionId"
+          :key="section.sectionId"
           class="view-section"
         >
           <h2 v-if="section.heading" class="section-heading">{{ section.heading }}</h2>
@@ -149,23 +238,14 @@ onMounted(() => {
           </div>
 
           <!-- Properties display -->
-          <div v-else-if="section.display === 'properties'" class="properties-grid">
-            <div v-for="field in section.fields" :key="field.label" class="property-row">
-              <span class="property-label">{{ field.label }}</span>
-              <span class="property-value">
-                <Badge
-                  v-if="shouldUseBadge(field.value, field.propType)"
-                  :value="field.value"
-                  :property="field.propType"
-                />
-                <template v-else>{{ field.value || '-' }}</template>
-              </span>
-            </div>
-          </div>
+          <PropertyDisplay
+            v-else-if="section.display === 'properties'"
+            :properties="mapFieldsToProperties(section.fields)"
+          />
 
           <!-- Content display (single) -->
           <div v-else-if="section.display === 'content' && section.hasContent" class="content-block">
-            <div class="markdown-content" v-html="section.content"></div>
+            <div class="markdown-content" v-html="renderMarkdown(section.content || '')"/>
           </div>
 
           <!-- Content display (collection) -->
@@ -179,7 +259,7 @@ onMounted(() => {
                 <span class="entity-type">{{ entity.type }}</span>
                 <span class="entity-title">{{ entity.title }}</span>
               </header>
-              <div v-if="entity.hasContent" class="markdown-content" v-html="entity.content"></div>
+              <div v-if="entity.hasContent" class="markdown-content" v-html="renderMarkdown(entity.content || '')"/>
             </article>
           </div>
 
@@ -251,7 +331,7 @@ onMounted(() => {
                       <th v-for="col in section.columns" :key="col.property || col.relation">
                         {{ col.label || col.property || col.relation }}
                       </th>
-                      <th class="actions-col"></th>
+                      <th class="actions-col"/>
                     </tr>
                   </thead>
                   <tbody>
@@ -307,7 +387,7 @@ onMounted(() => {
                   <th v-for="col in section.columns" :key="col.property || col.relation">
                     {{ col.label || col.property || col.relation }}
                   </th>
-                  <th class="actions-col"></th>
+                  <th class="actions-col"/>
                 </tr>
               </thead>
               <tbody>
@@ -447,6 +527,70 @@ onMounted(() => {
   gap: 8px;
 }
 
+.header-actions kbd {
+  padding: 2px 5px;
+  font-size: 10px;
+  background: var(--border-color);
+  border-radius: 3px;
+  font-family: monospace;
+  margin-left: 4px;
+}
+
+/* Scope Navigation Bar */
+.scope-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.scope-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-color);
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+
+.scope-nav-btn:hover:not(.disabled) {
+  filter: brightness(0.95);
+  border-color: var(--accent-color);
+}
+
+.scope-nav-btn.disabled {
+  color: var(--muted-text);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.scope-nav-btn kbd {
+  padding: 2px 5px;
+  font-size: 10px;
+  background: var(--border-color);
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+.scope-nav-progress {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color);
+  font-family: monospace;
+}
+
+.scope-nav-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
 /* Jump bar */
 .jump-bar {
   display: flex;
@@ -501,28 +645,6 @@ onMounted(() => {
   background: var(--hover-bg);
   border-radius: 6px;
   font-style: italic;
-}
-
-/* Properties grid */
-.properties-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px 24px;
-}
-
-.property-row {
-  display: flex;
-  gap: 8px;
-}
-
-.property-label {
-  font-weight: 500;
-  color: var(--muted-text);
-  min-width: 100px;
-}
-
-.property-value {
-  color: var(--text-color);
 }
 
 /* Content block */

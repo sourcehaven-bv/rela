@@ -7,9 +7,8 @@ import type { Entity, Command } from '@/types'
 import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
 import { renderMarkdown, renderMermaidDiagrams, getCheckboxStats } from '@/utils/markdown'
-import { formatValue, isEnumProperty } from '@/utils/format'
 import { getCommands, toggleCheckbox } from '@/api'
-import Badge from '@/components/common/Badge.vue'
+import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 
@@ -38,12 +37,12 @@ function handleKeydown(e: KeyboardEvent) {
     e.preventDefault()
     editEntity()
   }
-  // Scope navigation: j/k or arrow keys
-  if ((e.key === 'j' || e.key === 'ArrowUp') && scopeNav.value?.prevId) {
+  // Scope navigation: p/n for prev/next
+  if (e.key === 'p' && scopeNav.value?.prevId) {
     e.preventDefault()
     navigateScope('prev')
   }
-  if ((e.key === 'k' || e.key === 'ArrowDown') && scopeNav.value?.nextId) {
+  if (e.key === 'n' && scopeNav.value?.nextId) {
     e.preventDefault()
     navigateScope('next')
   }
@@ -78,13 +77,30 @@ const editFormId = computed(() => getEditFormId(schemaStore, props.entityType))
 const properties = computed(() => {
   if (!entity.value || !typeDef.value) return []
 
-  return Object.entries(typeDef.value.properties).map(([name, def]) => ({
+  // Get property order from edit form if available, otherwise use metamodel order
+  const formId = editFormId.value
+  const form = formId ? schemaStore.getForm(formId) : null
+  const formFieldOrder = form?.fields?.map((f) => f.property).filter(Boolean) as string[] || []
+
+  // Build properties list
+  const props = Object.entries(typeDef.value.properties).map(([name, def]) => ({
     name,
     label: name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
     value: entity.value?.properties[name],
     type: def.type,
     values: def.values,
+    isLongText: def.type === 'string' && String(entity.value?.properties[name] || '').length > 60,
   }))
+
+  // Sort by form field order, then alphabetically for any not in form
+  return props.sort((a, b) => {
+    const aIdx = formFieldOrder.indexOf(a.name)
+    const bIdx = formFieldOrder.indexOf(b.name)
+    if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx
+    if (aIdx !== -1) return -1
+    if (bIdx !== -1) return 1
+    return a.name.localeCompare(b.name)
+  })
 })
 
 const relations = computed(() => {
@@ -282,7 +298,7 @@ onMounted(() => loadEntity())
           class="scope-nav-btn"
           @click="navigateScope('prev')"
         >
-          ← Prev <kbd>J</kbd>
+          ← Prev <kbd>P</kbd>
         </button>
         <span v-else class="scope-nav-btn disabled">← Prev</span>
         <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
@@ -292,7 +308,7 @@ onMounted(() => loadEntity())
           class="scope-nav-btn"
           @click="navigateScope('next')"
         >
-          Next → <kbd>K</kbd>
+          Next → <kbd>N</kbd>
         </button>
         <span v-else class="scope-nav-btn disabled">Next →</span>
       </div>
@@ -323,20 +339,7 @@ onMounted(() => loadEntity())
       <!-- Properties Section -->
       <section class="detail-section">
         <h2>Properties</h2>
-        <div class="properties-grid">
-          <div v-for="prop in properties" :key="prop.name" class="property-item">
-            <dt>{{ prop.label }}</dt>
-            <dd>
-              <Badge
-                v-if="isEnumProperty(prop)"
-                :value="String(prop.value || '')"
-                :property="prop.name"
-                :entity-type="typeDef"
-              />
-              <span v-else>{{ formatValue(prop.value, prop.type) }}</span>
-            </dd>
-          </div>
-        </div>
+        <PropertyDisplay :properties="properties" :entity-type="typeDef" />
       </section>
 
       <!-- Relations Section -->
@@ -463,31 +466,6 @@ onMounted(() => loadEntity())
 .detail-section h2 {
   margin: 0 0 16px;
   font-size: 18px;
-  color: var(--text-color);
-}
-
-.properties-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
-}
-
-.property-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.property-item dt {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--muted-text);
-}
-
-.property-item dd {
-  margin: 0;
-  font-size: 14px;
   color: var(--text-color);
 }
 

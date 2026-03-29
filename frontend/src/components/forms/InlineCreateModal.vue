@@ -220,7 +220,7 @@ function handleClose() {
           </div>
 
           <footer class="modal-footer">
-            <button type="button" class="btn btn-secondary" @click="handleClose" :disabled="loading">
+            <button type="button" class="btn btn-secondary" :disabled="loading" @click="handleClose">
               Cancel
             </button>
             <button type="submit" class="btn btn-primary" :disabled="loading">
