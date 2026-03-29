@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -374,4 +375,308 @@ func TestEngine_RelationCreated(t *testing.T) {
 	if result.PropertiesSet["has_implementation"] != "true" {
 		t.Error("expected trigger on relation created")
 	}
+}
+
+func TestEngine_WhenConditionMet(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "docs-for-enhancements",
+			On: Trigger{
+				Entity:   []string{"ticket"},
+				Property: "status",
+				Becomes:  "review",
+				When:     parseFilters(t, "kind=enhancement"),
+			},
+			Do: []Action{
+				{Set: "needs_docs", Value: "true"},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	oldEntity := model.NewEntity("T-001", "ticket")
+	oldEntity.Properties["status"] = "in-progress"
+	oldEntity.Properties["kind"] = "enhancement"
+
+	newEntity := model.NewEntity("T-001", "ticket")
+	newEntity.Properties["status"] = "review"
+	newEntity.Properties["kind"] = "enhancement"
+
+	result := engine.Process(Event{
+		Type:      EventEntityUpdated,
+		Entity:    newEntity,
+		OldEntity: oldEntity,
+	})
+
+	if result.PropertiesSet["needs_docs"] != "true" {
+		t.Error("expected trigger to fire when condition is met")
+	}
+}
+
+func TestEngine_WhenConditionNotMet(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "docs-for-enhancements",
+			On: Trigger{
+				Entity:   []string{"ticket"},
+				Property: "status",
+				Becomes:  "review",
+				When:     parseFilters(t, "kind=enhancement"),
+			},
+			Do: []Action{
+				{Set: "needs_docs", Value: "true"},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	oldEntity := model.NewEntity("T-001", "ticket")
+	oldEntity.Properties["status"] = "in-progress"
+	oldEntity.Properties["kind"] = "bug" // Not an enhancement
+
+	newEntity := model.NewEntity("T-001", "ticket")
+	newEntity.Properties["status"] = "review"
+	newEntity.Properties["kind"] = "bug"
+
+	result := engine.Process(Event{
+		Type:      EventEntityUpdated,
+		Entity:    newEntity,
+		OldEntity: oldEntity,
+	})
+
+	if len(result.PropertiesSet) > 0 {
+		t.Error("expected trigger NOT to fire when condition is not met")
+	}
+}
+
+func TestEngine_MultipleWhenConditions(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "high-priority-enhancements",
+			On: Trigger{
+				Entity:   []string{"ticket"},
+				Property: "status",
+				Becomes:  "review",
+				When:     parseFilters(t, "kind=enhancement", "priority=high"),
+			},
+			Do: []Action{
+				{Set: "urgent_review", Value: "true"},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	// Test: both conditions met
+	oldEntity := model.NewEntity("T-001", "ticket")
+	oldEntity.Properties["status"] = "in-progress"
+	oldEntity.Properties["kind"] = "enhancement"
+	oldEntity.Properties["priority"] = "high"
+
+	newEntity := model.NewEntity("T-001", "ticket")
+	newEntity.Properties["status"] = "review"
+	newEntity.Properties["kind"] = "enhancement"
+	newEntity.Properties["priority"] = "high"
+
+	result := engine.Process(Event{
+		Type:      EventEntityUpdated,
+		Entity:    newEntity,
+		OldEntity: oldEntity,
+	})
+
+	if result.PropertiesSet["urgent_review"] != "true" {
+		t.Error("expected trigger when all conditions are met")
+	}
+
+	// Test: only one condition met
+	oldEntity2 := model.NewEntity("T-002", "ticket")
+	oldEntity2.Properties["status"] = "in-progress"
+	oldEntity2.Properties["kind"] = "enhancement"
+	oldEntity2.Properties["priority"] = "low" // Not high
+
+	newEntity2 := model.NewEntity("T-002", "ticket")
+	newEntity2.Properties["status"] = "review"
+	newEntity2.Properties["kind"] = "enhancement"
+	newEntity2.Properties["priority"] = "low"
+
+	result2 := engine.Process(Event{
+		Type:      EventEntityUpdated,
+		Entity:    newEntity2,
+		OldEntity: oldEntity2,
+	})
+
+	if len(result2.PropertiesSet) > 0 {
+		t.Error("expected trigger NOT to fire when only one condition met")
+	}
+}
+
+func TestEngine_NoWhenConditions(t *testing.T) {
+	// Backward compatibility: no when conditions = always match
+	automations := []Automation{
+		{
+			Name: "always-trigger",
+			On: Trigger{
+				Entity:   []string{"ticket"},
+				Property: "status",
+				Becomes:  "review",
+				// No When conditions
+			},
+			Do: []Action{
+				{Set: "reviewed", Value: "true"},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	oldEntity := model.NewEntity("T-001", "ticket")
+	oldEntity.Properties["status"] = "in-progress"
+
+	newEntity := model.NewEntity("T-001", "ticket")
+	newEntity.Properties["status"] = "review"
+
+	result := engine.Process(Event{
+		Type:      EventEntityUpdated,
+		Entity:    newEntity,
+		OldEntity: oldEntity,
+	})
+
+	if result.PropertiesSet["reviewed"] != "true" {
+		t.Error("expected trigger without when conditions to fire")
+	}
+}
+
+func TestEngine_WhenConditionOnCreated(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "init-enhancement",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+				When:    parseFilters(t, "kind=enhancement"),
+			},
+			Do: []Action{
+				{Set: "needs_planning", Value: "true"},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	// Enhancement ticket
+	entity := model.NewEntity("T-001", "ticket")
+	entity.Properties["kind"] = "enhancement"
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if result.PropertiesSet["needs_planning"] != "true" {
+		t.Error("expected trigger on created when condition met")
+	}
+
+	// Bug ticket - should not trigger
+	bugEntity := model.NewEntity("T-002", "ticket")
+	bugEntity.Properties["kind"] = "bug"
+
+	result2 := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: bugEntity,
+	})
+
+	if len(result2.PropertiesSet) > 0 {
+		t.Error("expected no trigger on created when condition not met")
+	}
+}
+
+func TestEngine_WhenConditionOnRelationCreated(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "link-only-enhancements",
+			On: Trigger{
+				RelationCreated: "implements",
+				When:            parseFilters(t, "kind=enhancement"),
+			},
+			Do: []Action{
+				{Set: "has_impl", Value: "true"},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	// Enhancement ticket - should trigger
+	entity := model.NewEntity("T-001", "ticket")
+	entity.Properties["kind"] = "enhancement"
+	rel := model.NewRelation("S-001", "implements", "T-001")
+
+	result := engine.Process(Event{
+		Type:     EventRelationCreated,
+		Entity:   entity,
+		Relation: rel,
+	})
+
+	if result.PropertiesSet["has_impl"] != "true" {
+		t.Error("expected trigger on relation created when condition met")
+	}
+
+	// Bug ticket - should not trigger
+	bugEntity := model.NewEntity("T-002", "ticket")
+	bugEntity.Properties["kind"] = "bug"
+	rel2 := model.NewRelation("S-002", "implements", "T-002")
+
+	result2 := engine.Process(Event{
+		Type:     EventRelationCreated,
+		Entity:   bugEntity,
+		Relation: rel2,
+	})
+
+	if len(result2.PropertiesSet) > 0 {
+		t.Error("expected no trigger on relation created when condition not met")
+	}
+}
+
+func TestEngine_WhenConditionNilEntity(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "with-when",
+			On: Trigger{
+				Property: "status",
+				Becomes:  "done",
+				When:     parseFilters(t, "kind=enhancement"),
+			},
+			Do: []Action{
+				{Set: "done", Value: "true"},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	// Nil entity should not panic and should not fire
+	result := engine.Process(Event{
+		Type:   EventEntityUpdated,
+		Entity: nil,
+	})
+
+	if len(result.PropertiesSet) > 0 {
+		t.Error("expected no trigger when entity is nil")
+	}
+}
+
+// parseFilters is a test helper to parse filter strings.
+func parseFilters(t *testing.T, conditions ...string) []*filter.Filter {
+	t.Helper()
+	filters := make([]*filter.Filter, 0, len(conditions))
+	for _, c := range conditions {
+		f, err := filter.Parse(c)
+		if err != nil {
+			t.Fatalf("failed to parse filter %q: %v", c, err)
+		}
+		filters = append(filters, f)
+	}
+	return filters
 }

@@ -1098,6 +1098,45 @@ Automations fire based on entity changes:
 | `created`         | Fires when entity is created                   | `true`                    |
 | `relation_created`| Fires when this relation type is created       | `implements`              |
 | `relation_removed`| Fires when this relation type is removed       | `implements`              |
+| `when`            | Property conditions that must match (AND)      | `["kind=enhancement"]`    |
+
+### Conditional Triggers
+
+Use `when` to add property conditions that must be satisfied for the automation to fire.
+This uses the same filter syntax as validation rules.
+
+```yaml
+automations:
+  - name: docs-for-enhancements
+    description: Create docs checklist only for enhancement tickets
+    on:
+      entity: ticket
+      property: status
+      becomes: review
+      when:
+        - "kind=enhancement"
+    do:
+      - create_entity:
+          type: docs-checklist
+          relation: has-docs
+```
+
+Multiple conditions use AND logic (all must match):
+
+```yaml
+on:
+  entity: ticket
+  property: status
+  becomes: review
+  when:
+    - "kind=enhancement"
+    - "priority=high"
+```
+
+Supported operators: `=`, `!=`, `<`, `<=`, `>`, `>=`, `=~` (regex).
+
+**Note:** Conditions are evaluated against the entity's NEW state (after the change).
+For property change triggers, use `from` to filter on the old value of the changed property.
 
 ### Actions
 
