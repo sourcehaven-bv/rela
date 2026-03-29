@@ -27,6 +27,7 @@ components:
 
   # Server protocols
   mcp:              { in: internal/mcp }
+  sqldb:            { in: internal/sqldb }
 
   # Application services
   workspace:        { in: internal/workspace }
@@ -79,6 +80,11 @@ vendors:
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
   singleflight: { in: golang.org/x/sync/singleflight }
+  mysql:
+    in:
+      - github.com/dolthub/go-mysql-server
+      - github.com/dolthub/go-mysql-server/**
+  ojg:         { in: github.com/ohler55/ojg/** }
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
@@ -126,6 +132,7 @@ deps:
       - output
       - project
       - schema
+      - sqldb
       - views
       - workspace
     canUse:
@@ -174,6 +181,14 @@ deps:
     canUse:
       - mcpgo
       - fsnotify
+
+  # SQL interface
+  sqldb:
+    mayDependOn:
+      - graph
+      - metamodel
+    canUse:
+      - mysql
 
   # Application services
   workspace:
@@ -249,6 +264,8 @@ deps:
       - graph
       - metamodel
       - storage
+    canUse:
+      - ojg
 
   # Core domain
   metamodel:
