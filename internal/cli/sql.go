@@ -17,6 +17,7 @@ const defaultMySQLPort = 3306
 var (
 	sqlHost     string
 	sqlPort     int
+	sqlSocket   string
 	sqlUser     string
 	sqlPassword string
 	sqlDatabase string
@@ -36,9 +37,11 @@ Examples:
   rela sql                          # Start on default port 3306
   rela sql --port 3307              # Start on custom port
   rela sql --host 0.0.0.0           # Listen on all interfaces
+  rela sql --socket /tmp/rela.sock  # Listen on Unix socket
 
 Connect with any MySQL client:
   mysql -h localhost -P 3306 -u root rela
+  mysql --socket /tmp/rela.sock -u root rela
 
 Query examples:
   SELECT * FROM requirements;
@@ -69,6 +72,7 @@ func runSQLServer() error {
 	config := sqldb.ServerConfig{
 		Host:     sqlHost,
 		Port:     sqlPort,
+		Socket:   sqlSocket,
 		User:     sqlUser,
 		Password: sqlPassword,
 		Database: sqlDatabase,
@@ -90,7 +94,11 @@ func runSQLServer() error {
 	}()
 
 	fmt.Fprintf(os.Stderr, "Starting MySQL server on %s\n", srv.Address())
-	fmt.Fprintf(os.Stderr, "Connect with: mysql -h %s -P %d -u %s %s\n", sqlHost, sqlPort, sqlUser, sqlDatabase)
+	if sqlSocket != "" {
+		fmt.Fprintf(os.Stderr, "Connect with: mysql --socket %s -u %s %s\n", sqlSocket, sqlUser, sqlDatabase)
+	} else {
+		fmt.Fprintf(os.Stderr, "Connect with: mysql -h %s -P %d -u %s %s\n", sqlHost, sqlPort, sqlUser, sqlDatabase)
+	}
 
 	return srv.Start()
 }
@@ -98,6 +106,7 @@ func runSQLServer() error {
 func init() {
 	sqlCmd.Flags().StringVar(&sqlHost, "host", "localhost", "Host to listen on")
 	sqlCmd.Flags().IntVar(&sqlPort, "port", defaultMySQLPort, "Port to listen on")
+	sqlCmd.Flags().StringVar(&sqlSocket, "socket", "", "Unix socket path (overrides host/port)")
 	sqlCmd.Flags().StringVar(&sqlUser, "user", "root", "MySQL user")
 	sqlCmd.Flags().StringVar(&sqlPassword, "password", "", "MySQL password (empty for no auth)")
 	sqlCmd.Flags().StringVar(&sqlDatabase, "database", "rela", "Database name")

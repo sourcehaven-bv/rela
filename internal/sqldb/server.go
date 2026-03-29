@@ -24,6 +24,7 @@ type Server struct {
 type ServerConfig struct {
 	Host     string
 	Port     int
+	Socket   string // Unix socket path (overrides Host/Port if set)
 	User     string
 	Password string
 	Database string
@@ -61,6 +62,11 @@ func NewServer(g *graph.Graph, meta *metamodel.Metamodel, config ServerConfig) (
 		Address:  fmt.Sprintf("%s:%d", config.Host, config.Port),
 	}
 
+	// Use Unix socket if specified
+	if config.Socket != "" {
+		serverConfig.Socket = config.Socket
+	}
+
 	// Create the MySQL server
 	srv, err := server.NewServer(
 		serverConfig,
@@ -92,5 +98,8 @@ func (s *Server) Close() error {
 
 // Address returns the server address.
 func (s *Server) Address() string {
+	if s.config.Socket != "" {
+		return s.config.Socket
+	}
 	return fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 }
