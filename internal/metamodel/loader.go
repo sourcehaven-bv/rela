@@ -127,7 +127,9 @@ func parseRaw(data []byte) (*Metamodel, error) {
 	}
 
 	// Extract property order from YAML (maps lose key order during unmarshaling)
-	extractPropertyOrder(data, &m)
+	if err := extractPropertyOrder(data, &m); err != nil {
+		return nil, err
+	}
 
 	return &m, nil
 }
@@ -135,19 +137,19 @@ func parseRaw(data []byte) (*Metamodel, error) {
 // extractPropertyOrder parses the YAML using yaml.Node to extract property key order
 // for each entity definition. This allows WriteEntity to output properties in the
 // same order as defined in the metamodel.
-func extractPropertyOrder(data []byte, m *Metamodel) {
+func extractPropertyOrder(data []byte, m *Metamodel) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
-		return // Defensive: shouldn't fail since struct parsing succeeded
+		return fmt.Errorf("parse yaml.Node for property order: %w", err)
 	}
 
 	// root is a document node, get its content
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
-		return
+		return nil
 	}
 	doc := root.Content[0]
 	if doc.Kind != yaml.MappingNode {
-		return
+		return nil
 	}
 
 	// Find the "entities" key
@@ -159,6 +161,7 @@ func extractPropertyOrder(data []byte, m *Metamodel) {
 			break
 		}
 	}
+	return nil
 }
 
 // extractEntityPropertyOrder extracts property order from the entities mapping node.
