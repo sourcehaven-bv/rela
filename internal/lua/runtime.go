@@ -19,6 +19,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
+// Default values for Lua API functions.
+const (
+	defaultSearchLimit   = 20
+	argPosCreateEntityID = 4
+)
+
 // Runtime wraps gopher-lua VM with rela bindings.
 type Runtime struct {
 	L           *lua.LState
@@ -69,20 +75,34 @@ func (r *Runtime) Close() {
 func (r *Runtime) registerBindings() {
 	rela := r.L.NewTable()
 
-	// Entity functions
+	// Entity query functions
 	r.L.SetField(rela, "get_entity", r.L.NewFunction(r.luaGetEntity))
 	r.L.SetField(rela, "list_entities", r.L.NewFunction(r.luaListEntities))
+	r.L.SetField(rela, "search", r.L.NewFunction(r.luaSearch))
 
-	// Relation functions
+	// Entity mutation functions
+	r.L.SetField(rela, "create_entity", r.L.NewFunction(r.luaCreateEntity))
+	r.L.SetField(rela, "update_entity", r.L.NewFunction(r.luaUpdateEntity))
+	r.L.SetField(rela, "delete_entity", r.L.NewFunction(r.luaDeleteEntity))
+
+	// Relation query functions
 	r.L.SetField(rela, "get_relations", r.L.NewFunction(r.luaGetRelations))
+
+	// Relation mutation functions
+	r.L.SetField(rela, "create_relation", r.L.NewFunction(r.luaCreateRelation))
+	r.L.SetField(rela, "delete_relation", r.L.NewFunction(r.luaDeleteRelation))
 
 	// Graph traversal
 	r.L.SetField(rela, "trace_from", r.L.NewFunction(r.luaTraceFrom))
 	r.L.SetField(rela, "trace_to", r.L.NewFunction(r.luaTraceTo))
+	r.L.SetField(rela, "find_path", r.L.NewFunction(r.luaFindPath))
 
 	// Output functions
 	r.L.SetField(rela, "output", r.L.NewFunction(r.luaOutput))
 	r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
+
+	// Utility functions
+	r.L.SetField(rela, "refresh", r.L.NewFunction(r.luaRefresh))
 
 	// Context
 	r.L.SetField(rela, "project_root", lua.LString(r.projectRoot))
@@ -422,6 +442,237 @@ func luaTableToGo(t *lua.LTable) interface{} {
 	}
 
 	// It's a map
+	m := make(map[string]interface{})
+	t.ForEach(func(k, v lua.LValue) {
+		var key string
+		switch kv := k.(type) {
+		case lua.LString:
+			key = string(kv)
+		case lua.LNumber:
+			key = fmt.Sprintf("%v", float64(kv))
+		default:
+			key = k.String()
+		}
+		m[key] = luaValueToGo(v)
+	})
+	return m
+}
+
+// luaSearch implements rela.search(query, type?, limit?) -> table
+func (r *Runtime) luaSearch(ls *lua.LState) int {
+	query := ls.CheckString(1)
+	if query == "" {
+		ls.RaiseError("search query cannot be empty")
+		return 0
+	}
+
+	limit := ls.OptInt(2, defaultSearchLimit)
+
+	entities, err := r.ws.SearchSimple(query, limit)
+	if err != nil {
+		ls.RaiseError("search error: %s", err.Error())
+		return 0
+	}
+
+	result := ls.NewTable()
+	for i, e := range entities {
+		result.RawSetInt(i+1, entityToTable(ls, e))
+	}
+	ls.Push(result)
+	return 1
+}
+
+// luaCreateEntity implements rela.create_entity(type, properties, content?, id?) -> table
+func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
+	entityType := ls.CheckString(1)
+	if entityType == "" {
+		ls.RaiseError("entity type cannot be empty")
+		return 0
+	}
+
+	propsTable := ls.CheckTable(2)
+	props := luaTableToGoMap(propsTable)
+
+	content := ls.OptString(3, "")
+	customID := ls.OptString(argPosCreateEntityID, "")
+
+	entity, _, err := r.ws.CreateEntity(entityType, workspace.CreateOptions{
+		ID:         customID,
+		Properties: props,
+		Content:    content,
+	})
+	if err != nil {
+		ls.RaiseError("create entity error: %s", err.Error())
+		return 0
+	}
+
+	ls.Push(entityToTable(ls, entity))
+	return 1
+}
+
+// luaUpdateEntity implements rela.update_entity(id, properties, content?) -> table
+func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
+	id := ls.CheckString(1)
+	if id == "" {
+		ls.RaiseError("entity ID cannot be empty")
+		return 0
+	}
+
+	entity, found := r.ws.GetEntity(id)
+	if !found {
+		ls.RaiseError("entity not found: %s", id)
+		return 0
+	}
+
+	// Clone entity for update
+	oldEntity := *entity
+	updated := *entity
+
+	// Update properties if provided
+	if ls.GetTop() >= 2 && ls.Get(2).Type() == lua.LTTable {
+		propsTable := ls.CheckTable(2)
+		newProps := luaTableToGoMap(propsTable)
+		// Merge properties
+		if updated.Properties == nil {
+			updated.Properties = make(map[string]interface{})
+		}
+		for k, v := range newProps {
+			updated.Properties[k] = v
+		}
+	}
+
+	// Update content if provided
+	if ls.GetTop() >= 3 {
+		content := ls.OptString(3, "")
+		if content != "" {
+			updated.Content = content
+		}
+	}
+
+	_, err := r.ws.UpdateEntity(&updated, &oldEntity)
+	if err != nil {
+		ls.RaiseError("update entity error: %s", err.Error())
+		return 0
+	}
+
+	// Get fresh entity after update
+	updatedEntity, _ := r.ws.GetEntity(id)
+	ls.Push(entityToTable(ls, updatedEntity))
+	return 1
+}
+
+// luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean
+func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
+	id := ls.CheckString(1)
+	if id == "" {
+		ls.RaiseError("entity ID cannot be empty")
+		return 0
+	}
+
+	cascade := ls.OptBool(2, false)
+
+	entity, found := r.ws.GetEntity(id)
+	if !found {
+		ls.RaiseError("entity not found: %s", id)
+		return 0
+	}
+
+	_, err := r.ws.DeleteEntity(entity.Type, id, cascade)
+	if err != nil {
+		ls.RaiseError("delete entity error: %s", err.Error())
+		return 0
+	}
+
+	ls.Push(lua.LTrue)
+	return 1
+}
+
+// luaCreateRelation implements rela.create_relation(from, type, to, content?) -> table
+func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
+	from := ls.CheckString(1)
+	relType := ls.CheckString(2)
+	to := ls.CheckString(3)
+
+	if from == "" || relType == "" || to == "" {
+		ls.RaiseError("from, type, and to are required")
+		return 0
+	}
+
+	rel, err := r.ws.CreateRelation(from, relType, to)
+	if err != nil {
+		ls.RaiseError("create relation error: %s", err.Error())
+		return 0
+	}
+
+	ls.Push(relationToTable(ls, rel))
+	return 1
+}
+
+// luaDeleteRelation implements rela.delete_relation(from, type, to) -> boolean
+func (r *Runtime) luaDeleteRelation(ls *lua.LState) int {
+	from := ls.CheckString(1)
+	relType := ls.CheckString(2)
+	to := ls.CheckString(3)
+
+	if from == "" || relType == "" || to == "" {
+		ls.RaiseError("from, type, and to are required")
+		return 0
+	}
+
+	err := r.ws.DeleteRelation(from, relType, to)
+	if err != nil {
+		ls.RaiseError("delete relation error: %s", err.Error())
+		return 0
+	}
+
+	ls.Push(lua.LTrue)
+	return 1
+}
+
+// luaFindPath implements rela.find_path(from, to) -> table
+func (r *Runtime) luaFindPath(ls *lua.LState) int {
+	from := ls.CheckString(1)
+	to := ls.CheckString(2)
+
+	if from == "" || to == "" {
+		ls.RaiseError("from and to are required")
+		return 0
+	}
+
+	path := r.ws.FindPath(from, to)
+	if path == nil {
+		ls.Push(lua.LNil)
+		return 1
+	}
+
+	result := ls.NewTable()
+	for i, step := range path {
+		stepTable := ls.NewTable()
+		stepTable.RawSetString("id", lua.LString(step.ID))
+		stepTable.RawSetString("type", lua.LString(step.Type))
+		stepTable.RawSetString("title", lua.LString(step.Title))
+		stepTable.RawSetString("relation", lua.LString(step.Relation))
+		result.RawSetInt(i+1, stepTable)
+	}
+	ls.Push(result)
+	return 1
+}
+
+// luaRefresh implements rela.refresh() -> boolean
+// Re-syncs the graph from disk (reloads all entities and relations).
+func (r *Runtime) luaRefresh(ls *lua.LState) int {
+	_, err := r.ws.Sync()
+	if err != nil {
+		ls.RaiseError("refresh error: %s", err.Error())
+		return 0
+	}
+
+	ls.Push(lua.LTrue)
+	return 1
+}
+
+// luaTableToGoMap converts a Lua table to a Go map[string]interface{}.
+func luaTableToGoMap(t *lua.LTable) map[string]interface{} {
 	m := make(map[string]interface{})
 	t.ForEach(func(k, v lua.LValue) {
 		var key string

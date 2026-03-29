@@ -14,14 +14,26 @@ var scriptCmd = &cobra.Command{
 	Long: `Execute a Lua script with access to the rela graph.
 
 Scripts can query entities and relations, apply filters, trace dependencies,
-and output results as JSON or write files.
+create/update/delete entities and relations, and output results.
 
-Available functions in the rela module:
+Query functions:
   rela.get_entity(id)              Get entity by ID (returns table or nil)
   rela.list_entities(type, filter) List entities with optional filter
+  rela.search(query, limit?)       Full-text search (default limit: 20)
   rela.get_relations(opts)         Get relations (opts: {from, type, to})
   rela.trace_from(id, depth)       Trace outgoing dependencies
   rela.trace_to(id, depth)         Trace incoming dependencies
+  rela.find_path(from, to)         Find shortest path between entities
+
+Mutation functions:
+  rela.create_entity(type, props, content?, id?)  Create new entity
+  rela.update_entity(id, props, content?)         Update entity properties
+  rela.delete_entity(id, cascade?)                Delete entity
+  rela.create_relation(from, type, to)            Create relation
+  rela.delete_relation(from, type, to)            Delete relation
+  rela.refresh()                                  Reload graph from disk
+
+Output functions:
   rela.output(data)                Output data as JSON to stdout
   rela.write_file(path, content)   Write content to file
 
