@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global process */
 
 /**
  * Generate or check coverage baseline for frontend tests.
@@ -93,7 +94,7 @@ function checkBaseline() {
   }
 
   // Check for files removed from coverage that still exist in baseline
-  for (const [file, base] of baseline) {
+  for (const [file, _base] of baseline) {
     if (!current.find((c) => c.file === file)) {
       // File removed from coverage - only warn, don't fail
       // (file might have been deleted or moved)
