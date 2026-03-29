@@ -9,92 +9,125 @@ type: planning-checklist
 
 ## Understanding
 
-- [ ] Problem/requirements clearly understood
-- [ ] Scope defined (what's in/out documented below)
-- [ ] Acceptance criteria documented with specific test scenarios
+- [x] Problem/requirements clearly understood
+- [x] Scope defined (what's in/out documented below)
+- [x] Acceptance criteria documented with specific test scenarios
 
 **Scope:**
-<!-- Document explicitly what IS and IS NOT in scope -->
+- IN: Entity frontmatter property ordering based on metamodel definition
+- IN: `rela fmt` CLI command with `--dry-run` and `--check` flags
+- OUT: Relation file formatting (future work)
+- OUT: Automatic formatting on save (would require hooks)
 
 **Acceptance Criteria:**
-<!-- Each criterion must have a concrete test scenario -->
-1. ...
+1. Properties appear in order: `id`, `type`, then metamodel-defined order, then extras alphabetically
+2. `rela fmt` formats all or specific entity types
+3. `rela fmt --dry-run` shows what would change without writing
+4. `rela fmt --check` exits 1 if files need formatting (for CI)
 
 ## Research
 
-- [ ] Searched for existing libraries that solve this problem
-- [ ] Checked codebase for similar patterns or reusable code
-- [ ] Looked for reference implementations in other projects
-- [ ] Reviewed relevant rela concepts for prior art
+- [x] Searched for existing libraries that solve this problem
+- [x] Checked codebase for similar patterns or reusable code
+- [x] Looked for reference implementations in other projects
+- [x] Reviewed relevant rela concepts for prior art
 
 **Existing Solutions:**
-<!-- Document what you found:
-- Libraries considered (with pros/cons, why chosen or rejected)
-- Similar patterns in codebase (file:line references)
-- Reference implementations that inspired the approach
-- Relevant concepts from rela-docs or rela-issues-and-design-tickets
--->
+- gopkg.in/yaml.v3 provides `yaml.Node` for preserving/controlling YAML key order
+- Existing `FormatDocument` in `markdown/parser.go:70` used as base pattern
+- Go maps don't preserve order, so need explicit key order tracking
+- `WriteEntity` already supports property order parameter (added in this work)
 
 ## Approach
 
-- [ ] Technical approach chosen and documented
-- [ ] Approach builds on existing patterns (not reinventing)
-- [ ] Alternatives considered (document why rejected)
-- [ ] Dependencies identified (packages, APIs, types)
+- [x] Technical approach chosen and documented
+- [x] Approach builds on existing patterns (not reinventing)
+- [x] Alternatives considered (document why rejected)
+- [x] Dependencies identified (packages, APIs, types)
 
 **Technical Approach:**
-<!-- Document the approach with enough detail that implementation is mechanical -->
+1. Extract property definition order from metamodel YAML using `yaml.Node` during loading
+2. Store order in `EntityDef.PropertyOrder` field
+3. Add `FormatDocumentOrdered` that builds yaml.Node with explicit key order
+4. Update `WriteEntity` to pass property order through the layers
+5. Add `rela fmt` command using workspace.FormatEntity
+
+**Alternatives considered:**
+- Using YAML comments to preserve order: Rejected - comments not semantic
+- Alphabetical order: Rejected - metamodel order is more meaningful
+- Third-party YAML library: Rejected - yaml.v3 Node support is sufficient
 
 **Files to modify:**
-<!-- List specific files that will change -->
+- `internal/metamodel/types.go` - Add PropertyOrder field
+- `internal/metamodel/loader.go` - Extract order via yaml.Node
+- `internal/metamodel/entity_def.go` - GetPropertyOrder method
+- `internal/markdown/parser.go` - FormatDocumentOrdered, marshalOrdered, valueToNode
+- `internal/markdown/entity.go` - FormatEntity, update WriteEntity signature
+- `internal/repository/repository.go` - Pass property order to WriteEntity
+- `internal/repository/transaction.go` - Pass property order to WriteEntity
+- `internal/workspace/workspace.go` - Add FormatEntity method
+- `internal/cli/fmt.go` - New fmt command
+- `internal/cli/root.go` - Handle ExitError
+- `internal/errors/errors.go` - Add ExitError type
 
 ## Security Considerations
 
-- [ ] Input sources identified (user input, config, external APIs)
-- [ ] Input validation approach defined (allowlist preferred over blocklist)
-- [ ] Security-sensitive operations identified (file access, auth, crypto)
-- [ ] Error handling doesn't leak sensitive information
+- [x] Input sources identified (user input, config, external APIs)
+- [x] Input validation approach defined (allowlist preferred over blocklist)
+- [x] Security-sensitive operations identified (file access, auth, crypto)
+- [x] Error handling doesn't leak sensitive information
 
 **Input Sources & Validation:**
-<!-- For each input: source, validation approach, what happens on invalid input -->
+- Entity files: Already validated by metamodel during load
+- Metamodel YAML: Parsed by existing loader with validation
+- No direct user input - command operates on existing project files
 
 **Security-Sensitive Operations:**
-<!-- List operations and how they're protected -->
+- File reads: Through workspace/repository layers with SafeFS
+- File writes: Through workspace/repository layers, same paths as existing files
+- No network access, no auth, no crypto
 
 ## Test Plan
 
-- [ ] Test scenarios documented for each acceptance criterion
-- [ ] Edge cases identified and documented
-- [ ] Negative test cases defined (invalid input, error conditions)
-- [ ] Integration test approach defined (not just unit tests)
+- [x] Test scenarios documented for each acceptance criterion
+- [x] Edge cases identified and documented
+- [x] Negative test cases defined (invalid input, error conditions)
+- [x] Integration test approach defined (not just unit tests)
 
 **Test Scenarios:**
-<!-- Map each acceptance criterion to how it will be tested -->
+1. FormatDocumentOrdered produces correct key order (unit test)
+2. GetPropertyOrder returns defensive copy (unit test)
+3. ExitError works correctly (unit test)
+4. `rela fmt --check` exits 1 when files need formatting (manual/integration)
+5. `rela fmt` then `--check` exits 0 (manual/integration)
 
 **Edge Cases:**
-<!-- List specific edge cases and expected behavior. Consider:
-- Empty/null/missing values
-- Boundary values (0, -1, MAX_INT)
-- Special characters, unicode, null bytes
-- Concurrent access
-- Resource exhaustion
--->
+- Entity with no properties defined in metamodel: Uses alphabetical order
+- Entity with extra properties not in metamodel: Extras sorted alphabetically at end
+- Empty entity content: Should work (just frontmatter)
+- Metamodel without property order: Falls back gracefully
 
 **Negative Tests:**
-<!-- What should fail? How should it fail? -->
+- Invalid entity type argument: Returns error
+- yaml.Node parse failure: Now returns error (was silent, fixed per RR-XD6H)
 
 ## Risk Assessment
 
-- [ ] Technical risks assessed with mitigations
-- [ ] Security risks assessed (see Security Considerations)
-- [ ] Effort estimated (xs/s/m/l/xl)
+- [x] Technical risks assessed with mitigations
+- [x] Security risks assessed (see Security Considerations)
+- [x] Effort estimated (xs/s/m/l/xl)
 
 **Risks:**
-<!-- List risks and how they will be mitigated -->
+- Risk: yaml.Node API complexity → Mitigated by thorough testing
+- Risk: Breaking existing frontmatter → Mitigated by --dry-run flag and idempotent formatting
+- Effort: **S** (small) - Straightforward YAML manipulation with existing patterns
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
+**Design Review Findings:**
+- RR-MWZR (critical): valueToNode marshal/unmarshal inefficiency → Fixed: use yaml.Node.Encode()
+- RR-XD6H (significant): extractPropertyOrder silently swallows errors → Fixed: returns error
+- RR-8B12 (minor): GetPropertyOrder aliasing → Fixed: returns defensive copy
