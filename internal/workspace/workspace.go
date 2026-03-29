@@ -441,58 +441,25 @@ type CreateResult struct {
 // defaults, validates, writes to disk, updates the graph, and runs
 // automation.
 func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.Entity, *CreateResult, error) {
-	meta := w.Meta()
-	entityDef, ok := meta.GetEntityDef(entityType)
-	if !ok {
-		return nil, nil, fmt.Errorf("unknown entity type: %s", entityType)
-	}
-
-	// Resolve ID.
-	entityID := opts.ID
-	if entityID == "" {
-		id, err := w.GenerateID(entityType, opts.Prefix)
-		if err != nil {
-			return nil, nil, err
-		}
-		entityID = id
-	} else {
-		if err := model.ValidateID(entityID); err != nil {
-			return nil, nil, err
+	// Check for duplicates if custom ID provided.
+	if opts.ID != "" {
+		if _, exists := w.graph.GetNode(opts.ID); exists {
+			return nil, nil, fmt.Errorf("entity with ID %s already exists", opts.ID)
 		}
 	}
 
-	// Check for duplicates.
-	if _, exists := w.graph.GetNode(entityID); exists {
-		return nil, nil, fmt.Errorf("entity with ID %s already exists", entityID)
-	}
-
-	entity := model.NewEntity(entityID, entityType)
-
-	// Apply template defaults.
-	template, err := w.repo.LoadEntityTemplate(entityType)
+	// Create entity using core logic (no automation yet - we run it after for pre-validation changes).
+	entity, err := w.createEntityCore(entityType, createEntityCoreOpts{
+		ID:         opts.ID,
+		IDPrefix:   opts.Prefix,
+		Properties: opts.Properties,
+		Content:    opts.Content,
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("load template: %w", err)
-	}
-	if template != nil {
-		markdown.ApplyEntityTemplate(entity, template)
+		return nil, nil, err
 	}
 
-	// Apply caller-provided properties (override template defaults).
-	for k, v := range opts.Properties {
-		entity.Properties[k] = v
-	}
-
-	// Set body.
-	if opts.Content != "" {
-		entity.Content = opts.Content
-	}
-
-	// Set default status if not set.
-	if entity.GetString("status") == "" {
-		entity.SetString("status", entityDef.GetDefaultStatus(meta))
-	}
-
-	// Run automation once and collect all results.
+	// Run automation and apply property changes.
 	result := &CreateResult{}
 	var autoResult *automation.Result
 	if w.automation != nil {
@@ -500,24 +467,21 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 			Type:   automation.EventEntityCreated,
 			Entity: entity,
 		})
-		// Apply property changes before validation.
-		for prop, val := range autoResult.PropertiesSet {
-			entity.SetString(prop, val)
+		// Apply property changes.
+		if len(autoResult.PropertiesSet) > 0 {
+			for prop, val := range autoResult.PropertiesSet {
+				entity.SetString(prop, val)
+			}
+			// Re-write entity with automation-set properties.
+			if err := w.repo.WriteEntity(entity, w.Meta()); err != nil {
+				return nil, nil, fmt.Errorf("write entity after automation: %w", err)
+			}
 		}
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
 	}
 
-	// Validate.
-	if errs := meta.ValidateEntity(entity); len(errs) > 0 {
-		return nil, nil, newValidationError(errs)
-	}
-
-	// Write to disk + update graph + search index.
-	if err := w.repo.WriteEntity(entity, meta); err != nil {
-		return nil, nil, fmt.Errorf("write entity: %w", err)
-	}
-	w.graph.AddNode(entity)
+	// Index the entity for search.
 	w.indexEntity(entity)
 
 	// Apply automation side effects (relations, entities) after entity is written.
@@ -637,43 +601,61 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 	return result, nil
 }
 
+// createEntityCoreOpts configures core entity creation.
+type createEntityCoreOpts struct {
+	ID              string                 // Custom ID (empty = auto-generate)
+	IDPrefix        string                 // Prefix for auto-generated ID
+	TemplateVariant string                 // Template variant name (empty = default template)
+	Properties      map[string]interface{} // Properties to set
+	Content         string                 // Body content
+}
+
 // createEntityCore creates an entity without running automations.
-// If templateVariant is non-empty, loads <type>--<variant>.md instead of <type>.md.
-// This is the core creation logic used by the automation queue processor.
-func (w *Workspace) createEntityCore(
-	entityType, templateVariant string,
-	props map[string]interface{},
-) (*model.Entity, error) {
+// This is the shared creation logic used by CreateEntity and automation processing.
+func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpts) (*model.Entity, error) {
 	meta := w.Meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
 		return nil, fmt.Errorf("unknown entity type: %s", entityType)
 	}
 
-	// Generate ID.
-	entityID, err := w.GenerateID(entityType, "")
-	if err != nil {
-		return nil, err
+	// Resolve ID.
+	entityID := opts.ID
+	if entityID == "" {
+		id, err := w.GenerateID(entityType, opts.IDPrefix)
+		if err != nil {
+			return nil, err
+		}
+		entityID = id
+	} else {
+		if err := model.ValidateID(entityID); err != nil {
+			return nil, err
+		}
 	}
 
 	entity := model.NewEntity(entityID, entityType)
 
 	// Apply template defaults (use variant if specified).
-	template, err := w.repo.LoadEntityTemplateVariant(entityType, templateVariant)
+	template, err := w.repo.LoadEntityTemplateVariant(entityType, opts.TemplateVariant)
 	if err != nil {
 		return nil, fmt.Errorf("load template: %w", err)
 	}
 	// If a variant was explicitly specified but not found, that's an error.
-	if templateVariant != "" && template == nil {
-		return nil, fmt.Errorf("template variant %q not found for entity type %s", templateVariant, entityType)
+	if opts.TemplateVariant != "" && template == nil {
+		return nil, fmt.Errorf("template variant %q not found for entity type %s", opts.TemplateVariant, entityType)
 	}
 	if template != nil {
 		markdown.ApplyEntityTemplate(entity, template)
 	}
 
 	// Apply provided properties (override template defaults).
-	for k, v := range props {
+	for k, v := range opts.Properties {
 		entity.Properties[k] = v
+	}
+
+	// Set body content.
+	if opts.Content != "" {
+		entity.Content = opts.Content
 	}
 
 	// Set default status if not set.
@@ -778,7 +760,10 @@ func (w *Workspace) processEntityCreations(
 		}
 
 		// Create entity (no automation yet).
-		created, createErr := w.createEntityCore(toCreate.Type, toCreate.Template, toCreate.Properties)
+		created, createErr := w.createEntityCore(toCreate.Type, createEntityCoreOpts{
+			TemplateVariant: toCreate.Template,
+			Properties:      toCreate.Properties,
+		})
 		if createErr != nil {
 			effects.Errors = append(effects.Errors,
 				fmt.Sprintf("failed to create automation entity %s: %v", toCreate.Type, createErr))
@@ -862,12 +847,11 @@ func (w *Workspace) applyRelationCreations(
 			continue
 		}
 
-		if writeErr := w.repo.WriteRelation(rel); writeErr != nil {
+		if err := w.writeRelationCore(rel); err != nil {
 			effects.Errors = append(effects.Errors,
-				fmt.Sprintf("failed to create automation relation: %v", writeErr))
+				fmt.Sprintf("failed to create automation relation: %v", err))
 			continue
 		}
-		w.graph.AddEdge(rel)
 		effects.RelationsCreated = append(effects.RelationsCreated, rel)
 	}
 }
@@ -928,16 +912,25 @@ func (w *Workspace) createTriggerRelation(
 	}
 
 	rel := model.NewRelation(triggerEntity.ID, relationType, created.ID)
-	if writeErr := w.repo.WriteRelation(rel); writeErr != nil {
+	if err := w.writeRelationCore(rel); err != nil {
 		effects.Errors = append(effects.Errors,
-			fmt.Sprintf("failed to create automation relation: %v", writeErr))
+			fmt.Sprintf("failed to create automation relation: %v", err))
 		return
 	}
-	w.graph.AddEdge(rel)
 	effects.RelationsCreated = append(effects.RelationsCreated, rel)
 }
 
 // --- Relation operations ---
+
+// writeRelationCore writes a relation to disk and updates the graph.
+// This is the shared write logic used by CreateRelation and automation processing.
+func (w *Workspace) writeRelationCore(rel *model.Relation) error {
+	if err := w.repo.WriteRelation(rel); err != nil {
+		return fmt.Errorf("write relation: %w", err)
+	}
+	w.graph.AddEdge(rel)
+	return nil
+}
 
 // CreateRelationOptions configures optional settings for relation creation.
 type CreateRelationOptions struct {
@@ -986,10 +979,9 @@ func (w *Workspace) CreateRelation(from, relType, to string, opts ...CreateRelat
 		}
 	}
 
-	if err := w.repo.WriteRelation(rel); err != nil {
-		return nil, fmt.Errorf("write relation: %w", err)
+	if err := w.writeRelationCore(rel); err != nil {
+		return nil, err
 	}
-	w.graph.AddEdge(rel)
 
 	w.saveCacheQuietly()
 	return rel, nil
