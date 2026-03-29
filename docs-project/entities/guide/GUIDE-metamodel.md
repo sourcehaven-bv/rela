@@ -1113,8 +1113,8 @@ This uses the same filter syntax as validation rules.
 
 ```yaml
 automations:
-  - name: docs-for-enhancements
-    description: Create docs checklist only for enhancement tickets
+  - name: mark-enhancement-for-docs
+    description: Mark enhancement tickets for documentation review
     on:
       entity: ticket
       property: status
@@ -1122,9 +1122,8 @@ automations:
       when:
         - "kind=enhancement"
     do:
-      - create_entity:
-          type: docs-checklist
-          relation: has-docs
+      - set: needs_docs
+        value: "true"
 ```
 
 Multiple conditions use AND logic (all must match):
