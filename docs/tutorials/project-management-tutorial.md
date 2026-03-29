@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Tutorial: Hybrid Project Management with Rela
 
 This comprehensive tutorial walks you through implementing a complete project

@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Export Guide
 
 The `rela export` command enables powerful reporting and analysis by exporting your

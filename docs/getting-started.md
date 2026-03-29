@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Getting Started
 
 This guide walks you through installing rela and creating your first project.

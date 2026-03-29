@@ -1,6 +1,10 @@
 package metamodel
 
-import "github.com/Sourcehaven-BV/rela/internal/model"
+import (
+	"regexp"
+
+	"github.com/Sourcehaven-BV/rela/internal/model"
+)
 
 // Metamodel represents the full metamodel configuration
 type Metamodel struct {
@@ -61,10 +65,33 @@ func (v *ValidationRule) IsError() bool {
 	return v.GetSeverity() == "error"
 }
 
-// CustomType defines a reusable enum type
+// TypeValidation defines a regex validation for a custom type.
+type TypeValidation struct {
+	Pattern string `yaml:"pattern"` // Regex pattern that values must match
+	Error   string `yaml:"error"`   // User-friendly error message if pattern doesn't match
+
+	// compiled is the pre-compiled regex, populated during metamodel load.
+	// Not exported to prevent YAML serialization issues.
+	compiled *regexp.Regexp
+}
+
+// Compiled returns the pre-compiled regex pattern.
+// Returns nil if the pattern hasn't been compiled yet.
+func (tv *TypeValidation) Compiled() *regexp.Regexp {
+	return tv.compiled
+}
+
+// SetCompiled sets the pre-compiled regex pattern.
+func (tv *TypeValidation) SetCompiled(re *regexp.Regexp) {
+	tv.compiled = re
+}
+
+// CustomType defines a reusable type with optional enum values and/or regex validations.
 type CustomType struct {
-	Values  []string `yaml:"values"`
-	Default string   `yaml:"default,omitempty"`
+	Values      []string         `yaml:"values,omitempty"`      // Allowed values (makes this an enum type)
+	Default     string           `yaml:"default,omitempty"`     // Default value
+	Description string           `yaml:"description,omitempty"` // Documentation for the type
+	Validations []TypeValidation `yaml:"validations,omitempty"` // Regex validations with error messages
 }
 
 // EntityDef defines an entity type in the metamodel
@@ -74,7 +101,8 @@ type EntityDef struct {
 	Description string                 `yaml:"description,omitempty"` // Documentation explaining intent/usage
 	Plural      string                 `yaml:"plural,omitempty"`      // Used for directory names (e.g., "policies" for "policy")
 	Aliases     []string               `yaml:"aliases,omitempty"`
-	IDType      string                 `yaml:"id_type,omitempty"`     // "auto" (default) or "manual"
+	IDType      string                 `yaml:"id_type,omitempty"`     // "short" (default), "sequential", or "manual"
+	IDCaps      string                 `yaml:"id_caps,omitempty"`     // "upper" (default) or "lower" - capitalization for short ID suffix
 	IDPrefix    string                 `yaml:"id_prefix,omitempty"`   // Single ID prefix (sugar for single-element id_prefixes)
 	IDPrefixes  []string               `yaml:"id_prefixes,omitempty"` // Multiple ID prefixes
 	RDFType     string                 `yaml:"rdf_type,omitempty"`
@@ -113,6 +141,12 @@ const (
 
 	// Deprecated alias (still accepted for backwards compatibility)
 	IDTypeString = "string" // Deprecated: use "manual" instead
+)
+
+// ID capitalization modes for short IDs
+const (
+	IDCapsUpper = "upper" // Random suffix is uppercase (e.g., REQ-A3F8) - default
+	IDCapsLower = "lower" // Random suffix is lowercase (e.g., REQ-a3f8)
 )
 
 // ReservedPropertyNames contains property names that cannot be used in metamodel definitions
@@ -255,6 +289,7 @@ type AutomationTrigger struct {
 	Created         bool          `yaml:"created,omitempty"`
 	RelationCreated string        `yaml:"relation_created,omitempty"`
 	RelationRemoved string        `yaml:"relation_removed,omitempty"`
+	When            []string      `yaml:"when,omitempty"` // Property conditions that must match (AND logic)
 }
 
 // AutomationAction specifies an operation to perform.

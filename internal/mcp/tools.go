@@ -29,6 +29,7 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolAnalyzeCardinality(), s.handleAnalyzeCardinality)
 	s.mcp.AddTool(toolAnalyzeProperties(), s.handleAnalyzeProperties)
 	s.mcp.AddTool(toolAnalyzeValidations(), s.handleAnalyzeValidations)
+	s.mcp.AddTool(toolAnalyzeSchema(), s.handleAnalyzeSchema)
 
 	// Schema tools
 	s.mcp.AddTool(toolGetMetamodel(), s.handleGetMetamodel)
@@ -185,6 +186,13 @@ func toolAnalyzeProperties() mcp.Tool {
 func toolAnalyzeValidations() mcp.Tool {
 	return mcp.NewTool("analyze_validations",
 		mcp.WithDescription("Run custom validation rules defined in the metamodel"),
+	)
+}
+
+func toolAnalyzeSchema() mcp.Tool {
+	return mcp.NewTool("analyze_schema",
+		mcp.WithDescription("Analyze metamodel schema usage to find unused entity types, relation types, and custom types"),
+		mcp.WithNumber("threshold", mcp.Description("Show types with instance count <= threshold (0 = only unused, default 0)")),
 	)
 }
 

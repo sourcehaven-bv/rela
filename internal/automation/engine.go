@@ -31,6 +31,20 @@ func NewEngineFromMetamodel(defs []metamodel.AutomationDef) *Engine {
 
 // convertFromMetamodel converts a metamodel AutomationDef to the internal Automation type.
 func convertFromMetamodel(def metamodel.AutomationDef) Automation {
+	// Parse when conditions
+	// Note: Invalid filters are silently skipped. This could be improved by
+	// validating at metamodel load time (requires breaking filter/metamodel import cycle).
+	whenFilters := make([]*filter.Filter, 0, len(def.On.When))
+	for _, w := range def.On.When {
+		f, err := filter.Parse(w)
+		if err != nil {
+			// Skip invalid conditions - this automation will have fewer constraints
+			// than intended, which is safer than having no constraints at all
+			continue
+		}
+		whenFilters = append(whenFilters, f)
+	}
+
 	auto := Automation{
 		Name:        def.Name,
 		Description: def.Description,
@@ -42,6 +56,7 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 			Created:         def.On.Created,
 			RelationCreated: def.On.RelationCreated,
 			RelationRemoved: def.On.RelationRemoved,
+			When:            whenFilters,
 		},
 		Do:       make([]Action, len(def.Do)),
 		Validate: make([]Validation, len(def.Validate)),
@@ -131,6 +146,11 @@ func (e *Engine) matches(trigger Trigger, event Event) bool {
 		}
 	}
 
+	// Check when conditions (property filters on the entity)
+	if !e.matchesWhenConditions(trigger, event.Entity) {
+		return false
+	}
+
 	switch event.Type {
 	case EventEntityCreated:
 		return trigger.Created
@@ -184,6 +204,25 @@ func (e *Engine) matchesPropertyChange(trigger Trigger, event Event) bool {
 		return false
 	}
 
+	return true
+}
+
+// matchesWhenConditions checks if all when conditions are satisfied.
+// Returns true if no conditions are specified (backward compatible).
+func (e *Engine) matchesWhenConditions(trigger Trigger, entity *model.Entity) bool {
+	if len(trigger.When) == 0 {
+		return true
+	}
+	if entity == nil {
+		return false
+	}
+
+	for _, f := range trigger.When {
+		val := entity.Properties[f.Property]
+		if !matchSimple(val, f) {
+			return false
+		}
+	}
 	return true
 }
 

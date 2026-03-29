@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # CLI Reference
 
 Complete reference for all rela commands.
@@ -128,10 +130,43 @@ rela list [type] [flags]
 
 **Flags:**
 
-| Flag         | Description        |
-| ------------ | ------------------ |
-| `--status`   | Filter by status   |
-| `--priority` | Filter by priority |
+| Flag      | Description                                      |
+| --------- | ------------------------------------------------ |
+| `--where` | Filter by property (repeatable for AND logic)    |
+| `--sort`  | Sort by property (or `id`, `modified`)           |
+| `--desc`  | Sort descending                                  |
+
+**Filter Operators:**
+
+The `--where` flag supports multiple comparison operators:
+
+| Operator | Description                        | Example                            |
+| -------- | ---------------------------------- | ---------------------------------- |
+| `=`      | Exact match (supports `*` glob)    | `--where "status=draft"`           |
+| `!=`     | Not equal                          | `--where "status!=done"`           |
+| `<`      | Less than (date/integer)           | `--where "due_date<2025-03-01"`    |
+| `<=`     | Less than or equal                 | `--where "priority<=2"`            |
+| `>`      | Greater than                       | `--where "risk_score>5"`           |
+| `>=`     | Greater than or equal              | `--where "valid_until>=2025-01-01"`|
+| `=~`     | Regex match                        | `--where "title=~^Auth"`           |
+| `~`      | Fuzzy match                        | `--where "title~authentcation"`    |
+
+**Glob Patterns:**
+
+Use `*` in equality matches for wildcard matching:
+
+```bash
+rela list control --where "iso27001=A.9.*"    # Matches A.9.1, A.9.2.1, etc.
+rela list --where "title=User*"               # Titles starting with "User"
+```
+
+**Fuzzy Matching:**
+
+The `~` operator performs fuzzy (typo-tolerant) matching:
+
+```bash
+rela list --where "title~authentcation"       # Finds "authentication" despite typo
+```
 
 **Examples:**
 
@@ -144,11 +179,21 @@ rela list requirements
 rela list requirement
 rela list req
 
-# Filter by status
-rela list --status accepted
+# Filter by property value
+rela list control --where "status=implemented"
 
-# Combine filters
-rela list requirements --status draft --priority high
+# Multiple filters (AND logic)
+rela list control --where "status=implemented" --where "applicability=applicable"
+
+# Date comparison
+rela list evidence --where "valid_until<2025-02-01"
+
+# Integer comparison
+rela list risk --where "risk_score>=5"
+
+# Sort by property
+rela list control --sort iso27001
+rela list evidence --sort valid_until --desc
 
 # JSON output
 rela list -o json
@@ -249,6 +294,93 @@ rela delete REQ-001 --force
 
 # Delete entity and all its relations
 rela delete REQ-001 --cascade
+```
+
+---
+
+### rela attach
+
+Attach file(s) to an entity.
+
+```bash
+rela attach <entity-id> <file>... [flags]
+```
+
+Files are stored in a content-addressable store using SHA-256 hashes.
+Duplicate files are automatically deduplicated.
+
+**Arguments:**
+
+- `entity-id` - Target entity ID
+- `file...` - One or more files to attach (supports glob patterns)
+
+**Flags:**
+
+| Flag              | Description                              |
+| ----------------- | ---------------------------------------- |
+| `-P, --property`  | Property to attach file(s) to            |
+
+If `--property` is not specified, uses the first `file`-type property defined for the entity type.
+
+**Examples:**
+
+```bash
+rela attach BUG-042 screenshot.png
+rela attach BUG-042 screenshot.png --property screenshot
+rela attach DEC-007 *.pdf --property supporting-docs
+rela attach REQ-001 diagram.png spec.pdf
+```
+
+---
+
+### rela attachments
+
+List all file attachments for an entity.
+
+```bash
+rela attachments <entity-id>
+```
+
+Shows the property name, file path, original filename, and size for each attachment.
+
+**Arguments:**
+
+- `entity-id` - Entity ID to list attachments for
+
+**Examples:**
+
+```bash
+rela attachments BUG-042
+rela attachments DEC-007
+```
+
+---
+
+### rela detach
+
+Remove an attachment reference from an entity.
+
+```bash
+rela detach <entity-id> <property> [hash-prefix]
+```
+
+This removes the reference from the entity's property but does NOT delete the
+actual file. Use `rela gc --attachments` to clean up unreferenced files.
+
+**Arguments:**
+
+- `entity-id` - Entity ID
+- `property` - Property name containing the attachment
+- `hash-prefix` - Optional: first characters of hash to identify specific attachment
+
+If the property contains multiple attachments, provide a hash prefix to specify
+which one to remove. Without a prefix, removes all attachments from the property.
+
+**Examples:**
+
+```bash
+rela detach BUG-042 screenshot
+rela detach DEC-007 supporting-docs ab3f
 ```
 
 ---
@@ -797,8 +929,8 @@ Find gaps in ID sequences for entity types with sequential IDs.
 rela analyze gaps
 ```
 
-Entity types configured with `id_type: manual` are excluded from gap analysis since they use
-manually-specified IDs that are not expected to be sequential.
+Gap analysis only applies to entity types with `id_type: sequential`. Entity types with
+`short` (default) or `manual` IDs are excluded since they don't follow numeric sequences.
 
 #### rela analyze cardinality
 
@@ -831,6 +963,55 @@ $ rela analyze validations
 Found 2 errors, 1 warnings across 2 rules
 ```
 
+#### rela analyze properties
+
+Validate entity property values against the metamodel schema.
+
+```bash
+rela analyze properties
+```
+
+Checks for:
+
+- Invalid enum values (not in allowed list)
+- Invalid custom type values
+- Invalid date formats
+- Invalid integer/boolean values
+- Missing required properties
+- Entity IDs not matching configured patterns
+
+This catches issues in manually-edited markdown files that bypass CLI validation.
+
+#### rela analyze schema
+
+Analyze metamodel schema usage to find unused or underused types.
+
+```bash
+rela analyze schema
+rela analyze schema --threshold 2
+rela analyze schema --cleanup --dry-run
+```
+
+Shows:
+
+- Entity types with no instances
+- Relation types with no instances
+- Custom types (enums) not referenced by any property
+- Types with few instances (when `--threshold` is set)
+
+**Flags:**
+
+| Flag          | Description                                                    |
+| ------------- | -------------------------------------------------------------- |
+| `--threshold` | Show types with instance count <= threshold (0 = only unused)  |
+| `--cleanup`   | Remove unused types from metamodel.yaml                        |
+| `--dry-run`   | Preview cleanup changes without modifying files                |
+
+The cleanup operation only removes types that have no instances AND no references in
+configuration files (data-entry.yaml, views.yaml, validations, automations). Types
+referenced in forms, lists, views, or validations will not be removed even if they
+have zero instances.
+
 #### rela analyze all
 
 Run all analysis checks.
@@ -839,7 +1020,25 @@ Run all analysis checks.
 rela analyze all
 ```
 
-Runs orphans, duplicates, gaps, cardinality, and (if defined) custom validations.
+Runs orphans, duplicates, gaps, cardinality, properties, and (if defined) custom validations.
+
+#### View-Scoped Analysis
+
+All analyze subcommands support scoping to entities in a specific view:
+
+```bash
+rela analyze orphans --view traceability --entry REQ-001
+rela analyze cardinality --view impact --entry DEC-005
+```
+
+**Flags:**
+
+| Flag      | Description                                          |
+| --------- | ---------------------------------------------------- |
+| `--view`  | Scope analysis to entities in a view                 |
+| `--entry` | Entry entity ID for the view (required with --view)  |
+
+This is useful for checking quality within a specific context rather than the entire graph.
 
 ---
 
@@ -1074,6 +1273,214 @@ Add to your CI pipeline to ensure project files are up-to-date:
 ```
 
 This will exit with code 1 if migrations are needed.
+
+---
+
+### rela normalize
+
+Normalize markdown headers in entity files to start at level 2 (##).
+
+```bash
+rela normalize [type] [flags]
+```
+
+This command adjusts header levels so the minimum header level in each entity is `##`,
+preserving the relative hierarchy. For example:
+
+```markdown
+# Overview        →  ## Overview
+## Details        →  ### Details
+### Subsection    →  #### Subsection
+```
+
+Setext-style headers (underlined with `===` or `---`) are converted to ATX style (`##`).
+
+**Arguments:**
+
+- `type` - Optional: specific entity type to normalize
+
+**Flags:**
+
+| Flag        | Description                        |
+| ----------- | ---------------------------------- |
+| `--dry-run` | Preview changes without writing    |
+
+**Examples:**
+
+```bash
+rela normalize                # Normalize all entities
+rela normalize requirements   # Normalize only requirements
+rela normalize req            # Alias works too
+rela normalize --dry-run      # Preview changes without writing
+```
+
+---
+
+### rela rename
+
+Rename entity types or entity IDs across the project.
+
+#### rela rename entity
+
+Rename an entity type across the entire project.
+
+```bash
+rela rename entity <old-type> <new-type> [flags]
+```
+
+**Arguments:**
+
+- `old-type` - Current entity type name
+- `new-type` - New entity type name
+
+**Flags:**
+
+| Flag           | Description                              |
+| -------------- | ---------------------------------------- |
+| `--plural`     | Override plural form for directory name  |
+| `-f, --force`  | Skip confirmation prompt                 |
+
+This updates:
+
+- The entity key in `metamodel.yaml`
+- All relation `from`/`to` references in `metamodel.yaml`
+- All validation `entity_type` references in `metamodel.yaml`
+- The entity directory (e.g., `entities/issues/` → `entities/tickets/`)
+- The `type` field in all entity markdown files
+- Entity templates (if they exist)
+
+**Examples:**
+
+```bash
+rela rename entity issue ticket
+rela rename entity issue ticket --plural tickets
+rela rename entity requirement feature --force
+```
+
+#### rela rename id
+
+Rename an entity's ID and update all relations that reference it.
+
+```bash
+rela rename id <old-id> <new-id> [flags]
+```
+
+**Arguments:**
+
+- `old-id` - Current entity ID
+- `new-id` - New entity ID
+
+**Flags:**
+
+| Flag        | Description                      |
+| ----------- | -------------------------------- |
+| `--dry-run` | Preview changes without applying |
+
+This updates:
+
+- The entity file (renamed and `id` field updated)
+- All relation files where this entity is the `from` or `to` endpoint
+
+**Examples:**
+
+```bash
+rela rename id REQ-001 REQ-100
+rela rename id REQ-001 REQ-100 --dry-run
+```
+
+---
+
+### rela schema
+
+View the metamodel schema.
+
+```bash
+rela schema [command] [flags]
+```
+
+Displays information about the loaded metamodel including entity types, relation types,
+and custom types.
+
+**Subcommands:**
+
+| Command     | Description                              |
+| ----------- | ---------------------------------------- |
+| `overview`  | Show metamodel overview (default)        |
+| `entities`  | List all entity types with descriptions  |
+| `relations` | List all relation types                  |
+| `types`     | List custom types defined in metamodel   |
+| `entity`    | Show details for a specific entity type  |
+| `relation`  | Show details for a specific relation     |
+
+**Flags:**
+
+| Flag            | Description                                     |
+| --------------- | ----------------------------------------------- |
+| `--graphviz`    | Output metamodel as GraphViz DOT format         |
+| `--constraints` | Include cardinality constraints in DOT output   |
+
+**Examples:**
+
+```bash
+rela schema                    # Overview
+rela schema entities           # List entity types
+rela schema relations          # List relation types
+rela schema types              # List custom types
+rela schema entity service     # Detail for one entity type
+rela schema relation addresses # Detail for one relation type
+rela schema --graphviz         # Output as DOT format
+rela schema --graphviz --constraints  # DOT with cardinality
+```
+
+---
+
+### rela gc
+
+Garbage collect unreferenced files from the project.
+
+```bash
+rela gc [flags]
+```
+
+**Flags:**
+
+| Flag            | Description                                              |
+| --------------- | -------------------------------------------------------- |
+| `--attachments` | Clean up unreferenced attachment files                   |
+| `--temp-files`  | Clean up orphaned `.new` files from interrupted writes   |
+| `--dry-run`     | Show what would be removed without actually removing     |
+
+**Examples:**
+
+```bash
+rela gc --attachments           # Remove unreferenced attachment files
+rela gc --temp-files            # Remove orphaned temp files
+rela gc --attachments --dry-run # Preview what would be removed
+```
+
+---
+
+### rela validate
+
+Validate project configuration files.
+
+```bash
+rela validate
+```
+
+Checks `metamodel.yaml` and `data-entry.yaml` for:
+
+- Unknown/misspelled keys
+- Invalid cross-references (forms, lists, views)
+- Invalid entity types, relations, and properties
+- View traversal correctness
+- Dashboard and command configuration
+
+**Examples:**
+
+```bash
+rela validate
+```
 
 ---
 

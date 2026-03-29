@@ -605,6 +605,175 @@ func TestInvalidIDTypeError_Error(t *testing.T) {
 	}
 }
 
+func TestInvalidIDCapsError_Error(t *testing.T) {
+	err := &InvalidIDCapsError{
+		EntityType: "task",
+		IDCaps:     "mixed",
+	}
+
+	expected := `invalid id_caps for entity task: mixed (must be 'upper' or 'lower')`
+	if err.Error() != expected {
+		t.Errorf("expected %q, got %q", expected, err.Error())
+	}
+}
+
+func TestParse_InvalidIDCaps(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: short
+    id_caps: mixed
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`
+
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	var idCapsErr *InvalidIDCapsError
+	if !errors.As(err, &idCapsErr) {
+		t.Errorf("expected InvalidIDCapsError, got %T: %v", err, err)
+	}
+}
+
+func TestParse_ValidIDCaps(t *testing.T) {
+	tests := []struct {
+		name     string
+		idCaps   string
+		expected string
+	}{
+		{"upper", "upper", "upper"},
+		{"lower", "lower", "lower"},
+		{"empty defaults to upper", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml := fmt.Sprintf(`version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: short
+    id_caps: %s
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`, tt.idCaps)
+			if tt.idCaps == "" {
+				yaml = `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: short
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`
+			}
+
+			meta, err := Parse([]byte(yaml))
+			assertNoError(t, err)
+
+			if meta.Entities["task"].IDCaps != tt.expected {
+				t.Errorf("expected IDCaps=%q, got %q", tt.expected, meta.Entities["task"].IDCaps)
+			}
+		})
+	}
+}
+
+func TestParse_IDCapsOnNonShortType(t *testing.T) {
+	// id_caps should warn when set on non-short ID types
+	tests := []struct {
+		name       string
+		yaml       string
+		wantErr    bool
+		wantErrStr string
+	}{
+		{
+			name: "id_caps on sequential type warns",
+			yaml: `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: sequential
+    id_caps: upper
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`,
+			wantErr:    true,
+			wantErrStr: "'id_caps' has no effect (only applies to 'id_type: short')",
+		},
+		{
+			name: "id_caps on manual type warns",
+			yaml: `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: manual
+    id_caps: lower
+    properties:
+      title:
+        type: string
+`,
+			wantErr:    true,
+			wantErrStr: "'id_caps' has no effect (only applies to 'id_type: short')",
+		},
+		{
+			name: "id_caps on default type (short) is valid",
+			yaml: `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_caps: upper
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`,
+			wantErr: false, // default id_type is "short", so id_caps is valid
+		},
+		{
+			name: "id_caps on short type is valid",
+			yaml: `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: short
+    id_caps: upper
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+`,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.yaml))
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.wantErrStr)
+					return
+				}
+				if !strings.Contains(err.Error(), tt.wantErrStr) {
+					t.Errorf("expected error containing %q, got: %v", tt.wantErrStr, err)
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestParse_UnknownTopLevelKeys(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1035,4 +1204,166 @@ func TestSchemaValidationError_MultipleErrors(t *testing.T) {
 	}
 	expected := "metamodel validation errors:\n  - first problem\n  - second problem"
 	assertEqual(t, err.Error(), expected)
+}
+
+func TestParse_CustomTypeWithValidations(t *testing.T) {
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  semver:
+    description: "Semantic version"
+    validations:
+      - pattern: '^\d+\.\d+\.\d+$'
+        error: "Must be valid semver (e.g., 1.2.3)"
+entities:
+  component:
+    label: Component
+    id_prefix: "COMP-"
+    properties:
+      name:
+        type: string
+        required: true
+      version:
+        type: semver
+`
+	meta, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+
+	if meta == nil {
+		t.Fatal("expected metamodel, got nil")
+	}
+
+	// Verify the type was loaded
+	semver, ok := meta.Types["semver"]
+	if !ok {
+		t.Fatal("expected semver type to be defined")
+	}
+	if semver.Description != "Semantic version" {
+		t.Errorf("expected description 'Semantic version', got %q", semver.Description)
+	}
+	if len(semver.Validations) != 1 {
+		t.Fatalf("expected 1 validation, got %d", len(semver.Validations))
+	}
+	if semver.Validations[0].Pattern != `^\d+\.\d+\.\d+$` {
+		t.Errorf("unexpected pattern: %s", semver.Validations[0].Pattern)
+	}
+	if semver.Validations[0].Error != "Must be valid semver (e.g., 1.2.3)" {
+		t.Errorf("unexpected error message: %s", semver.Validations[0].Error)
+	}
+}
+
+func TestParse_CustomTypeWithInvalidRegex(t *testing.T) {
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  bad_type:
+    validations:
+      - pattern: '[invalid(regex'
+        error: "This won't work"
+entities:
+  item:
+    label: Item
+    id_prefix: "ITEM-"
+    properties:
+      name:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for invalid regex pattern")
+	}
+	if !strings.Contains(err.Error(), "invalid regex pattern") {
+		t.Errorf("expected 'invalid regex pattern' in error, got: %v", err)
+	}
+}
+
+func TestParse_CustomTypeWithEmptyPattern(t *testing.T) {
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  bad_type:
+    validations:
+      - pattern: ""
+        error: "Empty pattern"
+entities:
+  item:
+    label: Item
+    id_prefix: "ITEM-"
+    properties:
+      name:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for empty pattern")
+	}
+	if !strings.Contains(err.Error(), "empty pattern") {
+		t.Errorf("expected 'empty pattern' in error, got: %v", err)
+	}
+}
+
+func TestParse_CustomTypeWithEmptyError(t *testing.T) {
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  bad_type:
+    validations:
+      - pattern: "^test$"
+        error: ""
+entities:
+  item:
+    label: Item
+    id_prefix: "ITEM-"
+    properties:
+      name:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for empty error message")
+	}
+	if !strings.Contains(err.Error(), "empty error message") {
+		t.Errorf("expected 'empty error message' in error, got: %v", err)
+	}
+}
+
+func TestParse_CustomTypeWithEnumAndValidations(t *testing.T) {
+	// A type can have both enum values AND regex validations
+	yaml := `
+version: "1.0"
+namespace: "https://example.org/"
+types:
+  constrained_status:
+    values: [draft, review, published]
+    validations:
+      - pattern: '^[a-z]+$'
+        error: "Must be lowercase"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: constrained_status
+`
+	meta, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+
+	ct := meta.Types["constrained_status"]
+	if len(ct.Values) != 3 {
+		t.Errorf("expected 3 enum values, got %d", len(ct.Values))
+	}
+	if len(ct.Validations) != 1 {
+		t.Errorf("expected 1 validation, got %d", len(ct.Validations))
+	}
 }

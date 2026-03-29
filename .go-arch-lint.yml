@@ -37,6 +37,7 @@ components:
   importer:         { in: internal/importer }
   rename:           { in: internal/rename }
   repository:       { in: internal/repository }
+  schema:           { in: internal/schema }
   validation:       { in: internal/validation }
   views:            { in: internal/views }
 
@@ -124,6 +125,7 @@ deps:
       - metamodel
       - output
       - project
+      - schema
       - views
       - workspace
     canUse:
@@ -160,10 +162,12 @@ deps:
   # Server protocols
   mcp:
     mayDependOn:
+      - dataentryconfig
       - filter
       - markdown
       - metamodel
       - rename
+      - schema
       - search
       - views
       - workspace
@@ -227,6 +231,13 @@ deps:
       - views
     canUse:
       - gogit
+  schema:
+    mayDependOn:
+      - dataentryconfig
+      - graph
+      - metamodel
+      - migration
+      - views
   validation:
     mayDependOn:
       - filter

@@ -2,7 +2,9 @@ package metamodel
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -230,9 +232,28 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 	return nil
 }
 
-// validateCustomTypeValue validates a value against a custom type's allowed values.
+// validateCustomTypeValue validates a value against a custom type's allowed values and regex validations.
 // Supports both single string values and []string (multi-select).
+// Returns an error combining all validation failures.
+//
+//nolint:funlen // validation logic for multiple cases; splitting would reduce readability
 func validateCustomTypeValue(propName string, customType CustomType, val interface{}) *ValidationError {
+	hasEnumValues := len(customType.Values) > 0
+	hasValidations := len(customType.Validations) > 0
+
+	// If no values and no validations, treat as plain string (no validation needed)
+	if !hasEnumValues && !hasValidations {
+		if _, ok := val.(string); !ok {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidType,
+				Property: propName,
+				Message:  "Must be a string",
+			}
+		}
+		return nil
+	}
+
+	// Build allowed values map for enum validation
 	allowed := make(map[string]bool, len(customType.Values))
 	for _, v := range customType.Values {
 		allowed[v] = true
@@ -240,20 +261,29 @@ func validateCustomTypeValue(propName string, customType CustomType, val interfa
 
 	// Handle []string (multi-select from form submission)
 	if list, ok := val.([]string); ok {
-		if len(list) == 0 {
+		if len(list) == 0 && hasEnumValues {
 			return &ValidationError{
 				Type:     ValidationErrorInvalidValue,
 				Property: propName,
 				Message:  fmt.Sprintf("Empty list (allowed: %v)", customType.Values),
 			}
 		}
-		for _, s := range list {
-			if !allowed[s] {
-				return &ValidationError{
-					Type:     ValidationErrorInvalidValue,
-					Property: propName,
-					Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
-				}
+		// Collect all errors from all list items
+		var allErrors []string
+		for i, s := range list {
+			if hasEnumValues && !allowed[s] {
+				allErrors = append(allErrors, fmt.Sprintf("item[%d]: invalid value %q", i, s))
+			}
+			// Run regex validations on each item
+			if err := validateRegexPatterns(propName, customType.Validations, s); err != nil {
+				allErrors = append(allErrors, fmt.Sprintf("item[%d]: %s", i, err.Message))
+			}
+		}
+		if len(allErrors) > 0 {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  strings.Join(allErrors, "; "),
 			}
 		}
 		return nil
@@ -261,28 +291,34 @@ func validateCustomTypeValue(propName string, customType CustomType, val interfa
 
 	// Handle []interface{} (from YAML parsing)
 	if list, ok := val.([]interface{}); ok {
-		if len(list) == 0 {
+		if len(list) == 0 && hasEnumValues {
 			return &ValidationError{
 				Type:     ValidationErrorInvalidValue,
 				Property: propName,
 				Message:  fmt.Sprintf("Empty list (allowed: %v)", customType.Values),
 			}
 		}
-		for _, item := range list {
+		// Collect all errors from all list items
+		var allErrors []string
+		for i, item := range list {
 			s, ok := item.(string)
 			if !ok {
-				return &ValidationError{
-					Type:     ValidationErrorInvalidType,
-					Property: propName,
-					Message:  "List values must be strings",
-				}
+				allErrors = append(allErrors, fmt.Sprintf("item[%d]: must be a string", i))
+				continue
 			}
-			if !allowed[s] {
-				return &ValidationError{
-					Type:     ValidationErrorInvalidValue,
-					Property: propName,
-					Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
-				}
+			if hasEnumValues && !allowed[s] {
+				allErrors = append(allErrors, fmt.Sprintf("item[%d]: invalid value %q", i, s))
+			}
+			// Run regex validations on each item
+			if err := validateRegexPatterns(propName, customType.Validations, s); err != nil {
+				allErrors = append(allErrors, fmt.Sprintf("item[%d]: %s", i, err.Message))
+			}
+		}
+		if len(allErrors) > 0 {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  strings.Join(allErrors, "; "),
 			}
 		}
 		return nil
@@ -297,21 +333,76 @@ func validateCustomTypeValue(propName string, customType CustomType, val interfa
 			Message:  "Must be a string or list of strings",
 		}
 	}
+
+	// Empty string handling:
+	// - For enum types: empty is not a valid value, so fail
+	// - For regex-only types: empty can be skipped (let 'required' handle it)
 	if s == "" {
+		if hasEnumValues {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
+			}
+		}
+		// For regex-only types, skip validation on empty
+		return nil
+	}
+
+	// Validate against enum values if present
+	if hasEnumValues && !allowed[s] {
 		return &ValidationError{
 			Type:     ValidationErrorInvalidValue,
 			Property: propName,
 			Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
 		}
 	}
-	if !allowed[s] {
-		return &ValidationError{
-			Type:     ValidationErrorInvalidValue,
-			Property: propName,
-			Message:  fmt.Sprintf("Invalid value %q (allowed: %v)", s, customType.Values),
+
+	// Run regex validations
+	return validateRegexPatterns(propName, customType.Validations, s)
+}
+
+// validateRegexPatterns validates a string value against a list of regex patterns.
+// Returns an error containing all failing validation messages combined.
+// Uses pre-compiled regexes cached during metamodel load.
+func validateRegexPatterns(propName string, validations []TypeValidation, value string) *ValidationError {
+	if len(validations) == 0 {
+		return nil
+	}
+
+	var failedMessages []string
+
+	for i := range validations {
+		v := &validations[i]
+
+		// Use the pre-compiled regex from metamodel load
+		re := v.Compiled()
+		if re == nil {
+			// Fallback: compile if not cached (shouldn't happen in normal usage)
+			var err error
+			re, err = regexp.Compile(v.Pattern)
+			if err != nil {
+				failedMessages = append(failedMessages, fmt.Sprintf("[internal] invalid pattern: %v", err))
+				continue
+			}
+		}
+
+		if !re.MatchString(value) {
+			failedMessages = append(failedMessages, v.Error)
 		}
 	}
-	return nil
+
+	if len(failedMessages) == 0 {
+		return nil
+	}
+
+	// Combine all error messages
+	message := strings.Join(failedMessages, "; ")
+	return &ValidationError{
+		Type:     ValidationErrorInvalidValue,
+		Property: propName,
+		Message:  message,
+	}
 }
 
 // ParseDateValue parses a date string using the property's format.

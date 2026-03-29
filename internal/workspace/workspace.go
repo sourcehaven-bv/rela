@@ -414,7 +414,7 @@ func (w *Workspace) GenerateID(entityType, prefix string) (string, error) {
 
 	existingIDs := w.graph.AllIDs()
 	if entityDef.IsShortID() {
-		return model.GenerateShortID(existingIDs, prefix, w.graph.NodeCount()), nil
+		return model.GenerateShortID(existingIDs, prefix, w.graph.NodeCount(), entityDef.GetIDCaps()), nil
 	}
 	return model.GenerateNextID(existingIDs, prefix), nil
 }

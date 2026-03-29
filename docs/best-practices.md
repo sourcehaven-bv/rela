@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Best Practices
 
 This guide covers practical tips for maintaining a healthy information system

@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Data Entry Web App
 
 The data entry application provides a web-based UI for creating, editing, and browsing entities

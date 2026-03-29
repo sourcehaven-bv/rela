@@ -597,70 +597,96 @@ func TestGenerateShortID(t *testing.T) {
 		existingIDs []string
 		prefix      string
 		entityCount int
+		caps        string
 		wantPrefix  string
 		wantLength  int
+		wantUpper   bool
 	}{
 		{
-			name:        "first ID with empty prefix",
+			name:        "first ID with empty prefix uppercase",
 			existingIDs: []string{},
 			prefix:      "TKT",
 			entityCount: 0,
+			caps:        "upper",
 			wantPrefix:  "TKT-",
 			wantLength:  4, // 4 chars for small counts
+			wantUpper:   true,
 		},
 		{
 			name:        "prefix with trailing dash",
 			existingIDs: []string{},
 			prefix:      "REQ-",
 			entityCount: 0,
+			caps:        "upper",
 			wantPrefix:  "REQ-",
 			wantLength:  4,
+			wantUpper:   true,
 		},
 		{
-			name:        "length scales with entity count 500",
+			name:        "lowercase suffix",
 			existingIDs: []string{},
-			prefix:      "TKT",
-			entityCount: 500,
+			prefix:      "TKT-",
+			entityCount: 0,
+			caps:        "lower",
 			wantPrefix:  "TKT-",
 			wantLength:  4,
+			wantUpper:   false,
+		},
+		{
+			name:        "prefix case preserved",
+			existingIDs: []string{},
+			prefix:      "MyType-",
+			entityCount: 0,
+			caps:        "upper",
+			wantPrefix:  "MyType-",
+			wantLength:  4,
+			wantUpper:   true,
 		},
 		{
 			name:        "length scales with entity count 501",
 			existingIDs: []string{},
 			prefix:      "TKT",
 			entityCount: 501,
+			caps:        "upper",
 			wantPrefix:  "TKT-",
 			wantLength:  5,
+			wantUpper:   true,
 		},
 		{
 			name:        "length scales with entity count 1501",
 			existingIDs: []string{},
 			prefix:      "TKT",
 			entityCount: 1501,
+			caps:        "upper",
 			wantPrefix:  "TKT-",
 			wantLength:  6,
+			wantUpper:   true,
 		},
 		{
 			name:        "length scales with entity count 10001",
 			existingIDs: []string{},
 			prefix:      "TKT",
 			entityCount: 10001,
+			caps:        "upper",
 			wantPrefix:  "TKT-",
 			wantLength:  7,
+			wantUpper:   true,
 		},
 		{
 			name:        "length scales with entity count 50001",
 			existingIDs: []string{},
 			prefix:      "TKT",
 			entityCount: 50001,
+			caps:        "upper",
 			wantPrefix:  "TKT-",
 			wantLength:  8,
+			wantUpper:   true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := GenerateShortID(tt.existingIDs, tt.prefix, tt.entityCount)
+			got := GenerateShortID(tt.existingIDs, tt.prefix, tt.entityCount, tt.caps)
 
 			// Check prefix
 			if len(got) < len(tt.wantPrefix) || got[:len(tt.wantPrefix)] != tt.wantPrefix {
@@ -673,11 +699,17 @@ func TestGenerateShortID(t *testing.T) {
 				t.Errorf("GenerateShortID() length = %d, want %d (got %q)", len(got), wantTotalLen, got)
 			}
 
-			// Check random part contains only valid base36 characters
+			// Check random part contains only valid base36 characters with correct case
 			randomPart := got[len(tt.wantPrefix):]
 			for _, c := range randomPart {
-				if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
-					t.Errorf("GenerateShortID() random part contains invalid char %q in %q", c, got)
+				if tt.wantUpper {
+					if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z')) {
+						t.Errorf("GenerateShortID() random part contains invalid char %q in %q (expected uppercase)", c, got)
+					}
+				} else {
+					if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+						t.Errorf("GenerateShortID() random part contains invalid char %q in %q (expected lowercase)", c, got)
+					}
 				}
 			}
 		})
@@ -691,7 +723,7 @@ func TestGenerateShortID_Uniqueness(t *testing.T) {
 
 	// Generate many IDs and check for uniqueness
 	for i := 0; i < 1000; i++ {
-		id := GenerateShortID(existingIDs, "TKT", i)
+		id := GenerateShortID(existingIDs, "TKT", i, "upper")
 		if generated[id] {
 			t.Errorf("Duplicate ID generated: %s", id)
 		}
@@ -703,11 +735,11 @@ func TestGenerateShortID_Uniqueness(t *testing.T) {
 // TestGenerateShortID_CollisionAvoidance tests collision handling
 func TestGenerateShortID_CollisionAvoidance(t *testing.T) {
 	// Pre-populate with some IDs that might collide
-	existingIDs := []string{"TKT-0000", "TKT-1111", "TKT-aaaa"}
+	existingIDs := []string{"TKT-0000", "TKT-1111", "TKT-AAAA"}
 
 	// Generate IDs and ensure none collide with existing
 	for i := 0; i < 100; i++ {
-		id := GenerateShortID(existingIDs, "TKT", len(existingIDs))
+		id := GenerateShortID(existingIDs, "TKT", len(existingIDs), "upper")
 		for _, existing := range existingIDs {
 			if id == existing {
 				t.Errorf("Generated ID %s collides with existing ID", id)

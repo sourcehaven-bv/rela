@@ -1,3 +1,5 @@
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
 # Scenario: ISO 27001 Information Security Management System
 
 ## Background
