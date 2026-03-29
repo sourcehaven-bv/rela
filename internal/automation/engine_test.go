@@ -399,9 +399,8 @@ func TestEngine_WhenConditionMet(t *testing.T) {
 	oldEntity.Properties["status"] = "in-progress"
 	oldEntity.Properties["kind"] = "enhancement"
 
-	newEntity := model.NewEntity("T-001", "ticket")
+	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
-	newEntity.Properties["kind"] = "enhancement"
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -436,9 +435,8 @@ func TestEngine_WhenConditionNotMet(t *testing.T) {
 	oldEntity.Properties["status"] = "in-progress"
 	oldEntity.Properties["kind"] = "bug" // Not an enhancement
 
-	newEntity := model.NewEntity("T-001", "ticket")
+	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
-	newEntity.Properties["kind"] = "bug"
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -475,10 +473,8 @@ func TestEngine_MultipleWhenConditions(t *testing.T) {
 	oldEntity.Properties["kind"] = "enhancement"
 	oldEntity.Properties["priority"] = "high"
 
-	newEntity := model.NewEntity("T-001", "ticket")
+	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
-	newEntity.Properties["kind"] = "enhancement"
-	newEntity.Properties["priority"] = "high"
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -496,10 +492,8 @@ func TestEngine_MultipleWhenConditions(t *testing.T) {
 	oldEntity2.Properties["kind"] = "enhancement"
 	oldEntity2.Properties["priority"] = "low" // Not high
 
-	newEntity2 := model.NewEntity("T-002", "ticket")
+	newEntity2 := oldEntity2.Clone()
 	newEntity2.Properties["status"] = "review"
-	newEntity2.Properties["kind"] = "enhancement"
-	newEntity2.Properties["priority"] = "low"
 
 	result2 := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -534,7 +528,7 @@ func TestEngine_NoWhenConditions(t *testing.T) {
 	oldEntity := model.NewEntity("T-001", "ticket")
 	oldEntity.Properties["status"] = "in-progress"
 
-	newEntity := model.NewEntity("T-001", "ticket")
+	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
 
 	result := engine.Process(Event{
