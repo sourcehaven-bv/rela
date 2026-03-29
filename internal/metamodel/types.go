@@ -96,20 +96,21 @@ type CustomType struct {
 
 // EntityDef defines an entity type in the metamodel
 type EntityDef struct {
-	Label       string                 `yaml:"label"`
-	LabelPlural string                 `yaml:"label_plural,omitempty"`
-	Description string                 `yaml:"description,omitempty"` // Documentation explaining intent/usage
-	Plural      string                 `yaml:"plural,omitempty"`      // Used for directory names (e.g., "policies" for "policy")
-	Aliases     []string               `yaml:"aliases,omitempty"`
-	IDType      string                 `yaml:"id_type,omitempty"`     // "short" (default), "sequential", or "manual"
-	IDCaps      string                 `yaml:"id_caps,omitempty"`     // "upper" (default) or "lower" - capitalization for short ID suffix
-	IDPrefix    string                 `yaml:"id_prefix,omitempty"`   // Single ID prefix (sugar for single-element id_prefixes)
-	IDPrefixes  []string               `yaml:"id_prefixes,omitempty"` // Multiple ID prefixes
-	RDFType     string                 `yaml:"rdf_type,omitempty"`
-	Properties  map[string]PropertyDef `yaml:"properties"`
-	DefaultSort []model.SortSpec       `yaml:"default_sort,omitempty"` // Default sort order for this entity type
-	Color       string                 `yaml:"color,omitempty"`
-	BorderColor string                 `yaml:"border_color,omitempty"`
+	Label         string                 `yaml:"label"`
+	LabelPlural   string                 `yaml:"label_plural,omitempty"`
+	Description   string                 `yaml:"description,omitempty"` // Documentation explaining intent/usage
+	Plural        string                 `yaml:"plural,omitempty"`      // Used for directory names (e.g., "policies" for "policy")
+	Aliases       []string               `yaml:"aliases,omitempty"`
+	IDType        string                 `yaml:"id_type,omitempty"`     // "short" (default), "sequential", or "manual"
+	IDCaps        string                 `yaml:"id_caps,omitempty"`     // "upper" (default) or "lower" - capitalization for short ID suffix
+	IDPrefix      string                 `yaml:"id_prefix,omitempty"`   // Single ID prefix (sugar for single-element id_prefixes)
+	IDPrefixes    []string               `yaml:"id_prefixes,omitempty"` // Multiple ID prefixes
+	RDFType       string                 `yaml:"rdf_type,omitempty"`
+	Properties    map[string]PropertyDef `yaml:"properties"`
+	PropertyOrder []string               `yaml:"-"`                      // Order of properties as defined in YAML (computed at load)
+	DefaultSort   []model.SortSpec       `yaml:"default_sort,omitempty"` // Default sort order for this entity type
+	Color         string                 `yaml:"color,omitempty"`
+	BorderColor   string                 `yaml:"border_color,omitempty"`
 }
 
 // PropertyDef defines a property on an entity

@@ -63,3 +63,19 @@ func (e *ValidationError) Error() string {
 func (e *ValidationError) Unwrap() error {
 	return ErrValidation
 }
+
+// ExitError is an error that indicates the program should exit with a specific code.
+// This allows commands to signal exit codes without calling os.Exit directly,
+// making them testable.
+type ExitError struct {
+	Code int
+}
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("exit status %d", e.Code)
+}
+
+// NewExitError creates a new ExitError with the given exit code.
+func NewExitError(code int) *ExitError {
+	return &ExitError{Code: code}
+}

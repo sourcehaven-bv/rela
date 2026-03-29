@@ -1004,6 +1004,44 @@ func (w *Workspace) RenameEntity(entityType, oldID, newID string, dryRun bool) (
 	return rename.Rename(w.repo, w.Meta(), w.graph, entityType, oldID, newID, rename.Options{DryRun: dryRun})
 }
 
+// --- Formatting ---
+
+// FormatEntity checks if an entity file needs formatting and optionally writes
+// the formatted version. Returns true if the file was (or would be) modified.
+func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error) {
+	// Get property order from metamodel
+	var propertyOrder []string
+	if entityDef, ok := w.meta.GetEntityDef(entity.Type); ok {
+		propertyOrder = entityDef.GetPropertyOrder()
+	}
+
+	// Generate formatted content
+	formatted, err := markdown.FormatEntity(entity, propertyOrder)
+	if err != nil {
+		return false, fmt.Errorf("format entity: %w", err)
+	}
+
+	// Read current file content
+	current, err := w.repo.FS().ReadFile(entity.FilePath)
+	if err != nil {
+		return false, fmt.Errorf("read entity file: %w", err)
+	}
+
+	// Compare
+	if formatted == string(current) {
+		return false, nil
+	}
+
+	// Write if not dry-run
+	if !dryRun {
+		if err := w.repo.WriteEntity(entity, w.meta); err != nil {
+			return false, fmt.Errorf("write entity: %w", err)
+		}
+	}
+
+	return true, nil
+}
+
 // --- File watching ---
 
 // WatchOptions configures the file watcher.

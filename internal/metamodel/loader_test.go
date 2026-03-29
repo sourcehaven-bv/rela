@@ -1367,3 +1367,48 @@ entities:
 		t.Errorf("expected 1 validation, got %d", len(ct.Validations))
 	}
 }
+
+func TestParse_PropertyOrderExtraction(t *testing.T) {
+	// Property order in YAML should be preserved in PropertyOrder field
+	yaml := `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_prefix: "TASK-"
+    properties:
+      title:
+        type: string
+        required: true
+      priority:
+        type: string
+      status:
+        type: string
+      assignee:
+        type: string
+      due_date:
+        type: date
+`
+	meta, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+
+	entityDef, ok := meta.Entities["task"]
+	if !ok {
+		t.Fatal("task entity not found")
+	}
+
+	order := entityDef.GetPropertyOrder()
+	if order == nil {
+		t.Fatal("PropertyOrder should not be nil")
+	}
+
+	expected := []string{"title", "priority", "status", "assignee", "due_date"}
+	if len(order) != len(expected) {
+		t.Fatalf("expected %d properties in order, got %d: %v", len(expected), len(order), order)
+	}
+
+	for i, prop := range expected {
+		if order[i] != prop {
+			t.Errorf("property order[%d]: expected %q, got %q", i, prop, order[i])
+		}
+	}
+}

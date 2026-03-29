@@ -193,13 +193,21 @@ func (r *Repository) ReadEntity(entityType, id string, meta *metamodel.Metamodel
 // WriteEntity writes an entity to its canonical file path.
 // The path is computed from the entity's Type and ID using the metamodel's
 // plural directory convention. Sets entity.FilePath before writing.
+// Properties are written in the order defined in the metamodel.
 func (r *Repository) WriteEntity(entity *model.Entity, meta *metamodel.Metamodel) error {
 	filePath := r.EntityFilePath(entity.Type, entity.ID, meta)
 	if filePath == "" {
 		return fmt.Errorf("unknown entity type: %s", entity.Type)
 	}
 	entity.FilePath = filePath
-	return r.fio.WriteEntity(entity, filePath)
+
+	// Get property order from metamodel if available
+	var propertyOrder []string
+	if entityDef, ok := meta.GetEntityDef(entity.Type); ok {
+		propertyOrder = entityDef.GetPropertyOrder()
+	}
+
+	return r.fio.WriteEntity(entity, filePath, propertyOrder)
 }
 
 // DeleteEntity removes the entity file for the given type and ID.

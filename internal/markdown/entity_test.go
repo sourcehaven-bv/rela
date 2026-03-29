@@ -206,6 +206,71 @@ func TestWriteEntity_PropertyOrdering(t *testing.T) {
 	}
 }
 
+func TestWriteEntity_WithPropertyOrder(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	entity := model.NewEntity("REQ-001", "requirement")
+	entity.SetString("zebra", "last-alphabetically")
+	entity.SetString("alpha", "first-alphabetically")
+	entity.SetString("priority", "high")
+	entity.SetString("title", "Test")
+	entity.SetString("status", "draft")
+	entity.SetString("extra", "not-in-order")
+
+	entityPath := filepath.Join(tmpDir, "REQ-001.md")
+
+	// Write with specific property order: title, priority, status
+	propertyOrder := []string{"title", "priority", "status"}
+	err := testIO.WriteEntity(entity, entityPath, propertyOrder)
+	if err != nil {
+		t.Fatalf("WriteEntity failed: %v", err)
+	}
+
+	content, err := os.ReadFile(entityPath)
+	if err != nil {
+		t.Fatalf("failed to read entity file: %v", err)
+	}
+
+	contentStr := string(content)
+
+	// Verify the order: id, type, then title, priority, status, then remaining alphabetically
+	idIdx := strings.Index(contentStr, "id:")
+	typeIdx := strings.Index(contentStr, "type:")
+	titleIdx := strings.Index(contentStr, "title:")
+	priorityIdx := strings.Index(contentStr, "priority:")
+	statusIdx := strings.Index(contentStr, "status:")
+	alphaIdx := strings.Index(contentStr, "alpha:")
+	extraIdx := strings.Index(contentStr, "extra:")
+	zebraIdx := strings.Index(contentStr, "zebra:")
+
+	// id and type should come first
+	if idIdx > typeIdx {
+		t.Error("id should come before type")
+	}
+
+	// Properties in specified order
+	if typeIdx > titleIdx {
+		t.Error("type should come before title")
+	}
+	if titleIdx > priorityIdx {
+		t.Error("title should come before priority")
+	}
+	if priorityIdx > statusIdx {
+		t.Error("priority should come before status")
+	}
+
+	// Remaining properties should come after and be sorted alphabetically
+	if statusIdx > alphaIdx {
+		t.Error("status should come before remaining properties")
+	}
+	if alphaIdx > extraIdx {
+		t.Error("alpha should come before extra (alphabetical)")
+	}
+	if extraIdx > zebraIdx {
+		t.Error("extra should come before zebra (alphabetical)")
+	}
+}
+
 func TestDeleteEntity(t *testing.T) {
 	tmpDir := testutil.TempDirWithCleanup(t)
 

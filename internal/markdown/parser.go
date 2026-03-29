@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -98,15 +99,30 @@ func splitFrontmatter(content string) (frontmatter, body string, err error) {
 	return frontmatter, body, nil
 }
 
-// FormatDocument formats a document back to markdown with YAML frontmatter
+// FormatDocument formats a document back to markdown with YAML frontmatter.
+// Keys are output in alphabetical order (yaml.Marshal default behavior).
 func FormatDocument(frontmatter map[string]interface{}, content string) (string, error) {
+	return FormatDocumentOrdered(frontmatter, content, nil)
+}
+
+// FormatDocumentOrdered formats a document with YAML frontmatter in a specific key order.
+// If keyOrder is nil or empty, keys are sorted alphabetically.
+// Keys in keyOrder appear first (in that order), followed by any remaining keys alphabetically.
+func FormatDocumentOrdered(frontmatter map[string]interface{}, content string, keyOrder []string) (string, error) {
 	var sb strings.Builder
 
 	if len(frontmatter) > 0 {
 		sb.WriteString(frontmatterDelimiter)
 		sb.WriteString("\n")
 
-		yamlBytes, err := yaml.Marshal(frontmatter)
+		var yamlBytes []byte
+		var err error
+
+		if len(keyOrder) > 0 {
+			yamlBytes, err = marshalOrdered(frontmatter, keyOrder)
+		} else {
+			yamlBytes, err = yaml.Marshal(frontmatter)
+		}
 		if err != nil {
 			return "", err
 		}
@@ -124,6 +140,67 @@ func FormatDocument(frontmatter map[string]interface{}, content string) (string,
 	}
 
 	return sb.String(), nil
+}
+
+// marshalOrdered marshals a map to YAML with keys in the specified order.
+// Keys in keyOrder appear first, followed by remaining keys alphabetically.
+func marshalOrdered(data map[string]interface{}, keyOrder []string) ([]byte, error) {
+	// Build yaml.Node with ordered keys
+	node := &yaml.Node{
+		Kind: yaml.MappingNode,
+	}
+
+	// Track which keys we've added
+	added := make(map[string]bool)
+
+	// Add keys in specified order first
+	for _, key := range keyOrder {
+		val, ok := data[key]
+		if !ok {
+			continue
+		}
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+		)
+		valNode, err := valueToNode(val)
+		if err != nil {
+			return nil, err
+		}
+		node.Content = append(node.Content, valNode)
+		added[key] = true
+	}
+
+	// Collect remaining keys and sort them
+	var remaining []string
+	for key := range data {
+		if !added[key] {
+			remaining = append(remaining, key)
+		}
+	}
+	sort.Strings(remaining)
+
+	// Add remaining keys alphabetically
+	for _, key := range remaining {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+		)
+		valNode, err := valueToNode(data[key])
+		if err != nil {
+			return nil, err
+		}
+		node.Content = append(node.Content, valNode)
+	}
+
+	return yaml.Marshal(node)
+}
+
+// valueToNode converts a Go value to a yaml.Node.
+func valueToNode(val interface{}) (*yaml.Node, error) {
+	var node yaml.Node
+	if err := node.Encode(val); err != nil {
+		return nil, err
+	}
+	return &node, nil
 }
 
 // GetString extracts a string value from frontmatter
