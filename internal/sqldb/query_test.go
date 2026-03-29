@@ -1,6 +1,7 @@
 package sqldb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -145,7 +146,7 @@ func TestQuery_Select(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT id, title FROM requirements")
+	result, err := Query(context.Background(), g, meta, "SELECT id, title FROM requirements")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -171,7 +172,7 @@ func TestQuery_SelectAll(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT * FROM components")
+	result, err := Query(context.Background(), g, meta, "SELECT * FROM components")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -191,7 +192,7 @@ func TestQuery_Where(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT id, title FROM requirements WHERE status = 'approved'")
+	result, err := Query(context.Background(), g, meta, "SELECT id, title FROM requirements WHERE status = 'approved'")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -206,7 +207,7 @@ func TestQuery_WhereMultiple(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT id FROM requirements WHERE status = 'approved' AND priority = 'high'")
+	result, err := Query(context.Background(), g, meta, "SELECT id FROM requirements WHERE status = 'approved' AND priority = 'high'")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -227,7 +228,7 @@ func TestQuery_Join(t *testing.T) {
 		JOIN implements i ON f.id = i.from_id
 		JOIN requirements r ON i.to_id = r.id
 	`
-	result, err := Query(g, meta, query)
+	result, err := Query(context.Background(), g, meta, query)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -247,7 +248,7 @@ func TestQuery_Count(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT COUNT(*) FROM requirements")
+	result, err := Query(context.Background(), g, meta, "SELECT COUNT(*) FROM requirements")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -270,7 +271,7 @@ func TestQuery_CountWithWhere(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT COUNT(*) FROM requirements WHERE status = 'approved'")
+	result, err := Query(context.Background(), g, meta, "SELECT COUNT(*) FROM requirements WHERE status = 'approved'")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -288,7 +289,7 @@ func TestQuery_Limit(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT id FROM requirements LIMIT 2")
+	result, err := Query(context.Background(), g, meta, "SELECT id FROM requirements LIMIT 2")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -302,7 +303,7 @@ func TestQuery_OrderBy(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT id FROM requirements ORDER BY id ASC")
+	result, err := Query(context.Background(), g, meta, "SELECT id FROM requirements ORDER BY id ASC")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -321,7 +322,7 @@ func TestQuery_RelationTable(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT from_id, to_id FROM implements")
+	result, err := Query(context.Background(), g, meta, "SELECT from_id, to_id FROM implements")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -341,7 +342,7 @@ func TestQuery_ShowTables(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SHOW TABLES")
+	result, err := Query(context.Background(), g, meta, "SHOW TABLES")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -356,7 +357,7 @@ func TestQuery_Describe(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "DESCRIBE requirements")
+	result, err := Query(context.Background(), g, meta, "DESCRIBE requirements")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -371,7 +372,7 @@ func TestQuery_InvalidSQL(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	_, err := Query(g, meta, "INVALID SQL QUERY")
+	_, err := Query(context.Background(), g, meta, "INVALID SQL QUERY")
 	if err == nil {
 		t.Error("expected error for invalid SQL")
 	}
@@ -381,7 +382,7 @@ func TestQuery_NonExistentTable(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	_, err := Query(g, meta, "SELECT * FROM nonexistent")
+	_, err := Query(context.Background(), g, meta, "SELECT * FROM nonexistent")
 	if err == nil {
 		t.Error("expected error for non-existent table")
 	}
@@ -391,7 +392,7 @@ func TestQuery_EmptyResult(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT id FROM requirements WHERE status = 'nonexistent'")
+	result, err := Query(context.Background(), g, meta, "SELECT id FROM requirements WHERE status = 'nonexistent'")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -405,7 +406,7 @@ func TestQuery_Content(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT id, content FROM functions WHERE id = 'FUNC-001'")
+	result, err := Query(context.Background(), g, meta, "SELECT id, content FROM functions WHERE id = 'FUNC-001'")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -425,7 +426,7 @@ func TestQuery_GroupBy(t *testing.T) {
 	meta := testMetamodel()
 	g := testGraph()
 
-	result, err := Query(g, meta, "SELECT status, COUNT(*) FROM requirements GROUP BY status")
+	result, err := Query(context.Background(), g, meta, "SELECT status, COUNT(*) FROM requirements GROUP BY status")
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -449,7 +450,7 @@ func TestQuery_ComplexJoin(t *testing.T) {
 		JOIN ` + "`belongs-to`" + ` b ON f.id = b.from_id
 		JOIN components c ON b.to_id = c.id
 	`
-	result, err := Query(g, meta, query)
+	result, err := Query(context.Background(), g, meta, query)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}

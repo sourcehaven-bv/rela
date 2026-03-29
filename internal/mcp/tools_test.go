@@ -814,3 +814,111 @@ func TestApplyPagination(t *testing.T) {
 		t.Errorf("expected nil for offset beyond length, got %v", result)
 	}
 }
+
+// --- SQL handler tests ---
+
+func TestHandleSQLQuery_SelectAll(t *testing.T) {
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{"query": "SELECT * FROM requirements"})
+	result, err := s.handleSQLQuery(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := getResultText(t, result)
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+	// Should have 3 requirements
+	rowCount := int(parsed["row_count"].(float64))
+	if rowCount != 3 {
+		t.Errorf("expected 3 rows, got %d", rowCount)
+	}
+	columns := parsed["columns"].([]interface{})
+	if len(columns) == 0 {
+		t.Error("expected columns in result")
+	}
+}
+
+func TestHandleSQLQuery_WithWhere(t *testing.T) {
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{
+		"query": "SELECT id, title FROM requirements WHERE status = 'accepted'",
+	})
+	result, err := s.handleSQLQuery(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := getResultText(t, result)
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+	// Should have 2 accepted requirements
+	rowCount := int(parsed["row_count"].(float64))
+	if rowCount != 2 {
+		t.Errorf("expected 2 rows, got %d", rowCount)
+	}
+}
+
+func TestHandleSQLQuery_Join(t *testing.T) {
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{
+		"query": "SELECT r.id, r.title FROM requirements r JOIN addresses a ON r.id = a.to_id",
+	})
+	result, err := s.handleSQLQuery(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := getResultText(t, result)
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+	// Should have 1 requirement linked via addresses
+	rowCount := int(parsed["row_count"].(float64))
+	if rowCount != 1 {
+		t.Errorf("expected 1 row from join, got %d", rowCount)
+	}
+}
+
+func TestHandleSQLQuery_ShowTables(t *testing.T) {
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{"query": "SHOW TABLES"})
+	result, err := s.handleSQLQuery(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := getResultText(t, result)
+	// Should list tables
+	if !strings.Contains(text, "requirements") {
+		t.Error("expected SHOW TABLES to include requirements")
+	}
+	if !strings.Contains(text, "decisions") {
+		t.Error("expected SHOW TABLES to include decisions")
+	}
+}
+
+func TestHandleSQLQuery_InvalidSQL(t *testing.T) {
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{"query": "SELECT * FROM"})
+	result, err := s.handleSQLQuery(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error result for invalid SQL")
+	}
+}
+
+func TestHandleSQLQuery_MissingQuery(t *testing.T) {
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{})
+	result, err := s.handleSQLQuery(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error result for missing query")
+	}
+}

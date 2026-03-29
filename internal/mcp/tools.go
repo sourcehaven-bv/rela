@@ -43,6 +43,9 @@ func (s *Server) registerTools() {
 	// Utility tools
 	s.mcp.AddTool(toolRefresh(), s.handleRefresh)
 	s.mcp.AddTool(toolExport(), s.handleExport)
+
+	// SQL tools
+	s.mcp.AddTool(toolSQLQuery(), s.handleSQLQuery)
 }
 
 // --- Tool Definitions ---
@@ -245,5 +248,16 @@ func toolExport() mcp.Tool {
 		mcp.WithString("format", mcp.Required(),
 			mcp.Description("Output format"), mcp.Enum("json", "yaml", "csv")),
 		mcp.WithString("type", mcp.Description("Entity type to export (omit for all)")),
+	)
+}
+
+func toolSQLQuery() mcp.Tool {
+	return mcp.NewTool("sql_query",
+		mcp.WithDescription(
+			"Execute a SQL query against the rela graph. "+
+				"Entity types become tables (pluralized names like 'requirements', 'decisions'). "+
+				"Relation types also become tables (e.g. 'implements', 'addresses'). "+
+				"Use SHOW TABLES to list available tables, DESCRIBE <table> to see columns."),
+		mcp.WithString("query", mcp.Required(), mcp.Description("SQL query to execute")),
 	)
 }

@@ -29,7 +29,7 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		query := args[0]
 
-		result, err := sqldb.Query(ws.Graph(), meta, query)
+		result, err := sqldb.Query(cmd.Context(), ws.Graph(), meta, query)
 		if err != nil {
 			return err
 		}
@@ -125,7 +125,12 @@ func outputQueryTable(result *sqldb.QueryResult) error {
 		fmt.Println(line.String())
 	}
 
-	fmt.Printf("\n(%d rows)\n", len(result.Rows))
+	if result.Truncated {
+		fmt.Printf("\n(%d rows, truncated at %d - use LIMIT clause for specific results)\n",
+			len(result.Rows), sqldb.MaxRows)
+	} else {
+		fmt.Printf("\n(%d rows)\n", len(result.Rows))
+	}
 	return nil
 }
 

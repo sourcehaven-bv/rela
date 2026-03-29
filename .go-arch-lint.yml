@@ -176,6 +176,7 @@ deps:
       - rename
       - schema
       - search
+      - sqldb
       - views
       - workspace
     canUse:
