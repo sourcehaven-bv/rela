@@ -289,6 +289,7 @@ type AutomationTrigger struct {
 	Created         bool          `yaml:"created,omitempty"`
 	RelationCreated string        `yaml:"relation_created,omitempty"`
 	RelationRemoved string        `yaml:"relation_removed,omitempty"`
+	When            []string      `yaml:"when,omitempty"` // Property conditions that must match (AND logic)
 }
 
 // AutomationAction specifies an operation to perform.

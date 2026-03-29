@@ -4,6 +4,7 @@
 package automation
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -25,6 +26,7 @@ type Trigger struct {
 	Created         bool
 	RelationCreated string
 	RelationRemoved string
+	When            []*filter.Filter // Property conditions that must all match
 }
 
 // Action specifies an operation to perform.
