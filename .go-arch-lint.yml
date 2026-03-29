@@ -167,6 +167,7 @@ deps:
     mayDependOn:
       - dataentryconfig
       - filter
+      - lua
       - markdown
       - metamodel
       - rename

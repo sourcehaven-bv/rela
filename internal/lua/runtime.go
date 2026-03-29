@@ -66,6 +66,11 @@ func (r *Runtime) RunFile(path string, args []string) error {
 	return r.L.DoFile(path)
 }
 
+// RunString executes Lua code from a string.
+func (r *Runtime) RunString(code string) error {
+	return r.L.DoString(code)
+}
+
 // Close releases Lua VM resources.
 func (r *Runtime) Close() {
 	r.L.Close()
