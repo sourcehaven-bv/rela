@@ -47,6 +47,7 @@ func (s *Server) registerTools() {
 	// Lua scripting tools
 	s.mcp.AddTool(toolLuaEval(), s.handleLuaEval)
 	s.mcp.AddTool(toolLuaRun(), s.handleLuaRun)
+	s.mcp.AddTool(toolLuaList(), s.handleLuaList)
 }
 
 // --- Tool Definitions ---

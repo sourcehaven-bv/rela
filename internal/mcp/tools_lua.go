@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -36,6 +38,14 @@ func toolLuaRun() mcp.Tool {
 			mcp.Description("Path to Lua script file (relative to project root)")),
 		mcp.WithArray("args",
 			mcp.Description("Arguments to pass to the script (available as rela.args)")),
+	)
+}
+
+func toolLuaList() mcp.Tool {
+	return mcp.NewTool("lua_list",
+		mcp.WithDescription(
+			"List available Lua scripts in the project. "+
+				"Searches for .lua files in common locations (scripts/, lua/, root)."),
 	)
 }
 
@@ -98,4 +108,63 @@ func (s *Server) handleLuaRun(_ context.Context, req mcp.CallToolRequest) (*mcp.
 	}
 
 	return mcp.NewToolResultText(result), nil
+}
+
+func (s *Server) handleLuaList(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	projectRoot := s.ws.Paths().Root
+
+	// Directories to search for Lua scripts
+	searchDirs := []string{
+		"scripts",
+		"lua",
+		".",
+	}
+
+	var scripts []string
+	seen := make(map[string]bool)
+
+	for _, dir := range searchDirs {
+		searchPath := filepath.Join(projectRoot, dir)
+		entries, err := os.ReadDir(searchPath)
+		if err != nil {
+			continue // Directory doesn't exist, skip
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if !strings.HasSuffix(entry.Name(), ".lua") {
+				continue
+			}
+
+			// Get relative path from project root
+			var relPath string
+			if dir == "." {
+				relPath = entry.Name()
+			} else {
+				relPath = filepath.Join(dir, entry.Name())
+			}
+
+			if seen[relPath] {
+				continue
+			}
+			seen[relPath] = true
+			scripts = append(scripts, relPath)
+		}
+	}
+
+	if len(scripts) == 0 {
+		return mcp.NewToolResultText("No Lua scripts found in project"), nil
+	}
+
+	var result strings.Builder
+	result.WriteString("Available Lua scripts:\n")
+	for _, script := range scripts {
+		result.WriteString("  ")
+		result.WriteString(script)
+		result.WriteString("\n")
+	}
+
+	return mcp.NewToolResultText(result.String()), nil
 }
