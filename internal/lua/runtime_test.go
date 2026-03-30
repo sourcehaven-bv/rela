@@ -441,23 +441,19 @@ func TestWriteFile(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	// Use same temp dir for project root and output file
 	projectRoot := t.TempDir()
 	r := New(ws, ws.Meta(), projectRoot, &buf)
 	defer r.Close()
 
-	outFile := filepath.Join(projectRoot, "output.txt")
-
-	script := `rela.write_file("` + outFile + `", "hello world")`
-	tmpFile := filepath.Join(projectRoot, "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
+	// Files are written to output/ directory
+	script := `rela.write_file("result.txt", "hello world")`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
 	}
 
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
+	// File should be in output/ subdirectory
+	outFile := filepath.Join(projectRoot, "output", "result.txt")
 	content, err := os.ReadFile(outFile)
 	if err != nil {
 		t.Fatalf("Failed to read output file: %v", err)
@@ -541,19 +537,21 @@ func TestWriteFile_PathTraversal(t *testing.T) {
 	r := New(ws, ws.Meta(), projectRoot, &buf)
 	defer r.Close()
 
-	// Try to write outside project root using path traversal
+	// Try to escape output/ using path traversal
 	script := `rela.write_file("../outside.txt", "malicious")`
-	tmpFile := filepath.Join(projectRoot, "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
+	err := r.RunString(script)
 	if err == nil {
 		t.Fatal("Expected error for path traversal attempt")
 	}
-	if !strings.Contains(err.Error(), "must be within project root") {
-		t.Errorf("Expected 'must be within project root' error, got: %v", err)
+	// Error message should indicate the path is not local
+	if !strings.Contains(err.Error(), "local path") {
+		t.Errorf("Expected 'local path' error, got: %v", err)
+	}
+
+	// Verify file was NOT created outside output/
+	outsideFile := filepath.Join(projectRoot, "outside.txt")
+	if _, err := os.Stat(outsideFile); err == nil {
+		t.Error("File should not have been created outside output/")
 	}
 }
 
@@ -565,20 +563,15 @@ func TestWriteFile_AbsolutePathOutside(t *testing.T) {
 	r := New(ws, ws.Meta(), projectRoot, &buf)
 	defer r.Close()
 
-	// Try to write to absolute path outside project
+	// Try to write to absolute path (should be rejected)
 	script := `rela.write_file("/tmp/outside.txt", "malicious")`
-	tmpFile := filepath.Join(projectRoot, "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
+	err := r.RunString(script)
 	if err == nil {
-		t.Fatal("Expected error for absolute path outside project")
+		t.Fatal("Expected error for absolute path")
 	}
 }
 
-func TestWriteFile_WithinProject(t *testing.T) {
+func TestWriteFile_InOutputDir(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -586,17 +579,15 @@ func TestWriteFile_WithinProject(t *testing.T) {
 	r := New(ws, ws.Meta(), projectRoot, &buf)
 	defer r.Close()
 
-	outFile := filepath.Join(projectRoot, "output.txt")
-	script := `rela.write_file("` + outFile + `", "allowed")`
-	tmpFile := filepath.Join(projectRoot, "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
+	// Write to output directory
+	script := `rela.write_file("result.txt", "allowed")`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
 	}
 
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
+	// File should be in output/ subdirectory
+	outFile := filepath.Join(projectRoot, "output", "result.txt")
 	content, err := os.ReadFile(outFile)
 	if err != nil {
 		t.Fatalf("Failed to read output file: %v", err)
@@ -1215,5 +1206,157 @@ rela.output({
 	}
 	if result["has_children"] != true {
 		t.Errorf("Expected has_children=true (TKT-001 -> FEAT-001), got %v", result["has_children"])
+	}
+}
+
+// TestSandbox_DangerousLibrariesUnavailable verifies that dangerous Lua libraries
+// (io, os, debug) are not available in the sandboxed runtime.
+func TestSandbox_DangerousLibrariesUnavailable(t *testing.T) {
+	ws := testWorkspace(t)
+
+	tests := []struct {
+		name   string
+		script string
+	}{
+		{"io library", `if io then error("io should not be available") end`},
+		{"os library", `if os then error("os should not be available") end`},
+		{"debug library", `if debug then error("debug should not be available") end`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			r := New(ws, ws.Meta(), "/tmp", &buf)
+			defer r.Close()
+
+			// Should succeed because the libraries are not available
+			err := r.RunString(tt.script)
+			if err != nil {
+				t.Errorf("Script failed unexpectedly: %v", err)
+			}
+		})
+	}
+}
+
+// TestSandbox_DangerousFunctionsRemoved verifies that dangerous base functions
+// are removed from the sandbox.
+func TestSandbox_DangerousFunctionsRemoved(t *testing.T) {
+	ws := testWorkspace(t)
+
+	dangerousFuncs := []string{
+		"loadfile",
+		"dofile",
+		"load",
+		"loadstring",
+		"rawget",
+		"rawset",
+		"rawequal",
+		"rawlen",
+		"getmetatable",
+		"setmetatable",
+	}
+
+	for _, fn := range dangerousFuncs {
+		t.Run(fn, func(t *testing.T) {
+			var buf bytes.Buffer
+			r := New(ws, ws.Meta(), "/tmp", &buf)
+			defer r.Close()
+
+			script := `if ` + fn + ` ~= nil then error("` + fn + ` should be nil") end`
+			err := r.RunString(script)
+			if err != nil {
+				t.Errorf("Function %s should be nil but script failed: %v", fn, err)
+			}
+		})
+	}
+}
+
+// TestSandbox_SafeLibrariesAvailable verifies that safe Lua libraries are available.
+func TestSandbox_SafeLibrariesAvailable(t *testing.T) {
+	ws := testWorkspace(t)
+
+	tests := []struct {
+		name   string
+		script string
+	}{
+		{"string library", `if not string.len then error("string.len not available") end`},
+		{"table library", `if not table.insert then error("table.insert not available") end`},
+		{"math library", `if not math.floor then error("math.floor not available") end`},
+		{"coroutine library", `if not coroutine.create then error("coroutine.create not available") end`},
+		{"base print", `if not print then error("print not available") end`},
+		{"base pairs", `if not pairs then error("pairs not available") end`},
+		{"base ipairs", `if not ipairs then error("ipairs not available") end`},
+		{"base type", `if not type then error("type not available") end`},
+		{"base tostring", `if not tostring then error("tostring not available") end`},
+		{"base tonumber", `if not tonumber then error("tonumber not available") end`},
+		{"base error", `if not error then error("error not available") end`},
+		{"base pcall", `if not pcall then error("pcall not available") end`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			r := New(ws, ws.Meta(), "/tmp", &buf)
+			defer r.Close()
+
+			err := r.RunString(tt.script)
+			if err != nil {
+				t.Errorf("Script failed: %v", err)
+			}
+		})
+	}
+}
+
+// TestWriteFile_NestedDirectories verifies that write_file creates nested directories in output/.
+func TestWriteFile_NestedDirectories(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	projectRoot := t.TempDir()
+	r := New(ws, ws.Meta(), projectRoot, &buf)
+	defer r.Close()
+
+	// Write to a deeply nested path within output/
+	script := `rela.write_file("reports/2024/summary.txt", "nested content")`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	// Verify file was created in output/ subdirectory
+	outFile := filepath.Join(projectRoot, "output", "reports", "2024", "summary.txt")
+	content, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	if string(content) != "nested content" {
+		t.Errorf("Expected 'nested content', got %q", string(content))
+	}
+}
+
+// TestSetArgs verifies that SetArgs correctly sets script arguments.
+func TestSetArgs(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	r.SetArgs([]string{"arg1", "arg2", "arg3"})
+
+	script := `rela.output(rela.args)`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result []interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if len(result) != 3 || result[0] != "arg1" || result[1] != "arg2" || result[2] != "arg3" {
+		t.Errorf("Expected [arg1, arg2, arg3], got %v", result)
 	}
 }

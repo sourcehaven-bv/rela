@@ -1,5 +1,11 @@
 // Package lua provides a Lua scripting runtime for rela with bindings
 // to query entities, relations, and output results.
+//
+// The runtime is sandboxed: only safe Lua libraries are loaded (base, table,
+// string, math, utf8, coroutine). The io, os, and debug libraries are NOT
+// available to prevent filesystem access and code execution. File operations
+// are only possible through the provided rela.write_file() function which
+// validates paths are within the project root.
 package lua
 
 import (
@@ -9,7 +15,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 
@@ -21,7 +26,9 @@ import (
 
 // Default values for Lua API functions.
 const (
-	defaultSearchLimit   = 20
+	defaultSearchLimit = 20
+	// argPosCreateEntityID is the position of the optional ID parameter in create_entity
+	// (type=1, properties=2, content=3, id=4).
 	argPosCreateEntityID = 4
 )
 
@@ -35,8 +42,17 @@ type Runtime struct {
 }
 
 // New creates a Runtime with rela bindings registered.
+// The Lua VM is sandboxed with only safe libraries loaded (no io, os, or debug).
 func New(ws *workspace.Workspace, meta *metamodel.Metamodel, projectRoot string, stdout io.Writer) *Runtime {
-	L := lua.NewState()
+	// Create sandboxed Lua state - skip default libraries for security
+	L := lua.NewState(lua.Options{
+		SkipOpenLibs:  true,
+		CallStackSize: 1024,      // Limit call stack depth to prevent stack overflow
+		RegistrySize:  1024 * 64, // Limit registry size
+	})
+
+	// Load only safe libraries (NOT io, os, or debug)
+	openSafeLibraries(L)
 
 	r := &Runtime{
 		L:           L,
@@ -48,6 +64,44 @@ func New(ws *workspace.Workspace, meta *metamodel.Metamodel, projectRoot string,
 
 	r.registerBindings()
 	return r
+}
+
+// openSafeLibraries loads only safe Lua standard libraries.
+// Excluded for security: io (file access), os (system commands), debug (internals).
+func openSafeLibraries(ls *lua.LState) {
+	// Libraries to load - order matters, LoadLibName must come first if used
+	safeLibs := []struct {
+		name string
+		fn   lua.LGFunction
+	}{
+		{lua.BaseLibName, lua.OpenBase},
+		{lua.TabLibName, lua.OpenTable},
+		{lua.StringLibName, lua.OpenString},
+		{lua.MathLibName, lua.OpenMath},
+		{lua.CoroutineLibName, lua.OpenCoroutine},
+		// NOT included: lua.IoLibName, lua.OsLibName, lua.DebugLibName, lua.ChannelLibName
+	}
+
+	for _, lib := range safeLibs {
+		ls.Push(ls.NewFunction(lib.fn))
+		ls.Push(lua.LString(lib.name))
+		ls.Call(1, 0)
+	}
+
+	// Remove dangerous base functions that could bypass sandbox
+	ls.SetGlobal("loadfile", lua.LNil)
+	ls.SetGlobal("dofile", lua.LNil)
+	ls.SetGlobal("load", lua.LNil)
+	ls.SetGlobal("loadstring", lua.LNil)
+
+	// Remove raw access functions that could bypass metamethod protections
+	// and modify the rela module internals
+	ls.SetGlobal("rawget", lua.LNil)
+	ls.SetGlobal("rawset", lua.LNil)
+	ls.SetGlobal("rawequal", lua.LNil)
+	ls.SetGlobal("rawlen", lua.LNil)
+	ls.SetGlobal("getmetatable", lua.LNil)
+	ls.SetGlobal("setmetatable", lua.LNil)
 }
 
 // RunFile executes a Lua script file with arguments.
@@ -69,6 +123,18 @@ func (r *Runtime) RunFile(path string, args []string) error {
 // RunString executes Lua code from a string.
 func (r *Runtime) RunString(code string) error {
 	return r.L.DoString(code)
+}
+
+// SetArgs sets the script arguments (rela.args) before execution.
+func (r *Runtime) SetArgs(args []string) {
+	argsTable := r.L.NewTable()
+	for i, arg := range args {
+		argsTable.RawSetInt(i+1, lua.LString(arg))
+	}
+	relaTable, ok := r.L.GetGlobal("rela").(*lua.LTable)
+	if ok {
+		relaTable.RawSetString("args", argsTable)
+	}
 }
 
 // Close releases Lua VM resources.
@@ -123,6 +189,10 @@ func (r *Runtime) registerBindings() {
 // luaGetEntity implements rela.get_entity(id) -> table|nil
 func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 	id := ls.CheckString(1)
+	if id == "" {
+		ls.RaiseError("entity ID cannot be empty")
+		return 0
+	}
 
 	entity, found := r.ws.GetEntity(id)
 	if !found {
@@ -227,6 +297,10 @@ func (r *Runtime) luaGetRelations(ls *lua.LState) int {
 // luaTraceFrom implements rela.trace_from(id, depth?) -> table|nil
 func (r *Runtime) luaTraceFrom(ls *lua.LState) int {
 	id := ls.CheckString(1)
+	if id == "" {
+		ls.RaiseError("entity ID cannot be empty")
+		return 0
+	}
 	maxDepth := ls.OptInt(2, 0)
 
 	trace := r.ws.TraceFrom(id, maxDepth)
@@ -241,6 +315,10 @@ func (r *Runtime) luaTraceFrom(ls *lua.LState) int {
 // luaTraceTo implements rela.trace_to(id, depth?) -> table|nil
 func (r *Runtime) luaTraceTo(ls *lua.LState) int {
 	id := ls.CheckString(1)
+	if id == "" {
+		ls.RaiseError("entity ID cannot be empty")
+		return 0
+	}
 	maxDepth := ls.OptInt(2, 0)
 
 	trace := r.ws.TraceTo(id, maxDepth)
@@ -267,36 +345,50 @@ func (r *Runtime) luaOutput(ls *lua.LState) int {
 	return 0
 }
 
+// outputDir is the only directory where Lua scripts can write files.
+const outputDir = "output"
+
 // luaWriteFile implements rela.write_file(path, content)
-// Path must be within the project root for security.
+// Files can ONLY be written to the output/ directory for security.
+// Path is relative to output/ (e.g., "report.txt" -> "output/report.txt").
 func (r *Runtime) luaWriteFile(ls *lua.LState) int {
 	path := ls.CheckString(1)
 	content := ls.CheckString(2)
 
-	// Resolve to absolute path
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		ls.RaiseError("invalid path: %s", err.Error())
+	if path == "" {
+		ls.RaiseError("write_file: path cannot be empty")
 		return 0
 	}
 
-	// Validate path is within project root
-	absRoot, err := filepath.Abs(r.projectRoot)
-	if err != nil {
-		ls.RaiseError("invalid project root: %s", err.Error())
+	// Validate the path is local (no "..", no absolute paths)
+	if !filepath.IsLocal(path) {
+		ls.RaiseError("write_file: path must be a local path (no '..' or absolute paths)")
 		return 0
 	}
 
-	// Ensure the path starts with project root (after cleaning)
-	if !strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) && absPath != absRoot {
-		ls.RaiseError("write_file: path must be within project root")
+	// Build the full path within output directory
+	outputPath := filepath.Join(r.projectRoot, outputDir)
+
+	// Ensure output directory exists
+	if err := os.MkdirAll(outputPath, 0755); err != nil {
+		ls.RaiseError("write_file: cannot create output directory: %s", err.Error())
 		return 0
 	}
 
-	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
-		ls.RaiseError("write file error: %s", err.Error())
+	// Ensure parent directories within output/ exist
+	fullPath := filepath.Join(outputPath, path)
+	dir := filepath.Dir(fullPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		ls.RaiseError("write_file: cannot create directory: %s", err.Error())
 		return 0
 	}
+
+	// Write the file
+	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+		ls.RaiseError("write_file: cannot write file: %s", err.Error())
+		return 0
+	}
+
 	return 0
 }
 
@@ -467,7 +559,8 @@ func luaTableToGo(t *lua.LTable) interface{} {
 	return m
 }
 
-// luaSearch implements rela.search(query, type?, limit?) -> table
+// luaSearch implements rela.search(query, limit?) -> table
+// Performs full-text search across entity titles and properties.
 func (r *Runtime) luaSearch(ls *lua.LState) int {
 	query := ls.CheckString(1)
 	if query == "" {
@@ -533,9 +626,19 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	// Clone entity for update
+	// Clone entity for update - must deep copy the Properties map
 	oldEntity := *entity
 	updated := *entity
+
+	// Deep copy the properties map to avoid mutating oldEntity
+	if entity.Properties != nil {
+		oldEntity.Properties = make(map[string]interface{}, len(entity.Properties))
+		updated.Properties = make(map[string]interface{}, len(entity.Properties))
+		for k, v := range entity.Properties {
+			oldEntity.Properties[k] = v
+			updated.Properties[k] = v
+		}
+	}
 
 	// Update properties if provided
 	if ls.GetTop() >= 2 && ls.Get(2).Type() == lua.LTTable {
@@ -550,12 +653,9 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		}
 	}
 
-	// Update content if provided
-	if ls.GetTop() >= 3 {
-		content := ls.OptString(3, "")
-		if content != "" {
-			updated.Content = content
-		}
+	// Update content if provided (nil means not provided, empty string clears content)
+	if ls.GetTop() >= 3 && ls.Get(3).Type() != lua.LTNil {
+		updated.Content = ls.CheckString(3)
 	}
 
 	_, err := r.ws.UpdateEntity(&updated, &oldEntity)
@@ -565,7 +665,11 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 	}
 
 	// Get fresh entity after update
-	updatedEntity, _ := r.ws.GetEntity(id)
+	updatedEntity, found := r.ws.GetEntity(id)
+	if !found {
+		ls.RaiseError("entity disappeared after update: %s", id)
+		return 0
+	}
 	ls.Push(entityToTable(ls, updatedEntity))
 	return 1
 }
