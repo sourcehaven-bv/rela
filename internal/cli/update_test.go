@@ -5,9 +5,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -71,10 +71,11 @@ func TestUpdateCmd_PropertyFlagParsing(t *testing.T) {
 	setupUpdateTestEnv()
 
 	// Create an existing entity in the graph
-	entity := model.NewEntity("RB-001", "requirement")
-	entity.SetString("title", "Original Title")
-	entity.SetString("status", "draft")
-	g.AddNode(entity)
+	g.AddNode(testutil.Entity("requirement").
+		ID("RB-001").
+		With("title", "Original Title").
+		With("status", "draft").
+		Build())
 
 	tests := []struct {
 		name       string
@@ -142,9 +143,11 @@ func TestUpdateCmd_MultiplePropertiesApplied(t *testing.T) {
 	setupUpdateTestEnv()
 
 	// Create an existing entity in the graph
-	entity := model.NewEntity("CTRL-001", "control")
-	entity.SetString("title", "Access Control")
-	entity.SetString("status", "draft")
+	entity := testutil.Entity("control").
+		ID("CTRL-001").
+		With("title", "Access Control").
+		With("status", "draft").
+		Build()
 	g.AddNode(entity)
 
 	// Simulate applying multiple properties

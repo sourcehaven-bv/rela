@@ -6,11 +6,11 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -175,14 +175,11 @@ types:
 	ws = workspace.NewForTest(g, meta)
 
 	// Add some test entities to the graph
-	g.AddNode(&model.Entity{
-		ID:   "REQ-001",
-		Type: "requirement",
-		Properties: map[string]interface{}{
-			"title":  "Test requirement",
-			"status": "draft",
-		},
-	})
+	g.AddNode(testutil.Entity("requirement").
+		ID("REQ-001").
+		With("title", "Test requirement").
+		With("status", "draft").
+		Build())
 
 	// Test using alias directly
 	resolved, def, err := resolveEntityType("req")
@@ -317,13 +314,8 @@ func TestListAllEntities(t *testing.T) {
 	ws = workspace.NewForTest(g, meta)
 
 	// Add entities of different types
-	req := model.NewEntity("REQ-001", "requirement")
-	req.Properties["title"] = "Test Requirement"
-	g.AddNode(req)
-
-	dec := model.NewEntity("DEC-001", "decision")
-	dec.Properties["title"] = "Test Decision"
-	g.AddNode(dec)
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Test Requirement").Build())
+	g.AddNode(testutil.Entity("decision").ID("DEC-001").With("title", "Test Decision").Build())
 
 	// List all entities (no type filter)
 	entities := g.AllNodes()
@@ -350,17 +342,9 @@ func TestListByType(t *testing.T) {
 	ws = workspace.NewForTest(g, meta)
 
 	// Add entities
-	req1 := model.NewEntity("REQ-001", "requirement")
-	req1.Properties["title"] = "Req 1"
-	g.AddNode(req1)
-
-	req2 := model.NewEntity("REQ-002", "requirement")
-	req2.Properties["title"] = "Req 2"
-	g.AddNode(req2)
-
-	dec := model.NewEntity("DEC-001", "decision")
-	dec.Properties["title"] = "Dec 1"
-	g.AddNode(dec)
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Req 1").Build())
+	g.AddNode(testutil.Entity("requirement").ID("REQ-002").With("title", "Req 2").Build())
+	g.AddNode(testutil.Entity("decision").ID("DEC-001").With("title", "Dec 1").Build())
 
 	// List only requirements
 	entities := g.NodesByType("requirement")

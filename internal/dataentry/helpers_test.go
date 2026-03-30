@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 // htmlHasElement checks if the HTML contains an element matching the given tag and optional attributes.
@@ -128,9 +129,9 @@ func TestPropertyIsEmpty(t *testing.T) {
 
 func TestApplyFilters(t *testing.T) {
 	entities := []*model.Entity{
-		{ID: "E-001", Type: "ticket", Properties: map[string]interface{}{"status": "open", "priority": "high"}},
-		{ID: "E-002", Type: "ticket", Properties: map[string]interface{}{"status": "closed", "priority": "low"}},
-		{ID: "E-003", Type: "ticket", Properties: map[string]interface{}{"status": "open", "priority": "low"}},
+		testutil.Entity("ticket").ID("E-001").With("status", "open").With("priority", "high").Build(),
+		testutil.Entity("ticket").ID("E-002").With("status", "closed").With("priority", "low").Build(),
+		testutil.Entity("ticket").ID("E-003").With("status", "open").With("priority", "low").Build(),
 	}
 
 	tests := []struct {
@@ -199,11 +200,11 @@ func TestApplyFilters(t *testing.T) {
 
 func TestApplyFiltersMultiSelect(t *testing.T) {
 	entities := []*model.Entity{
-		{ID: "E-001", Type: "clause", Properties: map[string]interface{}{"applies_to": "client"}},
-		{ID: "E-002", Type: "clause", Properties: map[string]interface{}{"applies_to": []string{"client", "provider"}}},
-		{ID: "E-003", Type: "clause", Properties: map[string]interface{}{"applies_to": []string{"provider", "employee"}}},
-		{ID: "E-004", Type: "clause", Properties: map[string]interface{}{"applies_to": "employee"}},
-		{ID: "E-005", Type: "clause", Properties: map[string]interface{}{"applies_to": []interface{}{"client", "provider"}}}, // from YAML
+		testutil.Entity("clause").ID("E-001").With("applies_to", "client").Build(),
+		testutil.Entity("clause").ID("E-002").WithList("applies_to", "client", "provider").Build(),
+		testutil.Entity("clause").ID("E-003").WithList("applies_to", "provider", "employee").Build(),
+		testutil.Entity("clause").ID("E-004").With("applies_to", "employee").Build(),
+		testutil.Entity("clause").ID("E-005").With("applies_to", []interface{}{"client", "provider"}).Build(), // from YAML
 	}
 
 	tests := []struct {
@@ -265,9 +266,9 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	makeEntities := func() []*model.Entity {
 		return []*model.Entity{
-			{ID: "E-003", Type: "item", Properties: map[string]interface{}{"name": "Charlie"}},
-			{ID: "E-001", Type: "item", Properties: map[string]interface{}{"name": "Alice"}},
-			{ID: "E-002", Type: "item", Properties: map[string]interface{}{"name": "Bob"}},
+			testutil.Entity("item").ID("E-003").With("name", "Charlie").Build(),
+			testutil.Entity("item").ID("E-001").With("name", "Alice").Build(),
+			testutil.Entity("item").ID("E-002").With("name", "Bob").Build(),
 		}
 	}
 
@@ -309,9 +310,9 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("nil property values sort to end", func(t *testing.T) {
 		entities := []*model.Entity{
-			{ID: "E-001", Type: "item", Properties: map[string]interface{}{"name": "Bob"}},
-			{ID: "E-002", Type: "item", Properties: map[string]interface{}{}},
-			{ID: "E-003", Type: "item", Properties: map[string]interface{}{"name": "Alice"}},
+			testutil.Entity("item").ID("E-001").With("name", "Bob").Build(),
+			testutil.Entity("item").ID("E-002").Build(),
+			testutil.Entity("item").ID("E-003").With("name", "Alice").Build(),
 		}
 		app.sortEntitiesMulti(entities, []model.SortSpec{{Property: "name", Direction: "asc"}})
 		// With type-aware sorting, nil values sort to end
@@ -1005,21 +1006,13 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	}
 
 	g := graph.New()
-	assessment := model.NewEntity("ASS-001", "assessment")
-	assessment.SetString("title", "Q1 Review")
-	g.AddNode(assessment)
+	g.AddNode(testutil.Entity("assessment").ID("ASS-001").With("title", "Q1 Review").Build())
+	g.AddNode(testutil.Entity("person").ID("PER-001").With("name", "Alice").Build())
+	g.AddNode(testutil.Entity("person").ID("PER-002").With("name", "Bob").Build())
 
-	person1 := model.NewEntity("PER-001", "person")
-	person1.SetString("name", "Alice")
-	g.AddNode(person1)
-
-	person2 := model.NewEntity("PER-002", "person")
-	person2.SetString("name", "Bob")
-	g.AddNode(person2)
-
-	g.AddEdge(&model.Relation{From: "ASS-001", Type: "assessmentBy", To: "PER-001"})
-	g.AddEdge(&model.Relation{From: "ASS-001", Type: "assessmentBy", To: "PER-002"})
-	g.AddEdge(&model.Relation{From: "ASS-001", Type: "otherRel", To: "PER-001"})
+	g.AddEdge(testutil.NewRelation("ASS-001", "assessmentBy", "PER-001").Build())
+	g.AddEdge(testutil.NewRelation("ASS-001", "assessmentBy", "PER-002").Build())
+	g.AddEdge(testutil.NewRelation("ASS-001", "otherRel", "PER-001").Build())
 
 	app := &App{meta: meta, g: g}
 
@@ -1175,34 +1168,21 @@ func TestFilterByRelation(t *testing.T) {
 	g := graph.New()
 
 	// Create components
-	cmp1 := model.NewEntity("CMP-001", "component")
-	cmp1.SetString("name", "Frontend")
-	g.AddNode(cmp1)
-
-	cmp2 := model.NewEntity("CMP-002", "component")
-	cmp2.SetString("name", "Backend")
-	g.AddNode(cmp2)
+	g.AddNode(testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build())
+	g.AddNode(testutil.Entity("component").ID("CMP-002").With("name", "Backend").Build())
 
 	// Create tickets with relations to components
-	t1 := model.NewEntity("TKT-001", "ticket")
-	t1.SetString("title", "Frontend bug")
-	g.AddNode(t1)
-	g.AddEdge(&model.Relation{From: "TKT-001", Type: "belongs_to", To: "CMP-001"})
+	g.AddNode(testutil.Entity("ticket").ID("TKT-001").With("title", "Frontend bug").Build())
+	g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
 
-	t2 := model.NewEntity("TKT-002", "ticket")
-	t2.SetString("title", "Backend bug")
-	g.AddNode(t2)
-	g.AddEdge(&model.Relation{From: "TKT-002", Type: "belongs_to", To: "CMP-002"})
+	g.AddNode(testutil.Entity("ticket").ID("TKT-002").With("title", "Backend bug").Build())
+	g.AddEdge(testutil.NewRelation("TKT-002", "belongs_to", "CMP-002").Build())
 
-	t3 := model.NewEntity("TKT-003", "ticket")
-	t3.SetString("title", "Another frontend bug")
-	g.AddNode(t3)
-	g.AddEdge(&model.Relation{From: "TKT-003", Type: "belongs_to", To: "CMP-001"})
+	g.AddNode(testutil.Entity("ticket").ID("TKT-003").With("title", "Another frontend bug").Build())
+	g.AddEdge(testutil.NewRelation("TKT-003", "belongs_to", "CMP-001").Build())
 
-	t4 := model.NewEntity("TKT-004", "ticket")
-	t4.SetString("title", "No component ticket")
-	g.AddNode(t4)
-	// No relation for t4
+	g.AddNode(testutil.Entity("ticket").ID("TKT-004").With("title", "No component ticket").Build())
+	// No relation for TKT-004
 
 	app := &App{meta: meta, g: g}
 	allTickets := g.NodesByType("ticket")
@@ -1279,38 +1259,22 @@ func TestResolveRelationFilterValues(t *testing.T) {
 	g := graph.New()
 
 	// Create components
-	cmp1 := model.NewEntity("CMP-001", "component")
-	cmp1.SetString("name", "Frontend")
-	g.AddNode(cmp1)
-
-	cmp2 := model.NewEntity("CMP-002", "component")
-	cmp2.SetString("name", "Backend")
-	g.AddNode(cmp2)
-
-	cmp3 := model.NewEntity("CMP-003", "component")
-	cmp3.SetString("name", "API")
-	g.AddNode(cmp3)
+	g.AddNode(testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build())
+	g.AddNode(testutil.Entity("component").ID("CMP-002").With("name", "Backend").Build())
+	g.AddNode(testutil.Entity("component").ID("CMP-003").With("name", "API").Build())
 
 	// Create tickets with relations
-	t1 := model.NewEntity("TKT-001", "ticket")
-	t1.SetString("title", "Ticket 1")
-	g.AddNode(t1)
-	g.AddEdge(&model.Relation{From: "TKT-001", Type: "belongs_to", To: "CMP-001"})
+	g.AddNode(testutil.Entity("ticket").ID("TKT-001").With("title", "Ticket 1").Build())
+	g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
 
-	t2 := model.NewEntity("TKT-002", "ticket")
-	t2.SetString("title", "Ticket 2")
-	g.AddNode(t2)
-	g.AddEdge(&model.Relation{From: "TKT-002", Type: "belongs_to", To: "CMP-002"})
+	g.AddNode(testutil.Entity("ticket").ID("TKT-002").With("title", "Ticket 2").Build())
+	g.AddEdge(testutil.NewRelation("TKT-002", "belongs_to", "CMP-002").Build())
 
-	t3 := model.NewEntity("TKT-003", "ticket")
-	t3.SetString("title", "Ticket 3")
-	g.AddNode(t3)
-	g.AddEdge(&model.Relation{From: "TKT-003", Type: "belongs_to", To: "CMP-001"}) // duplicate Frontend
+	g.AddNode(testutil.Entity("ticket").ID("TKT-003").With("title", "Ticket 3").Build())
+	g.AddEdge(testutil.NewRelation("TKT-003", "belongs_to", "CMP-001").Build()) // duplicate Frontend
 
 	// TKT-004 has no relation
-	t4 := model.NewEntity("TKT-004", "ticket")
-	t4.SetString("title", "Ticket 4")
-	g.AddNode(t4)
+	g.AddNode(testutil.Entity("ticket").ID("TKT-004").With("title", "Ticket 4").Build())
 
 	app := &App{meta: meta, g: g}
 	allTickets := g.NodesByType("ticket")
@@ -1368,14 +1332,10 @@ func TestResolveScope(t *testing.T) {
 
 	makeGraph := func() *graph.Graph {
 		g := graph.New()
-		for _, e := range []*model.Entity{
-			{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"status": "open", "priority": "high"}},
-			{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"status": "closed", "priority": "low"}},
-			{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"status": "open", "priority": "medium"}},
-			{ID: "T-004", Type: "ticket", Properties: map[string]interface{}{"status": "open", "priority": "low"}},
-		} {
-			g.AddNode(e)
-		}
+		g.AddNode(testutil.Entity("ticket").ID("T-001").With("status", "open").With("priority", "high").Build())
+		g.AddNode(testutil.Entity("ticket").ID("T-002").With("status", "closed").With("priority", "low").Build())
+		g.AddNode(testutil.Entity("ticket").ID("T-003").With("status", "open").With("priority", "medium").Build())
+		g.AddNode(testutil.Entity("ticket").ID("T-004").With("status", "open").With("priority", "low").Build())
 		return g
 	}
 
@@ -1584,20 +1544,15 @@ func TestResolveScope(t *testing.T) {
 		}
 
 		relGraph := graph.New()
-		cmp := model.NewEntity("CMP-001", "component")
-		cmp.SetString("name", "Frontend")
-		relGraph.AddNode(cmp)
+		relGraph.AddNode(testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build())
 
-		for _, e := range []*model.Entity{
-			{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Ticket 1"}},
-			{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Ticket 2"}},
-			{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"title": "Ticket 3"}},
-		} {
-			relGraph.AddNode(e)
-		}
+		relGraph.AddNode(testutil.Entity("ticket").ID("T-001").With("title", "Ticket 1").Build())
+		relGraph.AddNode(testutil.Entity("ticket").ID("T-002").With("title", "Ticket 2").Build())
+		relGraph.AddNode(testutil.Entity("ticket").ID("T-003").With("title", "Ticket 3").Build())
+
 		// Only T-001 and T-002 belong to Frontend
-		relGraph.AddEdge(&model.Relation{From: "T-001", Type: "belongs_to", To: "CMP-001"})
-		relGraph.AddEdge(&model.Relation{From: "T-002", Type: "belongs_to", To: "CMP-001"})
+		relGraph.AddEdge(testutil.NewRelation("T-001", "belongs_to", "CMP-001").Build())
+		relGraph.AddEdge(testutil.NewRelation("T-002", "belongs_to", "CMP-001").Build())
 
 		relApp := &App{
 			meta: relMeta,

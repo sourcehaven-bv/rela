@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 func TestInterpolate_SimpleVariables(t *testing.T) {
@@ -40,9 +40,10 @@ func TestInterpolate_EntityVariables(t *testing.T) {
 	vars := DefaultTemplateVars()
 	vars.Now = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
 
-	entity := model.NewEntity("T-123", "ticket")
-	entity.Properties["status"] = "in-progress"
-	entity.Properties["owner"] = "alice"
+	entity := testutil.NewEntity("T-123", "ticket").
+		With("status", "in-progress").
+		With("owner", "alice").
+		Build()
 
 	tests := []struct {
 		template string
@@ -67,13 +68,15 @@ func TestInterpolate_OldEntityVariables(t *testing.T) {
 	vars := DefaultTemplateVars()
 	vars.Now = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
 
-	oldEntity := model.NewEntity("T-123", "ticket")
-	oldEntity.Properties["status"] = "backlog"
-	oldEntity.Properties["owner"] = "bob"
+	oldEntity := testutil.NewEntity("T-123", "ticket").
+		With("status", "backlog").
+		With("owner", "bob").
+		Build()
 
-	newEntity := model.NewEntity("T-123", "ticket")
-	newEntity.Properties["status"] = "in-progress"
-	newEntity.Properties["owner"] = "alice"
+	newEntity := testutil.NewEntity("T-123", "ticket").
+		With("status", "in-progress").
+		With("owner", "alice").
+		Build()
 
 	tests := []struct {
 		template string
@@ -112,8 +115,7 @@ func TestInterpolate_MixedTemplate(t *testing.T) {
 		},
 	}
 
-	entity := model.NewEntity("T-001", "ticket")
-	entity.Properties["title"] = "Fix bug"
+	entity := testutil.NewEntity("T-001", "ticket").With("title", "Fix bug").Build()
 
 	template := "{{entity.id}}: {{new.title}} - assigned to {{user.name}} on {{today}}"
 	expected := "T-001: Fix bug - assigned to Alice on 2025-01-15"

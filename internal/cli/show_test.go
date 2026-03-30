@@ -9,8 +9,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -45,11 +45,12 @@ func TestShowEntity(t *testing.T) {
 	defer cleanup()
 
 	// Add a test entity
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.Properties["title"] = "Test Requirement"
-	entity.Properties["status"] = "draft"
-	entity.Properties["priority"] = "high"
-	g.AddNode(entity)
+	g.AddNode(testutil.Entity("requirement").
+		ID("REQ-001").
+		With("title", "Test Requirement").
+		With("status", "draft").
+		With("priority", "high").
+		Build())
 
 	err := showCmd.RunE(showCmd, []string{"REQ-001"})
 	if err != nil {
@@ -75,17 +76,18 @@ func TestShowEntityWithIncomingRelations(t *testing.T) {
 	defer cleanup()
 
 	// Add entities
-	req := model.NewEntity("REQ-001", "requirement")
-	req.Properties["title"] = "User Authentication"
-	g.AddNode(req)
+	g.AddNode(testutil.Entity("requirement").
+		ID("REQ-001").
+		With("title", "User Authentication").
+		Build())
 
-	dec := model.NewEntity("DEC-001", "decision")
-	dec.Properties["title"] = "Use OAuth2"
-	g.AddNode(dec)
+	g.AddNode(testutil.Entity("decision").
+		ID("DEC-001").
+		With("title", "Use OAuth2").
+		Build())
 
 	// Add relation: DEC-001 addresses REQ-001
-	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
-	g.AddEdge(rel)
+	g.AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build())
 
 	err := showCmd.RunE(showCmd, []string{"REQ-001"})
 	if err != nil {
@@ -108,17 +110,18 @@ func TestShowEntityWithOutgoingRelations(t *testing.T) {
 	defer cleanup()
 
 	// Add entities
-	req := model.NewEntity("REQ-001", "requirement")
-	req.Properties["title"] = "User Authentication"
-	g.AddNode(req)
+	g.AddNode(testutil.Entity("requirement").
+		ID("REQ-001").
+		With("title", "User Authentication").
+		Build())
 
-	dec := model.NewEntity("DEC-001", "decision")
-	dec.Properties["title"] = "Use OAuth2"
-	g.AddNode(dec)
+	g.AddNode(testutil.Entity("decision").
+		ID("DEC-001").
+		With("title", "Use OAuth2").
+		Build())
 
 	// Add relation: DEC-001 addresses REQ-001
-	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
-	g.AddEdge(rel)
+	g.AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build())
 
 	err := showCmd.RunE(showCmd, []string{"DEC-001"})
 	if err != nil {
@@ -179,10 +182,11 @@ func TestShowEntityJSON(t *testing.T) {
 	out = output.NewWithWriter(&buf, output.FormatJSON)
 
 	// Add a test entity
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.Properties["title"] = "Test Requirement"
-	entity.Properties["status"] = "draft"
-	g.AddNode(entity)
+	g.AddNode(testutil.Entity("requirement").
+		ID("REQ-001").
+		With("title", "Test Requirement").
+		With("status", "draft").
+		Build())
 
 	err := showCmd.RunE(showCmd, []string{"REQ-001"})
 	if err != nil {
@@ -224,26 +228,30 @@ func TestShowEntityWithMultipleRelations(t *testing.T) {
 	defer cleanup()
 
 	// Add entities
-	req := model.NewEntity("REQ-001", "requirement")
-	req.Properties["title"] = "User Authentication"
-	g.AddNode(req)
+	g.AddNode(testutil.Entity("requirement").
+		ID("REQ-001").
+		With("title", "User Authentication").
+		Build())
 
-	dec1 := model.NewEntity("DEC-001", "decision")
-	dec1.Properties["title"] = "Use OAuth2"
-	g.AddNode(dec1)
+	g.AddNode(testutil.Entity("decision").
+		ID("DEC-001").
+		With("title", "Use OAuth2").
+		Build())
 
-	dec2 := model.NewEntity("DEC-002", "decision")
-	dec2.Properties["title"] = "Use JWT tokens"
-	g.AddNode(dec2)
+	g.AddNode(testutil.Entity("decision").
+		ID("DEC-002").
+		With("title", "Use JWT tokens").
+		Build())
 
-	sol := model.NewEntity("SOL-001", "solution")
-	sol.Properties["title"] = "Authentication Service"
-	g.AddNode(sol)
+	g.AddNode(testutil.Entity("solution").
+		ID("SOL-001").
+		With("title", "Authentication Service").
+		Build())
 
 	// Add relations
-	g.AddEdge(model.NewRelation("DEC-001", "addresses", "REQ-001"))
-	g.AddEdge(model.NewRelation("DEC-002", "addresses", "REQ-001"))
-	g.AddEdge(model.NewRelation("REQ-001", "implements", "SOL-001"))
+	g.AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build())
+	g.AddEdge(testutil.NewRelation("DEC-002", "addresses", "REQ-001").Build())
+	g.AddEdge(testutil.NewRelation("REQ-001", "implements", "SOL-001").Build())
 
 	err := showCmd.RunE(showCmd, []string{"REQ-001"})
 	if err != nil {
@@ -271,9 +279,10 @@ func TestShowEntityWithNoRelations(t *testing.T) {
 	defer cleanup()
 
 	// Add a standalone entity with no relations
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.Properties["title"] = "Standalone Requirement"
-	g.AddNode(entity)
+	g.AddNode(testutil.Entity("requirement").
+		ID("REQ-001").
+		With("title", "Standalone Requirement").
+		Build())
 
 	err := showCmd.RunE(showCmd, []string{"REQ-001"})
 	if err != nil {
@@ -328,10 +337,11 @@ func TestShowEntityWithContent(t *testing.T) {
 	defer cleanup()
 
 	// Add entity with content
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.Properties["title"] = "Test Requirement"
-	entity.Content = "This is the detailed description of the requirement.\n\nIt can span multiple lines."
-	g.AddNode(entity)
+	g.AddNode(testutil.Entity("requirement").
+		ID("REQ-001").
+		With("title", "Test Requirement").
+		WithContent("This is the detailed description of the requirement.\n\nIt can span multiple lines.").
+		Build())
 
 	err := showCmd.RunE(showCmd, []string{"REQ-001"})
 	if err != nil {

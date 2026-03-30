@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -25,7 +26,7 @@ func newHandlerTestApp(t *testing.T) *App {
 	g := testGraph()
 
 	// Add a relation for testing edge display
-	g.AddEdge(model.NewRelation("TKT-001", "depends_on", "TKT-002"))
+	g.AddEdge(testutil.NewRelation("TKT-001", "depends_on", "TKT-002").Build())
 
 	// Add view config
 	cfg.Views = map[string]ViewConfig{
@@ -213,10 +214,7 @@ func TestHandleList(t *testing.T) {
 			},
 		}
 		// Add entity with multi-select values as []string
-		e := model.NewEntity("TKT-003", "ticket")
-		e.SetString("title", "Multi-select Test")
-		e.Properties["applies_to"] = []string{"client", "provider"}
-		app.g.AddNode(e)
+		app.g.AddNode(testutil.Entity("ticket").ID("TKT-003").With("title", "Multi-select Test").WithList("applies_to", "client", "provider").Build())
 
 		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
 		w := httptest.NewRecorder()
@@ -251,10 +249,7 @@ func TestHandleList(t *testing.T) {
 			},
 		}
 		// Simulate YAML-parsed values ([]interface{})
-		e := model.NewEntity("TKT-004", "ticket")
-		e.SetString("title", "YAML Test")
-		e.Properties["tags"] = []interface{}{"bug", "feature"}
-		app.g.AddNode(e)
+		app.g.AddNode(testutil.Entity("ticket").ID("TKT-004").With("title", "YAML Test").With("tags", []interface{}{"bug", "feature"}).Build())
 
 		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
 		w := httptest.NewRecorder()
@@ -275,7 +270,7 @@ func TestHandleList(t *testing.T) {
 		app := newHandlerTestApp(t)
 
 		// Add relation to existing tickets
-		app.g.AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
+		app.g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
 
 		// Configure list with relation-based filter
 		app.Cfg.Lists["tickets"] = List{
@@ -311,7 +306,7 @@ func TestHandleList(t *testing.T) {
 		app := newHandlerTestApp(t)
 
 		// Add relation to existing tickets
-		app.g.AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
+		app.g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
 
 		// Configure list with relation-based filter
 		app.Cfg.Lists["tickets"] = List{
@@ -370,7 +365,7 @@ func TestHandleList(t *testing.T) {
 		app := newHandlerTestApp(t)
 
 		// Add relation to existing tickets
-		app.g.AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
+		app.g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
 
 		// Configure list with relation filter and custom label
 		app.Cfg.Lists["tickets"] = List{
@@ -402,10 +397,7 @@ func TestHandleList(t *testing.T) {
 
 		// Add more tickets for pagination
 		for i := 3; i <= 5; i++ {
-			e := model.NewEntity("TKT-00"+string(rune('0'+i)), "ticket")
-			e.SetString("title", "Ticket "+string(rune('0'+i)))
-			e.SetString("status", "open")
-			app.g.AddNode(e)
+			app.g.AddNode(testutil.Entity("ticket").ID("TKT-00"+string(rune('0'+i))).With("title", "Ticket "+string(rune('0'+i))).With("status", "open").Build())
 		}
 
 		// Configure list with pagination and filter
@@ -569,10 +561,7 @@ func TestHandleForm(t *testing.T) {
 			},
 		}
 		// Add entity with multi-select values
-		e := model.NewEntity("TKT-ROLES", "ticket")
-		e.SetString("title", "Role Test")
-		e.Properties["roles"] = []string{"admin", "viewer"}
-		app.g.AddNode(e)
+		app.g.AddNode(testutil.Entity("ticket").ID("TKT-ROLES").With("title", "Role Test").WithList("roles", "admin", "viewer").Build())
 
 		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket-roles/TKT-ROLES", http.NoBody)
 		w := httptest.NewRecorder()
@@ -1612,9 +1601,7 @@ func TestHandleLinkCandidates(t *testing.T) {
 	t.Run("filters by search query", func(t *testing.T) {
 		app := newHandlerTestApp(t)
 		// Add a third ticket
-		e3 := model.NewEntity("TKT-003", "ticket")
-		e3.SetString("title", "Third Ticket")
-		app.g.AddNode(e3)
+		app.g.AddNode(testutil.Entity("ticket").ID("TKT-003").With("title", "Third Ticket").Build())
 
 		r := httptest.NewRequest(http.MethodGet,
 			"/api/link-candidates?relation=depends_on&link_as=to&peer=TKT-001&entity_types=ticket&q=Third",

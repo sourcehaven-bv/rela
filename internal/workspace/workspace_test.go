@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 const testMetamodelYAML = `version: "1.0"
@@ -235,7 +236,7 @@ func TestGenerateID_Sequential(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	// Add an existing entity so the next ID is REQ-002.
-	ws.graph.AddNode(&model.Entity{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "first"}})
+	ws.graph.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "first").Build())
 
 	id, err := ws.GenerateID("requirement", "")
 	if err != nil {

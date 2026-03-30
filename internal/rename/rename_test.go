@@ -5,10 +5,10 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 const testMetamodelYAML = `version: "1.0"
@@ -85,8 +85,7 @@ func TestRename_NoRelations(t *testing.T) {
 	repo, meta, g, _ := setupTestEnv(t)
 
 	// Create entity
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.SetString("title", "Test Requirement")
+	entity := testutil.NewEntity("REQ-001", "requirement").With("title", "Test Requirement").Build()
 	if err := repo.WriteEntity(entity, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
 	}
@@ -130,10 +129,8 @@ func TestRename_OutgoingRelations(t *testing.T) {
 	repo, meta, g, _ := setupTestEnv(t)
 
 	// Create entities
-	req := model.NewEntity("REQ-001", "requirement")
-	req.SetString("title", "Requirement")
-	dec := model.NewEntity("DEC-001", "decision")
-	dec.SetString("title", "Decision")
+	req := testutil.NewEntity("REQ-001", "requirement").With("title", "Requirement").Build()
+	dec := testutil.NewEntity("DEC-001", "decision").With("title", "Decision").Build()
 
 	if err := repo.WriteEntity(req, meta); err != nil {
 		t.Fatalf("WriteEntity(req) error = %v", err)
@@ -145,7 +142,7 @@ func TestRename_OutgoingRelations(t *testing.T) {
 	g.AddNode(dec)
 
 	// Create outgoing relation from DEC-001
-	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
+	rel := testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build()
 	if err := repo.WriteRelation(rel); err != nil {
 		t.Fatalf("WriteRelation() error = %v", err)
 	}
@@ -184,10 +181,8 @@ func TestRename_IncomingRelations(t *testing.T) {
 	repo, meta, g, _ := setupTestEnv(t)
 
 	// Create entities
-	req := model.NewEntity("REQ-001", "requirement")
-	req.SetString("title", "Requirement")
-	dec := model.NewEntity("DEC-001", "decision")
-	dec.SetString("title", "Decision")
+	req := testutil.NewEntity("REQ-001", "requirement").With("title", "Requirement").Build()
+	dec := testutil.NewEntity("DEC-001", "decision").With("title", "Decision").Build()
 
 	if err := repo.WriteEntity(req, meta); err != nil {
 		t.Fatalf("WriteEntity(req) error = %v", err)
@@ -199,7 +194,7 @@ func TestRename_IncomingRelations(t *testing.T) {
 	g.AddNode(dec)
 
 	// Create relation to REQ-001
-	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
+	rel := testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build()
 	if err := repo.WriteRelation(rel); err != nil {
 		t.Fatalf("WriteRelation() error = %v", err)
 	}
@@ -239,8 +234,7 @@ func TestRename_BothIncomingAndOutgoing(t *testing.T) {
 
 	// Create entities: REQ-001, REQ-002, REQ-003
 	for _, id := range []string{"REQ-001", "REQ-002", "REQ-003"} {
-		e := model.NewEntity(id, "requirement")
-		e.SetString("title", "Requirement "+id)
+		e := testutil.NewEntity(id, "requirement").With("title", "Requirement "+id).Build()
 		if err := repo.WriteEntity(e, meta); err != nil {
 			t.Fatalf("WriteEntity(%s) error = %v", id, err)
 		}
@@ -248,14 +242,14 @@ func TestRename_BothIncomingAndOutgoing(t *testing.T) {
 	}
 
 	// REQ-001 depends-on REQ-002 (outgoing from REQ-001)
-	rel1 := model.NewRelation("REQ-001", "depends-on", "REQ-002")
+	rel1 := testutil.NewRelation("REQ-001", "depends-on", "REQ-002").Build()
 	if err := repo.WriteRelation(rel1); err != nil {
 		t.Fatalf("WriteRelation(rel1) error = %v", err)
 	}
 	g.AddEdge(rel1)
 
 	// REQ-003 depends-on REQ-001 (incoming to REQ-001)
-	rel2 := model.NewRelation("REQ-003", "depends-on", "REQ-001")
+	rel2 := testutil.NewRelation("REQ-003", "depends-on", "REQ-001").Build()
 	if err := repo.WriteRelation(rel2); err != nil {
 		t.Fatalf("WriteRelation(rel2) error = %v", err)
 	}
@@ -288,15 +282,14 @@ func TestRename_SelfReferential(t *testing.T) {
 	repo, meta, g, _ := setupTestEnv(t)
 
 	// Create entity
-	req := model.NewEntity("REQ-001", "requirement")
-	req.SetString("title", "Self-referential")
+	req := testutil.NewEntity("REQ-001", "requirement").With("title", "Self-referential").Build()
 	if err := repo.WriteEntity(req, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
 	}
 	g.AddNode(req)
 
 	// Create self-referential relation
-	rel := model.NewRelation("REQ-001", "depends-on", "REQ-001")
+	rel := testutil.NewRelation("REQ-001", "depends-on", "REQ-001").Build()
 	if err := repo.WriteRelation(rel); err != nil {
 		t.Fatalf("WriteRelation() error = %v", err)
 	}
@@ -327,10 +320,8 @@ func TestRename_DryRun(t *testing.T) {
 	repo, meta, g, _ := setupTestEnv(t)
 
 	// Create entity with relation
-	req := model.NewEntity("REQ-001", "requirement")
-	req.SetString("title", "Requirement")
-	dec := model.NewEntity("DEC-001", "decision")
-	dec.SetString("title", "Decision")
+	req := testutil.NewEntity("REQ-001", "requirement").With("title", "Requirement").Build()
+	dec := testutil.NewEntity("DEC-001", "decision").With("title", "Decision").Build()
 
 	if err := repo.WriteEntity(req, meta); err != nil {
 		t.Fatalf("WriteEntity(req) error = %v", err)
@@ -341,7 +332,7 @@ func TestRename_DryRun(t *testing.T) {
 	g.AddNode(req)
 	g.AddNode(dec)
 
-	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
+	rel := testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build()
 	if err := repo.WriteRelation(rel); err != nil {
 		t.Fatalf("WriteRelation() error = %v", err)
 	}
@@ -379,10 +370,8 @@ func TestRename_ErrorNewIDExists(t *testing.T) {
 	repo, meta, g, _ := setupTestEnv(t)
 
 	// Create two entities
-	req1 := model.NewEntity("REQ-001", "requirement")
-	req1.SetString("title", "First")
-	req2 := model.NewEntity("REQ-002", "requirement")
-	req2.SetString("title", "Second")
+	req1 := testutil.NewEntity("REQ-001", "requirement").With("title", "First").Build()
+	req2 := testutil.NewEntity("REQ-002", "requirement").With("title", "Second").Build()
 
 	if err := repo.WriteEntity(req1, meta); err != nil {
 		t.Fatalf("WriteEntity(req1) error = %v", err)
@@ -417,8 +406,7 @@ func TestRename_ErrorInvalidNewID(t *testing.T) {
 	repo, meta, g, _ := setupTestEnv(t)
 
 	// Create entity
-	req := model.NewEntity("REQ-001", "requirement")
-	req.SetString("title", "Test")
+	req := testutil.NewEntity("REQ-001", "requirement").With("title", "Test").Build()
 	if err := repo.WriteEntity(req, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
 	}
@@ -435,8 +423,7 @@ func TestRename_ErrorTypeMismatch(t *testing.T) {
 	repo, meta, g, _ := setupTestEnv(t)
 
 	// Create entity
-	req := model.NewEntity("REQ-001", "requirement")
-	req.SetString("title", "Test")
+	req := testutil.NewEntity("REQ-001", "requirement").With("title", "Test").Build()
 	if err := repo.WriteEntity(req, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
 	}
@@ -453,10 +440,11 @@ func TestRename_PreservesContent(t *testing.T) {
 	repo, meta, g, _ := setupTestEnv(t)
 
 	// Create entity with content
-	req := model.NewEntity("REQ-001", "requirement")
-	req.SetString("title", "With Content")
-	req.SetString("status", "approved")
-	req.Content = "# Description\n\nThis is the detailed description.\n"
+	req := testutil.NewEntity("REQ-001", "requirement").
+		With("title", "With Content").
+		With("status", "approved").
+		WithContent("# Description\n\nThis is the detailed description.\n").
+		Build()
 	if err := repo.WriteEntity(req, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
 	}
@@ -489,8 +477,7 @@ func TestRename_NoTempFilesLeft(t *testing.T) {
 	repo, meta, g, fs := setupTestEnv(t)
 
 	// Create entity
-	req := model.NewEntity("REQ-001", "requirement")
-	req.SetString("title", "Test")
+	req := testutil.NewEntity("REQ-001", "requirement").With("title", "Test").Build()
 	if err := repo.WriteEntity(req, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
 	}

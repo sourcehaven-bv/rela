@@ -5,9 +5,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 const testMetamodelYAML = `version: "1.0"
@@ -81,9 +81,10 @@ func setupTestRepo(t *testing.T) (*Repository, *metamodel.Metamodel, storage.FS)
 func TestRepository_WriteAndReadEntity(t *testing.T) {
 	repo, meta, _ := setupTestRepo(t)
 
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.SetString("title", "Test Requirement")
-	entity.SetString("status", "draft")
+	entity := testutil.NewEntity("REQ-001", "requirement").
+		With("title", "Test Requirement").
+		With("status", "draft").
+		Build()
 
 	if err := repo.WriteEntity(entity, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
@@ -112,8 +113,9 @@ func TestRepository_WriteAndReadEntity(t *testing.T) {
 func TestRepository_WriteEntitySetsFilePath(t *testing.T) {
 	repo, meta, _ := setupTestRepo(t)
 
-	entity := model.NewEntity("REQ-002", "requirement")
-	entity.SetString("title", "Path Check")
+	entity := testutil.NewEntity("REQ-002", "requirement").
+		With("title", "Path Check").
+		Build()
 
 	if err := repo.WriteEntity(entity, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
@@ -128,8 +130,9 @@ func TestRepository_WriteEntitySetsFilePath(t *testing.T) {
 func TestRepository_WriteEntityUnknownType(t *testing.T) {
 	repo, meta, _ := setupTestRepo(t)
 
-	entity := model.NewEntity("FOO-001", "unknown_type")
-	entity.SetString("title", "Bad Type")
+	entity := testutil.NewEntity("FOO-001", "unknown_type").
+		With("title", "Bad Type").
+		Build()
 
 	err := repo.WriteEntity(entity, meta)
 	if err == nil {
@@ -158,8 +161,9 @@ func TestRepository_ReadEntityUnknownType(t *testing.T) {
 func TestRepository_DeleteEntity(t *testing.T) {
 	repo, meta, _ := setupTestRepo(t)
 
-	entity := model.NewEntity("REQ-003", "requirement")
-	entity.SetString("title", "To Delete")
+	entity := testutil.NewEntity("REQ-003", "requirement").
+		With("title", "To Delete").
+		Build()
 
 	if err := repo.WriteEntity(entity, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
@@ -195,14 +199,16 @@ func TestRepository_ListEntities(t *testing.T) {
 
 	// Write multiple entities
 	for _, id := range []string{"REQ-001", "REQ-002"} {
-		e := model.NewEntity(id, "requirement")
-		e.SetString("title", "Entity "+id)
+		e := testutil.NewEntity(id, "requirement").
+			With("title", "Entity "+id).
+			Build()
 		if err := repo.WriteEntity(e, meta); err != nil {
 			t.Fatalf("WriteEntity(%s) error = %v", id, err)
 		}
 	}
-	dec := model.NewEntity("DEC-001", "decision")
-	dec.SetString("title", "Decision 1")
+	dec := testutil.NewEntity("DEC-001", "decision").
+		With("title", "Decision 1").
+		Build()
 	if err := repo.WriteEntity(dec, meta); err != nil {
 		t.Fatalf("WriteEntity(DEC-001) error = %v", err)
 	}
@@ -222,7 +228,7 @@ func TestRepository_ListEntities(t *testing.T) {
 func TestRepository_WriteAndReadRelation(t *testing.T) {
 	repo, _, _ := setupTestRepo(t)
 
-	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
+	rel := testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build()
 
 	if err := repo.WriteRelation(rel); err != nil {
 		t.Fatalf("WriteRelation() error = %v", err)
@@ -251,7 +257,7 @@ func TestRepository_WriteAndReadRelation(t *testing.T) {
 func TestRepository_DeleteRelation(t *testing.T) {
 	repo, _, _ := setupTestRepo(t)
 
-	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
+	rel := testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build()
 	if err := repo.WriteRelation(rel); err != nil {
 		t.Fatalf("WriteRelation() error = %v", err)
 	}
@@ -269,8 +275,8 @@ func TestRepository_DeleteRelation(t *testing.T) {
 func TestRepository_ListRelations(t *testing.T) {
 	repo, _, _ := setupTestRepo(t)
 
-	r1 := model.NewRelation("DEC-001", "addresses", "REQ-001")
-	r2 := model.NewRelation("DEC-001", "addresses", "REQ-002")
+	r1 := testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build()
+	r2 := testutil.NewRelation("DEC-001", "addresses", "REQ-002").Build()
 
 	if err := repo.WriteRelation(r1); err != nil {
 		t.Fatalf("WriteRelation(r1) error = %v", err)
@@ -295,14 +301,12 @@ func TestRepository_Sync(t *testing.T) {
 	repo, meta, _ := setupTestRepo(t)
 
 	// Write entities and a relation
-	e1 := model.NewEntity("REQ-001", "requirement")
-	e1.SetString("title", "Req 1")
-	e2 := model.NewEntity("DEC-001", "decision")
-	e2.SetString("title", "Dec 1")
+	e1 := testutil.NewEntity("REQ-001", "requirement").With("title", "Req 1").Build()
+	e2 := testutil.NewEntity("DEC-001", "decision").With("title", "Dec 1").Build()
 	_ = repo.WriteEntity(e1, meta)
 	_ = repo.WriteEntity(e2, meta)
 
-	rel := model.NewRelation("DEC-001", "addresses", "REQ-001")
+	rel := testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build()
 	_ = repo.WriteRelation(rel)
 
 	// Sync into a fresh graph
@@ -332,8 +336,7 @@ func TestRepository_Sync_MissingSourceEntity(t *testing.T) {
 	repo, meta, fs := setupTestRepo(t)
 
 	// Write only target entity
-	e1 := model.NewEntity("REQ-001", "requirement")
-	e1.SetString("title", "Req 1")
+	e1 := testutil.NewEntity("REQ-001", "requirement").With("title", "Req 1").Build()
 	_ = repo.WriteEntity(e1, meta)
 
 	// Write relation with missing source directly as a file
@@ -362,8 +365,7 @@ func TestRepository_Sync_MissingTargetEntity(t *testing.T) {
 	repo, meta, fs := setupTestRepo(t)
 
 	// Write only source entity
-	e1 := model.NewEntity("DEC-001", "decision")
-	e1.SetString("title", "Dec 1")
+	e1 := testutil.NewEntity("DEC-001", "decision").With("title", "Dec 1").Build()
 	_ = repo.WriteEntity(e1, meta)
 
 	// Write relation with missing target directly as a file
@@ -392,13 +394,12 @@ func TestRepository_Sync_ClearsExistingGraph(t *testing.T) {
 	repo, meta, _ := setupTestRepo(t)
 
 	// Write one entity
-	e1 := model.NewEntity("REQ-001", "requirement")
-	e1.SetString("title", "Req 1")
+	e1 := testutil.NewEntity("REQ-001", "requirement").With("title", "Req 1").Build()
 	_ = repo.WriteEntity(e1, meta)
 
 	// Pre-populate graph with different data
 	g := graph.New()
-	old := model.NewEntity("OLD-001", "old")
+	old := testutil.NewEntity("OLD-001", "old").Build()
 	g.AddNode(old)
 
 	if g.NodeCount() != 1 {
@@ -434,8 +435,7 @@ func TestRepository_CacheSaveAndLoad(t *testing.T) {
 
 	// Build a graph with entities
 	g := graph.New()
-	e1 := model.NewEntity("REQ-001", "requirement")
-	e1.SetString("title", "Cached Req")
+	e1 := testutil.NewEntity("REQ-001", "requirement").With("title", "Cached Req").Build()
 	g.AddNode(e1)
 
 	// Initially no cache
@@ -546,9 +546,10 @@ func TestRepository_Paths(t *testing.T) {
 func TestRepository_EntityWithContent(t *testing.T) {
 	repo, meta, _ := setupTestRepo(t)
 
-	entity := model.NewEntity("REQ-010", "requirement")
-	entity.SetString("title", "With Content")
-	entity.Content = "# Description\n\nThis is the body.\n"
+	entity := testutil.NewEntity("REQ-010", "requirement").
+		With("title", "With Content").
+		WithContent("# Description\n\nThis is the body.\n").
+		Build()
 
 	if err := repo.WriteEntity(entity, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
@@ -635,10 +636,8 @@ func TestRepository_LoadEntityTemplate_Exists(t *testing.T) {
 func TestRepository_MultipleEntityTypes(t *testing.T) {
 	repo, meta, _ := setupTestRepo(t)
 
-	req := model.NewEntity("REQ-001", "requirement")
-	req.SetString("title", "A Requirement")
-	dec := model.NewEntity("DEC-001", "decision")
-	dec.SetString("title", "A Decision")
+	req := testutil.NewEntity("REQ-001", "requirement").With("title", "A Requirement").Build()
+	dec := testutil.NewEntity("DEC-001", "decision").With("title", "A Decision").Build()
 
 	if err := repo.WriteEntity(req, meta); err != nil {
 		t.Fatalf("WriteEntity(req) error = %v", err)
@@ -679,8 +678,7 @@ func TestRepository_MultipleEntityTypes(t *testing.T) {
 func TestRepository_OverwriteEntity(t *testing.T) {
 	repo, meta, _ := setupTestRepo(t)
 
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.SetString("title", "Original")
+	entity := testutil.NewEntity("REQ-001", "requirement").With("title", "Original").Build()
 	_ = repo.WriteEntity(entity, meta)
 
 	// Update and overwrite

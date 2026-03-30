@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -49,32 +50,36 @@ func setupTestGraph() {
 	out = output.New(output.FormatTable)
 
 	// Add test entities
-	ctrl1 := model.NewEntity("CTRL-001", "control")
-	ctrl1.Properties["title"] = "Access Control Policy"
-	ctrl1.Properties["status"] = "implemented"
-	ctrl1.Properties["iso27001"] = "A.5.15"
-	g.AddNode(ctrl1)
+	g.AddNode(testutil.Entity("control").
+		ID("CTRL-001").
+		With("title", "Access Control Policy").
+		With("status", "implemented").
+		With("iso27001", "A.5.15").
+		Build())
 
-	ctrl2 := model.NewEntity("CTRL-002", "control")
-	ctrl2.Properties["title"] = "Password Policy"
-	ctrl2.Properties["status"] = "draft"
-	ctrl2.Properties["iso27001"] = "A.9.4.3"
-	g.AddNode(ctrl2)
+	g.AddNode(testutil.Entity("control").
+		ID("CTRL-002").
+		With("title", "Password Policy").
+		With("status", "draft").
+		With("iso27001", "A.9.4.3").
+		Build())
 
-	risk1 := model.NewEntity("RISK-001", "risk")
-	risk1.Properties["title"] = "Unauthorized Access"
-	risk1.Properties["severity"] = "high"
-	g.AddNode(risk1)
+	g.AddNode(testutil.Entity("risk").
+		ID("RISK-001").
+		With("title", "Unauthorized Access").
+		With("severity", "high").
+		Build())
 
-	ev1 := model.NewEntity("EV-001", "evidence")
-	ev1.Properties["title"] = "Access Control Audit Report"
-	ev1.Properties["valid_until"] = "2025-12-31"
-	g.AddNode(ev1)
+	g.AddNode(testutil.Entity("evidence").
+		ID("EV-001").
+		With("title", "Access Control Audit Report").
+		With("valid_until", "2025-12-31").
+		Build())
 
 	// Add test relations
-	g.AddEdge(model.NewRelation("CTRL-001", "mitigates", "RISK-001"))
-	g.AddEdge(model.NewRelation("CTRL-002", "mitigates", "RISK-001"))
-	g.AddEdge(model.NewRelation("CTRL-001", "evidencedBy", "EV-001"))
+	g.AddEdge(testutil.NewRelation("CTRL-001", "mitigates", "RISK-001").Build())
+	g.AddEdge(testutil.NewRelation("CTRL-002", "mitigates", "RISK-001").Build())
+	g.AddEdge(testutil.NewRelation("CTRL-001", "evidencedBy", "EV-001").Build())
 }
 
 func TestExportEntitiesJSON(t *testing.T) {
