@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
+
+// scriptsDir is the directory where Lua scripts must be located for lua_run.
+const scriptsDir = "scripts"
 
 func toolLuaEval() mcp.Tool {
 	return mcp.NewTool("lua_eval",
@@ -32,10 +36,10 @@ func toolLuaRun() mcp.Tool {
 	return mcp.NewTool("lua_run",
 		mcp.WithDescription(
 			"Execute a Lua script file against the rela graph. "+
-				"Script path is relative to project root. "+
+				"Scripts must be located in the 'scripts/' directory. "+
 				"Use rela.output(data) to return results as JSON."),
 		mcp.WithString("path", mcp.Required(),
-			mcp.Description("Path to Lua script file (relative to project root)")),
+			mcp.Description("Script filename or path within scripts/ (e.g., 'export.lua' or 'reports/summary.lua')")),
 		mcp.WithArray("args",
 			mcp.Description("Arguments to pass to the script (available as rela.args)")),
 	)
@@ -44,8 +48,8 @@ func toolLuaRun() mcp.Tool {
 func toolLuaList() mcp.Tool {
 	return mcp.NewTool("lua_list",
 		mcp.WithDescription(
-			"List available Lua scripts in the project. "+
-				"Searches for .lua files in common locations (scripts/, lua/, root)."),
+			"List available Lua scripts in the scripts/ directory. "+
+				"Only scripts in this directory can be executed via lua_run."),
 	)
 }
 
@@ -81,15 +85,47 @@ func (s *Server) handleLuaRun(_ context.Context, req mcp.CallToolRequest) (*mcp.
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	// Security: Validate path is local (no "..", no absolute paths)
+	if !filepath.IsLocal(path) {
+		return mcp.NewToolResultError("script path must be a local path (no '..' or absolute paths allowed)"), nil
+	}
+
+	// Security: Must have .lua extension
+	if !strings.HasSuffix(path, ".lua") {
+		return mcp.NewToolResultError("script must have .lua extension"), nil
+	}
+
 	// Parse args if provided
 	args := req.GetStringSlice("args", nil)
 
 	projectRoot := s.ws.Paths().Root
 
-	// Resolve path relative to project root
-	scriptPath := path
-	if !filepath.IsAbs(path) {
-		scriptPath = filepath.Join(projectRoot, path)
+	// Security: Scripts must be in the scripts/ directory
+	// Use os.Root for traversal-resistant path access
+	root, err := os.OpenRoot(projectRoot)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("cannot open project root: %s", err.Error())), nil
+	}
+	defer root.Close()
+
+	// Verify script exists using traversal-resistant API
+	scriptsRoot, err := root.OpenRoot(scriptsDir)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("scripts directory not found: %s", err.Error())), nil
+	}
+	defer scriptsRoot.Close()
+
+	// Read script content using traversal-resistant API to prevent symlink escapes
+	scriptFile, err := scriptsRoot.Open(path)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("script not found: %s (scripts must be in the scripts/ directory)", path)), nil
+	}
+	defer scriptFile.Close()
+
+	// Read script content
+	scriptContent, err := io.ReadAll(scriptFile)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("cannot read script: %s", err.Error())), nil
 	}
 
 	// Capture output
@@ -98,8 +134,12 @@ func (s *Server) handleLuaRun(_ context.Context, req mcp.CallToolRequest) (*mcp.
 	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output)
 	defer runtime.Close()
 
-	if err := runtime.RunFile(scriptPath, args); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Lua error: %s", err.Error())), nil
+	// Set script args before execution
+	runtime.SetArgs(args)
+
+	// Execute script content directly (bypasses symlink escapes since we read via os.Root)
+	if err := runtime.RunString(string(scriptContent)); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Lua error in %s: %s", path, err.Error())), nil
 	}
 
 	result := output.String()
@@ -113,58 +153,43 @@ func (s *Server) handleLuaRun(_ context.Context, req mcp.CallToolRequest) (*mcp.
 func (s *Server) handleLuaList(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	projectRoot := s.ws.Paths().Root
 
-	// Directories to search for Lua scripts
-	searchDirs := []string{
-		"scripts",
-		"lua",
-		".",
-	}
+	// Only search the scripts/ directory (security restriction)
+	scriptsPath := filepath.Join(projectRoot, scriptsDir)
 
 	var scripts []string
-	seen := make(map[string]bool)
 
-	for _, dir := range searchDirs {
-		searchPath := filepath.Join(projectRoot, dir)
-		entries, err := os.ReadDir(searchPath)
-		if err != nil {
-			continue // Directory doesn't exist, skip
+	// Walk the scripts directory recursively to find all .lua files
+	_ = filepath.WalkDir(scriptsPath, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return filepath.SkipDir // Skip directories with errors
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".lua") {
+			return nil
 		}
 
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			if !strings.HasSuffix(entry.Name(), ".lua") {
-				continue
-			}
-
-			// Get relative path from project root
-			var relPath string
-			if dir == "." {
-				relPath = entry.Name()
-			} else {
-				relPath = filepath.Join(dir, entry.Name())
-			}
-
-			if seen[relPath] {
-				continue
-			}
-			seen[relPath] = true
+		// Get relative path from scripts directory
+		relPath, _ := filepath.Rel(scriptsPath, path)
+		if relPath != "" {
 			scripts = append(scripts, relPath)
 		}
-	}
+		return nil
+	})
 
 	if len(scripts) == 0 {
-		return mcp.NewToolResultText("No Lua scripts found in project"), nil
+		return mcp.NewToolResultText("No Lua scripts found in scripts/ directory"), nil
 	}
 
 	var result strings.Builder
-	result.WriteString("Available Lua scripts:\n")
+	result.WriteString("Available Lua scripts (in scripts/):\n")
 	for _, script := range scripts {
 		result.WriteString("  ")
 		result.WriteString(script)
 		result.WriteString("\n")
 	}
+	result.WriteString("\nUse lua_run with the script name to execute.")
 
 	return mcp.NewToolResultText(result.String()), nil
 }
