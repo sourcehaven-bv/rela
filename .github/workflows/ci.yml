@@ -256,20 +256,21 @@ jobs:
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela
 
-      - name: Check for new bug or feature entity
+      - name: Check for new or modified bug/feature/ticket entity
         run: |
           set -euo pipefail
           BASE_REF="${{ github.event.pull_request.base.sha }}"
 
-          # Get list of added entity files in this PR
-          ADDED_ENTITIES=$(git diff --name-only --diff-filter=A "${BASE_REF}"...HEAD -- \
+          # Get list of added or modified entity files in this PR
+          # A = Added (new tickets), M = Modified (continuation work on existing tickets)
+          CHANGED_ENTITIES=$(git diff --name-only --diff-filter=AM "${BASE_REF}"...HEAD -- \
             'tickets/entities/bugs/*.md' \
             'tickets/entities/features/*.md' \
             'tickets/entities/tickets/*.md' || true)
 
-          if [[ -z "$ADDED_ENTITIES" ]]; then
+          if [[ -z "$CHANGED_ENTITIES" ]]; then
             echo ""
-            echo "ERROR: PR must include a new bug, feature, or ticket entity in tickets/entities/"
+            echo "ERROR: PR must include a new or modified bug, feature, or ticket entity in tickets/entities/"
             echo ""
             echo "Create one with:"
             echo "  rela create bug --project tickets -t 'Title'"
@@ -278,8 +279,8 @@ jobs:
             exit 1
           fi
 
-          echo "Found new entities:"
-          echo "$ADDED_ENTITIES"
+          echo "Found ticket entities:"
+          echo "$CHANGED_ENTITIES"
 
       - name: Run rela analyze
         run: |
