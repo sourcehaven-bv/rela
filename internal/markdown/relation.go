@@ -72,8 +72,14 @@ func (f *FileIO) WriteRelation(relation *model.Relation, path string) error {
 
 // FormatRelation returns the formatted markdown content for a relation.
 // Frontmatter keys are ordered: from, relation, to, then extras alphabetically.
-// Markdown content is also formatted.
+// Markdown content is also formatted. Uses default line width (80).
 func FormatRelation(relation *model.Relation) (string, error) {
+	return FormatRelationWithWidth(relation, DefaultLineWidth)
+}
+
+// FormatRelationWithWidth returns the formatted markdown content for a relation
+// with a specific line width for paragraph wrapping.
+func FormatRelationWithWidth(relation *model.Relation, lineWidth int) (string, error) {
 	frontmatter := map[string]interface{}{
 		"from":     relation.From,
 		"relation": relation.Type,
@@ -91,7 +97,7 @@ func FormatRelation(relation *model.Relation) (string, error) {
 	// Format markdown content
 	content := relation.Content
 	if content != "" {
-		content = FormatMarkdown(content)
+		content = FormatMarkdownWithWidth(content, lineWidth)
 	}
 
 	return FormatDocumentOrdered(frontmatter, content, keyOrder)
