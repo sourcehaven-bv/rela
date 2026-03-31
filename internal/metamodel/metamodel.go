@@ -136,3 +136,19 @@ func (m *Metamodel) RelationTypes() []string {
 	}
 	return types
 }
+
+// HasEntityType returns true if the entity type exists in the metamodel.
+func (m *Metamodel) HasEntityType(entityType string) bool {
+	_, ok := m.GetEntityDef(entityType)
+	return ok
+}
+
+// HasValidationRule returns true if a validation rule with the given name exists.
+func (m *Metamodel) HasValidationRule(ruleName string) bool {
+	for _, rule := range m.Validations {
+		if rule.Name == ruleName {
+			return true
+		}
+	}
+	return false
+}

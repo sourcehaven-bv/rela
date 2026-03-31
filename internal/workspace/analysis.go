@@ -11,6 +11,19 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
+// MetamodelAccessor provides read-only access to metamodel for validation.
+// This interface is used by the validate command to check filter values.
+type MetamodelAccessor interface {
+	HasEntityType(entityType string) bool
+	HasValidationRule(ruleName string) bool
+}
+
+// ValidationFilter specifies which validation rules to run.
+type ValidationFilter struct {
+	RuleName   string // Exact rule name match (empty = no filter)
+	EntityType string // Entity type filter (empty = no filter)
+}
+
 // AnalyzeOptions configures analysis scope.
 type AnalyzeOptions struct {
 	// Scope limits analysis to specific entity IDs. If nil, all entities are analyzed.
@@ -327,10 +340,51 @@ func (w *Workspace) ValidateProperties(opts AnalyzeOptions) []PropertyError {
 // ValidationViolation is re-exported from the validation package.
 type ValidationViolation = validation.Violation
 
-// RunValidations executes custom validation rules from the metamodel, filtered by scope.
+// RunValidations executes all custom validation rules from the metamodel, filtered by scope.
 func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
 	svc := validation.New(w.meta)
 	return svc.Check(w.graph.AllNodes(), opts.Scope)
+}
+
+// RunValidationsFiltered executes custom validation rules matching the given filters.
+// Multiple filters are combined with OR (union of matching rules).
+// If a filter has both RuleName and EntityType empty, all rules match.
+func (w *Workspace) RunValidationsFiltered(opts AnalyzeOptions, filters []ValidationFilter) []ValidationViolation {
+	svc := validation.New(w.meta)
+
+	// Build set of rule names to run based on filters
+	ruleNames := make(map[string]bool)
+	for _, filter := range filters {
+		for _, rule := range svc.Rules() {
+			if matchesFilter(rule, filter) {
+				ruleNames[rule.Name] = true
+			}
+		}
+	}
+
+	// Run only matching rules
+	return svc.CheckRules(w.graph.AllNodes(), opts.Scope, ruleNames)
+}
+
+// matchesFilter returns true if the rule matches the filter criteria.
+func matchesFilter(rule metamodel.ValidationRule, filter ValidationFilter) bool {
+	// Rule name exact match
+	if filter.RuleName != "" {
+		return rule.Name == filter.RuleName
+	}
+
+	// Entity type match
+	if filter.EntityType != "" {
+		return rule.EntityType == filter.EntityType
+	}
+
+	// Empty filter matches all rules
+	return true
+}
+
+// CountValidationsBySeverity returns counts of errors and warnings from violations.
+func CountValidationsBySeverity(violations []ValidationViolation) (errors, warnings int) {
+	return validation.CountBySeverity(violations)
 }
 
 // --- Summary Analysis ---
