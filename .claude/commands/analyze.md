@@ -1,3 +1,4 @@
+<!-- @managed: claude-workflow v1 -->
 # Analyze Ticket/Bug
 
 Run all rela validation and analysis tools on a ticket or bug.
@@ -32,7 +33,7 @@ Run all analysis tools via rela MCP:
 
 For each violation found:
 
-```
+```text
 Issue: [violation description]
 Entity: [entity type and ID]
 Fix: [what needs to be done]
@@ -44,7 +45,7 @@ Offer to fix each issue automatically where possible.
 
 Repeat the analysis after each fix until all checks pass:
 
-```
+```text
 Analysis complete:
   Cardinality: PASS
   Orphans: PASS

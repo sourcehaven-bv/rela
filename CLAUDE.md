@@ -388,7 +388,7 @@ Each phase has a dedicated checklist entity with standard items from templates.
 
 **Ticket Workflow:**
 
-```text
+```
 backlog → ready → planning → in-progress → review → done
                      │            │           │
                      ▼            ▼           ▼
@@ -402,7 +402,7 @@ backlog → ready → planning → in-progress → review → done
 
 **Bug Workflow:**
 
-```text
+```
 backlog → ready → analyzing → in-progress → review → done
                      │            │           │
                      ▼            ▼           ▼
@@ -490,7 +490,6 @@ Alternatively, invoke the cranky-code-reviewer agent directly for ad-hoc reviews
 **Creating Review Responses:**
 
 For each finding from code review:
-
 1. Create a `review-response` entity with:
    - `title`: Brief description of the finding
    - `finding`: Full description of the issue
@@ -508,20 +507,17 @@ For each finding from code review:
 | nit | Optional, can wont-fix with reason |
 
 When addressing a finding:
-
 - Fix the issue in code
 - Update status to `addressed`
 - Document the `resolution` (how it was fixed)
 
 When not addressing:
-
 - Set status to `wont-fix` or `deferred`
 - Document the `reason` (justification required)
 
 **Validation Gates:**
 
 Tickets/bugs cannot be marked `done` if they have:
-
 - Open critical review responses
 - Open significant review responses
 
@@ -601,4 +597,74 @@ Automation properties support template interpolation:
 | `{{today}}` | Current date (YYYY-MM-DD) |
 
 Common mistake: `{{entity.title}}` is WRONG, use `{{new.title}}` instead.
+
+### Test Writing Best Practices
+
+Follow these patterns to make tests clearer and more maintainable.
+
+**Use Test Fixture Builders:**
+
+Use builder patterns or factory functions to create test data. Only specify values that matter for the specific test - let fixtures handle defaults and generate random values for everything else.
+
+**Avoid Hardcoded Values in Assertions:**
+
+Don't compare against hardcoded strings when the object is in scope:
+
+```
+// BAD - couples test to specific value
+entity = createEntity(id="T-001")
+assert relation.from == "T-001"
+
+// GOOD - uses object reference
+entity = createEntity()
+assert relation.from == entity.id
+```
+
+For interpolated values, construct the expected value from the object:
+
+```
+// BAD
+assert result.title == "Checklist for T-001"
+
+// GOOD
+assert result.title == "Checklist for " + entity.id
+```
+
+For preserved properties, compare against the original object:
+
+```
+// BAD
+assert updated.title == "Original Title"
+
+// GOOD
+assert updated.title == original.title
+```
+
+**When Hardcoded Values ARE Appropriate:**
+
+- **Ordering tests**: Verifying sort order requires deterministic values
+- **Parse/read tests**: Verifying parser reads specific values from fixtures
+- **Trigger values**: Testing rules that trigger on specific values
+
+**Use Local Variables for Repeated Values:**
+
+When values are passed to helpers and then asserted, extract to variables:
+
+```
+// BAD - duplicated string
+createEntity(id="REQ-001")
+assert relation.from == "REQ-001"
+
+// GOOD - single source of truth
+reqId = "REQ-001"
+createEntity(id=reqId)
+assert relation.from == reqId
+```
+
+**Benefits:**
+
+1. **Random test data**: Catches bugs where code accidentally depends on specific values
+2. **Clearer intent**: Only explicitly set values that matter for the test
+3. **Less boilerplate**: Fixtures handle defaults
+4. **Easier refactoring**: Change formats without updating every assertion
 <!-- @managed: claude-workflow end -->

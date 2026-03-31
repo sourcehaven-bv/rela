@@ -89,6 +89,23 @@ status: pending
 **Risks:**
 <!-- List risks and how they will be mitigated -->
 
+## Documentation Planning
+
+For enhancements: identify what documentation needs updating.
+
+- [ ] User-facing docs identified (skip if internal refactor)
+- [ ] Docs-checklist will be created when entering implementation
+
+**Documentation Impact:**
+<!-- Which docs need updating? Check all that apply:
+- [ ] User guide / reference docs
+- [ ] CLI help text (if commands changed)
+- [ ] CLAUDE.md (if new patterns)
+- [ ] README.md (if project-level changes)
+- [ ] API docs (if applicable)
+- [ ] N/A - Internal change, no user-facing docs needed
+-->
+
 ## Design Review
 
 - [ ] Run `/design-review` before starting implementation

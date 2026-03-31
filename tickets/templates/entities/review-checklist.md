@@ -27,6 +27,16 @@ status: pending
 **Acceptance Status:**
 <!-- For each acceptance criterion, state PASS/FAIL with evidence -->
 
+## Documentation (enhancements only)
+
+Skip this section for bugs and internal refactors.
+
+- [ ] Docs-checklist created and linked via `has-docs`
+- [ ] User-facing documentation updated
+- [ ] Docs-checklist marked as done
+
+**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+
 ## Final Checks
 
 - [ ] Commit message explains the why, not just what
