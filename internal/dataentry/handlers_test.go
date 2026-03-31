@@ -19,14 +19,15 @@ import (
 )
 
 // newHandlerTestApp builds a full App (including parsed templates) for handler tests.
-func newHandlerTestApp(t *testing.T) *App {
+// Returns the app and the test entities for direct use without graph lookups.
+func newHandlerTestApp(t *testing.T) (*App, testEntities) {
 	t.Helper()
 	meta := testMeta()
 	cfg := testConfig()
-	g := testGraph(meta)
+	g, entities := testGraph(meta)
 
 	// Add a relation for testing edge display
-	g.AddEdge(testutil.NewRelation("TKT-001", "depends_on", "TKT-002").Build())
+	g.AddEdge(testutil.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID).Build())
 
 	// Add view config
 	cfg.Views = map[string]ViewConfig{
@@ -75,12 +76,12 @@ func newHandlerTestApp(t *testing.T) *App {
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 		ws:          ws,
-	}
+	}, entities
 }
 
 func TestHandleIndex(t *testing.T) {
 	t.Run("redirects to first list", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleIndex(w, r)
@@ -95,7 +96,7 @@ func TestHandleIndex(t *testing.T) {
 	})
 
 	t.Run("non-root path returns 404", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/notfound", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleIndex(w, r)
@@ -105,7 +106,7 @@ func TestHandleIndex(t *testing.T) {
 	})
 
 	t.Run("no navigation returns error", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.Cfg.Navigation = nil
 		r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		w := httptest.NewRecorder()
@@ -116,7 +117,7 @@ func TestHandleIndex(t *testing.T) {
 	})
 
 	t.Run("dashboard as first nav item", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.Cfg.Navigation = []NavigationEntry{
 			{Label: "Dashboard", Dashboard: true},
 			{Label: "Tickets", List: "tickets"},
@@ -132,7 +133,7 @@ func TestHandleIndex(t *testing.T) {
 
 func TestHandleList(t *testing.T) {
 	t.Run("renders list page", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleList(w, r)
@@ -149,7 +150,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("unknown list returns 404", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/list/nonexistent", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleList(w, r)
@@ -159,7 +160,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("sorting via query params", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/list/tickets?sort=title&sort_dir=desc", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleList(w, r)
@@ -169,7 +170,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("pagination", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.Cfg.Lists["tickets"] = List{
 			EntityType: "ticket",
 			Title:      "Tickets",
@@ -185,7 +186,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("HTMX request returns partial", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
 		r.Header.Set("HX-Request", "true")
 		w := httptest.NewRecorder()
@@ -196,7 +197,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("multi-select column renders list values", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		// Add a multi-select type and property
 		app.meta.Types["applies_to_type"] = metamodel.CustomType{
 			Values: []string{"client", "provider", "employee"},
@@ -233,7 +234,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("multi-select column renders []interface{} from YAML", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.meta.Types["tag_type"] = metamodel.CustomType{
 			Values: []string{"bug", "feature", "docs"},
 		}
@@ -267,7 +268,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("relation-based filter control filters list", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Add relation to existing tickets
 		app.g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
@@ -303,7 +304,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("relation-based filter shows select with target titles", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Add relation to existing tickets
 		app.g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
@@ -334,7 +335,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("filter control with custom label", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Configure list with property filter and custom label
 		app.Cfg.Lists["tickets"] = List{
@@ -362,7 +363,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("relation filter control with custom label", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Add relation to existing tickets
 		app.g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
@@ -393,7 +394,7 @@ func TestHandleList(t *testing.T) {
 	})
 
 	t.Run("filter params preserved in pagination links", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Add more tickets for pagination
 		for i := 3; i <= 5; i++ {
@@ -429,7 +430,7 @@ func TestHandleList(t *testing.T) {
 
 func TestHandleForm(t *testing.T) {
 	t.Run("renders create form", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/form/create-ticket", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleForm(w, r)
@@ -443,7 +444,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("renders edit form with entity", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket/TKT-001", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleForm(w, r)
@@ -457,7 +458,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("unknown form returns 404", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/form/nonexistent", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleForm(w, r)
@@ -467,7 +468,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("HTMX request returns partial", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket/TKT-001", http.NoBody)
 		r.Header.Set("HX-Request", "true")
 		w := httptest.NewRecorder()
@@ -478,7 +479,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("edit form shows incoming relations as selected", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Add an incoming relation: TKT-001 --belongs_to--> CMP-001
 		// This means CMP-001 has an incoming "belongs_to" edge from TKT-001.
@@ -511,7 +512,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("edit form shows outgoing relations as selected", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// TKT-001 --depends_on--> TKT-002 already added in newHandlerTestApp
 
@@ -542,7 +543,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("edit form pre-selects multi-select property values", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		// Add a multi-select property type
 		app.meta.Types["role_type"] = metamodel.CustomType{
 			Values: []string{"admin", "editor", "viewer"},
@@ -584,7 +585,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("prefills relation from link params via inverse", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		// Add inverse to depends_on so we can test inverse matching.
 		rels := app.meta.Relations
 		dep := rels["depends_on"]
@@ -618,7 +619,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("relation widget auto-selects multi-select for unlimited incoming cardinality", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Set MaxIncoming to nil (unlimited) for belongs_to relation
 		rel := app.meta.Relations["belongs_to"]
@@ -652,7 +653,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("relation widget auto-selects multi-select for unlimited outgoing cardinality", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Set MaxOutgoing to nil (unlimited) for depends_on relation
 		rel := app.meta.Relations["depends_on"]
@@ -686,7 +687,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("relation widget uses single-select when max cardinality is 1", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Set MaxOutgoing to 1 for belongs_to relation
 		one := 1
@@ -721,7 +722,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("explicit widget config overrides auto-detection", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Set MaxOutgoing to nil (unlimited) which would auto-select multi-select
 		rel := app.meta.Relations["depends_on"]
@@ -756,7 +757,7 @@ func TestHandleForm(t *testing.T) {
 	})
 
 	t.Run("relation widget defaults to single-select when relation not in metamodel", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		// Add form with a relation that doesn't exist in the metamodel
 		app.Cfg.Forms["edit-ticket-unknown-rel"] = Form{
@@ -787,7 +788,7 @@ func TestHandleForm(t *testing.T) {
 
 func TestHandleEntity(t *testing.T) {
 	t.Run("renders entity detail", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/TKT-001", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleEntity(w, r)
@@ -801,7 +802,7 @@ func TestHandleEntity(t *testing.T) {
 	})
 
 	t.Run("legacy URL redirects", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/entity/TKT-001", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleEntity(w, r)
@@ -815,7 +816,7 @@ func TestHandleEntity(t *testing.T) {
 	})
 
 	t.Run("legacy URL with HTMX sets HX-Replace-Url", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/entity/TKT-001", http.NoBody)
 		r.Header.Set("HX-Request", "true")
 		w := httptest.NewRecorder()
@@ -829,7 +830,7 @@ func TestHandleEntity(t *testing.T) {
 	})
 
 	t.Run("unknown entity returns 404", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/NONEXISTENT", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleEntity(w, r)
@@ -841,7 +842,7 @@ func TestHandleEntity(t *testing.T) {
 
 func TestHandleView(t *testing.T) {
 	t.Run("renders view page", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/view/ticket_detail/TKT-001", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleView(w, r)
@@ -855,7 +856,7 @@ func TestHandleView(t *testing.T) {
 	})
 
 	t.Run("unknown view returns 404", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/view/nonexistent/TKT-001", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleView(w, r)
@@ -865,7 +866,7 @@ func TestHandleView(t *testing.T) {
 	})
 
 	t.Run("malformed path returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/view/ticket_detail", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleView(w, r)
@@ -875,7 +876,7 @@ func TestHandleView(t *testing.T) {
 	})
 
 	t.Run("wrong entry type returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/view/ticket_detail/CMP-001", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleView(w, r)
@@ -885,7 +886,7 @@ func TestHandleView(t *testing.T) {
 	})
 
 	t.Run("HTMX request returns partial", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/view/ticket_detail/TKT-001", http.NoBody)
 		r.Header.Set("HX-Request", "true")
 		w := httptest.NewRecorder()
@@ -896,7 +897,7 @@ func TestHandleView(t *testing.T) {
 	})
 
 	t.Run("link existing button rendered for traversal section", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/view/ticket_detail/TKT-001", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleView(w, r)
@@ -915,7 +916,7 @@ func TestHandleView(t *testing.T) {
 
 func TestHandleSearch(t *testing.T) {
 	t.Run("renders search page without query", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/search", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleSearch(w, r)
@@ -925,7 +926,7 @@ func TestHandleSearch(t *testing.T) {
 	})
 
 	t.Run("search with query", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/search?q=type:ticket", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleSearch(w, r)
@@ -939,7 +940,7 @@ func TestHandleSearch(t *testing.T) {
 	})
 
 	t.Run("free text search", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/search?q=First", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleSearch(w, r)
@@ -953,7 +954,7 @@ func TestHandleSearch(t *testing.T) {
 	})
 
 	t.Run("HTMX search-results target", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/search?q=type:ticket", http.NoBody)
 		r.Header.Set("HX-Request", "true")
 		r.Header.Set("HX-Target", "search-results")
@@ -967,7 +968,7 @@ func TestHandleSearch(t *testing.T) {
 
 func TestHandleDashboard(t *testing.T) {
 	t.Run("renders dashboard", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/dashboard", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleDashboard(w, r)
@@ -981,7 +982,7 @@ func TestHandleDashboard(t *testing.T) {
 	})
 
 	t.Run("no dashboard config returns 404", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.Cfg.Dashboard = nil
 		r := httptest.NewRequest(http.MethodGet, "/dashboard", http.NoBody)
 		w := httptest.NewRecorder()
@@ -994,7 +995,7 @@ func TestHandleDashboard(t *testing.T) {
 
 func TestHandleCreate(t *testing.T) {
 	t.Run("method not allowed for GET", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/api/create", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleCreate(w, r)
@@ -1004,7 +1005,7 @@ func TestHandleCreate(t *testing.T) {
 	})
 
 	t.Run("unknown form returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		form := url.Values{"_form_id": {"nonexistent"}}
 		r := httptest.NewRequest(http.MethodPost, "/api/create", strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1018,7 +1019,7 @@ func TestHandleCreate(t *testing.T) {
 
 func TestHandleUpdate(t *testing.T) {
 	t.Run("method not allowed for GET", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/api/update", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleUpdate(w, r)
@@ -1028,7 +1029,7 @@ func TestHandleUpdate(t *testing.T) {
 	})
 
 	t.Run("entity not found", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		form := url.Values{
 			"_entity_id": {"NONEXISTENT"},
 			"_form_id":   {"edit-ticket"},
@@ -1043,7 +1044,7 @@ func TestHandleUpdate(t *testing.T) {
 	})
 
 	t.Run("unknown form returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		form := url.Values{
 			"_entity_id": {"TKT-001"},
 			"_form_id":   {"nonexistent"},
@@ -1060,7 +1061,7 @@ func TestHandleUpdate(t *testing.T) {
 
 func TestHandleDelete(t *testing.T) {
 	t.Run("method not allowed for GET", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/api/delete", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleDelete(w, r)
@@ -1070,7 +1071,7 @@ func TestHandleDelete(t *testing.T) {
 	})
 
 	t.Run("entity not found", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		form := url.Values{"_entity_id": {"NONEXISTENT"}}
 		r := httptest.NewRequest(http.MethodPost, "/api/delete", strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1084,7 +1085,7 @@ func TestHandleDelete(t *testing.T) {
 
 func TestHandleInlineCreate(t *testing.T) {
 	t.Run("method not allowed for GET", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/api/inline-create", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleInlineCreate(w, r)
@@ -1097,7 +1098,7 @@ func TestHandleInlineCreate(t *testing.T) {
 	})
 
 	t.Run("unknown form returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		form := url.Values{"_form_id": {"nonexistent"}}
 		r := httptest.NewRequest(http.MethodPost, "/api/inline-create", strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1111,7 +1112,7 @@ func TestHandleInlineCreate(t *testing.T) {
 
 func TestHandleInlineForm(t *testing.T) {
 	t.Run("renders inline form HTML", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/api/inline-form/create-ticket", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleInlineForm(w, r)
@@ -1125,7 +1126,7 @@ func TestHandleInlineForm(t *testing.T) {
 	})
 
 	t.Run("unknown form returns 404", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/api/inline-form/nonexistent", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleInlineForm(w, r)
@@ -1136,7 +1137,7 @@ func TestHandleInlineForm(t *testing.T) {
 }
 
 func TestHandleExecuteQuery(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, entities := newHandlerTestApp(t)
 
 	t.Run("type query returns matching entities", func(t *testing.T) {
 		results := app.executeQuery("type:ticket")
@@ -1147,10 +1148,9 @@ func TestHandleExecuteQuery(t *testing.T) {
 
 	t.Run("free text query", func(t *testing.T) {
 		// testGraph creates TKT-001 with title "First Ticket"
-		firstTicket, _ := app.g.GetNode("TKT-001")
 		results := app.executeQuery("First")
-		if len(results) != 1 || results[0].ID != firstTicket.ID {
-			t.Errorf("expected [%s], got %v", firstTicket.ID, collectIDs(results))
+		if len(results) != 1 || results[0].ID != entities.ticket1.ID {
+			t.Errorf("expected [%s], got %v", entities.ticket1.ID, collectIDs(results))
 		}
 	})
 
@@ -1163,17 +1163,16 @@ func TestHandleExecuteQuery(t *testing.T) {
 
 	t.Run("property filter query", func(t *testing.T) {
 		// testGraph creates TKT-001 with status "open"
-		openTicket, _ := app.g.GetNode("TKT-001")
 		results := app.executeQuery("type:ticket status:open")
-		if len(results) != 1 || results[0].ID != openTicket.ID {
-			t.Errorf("expected [%s], got %v", openTicket.ID, collectIDs(results))
+		if len(results) != 1 || results[0].ID != entities.ticket1.ID {
+			t.Errorf("expected [%s], got %v", entities.ticket1.ID, collectIDs(results))
 		}
 	})
 }
 
 func TestHandleToggleGroup(t *testing.T) {
 	t.Run("toggles group collapsed state", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		// Set up a workspace with cache dir for UI state persistence
 		fs := storage.NewMemFS()
 		ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
@@ -1212,7 +1211,7 @@ func TestHandleToggleGroup(t *testing.T) {
 	})
 
 	t.Run("missing group returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		body := strings.NewReader("")
 		r := httptest.NewRequest(http.MethodPost, "/api/ui/toggle-group", body)
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1224,7 +1223,7 @@ func TestHandleToggleGroup(t *testing.T) {
 	})
 
 	t.Run("GET not allowed", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/api/ui/toggle-group", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleToggleGroup(w, r)
@@ -1236,7 +1235,7 @@ func TestHandleToggleGroup(t *testing.T) {
 
 func TestHandleSettings(t *testing.T) {
 	t.Run("renders settings page", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.userDefaults = nil
 		r := httptest.NewRequest(http.MethodGet, "/settings", http.NoBody)
 		w := httptest.NewRecorder()
@@ -1251,7 +1250,7 @@ func TestHandleSettings(t *testing.T) {
 	})
 
 	t.Run("renders settings with existing defaults", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.userDefaults = &UserDefaults{
 			Defaults: map[string]string{"priority": "high"},
 		}
@@ -1264,7 +1263,7 @@ func TestHandleSettings(t *testing.T) {
 	})
 
 	t.Run("HTMX request returns partial", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.userDefaults = nil
 		r := httptest.NewRequest(http.MethodGet, "/settings", http.NoBody)
 		r.Header.Set("HX-Request", "true")
@@ -1278,7 +1277,7 @@ func TestHandleSettings(t *testing.T) {
 
 func TestHandleSaveSettings(t *testing.T) {
 	t.Run("saves global property defaults", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.userDefaults = nil
 
 		form := url.Values{
@@ -1304,11 +1303,10 @@ func TestHandleSaveSettings(t *testing.T) {
 	})
 
 	t.Run("saves global relation defaults", func(t *testing.T) {
-		app := newHandlerTestApp(t)
-		component, _ := app.g.GetNode("CMP-001")
+		app, entities := newHandlerTestApp(t)
 
 		form := url.Values{
-			"default_rel[belongs_to]": {component.ID},
+			"default_rel[belongs_to]": {entities.component.ID},
 		}
 		r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1317,19 +1315,18 @@ func TestHandleSaveSettings(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d", w.Code)
 		}
-		if app.userDefaults.RelationDefaults["belongs_to"] != component.ID {
-			t.Errorf("expected belongs_to=%s, got %q", component.ID, app.userDefaults.RelationDefaults["belongs_to"])
+		if app.userDefaults.RelationDefaults["belongs_to"] != entities.component.ID {
+			t.Errorf("expected belongs_to=%s, got %q", entities.component.ID, app.userDefaults.RelationDefaults["belongs_to"])
 		}
 	})
 
 	t.Run("saves override groups", func(t *testing.T) {
-		app := newHandlerTestApp(t)
-		ticket2, _ := app.g.GetNode("TKT-002")
+		app, entities := newHandlerTestApp(t)
 
 		form := url.Values{
 			"override[0][types]":           {"ticket"},
 			"override[0][prop][priority]":  {"high"},
-			"override[0][rel][depends_on]": {ticket2.ID},
+			"override[0][rel][depends_on]": {entities.ticket2.ID},
 		}
 		r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1348,13 +1345,13 @@ func TestHandleSaveSettings(t *testing.T) {
 		if o.Defaults["priority"] != "high" {
 			t.Errorf("expected priority=high, got %q", o.Defaults["priority"])
 		}
-		if o.RelationDefaults["depends_on"] != ticket2.ID {
-			t.Errorf("expected depends_on=%s, got %q", ticket2.ID, o.RelationDefaults["depends_on"])
+		if o.RelationDefaults["depends_on"] != entities.ticket2.ID {
+			t.Errorf("expected depends_on=%s, got %q", entities.ticket2.ID, o.RelationDefaults["depends_on"])
 		}
 	})
 
 	t.Run("skips overrides without types", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		form := url.Values{
 			"override[0][prop][priority]": {"high"},
@@ -1372,7 +1369,7 @@ func TestHandleSaveSettings(t *testing.T) {
 	})
 
 	t.Run("empty values are not saved", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		form := url.Values{
 			"default_prop[priority]":  {""},
@@ -1394,7 +1391,7 @@ func TestHandleSaveSettings(t *testing.T) {
 	})
 
 	t.Run("GET not allowed", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/api/settings", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleSaveSettings(w, r)
@@ -1404,7 +1401,7 @@ func TestHandleSaveSettings(t *testing.T) {
 	})
 
 	t.Run("persists to file and reloads", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 
 		form := url.Values{
 			"default_prop[priority]": {"medium"},
@@ -1430,7 +1427,7 @@ func TestHandleSaveSettings(t *testing.T) {
 
 func TestHandleFormWithUserDefaults(t *testing.T) {
 	t.Run("create form uses user defaults for property", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.userDefaults = &UserDefaults{
 			Defaults: map[string]string{"status": "in_progress"},
 		}
@@ -1457,10 +1454,9 @@ func TestHandleFormWithUserDefaults(t *testing.T) {
 	})
 
 	t.Run("create form uses user defaults for relation", func(t *testing.T) {
-		app := newHandlerTestApp(t)
-		component, _ := app.g.GetNode("CMP-001")
+		app, entities := newHandlerTestApp(t)
 		app.userDefaults = &UserDefaults{
-			RelationDefaults: map[string]string{"belongs_to": component.ID},
+			RelationDefaults: map[string]string{"belongs_to": entities.component.ID},
 		}
 		// Need a form with a relation field
 		app.Cfg.Forms["create-ticket-rel"] = Form{
@@ -1481,14 +1477,14 @@ func TestHandleFormWithUserDefaults(t *testing.T) {
 		}
 		body := w.Body.String()
 		// Component should be pre-selected as the default relation target
-		expectedAttr := `value="` + component.ID + `" selected`
+		expectedAttr := `value="` + entities.component.ID + `" selected`
 		if !strings.Contains(body, expectedAttr) {
-			t.Errorf("expected %s to be pre-selected as user default relation", component.ID)
+			t.Errorf("expected %s to be pre-selected as user default relation", entities.component.ID)
 		}
 	})
 
 	t.Run("edit form does not use user defaults", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.userDefaults = &UserDefaults{
 			Defaults: map[string]string{"status": "in_progress"},
 		}
@@ -1508,7 +1504,7 @@ func TestHandleFormWithUserDefaults(t *testing.T) {
 	})
 
 	t.Run("override takes precedence in create form", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.userDefaults = &UserDefaults{
 			Defaults: map[string]string{"priority": "low"},
 			Overrides: []DefaultOverride{
@@ -1543,7 +1539,7 @@ func TestHandleFormWithUserDefaults(t *testing.T) {
 
 func TestHandleIndexWithGroupedNav(t *testing.T) {
 	t.Run("first item inside group", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		app.Cfg.Navigation = []NavigationEntry{
 			{
 				Group: "Tickets",
@@ -1567,7 +1563,7 @@ func TestHandleIndexWithGroupedNav(t *testing.T) {
 
 func TestHandleLinkCandidates(t *testing.T) {
 	t.Run("missing params returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/api/link-candidates", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleLinkCandidates(w, r)
@@ -1577,13 +1573,11 @@ func TestHandleLinkCandidates(t *testing.T) {
 	})
 
 	t.Run("returns candidates excluding already linked", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, entities := newHandlerTestApp(t)
 		// TKT-001 depends_on TKT-002 (added in newHandlerTestApp)
-		ticket1, _ := app.g.GetNode("TKT-001")
-		ticket2, _ := app.g.GetNode("TKT-002")
 
 		r := httptest.NewRequest(http.MethodGet,
-			"/api/link-candidates?relation=depends_on&link_as=to&peer=TKT-001&entity_types=ticket",
+			"/api/link-candidates?relation=depends_on&link_as=to&peer="+entities.ticket1.ID+"&entity_types=ticket",
 			http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleLinkCandidates(w, r)
@@ -1600,17 +1594,17 @@ func TestHandleLinkCandidates(t *testing.T) {
 		}
 		// TKT-002 is already linked, TKT-001 is self — expect empty
 		for _, c := range candidates {
-			if c.ID == ticket2.ID {
-				t.Errorf("%s should be excluded (already linked)", ticket2.ID)
+			if c.ID == entities.ticket2.ID {
+				t.Errorf("%s should be excluded (already linked)", entities.ticket2.ID)
 			}
-			if c.ID == ticket1.ID {
-				t.Errorf("%s should be excluded (self)", ticket1.ID)
+			if c.ID == entities.ticket1.ID {
+				t.Errorf("%s should be excluded (self)", entities.ticket1.ID)
 			}
 		}
 	})
 
 	t.Run("filters by search query", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		// Add a third ticket
 		thirdTicket := testutil.EntityFor(app.meta, "ticket").ID("TKT-003").With("title", "Third Ticket").Build()
 		app.g.AddNode(thirdTicket)
@@ -1638,7 +1632,7 @@ func TestHandleLinkCandidates(t *testing.T) {
 	})
 
 	t.Run("returns empty array when no candidates", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet,
 			"/api/link-candidates?relation=depends_on&link_as=to&peer=TKT-001&entity_types=ticket&q=nonexistent",
 			http.NoBody)
@@ -1656,7 +1650,7 @@ func TestHandleLinkCandidates(t *testing.T) {
 
 func TestHandleLinkExisting(t *testing.T) {
 	t.Run("method not allowed for GET", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		r := httptest.NewRequest(http.MethodGet, "/api/link-existing", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleLinkExisting(w, r)
@@ -1666,7 +1660,7 @@ func TestHandleLinkExisting(t *testing.T) {
 	})
 
 	t.Run("missing params returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		form := url.Values{"relation": {"depends_on"}}
 		r := httptest.NewRequest(http.MethodPost, "/api/link-existing", strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1678,7 +1672,7 @@ func TestHandleLinkExisting(t *testing.T) {
 	})
 
 	t.Run("unknown relation returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		form := url.Values{
 			"relation": {"nonexistent"},
 			"link_as":  {"to"},
@@ -1695,7 +1689,7 @@ func TestHandleLinkExisting(t *testing.T) {
 	})
 
 	t.Run("unknown peer returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		form := url.Values{
 			"relation": {"depends_on"},
 			"link_as":  {"to"},
@@ -1712,7 +1706,7 @@ func TestHandleLinkExisting(t *testing.T) {
 	})
 
 	t.Run("unknown target returns 400", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		form := url.Values{
 			"relation": {"depends_on"},
 			"link_as":  {"to"},
@@ -1788,7 +1782,7 @@ func TestValidationErrorsToFieldMap(t *testing.T) {
 
 func TestHandleCreateWithValidationErrors(t *testing.T) {
 	t.Run("returns 422 with validation errors for missing required field", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		// Configure temp directory for repository to avoid writing to real filesystem
 		tmpDir := t.TempDir()
 		repo := newTestRepository(t, tmpDir)
@@ -1839,7 +1833,7 @@ func TestHandleCreateWithValidationErrors(t *testing.T) {
 
 func TestHandleUpdateWithValidationErrors(t *testing.T) {
 	t.Run("returns 422 with validation errors for invalid field", func(t *testing.T) {
-		app := newHandlerTestApp(t)
+		app, _ := newHandlerTestApp(t)
 		// Configure temp directory for repository to avoid writing to real filesystem
 		tmpDir := t.TempDir()
 		repo := newTestRepository(t, tmpDir)

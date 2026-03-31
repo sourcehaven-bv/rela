@@ -16,10 +16,10 @@ func newGraphTestApp(t *testing.T) *App {
 	t.Helper()
 	meta := testMeta()
 	cfg := testConfig()
-	g := testGraph(meta)
+	g, entities := testGraph(meta)
 
 	// Add a relation edge for testing
-	g.AddEdge(model.NewRelation("TKT-001", "depends_on", "TKT-002"))
+	g.AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
 	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
@@ -419,7 +419,7 @@ func TestNavElementsGraphSkipsCount(t *testing.T) {
 func TestBuildContentGraphDataEmptyGraph(t *testing.T) {
 	meta := testMeta()
 	cfg := testConfig()
-	g := testGraph(meta)
+	g, _ := testGraph(meta)
 
 	// Remove all nodes
 	for _, n := range g.AllNodes() {

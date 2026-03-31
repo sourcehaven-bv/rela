@@ -10,12 +10,21 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
+
+// testEntities holds references to entities created by testGraph.
+// This avoids the need to look up entities by ID in tests.
+type testEntities struct {
+	ticket1   *model.Entity
+	ticket2   *model.Entity
+	component *model.Entity
+}
 
 // testMeta returns a metamodel suitable for testing app-level functions.
 func testMeta() *metamodel.Metamodel {
@@ -115,20 +124,24 @@ func testConfig() *Config {
 	}
 }
 
-// testGraph returns a graph with some test entities.
-func testGraph(meta *metamodel.Metamodel) *graph.Graph {
+// testGraph returns a graph with some test entities and the entities themselves.
+func testGraph(meta *metamodel.Metamodel) (*graph.Graph, testEntities) {
 	g := graph.New()
-	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-001").With("title", "First Ticket").With("status", "open").With("priority", "high").Build())
-	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-002").With("title", "Second Ticket").With("status", "closed").With("priority", "low").Build())
-	g.AddNode(testutil.EntityFor(meta, "component").ID("CMP-001").With("name", "Frontend").Build())
-	return g
+	t1 := testutil.EntityFor(meta, "ticket").ID("TKT-001").With("title", "First Ticket").With("status", "open").With("priority", "high").Build()
+	t2 := testutil.EntityFor(meta, "ticket").ID("TKT-002").With("title", "Second Ticket").With("status", "closed").With("priority", "low").Build()
+	c1 := testutil.EntityFor(meta, "component").ID("CMP-001").With("name", "Frontend").Build()
+	g.AddNode(t1)
+	g.AddNode(t2)
+	g.AddNode(c1)
+	return g, testEntities{ticket1: t1, ticket2: t2, component: c1}
 }
 
 // testAppInstance creates a minimal App with templates for testing app-level methods.
-func testAppInstance() *App {
+// Returns the app and the test entities for direct use without graph lookups.
+func testAppInstance() (*App, testEntities) {
 	cfg := testConfig()
 	meta := testMeta()
-	g := testGraph(meta)
+	g, entities := testGraph(meta)
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
 	tmpl, _ := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
 	return &App{
@@ -138,7 +151,7 @@ func testAppInstance() *App {
 		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
-	}
+	}, entities
 }
 
 func TestValidateConfig(t *testing.T) {
@@ -308,7 +321,7 @@ func TestBuildStyleMap(t *testing.T) {
 }
 
 func TestEditFormForType(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("returns edit form", func(t *testing.T) {
 		got := app.editFormForType("ticket")
@@ -325,7 +338,7 @@ func TestEditFormForType(t *testing.T) {
 	})
 
 	t.Run("form with empty mode treated as edit", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		app2.Cfg.Forms = map[string]Form{
 			"default-form": {EntityType: "ticket", Mode: ""},
 		}
@@ -337,7 +350,7 @@ func TestEditFormForType(t *testing.T) {
 }
 
 func TestCreateFormForType(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("returns create form", func(t *testing.T) {
 		got := app.createFormForType("ticket")
@@ -347,7 +360,7 @@ func TestCreateFormForType(t *testing.T) {
 	})
 
 	t.Run("falls back to edit form", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		app2.Cfg.Forms = map[string]Form{
 			"edit-ticket": {EntityType: "ticket", Mode: "edit"},
 		}
@@ -366,11 +379,10 @@ func TestCreateFormForType(t *testing.T) {
 }
 
 func TestEntityDisplayTitle(t *testing.T) {
-	app := testAppInstance()
+	app, entities := testAppInstance()
 
 	t.Run("returns primary property value", func(t *testing.T) {
-		e, _ := app.g.GetNode("TKT-001")
-		got := app.entityDisplayTitle(e)
+		got := app.entityDisplayTitle(entities.ticket1)
 		if got != "First Ticket" {
 			t.Errorf("expected 'First Ticket', got %q", got)
 		}
@@ -394,7 +406,7 @@ func TestEntityDisplayTitle(t *testing.T) {
 }
 
 func TestActiveListForEntityType(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("returns matching list", func(t *testing.T) {
 		got := app.activeListForEntityType("ticket")
@@ -412,7 +424,7 @@ func TestActiveListForEntityType(t *testing.T) {
 }
 
 func TestActiveListFromReferer(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("extracts list from referer", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/TKT-001", http.NoBody)
@@ -451,7 +463,7 @@ func TestActiveListFromReferer(t *testing.T) {
 }
 
 func TestResolveActiveList(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("from query param takes precedence", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/TKT-001?from=components", http.NoBody)
@@ -489,7 +501,7 @@ func TestResolveActiveList(t *testing.T) {
 }
 
 func TestNavElements(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("flat items with counts", func(t *testing.T) {
 		elements := app.navElements("")
@@ -522,7 +534,7 @@ func TestNavElements(t *testing.T) {
 	})
 
 	t.Run("dashboard items skip entity lookup", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		app2.Cfg.Navigation = []NavigationEntry{
 			{Label: "Dashboard", Dashboard: true},
 			{Label: "Tickets", List: "tickets"},
@@ -540,7 +552,7 @@ func TestNavElements(t *testing.T) {
 	})
 
 	t.Run("filters applied to count", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		app2.Cfg.Lists["tickets"] = List{
 			EntityType: "ticket",
 			Filters: []FilterConfig{
@@ -558,7 +570,7 @@ func TestNavElements(t *testing.T) {
 	})
 
 	t.Run("groups with items", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		app2.Cfg.Navigation = []NavigationEntry{
 			{Label: "Dashboard", Dashboard: true},
 			{
@@ -601,7 +613,7 @@ func TestNavElements(t *testing.T) {
 	})
 
 	t.Run("group collapsed from config", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		app2.Cfg.Navigation = []NavigationEntry{
 			{
 				Group:     "Hidden",
@@ -621,7 +633,7 @@ func TestNavElements(t *testing.T) {
 	})
 
 	t.Run("auto-expand group containing active list", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		app2.Cfg.Navigation = []NavigationEntry{
 			{
 				Group:     "Tickets",
@@ -706,7 +718,7 @@ func TestUIStateLoadSave(t *testing.T) {
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
 	repo := repository.New(fs, ctx)
 
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(repo, app.meta, app.g)
 
 	t.Run("load returns defaults when file missing", func(t *testing.T) {
@@ -728,7 +740,7 @@ func TestUIStateLoadSave(t *testing.T) {
 	})
 
 	t.Run("UIState overrides config default", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		app2.ws = workspace.NewWithGraph(repo, app2.meta, app2.g)
 		app2.Cfg.Navigation = []NavigationEntry{
 			{
@@ -754,7 +766,7 @@ func TestUIStateLoadSave(t *testing.T) {
 	})
 
 	t.Run("nil ws is safe", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		app2.ws = nil
 		state := app2.loadUIState()
 		if len(state.CollapsedGroups) != 0 {
@@ -775,7 +787,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
 	repo := repository.New(fs, ctx)
 
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(repo, app.meta, app.g)
 
 	t.Run("load returns nil when file missing", func(t *testing.T) {
@@ -822,7 +834,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 	})
 
 	t.Run("nil ws is safe", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		app2.ws = nil
 		ud := app2.loadUserDefaults()
 		if ud != nil {
@@ -885,7 +897,7 @@ func TestValidateConfigNestedGroups(t *testing.T) {
 }
 
 func TestActiveListForEntityTypeWithGroups(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	app.Cfg.Navigation = []NavigationEntry{
 		{
 			Group: "Tickets",
