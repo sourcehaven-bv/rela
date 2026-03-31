@@ -62,6 +62,22 @@ function goBack() {
   }
 }
 
+// Handle clicks on links inside v-html content to use Vue Router
+function handleContentClick(event: MouseEvent) {
+  const target = event.target as HTMLElement
+  const anchor = target.closest('a')
+  if (!anchor) return
+
+  const href = anchor.getAttribute('href')
+  if (!href) return
+
+  // Only intercept internal links (starting with /)
+  if (href.startsWith('/')) {
+    event.preventDefault()
+    router.push(href)
+  }
+}
+
 // Handle entity change events via centralized SSE
 function handleEntityChange(data: { id?: string }) {
   if (data.id && entityIds.value.includes(data.id)) {
@@ -115,7 +131,7 @@ onUnmounted(() => {
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
-      <div class="document-body" v-html="sanitizedContent" />
+      <div class="document-body" @click="handleContentClick" v-html="sanitizedContent" />
     </div>
 
     <div v-else class="empty-state">
