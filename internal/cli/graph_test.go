@@ -6,8 +6,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -38,20 +38,23 @@ func setupGraphTestGraph() {
 	out = output.New(output.FormatTable)
 
 	// Add test entities
-	req1 := model.NewEntity("REQ-001", "requirement")
-	req1.Properties["title"] = "First Requirement"
-	g.AddNode(req1)
+	g.AddNode(testutil.EntityFor(meta, "requirement").
+		ID("REQ-001").
+		With("title", "First Requirement").
+		Build())
 
-	req2 := model.NewEntity("REQ-002", "requirement")
-	req2.Properties["title"] = "Second Requirement"
-	g.AddNode(req2)
+	g.AddNode(testutil.EntityFor(meta, "requirement").
+		ID("REQ-002").
+		With("title", "Second Requirement").
+		Build())
 
-	dec1 := model.NewEntity("DEC-001", "decision")
-	dec1.Properties["title"] = "Important Decision"
-	g.AddNode(dec1)
+	g.AddNode(testutil.EntityFor(meta, "decision").
+		ID("DEC-001").
+		With("title", "Important Decision").
+		Build())
 
 	// Add test relations
-	g.AddEdge(model.NewRelation("DEC-001", "implements", "REQ-001"))
+	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-001").Build())
 }
 
 func TestGenerateDOT_BasicOutput(t *testing.T) {
@@ -212,8 +215,7 @@ func TestGenerateDOT_EntityWithoutTitle(t *testing.T) {
 	ws = workspace.NewForTest(g, meta)
 
 	// Add entity without title
-	entity := model.NewEntity("CMP-001", "component")
-	g.AddNode(entity)
+	g.AddNode(testutil.Entity("component").ID("CMP-001").Build())
 
 	entities := g.AllNodes()
 	edges := g.AllEdges()

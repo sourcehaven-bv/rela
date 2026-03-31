@@ -18,6 +18,13 @@ func (m *Metamodel) rebuildAliasMap() {
 	}
 }
 
+// InitAliases initializes the alias map from entity definitions.
+// Call this after programmatically constructing a Metamodel (e.g., via testutil builders)
+// to enable alias resolution. Not needed when using Parse() which calls this automatically.
+func (m *Metamodel) InitAliases() {
+	m.rebuildAliasMap()
+}
+
 // ResolveAlias returns the canonical entity type name for an alias
 func (m *Metamodel) ResolveAlias(alias string) string {
 	if m.aliasMap == nil {

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 func TestEntityQueries(t *testing.T) {
@@ -12,13 +12,8 @@ func TestEntityQueries(t *testing.T) {
 	ws := &Workspace{graph: g}
 
 	// Add test entities
-	req := model.NewEntity("REQ-001", "requirement")
-	req.Properties["title"] = "Test Requirement"
-	g.AddNode(req)
-
-	dec := model.NewEntity("DEC-001", "decision")
-	dec.Properties["title"] = "Test Decision"
-	g.AddNode(dec)
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Test Requirement").Build())
+	g.AddNode(testutil.Entity("decision").ID("DEC-001").With("title", "Test Decision").Build())
 
 	// Test GetEntity
 	entity, ok := ws.GetEntity("REQ-001")
@@ -64,14 +59,11 @@ func TestRelationQueries(t *testing.T) {
 	ws := &Workspace{graph: g}
 
 	// Add entities
-	req := model.NewEntity("REQ-001", "requirement")
-	g.AddNode(req)
-	dec := model.NewEntity("DEC-001", "decision")
-	g.AddNode(dec)
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").Build())
+	g.AddNode(testutil.Entity("decision").ID("DEC-001").Build())
 
 	// Add relation
-	rel := model.NewRelation("DEC-001", "implements", "REQ-001")
-	g.AddEdge(rel)
+	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-001").Build())
 
 	// Test GetRelation
 	found, ok := ws.GetRelation("DEC-001", "implements", "REQ-001")
@@ -112,15 +104,12 @@ func TestGraphAnalysis(t *testing.T) {
 	ws := &Workspace{graph: g}
 
 	// Add entities
-	req := model.NewEntity("REQ-001", "requirement")
-	g.AddNode(req)
-	dec := model.NewEntity("DEC-001", "decision")
-	g.AddNode(dec)
-	orphan := model.NewEntity("ORPHAN-001", "requirement")
-	g.AddNode(orphan)
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").Build())
+	g.AddNode(testutil.Entity("decision").ID("DEC-001").Build())
+	g.AddNode(testutil.Entity("requirement").ID("ORPHAN-001").Build())
 
 	// Add relation between req and dec
-	g.AddEdge(model.NewRelation("DEC-001", "implements", "REQ-001"))
+	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-001").Build())
 
 	// Test FindOrphans
 	orphans := ws.FindOrphans()

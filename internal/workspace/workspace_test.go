@@ -11,69 +11,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
-const testMetamodelYAML = `version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    plural: requirements
-    id_prefix: "REQ-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-  decision:
-    label: Decision
-    plural: decisions
-    id_prefix: "DEC-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-  stakeholder:
-    label: Stakeholder
-    plural: stakeholders
-    id_type: manual
-    properties:
-      name:
-        type: string
-        required: true
-  checklist:
-    label: Checklist
-    plural: checklists
-    id_prefix: "CHK-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-relations:
-  addresses:
-    label: Addresses
-    from: [decision]
-    to: [requirement]
-  has-checklist:
-    label: has checklist
-    from: [requirement]
-    to: [checklist]
-automations:
-  - name: auto-draft
-    on:
-      entity: [requirement]
-      created: true
-    do:
-      - set: status
-        value: draft
-`
+// testMetamodelYAML is the shared workspace test metamodel - use testutil.WorkspaceMetamodelYAML()
+var testMetamodelYAML = testutil.WorkspaceMetamodelYAML()
 
 func setupTestWorkspace(t *testing.T) *Workspace {
 	t.Helper()
@@ -235,7 +177,7 @@ func TestGenerateID_Sequential(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	// Add an existing entity so the next ID is REQ-002.
-	ws.graph.AddNode(&model.Entity{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "first"}})
+	ws.graph.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "first").Build())
 
 	id, err := ws.GenerateID("requirement", "")
 	if err != nil {

@@ -8,8 +8,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -18,16 +18,19 @@ func setupAnalyzeTestGraph() {
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
-				Label:    "Requirement",
-				IDPrefix: "REQ-",
+				Label:      "Requirement",
+				IDPrefix:   "REQ-",
+				Properties: map[string]metamodel.PropertyDef{},
 			},
 			"decision": {
-				Label:    "Decision",
-				IDPrefix: "DEC-",
+				Label:      "Decision",
+				IDPrefix:   "DEC-",
+				Properties: map[string]metamodel.PropertyDef{},
 			},
 			"component": {
-				Label:    "Component",
-				IDPrefix: "CMP-",
+				Label:      "Component",
+				IDPrefix:   "CMP-",
+				Properties: map[string]metamodel.PropertyDef{},
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{
@@ -47,30 +50,30 @@ func setupAnalyzeTestGraph() {
 	out = output.New(output.FormatTable)
 
 	// Add test entities
-	req1 := model.NewEntity("REQ-001", "requirement")
-	req1.Properties["title"] = "First Requirement"
-	g.AddNode(req1)
+	g.AddNode(testutil.EntityFor(meta, "requirement").
+		ID("REQ-001").
+		Build())
 
-	req2 := model.NewEntity("REQ-002", "requirement")
-	req2.Properties["title"] = "Second Requirement"
-	g.AddNode(req2)
+	g.AddNode(testutil.EntityFor(meta, "requirement").
+		ID("REQ-002").
+		Build())
 
-	dec1 := model.NewEntity("DEC-001", "decision")
-	dec1.Properties["title"] = "Important Decision"
-	g.AddNode(dec1)
+	g.AddNode(testutil.EntityFor(meta, "decision").
+		ID("DEC-001").
+		Build())
 
-	cmp1 := model.NewEntity("CMP-001", "component")
-	cmp1.Properties["title"] = "API Component"
-	g.AddNode(cmp1)
+	g.AddNode(testutil.EntityFor(meta, "component").
+		ID("CMP-001").
+		Build())
 
-	cmp2 := model.NewEntity("CMP-002", "component")
-	cmp2.Properties["title"] = "Database Component"
-	g.AddNode(cmp2)
+	g.AddNode(testutil.EntityFor(meta, "component").
+		ID("CMP-002").
+		Build())
 
 	// Add relations
-	g.AddEdge(model.NewRelation("DEC-001", "implements", "REQ-001"))
-	g.AddEdge(model.NewRelation("DEC-001", "implements", "REQ-002"))
-	g.AddEdge(model.NewRelation("CMP-001", "uses", "CMP-002"))
+	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-001").Build())
+	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-002").Build())
+	g.AddEdge(testutil.NewRelation("CMP-001", "uses", "CMP-002").Build())
 }
 
 // setupJSONTestOutput sets up JSON output writer and returns the buffer
@@ -122,13 +125,17 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 				g = graph.New()
 				meta = &metamodel.Metamodel{
 					Entities: map[string]metamodel.EntityDef{
-						"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
+						"requirement": {
+							Label:      "Requirement",
+							IDPrefix:   "REQ-",
+							Properties: map[string]metamodel.PropertyDef{},
+						},
 					},
 				}
 				ws = workspace.NewForTest(g, meta)
-				orphan := model.NewEntity("REQ-003", "requirement")
-				orphan.Properties["title"] = "Orphan Requirement"
-				g.AddNode(orphan)
+				g.AddNode(testutil.EntityFor(meta, "requirement").
+					ID("REQ-003").
+					Build())
 			},
 			run:        func() error { return analyzeOrphansCmd.RunE(nil, nil) },
 			wantStatus: "warning",
@@ -147,16 +154,22 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 				g = graph.New()
 				meta = &metamodel.Metamodel{
 					Entities: map[string]metamodel.EntityDef{
-						"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
+						"requirement": {
+							Label:      "Requirement",
+							IDPrefix:   "REQ-",
+							Properties: map[string]metamodel.PropertyDef{},
+						},
 					},
 				}
 				ws = workspace.NewForTest(g, meta)
-				e1 := model.NewEntity("REQ-001", "requirement")
-				e1.Properties["title"] = "Same Title"
-				g.AddNode(e1)
-				e2 := model.NewEntity("REQ-002", "requirement")
-				e2.Properties["title"] = "Same Title"
-				g.AddNode(e2)
+				g.AddNode(testutil.EntityFor(meta, "requirement").
+					ID("REQ-001").
+					With("title", "Same Title").
+					Build())
+				g.AddNode(testutil.EntityFor(meta, "requirement").
+					ID("REQ-002").
+					With("title", "Same Title").
+					Build())
 			},
 			run:        func() error { return analyzeDuplicatesCmd.RunE(nil, nil) },
 			wantStatus: "warning",
@@ -168,12 +181,16 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 				g = graph.New()
 				meta = &metamodel.Metamodel{
 					Entities: map[string]metamodel.EntityDef{
-						"requirement": {Label: "Requirement", IDPrefix: "REQ-"},
+						"requirement": {
+							Label:      "Requirement",
+							IDPrefix:   "REQ-",
+							Properties: map[string]metamodel.PropertyDef{},
+						},
 					},
 				}
 				ws = workspace.NewForTest(g, meta)
-				g.AddNode(model.NewEntity("REQ-001", "requirement"))
-				g.AddNode(model.NewEntity("REQ-003", "requirement"))
+				g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
+				g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-003").Build())
 			},
 			run:        func() error { return analyzeGapsCmd.RunE(nil, nil) },
 			wantStatus: "warning",
@@ -221,9 +238,10 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 					},
 				}
 				ws = workspace.NewForTest(g, meta)
-				e := model.NewEntity("REQ-001", "requirement")
-				e.Properties["status"] = "accepted"
-				g.AddNode(e)
+				g.AddNode(testutil.EntityFor(meta, "requirement").
+					ID("REQ-001").
+					With("status", "accepted").
+					Build())
 			},
 			run:        func() error { return runValidations(workspace.AnalyzeOptions{}) },
 			wantStatus: "error",

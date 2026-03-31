@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 func TestEngine_EntityCreated(t *testing.T) {
@@ -27,7 +27,7 @@ func TestEngine_EntityCreated(t *testing.T) {
 		Now: func() time.Time { return time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC) },
 	})
 
-	entity := model.NewEntity("T-001", "ticket")
+	entity := testutil.Entity("ticket").ID("T-001").Build()
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
@@ -55,7 +55,7 @@ func TestEngine_EntityCreated_WrongType(t *testing.T) {
 	engine := NewEngine(automations)
 
 	// Entity of different type - should not trigger
-	entity := model.NewEntity("B-001", "bug")
+	entity := testutil.Entity("bug").ID("B-001").Build()
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
@@ -86,11 +86,8 @@ func TestEngine_PropertyChange(t *testing.T) {
 		Now: func() time.Time { return time.Date(2025, 2, 10, 10, 0, 0, 0, time.UTC) },
 	})
 
-	oldEntity := model.NewEntity("T-001", "ticket")
-	oldEntity.Properties["status"] = "backlog"
-
-	newEntity := model.NewEntity("T-001", "ticket")
-	newEntity.Properties["status"] = "in-progress"
+	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "backlog").Build()
+	newEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -121,11 +118,8 @@ func TestEngine_PropertyChange_NoChange(t *testing.T) {
 	engine := NewEngine(automations)
 
 	// Status already "in-progress" - no change
-	oldEntity := model.NewEntity("T-001", "ticket")
-	oldEntity.Properties["status"] = "in-progress"
-
-	newEntity := model.NewEntity("T-001", "ticket")
-	newEntity.Properties["status"] = "in-progress"
+	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
+	newEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -157,11 +151,8 @@ func TestEngine_PropertyChange_FromConstraint(t *testing.T) {
 	engine := NewEngine(automations)
 
 	// From "backlog" to "in-progress" - should trigger
-	oldEntity := model.NewEntity("T-001", "ticket")
-	oldEntity.Properties["status"] = "backlog"
-
-	newEntity := model.NewEntity("T-001", "ticket")
-	newEntity.Properties["status"] = "in-progress"
+	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "backlog").Build()
+	newEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -174,11 +165,8 @@ func TestEngine_PropertyChange_FromConstraint(t *testing.T) {
 	}
 
 	// From "ready" to "in-progress" - should NOT trigger
-	oldEntity2 := model.NewEntity("T-002", "ticket")
-	oldEntity2.Properties["status"] = "ready"
-
-	newEntity2 := model.NewEntity("T-002", "ticket")
-	newEntity2.Properties["status"] = "in-progress"
+	oldEntity2 := testutil.Entity("ticket").ID("T-002").With("status", "ready").Build()
+	newEntity2 := testutil.Entity("ticket").ID("T-002").With("status", "in-progress").Build()
 
 	result2 := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -212,12 +200,8 @@ func TestEngine_ValidationWarning(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	oldEntity := model.NewEntity("B-001", "bug")
-	oldEntity.Properties["status"] = "backlog"
-
-	newEntity := model.NewEntity("B-001", "bug")
-	newEntity.Properties["status"] = "in-progress"
-	// why1 is empty
+	oldEntity := testutil.Entity("bug").ID("B-001").With("status", "backlog").Build()
+	newEntity := testutil.Entity("bug").ID("B-001").With("status", "in-progress").Build()
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -254,12 +238,8 @@ func TestEngine_ValidationPasses(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	oldEntity := model.NewEntity("B-001", "bug")
-	oldEntity.Properties["status"] = "backlog"
-
-	newEntity := model.NewEntity("B-001", "bug")
-	newEntity.Properties["status"] = "in-progress"
-	newEntity.Properties["why1"] = "Database connection timeout"
+	oldEntity := testutil.Entity("bug").ID("B-001").With("status", "backlog").Build()
+	newEntity := testutil.Entity("bug").ID("B-001").With("status", "in-progress").With("why1", "Database connection timeout").Build()
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -293,7 +273,7 @@ func TestEngine_CreateRelation(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	entity := model.NewEntity("T-001", "ticket")
+	entity := testutil.Entity("ticket").ID("T-001").Build()
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
@@ -325,7 +305,7 @@ func TestEngine_MultipleEntityTypes(t *testing.T) {
 	engine := NewEngine(automations)
 
 	for _, entityType := range []string{"ticket", "bug", "feature"} {
-		entity := model.NewEntity("E-001", entityType)
+		entity := testutil.Entity(entityType).ID("E-001").Build()
 		result := engine.Process(Event{
 			Type:   EventEntityCreated,
 			Entity: entity,
@@ -337,7 +317,7 @@ func TestEngine_MultipleEntityTypes(t *testing.T) {
 	}
 
 	// Other type should not trigger
-	entity := model.NewEntity("D-001", "decision")
+	entity := testutil.Entity("decision").ID("D-001").Build()
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
@@ -363,8 +343,8 @@ func TestEngine_RelationCreated(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	entity := model.NewEntity("T-001", "ticket")
-	rel := model.NewRelation("S-001", "implements", "T-001")
+	entity := testutil.Entity("ticket").ID("T-001").Build()
+	rel := testutil.NewRelation("S-001", "implements", "T-001").Build()
 
 	result := engine.Process(Event{
 		Type:     EventRelationCreated,
@@ -403,13 +383,15 @@ func TestEngine_CreateEntity_OnPropertyChange(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	oldEntity := model.NewEntity("T-001", "ticket")
-	oldEntity.Properties["status"] = "backlog"
-	oldEntity.Properties["title"] = "Implement feature X"
+	oldEntity := testutil.Entity("ticket").ID("T-001").
+		With("status", "backlog").
+		With("title", "Implement feature X").
+		Build()
 
-	newEntity := model.NewEntity("T-001", "ticket")
-	newEntity.Properties["status"] = "planning"
-	newEntity.Properties["title"] = "Implement feature X"
+	newEntity := testutil.Entity("ticket").ID("T-001").
+		With("status", "planning").
+		With("title", "Implement feature X").
+		Build()
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -459,8 +441,7 @@ func TestEngine_CreateEntity_OnCreated(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	entity := model.NewEntity("T-001", "ticket")
-	entity.Properties["title"] = "New ticket"
+	entity := testutil.Entity("ticket").ID("T-001").With("title", "New ticket").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -504,7 +485,7 @@ func TestEngine_CreateEntity_NoRelation(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	entity := model.NewEntity("T-001", "ticket")
+	entity := testutil.Entity("ticket").ID("T-001").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -544,7 +525,7 @@ func TestEngine_CreateEntity_MissingType(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	entity := model.NewEntity("T-001", "ticket")
+	entity := testutil.Entity("ticket").ID("T-001").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -581,7 +562,7 @@ func TestEngine_CreateEntity_IfExistsDefaultsToSkip(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	entity := model.NewEntity("T-001", "ticket")
+	entity := testutil.Entity("ticket").ID("T-001").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -620,7 +601,7 @@ func TestEngine_CreateEntity_IfExistsExplicit(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	entity := model.NewEntity("T-001", "ticket")
+	entity := testutil.Entity("ticket").ID("T-001").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -663,15 +644,17 @@ func TestEngine_CreateEntity_WithTemplate(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	oldEntity := model.NewEntity("T-001", "ticket")
-	oldEntity.Properties["status"] = "backlog"
-	oldEntity.Properties["kind"] = "enhancement"
-	oldEntity.Properties["title"] = "Add new feature"
+	oldEntity := testutil.Entity("ticket").ID("T-001").
+		With("status", "backlog").
+		With("kind", "enhancement").
+		With("title", "Add new feature").
+		Build()
 
-	newEntity := model.NewEntity("T-001", "ticket")
-	newEntity.Properties["status"] = "planning"
-	newEntity.Properties["kind"] = "enhancement"
-	newEntity.Properties["title"] = "Add new feature"
+	newEntity := testutil.Entity("ticket").ID("T-001").
+		With("status", "planning").
+		With("kind", "enhancement").
+		With("title", "Add new feature").
+		Build()
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -713,7 +696,7 @@ func TestEngine_CreateEntity_TemplateEmpty(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	entity := model.NewEntity("T-001", "ticket")
+	entity := testutil.Entity("ticket").ID("T-001").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -753,8 +736,7 @@ func TestEngine_CreateEntity_TemplateMissingProperty(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	entity := model.NewEntity("T-001", "ticket")
-	// Note: kind property is NOT set
+	entity := testutil.Entity("ticket").ID("T-001").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -832,8 +814,7 @@ func TestEngine_CreateEntity_TemplatePathTraversal(t *testing.T) {
 
 			engine := NewEngine(automations)
 
-			entity := model.NewEntity("T-001", "ticket")
-			entity.Properties["kind"] = tc.kind
+			entity := testutil.Entity("ticket").ID("T-001").With("kind", tc.kind).Build()
 
 			result := engine.Process(Event{
 				Type:   EventEntityCreated,
@@ -880,9 +861,10 @@ func TestEngine_WhenConditionMet(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	oldEntity := model.NewEntity("T-001", "ticket")
-	oldEntity.Properties["status"] = "in-progress"
-	oldEntity.Properties["kind"] = "enhancement"
+	oldEntity := testutil.Entity("ticket").ID("T-001").
+		With("status", "in-progress").
+		With("kind", "enhancement").
+		Build()
 
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
@@ -916,9 +898,10 @@ func TestEngine_WhenConditionNotMet(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	oldEntity := model.NewEntity("T-001", "ticket")
-	oldEntity.Properties["status"] = "in-progress"
-	oldEntity.Properties["kind"] = "bug" // Not an enhancement
+	oldEntity := testutil.Entity("ticket").ID("T-001").
+		With("status", "in-progress").
+		With("kind", "bug").
+		Build()
 
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
@@ -953,10 +936,11 @@ func TestEngine_MultipleWhenConditions(t *testing.T) {
 	engine := NewEngine(automations)
 
 	// Test: both conditions met
-	oldEntity := model.NewEntity("T-001", "ticket")
-	oldEntity.Properties["status"] = "in-progress"
-	oldEntity.Properties["kind"] = "enhancement"
-	oldEntity.Properties["priority"] = "high"
+	oldEntity := testutil.Entity("ticket").ID("T-001").
+		With("status", "in-progress").
+		With("kind", "enhancement").
+		With("priority", "high").
+		Build()
 
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
@@ -972,10 +956,11 @@ func TestEngine_MultipleWhenConditions(t *testing.T) {
 	}
 
 	// Test: only one condition met
-	oldEntity2 := model.NewEntity("T-002", "ticket")
-	oldEntity2.Properties["status"] = "in-progress"
-	oldEntity2.Properties["kind"] = "enhancement"
-	oldEntity2.Properties["priority"] = "low" // Not high
+	oldEntity2 := testutil.Entity("ticket").ID("T-002").
+		With("status", "in-progress").
+		With("kind", "enhancement").
+		With("priority", "low").
+		Build()
 
 	newEntity2 := oldEntity2.Clone()
 	newEntity2.Properties["status"] = "review"
@@ -1010,8 +995,7 @@ func TestEngine_NoWhenConditions(t *testing.T) {
 
 	engine := NewEngine(automations)
 
-	oldEntity := model.NewEntity("T-001", "ticket")
-	oldEntity.Properties["status"] = "in-progress"
+	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
 
 	newEntity := oldEntity.Clone()
 	newEntity.Properties["status"] = "review"
@@ -1045,8 +1029,7 @@ func TestEngine_WhenConditionOnCreated(t *testing.T) {
 	engine := NewEngine(automations)
 
 	// Enhancement ticket
-	entity := model.NewEntity("T-001", "ticket")
-	entity.Properties["kind"] = "enhancement"
+	entity := testutil.Entity("ticket").ID("T-001").With("kind", "enhancement").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -1058,8 +1041,7 @@ func TestEngine_WhenConditionOnCreated(t *testing.T) {
 	}
 
 	// Bug ticket - should not trigger
-	bugEntity := model.NewEntity("T-002", "ticket")
-	bugEntity.Properties["kind"] = "bug"
+	bugEntity := testutil.Entity("ticket").ID("T-002").With("kind", "bug").Build()
 
 	result2 := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -1088,9 +1070,8 @@ func TestEngine_WhenConditionOnRelationCreated(t *testing.T) {
 	engine := NewEngine(automations)
 
 	// Enhancement ticket - should trigger
-	entity := model.NewEntity("T-001", "ticket")
-	entity.Properties["kind"] = "enhancement"
-	rel := model.NewRelation("S-001", "implements", "T-001")
+	entity := testutil.Entity("ticket").ID("T-001").With("kind", "enhancement").Build()
+	rel := testutil.NewRelation("S-001", "implements", "T-001").Build()
 
 	result := engine.Process(Event{
 		Type:     EventRelationCreated,
@@ -1103,9 +1084,8 @@ func TestEngine_WhenConditionOnRelationCreated(t *testing.T) {
 	}
 
 	// Bug ticket - should not trigger
-	bugEntity := model.NewEntity("T-002", "ticket")
-	bugEntity.Properties["kind"] = "bug"
-	rel2 := model.NewRelation("S-002", "implements", "T-002")
+	bugEntity := testutil.Entity("ticket").ID("T-002").With("kind", "bug").Build()
+	rel2 := testutil.NewRelation("S-002", "implements", "T-002").Build()
 
 	result2 := engine.Process(Event{
 		Type:     EventRelationCreated,

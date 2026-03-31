@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -48,10 +49,7 @@ func makeToolRequest(args map[string]interface{}) mcp.CallToolRequest {
 
 func TestConvertEntity_WithoutRelations(t *testing.T) {
 	g := graph.New()
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Test requirement"
-	e.Properties["status"] = "draft"
-	e.Content = "Some content"
+	e := testutil.Entity("requirement").ID("REQ-001").With("title", "Test requirement").With("status", "draft").WithContent("Some content").Build()
 	g.AddNode(e)
 
 	result, err := convertEntity(e, &graphAdapter{g}, false)
@@ -83,15 +81,12 @@ func TestConvertEntity_WithoutRelations(t *testing.T) {
 
 func TestConvertEntity_WithRelations(t *testing.T) {
 	g := graph.New()
-	e1 := model.NewEntity("REQ-001", "requirement")
-	e1.Properties["title"] = "Requirement 1"
-	e2 := model.NewEntity("SOL-001", "solution")
-	e2.Properties["title"] = "Solution 1"
+	e1 := testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement 1").Build()
+	e2 := testutil.Entity("solution").ID("SOL-001").With("title", "Solution 1").Build()
 	g.AddNode(e1)
 	g.AddNode(e2)
 
-	rel := model.NewRelation("SOL-001", "addresses", "REQ-001")
-	g.AddEdge(rel)
+	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
 
 	result, err := convertEntity(e1, &graphAdapter{g}, true)
 	if err != nil {
@@ -118,7 +113,7 @@ func TestConvertEntity_WithRelations(t *testing.T) {
 
 func TestConvertEntity_NoRelationsPresent(t *testing.T) {
 	g := graph.New()
-	e := model.NewEntity("REQ-001", "requirement")
+	e := testutil.Entity("requirement").ID("REQ-001").Build()
 	g.AddNode(e)
 
 	result, err := convertEntity(e, &graphAdapter{g}, true)
@@ -137,9 +132,7 @@ func TestConvertEntity_NoRelationsPresent(t *testing.T) {
 }
 
 func TestConvertEntitySummary(t *testing.T) {
-	e := model.NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "My Title"
-	e.Properties["status"] = "accepted"
+	e := testutil.Entity("requirement").ID("REQ-001").With("title", "My Title").With("status", "accepted").Build()
 
 	result := convertEntitySummary(e)
 
@@ -158,7 +151,7 @@ func TestConvertEntitySummary(t *testing.T) {
 }
 
 func TestConvertEntitySummary_NoTitleNoStatus(t *testing.T) {
-	e := model.NewEntity("REQ-002", "requirement")
+	e := testutil.Entity("requirement").ID("REQ-002").Build()
 
 	result := convertEntitySummary(e)
 
@@ -174,9 +167,7 @@ func TestConvertEntitySummary_NoTitleNoStatus(t *testing.T) {
 }
 
 func TestConvertRelation(t *testing.T) {
-	r := model.NewRelation("SOL-001", "addresses", "REQ-001")
-	r.Properties = map[string]interface{}{"rationale": "because"}
-	r.Content = "Relation content"
+	r := testutil.NewRelation("SOL-001", "addresses", "REQ-001").WithProperty("rationale", "because").WithContent("Relation content").Build()
 
 	result, err := convertRelation(r)
 	if err != nil {
@@ -304,8 +295,7 @@ func TestConvertPathSteps_Empty(t *testing.T) {
 
 func TestBuildRelations_NoEdges(t *testing.T) {
 	g := graph.New()
-	e := model.NewEntity("REQ-001", "requirement")
-	g.AddNode(e)
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").Build())
 
 	rels := buildRelations("REQ-001", &graphAdapter{g})
 	if rels != nil {
@@ -315,15 +305,10 @@ func TestBuildRelations_NoEdges(t *testing.T) {
 
 func TestBuildRelations_OutgoingOnly(t *testing.T) {
 	g := graph.New()
-	e1 := model.NewEntity("SOL-001", "solution")
-	e1.Properties["title"] = "Solution"
-	e2 := model.NewEntity("REQ-001", "requirement")
-	e2.Properties["title"] = "Requirement"
-	g.AddNode(e1)
-	g.AddNode(e2)
+	g.AddNode(testutil.Entity("solution").ID("SOL-001").With("title", "Solution").Build())
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement").Build())
 
-	rel := model.NewRelation("SOL-001", "addresses", "REQ-001")
-	g.AddEdge(rel)
+	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
 
 	rels := buildRelations("SOL-001", &graphAdapter{g})
 	if rels == nil {
@@ -345,15 +330,10 @@ func TestBuildRelations_OutgoingOnly(t *testing.T) {
 
 func TestBuildRelations_IncomingOnly(t *testing.T) {
 	g := graph.New()
-	e1 := model.NewEntity("REQ-001", "requirement")
-	e1.Properties["title"] = "Requirement"
-	e2 := model.NewEntity("SOL-001", "solution")
-	e2.Properties["title"] = "Solution"
-	g.AddNode(e1)
-	g.AddNode(e2)
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement").Build())
+	g.AddNode(testutil.Entity("solution").ID("SOL-001").With("title", "Solution").Build())
 
-	rel := model.NewRelation("SOL-001", "addresses", "REQ-001")
-	g.AddEdge(rel)
+	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
 
 	rels := buildRelations("REQ-001", &graphAdapter{g})
 	if rels == nil {
@@ -372,18 +352,12 @@ func TestBuildRelations_IncomingOnly(t *testing.T) {
 
 func TestBuildRelations_BothDirections(t *testing.T) {
 	g := graph.New()
-	e1 := model.NewEntity("REQ-001", "requirement")
-	e1.Properties["title"] = "Req"
-	e2 := model.NewEntity("SOL-001", "solution")
-	e2.Properties["title"] = "Sol"
-	e3 := model.NewEntity("DEC-001", "decision")
-	e3.Properties["title"] = "Dec"
-	g.AddNode(e1)
-	g.AddNode(e2)
-	g.AddNode(e3)
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Req").Build())
+	g.AddNode(testutil.Entity("solution").ID("SOL-001").With("title", "Sol").Build())
+	g.AddNode(testutil.Entity("decision").ID("DEC-001").With("title", "Dec").Build())
 
-	g.AddEdge(model.NewRelation("SOL-001", "addresses", "REQ-001"))
-	g.AddEdge(model.NewRelation("REQ-001", "motivates", "DEC-001"))
+	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
+	g.AddEdge(testutil.NewRelation("REQ-001", "motivates", "DEC-001").Build())
 
 	rels := buildRelations("REQ-001", &graphAdapter{g})
 	if rels == nil {
@@ -405,17 +379,8 @@ func TestBuildRelations_BothDirections(t *testing.T) {
 
 func TestConvertEntitiesList(t *testing.T) {
 	entities := []*model.Entity{
-		func() *model.Entity {
-			e := model.NewEntity("REQ-001", "requirement")
-			e.Properties["title"] = "First"
-			e.Properties["status"] = "draft"
-			return e
-		}(),
-		func() *model.Entity {
-			e := model.NewEntity("REQ-002", "requirement")
-			e.Properties["title"] = "Second"
-			return e
-		}(),
+		testutil.Entity("requirement").ID("REQ-001").With("title", "First").With("status", "draft").Build(),
+		testutil.Entity("requirement").ID("REQ-002").With("title", "Second").Build(),
 	}
 
 	result, err := convertEntitiesList(entities)
@@ -451,12 +416,8 @@ func TestConvertEntitiesList_Empty(t *testing.T) {
 
 func TestConvertRelationsList(t *testing.T) {
 	relations := []*model.Relation{
-		func() *model.Relation {
-			r := model.NewRelation("SOL-001", "addresses", "REQ-001")
-			r.Properties = map[string]interface{}{"weight": "high"}
-			return r
-		}(),
-		model.NewRelation("CMP-001", "implements", "SOL-001"),
+		testutil.NewRelation("SOL-001", "addresses", "REQ-001").WithProperty("weight", "high").Build(),
+		testutil.NewRelation("CMP-001", "implements", "SOL-001").Build(),
 	}
 
 	result, err := convertRelationsList(relations)
@@ -495,9 +456,9 @@ func TestConvertRelationsList_Empty(t *testing.T) {
 
 func TestSortEntitiesByID(t *testing.T) {
 	entities := []*model.Entity{
-		model.NewEntity("REQ-003", "requirement"),
-		model.NewEntity("REQ-001", "requirement"),
-		model.NewEntity("REQ-002", "requirement"),
+		testutil.Entity("requirement").ID("REQ-003").Build(),
+		testutil.Entity("requirement").ID("REQ-001").Build(),
+		testutil.Entity("requirement").ID("REQ-002").Build(),
 	}
 
 	sortEntitiesByID(entities)
@@ -515,9 +476,9 @@ func TestSortEntitiesByID(t *testing.T) {
 
 func TestSortRelations(t *testing.T) {
 	relations := []*model.Relation{
-		model.NewRelation("SOL-001", "implements", "REQ-001"),
-		model.NewRelation("SOL-001", "addresses", "REQ-001"),
-		model.NewRelation("CMP-001", "implements", "SOL-001"),
+		testutil.NewRelation("SOL-001", "implements", "REQ-001").Build(),
+		testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build(),
+		testutil.NewRelation("CMP-001", "implements", "SOL-001").Build(),
 	}
 
 	sortRelations(relations)
@@ -537,8 +498,8 @@ func TestSortRelations(t *testing.T) {
 
 func TestSortRelations_ByTo(t *testing.T) {
 	relations := []*model.Relation{
-		model.NewRelation("SOL-001", "addresses", "REQ-002"),
-		model.NewRelation("SOL-001", "addresses", "REQ-001"),
+		testutil.NewRelation("SOL-001", "addresses", "REQ-002").Build(),
+		testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build(),
 	}
 
 	sortRelations(relations)
@@ -578,9 +539,9 @@ func TestMarshalJSON_Indented(t *testing.T) {
 
 func TestCountEdgesByType(t *testing.T) {
 	edges := []*model.Relation{
-		model.NewRelation("A", "addresses", "B"),
-		model.NewRelation("A", "implements", "C"),
-		model.NewRelation("A", "addresses", "D"),
+		testutil.NewRelation("A", "addresses", "B").Build(),
+		testutil.NewRelation("A", "implements", "C").Build(),
+		testutil.NewRelation("A", "addresses", "D").Build(),
 	}
 
 	count := countEdgesByType(edges, "addresses")
@@ -607,7 +568,7 @@ func TestCountEdgesByType_Empty(t *testing.T) {
 }
 
 func TestConvertRelation_NoProperties(t *testing.T) {
-	r := model.NewRelation("SOL-001", "addresses", "REQ-001")
+	r := testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build()
 
 	result, err := convertRelation(r)
 	if err != nil {
@@ -680,10 +641,7 @@ func TestConvertTraceResult_DeepNesting(t *testing.T) {
 
 func TestConvertEntity_WithProperties(t *testing.T) {
 	g := graph.New()
-	e := model.NewEntity("DEC-001", "decision")
-	e.Properties["title"] = "Use Go"
-	e.Properties["status"] = "accepted"
-	e.Properties["priority"] = "high"
+	e := testutil.Entity("decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high").Build()
 	g.AddNode(e)
 
 	result, err := convertEntity(e, &graphAdapter{g}, false)
@@ -704,9 +662,9 @@ func TestConvertEntity_WithProperties(t *testing.T) {
 
 func TestSortEntitiesByID_AlreadySorted(t *testing.T) {
 	entities := []*model.Entity{
-		model.NewEntity("A-001", "test"),
-		model.NewEntity("B-001", "test"),
-		model.NewEntity("C-001", "test"),
+		testutil.Entity("test").ID("A-001").Build(),
+		testutil.Entity("test").ID("B-001").Build(),
+		testutil.Entity("test").ID("C-001").Build(),
 	}
 
 	sortEntitiesByID(entities)

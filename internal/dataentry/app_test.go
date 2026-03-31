@@ -10,10 +10,10 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -118,22 +118,9 @@ func testConfig() *Config {
 // testGraph returns a graph with some test entities.
 func testGraph() *graph.Graph {
 	g := graph.New()
-	e1 := model.NewEntity("TKT-001", "ticket")
-	e1.SetString("title", "First Ticket")
-	e1.SetString("status", "open")
-	e1.SetString("priority", "high")
-	g.AddNode(e1)
-
-	e2 := model.NewEntity("TKT-002", "ticket")
-	e2.SetString("title", "Second Ticket")
-	e2.SetString("status", "closed")
-	e2.SetString("priority", "low")
-	g.AddNode(e2)
-
-	c1 := model.NewEntity("CMP-001", "component")
-	c1.SetString("name", "Frontend")
-	g.AddNode(c1)
-
+	g.AddNode(testutil.Entity("ticket").ID("TKT-001").With("title", "First Ticket").With("status", "open").With("priority", "high").Build())
+	g.AddNode(testutil.Entity("ticket").ID("TKT-002").With("title", "Second Ticket").With("status", "closed").With("priority", "low").Build())
+	g.AddNode(testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build())
 	return g
 }
 
@@ -390,7 +377,7 @@ func TestEntityDisplayTitle(t *testing.T) {
 	})
 
 	t.Run("falls back to ID for unknown type", func(t *testing.T) {
-		e := &model.Entity{ID: "UNK-001", Type: "unknown", Properties: map[string]interface{}{}}
+		e := testutil.Entity("unknown").ID("UNK-001").Build()
 		got := app.entityDisplayTitle(e)
 		if got != "UNK-001" {
 			t.Errorf("expected 'UNK-001', got %q", got)
@@ -398,7 +385,7 @@ func TestEntityDisplayTitle(t *testing.T) {
 	})
 
 	t.Run("falls back to ID when primary property is empty", func(t *testing.T) {
-		e := &model.Entity{ID: "TKT-099", Type: "ticket", Properties: map[string]interface{}{"title": ""}}
+		e := testutil.Entity("ticket").ID("TKT-099").With("title", "").Build()
 		got := app.entityDisplayTitle(e)
 		if got != "TKT-099" {
 			t.Errorf("expected 'TKT-099', got %q", got)

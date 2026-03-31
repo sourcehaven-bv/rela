@@ -6,6 +6,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 // testViewApp creates an App with a graph suitable for view traversal tests.
@@ -43,27 +44,14 @@ func testViewApp() *App {
 	}
 
 	g := graph.New()
-	e1 := model.NewEntity("TKT-001", "ticket")
-	e1.SetString("title", "First")
-	e1.SetString("status", "open")
-	g.AddNode(e1)
+	g.AddNode(testutil.Entity("ticket").ID("TKT-001").With("title", "First").With("status", "open").Build())
+	g.AddNode(testutil.Entity("ticket").ID("TKT-002").With("title", "Second").With("status", "closed").Build())
+	g.AddNode(testutil.Entity("ticket").ID("TKT-003").With("title", "Third").Build())
+	g.AddNode(testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build())
 
-	e2 := model.NewEntity("TKT-002", "ticket")
-	e2.SetString("title", "Second")
-	e2.SetString("status", "closed")
-	g.AddNode(e2)
-
-	e3 := model.NewEntity("TKT-003", "ticket")
-	e3.SetString("title", "Third")
-	g.AddNode(e3)
-
-	c1 := model.NewEntity("CMP-001", "component")
-	c1.SetString("name", "Frontend")
-	g.AddNode(c1)
-
-	g.AddEdge(model.NewRelation("TKT-001", "depends_on", "TKT-002"))
-	g.AddEdge(model.NewRelation("TKT-002", "depends_on", "TKT-003"))
-	g.AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
+	g.AddEdge(testutil.NewRelation("TKT-001", "depends_on", "TKT-002").Build())
+	g.AddEdge(testutil.NewRelation("TKT-002", "depends_on", "TKT-003").Build())
+	g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
 
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
 	return &App{
@@ -331,37 +319,23 @@ func testViewAppWithMixedTypes() *App {
 	g := graph.New()
 
 	// Bouwblok
-	bb := model.NewEntity("BOUWBLOK-001", "bouwblok")
-	bb.SetString("title", "Main Bouwblok")
-	g.AddNode(bb)
+	g.AddNode(testutil.Entity("bouwblok").ID("BOUWBLOK-001").With("title", "Main Bouwblok").Build())
 
 	// Functions
-	f1 := model.NewEntity("FUNC-001", "function")
-	f1.SetString("title", "Function One")
-	f1.SetString("status", "active")
-	g.AddNode(f1)
-
-	f2 := model.NewEntity("FUNC-002", "function")
-	f2.SetString("title", "Function Two")
-	f2.SetString("status", "draft")
-	g.AddNode(f2)
+	g.AddNode(testutil.Entity("function").ID("FUNC-001").With("title", "Function One").With("status", "active").Build())
+	g.AddNode(testutil.Entity("function").ID("FUNC-002").With("title", "Function Two").With("status", "draft").Build())
 
 	// Use case
-	uc := model.NewEntity("UC-001", "usecase")
-	uc.SetString("title", "Use Case One")
-	uc.SetString("status", "active")
-	g.AddNode(uc)
+	g.AddNode(testutil.Entity("usecase").ID("UC-001").With("title", "Use Case One").With("status", "active").Build())
 
 	// Scenario
-	sc := model.NewEntity("SCEN-001", "scenario")
-	sc.SetString("title", "Scenario One")
-	g.AddNode(sc)
+	g.AddNode(testutil.Entity("scenario").ID("SCEN-001").With("title", "Scenario One").Build())
 
 	// Relations: all point to bouwblok
-	g.AddEdge(model.NewRelation("FUNC-001", "partOfBouwblok", "BOUWBLOK-001"))
-	g.AddEdge(model.NewRelation("FUNC-002", "partOfBouwblok", "BOUWBLOK-001"))
-	g.AddEdge(model.NewRelation("UC-001", "partOfBouwblok", "BOUWBLOK-001"))
-	g.AddEdge(model.NewRelation("SCEN-001", "partOfBouwblok", "BOUWBLOK-001"))
+	g.AddEdge(testutil.NewRelation("FUNC-001", "partOfBouwblok", "BOUWBLOK-001").Build())
+	g.AddEdge(testutil.NewRelation("FUNC-002", "partOfBouwblok", "BOUWBLOK-001").Build())
+	g.AddEdge(testutil.NewRelation("UC-001", "partOfBouwblok", "BOUWBLOK-001").Build())
+	g.AddEdge(testutil.NewRelation("SCEN-001", "partOfBouwblok", "BOUWBLOK-001").Build())
 
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
 	return &App{
@@ -548,10 +522,10 @@ func TestFilterEntities(t *testing.T) {
 	app := testViewAppWithMixedTypes()
 
 	entities := []*model.Entity{
-		{ID: "FUNC-001", Type: "function", Properties: map[string]interface{}{"status": "active"}},
-		{ID: "FUNC-002", Type: "function", Properties: map[string]interface{}{"status": "draft"}},
-		{ID: "UC-001", Type: "usecase", Properties: map[string]interface{}{"status": "active"}},
-		{ID: "SCEN-001", Type: "scenario", Properties: map[string]interface{}{}},
+		testutil.Entity("function").ID("FUNC-001").With("status", "active").Build(),
+		testutil.Entity("function").ID("FUNC-002").With("status", "draft").Build(),
+		testutil.Entity("usecase").ID("UC-001").With("status", "active").Build(),
+		testutil.Entity("scenario").ID("SCEN-001").Build(),
 	}
 
 	t.Run("filter by type", func(t *testing.T) {

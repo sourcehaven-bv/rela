@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 const txTestMetamodelYAML = `version: "1.0"
@@ -62,8 +62,7 @@ func setupTxTestEnv(t *testing.T) (*Repository, *metamodel.Metamodel, storage.FS
 func TestTransaction_CommitsOnSuccess(t *testing.T) {
 	repo, meta, fs := setupTxTestEnv(t)
 
-	entity := model.NewEntity("TASK-001", "task")
-	entity.SetString("title", "Test Task")
+	entity := testutil.NewEntity("TASK-001", "task").With("title", "Test Task").Build()
 
 	err := repo.Transaction(func(tx Tx) error {
 		return tx.WriteEntity(entity, meta)
@@ -89,8 +88,7 @@ func TestTransaction_CommitsOnSuccess(t *testing.T) {
 func TestTransaction_RollsBackOnError(t *testing.T) {
 	repo, meta, fs := setupTxTestEnv(t)
 
-	entity := model.NewEntity("TASK-001", "task")
-	entity.SetString("title", "Test Task")
+	entity := testutil.NewEntity("TASK-001", "task").With("title", "Test Task").Build()
 
 	err := repo.Transaction(func(tx Tx) error {
 		if writeErr := tx.WriteEntity(entity, meta); writeErr != nil {
@@ -119,10 +117,8 @@ func TestTransaction_RollsBackOnError(t *testing.T) {
 func TestTransaction_MultipleOperations(t *testing.T) {
 	repo, meta, _ := setupTxTestEnv(t)
 
-	task1 := model.NewEntity("TASK-001", "task")
-	task1.SetString("title", "Task 1")
-	task2 := model.NewEntity("TASK-002", "task")
-	task2.SetString("title", "Task 2")
+	task1 := testutil.NewEntity("TASK-001", "task").With("title", "Task 1").Build()
+	task2 := testutil.NewEntity("TASK-002", "task").With("title", "Task 2").Build()
 
 	err := repo.Transaction(func(tx Tx) error {
 		if err := tx.WriteEntity(task1, meta); err != nil {
@@ -131,7 +127,7 @@ func TestTransaction_MultipleOperations(t *testing.T) {
 		if err := tx.WriteEntity(task2, meta); err != nil {
 			return err
 		}
-		rel := model.NewRelation("TASK-001", "depends-on", "TASK-002")
+		rel := testutil.NewRelation("TASK-001", "depends-on", "TASK-002").Build()
 		return tx.WriteRelation(rel)
 	})
 	if err != nil {
@@ -156,8 +152,7 @@ func TestTransaction_DeleteOperations(t *testing.T) {
 	repo, meta, _ := setupTxTestEnv(t)
 
 	// First create an entity outside transaction
-	entity := model.NewEntity("TASK-001", "task")
-	entity.SetString("title", "To Delete")
+	entity := testutil.NewEntity("TASK-001", "task").With("title", "To Delete").Build()
 	if err := repo.WriteEntity(entity, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
 	}
@@ -180,15 +175,13 @@ func TestTransaction_WriteAndDeleteInSameTransaction(t *testing.T) {
 	repo, meta, _ := setupTxTestEnv(t)
 
 	// Create an entity outside transaction
-	oldEntity := model.NewEntity("TASK-001", "task")
-	oldEntity.SetString("title", "Old")
+	oldEntity := testutil.NewEntity("TASK-001", "task").With("title", "Old").Build()
 	if err := repo.WriteEntity(oldEntity, meta); err != nil {
 		t.Fatalf("WriteEntity() error = %v", err)
 	}
 
 	// Simulate a rename: write new, delete old
-	newEntity := model.NewEntity("TASK-100", "task")
-	newEntity.SetString("title", "Old") // Same content
+	newEntity := testutil.NewEntity("TASK-100", "task").With("title", "Old").Build()
 
 	err := repo.Transaction(func(tx Tx) error {
 		if writeErr := tx.WriteEntity(newEntity, meta); writeErr != nil {
