@@ -6,6 +6,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
 func TestEngineExecute(t *testing.T) {
@@ -39,49 +40,34 @@ func TestEngineExecute(t *testing.T) {
 	// Create a graph with test data
 	g := graph.New()
 
-	doc := &model.Entity{
-		ID:   "DOC-001",
-		Type: "document",
-		Properties: map[string]interface{}{
-			"title": "Test Document",
-		},
-		Content: "Document content",
-	}
+	doc := testutil.EntityFor(meta, "document").
+		ID("DOC-001").
+		With("title", "Test Document").
+		WithContent("Document content").
+		Build()
 	g.AddNode(doc)
 
-	sec1 := &model.Entity{
-		ID:   "SEC-001",
-		Type: "section",
-		Properties: map[string]interface{}{
-			"title": "Section 1",
-		},
-		Content: "Section 1 content",
-	}
+	sec1 := testutil.EntityFor(meta, "section").
+		ID("SEC-001").
+		With("title", "Section 1").
+		WithContent("Section 1 content").
+		Build()
 	g.AddNode(sec1)
 
-	sec2 := &model.Entity{
-		ID:   "SEC-002",
-		Type: "section",
-		Properties: map[string]interface{}{
-			"title": "Section 2",
-		},
-		Content: "Section 2 content",
-	}
+	sec2 := testutil.EntityFor(meta, "section").
+		ID("SEC-002").
+		With("title", "Section 2").
+		WithContent("Section 2 content").
+		Build()
 	g.AddNode(sec2)
 
 	// Add relations
-	g.AddEdge(&model.Relation{
-		From:    "DOC-001",
-		Type:    "contains",
-		To:      "SEC-001",
-		Content: "Relation content 1",
-	})
-	g.AddEdge(&model.Relation{
-		From:    "DOC-001",
-		Type:    "contains",
-		To:      "SEC-002",
-		Content: "Relation content 2",
-	})
+	g.AddEdge(testutil.NewRelation("DOC-001", "contains", "SEC-001").
+		WithContent("Relation content 1").
+		Build())
+	g.AddEdge(testutil.NewRelation("DOC-001", "contains", "SEC-002").
+		WithContent("Relation content 2").
+		Build())
 
 	// Create a view definition
 	view := ViewDef{
@@ -156,36 +142,27 @@ func TestEngineTraverseRecursive(t *testing.T) {
 	// Create a graph with dependencies
 	g := graph.New()
 
-	comp1 := &model.Entity{
-		ID:   "COMP-001",
-		Type: "component",
-		Properties: map[string]interface{}{
-			"title": "Component 1",
-		},
-	}
+	comp1 := testutil.EntityFor(meta, "component").
+		ID("COMP-001").
+		With("title", "Component 1").
+		Build()
 	g.AddNode(comp1)
 
-	comp2 := &model.Entity{
-		ID:   "COMP-002",
-		Type: "component",
-		Properties: map[string]interface{}{
-			"title": "Component 2",
-		},
-	}
+	comp2 := testutil.EntityFor(meta, "component").
+		ID("COMP-002").
+		With("title", "Component 2").
+		Build()
 	g.AddNode(comp2)
 
-	comp3 := &model.Entity{
-		ID:   "COMP-003",
-		Type: "component",
-		Properties: map[string]interface{}{
-			"title": "Component 3",
-		},
-	}
+	comp3 := testutil.EntityFor(meta, "component").
+		ID("COMP-003").
+		With("title", "Component 3").
+		Build()
 	g.AddNode(comp3)
 
 	// COMP-001 -> COMP-002 -> COMP-003 (chain)
-	g.AddEdge(&model.Relation{From: "COMP-001", Type: "dependsOn", To: "COMP-002"})
-	g.AddEdge(&model.Relation{From: "COMP-002", Type: "dependsOn", To: "COMP-003"})
+	g.AddEdge(testutil.NewRelation("COMP-001", "dependsOn", "COMP-002").Build())
+	g.AddEdge(testutil.NewRelation("COMP-002", "dependsOn", "COMP-003").Build())
 
 	// Create a view with recursive traversal
 	view := ViewDef{
@@ -295,9 +272,9 @@ func TestViewDefValidation(t *testing.T) {
 }
 
 func TestViewResultEntities(t *testing.T) {
-	entry := &model.Entity{ID: "DOC-001", Type: "document"}
-	sec1 := &model.Entity{ID: "SEC-001", Type: "section"}
-	sec2 := &model.Entity{ID: "SEC-002", Type: "section"}
+	entry := testutil.NewEntity("DOC-001", "document").Build()
+	sec1 := testutil.NewEntity("SEC-001", "section").Build()
+	sec2 := testutil.NewEntity("SEC-002", "section").Build()
 
 	tests := []struct {
 		name    string
@@ -388,8 +365,8 @@ func TestViewResultEntities(t *testing.T) {
 }
 
 func TestViewResultEntityIDs(t *testing.T) {
-	entry := &model.Entity{ID: "DOC-001", Type: "document"}
-	sec1 := &model.Entity{ID: "SEC-001", Type: "section"}
+	entry := testutil.NewEntity("DOC-001", "document").Build()
+	sec1 := testutil.NewEntity("SEC-001", "section").Build()
 
 	result := &ViewResult{
 		Entry: entry,

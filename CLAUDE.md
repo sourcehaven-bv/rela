@@ -608,8 +608,9 @@ Follow these patterns to make tests clearer and more maintainable.
 
 **Use Test Fixture Builders:**
 
-Use builder patterns or factory functions to create test data. Only specify values that matter for
-the specific test - let fixtures handle defaults and generate random values for everything else.
+Use builder patterns or factory functions to create test data. Only specify values that matter
+for the specific test - let fixtures handle defaults and generate random values for everything
+else.
 
 **Avoid Hardcoded Values in Assertions:**
 

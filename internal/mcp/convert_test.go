@@ -21,6 +21,43 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
+// testMeta returns a shared metamodel for convert tests with all needed entity types.
+func testMeta() *metamodel.Metamodel {
+	return testutil.NewMetamodel().
+		DefineEntity("requirement").
+		Label("Requirement").
+		IDPrefix("REQ-").
+		Prop("title", metamodel.PropertyTypeString, true).
+		Prop("status", "status", false).
+		End().
+		DefineEntity("decision").
+		Label("Decision").
+		IDPrefix("DEC-").
+		Prop("title", metamodel.PropertyTypeString, true).
+		Prop("status", "status", false).
+		Prop("priority", metamodel.PropertyTypeString, false).
+		End().
+		DefineEntity("solution").
+		Label("Solution").
+		IDPrefix("SOL-").
+		Prop("title", metamodel.PropertyTypeString, true).
+		End().
+		DefineEntity("component").
+		Label("Component").
+		IDPrefix("CMP-").
+		Prop("title", metamodel.PropertyTypeString, false).
+		End().
+		DefineEntity("test").
+		Label("Test").
+		Prop("title", metamodel.PropertyTypeString, false).
+		End().
+		WithRelation("addresses", "Addresses", []string{"solution"}, []string{"requirement"}).
+		WithRelation("implements", "Implements", []string{"component"}, []string{"solution"}).
+		WithRelation("motivates", "Motivates", []string{"requirement"}, []string{"decision"}).
+		WithCustomType("status", []string{"draft", "proposed", "accepted", "rejected"}).
+		Build()
+}
+
 // graphAdapter wraps *graph.Graph to implement relationQuerier for tests.
 type graphAdapter struct {
 	g *graph.Graph
@@ -48,8 +85,9 @@ func makeToolRequest(args map[string]interface{}) mcp.CallToolRequest {
 }
 
 func TestConvertEntity_WithoutRelations(t *testing.T) {
+	meta := testMeta()
 	g := graph.New()
-	e := testutil.Entity("requirement").ID("REQ-001").With("title", "Test requirement").With("status", "draft").WithContent("Some content").Build()
+	e := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Test requirement").WithContent("Some content").Build()
 	g.AddNode(e)
 
 	result, err := convertEntity(e, &graphAdapter{g}, false)
@@ -62,8 +100,8 @@ func TestConvertEntity_WithoutRelations(t *testing.T) {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
 
-	if parsed.ID != "REQ-001" {
-		t.Errorf("expected ID REQ-001, got %s", parsed.ID)
+	if parsed.ID != e.ID {
+		t.Errorf("expected ID %s, got %s", e.ID, parsed.ID)
 	}
 	if parsed.Type != "requirement" {
 		t.Errorf("expected type requirement, got %s", parsed.Type)
@@ -80,13 +118,14 @@ func TestConvertEntity_WithoutRelations(t *testing.T) {
 }
 
 func TestConvertEntity_WithRelations(t *testing.T) {
+	meta := testMeta()
 	g := graph.New()
-	e1 := testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement 1").Build()
-	e2 := testutil.Entity("solution").ID("SOL-001").With("title", "Solution 1").Build()
+	e1 := testutil.EntityFor(meta, "requirement").ID("REQ-001").Build()
+	e2 := testutil.EntityFor(meta, "solution").ID("SOL-001").Build()
 	g.AddNode(e1)
 	g.AddNode(e2)
 
-	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
+	g.AddEdge(testutil.NewRelation(e2.ID, "addresses", e1.ID).Build())
 
 	result, err := convertEntity(e1, &graphAdapter{g}, true)
 	if err != nil {
@@ -105,15 +144,16 @@ func TestConvertEntity_WithRelations(t *testing.T) {
 		t.Errorf("expected 1 incoming 'addresses' relation, got %d",
 			len(parsed.Relations.Incoming["addresses"]))
 	}
-	if parsed.Relations.Incoming["addresses"][0].ID != "SOL-001" {
-		t.Errorf("expected incoming from SOL-001, got %s",
-			parsed.Relations.Incoming["addresses"][0].ID)
+	if parsed.Relations.Incoming["addresses"][0].ID != e2.ID {
+		t.Errorf("expected incoming from %s, got %s",
+			e2.ID, parsed.Relations.Incoming["addresses"][0].ID)
 	}
 }
 
 func TestConvertEntity_NoRelationsPresent(t *testing.T) {
+	meta := testMeta()
 	g := graph.New()
-	e := testutil.Entity("requirement").ID("REQ-001").Build()
+	e := testutil.EntityFor(meta, "requirement").ID("REQ-001").Build()
 	g.AddNode(e)
 
 	result, err := convertEntity(e, &graphAdapter{g}, true)
@@ -132,31 +172,33 @@ func TestConvertEntity_NoRelationsPresent(t *testing.T) {
 }
 
 func TestConvertEntitySummary(t *testing.T) {
-	e := testutil.Entity("requirement").ID("REQ-001").With("title", "My Title").With("status", "accepted").Build()
+	meta := testMeta()
+	e := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "My Title").With("status", "accepted").Build()
 
 	result := convertEntitySummary(e)
 
-	if result["id"] != "REQ-001" {
-		t.Errorf("expected id REQ-001, got %v", result["id"])
+	if result["id"] != e.ID {
+		t.Errorf("expected id %s, got %v", e.ID, result["id"])
 	}
-	if result["type"] != "requirement" {
-		t.Errorf("expected type requirement, got %v", result["type"])
+	if result["type"] != e.Type {
+		t.Errorf("expected type %s, got %v", e.Type, result["type"])
 	}
-	if result["title"] != "My Title" {
-		t.Errorf("expected title 'My Title', got %v", result["title"])
+	if result["title"] != e.Properties["title"] {
+		t.Errorf("expected title '%v', got %v", e.Properties["title"], result["title"])
 	}
-	if result["status"] != "accepted" {
-		t.Errorf("expected status 'accepted', got %v", result["status"])
+	if result["status"] != e.Properties["status"] {
+		t.Errorf("expected status '%v', got %v", e.Properties["status"], result["status"])
 	}
 }
 
 func TestConvertEntitySummary_NoTitleNoStatus(t *testing.T) {
-	e := testutil.Entity("requirement").ID("REQ-002").Build()
+	meta := testMeta()
+	e := testutil.EntityFor(meta, "requirement").ID("REQ-002").Without("title").Without("status").Build()
 
 	result := convertEntitySummary(e)
 
-	if result["id"] != "REQ-002" {
-		t.Errorf("expected id REQ-002, got %v", result["id"])
+	if result["id"] != e.ID {
+		t.Errorf("expected id %s, got %v", e.ID, result["id"])
 	}
 	if _, ok := result["title"]; ok {
 		t.Error("expected no title key when title is empty")
@@ -179,20 +221,20 @@ func TestConvertRelation(t *testing.T) {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
 
-	if parsed.From != "SOL-001" {
-		t.Errorf("expected from SOL-001, got %s", parsed.From)
+	if parsed.From != r.From {
+		t.Errorf("expected from %s, got %s", r.From, parsed.From)
 	}
-	if parsed.Type != "addresses" {
-		t.Errorf("expected type addresses, got %s", parsed.Type)
+	if parsed.Type != r.Type {
+		t.Errorf("expected type %s, got %s", r.Type, parsed.Type)
 	}
-	if parsed.To != "REQ-001" {
-		t.Errorf("expected to REQ-001, got %s", parsed.To)
+	if parsed.To != r.To {
+		t.Errorf("expected to %s, got %s", r.To, parsed.To)
 	}
-	if parsed.Content != "Relation content" {
-		t.Errorf("expected content 'Relation content', got %s", parsed.Content)
+	if parsed.Content != r.Content {
+		t.Errorf("expected content '%s', got %s", r.Content, parsed.Content)
 	}
-	if parsed.Properties["rationale"] != "because" {
-		t.Errorf("expected property rationale=because, got %v", parsed.Properties["rationale"])
+	if parsed.Properties["rationale"] != r.Properties["rationale"] {
+		t.Errorf("expected property rationale=%v, got %v", r.Properties["rationale"], parsed.Properties["rationale"])
 	}
 }
 
@@ -294,8 +336,9 @@ func TestConvertPathSteps_Empty(t *testing.T) {
 }
 
 func TestBuildRelations_NoEdges(t *testing.T) {
+	meta := testMeta()
 	g := graph.New()
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").Build())
+	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
 
 	rels := buildRelations("REQ-001", &graphAdapter{g})
 	if rels != nil {
@@ -304,24 +347,27 @@ func TestBuildRelations_NoEdges(t *testing.T) {
 }
 
 func TestBuildRelations_OutgoingOnly(t *testing.T) {
+	meta := testMeta()
 	g := graph.New()
-	g.AddNode(testutil.Entity("solution").ID("SOL-001").With("title", "Solution").Build())
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement").Build())
+	sol := testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Solution").Build()
+	req := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Requirement").Build()
+	g.AddNode(sol)
+	g.AddNode(req)
 
-	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
+	g.AddEdge(testutil.NewRelation(sol.ID, "addresses", req.ID).Build())
 
-	rels := buildRelations("SOL-001", &graphAdapter{g})
+	rels := buildRelations(sol.ID, &graphAdapter{g})
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
 	if len(rels.Outgoing["addresses"]) != 1 {
 		t.Errorf("expected 1 outgoing addresses relation, got %d", len(rels.Outgoing["addresses"]))
 	}
-	if rels.Outgoing["addresses"][0].ID != "REQ-001" {
-		t.Errorf("expected target REQ-001, got %s", rels.Outgoing["addresses"][0].ID)
+	if rels.Outgoing["addresses"][0].ID != req.ID {
+		t.Errorf("expected target %s, got %s", req.ID, rels.Outgoing["addresses"][0].ID)
 	}
-	if rels.Outgoing["addresses"][0].Title != "Requirement" {
-		t.Errorf("expected title 'Requirement', got %s", rels.Outgoing["addresses"][0].Title)
+	if rels.Outgoing["addresses"][0].Title != req.Properties["title"] {
+		t.Errorf("expected title '%v', got %s", req.Properties["title"], rels.Outgoing["addresses"][0].Title)
 	}
 	if rels.Incoming != nil {
 		t.Error("expected no incoming relations")
@@ -329,13 +375,16 @@ func TestBuildRelations_OutgoingOnly(t *testing.T) {
 }
 
 func TestBuildRelations_IncomingOnly(t *testing.T) {
+	meta := testMeta()
 	g := graph.New()
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement").Build())
-	g.AddNode(testutil.Entity("solution").ID("SOL-001").With("title", "Solution").Build())
+	req := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Requirement").Build()
+	sol := testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Solution").Build()
+	g.AddNode(req)
+	g.AddNode(sol)
 
-	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
+	g.AddEdge(testutil.NewRelation(sol.ID, "addresses", req.ID).Build())
 
-	rels := buildRelations("REQ-001", &graphAdapter{g})
+	rels := buildRelations(req.ID, &graphAdapter{g})
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -345,16 +394,17 @@ func TestBuildRelations_IncomingOnly(t *testing.T) {
 	if len(rels.Incoming["addresses"]) != 1 {
 		t.Errorf("expected 1 incoming addresses relation, got %d", len(rels.Incoming["addresses"]))
 	}
-	if rels.Incoming["addresses"][0].ID != "SOL-001" {
-		t.Errorf("expected source SOL-001, got %s", rels.Incoming["addresses"][0].ID)
+	if rels.Incoming["addresses"][0].ID != sol.ID {
+		t.Errorf("expected source %s, got %s", sol.ID, rels.Incoming["addresses"][0].ID)
 	}
 }
 
 func TestBuildRelations_BothDirections(t *testing.T) {
+	meta := testMeta()
 	g := graph.New()
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Req").Build())
-	g.AddNode(testutil.Entity("solution").ID("SOL-001").With("title", "Sol").Build())
-	g.AddNode(testutil.Entity("decision").ID("DEC-001").With("title", "Dec").Build())
+	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Req").Build())
+	g.AddNode(testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Sol").Build())
+	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Dec").Build())
 
 	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
 	g.AddEdge(testutil.NewRelation("REQ-001", "motivates", "DEC-001").Build())
@@ -378,9 +428,10 @@ func TestBuildRelations_BothDirections(t *testing.T) {
 }
 
 func TestConvertEntitiesList(t *testing.T) {
+	meta := testMeta()
 	entities := []*model.Entity{
-		testutil.Entity("requirement").ID("REQ-001").With("title", "First").With("status", "draft").Build(),
-		testutil.Entity("requirement").ID("REQ-002").With("title", "Second").Build(),
+		testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "First").With("status", "draft").Build(),
+		testutil.EntityFor(meta, "requirement").ID("REQ-002").With("title", "Second").Build(),
 	}
 
 	result, err := convertEntitiesList(entities)
@@ -455,10 +506,11 @@ func TestConvertRelationsList_Empty(t *testing.T) {
 }
 
 func TestSortEntitiesByID(t *testing.T) {
+	meta := testMeta()
 	entities := []*model.Entity{
-		testutil.Entity("requirement").ID("REQ-003").Build(),
-		testutil.Entity("requirement").ID("REQ-001").Build(),
-		testutil.Entity("requirement").ID("REQ-002").Build(),
+		testutil.EntityFor(meta, "requirement").ID("REQ-003").Build(),
+		testutil.EntityFor(meta, "requirement").ID("REQ-001").Build(),
+		testutil.EntityFor(meta, "requirement").ID("REQ-002").Build(),
 	}
 
 	sortEntitiesByID(entities)
@@ -580,8 +632,8 @@ func TestConvertRelation_NoProperties(t *testing.T) {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
 
-	if parsed.From != "SOL-001" {
-		t.Errorf("expected from SOL-001, got %s", parsed.From)
+	if parsed.From != r.From {
+		t.Errorf("expected from %s, got %s", r.From, parsed.From)
 	}
 	if parsed.Content != "" {
 		t.Errorf("expected empty content, got %s", parsed.Content)
@@ -640,8 +692,9 @@ func TestConvertTraceResult_DeepNesting(t *testing.T) {
 }
 
 func TestConvertEntity_WithProperties(t *testing.T) {
+	meta := testMeta()
 	g := graph.New()
-	e := testutil.Entity("decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high").Build()
+	e := testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high").Build()
 	g.AddNode(e)
 
 	result, err := convertEntity(e, &graphAdapter{g}, false)
@@ -661,10 +714,11 @@ func TestConvertEntity_WithProperties(t *testing.T) {
 }
 
 func TestSortEntitiesByID_AlreadySorted(t *testing.T) {
+	meta := testMeta()
 	entities := []*model.Entity{
-		testutil.Entity("test").ID("A-001").Build(),
-		testutil.Entity("test").ID("B-001").Build(),
-		testutil.Entity("test").ID("C-001").Build(),
+		testutil.EntityFor(meta, "test").ID("A-001").Build(),
+		testutil.EntityFor(meta, "test").ID("B-001").Build(),
+		testutil.EntityFor(meta, "test").ID("C-001").Build(),
 	}
 
 	sortEntitiesByID(entities)

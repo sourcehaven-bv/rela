@@ -16,7 +16,7 @@ func newGraphTestApp(t *testing.T) *App {
 	t.Helper()
 	meta := testMeta()
 	cfg := testConfig()
-	g := testGraph()
+	g := testGraph(meta)
 
 	// Add a relation edge for testing
 	g.AddEdge(model.NewRelation("TKT-001", "depends_on", "TKT-002"))
@@ -419,7 +419,7 @@ func TestNavElementsGraphSkipsCount(t *testing.T) {
 func TestBuildContentGraphDataEmptyGraph(t *testing.T) {
 	meta := testMeta()
 	cfg := testConfig()
-	g := testGraph()
+	g := testGraph(meta)
 
 	// Remove all nodes
 	for _, n := range g.AllNodes() {

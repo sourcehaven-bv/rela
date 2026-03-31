@@ -283,7 +283,7 @@ func TestEngine_CreateRelation(t *testing.T) {
 		t.Fatalf("expected 1 relation to create, got %d", len(result.RelationsToCreate))
 	}
 	rel := result.RelationsToCreate[0]
-	if rel.From != "T-001" || rel.Type != "belongs-to" || rel.To != "sprint-current" {
+	if rel.From != entity.ID || rel.Type != "belongs-to" || rel.To != "sprint-current" {
 		t.Errorf("unexpected relation: %+v", rel)
 	}
 }

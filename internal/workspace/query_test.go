@@ -8,12 +8,13 @@ import (
 )
 
 func TestEntityQueries(t *testing.T) {
+	meta := testutil.WorkspaceMetamodel()
 	g := graph.New()
-	ws := &Workspace{graph: g}
+	ws := &Workspace{graph: g, meta: meta}
 
 	// Add test entities
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Test Requirement").Build())
-	g.AddNode(testutil.Entity("decision").ID("DEC-001").With("title", "Test Decision").Build())
+	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Test Requirement").Build())
+	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Test Decision").Build())
 
 	// Test GetEntity
 	entity, ok := ws.GetEntity("REQ-001")
@@ -55,12 +56,13 @@ func TestEntityQueries(t *testing.T) {
 }
 
 func TestRelationQueries(t *testing.T) {
+	meta := testutil.WorkspaceMetamodel()
 	g := graph.New()
-	ws := &Workspace{graph: g}
+	ws := &Workspace{graph: g, meta: meta}
 
 	// Add entities
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").Build())
-	g.AddNode(testutil.Entity("decision").ID("DEC-001").Build())
+	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
+	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").Build())
 
 	// Add relation
 	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-001").Build())
@@ -100,13 +102,14 @@ func TestRelationQueries(t *testing.T) {
 }
 
 func TestGraphAnalysis(t *testing.T) {
+	meta := testutil.WorkspaceMetamodel()
 	g := graph.New()
-	ws := &Workspace{graph: g}
+	ws := &Workspace{graph: g, meta: meta}
 
 	// Add entities
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").Build())
-	g.AddNode(testutil.Entity("decision").ID("DEC-001").Build())
-	g.AddNode(testutil.Entity("requirement").ID("ORPHAN-001").Build())
+	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
+	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").Build())
+	g.AddNode(testutil.EntityFor(meta, "requirement").ID("ORPHAN-001").Build())
 
 	// Add relation between req and dec
 	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-001").Build())
