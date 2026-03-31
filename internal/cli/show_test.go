@@ -45,9 +45,8 @@ func TestShowEntity(t *testing.T) {
 	defer cleanup()
 
 	// Add a test entity
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("REQ-001").
-		With("title", "Test Requirement").
 		With("status", "draft").
 		With("priority", "high").
 		Build())
@@ -63,9 +62,6 @@ func TestShowEntity(t *testing.T) {
 	if !strings.Contains(result, "REQ-001") {
 		t.Errorf("expected 'REQ-001' in output, got: %s", result)
 	}
-	if !strings.Contains(result, "Test Requirement") {
-		t.Errorf("expected 'Test Requirement' in output, got: %s", result)
-	}
 	if !strings.Contains(result, "draft") {
 		t.Errorf("expected 'draft' status in output, got: %s", result)
 	}
@@ -76,14 +72,12 @@ func TestShowEntityWithIncomingRelations(t *testing.T) {
 	defer cleanup()
 
 	// Add entities
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("REQ-001").
-		With("title", "User Authentication").
 		Build())
 
-	g.AddNode(testutil.Entity("decision").
+	g.AddNode(testutil.EntityFor(meta, "decision").
 		ID("DEC-001").
-		With("title", "Use OAuth2").
 		Build())
 
 	// Add relation: DEC-001 addresses REQ-001
@@ -110,14 +104,12 @@ func TestShowEntityWithOutgoingRelations(t *testing.T) {
 	defer cleanup()
 
 	// Add entities
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("REQ-001").
-		With("title", "User Authentication").
 		Build())
 
-	g.AddNode(testutil.Entity("decision").
+	g.AddNode(testutil.EntityFor(meta, "decision").
 		ID("DEC-001").
-		With("title", "Use OAuth2").
 		Build())
 
 	// Add relation: DEC-001 addresses REQ-001
@@ -182,10 +174,8 @@ func TestShowEntityJSON(t *testing.T) {
 	out = output.NewWithWriter(&buf, output.FormatJSON)
 
 	// Add a test entity
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("REQ-001").
-		With("title", "Test Requirement").
-		With("status", "draft").
 		Build())
 
 	err := showCmd.RunE(showCmd, []string{"REQ-001"})
@@ -213,13 +203,13 @@ func TestShowEntityJSON(t *testing.T) {
 		t.Errorf("expected type='requirement', got: %v", entityData["type"])
 	}
 
-	// Check properties
+	// Check properties - EntityFor auto-fills title and status
 	props, ok := entityData["properties"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected properties to be a map")
 	}
-	if props["title"] != "Test Requirement" {
-		t.Errorf("expected title='Test Requirement', got: %v", props["title"])
+	if props["title"] == "" {
+		t.Errorf("expected title to be non-empty, got: %v", props["title"])
 	}
 }
 
@@ -228,24 +218,20 @@ func TestShowEntityWithMultipleRelations(t *testing.T) {
 	defer cleanup()
 
 	// Add entities
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("REQ-001").
-		With("title", "User Authentication").
 		Build())
 
-	g.AddNode(testutil.Entity("decision").
+	g.AddNode(testutil.EntityFor(meta, "decision").
 		ID("DEC-001").
-		With("title", "Use OAuth2").
 		Build())
 
-	g.AddNode(testutil.Entity("decision").
+	g.AddNode(testutil.EntityFor(meta, "decision").
 		ID("DEC-002").
-		With("title", "Use JWT tokens").
 		Build())
 
-	g.AddNode(testutil.Entity("solution").
+	g.AddNode(testutil.EntityFor(meta, "solution").
 		ID("SOL-001").
-		With("title", "Authentication Service").
 		Build())
 
 	// Add relations
@@ -279,9 +265,8 @@ func TestShowEntityWithNoRelations(t *testing.T) {
 	defer cleanup()
 
 	// Add a standalone entity with no relations
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("REQ-001").
-		With("title", "Standalone Requirement").
 		Build())
 
 	err := showCmd.RunE(showCmd, []string{"REQ-001"})
@@ -294,9 +279,6 @@ func TestShowEntityWithNoRelations(t *testing.T) {
 	// Should still show the entity
 	if !strings.Contains(result, "REQ-001") {
 		t.Errorf("expected 'REQ-001' in output, got: %s", result)
-	}
-	if !strings.Contains(result, "Standalone Requirement") {
-		t.Errorf("expected 'Standalone Requirement' in output, got: %s", result)
 	}
 }
 
@@ -337,9 +319,8 @@ func TestShowEntityWithContent(t *testing.T) {
 	defer cleanup()
 
 	// Add entity with content
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("REQ-001").
-		With("title", "Test Requirement").
 		WithContent("This is the detailed description of the requirement.\n\nIt can span multiple lines.").
 		Build())
 

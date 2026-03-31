@@ -214,7 +214,7 @@ func TestHandleList(t *testing.T) {
 			},
 		}
 		// Add entity with multi-select values as []string
-		app.g.AddNode(testutil.Entity("ticket").ID("TKT-003").With("title", "Multi-select Test").WithList("applies_to", "client", "provider").Build())
+		app.g.AddNode(testutil.EntityFor(app.meta, "ticket").ID("TKT-003").WithList("applies_to", "client", "provider").Build())
 
 		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
 		w := httptest.NewRecorder()
@@ -249,7 +249,7 @@ func TestHandleList(t *testing.T) {
 			},
 		}
 		// Simulate YAML-parsed values ([]interface{})
-		app.g.AddNode(testutil.Entity("ticket").ID("TKT-004").With("title", "YAML Test").With("tags", []interface{}{"bug", "feature"}).Build())
+		app.g.AddNode(testutil.EntityFor(app.meta, "ticket").ID("TKT-004").With("tags", []interface{}{"bug", "feature"}).Build())
 
 		r := httptest.NewRequest(http.MethodGet, "/list/tickets", http.NoBody)
 		w := httptest.NewRecorder()
@@ -397,7 +397,7 @@ func TestHandleList(t *testing.T) {
 
 		// Add more tickets for pagination
 		for i := 3; i <= 5; i++ {
-			app.g.AddNode(testutil.Entity("ticket").ID("TKT-00"+string(rune('0'+i))).With("title", "Ticket "+string(rune('0'+i))).With("status", "open").Build())
+			app.g.AddNode(testutil.EntityFor(app.meta, "ticket").ID("TKT-00"+string(rune('0'+i))).With("status", "open").Build())
 		}
 
 		// Configure list with pagination and filter
@@ -561,7 +561,7 @@ func TestHandleForm(t *testing.T) {
 			},
 		}
 		// Add entity with multi-select values
-		app.g.AddNode(testutil.Entity("ticket").ID("TKT-ROLES").With("title", "Role Test").WithList("roles", "admin", "viewer").Build())
+		app.g.AddNode(testutil.EntityFor(app.meta, "ticket").ID("TKT-ROLES").WithList("roles", "admin", "viewer").Build())
 
 		r := httptest.NewRequest(http.MethodGet, "/form/edit-ticket-roles/TKT-ROLES", http.NoBody)
 		w := httptest.NewRecorder()
@@ -1601,7 +1601,7 @@ func TestHandleLinkCandidates(t *testing.T) {
 	t.Run("filters by search query", func(t *testing.T) {
 		app := newHandlerTestApp(t)
 		// Add a third ticket
-		app.g.AddNode(testutil.Entity("ticket").ID("TKT-003").With("title", "Third Ticket").Build())
+		app.g.AddNode(testutil.EntityFor(app.meta, "ticket").ID("TKT-003").With("title", "Third Ticket").Build())
 
 		r := httptest.NewRequest(http.MethodGet,
 			"/api/link-candidates?relation=depends_on&link_as=to&peer=TKT-001&entity_types=ticket&q=Third",

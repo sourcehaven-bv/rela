@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -39,31 +40,8 @@ func setupRenameTestEnv(t *testing.T) string {
 	os.MkdirAll(filepath.Join(dir, "entities", "requirements"), 0755)
 	os.MkdirAll(filepath.Join(dir, "relations"), 0755)
 
-	// Write metamodel
-	metamodelYAML := `version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    id_prefix: "REQ-"
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-  decision:
-    label: Decision
-    id_prefix: "DEC-"
-    properties:
-      title:
-        type: string
-        required: true
-relations:
-  addresses:
-    label: addresses
-    from: [decision]
-    to: [requirement]
-`
+	// Write metamodel using shared helper
+	metamodelYAML := testutil.SimpleMetamodelYAML()
 	os.WriteFile(projectCtx.MetamodelPath, []byte(metamodelYAML), 0644)
 
 	// Load metamodel

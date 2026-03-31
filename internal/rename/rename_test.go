@@ -11,38 +11,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
-const testMetamodelYAML = `version: "1.0"
-entities:
-  requirement:
-    label: Requirement
-    plural: requirements
-    id_prefix: "REQ-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-  decision:
-    label: Decision
-    plural: decisions
-    id_prefix: "DEC-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-relations:
-  addresses:
-    label: Addresses
-    from: [decision]
-    to: [requirement]
-  depends-on:
-    label: Depends On
-    from: [requirement]
-    to: [requirement]
-`
+// testMetamodelYAML uses the shared rename test metamodel
+var testMetamodelYAML = testutil.RenameTestMetamodelYAML()
 
 func setupTestEnv(t *testing.T) (*repository.Repository, *metamodel.Metamodel, *graph.Graph, storage.FS) {
 	t.Helper()

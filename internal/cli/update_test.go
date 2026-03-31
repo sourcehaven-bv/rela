@@ -71,7 +71,7 @@ func TestUpdateCmd_PropertyFlagParsing(t *testing.T) {
 	setupUpdateTestEnv()
 
 	// Create an existing entity in the graph
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("RB-001").
 		With("title", "Original Title").
 		With("status", "draft").
@@ -143,7 +143,7 @@ func TestUpdateCmd_MultiplePropertiesApplied(t *testing.T) {
 	setupUpdateTestEnv()
 
 	// Create an existing entity in the graph
-	entity := testutil.Entity("control").
+	entity := testutil.EntityFor(meta, "control").
 		ID("CTRL-001").
 		With("title", "Access Control").
 		With("status", "draft").

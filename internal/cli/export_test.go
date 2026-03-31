@@ -50,27 +50,27 @@ func setupTestGraph() {
 	out = output.New(output.FormatTable)
 
 	// Add test entities
-	g.AddNode(testutil.Entity("control").
+	g.AddNode(testutil.EntityFor(meta, "control").
 		ID("CTRL-001").
 		With("title", "Access Control Policy").
 		With("status", "implemented").
 		With("iso27001", "A.5.15").
 		Build())
 
-	g.AddNode(testutil.Entity("control").
+	g.AddNode(testutil.EntityFor(meta, "control").
 		ID("CTRL-002").
 		With("title", "Password Policy").
 		With("status", "draft").
 		With("iso27001", "A.9.4.3").
 		Build())
 
-	g.AddNode(testutil.Entity("risk").
+	g.AddNode(testutil.EntityFor(meta, "risk").
 		ID("RISK-001").
 		With("title", "Unauthorized Access").
 		With("severity", "high").
 		Build())
 
-	g.AddNode(testutil.Entity("evidence").
+	g.AddNode(testutil.EntityFor(meta, "evidence").
 		ID("EV-001").
 		With("title", "Access Control Audit Report").
 		With("valid_until", "2025-12-31").

@@ -38,17 +38,17 @@ func setupGraphTestGraph() {
 	out = output.New(output.FormatTable)
 
 	// Add test entities
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("REQ-001").
 		With("title", "First Requirement").
 		Build())
 
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("REQ-002").
 		With("title", "Second Requirement").
 		Build())
 
-	g.AddNode(testutil.Entity("decision").
+	g.AddNode(testutil.EntityFor(meta, "decision").
 		ID("DEC-001").
 		With("title", "Important Decision").
 		Build())
