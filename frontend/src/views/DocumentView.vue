@@ -1,0 +1,369 @@
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useSchemaStore, useUIStore } from '@/stores'
+import { renderDocument } from '@/api/documents'
+import { useEvents } from '@/composables/useEvents'
+import DOMPurify from 'dompurify'
+
+const props = defineProps<{
+  name: string
+  entityId: string
+}>()
+
+const route = useRoute()
+const router = useRouter()
+const schemaStore = useSchemaStore()
+const uiStore = useUIStore()
+const { on, off } = useEvents()
+
+// State
+const docContent = ref<string>('')
+const loading = ref(true)
+const isCached = ref(false)
+const entityIds = ref<string[]>([])
+
+// Sanitized content for safe rendering
+const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
+
+// Get document config
+const docConfig = computed(() => schemaStore.documents.get(props.name))
+const docTitle = computed(() => {
+  if (docConfig.value?.title) return docConfig.value.title
+  return props.name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
+})
+
+// Navigation from list context
+const fromList = computed(() => route.query.from as string | undefined)
+
+async function loadDocument(refresh = false) {
+  loading.value = true
+  docContent.value = ''
+
+  try {
+    const result = await renderDocument(props.name, props.entityId, refresh)
+    docContent.value = result.html
+    isCached.value = result.cached
+    entityIds.value = result.entity_ids || []
+  } catch {
+    uiStore.error('Failed to render document')
+    docContent.value = ''
+    entityIds.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+function goBack() {
+  if (fromList.value) {
+    router.push(`/list/${fromList.value}`)
+  } else {
+    router.back()
+  }
+}
+
+// Handle entity change events via centralized SSE
+function handleEntityChange(data: { id?: string }) {
+  if (data.id && entityIds.value.includes(data.id)) {
+    loadDocument(true)
+  }
+}
+
+// Load on mount and watch for prop changes
+watch([() => props.name, () => props.entityId], () => {
+  loadDocument()
+}, { immediate: true })
+
+onMounted(() => {
+  on('entity:created', handleEntityChange)
+  on('entity:updated', handleEntityChange)
+  on('entity:deleted', handleEntityChange)
+})
+
+onUnmounted(() => {
+  off('entity:created', handleEntityChange)
+  off('entity:updated', handleEntityChange)
+  off('entity:deleted', handleEntityChange)
+})
+</script>
+
+<template>
+  <div class="document-view">
+    <header class="page-header">
+      <div class="header-left">
+        <button class="btn btn-secondary" @click="goBack">
+          Back <kbd>Esc</kbd>
+        </button>
+      </div>
+      <h1>{{ docTitle }}: {{ entityId }}</h1>
+      <div class="header-right">
+        <button
+          class="btn btn-secondary"
+          :disabled="loading"
+          @click="loadDocument(true)"
+        >
+          <span v-if="loading" class="spinner-sm" />
+          <span v-else>Refresh</span>
+        </button>
+      </div>
+    </header>
+
+    <div v-if="loading && !docContent" class="loading-state">
+      <div class="spinner" />
+      <span>Rendering document...</span>
+    </div>
+
+    <div v-else-if="docContent" class="document-content">
+      <div v-if="isCached" class="cached-badge">cached</div>
+      <div class="document-body" v-html="sanitizedContent" />
+    </div>
+
+    <div v-else class="empty-state">
+      <p>No document content available</p>
+      <p class="muted">Document "{{ name }}" may not be configured or the entity "{{ entityId }}" may not exist.</p>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.document-view {
+  max-width: 1000px;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  gap: 16px;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 24px;
+  flex: 1;
+  text-align: center;
+}
+
+.header-left,
+.header-right {
+  min-width: 120px;
+}
+
+.header-right {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: var(--border-color, #e2e8f0);
+  color: var(--text-color, #1e293b);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  filter: brightness(0.9);
+}
+
+.loading-state,
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 96px 48px;
+  gap: 16px;
+  color: var(--muted-text);
+  background: var(--card-bg);
+  border-radius: 8px;
+}
+
+.muted {
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.spinner-sm {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.document-content {
+  position: relative;
+  background: var(--card-bg);
+  border-radius: 8px;
+  padding: 32px;
+}
+
+.cached-badge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 2px 8px;
+  background: var(--hover-bg);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted-text);
+  text-transform: uppercase;
+}
+
+.document-body {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-color);
+}
+
+/* Style injected HTML content */
+.document-body :deep(h1),
+.document-body :deep(h2),
+.document-body :deep(h3) {
+  margin: 24px 0 12px;
+  color: var(--text-color);
+}
+
+.document-body :deep(h1:first-child),
+.document-body :deep(h2:first-child),
+.document-body :deep(h3:first-child) {
+  margin-top: 0;
+}
+
+.document-body :deep(h1) {
+  font-size: 28px;
+}
+
+.document-body :deep(h2) {
+  font-size: 22px;
+}
+
+.document-body :deep(h3) {
+  font-size: 18px;
+}
+
+.document-body :deep(p) {
+  margin: 0 0 16px;
+}
+
+.document-body :deep(ul),
+.document-body :deep(ol) {
+  margin: 0 0 16px;
+  padding-left: 24px;
+}
+
+.document-body :deep(li) {
+  margin-bottom: 6px;
+}
+
+.document-body :deep(pre) {
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 16px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+
+.document-body :deep(code) {
+  background: var(--hover-bg);
+  color: var(--text-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.document-body :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+
+.document-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+}
+
+.document-body :deep(th),
+.document-body :deep(td) {
+  padding: 10px 14px;
+  text-align: left;
+  border: 1px solid var(--border-color);
+}
+
+.document-body :deep(th) {
+  background: var(--hover-bg);
+  font-weight: 600;
+}
+
+.document-body :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 32px 0;
+}
+
+.document-body :deep(blockquote) {
+  margin: 16px 0;
+  padding: 16px 20px;
+  background: var(--hover-bg);
+  border-left: 4px solid var(--accent-color);
+  color: var(--muted-text);
+}
+
+.document-body :deep(img) {
+  max-width: 100%;
+  height: auto;
+}
+
+.document-body :deep(a) {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+.document-body :deep(a:hover) {
+  text-decoration: underline;
+}
+
+kbd {
+  padding: 2px 6px;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+}
+</style>

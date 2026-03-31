@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func TestV1SchemaEndpoint(t *testing.T) {
@@ -1988,9 +1989,12 @@ func newTestAppV1(t *testing.T) *App {
 		Navigation: []dataentryconfig.NavigationEntry{},
 	}
 
+	ws := workspace.NewForTest(g, meta)
+
 	return &App{
 		meta: meta,
 		g:    g,
+		ws:   ws,
 		Cfg:  cfg,
 	}
 }

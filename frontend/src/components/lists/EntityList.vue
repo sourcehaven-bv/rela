@@ -208,6 +208,17 @@ function handlePageChange(page: number) {
   loadEntities()
 }
 
+// Resolve a link configuration value to a path (mirrors backend resolveLinkTarget)
+function resolveLinkTarget(link: string, entityType: string, entityId: string): string {
+  if (!link) return ''
+  if (link === 'detail') return `/entity/${entityType}/${entityId}`
+  if (link.startsWith('document/')) {
+    const docName = link.slice('document/'.length)
+    return `/document/${docName}/${entityId}`
+  }
+  return ''
+}
+
 function navigateToEntity(entity: Entity) {
   // Build query params to preserve navigation context
   const query: Record<string, string> = {
@@ -233,10 +244,21 @@ function navigateToEntity(entity: Entity) {
     }
   }
 
-  // Use detail_view if configured, otherwise entity detail page
-  const path = listConfig.value?.detail_view
-    ? `/view/${listConfig.value.detail_view}/${entity.id}`
-    : `/entity/${entity.type}/${entity.id}`
+  // Check for column-level link first (use first column with link)
+  const columnWithLink = listConfig.value?.columns?.find((col) => col.link)
+  const columnLink = columnWithLink?.link
+    ? resolveLinkTarget(columnWithLink.link, entity.type, entity.id)
+    : ''
+
+  // Priority: column link > detail_view > entity detail page
+  let path: string
+  if (columnLink) {
+    path = columnLink
+  } else if (listConfig.value?.detail_view) {
+    path = `/view/${listConfig.value.detail_view}/${entity.id}`
+  } else {
+    path = `/entity/${entity.type}/${entity.id}`
+  }
 
   router.push({ path, query })
 }

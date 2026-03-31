@@ -72,6 +72,12 @@ const routes: RouteRecordRaw[] = [
     name: 'conflicts',
     component: () => import('@/views/ConflictsView.vue'),
   },
+  {
+    path: '/document/:name/:entityId',
+    name: 'document',
+    component: () => import('@/views/DocumentView.vue'),
+    props: true,
+  },
 ]
 
 const router = createRouter({
