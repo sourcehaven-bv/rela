@@ -279,6 +279,7 @@ deps:
       - metamodel
       - workspace
     canUse:
+      - goldmark
       - gopherlua
   search:
     mayDependOn:

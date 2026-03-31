@@ -8,6 +8,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
+var scriptOutputDir string
+
 var scriptCmd = &cobra.Command{
 	Use:   "script <file.lua> [args...]",
 	Short: "Execute a Lua script against the graph",
@@ -39,7 +41,7 @@ Schema introspection:
 
 Output functions:
   rela.output(data)                Output data as JSON to stdout
-  rela.write_file(path, content)   Write content to file
+  rela.write_file(path, content)   Write content to file (relative to --output-dir)
 
 Context:
   rela.args                        Script arguments (table)
@@ -47,13 +49,19 @@ Context:
 
 Example:
   rela script scripts/export.lua
-  rela script scripts/report.lua --format=json`,
+  rela script scripts/report.lua --format=json
+  rela script scripts/docs.lua --output-dir=/path/to/docs`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		scriptPath := args[0]
 		scriptArgs := args[1:]
 
-		runtime := lua.New(ws, meta, projectCtx.Root, os.Stdout)
+		var opts []lua.Option
+		if scriptOutputDir != "" {
+			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
+		}
+
+		runtime := lua.New(ws, meta, projectCtx.Root, os.Stdout, opts...)
 		defer runtime.Close()
 
 		return runtime.RunFile(scriptPath, scriptArgs)
@@ -61,5 +69,7 @@ Example:
 }
 
 func init() {
+	scriptCmd.Flags().StringVar(&scriptOutputDir, "output-dir", "",
+		"Directory for write_file output (default: {project}/output)")
 	rootCmd.AddCommand(scriptCmd)
 }
