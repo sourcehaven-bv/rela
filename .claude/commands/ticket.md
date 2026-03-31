@@ -1,3 +1,4 @@
+<!-- @managed: claude-workflow v1 -->
 # Create and Start Ticket
 
 You are helping the user create and work on a new ticket. The user has described what they want: $ARGUMENTS
@@ -31,28 +32,33 @@ Transition ticket to `planning` status. **Automation will create planning-checkl
 ### Work through planning with DOCUMENTATION (not just checkboxes):
 
 **Understanding:**
+
 - Clarify the problem/requirements - ASK USER if anything is unclear
 - Define scope explicitly - document what IS and IS NOT in scope
 - Write specific acceptance criteria with test scenarios
 
 **Approach:**
+
 - Research the codebase thoroughly (use Explore agent if needed)
 - Document the technical approach in detail
 - List specific files that will be modified
 - Consider and document alternatives
 
 **Test Plan:**
+
 - Document how EACH acceptance criterion will be tested
 - List specific edge cases and expected behavior
 - Define integration test approach (not just unit tests)
 
 **Risk Assessment:**
+
 - Identify risks with mitigations
 - Estimate effort
 
 ### STOP AND PRESENT PLAN TO USER
 
 Before proceeding to implementation:
+
 1. Mark planning checklist as `done` (with all documentation filled in)
 2. Present the plan summary to the user
 3. ASK: "Does this plan look correct? Any concerns before I implement?"
@@ -65,17 +71,20 @@ Transition ticket to `in-progress`. **Automation will create implementation-chec
 ### Implementation requirements:
 
 **Development:**
+
 - Write unit tests for new code
 - Write integration tests (test the full flow, not just units)
 - Implement the feature
 - Handle ALL edge cases from planning
 
 **Manual Verification (REQUIRED):**
+
 - Test the feature end-to-end manually
 - Verify EACH acceptance criterion
 - Document verification evidence in the checklist
 
 **Quality:**
+
 - Check code follows project patterns
 - Ensure no silent failures (errors must be surfaced, not just logged)
 
@@ -93,11 +102,13 @@ Transition ticket to `review`. **Automation will create review-checklist automat
 ### Review requirements:
 
 **Automated Checks:**
+
 - Run `just test` - all must pass
 - Run `just lint` - must be clean
 - Run `just coverage-check` - must pass
 
 **Code Review (REQUIRED):**
+
 - Use the `cranky-code-reviewer` agent to review the code
 - For EACH finding from the reviewer:
   1. Create a `review-response` entity with:
@@ -116,6 +127,7 @@ Transition ticket to `review`. **Automation will create review-checklist automat
 - Document review summary in checklist
 
 **Acceptance Verification:**
+
 - Verify each acceptance criterion from planning
 - Document PASS/FAIL with evidence for each
 

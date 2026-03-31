@@ -12,6 +12,14 @@ status: pending
 - [ ] Edge cases from planning handled
 - [ ] Error handling in place (errors surfaced, not swallowed)
 
+## Test Quality
+
+- [ ] Using fixture builders or factories for test data
+- [ ] No hardcoded values in assertions when object is in scope
+- [ ] Only specifying values that matter for the test
+- [ ] Interpolated values constructed from objects, not hardcoded
+- [ ] Property comparisons use original object, not hardcoded strings
+
 ## Manual Verification
 
 - [ ] Feature manually tested end-to-end
