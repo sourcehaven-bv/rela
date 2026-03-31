@@ -1385,3 +1385,334 @@ func TestSetArgs(t *testing.T) {
 		t.Errorf("Expected [arg1, arg2, arg3], got %v", result)
 	}
 }
+
+func TestSortEntities_ByStringProperty(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	// Tickets have statuses "open" and "done" - sort by status
+	script := `
+local tickets = rela.list_entities("ticket")
+local sorted = rela.sort_entities(tickets, "status")
+local result = {}
+for i, e in ipairs(sorted) do
+    result[i] = e.properties.status
+end
+rela.output(result)
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result []interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	// "done" < "open" alphabetically
+	if len(result) != 2 || result[0] != "done" || result[1] != "open" {
+		t.Errorf("Expected [done, open], got %v", result)
+	}
+}
+
+func TestSortEntities_ByNumericProperty(t *testing.T) {
+	// Create workspace with entities that have numeric-like order property
+	g := graph.New()
+	g.AddNode(&model.Entity{
+		ID:   "DOC-001",
+		Type: "doc",
+		Properties: map[string]interface{}{
+			"title": "Third",
+			"order": "3",
+		},
+	})
+	g.AddNode(&model.Entity{
+		ID:   "DOC-002",
+		Type: "doc",
+		Properties: map[string]interface{}{
+			"title": "First",
+			"order": "1",
+		},
+	})
+	g.AddNode(&model.Entity{
+		ID:   "DOC-003",
+		Type: "doc",
+		Properties: map[string]interface{}{
+			"title": "Second",
+			"order": "2",
+		},
+	})
+	g.AddNode(&model.Entity{
+		ID:   "DOC-010",
+		Type: "doc",
+		Properties: map[string]interface{}{
+			"title": "Tenth",
+			"order": "10",
+		},
+	})
+
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"doc": {
+				IDPrefix: "DOC",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string"},
+					"order": {Type: "string"},
+				},
+			},
+		},
+	}
+	ws := workspace.NewForTest(g, meta)
+
+	var buf bytes.Buffer
+	r := New(ws, meta, "/tmp", &buf)
+	defer r.Close()
+
+	script := `
+local docs = rela.list_entities("doc")
+local sorted = rela.sort_entities(docs, "order")
+local result = {}
+for i, e in ipairs(sorted) do
+    result[i] = e.properties.order
+end
+rela.output(result)
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result []interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	// Should sort numerically: 1, 2, 3, 10 (not lexicographically: 1, 10, 2, 3)
+	expected := []string{"1", "2", "3", "10"}
+	if len(result) != len(expected) {
+		t.Fatalf("Expected %d items, got %d", len(expected), len(result))
+	}
+	for i, exp := range expected {
+		if result[i] != exp {
+			t.Errorf("At index %d: expected %s, got %v", i, exp, result[i])
+		}
+	}
+}
+
+func TestSortEntities_Descending(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	script := `
+local tickets = rela.list_entities("ticket")
+local sorted = rela.sort_entities(tickets, "status", "desc")
+local result = {}
+for i, e in ipairs(sorted) do
+    result[i] = e.properties.status
+end
+rela.output(result)
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result []interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	// Descending: "open" before "done"
+	if len(result) != 2 || result[0] != "open" || result[1] != "done" {
+		t.Errorf("Expected [open, done], got %v", result)
+	}
+}
+
+func TestSortEntities_EmptyProperty(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	script := `rela.sort_entities({}, "")`
+	err := r.RunString(script)
+	if err == nil {
+		t.Fatal("Expected error for empty property")
+	}
+	if !strings.Contains(err.Error(), "property cannot be empty") {
+		t.Errorf("Expected 'property cannot be empty' error, got: %v", err)
+	}
+}
+
+func TestEntityProp(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	script := `
+local e = rela.get_entity("TKT-001")
+rela.output({
+    title = e:prop("title", "default"),
+    missing = e:prop("nonexistent", "fallback"),
+    status = e:prop("status")
+})
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if result["title"] != "Test Ticket" {
+		t.Errorf("Expected title='Test Ticket', got %v", result["title"])
+	}
+	if result["missing"] != "fallback" {
+		t.Errorf("Expected missing='fallback', got %v", result["missing"])
+	}
+	if result["status"] != "open" {
+		t.Errorf("Expected status='open', got %v", result["status"])
+	}
+}
+
+func TestEntityProp_EmptyStringUsesDefault(t *testing.T) {
+	// Create entity with empty string property
+	g := graph.New()
+	g.AddNode(&model.Entity{
+		ID:   "TEST-001",
+		Type: "test",
+		Properties: map[string]interface{}{
+			"title":   "Has Title",
+			"summary": "", // empty string
+		},
+	})
+
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"test": {
+				IDPrefix: "TEST",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":   {Type: "string"},
+					"summary": {Type: "string"},
+				},
+			},
+		},
+	}
+	ws := workspace.NewForTest(g, meta)
+
+	var buf bytes.Buffer
+	r := New(ws, meta, "/tmp", &buf)
+	defer r.Close()
+
+	script := `
+local e = rela.get_entity("TEST-001")
+rela.output({
+    summary = e:prop("summary", "no summary")
+})
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	// Empty string should use default
+	if result["summary"] != "no summary" {
+		t.Errorf("Expected summary='no summary', got %v", result["summary"])
+	}
+}
+
+func TestWriteFile_EnsureNewline(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	projectRoot := t.TempDir()
+	r := New(ws, ws.Meta(), projectRoot, &buf)
+	defer r.Close()
+
+	// Write without trailing newline, but with ensure_newline option
+	script := `rela.write_file("test.txt", "no newline", {ensure_newline = true})`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	outFile := filepath.Join(projectRoot, "output", "test.txt")
+	content, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	if string(content) != "no newline\n" {
+		t.Errorf("Expected 'no newline\\n', got %q", string(content))
+	}
+}
+
+func TestWriteFile_EnsureNewline_AlreadyHasNewline(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	projectRoot := t.TempDir()
+	r := New(ws, ws.Meta(), projectRoot, &buf)
+	defer r.Close()
+
+	// Write with trailing newline and ensure_newline option - should not double
+	script := `rela.write_file("test.txt", "has newline\n", {ensure_newline = true})`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	outFile := filepath.Join(projectRoot, "output", "test.txt")
+	content, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	if string(content) != "has newline\n" {
+		t.Errorf("Expected 'has newline\\n', got %q", string(content))
+	}
+}
+
+func TestWriteFile_EnsureNewline_EmptyContent(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	projectRoot := t.TempDir()
+	r := New(ws, ws.Meta(), projectRoot, &buf)
+	defer r.Close()
+
+	// Empty content should stay empty even with ensure_newline
+	script := `rela.write_file("empty.txt", "", {ensure_newline = true})`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	outFile := filepath.Join(projectRoot, "output", "empty.txt")
+	content, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	if len(content) != 0 {
+		t.Errorf("Expected empty string, got %q", string(content))
+	}
+}

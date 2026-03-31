@@ -204,6 +204,9 @@ func (r *Runtime) registerBindings() {
 	r.L.SetField(rela, "get_entity_types", r.L.NewFunction(r.luaGetEntityTypes))
 	r.L.SetField(rela, "get_relation_types", r.L.NewFunction(r.luaGetRelationTypes))
 
+	// Utility functions
+	r.L.SetField(rela, "sort_entities", r.L.NewFunction(r.luaSortEntities))
+
 	// Context
 	r.L.SetField(rela, "project_root", lua.LString(r.projectRoot))
 	r.L.SetField(rela, "args", r.L.NewTable()) // Will be set before running script
@@ -376,9 +379,11 @@ func (r *Runtime) luaOutput(ls *lua.LState) int {
 // defaultOutputDir is the default directory where Lua scripts can write files.
 const defaultOutputDir = "output"
 
-// luaWriteFile implements rela.write_file(path, content)
+// luaWriteFile implements rela.write_file(path, content, opts?)
 // Files can ONLY be written to the configured output directory for security.
 // Path is relative to output dir (e.g., "report.txt" -> "{output}/report.txt").
+// Options:
+//   - ensure_newline: boolean - ensure content ends with a newline (default: false)
 func (r *Runtime) luaWriteFile(ls *lua.LState) int {
 	path := ls.CheckString(1)
 	content := ls.CheckString(2)
@@ -386,6 +391,22 @@ func (r *Runtime) luaWriteFile(ls *lua.LState) int {
 	if path == "" {
 		ls.RaiseError("write_file: path cannot be empty")
 		return 0
+	}
+
+	// Parse options if provided
+	ensureNewline := false
+	if ls.GetTop() >= 3 && ls.Get(3).Type() == lua.LTTable {
+		opts := ls.CheckTable(3)
+		if v := opts.RawGetString("ensure_newline"); v != lua.LNil {
+			if b, ok := v.(lua.LBool); ok {
+				ensureNewline = bool(b)
+			}
+		}
+	}
+
+	// Ensure content ends with newline if requested
+	if ensureNewline && content != "" && content[len(content)-1] != '\n' {
+		content += "\n"
 	}
 
 	// Validate the path is local (no "..", no absolute paths)
@@ -426,6 +447,7 @@ func (r *Runtime) luaWriteFile(ls *lua.LState) int {
 }
 
 // entityToTable converts a model.Entity to a Lua table.
+// The returned table has a metatable with a prop(name, default) method.
 func entityToTable(ls *lua.LState, e *model.Entity) *lua.LTable {
 	t := ls.NewTable()
 	t.RawSetString("id", lua.LString(e.ID))
@@ -438,7 +460,43 @@ func entityToTable(ls *lua.LState, e *model.Entity) *lua.LTable {
 	}
 	t.RawSetString("properties", props)
 
+	// Add prop(name, default) method via a function field
+	t.RawSetString("prop", ls.NewFunction(luaEntityProp))
+
 	return t
+}
+
+// luaEntityProp implements entity:prop(name, default) -> value
+// Returns the property value or the default if not set/empty.
+func luaEntityProp(ls *lua.LState) int {
+	// Get self (the entity table) - first argument in method call
+	self := ls.CheckTable(1)
+	name := ls.CheckString(2)
+	defaultVal := ls.Get(3) // optional, can be nil
+
+	// Get properties table
+	propsVal := self.RawGetString("properties")
+	props, ok := propsVal.(*lua.LTable)
+	if !ok {
+		ls.Push(defaultVal)
+		return 1
+	}
+
+	// Get the property value
+	val := props.RawGetString(name)
+
+	// Return default if nil or empty string
+	if val == lua.LNil {
+		ls.Push(defaultVal)
+		return 1
+	}
+	if str, ok := val.(lua.LString); ok && string(str) == "" {
+		ls.Push(defaultVal)
+		return 1
+	}
+
+	ls.Push(val)
+	return 1
 }
 
 // relationToTable converts a model.Relation to a Lua table.
@@ -903,4 +961,105 @@ func (r *Runtime) luaGetRelationTypes(ls *lua.LState) int {
 
 	ls.Push(result)
 	return 1
+}
+
+// sortableEntry holds an entity table and its sort key for sorting.
+type sortableEntry struct {
+	value lua.LValue
+	prop  lua.LValue
+}
+
+// luaSortEntities implements rela.sort_entities(entities, property, direction?) -> table
+// Sorts a list of entity tables by a property value.
+// Direction is optional: "asc" (default) or "desc".
+// Handles numeric comparison for property values that look like numbers.
+func (r *Runtime) luaSortEntities(ls *lua.LState) int {
+	entitiesTable := ls.CheckTable(1)
+	property := ls.CheckString(2)
+	direction := ls.OptString(3, "asc")
+
+	if property == "" {
+		ls.RaiseError("sort_entities: property cannot be empty")
+		return 0
+	}
+
+	descending := direction == "desc"
+
+	// Collect entities into a slice for sorting
+	entries := make([]sortableEntry, 0, entitiesTable.Len())
+
+	for i := 1; i <= entitiesTable.Len(); i++ {
+		v := entitiesTable.RawGetInt(i)
+		tbl, ok := v.(*lua.LTable)
+		if !ok {
+			continue
+		}
+		props := tbl.RawGetString("properties")
+		propVal := lua.LNil
+		if propsTbl, ok := props.(*lua.LTable); ok {
+			propVal = propsTbl.RawGetString(property)
+		}
+		entries = append(entries, sortableEntry{value: v, prop: propVal})
+	}
+
+	// Sort entries using bubble sort (sufficient for typical entity counts)
+	sortEntries(entries, descending)
+
+	// Build result table
+	result := ls.NewTable()
+	for i, entry := range entries {
+		result.RawSetInt(i+1, entry.value)
+	}
+
+	ls.Push(result)
+	return 1
+}
+
+// sortEntries sorts entity entries by their property value using bubble sort.
+func sortEntries(entries []sortableEntry, descending bool) {
+	for i := 0; i < len(entries)-1; i++ {
+		for j := 0; j < len(entries)-i-1; j++ {
+			if shouldSwapEntries(entries[j].prop, entries[j+1].prop, descending) {
+				entries[j], entries[j+1] = entries[j+1], entries[j]
+			}
+		}
+	}
+}
+
+// shouldSwapEntries returns true if entries should be swapped for the desired order.
+func shouldSwapEntries(a, b lua.LValue, descending bool) bool {
+	aStr, aNum, aIsNum := luaValueToSortable(a)
+	bStr, bNum, bIsNum := luaValueToSortable(b)
+
+	var aLess bool
+	if aIsNum && bIsNum {
+		aLess = aNum < bNum
+	} else {
+		aLess = aStr < bStr
+	}
+
+	if descending {
+		return aLess // swap if a < b (we want larger first)
+	}
+	return !aLess && (aStr != bStr || aNum != bNum) // swap if a > b
+}
+
+// luaValueToSortable converts a Lua value to sortable string and number representations.
+func luaValueToSortable(v lua.LValue) (str string, num float64, isNum bool) {
+	switch val := v.(type) {
+	case lua.LNumber:
+		return "", float64(val), true
+	case lua.LString:
+		s := string(val)
+		// Try to parse as number for numeric sorting
+		var n float64
+		if _, err := fmt.Sscanf(s, "%f", &n); err == nil {
+			return s, n, true
+		}
+		return s, 0, false
+	case *lua.LNilType:
+		return "", math.MaxFloat64, false // nil sorts last
+	default:
+		return v.String(), 0, false
+	}
 }

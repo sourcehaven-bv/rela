@@ -10,34 +10,6 @@
 -- For README.md, run with --output-dir=.. and pass "readme" as first argument:
 --   rela script generate-docs.lua --output-dir=.. readme
 
--- Helper: Ensure string ends with newline
-local function ensure_newline(s)
-    if s:sub(-1) ~= "\n" then
-        return s .. "\n"
-    end
-    return s
-end
-
--- Helper: Sort entities by a property
-local function sort_by(entities, prop)
-    local sorted = {}
-    for _, e in ipairs(entities) do
-        table.insert(sorted, e)
-    end
-    table.sort(sorted, function(a, b)
-        local va = a.properties[prop] or ""
-        local vb = b.properties[prop] or ""
-        -- Handle numeric comparison for 'order'
-        if prop == "order" then
-            local na = tonumber(va) or 999
-            local nb = tonumber(vb) or 999
-            return na < nb
-        end
-        return va < vb
-    end)
-    return sorted
-end
-
 -- Helper: Remove prefix from ID (e.g., "GUIDE-concepts" -> "concepts")
 local function remove_prefix(id)
     return id:gsub("^[A-Z]+%-", "")
@@ -45,14 +17,14 @@ end
 
 -- Generate a single doc page (guide, tutorial, or scenario)
 local function generate_doc_page(entity, output_path)
-    local title = entity.properties.title or entity.id
+    local title = entity:prop("title", entity.id)
     local content = entity.content or ""
 
     local doc = "<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->\n\n"
     doc = doc .. "# " .. title .. "\n\n"
     doc = doc .. content
 
-    rela.write_file(output_path, ensure_newline(doc))
+    rela.write_file(output_path, doc, {ensure_newline = true})
 end
 
 -- Generate guide pages (output to --output-dir root)
@@ -102,9 +74,9 @@ end
 
 -- Generate README.md with dynamic entity lists
 local function generate_readme(output_path)
-    local guides = sort_by(rela.list_entities("guide"), "order")
-    local tutorials = sort_by(rela.list_entities("tutorial"), "id")
-    local scenarios = sort_by(rela.list_entities("scenario"), "id")
+    local guides = rela.sort_entities(rela.list_entities("guide"), "order")
+    local tutorials = rela.sort_entities(rela.list_entities("tutorial"), "id")
+    local scenarios = rela.sort_entities(rela.list_entities("scenario"), "id")
 
     local readme = [[<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
 
@@ -182,8 +154,8 @@ go build -o rela ./cmd/rela
     -- Add guide entries
     for _, guide in ipairs(guides) do
         local slug = remove_prefix(guide.id)
-        local title = guide.properties.title or guide.id
-        local summary = guide.properties.summary or ""
+        local title = guide:prop("title", guide.id)
+        local summary = guide:prop("summary", "")
         readme = readme .. "| [" .. title .. "](docs/" .. slug .. ".md) | " .. summary .. " |\n"
     end
 
@@ -198,8 +170,8 @@ go build -o rela ./cmd/rela
     -- Add tutorial entries
     for _, tutorial in ipairs(tutorials) do
         local slug = remove_prefix(tutorial.id)
-        local title = tutorial.properties.title or tutorial.id
-        local summary = tutorial.properties.summary or ""
+        local title = tutorial:prop("title", tutorial.id)
+        local summary = tutorial:prop("summary", "")
         readme = readme .. "| [" .. title .. "](docs/tutorials/" .. slug .. ".md) | " .. summary .. " |\n"
     end
 
@@ -214,8 +186,8 @@ go build -o rela ./cmd/rela
     -- Add scenario entries
     for _, scenario in ipairs(scenarios) do
         local slug = remove_prefix(scenario.id)
-        local title = scenario.properties.title or scenario.id
-        local summary = scenario.properties.summary or ""
+        local title = scenario:prop("title", scenario.id)
+        local summary = scenario:prop("summary", "")
         readme = readme .. "| [" .. title .. "](docs/scenarios/" .. slug .. ".md) | " .. summary .. " |\n"
     end
 
@@ -252,7 +224,7 @@ Use `rela analyze coverage` to check for gaps in this chain.
 AGPL-3.0 - See [LICENSE](LICENSE) for details.
 ]]
 
-    rela.write_file(output_path, ensure_newline(readme))
+    rela.write_file(output_path, readme, {ensure_newline = true})
 end
 
 -- Main execution
