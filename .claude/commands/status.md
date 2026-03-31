@@ -1,3 +1,4 @@
+<!-- @managed: claude-workflow v1 -->
 # Checklist Status
 
 Check the workflow progress for a ticket or bug.
@@ -28,7 +29,7 @@ If $ARGUMENTS is provided, look up that specific ticket/bug ID. Otherwise, ask t
 
 Display a progress summary:
 
-```
+```text
 Ticket: TKT-123 - Add dark mode toggle
 Status: in-progress
 

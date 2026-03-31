@@ -1,3 +1,4 @@
+<!-- @managed: claude-workflow v1 -->
 # Pre-Completion Review
 
 Perform self-review before marking a ticket/bug as done.
@@ -19,6 +20,7 @@ Mark each as done in the review checklist.
 ## Code Review
 
 Run `/code-review` to invoke the cranky-code-reviewer agent. This will:
+
 - Perform thorough code review of changes
 - Create `review-response` entities for each finding
 - Link findings to the current ticket
@@ -37,18 +39,18 @@ Run `/code-review` to invoke the cranky-code-reviewer agent. This will:
 - [ ] Acceptance criteria from planning checklist are met
 - [ ] Works as expected when tested locally
 
-## Documentation (for enhancements/docs tickets)
+## Documentation (REQUIRED for enhancements)
 
-If this is an enhancement or docs ticket:
+**For enhancement tickets (kind=enhancement), you MUST:**
 
-1. Create `docs-checklist` from template
-2. Link via `has-docs` relation
-3. Update relevant documentation:
-   - [ ] Comments where logic isn't obvious
-   - [ ] README if applicable
-   - [ ] CLAUDE.md if new patterns
-   - [ ] CLI help text if commands changed
-   - [ ] Changelog entry
+1. Create `docs-checklist` entity from template
+2. Link to ticket via `has-docs` relation
+3. Update user-facing documentation per planning checklist
+4. Mark docs-checklist as `done`
+
+Check the planning checklist's "Documentation Impact" section for which docs need updating.
+
+Skip this section only for bugs and internal refactors.
 
 ## Completion
 

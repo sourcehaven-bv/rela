@@ -1,3 +1,4 @@
+<!-- @managed: claude-workflow v1 -->
 # Create and Analyze Bug
 
 You are helping the user report and analyze a bug. The user has described the issue: $ARGUMENTS
@@ -54,6 +55,7 @@ Update the bug entity with your findings in the why1-why5 properties.
 ## Step 6: Ready for Implementation
 
 Once analysis is complete:
+
 1. Mark analysis checklist as `done`
 2. Transition bug to `in-progress` (automation creates implementation-checklist)
 3. Present the analysis and fix plan to the user

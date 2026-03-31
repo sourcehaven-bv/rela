@@ -1,3 +1,4 @@
+<!-- @managed: claude-workflow v1 -->
 # Implement Ticket/Bug
 
 Continue implementation on the current ticket or bug.
@@ -12,12 +13,14 @@ The implementation-checklist was created automatically when status changed to `i
 Work through the implementation checklist (auto-created by automation):
 
 ### Development
+
 - [ ] Write tests first (TDD where applicable)
 - [ ] Implement the happy path
 - [ ] Handle edge cases identified in planning
 - [ ] Add error handling
 
 ### Quality
+
 - [ ] Code follows project style
 - [ ] No security issues introduced
 - [ ] Performance is acceptable

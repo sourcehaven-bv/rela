@@ -1,3 +1,4 @@
+<!-- @managed: claude-workflow v1 -->
 # Skip Checklist Item
 
 Skip a checklist item with a documented reason.
