@@ -259,6 +259,9 @@ func TestGetEntity(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
+	// Get reference entity for assertions
+	entity, _ := ws.GetEntity("TKT-001")
+
 	r := New(ws, ws.Meta(), "/tmp", &buf)
 	defer r.Close()
 
@@ -285,17 +288,17 @@ rela.output({
 		t.Fatalf("Failed to parse output: %v", err)
 	}
 
-	if result["id"] != "TKT-001" {
-		t.Errorf("Expected id=TKT-001, got %v", result["id"])
+	if result["id"] != entity.ID {
+		t.Errorf("Expected id=%s, got %v", entity.ID, result["id"])
 	}
-	if result["type"] != "ticket" {
-		t.Errorf("Expected type=ticket, got %v", result["type"])
+	if result["type"] != entity.Type {
+		t.Errorf("Expected type=%s, got %v", entity.Type, result["type"])
 	}
-	if result["title"] != "Test Ticket" {
-		t.Errorf("Expected title=Test Ticket, got %v", result["title"])
+	if result["title"] != entity.Properties["title"] {
+		t.Errorf("Expected title=%v, got %v", entity.Properties["title"], result["title"])
 	}
-	if result["content"] != "Test content" {
-		t.Errorf("Expected content=Test content, got %v", result["content"])
+	if result["content"] != entity.Content {
+		t.Errorf("Expected content=%s, got %v", entity.Content, result["content"])
 	}
 }
 
@@ -397,6 +400,13 @@ func TestGetRelations(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
+	// Get reference relation for assertions
+	rels := ws.Graph().RelationsOfType("implements")
+	if len(rels) == 0 {
+		t.Fatal("Expected at least one implements relation in test workspace")
+	}
+	testRel := rels[0]
+
 	r := New(ws, ws.Meta(), "/tmp", &buf)
 	defer r.Close()
 
@@ -426,14 +436,14 @@ rela.output({
 	}
 
 	first := result["first"].(map[string]interface{})
-	if first["from"] != "TKT-001" {
-		t.Errorf("Expected from=TKT-001, got %v", first["from"])
+	if first["from"] != testRel.From {
+		t.Errorf("Expected from=%s, got %v", testRel.From, first["from"])
 	}
-	if first["type"] != "implements" {
-		t.Errorf("Expected type=implements, got %v", first["type"])
+	if first["type"] != testRel.Type {
+		t.Errorf("Expected type=%s, got %v", testRel.Type, first["type"])
 	}
-	if first["to"] != "FEAT-001" {
-		t.Errorf("Expected to=FEAT-001, got %v", first["to"])
+	if first["to"] != testRel.To {
+		t.Errorf("Expected to=%s, got %v", testRel.To, first["to"])
 	}
 }
 
@@ -817,6 +827,10 @@ func TestUpdateEntity(t *testing.T) {
 	ws, root := testWorkspaceWithRepo(t)
 	var buf bytes.Buffer
 
+	// Get reference entity for assertions
+	entity, _ := ws.GetEntity("TKT-001")
+	entityID := entity.ID
+
 	r := New(ws, ws.Meta(), root, &buf)
 	defer r.Close()
 
@@ -841,8 +855,8 @@ rela.output({
 		t.Fatalf("Failed to parse output: %v", err)
 	}
 
-	if result["id"] != "TKT-001" {
-		t.Errorf("Expected id=TKT-001, got %v", result["id"])
+	if result["id"] != entityID {
+		t.Errorf("Expected id=%s, got %v", entityID, result["id"])
 	}
 	if result["status"] != "closed" {
 		t.Errorf("Expected status=closed, got %v", result["status"])
@@ -930,6 +944,11 @@ func TestCreateRelation(t *testing.T) {
 	ws, root := testWorkspaceWithRepo(t)
 	var buf bytes.Buffer
 
+	// Get reference entities for assertions
+	fromEntity, _ := ws.GetEntity("TKT-002")
+	toEntity, _ := ws.GetEntity("FEAT-001")
+	relType := "implements"
+
 	r := New(ws, ws.Meta(), root, &buf)
 	defer r.Close()
 
@@ -956,14 +975,14 @@ rela.output({
 		t.Fatalf("Failed to parse output: %v", err)
 	}
 
-	if result["from"] != "TKT-002" {
-		t.Errorf("Expected from=TKT-002, got %v", result["from"])
+	if result["from"] != fromEntity.ID {
+		t.Errorf("Expected from=%s, got %v", fromEntity.ID, result["from"])
 	}
-	if result["type"] != "implements" {
-		t.Errorf("Expected type=implements, got %v", result["type"])
+	if result["type"] != relType {
+		t.Errorf("Expected type=%s, got %v", relType, result["type"])
 	}
-	if result["to"] != "FEAT-001" {
-		t.Errorf("Expected to=FEAT-001, got %v", result["to"])
+	if result["to"] != toEntity.ID {
+		t.Errorf("Expected to=%s, got %v", toEntity.ID, result["to"])
 	}
 }
 
@@ -1141,6 +1160,9 @@ func TestTraceFrom(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
+	// Get reference entity for assertions
+	entity, _ := ws.GetEntity("TKT-001")
+
 	r := New(ws, ws.Meta(), "/tmp", &buf)
 	defer r.Close()
 
@@ -1165,8 +1187,8 @@ rela.output({
 		t.Fatalf("Failed to parse output: %v", err)
 	}
 
-	if result["id"] != "TKT-001" {
-		t.Errorf("Expected id=TKT-001, got %v", result["id"])
+	if result["id"] != entity.ID {
+		t.Errorf("Expected id=%s, got %v", entity.ID, result["id"])
 	}
 	if result["has_children"] != true {
 		t.Errorf("Expected has_children=true, got %v", result["has_children"])
@@ -1176,6 +1198,9 @@ rela.output({
 func TestTraceTo(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
+
+	// Get reference entity for assertions
+	entity, _ := ws.GetEntity("FEAT-001")
 
 	r := New(ws, ws.Meta(), "/tmp", &buf)
 	defer r.Close()
@@ -1201,8 +1226,8 @@ rela.output({
 		t.Fatalf("Failed to parse output: %v", err)
 	}
 
-	if result["id"] != "FEAT-001" {
-		t.Errorf("Expected id=FEAT-001, got %v", result["id"])
+	if result["id"] != entity.ID {
+		t.Errorf("Expected id=%s, got %v", entity.ID, result["id"])
 	}
 	if result["has_children"] != true {
 		t.Errorf("Expected has_children=true (TKT-001 -> FEAT-001), got %v", result["has_children"])

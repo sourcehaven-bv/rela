@@ -1006,18 +1006,21 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	}
 
 	g := graph.New()
-	g.AddNode(testutil.Entity("assessment").ID("ASS-001").With("title", "Q1 Review").Build())
-	g.AddNode(testutil.Entity("person").ID("PER-001").With("name", "Alice").Build())
-	g.AddNode(testutil.Entity("person").ID("PER-002").With("name", "Bob").Build())
+	assessment := testutil.Entity("assessment").ID("ASS-001").With("title", "Q1 Review").Build()
+	person1 := testutil.Entity("person").ID("PER-001").With("name", "Alice").Build()
+	person2 := testutil.Entity("person").ID("PER-002").With("name", "Bob").Build()
+	g.AddNode(assessment)
+	g.AddNode(person1)
+	g.AddNode(person2)
 
-	g.AddEdge(testutil.NewRelation("ASS-001", "assessmentBy", "PER-001").Build())
-	g.AddEdge(testutil.NewRelation("ASS-001", "assessmentBy", "PER-002").Build())
-	g.AddEdge(testutil.NewRelation("ASS-001", "otherRel", "PER-001").Build())
+	g.AddEdge(testutil.NewRelation(assessment.ID, "assessmentBy", person1.ID).Build())
+	g.AddEdge(testutil.NewRelation(assessment.ID, "assessmentBy", person2.ID).Build())
+	g.AddEdge(testutil.NewRelation(assessment.ID, "otherRel", person1.ID).Build())
 
 	app := &App{meta: meta, g: g}
 
 	t.Run("resolves multiple targets", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("ASS-001", "assessmentBy", "")
+		got := app.resolveRelationColumnValues(assessment.ID, "assessmentBy", "")
 		want := []string{"Alice", "Bob"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -1025,7 +1028,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("filters by relation type", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("ASS-001", "otherRel", "")
+		got := app.resolveRelationColumnValues(assessment.ID, "otherRel", "")
 		want := []string{"Alice"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -1033,7 +1036,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("returns empty for no matching relations", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("ASS-001", "nonexistent", "")
+		got := app.resolveRelationColumnValues(assessment.ID, "nonexistent", "")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
@@ -1047,7 +1050,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("direction outgoing explicit", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("ASS-001", "assessmentBy", "outgoing")
+		got := app.resolveRelationColumnValues(assessment.ID, "assessmentBy", "outgoing")
 		want := []string{"Alice", "Bob"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -1057,8 +1060,8 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	t.Run("direction incoming returns sources", func(t *testing.T) {
 		// PER-001 has an incoming edge from ASS-001 via assessmentBy
 		// Assessment title is not required, so falls back to ID
-		got := app.resolveRelationColumnValues("PER-001", "assessmentBy", "incoming")
-		want := []string{"ASS-001"}
+		got := app.resolveRelationColumnValues(person1.ID, "assessmentBy", "incoming")
+		want := []string{assessment.ID}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
 		}
@@ -1066,15 +1069,15 @@ func TestResolveRelationColumnValue(t *testing.T) {
 
 	t.Run("direction incoming returns multiple sources", func(t *testing.T) {
 		// PER-001 is target of both assessmentBy and otherRel from ASS-001
-		got := app.resolveRelationColumnValues("PER-001", "otherRel", "incoming")
-		want := []string{"ASS-001"}
+		got := app.resolveRelationColumnValues(person1.ID, "otherRel", "incoming")
+		want := []string{assessment.ID}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 
 	t.Run("direction incoming no matches", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("ASS-001", "assessmentBy", "incoming")
+		got := app.resolveRelationColumnValues(assessment.ID, "assessmentBy", "incoming")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
@@ -1168,20 +1171,26 @@ func TestFilterByRelation(t *testing.T) {
 	g := graph.New()
 
 	// Create components
-	g.AddNode(testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build())
-	g.AddNode(testutil.Entity("component").ID("CMP-002").With("name", "Backend").Build())
+	cmpFrontend := testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build()
+	cmpBackend := testutil.Entity("component").ID("CMP-002").With("name", "Backend").Build()
+	g.AddNode(cmpFrontend)
+	g.AddNode(cmpBackend)
 
 	// Create tickets with relations to components
-	g.AddNode(testutil.Entity("ticket").ID("TKT-001").With("title", "Frontend bug").Build())
-	g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
+	tkt1 := testutil.Entity("ticket").ID("TKT-001").With("title", "Frontend bug").Build()
+	g.AddNode(tkt1)
+	g.AddEdge(testutil.NewRelation(tkt1.ID, "belongs_to", cmpFrontend.ID).Build())
 
-	g.AddNode(testutil.Entity("ticket").ID("TKT-002").With("title", "Backend bug").Build())
-	g.AddEdge(testutil.NewRelation("TKT-002", "belongs_to", "CMP-002").Build())
+	tkt2 := testutil.Entity("ticket").ID("TKT-002").With("title", "Backend bug").Build()
+	g.AddNode(tkt2)
+	g.AddEdge(testutil.NewRelation(tkt2.ID, "belongs_to", cmpBackend.ID).Build())
 
-	g.AddNode(testutil.Entity("ticket").ID("TKT-003").With("title", "Another frontend bug").Build())
-	g.AddEdge(testutil.NewRelation("TKT-003", "belongs_to", "CMP-001").Build())
+	tkt3 := testutil.Entity("ticket").ID("TKT-003").With("title", "Another frontend bug").Build()
+	g.AddNode(tkt3)
+	g.AddEdge(testutil.NewRelation(tkt3.ID, "belongs_to", cmpFrontend.ID).Build())
 
-	g.AddNode(testutil.Entity("ticket").ID("TKT-004").With("title", "No component ticket").Build())
+	tkt4 := testutil.Entity("ticket").ID("TKT-004").With("title", "No component ticket").Build()
+	g.AddNode(tkt4)
 	// No relation for TKT-004
 
 	app := &App{meta: meta, g: g}
@@ -1193,8 +1202,8 @@ func TestFilterByRelation(t *testing.T) {
 		if len(got) != 2 {
 			t.Fatalf("expected 2 results, got %d: %v", len(got), gotIDs)
 		}
-		if !sliceContainsStr(gotIDs, "TKT-001") || !sliceContainsStr(gotIDs, "TKT-003") {
-			t.Errorf("expected TKT-001 and TKT-003, got %v", gotIDs)
+		if !sliceContainsStr(gotIDs, tkt1.ID) || !sliceContainsStr(gotIDs, tkt3.ID) {
+			t.Errorf("expected %s and %s, got %v", tkt1.ID, tkt3.ID, gotIDs)
 		}
 	})
 
@@ -1204,8 +1213,8 @@ func TestFilterByRelation(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("expected 1 result, got %d: %v", len(got), gotIDs)
 		}
-		if gotIDs[0] != "TKT-002" {
-			t.Errorf("expected TKT-002, got %v", gotIDs)
+		if gotIDs[0] != tkt2.ID {
+			t.Errorf("expected %s, got %v", tkt2.ID, gotIDs)
 		}
 	})
 
@@ -1226,8 +1235,8 @@ func TestFilterByRelation(t *testing.T) {
 	t.Run("handles entities without relations", func(t *testing.T) {
 		got := app.filterByRelation(allTickets, "belongs_to", "Frontend")
 		for _, e := range got {
-			if e.ID == "TKT-004" {
-				t.Error("TKT-004 should not be in results (has no belongs_to relation)")
+			if e.ID == tkt4.ID {
+				t.Errorf("%s should not be in results (has no belongs_to relation)", tkt4.ID)
 			}
 		}
 	})
@@ -1259,22 +1268,29 @@ func TestResolveRelationFilterValues(t *testing.T) {
 	g := graph.New()
 
 	// Create components
-	g.AddNode(testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build())
-	g.AddNode(testutil.Entity("component").ID("CMP-002").With("name", "Backend").Build())
-	g.AddNode(testutil.Entity("component").ID("CMP-003").With("name", "API").Build())
+	cmpFrontend := testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build()
+	cmpBackend := testutil.Entity("component").ID("CMP-002").With("name", "Backend").Build()
+	cmpAPI := testutil.Entity("component").ID("CMP-003").With("name", "API").Build()
+	g.AddNode(cmpFrontend)
+	g.AddNode(cmpBackend)
+	g.AddNode(cmpAPI)
 
 	// Create tickets with relations
-	g.AddNode(testutil.Entity("ticket").ID("TKT-001").With("title", "Ticket 1").Build())
-	g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
+	tkt1 := testutil.Entity("ticket").ID("TKT-001").With("title", "Ticket 1").Build()
+	g.AddNode(tkt1)
+	g.AddEdge(testutil.NewRelation(tkt1.ID, "belongs_to", cmpFrontend.ID).Build())
 
-	g.AddNode(testutil.Entity("ticket").ID("TKT-002").With("title", "Ticket 2").Build())
-	g.AddEdge(testutil.NewRelation("TKT-002", "belongs_to", "CMP-002").Build())
+	tkt2 := testutil.Entity("ticket").ID("TKT-002").With("title", "Ticket 2").Build()
+	g.AddNode(tkt2)
+	g.AddEdge(testutil.NewRelation(tkt2.ID, "belongs_to", cmpBackend.ID).Build())
 
-	g.AddNode(testutil.Entity("ticket").ID("TKT-003").With("title", "Ticket 3").Build())
-	g.AddEdge(testutil.NewRelation("TKT-003", "belongs_to", "CMP-001").Build()) // duplicate Frontend
+	tkt3 := testutil.Entity("ticket").ID("TKT-003").With("title", "Ticket 3").Build()
+	g.AddNode(tkt3)
+	g.AddEdge(testutil.NewRelation(tkt3.ID, "belongs_to", cmpFrontend.ID).Build()) // duplicate Frontend
 
 	// TKT-004 has no relation
-	g.AddNode(testutil.Entity("ticket").ID("TKT-004").With("title", "Ticket 4").Build())
+	tkt4 := testutil.Entity("ticket").ID("TKT-004").With("title", "Ticket 4").Build()
+	g.AddNode(tkt4)
 
 	app := &App{meta: meta, g: g}
 	allTickets := g.NodesByType("ticket")
@@ -1544,15 +1560,19 @@ func TestResolveScope(t *testing.T) {
 		}
 
 		relGraph := graph.New()
-		relGraph.AddNode(testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build())
+		cmp := testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build()
+		relGraph.AddNode(cmp)
 
-		relGraph.AddNode(testutil.Entity("ticket").ID("T-001").With("title", "Ticket 1").Build())
-		relGraph.AddNode(testutil.Entity("ticket").ID("T-002").With("title", "Ticket 2").Build())
-		relGraph.AddNode(testutil.Entity("ticket").ID("T-003").With("title", "Ticket 3").Build())
+		t1 := testutil.Entity("ticket").ID("T-001").With("title", "Ticket 1").Build()
+		t2 := testutil.Entity("ticket").ID("T-002").With("title", "Ticket 2").Build()
+		t3 := testutil.Entity("ticket").ID("T-003").With("title", "Ticket 3").Build()
+		relGraph.AddNode(t1)
+		relGraph.AddNode(t2)
+		relGraph.AddNode(t3)
 
 		// Only T-001 and T-002 belong to Frontend
-		relGraph.AddEdge(testutil.NewRelation("T-001", "belongs_to", "CMP-001").Build())
-		relGraph.AddEdge(testutil.NewRelation("T-002", "belongs_to", "CMP-001").Build())
+		relGraph.AddEdge(testutil.NewRelation(t1.ID, "belongs_to", cmp.ID).Build())
+		relGraph.AddEdge(testutil.NewRelation(t2.ID, "belongs_to", cmp.ID).Build())
 
 		relApp := &App{
 			meta: relMeta,
@@ -1570,8 +1590,8 @@ func TestResolveScope(t *testing.T) {
 			},
 		}
 
-		r := makeRequest("/entity/ticket/T-001?scope=list:tickets&filter_belongs_to=Frontend")
-		got := relApp.resolveScope("T-001", r)
+		r := makeRequest("/entity/ticket/" + t1.ID + "?scope=list:tickets&filter_belongs_to=Frontend")
+		got := relApp.resolveScope(t1.ID, r)
 		if got == nil {
 			t.Fatal("expected non-nil scope")
 		}

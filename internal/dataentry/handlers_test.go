@@ -1146,9 +1146,11 @@ func TestHandleExecuteQuery(t *testing.T) {
 	})
 
 	t.Run("free text query", func(t *testing.T) {
+		// testGraph creates TKT-001 with title "First Ticket"
+		firstTicket, _ := app.g.GetNode("TKT-001")
 		results := app.executeQuery("First")
-		if len(results) != 1 || results[0].ID != "TKT-001" {
-			t.Errorf("expected [TKT-001], got %v", collectIDs(results))
+		if len(results) != 1 || results[0].ID != firstTicket.ID {
+			t.Errorf("expected [%s], got %v", firstTicket.ID, collectIDs(results))
 		}
 	})
 
@@ -1160,9 +1162,11 @@ func TestHandleExecuteQuery(t *testing.T) {
 	})
 
 	t.Run("property filter query", func(t *testing.T) {
+		// testGraph creates TKT-001 with status "open"
+		openTicket, _ := app.g.GetNode("TKT-001")
 		results := app.executeQuery("type:ticket status:open")
-		if len(results) != 1 || results[0].ID != "TKT-001" {
-			t.Errorf("expected [TKT-001], got %v", collectIDs(results))
+		if len(results) != 1 || results[0].ID != openTicket.ID {
+			t.Errorf("expected [%s], got %v", openTicket.ID, collectIDs(results))
 		}
 	})
 }
@@ -1301,9 +1305,10 @@ func TestHandleSaveSettings(t *testing.T) {
 
 	t.Run("saves global relation defaults", func(t *testing.T) {
 		app := newHandlerTestApp(t)
+		component, _ := app.g.GetNode("CMP-001")
 
 		form := url.Values{
-			"default_rel[belongs_to]": {"CMP-001"},
+			"default_rel[belongs_to]": {component.ID},
 		}
 		r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1312,18 +1317,19 @@ func TestHandleSaveSettings(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d", w.Code)
 		}
-		if app.userDefaults.RelationDefaults["belongs_to"] != "CMP-001" {
-			t.Errorf("expected belongs_to=CMP-001, got %q", app.userDefaults.RelationDefaults["belongs_to"])
+		if app.userDefaults.RelationDefaults["belongs_to"] != component.ID {
+			t.Errorf("expected belongs_to=%s, got %q", component.ID, app.userDefaults.RelationDefaults["belongs_to"])
 		}
 	})
 
 	t.Run("saves override groups", func(t *testing.T) {
 		app := newHandlerTestApp(t)
+		ticket2, _ := app.g.GetNode("TKT-002")
 
 		form := url.Values{
 			"override[0][types]":           {"ticket"},
 			"override[0][prop][priority]":  {"high"},
-			"override[0][rel][depends_on]": {"TKT-002"},
+			"override[0][rel][depends_on]": {ticket2.ID},
 		}
 		r := httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1342,8 +1348,8 @@ func TestHandleSaveSettings(t *testing.T) {
 		if o.Defaults["priority"] != "high" {
 			t.Errorf("expected priority=high, got %q", o.Defaults["priority"])
 		}
-		if o.RelationDefaults["depends_on"] != "TKT-002" {
-			t.Errorf("expected depends_on=TKT-002, got %q", o.RelationDefaults["depends_on"])
+		if o.RelationDefaults["depends_on"] != ticket2.ID {
+			t.Errorf("expected depends_on=%s, got %q", ticket2.ID, o.RelationDefaults["depends_on"])
 		}
 	})
 
@@ -1452,8 +1458,9 @@ func TestHandleFormWithUserDefaults(t *testing.T) {
 
 	t.Run("create form uses user defaults for relation", func(t *testing.T) {
 		app := newHandlerTestApp(t)
+		component, _ := app.g.GetNode("CMP-001")
 		app.userDefaults = &UserDefaults{
-			RelationDefaults: map[string]string{"belongs_to": "CMP-001"},
+			RelationDefaults: map[string]string{"belongs_to": component.ID},
 		}
 		// Need a form with a relation field
 		app.Cfg.Forms["create-ticket-rel"] = Form{
@@ -1473,9 +1480,10 @@ func TestHandleFormWithUserDefaults(t *testing.T) {
 			t.Errorf("expected 200, got %d", w.Code)
 		}
 		body := w.Body.String()
-		// CMP-001 should be pre-selected as the default relation target
-		if !strings.Contains(body, `value="CMP-001" selected`) {
-			t.Error("expected CMP-001 to be pre-selected as user default relation")
+		// Component should be pre-selected as the default relation target
+		expectedAttr := `value="` + component.ID + `" selected`
+		if !strings.Contains(body, expectedAttr) {
+			t.Errorf("expected %s to be pre-selected as user default relation", component.ID)
 		}
 	})
 
@@ -1571,6 +1579,9 @@ func TestHandleLinkCandidates(t *testing.T) {
 	t.Run("returns candidates excluding already linked", func(t *testing.T) {
 		app := newHandlerTestApp(t)
 		// TKT-001 depends_on TKT-002 (added in newHandlerTestApp)
+		ticket1, _ := app.g.GetNode("TKT-001")
+		ticket2, _ := app.g.GetNode("TKT-002")
+
 		r := httptest.NewRequest(http.MethodGet,
 			"/api/link-candidates?relation=depends_on&link_as=to&peer=TKT-001&entity_types=ticket",
 			http.NoBody)
@@ -1589,11 +1600,11 @@ func TestHandleLinkCandidates(t *testing.T) {
 		}
 		// TKT-002 is already linked, TKT-001 is self — expect empty
 		for _, c := range candidates {
-			if c.ID == "TKT-002" {
-				t.Error("TKT-002 should be excluded (already linked)")
+			if c.ID == ticket2.ID {
+				t.Errorf("%s should be excluded (already linked)", ticket2.ID)
 			}
-			if c.ID == "TKT-001" {
-				t.Error("TKT-001 should be excluded (self)")
+			if c.ID == ticket1.ID {
+				t.Errorf("%s should be excluded (self)", ticket1.ID)
 			}
 		}
 	})
@@ -1601,7 +1612,8 @@ func TestHandleLinkCandidates(t *testing.T) {
 	t.Run("filters by search query", func(t *testing.T) {
 		app := newHandlerTestApp(t)
 		// Add a third ticket
-		app.g.AddNode(testutil.EntityFor(app.meta, "ticket").ID("TKT-003").With("title", "Third Ticket").Build())
+		thirdTicket := testutil.EntityFor(app.meta, "ticket").ID("TKT-003").With("title", "Third Ticket").Build()
+		app.g.AddNode(thirdTicket)
 
 		r := httptest.NewRequest(http.MethodGet,
 			"/api/link-candidates?relation=depends_on&link_as=to&peer=TKT-001&entity_types=ticket&q=Third",
@@ -1620,8 +1632,8 @@ func TestHandleLinkCandidates(t *testing.T) {
 		if len(candidates) != 1 {
 			t.Fatalf("expected 1 candidate, got %d", len(candidates))
 		}
-		if candidates[0].ID != "TKT-003" {
-			t.Errorf("expected TKT-003, got %s", candidates[0].ID)
+		if candidates[0].ID != thirdTicket.ID {
+			t.Errorf("expected %s, got %s", thirdTicket.ID, candidates[0].ID)
 		}
 	})
 

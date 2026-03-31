@@ -62,8 +62,8 @@ func TestConvertEntity_WithoutRelations(t *testing.T) {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
 
-	if parsed.ID != "REQ-001" {
-		t.Errorf("expected ID REQ-001, got %s", parsed.ID)
+	if parsed.ID != e.ID {
+		t.Errorf("expected ID %s, got %s", e.ID, parsed.ID)
 	}
 	if parsed.Type != "requirement" {
 		t.Errorf("expected type requirement, got %s", parsed.Type)
@@ -86,7 +86,7 @@ func TestConvertEntity_WithRelations(t *testing.T) {
 	g.AddNode(e1)
 	g.AddNode(e2)
 
-	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
+	g.AddEdge(testutil.NewRelation(e2.ID, "addresses", e1.ID).Build())
 
 	result, err := convertEntity(e1, &graphAdapter{g}, true)
 	if err != nil {
@@ -105,9 +105,9 @@ func TestConvertEntity_WithRelations(t *testing.T) {
 		t.Errorf("expected 1 incoming 'addresses' relation, got %d",
 			len(parsed.Relations.Incoming["addresses"]))
 	}
-	if parsed.Relations.Incoming["addresses"][0].ID != "SOL-001" {
-		t.Errorf("expected incoming from SOL-001, got %s",
-			parsed.Relations.Incoming["addresses"][0].ID)
+	if parsed.Relations.Incoming["addresses"][0].ID != e2.ID {
+		t.Errorf("expected incoming from %s, got %s",
+			e2.ID, parsed.Relations.Incoming["addresses"][0].ID)
 	}
 }
 
@@ -136,17 +136,17 @@ func TestConvertEntitySummary(t *testing.T) {
 
 	result := convertEntitySummary(e)
 
-	if result["id"] != "REQ-001" {
-		t.Errorf("expected id REQ-001, got %v", result["id"])
+	if result["id"] != e.ID {
+		t.Errorf("expected id %s, got %v", e.ID, result["id"])
 	}
-	if result["type"] != "requirement" {
-		t.Errorf("expected type requirement, got %v", result["type"])
+	if result["type"] != e.Type {
+		t.Errorf("expected type %s, got %v", e.Type, result["type"])
 	}
-	if result["title"] != "My Title" {
-		t.Errorf("expected title 'My Title', got %v", result["title"])
+	if result["title"] != e.Properties["title"] {
+		t.Errorf("expected title '%v', got %v", e.Properties["title"], result["title"])
 	}
-	if result["status"] != "accepted" {
-		t.Errorf("expected status 'accepted', got %v", result["status"])
+	if result["status"] != e.Properties["status"] {
+		t.Errorf("expected status '%v', got %v", e.Properties["status"], result["status"])
 	}
 }
 
@@ -155,8 +155,8 @@ func TestConvertEntitySummary_NoTitleNoStatus(t *testing.T) {
 
 	result := convertEntitySummary(e)
 
-	if result["id"] != "REQ-002" {
-		t.Errorf("expected id REQ-002, got %v", result["id"])
+	if result["id"] != e.ID {
+		t.Errorf("expected id %s, got %v", e.ID, result["id"])
 	}
 	if _, ok := result["title"]; ok {
 		t.Error("expected no title key when title is empty")
@@ -179,20 +179,20 @@ func TestConvertRelation(t *testing.T) {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
 
-	if parsed.From != "SOL-001" {
-		t.Errorf("expected from SOL-001, got %s", parsed.From)
+	if parsed.From != r.From {
+		t.Errorf("expected from %s, got %s", r.From, parsed.From)
 	}
-	if parsed.Type != "addresses" {
-		t.Errorf("expected type addresses, got %s", parsed.Type)
+	if parsed.Type != r.Type {
+		t.Errorf("expected type %s, got %s", r.Type, parsed.Type)
 	}
-	if parsed.To != "REQ-001" {
-		t.Errorf("expected to REQ-001, got %s", parsed.To)
+	if parsed.To != r.To {
+		t.Errorf("expected to %s, got %s", r.To, parsed.To)
 	}
-	if parsed.Content != "Relation content" {
-		t.Errorf("expected content 'Relation content', got %s", parsed.Content)
+	if parsed.Content != r.Content {
+		t.Errorf("expected content '%s', got %s", r.Content, parsed.Content)
 	}
-	if parsed.Properties["rationale"] != "because" {
-		t.Errorf("expected property rationale=because, got %v", parsed.Properties["rationale"])
+	if parsed.Properties["rationale"] != r.Properties["rationale"] {
+		t.Errorf("expected property rationale=%v, got %v", r.Properties["rationale"], parsed.Properties["rationale"])
 	}
 }
 
@@ -305,23 +305,25 @@ func TestBuildRelations_NoEdges(t *testing.T) {
 
 func TestBuildRelations_OutgoingOnly(t *testing.T) {
 	g := graph.New()
-	g.AddNode(testutil.Entity("solution").ID("SOL-001").With("title", "Solution").Build())
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement").Build())
+	sol := testutil.Entity("solution").ID("SOL-001").With("title", "Solution").Build()
+	req := testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement").Build()
+	g.AddNode(sol)
+	g.AddNode(req)
 
-	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
+	g.AddEdge(testutil.NewRelation(sol.ID, "addresses", req.ID).Build())
 
-	rels := buildRelations("SOL-001", &graphAdapter{g})
+	rels := buildRelations(sol.ID, &graphAdapter{g})
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
 	if len(rels.Outgoing["addresses"]) != 1 {
 		t.Errorf("expected 1 outgoing addresses relation, got %d", len(rels.Outgoing["addresses"]))
 	}
-	if rels.Outgoing["addresses"][0].ID != "REQ-001" {
-		t.Errorf("expected target REQ-001, got %s", rels.Outgoing["addresses"][0].ID)
+	if rels.Outgoing["addresses"][0].ID != req.ID {
+		t.Errorf("expected target %s, got %s", req.ID, rels.Outgoing["addresses"][0].ID)
 	}
-	if rels.Outgoing["addresses"][0].Title != "Requirement" {
-		t.Errorf("expected title 'Requirement', got %s", rels.Outgoing["addresses"][0].Title)
+	if rels.Outgoing["addresses"][0].Title != req.Properties["title"] {
+		t.Errorf("expected title '%v', got %s", req.Properties["title"], rels.Outgoing["addresses"][0].Title)
 	}
 	if rels.Incoming != nil {
 		t.Error("expected no incoming relations")
@@ -330,12 +332,14 @@ func TestBuildRelations_OutgoingOnly(t *testing.T) {
 
 func TestBuildRelations_IncomingOnly(t *testing.T) {
 	g := graph.New()
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement").Build())
-	g.AddNode(testutil.Entity("solution").ID("SOL-001").With("title", "Solution").Build())
+	req := testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement").Build()
+	sol := testutil.Entity("solution").ID("SOL-001").With("title", "Solution").Build()
+	g.AddNode(req)
+	g.AddNode(sol)
 
-	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
+	g.AddEdge(testutil.NewRelation(sol.ID, "addresses", req.ID).Build())
 
-	rels := buildRelations("REQ-001", &graphAdapter{g})
+	rels := buildRelations(req.ID, &graphAdapter{g})
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -345,8 +349,8 @@ func TestBuildRelations_IncomingOnly(t *testing.T) {
 	if len(rels.Incoming["addresses"]) != 1 {
 		t.Errorf("expected 1 incoming addresses relation, got %d", len(rels.Incoming["addresses"]))
 	}
-	if rels.Incoming["addresses"][0].ID != "SOL-001" {
-		t.Errorf("expected source SOL-001, got %s", rels.Incoming["addresses"][0].ID)
+	if rels.Incoming["addresses"][0].ID != sol.ID {
+		t.Errorf("expected source %s, got %s", sol.ID, rels.Incoming["addresses"][0].ID)
 	}
 }
 
@@ -580,8 +584,8 @@ func TestConvertRelation_NoProperties(t *testing.T) {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
 
-	if parsed.From != "SOL-001" {
-		t.Errorf("expected from SOL-001, got %s", parsed.From)
+	if parsed.From != r.From {
+		t.Errorf("expected from %s, got %s", r.From, parsed.From)
 	}
 	if parsed.Content != "" {
 		t.Errorf("expected empty content, got %s", parsed.Content)
