@@ -28,6 +28,20 @@ These options work with any command:
 | -------------- | ---------------------------------------------------------------- |
 | `RELA_PROJECT` | Default project directory when `--project` flag is not specified |
 
+## Project Configuration
+
+Project-level settings are stored in `.rela/config.yaml`. This file is optional; defaults are used
+when it doesn't exist.
+
+```yaml
+formatting:
+  line_width: 80  # Maximum line width for paragraph wrapping (default: 80)
+```
+
+| Setting                  | Description                                      | Default |
+| ------------------------ | ------------------------------------------------ | ------- |
+| `formatting.line_width`  | Maximum line width for paragraph wrapping        | 80      |
+
 ## Commands
 
 ### rela init
@@ -663,6 +677,66 @@ When using `--all`, the output includes both entities and relations:
   ]
 }
 ```
+
+---
+
+### rela fmt
+
+Format entity and relation files for consistent styling.
+
+```bash
+rela fmt [type] [flags]
+```
+
+**Arguments:**
+
+- `type` - Optional: specific entity type to format
+
+**Flags:**
+
+| Flag        | Description                                          |
+| ----------- | ---------------------------------------------------- |
+| `--dry-run` | Preview changes without writing                      |
+| `--check`   | Check if files need formatting (exits 1 if they do)  |
+
+This command normalizes:
+
+- Frontmatter property ordering (id/type first for entities, from/relation/to for relations)
+- Markdown content formatting (headings, lists, whitespace)
+- Paragraph wrapping to configured line width (default: 80 characters)
+
+**Configuration:**
+
+Line width can be configured in `.rela/config.yaml`:
+
+```yaml
+formatting:
+  line_width: 100  # default: 80
+```
+
+**What gets wrapped:**
+
+- Paragraph text is wrapped to the configured line width
+- Code blocks, headings, lists, and blockquotes are NOT wrapped (preserved as-is)
+
+**Examples:**
+
+```bash
+rela fmt                # Format all entities and relations
+rela fmt requirements   # Format only requirements (entities)
+rela fmt --dry-run      # Preview changes without writing
+rela fmt --check        # Check if files need formatting (for CI)
+```
+
+**CI Integration:**
+
+Add to your CI pipeline to ensure consistent formatting:
+
+```yaml
+- run: rela fmt --check
+```
+
+This will exit with code 1 if any files need formatting.
 
 ---
 

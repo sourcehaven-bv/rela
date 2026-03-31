@@ -44,6 +44,7 @@ type Workspace struct {
 	meta       *metamodel.Metamodel
 	automation *automation.Engine
 	searchIdx  *search.Index
+	config     *project.Config
 	mu         sync.RWMutex
 
 	// Watcher state (nil when not watching).
@@ -116,8 +117,9 @@ func NewWithGraph(repo repository.Store, meta *metamodel.Metamodel, g *graph.Gra
 // to query the graph. It initializes a search index with all entities.
 func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
 	ws := &Workspace{
-		graph: g,
-		meta:  meta,
+		graph:  g,
+		meta:   meta,
+		config: project.DefaultConfig(),
 	}
 
 	// Initialize search index for test workspaces.
@@ -152,12 +154,26 @@ func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Gra
 		}
 	}
 
+	// Load project config (use defaults if not found or repo is nil).
+	var cfg *project.Config
+	if repo != nil {
+		var err error
+		cfg, err = project.LoadConfig(repo.Paths())
+		if err != nil {
+			log.Printf("Warning: failed to load config: %v", err)
+			cfg = project.DefaultConfig()
+		}
+	} else {
+		cfg = project.DefaultConfig()
+	}
+
 	return &Workspace{
 		repo:       repo,
 		graph:      g,
 		meta:       meta,
 		automation: autoEngine,
 		searchIdx:  searchIdx,
+		config:     cfg,
 	}
 }
 
@@ -1015,8 +1031,8 @@ func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error
 		propertyOrder = entityDef.GetPropertyOrder()
 	}
 
-	// Generate formatted content
-	formatted, err := markdown.FormatEntity(entity, propertyOrder)
+	// Generate formatted content with configured line width
+	formatted, err := markdown.FormatEntityWithWidth(entity, propertyOrder, w.config.Formatting.LineWidth)
 	if err != nil {
 		return false, fmt.Errorf("format entity: %w", err)
 	}
@@ -1045,8 +1061,8 @@ func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error
 // FormatRelation checks if a relation file needs formatting and optionally writes
 // the formatted version. Returns true if the file was (or would be) modified.
 func (w *Workspace) FormatRelation(relation *model.Relation, dryRun bool) (bool, error) {
-	// Generate formatted content
-	formatted, err := markdown.FormatRelation(relation)
+	// Generate formatted content with configured line width
+	formatted, err := markdown.FormatRelationWithWidth(relation, w.config.Formatting.LineWidth)
 	if err != nil {
 		return false, fmt.Errorf("format relation: %w", err)
 	}

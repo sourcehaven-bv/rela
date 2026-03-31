@@ -74,6 +74,7 @@ vendors:
       - github.com/yuin/goldmark
       - github.com/yuin/goldmark/**
       - github.com/teekennedy/goldmark-markdown
+      - github.com/mitchellh/go-wordwrap
   gogit:       { in: github.com/go-git/go-git/** }
   gopherlua:   { in: github.com/yuin/gopher-lua }
   mcpgo:       { in: github.com/mark3labs/mcp-go/** }

@@ -70,7 +70,14 @@ func (f *FileIO) ReadEntity(path string, meta *metamodel.Metamodel) (*model.Enti
 // FormatEntity returns the formatted markdown content for an entity.
 // The optional propertyOrder specifies the order for entity properties (after id and type).
 // Both frontmatter ordering and markdown content formatting are applied.
+// Uses default line width (80) for paragraph wrapping.
 func FormatEntity(entity *model.Entity, propertyOrder []string) (string, error) {
+	return FormatEntityWithWidth(entity, propertyOrder, DefaultLineWidth)
+}
+
+// FormatEntityWithWidth returns the formatted markdown content for an entity
+// with a specific line width for paragraph wrapping.
+func FormatEntityWithWidth(entity *model.Entity, propertyOrder []string, lineWidth int) (string, error) {
 	frontmatter := make(map[string]interface{})
 	frontmatter["id"] = entity.ID
 	frontmatter["type"] = entity.Type
@@ -89,7 +96,7 @@ func FormatEntity(entity *model.Entity, propertyOrder []string) (string, error) 
 	// Format markdown content
 	content := entity.Content
 	if content != "" {
-		content = FormatMarkdown(content)
+		content = FormatMarkdownWithWidth(content, lineWidth)
 	}
 
 	return FormatDocumentOrdered(frontmatter, content, keyOrder)
