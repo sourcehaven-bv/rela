@@ -317,9 +317,6 @@ jobs:
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela
 
-      - name: Install mdcomp
-        run: pip install git+https://github.com/sourcehaven-bv/mdcomp.git
-
       - name: Generate docs
         run: ./scripts/generate-docs.sh
 

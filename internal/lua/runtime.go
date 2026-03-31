@@ -39,11 +39,30 @@ type Runtime struct {
 	meta        *metamodel.Metamodel
 	stdout      io.Writer
 	projectRoot string
+	outputDir   string // Directory where write_file can write (defaults to "output")
+}
+
+// Option configures a Runtime.
+type Option func(*Runtime)
+
+// WithOutputDir sets the output directory for write_file.
+// If the path is absolute, files will be written there directly.
+// If relative, it's relative to the project root.
+func WithOutputDir(dir string) Option {
+	return func(r *Runtime) {
+		r.outputDir = dir
+	}
 }
 
 // New creates a Runtime with rela bindings registered.
 // The Lua VM is sandboxed with only safe libraries loaded (no io, os, or debug).
-func New(ws *workspace.Workspace, meta *metamodel.Metamodel, projectRoot string, stdout io.Writer) *Runtime {
+func New(
+	ws *workspace.Workspace,
+	meta *metamodel.Metamodel,
+	projectRoot string,
+	stdout io.Writer,
+	opts ...Option,
+) *Runtime {
 	// Create sandboxed Lua state - skip default libraries for security
 	L := lua.NewState(lua.Options{
 		SkipOpenLibs:  true,
@@ -60,6 +79,12 @@ func New(ws *workspace.Workspace, meta *metamodel.Metamodel, projectRoot string,
 		meta:        meta,
 		stdout:      stdout,
 		projectRoot: projectRoot,
+		outputDir:   defaultOutputDir,
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(r)
 	}
 
 	r.registerBindings()
@@ -348,12 +373,12 @@ func (r *Runtime) luaOutput(ls *lua.LState) int {
 	return 0
 }
 
-// outputDir is the only directory where Lua scripts can write files.
-const outputDir = "output"
+// defaultOutputDir is the default directory where Lua scripts can write files.
+const defaultOutputDir = "output"
 
 // luaWriteFile implements rela.write_file(path, content)
-// Files can ONLY be written to the output/ directory for security.
-// Path is relative to output/ (e.g., "report.txt" -> "output/report.txt").
+// Files can ONLY be written to the configured output directory for security.
+// Path is relative to output dir (e.g., "report.txt" -> "{output}/report.txt").
 func (r *Runtime) luaWriteFile(ls *lua.LState) int {
 	path := ls.CheckString(1)
 	content := ls.CheckString(2)
@@ -370,7 +395,12 @@ func (r *Runtime) luaWriteFile(ls *lua.LState) int {
 	}
 
 	// Build the full path within output directory
-	outputPath := filepath.Join(r.projectRoot, outputDir)
+	var outputPath string
+	if filepath.IsAbs(r.outputDir) {
+		outputPath = r.outputDir
+	} else {
+		outputPath = filepath.Join(r.projectRoot, r.outputDir)
+	}
 
 	// Ensure output directory exists
 	if err := os.MkdirAll(outputPath, 0755); err != nil {
