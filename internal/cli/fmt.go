@@ -14,27 +14,32 @@ var (
 
 var fmtCmd = &cobra.Command{
 	Use:   "fmt [type]",
-	Short: "Format entity files",
-	Long: `Formats entity files to ensure consistent formatting.
+	Short: "Format entity and relation files",
+	Long: `Formats entity and relation files to ensure consistent formatting.
 
-Currently this command:
-- Orders frontmatter properties according to the metamodel definition
-- Ensures id and type appear first, followed by properties in metamodel order
-- Places any extra properties (not in metamodel) at the end, sorted alphabetically
+This command normalizes:
+- Frontmatter property ordering (id/type first for entities, from/relation/to for relations)
+- Markdown content formatting (headings, lists, whitespace)
 
 Exit codes:
 - 0: All files formatted (or already formatted with --check)
 - 1: Files need formatting (with --check)
 
 Examples:
-  rela fmt                # Format all entities
-  rela fmt requirements   # Format only requirements
+  rela fmt                # Format all entities and relations
+  rela fmt requirements   # Format only requirements (entities)
   rela fmt --dry-run      # Preview changes without writing
   rela fmt --check        # Check if files need formatting (for CI)`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var entities []*model.Entity
+		// For --check mode, use dry-run behavior internally
+		dryRun := fmtDryRun || fmtCheck
 
+		modifiedEntities := 0
+		modifiedRelations := 0
+
+		// Format entities
+		var entities []*model.Entity
 		if len(args) > 0 {
 			typeName := args[0]
 			resolvedType, _, err := resolveEntityType(typeName)
@@ -46,15 +51,6 @@ Examples:
 			entities = ws.AllEntities()
 		}
 
-		if len(entities) == 0 {
-			out.WriteMessage("No entities found")
-			return nil
-		}
-
-		// For --check mode, use dry-run behavior internally
-		dryRun := fmtDryRun || fmtCheck
-
-		modified := 0
 		for _, entity := range entities {
 			changed, err := ws.FormatEntity(entity, dryRun)
 			if err != nil {
@@ -66,7 +62,7 @@ Examples:
 				continue
 			}
 
-			modified++
+			modifiedEntities++
 
 			if fmtCheck {
 				out.WriteMessage("Needs formatting: %s", entity.ID)
@@ -77,19 +73,52 @@ Examples:
 			}
 		}
 
+		// Format relations (only when no specific type is specified)
+		if len(args) == 0 {
+			relations := ws.AllRelations()
+			for _, relation := range relations {
+				changed, err := ws.FormatRelation(relation, dryRun)
+				if err != nil {
+					out.WriteWarning("Failed to format relation %s--%s--%s: %v",
+						relation.From, relation.Type, relation.To, err)
+					continue
+				}
+
+				if !changed {
+					continue
+				}
+
+				modifiedRelations++
+
+				relationID := relation.From + "--" + relation.Type + "--" + relation.To
+				if fmtCheck {
+					out.WriteMessage("Needs formatting: %s", relationID)
+				} else if fmtDryRun {
+					out.WriteMessage("Would format: %s", relationID)
+				} else if verbose {
+					out.WriteMessage("Formatted: %s", relationID)
+				}
+			}
+		}
+
+		totalModified := modifiedEntities + modifiedRelations
+
 		if fmtCheck {
-			if modified > 0 {
-				out.WriteMessage("%d entities need formatting", modified)
+			if totalModified > 0 {
+				out.WriteMessage("%d files need formatting (%d entities, %d relations)",
+					totalModified, modifiedEntities, modifiedRelations)
 				return errors.NewExitError(1)
 			}
-			out.WriteSuccess("All entities are properly formatted")
+			out.WriteSuccess("All files are properly formatted")
 			return nil
 		}
 
 		if fmtDryRun {
-			out.WriteMessage("Dry run: %d entities would be formatted", modified)
+			out.WriteMessage("Dry run: %d files would be formatted (%d entities, %d relations)",
+				totalModified, modifiedEntities, modifiedRelations)
 		} else {
-			out.WriteSuccess("Formatted %d entities", modified)
+			out.WriteSuccess("Formatted %d files (%d entities, %d relations)",
+				totalModified, modifiedEntities, modifiedRelations)
 		}
 
 		return nil

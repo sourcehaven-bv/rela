@@ -123,6 +123,92 @@ func TestWriteRelation(t *testing.T) {
 	}
 }
 
+func TestFormatRelation(t *testing.T) {
+	tests := []struct {
+		name     string
+		relation *model.Relation
+		contains []string
+	}{
+		{
+			name: "basic relation",
+			relation: &model.Relation{
+				From: "DEC-001",
+				Type: "addresses",
+				To:   "REQ-001",
+			},
+			contains: []string{"from: DEC-001", "relation: addresses", "to: REQ-001"},
+		},
+		{
+			name: "relation with properties",
+			relation: &model.Relation{
+				From: "DEC-001",
+				Type: "addresses",
+				To:   "REQ-001",
+				Properties: map[string]interface{}{
+					"rationale": "Because it makes sense",
+				},
+			},
+			contains: []string{"from: DEC-001", "rationale: Because it makes sense"},
+		},
+		{
+			name: "relation with content",
+			relation: &model.Relation{
+				From:    "DEC-001",
+				Type:    "addresses",
+				To:      "REQ-001",
+				Content: "## Notes\n\nSome notes here.",
+			},
+			contains: []string{"## Notes", "Some notes here."},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			formatted, err := FormatRelation(tt.relation)
+			if err != nil {
+				t.Fatalf("FormatRelation failed: %v", err)
+			}
+
+			for _, want := range tt.contains {
+				if !strings.Contains(formatted, want) {
+					t.Errorf("formatted output missing %q:\n%s", want, formatted)
+				}
+			}
+		})
+	}
+}
+
+func TestFormatRelation_KeyOrder(t *testing.T) {
+	relation := &model.Relation{
+		From: "DEC-001",
+		Type: "addresses",
+		To:   "REQ-001",
+		Properties: map[string]interface{}{
+			"alpha": "first",
+			"zebra": "last",
+		},
+	}
+
+	formatted, err := FormatRelation(relation)
+	if err != nil {
+		t.Fatalf("FormatRelation failed: %v", err)
+	}
+
+	// Check that from, relation, to appear before properties
+	fromIdx := strings.Index(formatted, "from:")
+	relationIdx := strings.Index(formatted, "relation:")
+	toIdx := strings.Index(formatted, "to:")
+	alphaIdx := strings.Index(formatted, "alpha:")
+	zebraIdx := strings.Index(formatted, "zebra:")
+
+	if fromIdx >= relationIdx || relationIdx >= toIdx {
+		t.Errorf("key order should be from, relation, to; got indices %d, %d, %d", fromIdx, relationIdx, toIdx)
+	}
+	if toIdx >= alphaIdx || toIdx >= zebraIdx {
+		t.Errorf("properties should come after from/relation/to; to=%d, alpha=%d, zebra=%d", toIdx, alphaIdx, zebraIdx)
+	}
+}
+
 func TestDeleteRelation(t *testing.T) {
 	tmpDir := t.TempDir()
 
