@@ -21,43 +21,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-// testMeta returns a shared metamodel for convert tests with all needed entity types.
-func testMeta() *metamodel.Metamodel {
-	return testutil.NewMetamodel().
-		DefineEntity("requirement").
-		Label("Requirement").
-		IDPrefix("REQ-").
-		Prop("title", metamodel.PropertyTypeString, true).
-		Prop("status", "status", false).
-		End().
-		DefineEntity("decision").
-		Label("Decision").
-		IDPrefix("DEC-").
-		Prop("title", metamodel.PropertyTypeString, true).
-		Prop("status", "status", false).
-		Prop("priority", metamodel.PropertyTypeString, false).
-		End().
-		DefineEntity("solution").
-		Label("Solution").
-		IDPrefix("SOL-").
-		Prop("title", metamodel.PropertyTypeString, true).
-		End().
-		DefineEntity("component").
-		Label("Component").
-		IDPrefix("CMP-").
-		Prop("title", metamodel.PropertyTypeString, false).
-		End().
-		DefineEntity("test").
-		Label("Test").
-		Prop("title", metamodel.PropertyTypeString, false).
-		End().
-		WithRelation("addresses", "Addresses", []string{"solution"}, []string{"requirement"}).
-		WithRelation("implements", "Implements", []string{"component"}, []string{"solution"}).
-		WithRelation("motivates", "Motivates", []string{"requirement"}, []string{"decision"}).
-		WithCustomType("status", []string{"draft", "proposed", "accepted", "rejected"}).
-		Build()
-}
-
 // graphAdapter wraps *graph.Graph to implement relationQuerier for tests.
 type graphAdapter struct {
 	g *graph.Graph
@@ -85,9 +48,8 @@ func makeToolRequest(args map[string]interface{}) mcp.CallToolRequest {
 }
 
 func TestConvertEntity_WithoutRelations(t *testing.T) {
-	meta := testMeta()
 	g := graph.New()
-	e := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Test requirement").WithContent("Some content").Build()
+	e := testutil.Entity("requirement").ID("REQ-001").With("title", "Test requirement").With("status", "draft").WithContent("Some content").Build()
 	g.AddNode(e)
 
 	result, err := convertEntity(e, &graphAdapter{g}, false)
@@ -118,10 +80,9 @@ func TestConvertEntity_WithoutRelations(t *testing.T) {
 }
 
 func TestConvertEntity_WithRelations(t *testing.T) {
-	meta := testMeta()
 	g := graph.New()
-	e1 := testutil.EntityFor(meta, "requirement").ID("REQ-001").Build()
-	e2 := testutil.EntityFor(meta, "solution").ID("SOL-001").Build()
+	e1 := testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement 1").Build()
+	e2 := testutil.Entity("solution").ID("SOL-001").With("title", "Solution 1").Build()
 	g.AddNode(e1)
 	g.AddNode(e2)
 
@@ -151,9 +112,8 @@ func TestConvertEntity_WithRelations(t *testing.T) {
 }
 
 func TestConvertEntity_NoRelationsPresent(t *testing.T) {
-	meta := testMeta()
 	g := graph.New()
-	e := testutil.EntityFor(meta, "requirement").ID("REQ-001").Build()
+	e := testutil.Entity("requirement").ID("REQ-001").Build()
 	g.AddNode(e)
 
 	result, err := convertEntity(e, &graphAdapter{g}, true)
@@ -172,8 +132,7 @@ func TestConvertEntity_NoRelationsPresent(t *testing.T) {
 }
 
 func TestConvertEntitySummary(t *testing.T) {
-	meta := testMeta()
-	e := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "My Title").With("status", "accepted").Build()
+	e := testutil.Entity("requirement").ID("REQ-001").With("title", "My Title").With("status", "accepted").Build()
 
 	result := convertEntitySummary(e)
 
@@ -192,8 +151,7 @@ func TestConvertEntitySummary(t *testing.T) {
 }
 
 func TestConvertEntitySummary_NoTitleNoStatus(t *testing.T) {
-	meta := testMeta()
-	e := testutil.EntityFor(meta, "requirement").ID("REQ-002").Without("title").Without("status").Build()
+	e := testutil.Entity("requirement").ID("REQ-002").Build()
 
 	result := convertEntitySummary(e)
 
@@ -336,9 +294,8 @@ func TestConvertPathSteps_Empty(t *testing.T) {
 }
 
 func TestBuildRelations_NoEdges(t *testing.T) {
-	meta := testMeta()
 	g := graph.New()
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").Build())
 
 	rels := buildRelations("REQ-001", &graphAdapter{g})
 	if rels != nil {
@@ -347,10 +304,9 @@ func TestBuildRelations_NoEdges(t *testing.T) {
 }
 
 func TestBuildRelations_OutgoingOnly(t *testing.T) {
-	meta := testMeta()
 	g := graph.New()
-	sol := testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Solution").Build()
-	req := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Requirement").Build()
+	sol := testutil.Entity("solution").ID("SOL-001").With("title", "Solution").Build()
+	req := testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement").Build()
 	g.AddNode(sol)
 	g.AddNode(req)
 
@@ -375,10 +331,9 @@ func TestBuildRelations_OutgoingOnly(t *testing.T) {
 }
 
 func TestBuildRelations_IncomingOnly(t *testing.T) {
-	meta := testMeta()
 	g := graph.New()
-	req := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Requirement").Build()
-	sol := testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Solution").Build()
+	req := testutil.Entity("requirement").ID("REQ-001").With("title", "Requirement").Build()
+	sol := testutil.Entity("solution").ID("SOL-001").With("title", "Solution").Build()
 	g.AddNode(req)
 	g.AddNode(sol)
 
@@ -400,11 +355,10 @@ func TestBuildRelations_IncomingOnly(t *testing.T) {
 }
 
 func TestBuildRelations_BothDirections(t *testing.T) {
-	meta := testMeta()
 	g := graph.New()
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Req").Build())
-	g.AddNode(testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Sol").Build())
-	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Dec").Build())
+	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Req").Build())
+	g.AddNode(testutil.Entity("solution").ID("SOL-001").With("title", "Sol").Build())
+	g.AddNode(testutil.Entity("decision").ID("DEC-001").With("title", "Dec").Build())
 
 	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
 	g.AddEdge(testutil.NewRelation("REQ-001", "motivates", "DEC-001").Build())
@@ -428,10 +382,9 @@ func TestBuildRelations_BothDirections(t *testing.T) {
 }
 
 func TestConvertEntitiesList(t *testing.T) {
-	meta := testMeta()
 	entities := []*model.Entity{
-		testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "First").With("status", "draft").Build(),
-		testutil.EntityFor(meta, "requirement").ID("REQ-002").With("title", "Second").Build(),
+		testutil.Entity("requirement").ID("REQ-001").With("title", "First").With("status", "draft").Build(),
+		testutil.Entity("requirement").ID("REQ-002").With("title", "Second").Build(),
 	}
 
 	result, err := convertEntitiesList(entities)
@@ -506,11 +459,10 @@ func TestConvertRelationsList_Empty(t *testing.T) {
 }
 
 func TestSortEntitiesByID(t *testing.T) {
-	meta := testMeta()
 	entities := []*model.Entity{
-		testutil.EntityFor(meta, "requirement").ID("REQ-003").Build(),
-		testutil.EntityFor(meta, "requirement").ID("REQ-001").Build(),
-		testutil.EntityFor(meta, "requirement").ID("REQ-002").Build(),
+		testutil.Entity("requirement").ID("REQ-003").Build(),
+		testutil.Entity("requirement").ID("REQ-001").Build(),
+		testutil.Entity("requirement").ID("REQ-002").Build(),
 	}
 
 	sortEntitiesByID(entities)
@@ -692,9 +644,8 @@ func TestConvertTraceResult_DeepNesting(t *testing.T) {
 }
 
 func TestConvertEntity_WithProperties(t *testing.T) {
-	meta := testMeta()
 	g := graph.New()
-	e := testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high").Build()
+	e := testutil.Entity("decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high").Build()
 	g.AddNode(e)
 
 	result, err := convertEntity(e, &graphAdapter{g}, false)
@@ -714,11 +665,10 @@ func TestConvertEntity_WithProperties(t *testing.T) {
 }
 
 func TestSortEntitiesByID_AlreadySorted(t *testing.T) {
-	meta := testMeta()
 	entities := []*model.Entity{
-		testutil.EntityFor(meta, "test").ID("A-001").Build(),
-		testutil.EntityFor(meta, "test").ID("B-001").Build(),
-		testutil.EntityFor(meta, "test").ID("C-001").Build(),
+		testutil.Entity("test").ID("A-001").Build(),
+		testutil.Entity("test").ID("B-001").Build(),
+		testutil.Entity("test").ID("C-001").Build(),
 	}
 
 	sortEntitiesByID(entities)

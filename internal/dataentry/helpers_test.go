@@ -128,11 +128,10 @@ func TestPropertyIsEmpty(t *testing.T) {
 }
 
 func TestApplyFilters(t *testing.T) {
-	meta := testMeta()
 	entities := []*model.Entity{
-		testutil.EntityFor(meta, "ticket").ID("E-001").With("status", "open").With("priority", "high").Build(),
-		testutil.EntityFor(meta, "ticket").ID("E-002").With("status", "closed").With("priority", "low").Build(),
-		testutil.EntityFor(meta, "ticket").ID("E-003").With("status", "open").With("priority", "low").Build(),
+		testutil.Entity("ticket").ID("E-001").With("status", "open").With("priority", "high").Build(),
+		testutil.Entity("ticket").ID("E-002").With("status", "closed").With("priority", "low").Build(),
+		testutil.Entity("ticket").ID("E-003").With("status", "open").With("priority", "low").Build(),
 	}
 
 	tests := []struct {
@@ -200,8 +199,6 @@ func TestApplyFilters(t *testing.T) {
 }
 
 func TestApplyFiltersMultiSelect(t *testing.T) {
-	// Note: Using Entity() here because "clause" type is not in testMeta()
-	// and the test is specifically testing multi-select property filtering logic
 	entities := []*model.Entity{
 		testutil.Entity("clause").ID("E-001").With("applies_to", "client").Build(),
 		testutil.Entity("clause").ID("E-002").WithList("applies_to", "client", "provider").Build(),
@@ -268,8 +265,6 @@ func TestSortEntitiesMulti(t *testing.T) {
 	}
 
 	makeEntities := func() []*model.Entity {
-		// Note: Using Entity() here because "item" type is not in testMeta()
-		// and the test is specifically testing sorting logic, not entity creation
 		return []*model.Entity{
 			testutil.Entity("item").ID("E-003").With("name", "Charlie").Build(),
 			testutil.Entity("item").ID("E-001").With("name", "Alice").Build(),
@@ -314,7 +309,6 @@ func TestSortEntitiesMulti(t *testing.T) {
 	})
 
 	t.Run("nil property values sort to end", func(t *testing.T) {
-		// Note: Using Entity() here because "item" type is not in testMeta()
 		entities := []*model.Entity{
 			testutil.Entity("item").ID("E-001").With("name", "Bob").Build(),
 			testutil.Entity("item").ID("E-002").Build(),
@@ -1012,9 +1006,9 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	}
 
 	g := graph.New()
-	assessment := testutil.EntityFor(meta, "assessment").ID("ASS-001").With("title", "Q1 Review").Build()
-	person1 := testutil.EntityFor(meta, "person").ID("PER-001").With("name", "Alice").Build()
-	person2 := testutil.EntityFor(meta, "person").ID("PER-002").With("name", "Bob").Build()
+	assessment := testutil.Entity("assessment").ID("ASS-001").With("title", "Q1 Review").Build()
+	person1 := testutil.Entity("person").ID("PER-001").With("name", "Alice").Build()
+	person2 := testutil.Entity("person").ID("PER-002").With("name", "Bob").Build()
 	g.AddNode(assessment)
 	g.AddNode(person1)
 	g.AddNode(person2)
@@ -1156,7 +1150,7 @@ func TestFilterByRelation(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
 				Properties: map[string]metamodel.PropertyDef{
-					"title": {Type: "string", Required: true},
+					"title": {Type: "string"},
 				},
 			},
 			"component": {
@@ -1177,25 +1171,25 @@ func TestFilterByRelation(t *testing.T) {
 	g := graph.New()
 
 	// Create components
-	cmpFrontend := testutil.EntityFor(meta, "component").ID("CMP-001").With("name", "Frontend").Build()
-	cmpBackend := testutil.EntityFor(meta, "component").ID("CMP-002").With("name", "Backend").Build()
+	cmpFrontend := testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build()
+	cmpBackend := testutil.Entity("component").ID("CMP-002").With("name", "Backend").Build()
 	g.AddNode(cmpFrontend)
 	g.AddNode(cmpBackend)
 
 	// Create tickets with relations to components
-	tkt1 := testutil.EntityFor(meta, "ticket").ID("TKT-001").With("title", "Frontend bug").Build()
+	tkt1 := testutil.Entity("ticket").ID("TKT-001").With("title", "Frontend bug").Build()
 	g.AddNode(tkt1)
 	g.AddEdge(testutil.NewRelation(tkt1.ID, "belongs_to", cmpFrontend.ID).Build())
 
-	tkt2 := testutil.EntityFor(meta, "ticket").ID("TKT-002").With("title", "Backend bug").Build()
+	tkt2 := testutil.Entity("ticket").ID("TKT-002").With("title", "Backend bug").Build()
 	g.AddNode(tkt2)
 	g.AddEdge(testutil.NewRelation(tkt2.ID, "belongs_to", cmpBackend.ID).Build())
 
-	tkt3 := testutil.EntityFor(meta, "ticket").ID("TKT-003").With("title", "Another frontend bug").Build()
+	tkt3 := testutil.Entity("ticket").ID("TKT-003").With("title", "Another frontend bug").Build()
 	g.AddNode(tkt3)
 	g.AddEdge(testutil.NewRelation(tkt3.ID, "belongs_to", cmpFrontend.ID).Build())
 
-	tkt4 := testutil.EntityFor(meta, "ticket").ID("TKT-004").With("title", "No component ticket").Build()
+	tkt4 := testutil.Entity("ticket").ID("TKT-004").With("title", "No component ticket").Build()
 	g.AddNode(tkt4)
 	// No relation for TKT-004
 
@@ -1253,7 +1247,7 @@ func TestResolveRelationFilterValues(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
 				Properties: map[string]metamodel.PropertyDef{
-					"title": {Type: "string", Required: true},
+					"title": {Type: "string"},
 				},
 			},
 			"component": {
@@ -1274,28 +1268,28 @@ func TestResolveRelationFilterValues(t *testing.T) {
 	g := graph.New()
 
 	// Create components
-	cmpFrontend := testutil.EntityFor(meta, "component").ID("CMP-001").With("name", "Frontend").Build()
-	cmpBackend := testutil.EntityFor(meta, "component").ID("CMP-002").With("name", "Backend").Build()
-	cmpAPI := testutil.EntityFor(meta, "component").ID("CMP-003").With("name", "API").Build()
+	cmpFrontend := testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build()
+	cmpBackend := testutil.Entity("component").ID("CMP-002").With("name", "Backend").Build()
+	cmpAPI := testutil.Entity("component").ID("CMP-003").With("name", "API").Build()
 	g.AddNode(cmpFrontend)
 	g.AddNode(cmpBackend)
 	g.AddNode(cmpAPI)
 
 	// Create tickets with relations
-	tkt1 := testutil.EntityFor(meta, "ticket").ID("TKT-001").With("title", "Ticket 1").Build()
+	tkt1 := testutil.Entity("ticket").ID("TKT-001").With("title", "Ticket 1").Build()
 	g.AddNode(tkt1)
 	g.AddEdge(testutil.NewRelation(tkt1.ID, "belongs_to", cmpFrontend.ID).Build())
 
-	tkt2 := testutil.EntityFor(meta, "ticket").ID("TKT-002").With("title", "Ticket 2").Build()
+	tkt2 := testutil.Entity("ticket").ID("TKT-002").With("title", "Ticket 2").Build()
 	g.AddNode(tkt2)
 	g.AddEdge(testutil.NewRelation(tkt2.ID, "belongs_to", cmpBackend.ID).Build())
 
-	tkt3 := testutil.EntityFor(meta, "ticket").ID("TKT-003").With("title", "Ticket 3").Build()
+	tkt3 := testutil.Entity("ticket").ID("TKT-003").With("title", "Ticket 3").Build()
 	g.AddNode(tkt3)
 	g.AddEdge(testutil.NewRelation(tkt3.ID, "belongs_to", cmpFrontend.ID).Build()) // duplicate Frontend
 
 	// TKT-004 has no relation
-	tkt4 := testutil.EntityFor(meta, "ticket").ID("TKT-004").With("title", "Ticket 4").Build()
+	tkt4 := testutil.Entity("ticket").ID("TKT-004").With("title", "Ticket 4").Build()
 	g.AddNode(tkt4)
 
 	app := &App{meta: meta, g: g}
@@ -1354,10 +1348,10 @@ func TestResolveScope(t *testing.T) {
 
 	makeGraph := func() *graph.Graph {
 		g := graph.New()
-		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-001").With("status", "open").With("priority", "high").Build())
-		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-002").With("status", "closed").With("priority", "low").Build())
-		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-003").With("status", "open").With("priority", "medium").Build())
-		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-004").With("status", "open").With("priority", "low").Build())
+		g.AddNode(testutil.Entity("ticket").ID("T-001").With("status", "open").With("priority", "high").Build())
+		g.AddNode(testutil.Entity("ticket").ID("T-002").With("status", "closed").With("priority", "low").Build())
+		g.AddNode(testutil.Entity("ticket").ID("T-003").With("status", "open").With("priority", "medium").Build())
+		g.AddNode(testutil.Entity("ticket").ID("T-004").With("status", "open").With("priority", "low").Build())
 		return g
 	}
 
@@ -1551,7 +1545,7 @@ func TestResolveScope(t *testing.T) {
 			Entities: map[string]metamodel.EntityDef{
 				"ticket": {
 					Properties: map[string]metamodel.PropertyDef{
-						"title": {Type: "string", Required: true},
+						"title": {Type: "string"},
 					},
 				},
 				"component": {
@@ -1566,12 +1560,12 @@ func TestResolveScope(t *testing.T) {
 		}
 
 		relGraph := graph.New()
-		cmp := testutil.EntityFor(relMeta, "component").ID("CMP-001").With("name", "Frontend").Build()
+		cmp := testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build()
 		relGraph.AddNode(cmp)
 
-		t1 := testutil.EntityFor(relMeta, "ticket").ID("T-001").With("title", "Ticket 1").Build()
-		t2 := testutil.EntityFor(relMeta, "ticket").ID("T-002").With("title", "Ticket 2").Build()
-		t3 := testutil.EntityFor(relMeta, "ticket").ID("T-003").With("title", "Ticket 3").Build()
+		t1 := testutil.Entity("ticket").ID("T-001").With("title", "Ticket 1").Build()
+		t2 := testutil.Entity("ticket").ID("T-002").With("title", "Ticket 2").Build()
+		t3 := testutil.Entity("ticket").ID("T-003").With("title", "Ticket 3").Build()
 		relGraph.AddNode(t1)
 		relGraph.AddNode(t2)
 		relGraph.AddNode(t3)
