@@ -3,7 +3,7 @@ effort: m
 id: TKT-7g7x
 kind: refactor
 priority: low
-status: ready
+status: in-progress
 title: Replace hardcoded ID comparisons in test assertions
 type: ticket
 ---
