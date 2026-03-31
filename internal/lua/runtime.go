@@ -183,6 +183,9 @@ func (r *Runtime) registerBindings() {
 	r.L.SetField(rela, "project_root", lua.LString(r.projectRoot))
 	r.L.SetField(rela, "args", r.L.NewTable()) // Will be set before running script
 
+	// Markdown AST module
+	r.registerMarkdownModule(rela)
+
 	r.L.SetGlobal("rela", rela)
 }
 
