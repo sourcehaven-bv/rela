@@ -37,9 +37,21 @@ func (s *Service) Rules() []metamodel.ValidationRule {
 // Check runs all validation rules against the given entities.
 // If scope is non-nil, only entities in scope are checked.
 func (s *Service) Check(entities []*model.Entity, scope map[string]bool) []Violation {
+	return s.CheckRules(entities, scope, nil)
+}
+
+// CheckRules runs validation rules against the given entities.
+// If ruleNames is nil, all rules are run. Otherwise, only rules in the set are run.
+// If scope is non-nil, only entities in scope are checked.
+func (s *Service) CheckRules(entities []*model.Entity, scope, ruleNames map[string]bool) []Violation {
 	var violations []Violation
 
 	for _, rule := range s.meta.Validations {
+		// Skip rules not in the filter set (if filter is specified)
+		if ruleNames != nil && !ruleNames[rule.Name] {
+			continue
+		}
+
 		ruleViolations := s.checkRule(rule, entities, scope)
 		severity := rule.GetSeverity()
 		for _, entity := range ruleViolations {
