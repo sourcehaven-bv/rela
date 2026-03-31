@@ -1042,6 +1042,36 @@ func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error
 	return true, nil
 }
 
+// FormatRelation checks if a relation file needs formatting and optionally writes
+// the formatted version. Returns true if the file was (or would be) modified.
+func (w *Workspace) FormatRelation(relation *model.Relation, dryRun bool) (bool, error) {
+	// Generate formatted content
+	formatted, err := markdown.FormatRelation(relation)
+	if err != nil {
+		return false, fmt.Errorf("format relation: %w", err)
+	}
+
+	// Read current file content
+	current, err := w.repo.FS().ReadFile(relation.FilePath)
+	if err != nil {
+		return false, fmt.Errorf("read relation file: %w", err)
+	}
+
+	// Compare
+	if formatted == string(current) {
+		return false, nil
+	}
+
+	// Write if not dry-run
+	if !dryRun {
+		if err := w.repo.WriteRelation(relation); err != nil {
+			return false, fmt.Errorf("write relation: %w", err)
+		}
+	}
+
+	return true, nil
+}
+
 // --- File watching ---
 
 // WatchOptions configures the file watcher.

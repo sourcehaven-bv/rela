@@ -56,18 +56,7 @@ func (f *FileIO) ReadRelation(path string) (*model.Relation, error) {
 
 // WriteRelation writes a relation to a markdown file.
 func (f *FileIO) WriteRelation(relation *model.Relation, path string) error {
-	frontmatter := map[string]interface{}{
-		"from":     relation.From,
-		"relation": relation.Type,
-		"to":       relation.To,
-	}
-
-	// Add any additional properties
-	for key, value := range relation.Properties {
-		frontmatter[key] = value
-	}
-
-	content, err := FormatDocument(frontmatter, relation.Content)
+	content, err := FormatRelation(relation)
 	if err != nil {
 		return err
 	}
@@ -79,6 +68,33 @@ func (f *FileIO) WriteRelation(relation *model.Relation, path string) error {
 	}
 
 	return f.FS.WriteFile(path, []byte(content), 0644)
+}
+
+// FormatRelation returns the formatted markdown content for a relation.
+// Frontmatter keys are ordered: from, relation, to, then extras alphabetically.
+// Markdown content is also formatted.
+func FormatRelation(relation *model.Relation) (string, error) {
+	frontmatter := map[string]interface{}{
+		"from":     relation.From,
+		"relation": relation.Type,
+		"to":       relation.To,
+	}
+
+	// Add any additional properties
+	for key, value := range relation.Properties {
+		frontmatter[key] = value
+	}
+
+	// Key order: from, relation, to, then extras alphabetically
+	keyOrder := []string{"from", "relation", "to"}
+
+	// Format markdown content
+	content := relation.Content
+	if content != "" {
+		content = FormatMarkdown(content)
+	}
+
+	return FormatDocumentOrdered(frontmatter, content, keyOrder)
 }
 
 // DeleteRelation removes a relation file.

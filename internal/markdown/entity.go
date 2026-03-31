@@ -69,6 +69,7 @@ func (f *FileIO) ReadEntity(path string, meta *metamodel.Metamodel) (*model.Enti
 
 // FormatEntity returns the formatted markdown content for an entity.
 // The optional propertyOrder specifies the order for entity properties (after id and type).
+// Both frontmatter ordering and markdown content formatting are applied.
 func FormatEntity(entity *model.Entity, propertyOrder []string) (string, error) {
 	frontmatter := make(map[string]interface{})
 	frontmatter["id"] = entity.ID
@@ -85,7 +86,13 @@ func FormatEntity(entity *model.Entity, propertyOrder []string) (string, error) 
 		keyOrder = append(keyOrder, propertyOrder...)
 	}
 
-	return FormatDocumentOrdered(frontmatter, entity.Content, keyOrder)
+	// Format markdown content
+	content := entity.Content
+	if content != "" {
+		content = FormatMarkdown(content)
+	}
+
+	return FormatDocumentOrdered(frontmatter, content, keyOrder)
 }
 
 // WriteEntity writes an entity to a markdown file.

@@ -72,6 +72,7 @@ vendors:
     in:
       - github.com/yuin/goldmark
       - github.com/yuin/goldmark/**
+      - github.com/teekennedy/goldmark-markdown
   gogit:       { in: github.com/go-git/go-git/** }
   mcpgo:       { in: github.com/mark3labs/mcp-go/** }
   wails:       { in: github.com/wailsapp/wails/** }
