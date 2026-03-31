@@ -48,7 +48,7 @@ func TestWriteJSONError(t *testing.T) {
 }
 
 func TestEntityToAPI_WithoutRelations(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	e := &model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
@@ -75,17 +75,12 @@ func TestEntityToAPI_WithoutRelations(t *testing.T) {
 }
 
 func TestEntityToAPI_WithRelations(t *testing.T) {
-	app := testAppInstance()
+	app, entities := testAppInstance()
 
 	// Add a relation to test graph
-	app.g.AddEdge(model.NewRelation("TKT-001", "depends_on", "TKT-002"))
+	app.g.AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
-	entity, found := app.g.GetNode("TKT-001")
-	if !found {
-		t.Fatal("TKT-001 not found in test graph")
-	}
-
-	result := app.entityToAPI(entity, true)
+	result := app.entityToAPI(entities.ticket1, true)
 
 	if len(result.Relations) == 0 {
 		t.Fatal("expected relations, got none")
@@ -93,30 +88,29 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 
 	hasOutgoing := false
 	for _, r := range result.Relations {
-		if r.Direction == DirectionOutgoing && r.Type == "depends_on" && r.To == "TKT-002" {
+		if r.Direction == DirectionOutgoing && r.Type == "depends_on" && r.To == entities.ticket2.ID {
 			hasOutgoing = true
 		}
 	}
 	if !hasOutgoing {
-		t.Error("expected outgoing depends_on relation to TKT-002")
+		t.Errorf("expected outgoing depends_on relation to %s", entities.ticket2.ID)
 	}
 
 	// Check incoming from perspective of TKT-002
-	entity2, _ := app.g.GetNode("TKT-002")
-	result2 := app.entityToAPI(entity2, true)
+	result2 := app.entityToAPI(entities.ticket2, true)
 	hasIncoming := false
 	for _, r := range result2.Relations {
-		if r.Direction == DirectionIncoming && r.Type == "depends_on" && r.From == "TKT-001" {
+		if r.Direction == DirectionIncoming && r.Type == "depends_on" && r.From == entities.ticket1.ID {
 			hasIncoming = true
 		}
 	}
 	if !hasIncoming {
-		t.Error("expected incoming depends_on relation from TKT-001")
+		t.Errorf("expected incoming depends_on relation from %s", entities.ticket1.ID)
 	}
 }
 
 func TestHandleAPIEntityTypes(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/entity-types", http.NoBody)
 
@@ -149,7 +143,7 @@ func TestHandleAPIEntityTypes(t *testing.T) {
 }
 
 func TestHandleAPIEntities(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("all entities", func(t *testing.T) {
 		w := httptest.NewRecorder()
@@ -187,7 +181,7 @@ func TestHandleAPIEntities(t *testing.T) {
 }
 
 func TestHandleAPIEntity(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("found", func(t *testing.T) {
 		w := httptest.NewRecorder()
@@ -229,7 +223,7 @@ func TestHandleAPIEntity(t *testing.T) {
 }
 
 func TestHandleAPIMetamodel(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/metamodel", http.NoBody)
 
@@ -252,7 +246,7 @@ func TestHandleAPIMetamodel(t *testing.T) {
 }
 
 func TestHandleAPIEntitiesCRUD_MethodNotAllowed(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/api/entities", http.NoBody)
 
@@ -264,7 +258,7 @@ func TestHandleAPIEntitiesCRUD_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleAPIEntityCRUD_MethodNotAllowed(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/entities/TKT-001", http.NoBody)
 
@@ -276,7 +270,7 @@ func TestHandleAPIEntityCRUD_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleAPIRelationsCRUD_MethodNotAllowed(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPatch, "/api/relations", http.NoBody)
 
@@ -288,7 +282,7 @@ func TestHandleAPIRelationsCRUD_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleEntityHelp(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("valid entity type", func(t *testing.T) {
 		w := httptest.NewRecorder()

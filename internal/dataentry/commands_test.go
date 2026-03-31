@@ -21,7 +21,7 @@ import (
 // --- resolveCommands ---
 
 func TestResolveCommands(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	app.Cfg.Views = map[string]ViewConfig{
 		"ticket_detail": {Title: "Ticket Detail", Entry: ViewEntry{Type: "ticket"}},
 	}
@@ -110,7 +110,7 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("empty commands returns nil", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		cmds := app2.resolveCommands("entity", "", "ticket")
 		if cmds != nil {
 			t.Errorf("expected nil, got %v", cmds)
@@ -118,7 +118,7 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("auto_open propagated to resolved command", func(t *testing.T) {
-		app2 := testAppInstance()
+		app2, _ := testAppInstance()
 		trueVal := true
 		app2.Cfg.Commands = map[string]CommandConfig{
 			"auto-cmd": {
@@ -254,20 +254,19 @@ func TestParseCommandOutput(t *testing.T) {
 // --- Stdin JSON builders ---
 
 func TestBuildEntityInput(t *testing.T) {
-	app := testAppInstance()
+	app, entities := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
 		app.meta, app.g)
-	entity, _ := app.g.GetNode("TKT-001")
-	app.g.AddEdge(model.NewRelation("TKT-001", "depends_on", "TKT-002"))
+	app.g.AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
-	input := app.buildEntityInput(entity)
+	input := app.buildEntityInput(entities.ticket1)
 
 	if input.Context != "entity" {
 		t.Errorf("expected entity context, got %s", input.Context)
 	}
-	if input.Entity.ID != "TKT-001" {
-		t.Errorf("expected TKT-001, got %s", input.Entity.ID)
+	if input.Entity.ID != entities.ticket1.ID {
+		t.Errorf("expected %s, got %s", entities.ticket1.ID, input.Entity.ID)
 	}
 	if input.Project.Root != "/test/project" {
 		t.Errorf("expected /test/project, got %s", input.Project.Root)
@@ -291,7 +290,7 @@ func TestBuildEntityInput(t *testing.T) {
 }
 
 func TestBuildListInput(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
 		app.meta, app.g)
@@ -311,7 +310,7 @@ func TestBuildListInput(t *testing.T) {
 }
 
 func TestBuildViewInput(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
 		app.meta, app.g)
@@ -349,7 +348,7 @@ func TestBuildViewInput(t *testing.T) {
 }
 
 func TestBuildGlobalInput(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
 		app.meta, app.g)
@@ -367,7 +366,7 @@ func TestBuildGlobalInput(t *testing.T) {
 // --- buildCommandEnv ---
 
 func TestBuildCommandEnv(t *testing.T) {
-	app := testAppInstance()
+	app, entities := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
 		app.meta, app.g)
@@ -377,8 +376,7 @@ func TestBuildCommandEnv(t *testing.T) {
 		Context: "entity",
 		Env:     map[string]string{"FORMAT": "pdf"},
 	}
-	entity, _ := app.g.GetNode("TKT-001")
-	input := app.buildEntityInput(entity)
+	input := app.buildEntityInput(entities.ticket1)
 	env := app.buildCommandEnv(cmd, input)
 
 	envMap := envToMap(env)
@@ -388,8 +386,8 @@ func TestBuildCommandEnv(t *testing.T) {
 	if envMap["RELA_CONTEXT"] != "entity" {
 		t.Errorf("expected entity context, got %s", envMap["RELA_CONTEXT"])
 	}
-	if envMap["RELA_ENTITY_ID"] != "TKT-001" {
-		t.Errorf("expected TKT-001, got %s", envMap["RELA_ENTITY_ID"])
+	if envMap["RELA_ENTITY_ID"] != entities.ticket1.ID {
+		t.Errorf("expected %s, got %s", entities.ticket1.ID, envMap["RELA_ENTITY_ID"])
 	}
 	if envMap["RELA_ENTITY_TYPE"] != "ticket" {
 		t.Errorf("expected ticket, got %s", envMap["RELA_ENTITY_TYPE"])
@@ -400,7 +398,7 @@ func TestBuildCommandEnv(t *testing.T) {
 }
 
 func TestBuildCommandEnvListContext(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
 		app.meta, app.g)
@@ -416,17 +414,16 @@ func TestBuildCommandEnvListContext(t *testing.T) {
 }
 
 func TestBuildCommandEnvViewContext(t *testing.T) {
-	app := testAppInstance()
+	app, entities := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
 		app.meta, app.g)
 
 	cmd := CommandConfig{Script: "echo hi", Context: "view"}
-	entity, _ := app.g.GetNode("TKT-001")
 	input := &commandInput{
 		Context: "view",
 		ViewID:  "ticket_detail",
-		Entity:  entity,
+		Entity:  entities.ticket1,
 		Project: app.projectInfo(),
 	}
 	env := app.buildCommandEnv(cmd, input)
@@ -435,8 +432,8 @@ func TestBuildCommandEnvViewContext(t *testing.T) {
 	if envMap["RELA_VIEW_ID"] != "ticket_detail" {
 		t.Errorf("expected ticket_detail, got %s", envMap["RELA_VIEW_ID"])
 	}
-	if envMap["RELA_ENTITY_ID"] != "TKT-001" {
-		t.Errorf("expected TKT-001, got %s", envMap["RELA_ENTITY_ID"])
+	if envMap["RELA_ENTITY_ID"] != entities.ticket1.ID {
+		t.Errorf("expected %s, got %s", entities.ticket1.ID, envMap["RELA_ENTITY_ID"])
 	}
 }
 
@@ -599,7 +596,7 @@ commands:
 // --- SSE Handler integration test ---
 
 func TestHandleCommandExec(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, _ := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -682,7 +679,7 @@ func TestHandleCommandExec(t *testing.T) {
 }
 
 func TestHandleCommandExecFailing(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, _ := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -720,7 +717,7 @@ func TestHandleCommandExecFailing(t *testing.T) {
 }
 
 func TestHandleCommandExecGlobalContext(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, _ := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -752,7 +749,7 @@ func TestHandleCommandExecGlobalContext(t *testing.T) {
 }
 
 func TestHandleCommandExecListContext(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, _ := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -774,7 +771,7 @@ func TestHandleCommandExecListContext(t *testing.T) {
 }
 
 func TestHandleCommandExecViewContext(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, _ := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -799,7 +796,7 @@ func TestHandleCommandExecViewContext(t *testing.T) {
 
 func TestHandleCommandCancel(t *testing.T) {
 	t.Run("no running command", func(t *testing.T) {
-		app := testAppInstance()
+		app, _ := testAppInstance()
 		r := httptest.NewRequest(http.MethodPost, "/api/command-cancel/nonexistent", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleCommandCancel(w, r)
@@ -809,7 +806,7 @@ func TestHandleCommandCancel(t *testing.T) {
 	})
 
 	t.Run("method not allowed", func(t *testing.T) {
-		app := testAppInstance()
+		app, _ := testAppInstance()
 		r := httptest.NewRequest(http.MethodGet, "/api/command-cancel/test", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleCommandCancel(w, r)
@@ -822,7 +819,7 @@ func TestHandleCommandCancel(t *testing.T) {
 // --- Open URL handler ---
 
 func TestHandleOpenURL(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("missing url", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/api/open-url", http.NoBody)
@@ -855,7 +852,7 @@ func TestHandleOpenURL(t *testing.T) {
 // --- Open File handler ---
 
 func TestHandleOpenFile(t *testing.T) {
-	app := testAppInstance()
+	app, _ := testAppInstance()
 
 	t.Run("missing path", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/api/open-file", http.NoBody)

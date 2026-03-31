@@ -7,7 +7,7 @@ import (
 )
 
 func TestNewRouterRegistersRoutes(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, _ := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 
 	handler := app.NewRouter()
@@ -36,7 +36,7 @@ func TestNewRouterRegistersRoutes(t *testing.T) {
 }
 
 func TestNewRouterStaticFiles(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, _ := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 
 	handler := app.NewRouter()
@@ -52,7 +52,7 @@ func TestNewRouterStaticFiles(t *testing.T) {
 }
 
 func TestNewRouterStaticFilesNoCacheHeader(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, _ := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 	handler := app.NewRouter()
 
@@ -67,7 +67,7 @@ func TestNewRouterStaticFilesNoCacheHeader(t *testing.T) {
 }
 
 func TestNewRouterAPIHasNoCacheHeader(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, _ := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 	handler := app.NewRouter()
 
@@ -83,7 +83,7 @@ func TestNewRouterAPIHasNoCacheHeader(t *testing.T) {
 }
 
 func TestNewRouterSSEEndpoint(t *testing.T) {
-	app := newHandlerTestApp(t)
+	app, _ := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 
 	handler := app.NewRouter()
