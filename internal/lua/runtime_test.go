@@ -1716,3 +1716,276 @@ func TestWriteFile_EnsureNewline_EmptyContent(t *testing.T) {
 		t.Errorf("Expected empty string, got %q", string(content))
 	}
 }
+
+func TestEntityStripPrefix(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	script := `
+local e = rela.get_entity("TKT-001")
+rela.output({slug = e:strip_prefix()})
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if result["slug"] != "001" {
+		t.Errorf("Expected slug='001', got %v", result["slug"])
+	}
+}
+
+func TestEntityStripPrefix_NoHyphen(t *testing.T) {
+	// Create entity with ID that has no hyphen
+	g := graph.New()
+	g.AddNode(&model.Entity{
+		ID:         "NOHYPHEN",
+		Type:       "test",
+		Properties: map[string]interface{}{},
+	})
+
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"test": {IDPrefix: "TEST"},
+		},
+	}
+	ws := workspace.NewForTest(g, meta)
+
+	var buf bytes.Buffer
+	r := New(ws, meta, "/tmp", &buf)
+	defer r.Close()
+
+	script := `
+local e = rela.get_entity("NOHYPHEN")
+rela.output({slug = e:strip_prefix()})
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	// No hyphen, should return ID as-is
+	if result["slug"] != "NOHYPHEN" {
+		t.Errorf("Expected slug='NOHYPHEN', got %v", result["slug"])
+	}
+}
+
+func TestMdLink(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	script := `rela.output({link = rela.md.link("Guide", "docs/guide.md")})`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	expected := "[Guide](docs/guide.md)"
+	if result["link"] != expected {
+		t.Errorf("Expected link=%q, got %v", expected, result["link"])
+	}
+}
+
+func TestMdRef(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	script := `rela.output({ref = rela.md.ref("GUIDE-001", "the guide")})`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	expected := "[the guide][GUIDE-001]"
+	if result["ref"] != expected {
+		t.Errorf("Expected ref=%q, got %v", expected, result["ref"])
+	}
+}
+
+func TestMdTable(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	script := `
+local tbl = rela.md.table(
+    {"Name", "Status"},
+    {
+        {"Alice", "active"},
+        {"Bob", "pending"}
+    }
+)
+rela.output({table = tbl})
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	expected := "| Name | Status |\n| -------- | -------- |\n| Alice | active |\n| Bob | pending |\n"
+	if result["table"] != expected {
+		t.Errorf("Expected table=%q, got %q", expected, result["table"])
+	}
+}
+
+func TestMdEntityTable_PropertyColumns(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	script := `
+local tickets = rela.sort_entities(rela.list_entities("ticket"), "status")
+local tbl = rela.md.entity_table(tickets, {
+    {"Title", "title"},
+    {"Status", "status", "unknown"}
+})
+rela.output({table = tbl})
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	tableStr := result["table"].(string)
+	// Should have header row
+	if !strings.Contains(tableStr, "| Title | Status |") {
+		t.Errorf("Expected header row, got %q", tableStr)
+	}
+	// Should have data rows with sorted values (done before open)
+	if !strings.Contains(tableStr, "| Done Ticket | done |") {
+		t.Errorf("Expected 'Done Ticket' row, got %q", tableStr)
+	}
+	if !strings.Contains(tableStr, "| Test Ticket | open |") {
+		t.Errorf("Expected 'Test Ticket' row, got %q", tableStr)
+	}
+}
+
+func TestMdEntityTable_FunctionColumn(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	script := `
+local tickets = rela.list_entities("ticket")
+local tbl = rela.md.entity_table(tickets, {
+    {"Link", function(e)
+        return rela.md.link(e:prop("title", e.id), e:strip_prefix() .. ".md")
+    end}
+})
+rela.output({table = tbl})
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	tableStr := result["table"].(string)
+	// Should have links
+	if !strings.Contains(tableStr, "[Test Ticket](001.md)") && !strings.Contains(tableStr, "[Done Ticket](002.md)") {
+		t.Errorf("Expected markdown links in table, got %q", tableStr)
+	}
+}
+
+func TestMdEntityTable_DefaultValue(t *testing.T) {
+	// Create entity with missing property
+	g := graph.New()
+	g.AddNode(&model.Entity{
+		ID:   "TEST-001",
+		Type: "test",
+		Properties: map[string]interface{}{
+			"title": "Has Title",
+			// no "status" property
+		},
+	})
+
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"test": {
+				IDPrefix: "TEST",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":  {Type: "string"},
+					"status": {Type: "string"},
+				},
+			},
+		},
+	}
+	ws := workspace.NewForTest(g, meta)
+
+	var buf bytes.Buffer
+	r := New(ws, meta, "/tmp", &buf)
+	defer r.Close()
+
+	script := `
+local entities = rela.list_entities("test")
+local tbl = rela.md.entity_table(entities, {
+    {"Title", "title"},
+    {"Status", "status", "draft"}
+})
+rela.output({table = tbl})
+`
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	tableStr := result["table"].(string)
+	// Should use default value "draft" for missing status
+	if !strings.Contains(tableStr, "| Has Title | draft |") {
+		t.Errorf("Expected default value 'draft', got %q", tableStr)
+	}
+}

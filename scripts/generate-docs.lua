@@ -10,11 +10,6 @@
 -- For README.md, run with --output-dir=.. and pass "readme" as first argument:
 --   rela script generate-docs.lua --output-dir=.. readme
 
--- Helper: Remove prefix from ID (e.g., "GUIDE-concepts" -> "concepts")
-local function remove_prefix(id)
-    return id:gsub("^[A-Z]+%-", "")
-end
-
 -- Generate a single doc page (guide, tutorial, or scenario)
 local function generate_doc_page(entity, output_path)
     local title = entity:prop("title", entity.id)
@@ -33,7 +28,7 @@ local function generate_guides()
     local count = 0
 
     for _, guide in ipairs(guides) do
-        local slug = remove_prefix(guide.id)
+        local slug = guide:strip_prefix()
         local output_path = slug .. ".md"
         generate_doc_page(guide, output_path)
         count = count + 1
@@ -48,7 +43,7 @@ local function generate_tutorials()
     local count = 0
 
     for _, tutorial in ipairs(tutorials) do
-        local slug = remove_prefix(tutorial.id)
+        local slug = tutorial:strip_prefix()
         local output_path = "tutorials/" .. slug .. ".md"
         generate_doc_page(tutorial, output_path)
         count = count + 1
@@ -63,7 +58,7 @@ local function generate_scenarios()
     local count = 0
 
     for _, scenario in ipairs(scenarios) do
-        local slug = remove_prefix(scenario.id)
+        local slug = scenario:strip_prefix()
         local output_path = "scenarios/" .. slug .. ".md"
         generate_doc_page(scenario, output_path)
         count = count + 1
@@ -147,49 +142,43 @@ go build -o rela ./cmd/rela
 
 ## Documentation
 
-| Document | Description |
-| -------- | ----------- |
 ]]
 
-    -- Add guide entries
-    for _, guide in ipairs(guides) do
-        local slug = remove_prefix(guide.id)
-        local title = guide:prop("title", guide.id)
-        local summary = guide:prop("summary", "")
-        readme = readme .. "| [" .. title .. "](docs/" .. slug .. ".md) | " .. summary .. " |\n"
-    end
+    -- Add guide table
+    readme = readme .. rela.md.entity_table(guides, {
+        {"Document", function(e)
+            return rela.md.link(e:prop("title", e.id), "docs/" .. e:strip_prefix() .. ".md")
+        end},
+        {"Description", "summary"}
+    })
 
     readme = readme .. [[
 
 ### Tutorials
 
-| Tutorial | Description |
-| -------- | ----------- |
 ]]
 
-    -- Add tutorial entries
-    for _, tutorial in ipairs(tutorials) do
-        local slug = remove_prefix(tutorial.id)
-        local title = tutorial:prop("title", tutorial.id)
-        local summary = tutorial:prop("summary", "")
-        readme = readme .. "| [" .. title .. "](docs/tutorials/" .. slug .. ".md) | " .. summary .. " |\n"
-    end
+    -- Add tutorial table
+    readme = readme .. rela.md.entity_table(tutorials, {
+        {"Tutorial", function(e)
+            return rela.md.link(e:prop("title", e.id), "docs/tutorials/" .. e:strip_prefix() .. ".md")
+        end},
+        {"Description", "summary"}
+    })
 
     readme = readme .. [[
 
 ### Scenarios
 
-| Scenario | Description |
-| -------- | ----------- |
 ]]
 
-    -- Add scenario entries
-    for _, scenario in ipairs(scenarios) do
-        local slug = remove_prefix(scenario.id)
-        local title = scenario:prop("title", scenario.id)
-        local summary = scenario:prop("summary", "")
-        readme = readme .. "| [" .. title .. "](docs/scenarios/" .. slug .. ".md) | " .. summary .. " |\n"
-    end
+    -- Add scenario table
+    readme = readme .. rela.md.entity_table(scenarios, {
+        {"Scenario", function(e)
+            return rela.md.link(e:prop("title", e.id), "docs/scenarios/" .. e:strip_prefix() .. ".md")
+        end},
+        {"Description", "summary"}
+    })
 
     readme = readme .. [[
 

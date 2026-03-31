@@ -211,7 +211,7 @@ func (r *Runtime) registerBindings() {
 	r.L.SetField(rela, "project_root", lua.LString(r.projectRoot))
 	r.L.SetField(rela, "args", r.L.NewTable()) // Will be set before running script
 
-	// Markdown AST module
+	// Markdown AST and generation helpers module (rela.md.*)
 	r.registerMarkdownModule(rela)
 
 	r.L.SetGlobal("rela", rela)
@@ -463,6 +463,9 @@ func entityToTable(ls *lua.LState, e *model.Entity) *lua.LTable {
 	// Add prop(name, default) method via a function field
 	t.RawSetString("prop", ls.NewFunction(luaEntityProp))
 
+	// Add strip_prefix() method to get ID without type prefix
+	t.RawSetString("strip_prefix", ls.NewFunction(luaEntityStripPrefix))
+
 	return t
 }
 
@@ -496,6 +499,32 @@ func luaEntityProp(ls *lua.LState) int {
 	}
 
 	ls.Push(val)
+	return 1
+}
+
+// luaEntityStripPrefix implements entity:strip_prefix() -> string
+// Returns the entity ID with the type prefix removed (e.g., "GUIDE-foo" -> "foo").
+func luaEntityStripPrefix(ls *lua.LState) int {
+	self := ls.CheckTable(1)
+	idVal := self.RawGetString("id")
+
+	id, ok := idVal.(lua.LString)
+	if !ok {
+		ls.Push(lua.LString(""))
+		return 1
+	}
+
+	// Strip prefix: find first hyphen and return everything after it
+	idStr := string(id)
+	for i, c := range idStr {
+		if c == '-' {
+			ls.Push(lua.LString(idStr[i+1:]))
+			return 1
+		}
+	}
+
+	// No hyphen found, return as-is
+	ls.Push(id)
 	return 1
 }
 

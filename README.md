@@ -68,7 +68,7 @@ go build -o rela ./cmd/rela
 ## Documentation
 
 | Document | Description |
-| -------- | ----------- |
+| -------- | -------- |
 | [Getting Started](docs/getting-started.md) | Installation, first project, core workflow |
 | [Concepts](docs/concepts.md) | Architecture traceability fundamentals |
 | [CLI Reference](docs/cli-reference.md) | Complete command reference |
@@ -83,14 +83,14 @@ go build -o rela ./cmd/rela
 ### Tutorials
 
 | Tutorial | Description |
-| -------- | ----------- |
+| -------- | -------- |
 | [Tutorial: Building an ISO 27001 ISMS with Rela](docs/tutorials/iso27001-isms-tutorial.md) | Build a complete Information Security Management System |
 | [Tutorial: Hybrid Project Management with Rela](docs/tutorials/project-management-tutorial.md) | Build a hybrid project management system |
 
 ### Scenarios
 
 | Scenario | Description |
-| -------- | ----------- |
+| -------- | -------- |
 | [Scenario: DevOps/SRE Runbooks & Infrastructure Operations](docs/scenarios/devops-runbooks.md) | DevOps/SRE runbooks and infrastructure operations |
 | [Scenario: ISO 27001 Information Security Management System](docs/scenarios/iso27001-isms.md) | ISO 27001 Information Security Management System |
 | [Scenario: Hybrid Project Management](docs/scenarios/project-management.md) | Hybrid project management documentation |

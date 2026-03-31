@@ -56,6 +56,12 @@ func (r *Runtime) registerMarkdownModule(rela *lua.LTable) {
 	r.L.SetField(md, "blockquote", r.L.NewFunction(luaMdBlockquote))
 	r.L.SetField(md, "list", r.L.NewFunction(luaMdList))
 
+	// Generation helpers
+	r.L.SetField(md, "link", r.L.NewFunction(luaMdLink))
+	r.L.SetField(md, "ref", r.L.NewFunction(luaMdRef))
+	r.L.SetField(md, "table", r.L.NewFunction(luaMdTable))
+	r.L.SetField(md, "entity_table", r.L.NewFunction(r.luaMdEntityTable))
+
 	r.L.SetField(rela, "md", md)
 }
 
@@ -808,5 +814,179 @@ func (r *Runtime) renderRaw(sb *strings.Builder, node *lua.LTable) {
 	sb.WriteString(content)
 	if !strings.HasSuffix(content, "\n") {
 		sb.WriteString("\n")
+	}
+}
+
+// --- Markdown Generation Helpers ---
+
+// luaMdLink implements rela.md.link(text, url) -> string
+// Returns a markdown link: [text](url)
+func luaMdLink(ls *lua.LState) int {
+	linkText := ls.CheckString(1)
+	url := ls.CheckString(2)
+	ls.Push(lua.LString("[" + linkText + "](" + url + ")"))
+	return 1
+}
+
+// luaMdRef implements rela.md.ref(id, text) -> string
+// Returns a markdown reference link: [text][id]
+func luaMdRef(ls *lua.LState) int {
+	id := ls.CheckString(1)
+	refText := ls.CheckString(2)
+	ls.Push(lua.LString("[" + refText + "][" + id + "]"))
+	return 1
+}
+
+// luaMdTable implements rela.md.table(headers, rows) -> string
+// Builds a markdown table from headers and rows.
+func luaMdTable(ls *lua.LState) int {
+	headers := ls.CheckTable(1)
+	rows := ls.CheckTable(2)
+
+	var sb strings.Builder
+
+	// Build header row
+	sb.WriteString("|")
+	for i := 1; i <= headers.Len(); i++ {
+		h := headers.RawGetInt(i)
+		sb.WriteString(" ")
+		sb.WriteString(lua.LVAsString(h))
+		sb.WriteString(" |")
+	}
+	sb.WriteString("\n")
+
+	// Build separator row
+	sb.WriteString("|")
+	for i := 1; i <= headers.Len(); i++ {
+		sb.WriteString(" -------- |")
+	}
+	sb.WriteString("\n")
+
+	// Build data rows
+	for i := 1; i <= rows.Len(); i++ {
+		rowVal := rows.RawGetInt(i)
+		row, ok := rowVal.(*lua.LTable)
+		if !ok {
+			continue
+		}
+		sb.WriteString("|")
+		for j := 1; j <= row.Len(); j++ {
+			cell := row.RawGetInt(j)
+			sb.WriteString(" ")
+			sb.WriteString(lua.LVAsString(cell))
+			sb.WriteString(" |")
+		}
+		sb.WriteString("\n")
+	}
+
+	ls.Push(lua.LString(sb.String()))
+	return 1
+}
+
+// luaMdEntityTable implements rela.md.entity_table(entities, columns) -> string
+// Builds a markdown table from entities using column specifications.
+// Column spec: {"Header", "field"} or {"Header", "field", "default"} or {"Header", function}
+func (r *Runtime) luaMdEntityTable(ls *lua.LState) int {
+	entities := ls.CheckTable(1)
+	columns := ls.CheckTable(2)
+
+	var sb strings.Builder
+
+	// Build header row
+	sb.WriteString("|")
+	for i := 1; i <= columns.Len(); i++ {
+		colVal := columns.RawGetInt(i)
+		col, ok := colVal.(*lua.LTable)
+		if !ok {
+			continue
+		}
+		header := lua.LVAsString(col.RawGetInt(1))
+		sb.WriteString(" ")
+		sb.WriteString(header)
+		sb.WriteString(" |")
+	}
+	sb.WriteString("\n")
+
+	// Build separator row
+	sb.WriteString("|")
+	for i := 1; i <= columns.Len(); i++ {
+		sb.WriteString(" -------- |")
+	}
+	sb.WriteString("\n")
+
+	// Build data rows
+	for i := 1; i <= entities.Len(); i++ {
+		entityVal := entities.RawGetInt(i)
+		entity, ok := entityVal.(*lua.LTable)
+		if !ok {
+			continue
+		}
+
+		sb.WriteString("|")
+		for j := 1; j <= columns.Len(); j++ {
+			colVal := columns.RawGetInt(j)
+			col, ok := colVal.(*lua.LTable)
+			if !ok {
+				sb.WriteString(" |")
+				continue
+			}
+
+			cellValue := r.evalColumnSpec(ls, col, entity)
+			sb.WriteString(" ")
+			sb.WriteString(cellValue)
+			sb.WriteString(" |")
+		}
+		sb.WriteString("\n")
+	}
+
+	ls.Push(lua.LString(sb.String()))
+	return 1
+}
+
+// evalColumnSpec evaluates a column specification against an entity.
+// Spec: {"Header", "field"} or {"Header", "field", "default"} or {"Header", function}
+func (r *Runtime) evalColumnSpec(ls *lua.LState, col, entity *lua.LTable) string {
+	spec := col.RawGetInt(2)
+
+	switch s := spec.(type) {
+	case *lua.LFunction:
+		// Call the function with entity as argument
+		ls.Push(s)
+		ls.Push(entity)
+		if err := ls.PCall(1, 1, nil); err != nil {
+			return ""
+		}
+		result := ls.Get(-1)
+		ls.Pop(1)
+		return lua.LVAsString(result)
+
+	case lua.LString:
+		// Property name - look up in entity.properties
+		fieldName := string(s)
+		defaultVal := ""
+		if col.Len() >= 3 {
+			defaultVal = lua.LVAsString(col.RawGetInt(3))
+		}
+
+		// Get properties table
+		propsVal := entity.RawGetString("properties")
+		props, ok := propsVal.(*lua.LTable)
+		if !ok {
+			return defaultVal
+		}
+
+		// Get property value
+		val := props.RawGetString(fieldName)
+		if val == lua.LNil {
+			return defaultVal
+		}
+		valStr := lua.LVAsString(val)
+		if valStr == "" {
+			return defaultVal
+		}
+		return valStr
+
+	default:
+		return ""
 	}
 }
