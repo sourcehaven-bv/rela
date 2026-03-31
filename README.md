@@ -69,16 +69,16 @@ go build -o rela ./cmd/rela
 
 | Document | Description |
 | -------- | ----------- |
-| [Views - Declarative Context Generation](docs/views.md) | Declarative views, CI integration |
-| [Metamodel Reference](docs/metamodel.md) | Configure entity types and relations |
-| [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |
-| [Lua Scripting](docs/lua-scripting.md) | Programmable automation with embedded Lua |
 | [Getting Started](docs/getting-started.md) | Installation, first project, core workflow |
-| [Export Guide](docs/export.md) | Export, import, and data integration |
-| [Data Entry Web App](docs/data-entry.md) | Config-driven web UI for entity management |
 | [Concepts](docs/concepts.md) | Architecture traceability fundamentals |
 | [CLI Reference](docs/cli-reference.md) | Complete command reference |
+| [Metamodel Reference](docs/metamodel.md) | Configure entity types and relations |
+| [Views - Declarative Context Generation](docs/views.md) | Declarative views, CI integration |
+| [Export Guide](docs/export.md) | Export, import, and data integration |
 | [Best Practices](docs/best-practices.md) | Maintenance tips and team workflows |
+| [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |
+| [Data Entry Web App](docs/data-entry.md) | Config-driven web UI for entity management |
+| [Lua Scripting](docs/lua-scripting.md) | Programmable automation with embedded Lua |
 
 ### Tutorials
 

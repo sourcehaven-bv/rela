@@ -29,7 +29,9 @@ local function sort_by(entities, prop)
         local vb = b.properties[prop] or ""
         -- Handle numeric comparison for 'order'
         if prop == "order" then
-            return tonumber(va) or 999 < tonumber(vb) or 999
+            local na = tonumber(va) or 999
+            local nb = tonumber(vb) or 999
+            return na < nb
         end
         return va < vb
     end)
