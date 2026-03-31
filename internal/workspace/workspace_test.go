@@ -517,20 +517,22 @@ func TestDeleteEntity_NotFound(t *testing.T) {
 func TestCreateRelation(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
+	reqID := "REQ-001"
+	decID := "DEC-001"
 	mustCreate(t, ws, "requirement", CreateOptions{
-		ID:         "REQ-001",
+		ID:         reqID,
 		Properties: map[string]interface{}{"title": "Req"},
 	})
 	mustCreate(t, ws, "decision", CreateOptions{
-		ID:         "DEC-001",
+		ID:         decID,
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
 
-	rel, err := ws.CreateRelation("DEC-001", "addresses", "REQ-001")
+	rel, err := ws.CreateRelation(decID, "addresses", reqID)
 	if err != nil {
 		t.Fatalf("CreateRelation() error = %v", err)
 	}
-	if rel.From != "DEC-001" || rel.Type != "addresses" || rel.To != "REQ-001" {
+	if rel.From != decID || rel.Type != "addresses" || rel.To != reqID {
 		t.Errorf("unexpected relation: %+v", rel)
 	}
 
