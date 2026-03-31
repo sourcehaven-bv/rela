@@ -22,49 +22,18 @@ local function generate_doc_page(entity, output_path)
     rela.write_file(output_path, doc, {ensure_newline = true})
 end
 
--- Generate guide pages (output to --output-dir root)
-local function generate_guides()
-    local guides = rela.list_entities("guide")
-    local count = 0
+-- Generate doc pages for an entity type
+-- path_prefix: prepended to output path (e.g., "tutorials/" or "" for root)
+local function generate_entity_type(entity_type, path_prefix)
+    local entities = rela.list_entities(entity_type)
 
-    for _, guide in ipairs(guides) do
-        local slug = guide:strip_prefix()
-        local output_path = slug .. ".md"
-        generate_doc_page(guide, output_path)
-        count = count + 1
+    for _, entity in ipairs(entities) do
+        local slug = entity:strip_prefix()
+        local output_path = path_prefix .. slug .. ".md"
+        generate_doc_page(entity, output_path)
     end
 
-    return count
-end
-
--- Generate tutorial pages (output to --output-dir/tutorials/)
-local function generate_tutorials()
-    local tutorials = rela.list_entities("tutorial")
-    local count = 0
-
-    for _, tutorial in ipairs(tutorials) do
-        local slug = tutorial:strip_prefix()
-        local output_path = "tutorials/" .. slug .. ".md"
-        generate_doc_page(tutorial, output_path)
-        count = count + 1
-    end
-
-    return count
-end
-
--- Generate scenario pages (output to --output-dir/scenarios/)
-local function generate_scenarios()
-    local scenarios = rela.list_entities("scenario")
-    local count = 0
-
-    for _, scenario in ipairs(scenarios) do
-        local slug = scenario:strip_prefix()
-        local output_path = "scenarios/" .. slug .. ".md"
-        generate_doc_page(scenario, output_path)
-        count = count + 1
-    end
-
-    return count
+    return #entities
 end
 
 -- Generate README.md with dynamic entity lists
@@ -226,14 +195,9 @@ if mode == "readme" then
     rela.output({ readme = true })
 else
     -- Generate docs (use --output-dir=../docs)
-    local guide_count = generate_guides()
-    local tutorial_count = generate_tutorials()
-    local scenario_count = generate_scenarios()
-
-    -- Output summary
     rela.output({
-        guides = guide_count,
-        tutorials = tutorial_count,
-        scenarios = scenario_count
+        guides = generate_entity_type("guide", ""),
+        tutorials = generate_entity_type("tutorial", "tutorials/"),
+        scenarios = generate_entity_type("scenario", "scenarios/")
     })
 end
