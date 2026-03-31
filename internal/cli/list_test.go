@@ -127,10 +127,8 @@ func TestListCommandWithAliases(t *testing.T) {
 	ws = workspace.NewForTest(g, meta)
 
 	// Add some test entities to the graph
-	g.AddNode(testutil.Entity("requirement").
+	g.AddNode(testutil.EntityFor(meta, "requirement").
 		ID("REQ-001").
-		With("title", "Test requirement").
-		With("status", "draft").
 		Build())
 
 	// Test using alias directly
@@ -249,8 +247,8 @@ func TestListAllEntities(t *testing.T) {
 	ws = workspace.NewForTest(g, meta)
 
 	// Add entities of different types
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Test Requirement").Build())
-	g.AddNode(testutil.Entity("decision").ID("DEC-001").With("title", "Test Decision").Build())
+	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
+	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").Build())
 
 	// List all entities (no type filter)
 	entities := g.AllNodes()
@@ -277,9 +275,9 @@ func TestListByType(t *testing.T) {
 	ws = workspace.NewForTest(g, meta)
 
 	// Add entities
-	g.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "Req 1").Build())
-	g.AddNode(testutil.Entity("requirement").ID("REQ-002").With("title", "Req 2").Build())
-	g.AddNode(testutil.Entity("decision").ID("DEC-001").With("title", "Dec 1").Build())
+	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
+	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-002").Build())
+	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").Build())
 
 	// List only requirements
 	entities := g.NodesByType("requirement")

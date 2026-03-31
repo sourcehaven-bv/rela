@@ -44,10 +44,10 @@ func testViewApp() *App {
 	}
 
 	g := graph.New()
-	g.AddNode(testutil.Entity("ticket").ID("TKT-001").With("title", "First").With("status", "open").Build())
-	g.AddNode(testutil.Entity("ticket").ID("TKT-002").With("title", "Second").With("status", "closed").Build())
-	g.AddNode(testutil.Entity("ticket").ID("TKT-003").With("title", "Third").Build())
-	g.AddNode(testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build())
+	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-001").With("title", "First").With("status", "open").Build())
+	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-002").With("title", "Second").With("status", "closed").Build())
+	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-003").With("title", "Third").Build())
+	g.AddNode(testutil.EntityFor(meta, "component").ID("CMP-001").With("name", "Frontend").Build())
 
 	g.AddEdge(testutil.NewRelation("TKT-001", "depends_on", "TKT-002").Build())
 	g.AddEdge(testutil.NewRelation("TKT-002", "depends_on", "TKT-003").Build())
@@ -319,17 +319,17 @@ func testViewAppWithMixedTypes() *App {
 	g := graph.New()
 
 	// Bouwblok
-	g.AddNode(testutil.Entity("bouwblok").ID("BOUWBLOK-001").With("title", "Main Bouwblok").Build())
+	g.AddNode(testutil.EntityFor(meta, "bouwblok").ID("BOUWBLOK-001").With("title", "Main Bouwblok").Build())
 
 	// Functions
-	g.AddNode(testutil.Entity("function").ID("FUNC-001").With("title", "Function One").With("status", "active").Build())
-	g.AddNode(testutil.Entity("function").ID("FUNC-002").With("title", "Function Two").With("status", "draft").Build())
+	g.AddNode(testutil.EntityFor(meta, "function").ID("FUNC-001").With("title", "Function One").With("status", "active").Build())
+	g.AddNode(testutil.EntityFor(meta, "function").ID("FUNC-002").With("title", "Function Two").With("status", "draft").Build())
 
 	// Use case
-	g.AddNode(testutil.Entity("usecase").ID("UC-001").With("title", "Use Case One").With("status", "active").Build())
+	g.AddNode(testutil.EntityFor(meta, "usecase").ID("UC-001").With("title", "Use Case One").With("status", "active").Build())
 
 	// Scenario
-	g.AddNode(testutil.Entity("scenario").ID("SCEN-001").With("title", "Scenario One").Build())
+	g.AddNode(testutil.EntityFor(meta, "scenario").ID("SCEN-001").With("title", "Scenario One").Build())
 
 	// Relations: all point to bouwblok
 	g.AddEdge(testutil.NewRelation("FUNC-001", "partOfBouwblok", "BOUWBLOK-001").Build())
@@ -522,10 +522,10 @@ func TestFilterEntities(t *testing.T) {
 	app := testViewAppWithMixedTypes()
 
 	entities := []*model.Entity{
-		testutil.Entity("function").ID("FUNC-001").With("status", "active").Build(),
-		testutil.Entity("function").ID("FUNC-002").With("status", "draft").Build(),
-		testutil.Entity("usecase").ID("UC-001").With("status", "active").Build(),
-		testutil.Entity("scenario").ID("SCEN-001").Build(),
+		testutil.EntityFor(app.meta, "function").ID("FUNC-001").With("status", "active").Build(),
+		testutil.EntityFor(app.meta, "function").ID("FUNC-002").With("status", "draft").Build(),
+		testutil.EntityFor(app.meta, "usecase").ID("UC-001").With("status", "active").Build(),
+		testutil.EntityFor(app.meta, "scenario").ID("SCEN-001").Build(),
 	}
 
 	t.Run("filter by type", func(t *testing.T) {

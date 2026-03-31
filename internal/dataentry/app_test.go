@@ -116,11 +116,11 @@ func testConfig() *Config {
 }
 
 // testGraph returns a graph with some test entities.
-func testGraph() *graph.Graph {
+func testGraph(meta *metamodel.Metamodel) *graph.Graph {
 	g := graph.New()
-	g.AddNode(testutil.Entity("ticket").ID("TKT-001").With("title", "First Ticket").With("status", "open").With("priority", "high").Build())
-	g.AddNode(testutil.Entity("ticket").ID("TKT-002").With("title", "Second Ticket").With("status", "closed").With("priority", "low").Build())
-	g.AddNode(testutil.Entity("component").ID("CMP-001").With("name", "Frontend").Build())
+	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-001").With("title", "First Ticket").With("status", "open").With("priority", "high").Build())
+	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-002").With("title", "Second Ticket").With("status", "closed").With("priority", "low").Build())
+	g.AddNode(testutil.EntityFor(meta, "component").ID("CMP-001").With("name", "Frontend").Build())
 	return g
 }
 
@@ -128,7 +128,7 @@ func testGraph() *graph.Graph {
 func testAppInstance() *App {
 	cfg := testConfig()
 	meta := testMeta()
-	g := testGraph()
+	g := testGraph(meta)
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
 	tmpl, _ := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
 	return &App{

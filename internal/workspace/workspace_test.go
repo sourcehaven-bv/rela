@@ -177,7 +177,7 @@ func TestGenerateID_Sequential(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	// Add an existing entity so the next ID is REQ-002.
-	ws.graph.AddNode(testutil.Entity("requirement").ID("REQ-001").With("title", "first").Build())
+	ws.graph.AddNode(testutil.EntityFor(ws.Meta(), "requirement").ID("REQ-001").Build())
 
 	id, err := ws.GenerateID("requirement", "")
 	if err != nil {
