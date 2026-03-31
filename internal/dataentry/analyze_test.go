@@ -605,3 +605,116 @@ func TestAnalyzeValidationsWithCombinedRules(t *testing.T) {
 		t.Error("expected violation on DEC-002")
 	}
 }
+
+func TestAnalyzeValidationsWithChecklistRule(t *testing.T) {
+	g := graph.New()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"checklist": {Properties: map[string]metamodel.PropertyDef{
+				"title":  {Type: "string"},
+				"status": {Type: "string"},
+			}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "done-checklist-complete",
+				Description: "Done checklists must have all items checked",
+				EntityType:  "checklist",
+				When:        []string{"status=done"},
+				Content: &metamodel.ContentRule{
+					Checklist: &metamodel.ChecklistRule{
+						AllChecked: true,
+					},
+				},
+				Severity: "error",
+			},
+		},
+	}
+
+	// Done with unchecked items — violation
+	g.AddNode(&model.Entity{
+		ID:         "CHK-001",
+		Type:       "checklist",
+		Properties: map[string]interface{}{"title": "Incomplete", "status": "done"},
+		Content:    "- [x] Done item\n- [ ] Not done item",
+	})
+	// Done with all checked — OK
+	g.AddNode(&model.Entity{
+		ID:         "CHK-002",
+		Type:       "checklist",
+		Properties: map[string]interface{}{"title": "Complete", "status": "done"},
+		Content:    "- [x] Done 1\n- [x] Done 2",
+	})
+	// In-progress — rule doesn't apply
+	g.AddNode(&model.Entity{
+		ID:         "CHK-003",
+		Type:       "checklist",
+		Properties: map[string]interface{}{"title": "WIP", "status": "in-progress"},
+		Content:    "- [ ] Not started",
+	})
+
+	app := newTestApp(g, meta)
+	section := app.analyzeValidations()
+
+	if len(section.Issues) != 1 {
+		t.Fatalf("expected 1 checklist validation issue, got %d", len(section.Issues))
+	}
+	if section.Issues[0].EntityID != "CHK-001" {
+		t.Errorf("expected violation on CHK-001, got %s", section.Issues[0].EntityID)
+	}
+	if section.Issues[0].Severity != "error" {
+		t.Errorf("expected severity 'error', got %q", section.Issues[0].Severity)
+	}
+}
+
+func TestAnalyzeValidationsWithChecklistAllowSkipped(t *testing.T) {
+	g := graph.New()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"checklist": {Properties: map[string]metamodel.PropertyDef{
+				"title":  {Type: "string"},
+				"status": {Type: "string"},
+			}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "done-checklist-allow-skipped",
+				Description: "Done checklists must have all items checked or skipped",
+				EntityType:  "checklist",
+				When:        []string{"status=done"},
+				Content: &metamodel.ContentRule{
+					Checklist: &metamodel.ChecklistRule{
+						AllChecked:   true,
+						AllowSkipped: true,
+					},
+				},
+				Severity: "error",
+			},
+		},
+	}
+
+	// Done with skipped item — OK
+	g.AddNode(&model.Entity{
+		ID:         "CHK-001",
+		Type:       "checklist",
+		Properties: map[string]interface{}{"title": "Skipped", "status": "done"},
+		Content:    "- [x] Done item\n- [x] ~~Skipped item~~ (N/A: reason)",
+	})
+	// Done with unchecked non-skipped — violation
+	g.AddNode(&model.Entity{
+		ID:         "CHK-002",
+		Type:       "checklist",
+		Properties: map[string]interface{}{"title": "Incomplete", "status": "done"},
+		Content:    "- [x] Done item\n- [ ] Not done, not skipped",
+	})
+
+	app := newTestApp(g, meta)
+	section := app.analyzeValidations()
+
+	if len(section.Issues) != 1 {
+		t.Fatalf("expected 1 checklist validation issue, got %d", len(section.Issues))
+	}
+	if section.Issues[0].EntityID != "CHK-002" {
+		t.Errorf("expected violation on CHK-002, got %s", section.Issues[0].EntityID)
+	}
+}

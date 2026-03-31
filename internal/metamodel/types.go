@@ -327,6 +327,18 @@ type AutomationCheck struct {
 type ContentRule struct {
 	// RequiredHeaders specifies headers that must appear in the content
 	RequiredHeaders []HeaderCheck `yaml:"required-headers,omitempty"`
+
+	// Checklist specifies validation rules for markdown checklists (task lists)
+	Checklist *ChecklistRule `yaml:"checklist,omitempty"`
+}
+
+// ChecklistRule defines validation rules for markdown checklists.
+type ChecklistRule struct {
+	// AllChecked requires all checklist items to be checked
+	AllChecked bool `yaml:"all-checked,omitempty"`
+
+	// AllowSkipped treats strikethrough items as complete (e.g., "- [x] ~~task~~ (N/A: reason)")
+	AllowSkipped bool `yaml:"allow-skipped,omitempty"`
 }
 
 // HeaderCheck specifies a header to check for in markdown content.

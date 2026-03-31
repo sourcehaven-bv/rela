@@ -209,3 +209,268 @@ func TestCheckContentRule(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractChecklistItems(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []ChecklistItem
+	}{
+		{
+			name:    "empty content",
+			content: "",
+			want:    nil,
+		},
+		{
+			name:    "no checklists",
+			content: "Just some text\n- Regular list item\n- Another item",
+			want:    nil,
+		},
+		{
+			name:    "single unchecked item",
+			content: "- [ ] Task to do",
+			want: []ChecklistItem{
+				{Checked: false, Skipped: false, Text: "Task to do"},
+			},
+		},
+		{
+			name:    "single checked item",
+			content: "- [x] Completed task",
+			want: []ChecklistItem{
+				{Checked: true, Skipped: false, Text: "Completed task"},
+			},
+		},
+		{
+			name:    "uppercase X",
+			content: "- [X] Also checked",
+			want: []ChecklistItem{
+				{Checked: true, Skipped: false, Text: "Also checked"},
+			},
+		},
+		{
+			name:    "multiple items",
+			content: "- [x] Done\n- [ ] Not done\n- [x] Also done",
+			want: []ChecklistItem{
+				{Checked: true, Skipped: false, Text: "Done"},
+				{Checked: false, Skipped: false, Text: "Not done"},
+				{Checked: true, Skipped: false, Text: "Also done"},
+			},
+		},
+		{
+			name:    "strikethrough item",
+			content: "- [x] ~~Skipped task~~ (N/A: reason)",
+			want: []ChecklistItem{
+				{Checked: true, Skipped: true, Text: "Skipped task (N/A: reason)"},
+			},
+		},
+		{
+			name:    "unchecked strikethrough",
+			content: "- [ ] ~~This was skipped~~",
+			want: []ChecklistItem{
+				{Checked: false, Skipped: true, Text: "This was skipped"},
+			},
+		},
+		{
+			name:    "mixed checked unchecked and skipped",
+			content: "- [x] Done task\n- [ ] Pending\n- [x] ~~Skipped~~ (N/A)",
+			want: []ChecklistItem{
+				{Checked: true, Skipped: false, Text: "Done task"},
+				{Checked: false, Skipped: false, Text: "Pending"},
+				{Checked: true, Skipped: true, Text: "Skipped (N/A)"},
+			},
+		},
+		{
+			name:    "nested checklist",
+			content: "- [x] Parent\n  - [ ] Child 1\n  - [x] Child 2",
+			want: []ChecklistItem{
+				{Checked: true, Skipped: false, Text: "Parent"},
+				{Checked: false, Skipped: false, Text: "Child 1"},
+				{Checked: true, Skipped: false, Text: "Child 2"},
+			},
+		},
+		{
+			name:    "checkbox in code block ignored",
+			content: "- [x] Real item\n```\n- [ ] Not a real item\n```",
+			want: []ChecklistItem{
+				{Checked: true, Skipped: false, Text: "Real item"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractChecklistItems(tt.content)
+			if len(got) != len(tt.want) {
+				t.Errorf("ExtractChecklistItems() got %d items, want %d", len(got), len(tt.want))
+				for i, item := range got {
+					t.Logf("  got[%d]: checked=%v, skipped=%v, text=%q", i, item.Checked, item.Skipped, item.Text)
+				}
+				return
+			}
+			for i := range got {
+				if got[i].Checked != tt.want[i].Checked {
+					t.Errorf("item[%d].Checked = %v, want %v", i, got[i].Checked, tt.want[i].Checked)
+				}
+				if got[i].Skipped != tt.want[i].Skipped {
+					t.Errorf("item[%d].Skipped = %v, want %v", i, got[i].Skipped, tt.want[i].Skipped)
+				}
+				if got[i].Text != tt.want[i].Text {
+					t.Errorf("item[%d].Text = %q, want %q", i, got[i].Text, tt.want[i].Text)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckChecklistRule(t *testing.T) {
+	tests := []struct {
+		name  string
+		items []ChecklistItem
+		rule  *metamodel.ChecklistRule
+		want  bool
+	}{
+		{
+			name:  "nil rule passes",
+			items: []ChecklistItem{{Checked: false}},
+			rule:  nil,
+			want:  true,
+		},
+		{
+			name:  "empty items passes",
+			items: []ChecklistItem{},
+			rule:  &metamodel.ChecklistRule{AllChecked: true},
+			want:  true,
+		},
+		{
+			name: "all checked passes",
+			items: []ChecklistItem{
+				{Checked: true, Text: "Item 1"},
+				{Checked: true, Text: "Item 2"},
+			},
+			rule: &metamodel.ChecklistRule{AllChecked: true},
+			want: true,
+		},
+		{
+			name: "unchecked item fails",
+			items: []ChecklistItem{
+				{Checked: true, Text: "Item 1"},
+				{Checked: false, Text: "Item 2"},
+			},
+			rule: &metamodel.ChecklistRule{AllChecked: true},
+			want: false,
+		},
+		{
+			name: "skipped item passes with allow-skipped",
+			items: []ChecklistItem{
+				{Checked: true, Text: "Item 1"},
+				{Checked: false, Skipped: true, Text: "Skipped item"},
+			},
+			rule: &metamodel.ChecklistRule{AllChecked: true, AllowSkipped: true},
+			want: true,
+		},
+		{
+			name: "skipped item fails without allow-skipped",
+			items: []ChecklistItem{
+				{Checked: true, Text: "Item 1"},
+				{Checked: false, Skipped: true, Text: "Skipped item"},
+			},
+			rule: &metamodel.ChecklistRule{AllChecked: true, AllowSkipped: false},
+			want: false,
+		},
+		{
+			name: "checked skipped item passes",
+			items: []ChecklistItem{
+				{Checked: true, Skipped: true, Text: "Item 1"},
+			},
+			rule: &metamodel.ChecklistRule{AllChecked: true},
+			want: true,
+		},
+		{
+			name: "no all-checked rule passes with unchecked",
+			items: []ChecklistItem{
+				{Checked: false, Text: "Unchecked"},
+			},
+			rule: &metamodel.ChecklistRule{AllChecked: false},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CheckChecklistRule(tt.items, tt.rule)
+			if got != tt.want {
+				t.Errorf("CheckChecklistRule() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckContentRuleWithChecklist(t *testing.T) {
+	tests := []struct {
+		name   string
+		entity *model.Entity
+		rule   *metamodel.ContentRule
+		want   bool
+	}{
+		{
+			name:   "all checked passes",
+			entity: &model.Entity{Content: "- [x] Task 1\n- [x] Task 2"},
+			rule: &metamodel.ContentRule{
+				Checklist: &metamodel.ChecklistRule{AllChecked: true},
+			},
+			want: true,
+		},
+		{
+			name:   "unchecked item fails",
+			entity: &model.Entity{Content: "- [x] Task 1\n- [ ] Task 2"},
+			rule: &metamodel.ContentRule{
+				Checklist: &metamodel.ChecklistRule{AllChecked: true},
+			},
+			want: false,
+		},
+		{
+			name:   "skipped item passes with allow-skipped",
+			entity: &model.Entity{Content: "- [x] Task 1\n- [x] ~~Task 2~~ (N/A)"},
+			rule: &metamodel.ContentRule{
+				Checklist: &metamodel.ChecklistRule{AllChecked: true, AllowSkipped: true},
+			},
+			want: true,
+		},
+		{
+			name:   "combined headers and checklist both pass",
+			entity: &model.Entity{Content: "## Summary\n- [x] Done\n## Details"},
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{{Header: "## Summary"}},
+				Checklist:       &metamodel.ChecklistRule{AllChecked: true},
+			},
+			want: true,
+		},
+		{
+			name:   "combined headers pass checklist fails",
+			entity: &model.Entity{Content: "## Summary\n- [ ] Not done"},
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{{Header: "## Summary"}},
+				Checklist:       &metamodel.ChecklistRule{AllChecked: true},
+			},
+			want: false,
+		},
+		{
+			name:   "combined headers fail checklist passes",
+			entity: &model.Entity{Content: "## Other\n- [x] Done"},
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{{Header: "## Summary"}},
+				Checklist:       &metamodel.ChecklistRule{AllChecked: true},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CheckContentRule(tt.entity, tt.rule)
+			if got != tt.want {
+				t.Errorf("CheckContentRule() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
