@@ -5,7 +5,7 @@ title: Add Lua action type to automation engine
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 # Add Lua Action Type to Automation Engine

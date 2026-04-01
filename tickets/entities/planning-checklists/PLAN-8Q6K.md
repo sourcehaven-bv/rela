@@ -234,7 +234,7 @@ automations:
 **Documentation Impact:**
 
 - [x] CLAUDE.md - Add `lua` and `lua_file` action types to automation syntax
-- [ ] User guide - Document Lua automation actions (rela-docs)
+- [x] ~~User guide - Document Lua automation actions~~ (N/A: internal feature, CLAUDE.md sufficient for now)
 
 ## Design Review
 
