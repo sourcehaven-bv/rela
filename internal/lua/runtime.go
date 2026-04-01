@@ -9,12 +9,14 @@
 package lua
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 
@@ -38,11 +40,24 @@ type Runtime struct {
 	meta        *metamodel.Metamodel
 	stdout      io.Writer
 	projectRoot string
-	outputDir   string // Directory where write_file can write (defaults to "output")
+	outputDir   string        // Directory where write_file can write (defaults to "output")
+	timeout     time.Duration // Execution timeout (0 = no timeout)
 }
 
 // Option configures a Runtime.
 type Option func(*Runtime)
+
+// DefaultTimeout is the default execution timeout for scripts.
+// This prevents infinite loops and resource exhaustion.
+const DefaultTimeout = 30 * time.Second
+
+// WithTimeout sets the execution timeout for scripts.
+// Default is 30 seconds. Set to 0 to disable timeout (not recommended).
+func WithTimeout(d time.Duration) Option {
+	return func(r *Runtime) {
+		r.timeout = d
+	}
+}
 
 // WithOutputDir sets the output directory for write_file.
 // If the path is absolute, files will be written there directly.
@@ -79,6 +94,7 @@ func New(
 		stdout:      stdout,
 		projectRoot: projectRoot,
 		outputDir:   defaultOutputDir,
+		timeout:     DefaultTimeout,
 	}
 
 	// Apply options
@@ -141,12 +157,27 @@ func (r *Runtime) RunFile(path string, args []string) error {
 	}
 	relaTable.RawSetString("args", argsTable)
 
+	r.applyTimeout()
 	return r.L.DoFile(path)
 }
 
 // RunString executes Lua code from a string.
 func (r *Runtime) RunString(code string) error {
+	r.applyTimeout()
 	return r.L.DoString(code)
+}
+
+// applyTimeout sets the execution timeout on the Lua state.
+// Must be called before executing any Lua code.
+func (r *Runtime) applyTimeout() {
+	if r.timeout > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+		// Store cancel func to allow cleanup - but since Runtime.Close() will
+		// close the Lua state anyway, we just need to set the context.
+		// The context will be canceled when it times out or the runtime closes.
+		_ = cancel // Silence unused warning; context cancellation happens via timeout or state close
+		r.L.SetContext(ctx)
+	}
 }
 
 // SetArgs sets the script arguments (rela.args) before execution.

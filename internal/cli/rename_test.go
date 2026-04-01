@@ -54,7 +54,7 @@ func setupRenameTestEnv(t *testing.T) string {
 	// Set up workspace for FS access
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	repo := repository.New(fs, projectCtx)
-	ws = workspace.NewWithGraph(repo, meta, g)
+	ws = workspace.NewWithGraph(repo, meta, g, workspace.NopScriptExecutor)
 
 	return dir
 }

@@ -257,7 +257,7 @@ func TestBuildEntityInput(t *testing.T) {
 	app, entities := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 	app.g.AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
 	input := app.buildEntityInput(entities.ticket1)
@@ -293,7 +293,7 @@ func TestBuildListInput(t *testing.T) {
 	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 	entities := app.g.NodesByType("ticket")
 
 	input := app.buildListInput("tickets", entities)
@@ -313,7 +313,7 @@ func TestBuildViewInput(t *testing.T) {
 	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 	app.g.AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
 
 	view := ViewConfig{
@@ -351,7 +351,7 @@ func TestBuildGlobalInput(t *testing.T) {
 	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 
 	input := app.buildGlobalInput()
 
@@ -369,7 +369,7 @@ func TestBuildCommandEnv(t *testing.T) {
 	app, entities := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 
 	cmd := CommandConfig{
 		Script:  "echo hi",
@@ -401,7 +401,7 @@ func TestBuildCommandEnvListContext(t *testing.T) {
 	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 
 	cmd := CommandConfig{Script: "echo hi", Context: "list"}
 	input := app.buildListInput("tickets", nil)
@@ -417,7 +417,7 @@ func TestBuildCommandEnvViewContext(t *testing.T) {
 	app, entities := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 
 	cmd := CommandConfig{Script: "echo hi", Context: "view"}
 	input := &commandInput{
@@ -599,7 +599,7 @@ func TestHandleCommandExec(t *testing.T) {
 	app, _ := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 	app.Cfg.Commands = map[string]CommandConfig{
 		"test-echo": {
 			Label:   "Test Echo",
@@ -682,7 +682,7 @@ func TestHandleCommandExecFailing(t *testing.T) {
 	app, _ := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 	app.Cfg.Commands = map[string]CommandConfig{
 		"fail-cmd": {
 			Label:   "Fail",
@@ -720,7 +720,7 @@ func TestHandleCommandExecGlobalContext(t *testing.T) {
 	app, _ := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 	app.Cfg.Commands = map[string]CommandConfig{
 		"global-cmd": {
 			Label:   "Global",
@@ -752,7 +752,7 @@ func TestHandleCommandExecListContext(t *testing.T) {
 	app, _ := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 	app.Cfg.Commands = map[string]CommandConfig{
 		"list-cmd": {
 			Label:   "List",
@@ -774,7 +774,7 @@ func TestHandleCommandExecViewContext(t *testing.T) {
 	app, _ := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
-		app.meta, app.g)
+		app.meta, app.g, workspace.NopScriptExecutor)
 	app.Cfg.Commands = map[string]CommandConfig{
 		"view-cmd": {
 			Label:   "View",

@@ -126,7 +126,7 @@ status: open
 		t.Fatalf("parsing graph templates: %v", err)
 	}
 
-	ws := workspace.NewWithGraph(repo, meta, g)
+	ws := workspace.NewWithGraph(repo, meta, g, workspace.NopScriptExecutor)
 
 	app := &App{
 		Cfg:         cfg,

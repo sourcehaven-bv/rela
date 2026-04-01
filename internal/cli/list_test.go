@@ -43,7 +43,7 @@ func setupWorkspaceFromMeta(t *testing.T, m *metamodel.Metamodel) {
 	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
 	repo := repository.New(fs, ctx)
-	ws = workspace.NewWithGraph(repo, m, g)
+	ws = workspace.NewWithGraph(repo, m, g, workspace.NopScriptExecutor)
 }
 
 func TestResolveEntityTypeWithAlias(t *testing.T) {

@@ -1,42 +1,37 @@
-// Package script provides a centralized script execution engine.
-// It handles all concerns related to running automation scripts:
-// path validation, secure file loading, timeout, and entity context.
+// Package script orchestrates script execution for automations.
+// It combines lua.Runtime with workspace operations, handling:
+// path validation, secure file loading, and entity context injection.
 //
-// Currently supports Lua scripts via the lua package. The architecture
-// allows for future extension to other script languages.
+// This package bridges lua (runtime) and workspace (domain) without either
+// depending on the other - each defines the interface it needs, script glues them.
 package script
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
-// DefaultTimeout is the maximum time allowed for a script to run.
-// This prevents infinite loops or resource exhaustion from automation scripts.
-const DefaultTimeout = 30 * time.Second
-
 // scriptsDir is the directory where script files must be located.
 const scriptsDir = "scripts"
 
 // Executor runs scripts with entity context. It centralizes all script
-// execution concerns: path validation, secure file loading, timeout,
-// sandbox enforcement, and entity context setup.
+// execution concerns: path validation, secure file loading, sandbox
+// enforcement, and entity context setup.
+//
+// Timeout is handled by lua.Runtime (default 30s, configurable via lua.WithTimeout).
 type Executor struct {
 	ws          lua.WorkspaceInterface
 	meta        *metamodel.Metamodel
 	projectRoot string
-	timeout     time.Duration
 }
 
 // New creates a script executor.
@@ -45,7 +40,6 @@ func New(ws lua.WorkspaceInterface, meta *metamodel.Metamodel, projectRoot strin
 		ws:          ws,
 		meta:        meta,
 		projectRoot: projectRoot,
-		timeout:     DefaultTimeout,
 	}
 }
 
@@ -64,19 +58,15 @@ func (e *Executor) ExecuteFile(path string, entity, oldEntity *model.Entity) err
 	return e.execute(code, entity, oldEntity)
 }
 
-// execute runs Lua code with entity context and timeout.
+// execute runs Lua code with entity context.
+// Timeout is handled by lua.Runtime (default 30s).
 func (e *Executor) execute(code string, entity, oldEntity *model.Entity) error {
 	var output bytes.Buffer
 	runtime := lua.New(e.ws, e.meta, e.projectRoot, &output)
 	defer runtime.Close()
 
-	// Set execution timeout to prevent infinite loops or resource exhaustion.
-	ls := runtime.LState()
-	ctx, cancel := context.WithTimeout(context.Background(), e.timeout)
-	defer cancel()
-	ls.SetContext(ctx)
-
 	// Set entity context as Lua globals
+	ls := runtime.LState()
 	if entity != nil {
 		ls.SetGlobal("entity", lua.EntityToTable(ls, entity))
 	}

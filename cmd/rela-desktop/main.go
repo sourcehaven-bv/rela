@@ -33,6 +33,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -125,13 +126,15 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	ws, wsErr := workspace.New(repo)
+	ws, wsErr := workspace.New(repo, workspace.NopScriptExecutor)
 	if wsErr != nil {
 		d.mu.Lock()
 		d.loadErr = wsErr.Error()
 		d.mu.Unlock()
 		return wsErr.Error()
 	}
+	// Set real script executor (needs workspace for meta/paths)
+	ws.SetScriptExecutor(script.New(ws, ws.Meta(), ws.Paths().Root))
 
 	app, err := dataentry.NewApp(ws)
 	if err != nil {

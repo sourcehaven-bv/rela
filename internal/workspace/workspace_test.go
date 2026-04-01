@@ -52,7 +52,7 @@ func setupTestWorkspace(t *testing.T) *Workspace {
 
 	repo := repository.New(fs, ctx)
 	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := NewWithGraph(repo, meta, g, NopScriptExecutor)
 
 	return ws
 }
@@ -88,7 +88,7 @@ func TestNew(t *testing.T) {
 	_ = fs.WriteFile(ctx.MetamodelPath, []byte(testMetamodelYAML), 0o644)
 
 	repo := repository.New(fs, ctx)
-	ws, err := New(repo)
+	ws, err := New(repo, NopScriptExecutor)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -252,7 +252,7 @@ relations: {}
 
 	repo := repository.New(fs, ctx)
 	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := NewWithGraph(repo, meta, g, NopScriptExecutor)
 
 	tests := []struct {
 		entityType  string
@@ -967,7 +967,7 @@ automations:
 
 	repo := repository.New(fs, ctx)
 	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := NewWithGraph(repo, meta, g, NopScriptExecutor)
 
 	return ws
 }
@@ -1153,7 +1153,7 @@ automations:
 
 	repo := repository.New(fs, ctx)
 	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := NewWithGraph(repo, meta, g, NopScriptExecutor)
 
 	return ws, fs, ctx
 }
@@ -1243,7 +1243,7 @@ automations:
 
 	repo := repository.New(fs, ctx)
 	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := NewWithGraph(repo, meta, g, NopScriptExecutor)
 
 	// Create starter entity - this should trigger a chain of automations.
 	_, result, err := ws.CreateEntity("starter", CreateOptions{
@@ -1378,7 +1378,7 @@ automations:
 
 	repo := repository.New(fs, ctx)
 	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := NewWithGraph(repo, meta, g, NopScriptExecutor)
 
 	// Create alpha - should trigger beta creation, which triggers gamma creation.
 	_, result, err := ws.CreateEntity("alpha", CreateOptions{
@@ -1783,7 +1783,7 @@ func setupWorkspaceWithMetamodel(t *testing.T, metamodelYAML string) *Workspace 
 
 	repo := repository.New(fs, ctx)
 	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := NewWithGraph(repo, meta, g, NopScriptExecutor)
 
 	// Set up script executor for automation tests.
 	exec := script.New(ws, meta, root)

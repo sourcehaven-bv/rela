@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -62,7 +63,9 @@ and maintain semantic relationships between them.`,
 
 		// Discover project and initialize workspace
 		var err error
-		ws, err = workspace.DiscoverAndNew(startDir)
+		ws, err = workspace.DiscoverAndNew(startDir, func(w *workspace.Workspace) workspace.ScriptExecutor {
+			return script.New(w, w.Meta(), w.Paths().Root)
+		})
 		if err != nil {
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}

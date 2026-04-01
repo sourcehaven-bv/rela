@@ -34,15 +34,31 @@ type ChangeEvent = repository.ChangeEvent
 // ChangeOp is re-exported from repository for the same reason as ChangeEvent.
 type ChangeOp = repository.ChangeOp
 
-// ScriptExecutor runs scripts with entity context. This interface is implemented
-// by the script package and injected into Workspace. The abstraction allows
-// workspace to execute automation scripts without depending on specific script
-// language implementations.
+// ScriptExecutor runs scripts with entity context. This follows dependency
+// inversion: workspace defines the interface it needs, script package implements it.
+// This keeps workspace independent of specific script languages (Lua, etc.).
+//
+// For production, pass script.New(...). For tests, pass NopScriptExecutor.
 type ScriptExecutor interface {
 	// ExecuteCode runs inline script code with entity context.
 	ExecuteCode(code string, entity, oldEntity *model.Entity) error
 	// ExecuteFile runs a script file from the scripts/ directory.
 	ExecuteFile(path string, entity, oldEntity *model.Entity) error
+}
+
+// NopScriptExecutor is a no-op implementation of ScriptExecutor for tests
+// that don't trigger Lua automations. It panics if actually called, making
+// it obvious when a test unexpectedly triggers Lua execution.
+var NopScriptExecutor ScriptExecutor = nopScriptExecutor{}
+
+type nopScriptExecutor struct{}
+
+func (nopScriptExecutor) ExecuteCode(string, *model.Entity, *model.Entity) error {
+	panic("NopScriptExecutor: Lua execution not expected in this context")
+}
+
+func (nopScriptExecutor) ExecuteFile(string, *model.Entity, *model.Entity) error {
+	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
 // Workspace is a stateful domain session that ties together the repository
@@ -74,20 +90,43 @@ const maxAutomationDepth = 50
 // creates a workspace. If startDir is empty, it uses the current working
 // directory. This is a convenience function that combines project discovery,
 // repository creation, and workspace initialization.
-func DiscoverAndNew(startDir string) (*Workspace, error) {
+// DiscoverAndNew discovers a project from the given start directory and
+// creates a workspace. If startDir is empty, it uses the current working
+// directory.
+//
+// The scriptExecFactory is called after workspace creation to create the
+// script executor. This allows the executor to access workspace metadata.
+// For production, pass a factory that creates script.Executor. For tests
+// that don't use Lua automations, pass nil (uses NopScriptExecutor).
+func DiscoverAndNew(startDir string, scriptExecFactory func(ws *Workspace) ScriptExecutor) (*Workspace, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	ctx, err := project.Discover(startDir, fs)
 	if err != nil {
 		return nil, err
 	}
 	repo := repository.New(fs, ctx)
-	return New(repo)
+
+	// Create workspace with NopScriptExecutor initially
+	ws, err := New(repo, NopScriptExecutor)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set the real executor if factory provided
+	if scriptExecFactory != nil {
+		ws.scriptExec = scriptExecFactory(ws)
+	}
+
+	return ws, nil
 }
 
 // New creates a workspace from a repository. It loads the metamodel,
 // initializes the graph (from cache or by syncing from disk), and sets
 // up the automation engine.
-func New(repo repository.Store) (*Workspace, error) {
+//
+// The scriptExec parameter enables Lua automation actions. Pass a script.Executor
+// for production use. For tests that don't trigger Lua automations, use NewForTest().
+func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
 	meta, err := repo.LoadMetamodel()
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
@@ -115,13 +154,16 @@ func New(repo repository.Store) (*Workspace, error) {
 		}
 	}
 
-	return newWorkspace(repo, meta, g), nil
+	return newWorkspace(repo, meta, g, scriptExec), nil
 }
 
 // NewWithGraph creates a workspace with a pre-populated graph. Use this
 // when the caller has already loaded the metamodel and synced the graph.
-func NewWithGraph(repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph) *Workspace {
-	return newWorkspace(repo, meta, g)
+//
+// The scriptExec parameter enables Lua automation actions. Pass a script.Executor
+// for production use.
+func NewWithGraph(repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor) *Workspace {
+	return newWorkspace(repo, meta, g, scriptExec)
 }
 
 // NewForTest creates a minimal workspace for testing. It has no repository,
@@ -149,7 +191,7 @@ func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
 	return ws
 }
 
-func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph) *Workspace {
+func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor) *Workspace {
 	var autoEngine *automation.Engine
 	if len(meta.Automations) > 0 {
 		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
@@ -186,17 +228,17 @@ func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Gra
 		automation: autoEngine,
 		searchIdx:  searchIdx,
 		config:     cfg,
+		scriptExec: scriptExec,
 	}
 }
 
-// --- Configuration ---
-
-// SetScriptExecutor sets the script executor for running automation scripts.
-// This must be called after workspace creation by the entry point (CLI, MCP, etc.)
-// to enable script automation actions. If not set, script actions will be skipped.
+// SetScriptExecutor replaces the script executor. This is useful when the
+// executor needs access to the workspace (for meta, paths, etc.) but the
+// workspace needs to be created first. Typical pattern:
+//
+//	ws, _ := workspace.New(repo, workspace.NopScriptExecutor)
+//	ws.SetScriptExecutor(script.New(ws, ws.Meta(), ws.Paths().Root))
 func (w *Workspace) SetScriptExecutor(exec ScriptExecutor) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.scriptExec = exec
 }
 
@@ -960,26 +1002,16 @@ func (w *Workspace) executeLuaActions(
 		return
 	}
 
-	w.mu.RLock()
-	exec := w.scriptExec
-	w.mu.RUnlock()
-
-	if exec == nil {
-		// No script executor configured - skip silently.
-		// This happens when workspace is used without the script package wired in.
-		return
-	}
-
 	for _, action := range luaActions {
 		var err error
 
 		switch {
 		case action.Code != "":
 			// Inline script code
-			err = exec.ExecuteCode(action.Code, entity, oldEntity)
+			err = w.scriptExec.ExecuteCode(action.Code, entity, oldEntity)
 		case action.FilePath != "":
 			// Script file from scripts/ directory
-			err = exec.ExecuteFile(action.FilePath, entity, oldEntity)
+			err = w.scriptExec.ExecuteFile(action.FilePath, entity, oldEntity)
 		default:
 			// Empty action - skip
 			continue

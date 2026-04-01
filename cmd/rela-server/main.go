@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -33,10 +34,13 @@ func main() {
 		log.Fatalf("Failed to initialize repository: %v", err)
 	}
 
-	ws, err := workspace.New(repo)
+	// Create workspace with NopScriptExecutor initially, then set real one
+	ws, err := workspace.New(repo, workspace.NopScriptExecutor)
 	if err != nil {
 		log.Fatalf("Failed to initialize workspace: %v", err)
 	}
+	// Now set the real script executor (needs workspace to be created first for meta/paths)
+	ws.SetScriptExecutor(script.New(ws, ws.Meta(), ws.Paths().Root))
 
 	app, err := dataentry.NewApp(ws)
 	if err != nil {

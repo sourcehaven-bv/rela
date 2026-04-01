@@ -3,10 +3,11 @@ package lua
 import "github.com/Sourcehaven-BV/rela/internal/model"
 
 // WorkspaceInterface defines the workspace operations needed by the Lua runtime.
-// This interface is implemented by *workspace.Workspace and used to avoid
-// importing the workspace package directly from the Lua runtime.
-// Methods use primitive types to avoid shared type definitions that would
-// create import cycles.
+// This follows the Go idiom of "accept interfaces, return structs" - the consumer
+// (lua) defines the interface it needs, and the provider (workspace) implements it.
+//
+// This enables dependency inversion: lua doesn't know about workspace, but can
+// still call workspace methods through this interface.
 type WorkspaceInterface interface {
 	// Entity queries
 	GetEntity(id string) (*model.Entity, bool)

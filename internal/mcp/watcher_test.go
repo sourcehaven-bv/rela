@@ -41,7 +41,7 @@ func TestWatcherStop(t *testing.T) {
 		CachePath:     filepath.Join(cacheDir, "cache.json"),
 	}
 	repo := repository.New(storage.NewOsFS(), ctx)
-	ws, err := workspace.New(repo)
+	ws, err := workspace.New(repo, workspace.NopScriptExecutor)
 	if err != nil {
 		t.Fatalf("workspace.New failed: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestWatcherFileChange(t *testing.T) {
 		CachePath:     filepath.Join(cacheDir, "cache.json"),
 	}
 	repo := repository.New(storage.NewOsFS(), ctx)
-	ws, err := workspace.New(repo)
+	ws, err := workspace.New(repo, workspace.NopScriptExecutor)
 	if err != nil {
 		t.Fatalf("workspace.New failed: %v", err)
 	}

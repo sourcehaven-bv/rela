@@ -59,7 +59,7 @@ func makeTestServer(t *testing.T) *Server {
 	g.AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build())
 
 	// Create workspace with pre-populated graph (no repo needed for read-only tests)
-	ws := workspace.NewWithGraph(nil, meta, g)
+	ws := workspace.NewWithGraph(nil, meta, g, workspace.NopScriptExecutor)
 
 	return &Server{
 		ws:     ws,
