@@ -1,7 +1,6 @@
 package automation
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -1410,11 +1409,12 @@ func TestEngine_LuaMultipleActions(t *testing.T) {
 	}
 }
 
-func TestEngine_LuaFilePathTraversalValidation(t *testing.T) {
-	// Test that path traversal attempts are caught early in the engine.
+func TestEngine_LuaFilePathPassthrough(t *testing.T) {
+	// Test that lua_file paths are passed through to LuaToExecute.
+	// Path validation is centralized in the script package at execution time.
 	automations := []Automation{
 		{
-			Name: "path-traversal",
+			Name: "path-passthrough",
 			On: Trigger{
 				Entity:  []string{"ticket"},
 				Created: true,
@@ -1436,33 +1436,27 @@ func TestEngine_LuaFilePathTraversalValidation(t *testing.T) {
 		Entity: entity,
 	})
 
-	// Should have an error about invalid path.
-	if len(result.Errors) == 0 {
-		t.Fatal("expected error for path traversal, got none")
+	// Engine should pass through the path without errors.
+	// Validation happens in the script package at execution time.
+	if len(result.Errors) != 0 {
+		t.Errorf("expected no engine errors (validation is done at execution time), got: %v", result.Errors)
 	}
 
-	foundPathError := false
-	for _, errMsg := range result.Errors {
-		if strings.Contains(errMsg, "local") && strings.Contains(errMsg, "..") {
-			foundPathError = true
-			break
-		}
+	// Path should be queued for execution.
+	if len(result.LuaToExecute) != 1 {
+		t.Fatalf("expected 1 Lua action, got %d", len(result.LuaToExecute))
 	}
-	if !foundPathError {
-		t.Errorf("expected path traversal error, got: %v", result.Errors)
-	}
-
-	// No Lua should be queued for execution.
-	if len(result.LuaToExecute) != 0 {
-		t.Errorf("expected no Lua actions for invalid path, got %d", len(result.LuaToExecute))
+	if result.LuaToExecute[0].FilePath != "../../../etc/passwd" {
+		t.Errorf("expected path to be passed through, got: %s", result.LuaToExecute[0].FilePath)
 	}
 }
 
-func TestEngine_LuaFileMissingExtensionValidation(t *testing.T) {
-	// Test that files without .lua extension are rejected early.
+func TestEngine_LuaFileExtensionPassthrough(t *testing.T) {
+	// Test that lua_file paths are passed through regardless of extension.
+	// Extension validation is centralized in the script package at execution time.
 	automations := []Automation{
 		{
-			Name: "wrong-extension",
+			Name: "extension-passthrough",
 			On: Trigger{
 				Entity:  []string{"ticket"},
 				Created: true,
@@ -1484,24 +1478,17 @@ func TestEngine_LuaFileMissingExtensionValidation(t *testing.T) {
 		Entity: entity,
 	})
 
-	// Should have an error about extension.
-	if len(result.Errors) == 0 {
-		t.Fatal("expected error for wrong extension, got none")
+	// Engine should pass through the path without errors.
+	// Extension validation happens in the script package at execution time.
+	if len(result.Errors) != 0 {
+		t.Errorf("expected no engine errors (validation is done at execution time), got: %v", result.Errors)
 	}
 
-	foundExtError := false
-	for _, errMsg := range result.Errors {
-		if strings.Contains(errMsg, ".lua extension") {
-			foundExtError = true
-			break
-		}
+	// Path should be queued for execution.
+	if len(result.LuaToExecute) != 1 {
+		t.Fatalf("expected 1 Lua action, got %d", len(result.LuaToExecute))
 	}
-	if !foundExtError {
-		t.Errorf("expected extension error, got: %v", result.Errors)
-	}
-
-	// No Lua should be queued.
-	if len(result.LuaToExecute) != 0 {
-		t.Errorf("expected no Lua actions for invalid extension, got %d", len(result.LuaToExecute))
+	if result.LuaToExecute[0].FilePath != "script.txt" {
+		t.Errorf("expected path to be passed through, got: %s", result.LuaToExecute[0].FilePath)
 	}
 }

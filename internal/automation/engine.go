@@ -1,10 +1,6 @@
 package automation
 
 import (
-	"fmt"
-	"path/filepath"
-	"strings"
-
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -295,30 +291,12 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 	}
 
 	if action.LuaFile != "" {
-		// Defense-in-depth: validate path early before execution.
-		// The workspace will also validate, but failing fast here gives better errors.
-		if err := validateLuaFilePath(action.LuaFile); err != nil {
-			result.Errors = append(result.Errors, err.Error())
-			return
-		}
+		// Path validation is handled by the script package at execution time.
+		// This keeps validation centralized and consistent across all script execution paths.
 		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
 			FilePath: action.LuaFile,
 		})
 	}
-}
-
-// validateLuaFilePath validates a Lua script path for security.
-// Returns an error if the path is invalid.
-func validateLuaFilePath(path string) error {
-	// Must be a local path (no ".." or absolute paths).
-	if !filepath.IsLocal(path) {
-		return fmt.Errorf("lua_file: path must be local (no '..' or absolute paths): %s", path)
-	}
-	// Must have .lua extension.
-	if !strings.HasSuffix(path, ".lua") {
-		return fmt.Errorf("lua_file: script must have .lua extension: %s", path)
-	}
-	return nil
 }
 
 // evaluateValidation checks a validation and adds warnings/errors to the result.

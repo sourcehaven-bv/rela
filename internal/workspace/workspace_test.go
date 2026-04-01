@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
@@ -1708,13 +1708,13 @@ automations:
 
 	foundLuaError := false
 	for _, errMsg := range result.AutomationErrors {
-		if strings.Contains(errMsg, "lua execution error") && strings.Contains(errMsg, "intentional test error") {
+		if strings.Contains(errMsg, "script execution error") && strings.Contains(errMsg, "intentional test error") {
 			foundLuaError = true
 			break
 		}
 	}
 	if !foundLuaError {
-		t.Errorf("expected Lua error message, got: %v", result.AutomationErrors)
+		t.Errorf("expected script error message, got: %v", result.AutomationErrors)
 	}
 }
 
@@ -1785,9 +1785,9 @@ func setupWorkspaceWithMetamodel(t *testing.T, metamodelYAML string) *Workspace 
 	g := graph.New()
 	ws := NewWithGraph(repo, meta, g)
 
-	// Set up Lua executor for automation tests.
-	exec := lua.NewExecutor(ws, meta, root)
-	ws.SetLuaExecutor(exec)
+	// Set up script executor for automation tests.
+	exec := script.New(ws, meta, root)
+	ws.SetScriptExecutor(exec)
 
 	return ws
 }

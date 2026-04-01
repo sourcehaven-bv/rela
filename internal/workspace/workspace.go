@@ -8,10 +8,7 @@ package workspace
 import (
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -37,14 +34,15 @@ type ChangeEvent = repository.ChangeEvent
 // ChangeOp is re-exported from repository for the same reason as ChangeEvent.
 type ChangeOp = repository.ChangeOp
 
-// LuaExecutor runs Lua code with entity context. This interface is implemented
-// by the lua package and injected into Workspace to avoid a circular import.
-// The lua package depends on workspace (for WorkspaceInterface), so workspace
-// cannot import lua directly.
-type LuaExecutor interface {
-	// ExecuteCode runs Lua code with entity and oldEntity available as globals.
-	// Returns any error from script execution.
+// ScriptExecutor runs scripts with entity context. This interface is implemented
+// by the script package and injected into Workspace. The abstraction allows
+// workspace to execute automation scripts without depending on specific script
+// language implementations.
+type ScriptExecutor interface {
+	// ExecuteCode runs inline script code with entity context.
 	ExecuteCode(code string, entity, oldEntity *model.Entity) error
+	// ExecuteFile runs a script file from the scripts/ directory.
+	ExecuteFile(path string, entity, oldEntity *model.Entity) error
 }
 
 // Workspace is a stateful domain session that ties together the repository
@@ -58,7 +56,7 @@ type Workspace struct {
 	automation *automation.Engine
 	searchIdx  *search.Index
 	config     *project.Config
-	luaExec    LuaExecutor
+	scriptExec ScriptExecutor
 	mu         sync.RWMutex
 
 	// Watcher state (nil when not watching).
@@ -193,13 +191,13 @@ func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Gra
 
 // --- Configuration ---
 
-// SetLuaExecutor sets the Lua executor for running automation Lua code.
+// SetScriptExecutor sets the script executor for running automation scripts.
 // This must be called after workspace creation by the entry point (CLI, MCP, etc.)
-// to enable Lua automation actions. If not set, Lua actions will be silently skipped.
-func (w *Workspace) SetLuaExecutor(exec LuaExecutor) {
+// to enable script automation actions. If not set, script actions will be skipped.
+func (w *Workspace) SetScriptExecutor(exec ScriptExecutor) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.luaExec = exec
+	w.scriptExec = exec
 }
 
 // --- Accessors ---
@@ -951,9 +949,6 @@ func (w *Workspace) applyRelationCreations(
 	}
 }
 
-// scriptsDir is the directory where Lua scripts must be located for lua_file actions.
-const scriptsDir = "scripts"
-
 // executeLuaActions executes Lua scripts from automation results.
 func (w *Workspace) executeLuaActions(
 	entity *model.Entity,
@@ -965,92 +960,36 @@ func (w *Workspace) executeLuaActions(
 		return
 	}
 
-	projectRoot := w.Paths().Root
+	w.mu.RLock()
+	exec := w.scriptExec
+	w.mu.RUnlock()
+
+	if exec == nil {
+		// No script executor configured - skip silently.
+		// This happens when workspace is used without the script package wired in.
+		return
+	}
 
 	for _, action := range luaActions {
-		var code string
+		var err error
 
 		switch {
 		case action.Code != "":
-			// Inline Lua code
-			code = action.Code
+			// Inline script code
+			err = exec.ExecuteCode(action.Code, entity, oldEntity)
 		case action.FilePath != "":
-			// Load script from file using os.OpenRoot for traversal-resistant access
-			scriptCode, err := w.loadLuaScript(projectRoot, action.FilePath)
-			if err != nil {
-				effects.Errors = append(effects.Errors,
-					fmt.Sprintf("lua_file error: %s", err.Error()))
-				continue
-			}
-			code = scriptCode
+			// Script file from scripts/ directory
+			err = exec.ExecuteFile(action.FilePath, entity, oldEntity)
 		default:
 			// Empty action - skip
 			continue
 		}
 
-		// Execute the Lua code
-		if err := w.executeLuaCode(code, entity, oldEntity); err != nil {
+		if err != nil {
 			effects.Errors = append(effects.Errors,
-				fmt.Sprintf("lua execution error: %s", err.Error()))
+				fmt.Sprintf("script execution error: %s", err.Error()))
 		}
 	}
-}
-
-// loadLuaScript loads a Lua script from the scripts/ directory using os.OpenRoot
-// for traversal-resistant file access.
-func (w *Workspace) loadLuaScript(projectRoot, scriptPath string) (string, error) {
-	// Security: Validate path is local (no "..", no absolute paths)
-	if !filepath.IsLocal(scriptPath) {
-		return "", fmt.Errorf("script path must be a local path (no '..' or absolute paths): %s", scriptPath)
-	}
-
-	// Security: Must have .lua extension
-	if !strings.HasSuffix(scriptPath, ".lua") {
-		return "", fmt.Errorf("script must have .lua extension: %s", scriptPath)
-	}
-
-	// Use os.OpenRoot for traversal-resistant access.
-	// Error messages intentionally omit system paths to prevent information leakage.
-	root, err := os.OpenRoot(projectRoot)
-	if err != nil {
-		return "", errors.New("cannot access project directory")
-	}
-	defer root.Close()
-
-	scriptsRoot, err := root.OpenRoot(scriptsDir)
-	if err != nil {
-		return "", fmt.Errorf("scripts/ directory not found or not accessible")
-	}
-	defer scriptsRoot.Close()
-
-	scriptFile, err := scriptsRoot.Open(scriptPath)
-	if err != nil {
-		return "", fmt.Errorf("script not found: %s (must be in scripts/ directory)", scriptPath)
-	}
-	defer scriptFile.Close()
-
-	content, err := io.ReadAll(scriptFile)
-	if err != nil {
-		return "", fmt.Errorf("cannot read script: %s", scriptPath)
-	}
-
-	return string(content), nil
-}
-
-// executeLuaCode runs Lua code with entity context set as globals.
-// Uses the injected LuaExecutor. Returns nil if no executor is configured.
-func (w *Workspace) executeLuaCode(code string, entity, oldEntity *model.Entity) error {
-	w.mu.RLock()
-	exec := w.luaExec
-	w.mu.RUnlock()
-
-	if exec == nil {
-		// No Lua executor configured - skip silently.
-		// This happens when workspace is used without the lua package wired in.
-		return nil
-	}
-
-	return exec.ExecuteCode(code, entity, oldEntity)
 }
 
 // handleIfExists checks if_exists behavior for entity creation.
