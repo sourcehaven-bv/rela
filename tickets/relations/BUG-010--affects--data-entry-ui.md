@@ -1,5 +1,5 @@
 ---
-from: BUG-006
+from: BUG-010
 to: data-entry-ui
 relation: affects
 ---

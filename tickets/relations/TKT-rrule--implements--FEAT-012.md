@@ -1,5 +1,5 @@
 ---
-from: TKT-008
-to: FEAT-013
+from: TKT-rrule
+to: FEAT-012
 relation: implements
 ---
