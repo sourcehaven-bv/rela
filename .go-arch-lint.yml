@@ -105,6 +105,7 @@ deps:
       - dataentry
       - project
       - repository
+      - script
       - storage
       - workspace
   cmdDesktop:
@@ -115,6 +116,7 @@ deps:
       - metamodel
       - project
       - repository
+      - script
       - storage
       - workspace
     canUse:

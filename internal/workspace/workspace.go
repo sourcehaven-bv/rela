@@ -162,7 +162,9 @@ func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
 //
 // The scriptExec parameter enables Lua automation actions. Pass a script.Executor
 // for production use.
-func NewWithGraph(repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor) *Workspace {
+func NewWithGraph(
+	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor,
+) *Workspace {
 	return newWorkspace(repo, meta, g, scriptExec)
 }
 
@@ -191,7 +193,9 @@ func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
 	return ws
 }
 
-func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor) *Workspace {
+func newWorkspace(
+	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor,
+) *Workspace {
 	var autoEngine *automation.Engine
 	if len(meta.Automations) > 0 {
 		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
