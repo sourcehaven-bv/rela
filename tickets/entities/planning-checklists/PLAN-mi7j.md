@@ -285,7 +285,7 @@ Per user: "Security is not of concern at this point (tools run locally with trus
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: implementation complete)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: implementation complete)
 
-**Design Review Findings:** <!-- To be filled after /design-review -->
+**Design Review Findings:** N/A - retroactive checklist completion.

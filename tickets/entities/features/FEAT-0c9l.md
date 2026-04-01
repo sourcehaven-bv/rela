@@ -3,6 +3,7 @@ description: 'List columns with relation: currently only show outgoing relations
 id: FEAT-0c9l
 priority: medium
 status: implemented
+summary: Show incoming relations in list columns via direction:incoming config
 title: Support direction:incoming for relation columns in lists
 type: feature
 ---

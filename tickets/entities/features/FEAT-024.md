@@ -3,6 +3,7 @@ description: Add support for relation-based filter controls in data-entry list v
 id: FEAT-024
 priority: medium
 status: implemented
+summary: Filter list views by relation targets (e.g., filter controls by owner role)
 title: Relation-based filter controls in list views
 type: feature
 ---

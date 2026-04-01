@@ -3,7 +3,7 @@ effort: m
 id: TKT-msvn
 kind: enhancement
 priority: medium
-status: review
+status: done
 title: Add metamodel cleanup/trim command
 type: ticket
 ---

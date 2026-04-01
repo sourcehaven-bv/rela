@@ -1,6 +1,8 @@
 ---
 id: FEAT-006
-status: done
+status: implemented
+summary: Visual kanban boards with drag-and-drop for status workflows
+description: Kanban board views for the data-entry web app with drag-and-drop card movement
 title: Kanban board views for data-entry
 type: feature
 ---

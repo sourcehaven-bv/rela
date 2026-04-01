@@ -2,6 +2,7 @@
 id: FEAT-015
 status: implemented
 summary: Browser-based E2E tests using chromedp to verify form submission works correctly
+description: E2E tests using chromedp (headless Chrome) to verify markdown editor and form submission
 title: E2E tests for data entry forms
 type: feature
 ---

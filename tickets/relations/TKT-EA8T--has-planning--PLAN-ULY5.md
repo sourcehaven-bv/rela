@@ -1,5 +1,5 @@
 ---
-from: TKT-elbr
+from: TKT-EA8T
 relation: has-planning
-to: PLAN-aqye
+to: PLAN-ULY5
 ---

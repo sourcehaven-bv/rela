@@ -213,9 +213,9 @@ For enhancements: identify what documentation needs updating.
 **Documentation Impact:**
 
 - [x] CLI help text (validate command help will update automatically via Cobra)
-- [ ] User guide / reference docs - Add example for CI integration
-- [ ] CLAUDE.md - No changes needed
-- [ ] README.md - No changes needed
+- [x] ~~User guide / reference docs~~ (N/A: CLI help is sufficient)
+- [x] ~~CLAUDE.md~~ (N/A: no changes needed)
+- [x] ~~README.md~~ (N/A: no changes needed)
 
 ## Design Review
 

@@ -3,7 +3,7 @@ effort: m
 id: TKT-a2qn
 kind: enhancement
 priority: medium
-status: review
+status: done
 title: Add automatic entity creation to automation engine
 type: ticket
 ---

@@ -2,6 +2,7 @@
 id: FEAT-014
 status: implemented
 summary: EasyMDE-based markdown editor for entity content in data entry forms
+description: EasyMDE markdown editor with toolbar, preview, and fullscreen editing in data-entry forms
 title: Markdown editor in data entry forms
 type: feature
 ---

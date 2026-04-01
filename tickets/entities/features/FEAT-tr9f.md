@@ -2,6 +2,7 @@
 description: 'List columns with relation: currently only show outgoing relations. Add support for direction: incoming to display entities that point to the current row.'
 id: FEAT-tr9f
 status: implemented
+summary: Show incoming relations in list columns via direction:incoming config
 title: 'Support direction: incoming for relation columns in lists'
 type: feature
 ---

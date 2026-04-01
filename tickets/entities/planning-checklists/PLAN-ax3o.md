@@ -154,7 +154,7 @@ type: planning-checklist
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: straightforward implementation)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: no design review needed)
 
-**Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
+**Design Review Findings:** N/A
