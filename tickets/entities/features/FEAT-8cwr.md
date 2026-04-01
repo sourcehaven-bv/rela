@@ -1,6 +1,8 @@
 ---
 id: FEAT-8cwr
 status: implemented
+summary: Help icon in forms opens modal with entity/property/relation documentation
+description: Surface metamodel descriptions in data-entry via a help modal
 title: Help modal for entity documentation in data-entry
 type: feature
 ---

@@ -3,6 +3,7 @@ description: Model Context Protocol server that exposes rela capabilities to AI 
 id: FEAT-019
 priority: high
 status: implemented
+summary: MCP server exposing rela tools, resources, and prompts to AI assistants
 title: MCP Server API
 type: feature
 ---

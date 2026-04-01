@@ -1587,16 +1587,10 @@ validations:
     entity_type: planning-checklist
     when:
       - "status=done"
-    body:
-      pattern: "^- \\[ \\]"
-      max_matches: 0
-    severity: error
-  - name: planning-checklist-skipped-needs-reason
-    description: "Skipped items must include a reason in parentheses"
-    entity_type: planning-checklist
-    body:
-      pattern: "^- \\[x\\] ~~[^~]+~~\\s*$"
-      max_matches: 0
+    content:
+      checklist:
+        all-checked: true
+        allow-skipped: true
     severity: error
   # --- Checklist completeness (bug-analysis) ---
   - name: done-bug-analysis-checklist-no-unchecked
@@ -1604,16 +1598,10 @@ validations:
     entity_type: bug-analysis-checklist
     when:
       - "status=done"
-    body:
-      pattern: "^- \\[ \\]"
-      max_matches: 0
-    severity: error
-  - name: bug-analysis-checklist-skipped-needs-reason
-    description: "Skipped items must include a reason in parentheses"
-    entity_type: bug-analysis-checklist
-    body:
-      pattern: "^- \\[x\\] ~~[^~]+~~\\s*$"
-      max_matches: 0
+    content:
+      checklist:
+        all-checked: true
+        allow-skipped: true
     severity: error
   # --- Checklist completeness (implementation) ---
   - name: done-implementation-checklist-no-unchecked
@@ -1621,16 +1609,10 @@ validations:
     entity_type: implementation-checklist
     when:
       - "status=done"
-    body:
-      pattern: "^- \\[ \\]"
-      max_matches: 0
-    severity: error
-  - name: implementation-checklist-skipped-needs-reason
-    description: "Skipped items must include a reason in parentheses"
-    entity_type: implementation-checklist
-    body:
-      pattern: "^- \\[x\\] ~~[^~]+~~\\s*$"
-      max_matches: 0
+    content:
+      checklist:
+        all-checked: true
+        allow-skipped: true
     severity: error
   # --- Checklist completeness (review) ---
   - name: done-review-checklist-no-unchecked
@@ -1638,16 +1620,10 @@ validations:
     entity_type: review-checklist
     when:
       - "status=done"
-    body:
-      pattern: "^- \\[ \\]"
-      max_matches: 0
-    severity: error
-  - name: review-checklist-skipped-needs-reason
-    description: "Skipped items must include a reason in parentheses"
-    entity_type: review-checklist
-    body:
-      pattern: "^- \\[x\\] ~~[^~]+~~\\s*$"
-      max_matches: 0
+    content:
+      checklist:
+        all-checked: true
+        allow-skipped: true
     severity: error
   # --- Checklist completeness (docs) ---
   - name: done-docs-checklist-no-unchecked
@@ -1655,16 +1631,10 @@ validations:
     entity_type: docs-checklist
     when:
       - "status=done"
-    body:
-      pattern: "^- \\[ \\]"
-      max_matches: 0
-    severity: error
-  - name: docs-checklist-skipped-needs-reason
-    description: "Skipped items must include a reason in parentheses"
-    entity_type: docs-checklist
-    body:
-      pattern: "^- \\[x\\] ~~[^~]+~~\\s*$"
-      max_matches: 0
+    content:
+      checklist:
+        all-checked: true
+        allow-skipped: true
     severity: error
   # --- Ticket workflow gates ---
   - name: planning-ticket-needs-checklist
@@ -1850,6 +1820,210 @@ validations:
           - "status=open"
           - "severity=significant"
         max: 0
+    severity: error
+  # ===================
+  # CI Gates: No Partial Work
+  # ===================
+  # These rules prevent merging PRs with incomplete work.
+  # Tickets/bugs must be either not started (backlog/ready) or fully complete (done/wont-fix).
+  # --- Tickets in progress ---
+  - name: ci-no-planning-tickets
+    description: "CI: Tickets in 'planning' status cannot be merged - complete or revert"
+    entity_type: ticket
+    when:
+      - "status=planning"
+    then:
+      - "status!=planning"
+    severity: error
+  - name: ci-no-in-progress-tickets
+    description: "CI: Tickets in 'in-progress' status cannot be merged - complete or revert"
+    entity_type: ticket
+    when:
+      - "status=in-progress"
+    then:
+      - "status!=in-progress"
+    severity: error
+  - name: ci-no-review-tickets
+    description: "CI: Tickets in 'review' status cannot be merged - complete or revert"
+    entity_type: ticket
+    when:
+      - "status=review"
+    then:
+      - "status!=review"
+    severity: error
+  - name: ci-no-blocked-tickets
+    description: "CI: Tickets in 'blocked' status cannot be merged - resolve or revert"
+    entity_type: ticket
+    when:
+      - "status=blocked"
+    then:
+      - "status!=blocked"
+    severity: error
+  # --- Bugs in progress ---
+  - name: ci-no-analyzing-bugs
+    description: "CI: Bugs in 'analyzing' status cannot be merged - complete or revert"
+    entity_type: bug
+    when:
+      - "status=analyzing"
+    then:
+      - "status!=analyzing"
+    severity: error
+  - name: ci-no-in-progress-bugs
+    description: "CI: Bugs in 'in-progress' status cannot be merged - complete or revert"
+    entity_type: bug
+    when:
+      - "status=in-progress"
+    then:
+      - "status!=in-progress"
+    severity: error
+  - name: ci-no-review-bugs
+    description: "CI: Bugs in 'review' status cannot be merged - complete or revert"
+    entity_type: bug
+    when:
+      - "status=review"
+    then:
+      - "status!=review"
+    severity: error
+  - name: ci-no-blocked-bugs
+    description: "CI: Bugs in 'blocked' status cannot be merged - resolve or revert"
+    entity_type: bug
+    when:
+      - "status=blocked"
+    then:
+      - "status!=blocked"
+    severity: error
+  # --- Checklists in progress ---
+  - name: ci-no-in-progress-checklists-planning
+    description: "CI: Planning checklists in 'in-progress' cannot be merged"
+    entity_type: planning-checklist
+    when:
+      - "status=in-progress"
+    then:
+      - "status!=in-progress"
+    severity: error
+  - name: ci-no-in-progress-checklists-bug-analysis
+    description: "CI: Bug analysis checklists in 'in-progress' cannot be merged"
+    entity_type: bug-analysis-checklist
+    when:
+      - "status=in-progress"
+    then:
+      - "status!=in-progress"
+    severity: error
+  - name: ci-no-in-progress-checklists-implementation
+    description: "CI: Implementation checklists in 'in-progress' cannot be merged"
+    entity_type: implementation-checklist
+    when:
+      - "status=in-progress"
+    then:
+      - "status!=in-progress"
+    severity: error
+  - name: ci-no-in-progress-checklists-review
+    description: "CI: Review checklists in 'in-progress' cannot be merged"
+    entity_type: review-checklist
+    when:
+      - "status=in-progress"
+    then:
+      - "status!=in-progress"
+    severity: error
+  - name: ci-no-in-progress-checklists-docs
+    description: "CI: Docs checklists in 'in-progress' cannot be merged"
+    entity_type: docs-checklist
+    when:
+      - "status=in-progress"
+    then:
+      - "status!=in-progress"
+    severity: error
+  # --- Review responses must be resolved ---
+  - name: ci-no-open-review-responses
+    description: "CI: Open review responses cannot be merged - address or close them"
+    entity_type: review-response
+    when:
+      - "status=open"
+    then:
+      - "status!=open"
+    severity: error
+  # --- Risk validations ---
+  - name: identified-risk-needs-description
+    description: "Identified risks should have a description"
+    entity_type: risk
+    when:
+      - "status=identified"
+    then:
+      - "description!="
+    severity: warning
+  - name: mitigated-risk-needs-mitigation
+    description: "Mitigated risks must document how they were addressed"
+    entity_type: risk
+    when:
+      - "status=mitigated"
+    then:
+      - "mitigation!="
+    severity: error
+  - name: accepted-risk-needs-mitigation
+    description: "Accepted risks must document why acceptance is appropriate"
+    entity_type: risk
+    when:
+      - "status=accepted"
+    then:
+      - "mitigation!="
+    severity: error
+  - name: resolved-risk-needs-mitigation
+    description: "Resolved risks must document how they were eliminated"
+    entity_type: risk
+    when:
+      - "status=resolved"
+    then:
+      - "mitigation!="
+    severity: error
+  # --- Test validations ---
+  - name: active-test-case-needs-location
+    description: "Active test cases should specify their location (file/function)"
+    entity_type: test-case
+    when:
+      - "status=active"
+    then:
+      - "location!="
+    severity: warning
+  - name: active-test-case-needs-description
+    description: "Active test cases should have a description"
+    entity_type: test-case
+    when:
+      - "status=active"
+    then:
+      - "description!="
+    severity: warning
+  - name: active-test-suite-needs-description
+    description: "Active test suites should have a description"
+    entity_type: test-suite
+    when:
+      - "status=active"
+    then:
+      - "description!="
+    severity: warning
+  # --- Doc-task validations ---
+  - name: in-progress-doc-task-needs-priority
+    description: "In-progress doc tasks must have priority assigned"
+    entity_type: doc-task
+    when:
+      - "status=in-progress"
+    then:
+      - "priority!="
+    severity: error
+  - name: ready-doc-task-needs-description
+    description: "Ready doc tasks should have a description"
+    entity_type: doc-task
+    when:
+      - "status=ready"
+    then:
+      - "description!="
+    severity: warning
+  - name: in-progress-doc-task-needs-description
+    description: "In-progress doc tasks must have a description"
+    entity_type: doc-task
+    when:
+      - "status=in-progress"
+    then:
+      - "description!="
     severity: error
 # ===================
 # Automations

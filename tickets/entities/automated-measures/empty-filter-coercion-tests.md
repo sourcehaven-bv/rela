@@ -4,6 +4,7 @@ kind: test
 location: internal/filter/match_test.go
 status: active
 title: Empty filter value coercion tests
+description: Tests that empty filter checks work for all property types including integers and dates
 type: automated-measure
 ---
 

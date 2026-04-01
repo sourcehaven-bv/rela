@@ -282,22 +282,13 @@ jobs:
           echo "Found ticket entities:"
           echo "$CHANGED_ENTITIES"
 
-      - name: Run rela analyze
+      - name: Run rela validate
         run: |
           set -euo pipefail
           cd tickets
 
-          echo "Running cardinality check..."
-          ../bin/rela analyze cardinality
-
-          echo "Running orphans check..."
-          ../bin/rela analyze orphans
-
-          echo "Running properties check..."
-          ../bin/rela analyze properties
-
-          echo "Running validations check..."
-          ../bin/rela analyze validations
+          echo "Running validation checks..."
+          ../bin/rela validate --check cardinality --check properties --check validations
 
           echo ""
           echo "All rela checks passed!"

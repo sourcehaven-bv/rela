@@ -4,6 +4,7 @@ kind: test
 location: internal/dataentry/static/app.js
 status: active
 title: CodeMirror textarea sync on changes
+description: EasyMDE/CodeMirror editor syncs content to textarea on changes for HTMX form submissions
 type: automated-measure
 ---
 

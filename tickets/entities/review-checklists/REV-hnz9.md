@@ -48,7 +48,7 @@ type: review-checklist
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass (waiting for CI)
+- [x] All CI checks pass
 - [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/252
