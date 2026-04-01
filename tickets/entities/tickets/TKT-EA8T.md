@@ -5,7 +5,7 @@ title: CI validation for checklist completion
 kind: chore
 priority: medium
 effort: s
-status: planning
+status: done
 ---
 
 ## Description
