@@ -288,6 +288,8 @@ jobs:
           cd tickets
 
           echo "Running validation checks..."
+          # Note: cardinality check not included - it treats backlog items as errors
+          # TODO: Add cardinality check after implementing status-aware cardinality validation
           ../bin/rela validate --check properties --check validations
 
           echo ""
