@@ -299,6 +299,8 @@ type AutomationAction struct {
 	Value          string                `yaml:"value,omitempty"`
 	CreateRelation *CreateRelationAction `yaml:"create_relation,omitempty"`
 	CreateEntity   *CreateEntityAction   `yaml:"create_entity,omitempty"`
+	Lua            string                `yaml:"lua,omitempty"`      // Inline Lua code to execute
+	LuaFile        string                `yaml:"lua_file,omitempty"` // Path to Lua script in scripts/ directory
 }
 
 // CreateRelationAction specifies parameters for creating a relation.

@@ -8,7 +8,10 @@ package workspace
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -34,6 +37,16 @@ type ChangeEvent = repository.ChangeEvent
 // ChangeOp is re-exported from repository for the same reason as ChangeEvent.
 type ChangeOp = repository.ChangeOp
 
+// LuaExecutor runs Lua code with entity context. This interface is implemented
+// by the lua package and injected into Workspace to avoid a circular import.
+// The lua package depends on workspace (for WorkspaceInterface), so workspace
+// cannot import lua directly.
+type LuaExecutor interface {
+	// ExecuteCode runs Lua code with entity and oldEntity available as globals.
+	// Returns any error from script execution.
+	ExecuteCode(code string, entity, oldEntity *model.Entity) error
+}
+
 // Workspace is a stateful domain session that ties together the repository
 // (persistence), graph (in-memory query), metamodel (schema), and automation
 // engine. All write operations go through Workspace so that disk and memory
@@ -45,6 +58,7 @@ type Workspace struct {
 	automation *automation.Engine
 	searchIdx  *search.Index
 	config     *project.Config
+	luaExec    LuaExecutor
 	mu         sync.RWMutex
 
 	// Watcher state (nil when not watching).
@@ -177,6 +191,17 @@ func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Gra
 	}
 }
 
+// --- Configuration ---
+
+// SetLuaExecutor sets the Lua executor for running automation Lua code.
+// This must be called after workspace creation by the entry point (CLI, MCP, etc.)
+// to enable Lua automation actions. If not set, Lua actions will be silently skipped.
+func (w *Workspace) SetLuaExecutor(exec LuaExecutor) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.luaExec = exec
+}
+
 // --- Accessors ---
 
 // Graph returns the in-memory graph for direct read queries.
@@ -276,6 +301,13 @@ func (w *Workspace) Sync() (*model.SyncResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.repo.Sync(w.meta, w.graph)
+}
+
+// SyncLua is a Lua-friendly wrapper for Sync that doesn't return the result.
+// This satisfies lua.WorkspaceInterface without importing result types.
+func (w *Workspace) SyncLua() error {
+	_, err := w.Sync()
+	return err
 }
 
 // Reload reloads the metamodel and re-syncs the graph from disk. This is
@@ -500,9 +532,9 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 	// Index the entity for search.
 	w.indexEntity(entity)
 
-	// Apply automation side effects (relations, entities) after entity is written.
+	// Apply automation side effects (relations, entities, Lua) after entity is written.
 	if autoResult != nil {
-		effects := w.applyAutomationSideEffects(entity, autoResult)
+		effects := w.applyAutomationSideEffects(entity, nil, autoResult)
 		result.RelationsCreated = effects.RelationsCreated
 		result.EntitiesCreated = effects.EntitiesCreated
 		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
@@ -533,9 +565,10 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 
 	result := &UpdateResult{}
 
-	// Run automation.
+	// Run automation to get property changes and side effects.
+	var autoResult *automation.Result
 	if w.automation != nil && oldEntity != nil {
-		autoResult := w.automation.Process(automation.Event{
+		autoResult = w.automation.Process(automation.Event{
 			Type:      automation.EventEntityUpdated,
 			Entity:    entity,
 			OldEntity: oldEntity,
@@ -545,20 +578,24 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		}
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
-
-		effects := w.applyAutomationSideEffects(entity, autoResult)
-		result.RelationsCreated = effects.RelationsCreated
-		result.EntitiesCreated = effects.EntitiesCreated
-		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
-		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
 	}
 
-	// Write to disk + update graph + search index.
+	// Write to disk + update graph + search index BEFORE side effects.
+	// This ensures Lua scripts can modify entities without being overwritten.
 	if err := w.repo.WriteEntity(entity, meta); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 	w.graph.AddNode(entity)
 	w.indexEntity(entity)
+
+	// Apply automation side effects (relations, entities, Lua) AFTER entity is written.
+	if autoResult != nil {
+		effects := w.applyAutomationSideEffects(entity, oldEntity, autoResult)
+		result.RelationsCreated = effects.RelationsCreated
+		result.EntitiesCreated = effects.EntitiesCreated
+		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
+		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
+	}
 
 	w.saveCacheQuietly()
 	return result, nil
@@ -615,6 +652,43 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 
 	w.saveCacheQuietly()
 	return result, nil
+}
+
+// --- Lua-specific interface methods ---
+// These methods satisfy lua.WorkspaceInterface without importing result types,
+// breaking the circular dependency between lua and workspace packages.
+
+// CreateEntityLua creates an entity and returns it without the result struct.
+// This satisfies lua.WorkspaceInterface using primitive types to avoid import cycles.
+func (w *Workspace) CreateEntityLua(
+	entityType, id string, props map[string]interface{}, content string,
+) (*model.Entity, error) {
+	entity, _, err := w.CreateEntity(entityType, CreateOptions{
+		ID:         id,
+		Properties: props,
+		Content:    content,
+	})
+	return entity, err
+}
+
+// UpdateEntityLua updates an entity without returning the result struct.
+// This satisfies lua.WorkspaceInterface.
+func (w *Workspace) UpdateEntityLua(entity, oldEntity *model.Entity) error {
+	_, err := w.UpdateEntity(entity, oldEntity)
+	return err
+}
+
+// DeleteEntityLua deletes an entity without returning the result struct.
+// This satisfies lua.WorkspaceInterface.
+func (w *Workspace) DeleteEntityLua(entityType, id string, cascade bool) error {
+	_, err := w.DeleteEntity(entityType, id, cascade)
+	return err
+}
+
+// CreateRelationLua creates a relation without options.
+// This satisfies lua.WorkspaceInterface.
+func (w *Workspace) CreateRelationLua(from, relType, to string) (*model.Relation, error) {
+	return w.CreateRelation(from, relType, to)
 }
 
 // createEntityCoreOpts configures core entity creation.
@@ -725,6 +799,7 @@ type automationQueueItem struct {
 // This avoids deep recursion and provides clear iteration limits.
 func (w *Workspace) applyAutomationSideEffects(
 	triggerEntity *model.Entity,
+	oldEntity *model.Entity,
 	autoResult *automation.Result,
 ) *automationSideEffects {
 	effects := &automationSideEffects{}
@@ -738,6 +813,9 @@ func (w *Workspace) applyAutomationSideEffects(
 		item := queue[0]
 		queue = queue[1:]
 		iterations++
+
+		// Process Lua scripts for this trigger.
+		w.executeLuaActions(item.trigger, oldEntity, item.autoResult.LuaToExecute, effects)
 
 		// Process relations for this trigger.
 		w.applyRelationCreations(item.trigger, item.autoResult.RelationsToCreate, effects)
@@ -832,6 +910,7 @@ func (w *Workspace) runCreatedEntityAutomation(
 
 	// Return queue item if there's more work to do.
 	hasWork := len(newAutoResult.EntitiesToCreate) > 0 || len(newAutoResult.RelationsToCreate) > 0 ||
+		len(newAutoResult.LuaToExecute) > 0 ||
 		len(newAutoResult.Warnings) > 0 || len(newAutoResult.Errors) > 0
 	if hasWork {
 		return &automationQueueItem{created, newAutoResult}
@@ -870,6 +949,108 @@ func (w *Workspace) applyRelationCreations(
 		}
 		effects.RelationsCreated = append(effects.RelationsCreated, rel)
 	}
+}
+
+// scriptsDir is the directory where Lua scripts must be located for lua_file actions.
+const scriptsDir = "scripts"
+
+// executeLuaActions executes Lua scripts from automation results.
+func (w *Workspace) executeLuaActions(
+	entity *model.Entity,
+	oldEntity *model.Entity,
+	luaActions []automation.LuaToExecute,
+	effects *automationSideEffects,
+) {
+	if len(luaActions) == 0 {
+		return
+	}
+
+	projectRoot := w.Paths().Root
+
+	for _, action := range luaActions {
+		var code string
+
+		switch {
+		case action.Code != "":
+			// Inline Lua code
+			code = action.Code
+		case action.FilePath != "":
+			// Load script from file using os.OpenRoot for traversal-resistant access
+			scriptCode, err := w.loadLuaScript(projectRoot, action.FilePath)
+			if err != nil {
+				effects.Errors = append(effects.Errors,
+					fmt.Sprintf("lua_file error: %s", err.Error()))
+				continue
+			}
+			code = scriptCode
+		default:
+			// Empty action - skip
+			continue
+		}
+
+		// Execute the Lua code
+		if err := w.executeLuaCode(code, entity, oldEntity); err != nil {
+			effects.Errors = append(effects.Errors,
+				fmt.Sprintf("lua execution error: %s", err.Error()))
+		}
+	}
+}
+
+// loadLuaScript loads a Lua script from the scripts/ directory using os.OpenRoot
+// for traversal-resistant file access.
+func (w *Workspace) loadLuaScript(projectRoot, scriptPath string) (string, error) {
+	// Security: Validate path is local (no "..", no absolute paths)
+	if !filepath.IsLocal(scriptPath) {
+		return "", fmt.Errorf("script path must be a local path (no '..' or absolute paths): %s", scriptPath)
+	}
+
+	// Security: Must have .lua extension
+	if !strings.HasSuffix(scriptPath, ".lua") {
+		return "", fmt.Errorf("script must have .lua extension: %s", scriptPath)
+	}
+
+	// Use os.OpenRoot for traversal-resistant access.
+	// Error messages intentionally omit system paths to prevent information leakage.
+	root, err := os.OpenRoot(projectRoot)
+	if err != nil {
+		return "", errors.New("cannot access project directory")
+	}
+	defer root.Close()
+
+	scriptsRoot, err := root.OpenRoot(scriptsDir)
+	if err != nil {
+		return "", fmt.Errorf("scripts/ directory not found or not accessible")
+	}
+	defer scriptsRoot.Close()
+
+	scriptFile, err := scriptsRoot.Open(scriptPath)
+	if err != nil {
+		return "", fmt.Errorf("script not found: %s (must be in scripts/ directory)", scriptPath)
+	}
+	defer scriptFile.Close()
+
+	content, err := io.ReadAll(scriptFile)
+	if err != nil {
+		return "", fmt.Errorf("cannot read script: %s", scriptPath)
+	}
+
+	return string(content), nil
+}
+
+// executeLuaCode runs Lua code with entity context set as globals.
+// Uses the injected LuaExecutor. Returns nil if no executor is configured.
+func (w *Workspace) executeLuaCode(code string, entity, oldEntity *model.Entity) error {
+	w.mu.RLock()
+	exec := w.luaExec
+	w.mu.RUnlock()
+
+	if exec == nil {
+		// No Lua executor configured - skip silently.
+		// This happens when workspace is used without the lua package wired in.
+		return nil
+	}
+
+	return exec.ExecuteCode(code, entity, oldEntity)
 }
 
 // handleIfExists checks if_exists behavior for entity creation.

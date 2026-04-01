@@ -590,6 +590,53 @@ The `if_exists` check uses the relation to detect duplicates: if the trigger ent
 already has a relation of the specified type pointing to an entity of the same type
 being created, the action is considered a duplicate.
 
+**lua**: Execute inline Lua code
+
+```yaml
+automations:
+  - name: cascade-status-update
+    on:
+      entity: [ticket]
+      property: status
+      becomes: done
+    do:
+      - lua: |
+          -- Update related checklists
+          local rels = rela.get_relations({from = entity.id, type = "has-checklist"})
+          for _, rel in ipairs(rels) do
+            rela.update_entity(rel.to, {status = "completed"})
+          end
+```
+
+**lua_file**: Execute a Lua script file from the `scripts/` directory
+
+```yaml
+automations:
+  - name: archive-cascade
+    on:
+      entity: [ticket]
+      property: status
+      becomes: archived
+    do:
+      - lua_file: on_archive.lua  # Loads scripts/on_archive.lua
+```
+
+**Lua Action Security:**
+
+- Lua code is sandboxed (no io, os, or debug libraries)
+- Entity context is provided via globals (`entity`, `old_entity`) - NOT via interpolation
+- Only safe variables (`{{today}}`, `{{user.name}}`, etc.) are interpolated into Lua code
+- `{{new.property}}` and `{{entity.*}}` are NOT interpolated for security reasons
+- Script files must have `.lua` extension and reside in `scripts/` directory
+
+**Available Lua globals in automations:**
+
+| Global | Description |
+|--------|-------------|
+| `entity` | The triggering entity (table with id, type, properties, content) |
+| `old_entity` | The previous entity state (for update events, nil for create) |
+| `rela.*` | All rela Lua API functions (get_entity, update_entity, etc.) |
+
 ### Interpolation Syntax
 
 Automation properties support template interpolation:
@@ -597,10 +644,19 @@ Automation properties support template interpolation:
 | Pattern | Description |
 |---------|-------------|
 | `{{new.property}}` | Property from new/current entity |
+| `{{old.property}}` | Property from previous entity state |
 | `{{entity.id}}` | ID of the triggering entity |
+| `{{entity.type}}` | Type of the triggering entity |
 | `{{today}}` | Current date (YYYY-MM-DD) |
+| `{{now}}` | Current timestamp (RFC3339) |
+| `{{user.name}}` | Git user name |
+| `{{user.email}}` | Git user email |
 
 Common mistake: `{{entity.title}}` is WRONG, use `{{new.title}}` instead.
+
+**Note:** For `lua` actions, only safe variables (`{{today}}`, `{{now}}`, `{{user.name}}`, `{{user.email}}`)
+are interpolated. Entity properties (`{{new.*}}`, `{{old.*}}`, `{{entity.*}}`) are NOT interpolated into
+Lua code for security - use the `entity` and `old_entity` globals instead.
 
 ### Test Writing Best Practices
 

@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -1138,4 +1139,369 @@ func parseFilters(t *testing.T, conditions ...string) []*filter.Filter {
 		filters = append(filters, f)
 	}
 	return filters
+}
+
+func TestEngine_LuaInline(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "run-lua",
+			On: Trigger{
+				Entity:   []string{"ticket"},
+				Property: "status",
+				Becomes:  "done",
+			},
+			Do: []Action{
+				{
+					Lua: `-- this is a lua script`,
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
+	newEntity := testutil.Entity("ticket").ID("T-001").With("status", "done").Build()
+
+	result := engine.Process(Event{
+		Type:      EventEntityUpdated,
+		Entity:    newEntity,
+		OldEntity: oldEntity,
+	})
+
+	if len(result.LuaToExecute) != 1 {
+		t.Fatalf("expected 1 Lua action, got %d", len(result.LuaToExecute))
+	}
+
+	if result.LuaToExecute[0].Code != `-- this is a lua script` {
+		t.Errorf("unexpected Lua code: %q", result.LuaToExecute[0].Code)
+	}
+	if result.LuaToExecute[0].FilePath != "" {
+		t.Errorf("expected empty file path, got: %q", result.LuaToExecute[0].FilePath)
+	}
+}
+
+func TestEngine_LuaFile(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "run-lua-file",
+			On: Trigger{
+				Entity:   []string{"ticket"},
+				Property: "status",
+				Becomes:  "archived",
+			},
+			Do: []Action{
+				{
+					LuaFile: "archive_notify.lua",
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "done").Build()
+	newEntity := testutil.Entity("ticket").ID("T-001").With("status", "archived").Build()
+
+	result := engine.Process(Event{
+		Type:      EventEntityUpdated,
+		Entity:    newEntity,
+		OldEntity: oldEntity,
+	})
+
+	if len(result.LuaToExecute) != 1 {
+		t.Fatalf("expected 1 Lua action, got %d", len(result.LuaToExecute))
+	}
+
+	if result.LuaToExecute[0].FilePath != "archive_notify.lua" {
+		t.Errorf("unexpected file path: %q", result.LuaToExecute[0].FilePath)
+	}
+	if result.LuaToExecute[0].Code != "" {
+		t.Errorf("expected empty code, got: %q", result.LuaToExecute[0].Code)
+	}
+}
+
+func TestEngine_LuaInlineWithSafeInterpolation(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "run-lua-with-vars",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					Lua: `local date = "{{today}}"
+local user = "{{user.name}}"`,
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+	engine.SetTemplateVars(TemplateVars{
+		Now:  func() time.Time { return time.Date(2025, 3, 15, 10, 0, 0, 0, time.UTC) },
+		User: UserVars{Name: "Alice", Email: "alice@example.com"},
+	})
+
+	entity := testutil.Entity("ticket").ID("T-001").Build()
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.LuaToExecute) != 1 {
+		t.Fatalf("expected 1 Lua action, got %d", len(result.LuaToExecute))
+	}
+
+	expectedCode := `local date = "2025-03-15"
+local user = "Alice"`
+
+	if result.LuaToExecute[0].Code != expectedCode {
+		t.Errorf("expected safe interpolation, got: %q", result.LuaToExecute[0].Code)
+	}
+}
+
+func TestEngine_LuaInlineDoesNotInterpolateEntityProperties(t *testing.T) {
+	// Security test: entity properties should NOT be interpolated into Lua code
+	automations := []Automation{
+		{
+			Name: "check-no-entity-interpolation",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					Lua: `local title = "{{new.title}}"`,
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	// Even if title contains dangerous Lua code, it should NOT be interpolated
+	entity := testutil.Entity("ticket").ID("T-001").
+		With("title", `"; os.execute("rm -rf /"); --`).
+		Build()
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.LuaToExecute) != 1 {
+		t.Fatalf("expected 1 Lua action, got %d", len(result.LuaToExecute))
+	}
+
+	// Entity properties should NOT be interpolated - template stays as-is
+	if result.LuaToExecute[0].Code != `local title = "{{new.title}}"` {
+		t.Errorf("entity properties should not be interpolated, got: %q", result.LuaToExecute[0].Code)
+	}
+}
+
+func TestEngine_LuaOnCreated(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "init-lua",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					Lua: `rela.update_entity(entity.id, {initialized = "true"})`,
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := testutil.Entity("ticket").ID("T-001").Build()
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.LuaToExecute) != 1 {
+		t.Fatalf("expected 1 Lua action, got %d", len(result.LuaToExecute))
+	}
+}
+
+func TestEngine_LuaEmptyAction(t *testing.T) {
+	// Both Lua and LuaFile empty - should not add to LuaToExecute
+	automations := []Automation{
+		{
+			Name: "empty-lua-action",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					Lua:     "",
+					LuaFile: "",
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := testutil.Entity("ticket").ID("T-001").Build()
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.LuaToExecute) != 0 {
+		t.Errorf("expected no Lua actions for empty Lua/LuaFile, got %d", len(result.LuaToExecute))
+	}
+}
+
+func TestEngine_LuaMultipleActions(t *testing.T) {
+	automations := []Automation{
+		{
+			Name: "multi-lua",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					Lua: `-- action 1`,
+				},
+				{
+					LuaFile: "action2.lua",
+				},
+				{
+					Lua: `-- action 3`,
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := testutil.Entity("ticket").ID("T-001").Build()
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	if len(result.LuaToExecute) != 3 {
+		t.Fatalf("expected 3 Lua actions, got %d", len(result.LuaToExecute))
+	}
+
+	if result.LuaToExecute[0].Code != `-- action 1` {
+		t.Errorf("action 1: unexpected code")
+	}
+	if result.LuaToExecute[1].FilePath != "action2.lua" {
+		t.Errorf("action 2: unexpected file path")
+	}
+	if result.LuaToExecute[2].Code != `-- action 3` {
+		t.Errorf("action 3: unexpected code")
+	}
+}
+
+func TestEngine_LuaFilePathTraversalValidation(t *testing.T) {
+	// Test that path traversal attempts are caught early in the engine.
+	automations := []Automation{
+		{
+			Name: "path-traversal",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					LuaFile: "../../../etc/passwd",
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := testutil.Entity("ticket").ID("T-001").Build()
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	// Should have an error about invalid path.
+	if len(result.Errors) == 0 {
+		t.Fatal("expected error for path traversal, got none")
+	}
+
+	foundPathError := false
+	for _, errMsg := range result.Errors {
+		if strings.Contains(errMsg, "local") && strings.Contains(errMsg, "..") {
+			foundPathError = true
+			break
+		}
+	}
+	if !foundPathError {
+		t.Errorf("expected path traversal error, got: %v", result.Errors)
+	}
+
+	// No Lua should be queued for execution.
+	if len(result.LuaToExecute) != 0 {
+		t.Errorf("expected no Lua actions for invalid path, got %d", len(result.LuaToExecute))
+	}
+}
+
+func TestEngine_LuaFileMissingExtensionValidation(t *testing.T) {
+	// Test that files without .lua extension are rejected early.
+	automations := []Automation{
+		{
+			Name: "wrong-extension",
+			On: Trigger{
+				Entity:  []string{"ticket"},
+				Created: true,
+			},
+			Do: []Action{
+				{
+					LuaFile: "script.txt",
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(automations)
+
+	entity := testutil.Entity("ticket").ID("T-001").Build()
+
+	result := engine.Process(Event{
+		Type:   EventEntityCreated,
+		Entity: entity,
+	})
+
+	// Should have an error about extension.
+	if len(result.Errors) == 0 {
+		t.Fatal("expected error for wrong extension, got none")
+	}
+
+	foundExtError := false
+	for _, errMsg := range result.Errors {
+		if strings.Contains(errMsg, ".lua extension") {
+			foundExtError = true
+			break
+		}
+	}
+	if !foundExtError {
+		t.Errorf("expected extension error, got: %v", result.Errors)
+	}
+
+	// No Lua should be queued.
+	if len(result.LuaToExecute) != 0 {
+		t.Errorf("expected no Lua actions for invalid extension, got %d", len(result.LuaToExecute))
+	}
 }
