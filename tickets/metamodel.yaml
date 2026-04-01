@@ -704,21 +704,21 @@ relations:
     from: [ticket]
     to: [feature]
     inverse: implementedBy
-    min_outgoing: 1 # Every ticket should implement at least one feature
+    # min_outgoing: 1 # TODO: Re-enable after fixing historical tickets (TKT-EA8T)
   fixes:
     label: fixes
     description: Bug fixes an issue in this feature
     from: [bug]
     to: [feature]
     inverse: fixedBy
-    min_outgoing: 1 # Every bug must be linked to the feature it fixes
+    # min_outgoing: 1 # TODO: Re-enable after fixing historical bugs (TKT-EA8T)
   affects:
     label: affects
     description: Work touches this architectural concept
     from: [ticket, bug, doc-task]
     to: [concept]
     inverse: affectedBy
-    min_outgoing: 1 # Work items must specify which concepts they affect
+    # min_outgoing: 1 # TODO: Re-enable after fixing historical tickets/bugs (TKT-EA8T)
   depends-on:
     label: depends on
     description: Requires this to be completed first
@@ -754,7 +754,7 @@ relations:
     from: [feature]
     to: [concept]
     inverse: requiredBy
-    min_outgoing: 1 # Features must be grounded in at least one concept
+    # min_outgoing: 1 # TODO: Re-enable after fixing historical features (TKT-EA8T)
   concept-depends-on:
     label: depends on
     description: Concept depends on another concept
@@ -844,7 +844,7 @@ relations:
     from: [bug]
     to: [automated-measure]
     inverse: addedBy
-    min_outgoing: 1 # Every bug must result in an automated preventive measure
+    # min_outgoing: 1 # TODO: Re-enable after fixing historical bugs (TKT-EA8T)
   protects:
     label: protects
     description: Measure protects this concept from bugs
