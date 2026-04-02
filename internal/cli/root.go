@@ -62,7 +62,7 @@ and maintain semantic relationships between them.`,
 
 		// Discover project and initialize workspace
 		var err error
-		ws, err = workspace.DiscoverAndNew(startDir)
+		ws, err = workspace.Discover(startDir)
 		if err != nil {
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}

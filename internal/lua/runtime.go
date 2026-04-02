@@ -9,19 +9,20 @@
 package lua
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // Default values for Lua API functions.
@@ -35,15 +36,28 @@ const (
 // Runtime wraps gopher-lua VM with rela bindings.
 type Runtime struct {
 	L           *lua.LState
-	ws          *workspace.Workspace
+	ws          WorkspaceInterface
 	meta        *metamodel.Metamodel
 	stdout      io.Writer
 	projectRoot string
-	outputDir   string // Directory where write_file can write (defaults to "output")
+	outputDir   string        // Directory where write_file can write (defaults to "output")
+	timeout     time.Duration // Execution timeout (0 = no timeout)
 }
 
 // Option configures a Runtime.
 type Option func(*Runtime)
+
+// DefaultTimeout is the default execution timeout for scripts.
+// This prevents infinite loops and resource exhaustion.
+const DefaultTimeout = 30 * time.Second
+
+// WithTimeout sets the execution timeout for scripts.
+// Default is 30 seconds. Set to 0 to disable timeout (not recommended).
+func WithTimeout(d time.Duration) Option {
+	return func(r *Runtime) {
+		r.timeout = d
+	}
+}
 
 // WithOutputDir sets the output directory for write_file.
 // If the path is absolute, files will be written there directly.
@@ -57,7 +71,7 @@ func WithOutputDir(dir string) Option {
 // New creates a Runtime with rela bindings registered.
 // The Lua VM is sandboxed with only safe libraries loaded (no io, os, or debug).
 func New(
-	ws *workspace.Workspace,
+	ws WorkspaceInterface,
 	meta *metamodel.Metamodel,
 	projectRoot string,
 	stdout io.Writer,
@@ -80,6 +94,7 @@ func New(
 		stdout:      stdout,
 		projectRoot: projectRoot,
 		outputDir:   defaultOutputDir,
+		timeout:     DefaultTimeout,
 	}
 
 	// Apply options
@@ -142,12 +157,27 @@ func (r *Runtime) RunFile(path string, args []string) error {
 	}
 	relaTable.RawSetString("args", argsTable)
 
+	r.applyTimeout()
 	return r.L.DoFile(path)
 }
 
 // RunString executes Lua code from a string.
 func (r *Runtime) RunString(code string) error {
+	r.applyTimeout()
 	return r.L.DoString(code)
+}
+
+// applyTimeout sets the execution timeout on the Lua state.
+// Must be called before executing any Lua code.
+func (r *Runtime) applyTimeout() {
+	if r.timeout > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+		// Store cancel func to allow cleanup - but since Runtime.Close() will
+		// close the Lua state anyway, we just need to set the context.
+		// The context will be canceled when it times out or the runtime closes.
+		_ = cancel // Silence unused warning; context cancellation happens via timeout or state close
+		r.L.SetContext(ctx)
+	}
 }
 
 // SetArgs sets the script arguments (rela.args) before execution.
@@ -165,6 +195,11 @@ func (r *Runtime) SetArgs(args []string) {
 // Close releases Lua VM resources.
 func (r *Runtime) Close() {
 	r.L.Close()
+}
+
+// LState returns the underlying Lua state for setting globals.
+func (r *Runtime) LState() *lua.LState {
+	return r.L
 }
 
 // registerBindings sets up the rela module with all functions.
@@ -231,7 +266,7 @@ func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 		return 1
 	}
 
-	ls.Push(entityToTable(ls, entity))
+	ls.Push(EntityToTable(ls, entity))
 	return 1
 }
 
@@ -277,7 +312,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 
 	result := ls.NewTable()
 	for i, e := range entities {
-		result.RawSetInt(i+1, entityToTable(ls, e))
+		result.RawSetInt(i+1, EntityToTable(ls, e))
 	}
 	ls.Push(result)
 	return 1
@@ -446,9 +481,10 @@ func (r *Runtime) luaWriteFile(ls *lua.LState) int {
 	return 0
 }
 
-// entityToTable converts a model.Entity to a Lua table.
-// The returned table has a metatable with a prop(name, default) method.
-func entityToTable(ls *lua.LState, e *model.Entity) *lua.LTable {
+// EntityToTable converts a model.Entity to a Lua table.
+// The returned table has a prop(name, default) method.
+// Exported for use by workspace automation execution.
+func EntityToTable(ls *lua.LState, e *model.Entity) *lua.LTable {
 	t := ls.NewTable()
 	t.RawSetString("id", lua.LString(e.ID))
 	t.RawSetString("type", lua.LString(e.Type))
@@ -456,7 +492,7 @@ func entityToTable(ls *lua.LState, e *model.Entity) *lua.LTable {
 
 	props := ls.NewTable()
 	for k, v := range e.Properties {
-		props.RawSetString(k, goToLuaValue(ls, v))
+		props.RawSetString(k, GoToLuaValue(ls, v))
 	}
 	t.RawSetString("properties", props)
 
@@ -538,7 +574,7 @@ func relationToTable(ls *lua.LState, rel *model.Relation) *lua.LTable {
 	if len(rel.Properties) > 0 {
 		props := ls.NewTable()
 		for k, v := range rel.Properties {
-			props.RawSetString(k, goToLuaValue(ls, v))
+			props.RawSetString(k, GoToLuaValue(ls, v))
 		}
 		t.RawSetString("properties", props)
 	}
@@ -566,8 +602,9 @@ func traceResultToTable(ls *lua.LState, trace *model.TraceResult) *lua.LTable {
 	return t
 }
 
-// goToLuaValue converts a Go value to a Lua value.
-func goToLuaValue(ls *lua.LState, v interface{}) lua.LValue {
+// GoToLuaValue converts a Go value to a Lua value.
+// Exported for use by workspace automation execution.
+func GoToLuaValue(ls *lua.LState, v interface{}) lua.LValue {
 	if v == nil {
 		return lua.LNil
 	}
@@ -585,7 +622,7 @@ func goToLuaValue(ls *lua.LState, v interface{}) lua.LValue {
 	case []interface{}:
 		t := ls.NewTable()
 		for i, item := range val {
-			t.RawSetInt(i+1, goToLuaValue(ls, item))
+			t.RawSetInt(i+1, GoToLuaValue(ls, item))
 		}
 		return t
 	case []string:
@@ -597,7 +634,7 @@ func goToLuaValue(ls *lua.LState, v interface{}) lua.LValue {
 	case map[string]interface{}:
 		t := ls.NewTable()
 		for k, item := range val {
-			t.RawSetString(k, goToLuaValue(ls, item))
+			t.RawSetString(k, GoToLuaValue(ls, item))
 		}
 		return t
 	default:
@@ -698,7 +735,7 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 
 	result := ls.NewTable()
 	for i, e := range entities {
-		result.RawSetInt(i+1, entityToTable(ls, e))
+		result.RawSetInt(i+1, EntityToTable(ls, e))
 	}
 	ls.Push(result)
 	return 1
@@ -718,17 +755,13 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 	content := ls.OptString(3, "")
 	customID := ls.OptString(argPosCreateEntityID, "")
 
-	entity, _, err := r.ws.CreateEntity(entityType, workspace.CreateOptions{
-		ID:         customID,
-		Properties: props,
-		Content:    content,
-	})
+	entity, err := r.ws.CreateEntityLua(entityType, customID, props, content)
 	if err != nil {
 		ls.RaiseError("create entity error: %s", err.Error())
 		return 0
 	}
 
-	ls.Push(entityToTable(ls, entity))
+	ls.Push(EntityToTable(ls, entity))
 	return 1
 }
 
@@ -778,7 +811,7 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		updated.Content = ls.CheckString(3)
 	}
 
-	_, err := r.ws.UpdateEntity(&updated, &oldEntity)
+	err := r.ws.UpdateEntityLua(&updated, &oldEntity)
 	if err != nil {
 		ls.RaiseError("update entity error: %s", err.Error())
 		return 0
@@ -790,7 +823,7 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		ls.RaiseError("entity disappeared after update: %s", id)
 		return 0
 	}
-	ls.Push(entityToTable(ls, updatedEntity))
+	ls.Push(EntityToTable(ls, updatedEntity))
 	return 1
 }
 
@@ -810,7 +843,7 @@ func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	_, err := r.ws.DeleteEntity(entity.Type, id, cascade)
+	err := r.ws.DeleteEntityLua(entity.Type, id, cascade)
 	if err != nil {
 		ls.RaiseError("delete entity error: %s", err.Error())
 		return 0
@@ -831,7 +864,7 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	rel, err := r.ws.CreateRelation(from, relType, to)
+	rel, err := r.ws.CreateRelationLua(from, relType, to)
 	if err != nil {
 		ls.RaiseError("create relation error: %s", err.Error())
 		return 0
@@ -894,7 +927,7 @@ func (r *Runtime) luaFindPath(ls *lua.LState) int {
 // luaRefresh implements rela.refresh() -> boolean
 // Re-syncs the graph from disk (reloads all entities and relations).
 func (r *Runtime) luaRefresh(ls *lua.LState) int {
-	_, err := r.ws.Sync()
+	err := r.ws.SyncLua()
 	if err != nil {
 		ls.RaiseError("refresh error: %s", err.Error())
 		return 0

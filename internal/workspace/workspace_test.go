@@ -10,50 +10,70 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
-// testMetamodelYAML is the shared workspace test metamodel - use testutil.WorkspaceMetamodelYAML()
+// testMetamodelYAML is the shared workspace test metamodel.
 var testMetamodelYAML = testutil.WorkspaceMetamodelYAML()
 
-func setupTestWorkspace(t *testing.T) *Workspace {
-	t.Helper()
-	fs := storage.NewMemFS()
-
-	root := "/project"
-	ctx := &project.Context{
-		Root:                 root,
-		MetamodelPath:        root + "/metamodel.yaml",
-		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
-		EntitiesDir:          root + "/entities",
-		RelationsDir:         root + "/relations",
-		TemplatesDir:         root + "/templates",
-		EntityTemplatesDir:   root + "/templates/entities",
-		RelationTemplatesDir: root + "/templates/relations",
+// testContext creates a standard project.Context for testing.
+func testContext() *project.Context {
+	return &project.Context{
+		Root:                 "/project",
+		MetamodelPath:        "/project/metamodel.yaml",
+		CacheDir:             "/project/.rela",
+		CachePath:            "/project/.rela/cache.json",
+		EntitiesDir:          "/project/entities",
+		RelationsDir:         "/project/relations",
+		TemplatesDir:         "/project/templates",
+		EntityTemplatesDir:   "/project/templates/entities",
+		RelationTemplatesDir: "/project/templates/relations",
 	}
+}
 
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/requirements", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/decisions", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/stakeholders", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/checklists", 0o755)
+// setupWorkspaceFS creates an in-memory filesystem with directories for the given metamodel.
+func setupWorkspaceFS(ctx *project.Context, meta *metamodel.Metamodel, metamodelYAML string) storage.FS {
+	fs := storage.NewMemFS()
+	for _, entityDef := range meta.Entities {
+		_ = fs.MkdirAll(ctx.EntitiesDir+"/"+entityDef.Plural, 0o755)
+	}
 	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
 	_ = fs.MkdirAll(ctx.EntityTemplatesDir, 0o755)
 	_ = fs.MkdirAll(ctx.RelationTemplatesDir, 0o755)
-	_ = fs.WriteFile(ctx.MetamodelPath, []byte(testMetamodelYAML), 0o644)
+	_ = fs.WriteFile(ctx.MetamodelPath, []byte(metamodelYAML), 0o644)
+	return fs
+}
 
+// setupWorkspaceWithMetamodel creates a workspace with the given metamodel YAML.
+// Uses a real script engine for Lua automation tests.
+func setupWorkspaceWithMetamodel(t *testing.T, metamodelYAML string) *Workspace {
+	t.Helper()
+	meta, err := metamodel.Parse([]byte(metamodelYAML))
+	if err != nil {
+		t.Fatalf("failed to parse test metamodel: %v", err)
+	}
+
+	ctx := testContext()
+	fs := setupWorkspaceFS(ctx, meta, metamodelYAML)
+	repo := repository.New(fs, ctx)
+	return NewWithGraph(repo, meta, graph.New(), script.NewEngine())
+}
+
+// setupTestWorkspace creates a workspace with the standard test metamodel.
+func setupTestWorkspace(t *testing.T) *Workspace {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(testMetamodelYAML))
 	if err != nil {
 		t.Fatalf("failed to parse test metamodel: %v", err)
 	}
 
+	ctx := testContext()
+	fs := setupWorkspaceFS(ctx, meta, testMetamodelYAML)
 	repo := repository.New(fs, ctx)
-	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
-
-	return ws
+	return NewWithGraph(repo, meta, graph.New())
 }
 
 // mustCreate is a test helper that creates an entity, fatally failing on error.
@@ -67,26 +87,11 @@ func mustCreate(t *testing.T, ws *Workspace, entityType string, opts CreateOptio
 // --- Constructor tests ---
 
 func TestNew(t *testing.T) {
-	fs := storage.NewMemFS()
-	root := "/project"
-	ctx := &project.Context{
-		Root:                 root,
-		MetamodelPath:        root + "/metamodel.yaml",
-		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
-		EntitiesDir:          root + "/entities",
-		RelationsDir:         root + "/relations",
-		TemplatesDir:         root + "/templates",
-		EntityTemplatesDir:   root + "/templates/entities",
-		RelationTemplatesDir: root + "/templates/relations",
-	}
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/requirements", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/decisions", 0o755)
-	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
-	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	_ = fs.WriteFile(ctx.MetamodelPath, []byte(testMetamodelYAML), 0o644)
-
+	meta, _ := metamodel.Parse([]byte(testMetamodelYAML))
+	ctx := testContext()
+	fs := setupWorkspaceFS(ctx, meta, testMetamodelYAML)
 	repo := repository.New(fs, ctx)
+
 	ws, err := New(repo)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -189,7 +194,6 @@ func TestGenerateID_Sequential(t *testing.T) {
 }
 
 func TestGenerateID_ShortWithIDCaps(t *testing.T) {
-	// Test that id_caps configuration affects short ID generation
 	shortIDMetamodel := `version: "1.0"
 entities:
   ticket-upper:
@@ -223,35 +227,7 @@ entities:
         required: true
 relations: {}
 `
-	fs := storage.NewMemFS()
-	root := "/project"
-	ctx := &project.Context{
-		Root:                 root,
-		MetamodelPath:        root + "/metamodel.yaml",
-		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
-		EntitiesDir:          root + "/entities",
-		RelationsDir:         root + "/relations",
-		TemplatesDir:         root + "/templates",
-		EntityTemplatesDir:   root + "/templates/entities",
-		RelationTemplatesDir: root + "/templates/relations",
-	}
-
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/tickets-upper", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/tickets-lower", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/tickets-default", 0o755)
-	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
-	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	_ = fs.WriteFile(ctx.MetamodelPath, []byte(shortIDMetamodel), 0o644)
-
-	meta, err := metamodel.Parse([]byte(shortIDMetamodel))
-	if err != nil {
-		t.Fatalf("failed to parse metamodel: %v", err)
-	}
-
-	repo := repository.New(fs, ctx)
-	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := setupWorkspaceWithMetamodel(t, shortIDMetamodel)
 
 	tests := []struct {
 		entityType  string
@@ -880,7 +856,6 @@ func TestCreateEntity_AutomationWithIfExistsUnknown(t *testing.T) {
 
 func setupTestWorkspaceWithCreateEntityAutomation(t *testing.T, ifExists string) *Workspace {
 	t.Helper()
-
 	metamodelYAML := `version: "1.0"
 entities:
   requirement:
@@ -936,39 +911,7 @@ automations:
           properties:
             title: "Checklist for requirement"
 `
-
-	fs := storage.NewMemFS()
-	root := "/project"
-	ctx := &project.Context{
-		Root:                 root,
-		MetamodelPath:        root + "/metamodel.yaml",
-		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
-		EntitiesDir:          root + "/entities",
-		RelationsDir:         root + "/relations",
-		TemplatesDir:         root + "/templates",
-		EntityTemplatesDir:   root + "/templates/entities",
-		RelationTemplatesDir: root + "/templates/relations",
-	}
-
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/requirements", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/checklists", 0o755)
-	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
-	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	_ = fs.MkdirAll(ctx.EntityTemplatesDir, 0o755)
-	_ = fs.MkdirAll(ctx.RelationTemplatesDir, 0o755)
-	_ = fs.WriteFile(ctx.MetamodelPath, []byte(metamodelYAML), 0o644)
-
-	meta, err := metamodel.Parse([]byte(metamodelYAML))
-	if err != nil {
-		t.Fatalf("failed to parse test metamodel: %v", err)
-	}
-
-	repo := repository.New(fs, ctx)
-	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
-
-	return ws
+	return setupWorkspaceWithMetamodel(t, metamodelYAML)
 }
 
 // --- Template variant integration tests ---
@@ -1081,7 +1024,6 @@ status: open
 
 func setupTestWorkspaceWithTemplateAutomation(t *testing.T) (*Workspace, storage.FS, *project.Context) {
 	t.Helper()
-
 	metamodelYAML := `version: "1.0"
 entities:
   requirement:
@@ -1122,37 +1064,15 @@ automations:
           template: "{{new.kind}}"
           relation: has-checklist
 `
-
-	fs := storage.NewMemFS()
-	root := "/project"
-	ctx := &project.Context{
-		Root:                 root,
-		MetamodelPath:        root + "/metamodel.yaml",
-		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
-		EntitiesDir:          root + "/entities",
-		RelationsDir:         root + "/relations",
-		TemplatesDir:         root + "/templates",
-		EntityTemplatesDir:   root + "/templates/entities",
-		RelationTemplatesDir: root + "/templates/relations",
-	}
-
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/requirements", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/checklists", 0o755)
-	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
-	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	_ = fs.MkdirAll(ctx.EntityTemplatesDir, 0o755)
-	_ = fs.MkdirAll(ctx.RelationTemplatesDir, 0o755)
-	_ = fs.WriteFile(ctx.MetamodelPath, []byte(metamodelYAML), 0o644)
-
 	meta, err := metamodel.Parse([]byte(metamodelYAML))
 	if err != nil {
 		t.Fatalf("failed to parse test metamodel: %v", err)
 	}
 
+	ctx := testContext()
+	fs := setupWorkspaceFS(ctx, meta, metamodelYAML)
 	repo := repository.New(fs, ctx)
-	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := NewWithGraph(repo, meta, graph.New())
 
 	return ws, fs, ctx
 }
@@ -1161,11 +1081,7 @@ automations:
 
 func TestCreateEntity_AutomationDepthLimit(t *testing.T) {
 	// This test verifies that recursive automations are limited to maxAutomationDepth.
-	// We set up a chain where:
-	// - Creating a "starter" triggers creation of a "chain" entity
-	// - Creating a "chain" triggers creation of another "chain" entity
-	// This would be infinite without the depth limit.
-
+	// Creating a "starter" triggers creation of "chain" entities recursively.
 	metamodelYAML := `version: "1.0"
 entities:
   starter:
@@ -1214,35 +1130,8 @@ automations:
           properties:
             title: "Chain from chain"
 `
-
-	fs := storage.NewMemFS()
-	root := "/project"
-	ctx := &project.Context{
-		Root:                 root,
-		MetamodelPath:        root + "/metamodel.yaml",
-		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
-		EntitiesDir:          root + "/entities",
-		RelationsDir:         root + "/relations",
-		TemplatesDir:         root + "/templates",
-		EntityTemplatesDir:   root + "/templates/entities",
-		RelationTemplatesDir: root + "/templates/relations",
-	}
-
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/starters", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/chains", 0o755)
-	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
-	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	_ = fs.WriteFile(ctx.MetamodelPath, []byte(metamodelYAML), 0o644)
-
-	meta, err := metamodel.Parse([]byte(metamodelYAML))
-	if err != nil {
-		t.Fatalf("failed to parse test metamodel: %v", err)
-	}
-
-	repo := repository.New(fs, ctx)
-	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
+	g := ws.Graph()
 
 	// Create starter entity - this should trigger a chain of automations.
 	_, result, err := ws.CreateEntity("starter", CreateOptions{
@@ -1292,9 +1181,7 @@ automations:
 }
 
 func TestCreateEntity_AutomationChainWithoutLoop(t *testing.T) {
-	// This test verifies that non-looping chains work correctly.
-	// A → B → C (3 levels, well under the limit)
-
+	// This test verifies that non-looping chains work correctly: A → B → C
 	metamodelYAML := `version: "1.0"
 entities:
   alpha:
@@ -1348,36 +1235,8 @@ automations:
           properties:
             title: "Gamma from Beta"
 `
-
-	fs := storage.NewMemFS()
-	root := "/project"
-	ctx := &project.Context{
-		Root:                 root,
-		MetamodelPath:        root + "/metamodel.yaml",
-		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
-		EntitiesDir:          root + "/entities",
-		RelationsDir:         root + "/relations",
-		TemplatesDir:         root + "/templates",
-		EntityTemplatesDir:   root + "/templates/entities",
-		RelationTemplatesDir: root + "/templates/relations",
-	}
-
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/alphas", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/betas", 0o755)
-	_ = fs.MkdirAll(ctx.EntitiesDir+"/gammas", 0o755)
-	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
-	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	_ = fs.WriteFile(ctx.MetamodelPath, []byte(metamodelYAML), 0o644)
-
-	meta, err := metamodel.Parse([]byte(metamodelYAML))
-	if err != nil {
-		t.Fatalf("failed to parse test metamodel: %v", err)
-	}
-
-	repo := repository.New(fs, ctx)
-	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
+	g := ws.Graph()
 
 	// Create alpha - should trigger beta creation, which triggers gamma creation.
 	_, result, err := ws.CreateEntity("alpha", CreateOptions{
@@ -1416,4 +1275,334 @@ automations:
 	if len(allNodes) != 3 {
 		t.Errorf("expected 3 nodes in graph, got %d", len(allNodes))
 	}
+}
+
+// --- Lua automation tests ---
+// Inline lua: actions work with in-memory FS. Only lua_file: actions need real
+// filesystem (os.OpenRoot doesn't work with in-memory FS), so those tests verify
+// validation errors rather than actual script execution.
+
+func TestLuaAutomation_InlineCode(t *testing.T) {
+	ws := setupTestWorkspaceWithLuaAutomation(t)
+
+	// Create entity to trigger Lua automation.
+	entity, result, err := ws.CreateEntity("requirement", CreateOptions{
+		Properties: map[string]interface{}{"title": "Test Req"},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	// Should have no errors.
+	if len(result.AutomationErrors) > 0 {
+		t.Errorf("unexpected automation errors: %v", result.AutomationErrors)
+	}
+
+	// Lua automation updates the entity via rela.update_entity.
+	// Check the graph for the updated state.
+	updated, _ := ws.Graph().GetNode(entity.ID)
+	if updated.GetString("status") != "processed" {
+		t.Errorf("expected status 'processed' from Lua, got %q", updated.GetString("status"))
+	}
+}
+
+func TestLuaAutomation_EntityGlobals(t *testing.T) {
+	// Test that entity global is available in Lua on create.
+	metamodelYAML := `version: "1.0"
+entities:
+  item:
+    label: Item
+    plural: items
+    id_prefix: "ITEM-"
+    id_type: short
+    properties:
+      title:
+        type: string
+        required: true
+      lua_result:
+        type: string
+relations: {}
+automations:
+  - name: check-entity-globals
+    on:
+      entity: [item]
+      created: true
+    do:
+      - lua: |
+          -- Access entity global and verify it exists
+          if entity and entity.id then
+            rela.update_entity(entity.id, {lua_result = "entity_id:" .. entity.id})
+          end
+`
+	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
+
+	// Create entity - automation triggers on created.
+	entity, result, err := ws.CreateEntity("item", CreateOptions{
+		Properties: map[string]interface{}{"title": "Test Item"},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	if len(result.AutomationErrors) > 0 {
+		t.Errorf("automation errors: %v", result.AutomationErrors)
+	}
+
+	// Verify lua_result was set by Lua code using entity global.
+	updated, _ := ws.Graph().GetNode(entity.ID)
+	expectedResult := "entity_id:" + entity.ID
+	if updated.GetString("lua_result") != expectedResult {
+		t.Errorf("expected lua_result %q, got %q", expectedResult, updated.GetString("lua_result"))
+	}
+}
+
+func TestLuaAutomation_OldEntityGlobal(t *testing.T) {
+	// Test that old_entity global is available during updates.
+	// Use a simple inline Lua code that just sets old_status.
+	metamodelYAML := `version: "1.0"
+entities:
+  item:
+    label: Item
+    plural: items
+    id_prefix: "ITEM-"
+    id_type: short
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: string
+      old_status:
+        type: string
+relations: {}
+automations:
+  - name: capture-old-status
+    on:
+      entity: [item]
+      property: status
+    do:
+      - lua: "if old_entity then rela.update_entity(entity.id, {old_status = old_entity.properties.status or 'nil'}) else rela.update_entity(entity.id, {old_status = 'no_old'}) end"
+`
+	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
+
+	// Create entity with initial status.
+	entity, _, err := ws.CreateEntity("item", CreateOptions{
+		Properties: map[string]interface{}{"title": "Test Item", "status": "draft"},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	entityID := entity.ID
+
+	// Get fresh entity from graph (may have been modified by creation automations).
+	entity, _ = ws.Graph().GetNode(entityID)
+
+	// Update to trigger automation.
+	oldEntity := entity.Clone()
+	updated := entity.Clone()
+	updated.SetString("status", "active")
+
+	result, err := ws.UpdateEntity(updated, oldEntity)
+	if err != nil {
+		t.Fatalf("UpdateEntity error = %v", err)
+	}
+
+	if len(result.AutomationErrors) > 0 {
+		t.Errorf("automation errors: %v", result.AutomationErrors)
+	}
+
+	// Verify old_status was captured from old_entity.
+	finalEntity, _ := ws.Graph().GetNode(entityID)
+	oldStatusVal := finalEntity.GetString("old_status")
+	switch oldStatusVal {
+	case "":
+		t.Errorf("old_status is empty - Lua code did not run")
+	case "no_old":
+		t.Errorf("old_entity global was nil in Lua")
+	case "nil":
+		t.Errorf("old_entity.properties.status was nil")
+	case "draft":
+		// Success - expected value
+	default:
+		t.Errorf("expected old_status 'draft', got %q", oldStatusVal)
+	}
+}
+
+func TestLuaAutomation_LuaFilePathTraversal(t *testing.T) {
+	// Test that path traversal attempts are blocked.
+	metamodelYAML := `version: "1.0"
+entities:
+  item:
+    label: Item
+    plural: items
+    id_prefix: "ITEM-"
+    id_type: short
+    properties:
+      title:
+        type: string
+        required: true
+relations: {}
+automations:
+  - name: path-traversal-attempt
+    on:
+      entity: [item]
+      created: true
+    do:
+      - lua_file: "../../../etc/passwd"
+`
+	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
+
+	// Create entity - should trigger automation with path traversal attempt.
+	_, result, err := ws.CreateEntity("item", CreateOptions{
+		Properties: map[string]interface{}{"title": "Test Item"},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	// Should have an error about path traversal.
+	if len(result.AutomationErrors) == 0 {
+		t.Fatal("expected automation error for path traversal, got none")
+	}
+
+	foundTraversalError := false
+	for _, errMsg := range result.AutomationErrors {
+		if strings.Contains(errMsg, "local path") || strings.Contains(errMsg, "..") {
+			foundTraversalError = true
+			break
+		}
+	}
+	if !foundTraversalError {
+		t.Errorf("expected path traversal error, got: %v", result.AutomationErrors)
+	}
+}
+
+func TestLuaAutomation_LuaFileMissingExtension(t *testing.T) {
+	// Test that files without .lua extension are rejected.
+	metamodelYAML := `version: "1.0"
+entities:
+  item:
+    label: Item
+    plural: items
+    id_prefix: "ITEM-"
+    id_type: short
+    properties:
+      title:
+        type: string
+        required: true
+relations: {}
+automations:
+  - name: wrong-extension
+    on:
+      entity: [item]
+      created: true
+    do:
+      - lua_file: "script.txt"
+`
+	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
+
+	// Create entity - should trigger automation with wrong extension.
+	_, result, err := ws.CreateEntity("item", CreateOptions{
+		Properties: map[string]interface{}{"title": "Test Item"},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	// Should have an error about extension.
+	if len(result.AutomationErrors) == 0 {
+		t.Fatal("expected automation error for wrong extension, got none")
+	}
+
+	foundExtensionError := false
+	for _, errMsg := range result.AutomationErrors {
+		if strings.Contains(errMsg, ".lua extension") {
+			foundExtensionError = true
+			break
+		}
+	}
+	if !foundExtensionError {
+		t.Errorf("expected .lua extension error, got: %v", result.AutomationErrors)
+	}
+}
+
+func TestLuaAutomation_LuaExecutionError(t *testing.T) {
+	// Test that Lua errors are captured and reported.
+	metamodelYAML := `version: "1.0"
+entities:
+  item:
+    label: Item
+    plural: items
+    id_prefix: "ITEM-"
+    id_type: short
+    properties:
+      title:
+        type: string
+        required: true
+relations: {}
+automations:
+  - name: lua-error
+    on:
+      entity: [item]
+      created: true
+    do:
+      - lua: |
+          -- This will cause a Lua error
+          error("intentional test error")
+`
+	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
+
+	// Create entity - should trigger automation with Lua error.
+	_, result, err := ws.CreateEntity("item", CreateOptions{
+		Properties: map[string]interface{}{"title": "Test Item"},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntity error = %v", err)
+	}
+
+	// Should have a Lua execution error.
+	if len(result.AutomationErrors) == 0 {
+		t.Fatal("expected Lua execution error, got none")
+	}
+
+	foundLuaError := false
+	for _, errMsg := range result.AutomationErrors {
+		if strings.Contains(errMsg, "script execution error") && strings.Contains(errMsg, "intentional test error") {
+			foundLuaError = true
+			break
+		}
+	}
+	if !foundLuaError {
+		t.Errorf("expected script error message, got: %v", result.AutomationErrors)
+	}
+}
+
+func setupTestWorkspaceWithLuaAutomation(t *testing.T) *Workspace {
+	t.Helper()
+	metamodelYAML := `version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    plural: requirements
+    id_prefix: "REQ-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+        required: true
+      status:
+        type: string
+relations: {}
+automations:
+  - name: lua-on-create
+    on:
+      entity: [requirement]
+      created: true
+    do:
+      - lua: |
+          -- Set status to processed via Lua
+          rela.update_entity(entity.id, {status = "processed"})
+`
+	return setupWorkspaceWithMetamodel(t, metamodelYAML)
 }

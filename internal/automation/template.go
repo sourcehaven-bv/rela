@@ -100,6 +100,44 @@ func Interpolate(template string, vars TemplateVars, entity, oldEntity *model.En
 	return result
 }
 
+// InterpolateSafeOnly replaces only safe template variables in a string.
+// This is used for Lua code where entity properties should be accessed via globals,
+// not interpolated into the code (to prevent injection attacks).
+// Supported safe variables:
+//   - {{now}}        - Current timestamp (ISO 8601)
+//   - {{today}}      - Current date (YYYY-MM-DD)
+//   - {{user.name}}  - Git user name
+//   - {{user.email}} - Git user email
+//
+// NOT interpolated (left as-is or accessed via Lua globals):
+//   - {{entity.*}}   - Entity fields
+//   - {{old.*}}      - Previous property values
+//   - {{new.*}}      - New property values
+func InterpolateSafeOnly(template string, vars TemplateVars) string {
+	if !strings.Contains(template, "{{") {
+		return template
+	}
+
+	now := vars.Now()
+	if vars.Now == nil {
+		now = time.Now()
+	}
+
+	replacements := map[string]string{
+		"{{now}}":        now.Format(time.RFC3339),
+		"{{today}}":      now.Format("2006-01-02"),
+		"{{user.name}}":  vars.User.Name,
+		"{{user.email}}": vars.User.Email,
+	}
+
+	result := template
+	for key, value := range replacements {
+		result = strings.ReplaceAll(result, key, value)
+	}
+
+	return result
+}
+
 // interpolatePropertyRefs handles {{prefix.property}} patterns.
 func interpolatePropertyRefs(s, prefix string, entity *model.Entity) string {
 	marker := "{{" + prefix

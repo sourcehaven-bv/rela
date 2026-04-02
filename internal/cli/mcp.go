@@ -52,7 +52,7 @@ func runMCPServer() error {
 	}
 
 	// Discover project and initialize workspace
-	mcpWs, err := workspace.DiscoverAndNew(startDir)
+	mcpWs, err := workspace.Discover(startDir)
 	if err != nil {
 		return fmt.Errorf("no project found: run 'rela init' to create one")
 	}

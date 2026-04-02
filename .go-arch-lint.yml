@@ -44,6 +44,7 @@ components:
   # Core domain
   graph:            { in: internal/graph }
   lua:              { in: internal/lua }
+  script:           { in: internal/script }
   metamodel:        { in: internal/metamodel }
   migration:        { in: internal/migration }
   model:            { in: internal/model }
@@ -104,6 +105,7 @@ deps:
       - dataentry
       - project
       - repository
+      - script
       - storage
       - workspace
   cmdDesktop:
@@ -114,6 +116,7 @@ deps:
       - metamodel
       - project
       - repository
+      - script
       - storage
       - workspace
     canUse:
@@ -131,6 +134,7 @@ deps:
       - output
       - project
       - schema
+      - script
       - views
       - workspace
     canUse:
@@ -174,6 +178,7 @@ deps:
       - metamodel
       - rename
       - schema
+      - script
       - search
       - views
       - workspace
@@ -281,6 +286,10 @@ deps:
     canUse:
       - goldmark
       - gopherlua
+  script:
+    mayDependOn:
+      - lua
+      - metamodel
   search:
     mayDependOn:
       - filter

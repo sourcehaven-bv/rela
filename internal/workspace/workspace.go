@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/views"
@@ -34,6 +35,55 @@ type ChangeEvent = repository.ChangeEvent
 // ChangeOp is re-exported from repository for the same reason as ChangeEvent.
 type ChangeOp = repository.ChangeOp
 
+// ScriptExecutor runs scripts with entity context. This follows dependency
+// inversion: workspace defines the interface it needs, script package implements it.
+// This keeps workspace independent of specific script languages (Lua, etc.).
+//
+// The executor is stateless - all context is passed at execution time via
+// script.Context. This avoids circular dependencies: workspace can be created
+// with a script engine, and the engine receives workspace access only when
+// executing scripts.
+//
+// For production, pass script.NewEngine(). For tests, pass NopScriptExecutor.
+type ScriptExecutor interface {
+	// ExecuteCode runs inline script code with entity context.
+	ExecuteCode(code string, ctx script.Context) error
+	// ExecuteFile runs a script file from the scripts/ directory.
+	ExecuteFile(path string, ctx script.Context) error
+}
+
+// scriptContextImpl implements script.Context for passing to ScriptExecutor.
+// The workspace field satisfies lua.WorkspaceInterface (verified at runtime
+// by the script package).
+type scriptContextImpl struct {
+	workspace   *Workspace
+	meta        *metamodel.Metamodel
+	projectRoot string
+	entity      *model.Entity
+	oldEntity   *model.Entity
+}
+
+func (c *scriptContextImpl) GetWorkspace() interface{}     { return c.workspace }
+func (c *scriptContextImpl) GetMeta() *metamodel.Metamodel { return c.meta }
+func (c *scriptContextImpl) GetProjectRoot() string        { return c.projectRoot }
+func (c *scriptContextImpl) GetEntity() *model.Entity      { return c.entity }
+func (c *scriptContextImpl) GetOldEntity() *model.Entity   { return c.oldEntity }
+
+// NopScriptExecutor is a no-op implementation of ScriptExecutor for tests
+// that don't trigger Lua automations. It panics if actually called, making
+// it obvious when a test unexpectedly triggers Lua execution.
+var NopScriptExecutor ScriptExecutor = nopScriptExecutor{}
+
+type nopScriptExecutor struct{}
+
+func (nopScriptExecutor) ExecuteCode(string, script.Context) error {
+	panic("NopScriptExecutor: Lua execution not expected in this context")
+}
+
+func (nopScriptExecutor) ExecuteFile(string, script.Context) error {
+	panic("NopScriptExecutor: Lua execution not expected in this context")
+}
+
 // Workspace is a stateful domain session that ties together the repository
 // (persistence), graph (in-memory query), metamodel (schema), and automation
 // engine. All write operations go through Workspace so that disk and memory
@@ -45,6 +95,7 @@ type Workspace struct {
 	automation *automation.Engine
 	searchIdx  *search.Index
 	config     *project.Config
+	scriptExec ScriptExecutor
 	mu         sync.RWMutex
 
 	// Watcher state (nil when not watching).
@@ -58,24 +109,44 @@ type Workspace struct {
 // automations while allowing useful chaining (e.g., ticket → checklist → items).
 const maxAutomationDepth = 50
 
+// Discover discovers a project from the given start directory and creates
+// a production workspace with script execution enabled. If startDir is empty,
+// it uses the current working directory.
+//
+// This is the standard way to create a workspace for CLI and server use.
+// For tests, use DiscoverAndNew with NopScriptExecutor instead.
+func Discover(startDir string) (*Workspace, error) {
+	return DiscoverAndNew(startDir, script.NewEngine())
+}
+
 // DiscoverAndNew discovers a project from the given start directory and
-// creates a workspace. If startDir is empty, it uses the current working
-// directory. This is a convenience function that combines project discovery,
-// repository creation, and workspace initialization.
-func DiscoverAndNew(startDir string) (*Workspace, error) {
+// creates a workspace with a custom script executor. If startDir is empty,
+// it uses the current working directory.
+//
+// For production use, prefer Discover() which uses script.NewEngine().
+// This function is mainly for tests that need NopScriptExecutor.
+func DiscoverAndNew(startDir string, scriptExec ScriptExecutor) (*Workspace, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	ctx, err := project.Discover(startDir, fs)
 	if err != nil {
 		return nil, err
 	}
 	repo := repository.New(fs, ctx)
-	return New(repo)
+	return New(repo, scriptExec)
 }
 
-// New creates a workspace from a repository. It loads the metamodel,
-// initializes the graph (from cache or by syncing from disk), and sets
-// up the automation engine.
-func New(repo repository.Store) (*Workspace, error) {
+// New creates a workspace from a repository with an optional script executor.
+// It loads the metamodel, initializes the graph (from cache or by syncing
+// from disk), and sets up the automation engine.
+//
+// If scriptExec is not provided, defaults to script.NewEngine() for Lua support.
+// Open() is equivalent to New(repo) - both enable script execution.
+func New(repo repository.Store, scriptExec ...ScriptExecutor) (*Workspace, error) {
+	exec := ScriptExecutor(script.NewEngine())
+	if len(scriptExec) > 0 && scriptExec[0] != nil {
+		exec = scriptExec[0]
+	}
+
 	meta, err := repo.LoadMetamodel()
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
@@ -103,13 +174,22 @@ func New(repo repository.Store) (*Workspace, error) {
 		}
 	}
 
-	return newWorkspace(repo, meta, g), nil
+	return newWorkspace(repo, meta, g, exec), nil
 }
 
 // NewWithGraph creates a workspace with a pre-populated graph. Use this
 // when the caller has already loaded the metamodel and synced the graph.
-func NewWithGraph(repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph) *Workspace {
-	return newWorkspace(repo, meta, g)
+//
+// The optional scriptExec parameter enables Lua automation actions. If not provided,
+// defaults to NopScriptExecutor (suitable for tests). Pass a script.Engine for production.
+func NewWithGraph(
+	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ...ScriptExecutor,
+) *Workspace {
+	exec := NopScriptExecutor
+	if len(scriptExec) > 0 && scriptExec[0] != nil {
+		exec = scriptExec[0]
+	}
+	return newWorkspace(repo, meta, g, exec)
 }
 
 // NewForTest creates a minimal workspace for testing. It has no repository,
@@ -137,7 +217,9 @@ func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
 	return ws
 }
 
-func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph) *Workspace {
+func newWorkspace(
+	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor,
+) *Workspace {
 	var autoEngine *automation.Engine
 	if len(meta.Automations) > 0 {
 		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
@@ -174,6 +256,7 @@ func newWorkspace(repo repository.Store, meta *metamodel.Metamodel, g *graph.Gra
 		automation: autoEngine,
 		searchIdx:  searchIdx,
 		config:     cfg,
+		scriptExec: scriptExec,
 	}
 }
 
@@ -276,6 +359,13 @@ func (w *Workspace) Sync() (*model.SyncResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.repo.Sync(w.meta, w.graph)
+}
+
+// SyncLua is a Lua-friendly wrapper for Sync that doesn't return the result.
+// This satisfies lua.WorkspaceInterface without importing result types.
+func (w *Workspace) SyncLua() error {
+	_, err := w.Sync()
+	return err
 }
 
 // Reload reloads the metamodel and re-syncs the graph from disk. This is
@@ -500,9 +590,9 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 	// Index the entity for search.
 	w.indexEntity(entity)
 
-	// Apply automation side effects (relations, entities) after entity is written.
+	// Apply automation side effects (relations, entities, Lua) after entity is written.
 	if autoResult != nil {
-		effects := w.applyAutomationSideEffects(entity, autoResult)
+		effects := w.applyAutomationSideEffects(entity, nil, autoResult)
 		result.RelationsCreated = effects.RelationsCreated
 		result.EntitiesCreated = effects.EntitiesCreated
 		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
@@ -533,9 +623,10 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 
 	result := &UpdateResult{}
 
-	// Run automation.
+	// Run automation to get property changes and side effects.
+	var autoResult *automation.Result
 	if w.automation != nil && oldEntity != nil {
-		autoResult := w.automation.Process(automation.Event{
+		autoResult = w.automation.Process(automation.Event{
 			Type:      automation.EventEntityUpdated,
 			Entity:    entity,
 			OldEntity: oldEntity,
@@ -545,20 +636,24 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		}
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
-
-		effects := w.applyAutomationSideEffects(entity, autoResult)
-		result.RelationsCreated = effects.RelationsCreated
-		result.EntitiesCreated = effects.EntitiesCreated
-		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
-		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
 	}
 
-	// Write to disk + update graph + search index.
+	// Write to disk + update graph + search index BEFORE side effects.
+	// This ensures Lua scripts can modify entities without being overwritten.
 	if err := w.repo.WriteEntity(entity, meta); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 	w.graph.AddNode(entity)
 	w.indexEntity(entity)
+
+	// Apply automation side effects (relations, entities, Lua) AFTER entity is written.
+	if autoResult != nil {
+		effects := w.applyAutomationSideEffects(entity, oldEntity, autoResult)
+		result.RelationsCreated = effects.RelationsCreated
+		result.EntitiesCreated = effects.EntitiesCreated
+		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
+		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
+	}
 
 	w.saveCacheQuietly()
 	return result, nil
@@ -615,6 +710,43 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 
 	w.saveCacheQuietly()
 	return result, nil
+}
+
+// --- Lua-specific interface methods ---
+// These methods satisfy lua.WorkspaceInterface without importing result types,
+// breaking the circular dependency between lua and workspace packages.
+
+// CreateEntityLua creates an entity and returns it without the result struct.
+// This satisfies lua.WorkspaceInterface using primitive types to avoid import cycles.
+func (w *Workspace) CreateEntityLua(
+	entityType, id string, props map[string]interface{}, content string,
+) (*model.Entity, error) {
+	entity, _, err := w.CreateEntity(entityType, CreateOptions{
+		ID:         id,
+		Properties: props,
+		Content:    content,
+	})
+	return entity, err
+}
+
+// UpdateEntityLua updates an entity without returning the result struct.
+// This satisfies lua.WorkspaceInterface.
+func (w *Workspace) UpdateEntityLua(entity, oldEntity *model.Entity) error {
+	_, err := w.UpdateEntity(entity, oldEntity)
+	return err
+}
+
+// DeleteEntityLua deletes an entity without returning the result struct.
+// This satisfies lua.WorkspaceInterface.
+func (w *Workspace) DeleteEntityLua(entityType, id string, cascade bool) error {
+	_, err := w.DeleteEntity(entityType, id, cascade)
+	return err
+}
+
+// CreateRelationLua creates a relation without options.
+// This satisfies lua.WorkspaceInterface.
+func (w *Workspace) CreateRelationLua(from, relType, to string) (*model.Relation, error) {
+	return w.CreateRelation(from, relType, to)
 }
 
 // createEntityCoreOpts configures core entity creation.
@@ -725,6 +857,7 @@ type automationQueueItem struct {
 // This avoids deep recursion and provides clear iteration limits.
 func (w *Workspace) applyAutomationSideEffects(
 	triggerEntity *model.Entity,
+	oldEntity *model.Entity,
 	autoResult *automation.Result,
 ) *automationSideEffects {
 	effects := &automationSideEffects{}
@@ -738,6 +871,9 @@ func (w *Workspace) applyAutomationSideEffects(
 		item := queue[0]
 		queue = queue[1:]
 		iterations++
+
+		// Process Lua scripts for this trigger.
+		w.executeLuaActions(item.trigger, oldEntity, item.autoResult.LuaToExecute, effects)
 
 		// Process relations for this trigger.
 		w.applyRelationCreations(item.trigger, item.autoResult.RelationsToCreate, effects)
@@ -832,6 +968,7 @@ func (w *Workspace) runCreatedEntityAutomation(
 
 	// Return queue item if there's more work to do.
 	hasWork := len(newAutoResult.EntitiesToCreate) > 0 || len(newAutoResult.RelationsToCreate) > 0 ||
+		len(newAutoResult.LuaToExecute) > 0 ||
 		len(newAutoResult.Warnings) > 0 || len(newAutoResult.Errors) > 0
 	if hasWork {
 		return &automationQueueItem{created, newAutoResult}
@@ -869,6 +1006,48 @@ func (w *Workspace) applyRelationCreations(
 			continue
 		}
 		effects.RelationsCreated = append(effects.RelationsCreated, rel)
+	}
+}
+
+// executeLuaActions executes Lua scripts from automation results.
+func (w *Workspace) executeLuaActions(
+	entity *model.Entity,
+	oldEntity *model.Entity,
+	luaActions []automation.LuaToExecute,
+	effects *automationSideEffects,
+) {
+	if len(luaActions) == 0 {
+		return
+	}
+
+	// Build script context once for all actions
+	ctx := &scriptContextImpl{
+		workspace:   w,
+		meta:        w.meta,
+		projectRoot: w.repo.Paths().Root,
+		entity:      entity,
+		oldEntity:   oldEntity,
+	}
+
+	for _, action := range luaActions {
+		var err error
+
+		switch {
+		case action.Code != "":
+			// Inline script code
+			err = w.scriptExec.ExecuteCode(action.Code, ctx)
+		case action.FilePath != "":
+			// Script file from scripts/ directory
+			err = w.scriptExec.ExecuteFile(action.FilePath, ctx)
+		default:
+			// Empty action - skip
+			continue
+		}
+
+		if err != nil {
+			effects.Errors = append(effects.Errors,
+				fmt.Sprintf("script execution error: %s", err.Error()))
+		}
 	}
 }
 

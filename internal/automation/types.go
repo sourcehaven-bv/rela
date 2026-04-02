@@ -35,6 +35,8 @@ type Action struct {
 	Value          string
 	CreateRelation *CreateRelationAction
 	CreateEntity   *CreateEntityAction
+	Lua            string // Inline Lua code to execute
+	LuaFile        string // Path to Lua script file in scripts/ directory
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
@@ -115,6 +117,13 @@ type EntityToCreate struct {
 	IfExists            string                 // Behavior when relation exists: skip (default), error, replace
 }
 
+// LuaToExecute specifies Lua code to be executed by the workspace layer.
+// Either Code or FilePath is set, not both.
+type LuaToExecute struct {
+	Code     string // Inline Lua code (safe values already interpolated)
+	FilePath string // Path to script file in scripts/ directory
+}
+
 // Result represents the outcome of running automations.
 type Result struct {
 	// PropertiesSet contains properties that were automatically set.
@@ -125,6 +134,9 @@ type Result struct {
 
 	// EntitiesToCreate contains entities that should be created.
 	EntitiesToCreate []EntityToCreate
+
+	// LuaToExecute contains Lua scripts to be executed by the workspace layer.
+	LuaToExecute []LuaToExecute
 
 	// Warnings contains validation warnings (allow save, show message).
 	Warnings []string

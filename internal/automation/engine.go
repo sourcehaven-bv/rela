@@ -64,8 +64,10 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 
 	for i, a := range def.Do {
 		action := Action{
-			Set:   a.Set,
-			Value: a.Value,
+			Set:     a.Set,
+			Value:   a.Value,
+			Lua:     a.Lua,
+			LuaFile: a.LuaFile,
 		}
 		if a.CreateRelation != nil {
 			action.CreateRelation = &CreateRelationAction{
@@ -107,6 +109,7 @@ func (e *Engine) Process(event Event) *Result {
 		PropertiesSet:     make(map[string]string),
 		RelationsToCreate: make([]*model.Relation, 0),
 		EntitiesToCreate:  make([]EntityToCreate, 0),
+		LuaToExecute:      make([]LuaToExecute, 0),
 		Warnings:          make([]string, 0),
 		Errors:            make([]string, 0),
 	}
@@ -277,6 +280,23 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 			IfExists:            ifExists,
 		})
 	}
+
+	if action.Lua != "" {
+		// Interpolate only safe values ({{today}}, {{user.name}}, etc.)
+		// Entity properties are accessed via Lua globals, NOT interpolated into code
+		code := e.interpolateSafeOnly(action.Lua, event)
+		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
+			Code: code,
+		})
+	}
+
+	if action.LuaFile != "" {
+		// Path validation is handled by the script package at execution time.
+		// This keeps validation centralized and consistent across all script execution paths.
+		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
+			FilePath: action.LuaFile,
+		})
+	}
 }
 
 // evaluateValidation checks a validation and adds warnings/errors to the result.
@@ -324,6 +344,12 @@ func matchSimple(val interface{}, f *filter.Filter) bool {
 // interpolate replaces template variables in a string.
 func (e *Engine) interpolate(template string, event Event) string {
 	return Interpolate(template, e.vars, event.Entity, event.OldEntity)
+}
+
+// interpolateSafeOnly replaces only safe template variables (not entity properties).
+// Used for Lua code where entity properties should be accessed via globals.
+func (e *Engine) interpolateSafeOnly(template string, _ Event) string {
+	return InterpolateSafeOnly(template, e.vars)
 }
 
 // isValidTemplateName validates that a template name contains only safe identifier characters.
