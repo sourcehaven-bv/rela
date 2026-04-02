@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -33,7 +34,7 @@ func main() {
 		log.Fatalf("Failed to initialize repository: %v", err)
 	}
 
-	ws, err := workspace.New(repo)
+	ws, err := workspace.New(repo, script.NewEngine())
 	if err != nil {
 		log.Fatalf("Failed to initialize workspace: %v", err)
 	}

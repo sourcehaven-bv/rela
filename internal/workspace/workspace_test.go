@@ -92,7 +92,7 @@ func TestNew(t *testing.T) {
 	fs := setupWorkspaceFS(ctx, meta, testMetamodelYAML)
 	repo := repository.New(fs, ctx)
 
-	ws, err := New(repo)
+	ws, err := New(repo, NopScriptExecutor)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}

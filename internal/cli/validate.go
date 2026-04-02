@@ -111,7 +111,7 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Initialize workspace for entity checks (no Lua executor needed for validation)
-	checkWs, err := workspace.DiscoverAndNew(startDir, nil)
+	checkWs, err := workspace.Discover(startDir, workspace.NopScriptExecutor)
 	if err != nil {
 		return fmt.Errorf("failed to initialize workspace: %w", err)
 	}
