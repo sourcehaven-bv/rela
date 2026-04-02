@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -52,7 +53,7 @@ func runMCPServer() error {
 	}
 
 	// Discover project and initialize workspace
-	mcpWs, err := workspace.Discover(startDir)
+	mcpWs, err := workspace.Discover(startDir, script.NewEngine())
 	if err != nil {
 		return fmt.Errorf("no project found: run 'rela init' to create one")
 	}

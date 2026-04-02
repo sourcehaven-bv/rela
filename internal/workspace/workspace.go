@@ -22,7 +22,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
-	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/views"
@@ -40,19 +39,19 @@ type ChangeOp = repository.ChangeOp
 // This keeps workspace independent of specific script languages (Lua, etc.).
 //
 // The executor is stateless - all context is passed at execution time via
-// script.Context. This avoids circular dependencies: workspace can be created
-// with a script engine, and the engine receives workspace access only when
-// executing scripts.
+// metamodel.ScriptContext. This avoids circular dependencies: workspace can be
+// created with a script engine, and the engine receives workspace access only
+// when executing scripts.
 //
 // For production, pass script.NewEngine(). For tests, pass NopScriptExecutor.
 type ScriptExecutor interface {
 	// ExecuteCode runs inline script code with entity context.
-	ExecuteCode(code string, ctx script.Context) error
+	ExecuteCode(code string, ctx metamodel.ScriptContext) error
 	// ExecuteFile runs a script file from the scripts/ directory.
-	ExecuteFile(path string, ctx script.Context) error
+	ExecuteFile(path string, ctx metamodel.ScriptContext) error
 }
 
-// scriptContextImpl implements script.Context for passing to ScriptExecutor.
+// scriptContextImpl implements metamodel.ScriptContext for passing to ScriptExecutor.
 // The workspace field satisfies lua.WorkspaceInterface (verified at runtime
 // by the script package).
 type scriptContextImpl struct {
@@ -76,11 +75,11 @@ var NopScriptExecutor ScriptExecutor = nopScriptExecutor{}
 
 type nopScriptExecutor struct{}
 
-func (nopScriptExecutor) ExecuteCode(string, script.Context) error {
+func (nopScriptExecutor) ExecuteCode(string, metamodel.ScriptContext) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
-func (nopScriptExecutor) ExecuteFile(string, script.Context) error {
+func (nopScriptExecutor) ExecuteFile(string, metamodel.ScriptContext) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
@@ -110,22 +109,12 @@ type Workspace struct {
 const maxAutomationDepth = 50
 
 // Discover discovers a project from the given start directory and creates
-// a production workspace with script execution enabled. If startDir is empty,
-// it uses the current working directory.
+// a workspace with the given script executor. If startDir is empty, it uses
+// the current working directory.
 //
-// This is the standard way to create a workspace for CLI and server use.
-// For tests, use DiscoverAndNew with NopScriptExecutor instead.
-func Discover(startDir string) (*Workspace, error) {
-	return DiscoverAndNew(startDir, script.NewEngine())
-}
-
-// DiscoverAndNew discovers a project from the given start directory and
-// creates a workspace with a custom script executor. If startDir is empty,
-// it uses the current working directory.
-//
-// For production use, prefer Discover() which uses script.NewEngine().
-// This function is mainly for tests that need NopScriptExecutor.
-func DiscoverAndNew(startDir string, scriptExec ScriptExecutor) (*Workspace, error) {
+// For production use, pass script.NewEngine() for Lua support.
+// For tests, pass NopScriptExecutor.
+func Discover(startDir string, scriptExec ScriptExecutor) (*Workspace, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	ctx, err := project.Discover(startDir, fs)
 	if err != nil {
@@ -135,16 +124,16 @@ func DiscoverAndNew(startDir string, scriptExec ScriptExecutor) (*Workspace, err
 	return New(repo, scriptExec)
 }
 
-// New creates a workspace from a repository with an optional script executor.
+// New creates a workspace from a repository with a script executor.
 // It loads the metamodel, initializes the graph (from cache or by syncing
 // from disk), and sets up the automation engine.
 //
-// If scriptExec is not provided, defaults to script.NewEngine() for Lua support.
-// Open() is equivalent to New(repo) - both enable script execution.
-func New(repo repository.Store, scriptExec ...ScriptExecutor) (*Workspace, error) {
-	exec := ScriptExecutor(script.NewEngine())
-	if len(scriptExec) > 0 && scriptExec[0] != nil {
-		exec = scriptExec[0]
+// For production use, pass script.NewEngine() for Lua support.
+// For tests, pass NopScriptExecutor.
+func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
+	exec := scriptExec
+	if exec == nil {
+		exec = NopScriptExecutor
 	}
 
 	meta, err := repo.LoadMetamodel()

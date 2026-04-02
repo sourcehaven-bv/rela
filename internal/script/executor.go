@@ -19,32 +19,10 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // scriptsDir is the directory where script files must be located.
 const scriptsDir = "scripts"
-
-// Context provides everything a script needs to execute.
-// This interface is satisfied by workspace's internal context type,
-// allowing workspace to pass context without import cycles.
-//
-// The GetWorkspace() method returns an interface{} which must satisfy
-// lua.WorkspaceInterface. This avoids workspace needing to import lua
-// just to declare the return type.
-type Context interface {
-	// GetWorkspace returns the workspace for Lua callbacks.
-	// The returned value must satisfy lua.WorkspaceInterface.
-	GetWorkspace() interface{}
-	// GetMeta returns the current metamodel.
-	GetMeta() *metamodel.Metamodel
-	// GetProjectRoot returns the absolute project path.
-	GetProjectRoot() string
-	// GetEntity returns the triggering entity (may be nil).
-	GetEntity() *model.Entity
-	// GetOldEntity returns the previous entity state (may be nil).
-	GetOldEntity() *model.Entity
-}
 
 // Engine runs scripts with provided context. It is stateless - all dependencies
 // are passed at execution time via Context. This centralizes script execution
@@ -59,13 +37,13 @@ func NewEngine() *Engine {
 }
 
 // ExecuteCode runs inline script code with the given context.
-func (e *Engine) ExecuteCode(code string, ctx Context) error {
+func (e *Engine) ExecuteCode(code string, ctx metamodel.ScriptContext) error {
 	return e.execute(code, ctx)
 }
 
 // ExecuteFile loads and runs a script file from the scripts/ directory.
 // The path must be a local path (no ".." or absolute paths) with .lua extension.
-func (e *Engine) ExecuteFile(path string, ctx Context) error {
+func (e *Engine) ExecuteFile(path string, ctx metamodel.ScriptContext) error {
 	scriptCode, err := loadScript(ctx.GetProjectRoot(), path)
 	if err != nil {
 		return err
@@ -75,7 +53,7 @@ func (e *Engine) ExecuteFile(path string, ctx Context) error {
 
 // execute runs Lua code with entity context.
 // Timeout is handled by lua.Runtime (default 30s).
-func (e *Engine) execute(code string, ctx Context) error {
+func (e *Engine) execute(code string, ctx metamodel.ScriptContext) error {
 	// Type assert workspace to lua.WorkspaceInterface
 	ws, ok := ctx.GetWorkspace().(lua.WorkspaceInterface)
 	if !ok {

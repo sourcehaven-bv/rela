@@ -63,7 +63,7 @@ func newE2ETestApp(t *testing.T) (*App, string, func()) {
 
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	repo := repository.New(fs, ctx)
-	ws, err := workspace.New(repo)
+	ws, err := workspace.New(repo, workspace.NopScriptExecutor)
 	if err != nil {
 		t.Fatalf("creating workspace: %v", err)
 	}
