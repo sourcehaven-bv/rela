@@ -2,6 +2,11 @@
 id: BUG-WQ7Y
 type: bug
 title: 'Architecture boundary violation: workspace depends on script'
+description: The workspace package imports script package, violating go-arch-lint rules
+why1: ScriptExecutor interface used script.Context as parameter type
+why2: Context interface was defined in script package for convenience
+why3: No separate interface package existed for shared types
+prevention: Moved interface to metamodel package to follow architecture boundaries
 status: done
 ---
 
