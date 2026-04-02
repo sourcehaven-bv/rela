@@ -33,7 +33,7 @@ func main() {
 		log.Fatalf("Failed to initialize repository: %v", err)
 	}
 
-	ws, err := workspace.Open(repo)
+	ws, err := workspace.New(repo)
 	if err != nil {
 		log.Fatalf("Failed to initialize workspace: %v", err)
 	}

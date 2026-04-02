@@ -116,6 +116,11 @@ func (b *AutomationBuilder) CreateEntityWithRelation(entityType, relation string
 	})
 }
 
+// CreateEntityAction adds a create-entity action with full control.
+func (b *AutomationBuilder) CreateEntityAction(action *CreateEntityAction) *AutomationBuilder {
+	return b.Do(Action{CreateEntity: action})
+}
+
 // Validate adds a validation rule.
 func (b *AutomationBuilder) Validate(check, severity, message string) *AutomationBuilder {
 	b.auto.Validate = append(b.auto.Validate, Validation{

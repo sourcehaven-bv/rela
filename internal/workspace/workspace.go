@@ -119,15 +119,6 @@ func Discover(startDir string) (*Workspace, error) {
 	return DiscoverAndNew(startDir, script.NewEngine())
 }
 
-// Open creates a production workspace from a repository with script
-// execution enabled.
-//
-// This is the standard way to create a workspace when you already have
-// a repository. For tests, use New with NopScriptExecutor instead.
-func Open(repo repository.Store) (*Workspace, error) {
-	return New(repo, script.NewEngine())
-}
-
 // DiscoverAndNew discovers a project from the given start directory and
 // creates a workspace with a custom script executor. If startDir is empty,
 // it uses the current working directory.
@@ -144,13 +135,18 @@ func DiscoverAndNew(startDir string, scriptExec ScriptExecutor) (*Workspace, err
 	return New(repo, scriptExec)
 }
 
-// New creates a workspace from a repository with a custom script executor.
+// New creates a workspace from a repository with an optional script executor.
 // It loads the metamodel, initializes the graph (from cache or by syncing
 // from disk), and sets up the automation engine.
 //
-// For production use, prefer Open() which uses script.NewEngine().
-// This function is mainly for tests that need NopScriptExecutor.
-func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
+// If scriptExec is not provided, defaults to script.NewEngine() for Lua support.
+// Open() is equivalent to New(repo) - both enable script execution.
+func New(repo repository.Store, scriptExec ...ScriptExecutor) (*Workspace, error) {
+	exec := ScriptExecutor(script.NewEngine())
+	if len(scriptExec) > 0 && scriptExec[0] != nil {
+		exec = scriptExec[0]
+	}
+
 	meta, err := repo.LoadMetamodel()
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
@@ -178,18 +174,22 @@ func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
 		}
 	}
 
-	return newWorkspace(repo, meta, g, scriptExec), nil
+	return newWorkspace(repo, meta, g, exec), nil
 }
 
 // NewWithGraph creates a workspace with a pre-populated graph. Use this
 // when the caller has already loaded the metamodel and synced the graph.
 //
-// The scriptExec parameter enables Lua automation actions. Pass a script.Executor
-// for production use.
+// The optional scriptExec parameter enables Lua automation actions. If not provided,
+// defaults to NopScriptExecutor (suitable for tests). Pass a script.Engine for production.
 func NewWithGraph(
-	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor,
+	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ...ScriptExecutor,
 ) *Workspace {
-	return newWorkspace(repo, meta, g, scriptExec)
+	exec := NopScriptExecutor
+	if len(scriptExec) > 0 && scriptExec[0] != nil {
+		exec = scriptExec[0]
+	}
+	return newWorkspace(repo, meta, g, exec)
 }
 
 // NewForTest creates a minimal workspace for testing. It has no repository,

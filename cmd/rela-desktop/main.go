@@ -125,7 +125,7 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	ws, wsErr := workspace.Open(repo)
+	ws, wsErr := workspace.New(repo)
 	if wsErr != nil {
 		d.mu.Lock()
 		d.loadErr = wsErr.Error()

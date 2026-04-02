@@ -590,53 +590,6 @@ The `if_exists` check uses the relation to detect duplicates: if the trigger ent
 already has a relation of the specified type pointing to an entity of the same type
 being created, the action is considered a duplicate.
 
-**lua**: Execute inline Lua code
-
-```yaml
-automations:
-  - name: cascade-status-update
-    on:
-      entity: [ticket]
-      property: status
-      becomes: done
-    do:
-      - lua: |
-          -- Update related checklists
-          local rels = rela.get_relations({from = entity.id, type = "has-checklist"})
-          for _, rel in ipairs(rels) do
-            rela.update_entity(rel.to, {status = "completed"})
-          end
-```
-
-**lua_file**: Execute a Lua script file from the `scripts/` directory
-
-```yaml
-automations:
-  - name: archive-cascade
-    on:
-      entity: [ticket]
-      property: status
-      becomes: archived
-    do:
-      - lua_file: on_archive.lua  # Loads scripts/on_archive.lua
-```
-
-**Lua Action Security:**
-
-- Lua code is sandboxed (no io, os, or debug libraries)
-- Entity context is provided via globals (`entity`, `old_entity`) - NOT via interpolation
-- Only safe variables (`{{today}}`, `{{user.name}}`, etc.) are interpolated into Lua code
-- `{{new.property}}` and `{{entity.*}}` are NOT interpolated for security reasons
-- Script files must have `.lua` extension and reside in `scripts/` directory
-
-**Available Lua globals in automations:**
-
-| Global | Description |
-|--------|-------------|
-| `entity` | The triggering entity (table with id, type, properties, content) |
-| `old_entity` | The previous entity state (for update events, nil for create) |
-| `rela.*` | All rela Lua API functions (get_entity, update_entity, etc.) |
-
 ### Interpolation Syntax
 
 Automation properties support template interpolation:
@@ -644,29 +597,57 @@ Automation properties support template interpolation:
 | Pattern | Description |
 |---------|-------------|
 | `{{new.property}}` | Property from new/current entity |
-| `{{old.property}}` | Property from previous entity state |
 | `{{entity.id}}` | ID of the triggering entity |
-| `{{entity.type}}` | Type of the triggering entity |
 | `{{today}}` | Current date (YYYY-MM-DD) |
-| `{{now}}` | Current timestamp (RFC3339) |
-| `{{user.name}}` | Git user name |
-| `{{user.email}}` | Git user email |
 
 Common mistake: `{{entity.title}}` is WRONG, use `{{new.title}}` instead.
-
-**Note:** For `lua` actions, only safe variables (`{{today}}`, `{{now}}`, `{{user.name}}`, `{{user.email}}`)
-are interpolated. Entity properties (`{{new.*}}`, `{{old.*}}`, `{{entity.*}}`) are NOT interpolated into
-Lua code for security - use the `entity` and `old_entity` globals instead.
 
 ### Test Writing Best Practices
 
 Follow these patterns to make tests clearer and more maintainable.
 
-**Use Test Fixture Builders:**
+**Use Fluent Test Builders:**
 
-Use builder patterns or factory functions to create test data. Only specify values that matter
-for the specific test - let fixtures handle defaults and generate random values for everything
-else.
+Create fluent builder APIs for test fixtures. Only specify values that matter for the specific
+test - let builders handle defaults, auto-generate IDs, and fill required fields with random data.
+
+```python
+# BAD - verbose, specifies irrelevant details
+config = AutomationConfig(
+    name="test-automation",
+    trigger=Trigger(entity_types=["ticket"], event="created"),
+    actions=[Action(type="set", property="status", value="open")]
+)
+entity = Entity(id="T-001", type="ticket", properties={})
+
+# GOOD - fluent, only specifies what matters
+config = automation().on_create("ticket").set("status", "open").build()
+entity = entity("ticket").build()  # ID auto-generated
+```
+
+**Auto-Generate Identifiers:**
+
+Builders should auto-generate IDs, names, and other identifiers when not explicitly set.
+This catches bugs where code accidentally depends on specific values and reduces test noise.
+
+```python
+# BAD - hardcoded ID that test doesn't care about
+user = create_user(id="user-123", name="Test User")
+
+# GOOD - auto-generated, test doesn't depend on specific value
+user = user_builder().with_name("Test User").build()
+```
+
+**Minimize Test Setup:**
+
+If test setup takes more than a few lines, create a builder or helper. Common patterns to simplify:
+
+| Verbose Pattern | Fluent Alternative |
+|-----------------|-------------------|
+| Nested object construction | Chained builder methods |
+| Multiple required fields | Sensible defaults in builder |
+| Repeated boilerplate | Shared test fixtures |
+| Complex state setup | Purpose-named factory methods |
 
 **Avoid Hardcoded Values in Assertions:**
 
@@ -674,12 +655,12 @@ Don't compare against hardcoded strings when the object is in scope:
 
 ```python
 # BAD - couples test to specific value
-entity = createEntity(id="T-001")
-assert relation.from == "T-001"
+entity = create_entity(id="T-001")
+assert relation.source == "T-001"
 
 # GOOD - uses object reference
-entity = createEntity()
-assert relation.from == entity.id
+entity = create_entity()
+assert relation.source == entity.id
 ```
 
 For interpolated values, construct the expected value from the object:
@@ -706,7 +687,8 @@ assert updated.title == original.title
 
 - **Ordering tests**: Verifying sort order requires deterministic values
 - **Parse/read tests**: Verifying parser reads specific values from fixtures
-- **Trigger values**: Testing rules that trigger on specific values
+- **Trigger values**: Testing rules that trigger on specific values (e.g., status="done")
+- **Format validation**: Testing specific formats, patterns, or error messages
 
 **Use Local Variables for Repeated Values:**
 
@@ -714,19 +696,35 @@ When values are passed to helpers and then asserted, extract to variables:
 
 ```python
 # BAD - duplicated string
-createEntity(id="REQ-001")
-assert relation.from == "REQ-001"
+create_entity(id="REQ-001")
+assert relation.source == "REQ-001"
 
 # GOOD - single source of truth
-reqId = "REQ-001"
-createEntity(id=reqId)
-assert relation.from == reqId
+req_id = "REQ-001"
+create_entity(id=req_id)
+assert relation.source == req_id
+```
+
+**Clone for Variations:**
+
+When testing state changes, clone the original rather than creating two separate objects:
+
+```python
+# BAD - duplicates setup, easy to get out of sync
+old_entity = entity("ticket").with_status("backlog").with_title("Fix bug").build()
+new_entity = entity("ticket").with_status("done").with_title("Fix bug").build()
+
+# GOOD - clone ensures consistency
+old_entity = entity("ticket").with_status("backlog").with_title("Fix bug").build()
+new_entity = old_entity.clone()
+new_entity.status = "done"
 ```
 
 **Benefits:**
 
 1. **Random test data**: Catches bugs where code accidentally depends on specific values
 2. **Clearer intent**: Only explicitly set values that matter for the test
-3. **Less boilerplate**: Fixtures handle defaults
-4. **Easier refactoring**: Change formats without updating every assertion
+3. **Less boilerplate**: Builders handle defaults and required fields
+4. **Easier refactoring**: Change formats/schemas without updating every test
+5. **Better coverage**: Random values may catch edge cases hardcoded values miss
 <!-- @managed: claude-workflow end -->

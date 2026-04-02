@@ -831,7 +831,7 @@ func makeTestServerWithViews(t *testing.T, viewsYAML string) *Server {
 	repo := repository.New(testFS, ctx)
 	g := graph.New()
 	meta := &metamodel.Metamodel{}
-	ws := workspace.NewWithGraph(repo, meta, g, workspace.NopScriptExecutor)
+	ws := workspace.NewWithGraph(repo, meta, g)
 	return &Server{
 		ws:     ws,
 		logger: log.New(&strings.Builder{}, "", 0),

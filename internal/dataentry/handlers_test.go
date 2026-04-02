@@ -66,7 +66,7 @@ func newHandlerTestApp(t *testing.T) (*App, testEntities) {
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
 	repo := repository.New(fs, ctx)
 
-	ws := workspace.NewWithGraph(repo, meta, g, workspace.NopScriptExecutor)
+	ws := workspace.NewWithGraph(repo, meta, g)
 
 	return &App{
 		Cfg:         cfg,
@@ -1177,7 +1177,7 @@ func TestHandleToggleGroup(t *testing.T) {
 		fs := storage.NewMemFS()
 		ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 		_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-		app.ws = workspace.NewWithGraph(repository.New(fs, ctx), app.meta, app.g, workspace.NopScriptExecutor)
+		app.ws = workspace.NewWithGraph(repository.New(fs, ctx), app.meta, app.g)
 
 		// Toggle "Tickets" group to collapsed
 		body := strings.NewReader("group=Tickets")
@@ -1795,7 +1795,7 @@ func TestHandleCreateWithValidationErrors(t *testing.T) {
 		app.meta.Entities["ticket"] = entDef
 
 		// Rebuild workspace with updated repo and meta
-		app.ws = workspace.NewWithGraph(repo, app.meta, app.g, workspace.NopScriptExecutor)
+		app.ws = workspace.NewWithGraph(repo, app.meta, app.g)
 
 		// Submit form without title (required field)
 		form := url.Values{
@@ -1846,7 +1846,7 @@ func TestHandleUpdateWithValidationErrors(t *testing.T) {
 		app.meta.Entities["ticket"] = entDef
 
 		// Rebuild workspace with updated repo and meta
-		app.ws = workspace.NewWithGraph(repo, app.meta, app.g, workspace.NopScriptExecutor)
+		app.ws = workspace.NewWithGraph(repo, app.meta, app.g)
 
 		// Submit form with empty title (required field)
 		form := url.Values{
