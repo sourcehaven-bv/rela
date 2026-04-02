@@ -33,7 +33,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
-	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -126,7 +125,7 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	ws, wsErr := workspace.New(repo, script.NewEngine())
+	ws, wsErr := workspace.Open(repo)
 	if wsErr != nil {
 		d.mu.Lock()
 		d.loadErr = wsErr.Error()

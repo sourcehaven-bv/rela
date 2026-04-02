@@ -109,13 +109,31 @@ type Workspace struct {
 // automations while allowing useful chaining (e.g., ticket → checklist → items).
 const maxAutomationDepth = 50
 
-// DiscoverAndNew discovers a project from the given start directory and
-// creates a workspace. If startDir is empty, it uses the current working
-// directory. This is a convenience function that combines project discovery,
-// repository creation, and workspace initialization.
+// Discover discovers a project from the given start directory and creates
+// a production workspace with script execution enabled. If startDir is empty,
+// it uses the current working directory.
 //
-// For production, pass script.NewEngine(). For tests that don't use Lua
-// automations, pass NopScriptExecutor.
+// This is the standard way to create a workspace for CLI and server use.
+// For tests, use DiscoverAndNew with NopScriptExecutor instead.
+func Discover(startDir string) (*Workspace, error) {
+	return DiscoverAndNew(startDir, script.NewEngine())
+}
+
+// Open creates a production workspace from a repository with script
+// execution enabled.
+//
+// This is the standard way to create a workspace when you already have
+// a repository. For tests, use New with NopScriptExecutor instead.
+func Open(repo repository.Store) (*Workspace, error) {
+	return New(repo, script.NewEngine())
+}
+
+// DiscoverAndNew discovers a project from the given start directory and
+// creates a workspace with a custom script executor. If startDir is empty,
+// it uses the current working directory.
+//
+// For production use, prefer Discover() which uses script.NewEngine().
+// This function is mainly for tests that need NopScriptExecutor.
 func DiscoverAndNew(startDir string, scriptExec ScriptExecutor) (*Workspace, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	ctx, err := project.Discover(startDir, fs)
@@ -126,12 +144,12 @@ func DiscoverAndNew(startDir string, scriptExec ScriptExecutor) (*Workspace, err
 	return New(repo, scriptExec)
 }
 
-// New creates a workspace from a repository. It loads the metamodel,
-// initializes the graph (from cache or by syncing from disk), and sets
-// up the automation engine.
+// New creates a workspace from a repository with a custom script executor.
+// It loads the metamodel, initializes the graph (from cache or by syncing
+// from disk), and sets up the automation engine.
 //
-// The scriptExec parameter enables Lua automation actions. Pass a script.Executor
-// for production use. For tests that don't trigger Lua automations, use NewForTest().
+// For production use, prefer Open() which uses script.NewEngine().
+// This function is mainly for tests that need NopScriptExecutor.
 func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
 	meta, err := repo.LoadMetamodel()
 	if err != nil {
