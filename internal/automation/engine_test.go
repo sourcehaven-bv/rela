@@ -9,25 +9,17 @@ import (
 )
 
 func TestEngine_EntityCreated(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "set-created-at",
-			On: Trigger{
-				Entity:  []string{"ticket"},
-				Created: true,
-			},
-			Do: []Action{
-				{Set: "created_at", Value: "{{today}}"},
-			},
-		},
-	}
-
-	engine := NewEngine(automations)
+	engine := NewEngine([]Automation{
+		newAutomation("set-created-at").
+			OnCreate("ticket").
+			Set("created_at", "{{today}}").
+			Build(),
+	})
 	engine.SetTemplateVars(TemplateVars{
 		Now: func() time.Time { return time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC) },
 	})
 
-	entity := testutil.Entity("ticket").ID("T-001").Build()
+	entity := testutil.Entity("ticket").Build()
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
@@ -39,23 +31,12 @@ func TestEngine_EntityCreated(t *testing.T) {
 }
 
 func TestEngine_EntityCreated_WrongType(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "set-created-at",
-			On: Trigger{
-				Entity:  []string{"ticket"},
-				Created: true,
-			},
-			Do: []Action{
-				{Set: "created_at", Value: "{{today}}"},
-			},
-		},
-	}
-
-	engine := NewEngine(automations)
+	engine := NewEngine([]Automation{
+		newAutomation().OnCreate("ticket").Set("created_at", "{{today}}").Build(),
+	})
 
 	// Entity of different type - should not trigger
-	entity := testutil.Entity("bug").ID("B-001").Build()
+	entity := testutil.Entity("bug").Build()
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
@@ -67,27 +48,19 @@ func TestEngine_EntityCreated_WrongType(t *testing.T) {
 }
 
 func TestEngine_PropertyChange(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "set-started-at",
-			On: Trigger{
-				Entity:   []string{"ticket"},
-				Property: "status",
-				Becomes:  "in-progress",
-			},
-			Do: []Action{
-				{Set: "started_at", Value: "{{today}}"},
-			},
-		},
-	}
-
-	engine := NewEngine(automations)
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnProperty("ticket", "status", "in-progress").
+			Set("started_at", "{{today}}").
+			Build(),
+	})
 	engine.SetTemplateVars(TemplateVars{
 		Now: func() time.Time { return time.Date(2025, 2, 10, 10, 0, 0, 0, time.UTC) },
 	})
 
-	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "backlog").Build()
-	newEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
+	oldEntity := testutil.Entity("ticket").With("status", "backlog").Build()
+	newEntity := oldEntity.Clone()
+	newEntity.Properties["status"] = "in-progress"
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -101,25 +74,16 @@ func TestEngine_PropertyChange(t *testing.T) {
 }
 
 func TestEngine_PropertyChange_NoChange(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "set-started-at",
-			On: Trigger{
-				Entity:   []string{"ticket"},
-				Property: "status",
-				Becomes:  "in-progress",
-			},
-			Do: []Action{
-				{Set: "started_at", Value: "{{today}}"},
-			},
-		},
-	}
-
-	engine := NewEngine(automations)
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnProperty("ticket", "status", "in-progress").
+			Set("started_at", "{{today}}").
+			Build(),
+	})
 
 	// Status already "in-progress" - no change
-	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
-	newEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
+	oldEntity := testutil.Entity("ticket").With("status", "in-progress").Build()
+	newEntity := oldEntity.Clone()
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -133,26 +97,17 @@ func TestEngine_PropertyChange_NoChange(t *testing.T) {
 }
 
 func TestEngine_PropertyChange_FromConstraint(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "only-from-backlog",
-			On: Trigger{
-				Entity:   []string{"ticket"},
-				Property: "status",
-				From:     "backlog",
-				Becomes:  "in-progress",
-			},
-			Do: []Action{
-				{Set: "was_backlog", Value: "true"},
-			},
-		},
-	}
-
-	engine := NewEngine(automations)
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnPropertyFrom("ticket", "status", "backlog", "in-progress").
+			Set("was_backlog", "true").
+			Build(),
+	})
 
 	// From "backlog" to "in-progress" - should trigger
-	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "backlog").Build()
-	newEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
+	oldEntity := testutil.Entity("ticket").With("status", "backlog").Build()
+	newEntity := oldEntity.Clone()
+	newEntity.Properties["status"] = "in-progress"
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -165,8 +120,9 @@ func TestEngine_PropertyChange_FromConstraint(t *testing.T) {
 	}
 
 	// From "ready" to "in-progress" - should NOT trigger
-	oldEntity2 := testutil.Entity("ticket").ID("T-002").With("status", "ready").Build()
-	newEntity2 := testutil.Entity("ticket").ID("T-002").With("status", "in-progress").Build()
+	oldEntity2 := testutil.Entity("ticket").With("status", "ready").Build()
+	newEntity2 := oldEntity2.Clone()
+	newEntity2.Properties["status"] = "in-progress"
 
 	result2 := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -180,28 +136,16 @@ func TestEngine_PropertyChange_FromConstraint(t *testing.T) {
 }
 
 func TestEngine_ValidationWarning(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "require-why1-for-in-progress-bugs",
-			On: Trigger{
-				Entity:   []string{"bug"},
-				Property: "status",
-				Becomes:  "in-progress",
-			},
-			Validate: []Validation{
-				{
-					Check:    "why1!=",
-					Severity: "warning",
-					Message:  "Please add a why1 analysis",
-				},
-			},
-		},
-	}
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnProperty("bug", "status", "in-progress").
+			ValidateWarning("why1!=", "Please add a why1 analysis").
+			Build(),
+	})
 
-	engine := NewEngine(automations)
-
-	oldEntity := testutil.Entity("bug").ID("B-001").With("status", "backlog").Build()
-	newEntity := testutil.Entity("bug").ID("B-001").With("status", "in-progress").Build()
+	oldEntity := testutil.Entity("bug").With("status", "backlog").Build()
+	newEntity := oldEntity.Clone()
+	newEntity.Properties["status"] = "in-progress"
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -218,28 +162,17 @@ func TestEngine_ValidationWarning(t *testing.T) {
 }
 
 func TestEngine_ValidationPasses(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "require-why1-for-in-progress-bugs",
-			On: Trigger{
-				Entity:   []string{"bug"},
-				Property: "status",
-				Becomes:  "in-progress",
-			},
-			Validate: []Validation{
-				{
-					Check:    "why1!=",
-					Severity: "warning",
-					Message:  "Please add a why1 analysis",
-				},
-			},
-		},
-	}
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnProperty("bug", "status", "in-progress").
+			ValidateWarning("why1!=", "Please add a why1 analysis").
+			Build(),
+	})
 
-	engine := NewEngine(automations)
-
-	oldEntity := testutil.Entity("bug").ID("B-001").With("status", "backlog").Build()
-	newEntity := testutil.Entity("bug").ID("B-001").With("status", "in-progress").With("why1", "Database connection timeout").Build()
+	oldEntity := testutil.Entity("bug").With("status", "backlog").Build()
+	newEntity := oldEntity.Clone()
+	newEntity.Properties["status"] = "in-progress"
+	newEntity.Properties["why1"] = "Database connection timeout"
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -253,27 +186,14 @@ func TestEngine_ValidationPasses(t *testing.T) {
 }
 
 func TestEngine_CreateRelation(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "link-to-current-sprint",
-			On: Trigger{
-				Entity:  []string{"ticket"},
-				Created: true,
-			},
-			Do: []Action{
-				{
-					CreateRelation: &CreateRelationAction{
-						Relation: "belongs-to",
-						To:       "sprint-current",
-					},
-				},
-			},
-		},
-	}
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnCreate("ticket").
+			CreateRelation("belongs-to", "sprint-current").
+			Build(),
+	})
 
-	engine := NewEngine(automations)
-
-	entity := testutil.Entity("ticket").ID("T-001").Build()
+	entity := testutil.Entity("ticket").Build()
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
 		Entity: entity,
@@ -1141,26 +1061,16 @@ func parseFilters(t *testing.T, conditions ...string) []*filter.Filter {
 }
 
 func TestEngine_LuaInline(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "run-lua",
-			On: Trigger{
-				Entity:   []string{"ticket"},
-				Property: "status",
-				Becomes:  "done",
-			},
-			Do: []Action{
-				{
-					Lua: `-- this is a lua script`,
-				},
-			},
-		},
-	}
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnProperty("ticket", "status", "done").
+			Lua(`-- this is a lua script`).
+			Build(),
+	})
 
-	engine := NewEngine(automations)
-
-	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "in-progress").Build()
-	newEntity := testutil.Entity("ticket").ID("T-001").With("status", "done").Build()
+	oldEntity := testutil.Entity("ticket").With("status", "in-progress").Build()
+	newEntity := oldEntity.Clone()
+	newEntity.Properties["status"] = "done"
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -1181,26 +1091,16 @@ func TestEngine_LuaInline(t *testing.T) {
 }
 
 func TestEngine_LuaFile(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "run-lua-file",
-			On: Trigger{
-				Entity:   []string{"ticket"},
-				Property: "status",
-				Becomes:  "archived",
-			},
-			Do: []Action{
-				{
-					LuaFile: "archive_notify.lua",
-				},
-			},
-		},
-	}
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnProperty("ticket", "status", "archived").
+			LuaFile("archive_notify.lua").
+			Build(),
+	})
 
-	engine := NewEngine(automations)
-
-	oldEntity := testutil.Entity("ticket").ID("T-001").With("status", "done").Build()
-	newEntity := testutil.Entity("ticket").ID("T-001").With("status", "archived").Build()
+	oldEntity := testutil.Entity("ticket").With("status", "done").Build()
+	newEntity := oldEntity.Clone()
+	newEntity.Properties["status"] = "archived"
 
 	result := engine.Process(Event{
 		Type:      EventEntityUpdated,
@@ -1302,24 +1202,14 @@ func TestEngine_LuaInlineDoesNotInterpolateEntityProperties(t *testing.T) {
 }
 
 func TestEngine_LuaOnCreated(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "init-lua",
-			On: Trigger{
-				Entity:  []string{"ticket"},
-				Created: true,
-			},
-			Do: []Action{
-				{
-					Lua: `rela.update_entity(entity.id, {initialized = "true"})`,
-				},
-			},
-		},
-	}
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnCreate("ticket").
+			Lua(`rela.update_entity(entity.id, {initialized = "true"})`).
+			Build(),
+	})
 
-	engine := NewEngine(automations)
-
-	entity := testutil.Entity("ticket").ID("T-001").Build()
+	entity := testutil.Entity("ticket").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -1333,25 +1223,14 @@ func TestEngine_LuaOnCreated(t *testing.T) {
 
 func TestEngine_LuaEmptyAction(t *testing.T) {
 	// Both Lua and LuaFile empty - should not add to LuaToExecute
-	automations := []Automation{
-		{
-			Name: "empty-lua-action",
-			On: Trigger{
-				Entity:  []string{"ticket"},
-				Created: true,
-			},
-			Do: []Action{
-				{
-					Lua:     "",
-					LuaFile: "",
-				},
-			},
-		},
-	}
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnCreate("ticket").
+			Do(Action{Lua: "", LuaFile: ""}). // Empty action
+			Build(),
+	})
 
-	engine := NewEngine(automations)
-
-	entity := testutil.Entity("ticket").ID("T-001").Build()
+	entity := testutil.Entity("ticket").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -1364,30 +1243,16 @@ func TestEngine_LuaEmptyAction(t *testing.T) {
 }
 
 func TestEngine_LuaMultipleActions(t *testing.T) {
-	automations := []Automation{
-		{
-			Name: "multi-lua",
-			On: Trigger{
-				Entity:  []string{"ticket"},
-				Created: true,
-			},
-			Do: []Action{
-				{
-					Lua: `-- action 1`,
-				},
-				{
-					LuaFile: "action2.lua",
-				},
-				{
-					Lua: `-- action 3`,
-				},
-			},
-		},
-	}
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnCreate("ticket").
+			Lua(`-- action 1`).
+			LuaFile("action2.lua").
+			Lua(`-- action 3`).
+			Build(),
+	})
 
-	engine := NewEngine(automations)
-
-	entity := testutil.Entity("ticket").ID("T-001").Build()
+	entity := testutil.Entity("ticket").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -1412,24 +1277,14 @@ func TestEngine_LuaMultipleActions(t *testing.T) {
 func TestEngine_LuaFilePathPassthrough(t *testing.T) {
 	// Test that lua_file paths are passed through to LuaToExecute.
 	// Path validation is centralized in the script package at execution time.
-	automations := []Automation{
-		{
-			Name: "path-passthrough",
-			On: Trigger{
-				Entity:  []string{"ticket"},
-				Created: true,
-			},
-			Do: []Action{
-				{
-					LuaFile: "../../../etc/passwd",
-				},
-			},
-		},
-	}
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnCreate("ticket").
+			LuaFile("../../../etc/passwd").
+			Build(),
+	})
 
-	engine := NewEngine(automations)
-
-	entity := testutil.Entity("ticket").ID("T-001").Build()
+	entity := testutil.Entity("ticket").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
@@ -1454,24 +1309,14 @@ func TestEngine_LuaFilePathPassthrough(t *testing.T) {
 func TestEngine_LuaFileExtensionPassthrough(t *testing.T) {
 	// Test that lua_file paths are passed through regardless of extension.
 	// Extension validation is centralized in the script package at execution time.
-	automations := []Automation{
-		{
-			Name: "extension-passthrough",
-			On: Trigger{
-				Entity:  []string{"ticket"},
-				Created: true,
-			},
-			Do: []Action{
-				{
-					LuaFile: "script.txt",
-				},
-			},
-		},
-	}
+	engine := NewEngine([]Automation{
+		newAutomation().
+			OnCreate("ticket").
+			LuaFile("script.txt").
+			Build(),
+	})
 
-	engine := NewEngine(automations)
-
-	entity := testutil.Entity("ticket").ID("T-001").Build()
+	entity := testutil.Entity("ticket").Build()
 
 	result := engine.Process(Event{
 		Type:   EventEntityCreated,
