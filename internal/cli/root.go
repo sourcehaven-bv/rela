@@ -63,9 +63,7 @@ and maintain semantic relationships between them.`,
 
 		// Discover project and initialize workspace
 		var err error
-		ws, err = workspace.DiscoverAndNew(startDir, func(w *workspace.Workspace) workspace.ScriptExecutor {
-			return script.New(w, w.Meta(), w.Paths().Root)
-		})
+		ws, err = workspace.DiscoverAndNew(startDir, script.NewEngine())
 		if err != nil {
 			return fmt.Errorf("no project found: run 'rela init' to create one")
 		}

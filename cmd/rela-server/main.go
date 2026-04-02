@@ -34,13 +34,10 @@ func main() {
 		log.Fatalf("Failed to initialize repository: %v", err)
 	}
 
-	// Create workspace with NopScriptExecutor initially, then set real one
-	ws, err := workspace.New(repo, workspace.NopScriptExecutor)
+	ws, err := workspace.New(repo, script.NewEngine())
 	if err != nil {
 		log.Fatalf("Failed to initialize workspace: %v", err)
 	}
-	// Now set the real script executor (needs workspace to be created first for meta/paths)
-	ws.SetScriptExecutor(script.New(ws, ws.Meta(), ws.Paths().Root))
 
 	app, err := dataentry.NewApp(ws)
 	if err != nil {

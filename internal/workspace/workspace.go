@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/views"
@@ -38,13 +39,35 @@ type ChangeOp = repository.ChangeOp
 // inversion: workspace defines the interface it needs, script package implements it.
 // This keeps workspace independent of specific script languages (Lua, etc.).
 //
-// For production, pass script.New(...). For tests, pass NopScriptExecutor.
+// The executor is stateless - all context is passed at execution time via
+// script.Context. This avoids circular dependencies: workspace can be created
+// with a script engine, and the engine receives workspace access only when
+// executing scripts.
+//
+// For production, pass script.NewEngine(). For tests, pass NopScriptExecutor.
 type ScriptExecutor interface {
 	// ExecuteCode runs inline script code with entity context.
-	ExecuteCode(code string, entity, oldEntity *model.Entity) error
+	ExecuteCode(code string, ctx script.Context) error
 	// ExecuteFile runs a script file from the scripts/ directory.
-	ExecuteFile(path string, entity, oldEntity *model.Entity) error
+	ExecuteFile(path string, ctx script.Context) error
 }
+
+// scriptContextImpl implements script.Context for passing to ScriptExecutor.
+// The workspace field satisfies lua.WorkspaceInterface (verified at runtime
+// by the script package).
+type scriptContextImpl struct {
+	workspace   *Workspace
+	meta        *metamodel.Metamodel
+	projectRoot string
+	entity      *model.Entity
+	oldEntity   *model.Entity
+}
+
+func (c *scriptContextImpl) GetWorkspace() interface{}     { return c.workspace }
+func (c *scriptContextImpl) GetMeta() *metamodel.Metamodel { return c.meta }
+func (c *scriptContextImpl) GetProjectRoot() string        { return c.projectRoot }
+func (c *scriptContextImpl) GetEntity() *model.Entity      { return c.entity }
+func (c *scriptContextImpl) GetOldEntity() *model.Entity   { return c.oldEntity }
 
 // NopScriptExecutor is a no-op implementation of ScriptExecutor for tests
 // that don't trigger Lua automations. It panics if actually called, making
@@ -53,11 +76,11 @@ var NopScriptExecutor ScriptExecutor = nopScriptExecutor{}
 
 type nopScriptExecutor struct{}
 
-func (nopScriptExecutor) ExecuteCode(string, *model.Entity, *model.Entity) error {
+func (nopScriptExecutor) ExecuteCode(string, script.Context) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
-func (nopScriptExecutor) ExecuteFile(string, *model.Entity, *model.Entity) error {
+func (nopScriptExecutor) ExecuteFile(string, script.Context) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
@@ -90,34 +113,17 @@ const maxAutomationDepth = 50
 // creates a workspace. If startDir is empty, it uses the current working
 // directory. This is a convenience function that combines project discovery,
 // repository creation, and workspace initialization.
-// DiscoverAndNew discovers a project from the given start directory and
-// creates a workspace. If startDir is empty, it uses the current working
-// directory.
 //
-// The scriptExecFactory is called after workspace creation to create the
-// script executor. This allows the executor to access workspace metadata.
-// For production, pass a factory that creates script.Executor. For tests
-// that don't use Lua automations, pass nil (uses NopScriptExecutor).
-func DiscoverAndNew(startDir string, scriptExecFactory func(ws *Workspace) ScriptExecutor) (*Workspace, error) {
+// For production, pass script.NewEngine(). For tests that don't use Lua
+// automations, pass NopScriptExecutor.
+func DiscoverAndNew(startDir string, scriptExec ScriptExecutor) (*Workspace, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	ctx, err := project.Discover(startDir, fs)
 	if err != nil {
 		return nil, err
 	}
 	repo := repository.New(fs, ctx)
-
-	// Create workspace with NopScriptExecutor initially
-	ws, err := New(repo, NopScriptExecutor)
-	if err != nil {
-		return nil, err
-	}
-
-	// Set the real executor if factory provided
-	if scriptExecFactory != nil {
-		ws.scriptExec = scriptExecFactory(ws)
-	}
-
-	return ws, nil
+	return New(repo, scriptExec)
 }
 
 // New creates a workspace from a repository. It loads the metamodel,
@@ -234,16 +240,6 @@ func newWorkspace(
 		config:     cfg,
 		scriptExec: scriptExec,
 	}
-}
-
-// SetScriptExecutor replaces the script executor. This is useful when the
-// executor needs access to the workspace (for meta, paths, etc.) but the
-// workspace needs to be created first. Typical pattern:
-//
-//	ws, _ := workspace.New(repo, workspace.NopScriptExecutor)
-//	ws.SetScriptExecutor(script.New(ws, ws.Meta(), ws.Paths().Root))
-func (w *Workspace) SetScriptExecutor(exec ScriptExecutor) {
-	w.scriptExec = exec
 }
 
 // --- Accessors ---
@@ -1006,16 +1002,25 @@ func (w *Workspace) executeLuaActions(
 		return
 	}
 
+	// Build script context once for all actions
+	ctx := &scriptContextImpl{
+		workspace:   w,
+		meta:        w.meta,
+		projectRoot: w.repo.Paths().Root,
+		entity:      entity,
+		oldEntity:   oldEntity,
+	}
+
 	for _, action := range luaActions {
 		var err error
 
 		switch {
 		case action.Code != "":
 			// Inline script code
-			err = w.scriptExec.ExecuteCode(action.Code, entity, oldEntity)
+			err = w.scriptExec.ExecuteCode(action.Code, ctx)
 		case action.FilePath != "":
 			// Script file from scripts/ directory
-			err = w.scriptExec.ExecuteFile(action.FilePath, entity, oldEntity)
+			err = w.scriptExec.ExecuteFile(action.FilePath, ctx)
 		default:
 			// Empty action - skip
 			continue

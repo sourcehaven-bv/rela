@@ -1420,7 +1420,9 @@ automations:
 }
 
 // --- Lua automation tests ---
-// These tests require real filesystem because os.OpenRoot doesn't work with in-memory FS.
+// Inline lua: actions work with in-memory FS. Only lua_file: actions need real
+// filesystem (os.OpenRoot doesn't work with in-memory FS), so those tests verify
+// validation errors rather than actual script execution.
 
 func TestLuaAutomation_InlineCode(t *testing.T) {
 	ws := setupTestWorkspaceWithLuaAutomation(t)
@@ -1783,11 +1785,7 @@ func setupWorkspaceWithMetamodel(t *testing.T, metamodelYAML string) *Workspace 
 
 	repo := repository.New(fs, ctx)
 	g := graph.New()
-	ws := NewWithGraph(repo, meta, g, NopScriptExecutor)
-
-	// Set up script executor for automation tests.
-	exec := script.New(ws, meta, root)
-	ws.SetScriptExecutor(exec)
+	ws := NewWithGraph(repo, meta, g, script.NewEngine())
 
 	return ws
 }

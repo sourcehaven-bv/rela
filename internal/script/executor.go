@@ -2,8 +2,10 @@
 // It combines lua.Runtime with workspace operations, handling:
 // path validation, secure file loading, and entity context injection.
 //
-// This package bridges lua (runtime) and workspace (domain) without either
-// depending on the other - each defines the interface it needs, script glues them.
+// The Engine is stateless - all context (workspace, metamodel, paths, entities)
+// is passed at execution time. This avoids circular dependencies: workspace can
+// be constructed with an Engine, and the Engine receives workspace access only
+// when executing scripts.
 package script
 
 import (
@@ -23,55 +25,74 @@ import (
 // scriptsDir is the directory where script files must be located.
 const scriptsDir = "scripts"
 
-// Executor runs scripts with entity context. It centralizes all script
-// execution concerns: path validation, secure file loading, sandbox
-// enforcement, and entity context setup.
+// Context provides everything a script needs to execute.
+// This interface is satisfied by workspace's internal context type,
+// allowing workspace to pass context without import cycles.
+//
+// The GetWorkspace() method returns an interface{} which must satisfy
+// lua.WorkspaceInterface. This avoids workspace needing to import lua
+// just to declare the return type.
+type Context interface {
+	// GetWorkspace returns the workspace for Lua callbacks.
+	// The returned value must satisfy lua.WorkspaceInterface.
+	GetWorkspace() interface{}
+	// GetMeta returns the current metamodel.
+	GetMeta() *metamodel.Metamodel
+	// GetProjectRoot returns the absolute project path.
+	GetProjectRoot() string
+	// GetEntity returns the triggering entity (may be nil).
+	GetEntity() *model.Entity
+	// GetOldEntity returns the previous entity state (may be nil).
+	GetOldEntity() *model.Entity
+}
+
+// Engine runs scripts with provided context. It is stateless - all dependencies
+// are passed at execution time via Context. This centralizes script execution
+// concerns: path validation, secure file loading, sandbox enforcement.
 //
 // Timeout is handled by lua.Runtime (default 30s, configurable via lua.WithTimeout).
-type Executor struct {
-	ws          lua.WorkspaceInterface
-	meta        *metamodel.Metamodel
-	projectRoot string
+type Engine struct{}
+
+// NewEngine creates a stateless script engine.
+func NewEngine() *Engine {
+	return &Engine{}
 }
 
-// New creates a script executor.
-func New(ws lua.WorkspaceInterface, meta *metamodel.Metamodel, projectRoot string) *Executor {
-	return &Executor{
-		ws:          ws,
-		meta:        meta,
-		projectRoot: projectRoot,
-	}
-}
-
-// ExecuteCode runs inline script code with the given entity context.
-func (e *Executor) ExecuteCode(code string, entity, oldEntity *model.Entity) error {
-	return e.execute(code, entity, oldEntity)
+// ExecuteCode runs inline script code with the given context.
+func (e *Engine) ExecuteCode(code string, ctx Context) error {
+	return e.execute(code, ctx)
 }
 
 // ExecuteFile loads and runs a script file from the scripts/ directory.
 // The path must be a local path (no ".." or absolute paths) with .lua extension.
-func (e *Executor) ExecuteFile(path string, entity, oldEntity *model.Entity) error {
-	code, err := e.loadScript(path)
+func (e *Engine) ExecuteFile(path string, ctx Context) error {
+	scriptCode, err := loadScript(ctx.GetProjectRoot(), path)
 	if err != nil {
 		return err
 	}
-	return e.execute(code, entity, oldEntity)
+	return e.execute(scriptCode, ctx)
 }
 
 // execute runs Lua code with entity context.
 // Timeout is handled by lua.Runtime (default 30s).
-func (e *Executor) execute(code string, entity, oldEntity *model.Entity) error {
+func (e *Engine) execute(code string, ctx Context) error {
+	// Type assert workspace to lua.WorkspaceInterface
+	ws, ok := ctx.GetWorkspace().(lua.WorkspaceInterface)
+	if !ok {
+		return fmt.Errorf("workspace does not implement lua.WorkspaceInterface")
+	}
+
 	var output bytes.Buffer
-	runtime := lua.New(e.ws, e.meta, e.projectRoot, &output)
+	runtime := lua.New(ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output)
 	defer runtime.Close()
 
 	// Set entity context as Lua globals
 	ls := runtime.LState()
-	if entity != nil {
-		ls.SetGlobal("entity", lua.EntityToTable(ls, entity))
+	if ctx.GetEntity() != nil {
+		ls.SetGlobal("entity", lua.EntityToTable(ls, ctx.GetEntity()))
 	}
-	if oldEntity != nil {
-		ls.SetGlobal("old_entity", lua.EntityToTable(ls, oldEntity))
+	if ctx.GetOldEntity() != nil {
+		ls.SetGlobal("old_entity", lua.EntityToTable(ls, ctx.GetOldEntity()))
 	}
 
 	return runtime.RunString(code)
@@ -79,7 +100,7 @@ func (e *Executor) execute(code string, entity, oldEntity *model.Entity) error {
 
 // loadScript loads a script from the scripts/ directory using os.OpenRoot
 // for traversal-resistant file access.
-func (e *Executor) loadScript(scriptPath string) (string, error) {
+func loadScript(projectRoot, scriptPath string) (string, error) {
 	// Security: Validate path is local (no "..", no absolute paths)
 	if !filepath.IsLocal(scriptPath) {
 		return "", fmt.Errorf(
@@ -93,7 +114,7 @@ func (e *Executor) loadScript(scriptPath string) (string, error) {
 
 	// Use os.OpenRoot for traversal-resistant access.
 	// Error messages intentionally omit system paths to prevent information leakage.
-	root, err := os.OpenRoot(e.projectRoot)
+	root, err := os.OpenRoot(projectRoot)
 	if err != nil {
 		return "", errors.New("cannot access project directory")
 	}

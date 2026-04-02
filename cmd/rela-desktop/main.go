@@ -126,15 +126,13 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	ws, wsErr := workspace.New(repo, workspace.NopScriptExecutor)
+	ws, wsErr := workspace.New(repo, script.NewEngine())
 	if wsErr != nil {
 		d.mu.Lock()
 		d.loadErr = wsErr.Error()
 		d.mu.Unlock()
 		return wsErr.Error()
 	}
-	// Set real script executor (needs workspace for meta/paths)
-	ws.SetScriptExecutor(script.New(ws, ws.Meta(), ws.Paths().Root))
 
 	app, err := dataentry.NewApp(ws)
 	if err != nil {

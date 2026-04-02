@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -32,11 +33,24 @@ func (m *mockWorkspace) SearchSimple(_ string, _ int) ([]*model.Entity, error) {
 }
 func (m *mockWorkspace) SyncLua() error { return nil }
 
-func TestExecutor_ExecuteFile_PathTraversal(t *testing.T) {
-	// Test that path traversal attempts are blocked.
-	exec := New(&mockWorkspace{}, nil, "/project")
+// testContext implements script.Context for testing.
+type testContext struct {
+	workspace   *mockWorkspace
+	projectRoot string
+}
 
-	err := exec.ExecuteFile("../../../etc/passwd", nil, nil)
+func (c *testContext) GetWorkspace() interface{}     { return c.workspace }
+func (c *testContext) GetMeta() *metamodel.Metamodel { return nil }
+func (c *testContext) GetProjectRoot() string        { return c.projectRoot }
+func (c *testContext) GetEntity() *model.Entity      { return nil }
+func (c *testContext) GetOldEntity() *model.Entity   { return nil }
+
+func TestEngine_ExecuteFile_PathTraversal(t *testing.T) {
+	// Test that path traversal attempts are blocked.
+	engine := NewEngine()
+	ctx := &testContext{workspace: &mockWorkspace{}, projectRoot: "/project"}
+
+	err := engine.ExecuteFile("../../../etc/passwd", ctx)
 	if err == nil {
 		t.Fatal("expected error for path traversal, got none")
 	}
@@ -45,11 +59,12 @@ func TestExecutor_ExecuteFile_PathTraversal(t *testing.T) {
 	}
 }
 
-func TestExecutor_ExecuteFile_AbsolutePath(t *testing.T) {
+func TestEngine_ExecuteFile_AbsolutePath(t *testing.T) {
 	// Test that absolute paths are blocked.
-	exec := New(&mockWorkspace{}, nil, "/project")
+	engine := NewEngine()
+	ctx := &testContext{workspace: &mockWorkspace{}, projectRoot: "/project"}
 
-	err := exec.ExecuteFile("/etc/passwd", nil, nil)
+	err := engine.ExecuteFile("/etc/passwd", ctx)
 	if err == nil {
 		t.Fatal("expected error for absolute path, got none")
 	}
@@ -58,11 +73,12 @@ func TestExecutor_ExecuteFile_AbsolutePath(t *testing.T) {
 	}
 }
 
-func TestExecutor_ExecuteFile_WrongExtension(t *testing.T) {
+func TestEngine_ExecuteFile_WrongExtension(t *testing.T) {
 	// Test that non-.lua files are blocked.
-	exec := New(&mockWorkspace{}, nil, "/project")
+	engine := NewEngine()
+	ctx := &testContext{workspace: &mockWorkspace{}, projectRoot: "/project"}
 
-	err := exec.ExecuteFile("script.txt", nil, nil)
+	err := engine.ExecuteFile("script.txt", ctx)
 	if err == nil {
 		t.Fatal("expected error for wrong extension, got none")
 	}
@@ -71,12 +87,13 @@ func TestExecutor_ExecuteFile_WrongExtension(t *testing.T) {
 	}
 }
 
-func TestExecutor_ExecuteFile_ValidPath(t *testing.T) {
+func TestEngine_ExecuteFile_ValidPath(t *testing.T) {
 	// Test that valid paths pass validation (but fail at file access since
 	// we don't have a real filesystem in tests).
-	exec := New(&mockWorkspace{}, nil, "/nonexistent")
+	engine := NewEngine()
+	ctx := &testContext{workspace: &mockWorkspace{}, projectRoot: "/nonexistent"}
 
-	err := exec.ExecuteFile("test.lua", nil, nil)
+	err := engine.ExecuteFile("test.lua", ctx)
 	// Should fail at project directory access (not validation)
 	if err == nil {
 		t.Fatal("expected error for missing project directory")

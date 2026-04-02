@@ -53,9 +53,7 @@ func runMCPServer() error {
 	}
 
 	// Discover project and initialize workspace
-	mcpWs, err := workspace.DiscoverAndNew(startDir, func(w *workspace.Workspace) workspace.ScriptExecutor {
-		return script.New(w, w.Meta(), w.Paths().Root)
-	})
+	mcpWs, err := workspace.DiscoverAndNew(startDir, script.NewEngine())
 	if err != nil {
 		return fmt.Errorf("no project found: run 'rela init' to create one")
 	}
