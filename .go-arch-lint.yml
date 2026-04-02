@@ -200,6 +200,7 @@ deps:
       - project
       - rename
       - repository
+      - script
       - search
       - storage
       - validation
