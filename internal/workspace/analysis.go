@@ -340,17 +340,27 @@ func (w *Workspace) ValidateProperties(opts AnalyzeOptions) []PropertyError {
 // ValidationViolation is re-exported from the validation package.
 type ValidationViolation = validation.Violation
 
+// newValidationService creates a validation service with workspace and project root configured.
+func (w *Workspace) newValidationService() *validation.Service {
+	opts := []validation.Option{
+		validation.WithWorkspace(w),
+	}
+	if w.repo != nil {
+		opts = append(opts, validation.WithProjectRoot(w.repo.Paths().Root))
+	}
+	return validation.New(w.meta, opts...)
+}
+
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.
 func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
-	svc := validation.New(w.meta)
-	return svc.Check(w.graph.AllNodes(), opts.Scope)
+	return w.newValidationService().Check(w.graph.AllNodes(), opts.Scope)
 }
 
 // RunValidationsFiltered executes custom validation rules matching the given filters.
 // Multiple filters are combined with OR (union of matching rules).
 // If a filter has both RuleName and EntityType empty, all rules match.
 func (w *Workspace) RunValidationsFiltered(opts AnalyzeOptions, filters []ValidationFilter) []ValidationViolation {
-	svc := validation.New(w.meta)
+	svc := w.newValidationService()
 
 	// Build set of rule names to run based on filters
 	ruleNames := make(map[string]bool)

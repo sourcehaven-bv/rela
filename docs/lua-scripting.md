@@ -317,3 +317,33 @@ lua_run(path: "report.lua", args: ["2024-Q1"])
 ### lua_list
 
 List available scripts in `scripts/` directory.
+
+## Validation Rules
+
+Lua can be used in metamodel validation rules for complex business logic. See the
+[Lua Validation](metamodel.md#lua-validation) section in the Metamodel Reference for details.
+
+```yaml
+validations:
+  - name: check-coverage
+    description: "Components need 80% test coverage"
+    entity_type: component
+    lua: |
+      local cov = entity.properties.coverage
+      if cov == nil then return nil end
+      local value = tonumber(cov)
+      if value and value < 80 then
+        return { message = "Coverage is " .. value .. "%, need 80%" }
+      end
+      return nil
+    severity: error
+```
+
+Key differences from script execution:
+
+| Feature | Scripts (lua_eval/lua_run) | Validation Rules |
+|---------|---------------------------|------------------|
+| Workspace access | Full read/write | Read-only |
+| Timeout | None | 5 seconds |
+| Output | `rela.output()` | Return `nil` (pass) or `{message=...}` (violation) |
+| File I/O | `rela.write_file()` | Not available |

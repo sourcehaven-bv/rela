@@ -1771,6 +1771,21 @@ validations:
     then:
       - "reason!="
     severity: error
+  - name: critical-wontfix-needs-thorough-justification
+    description: "Critical findings marked wont-fix/deferred need thorough justification"
+    entity_type: review-response
+    severity: error
+    when:
+      - "severity=critical"
+    lua_file: validate-justification.lua
+    lua_args: ["200"]
+  - name: significant-wontfix-needs-adequate-justification
+    description: "Significant findings marked wont-fix/deferred need adequate justification"
+    entity_type: review-response
+    when:
+      - "severity=significant"
+    lua_file: validate-justification.lua
+    lua_args: ["150"]
   # --- Ticket review response gates ---
   - name: done-ticket-no-open-critical-responses
     description: "Done tickets cannot have open critical review responses"

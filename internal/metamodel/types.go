@@ -50,6 +50,21 @@ type ValidationRule struct {
 	// Severity is the severity level of violations: "error" or "warning"
 	// Defaults to "warning" if not specified
 	Severity string `yaml:"severity,omitempty"`
+
+	// Lua specifies inline Lua code for custom validation logic.
+	// The code should return true if the entity is valid, or false/nil for a violation.
+	// The entity being validated is available as the `entity` global variable.
+	// Read-only workspace access is available via rela.get_entity(), rela.list_entities(), etc.
+	Lua string `yaml:"lua,omitempty"`
+
+	// LuaFile specifies a path to a Lua script file in the scripts/ directory.
+	// The script should return true if valid, or false/nil for a violation.
+	// Example: "validate-dates.lua" loads scripts/validate-dates.lua
+	LuaFile string `yaml:"lua_file,omitempty"`
+
+	// LuaArgs specifies arguments to pass to Lua validation scripts.
+	// Available as rela.args in the Lua runtime.
+	LuaArgs []string `yaml:"lua_args,omitempty"`
 }
 
 // GetSeverity returns the severity level, defaulting to "warning"

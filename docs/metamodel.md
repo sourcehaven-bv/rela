@@ -1033,6 +1033,154 @@ validations:
 3. Each required header is checked against the extracted headers
 4. If any required header is missing, the entity violates the rule
 
+### Lua Validation
+
+For complex validation logic that goes beyond property filters and content checks, you can use
+Lua scripts. This enables cross-entity lookups, custom calculations, and sophisticated business rules.
+
+#### Inline Lua Code
+
+Use the `lua` field for short validation logic:
+
+```yaml
+validations:
+  - name: status-required
+    description: "Status must not be empty"
+    entity_type: ticket
+    lua: |
+      local status = entity.properties.status
+      if status == nil or status == "" then
+        return { message = "Status is required" }
+      end
+      return nil
+    severity: error
+```
+
+#### External Lua Scripts
+
+For longer scripts, use `lua_file` to reference a script in the `validations/` directory.
+Use `lua_args` to pass parameters to the script (available as `rela.args`):
+
+```yaml
+validations:
+  - name: component-coverage-high
+    description: "Critical components need 90% coverage"
+    entity_type: component
+    when:
+      - "criticality=high"
+    lua_file: check-coverage.lua
+    lua_args: ["90"]
+    severity: error
+  - name: component-coverage-standard
+    description: "Components need 80% coverage"
+    entity_type: component
+    lua_file: check-coverage.lua
+    lua_args: ["80"]
+    severity: warning
+```
+
+```lua
+-- validations/check-coverage.lua
+-- Entity is available as a global variable
+-- Arguments are available via rela.args
+
+local min_coverage = tonumber(rela.args[1]) or 80
+
+local coverage = entity.properties.test_coverage
+if coverage == nil then
+  return nil  -- No coverage data, pass
+end
+
+-- Parse percentage (e.g., "85%" -> 85)
+local value = tonumber(string.match(coverage, "(%d+)"))
+if value == nil then
+  return nil  -- Can't parse, pass
+end
+
+if value < min_coverage then
+  return { message = "Coverage is " .. value .. "%, minimum is " .. min_coverage .. "%" }
+end
+return nil
+```
+
+#### Entity Context
+
+The `entity` global variable provides access to the entity being validated:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `entity.id` | string | Entity ID (e.g., "REQ-001") |
+| `entity.type` | string | Entity type (e.g., "requirement") |
+| `entity.properties` | table | Property key-value pairs |
+| `entity.content` | string | Markdown body content |
+
+Access properties directly via `entity.properties.status` or `entity.properties["my-field"]`.
+
+#### Cross-Entity Lookups
+
+Lua validation scripts have read-only access to the workspace for cross-entity validation:
+
+```lua
+-- Get another entity by ID
+local related = rela.get_entity("REQ-001")
+if related and related.properties.status ~= "approved" then
+  return { message = "Related requirement must be approved" }
+end
+
+-- List entities by type
+local components = rela.list_entities("component")
+for _, comp in ipairs(components) do
+  -- Check each component...
+end
+
+-- Trace dependencies
+local deps = rela.trace_from(entity.id, 2)
+for _, step in ipairs(deps.path) do
+  -- Check dependency chain...
+end
+return nil
+```
+
+#### Return Value Semantics
+
+Lua scripts return `nil` to pass validation, or a table (or array of tables) to report violations:
+
+```lua
+-- Pass: return nil or nothing
+return nil
+
+-- Single violation with custom message
+return { message = "Status is required" }
+
+-- Single violation with custom severity (overrides rule default)
+return { message = "Consider adding a description", severity = "warning" }
+
+-- Multiple violations from one rule
+return {
+  { message = "Missing owner", severity = "warning" },
+  { message = "Priority not set", severity = "error" }
+}
+```
+
+Each violation table has:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `message` | string | Custom error message (required) |
+| `severity` | string | `"error"` or `"warning"` (optional, defaults to rule's severity) |
+
+#### Security and Sandboxing
+
+Lua validation runs in a sandboxed environment:
+
+- **Read-only workspace**: Scripts cannot create, update, or delete entities
+- **Execution timeout**: Scripts are terminated after 5 seconds to prevent infinite loops
+- **Path restrictions**: `lua_file` scripts must be in the `validations/` directory with `.lua` extension
+- **No file I/O**: Scripts cannot read or write files directly
+
+Errors in Lua scripts (syntax errors, runtime errors, timeouts) are logged and the validation
+rule is skipped ("fail open") to avoid blocking the entire validation run.
+
 ### Running Validations
 
 ```bash
