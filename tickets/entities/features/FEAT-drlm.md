@@ -1,8 +1,8 @@
 ---
 id: FEAT-drlm
-type: feature
+status: proposed
 title: View-scoped analysis for analyze commands
-status: removed
+type: feature
 ---
 
 Allow analysis commands to be scoped to entities resolved by a view, enabling validation of specific documents or releases before publishing.

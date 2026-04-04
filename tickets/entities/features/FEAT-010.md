@@ -2,6 +2,8 @@
 id: FEAT-010
 type: feature
 title: Use goldmark for markdown rendering
+summary: Use goldmark for markdown rendering with full GitHub Flavored Markdown support
+description: Replace custom markdown parser with goldmark library for full GFM support including tables, task lists, and strikethrough
 status: implemented
 ---
 

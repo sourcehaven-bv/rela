@@ -5,7 +5,7 @@ title: Add Markdown AST API to Lua scripting
 kind: enhancement
 priority: medium
 effort: m
-status: done
+status: ready
 ---
 
 # Add Markdown AST API to Lua Scripting
