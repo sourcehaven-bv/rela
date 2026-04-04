@@ -1801,6 +1801,42 @@ validations:
     then:
       - "reason!="
     severity: error
+  - name: critical-wontfix-needs-thorough-justification
+    description: "Critical findings marked wont-fix/deferred need thorough justification"
+    entity_type: review-response
+    severity: error
+    when:
+      - "severity=critical"
+    lua: |
+      local status = entity.properties.status or ""
+      if status ~= "wont-fix" and status ~= "deferred" then
+        return nil  -- Rule only applies to wont-fix/deferred
+      end
+      local reason = entity.properties.reason or ""
+      if #reason < 200 then
+        return {
+          message = "Critical finding needs thorough justification (got " .. #reason .. " chars, need 200+)"
+        }
+      end
+      return nil
+  - name: significant-wontfix-needs-adequate-justification
+    description: "Significant findings marked wont-fix/deferred need adequate justification"
+    entity_type: review-response
+    when:
+      - "severity=significant"
+    lua: |
+      local status = entity.properties.status or ""
+      if status ~= "wont-fix" and status ~= "deferred" then
+        return nil  -- Rule only applies to wont-fix/deferred
+      end
+      local reason = entity.properties.reason or ""
+      if #reason < 150 then
+        return {
+          message = "Significant finding needs adequate justification (got " .. #reason .. " chars, need 150+)",
+          severity = "warning"
+        }
+      end
+      return nil
   # --- Ticket review response gates ---
   - name: done-ticket-no-open-critical-responses
     description: "Done tickets cannot have open critical review responses"
