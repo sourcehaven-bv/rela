@@ -1050,22 +1050,16 @@ Use the `lua` field for short validation logic:
 
 ```yaml
 validations:
-  # Status must match parent ticket status
-  - name: subtask-inherits-status
-    description: "Subtasks should not be done if parent ticket is open"
-    entity_type: subtask
+  - name: status-required
+    description: "Status must not be empty"
+    entity_type: ticket
     lua: |
-      local parent = rela.trace_to(entity.id, 1)
-      for _, step in ipairs(parent.path) do
-        if step.entity.type == "ticket" then
-          local ticket_status = step.entity.properties.status
-          if entity.properties.status == "done" and ticket_status ~= "done" then
-            return false
-          end
-        end
+      local status = entity.properties.status
+      if status == nil or status == "" then
+        return { message = "Status is required" }
       end
-      return true
-    severity: warning
+      return nil
+    severity: error
 ```
 
 #### External Lua Scripts
@@ -1087,16 +1081,19 @@ validations:
 
 local coverage = entity.properties.test_coverage
 if coverage == nil then
-  return true  -- No coverage data, skip validation
+  return nil  -- No coverage data, pass
 end
 
 -- Parse percentage (e.g., "85%" -> 85)
 local value = tonumber(string.match(coverage, "(%d+)"))
 if value == nil then
-  return true  -- Can't parse, skip
+  return nil  -- Can't parse, pass
 end
 
-return value >= 80
+if value < 80 then
+  return { message = "Coverage is " .. value .. "%, minimum is 80%" }
+end
+return nil
 ```
 
 #### Entity Context
@@ -1119,8 +1116,8 @@ Lua validation scripts have read-only access to the workspace for cross-entity v
 ```lua
 -- Get another entity by ID
 local related = rela.get_entity("REQ-001")
-if related then
-  return related.properties.status == "approved"
+if related and related.properties.status ~= "approved" then
+  return { message = "Related requirement must be approved" }
 end
 
 -- List entities by type
@@ -1134,18 +1131,36 @@ local deps = rela.trace_from(entity.id, 2)
 for _, step in ipairs(deps.path) do
   -- Check dependency chain...
 end
+return nil
 ```
 
 #### Return Value Semantics
 
-| Return Value | Result |
-| ------------ | ------ |
-| `true` | Validation passes |
-| `false` | Validation fails (violation reported) |
-| `nil` | Validation fails (no return = nil) |
-| Other truthy value | Validation passes |
+Lua scripts return `nil` to pass validation, or a table (or array of tables) to report violations:
 
-Scripts that don't explicitly return a value will fail validation (nil is falsy).
+```lua
+-- Pass: return nil or nothing
+return nil
+
+-- Single violation with custom message
+return { message = "Status is required" }
+
+-- Single violation with custom severity (overrides rule default)
+return { message = "Consider adding a description", severity = "warning" }
+
+-- Multiple violations from one rule
+return {
+  { message = "Missing owner", severity = "warning" },
+  { message = "Priority not set", severity = "error" }
+}
+```
+
+Each violation table has:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `message` | string | Custom error message (required) |
+| `severity` | string | `"error"` or `"warning"` (optional, defaults to rule's severity) |
 
 #### Security and Sandboxing
 

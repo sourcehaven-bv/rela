@@ -17,6 +17,14 @@ status: pending
 - [ ] All significant review-responses addressed
 - [ ] Self-reviewed the diff for unrelated changes
 
+## Test Quality Review
+
+- [ ] Tests use fluent builders (not verbose object construction)
+- [ ] No hardcoded IDs/values that should be auto-generated
+- [ ] Assertions reference objects, not hardcoded strings
+- [ ] Test setup is minimal (only specifies what matters)
+- [ ] State change tests clone objects (not separate construction)
+
 **Review Responses:** <!-- List IDs of review-response entities created, e.g., RR-xxxx -->
 
 ## Acceptance Verification

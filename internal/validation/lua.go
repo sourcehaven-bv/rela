@@ -25,6 +25,12 @@ const scriptsDir = "scripts"
 // This prevents infinite loops in malicious or buggy Lua code.
 const validationTimeout = 5 * time.Second
 
+// LuaViolation represents a violation returned from a Lua validation script.
+type LuaViolation struct {
+	Message  string // Custom error message (required)
+	Severity string // "error" or "warning" (optional, defaults to rule's severity)
+}
+
 // luaExecutor handles Lua validation execution.
 type luaExecutor struct {
 	ws          lua.WorkspaceInterface
@@ -41,29 +47,45 @@ func newLuaExecutor(ws lua.WorkspaceInterface, meta *metamodel.Metamodel, projec
 	}
 }
 
-// validate runs Lua validation for an entity and returns true if valid.
-// Returns true (pass) if:
-//   - No Lua code specified (rule.Lua and rule.LuaFile both empty)
-//   - Lua returns true or a truthy non-nil value
+// validate runs Lua validation for an entity and returns any violations.
 //
-// Returns false (violation) if:
-//   - Lua returns false or nil (including no return statement)
+// Lua scripts should return:
+//   - nil (or no return): validation passes
+//   - table with "message" field: single violation
+//   - array of tables: multiple violations
+//
+// Each violation table can have:
+//   - message (string, required): the error message
+//   - severity (string, optional): "error" or "warning", defaults to rule's severity
+//
+// Example Lua returns:
+//
+//	return nil  -- pass
+//	return { message = "Field is required" }  -- single violation
+//	return { message = "Field is required", severity = "warning" }  -- with severity
+//	return {
+//	  { message = "Missing owner" },
+//	  { message = "Invalid status", severity = "error" }
+//	}  -- multiple violations
 //
 // Errors are logged but do not propagate - validation fails open to avoid
 // blocking the entire validation run due to a single broken rule.
-func (e *luaExecutor) validate(entity *model.Entity, rule metamodel.ValidationRule) bool {
+func (e *luaExecutor) validate(
+	entity *model.Entity,
+	rule metamodel.ValidationRule,
+) []LuaViolation {
 	code := rule.Lua
 	if code == "" && rule.LuaFile != "" {
 		var err error
 		code, err = e.loadScript(rule.LuaFile)
 		if err != nil {
 			log.Printf("validation rule %q: %v", rule.Name, err)
-			return true // fail open - skip rule on load error
+			return nil // fail open - skip rule on load error
 		}
 	}
 
 	if code == "" {
-		return true // no Lua validation
+		return nil // no Lua validation
 	}
 
 	// Create runtime with read-only workspace and discarded stdout
@@ -78,7 +100,7 @@ func (e *luaExecutor) validate(entity *model.Entity, rule metamodel.ValidationRu
 	fn, err := ls.LoadString(code)
 	if err != nil {
 		log.Printf("validation rule %q: Lua compile error: %v", rule.Name, err)
-		return true // fail open - skip rule on compile error
+		return nil // fail open - skip rule on compile error
 	}
 
 	// Set execution timeout to prevent infinite loops
@@ -90,25 +112,88 @@ func (e *luaExecutor) validate(entity *model.Entity, rule metamodel.ValidationRu
 	ls.Push(fn)
 	if err := ls.PCall(0, 1, nil); err != nil {
 		log.Printf("validation rule %q: Lua runtime error: %v", rule.Name, err)
-		return true // fail open - skip rule on runtime error
+		return nil // fail open - skip rule on runtime error
 	}
 
-	// Get return value from stack (PCall with NRet=1 leaves one value on stack)
+	// Get return value from stack
 	ret := ls.Get(-1)
-	ls.Pop(1) // clean up stack
+	ls.Pop(1)
 
-	// Handle different return types:
-	// - LTrue: pass
-	// - LFalse, LNil: violation
-	// - Other truthy values (string, number, table): pass
-	switch ret {
-	case golua.LNil, golua.LFalse:
-		return false // violation
-	case golua.LTrue:
-		return true // pass
-	default:
-		// Any other truthy value (string, number, table) = pass
-		return true
+	return e.parseReturnValue(ret, rule)
+}
+
+// parseReturnValue interprets the Lua return value as violations.
+func (e *luaExecutor) parseReturnValue(
+	ret golua.LValue,
+	rule metamodel.ValidationRule,
+) []LuaViolation {
+	// nil = pass
+	if ret == golua.LNil {
+		return nil
+	}
+
+	// Must be a table
+	tbl, ok := ret.(*golua.LTable)
+	if !ok {
+		log.Printf("validation rule %q: Lua must return nil or table, got %s",
+			rule.Name, ret.Type().String())
+		return nil // fail open
+	}
+
+	// Check if it's a single violation (has "message" key) or array of violations
+	if msg := tbl.RawGetString("message"); msg != golua.LNil {
+		// Single violation
+		v := e.tableToViolation(tbl, rule)
+		if v == nil {
+			return nil
+		}
+		return []LuaViolation{*v}
+	}
+
+	// Array of violations - iterate numeric keys
+	var violations []LuaViolation
+	tbl.ForEach(func(key, value golua.LValue) {
+		// Only process numeric keys (array elements)
+		if _, ok := key.(golua.LNumber); !ok {
+			return
+		}
+		if itemTbl, ok := value.(*golua.LTable); ok {
+			if v := e.tableToViolation(itemTbl, rule); v != nil {
+				violations = append(violations, *v)
+			}
+		}
+	})
+
+	return violations
+}
+
+// tableToViolation converts a Lua table to a LuaViolation.
+func (e *luaExecutor) tableToViolation(
+	tbl *golua.LTable,
+	rule metamodel.ValidationRule,
+) *LuaViolation {
+	// Message is required
+	msgVal := tbl.RawGetString("message")
+	msg, ok := msgVal.(golua.LString)
+	if !ok || msg == "" {
+		log.Printf("validation rule %q: violation table missing 'message' field", rule.Name)
+		return nil
+	}
+
+	// Severity is optional, defaults to rule's severity
+	severity := rule.GetSeverity()
+	if sevVal := tbl.RawGetString("severity"); sevVal != golua.LNil {
+		if sev, ok := sevVal.(golua.LString); ok {
+			sevStr := string(sev)
+			if sevStr == "error" || sevStr == "warning" {
+				severity = sevStr
+			}
+		}
+	}
+
+	return &LuaViolation{
+		Message:  string(msg),
+		Severity: severity,
 	}
 }
 

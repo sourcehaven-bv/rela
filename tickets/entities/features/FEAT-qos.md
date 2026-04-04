@@ -1,10 +1,10 @@
 ---
 id: FEAT-qos
-priority: high
-status: proposed
-summary: Redesign view system where query structure mirrors output structure, with JSONPath-based scope filtering
-title: Query-as-Output-Structure View System
 type: feature
+title: Query-as-Output-Structure View System
+summary: Redesign view system where query structure mirrors output structure, with JSONPath-based scope filtering
+priority: high
+status: removed
 ---
 
 # Query-as-Output-Structure View System

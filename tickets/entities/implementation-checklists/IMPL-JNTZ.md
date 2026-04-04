@@ -1,8 +1,11 @@
+---
+id: IMPL-JNTZ
+type: implementation-checklist
+title: 'Implementation: Add Lua validation rules to metamodel'
+status: in-progress
+---
+
 <!-- @managed: claude-workflow v1 -->
----
-title: Implementation
-status: pending
----
 
 ## Development
 

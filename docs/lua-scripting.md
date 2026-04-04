@@ -330,7 +330,12 @@ validations:
     entity_type: component
     lua: |
       local cov = entity.properties.coverage
-      return cov and tonumber(cov) >= 80
+      if cov == nil then return nil end
+      local value = tonumber(cov)
+      if value and value < 80 then
+        return { message = "Coverage is " .. value .. "%, need 80%" }
+      end
+      return nil
     severity: error
 ```
 
@@ -340,5 +345,5 @@ Key differences from script execution:
 |---------|---------------------------|------------------|
 | Workspace access | Full read/write | Read-only |
 | Timeout | None | 5 seconds |
-| Output | `rela.output()` | Return true/false |
+| Output | `rela.output()` | Return `nil` (pass) or `{message=...}` (violation) |
 | File I/O | `rela.write_file()` | Not available |

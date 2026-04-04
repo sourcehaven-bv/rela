@@ -140,7 +140,7 @@ func (m *mockWorkspace) SyncLua() error {
 // Verify mockWorkspace implements lua.WorkspaceInterface
 var _ lua.WorkspaceInterface = (*mockWorkspace)(nil)
 
-func TestLuaValidation_InlineCode(t *testing.T) {
+func TestLuaValidation_SingleViolation(t *testing.T) {
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -155,9 +155,13 @@ func TestLuaValidation_InlineCode(t *testing.T) {
 				Name:        "status-not-empty",
 				Description: "Status must not be empty",
 				EntityType:  "ticket",
-				// Use entity.properties directly to check for empty strings
-				// (entity:prop() returns nil for empty strings, which doesn't equal "")
-				Lua:      `return entity.properties.status ~= nil and entity.properties.status ~= ""`,
+				Lua: `
+					local status = entity.properties.status
+					if status == nil or status == "" then
+						return { message = "Status is required" }
+					end
+					return nil
+				`,
 				Severity: "error",
 			},
 		},
@@ -185,46 +189,182 @@ func TestLuaValidation_InlineCode(t *testing.T) {
 	if violations[0].EntityID != "TKT-002" {
 		t.Errorf("violation entity = %s, want TKT-002", violations[0].EntityID)
 	}
+	if violations[0].Description != "Status is required" {
+		t.Errorf("violation description = %q, want %q", violations[0].Description, "Status is required")
+	}
+}
+
+func TestLuaValidation_MultipleViolations(t *testing.T) {
+	ws := newMockWorkspace()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Properties: map[string]metamodel.PropertyDef{
+					"status": {Type: "string"},
+					"owner":  {Type: "string"},
+				},
+			},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "required-fields",
+				Description: "Required fields check",
+				EntityType:  "ticket",
+				Lua: `
+					local issues = {}
+					if entity.properties.status == nil or entity.properties.status == "" then
+						table.insert(issues, { message = "Status is required", severity = "error" })
+					end
+					if entity.properties.owner == nil or entity.properties.owner == "" then
+						table.insert(issues, { message = "Owner is required", severity = "warning" })
+					end
+					if #issues > 0 then
+						return issues
+					end
+					return nil
+				`,
+				Severity: "error",
+			},
+		},
+	}
+
+	entities := []*model.Entity{
+		{
+			ID:         "TKT-001",
+			Type:       "ticket",
+			Properties: map[string]interface{}{}, // missing both status and owner
+		},
+	}
+
+	svc := New(meta, WithWorkspace(ws), WithProjectRoot(t.TempDir()))
+	violations := svc.Check(entities, nil)
+
+	if len(violations) != 2 {
+		t.Fatalf("got %d violations, want 2", len(violations))
+	}
+
+	// Check we got both violations with correct severities
+	foundStatus, foundOwner := false, false
+	for _, v := range violations {
+		if v.Description == "Status is required" && v.Severity == "error" {
+			foundStatus = true
+		}
+		if v.Description == "Owner is required" && v.Severity == "warning" {
+			foundOwner = true
+		}
+	}
+	if !foundStatus {
+		t.Error("missing 'Status is required' violation with severity error")
+	}
+	if !foundOwner {
+		t.Error("missing 'Owner is required' violation with severity warning")
+	}
+}
+
+func TestLuaValidation_SeverityOverride(t *testing.T) {
+	ws := newMockWorkspace()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:       "test-rule",
+				EntityType: "ticket",
+				Lua:        `return { message = "Custom warning", severity = "warning" }`,
+				Severity:   "error", // default is error, but Lua overrides to warning
+			},
+		},
+	}
+
+	entities := []*model.Entity{
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+	}
+
+	svc := New(meta, WithWorkspace(ws), WithProjectRoot(t.TempDir()))
+	violations := svc.Check(entities, nil)
+
+	if len(violations) != 1 {
+		t.Fatalf("got %d violations, want 1", len(violations))
+	}
+	if violations[0].Severity != "warning" {
+		t.Errorf("severity = %s, want warning (Lua should override rule default)", violations[0].Severity)
+	}
+}
+
+func TestLuaValidation_SeverityDefault(t *testing.T) {
+	ws := newMockWorkspace()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:       "test-rule",
+				EntityType: "ticket",
+				Lua:        `return { message = "Uses default severity" }`, // no severity specified
+				Severity:   "warning",
+			},
+		},
+	}
+
+	entities := []*model.Entity{
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+	}
+
+	svc := New(meta, WithWorkspace(ws), WithProjectRoot(t.TempDir()))
+	violations := svc.Check(entities, nil)
+
+	if len(violations) != 1 {
+		t.Fatalf("got %d violations, want 1", len(violations))
+	}
+	if violations[0].Severity != "warning" {
+		t.Errorf("severity = %s, want warning (should use rule default)", violations[0].Severity)
+	}
 }
 
 func TestLuaValidation_ReturnValues(t *testing.T) {
 	ws := newMockWorkspace()
 
 	tests := []struct {
-		name       string
-		lua        string
-		wantPass   bool
-		entityProp string
+		name     string
+		lua      string
+		wantPass bool
 	}{
 		{
-			name:     "return true passes",
-			lua:      `return true`,
-			wantPass: true,
-		},
-		{
-			name:     "return false violates",
-			lua:      `return false`,
-			wantPass: false,
-		},
-		{
-			name:     "return nil violates",
+			name:     "return nil passes",
 			lua:      `return nil`,
-			wantPass: false,
+			wantPass: true,
 		},
 		{
-			name:     "no return violates",
+			name:     "no return passes",
 			lua:      `local x = 1`,
+			wantPass: true,
+		},
+		{
+			name:     "return table with message violates",
+			lua:      `return { message = "error" }`,
 			wantPass: false,
 		},
 		{
-			name:     "return truthy string passes",
-			lua:      `return "ok"`,
-			wantPass: true,
+			name:     "return array of tables violates",
+			lua:      `return { { message = "error 1" }, { message = "error 2" } }`,
+			wantPass: false,
 		},
 		{
-			name:     "return truthy number passes",
-			lua:      `return 1`,
-			wantPass: true,
+			name:     "return empty table passes",
+			lua:      `return {}`,
+			wantPass: true, // no message field, so treated as empty array
+		},
+		{
+			name:     "return non-table is error (fail open)",
+			lua:      `return "string"`,
+			wantPass: true, // fail open
+		},
+		{
+			name:     "return number is error (fail open)",
+			lua:      `return 42`,
+			wantPass: true, // fail open
 		},
 	}
 
@@ -275,14 +415,24 @@ func TestLuaValidation_EntityContext(t *testing.T) {
 				EntityType: "ticket",
 				Lua: `
 					-- Check entity.id and entity.type are available
-					if entity.id ~= "TKT-001" then return false end
-					if entity.type ~= "ticket" then return false end
+					if entity.id ~= "TKT-001" then
+						return { message = "entity.id mismatch" }
+					end
+					if entity.type ~= "ticket" then
+						return { message = "entity.type mismatch" }
+					end
 					-- Check prop() method works
-					if entity:prop("title") ~= "Test Ticket" then return false end
-					if entity:prop("status") ~= "open" then return false end
+					if entity:prop("title") ~= "Test Ticket" then
+						return { message = "title mismatch" }
+					end
+					if entity:prop("status") ~= "open" then
+						return { message = "status mismatch" }
+					end
 					-- Check prop() with default
-					if entity:prop("missing", "default") ~= "default" then return false end
-					return true
+					if entity:prop("missing", "default") ~= "default" then
+						return { message = "default value mismatch" }
+					end
+					return nil
 				`,
 			},
 		},
@@ -303,7 +453,7 @@ func TestLuaValidation_EntityContext(t *testing.T) {
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 0 {
-		t.Errorf("got %d violations, want 0 (entity context should work)", len(violations))
+		t.Errorf("got %d violations, want 0 (entity context should work): %v", len(violations), violations)
 	}
 }
 
@@ -320,9 +470,13 @@ func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
 				Lua: `
 					-- Can look up other entities
 					local other = rela.get_entity("PARENT-001")
-					if not other then return false end
-					if other:prop("status") ~= "approved" then return false end
-					return true
+					if not other then
+						return { message = "get_entity failed" }
+					end
+					if other:prop("status") ~= "approved" then
+						return { message = "status mismatch" }
+					end
+					return nil
 				`,
 			},
 		},
@@ -355,8 +509,10 @@ func TestLuaValidation_MutationsBlocked(t *testing.T) {
 						rela.create_entity("ticket", {title = "New"})
 					end)
 					-- Should fail, if it succeeded that's a problem
-					if ok then return false end
-					return true
+					if ok then
+						return { message = "mutation should have been blocked" }
+					end
+					return nil
 				`,
 			},
 		},
@@ -389,8 +545,10 @@ func TestLuaValidation_SyncBlocked(t *testing.T) {
 						rela.refresh()
 					end)
 					-- Should fail
-					if ok then return false end
-					return true
+					if ok then
+						return { message = "refresh should have been blocked" }
+					end
+					return nil
 				`,
 			},
 		},
@@ -425,7 +583,12 @@ func TestLuaValidation_CombinedWithWhenThen(t *testing.T) {
 				EntityType: "ticket",
 				When:       []string{"status=ready"},
 				Then:       []string{"priority!="},
-				Lua:        `return entity:prop("priority") ~= "invalid"`,
+				Lua: `
+					if entity:prop("priority") == "invalid" then
+						return { message = "Priority cannot be 'invalid'" }
+					end
+					return nil
+				`,
 			},
 		},
 	}
@@ -527,8 +690,13 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write a test script
-	scriptContent := `return entity:prop("status") == "valid"`
+	// Write a test script that returns violations
+	scriptContent := `
+		if entity:prop("status") ~= "valid" then
+			return { message = "Status must be 'valid'" }
+		end
+		return nil
+	`
 	if err := os.WriteFile(filepath.Join(scriptsDir, "validate-status.lua"), []byte(scriptContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -563,6 +731,9 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 	}
 	if violations[0].EntityID != "TKT-002" {
 		t.Errorf("violation entity = %s, want TKT-002", violations[0].EntityID)
+	}
+	if violations[0].Description != "Status must be 'valid'" {
+		t.Errorf("violation description = %q, want %q", violations[0].Description, "Status must be 'valid'")
 	}
 }
 
@@ -612,7 +783,7 @@ func TestLuaValidation_NoWorkspace(t *testing.T) {
 			{
 				Name:       "lua-rule",
 				EntityType: "ticket",
-				Lua:        `return false`, // Would fail if executed
+				Lua:        `return { message = "would fail" }`, // Would fail if executed
 			},
 		},
 	}
@@ -650,15 +821,18 @@ func TestLuaValidation_CrossEntityValidation(t *testing.T) {
 					-- Get relations where this entity is "from" with type "child-of"
 					local rels = rela.get_relations({from = entity.id, type = "child-of"})
 					if #rels == 0 then
-						return true -- no parent, OK
+						return nil -- no parent, OK
 					end
 
 					local parent = rela.get_entity(rels[1].to)
 					if not parent then
-						return true -- parent doesn't exist, OK (shouldn't happen)
+						return nil -- parent doesn't exist, OK (shouldn't happen)
 					end
 
-					return parent:prop("status") == "approved"
+					if parent:prop("status") ~= "approved" then
+						return { message = "Parent ticket must be approved" }
+					end
+					return nil
 				`,
 			},
 		},
@@ -775,13 +949,13 @@ func TestLuaValidation_PathTraversal(t *testing.T) {
 	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(scriptsDir, "valid.lua"), []byte(`return true`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(scriptsDir, "valid.lua"), []byte(`return nil`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create a secret file outside scripts/
 	secretPath := filepath.Join(tmpDir, "secret.lua")
-	if err := os.WriteFile(secretPath, []byte(`return false`), 0644); err != nil {
+	if err := os.WriteFile(secretPath, []byte(`return { message = "should not run" }`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -840,7 +1014,7 @@ func TestLuaValidation_PathTraversal(t *testing.T) {
 			violations := svc.Check(entities, nil)
 
 			// If rule should be skipped, expect 0 violations (fail open)
-			// If valid script, expect 0 violations (script returns true)
+			// If valid script, expect 0 violations (script returns nil)
 			if len(violations) != 0 {
 				t.Errorf("got %d violations, want 0", len(violations))
 			}

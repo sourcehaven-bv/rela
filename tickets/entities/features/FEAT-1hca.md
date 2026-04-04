@@ -1,11 +1,11 @@
 ---
-description: Provides SQL interface to rela graphs via dolthub/go-mysql-server. Supports network server mode (rela sql) and in-process queries (rela query).
 id: FEAT-1hca
-priority: medium
-status: in-progress
-summary: Query rela graphs using MySQL-compatible SQL syntax
-title: SQL Support
 type: feature
+title: SQL Support
+summary: Query rela graphs using MySQL-compatible SQL syntax
+description: Provides SQL interface to rela graphs via dolthub/go-mysql-server. Supports network server mode (rela sql) and in-process queries (rela query).
+priority: medium
+status: removed
 ---
 
 # SQL Support
