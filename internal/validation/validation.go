@@ -5,6 +5,7 @@ package validation
 
 import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -21,12 +22,42 @@ type Violation struct {
 
 // Service validates entities against custom metamodel rules.
 type Service struct {
-	meta *metamodel.Metamodel
+	meta        *metamodel.Metamodel
+	ws          lua.WorkspaceInterface // Optional: for Lua validation rules
+	projectRoot string                 // Optional: for loading lua_file scripts
+	luaExec     *luaExecutor           // Lazy-initialized Lua executor
+}
+
+// Option configures a validation Service.
+type Option func(*Service)
+
+// WithWorkspace sets the workspace for Lua validation rules.
+// This enables Lua scripts to access entities and relations via rela.get_entity(), etc.
+// The workspace is wrapped in a read-only layer to prevent mutations.
+func WithWorkspace(ws lua.WorkspaceInterface) Option {
+	return func(s *Service) {
+		s.ws = ws
+	}
+}
+
+// WithProjectRoot sets the project root for loading lua_file scripts.
+// Scripts are loaded from the scripts/ directory within the project root.
+func WithProjectRoot(root string) Option {
+	return func(s *Service) {
+		s.projectRoot = root
+	}
 }
 
 // New creates a validation service for the given metamodel.
-func New(meta *metamodel.Metamodel) *Service {
-	return &Service{meta: meta}
+// Use options to enable Lua validation support:
+//
+//	svc := validation.New(meta, validation.WithWorkspace(ws), validation.WithProjectRoot(root))
+func New(meta *metamodel.Metamodel, opts ...Option) *Service {
+	s := &Service{meta: meta}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Rules returns the validation rules from the metamodel.
@@ -156,10 +187,35 @@ func (s *Service) entityViolatesRule(
 		}
 	}
 
+	// Check Lua validation rules
+	if (rule.Lua != "" || rule.LuaFile != "") && !s.luaValidates(entity, rule) {
+		return true
+	}
+
 	// Check content rules
 	if rule.Content != nil && !markdown.CheckContentRule(entity, rule.Content) {
 		return true
 	}
 
 	return false
+}
+
+// luaValidates runs Lua validation and returns true if the entity passes.
+// Returns true (no violation) if:
+//   - No workspace configured (Lua rules are skipped)
+//   - Lua validation passes
+//
+// Returns false (violation) if Lua returns false/nil.
+func (s *Service) luaValidates(entity *model.Entity, rule metamodel.ValidationRule) bool {
+	// Skip Lua validation if no workspace configured
+	if s.ws == nil {
+		return true
+	}
+
+	// Lazy-initialize the Lua executor
+	if s.luaExec == nil {
+		s.luaExec = newLuaExecutor(s.ws, s.meta, s.projectRoot)
+	}
+
+	return s.luaExec.validate(entity, rule)
 }

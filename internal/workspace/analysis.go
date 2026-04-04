@@ -342,7 +342,15 @@ type ValidationViolation = validation.Violation
 
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.
 func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
-	svc := validation.New(w.meta)
+	// Build options for validation service
+	validationOpts := []validation.Option{
+		validation.WithWorkspace(w),
+	}
+	if w.repo != nil {
+		validationOpts = append(validationOpts, validation.WithProjectRoot(w.repo.Paths().Root))
+	}
+
+	svc := validation.New(w.meta, validationOpts...)
 	return svc.Check(w.graph.AllNodes(), opts.Scope)
 }
 
@@ -350,7 +358,15 @@ func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
 // Multiple filters are combined with OR (union of matching rules).
 // If a filter has both RuleName and EntityType empty, all rules match.
 func (w *Workspace) RunValidationsFiltered(opts AnalyzeOptions, filters []ValidationFilter) []ValidationViolation {
-	svc := validation.New(w.meta)
+	// Build options for validation service
+	validationOpts := []validation.Option{
+		validation.WithWorkspace(w),
+	}
+	if w.repo != nil {
+		validationOpts = append(validationOpts, validation.WithProjectRoot(w.repo.Paths().Root))
+	}
+
+	svc := validation.New(w.meta, validationOpts...)
 
 	// Build set of rule names to run based on filters
 	ruleNames := make(map[string]bool)
