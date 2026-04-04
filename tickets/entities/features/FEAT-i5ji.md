@@ -1,9 +1,10 @@
 ---
-description: Add Lua scripting capability using gopher-lua to enable programmable views as an alternative to declarative YAML views. Scripts can invoke rela functions to query entities and relations, then produce structured output as JSON.
 id: FEAT-i5ji
-status: proposed
-title: Lua scripting support for programmable views
 type: feature
+title: Lua scripting support for programmable views
+summary: Execute Lua scripts for complex data extraction and transformation via rela script command
+description: Add Lua scripting capability using gopher-lua to enable programmable views as an alternative to declarative YAML views. Scripts can invoke rela functions to query entities and relations, then produce structured output as JSON.
+status: implemented
 ---
 
 # Lua Scripting Support
