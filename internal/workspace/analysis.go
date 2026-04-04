@@ -340,33 +340,27 @@ func (w *Workspace) ValidateProperties(opts AnalyzeOptions) []PropertyError {
 // ValidationViolation is re-exported from the validation package.
 type ValidationViolation = validation.Violation
 
-// RunValidations executes all custom validation rules from the metamodel, filtered by scope.
-func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
-	// Build options for validation service
-	validationOpts := []validation.Option{
+// newValidationService creates a validation service with workspace and project root configured.
+func (w *Workspace) newValidationService() *validation.Service {
+	opts := []validation.Option{
 		validation.WithWorkspace(w),
 	}
 	if w.repo != nil {
-		validationOpts = append(validationOpts, validation.WithProjectRoot(w.repo.Paths().Root))
+		opts = append(opts, validation.WithProjectRoot(w.repo.Paths().Root))
 	}
+	return validation.New(w.meta, opts...)
+}
 
-	svc := validation.New(w.meta, validationOpts...)
-	return svc.Check(w.graph.AllNodes(), opts.Scope)
+// RunValidations executes all custom validation rules from the metamodel, filtered by scope.
+func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
+	return w.newValidationService().Check(w.graph.AllNodes(), opts.Scope)
 }
 
 // RunValidationsFiltered executes custom validation rules matching the given filters.
 // Multiple filters are combined with OR (union of matching rules).
 // If a filter has both RuleName and EntityType empty, all rules match.
 func (w *Workspace) RunValidationsFiltered(opts AnalyzeOptions, filters []ValidationFilter) []ValidationViolation {
-	// Build options for validation service
-	validationOpts := []validation.Option{
-		validation.WithWorkspace(w),
-	}
-	if w.repo != nil {
-		validationOpts = append(validationOpts, validation.WithProjectRoot(w.repo.Paths().Root))
-	}
-
-	svc := validation.New(w.meta, validationOpts...)
+	svc := w.newValidationService()
 
 	// Build set of rule names to run based on filters
 	ruleNames := make(map[string]bool)
