@@ -30,6 +30,9 @@ rela lua scripts/report.lua
 
 # Pass arguments
 rela lua scripts/migrate.lua --from=v1 --to=v2
+
+# Run an interactive flow (with user prompts)
+rela flow scripts/create-ticket.lua
 ```
 
 ### Script Location
@@ -45,6 +48,211 @@ project/
 ├── entities/
 └── metamodel.yaml
 ```
+
+## Interactive Flows
+
+Interactive flows allow Lua scripts to present forms to users and receive input. The script
+suspends at each form, waits for user input, then continues execution. This enables multi-step
+wizards, guided entity creation, and interactive data collection.
+
+### Running a Flow
+
+```bash
+rela flow scripts/create-ticket.lua
+```
+
+### Executable Scripts
+
+Flow scripts can be made directly executable with a shebang:
+
+```lua
+#!/usr/bin/env -S rela flow
+-- Your flow script here
+
+local event = rela.flow.emit({
+    type = "form",
+    -- ...
+})
+```
+
+Then run directly:
+
+```bash
+chmod +x scripts/create-ticket.lua
+./scripts/create-ticket.lua
+```
+
+### The emit() Function
+
+Use `rela.flow.emit()` to present a form and wait for user response:
+
+```lua
+local event = rela.flow.emit({
+    type = "form",
+    title = "Create Ticket",
+    fields = {
+        {name = "title", type = "text", required = true},
+        {name = "priority", type = "select",
+         options = {{"high", "High"}, {"medium", "Medium"}, {"low", "Low"}}},
+    },
+    actions = {
+        {"submit", "Create"},
+        {"cancel", "Cancel"},
+    },
+})
+
+if event.action == "cancel" then
+    return
+end
+
+rela.create_entity("ticket", {
+    title = event.data.title,
+    priority = event.data.priority,
+})
+```
+
+### Form Specification
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `type` | string | yes | Must be `"form"` |
+| `title` | string | no | Form title |
+| `description` | string | no | Help text shown below title |
+| `fields` | array | yes | Field definitions (see below) |
+| `actions` | array | yes | Action buttons (see below) |
+
+### Field Types
+
+| Type | Options | Returns |
+|------|---------|---------|
+| `text` | `required`, `default`, `placeholder`, `lines` | string |
+| `select` | `options`, `required`, `default` | selected value |
+| `multi-select` | `options`, `required`, `default` | array of values |
+| `boolean` | `default` | true/false |
+| `number` | `required`, `default`, `min`, `max`, `step` | number |
+| `date` | `required`, `default`, `min`, `max` | "YYYY-MM-DD" |
+| `markdown` | `content`, `label` | (display only, no data) |
+
+### Field Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | string | Field identifier (required, except for markdown) |
+| `type` | string | Field type (required) |
+| `label` | string | Display label (defaults to title-cased name) |
+| `content` | string | Markdown content (required for markdown fields) |
+| `required` | boolean | Whether field is required |
+| `default` | varies | Default value |
+| `placeholder` | string | Placeholder text (text fields only) |
+| `lines` | number | Number of lines for textarea (text fields only) |
+| `options` | array | Options for select/multi-select: `{{"value", "Label"}, ...}` |
+| `min`, `max` | number/string | Bounds for number or date fields |
+| `step` | number | Step increment for number fields |
+
+### Markdown Fields
+
+Markdown fields display formatted text within a form. They don't collect user input—use them to
+provide instructions, context, or visual separators between input fields:
+
+```lua
+fields = {
+    {type = "markdown", content = "## Instructions\nPlease fill out the form below."},
+    {name = "title", type = "text", required = true},
+    {type = "markdown", content = "---\n*Additional options:*"},
+    {name = "priority", type = "select", options = {{"high", "High"}, {"low", "Low"}}},
+    {type = "markdown", label = "Note", content = "Fields marked with * are required."},
+}
+```
+
+Markdown fields support:
+
+- `content` (required): The markdown text to display
+- `label` (optional): A title shown above the content
+
+### Actions
+
+Actions are defined as tuples: `{id, label}` or `{id, label, style}`:
+
+```lua
+actions = {
+    {"submit", "Create"},           -- Default style
+    {"cancel", "Cancel", "warning"}, -- Warning style
+}
+```
+
+Styles: `primary`, `warning`, `danger`
+
+### Event Response
+
+When a form is submitted, `emit()` returns an event table:
+
+```lua
+{
+    action = "submit",  -- The action ID the user chose
+    data = {            -- Field values (for submit-like actions)
+        title = "My Ticket",
+        priority = "high",
+    },
+}
+```
+
+### Multi-Step Flows
+
+Scripts can present multiple forms in sequence:
+
+```lua
+local data = {}
+
+-- Step 1: Basic info
+local e1 = rela.flow.emit({
+    type = "form",
+    title = "Step 1: Basic Info",
+    fields = {
+        {name = "title", type = "text", required = true},
+        {name = "kind", type = "select",
+         options = {{"bug", "Bug"}, {"feature", "Feature"}}},
+    },
+    actions = {{"next", "Next"}, {"cancel", "Cancel"}},
+})
+if e1.action == "cancel" then return end
+data.title = e1.data.title
+data.kind = e1.data.kind
+
+-- Step 2: Details
+local e2 = rela.flow.emit({
+    type = "form",
+    title = "Step 2: Details",
+    fields = {
+        {name = "description", type = "text", lines = 5},
+        {name = "priority", type = "select",
+         options = {{"high", "High"}, {"medium", "Medium"}, {"low", "Low"}}},
+    },
+    actions = {{"back", "Back"}, {"submit", "Create"}, {"cancel", "Cancel"}},
+})
+if e2.action == "cancel" then return end
+if e2.action == "back" then
+    -- Handle back navigation (use goto or restructure as loop)
+end
+data.description = e2.data.description
+data.priority = e2.data.priority
+
+rela.create_entity("ticket", data)
+```
+
+### Error Handling
+
+Validation errors (invalid form spec) raise Lua errors. User cancellation is handled via
+actions, not errors:
+
+```lua
+-- Handle cancel action explicitly
+if event.action == "cancel" then
+    print("User cancelled")
+    return
+end
+```
+
+Transport errors (e.g., terminal not interactive) also raise Lua errors.
 
 ## API Reference
 
@@ -85,12 +293,28 @@ project/
 | `rela.output(data)` | Output data as JSON to stdout |
 | `rela.write_file(path, content)` | Write file to `output/` directory |
 
+### Flow Functions
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.flow.emit(screen)` | Present form, wait for user input | event table |
+
+See [Interactive Flows](#interactive-flows) for detailed documentation.
+
+### Utility Functions
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.days_since(date)` | Days between date and today | number (-1 if invalid) |
+| `rela.sort_entities(list, prop, dir?)` | Sort entities by property | sorted table |
+
 ### Context
 
 | Variable | Description |
 |----------|-------------|
 | `rela.project_root` | Absolute path to project root |
 | `rela.args` | Script arguments (table) |
+| `rela.today` | Current date as "YYYY-MM-DD" |
 
 ## Entity Structure
 
@@ -101,6 +325,7 @@ Entities returned by query functions have this structure:
     id = "TKT-001",
     type = "ticket",
     content = "Markdown body...",
+    mod_time = "2024-01-15T10:30:00Z",  -- RFC3339 timestamp
     properties = {
         title = "Fix login bug",
         status = "open",
@@ -108,6 +333,11 @@ Entities returned by query functions have this structure:
     }
 }
 ```
+
+Entities also have helper methods:
+
+- `entity:prop(name, default)` - Get property with fallback default
+- `entity:strip_prefix()` - Get ID without type prefix (e.g., "001" from "TKT-001")
 
 ## Filter Expressions
 

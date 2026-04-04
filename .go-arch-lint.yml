@@ -69,6 +69,8 @@ components:
 vendors:
   bleve:       { in: github.com/blevesearch/bleve/** }
   cobra:       { in: github.com/spf13/cobra }
+  glamour:     { in: github.com/charmbracelet/glamour }
+  huh:         { in: github.com/charmbracelet/huh }
   yaml:        { in: gopkg.in/yaml.v3 }
   goldmark:
     in:
@@ -140,6 +142,8 @@ deps:
     canUse:
       - cobra
       - color
+      - glamour
+      - huh
       - tablewriter
 
   # Web / UI layer

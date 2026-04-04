@@ -35,13 +35,14 @@ const (
 
 // Runtime wraps gopher-lua VM with rela bindings.
 type Runtime struct {
-	L           *lua.LState
-	ws          WorkspaceInterface
-	meta        *metamodel.Metamodel
-	stdout      io.Writer
-	projectRoot string
-	outputDir   string        // Directory where write_file can write (defaults to "output")
-	timeout     time.Duration // Execution timeout (0 = no timeout)
+	L             *lua.LState
+	ws            WorkspaceInterface
+	meta          *metamodel.Metamodel
+	stdout        io.Writer
+	projectRoot   string
+	outputDir     string        // Directory where write_file can write (defaults to "output")
+	timeout       time.Duration // Execution timeout (0 = no timeout)
+	cancelTimeout context.CancelFunc
 }
 
 // Option configures a Runtime.
@@ -170,14 +171,21 @@ func (r *Runtime) RunString(code string) error {
 // applyTimeout sets the execution timeout on the Lua state.
 // Must be called before executing any Lua code.
 func (r *Runtime) applyTimeout() {
+	r.clearTimeout()
 	if r.timeout > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
-		// Store cancel func to allow cleanup - but since Runtime.Close() will
-		// close the Lua state anyway, we just need to set the context.
-		// The context will be canceled when it times out or the runtime closes.
-		_ = cancel // Silence unused warning; context cancellation happens via timeout or state close
+		r.cancelTimeout = cancel
 		r.L.SetContext(ctx)
 	}
+}
+
+// clearTimeout cancels any active timeout and removes the context from the Lua state.
+func (r *Runtime) clearTimeout() {
+	if r.cancelTimeout != nil {
+		r.cancelTimeout()
+		r.cancelTimeout = nil
+	}
+	r.L.RemoveContext()
 }
 
 // SetArgs sets the script arguments (rela.args) before execution.
@@ -194,6 +202,7 @@ func (r *Runtime) SetArgs(args []string) {
 
 // Close releases Lua VM resources.
 func (r *Runtime) Close() {
+	r.clearTimeout()
 	r.L.Close()
 }
 
@@ -241,6 +250,8 @@ func (r *Runtime) registerBindings() {
 
 	// Utility functions
 	r.L.SetField(rela, "sort_entities", r.L.NewFunction(r.luaSortEntities))
+	r.L.SetField(rela, "days_since", r.L.NewFunction(luaDaysSince))
+	r.L.SetField(rela, "today", lua.LString(time.Now().Format("2006-01-02")))
 
 	// Context
 	r.L.SetField(rela, "project_root", lua.LString(r.projectRoot))
@@ -489,6 +500,13 @@ func EntityToTable(ls *lua.LState, e *model.Entity) *lua.LTable {
 	t.RawSetString("id", lua.LString(e.ID))
 	t.RawSetString("type", lua.LString(e.Type))
 	t.RawSetString("content", lua.LString(e.Content))
+
+	// Add modification time as ISO 8601 string (empty if zero)
+	if !e.ModTime.IsZero() {
+		t.RawSetString("mod_time", lua.LString(e.ModTime.Format(time.RFC3339)))
+	} else {
+		t.RawSetString("mod_time", lua.LString(""))
+	}
 
 	props := ls.NewTable()
 	for k, v := range e.Properties {
@@ -1124,4 +1142,39 @@ func luaValueToSortable(v lua.LValue) (str string, num float64, isNum bool) {
 	default:
 		return v.String(), 0, false
 	}
+}
+
+// hoursPerDay is the number of hours in a day.
+const hoursPerDay = 24
+
+// luaDaysSince implements rela.days_since(date_string) -> number
+// Calculates the number of days between the given date and today.
+// Accepts RFC3339 (2006-01-02T15:04:05Z07:00) or date-only (2006-01-02) formats.
+// Returns -1 if the date cannot be parsed.
+func luaDaysSince(ls *lua.LState) int {
+	dateStr := ls.CheckString(1)
+	if dateStr == "" {
+		ls.Push(lua.LNumber(-1))
+		return 1
+	}
+
+	var t time.Time
+	var err error
+
+	// Try RFC3339 first (includes timezone)
+	t, err = time.Parse(time.RFC3339, dateStr)
+	if err != nil {
+		// Fall back to date-only format
+		t, err = time.Parse("2006-01-02", dateStr)
+	}
+
+	if err != nil {
+		ls.Push(lua.LNumber(-1))
+		return 1
+	}
+
+	now := time.Now()
+	days := int(now.Sub(t).Hours() / hoursPerDay)
+	ls.Push(lua.LNumber(days))
+	return 1
 }
