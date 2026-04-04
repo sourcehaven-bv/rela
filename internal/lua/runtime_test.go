@@ -1992,3 +1992,178 @@ rela.output({table = tbl})
 		t.Errorf("Expected default value 'draft', got %q", tableStr)
 	}
 }
+
+// Tests for shebang handling
+
+func TestStripShebang_WithShebang(t *testing.T) {
+	code := "#!/usr/bin/env rela script\nprint('hello')"
+	result := StripShebang(code)
+
+	// Should strip shebang but preserve newline (line 1 becomes blank)
+	expected := "\nprint('hello')"
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestStripShebang_WithoutShebang(t *testing.T) {
+	code := "print('hello')"
+	result := StripShebang(code)
+
+	if result != code {
+		t.Errorf("Expected unchanged code %q, got %q", code, result)
+	}
+}
+
+func TestStripShebang_ShebangOnly(t *testing.T) {
+	code := "#!/usr/bin/env rela script"
+	result := StripShebang(code)
+
+	if result != "" {
+		t.Errorf("Expected empty string, got %q", result)
+	}
+}
+
+func TestStripShebang_HashButNotShebang(t *testing.T) {
+	// Single # is not a shebang
+	code := "#not a shebang\nprint('hello')"
+	result := StripShebang(code)
+
+	if result != code {
+		t.Errorf("Expected unchanged code %q, got %q", code, result)
+	}
+}
+
+func TestStripShebang_EmptyString(t *testing.T) {
+	result := StripShebang("")
+	if result != "" {
+		t.Errorf("Expected empty string, got %q", result)
+	}
+}
+
+func TestStripShebang_ShebangInMiddle(t *testing.T) {
+	// Shebang-like content in middle of file should NOT be stripped
+	code := "print('hello')\n#!/usr/bin/env rela\nprint('world')"
+	result := StripShebang(code)
+
+	if result != code {
+		t.Errorf("Expected unchanged code %q, got %q", code, result)
+	}
+}
+
+func TestStripShebang_WindowsLineEndings(t *testing.T) {
+	// Windows CRLF line endings - the \r is stripped along with the shebang content
+	// since it comes before the \n that marks the end of the shebang line
+	code := "#!/usr/bin/env rela script\r\nprint('hello')"
+	result := StripShebang(code)
+
+	// The result starts from \n, so line 1 is blank and line 2 is print('hello')
+	expected := "\nprint('hello')"
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestRunString_WithShebang(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	// Script with shebang should execute successfully
+	script := "#!/usr/bin/env rela script\nrela.output({status = 'ok'})"
+	err := r.RunString(script)
+	if err != nil {
+		t.Fatalf("RunString with shebang failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if result["status"] != "ok" {
+		t.Errorf("Expected status=ok, got %v", result["status"])
+	}
+}
+
+func TestRunFile_WithShebang(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	// Create a temp script with shebang
+	script := "#!/usr/bin/env rela script\nrela.output({status = 'ok'})"
+	tmpFile := filepath.Join(t.TempDir(), "test.lua")
+	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.RunFile(tmpFile, nil); err != nil {
+		t.Fatalf("RunFile with shebang failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if result["status"] != "ok" {
+		t.Errorf("Expected status=ok, got %v", result["status"])
+	}
+}
+
+func TestRunFile_ErrorLineNumbers_WithShebang(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	// Script with shebang and error on line 2
+	script := "#!/usr/bin/env rela script\nsyntax error here"
+	tmpFile := filepath.Join(t.TempDir(), "test.lua")
+	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := r.RunFile(tmpFile, nil)
+	if err == nil {
+		t.Fatal("Expected error for syntax error")
+	}
+
+	// Error should mention line 2 (not line 1)
+	errStr := err.Error()
+	if !strings.Contains(errStr, "line:2") {
+		t.Errorf("Expected error on line 2, got: %v", errStr)
+	}
+}
+
+func TestRunFile_ErrorIncludesFilename(t *testing.T) {
+	ws := testWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	// Script with syntax error
+	script := "syntax error"
+	tmpFile := filepath.Join(t.TempDir(), "mytest.lua")
+	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := r.RunFile(tmpFile, nil)
+	if err == nil {
+		t.Fatal("Expected error for syntax error")
+	}
+
+	// Error should include filename
+	errStr := err.Error()
+	if !strings.Contains(errStr, "mytest.lua") {
+		t.Errorf("Expected error to include filename, got: %v", errStr)
+	}
+}
