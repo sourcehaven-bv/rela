@@ -1064,20 +1064,33 @@ validations:
 
 #### External Lua Scripts
 
-For longer scripts, use `lua_file` to reference a script in the `scripts/` directory:
+For longer scripts, use `lua_file` to reference a script in the `scripts/` directory.
+Use `lua_args` to pass parameters to the script (available as `rela.args`):
 
 ```yaml
 validations:
-  - name: component-coverage
-    description: "Components must have at least 80% test coverage"
+  - name: component-coverage-high
+    description: "Critical components need 90% coverage"
+    entity_type: component
+    when:
+      - "criticality=high"
+    lua_file: validations/check-coverage.lua
+    lua_args: ["90"]
+    severity: error
+  - name: component-coverage-standard
+    description: "Components need 80% coverage"
     entity_type: component
     lua_file: validations/check-coverage.lua
-    severity: error
+    lua_args: ["80"]
+    severity: warning
 ```
 
 ```lua
 -- scripts/validations/check-coverage.lua
 -- Entity is available as a global variable
+-- Arguments are available via rela.args
+
+local min_coverage = tonumber(rela.args[1]) or 80
 
 local coverage = entity.properties.test_coverage
 if coverage == nil then
@@ -1090,8 +1103,8 @@ if value == nil then
   return nil  -- Can't parse, pass
 end
 
-if value < 80 then
-  return { message = "Coverage is " .. value .. "%, minimum is 80%" }
+if value < min_coverage then
+  return { message = "Coverage is " .. value .. "%, minimum is " .. min_coverage .. "%" }
 end
 return nil
 ```

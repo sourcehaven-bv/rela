@@ -92,6 +92,11 @@ func (e *luaExecutor) validate(
 	runtime := lua.New(e.ws, e.meta, e.projectRoot, io.Discard)
 	defer runtime.Close()
 
+	// Set arguments if provided
+	if len(rule.LuaArgs) > 0 {
+		runtime.SetArgs(rule.LuaArgs)
+	}
+
 	// Inject entity as global
 	ls := runtime.LState()
 	ls.SetGlobal("entity", lua.EntityToTable(ls, entity))

@@ -61,6 +61,10 @@ type ValidationRule struct {
 	// The script should return true if valid, or false/nil for a violation.
 	// Example: "validate-dates.lua" loads scripts/validate-dates.lua
 	LuaFile string `yaml:"lua_file,omitempty"`
+
+	// LuaArgs specifies arguments to pass to Lua validation scripts.
+	// Available as rela.args in the Lua runtime.
+	LuaArgs []string `yaml:"lua_args,omitempty"`
 }
 
 // GetSeverity returns the severity level, defaulting to "warning"
