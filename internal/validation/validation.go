@@ -41,7 +41,7 @@ func WithWorkspace(ws lua.WorkspaceInterface) Option {
 }
 
 // WithProjectRoot sets the project root for loading lua_file scripts.
-// Scripts are loaded from the scripts/ directory within the project root.
+// Scripts are loaded from the validations/ directory within the project root.
 func WithProjectRoot(root string) Option {
 	return func(s *Service) {
 		s.projectRoot = root

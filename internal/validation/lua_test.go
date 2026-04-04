@@ -683,10 +683,10 @@ func TestLuaValidation_RuntimeError(t *testing.T) {
 func TestLuaValidation_ScriptFile(t *testing.T) {
 	ws := newMockWorkspace()
 
-	// Create temp directory with scripts/ subdirectory
+	// Create temp directory with validations/ subdirectory
 	tmpDir := t.TempDir()
-	scriptsDir := filepath.Join(tmpDir, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+	validationsDir := filepath.Join(tmpDir, "validations")
+	if err := os.MkdirAll(validationsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -697,7 +697,7 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 		end
 		return nil
 	`
-	if err := os.WriteFile(filepath.Join(scriptsDir, "validate-status.lua"), []byte(scriptContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(validationsDir, "validate-status.lua"), []byte(scriptContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -741,9 +741,9 @@ func TestLuaValidation_ScriptFileNotFound(t *testing.T) {
 	ws := newMockWorkspace()
 	tmpDir := t.TempDir()
 
-	// Create scripts directory but no script file
-	scriptsDir := filepath.Join(tmpDir, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+	// Create validations directory but no script file
+	validationsDir := filepath.Join(tmpDir, "validations")
+	if err := os.MkdirAll(validationsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -944,16 +944,16 @@ func TestLuaValidation_PathTraversal(t *testing.T) {
 	ws := newMockWorkspace()
 	tmpDir := t.TempDir()
 
-	// Create scripts directory with a valid script
-	scriptsDir := filepath.Join(tmpDir, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+	// Create validations directory with a valid script
+	validationsDir := filepath.Join(tmpDir, "validations")
+	if err := os.MkdirAll(validationsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(scriptsDir, "valid.lua"), []byte(`return nil`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(validationsDir, "valid.lua"), []byte(`return nil`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create a secret file outside scripts/
+	// Create a secret file outside validations/
 	secretPath := filepath.Join(tmpDir, "secret.lua")
 	if err := os.WriteFile(secretPath, []byte(`return { message = "should not run" }`), 0644); err != nil {
 		t.Fatal(err)

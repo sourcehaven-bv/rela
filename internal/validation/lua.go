@@ -18,8 +18,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
-// scriptsDir is the directory where script files must be located.
-const scriptsDir = "scripts"
+// validationsDir is the directory where validation script files must be located.
+const validationsDir = "validations"
 
 // validationTimeout is the maximum execution time for a single validation rule.
 // This prevents infinite loops in malicious or buggy Lua code.
@@ -202,7 +202,7 @@ func (e *luaExecutor) tableToViolation(
 	}
 }
 
-// loadScript loads a Lua script from the scripts/ directory.
+// loadScript loads a Lua script from the validations/ directory.
 // Uses os.OpenRoot for traversal-resistant file access.
 func (e *luaExecutor) loadScript(scriptPath string) (string, error) {
 	// Security: Validate path is local (no "..", no absolute paths)
@@ -224,15 +224,15 @@ func (e *luaExecutor) loadScript(scriptPath string) (string, error) {
 	}
 	defer root.Close()
 
-	scriptsRoot, err := root.OpenRoot(scriptsDir)
+	validationsRoot, err := root.OpenRoot(validationsDir)
 	if err != nil {
-		return "", errors.New("cannot access scripts directory")
+		return "", errors.New("cannot access validations directory")
 	}
-	defer scriptsRoot.Close()
+	defer validationsRoot.Close()
 
-	scriptFile, err := scriptsRoot.Open(scriptPath)
+	scriptFile, err := validationsRoot.Open(scriptPath)
 	if err != nil {
-		return "", fmt.Errorf("script not found: %s (must be in scripts/ directory)", scriptPath)
+		return "", fmt.Errorf("script not found: %s (must be in validations/ directory)", scriptPath)
 	}
 	defer scriptFile.Close()
 

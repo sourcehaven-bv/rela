@@ -1058,7 +1058,7 @@ validations:
 
 #### External Lua Scripts
 
-For longer scripts, use `lua_file` to reference a script in the `scripts/` directory.
+For longer scripts, use `lua_file` to reference a script in the `validations/` directory.
 Use `lua_args` to pass parameters to the script (available as `rela.args`):
 
 ```yaml
@@ -1068,19 +1068,19 @@ validations:
     entity_type: component
     when:
       - "criticality=high"
-    lua_file: validations/check-coverage.lua
+    lua_file: check-coverage.lua
     lua_args: ["90"]
     severity: error
   - name: component-coverage-standard
     description: "Components need 80% coverage"
     entity_type: component
-    lua_file: validations/check-coverage.lua
+    lua_file: check-coverage.lua
     lua_args: ["80"]
     severity: warning
 ```
 
 ```lua
--- scripts/validations/check-coverage.lua
+-- validations/check-coverage.lua
 -- Entity is available as a global variable
 -- Arguments are available via rela.args
 
@@ -1175,7 +1175,7 @@ Lua validation runs in a sandboxed environment:
 
 - **Read-only workspace**: Scripts cannot create, update, or delete entities
 - **Execution timeout**: Scripts are terminated after 5 seconds to prevent infinite loops
-- **Path restrictions**: `lua_file` scripts must be in the `scripts/` directory with `.lua` extension
+- **Path restrictions**: `lua_file` scripts must be in the `validations/` directory with `.lua` extension
 - **No file I/O**: Scripts cannot read or write files directly
 
 Errors in Lua scripts (syntax errors, runtime errors, timeouts) are logged and the validation
