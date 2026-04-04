@@ -2,7 +2,6 @@
 id: FEAT-GM14
 type: feature
 title: Checklist validation for markdown content
-summary: Validate markdown checklist completion with all-checked and allow-skipped options
 description: Add validation rules for markdown checklists (task lists) within entity bodies, enabling CI gates that require all tasks to be completed
 status: implemented
 ---
