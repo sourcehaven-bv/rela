@@ -1998,3 +1998,136 @@ func newTestAppV1(t *testing.T) *App {
 		Cfg:  cfg,
 	}
 }
+
+func TestV1EntityRelationsNotFound(t *testing.T) {
+	app := newTestAppV1(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/NONEXISTENT/relations", http.NoBody)
+	rec := httptest.NewRecorder()
+
+	app.mu.RLock()
+	app.handleV1EntityRelations(rec, req, "ticket", "NONEXISTENT")
+	app.mu.RUnlock()
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", rec.Code)
+	}
+
+	if rec.Header().Get("Content-Type") != "application/problem+json" {
+		t.Errorf("expected Content-Type 'application/problem+json', got %q",
+			rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestV1EntityRelationsWrongType(t *testing.T) {
+	app := newTestAppV1(t)
+
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Test Ticket",
+			"status": "open",
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/TKT-001/relations", http.NoBody)
+	rec := httptest.NewRecorder()
+
+	app.mu.RLock()
+	app.handleV1EntityRelations(rec, req, "feature", "TKT-001")
+	app.mu.RUnlock()
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", rec.Code)
+	}
+}
+
+func TestV1DeleteEntityNotFound(t *testing.T) {
+	app := newTestAppV1(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tickets/NONEXISTENT", http.NoBody)
+	rec := httptest.NewRecorder()
+
+	app.mu.RLock()
+	app.handleV1DeleteEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
+	app.mu.RUnlock()
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", rec.Code)
+	}
+
+	if rec.Header().Get("Content-Type") != "application/problem+json" {
+		t.Errorf("expected Content-Type 'application/problem+json', got %q",
+			rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestV1UpdateEntityNotFound(t *testing.T) {
+	app := newTestAppV1(t)
+
+	body := strings.NewReader(`{"properties":{"title":"Updated"}}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/NONEXISTENT", body)
+	rec := httptest.NewRecorder()
+
+	app.mu.RLock()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
+	app.mu.RUnlock()
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", rec.Code)
+	}
+}
+
+func TestV1UpdateEntityInvalidJSON(t *testing.T) {
+	app := newTestAppV1(t)
+
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Test Ticket",
+			"status": "open",
+		},
+	})
+
+	body := strings.NewReader(`{invalid json`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001", body)
+	rec := httptest.NewRecorder()
+
+	app.mu.RLock()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.mu.RUnlock()
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestExtractEntityIDs(t *testing.T) {
+	entities := []*model.Entity{
+		{ID: "REQ-001"},
+		{ID: "REQ-002"},
+		{ID: "DEC-001"},
+	}
+
+	got := extractEntityIDs(entities)
+	want := []string{"REQ-001", "REQ-002", "DEC-001"}
+
+	if len(got) != len(want) {
+		t.Fatalf("extractEntityIDs() returned %d IDs, want %d", len(got), len(want))
+	}
+
+	for i, id := range got {
+		if id != want[i] {
+			t.Errorf("extractEntityIDs()[%d] = %q, want %q", i, id, want[i])
+		}
+	}
+}
+
+func TestExtractEntityIDs_Empty(t *testing.T) {
+	got := extractEntityIDs(nil)
+	if len(got) != 0 {
+		t.Errorf("extractEntityIDs(nil) returned %d IDs, want 0", len(got))
+	}
+}

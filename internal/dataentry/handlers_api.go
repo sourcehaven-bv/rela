@@ -818,6 +818,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleAPISaveSettings saves the user defaults from JSON input.
+// Note: Called under reloadLockMiddleware which holds RLock.
 func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 	var input APIUserDefaults
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -838,15 +839,21 @@ func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Upgrade from read lock to write lock (middleware holds RLock)
+	a.mu.RUnlock()
+	a.mu.Lock()
+	defer func() {
+		a.mu.Unlock()
+		a.mu.RLock()
+	}()
+
 	// Save to file
 	if err := a.saveUserDefaults(&ud); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to save settings: "+err.Error())
 		return
 	}
 
-	a.mu.Lock()
 	a.userDefaults = &ud
-	a.mu.Unlock()
 
 	writeJSON(w, map[string]bool{"ok": true})
 }

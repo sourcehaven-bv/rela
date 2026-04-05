@@ -35,7 +35,7 @@ Vue 3 frontend for rela data entry application. Communicates with the Go backend
 
 ### Data Flow
 
-```
+```text
 Backend API (/api/v1/*)
      ↓
 src/api/          → Axios API client layer
@@ -70,15 +70,18 @@ src/components/   → Reusable UI components
 
 ### SSE Real-time Updates
 
-`useEvents` composable connects to `/api/v1/_events` SSE endpoint. On entity changes, it calls `entitiesStore.invalidateAll()` to refresh cached data.
+`useEvents` composable connects to `/api/v1/_events` SSE endpoint.
+On entity changes, it calls `entitiesStore.invalidateAll()` to refresh cached data.
 
 ### Routing
 
-Routes use dynamic imports for code splitting. Config-driven IDs (e.g., `/list/:id`, `/form/:id`) resolve to `data-entry.yaml` configuration from the backend.
+Routes use dynamic imports for code splitting. Config-driven IDs (e.g., `/list/:id`, `/form/:id`)
+resolve to `data-entry.yaml` configuration from the backend.
 
 ## E2E Test Architecture
 
 Each test gets an isolated backend:
+
 1. Fixture copies `prototypes/data-entry/project/` to temp directory
 2. Starts fresh `rela-server` on random port
 3. `page.route()` intercepts `/api/*` requests to the test's backend
@@ -89,6 +92,7 @@ Page objects are in `e2e/page-objects/` and follow the pattern: navigate to page
 ## Lint Configuration
 
 ESLint flat config with:
+
 - Vue 3 recommended + TypeScript
 - `vue/no-v-html: warn` (XSS risk)
 - `max-lines: 500` warning for Vue files (catches god components)
@@ -97,6 +101,7 @@ ESLint flat config with:
 ## CSS Architecture
 
 Global styles in `App.vue` use CSS custom properties for theming:
+
 - Light/dark mode via `:root.dark` class
 - Shared utility classes: `.btn`, `.btn-primary`, `.modal`, `.page-header`
 - Components use scoped styles with BEM-like naming

@@ -15,7 +15,7 @@ func newHandlerTestApp(t *testing.T) *App {
 	t.Helper()
 	meta := testMeta()
 	cfg := testConfig()
-	g := testGraph()
+	g, _ := testGraph(meta)
 
 	// Add a relation for testing edge display
 	g.AddEdge(model.NewRelation("TKT-001", "depends_on", "TKT-002"))

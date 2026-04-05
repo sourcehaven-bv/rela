@@ -39,6 +39,7 @@ exclude:
   paths:
     - ^cmd/rela              # main entry point
     - ^internal/testutil     # test helpers
+    - ^frontend/node_modules # Go files in npm dependencies
 
 # Require coverage-ignore annotations to have explanatory comments
 force-annotation-comment: true

@@ -20,9 +20,9 @@ export class KanbanPage extends BasePage {
     return this.page.locator('.kanban-view').first()
   }
 
-  /** The kanban board container */
+  /** The kanban board container (regular or swimlane) */
   get boardContainer(): Locator {
-    return this.page.locator('.kanban-board').first()
+    return this.page.locator('.kanban-board, .kanban-swimlane-board').first()
   }
 
   /** Page header (shows when loaded successfully) */

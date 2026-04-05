@@ -6,21 +6,20 @@ import (
 	"testing"
 )
 
-func TestNewRouterRegistersRoutes(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+func TestNewRouterRegistersAPIRoutes(t *testing.T) {
+	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 
 	handler := app.NewRouter()
 
+	// Test API routes (SPA routes depend on embedded frontend build)
 	tests := []struct {
 		path       string
 		wantStatus int
 	}{
-		{"/", http.StatusOK},
-		{"/list/tickets", http.StatusOK},
-		{"/dashboard", http.StatusOK},
-		{"/search", http.StatusOK},
-		{"/graph", http.StatusOK},
+		{"/api/v1/_schema", http.StatusOK},
+		{"/api/v1/_config", http.StatusOK},
+		{"/api/graph-data", http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -36,7 +35,7 @@ func TestNewRouterRegistersRoutes(t *testing.T) {
 }
 
 func TestNewRouterStaticFiles(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 
 	handler := app.NewRouter()
@@ -52,7 +51,7 @@ func TestNewRouterStaticFiles(t *testing.T) {
 }
 
 func TestNewRouterStaticFilesNoCacheHeader(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 	handler := app.NewRouter()
 
@@ -67,7 +66,7 @@ func TestNewRouterStaticFilesNoCacheHeader(t *testing.T) {
 }
 
 func TestNewRouterAPIHasNoCacheHeader(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 	handler := app.NewRouter()
 
@@ -83,7 +82,7 @@ func TestNewRouterAPIHasNoCacheHeader(t *testing.T) {
 }
 
 func TestNewRouterSSEEndpoint(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 
 	handler := app.NewRouter()

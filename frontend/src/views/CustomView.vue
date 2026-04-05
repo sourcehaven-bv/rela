@@ -9,6 +9,7 @@ import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
 import { renderMarkdown } from '@/utils/markdown'
 import Badge from '@/components/common/Badge.vue'
+import LinkExistingModal from '@/components/forms/LinkExistingModal.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
 import type { ViewSectionField } from '@/api'
@@ -64,6 +65,16 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const viewData = ref<ViewResponse | null>(null)
 
+// Link existing modal state
+const showLinkModal = ref(false)
+const linkModalInfo = ref<{
+  relation: string
+  linkAs: 'from' | 'to'
+  peerId: string
+  entityTypes: string[]
+  excludeIds: string[]
+} | null>(null)
+
 // Computed
 const viewConfig = computed(() => schemaStore.getView(props.id))
 
@@ -115,6 +126,25 @@ function navigateToCreate(formId: string, relationInfo?: { relation: string; lin
     query.linkPeer = relationInfo.peerId
   }
   router.push({ name: 'form-create', params: { id: formId }, query })
+}
+
+// Link existing modal
+function openLinkExisting(linkInfo: { relation: string; linkAs: 'from' | 'to'; peerId: string; entityTypes: string[] }, section: { entities?: Array<{ id: string }>, rows?: Array<{ entityId: string }> }) {
+  // Collect already-linked IDs from this section to exclude them
+  const excludeIds: string[] = []
+  if (section.entities) {
+    excludeIds.push(...section.entities.map((e) => e.id))
+  }
+  if (section.rows) {
+    excludeIds.push(...section.rows.map((r) => r.entityId))
+  }
+  linkModalInfo.value = { ...linkInfo, excludeIds }
+  showLinkModal.value = true
+}
+
+function handleLinked() {
+  // Reload the view to reflect the new relation
+  loadView()
 }
 
 // Map ViewSectionField[] to PropertyItem[] for PropertyDisplay
@@ -451,11 +481,30 @@ onMounted(() => loadView())
                 + Add {{ target.label }}
               </button>
             </template>
-            <!-- Link existing button could be added here if needed -->
+            <button
+              v-if="section.linkInfo"
+              class="btn btn-link-existing"
+              @click="openLinkExisting(section.linkInfo!, section)"
+            >
+              &#128279; Link Existing
+            </button>
           </div>
         </section>
       </div>
     </template>
+
+    <!-- Link existing modal -->
+    <LinkExistingModal
+      v-if="linkModalInfo"
+      :show="showLinkModal"
+      :relation="linkModalInfo.relation"
+      :link-as="linkModalInfo.linkAs"
+      :peer-id="linkModalInfo.peerId"
+      :entity-types="linkModalInfo.entityTypes"
+      :exclude-ids="linkModalInfo.excludeIds"
+      @close="showLinkModal = false"
+      @linked="handleLinked"
+    />
   </div>
 </template>
 
@@ -902,6 +951,27 @@ onMounted(() => loadView())
 }
 
 .btn-add:hover {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: white;
+}
+
+.btn-link-existing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  background: var(--hover-bg);
+  border: 1px dashed var(--border-color);
+  border-radius: 4px;
+  color: var(--accent-color);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-link-existing:hover {
   background: var(--accent-color);
   border-color: var(--accent-color);
   color: white;

@@ -580,7 +580,7 @@ commands:
 // --- SSE Handler integration test ---
 
 func TestHandleCommandExec(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -663,7 +663,7 @@ func TestHandleCommandExec(t *testing.T) {
 }
 
 func TestHandleCommandExecFailing(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -701,7 +701,7 @@ func TestHandleCommandExecFailing(t *testing.T) {
 }
 
 func TestHandleCommandExecGlobalContext(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -733,7 +733,7 @@ func TestHandleCommandExecGlobalContext(t *testing.T) {
 }
 
 func TestHandleCommandExecListContext(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -755,7 +755,7 @@ func TestHandleCommandExecListContext(t *testing.T) {
 }
 
 func TestHandleCommandExecViewContext(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)

@@ -1441,11 +1441,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 				PeerID:   sec.AddInfo.PeerID,
 			}
 			for _, t := range sec.AddInfo.Targets {
-				apiSec.AddInfo.Targets = append(apiSec.AddInfo.Targets, V1ViewAddTarget{
-					EntityType: t.EntityType,
-					FormID:     t.FormID,
-					Label:      t.Label,
-				})
+				apiSec.AddInfo.Targets = append(apiSec.AddInfo.Targets, V1ViewAddTarget(t))
 			}
 		}
 		if sec.LinkInfo != nil {
@@ -2129,11 +2125,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 
 		// Convert fields
 		for _, f := range sec.Fields {
-			v1Sec.Fields = append(v1Sec.Fields, V1SectionField{
-				Label:    f.Label,
-				Value:    f.Value,
-				PropType: f.PropType,
-			})
+			v1Sec.Fields = append(v1Sec.Fields, V1SectionField(f))
 		}
 
 		// Convert entities
@@ -2147,11 +2139,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 				HasContent: e.HasContent,
 			}
 			for _, f := range e.Fields {
-				v1Ent.Fields = append(v1Ent.Fields, V1SectionField{
-					Label:    f.Label,
-					Value:    f.Value,
-					PropType: f.PropType,
-				})
+				v1Ent.Fields = append(v1Ent.Fields, V1SectionField(f))
 			}
 			v1Sec.Entities = append(v1Sec.Entities, v1Ent)
 		}
@@ -2175,14 +2163,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 				Content:    row.Content,
 			}
 			for _, cell := range row.Cells {
-				v1Row.Cells = append(v1Row.Cells, V1ViewCell{
-					Values:     cell.Values,
-					PropType:   cell.PropType,
-					Widget:     cell.Widget,
-					Link:       cell.Link,
-					EntityID:   cell.EntityID,
-					EntityType: cell.EntityType,
-				})
+				v1Row.Cells = append(v1Row.Cells, V1ViewCell(cell))
 			}
 			v1Sec.Rows = append(v1Sec.Rows, v1Row)
 		}
@@ -2200,14 +2181,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 					Content:    row.Content,
 				}
 				for _, cell := range row.Cells {
-					v1Row.Cells = append(v1Row.Cells, V1ViewCell{
-						Values:     cell.Values,
-						PropType:   cell.PropType,
-						Widget:     cell.Widget,
-						Link:       cell.Link,
-						EntityID:   cell.EntityID,
-						EntityType: cell.EntityType,
-					})
+					v1Row.Cells = append(v1Row.Cells, V1ViewCell(cell))
 				}
 				v1Grp.Rows = append(v1Grp.Rows, v1Row)
 			}
@@ -2221,11 +2195,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 					HasContent: e.HasContent,
 				}
 				for _, f := range e.Fields {
-					v1Ent.Fields = append(v1Ent.Fields, V1SectionField{
-						Label:    f.Label,
-						Value:    f.Value,
-						PropType: f.PropType,
-					})
+					v1Ent.Fields = append(v1Ent.Fields, V1SectionField(f))
 				}
 				v1Grp.Entities = append(v1Grp.Entities, v1Ent)
 			}
@@ -2240,11 +2210,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 				PeerID:   sec.AddInfo.PeerID,
 			}
 			for _, t := range sec.AddInfo.Targets {
-				v1Sec.AddInfo.Targets = append(v1Sec.AddInfo.Targets, V1ViewAddTarget{
-					EntityType: t.EntityType,
-					FormID:     t.FormID,
-					Label:      t.Label,
-				})
+				v1Sec.AddInfo.Targets = append(v1Sec.AddInfo.Targets, V1ViewAddTarget(t))
 			}
 		}
 
