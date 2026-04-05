@@ -26,8 +26,6 @@ rela lua scripts/report.lua
 rela lua scripts/migrate.lua --from=v1 --to=v2
 ```
 
-### Script Location
-
 ### Shebang Support
 
 Scripts can include a shebang line for direct execution from the command line:
