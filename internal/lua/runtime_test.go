@@ -2021,107 +2021,94 @@ func TestStripShebang(t *testing.T) {
 	}
 }
 
-func TestRunString_WithShebang(t *testing.T) {
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	r := New(ws, ws.Meta(), "/tmp", &buf)
-	defer r.Close()
-
-	// Script with shebang should execute successfully
+func TestShebangExecution(t *testing.T) {
 	script := "#!/usr/bin/env rela script\nrela.output({status = 'ok'})"
-	err := r.RunString(script)
-	if err != nil {
-		t.Fatalf("RunString with shebang failed: %v", err)
-	}
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
+	t.Run("RunString", func(t *testing.T) {
+		ws := testWorkspace(t)
+		var buf bytes.Buffer
+		r := New(ws, ws.Meta(), "/tmp", &buf)
+		defer r.Close()
 
-	if result["status"] != "ok" {
-		t.Errorf("Expected status=ok, got %v", result["status"])
-	}
+		if err := r.RunString(script); err != nil {
+			t.Fatalf("RunString with shebang failed: %v", err)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+			t.Fatalf("Failed to parse output: %v", err)
+		}
+		if result["status"] != "ok" {
+			t.Errorf("Expected status=ok, got %v", result["status"])
+		}
+	})
+
+	t.Run("RunFile", func(t *testing.T) {
+		ws := testWorkspace(t)
+		var buf bytes.Buffer
+		r := New(ws, ws.Meta(), "/tmp", &buf)
+		defer r.Close()
+
+		tmpFile := filepath.Join(t.TempDir(), "test.lua")
+		if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := r.RunFile(tmpFile, nil); err != nil {
+			t.Fatalf("RunFile with shebang failed: %v", err)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+			t.Fatalf("Failed to parse output: %v", err)
+		}
+		if result["status"] != "ok" {
+			t.Errorf("Expected status=ok, got %v", result["status"])
+		}
+	})
 }
 
-func TestRunFile_WithShebang(t *testing.T) {
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
+func TestRunFile_Errors(t *testing.T) {
+	t.Run("line numbers preserved with shebang", func(t *testing.T) {
+		ws := testWorkspace(t)
+		var buf bytes.Buffer
+		r := New(ws, ws.Meta(), "/tmp", &buf)
+		defer r.Close()
 
-	r := New(ws, ws.Meta(), "/tmp", &buf)
-	defer r.Close()
+		tmpFile := filepath.Join(t.TempDir(), "test.lua")
+		if err := os.WriteFile(tmpFile, []byte("#!/usr/bin/env rela script\nsyntax error here"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-	// Create a temp script with shebang
-	script := "#!/usr/bin/env rela script\nrela.output({status = 'ok'})"
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
+		err := r.RunFile(tmpFile, nil)
+		if err == nil {
+			t.Fatal("Expected error for syntax error")
+		}
 
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile with shebang failed: %v", err)
-	}
+		// "line:2" (colon, no space) is gopher-lua's error format.
+		if !strings.Contains(err.Error(), "line:2") {
+			t.Errorf("Expected error on line 2, got: %v", err)
+		}
+	})
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
+	t.Run("includes filename", func(t *testing.T) {
+		ws := testWorkspace(t)
+		var buf bytes.Buffer
+		r := New(ws, ws.Meta(), "/tmp", &buf)
+		defer r.Close()
 
-	if result["status"] != "ok" {
-		t.Errorf("Expected status=ok, got %v", result["status"])
-	}
-}
+		tmpFile := filepath.Join(t.TempDir(), "mytest.lua")
+		if err := os.WriteFile(tmpFile, []byte("syntax error"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
-func TestRunFile_ErrorLineNumbers_WithShebang(t *testing.T) {
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
+		err := r.RunFile(tmpFile, nil)
+		if err == nil {
+			t.Fatal("Expected error for syntax error")
+		}
 
-	r := New(ws, ws.Meta(), "/tmp", &buf)
-	defer r.Close()
-
-	// Script with shebang and error on line 2
-	script := "#!/usr/bin/env rela script\nsyntax error here"
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for syntax error")
-	}
-
-	// Error should mention line 2 (not line 1).
-	// "line:2" (colon, no space) is gopher-lua's error format.
-	errStr := err.Error()
-	if !strings.Contains(errStr, "line:2") {
-		t.Errorf("Expected error on line 2, got: %v", errStr)
-	}
-}
-
-func TestRunFile_ErrorIncludesFilename(t *testing.T) {
-	ws := testWorkspace(t)
-	var buf bytes.Buffer
-
-	r := New(ws, ws.Meta(), "/tmp", &buf)
-	defer r.Close()
-
-	// Script with syntax error
-	script := "syntax error"
-	tmpFile := filepath.Join(t.TempDir(), "mytest.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := r.RunFile(tmpFile, nil)
-	if err == nil {
-		t.Fatal("Expected error for syntax error")
-	}
-
-	// Error should include filename
-	errStr := err.Error()
-	if !strings.Contains(errStr, "mytest.lua") {
-		t.Errorf("Expected error to include filename, got: %v", errStr)
-	}
+		if !strings.Contains(err.Error(), "mytest.lua") {
+			t.Errorf("Expected error to include filename, got: %v", err)
+		}
+	})
 }
