@@ -47,6 +47,9 @@ Context:
   rela.args                        Script arguments (table)
   rela.project_root                Project root path
 
+Scripts can include a shebang line (#!/usr/bin/env -S rela script) for direct
+execution. The shebang is automatically stripped before running.
+
 Example:
   rela script scripts/export.lua
   rela script scripts/report.lua --format=json

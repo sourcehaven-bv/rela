@@ -16,6 +16,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -32,6 +33,24 @@ const (
 	// (type=1, properties=2, content=3, id=4).
 	argPosCreateEntityID = 4
 )
+
+// stripShebang removes a shebang line from the beginning of Lua code.
+// This allows scripts to be directly executable from the command line
+// (e.g., #!/usr/bin/env -S rela script). If the code starts with "#!",
+// the first line is replaced with a blank line to preserve line numbers
+// in error messages. A leading UTF-8 BOM is also stripped if present.
+// Otherwise, the code is returned unchanged.
+func stripShebang(code string) string {
+	code = strings.TrimPrefix(code, "\xEF\xBB\xBF")
+	if !strings.HasPrefix(code, "#!") {
+		return code
+	}
+	idx := strings.Index(code, "\n")
+	if idx == -1 {
+		return ""
+	}
+	return code[idx:]
+}
 
 // Runtime wraps gopher-lua VM with rela bindings.
 type Runtime struct {
@@ -146,6 +165,7 @@ func openSafeLibraries(ls *lua.LState) {
 }
 
 // RunFile executes a Lua script file with arguments.
+// Shebang lines (starting with #!) are automatically stripped.
 func (r *Runtime) RunFile(path string, args []string) error {
 	// Set rela.args
 	argsTable := r.L.NewTable()
@@ -158,14 +178,31 @@ func (r *Runtime) RunFile(path string, args []string) error {
 	}
 	relaTable.RawSetString("args", argsTable)
 
+	// Read the file content
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read script file: %w", err)
+	}
+
+	// Strip shebang if present
+	code := stripShebang(string(content))
+
 	r.applyTimeout()
-	return r.L.DoFile(path)
+
+	fn, err := r.L.Load(strings.NewReader(code), path)
+	if err != nil {
+		return fmt.Errorf("cannot compile script: %w", err)
+	}
+
+	r.L.Push(fn)
+	return r.L.PCall(0, lua.MultRet, nil)
 }
 
 // RunString executes Lua code from a string.
+// Shebang lines (starting with #!) are automatically stripped.
 func (r *Runtime) RunString(code string) error {
 	r.applyTimeout()
-	return r.L.DoString(code)
+	return r.L.DoString(stripShebang(code))
 }
 
 // applyTimeout sets the execution timeout on the Lua state.
