@@ -28,6 +28,26 @@ rela lua scripts/migrate.lua --from=v1 --to=v2
 
 ### Script Location
 
+### Shebang Support
+
+Scripts can include a shebang line for direct execution from the command line:
+
+```lua
+#!/usr/bin/env -S rela script
+local entities = rela.list_entities("ticket", "status=open")
+rela.output({count = #entities})
+```
+
+```bash
+chmod +x scripts/report.lua
+./scripts/report.lua
+```
+
+The shebang line is automatically stripped before execution. Line numbers in error
+messages remain accurate.
+
+### Script Location
+
 Scripts executed via `lua_run` must be in the `scripts/` directory:
 
 ```text
