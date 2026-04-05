@@ -3,6 +3,7 @@
 # Variables
 build_dir := "bin"
 golangci_lint_version := "v1.62.2"
+go_packages := "$(go list ./... | grep -v /frontend/node_modules/)"
 
 # Default recipe
 default: lint test build
@@ -15,8 +16,8 @@ build-cli:
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela ./cmd/rela
 
-# Build the data entry server
-build-server:
+# Build the data entry server (includes Vue frontend)
+build-server: build-frontend
     @echo "Building rela-server..."
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server ./cmd/rela-server
@@ -55,12 +56,12 @@ clean:
 # Run tests with race detection
 test:
     @echo "Running tests..."
-    go test -race -cover ./...
+    go test -race -cover {{go_packages}}
 
 # Run tests with verbose output
 test-verbose:
     @echo "Running tests (verbose)..."
-    go test -race -cover -v ./...
+    go test -race -cover -v {{go_packages}}
 
 # ── E2E Tests ──
 
@@ -88,7 +89,7 @@ e2e-ui: build-server
 # Run tests with coverage profile
 test-coverage:
     @echo "Running tests with coverage..."
-    go test -race -coverprofile=coverage.out -covermode=atomic ./...
+    go test -race -coverprofile=coverage.out -covermode=atomic {{go_packages}}
 
 # Generate and display coverage report
 coverage: test-coverage
@@ -297,3 +298,22 @@ dev project="prototypes/data-entry/project" port="8080":
 [no-exit-message]
 dev-catalog port="8282":
     go run ./cmd/rela-server -project prototypes/data-entry/catalog -port {{port}}
+
+# ── Frontend Dev ──
+
+# Run Vue dev server with hot-reloading (requires Go server running on :8080)
+[no-exit-message]
+dev-frontend:
+    cd frontend && npm run dev
+
+# Build Vue frontend for production
+build-frontend:
+    cd frontend && npm run build
+
+# Type-check Vue frontend
+typecheck-frontend:
+    cd frontend && npm run typecheck
+
+# Lint Vue frontend
+lint-frontend:
+    cd frontend && npm run lint

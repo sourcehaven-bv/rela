@@ -575,28 +575,12 @@ commands:
 			t.Errorf("expected export auto_open to be nil, got %v", *export.AutoOpen)
 		}
 	})
-
-	t.Run("boolTrue template func", func(t *testing.T) {
-		funcs := templateFuncs(nil, nil)
-		fn := funcs["boolTrue"].(func(*bool) bool)
-		trueVal := true
-		falseVal := false
-		if !fn(&trueVal) {
-			t.Error("boolTrue(&true) should be true")
-		}
-		if fn(&falseVal) {
-			t.Error("boolTrue(&false) should be false")
-		}
-		if fn(nil) {
-			t.Error("boolTrue(nil) should be false")
-		}
-	})
 }
 
 // --- SSE Handler integration test ---
 
 func TestHandleCommandExec(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -679,7 +663,7 @@ func TestHandleCommandExec(t *testing.T) {
 }
 
 func TestHandleCommandExecFailing(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -717,7 +701,7 @@ func TestHandleCommandExecFailing(t *testing.T) {
 }
 
 func TestHandleCommandExecGlobalContext(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -749,7 +733,7 @@ func TestHandleCommandExecGlobalContext(t *testing.T) {
 }
 
 func TestHandleCommandExecListContext(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -771,7 +755,7 @@ func TestHandleCommandExecListContext(t *testing.T) {
 }
 
 func TestHandleCommandExecViewContext(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
 		app.meta, app.g)
@@ -926,16 +910,16 @@ func TestContains(t *testing.T) {
 
 // --- Helpers ---
 
-type sseEvent struct {
+type testSSEEvent struct {
 	event string
 	data  string
 }
 
-func parseSSEEvents(t *testing.T, body io.Reader) []sseEvent {
+func parseSSEEvents(t *testing.T, body io.Reader) []testSSEEvent {
 	t.Helper()
-	var events []sseEvent
+	var events []testSSEEvent
 	scanner := bufio.NewScanner(body)
-	var current sseEvent
+	var current testSSEEvent
 	for scanner.Scan() {
 		line := scanner.Text()
 		switch {
@@ -945,7 +929,7 @@ func parseSSEEvents(t *testing.T, body io.Reader) []sseEvent {
 			current.data = strings.TrimPrefix(line, "data: ")
 		case line == "" && current.event != "":
 			events = append(events, current)
-			current = sseEvent{}
+			current = testSSEEvent{}
 		}
 	}
 	if current.event != "" {

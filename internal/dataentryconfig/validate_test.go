@@ -909,7 +909,7 @@ func TestValidateConfig_DocumentMissingCommand(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_DocumentMissingView(t *testing.T) {
+func TestValidateConfig_DocumentMissingEntityType(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{
 		Documents: map[string]DocumentConfig{
@@ -919,11 +919,11 @@ func TestValidateConfig_DocumentMissingView(t *testing.T) {
 
 	err := ValidateConfig(nil, cfg, meta)
 	if err == nil {
-		t.Error("expected error for document with missing view")
+		t.Error("expected error for document with missing entity_type")
 	}
 	errStr := err.Error()
-	if !strings.Contains(errStr, "view is required") {
-		t.Errorf("expected 'view is required' error, got: %s", errStr)
+	if !strings.Contains(errStr, "entity_type is required") {
+		t.Errorf("expected 'entity_type is required' error, got: %s", errStr)
 	}
 }
 
@@ -931,13 +931,27 @@ func TestValidateConfig_DocumentValid(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{
 		Documents: map[string]DocumentConfig{
-			"spec": {Command: "render.sh", View: "spec-view"},
+			"spec": {Command: "render.sh", EntityType: "requirement"},
 		},
 	}
 
 	err := ValidateConfig(nil, cfg, meta)
 	if err != nil {
 		t.Errorf("expected valid document config to pass, got: %v", err)
+	}
+}
+
+func TestValidateConfig_DocumentValidWithView(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Documents: map[string]DocumentConfig{
+			"spec": {Command: "render.sh", EntityType: "requirement", View: "spec-view"},
+		},
+	}
+
+	err := ValidateConfig(nil, cfg, meta)
+	if err != nil {
+		t.Errorf("expected valid document config with view to pass, got: %v", err)
 	}
 }
 

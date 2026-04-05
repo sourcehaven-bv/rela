@@ -3,7 +3,6 @@ package dataentry
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
 	"net/url"
@@ -21,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -33,14 +33,13 @@ const uiStateFile = "ui-state.json"
 // userDefaultsFile is the filename for user-specific default values within the .rela directory.
 const userDefaultsFile = "user-defaults.yaml"
 
-// App is the central application struct holding config, metamodel, graph, and templates.
+// App is the central application struct holding config, metamodel, and graph.
 type App struct {
 	Cfg *Config
 	ws  *workspace.Workspace
 	// Convenience aliases set from workspace; avoid method-call overhead in hot paths.
 	meta *metamodel.Metamodel
 	g    *graph.Graph
-	tmpl *template.Template
 	// styleMap: property type name -> value -> CSS class name
 	styleMap map[string]map[string]string
 	// styledTypes: set of property type names that have style entries
@@ -49,6 +48,8 @@ type App struct {
 	userDefaults *UserDefaults
 	// gitOps provides git operations when git is enabled.
 	gitOps *git.Ops
+	// openAPIGen generates OpenAPI specs from the metamodel.
+	openAPIGen *openapi.Generator
 	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
 	// during live-reload. Handlers acquire RLock; reload acquires Lock.
 	mu sync.RWMutex
@@ -91,24 +92,19 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(&cfg, meta)
 
-	// Parse templates with style-aware funcs
-	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
-	if err != nil {
-		return nil, fmt.Errorf("parsing templates: %w", err)
-	}
-	tmpl, err = tmpl.Parse(graphTemplates)
-	if err != nil {
-		return nil, fmt.Errorf("parsing graph templates: %w", err)
-	}
 	app := &App{
 		Cfg:         &cfg,
 		ws:          ws,
 		meta:        meta,
 		g:           g,
-		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 		broker:      newEventBroker(),
+		openAPIGen: openapi.New(meta, openapi.Config{
+			Title:       cfg.App.Name + " API",
+			Description: cfg.App.Description,
+			Version:     "1.0.0",
+		}),
 	}
 	app.userDefaults = app.loadUserDefaults()
 
@@ -144,26 +140,6 @@ type NavGroup struct {
 type NavElement struct {
 	Item  *NavItem
 	Group *NavGroup
-}
-
-// gitTemplateData returns git-related fields for templates.
-// Returns GitEnabled=true and GitBranch if git is configured.
-func (a *App) gitTemplateData() (enabled bool, branch string) {
-	if a.gitOps == nil {
-		return false, ""
-	}
-	status, err := a.gitOps.GetStatus()
-	if err != nil || !status.Available {
-		return false, ""
-	}
-	return true, status.Branch
-}
-
-// addGitData adds git-related fields to a template data map.
-func (a *App) addGitData(data map[string]interface{}) {
-	enabled, branch := a.gitTemplateData()
-	data["GitEnabled"] = enabled
-	data["GitBranch"] = branch
 }
 
 // enrichNavEntry resolves a single NavigationEntry into a NavItem with entity type and count.

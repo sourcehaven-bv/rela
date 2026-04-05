@@ -852,8 +852,8 @@ func validateDocuments(cfg *Config) []string {
 		if doc.Command == "" {
 			errs = append(errs, fmt.Sprintf("document %q: command is required", docID))
 		}
-		if doc.View == "" {
-			errs = append(errs, fmt.Sprintf("document %q: view is required", docID))
+		if doc.EntityType == "" {
+			errs = append(errs, fmt.Sprintf("document %q: entity_type is required", docID))
 		}
 	}
 

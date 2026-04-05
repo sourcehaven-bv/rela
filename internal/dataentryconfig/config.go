@@ -83,71 +83,72 @@ type AppConfig struct {
 
 // Form defines a create/edit form for an entity type.
 type Form struct {
-	EntityType  string           `yaml:"entity_type"`
-	Title       string           `yaml:"title"`
-	Description string           `yaml:"description"`
-	Mode        string           `yaml:"mode"`
-	Body        *bool            `yaml:"body,omitempty"`
-	Fields      []FormField      `yaml:"fields"`
-	Relations   []FormRelation   `yaml:"relations"`
-	SidePanel   *SidePanelConfig `yaml:"side_panel,omitempty"`
+	EntityType  string           `yaml:"entity_type" json:"entity"`
+	Title       string           `yaml:"title" json:"title"`
+	Description string           `yaml:"description" json:"description,omitempty"`
+	Mode        string           `yaml:"mode" json:"mode,omitempty"`
+	Body        *bool            `yaml:"body,omitempty" json:"body,omitempty"`
+	Fields      []FormField      `yaml:"fields" json:"fields"`
+	Relations   []FormRelation   `yaml:"relations" json:"relations,omitempty"`
+	SidePanel   *SidePanelConfig `yaml:"side_panel,omitempty" json:"side_panel,omitempty"`
 }
 
 // SidePanelConfig defines an optional context panel shown alongside a form.
 // It reuses the view traversal and section display system.
 type SidePanelConfig struct {
-	Traverse []ViewTraverse `yaml:"traverse"`
-	Sections []ViewSection  `yaml:"sections"`
+	Traverse []ViewTraverse `yaml:"traverse" json:"traverse"`
+	Sections []ViewSection  `yaml:"sections" json:"sections"`
 }
 
 // FormField defines a single field in a form.
 type FormField struct {
-	Property    string              `yaml:"property"`
-	Label       string              `yaml:"label"`
-	Placeholder string              `yaml:"placeholder"`
-	Help        string              `yaml:"help"`
-	Required    *bool               `yaml:"required,omitempty"`
-	Default     string              `yaml:"default"`
-	Hidden      bool                `yaml:"hidden"`
-	Transitions map[string][]string `yaml:"transitions,omitempty"`
+	Property    string              `yaml:"property" json:"property"`
+	Label       string              `yaml:"label" json:"label,omitempty"`
+	Placeholder string              `yaml:"placeholder" json:"placeholder,omitempty"`
+	Help        string              `yaml:"help" json:"help,omitempty"`
+	Widget      string              `yaml:"widget" json:"widget,omitempty"`
+	Required    *bool               `yaml:"required,omitempty" json:"required,omitempty"`
+	Default     string              `yaml:"default" json:"default,omitempty"`
+	Hidden      bool                `yaml:"hidden" json:"hidden,omitempty"`
+	Transitions map[string][]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 }
 
 // FormRelation defines a relation field in a form.
 type FormRelation struct {
-	Relation     string             `yaml:"relation"`
-	Direction    Direction          `yaml:"direction"`
-	TargetType   string             `yaml:"target_type"`
-	Label        string             `yaml:"label"`
-	Required     bool               `yaml:"required"`
-	Widget       string             `yaml:"widget"`
-	Display      string             `yaml:"display"`
-	AllowCreate  bool               `yaml:"allow_create"`
-	CreateForm   string             `yaml:"create_form"`
-	Properties   []RelationProperty `yaml:"properties"`
-	Fields       []ViewSectionField `yaml:"fields"`
-	EmptyMessage string             `yaml:"empty_message"`
+	Relation     string             `yaml:"relation" json:"relation"`
+	Direction    Direction          `yaml:"direction" json:"direction,omitempty"`
+	TargetType   string             `yaml:"target_type" json:"target_type,omitempty"`
+	Label        string             `yaml:"label" json:"label,omitempty"`
+	Required     bool               `yaml:"required" json:"required,omitempty"`
+	Widget       string             `yaml:"widget" json:"widget,omitempty"`
+	Display      string             `yaml:"display" json:"display,omitempty"`
+	AllowCreate  bool               `yaml:"allow_create" json:"allow_create,omitempty"`
+	CreateForm   string             `yaml:"create_form" json:"create_form,omitempty"`
+	Properties   []RelationProperty `yaml:"properties" json:"properties,omitempty"`
+	Fields       []ViewSectionField `yaml:"fields" json:"fields,omitempty"`
+	EmptyMessage string             `yaml:"empty_message" json:"empty_message,omitempty"`
 }
 
 // RelationProperty defines an editable property on a relation.
 type RelationProperty struct {
-	Property string `yaml:"property"`
-	Label    string `yaml:"label"`
-	Required bool   `yaml:"required"`
+	Property string `yaml:"property" json:"property"`
+	Label    string `yaml:"label" json:"label,omitempty"`
+	Required bool   `yaml:"required" json:"required,omitempty"`
 }
 
 // List defines a list view for an entity type.
 type List struct {
-	EntityType     string          `yaml:"entity_type"`
-	Title          string          `yaml:"title"`
-	Description    string          `yaml:"description"`
-	Columns        []ListColumn    `yaml:"columns"`
-	Sort           []SortSpec      `yaml:"sort,omitempty"`
-	Filters        []FilterConfig  `yaml:"filters"`
-	FilterControls []FilterControl `yaml:"filter_controls"`
-	CreateForm     string          `yaml:"create_form"`
-	EditForm       string          `yaml:"edit_form"`
-	DetailView     string          `yaml:"detail_view"`
-	PageSize       int             `yaml:"page_size"`
+	EntityType     string          `yaml:"entity_type" json:"entity"`
+	Title          string          `yaml:"title" json:"title"`
+	Description    string          `yaml:"description" json:"description,omitempty"`
+	Columns        []ListColumn    `yaml:"columns" json:"columns"`
+	Sort           []SortSpec      `yaml:"sort,omitempty" json:"default_sort,omitempty"`
+	Filters        []FilterConfig  `yaml:"filters" json:"filters,omitempty"`
+	FilterControls []FilterControl `yaml:"filter_controls" json:"filter_controls,omitempty"`
+	CreateForm     string          `yaml:"create_form" json:"create_form,omitempty"`
+	EditForm       string          `yaml:"edit_form" json:"edit_form,omitempty"`
+	DetailView     string          `yaml:"detail_view" json:"detail_view,omitempty"`
+	PageSize       int             `yaml:"page_size" json:"page_size,omitempty"`
 }
 
 // ListColumn defines a column in a list view.
@@ -156,12 +157,12 @@ type List struct {
 // For relation columns, Direction controls whether to show outgoing (default)
 // or incoming edges. Use "incoming" to display entities that point to the current row.
 type ListColumn struct {
-	Property  string    `yaml:"property"`
-	Relation  string    `yaml:"relation"`
-	Direction Direction `yaml:"direction"` // "outgoing" (default) or "incoming"
-	Label     string    `yaml:"label"`
-	Sortable  bool      `yaml:"sortable"`
-	Link      string    `yaml:"link"`
+	Property  string    `yaml:"property" json:"property,omitempty"`
+	Relation  string    `yaml:"relation" json:"relation,omitempty"`
+	Direction Direction `yaml:"direction" json:"direction,omitempty"` // "outgoing" (default) or "incoming"
+	Label     string    `yaml:"label" json:"label,omitempty"`
+	Sortable  bool      `yaml:"sortable" json:"sortable,omitempty"`
+	Link      string    `yaml:"link" json:"link,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
@@ -171,9 +172,9 @@ type SortSpec = model.SortSpec
 
 // FilterConfig defines a static filter applied to a list.
 type FilterConfig struct {
-	Property string `yaml:"property"`
-	Operator string `yaml:"operator"`
-	Value    string `yaml:"value"`
+	Property string `yaml:"property" json:"property"`
+	Operator string `yaml:"operator" json:"operator"`
+	Value    string `yaml:"value" json:"value"`
 }
 
 // FilterControl defines a user-facing filter control in a list.
@@ -184,9 +185,9 @@ type FilterConfig struct {
 //
 // Label is an optional display label override for the control.
 type FilterControl struct {
-	Property string `yaml:"property,omitempty"`
-	Relation string `yaml:"relation,omitempty"`
-	Label    string `yaml:"label,omitempty"`
+	Property string `yaml:"property,omitempty" json:"property,omitempty"`
+	Relation string `yaml:"relation,omitempty" json:"relation,omitempty"`
+	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
 // Key returns the filter key (Relation if set, otherwise Property).
@@ -214,35 +215,35 @@ func (fc FilterControl) CurrentValue(query url.Values) string {
 
 // Kanban defines a kanban board view for an entity type.
 type Kanban struct {
-	EntityType       string           `yaml:"entity_type"`
-	Title            string           `yaml:"title"`
-	ColumnProperty   string           `yaml:"column_property"`
-	Columns          []KanbanColumn   `yaml:"columns,omitempty"`
-	SwimlaneProperty string           `yaml:"swimlane_property,omitempty"`
-	Swimlanes        []KanbanSwimlane `yaml:"swimlanes,omitempty"`
-	Card             KanbanCard       `yaml:"card"`
-	EditForm         string           `yaml:"edit_form,omitempty"`
-	CreateForm       string           `yaml:"create_form,omitempty"`
-	Filters          []FilterConfig   `yaml:"filters,omitempty"`
-	FilterControls   []FilterControl  `yaml:"filter_controls,omitempty"`
+	EntityType       string           `yaml:"entity_type" json:"entity"`
+	Title            string           `yaml:"title" json:"title"`
+	ColumnProperty   string           `yaml:"column_property" json:"column_property"`
+	Columns          []KanbanColumn   `yaml:"columns,omitempty" json:"columns,omitempty"`
+	SwimlaneProperty string           `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
+	Swimlanes        []KanbanSwimlane `yaml:"swimlanes,omitempty" json:"swimlanes,omitempty"`
+	Card             KanbanCard       `yaml:"card" json:"card"`
+	EditForm         string           `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
+	CreateForm       string           `yaml:"create_form,omitempty" json:"create_form,omitempty"`
+	Filters          []FilterConfig   `yaml:"filters,omitempty" json:"filters,omitempty"`
+	FilterControls   []FilterControl  `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
 }
 
 // KanbanColumn defines a column in the kanban board.
 type KanbanColumn struct {
-	Value string `yaml:"value"`
-	Label string `yaml:"label,omitempty"`
+	Value string `yaml:"value" json:"value"`
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
 // KanbanSwimlane defines a swimlane row in the kanban board.
 type KanbanSwimlane struct {
-	Value string `yaml:"value"`
-	Label string `yaml:"label,omitempty"`
+	Value string `yaml:"value" json:"value"`
+	Label string `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
 // KanbanCard defines how cards are displayed on the board.
 type KanbanCard struct {
-	Title  string             `yaml:"title"`
-	Fields []ViewSectionField `yaml:"fields,omitempty"`
+	Title  string             `yaml:"title" json:"title"`
+	Fields []ViewSectionField `yaml:"fields,omitempty" json:"fields,omitempty"`
 }
 
 // NavigationEntry defines a sidebar navigation item or a group of items.
@@ -250,16 +251,18 @@ type KanbanCard struct {
 // or a group (Group + Items). Nested groups are not supported.
 type NavigationEntry struct {
 	// Direct item fields
-	Label     string `yaml:"label,omitempty"`
-	List      string `yaml:"list,omitempty"`
-	Dashboard bool   `yaml:"dashboard,omitempty"`
-	Graph     bool   `yaml:"graph,omitempty"`
-	Kanban    string `yaml:"kanban,omitempty"`
+	Label     string `yaml:"label,omitempty" json:"label,omitempty"`
+	List      string `yaml:"list,omitempty" json:"list,omitempty"`
+	Dashboard bool   `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
+	Graph     bool   `yaml:"graph,omitempty" json:"graph,omitempty"`
+	Kanban    string `yaml:"kanban,omitempty" json:"kanban,omitempty"`
+	Search    bool   `yaml:"search,omitempty" json:"search,omitempty"`
+	Settings  bool   `yaml:"settings,omitempty" json:"settings,omitempty"`
 
 	// Group fields
-	Group     string            `yaml:"group,omitempty"`
-	Collapsed bool              `yaml:"collapsed,omitempty"`
-	Items     []NavigationEntry `yaml:"items,omitempty"`
+	Group     string            `yaml:"group,omitempty" json:"group,omitempty"`
+	Collapsed bool              `yaml:"collapsed,omitempty" json:"collapsed,omitempty"`
+	Items     []NavigationEntry `yaml:"items,omitempty" json:"items,omitempty"`
 }
 
 // IsGroup returns true if this entry is a navigation group.
@@ -331,62 +334,62 @@ func (ud *UserDefaults) ResolveRelationDefault(entityType, relation string) stri
 
 // DashboardConfig defines a dashboard page with query-driven cards.
 type DashboardConfig struct {
-	Title       string          `yaml:"title"`
-	Description string          `yaml:"description"`
-	Cards       []DashboardCard `yaml:"cards"`
+	Title       string          `yaml:"title" json:"title"`
+	Description string          `yaml:"description" json:"description,omitempty"`
+	Cards       []DashboardCard `yaml:"cards" json:"cards"`
 }
 
 // DashboardCard defines a single card on the dashboard, driven by a search query.
 type DashboardCard struct {
-	Title   string       `yaml:"title"`
-	Query   string       `yaml:"query"`
-	Display string       `yaml:"display"` // "count", "table", "breakdown"
-	GroupBy string       `yaml:"group_by,omitempty"`
-	Columns []ListColumn `yaml:"columns,omitempty"`
-	Sort    []SortSpec   `yaml:"sort,omitempty"`
-	Limit   int          `yaml:"limit,omitempty"`
+	Title   string       `yaml:"title" json:"title"`
+	Query   string       `yaml:"query" json:"query"`
+	Display string       `yaml:"display" json:"display"` // "count", "table", "breakdown"
+	GroupBy string       `yaml:"group_by,omitempty" json:"group_by,omitempty"`
+	Columns []ListColumn `yaml:"columns,omitempty" json:"columns,omitempty"`
+	Sort    []SortSpec   `yaml:"sort,omitempty" json:"sort,omitempty"`
+	Limit   int          `yaml:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ViewConfig defines a detailed entity view with traversal and sections.
 type ViewConfig struct {
-	Title    string         `yaml:"title"`
-	Entry    ViewEntry      `yaml:"entry"`
-	Traverse []ViewTraverse `yaml:"traverse"`
-	Sections []ViewSection  `yaml:"sections"`
+	Title    string         `yaml:"title" json:"title"`
+	Entry    ViewEntry      `yaml:"entry" json:"entry"`
+	Traverse []ViewTraverse `yaml:"traverse" json:"traverse"`
+	Sections []ViewSection  `yaml:"sections" json:"sections"`
 }
 
 // ViewEntry specifies the entry entity type for a view.
 type ViewEntry struct {
-	Type string `yaml:"type"`
+	Type string `yaml:"type" json:"type"`
 }
 
 // ViewTraverse defines a graph traversal rule for collecting related entities.
 type ViewTraverse struct {
-	From           string `yaml:"from"`
-	Follow         string `yaml:"follow,omitempty"`
-	FollowIncoming string `yaml:"follow_incoming,omitempty"`
-	CollectAs      string `yaml:"collect_as"`
-	Recursive      bool   `yaml:"recursive,omitempty"`
-	MaxDepth       int    `yaml:"max_depth,omitempty"`
-	Where          string `yaml:"where,omitempty"`
+	From           string `yaml:"from" json:"from"`
+	Follow         string `yaml:"follow,omitempty" json:"follow,omitempty"`
+	FollowIncoming string `yaml:"follow_incoming,omitempty" json:"follow_incoming,omitempty"`
+	CollectAs      string `yaml:"collect_as" json:"collect_as"`
+	Recursive      bool   `yaml:"recursive,omitempty" json:"recursive,omitempty"`
+	MaxDepth       int    `yaml:"max_depth,omitempty" json:"max_depth,omitempty"`
+	Where          string `yaml:"where,omitempty" json:"where,omitempty"`
 }
 
 // ViewSection defines a section within a view.
 type ViewSection struct {
-	Heading      string             `yaml:"heading,omitempty"`
-	Source       string             `yaml:"source"`
-	Display      string             `yaml:"display"`
-	Fields       []ViewSectionField `yaml:"fields,omitempty"`
-	Columns      []ListColumn       `yaml:"columns,omitempty"`
-	GroupBy      string             `yaml:"group_by,omitempty"`
-	EmptyMessage string             `yaml:"empty_message,omitempty"`
-	Link         string             `yaml:"link,omitempty"`
+	Heading      string             `yaml:"heading,omitempty" json:"heading,omitempty"`
+	Source       string             `yaml:"source" json:"source"`
+	Display      string             `yaml:"display" json:"display"`
+	Fields       []ViewSectionField `yaml:"fields,omitempty" json:"fields,omitempty"`
+	Columns      []ListColumn       `yaml:"columns,omitempty" json:"columns,omitempty"`
+	GroupBy      string             `yaml:"group_by,omitempty" json:"group_by,omitempty"`
+	EmptyMessage string             `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
+	Link         string             `yaml:"link,omitempty" json:"link,omitempty"`
 }
 
 // ViewSectionField defines a field within a view section.
 type ViewSectionField struct {
-	Property string `yaml:"property"`
-	Label    string `yaml:"label,omitempty"`
+	Property string `yaml:"property" json:"property"`
+	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
 // CommandConfig defines an executable command triggered from the UI.
@@ -412,13 +415,17 @@ type CommandScope struct {
 // DocumentConfig defines how to render a document from an entry entity.
 type DocumentConfig struct {
 	// Title is the display title for the document.
-	Title string `yaml:"title,omitempty"`
+	Title string `yaml:"title,omitempty" json:"title,omitempty"`
+	// EntityType specifies which entity types this document applies to.
+	// Used by the frontend to filter which documents to show for a given entity.
+	EntityType string `yaml:"entity_type,omitempty" json:"entity_type,omitempty"`
 	// View is the view name from views.yaml used to gather entities for content hashing.
-	View string `yaml:"view"`
+	// If empty, only the entry entity is used for cache validation.
+	View string `yaml:"view,omitempty" json:"view,omitempty"`
 	// Command is the external render command. Placeholders:
 	//   {id}       - entry ID
 	//   {id_lower} - lowercase entry ID
-	Command string `yaml:"command"`
+	Command string `yaml:"command" json:"command"`
 	// Timeout is the command execution timeout in seconds. Defaults to 30.
-	Timeout int `yaml:"timeout,omitempty"`
+	Timeout int `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 }

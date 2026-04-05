@@ -2,6 +2,10 @@ version: "1.0"
 app:
   name: "Support Tickets"
   description: "Internal ticket management system"
+git:
+  enabled: true
+  mode: direct
+  branch: develop
 # Colors for enum/custom type values from the metamodel.
 # Referenced by type name — applies everywhere that value appears.
 styles:
@@ -15,6 +19,28 @@ styles:
     high: orange
     medium: yellow
     low: green
+# Documents rendered via shell commands
+documents:
+  ticket_summary:
+    title: "Ticket Summary"
+    entity_type: ticket
+    command: |
+      export PATH=".rela/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+      TITLE=$(rela show {id} -o json | jq -r '.entity.properties.title // "Untitled"')
+      STATUS=$(rela show {id} -o json | jq -r '.entity.properties.status // "unknown"')
+      PRIORITY=$(rela show {id} -o json | jq -r '.entity.properties.priority // "medium"')
+      ASSIGNEE=$(rela show {id} -o json | jq -r '.entity.properties.assignee // "unassigned"')
+      DESC=$(rela show {id} -o json | jq -r '.entity.properties.description // ""')
+      echo "# $TITLE"
+      echo ""
+      echo "**Status:** $STATUS | **Priority:** $PRIORITY | **Assignee:** $ASSIGNEE"
+      echo ""
+      if [ -n "$DESC" ]; then
+        echo "## Description"
+        echo ""
+        echo "$DESC"
+      fi
+    timeout: 30
 forms:
   create_ticket:
     entity_type: ticket

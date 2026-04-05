@@ -37,7 +37,8 @@ entities:
   category:
     label: Category
     plural: categories
-    id_type: manual
+    id_prefix: "CAT-"
+    id_type: sequential
     properties:
       name:
         type: string
@@ -48,7 +49,8 @@ entities:
         type: string
   label:
     label: Label
-    id_type: manual
+    id_prefix: "LBL-"
+    id_type: sequential
     properties:
       name:
         type: string

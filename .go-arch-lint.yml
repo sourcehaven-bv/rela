@@ -6,6 +6,7 @@ allow:
 
 exclude:
   - internal/testutil
+  - frontend
 
 excludeFiles:
   - "_test\\.go$"
@@ -27,6 +28,7 @@ components:
 
   # Server protocols
   mcp:              { in: internal/mcp }
+  openapi:          { in: internal/openapi }
 
   # Application services
   workspace:        { in: internal/workspace }
@@ -158,6 +160,7 @@ deps:
       - markdown
       - metamodel
       - migration
+      - openapi
       - project
       - search
       - workspace
@@ -189,6 +192,9 @@ deps:
     canUse:
       - mcpgo
       - fsnotify
+  openapi:
+    mayDependOn:
+      - metamodel
 
   # Application services
   workspace:

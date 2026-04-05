@@ -105,6 +105,10 @@ func (a *App) handleGitSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp.Success = true
+
+	// Broadcast git status update
+	a.broker.broadcastGitStatus()
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

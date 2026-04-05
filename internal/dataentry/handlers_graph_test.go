@@ -2,16 +2,14 @@ package dataentry
 
 import (
 	"encoding/json"
-	"html/template"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
-// newGraphTestApp builds a full App with graph templates for graph handler tests.
+// newGraphTestApp builds an App for graph handler tests.
 func newGraphTestApp(t *testing.T) *App {
 	t.Helper()
 	meta := testMeta()
@@ -22,53 +20,14 @@ func newGraphTestApp(t *testing.T) *App {
 	g.AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	tmpl, err := template.New("").Funcs(templateFuncs(styleMap, styledTypes)).Parse(allTemplates())
-	if err != nil {
-		t.Fatalf("parsing templates: %v", err)
-	}
-	tmpl, err = tmpl.Parse(graphTemplates)
-	if err != nil {
-		t.Fatalf("parsing graph templates: %v", err)
-	}
 
 	return &App{
 		Cfg:         cfg,
 		meta:        meta,
 		g:           g,
-		tmpl:        tmpl,
 		styleMap:    styleMap,
 		styledTypes: styledTypes,
 	}
-}
-
-func TestHandleGraph(t *testing.T) {
-	t.Run("renders graph page", func(t *testing.T) {
-		app := newGraphTestApp(t)
-		r := httptest.NewRequest(http.MethodGet, "/graph", http.NoBody)
-		w := httptest.NewRecorder()
-		app.handleGraph(w, r)
-		if w.Code != http.StatusOK {
-			t.Errorf("expected 200, got %d", w.Code)
-		}
-		body := w.Body.String()
-		if !strings.Contains(body, "Graph Explorer") {
-			t.Error("expected Graph Explorer heading in page")
-		}
-		if !strings.Contains(body, "cytoscape.min.js") {
-			t.Error("expected cytoscape.min.js script tag")
-		}
-	})
-
-	t.Run("includes app name in title", func(t *testing.T) {
-		app := newGraphTestApp(t)
-		r := httptest.NewRequest(http.MethodGet, "/graph", http.NoBody)
-		w := httptest.NewRecorder()
-		app.handleGraph(w, r)
-		body := w.Body.String()
-		if !strings.Contains(body, "Test App - Graph Explorer") {
-			t.Error("expected app name in page title")
-		}
-	})
 }
 
 func TestHandleGraphData(t *testing.T) {
@@ -372,25 +331,6 @@ func TestBuildMetaInfo(t *testing.T) {
 		}
 		if len(dep.To) != 1 || dep.To[0] != "ticket" {
 			t.Errorf("expected depends_on to [ticket], got %v", dep.To)
-		}
-	})
-}
-
-func TestHandleIndexGraphRedirect(t *testing.T) {
-	t.Run("graph as first nav item redirects", func(t *testing.T) {
-		app := newGraphTestApp(t)
-		app.Cfg.Navigation = []NavigationEntry{
-			{Label: "Graph", Graph: true},
-			{Label: "Tickets", List: "tickets"},
-		}
-		r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		w := httptest.NewRecorder()
-		app.handleIndex(w, r)
-		if w.Code != http.StatusFound {
-			t.Errorf("expected 302 redirect, got %d", w.Code)
-		}
-		if loc := w.Header().Get("Location"); loc != "/graph" {
-			t.Errorf("expected redirect to /graph, got %q", loc)
 		}
 	})
 }

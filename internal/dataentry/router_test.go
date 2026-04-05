@@ -6,21 +6,20 @@ import (
 	"testing"
 )
 
-func TestNewRouterRegistersRoutes(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+func TestNewRouterRegistersAPIRoutes(t *testing.T) {
+	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 
 	handler := app.NewRouter()
 
+	// Test API routes (SPA routes depend on embedded frontend build)
 	tests := []struct {
 		path       string
 		wantStatus int
 	}{
-		{"/", http.StatusOK},
-		{"/list/tickets", http.StatusOK},
-		{"/dashboard", http.StatusOK},
-		{"/search", http.StatusOK},
-		{"/graph", http.StatusOK},
+		{"/api/v1/_schema", http.StatusOK},
+		{"/api/v1/_config", http.StatusOK},
+		{"/api/graph-data", http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -36,13 +35,13 @@ func TestNewRouterRegistersRoutes(t *testing.T) {
 }
 
 func TestNewRouterStaticFiles(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 
 	handler := app.NewRouter()
 
-	// Request a known embedded static file
-	r := httptest.NewRequest(http.MethodGet, "/static/htmx.min.js", http.NoBody)
+	// Request a known embedded static file (favicon is the only static file now)
+	r := httptest.NewRequest(http.MethodGet, "/static/favicon.svg", http.NoBody)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 
@@ -52,12 +51,12 @@ func TestNewRouterStaticFiles(t *testing.T) {
 }
 
 func TestNewRouterStaticFilesNoCacheHeader(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 	handler := app.NewRouter()
 
 	// Static files should NOT have no-cache header (they bypass the middleware)
-	r := httptest.NewRequest(http.MethodGet, "/static/htmx.min.js", http.NoBody)
+	r := httptest.NewRequest(http.MethodGet, "/static/favicon.svg", http.NoBody)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 
@@ -67,12 +66,12 @@ func TestNewRouterStaticFilesNoCacheHeader(t *testing.T) {
 }
 
 func TestNewRouterAPIHasNoCacheHeader(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 	handler := app.NewRouter()
 
-	// API/HTML routes should have no-cache header
-	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	// API routes should have no-cache header
+	r := httptest.NewRequest(http.MethodGet, "/api/graph-data", http.NoBody)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 
@@ -83,7 +82,7 @@ func TestNewRouterAPIHasNoCacheHeader(t *testing.T) {
 }
 
 func TestNewRouterSSEEndpoint(t *testing.T) {
-	app, _ := newHandlerTestApp(t)
+	app := newHandlerTestApp(t)
 	app.broker = newEventBroker()
 
 	handler := app.NewRouter()
