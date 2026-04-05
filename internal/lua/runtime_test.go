@@ -1995,72 +1995,29 @@ rela.output({table = tbl})
 
 // Tests for shebang handling
 
-func TestStripShebang_WithShebang(t *testing.T) {
-	code := "#!/usr/bin/env rela script\nprint('hello')"
-	result := StripShebang(code)
-
-	// Should strip shebang but preserve newline (line 1 becomes blank)
-	expected := "\nprint('hello')"
-	if result != expected {
-		t.Errorf("Expected %q, got %q", expected, result)
+func TestStripShebang(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"with shebang", "#!/usr/bin/env rela script\nprint('hello')", "\nprint('hello')"},
+		{"without shebang", "print('hello')", "print('hello')"},
+		{"shebang only", "#!/usr/bin/env rela script", ""},
+		{"hash but not shebang", "#not a shebang\nprint('hello')", "#not a shebang\nprint('hello')"},
+		{"empty string", "", ""},
+		{"shebang in middle", "print('hello')\n#!/usr/bin/env rela\nprint('world')", "print('hello')\n#!/usr/bin/env rela\nprint('world')"},
+		{"windows CRLF", "#!/usr/bin/env rela script\r\nprint('hello')", "\nprint('hello')"},
+		{"UTF-8 BOM with shebang", "\xEF\xBB\xBF#!/usr/bin/env rela\nprint('hello')", "\nprint('hello')"},
+		{"UTF-8 BOM without shebang", "\xEF\xBB\xBFprint('hello')", "print('hello')"},
 	}
-}
-
-func TestStripShebang_WithoutShebang(t *testing.T) {
-	code := "print('hello')"
-	result := StripShebang(code)
-
-	if result != code {
-		t.Errorf("Expected unchanged code %q, got %q", code, result)
-	}
-}
-
-func TestStripShebang_ShebangOnly(t *testing.T) {
-	code := "#!/usr/bin/env rela script"
-	result := StripShebang(code)
-
-	if result != "" {
-		t.Errorf("Expected empty string, got %q", result)
-	}
-}
-
-func TestStripShebang_HashButNotShebang(t *testing.T) {
-	// Single # is not a shebang
-	code := "#not a shebang\nprint('hello')"
-	result := StripShebang(code)
-
-	if result != code {
-		t.Errorf("Expected unchanged code %q, got %q", code, result)
-	}
-}
-
-func TestStripShebang_EmptyString(t *testing.T) {
-	result := StripShebang("")
-	if result != "" {
-		t.Errorf("Expected empty string, got %q", result)
-	}
-}
-
-func TestStripShebang_ShebangInMiddle(t *testing.T) {
-	// Shebang-like content in middle of file should NOT be stripped
-	code := "print('hello')\n#!/usr/bin/env rela\nprint('world')"
-	result := StripShebang(code)
-
-	if result != code {
-		t.Errorf("Expected unchanged code %q, got %q", code, result)
-	}
-}
-
-func TestStripShebang_WindowsLineEndings(t *testing.T) {
-	// Windows CRLF line endings - the \r is stripped along with the shebang content
-	// since it comes before the \n that marks the end of the shebang line
-	code := "#!/usr/bin/env rela script\r\nprint('hello')"
-	result := StripShebang(code)
-
-	// The result starts from \n, so line 1 is blank and line 2 is print('hello')
-	expected := "\nprint('hello')"
-	if result != expected {
-		t.Errorf("Expected %q, got %q", expected, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripShebang(tt.input)
+			if got != tt.expected {
+				t.Errorf("stripShebang(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
 	}
 }
 
@@ -2135,7 +2092,8 @@ func TestRunFile_ErrorLineNumbers_WithShebang(t *testing.T) {
 		t.Fatal("Expected error for syntax error")
 	}
 
-	// Error should mention line 2 (not line 1)
+	// Error should mention line 2 (not line 1).
+	// "line:2" (colon, no space) is gopher-lua's error format.
 	errStr := err.Error()
 	if !strings.Contains(errStr, "line:2") {
 		t.Errorf("Expected error on line 2, got: %v", errStr)

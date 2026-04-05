@@ -34,22 +34,21 @@ const (
 	argPosCreateEntityID = 4
 )
 
-// StripShebang removes a shebang line from the beginning of Lua code.
+// stripShebang removes a shebang line from the beginning of Lua code.
 // This allows scripts to be directly executable from the command line
 // (e.g., #!/usr/bin/env -S rela script). If the code starts with "#!",
 // the first line is replaced with a blank line to preserve line numbers
-// in error messages. Otherwise, the code is returned unchanged.
-func StripShebang(code string) string {
+// in error messages. A leading UTF-8 BOM is also stripped if present.
+// Otherwise, the code is returned unchanged.
+func stripShebang(code string) string {
+	code = strings.TrimPrefix(code, "\xEF\xBB\xBF")
 	if !strings.HasPrefix(code, "#!") {
 		return code
 	}
-	// Find the first newline
 	idx := strings.Index(code, "\n")
 	if idx == -1 {
-		// Shebang only, no code - return empty string
 		return ""
 	}
-	// Return from the newline position (preserves the newline, making line 1 blank)
 	return code[idx:]
 }
 
@@ -185,14 +184,13 @@ func (r *Runtime) RunFile(path string, args []string) error {
 	}
 
 	// Strip shebang if present
-	code := StripShebang(string(content))
+	code := stripShebang(string(content))
 
 	r.applyTimeout()
 
-	// Use Load with filename as chunk name for proper error messages
 	fn, err := r.L.Load(strings.NewReader(code), path)
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot compile script: %w", err)
 	}
 
 	r.L.Push(fn)
@@ -203,7 +201,7 @@ func (r *Runtime) RunFile(path string, args []string) error {
 // Shebang lines (starting with #!) are automatically stripped.
 func (r *Runtime) RunString(code string) error {
 	r.applyTimeout()
-	return r.L.DoString(StripShebang(code))
+	return r.L.DoString(stripShebang(code))
 }
 
 // applyTimeout sets the execution timeout on the Lua state.
