@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { getSettings, saveSettings, savePalette } from '@/api'
 import type {
@@ -11,7 +11,7 @@ import type {
   PaletteConfig,
 } from '@/api/settings'
 import TagSelect from '@/components/ui/TagSelect.vue'
-import { parsePalette, parseRelaPalette, assignPalette } from '@/utils/palette'
+import { parsePalette, parseRelaPalette, assignPalette, deriveTheme } from '@/utils/palette'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
@@ -65,6 +65,23 @@ const MAX_FILE_SIZE = 102400 // 100KB
 // Computed: which palette refs to show based on light/dark toggle
 const activeColors = computed(() => editingDark.value ? paletteDarkColors.value : paletteColors.value)
 const activeBadges = computed(() => editingDark.value ? paletteDarkBadges.value : paletteBadges.value)
+
+// Map role keys to CSS variable names for looking up auto-generated dark values
+const roleToCSSVar: Record<string, string> = {
+  base: '--sidebar-bg', surface: '--bg-color', accent: '--accent-color', text: '--text-color',
+  success: '--success-color', error: '--error-color', warning: '--warning-color', info: '--info-color',
+}
+const badgeToCSSVar = (name: string) => `--badge-${name}`
+
+/** Get the auto-generated dark value for a role (from resolved palette). */
+function autoDarkColor(key: string): string {
+  const cssVar = roleToCSSVar[key]
+  return cssVar ? (schemaStore.paletteDark[cssVar] || '') : ''
+}
+
+function autoDarkBadge(name: string): string {
+  return schemaStore.paletteDark[badgeToCSSVar(name)] || ''
+}
 
 function setColor(key: string, value: string) {
   if (editingDark.value) {
@@ -190,7 +207,7 @@ async function handleSavePalette() {
     }
 
     await savePalette(palette)
-    uiStore.success('Palette saved — reload page to see changes')
+    uiStore.success('Palette saved')
     await schemaStore.reload()
   } catch (err) {
     uiStore.error(err instanceof Error ? err.message : 'Failed to save palette')
@@ -198,6 +215,57 @@ async function handleSavePalette() {
     savingPalette.value = false
   }
 }
+
+async function handleResetPalette() {
+  // Reload from disk — discard unsaved edits
+  await loadSettings()
+  // Reapply the saved palette from schema store
+  const palette = uiStore.isDark ? schemaStore.paletteDark : schemaStore.paletteLight
+  if (Object.keys(palette).length > 0) {
+    uiStore.applyPalette(palette)
+  } else {
+    uiStore.clearPalette()
+  }
+  uiStore.info('Palette reset to saved state')
+}
+
+/** Build a full CSS variable map from current editing state for live preview.
+ *  Uses deriveTheme to compute all 21 variables including derived ones. */
+function buildPreviewPalette(): Record<string, string> {
+  const src = editingDark.value ? paletteDarkColors.value : paletteColors.value
+  const badgeSrc = editingDark.value ? paletteDarkBadges.value : paletteBadges.value
+
+  // Only build preview if at least one color is set
+  const hasColors = Object.values(src).some(Boolean)
+  const hasBadges = Object.values(badgeSrc).some(Boolean)
+  if (!hasColors && !hasBadges) return {}
+
+  // Derive all 21 CSS variables (8 base + 6 computed + 7 badges)
+  return deriveTheme(src, badgeSrc)
+}
+
+// Live preview: apply palette as user edits colors
+const stopPreviewWatch = watch(
+  [paletteColors, paletteBadges, paletteDarkColors, paletteDarkBadges, editingDark],
+  () => {
+    const preview = buildPreviewPalette()
+    if (Object.keys(preview).length > 0) {
+      uiStore.applyPalette(preview)
+    }
+  },
+  { deep: true },
+)
+
+// On unmount, reapply the saved palette (discard unsaved preview)
+onUnmounted(() => {
+  stopPreviewWatch()
+  const palette = uiStore.isDark ? schemaStore.paletteDark : schemaStore.paletteLight
+  if (Object.keys(palette).length > 0) {
+    uiStore.applyPalette(palette)
+  } else {
+    uiStore.clearPalette()
+  }
+})
 
 function handleImport() {
   const colors = parsePalette(importText.value)
@@ -798,14 +866,14 @@ onMounted(() => {
             <div class="color-input-group">
               <input
                 type="color"
-                :value="activeColors[role.key] || '#808080'"
+                :value="activeColors[role.key] || (editingDark ? autoDarkColor(role.key) : '') || '#808080'"
                 class="color-picker"
                 @input="setColor(role.key, ($event.target as HTMLInputElement).value)"
               />
               <input
                 type="text"
                 :value="activeColors[role.key] || ''"
-                placeholder="#hex"
+                :placeholder="editingDark ? (autoDarkColor(role.key) || 'auto') : '#hex'"
                 class="color-text"
                 @input="setColor(role.key, ($event.target as HTMLInputElement).value)"
               />
@@ -835,14 +903,14 @@ onMounted(() => {
             <div class="color-input-group">
               <input
                 type="color"
-                :value="activeBadges[name] || '#808080'"
+                :value="activeBadges[name] || (editingDark ? autoDarkBadge(name) : '') || '#808080'"
                 class="color-picker"
                 @input="setBadge(name, ($event.target as HTMLInputElement).value)"
               />
               <input
                 type="text"
                 :value="activeBadges[name] || ''"
-                placeholder="#hex"
+                :placeholder="editingDark ? (autoDarkBadge(name) || 'auto') : '#hex'"
                 class="color-text"
                 @input="setBadge(name, ($event.target as HTMLInputElement).value)"
               />
@@ -866,6 +934,11 @@ onMounted(() => {
           >
             {{ savingPalette ? 'Saving...' : 'Save Palette' }}
           </button>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            @click="handleResetPalette"
+          >Reset</button>
         </div>
       </div>
 

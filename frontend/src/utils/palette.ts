@@ -176,6 +176,105 @@ export function hexToHSL(hex: string): HSL {
   return { h, s, l }
 }
 
+function hslToHex(h: number, s: number, l: number): string {
+  if (s === 0) {
+    const v = Math.round(l * 255)
+    return rgbToHex(v, v, v)
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+  const p = 2 * l - q
+  const hueToRgb = (t: number) => {
+    const tt = t < 0 ? t + 1 : t > 1 ? t - 1 : t
+    if (tt < 1 / 6) return p + (q - p) * 6 * tt
+    if (tt < 1 / 2) return q
+    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6
+    return p
+  }
+  return rgbToHex(
+    Math.round(hueToRgb(h + 1 / 3) * 255),
+    Math.round(hueToRgb(h) * 255),
+    Math.round(hueToRgb(h - 1 / 3) * 255),
+  )
+}
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v))
+}
+
+function mixColors(hex1: string, hex2: string, ratio: number): string {
+  const n1 = normalizeHex(hex1).replace('#', '')
+  const n2 = normalizeHex(hex2).replace('#', '')
+  const r = Math.round(parseInt(n1.slice(0, 2), 16) * (1 - ratio) + parseInt(n2.slice(0, 2), 16) * ratio)
+  const g = Math.round(parseInt(n1.slice(2, 4), 16) * (1 - ratio) + parseInt(n2.slice(2, 4), 16) * ratio)
+  const b = Math.round(parseInt(n1.slice(4, 6), 16) * (1 - ratio) + parseInt(n2.slice(4, 6), 16) * ratio)
+  return rgbToHex(r, g, b)
+}
+
+// Default light colors (must match backend defaults)
+const DEFAULTS = {
+  base: '#1a1a2e', surface: '#f8fafc', accent: '#6366f1', text: '#1e293b',
+  success: '#10b981', error: '#ef4444', warning: '#f59e0b', info: '#3b82f6',
+}
+const DEFAULT_BADGES: Record<string, string> = {
+  blue: '#3b82f6', purple: '#8b5cf6', green: '#22c55e', gray: '#6b7280',
+  red: '#ef4444', orange: '#f97316', yellow: '#eab308',
+}
+
+/**
+ * Derive the full 21-variable CSS map from 8 base colors + 7 badges.
+ * Mirrors the Go deriveTheme() in palette.go.
+ */
+export function deriveTheme(
+  colors: Record<string, string>,
+  badges: Record<string, string>,
+): Record<string, string> {
+  // Fill gaps with defaults
+  const c = { ...DEFAULTS, ...colors }
+  const b = { ...DEFAULT_BADGES, ...badges }
+
+  const surfaceHSL = hexToHSL(c.surface)
+  const textHSL = hexToHSL(c.text)
+  const baseHSL = hexToHSL(c.base)
+
+  const m: Record<string, string> = {
+    '--sidebar-bg': c.base,
+    '--bg-color': c.surface,
+    '--accent-color': c.accent,
+    '--text-color': c.text,
+    '--success-color': c.success,
+    '--error-color': c.error,
+    '--warning-color': c.warning,
+    '--info-color': c.info,
+  }
+
+  // card-bg: lighten surface ~2%
+  m['--card-bg'] = surfaceHSL.l >= 0.98
+    ? c.surface
+    : hslToHex(surfaceHSL.h, surfaceHSL.s, clamp01(surfaceHSL.l + 0.02))
+  m['--input-bg'] = m['--card-bg']
+
+  // hover-bg: darken surface ~3%
+  m['--hover-bg'] = surfaceHSL.l <= 0.03
+    ? c.surface
+    : hslToHex(surfaceHSL.h, surfaceHSL.s, clamp01(surfaceHSL.l - 0.03))
+
+  // border-color: mix surface and text at 15%
+  m['--border-color'] = mixColors(c.surface, c.text, 0.15)
+
+  // muted-text: lighten text 30%
+  m['--muted-text'] = hslToHex(textHSL.h, textHSL.s, clamp01(textHSL.l + 0.30))
+
+  // sidebar-text: high contrast against base
+  m['--sidebar-text'] = baseHSL.l < 0.5 ? '#e8e8e8' : '#1e293b'
+
+  // Badge colors
+  for (const [name, color] of Object.entries(b)) {
+    m[`--badge-${name}`] = color
+  }
+
+  return m
+}
+
 /** Circular hue distance in [0, 0.5] range. */
 function hueDist(h1: number, h2: number): number {
   const d = Math.abs(h1 - h2)
