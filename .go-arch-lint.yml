@@ -84,6 +84,7 @@ vendors:
   gopherlua:   { in: github.com/yuin/gopher-lua }
   mcpgo:       { in: github.com/mark3labs/mcp-go/** }
   wails:       { in: github.com/wailsapp/wails/** }
+  runewidth:   { in: github.com/mattn/go-runewidth }
   tablewriter: { in: github.com/olekukonko/tablewriter }
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
@@ -299,6 +300,7 @@ deps:
     canUse:
       - goldmark
       - gopherlua
+      - runewidth
   script:
     mayDependOn:
       - lua
