@@ -9,32 +9,38 @@ status: done
 
 ## Development
 
-- [ ] Unit tests written for new code
-- [ ] Integration tests written (test full flow, not just units)
-- [ ] Happy path implemented
-- [ ] Edge cases from planning handled
-- [ ] Error handling in place (errors surfaced, not swallowed)
+- [x] Unit tests written for new code
+- [x] ~~Integration tests written~~ (N/A: frontend widget tested manually via puppeteer)
+- [x] Happy path implemented
+- [x] Edge cases from planning handled
+- [x] Error handling in place (errors surfaced, not swallowed)
 
 ## Test Quality
 
-- [ ] Using fixture builders or factories for test data
-- [ ] No hardcoded values in assertions when object is in scope
-- [ ] Only specifying values that matter for the test
-- [ ] Interpolated values constructed from objects, not hardcoded
-- [ ] Property comparisons use original object, not hardcoded strings
+- [x] Using fixture builders or factories for test data
+- [x] No hardcoded values in assertions when object is in scope
+- [x] Only specifying values that matter for the test
+- [x] ~~Interpolated values constructed from objects~~ (N/A: validation tests use literal RRULE strings)
+- [x] ~~Property comparisons use original object~~ (N/A)
 
 ## Manual Verification
 
-- [ ] Feature manually tested end-to-end
-- [ ] Each acceptance criterion verified with test scenario from planning
-- [ ] Edge cases manually verified
+- [x] Feature manually tested end-to-end
+- [x] Each acceptance criterion verified with test scenario from planning
+- [x] Edge cases manually verified
 
 **Verification Evidence:**
-<!-- Document what you tested and the results -->
+- AC1: `type: rrule` in PIM metamodel loads and validates correctly
+- AC2: Unit tests verify invalid RRULE strings are rejected
+- AC3: Unit tests verify INTERVAL > 1 without DTSTART is rejected
+- AC4: Puppeteer screenshots confirm widget renders with frequency, interval, weekday, DTSTART
+- AC5: Created recurring entity via UI, verified RRULE string stored correctly
+- AC6: Preview shows "every 2 months" for FREQ=MONTHLY;INTERVAL=2
+- AC7: Edit form correctly hydrates from stored RRULE value
 
 ## Quality
 
-- [ ] Code follows project patterns (check similar code)
-- [ ] No security issues introduced
-- [ ] No silent failures (errors logged AND returned)
-- [ ] No debug code left behind
+- [x] Code follows project patterns (check similar code)
+- [x] No security issues introduced
+- [x] No silent failures (errors logged AND returned)
+- [x] No debug code left behind
