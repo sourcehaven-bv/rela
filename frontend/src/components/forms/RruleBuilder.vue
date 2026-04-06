@@ -192,7 +192,6 @@ function isDaySelected(day: Weekday): boolean {
   padding: 12px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: var(--hover-bg);
 }
 
 .rrule-builder__label {
