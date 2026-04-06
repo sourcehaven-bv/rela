@@ -11,6 +11,7 @@ import type {
   PaletteConfig,
 } from '@/api/settings'
 import TagSelect from '@/components/ui/TagSelect.vue'
+import { parsePalette, assignPalette } from '@/utils/palette'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
@@ -46,6 +47,11 @@ const paletteRoles = [
 ]
 
 const badgeNames = ['blue', 'purple', 'green', 'gray', 'red', 'orange', 'yellow']
+
+// Import state
+const importText = ref('')
+const importedColors = ref<string[]>([])
+const selectedRole = ref<{ type: 'color' | 'badge'; key: string } | null>(null)
 
 // UI state for adding new items
 const selectedNewProperty = ref('')
@@ -150,6 +156,53 @@ async function handleSavePalette() {
   } finally {
     savingPalette.value = false
   }
+}
+
+function handleImport() {
+  const colors = parsePalette(importText.value)
+  if (colors.length === 0) {
+    uiStore.warning('No valid colors found. Paste hex values or a GIMP Palette.')
+    return
+  }
+  importedColors.value = colors
+  const assignment = assignPalette(colors)
+
+  // Apply assignment to palette state
+  for (const [key, val] of Object.entries(assignment.colors)) {
+    paletteColors.value[key] = val
+  }
+  for (const [key, val] of Object.entries(assignment.badges)) {
+    paletteBadges.value[key] = val
+  }
+
+  uiStore.success(`Imported ${colors.length} colors and auto-assigned to roles`)
+}
+
+function clearImport() {
+  importText.value = ''
+  importedColors.value = []
+  selectedRole.value = null
+}
+
+function selectRole(type: 'color' | 'badge', key: string) {
+  if (selectedRole.value?.type === type && selectedRole.value?.key === key) {
+    selectedRole.value = null // deselect
+  } else {
+    selectedRole.value = { type, key }
+  }
+}
+
+function assignSwatch(hex: string) {
+  if (!selectedRole.value) return
+  if (selectedRole.value.type === 'color') {
+    paletteColors.value[selectedRole.value.key] = hex
+  } else {
+    paletteBadges.value[selectedRole.value.key] = hex
+  }
+}
+
+function isRoleSelected(type: 'color' | 'badge', key: string): boolean {
+  return selectedRole.value?.type === type && selectedRole.value?.key === key
 }
 
 function clearPaletteColor(key: string) {
@@ -544,9 +597,55 @@ onMounted(() => {
         <p class="description">Customize the color palette. Empty fields use built-in defaults.</p>
         <p class="file-path">.rela/palette.yaml</p>
 
+        <h4 class="section-subtitle">Import Palette</h4>
+        <div class="import-section">
+          <textarea
+            v-model="importText"
+            class="import-textarea"
+            placeholder="Paste hex colors (one per line) or GIMP Palette (.gpl) content"
+            rows="4"
+          />
+          <div class="import-actions">
+            <button
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="!importText.trim()"
+              @click="handleImport"
+            >Import</button>
+            <button
+              v-if="importedColors.length"
+              type="button"
+              class="btn btn-secondary btn-sm"
+              @click="clearImport"
+            >Clear</button>
+          </div>
+          <div v-if="importedColors.length" class="swatch-section">
+            <p class="swatch-hint">
+              Click a role label below, then click a swatch to assign it.
+            </p>
+            <div class="swatch-grid">
+              <button
+                v-for="color in importedColors"
+                :key="color"
+                type="button"
+                class="swatch"
+                :style="{ backgroundColor: color }"
+                :title="color"
+                @click="assignSwatch(color)"
+              />
+            </div>
+          </div>
+        </div>
+
         <h4 class="section-subtitle">Theme Colors</h4>
         <div class="color-grid">
-          <div v-for="role in paletteRoles" :key="role.key" class="color-row">
+          <div
+            v-for="role in paletteRoles"
+            :key="role.key"
+            class="color-row"
+            :class="{ 'role-selected': isRoleSelected('color', role.key) }"
+            @click="selectRole('color', role.key)"
+          >
             <label class="color-label">
               <span class="color-name">{{ role.label }}</span>
               <span class="color-desc">{{ role.description }}</span>
@@ -578,7 +677,13 @@ onMounted(() => {
 
         <h4 class="section-subtitle">Badge Colors</h4>
         <div class="color-grid">
-          <div v-for="name in badgeNames" :key="name" class="color-row">
+          <div
+            v-for="name in badgeNames"
+            :key="name"
+            class="color-row"
+            :class="{ 'role-selected': isRoleSelected('badge', name) }"
+            @click="selectRole('badge', name)"
+          >
             <label class="color-label">
               <span class="color-name badge-label">{{ name }}</span>
             </label>
@@ -966,6 +1071,65 @@ h1 {
   margin-top: 16px;
   display: flex;
   gap: 12px;
+}
+
+.import-section {
+  margin-bottom: 16px;
+}
+
+.import-textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: monospace;
+  background: var(--input-bg);
+  color: var(--text-color);
+  resize: vertical;
+}
+
+.import-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.swatch-section {
+  margin-top: 12px;
+}
+
+.swatch-hint {
+  font-size: 12px;
+  color: var(--muted-text);
+  margin: 0 0 8px;
+}
+
+.swatch-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.swatch {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s;
+}
+
+.swatch:hover {
+  transform: scale(1.15);
+  border-color: var(--accent-color);
+}
+
+.role-selected {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+  border-radius: 6px;
 }
 
 /* Uses global .btn, .btn-primary, .btn-secondary, .btn-sm, .loading-state, .spinner, .error-state from App.vue */
