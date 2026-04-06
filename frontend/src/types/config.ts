@@ -1,8 +1,15 @@
 import type { SortSpec } from './schema'
 
+export interface ResolvedPalette {
+  light: Record<string, string>
+  dark?: Record<string, string>
+  darkDisabled?: boolean
+}
+
 export interface Config {
   app: AppConfig
   styles?: Record<string, Record<string, string>>
+  palette?: ResolvedPalette
   forms: Record<string, FormConfig>
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>

@@ -24,6 +24,7 @@ var validTopLevelKeys = map[string]bool{
 	"dashboard":  true,
 	"commands":   true,
 	"navigation": true,
+	"palette":    true,
 }
 
 // Known typos with suggestions

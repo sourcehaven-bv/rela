@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -657,10 +658,11 @@ func (a *App) edgeToAPIRelation(edge *model.Relation, relatedEntity *model.Entit
 
 // APISettingsData contains all data needed for the settings page.
 type APISettingsData struct {
-	UserDefaults  APIUserDefaults  `json:"userDefaults"`
-	AllProperties []APIPropertyDef `json:"allProperties"`
-	AllRelations  []APIRelationDef `json:"allRelations"`
-	EntityTypes   []string         `json:"entityTypes"`
+	UserDefaults  APIUserDefaults                `json:"userDefaults"`
+	UserPalette   *dataentryconfig.PaletteConfig `json:"userPalette,omitempty"`
+	AllProperties []APIPropertyDef               `json:"allProperties"`
+	AllRelations  []APIRelationDef               `json:"allRelations"`
+	EntityTypes   []string                       `json:"entityTypes"`
 }
 
 // APIUserDefaults is the JSON representation of user defaults.
@@ -809,6 +811,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 
 	data := APISettingsData{
 		UserDefaults:  apiDefaults,
+		UserPalette:   a.userPalette,
 		AllProperties: allProperties,
 		AllRelations:  allRelations,
 		EntityTypes:   a.meta.EntityTypes(),
@@ -854,6 +857,64 @@ func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.userDefaults = &ud
+
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// coverage-ignore: HTTP handlers tested via e2e tests
+
+// handleAPIPaletteCRUD routes /api/v1/_palette requests based on HTTP method.
+func (a *App) handleAPIPaletteCRUD(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		a.handleAPIGetPalette(w, r)
+	case http.MethodPut, http.MethodPost:
+		a.handleAPISavePalette(w, r)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleAPIGetPalette returns the current user palette.
+func (a *App) handleAPIGetPalette(w http.ResponseWriter, _ *http.Request) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	p := a.userPalette
+	if p == nil {
+		p = &dataentryconfig.PaletteConfig{}
+	}
+	writeJSON(w, p)
+}
+
+// handleAPISavePalette validates and saves the user palette.
+func (a *App) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
+	var input dataentryconfig.PaletteConfig
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if err := dataentryconfig.ValidatePalette(&input); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid palette: "+err.Error())
+		return
+	}
+
+	// Upgrade from read lock to write lock (middleware holds RLock)
+	a.mu.RUnlock()
+	a.mu.Lock()
+	defer func() {
+		a.mu.Unlock()
+		a.mu.RLock()
+	}()
+
+	if err := a.saveUserPalette(&input); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to save palette: "+err.Error())
+		return
+	}
+
+	a.userPalette = &input
+	a.palette = dataentryconfig.ResolvePalette(a.Cfg.Palette, a.userPalette)
 
 	writeJSON(w, map[string]bool{"ok": true})
 }

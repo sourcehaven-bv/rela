@@ -29,6 +29,9 @@ export const useSchemaStore = defineStore('schema', () => {
   const navigation = ref<NavigationEntry[]>([])
   const app = ref<AppConfig>({ name: 'rela' })
   const styles = ref<Record<string, Record<string, string>>>({})
+  const paletteLight = ref<Record<string, string>>({})
+  const paletteDark = ref<Record<string, string>>({})
+  const darkDisabled = ref(false)
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -70,6 +73,17 @@ export const useSchemaStore = defineStore('schema', () => {
       dashboard.value = configData.dashboard
       navigation.value = configData.navigation || []
 
+      // Apply palette if present
+      if (configData.palette) {
+        paletteLight.value = configData.palette.light || {}
+        paletteDark.value = configData.palette.dark || {}
+        darkDisabled.value = configData.palette.darkDisabled || false
+      } else {
+        paletteLight.value = {}
+        paletteDark.value = {}
+        darkDisabled.value = false
+      }
+
       loaded.value = true
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load schema'
@@ -98,6 +112,9 @@ export const useSchemaStore = defineStore('schema', () => {
     navigation,
     app,
     styles,
+    paletteLight,
+    paletteDark,
+    darkDisabled,
     loaded,
     loading,
     error,

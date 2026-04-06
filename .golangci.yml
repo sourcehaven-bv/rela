@@ -310,6 +310,7 @@ issues:
         - funlen        # Validation functions are inherently long
         - gocognit      # Cross-reference validation has complex control flow
         - gocyclo       # Validation functions are inherently complex
+        - mnd           # Color math constants (HSL thresholds, mix ratios)
         - nestif        # Validation logic has nested conditionals
         - lll           # Error message format strings are long
 

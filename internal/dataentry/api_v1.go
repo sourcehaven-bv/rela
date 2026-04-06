@@ -116,6 +116,7 @@ type V1Config struct {
 	Dashboard  *dataentryconfig.DashboardConfig          `json:"dashboard,omitempty"`
 	Navigation []dataentryconfig.NavigationEntry         `json:"navigation"`
 	Documents  map[string]dataentryconfig.DocumentConfig `json:"documents,omitempty"`
+	Palette    *dataentryconfig.ResolvedPalette          `json:"palette,omitempty"`
 }
 
 // V1AppConfig is the JSON representation of the app config.
@@ -161,6 +162,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
 	mux.HandleFunc("/api/v1/_settings", a.handleAPISettingsCRUD)
+	mux.HandleFunc("/api/v1/_palette", a.handleAPIPaletteCRUD)
 	mux.HandleFunc("/api/v1/_sidepanel/", a.handleV1SidePanel)
 	mux.HandleFunc("/api/v1/_sidebar", a.handleV1Sidebar)
 	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
@@ -885,6 +887,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Dashboard:  a.Cfg.Dashboard,
 		Navigation: a.Cfg.Navigation,
 		Documents:  a.Cfg.Documents,
+		Palette:    a.palette,
 	}
 
 	writeV1JSON(w, http.StatusOK, config)

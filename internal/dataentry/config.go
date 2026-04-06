@@ -10,6 +10,9 @@ package dataentry
 
 import "github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 
+// ResolvePalette is re-exported from dataentryconfig.
+var ResolvePalette = dataentryconfig.ResolvePalette
+
 // Widget and direction constants — re-exported from dataentryconfig.
 const (
 	WidgetText        = dataentryconfig.WidgetText
@@ -57,4 +60,7 @@ type (
 	CommandConfig    = dataentryconfig.CommandConfig
 	CommandScope     = dataentryconfig.CommandScope
 	DocumentConfig   = dataentryconfig.DocumentConfig
+	PaletteConfig    = dataentryconfig.PaletteConfig
+	PaletteColors    = dataentryconfig.PaletteColors
+	ResolvedPalette  = dataentryconfig.ResolvedPalette
 )

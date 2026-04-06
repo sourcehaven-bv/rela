@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { getSettings, saveSettings } from '@/api'
+import { getSettings, saveSettings, savePalette } from '@/api'
 import type {
   SettingsData,
   SettingsPropertyDef,
   SettingsRelationDef,
   UserDefaults,
   DefaultOverride,
+  PaletteConfig,
 } from '@/api/settings'
 import TagSelect from '@/components/ui/TagSelect.vue'
 
@@ -27,6 +28,24 @@ const entityTypes = ref<string[]>([])
 const propertyDefaults = ref<Record<string, string>>({})
 const relationDefaults = ref<Record<string, string>>({})
 const overrides = ref<DefaultOverride[]>([])
+
+// Palette state
+const paletteColors = ref<Record<string, string>>({})
+const paletteBadges = ref<Record<string, string>>({})
+const savingPalette = ref(false)
+
+const paletteRoles = [
+  { key: 'base', label: 'Base', description: 'Sidebar & navigation background' },
+  { key: 'surface', label: 'Surface', description: 'Main background' },
+  { key: 'accent', label: 'Accent', description: 'Primary action color' },
+  { key: 'text', label: 'Text', description: 'Main text color' },
+  { key: 'success', label: 'Success', description: 'Success indicators' },
+  { key: 'error', label: 'Error', description: 'Error indicators' },
+  { key: 'warning', label: 'Warning', description: 'Warning indicators' },
+  { key: 'info', label: 'Info', description: 'Info indicators' },
+]
+
+const badgeNames = ['blue', 'purple', 'green', 'gray', 'red', 'orange', 'yellow']
 
 // UI state for adding new items
 const selectedNewProperty = ref('')
@@ -66,6 +85,20 @@ async function loadSettings() {
       defaults: { ...o.defaults },
       relationDefaults: { ...o.relationDefaults },
     }))
+
+    // Load palette
+    const p = data.userPalette
+    if (p) {
+      paletteColors.value = {}
+      for (const role of paletteRoles) {
+        const val = p[role.key as keyof PaletteConfig]
+        if (typeof val === 'string') paletteColors.value[role.key] = val
+      }
+      paletteBadges.value = { ...(p.badges || {}) }
+    } else {
+      paletteColors.value = {}
+      paletteBadges.value = {}
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load settings'
   } finally {
@@ -94,6 +127,37 @@ async function handleSave() {
   } finally {
     saving.value = false
   }
+}
+
+async function handleSavePalette() {
+  savingPalette.value = true
+  try {
+    const palette: PaletteConfig = {}
+    for (const [key, val] of Object.entries(paletteColors.value)) {
+      if (val) (palette as Record<string, string>)[key] = val
+    }
+    const badges: Record<string, string> = {}
+    for (const [key, val] of Object.entries(paletteBadges.value)) {
+      if (val) badges[key] = val
+    }
+    if (Object.keys(badges).length > 0) palette.badges = badges
+
+    await savePalette(palette)
+    uiStore.success('Palette saved — reload page to see changes')
+    await schemaStore.reload()
+  } catch (err) {
+    uiStore.error(err instanceof Error ? err.message : 'Failed to save palette')
+  } finally {
+    savingPalette.value = false
+  }
+}
+
+function clearPaletteColor(key: string) {
+  delete paletteColors.value[key]
+}
+
+function clearBadgeColor(key: string) {
+  delete paletteBadges.value[key]
 }
 
 function addPropertyDefault() {
@@ -474,6 +538,87 @@ onMounted(() => {
         </button>
       </div>
 
+      <!-- Appearance / Palette -->
+      <div class="settings-card">
+        <h3>Appearance</h3>
+        <p class="description">Customize the color palette. Empty fields use built-in defaults.</p>
+        <p class="file-path">.rela/palette.yaml</p>
+
+        <h4 class="section-subtitle">Theme Colors</h4>
+        <div class="color-grid">
+          <div v-for="role in paletteRoles" :key="role.key" class="color-row">
+            <label class="color-label">
+              <span class="color-name">{{ role.label }}</span>
+              <span class="color-desc">{{ role.description }}</span>
+            </label>
+            <div class="color-input-group">
+              <input
+                type="color"
+                :value="paletteColors[role.key] || '#808080'"
+                class="color-picker"
+                @input="paletteColors[role.key] = ($event.target as HTMLInputElement).value"
+              />
+              <input
+                type="text"
+                :value="paletteColors[role.key] || ''"
+                placeholder="#hex"
+                class="color-text"
+                @input="paletteColors[role.key] = ($event.target as HTMLInputElement).value"
+              />
+              <button
+                v-if="paletteColors[role.key]"
+                type="button"
+                class="btn-icon btn-remove"
+                title="Clear (use default)"
+                @click="clearPaletteColor(role.key)"
+              >&times;</button>
+            </div>
+          </div>
+        </div>
+
+        <h4 class="section-subtitle">Badge Colors</h4>
+        <div class="color-grid">
+          <div v-for="name in badgeNames" :key="name" class="color-row">
+            <label class="color-label">
+              <span class="color-name badge-label">{{ name }}</span>
+            </label>
+            <div class="color-input-group">
+              <input
+                type="color"
+                :value="paletteBadges[name] || '#808080'"
+                class="color-picker"
+                @input="paletteBadges[name] = ($event.target as HTMLInputElement).value"
+              />
+              <input
+                type="text"
+                :value="paletteBadges[name] || ''"
+                placeholder="#hex"
+                class="color-text"
+                @input="paletteBadges[name] = ($event.target as HTMLInputElement).value"
+              />
+              <button
+                v-if="paletteBadges[name]"
+                type="button"
+                class="btn-icon btn-remove"
+                title="Clear (use default)"
+                @click="clearBadgeColor(name)"
+              >&times;</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="palette-actions">
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            :disabled="savingPalette"
+            @click="handleSavePalette"
+          >
+            {{ savingPalette ? 'Saving...' : 'Save Palette' }}
+          </button>
+        </div>
+      </div>
+
       <!-- App Info -->
       <div class="settings-card">
         <h3>Application Info</h3>
@@ -727,6 +872,100 @@ h1 {
   display: flex;
   gap: 12px;
   margin-top: 24px;
+}
+
+.section-subtitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color);
+  margin: 16px 0 8px;
+}
+
+.section-subtitle:first-of-type {
+  margin-top: 0;
+}
+
+.color-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--hover-bg);
+  border-radius: 6px;
+}
+
+.color-label {
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+}
+
+.color-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.color-desc {
+  font-size: 11px;
+  color: var(--muted-text);
+}
+
+.badge-label {
+  text-transform: capitalize;
+}
+
+.color-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.color-picker {
+  width: 32px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--input-bg);
+}
+
+.color-text {
+  width: 90px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: monospace;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.btn-icon {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--muted-text);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.btn-icon:hover {
+  color: var(--error-color);
+}
+
+.palette-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 12px;
 }
 
 /* Uses global .btn, .btn-primary, .btn-secondary, .btn-sm, .loading-state, .spinner, .error-state from App.vue */
