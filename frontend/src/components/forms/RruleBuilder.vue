@@ -145,7 +145,7 @@ function isDaySelected(day: Weekday): boolean {
       </select>
     </div>
 
-    <div v-if="freq === 1" class="rrule-builder__weekdays">
+    <div v-if="freq === RRule.WEEKLY" class="rrule-builder__weekdays">
       <button
         v-for="day in weekdays"
         :key="day.value.weekday"
