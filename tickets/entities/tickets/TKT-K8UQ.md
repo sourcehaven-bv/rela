@@ -5,7 +5,7 @@ title: Add customizable color palette to data-entry apps
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: done
 ---
 
 # Add Customizable Color Palette to Data-Entry Apps

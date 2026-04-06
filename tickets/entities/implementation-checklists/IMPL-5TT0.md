@@ -2,7 +2,7 @@
 id: IMPL-5TT0
 type: implementation-checklist
 title: 'Implementation: Add customizable color palette to data-entry apps'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
