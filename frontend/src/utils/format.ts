@@ -2,6 +2,7 @@
  * Value formatting utilities
  */
 
+import { RRule } from 'rrule'
 import type { PropertyDef, EntityType } from '@/types'
 
 /**
@@ -18,6 +19,19 @@ export function formatValue(value: unknown, type?: string): string {
 
   if (type === 'boolean') {
     return value ? 'Yes' : 'No'
+  }
+
+  if (type === 'rrule' && typeof value === 'string' && value) {
+    try {
+      // Handle both "FREQ=..." and "DTSTART:... RRULE:FREQ=..." formats
+      const str = String(value)
+      const rrulePart = str.includes('RRULE:')
+        ? str.substring(str.indexOf('RRULE:'))
+        : `RRULE:${str}`
+      return RRule.fromString(rrulePart).toText()
+    } catch {
+      return String(value)
+    }
   }
 
   if (Array.isArray(value)) {
