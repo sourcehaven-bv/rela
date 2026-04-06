@@ -1,0 +1,21 @@
+{{/* Reusable template partials */}}
+
+{{/* field-value: renders a field value with badge styling when applicable */}}
+{{/* Expects: .Label, .Value, .PropType */}}
+{{- define "field-value" -}}
+{{ if .Value }}{{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>{{ else }}{{ .Value }}{{ end }}{{ end }}
+{{- end -}}
+
+{{/* field-row: renders a label + value row with badge styling */}}
+{{/* Expects: .Label, .Value, .PropType */}}
+{{- define "field-row" -}}
+{{ if .Value }}<div class="field-row"><span class="field-label">{{ .Label }}:</span> {{ template "field-value" . }}</div>{{ end }}
+{{- end -}}
+
+{{/* card-props: renders relation property values for display on cards */}}
+{{/* Expects: []SectionFieldData (passed directly, not wrapped) */}}
+{{- define "card-props" -}}
+{{ range . }}{{ template "field-value" . }} {{ end }}
+{{- end -}}
+
+{{/* Legacy HTMX relation card templates removed — Vue RelationCards.vue handles this now */}}

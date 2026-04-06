@@ -3,9 +3,11 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import type { PropertyDef, FormFieldOrRelation, Template } from '@/types'
-import { getTemplates, createRelation } from '@/api'
+import { getTemplates, createRelation, updateRelationProperties, deleteRelation } from '@/api'
+import type { RelationCardState } from './RelationCards.vue'
 import FieldRenderer from './FieldRenderer.vue'
 import RelationPicker from './RelationPicker.vue'
+import RelationCards from './RelationCards.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 import SidePanel from './SidePanel.vue'
 import HelpModal from '@/components/ui/HelpModal.vue'
@@ -35,6 +37,7 @@ const formData = ref<Record<string, unknown>>({})
 const relations = ref<Record<string, string[]>>({})
 const content = ref('')
 const loading = ref(true)
+const saveGeneration = ref(0) // Incremented after save to reset RelationCards
 const saving = ref(false)
 const dirty = ref(false)
 const errors = ref<Record<string, string>>({})
@@ -290,14 +293,30 @@ async function handleSubmit() {
 
   saving.value = true
   try {
+    // Exclude card-managed relations from the entity update payload —
+    // those are saved separately via savePendingRelationCards()
+    const cardRelations = new Set(
+      fields.value
+        .filter((f) => f.relation && f.widget === 'cards')
+        .map((f) => f.relation!)
+    )
+    const filteredRelations: Record<string, string[]> = {}
+    for (const [rel, ids] of Object.entries(relations.value)) {
+      if (!cardRelations.has(rel)) {
+        filteredRelations[rel] = ids
+      }
+    }
+
     const payload = {
       properties: formData.value,
-      relations: relations.value,
+      relations: filteredRelations,
       content: content.value || undefined,
     }
 
     if (isEdit.value && props.entityId) {
       await entitiesStore.update(formConfig.value.entity, props.entityId, payload)
+      // Save any pending relation card changes (adds, removes, property edits)
+      await savePendingRelationCards()
       uiStore.success('Entity updated successfully')
     } else {
       const entity = await entitiesStore.create(formConfig.value.entity, payload)
@@ -372,6 +391,38 @@ function updateRelation(relation: string, value: string[]) {
   checkDirty()
 }
 
+// Pending relation card changes (for batch save)
+const pendingCardChanges = ref<Map<string, RelationCardState>>(new Map())
+
+function updateRelationCards(relation: string, state: RelationCardState) {
+  pendingCardChanges.value.set(relation, state)
+  checkDirty()
+}
+
+async function savePendingRelationCards() {
+  const entity = formConfig.value!.entity
+  const entityId = props.entityId!
+
+  await Promise.all(
+    Array.from(pendingCardChanges.value.entries()).map(async ([key, state]) => {
+      const relation = key.replace(/-outgoing$|-incoming$/, '')
+      const direction = key.endsWith('-incoming') ? 'incoming' : undefined
+      for (const targetId of state.removed) {
+        await deleteRelation(entity, entityId, relation, targetId, direction)
+      }
+      for (const add of state.added) {
+        await createRelation(entity, entityId, relation, add.targetId, add.meta, direction)
+      }
+      for (const upd of state.updated) {
+        await updateRelationProperties(entity, entityId, relation, upd.targetId, upd.meta, direction)
+      }
+    })
+  )
+
+  pendingCardChanges.value.clear()
+  saveGeneration.value++
+}
+
 function updateContent(value: string) {
   content.value = value
   checkDirty()
@@ -379,7 +430,8 @@ function updateContent(value: string) {
 
 function checkDirty() {
   const currentData = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
-  dirty.value = currentData !== originalData.value
+  const hasCardChanges = pendingCardChanges.value.size > 0
+  dirty.value = currentData !== originalData.value || hasCardChanges
 }
 
 function getPropertyDef(property: string): PropertyDef | undefined {
@@ -483,7 +535,7 @@ onBeforeRouteLeave((_to, _from, next) => {
             </p>
 
             <div class="form-fields">
-              <template v-for="field in section.fields" :key="field.property || field.relation">
+              <template v-for="(field, fieldIdx) in section.fields" :key="`${fieldIdx}-${field.property || field.relation}`">
                 <FieldRenderer
                   v-if="field.property && !field.hidden"
                   :field="field"
@@ -492,6 +544,14 @@ onBeforeRouteLeave((_to, _from, next) => {
                   :error="errors[field.property]"
                   :readonly="field.readonly"
                   @update="updateField(field.property!, $event)"
+                />
+                <RelationCards
+                  v-else-if="field.relation && field.widget === 'cards' && entityId"
+                  :key="`cards-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
+                  :field="field"
+                  :entity-type="formConfig.entity"
+                  :entity-id="entityId"
+                  @cards-changed="(state) => updateRelationCards(`${field.relation}-${field.direction || 'outgoing'}`, state)"
                 />
                 <RelationPicker
                   v-else-if="field.relation"
@@ -506,7 +566,7 @@ onBeforeRouteLeave((_to, _from, next) => {
         </template>
 
         <div v-else class="form-fields">
-          <template v-for="field in fields" :key="field.property || field.relation">
+          <template v-for="(field, fieldIdx) in fields" :key="`${fieldIdx}-${field.property || field.relation}`">
             <FieldRenderer
               v-if="field.property && !field.hidden"
               :field="field"
@@ -515,6 +575,14 @@ onBeforeRouteLeave((_to, _from, next) => {
               :error="errors[field.property]"
               :readonly="field.readonly"
               @update="updateField(field.property!, $event)"
+            />
+            <RelationCards
+              v-else-if="field.relation && field.widget === 'cards' && entityId"
+              :key="`cards-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
+              :field="field"
+              :entity-type="formConfig.entity"
+              :entity-id="entityId"
+              @cards-changed="(state) => updateRelationCards(`${field.relation}-${field.direction || 'outgoing'}`, state)"
             />
             <RelationPicker
               v-else-if="field.relation"

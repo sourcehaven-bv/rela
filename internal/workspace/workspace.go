@@ -1119,6 +1119,7 @@ func (w *Workspace) writeRelationCore(rel *model.Relation) error {
 // CreateRelationOptions configures optional settings for relation creation.
 type CreateRelationOptions struct {
 	Properties map[string]interface{} // property values for the relation
+	Content    string                 // markdown body content for the relation
 }
 
 // CreateRelation validates both endpoints exist, checks for duplicates,
@@ -1156,11 +1157,43 @@ func (w *Workspace) CreateRelation(from, relType, to string, opts ...CreateRelat
 		markdown.ApplyRelationTemplate(rel, template)
 	}
 
-	// Apply caller-provided properties (override template defaults).
+	// Apply caller-provided properties and content (override template defaults).
 	if len(opts) > 0 {
+		if len(opts[0].Properties) > 0 && rel.Properties == nil {
+			rel.Properties = make(map[string]interface{})
+		}
 		for k, v := range opts[0].Properties {
 			rel.Properties[k] = v
 		}
+		if opts[0].Content != "" {
+			rel.Content = opts[0].Content
+		}
+	}
+
+	if err := w.writeRelationCore(rel); err != nil {
+		return nil, err
+	}
+
+	w.saveCacheQuietly()
+	return rel, nil
+}
+
+// UpdateRelation updates properties on an existing relation.
+func (w *Workspace) UpdateRelation(from, relType, to string, opts CreateRelationOptions) (*model.Relation, error) {
+	rel, exists := w.graph.GetEdge(from, relType, to)
+	if !exists {
+		return nil, fmt.Errorf("relation not found: %s --%s--> %s", from, relType, to)
+	}
+
+	// Merge properties
+	if rel.Properties == nil {
+		rel.Properties = make(map[string]interface{})
+	}
+	for k, v := range opts.Properties {
+		rel.Properties[k] = v
+	}
+	if opts.Content != "" {
+		rel.Content = opts.Content
 	}
 
 	if err := w.writeRelationCore(rel); err != nil {

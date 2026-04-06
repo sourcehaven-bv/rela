@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Relation Cards + Modal Prototype</title>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --card-bg: #fff;
+      --border: #e0e0e0;
+      --text: #333;
+      --text-muted: #666;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --danger: #dc2626;
+      --danger-hover: #b91c1c;
+      --success: #16a34a;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.1rem; margin-bottom: 1rem; color: var(--text-muted); font-weight: 500; }
+    h3 { font-size: 0.9rem; margin-bottom: 0.75rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    .section {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    /* Simple mode - just a select */
+    .simple-relation {
+      margin-bottom: 1rem;
+    }
+
+    .simple-relation select {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
+
+    /* Cards layout */
+    .relation-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .relation-card {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem;
+      background: var(--bg);
+      position: relative;
+    }
+
+    .relation-card:hover {
+      border-color: var(--primary);
+    }
+
+    .relation-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 0.5rem;
+    }
+
+    .relation-card-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .relation-card-id {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      font-family: monospace;
+    }
+
+    .relation-card-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .relation-card-properties {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.25rem 1rem;
+      font-size: 0.85rem;
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .relation-card-properties dt {
+      color: var(--text-muted);
+    }
+
+    .relation-card-properties dd {
+      font-weight: 500;
+    }
+
+    .relation-card-content {
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .relation-card-content p {
+      margin: 0;
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 0.4rem 0.75rem;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn-sm {
+      padding: 0.25rem 0.5rem;
+      font-size: 0.75rem;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn-secondary {
+      background: var(--border);
+      color: var(--text);
+    }
+
+    .btn-secondary:hover {
+      background: #d0d0d0;
+    }
+
+    .btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+
+    .btn-danger:hover {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-muted);
+    }
+
+    .btn-ghost:hover {
+      background: var(--border);
+      color: var(--text);
+    }
+
+    .add-relation-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      padding: 0.5rem;
+      width: 100%;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+
+    .add-relation-btn:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+      background: rgba(37, 99, 235, 0.05);
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s, visibility 0.2s;
+    }
+
+    .modal-overlay.active {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .modal {
+      background: var(--card-bg);
+      border-radius: 8px;
+      width: 100%;
+      max-width: 500px;
+      max-height: 90vh;
+      overflow: auto;
+      transform: translateY(-20px);
+      transition: transform 0.2s;
+    }
+
+    .modal-overlay.active .modal {
+      transform: translateY(0);
+    }
+
+    .modal-header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-header h3 {
+      margin: 0;
+      text-transform: none;
+      letter-spacing: normal;
+      font-size: 1rem;
+      color: var(--text);
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      color: var(--text-muted);
+      line-height: 1;
+    }
+
+    .modal-close:hover {
+      color: var(--text);
+    }
+
+    .modal-body {
+      padding: 1.25rem;
+    }
+
+    .modal-footer {
+      padding: 1rem 1.25rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+    }
+
+    /* Form elements */
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-bottom: 0.35rem;
+    }
+
+    .form-label .required {
+      color: var(--danger);
+    }
+
+    .form-input,
+    .form-select,
+    .form-textarea {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.9rem;
+      font-family: inherit;
+    }
+
+    .form-input:focus,
+    .form-select:focus,
+    .form-textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    .form-textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+
+    .form-help {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    /* Comparison section */
+    .comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    @media (max-width: 700px) {
+      .comparison {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .comparison-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+      padding: 0.25rem 0.5rem;
+      background: var(--border);
+      border-radius: 4px;
+      display: inline-block;
+    }
+
+    /* Badge for property count */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.15rem 0.4rem;
+      font-size: 0.7rem;
+      font-weight: 500;
+      border-radius: 9999px;
+      background: var(--primary);
+      color: white;
+      margin-left: 0.5rem;
+    }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: var(--text);
+      color: white;
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      transform: translateY(100px);
+      opacity: 0;
+      transition: transform 0.3s, opacity 0.3s;
+      z-index: 1001;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Relation UI Prototype</h1>
+    <h2>Testing cards + modal for relations with properties/content</h2>
+
+    <div class="comparison">
+      <!-- Simple mode -->
+      <div>
+        <span class="comparison-label">Simple Mode (no properties)</span>
+        <div class="section">
+          <h3>Implements</h3>
+          <div class="simple-relation">
+            <select multiple>
+              <option value="FEAT-001" selected>FEAT-001: User Authentication</option>
+              <option value="FEAT-002" selected>FEAT-002: Role-Based Access</option>
+              <option value="FEAT-003">FEAT-003: Session Management</option>
+              <option value="FEAT-004">FEAT-004: Password Reset</option>
+            </select>
+          </div>
+          <p class="form-help">Multi-select when relation has no properties or content</p>
+        </div>
+      </div>
+
+      <!-- Advanced mode -->
+      <div>
+        <span class="comparison-label">Advanced Mode (with properties)</span>
+        <div class="section">
+          <h3>Addresses <span class="badge">2 props</span></h3>
+          <div class="relation-cards" id="relation-cards">
+            <!-- Cards will be rendered here -->
+          </div>
+          <button class="add-relation-btn" onclick="openModal('add')">
+            <span>+</span> Add relation
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Another example with content -->
+    <div class="section" style="margin-top: 2rem;">
+      <h3>Depends On <span class="badge">content</span></h3>
+      <div class="relation-cards" id="depends-cards">
+        <!-- Cards with content -->
+      </div>
+      <button class="add-relation-btn" onclick="openModal('add-depends')">
+        <span>+</span> Add dependency
+      </button>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-overlay" id="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modal-title">Edit Relation</h3>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body">
+        <!-- Form content will be injected here -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveRelation()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast">Relation saved</div>
+
+  <script>
+    // Sample data
+    const addressesRelations = [
+      {
+        id: 'REQ-001',
+        title: 'Secure Login Requirements',
+        properties: {
+          rationale: 'Critical security requirement',
+          impact: 'high'
+        }
+      },
+      {
+        id: 'REQ-003',
+        title: 'Password Policy Requirements',
+        properties: {
+          rationale: 'Compliance requirement for SOC2',
+          impact: 'medium'
+        }
+      }
+    ];
+
+    const dependsRelations = [
+      {
+        id: 'COMP-002',
+        title: 'Database Service',
+        content: 'Required for storing user credentials and session data. Must be initialized before auth service starts.'
+      }
+    ];
+
+    const availableTargets = [
+      { id: 'REQ-001', title: 'Secure Login Requirements' },
+      { id: 'REQ-002', title: 'Performance Requirements' },
+      { id: 'REQ-003', title: 'Password Policy Requirements' },
+      { id: 'REQ-004', title: 'Audit Logging Requirements' },
+      { id: 'REQ-005', title: 'Data Retention Policy' },
+    ];
+
+    const availableComponents = [
+      { id: 'COMP-001', title: 'API Gateway' },
+      { id: 'COMP-002', title: 'Database Service' },
+      { id: 'COMP-003', title: 'Cache Layer' },
+      { id: 'COMP-004', title: 'Message Queue' },
+    ];
+
+    let currentMode = null;
+    let currentEditId = null;
+
+    // Render cards
+    function renderCards() {
+      const container = document.getElementById('relation-cards');
+      container.innerHTML = addressesRelations.map(rel => `
+        <div class="relation-card">
+          <div class="relation-card-header">
+            <div>
+              <div class="relation-card-title">${rel.title}</div>
+              <div class="relation-card-id">${rel.id}</div>
+            </div>
+            <div class="relation-card-actions">
+              <button class="btn btn-sm btn-ghost" onclick="openModal('edit', '${rel.id}')">Edit</button>
+              <button class="btn btn-sm btn-danger" onclick="removeRelation('${rel.id}')">Remove</button>
+            </div>
+          </div>
+          <dl class="relation-card-properties">
+            <dt>Rationale</dt>
+            <dd>${rel.properties.rationale}</dd>
+            <dt>Impact</dt>
+            <dd>${rel.properties.impact}</dd>
+          </dl>
+        </div>
+      `).join('');
+
+      const dependsContainer = document.getElementById('depends-cards');
+      dependsContainer.innerHTML = dependsRelations.map(rel => `
+        <div class="relation-card">
+          <div class="relation-card-header">
+            <div>
+              <div class="relation-card-title">${rel.title}</div>
+              <div class="relation-card-id">${rel.id}</div>
+            </div>
+            <div class="relation-card-actions">
+              <button class="btn btn-sm btn-ghost" onclick="openModal('edit-depends', '${rel.id}')">Edit</button>
+              <button class="btn btn-sm btn-danger" onclick="removeDepends('${rel.id}')">Remove</button>
+            </div>
+          </div>
+          <div class="relation-card-content">
+            <p>${rel.content}</p>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Modal functions
+    function openModal(mode, editId = null) {
+      currentMode = mode;
+      currentEditId = editId;
+
+      const overlay = document.getElementById('modal-overlay');
+      const title = document.getElementById('modal-title');
+      const body = document.getElementById('modal-body');
+
+      if (mode === 'add') {
+        title.textContent = 'Add Relation';
+        body.innerHTML = `
+          <div class="form-group">
+            <label class="form-label">Target Entity <span class="required">*</span></label>
+            <select class="form-select" id="target-select">
+              <option value="">Select a requirement...</option>
+              ${availableTargets.map(t => `<option value="${t.id}">${t.id}: ${t.title}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Rationale <span class="required">*</span></label>
+            <input type="text" class="form-input" id="rationale-input" placeholder="Why does this address the requirement?">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Impact</label>
+            <select class="form-select" id="impact-select">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+        `;
+      } else if (mode === 'edit') {
+        const rel = addressesRelations.find(r => r.id === editId);
+        title.textContent = `Edit: ${rel.id}`;
+        body.innerHTML = `
+          <div class="form-group">
+            <label class="form-label">Target Entity</label>
+            <input type="text" class="form-input" value="${rel.id}: ${rel.title}" disabled>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Rationale <span class="required">*</span></label>
+            <input type="text" class="form-input" id="rationale-input" value="${rel.properties.rationale}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Impact</label>
+            <select class="form-select" id="impact-select">
+              <option value="low" ${rel.properties.impact === 'low' ? 'selected' : ''}>Low</option>
+              <option value="medium" ${rel.properties.impact === 'medium' ? 'selected' : ''}>Medium</option>
+              <option value="high" ${rel.properties.impact === 'high' ? 'selected' : ''}>High</option>
+            </select>
+          </div>
+        `;
+      } else if (mode === 'add-depends') {
+        title.textContent = 'Add Dependency';
+        body.innerHTML = `
+          <div class="form-group">
+            <label class="form-label">Component <span class="required">*</span></label>
+            <select class="form-select" id="target-select">
+              <option value="">Select a component...</option>
+              ${availableComponents.map(t => `<option value="${t.id}">${t.id}: ${t.title}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Notes</label>
+            <textarea class="form-textarea" id="content-input" placeholder="Describe the dependency..."></textarea>
+            <p class="form-help">Markdown supported</p>
+          </div>
+        `;
+      } else if (mode === 'edit-depends') {
+        const rel = dependsRelations.find(r => r.id === editId);
+        title.textContent = `Edit: ${rel.id}`;
+        body.innerHTML = `
+          <div class="form-group">
+            <label class="form-label">Component</label>
+            <input type="text" class="form-input" value="${rel.id}: ${rel.title}" disabled>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Notes</label>
+            <textarea class="form-textarea" id="content-input">${rel.content}</textarea>
+            <p class="form-help">Markdown supported</p>
+          </div>
+        `;
+      }
+
+      overlay.classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('modal-overlay').classList.remove('active');
+      currentMode = null;
+      currentEditId = null;
+    }
+
+    function closeModalOnOverlay(event) {
+      if (event.target === event.currentTarget) {
+        closeModal();
+      }
+    }
+
+    function saveRelation() {
+      // Simulate save
+      showToast('Relation saved');
+      closeModal();
+    }
+
+    function removeRelation(id) {
+      if (confirm(`Remove relation to ${id}?`)) {
+        const idx = addressesRelations.findIndex(r => r.id === id);
+        if (idx > -1) {
+          addressesRelations.splice(idx, 1);
+          renderCards();
+          showToast('Relation removed');
+        }
+      }
+    }
+
+    function removeDepends(id) {
+      if (confirm(`Remove dependency on ${id}?`)) {
+        const idx = dependsRelations.findIndex(r => r.id === id);
+        if (idx > -1) {
+          dependsRelations.splice(idx, 1);
+          renderCards();
+          showToast('Dependency removed');
+        }
+      }
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+
+    // Keyboard handling
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeModal();
+    });
+
+    // Initial render
+    renderCards();
+  </script>
+</body>
+</html>

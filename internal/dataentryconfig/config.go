@@ -26,6 +26,7 @@ const (
 	WidgetTextarea    = "textarea"
 	WidgetNumber      = "number"
 	WidgetDate        = "date"
+	WidgetCards       = "cards" // card-based UI for relations with properties
 )
 
 // Direction represents the edge direction for relation columns and form relations.

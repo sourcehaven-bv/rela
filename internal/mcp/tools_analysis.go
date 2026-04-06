@@ -138,8 +138,16 @@ func (s *Server) handleAnalyzeProperties(
 		Errors     []string `json:"errors"`
 	}
 
+	type relationErrors struct {
+		RelationKey  string   `json:"relation_key"` // from--type--to
+		RelationType string   `json:"relation_type"`
+		Errors       []string `json:"errors"`
+	}
+
 	meta := s.ws.Meta()
-	var allErrors []entityErrors
+	var allEntityErrors []entityErrors
+
+	// Validate entity properties
 	for _, entity := range s.ws.Graph().AllNodes() {
 		errs := meta.ValidateEntity(entity)
 		if len(errs) > 0 {
@@ -147,7 +155,7 @@ func (s *Server) handleAnalyzeProperties(
 			for i, e := range errs {
 				errStrings[i] = e.Error()
 			}
-			allErrors = append(allErrors, entityErrors{
+			allEntityErrors = append(allEntityErrors, entityErrors{
 				EntityID:   entity.ID,
 				EntityType: entity.Type,
 				Errors:     errStrings,
@@ -155,21 +163,54 @@ func (s *Server) handleAnalyzeProperties(
 		}
 	}
 
-	if len(allErrors) == 0 {
-		return mcp.NewToolResultText("All entity properties are valid"), nil
+	// Validate relation properties
+	relErrors := s.ws.ValidateRelationProperties()
+	allRelationErrors := make([]relationErrors, 0, len(relErrors))
+	for _, rpe := range relErrors {
+		errStrings := make([]string, len(rpe.Errors))
+		for i, e := range rpe.Errors {
+			errStrings[i] = e.Error()
+		}
+		allRelationErrors = append(allRelationErrors, relationErrors{
+			RelationKey:  rpe.RelationKey,
+			RelationType: rpe.RelationType,
+			Errors:       errStrings,
+		})
 	}
 
-	text, err := marshalJSON(allErrors)
+	totalEntityErrors := len(allEntityErrors)
+	totalRelationErrors := len(allRelationErrors)
+
+	if totalEntityErrors == 0 && totalRelationErrors == 0 {
+		return mcp.NewToolResultText("All entity and relation properties are valid"), nil
+	}
+
+	// Build combined result
+	result := make(map[string]interface{})
+	errorCount := 0
+
+	if totalEntityErrors > 0 {
+		result["entities"] = allEntityErrors
+		for _, ee := range allEntityErrors {
+			errorCount += len(ee.Errors)
+		}
+	}
+
+	if totalRelationErrors > 0 {
+		result["relations"] = allRelationErrors
+		for _, re := range allRelationErrors {
+			errorCount += len(re.Errors)
+		}
+	}
+
+	text, err := marshalJSON(result)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	errorCount := 0
-	for _, ee := range allErrors {
-		errorCount += len(ee.Errors)
-	}
+
 	return mcp.NewToolResultText(
-		fmt.Sprintf("Found %d property errors across %d entities:\n\n%s",
-			errorCount, len(allErrors), text)), nil
+		fmt.Sprintf("Found %d property errors across %d entities and %d relations:\n\n%s",
+			errorCount, totalEntityErrors, totalRelationErrors, text)), nil
 }
 
 func (s *Server) handleAnalyzeValidations(
