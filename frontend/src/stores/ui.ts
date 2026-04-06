@@ -123,6 +123,23 @@ export const useUIStore = defineStore('ui', () => {
     }
   }
 
+  // Apply palette CSS variables to the document root
+  function applyPalette(palette: Record<string, string>) {
+    const root = document.documentElement
+    for (const [key, value] of Object.entries(palette)) {
+      if (value) {
+        root.style.setProperty(key, value)
+      }
+    }
+  }
+
+  // Clear palette overrides (revert to CSS defaults)
+  function clearPalette() {
+    const root = document.documentElement
+    // Remove any inline style properties we may have set
+    root.removeAttribute('style')
+  }
+
   // Apply dark mode class and persist
   watch(
     [darkMode, themeMode],
@@ -173,5 +190,7 @@ export const useUIStore = defineStore('ui', () => {
     info,
     toggleDarkMode,
     setThemeMode,
+    applyPalette,
+    clearPalette,
   }
 })

@@ -33,6 +33,9 @@ const uiStateFile = "ui-state.json"
 // userDefaultsFile is the filename for user-specific default values within the .rela directory.
 const userDefaultsFile = "user-defaults.yaml"
 
+// userPaletteFile is the filename for user-specific palette overrides within the .rela directory.
+const userPaletteFile = "palette.yaml"
+
 // App is the central application struct holding config, metamodel, and graph.
 type App struct {
 	Cfg *Config
@@ -46,6 +49,10 @@ type App struct {
 	styledTypes map[string]bool
 	// userDefaults holds the loaded user defaults (nil if not yet loaded or no file).
 	userDefaults *UserDefaults
+	// palette holds the resolved palette for both light and dark themes.
+	palette *ResolvedPalette
+	// userPalette holds the user-specific palette overrides.
+	userPalette *PaletteConfig
 	// gitOps provides git operations when git is enabled.
 	gitOps *git.Ops
 	// openAPIGen generates OpenAPI specs from the metamodel.
@@ -107,6 +114,8 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		}),
 	}
 	app.userDefaults = app.loadUserDefaults()
+	app.userPalette = app.loadUserPalette()
+	app.palette = ResolvePalette(cfg.Palette, app.userPalette)
 
 	// Initialize git ops if enabled and repo is a git repository
 	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(ws.Paths().Root) {
@@ -247,6 +256,37 @@ func (a *App) saveUserDefaults(ud *UserDefaults) error {
 		return err
 	}
 	return a.ws.WriteCacheFile(userDefaultsFile, data)
+}
+
+// coverage-ignore: requires running workspace, tested via e2e
+
+// loadUserPalette reads .rela/palette.yaml and returns the parsed palette.
+// Returns nil if the file doesn't exist or can't be parsed.
+func (a *App) loadUserPalette() *PaletteConfig {
+	if a.ws == nil {
+		return nil
+	}
+	data, err := a.ws.ReadCacheFile(userPaletteFile)
+	if err != nil {
+		return nil
+	}
+	var p PaletteConfig
+	if err := yaml.Unmarshal(data, &p); err != nil {
+		return nil
+	}
+	return &p
+}
+
+// saveUserPalette writes the user palette to .rela/palette.yaml.
+func (a *App) saveUserPalette(p *PaletteConfig) error {
+	if a.ws == nil {
+		return nil
+	}
+	data, err := yaml.Marshal(p)
+	if err != nil {
+		return err
+	}
+	return a.ws.WriteCacheFile(userPaletteFile, data)
 }
 
 // firstNavTarget returns the first navigable item from the navigation config,
