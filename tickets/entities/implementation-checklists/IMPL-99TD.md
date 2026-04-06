@@ -2,7 +2,7 @@
 id: IMPL-99TD
 type: implementation-checklist
 title: 'Implementation: Add rrule property type with data-entry UI widget'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

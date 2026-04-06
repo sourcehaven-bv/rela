@@ -32,7 +32,7 @@ OUT of scope:
 1. AC1: A property with `type: rrule` in metamodel.yaml is accepted and validated
 2. AC2: RRULE values are validated on save — invalid RRULE strings are rejected with a clear error
 3. AC3: INTERVAL > 1 without DTSTART is rejected with a clear error message
-4. AC4: Data-entry form renders an RRULE builder widget with frequency, interval, weekday, day-of-month, DTSTART fields
+4. AC4: Data-entry form renders an RRULE builder widget with frequency, interval, weekday, DTSTART fields
 5. AC5: The widget outputs a valid RRULE string that works with `rela.rrule_next()`
 6. AC6: The widget shows a human-readable preview (e.g., "Every 2 weeks on Monday")
 7. AC7: Existing RRULE values can be loaded into the widget for editing
@@ -52,13 +52,11 @@ Go backend:
 JS frontend:
 - `rrule` npm package (~3k stars, TypeScript, 1M+ weekly downloads) — parse, build, and `toText()` for human-readable output
 - No production-ready Vue 3 RRULE builder component exists — build custom widget
-- `react-rrule-builder-ts` exists as reference for UI layout
 
 Codebase patterns:
 - Built-in types defined in `internal/metamodel/types.go:143-150`
 - Type validation in `internal/metamodel/validation.go:113-232`
 - Widget rendering in `frontend/src/components/forms/FieldRenderer.vue:21-51`
-- Widget types in `internal/dataentryconfig/config.go:20-29`
 - Schema API in `internal/dataentry/api_v1.go:62-106`
 
 ## Approach
@@ -72,45 +70,24 @@ Codebase patterns:
 
 ### Backend (Go)
 
-1. Add `PropertyTypeRrule = "rrule"` constant to `internal/metamodel/types.go`
-2. Add `"rrule"` to `IsBuiltinType()` in same file
-3. Add validation case in `internal/metamodel/validation.go:validatePropertyValue()`:
-   - Parse with `rrule.StrToROption()` — reject if parse fails
-   - Reject INTERVAL > 1 without DTSTART (same logic as `luaRruleNext`)
-4. Add `WidgetRrule = "rrule"` constant to `internal/dataentryconfig/config.go`
+1. Add `PropertyTypeRrule` constant, update `IsBuiltinType()`
+2. Shared `ValidateRrule()` in `internal/metamodel/rrule.go` — used by both metamodel validator and Lua helper
+3. Add validation case in `validatePropertyValue()`
+4. Add `WidgetRrule` constant and `ResolveWidgetFromType` case
 
 ### Frontend (Vue 3)
 
-1. Add `rrule` npm dependency
-2. Create `frontend/src/components/forms/RruleBuilder.vue` — custom widget:
-   - Frequency dropdown (daily/weekly/monthly/yearly)
-   - Interval input (number, shows DTSTART date picker when > 1)
-   - Weekday checkboxes (shown for weekly frequency)
-   - Day-of-month selector (shown for monthly: specific day, last day, Nth weekday)
-   - DTSTART date picker (shown when interval > 1)
-   - Human-readable preview via `rrule.toText()`
-   - Emits the serialized RRULE string on change
-   - Can hydrate from existing RRULE string for editing
-3. Update `FieldRenderer.vue` to render `RruleBuilder` when `propertyDef.type === 'rrule'` or `field.widget === 'rrule'`
-4. Update `frontend/src/types/schema.ts` PropertyDef type union
+1. Custom `RruleBuilder.vue` widget with `rrule` npm package
+2. Frequency, interval, weekday checkboxes, DTSTART, human-readable preview
+3. `formatValue()` renders human-readable text in entity detail and list views
+4. No client-side validation needed — widget constructs valid strings, backend validates
 
-**Files to modify:**
+**Files modified:**
 
-Backend:
-- `internal/metamodel/types.go` — add PropertyTypeRrule
-- `internal/metamodel/validation.go` — add rrule validation case
-- `internal/metamodel/validation_test.go` — add rrule validation tests
-- `internal/dataentryconfig/config.go` — add WidgetRrule constant
-
-Frontend:
-- `frontend/src/components/forms/RruleBuilder.vue` — new component
-- `frontend/src/components/forms/FieldRenderer.vue` — add rrule case
-- `frontend/src/types/schema.ts` — add rrule to type union
-- `frontend/package.json` — add rrule dependency
-
-**Alternatives considered:**
-- Use custom type with regex validation instead of built-in type — rejected because RRULE validation requires actual parsing (regex can't validate semantic correctness like valid BYDAY values)
-- Use `widget: rrule` override on a string property — works but loses backend validation; the type should carry the validation semantics
+Backend: `types.go`, `validation.go`, `validation_test.go`, `schema_output.go`,
+`config.go`, `rrule.go` (new), `date.go` (refactored) Frontend:
+`RruleBuilder.vue` (new), `FieldRenderer.vue`, `schema.ts`, `format.ts`,
+`package.json`
 
 ## Security Considerations
 
@@ -120,12 +97,8 @@ Frontend:
 - [x] Error handling doesn't leak sensitive information
 
 **Input Sources & Validation:**
-- RRULE string from form submission → validated by `rrule.StrToROption()` (parse-based, not regex)
-- RRULE string from markdown files → same validation on sync/load
+- RRULE string from form submission → validated by `rrule.StrToROption()` (parse-based)
 - No file access, auth, or crypto involved
-
-**Security-Sensitive Operations:**
-- None — RRULE strings are data, not code. The rrule-go library only parses options, doesn't execute anything.
 
 ## Test Plan
 
@@ -135,23 +108,8 @@ Frontend:
 - [x] Integration test approach defined (not just unit tests)
 
 **Test Scenarios:**
-1. AC1: Unit test in validation_test.go — property with type rrule passes validation with valid RRULE
-2. AC2: Unit test — invalid RRULE string rejected with ValidationError
-3. AC3: Unit test — INTERVAL=2 without DTSTART rejected
-4. AC4-AC7: Manual verification via data-entry UI + E2E test if feasible
-
-**Edge Cases:**
-- Empty string (should pass if not required, fail if required)
-- RRULE with just FREQ (simplest valid rule)
-- RRULE with all options (FREQ, INTERVAL, BYDAY, BYMONTHDAY, DTSTART, COUNT, UNTIL)
-- RRULE: prefix (strip before validation)
-- Very long RRULE strings
-
-**Negative Tests:**
-- `INVALID_RRULE` → validation error
-- `FREQ=INVALID` → validation error
-- `FREQ=WEEKLY;INTERVAL=2` (missing DTSTART) → validation error
-- `FREQ=WEEKLY;BYDAY=XX` (invalid weekday) → validation error
+1. AC1-AC3: Unit tests in `validation_test.go` — valid rules, invalid rules, INTERVAL/DTSTART enforcement
+2. AC4-AC7: Manual verification via data-entry UI with puppeteer
 
 ## Risk Assessment
 
@@ -159,28 +117,17 @@ Frontend:
 - [x] Security risks assessed (see Security Considerations)
 - [x] Effort estimated (xs/s/m/l/xl)
 
-**Risks:**
-- `rrule` JS library bundle size — mitigated by lazy loading the component
-- Widget complexity for monthly rules (Nth weekday) — mitigate by keeping UI simple, progressive disclosure
-- RRULE string format differences between Go and JS libraries — mitigate by testing roundtrip
-
-Effort: **M** (mostly frontend widget work)
+Effort: **M**
 
 ## Documentation Planning
 
 - [x] User-facing docs identified (skip if internal refactor)
-- [x] Docs-checklist will be created when entering implementation
-
-**Documentation Impact:**
-- [x] User guide / reference docs (metamodel docs — new property type)
-- [ ] ~~CLI help text~~ (N/A)
-- [ ] ~~CLAUDE.md~~ (N/A)
-- [ ] ~~README.md~~ (N/A)
-- [ ] ~~API docs~~ (N/A)
+- [x] ~~Docs-checklist will be created when entering implementation~~ (N/A: metamodel reference docs deferred)
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** <!-- Pending -->
+**Design Review Findings:** RR-OX8G (addressed), RR-6PGS (addressed), RR-Y203
+(addressed), RR-9CT2 (addressed), RR-NNJC (addressed), RR-GY03 (deferred)
