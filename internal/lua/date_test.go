@@ -149,37 +149,37 @@ func TestRruleNext(t *testing.T) {
 	}{
 		{
 			"weekly saturday",
-			"FREQ=WEEKLY;BYDAY=SA",
+			"FREQ=WEEKLY;BYDAY=SA;DTSTART=20250101T000000Z",
 			"2025-01-06",
 			"2025-01-11",
 		},
 		{
 			"monthly first day",
-			"FREQ=MONTHLY;BYMONTHDAY=1",
+			"FREQ=MONTHLY;BYMONTHDAY=1;DTSTART=20250101T000000Z",
 			"2025-01-15",
 			"2025-02-01",
 		},
 		{
 			"monthly last day",
-			"FREQ=MONTHLY;BYMONTHDAY=-1",
+			"FREQ=MONTHLY;BYMONTHDAY=-1;DTSTART=20250101T000000Z",
 			"2025-01-15",
 			"2025-01-31",
 		},
 		{
 			"quarterly first saturday",
-			"FREQ=MONTHLY;INTERVAL=3;BYDAY=1SA",
+			"FREQ=MONTHLY;INTERVAL=3;BYDAY=1SA;DTSTART=20250101T000000Z",
 			"2025-01-06",
 			"2025-04-05",
 		},
 		{
 			"with RRULE prefix",
-			"RRULE:FREQ=WEEKLY;BYDAY=MO",
+			"RRULE:FREQ=WEEKLY;BYDAY=MO;DTSTART=20250101T000000Z",
 			"2025-01-07",
 			"2025-01-13",
 		},
 		{
 			"every 2 weeks",
-			"FREQ=WEEKLY;INTERVAL=2",
+			"FREQ=WEEKLY;INTERVAL=2;DTSTART=20250106T000000Z",
 			"2025-01-06",
 			"2025-01-20",
 		},
@@ -221,8 +221,9 @@ func TestRruleNextExhausted(t *testing.T) {
 	rt, buf := newDateTestRuntime(t)
 	defer rt.Close()
 
-	// Rule with COUNT=1 starting at after date — next after that is nil
-	script := `rela.output(rela.rrule_next("FREQ=DAILY;COUNT=1", "2025-01-01"))`
+	// Rule with COUNT=1 and DTSTART in the past — only occurrence is Jan 1,
+	// so asking for next after Jan 1 returns nil.
+	script := `rela.output(rela.rrule_next("FREQ=DAILY;COUNT=1;DTSTART=20250101T000000Z", "2025-01-01"))`
 	err := rt.RunString(script)
 	require.NoError(t, err)
 
@@ -230,11 +231,24 @@ func TestRruleNextExhausted(t *testing.T) {
 }
 
 func TestRruleNextError(t *testing.T) {
-	rt, _ := newDateTestRuntime(t)
-	defer rt.Close()
+	tests := []struct {
+		name   string
+		script string
+	}{
+		{"invalid rrule", `rela.rrule_next("INVALID_RRULE")`},
+		{"interval without dtstart", `rela.rrule_next("FREQ=WEEKLY;INTERVAL=2", "2025-01-06")`},
+		{"interval 3 without dtstart", `rela.rrule_next("FREQ=MONTHLY;INTERVAL=3", "2025-01-06")`},
+	}
 
-	err := rt.RunString(`rela.rrule_next("INVALID_RRULE")`)
-	require.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt, _ := newDateTestRuntime(t)
+			defer rt.Close()
+
+			err := rt.RunString(tt.script)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestParseOffset(t *testing.T) {

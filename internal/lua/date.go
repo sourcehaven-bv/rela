@@ -32,7 +32,19 @@ func registerDateHelpers(ls *lua.LState, rela *lua.LTable) {
 }
 
 // parseDate parses a date string in RFC3339 or date-only format.
+// Date-only strings are parsed in local time to avoid off-by-one errors
+// when comparing with time.Now() near midnight.
 func parseDate(s string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t, err = time.ParseInLocation("2006-01-02", s, time.Local)
+	}
+	return t, err
+}
+
+// parseDateUTC parses a date string in RFC3339 or date-only format, always in UTC.
+// Used by rrule_next where all date comparisons happen in UTC.
+func parseDateUTC(s string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
 		t, err = time.Parse("2006-01-02", s)
@@ -110,16 +122,22 @@ func luaDateNextWeekday(ls *lua.LState) int {
 // luaRruleNext implements rela.rrule_next(rrule_string, after?) -> string|nil
 // Computes the next occurrence of an RRULE after the given date (or today).
 // Accepts both "RRULE:FREQ=..." and bare "FREQ=..." formats.
+//
+// Rules with INTERVAL > 1 require an explicit DTSTART in the RRULE string
+// to anchor the interval counting. Without it, the interval cadence would
+// drift on every invocation.
 func luaRruleNext(ls *lua.LState) int {
 	rruleStr := ls.CheckString(1)
 	afterStr := ls.OptString(2, "")
 
 	var after time.Time
 	if afterStr == "" {
-		after = time.Now()
+		// Use today at midnight UTC for consistency with RRULE dates.
+		now := time.Now()
+		after = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	} else {
 		var err error
-		after, err = parseDate(afterStr)
+		after, err = parseDateUTC(afterStr)
 		if err != nil {
 			ls.RaiseError("rrule_next: invalid after date %q", afterStr)
 			return 0
@@ -129,17 +147,20 @@ func luaRruleNext(ls *lua.LState) int {
 	// Strip RRULE: prefix if present
 	rruleStr = strings.TrimPrefix(rruleStr, "RRULE:")
 
-	// Parse the rule. teambition/rrule-go expects the option string without
-	// the RRULE: prefix, but with DTSTART if you want a specific start.
-	// We set DTStart to after so the rule generates from there.
+	// Parse in UTC — RRULE deals with dates, not times.
 	opt, err := rrule.StrToROption(rruleStr)
 	if err != nil {
 		ls.RaiseError("rrule_next: invalid RRULE %q: %s", rruleStr, err)
 		return 0
 	}
 
-	// Use the after date as DTSTART so the rule generates occurrences from there.
-	opt.Dtstart = after
+	// Reject INTERVAL > 1 without DTSTART — the interval cadence needs a
+	// stable anchor point, otherwise it drifts on every invocation.
+	if opt.Interval > 1 && opt.Dtstart.IsZero() {
+		ls.RaiseError("rrule_next: INTERVAL > 1 requires DTSTART in the RRULE string")
+		return 0
+	}
+
 	rule, err := rrule.NewRRule(*opt)
 	if err != nil {
 		ls.RaiseError("rrule_next: failed to create rule: %s", err)

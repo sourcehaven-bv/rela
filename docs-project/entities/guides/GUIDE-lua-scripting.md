@@ -373,21 +373,29 @@ date is provided, uses today. Returns `nil` if the rule has no more occurrences.
 
 Accepts both `RRULE:FREQ=...` and bare `FREQ=...` formats.
 
+**Important:** Rules with `INTERVAL` > 1 must include `DTSTART` to anchor the interval
+cadence. Without it, the function raises an error.
+
 ```lua
 -- Next Saturday
-rela.rrule_next("FREQ=WEEKLY;BYDAY=SA", "2025-01-06")       -- "2025-01-11"
+rela.rrule_next("FREQ=WEEKLY;BYDAY=SA;DTSTART=20250101T000000Z", "2025-01-06")
+-- "2025-01-11"
 
 -- 1st of each month
-rela.rrule_next("FREQ=MONTHLY;BYMONTHDAY=1", "2025-01-15")  -- "2025-02-01"
+rela.rrule_next("FREQ=MONTHLY;BYMONTHDAY=1;DTSTART=20250101T000000Z", "2025-01-15")
+-- "2025-02-01"
 
 -- Last day of each month
-rela.rrule_next("FREQ=MONTHLY;BYMONTHDAY=-1", "2025-01-15") -- "2025-01-31"
+rela.rrule_next("FREQ=MONTHLY;BYMONTHDAY=-1;DTSTART=20250101T000000Z", "2025-01-15")
+-- "2025-01-31"
 
--- Every 2 weeks
-rela.rrule_next("FREQ=WEEKLY;INTERVAL=2", "2025-01-06")     -- "2025-01-20"
+-- Every 2 weeks (INTERVAL > 1 requires DTSTART)
+rela.rrule_next("FREQ=WEEKLY;INTERVAL=2;DTSTART=20250106T000000Z", "2025-01-06")
+-- "2025-01-20"
 
--- 1st Saturday every 3 months
-rela.rrule_next("FREQ=MONTHLY;INTERVAL=3;BYDAY=1SA", "2025-01-06") -- "2025-04-05"
+-- 1st Saturday every 3 months (INTERVAL > 1 requires DTSTART)
+rela.rrule_next("FREQ=MONTHLY;INTERVAL=3;BYDAY=1SA;DTSTART=20250101T000000Z", "2025-01-06")
+-- "2025-04-05"
 
 -- Uses today if no after date
 rela.rrule_next("FREQ=DAILY")  -- tomorrow's date
