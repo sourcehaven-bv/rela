@@ -5,10 +5,11 @@ src/composables/useScopeNavigation.ts;120;120
 src/stores/entities.ts;204;204
 src/stores/git.ts;88;88
 src/stores/index.ts;4;4
-src/stores/schema.ts;119;119
-src/stores/ui.ts;148;148
-src/types/config.ts;268;268
+src/stores/schema.ts;136;133
+src/stores/ui.ts;150;150
+src/types/config.ts;275;275
 src/utils/dom.ts;14;14
 src/utils/filters.ts;32;32
 src/utils/format.ts;89;89
 src/utils/markdown.ts;82;82
+src/utils/palette.ts;235;235
