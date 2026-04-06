@@ -4,6 +4,7 @@ import {
   parseHexList,
   parseGPL,
   parsePalette,
+  parseRelaPalette,
   hexToHSL,
   assignPalette,
 } from './palette'
@@ -101,6 +102,87 @@ describe('parsePalette', () => {
 
   it('auto-detects hex list', () => {
     expect(parsePalette('ff0000\n00ff00')).toEqual(['#ff0000', '#00ff00'])
+  })
+})
+
+describe('parseRelaPalette', () => {
+  it('parses basic palette.yaml', () => {
+    const yaml = `base: "#1a1a2e"
+surface: "#f8fafc"
+accent: "#6366f1"
+text: "#1e293b"
+success: "#10b981"
+error: "#ef4444"
+warning: "#f59e0b"
+info: "#3b82f6"`
+    const result = parseRelaPalette(yaml)
+    expect(result.colors.base).toBe('#1a1a2e')
+    expect(result.colors.accent).toBe('#6366f1')
+    expect(Object.keys(result.colors)).toHaveLength(8)
+    expect(result.allColors).toHaveLength(8)
+  })
+
+  it('parses badges section', () => {
+    const yaml = `accent: "#6366f1"
+surface: "#f8fafc"
+badges:
+  blue: "#3b82f6"
+  red: "#ef4444"`
+    const result = parseRelaPalette(yaml)
+    expect(result.badges.blue).toBe('#3b82f6')
+    expect(result.badges.red).toBe('#ef4444')
+  })
+
+  it('parses explicit dark section', () => {
+    const yaml = `accent: "#6366f1"
+surface: "#f8fafc"
+dark:
+  accent: "#818cf8"
+  surface: "#121218"`
+    const result = parseRelaPalette(yaml)
+    expect(result.dark).toBeDefined()
+    expect(result.dark!.accent).toBe('#818cf8')
+    expect(result.dark!.surface).toBe('#121218')
+  })
+
+  it('handles unquoted hex values', () => {
+    const yaml = `accent: #6366f1
+surface: #f8fafc`
+    const result = parseRelaPalette(yaml)
+    expect(result.colors.accent).toBe('#6366f1')
+  })
+
+  it('handles inline comments', () => {
+    const yaml = `accent: "#6366f1" # primary color
+surface: "#f8fafc"`
+    const result = parseRelaPalette(yaml)
+    expect(result.colors.accent).toBe('#6366f1')
+  })
+
+  it('returns undefined dark when not present', () => {
+    const yaml = `accent: "#6366f1"
+surface: "#f8fafc"`
+    const result = parseRelaPalette(yaml)
+    expect(result.dark).toBeUndefined()
+  })
+
+  it('dark: auto does not create dark overrides', () => {
+    const yaml = `accent: "#6366f1"
+surface: "#f8fafc"
+dark: auto`
+    const result = parseRelaPalette(yaml)
+    expect(result.dark).toBeUndefined()
+  })
+})
+
+describe('parsePalette auto-detection', () => {
+  it('detects rela YAML', () => {
+    const yaml = `base: "#1a1a2e"
+surface: "#f8fafc"
+accent: "#6366f1"`
+    const result = parsePalette(yaml)
+    expect(result).toContain('#1a1a2e')
+    expect(result).toContain('#6366f1')
   })
 })
 

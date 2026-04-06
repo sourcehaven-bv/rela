@@ -49,6 +49,7 @@ export interface PaletteConfig {
   warning?: string
   info?: string
   badges?: Record<string, string>
+  dark?: PaletteColors | 'auto' | false
 }
 
 export interface SettingsData {

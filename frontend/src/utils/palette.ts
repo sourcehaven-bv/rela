@@ -56,10 +56,88 @@ export function parseGPL(text: string): string[] {
   return dedupe(colors)
 }
 
-/** Auto-detect format and parse palette text. */
+/** Result of parsing a rela palette.yaml file. */
+export interface RelaPaletteResult {
+  colors: Record<string, string>
+  badges: Record<string, string>
+  dark?: Record<string, string>
+  allColors: string[] // flat list for swatch display
+}
+
+/** Detect if text is a rela palette YAML file. */
+function isRelaPalette(text: string): boolean {
+  // Check for rela palette keys (at least 2 of the 8 role names at root level)
+  const roleKeys = ['base:', 'surface:', 'accent:', 'text:', 'success:', 'error:', 'warning:', 'info:']
+  let found = 0
+  for (const key of roleKeys) {
+    if (text.includes(key)) found++
+  }
+  return found >= 2
+}
+
+// Regex to extract hex color from a YAML line like: key: "#aabbcc" or key: #aabbcc
+const YAML_HEX_RE = /^\s{0,4}(\w[\w-]*):\s*"?#?([0-9a-fA-F]{6})"?\s*(?:#.*)?$/
+
+/** Parse a rela palette.yaml file into structured colors. */
+export function parseRelaPalette(text: string): RelaPaletteResult {
+  const colors: Record<string, string> = {}
+  const badges: Record<string, string> = {}
+  const dark: Record<string, string> = {}
+  const allColors: string[] = []
+
+  const roleKeys = new Set(['base', 'surface', 'accent', 'text', 'success', 'error', 'warning', 'info'])
+  const badgeKeys = new Set(['blue', 'purple', 'green', 'gray', 'red', 'orange', 'yellow'])
+
+  let section: 'root' | 'badges' | 'dark' = 'root'
+
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+
+    // Detect section changes (non-indented keys ending with :)
+    if (trimmed === 'badges:') { section = 'badges'; continue }
+    if (trimmed === 'dark:' || trimmed.startsWith('dark:')) {
+      // dark: auto / dark: false / dark: (object follows)
+      if (trimmed === 'dark: auto' || trimmed === 'dark: false' || trimmed === 'dark:') {
+        section = 'dark'
+        continue
+      }
+    }
+    // Any non-indented key resets to root
+    if (!line.startsWith(' ') && !line.startsWith('\t') && trimmed.includes(':')) {
+      if (section === 'badges' || section === 'dark') {
+        // Only reset if it's a known root key
+        const key = trimmed.split(':')[0].trim()
+        if (roleKeys.has(key)) section = 'root'
+      }
+    }
+
+    const match = trimmed.match(YAML_HEX_RE)
+    if (!match) continue
+
+    const key = match[1]
+    const hex = '#' + match[2].toLowerCase()
+    allColors.push(hex)
+
+    if (section === 'badges' && badgeKeys.has(key)) {
+      badges[key] = hex
+    } else if (section === 'dark' && roleKeys.has(key)) {
+      dark[key] = hex
+    } else if (section === 'root' && roleKeys.has(key)) {
+      colors[key] = hex
+    }
+  }
+
+  return { colors, badges, dark: Object.keys(dark).length > 0 ? dark : undefined, allColors: dedupe(allColors) }
+}
+
+/** Auto-detect format and parse palette text. Returns flat color array for swatches. */
 export function parsePalette(text: string): string[] {
   if (text.trim().startsWith('GIMP Palette')) {
     return parseGPL(text)
+  }
+  if (isRelaPalette(text)) {
+    return parseRelaPalette(text).allColors
   }
   return parseHexList(text)
 }
