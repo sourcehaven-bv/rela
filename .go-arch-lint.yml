@@ -83,6 +83,7 @@ vendors:
   gogit:       { in: github.com/go-git/go-git/** }
   gopherlua:   { in: github.com/yuin/gopher-lua }
   runewidth:   { in: github.com/mattn/go-runewidth }
+  rrulego:     { in: github.com/teambition/rrule-go }
   mcpgo:       { in: github.com/mark3labs/mcp-go/** }
   wails:       { in: github.com/wailsapp/wails/** }
   tablewriter: { in: github.com/olekukonko/tablewriter }
@@ -301,6 +302,7 @@ deps:
       - goldmark
       - gopherlua
       - runewidth
+      - rrulego
   script:
     mayDependOn:
       - lua
