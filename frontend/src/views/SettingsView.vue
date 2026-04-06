@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { getSettings, saveSettings } from '@/api'
+import { getSettings, saveSettings, savePalette } from '@/api'
 import type {
   SettingsData,
   SettingsPropertyDef,
   SettingsRelationDef,
   UserDefaults,
   DefaultOverride,
+  PaletteConfig,
 } from '@/api/settings'
 import TagSelect from '@/components/ui/TagSelect.vue'
+import { parsePalette, parseRelaPalette, assignPalette, deriveTheme } from '@/utils/palette'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
@@ -27,6 +29,75 @@ const entityTypes = ref<string[]>([])
 const propertyDefaults = ref<Record<string, string>>({})
 const relationDefaults = ref<Record<string, string>>({})
 const overrides = ref<DefaultOverride[]>([])
+
+// Palette state
+const paletteColors = ref<Record<string, string>>({})
+const paletteBadges = ref<Record<string, string>>({})
+const savingPalette = ref(false)
+
+const paletteRoles = [
+  { key: 'base', label: 'Base', description: 'Sidebar & navigation background' },
+  { key: 'surface', label: 'Surface', description: 'Main background' },
+  { key: 'accent', label: 'Accent', description: 'Primary action color' },
+  { key: 'text', label: 'Text', description: 'Main text color' },
+  { key: 'success', label: 'Success', description: 'Success indicators' },
+  { key: 'error', label: 'Error', description: 'Error indicators' },
+  { key: 'warning', label: 'Warning', description: 'Warning indicators' },
+  { key: 'info', label: 'Info', description: 'Info indicators' },
+]
+
+const badgeNames = ['blue', 'purple', 'green', 'gray', 'red', 'orange', 'yellow']
+
+// Import state
+const importText = ref('')
+const importedColors = ref<string[]>([])
+const selectedRole = ref<{ type: 'color' | 'badge'; key: string } | null>(null)
+const dragging = ref(false)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+// Dark mode editing state
+const paletteDarkColors = ref<Record<string, string>>({})
+const paletteDarkBadges = ref<Record<string, string>>({})
+const editingDark = ref(false)
+
+const MAX_FILE_SIZE = 102400 // 100KB
+
+// Computed: which palette refs to show based on light/dark toggle
+const activeColors = computed(() => editingDark.value ? paletteDarkColors.value : paletteColors.value)
+const activeBadges = computed(() => editingDark.value ? paletteDarkBadges.value : paletteBadges.value)
+
+// Map role keys to CSS variable names for looking up auto-generated dark values
+const roleToCSSVar: Record<string, string> = {
+  base: '--sidebar-bg', surface: '--bg-color', accent: '--accent-color', text: '--text-color',
+  success: '--success-color', error: '--error-color', warning: '--warning-color', info: '--info-color',
+}
+const badgeToCSSVar = (name: string) => `--badge-${name}`
+
+/** Get the auto-generated dark value for a role (from resolved palette). */
+function autoDarkColor(key: string): string {
+  const cssVar = roleToCSSVar[key]
+  return cssVar ? (schemaStore.paletteDark[cssVar] || '') : ''
+}
+
+function autoDarkBadge(name: string): string {
+  return schemaStore.paletteDark[badgeToCSSVar(name)] || ''
+}
+
+function setColor(key: string, value: string) {
+  if (editingDark.value) {
+    paletteDarkColors.value[key] = value
+  } else {
+    paletteColors.value[key] = value
+  }
+}
+
+function setBadge(key: string, value: string) {
+  if (editingDark.value) {
+    paletteDarkBadges.value[key] = value
+  } else {
+    paletteBadges.value[key] = value
+  }
+}
 
 // UI state for adding new items
 const selectedNewProperty = ref('')
@@ -66,6 +137,20 @@ async function loadSettings() {
       defaults: { ...o.defaults },
       relationDefaults: { ...o.relationDefaults },
     }))
+
+    // Load palette
+    const p = data.userPalette
+    if (p) {
+      paletteColors.value = {}
+      for (const role of paletteRoles) {
+        const val = p[role.key as keyof PaletteConfig]
+        if (typeof val === 'string') paletteColors.value[role.key] = val
+      }
+      paletteBadges.value = { ...(p.badges || {}) }
+    } else {
+      paletteColors.value = {}
+      paletteBadges.value = {}
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load settings'
   } finally {
@@ -93,6 +178,218 @@ async function handleSave() {
     error.value = err instanceof Error ? err.message : 'Failed to save settings'
   } finally {
     saving.value = false
+  }
+}
+
+async function handleSavePalette() {
+  savingPalette.value = true
+  try {
+    const palette: PaletteConfig = {}
+    for (const [key, val] of Object.entries(paletteColors.value)) {
+      if (val) (palette as Record<string, string>)[key] = val
+    }
+    const badges: Record<string, string> = {}
+    for (const [key, val] of Object.entries(paletteBadges.value)) {
+      if (val) badges[key] = val
+    }
+    if (Object.keys(badges).length > 0) palette.badges = badges
+
+    // Include dark mode overrides if any are set
+    const darkColors: Record<string, string> = {}
+    for (const [key, val] of Object.entries(paletteDarkColors.value)) {
+      if (val) darkColors[key] = val
+    }
+    for (const [key, val] of Object.entries(paletteDarkBadges.value)) {
+      if (val) darkColors[key] = val
+    }
+    if (Object.keys(darkColors).length > 0) {
+      (palette as Record<string, unknown>).dark = darkColors
+    }
+
+    await savePalette(palette)
+    uiStore.success('Palette saved')
+    await schemaStore.reload()
+  } catch (err) {
+    uiStore.error(err instanceof Error ? err.message : 'Failed to save palette')
+  } finally {
+    savingPalette.value = false
+  }
+}
+
+async function handleResetPalette() {
+  // Reload from disk — discard unsaved edits
+  await loadSettings()
+  // Reapply the saved palette from schema store
+  const palette = uiStore.isDark ? schemaStore.paletteDark : schemaStore.paletteLight
+  if (Object.keys(palette).length > 0) {
+    uiStore.applyPalette(palette)
+  } else {
+    uiStore.clearPalette()
+  }
+  uiStore.info('Palette reset to saved state')
+}
+
+/** Build a full CSS variable map from current editing state for live preview.
+ *  Uses deriveTheme to compute all 21 variables including derived ones. */
+function buildPreviewPalette(): Record<string, string> {
+  const src = editingDark.value ? paletteDarkColors.value : paletteColors.value
+  const badgeSrc = editingDark.value ? paletteDarkBadges.value : paletteBadges.value
+
+  // Only build preview if at least one color is set
+  const hasColors = Object.values(src).some(Boolean)
+  const hasBadges = Object.values(badgeSrc).some(Boolean)
+  if (!hasColors && !hasBadges) return {}
+
+  // Derive all 21 CSS variables (8 base + 6 computed + 7 badges)
+  return deriveTheme(src, badgeSrc)
+}
+
+// Live preview: apply palette as user edits colors
+const stopPreviewWatch = watch(
+  [paletteColors, paletteBadges, paletteDarkColors, paletteDarkBadges, editingDark],
+  () => {
+    const preview = buildPreviewPalette()
+    if (Object.keys(preview).length > 0) {
+      uiStore.applyPalette(preview)
+    }
+  },
+  { deep: true },
+)
+
+// On unmount, reapply the saved palette (discard unsaved preview)
+onUnmounted(() => {
+  stopPreviewWatch()
+  const palette = uiStore.isDark ? schemaStore.paletteDark : schemaStore.paletteLight
+  if (Object.keys(palette).length > 0) {
+    uiStore.applyPalette(palette)
+  } else {
+    uiStore.clearPalette()
+  }
+})
+
+function handleImport() {
+  const colors = parsePalette(importText.value)
+  if (colors.length === 0) {
+    uiStore.warning('No valid colors found. Paste hex values or a GIMP Palette.')
+    return
+  }
+  importedColors.value = colors
+  const assignment = assignPalette(colors)
+
+  // Apply assignment to palette state
+  for (const [key, val] of Object.entries(assignment.colors)) {
+    paletteColors.value[key] = val
+  }
+  for (const [key, val] of Object.entries(assignment.badges)) {
+    paletteBadges.value[key] = val
+  }
+
+  uiStore.success(`Imported ${colors.length} colors and auto-assigned to roles`)
+}
+
+function clearImport() {
+  importText.value = ''
+  importedColors.value = []
+  selectedRole.value = null
+}
+
+function handleFilePick() {
+  fileInput.value?.click()
+}
+
+function handleFileSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) readFile(file)
+  input.value = '' // reset so same file can be re-selected
+}
+
+function handleDragOver(event: DragEvent) {
+  event.preventDefault()
+  dragging.value = true
+}
+
+function handleDragLeave() {
+  dragging.value = false
+}
+
+function handleDrop(event: DragEvent) {
+  event.preventDefault()
+  dragging.value = false
+  const file = event.dataTransfer?.files[0]
+  if (file) readFile(file)
+}
+
+function readFile(file: File) {
+  if (file.size > MAX_FILE_SIZE) {
+    uiStore.warning('File too large (max 100KB)')
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    const text = reader.result as string
+    importText.value = text
+
+    // If it's a rela palette YAML, do structured import
+    const isYaml = file.name.endsWith('.yaml') || file.name.endsWith('.yml')
+    if (isYaml) {
+      const result = parseRelaPalette(text)
+      importedColors.value = result.allColors
+      for (const [key, val] of Object.entries(result.colors)) {
+        paletteColors.value[key] = val
+      }
+      for (const [key, val] of Object.entries(result.badges)) {
+        paletteBadges.value[key] = val
+      }
+      if (result.dark) {
+        for (const [key, val] of Object.entries(result.dark)) {
+          paletteDarkColors.value[key] = val
+        }
+      }
+      uiStore.success(`Imported palette from ${file.name}`)
+    } else {
+      handleImport()
+    }
+  }
+  reader.readAsText(file)
+}
+
+function selectRole(type: 'color' | 'badge', key: string) {
+  if (selectedRole.value?.type === type && selectedRole.value?.key === key) {
+    selectedRole.value = null // deselect
+  } else {
+    selectedRole.value = { type, key }
+  }
+}
+
+function assignSwatch(hex: string) {
+  if (!selectedRole.value) return
+  const colorsRef = editingDark.value ? paletteDarkColors : paletteColors
+  const badgesRef = editingDark.value ? paletteDarkBadges : paletteBadges
+  if (selectedRole.value.type === 'color') {
+    colorsRef.value[selectedRole.value.key] = hex
+  } else {
+    badgesRef.value[selectedRole.value.key] = hex
+  }
+}
+
+function isRoleSelected(type: 'color' | 'badge', key: string): boolean {
+  return selectedRole.value?.type === type && selectedRole.value?.key === key
+}
+
+function clearPaletteColor(key: string) {
+  if (editingDark.value) {
+    delete paletteDarkColors.value[key]
+  } else {
+    delete paletteColors.value[key]
+  }
+}
+
+function clearBadgeColor(key: string) {
+  if (editingDark.value) {
+    delete paletteDarkBadges.value[key]
+  } else {
+    delete paletteBadges.value[key]
   }
 }
 
@@ -474,6 +771,177 @@ onMounted(() => {
         </button>
       </div>
 
+      <!-- Appearance / Palette -->
+      <div class="settings-card">
+        <h3>Appearance</h3>
+        <p class="description">Customize the color palette. Empty fields use built-in defaults.</p>
+        <p class="file-path">.rela/palette.yaml</p>
+
+        <h4 class="section-subtitle">Import Palette</h4>
+        <div
+          class="import-section"
+          :class="{ 'drop-active': dragging }"
+          @dragover="handleDragOver"
+          @dragleave="handleDragLeave"
+          @drop="handleDrop"
+        >
+          <input
+            ref="fileInput"
+            type="file"
+            accept=".gpl,.hex,.txt,.yaml,.yml"
+            class="file-input-hidden"
+            @change="handleFileSelected"
+          />
+          <textarea
+            v-model="importText"
+            class="import-textarea"
+            placeholder="Paste hex colors, GIMP Palette (.gpl), or drag & drop a palette file"
+            rows="4"
+          />
+          <div class="import-actions">
+            <button
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="!importText.trim()"
+              @click="handleImport"
+            >Import</button>
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm"
+              @click="handleFilePick"
+            >Browse File</button>
+            <button
+              v-if="importedColors.length"
+              type="button"
+              class="btn btn-secondary btn-sm"
+              @click="clearImport"
+            >Clear</button>
+          </div>
+          <div v-if="importedColors.length" class="swatch-section">
+            <p class="swatch-hint">
+              Click a role label below, then click a swatch to assign it.
+            </p>
+            <div class="swatch-grid">
+              <button
+                v-for="color in importedColors"
+                :key="color"
+                type="button"
+                class="swatch"
+                :style="{ backgroundColor: color }"
+                :title="color"
+                @click="assignSwatch(color)"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="mode-toggle">
+          <button
+            type="button"
+            class="toggle-pill"
+            :class="{ active: !editingDark }"
+            @click="editingDark = false"
+          >Light</button>
+          <button
+            type="button"
+            class="toggle-pill"
+            :class="{ active: editingDark }"
+            @click="editingDark = true"
+          >Dark</button>
+        </div>
+
+        <h4 class="section-subtitle">Theme Colors</h4>
+        <div class="color-grid">
+          <div
+            v-for="role in paletteRoles"
+            :key="role.key"
+            class="color-row"
+            :class="{ 'role-selected': isRoleSelected('color', role.key) }"
+            @click="selectRole('color', role.key)"
+          >
+            <label class="color-label">
+              <span class="color-name">{{ role.label }}</span>
+              <span class="color-desc">{{ role.description }}</span>
+            </label>
+            <div class="color-input-group">
+              <input
+                type="color"
+                :value="activeColors[role.key] || (editingDark ? autoDarkColor(role.key) : '') || '#808080'"
+                class="color-picker"
+                @input="setColor(role.key, ($event.target as HTMLInputElement).value)"
+              />
+              <input
+                type="text"
+                :value="activeColors[role.key] || ''"
+                :placeholder="editingDark ? (autoDarkColor(role.key) || 'auto') : '#hex'"
+                class="color-text"
+                @input="setColor(role.key, ($event.target as HTMLInputElement).value)"
+              />
+              <button
+                v-if="activeColors[role.key]"
+                type="button"
+                class="btn-icon btn-remove"
+                title="Clear (use default)"
+                @click="clearPaletteColor(role.key)"
+              >&times;</button>
+            </div>
+          </div>
+        </div>
+
+        <h4 class="section-subtitle">Badge Colors</h4>
+        <div class="color-grid">
+          <div
+            v-for="name in badgeNames"
+            :key="name"
+            class="color-row"
+            :class="{ 'role-selected': isRoleSelected('badge', name) }"
+            @click="selectRole('badge', name)"
+          >
+            <label class="color-label">
+              <span class="color-name badge-label">{{ name }}</span>
+            </label>
+            <div class="color-input-group">
+              <input
+                type="color"
+                :value="activeBadges[name] || (editingDark ? autoDarkBadge(name) : '') || '#808080'"
+                class="color-picker"
+                @input="setBadge(name, ($event.target as HTMLInputElement).value)"
+              />
+              <input
+                type="text"
+                :value="activeBadges[name] || ''"
+                :placeholder="editingDark ? (autoDarkBadge(name) || 'auto') : '#hex'"
+                class="color-text"
+                @input="setBadge(name, ($event.target as HTMLInputElement).value)"
+              />
+              <button
+                v-if="activeBadges[name]"
+                type="button"
+                class="btn-icon btn-remove"
+                title="Clear (use default)"
+                @click="clearBadgeColor(name)"
+              >&times;</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="palette-actions">
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            :disabled="savingPalette"
+            @click="handleSavePalette"
+          >
+            {{ savingPalette ? 'Saving...' : 'Save Palette' }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            @click="handleResetPalette"
+          >Reset</button>
+        </div>
+      </div>
+
       <!-- App Info -->
       <div class="settings-card">
         <h3>Application Info</h3>
@@ -727,6 +1195,200 @@ h1 {
   display: flex;
   gap: 12px;
   margin-top: 24px;
+}
+
+.section-subtitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color);
+  margin: 16px 0 8px;
+}
+
+.section-subtitle:first-of-type {
+  margin-top: 0;
+}
+
+.color-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--hover-bg);
+  border-radius: 6px;
+}
+
+.color-label {
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+}
+
+.color-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.color-desc {
+  font-size: 11px;
+  color: var(--muted-text);
+}
+
+.badge-label {
+  text-transform: capitalize;
+}
+
+.color-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.color-picker {
+  width: 32px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--input-bg);
+}
+
+.color-text {
+  width: 90px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: monospace;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.btn-icon {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--muted-text);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.btn-icon:hover {
+  color: var(--error-color);
+}
+
+.palette-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 12px;
+}
+
+.import-section {
+  margin-bottom: 16px;
+}
+
+.import-textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: monospace;
+  background: var(--input-bg);
+  color: var(--text-color);
+  resize: vertical;
+}
+
+.import-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.swatch-section {
+  margin-top: 12px;
+}
+
+.swatch-hint {
+  font-size: 12px;
+  color: var(--muted-text);
+  margin: 0 0 8px;
+}
+
+.swatch-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.swatch {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s;
+}
+
+.swatch:hover {
+  transform: scale(1.15);
+  border-color: var(--accent-color);
+}
+
+.role-selected {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+.file-input-hidden {
+  display: none;
+}
+
+.drop-active {
+  outline: 2px dashed var(--accent-color);
+  outline-offset: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-color) 5%, transparent);
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 0;
+  margin: 16px 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.toggle-pill {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  background: var(--input-bg);
+  color: var(--muted-text);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.toggle-pill.active {
+  background: var(--accent-color);
+  color: white;
+}
+
+.toggle-pill:hover:not(.active) {
+  background: var(--hover-bg);
 }
 
 /* Uses global .btn, .btn-primary, .btn-secondary, .btn-sm, .loading-state, .spinner, .error-state from App.vue */

@@ -320,6 +320,81 @@ See [Interactive Flows](#interactive-flows) for detailed documentation.
 | `rela.days_since(date)` | Days between date and today | number (-1 if invalid) |
 | `rela.sort_entities(list, prop, dir?)` | Sort entities by property | sorted table |
 
+### Date Functions
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.date_add(date, offset)` | Add offset to date | date string |
+| `rela.date_weekday(date)` | Get weekday name | lowercase string |
+| `rela.date_next_weekday(date, day)` | Next occurrence of weekday after date | date string |
+| `rela.rrule_next(rrule, after?)` | Next RRULE occurrence (default: after today) | date string or nil |
+
+#### date_add
+
+Add a duration offset to a date. Offsets use `Nd`, `Nw`, `Nm`, `Ny` format. Negative values
+are supported.
+
+```lua
+rela.date_add("2025-01-15", "7d")   -- "2025-01-22"
+rela.date_add("2025-01-15", "2w")   -- "2025-01-29"
+rela.date_add("2025-01-15", "1m")   -- "2025-02-15"
+rela.date_add("2025-01-15", "1y")   -- "2026-01-15"
+rela.date_add("2025-01-15", "-3d")  -- "2025-01-12"
+```
+
+#### date_weekday
+
+Returns the lowercase weekday name for a date.
+
+```lua
+rela.date_weekday("2025-01-06")  -- "monday"
+```
+
+#### date_next_weekday
+
+Returns the next occurrence of the given weekday strictly after the date. If the date is
+already that weekday, it advances to the following week.
+
+```lua
+rela.date_next_weekday("2025-01-06", "friday")  -- "2025-01-10"
+rela.date_next_weekday("2025-01-06", "monday")  -- "2025-01-13" (not same day)
+```
+
+#### rrule_next
+
+Computes the next occurrence of an iCal RRULE (RFC 5545) after a given date. If no `after`
+date is provided, uses today. Returns `nil` if the rule has no more occurrences.
+
+Accepts both `RRULE:FREQ=...` and bare `FREQ=...` formats.
+
+**Important:** Rules with `INTERVAL` > 1 must include `DTSTART` to anchor the interval
+cadence. Without it, the function raises an error.
+
+```lua
+-- Next Saturday
+rela.rrule_next("FREQ=WEEKLY;BYDAY=SA;DTSTART=20250101T000000Z", "2025-01-06")
+-- "2025-01-11"
+
+-- 1st of each month
+rela.rrule_next("FREQ=MONTHLY;BYMONTHDAY=1;DTSTART=20250101T000000Z", "2025-01-15")
+-- "2025-02-01"
+
+-- Last day of each month
+rela.rrule_next("FREQ=MONTHLY;BYMONTHDAY=-1;DTSTART=20250101T000000Z", "2025-01-15")
+-- "2025-01-31"
+
+-- Every 2 weeks (INTERVAL > 1 requires DTSTART)
+rela.rrule_next("FREQ=WEEKLY;INTERVAL=2;DTSTART=20250106T000000Z", "2025-01-06")
+-- "2025-01-20"
+
+-- 1st Saturday every 3 months (INTERVAL > 1 requires DTSTART)
+rela.rrule_next("FREQ=MONTHLY;INTERVAL=3;BYDAY=1SA;DTSTART=20250101T000000Z", "2025-01-06")
+-- "2025-04-05"
+
+-- Uses today if no after date
+rela.rrule_next("FREQ=DAILY")  -- tomorrow's date
+```
+
 ### Context
 
 | Variable | Description |

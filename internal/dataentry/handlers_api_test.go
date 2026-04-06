@@ -10,6 +10,65 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
+func TestHandleAPIPaletteCRUD(t *testing.T) {
+	app := newHandlerTestApp(t)
+	app.palette = ResolvePalette(nil, nil)
+
+	t.Run("GET returns empty palette when none set", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/_palette", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleAPIPaletteCRUD(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+	})
+
+	t.Run("PUT saves valid palette", func(t *testing.T) {
+		body := `{"accent":"#e11d48","badges":{"blue":"#1e40af"}}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/_palette", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		// Need to hold RLock to simulate reloadLockMiddleware
+		app.mu.RLock()
+		app.handleAPISavePalette(w, req)
+		app.mu.RUnlock()
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if app.userPalette == nil || app.userPalette.Accent != "#e11d48" {
+			t.Error("palette not saved")
+		}
+	})
+
+	t.Run("PUT rejects invalid palette", func(t *testing.T) {
+		body := `{"accent":"not-hex"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/_palette", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		app.mu.RLock()
+		app.handleAPISavePalette(w, req)
+		app.mu.RUnlock()
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("method not allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/_palette", http.NoBody)
+		w := httptest.NewRecorder()
+		app.handleAPIPaletteCRUD(w, req)
+
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("expected 405, got %d", w.Code)
+		}
+	})
+}
+
 func TestWriteJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	writeJSON(w, map[string]string{"key": "value"})

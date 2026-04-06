@@ -306,8 +306,12 @@ dev-catalog port="8282":
 dev-frontend:
     cd frontend && npm run dev
 
+# Install frontend dependencies
+install-frontend:
+    cd frontend && npm install
+
 # Build Vue frontend for production
-build-frontend:
+build-frontend: install-frontend
     cd frontend && npm run build
 
 # Type-check Vue frontend

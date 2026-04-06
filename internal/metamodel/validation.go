@@ -243,6 +243,23 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 			}
 		}
 
+	case PropertyTypeRrule:
+		s, ok := val.(string)
+		if !ok {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidType,
+				Property: propName,
+				Message:  "Must be an RRULE string",
+			}
+		}
+		if err := ValidateRrule(s); err != nil {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidValue,
+				Property: propName,
+				Message:  err.Error(),
+			}
+		}
+
 	default:
 		// Custom type (enum defined in types section)
 		if customType, ok := m.Types[propDef.Type]; ok {

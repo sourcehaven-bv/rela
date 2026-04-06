@@ -65,20 +65,19 @@ const badgeClass = computed(() => {
   text-transform: capitalize;
 }
 
-/* Light mode colors - darker text for better contrast */
 .badge--blue {
-  background-color: color-mix(in srgb, #3b82f6 18%, transparent);
-  color: #1d4ed8;
+  background-color: color-mix(in srgb, var(--badge-blue) 18%, transparent);
+  color: var(--badge-blue);
 }
 
 .badge--purple {
-  background-color: color-mix(in srgb, #8b5cf6 18%, transparent);
-  color: #6d28d9;
+  background-color: color-mix(in srgb, var(--badge-purple) 18%, transparent);
+  color: var(--badge-purple);
 }
 
 .badge--green {
-  background-color: color-mix(in srgb, #22c55e 18%, transparent);
-  color: #15803d;
+  background-color: color-mix(in srgb, var(--badge-green) 18%, transparent);
+  color: var(--badge-green);
 }
 
 .badge--gray {
@@ -87,51 +86,17 @@ const badgeClass = computed(() => {
 }
 
 .badge--red {
-  background-color: color-mix(in srgb, #ef4444 18%, transparent);
-  color: #b91c1c;
+  background-color: color-mix(in srgb, var(--badge-red) 18%, transparent);
+  color: var(--badge-red);
 }
 
 .badge--orange {
-  background-color: color-mix(in srgb, #f97316 18%, transparent);
-  color: #c2410c;
+  background-color: color-mix(in srgb, var(--badge-orange) 18%, transparent);
+  color: var(--badge-orange);
 }
 
 .badge--yellow {
-  background-color: color-mix(in srgb, #eab308 18%, transparent);
-  color: #a16207;
-}
-
-</style>
-
-<!-- Dark mode: unscoped with higher specificity to override scoped [data-v-*] -->
-<style>
-.dark .badge.badge--blue {
-  background-color: color-mix(in srgb, #3b82f6 20%, transparent);
-  color: #60a5fa;
-}
-
-.dark .badge.badge--purple {
-  background-color: color-mix(in srgb, #8b5cf6 22%, transparent);
-  color: #c4b5fd;
-}
-
-.dark .badge.badge--green {
-  background-color: color-mix(in srgb, #22c55e 20%, transparent);
-  color: #4ade80;
-}
-
-.dark .badge.badge--red {
-  background-color: color-mix(in srgb, #ef4444 20%, transparent);
-  color: #f87171;
-}
-
-.dark .badge.badge--orange {
-  background-color: color-mix(in srgb, #f97316 20%, transparent);
-  color: #fb923c;
-}
-
-.dark .badge.badge--yellow {
-  background-color: color-mix(in srgb, #eab308 20%, transparent);
-  color: #fde047;
+  background-color: color-mix(in srgb, var(--badge-yellow) 18%, transparent);
+  color: var(--badge-yellow);
 }
 </style>

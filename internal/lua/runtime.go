@@ -294,6 +294,9 @@ func (r *Runtime) registerBindings() {
 	r.L.SetField(rela, "project_root", lua.LString(r.projectRoot))
 	r.L.SetField(rela, "args", r.L.NewTable()) // Will be set before running script
 
+	// Date and RRULE utility functions
+	registerDateHelpers(r.L, rela)
+
 	// Markdown AST and generation helpers module (rela.md.*)
 	r.registerMarkdownModule(rela)
 
@@ -1195,16 +1198,7 @@ func luaDaysSince(ls *lua.LState) int {
 		return 1
 	}
 
-	var t time.Time
-	var err error
-
-	// Try RFC3339 first (includes timezone)
-	t, err = time.Parse(time.RFC3339, dateStr)
-	if err != nil {
-		// Fall back to date-only format
-		t, err = time.Parse("2006-01-02", dateStr)
-	}
-
+	t, err := parseDate(dateStr)
 	if err != nil {
 		ls.Push(lua.LNumber(-1))
 		return 1

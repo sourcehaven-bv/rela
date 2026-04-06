@@ -18,7 +18,7 @@ export interface EntityType {
 }
 
 export interface PropertyDef {
-  type: 'string' | 'date' | 'integer' | 'boolean' | 'enum' | 'file'
+  type: 'string' | 'date' | 'integer' | 'boolean' | 'enum' | 'file' | 'rrule'
   required?: boolean
   values?: string[]
   default?: string

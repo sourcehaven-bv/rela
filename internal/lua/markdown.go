@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
 	lua "github.com/yuin/gopher-lua"
 )
@@ -20,7 +23,13 @@ const (
 	nodeTypeList          = "list"
 	nodeTypeBlockquote    = "blockquote"
 	nodeTypeThematicBreak = "thematic_break"
+	nodeTypeTable         = "table"
 	nodeTypeRaw           = "raw"
+
+	alignLeft   = "left"
+	alignRight  = "right"
+	alignCenter = "center"
+	alignNone   = "none"
 
 	minHeaderLevel = 1
 	maxHeaderLevel = 6
@@ -73,7 +82,7 @@ func (r *Runtime) luaMdParse(ls *lua.LState) int {
 	content := ls.CheckString(1)
 
 	source := []byte(content)
-	md := goldmark.New()
+	md := goldmark.New(goldmark.WithExtensions(extension.NewTable()))
 	reader := text.NewReader(source)
 	doc := md.Parser().Parse(reader)
 
@@ -526,6 +535,13 @@ func (r *Runtime) nodeToLua(n ast.Node, source []byte) *lua.LTable {
 	case *ast.ThematicBreak:
 		node.RawSetString("type", lua.LString(nodeTypeThematicBreak))
 
+	case *east.Table:
+		node.RawSetString("type", lua.LString(nodeTypeTable))
+		header, rows, alignments := r.extractTableData(n, source)
+		node.RawSetString("header", header)
+		node.RawSetString("rows", rows)
+		node.RawSetString("alignments", alignments)
+
 	default:
 		// For unsupported node types, capture as raw
 		node.RawSetString("type", lua.LString(nodeTypeRaw))
@@ -634,6 +650,58 @@ func (r *Runtime) extractRawContent(n ast.Node, source []byte) string {
 	return ""
 }
 
+// extractTableData extracts header, rows, and alignments from a GFM table node.
+// Note: cell text is extracted as plain text via extractText(), which strips inline
+// formatting (bold, links, code spans). This is consistent with heading/paragraph
+// extraction but means rich inline content in cells is not preserved.
+func (r *Runtime) extractTableData(table *east.Table, source []byte) (header, rows, alignments *lua.LTable) {
+	header = r.L.NewTable()
+	rows = r.L.NewTable()
+	alignments = r.L.NewTable()
+
+	// Extract alignments from table columns
+	for i, a := range table.Alignments {
+		var align string
+		switch a {
+		case east.AlignLeft:
+			align = alignLeft
+		case east.AlignRight:
+			align = alignRight
+		case east.AlignCenter:
+			align = alignCenter
+		default:
+			align = alignNone
+		}
+		alignments.RawSetInt(i+1, lua.LString(align))
+	}
+
+	// Walk children: TableHeader contains the header row, TableRows are data rows
+	rowIdx := 1
+	for child := table.FirstChild(); child != nil; child = child.NextSibling() {
+		switch child.Kind() {
+		case east.KindTableHeader:
+			// Header has TableCell children directly
+			cellIdx := 1
+			for cell := child.FirstChild(); cell != nil; cell = cell.NextSibling() {
+				header.RawSetInt(cellIdx, lua.LString(r.extractText(cell, source)))
+				cellIdx++
+			}
+		case east.KindTableRow:
+			// Data row with cells
+			luaRow := r.L.NewTable()
+			cellIdx := 1
+			for cell := child.FirstChild(); cell != nil; cell = cell.NextSibling() {
+				luaRow.RawSetInt(cellIdx, lua.LString(r.extractText(cell, source)))
+				cellIdx++
+			}
+			rows.RawSetInt(rowIdx, luaRow)
+			rowIdx++
+		}
+	}
+
+	return header, rows, alignments
+}
+
 // shiftNodeHeaders creates a deep copy of a node with shifted header levels.
 func (r *Runtime) shiftNodeHeaders(node *lua.LTable, offset int) *lua.LTable {
 	newNode := r.deepCopyNode(node)
@@ -713,6 +781,8 @@ func (r *Runtime) renderNode(sb *strings.Builder, node *lua.LTable) {
 		r.renderBlockquote(sb, node)
 	case nodeTypeThematicBreak:
 		sb.WriteString("---\n")
+	case nodeTypeTable:
+		r.renderTableNode(sb, node)
 	case nodeTypeRaw:
 		r.renderRaw(sb, node)
 	}
@@ -814,6 +884,127 @@ func (r *Runtime) renderRaw(sb *strings.Builder, node *lua.LTable) {
 	sb.WriteString(content)
 	if !strings.HasSuffix(content, "\n") {
 		sb.WriteString("\n")
+	}
+}
+
+// renderTableNode renders a table AST node to GFM markdown with column-aligned padding.
+func (r *Runtime) renderTableNode(sb *strings.Builder, node *lua.LTable) {
+	header, _ := node.RawGetString("header").(*lua.LTable)
+	rows, _ := node.RawGetString("rows").(*lua.LTable)
+	alignments, _ := node.RawGetString("alignments").(*lua.LTable)
+
+	if header == nil || header.Len() == 0 {
+		return
+	}
+
+	numCols := header.Len()
+
+	// Collect all cell values and compute column widths
+	headerCells := make([]string, numCols)
+	colWidths := make([]int, numCols)
+	colAligns := make([]string, numCols)
+
+	for i := 0; i < numCols; i++ {
+		headerCells[i] = lua.LVAsString(header.RawGetInt(i + 1))
+		colWidths[i] = runewidth.StringWidth(headerCells[i])
+		colAligns[i] = alignNone
+		if alignments != nil {
+			if a, ok := alignments.RawGetInt(i + 1).(lua.LString); ok {
+				colAligns[i] = string(a)
+			}
+		}
+	}
+
+	var dataRows [][]string
+	if rows != nil {
+		for i := 1; i <= rows.Len(); i++ {
+			row, ok := rows.RawGetInt(i).(*lua.LTable)
+			if !ok {
+				continue
+			}
+			cells := make([]string, numCols)
+			for j := 0; j < numCols; j++ {
+				cells[j] = lua.LVAsString(row.RawGetInt(j + 1))
+				if runewidth.StringWidth(cells[j]) > colWidths[j] {
+					colWidths[j] = runewidth.StringWidth(cells[j])
+				}
+			}
+			dataRows = append(dataRows, cells)
+		}
+	}
+
+	// Ensure minimum width of 3 for separator dashes
+	for i := range colWidths {
+		if colWidths[i] < 3 {
+			colWidths[i] = 3
+		}
+	}
+
+	// Header row
+	sb.WriteString("|")
+	for i := 0; i < numCols; i++ {
+		sb.WriteString(" ")
+		sb.WriteString(padCell(headerCells[i], colWidths[i], colAligns[i]))
+		sb.WriteString(" |")
+	}
+	sb.WriteString("\n")
+
+	// Separator row
+	sb.WriteString("|")
+	for i := 0; i < numCols; i++ {
+		sb.WriteString(" ")
+		sb.WriteString(renderSeparator(colWidths[i], colAligns[i]))
+		sb.WriteString(" |")
+	}
+	sb.WriteString("\n")
+
+	// Data rows
+	for _, cells := range dataRows {
+		sb.WriteString("|")
+		for j := 0; j < numCols; j++ {
+			sb.WriteString(" ")
+			sb.WriteString(padCell(cells[j], colWidths[j], colAligns[j]))
+			sb.WriteString(" |")
+		}
+		sb.WriteString("\n")
+	}
+}
+
+// padCell pads a cell value to the given width based on alignment.
+// Width is measured in display columns (using runewidth) to handle
+// multi-byte characters like CJK and emoji correctly.
+func padCell(value string, width int, align string) string {
+	padding := width - runewidth.StringWidth(value)
+	if padding <= 0 {
+		return value
+	}
+	switch align {
+	case alignRight:
+		return strings.Repeat(" ", padding) + value
+	case alignCenter:
+		left := padding / 2
+		right := padding - left
+		return strings.Repeat(" ", left) + value + strings.Repeat(" ", right)
+	default:
+		return value + strings.Repeat(" ", padding)
+	}
+}
+
+// renderSeparator renders a table separator cell with alignment markers.
+// width must be >= 3 (enforced by renderTableNode's minimum column width).
+func renderSeparator(width int, align string) string {
+	if width < 3 {
+		width = 3
+	}
+	switch align {
+	case alignLeft:
+		return ":" + strings.Repeat("-", width-1)
+	case alignRight:
+		return strings.Repeat("-", width-1) + ":"
+	case alignCenter:
+		return ":" + strings.Repeat("-", width-2) + ":"
+	default:
+		return strings.Repeat("-", width)
 	}
 }
 

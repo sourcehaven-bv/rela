@@ -565,6 +565,271 @@ func TestMdUnicodeContent(t *testing.T) {
 	assert.Contains(t, result, "émojis 🎉")
 }
 
+func TestMdTableParse(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	t.Run("simple table", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| Name | Age |\n| ---- | --- |\n| Alice | 30 |\n| Bob | 25 |\n")
+			result_len = #ast
+			result_type = ast[1].type
+			result_header_len = #ast[1].header
+			result_h1 = ast[1].header[1]
+			result_h2 = ast[1].header[2]
+			result_rows_len = #ast[1].rows
+			result_r1c1 = ast[1].rows[1][1]
+			result_r1c2 = ast[1].rows[1][2]
+			result_r2c1 = ast[1].rows[2][1]
+			result_r2c2 = ast[1].rows[2][2]
+		`
+		require.NoError(t, rt.RunString(code))
+
+		assert.Equal(t, 1, int(lua.LVAsNumber(rt.L.GetGlobal("result_len"))))
+		assert.Equal(t, "table", lua.LVAsString(rt.L.GetGlobal("result_type")))
+		assert.Equal(t, 2, int(lua.LVAsNumber(rt.L.GetGlobal("result_header_len"))))
+		assert.Equal(t, "Name", lua.LVAsString(rt.L.GetGlobal("result_h1")))
+		assert.Equal(t, "Age", lua.LVAsString(rt.L.GetGlobal("result_h2")))
+		assert.Equal(t, 2, int(lua.LVAsNumber(rt.L.GetGlobal("result_rows_len"))))
+		assert.Equal(t, "Alice", lua.LVAsString(rt.L.GetGlobal("result_r1c1")))
+		assert.Equal(t, "30", lua.LVAsString(rt.L.GetGlobal("result_r1c2")))
+		assert.Equal(t, "Bob", lua.LVAsString(rt.L.GetGlobal("result_r2c1")))
+		assert.Equal(t, "25", lua.LVAsString(rt.L.GetGlobal("result_r2c2")))
+	})
+
+	t.Run("alignment markers", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| Left | Center | Right |\n| :--- | :---: | ---: |\n| a | b | c |\n")
+			result_a1 = ast[1].alignments[1]
+			result_a2 = ast[1].alignments[2]
+			result_a3 = ast[1].alignments[3]
+		`
+		require.NoError(t, rt.RunString(code))
+
+		assert.Equal(t, "left", lua.LVAsString(rt.L.GetGlobal("result_a1")))
+		assert.Equal(t, "center", lua.LVAsString(rt.L.GetGlobal("result_a2")))
+		assert.Equal(t, "right", lua.LVAsString(rt.L.GetGlobal("result_a3")))
+	})
+
+	t.Run("header only table", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| Col |\n| --- |\n")
+			result_type = ast[1].type
+			result_header_len = #ast[1].header
+			result_rows_len = #ast[1].rows
+		`
+		require.NoError(t, rt.RunString(code))
+
+		assert.Equal(t, "table", lua.LVAsString(rt.L.GetGlobal("result_type")))
+		assert.Equal(t, 1, int(lua.LVAsNumber(rt.L.GetGlobal("result_header_len"))))
+		assert.Equal(t, 0, int(lua.LVAsNumber(rt.L.GetGlobal("result_rows_len"))))
+	})
+
+	t.Run("mixed content with table", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("# Title\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\nSome text.\n")
+			result_len = #ast
+			result_t1 = ast[1].type
+			result_t2 = ast[2].type
+			result_t3 = ast[3].type
+		`
+		require.NoError(t, rt.RunString(code))
+
+		assert.Equal(t, 3, int(lua.LVAsNumber(rt.L.GetGlobal("result_len"))))
+		assert.Equal(t, "heading", lua.LVAsString(rt.L.GetGlobal("result_t1")))
+		assert.Equal(t, "table", lua.LVAsString(rt.L.GetGlobal("result_t2")))
+		assert.Equal(t, "paragraph", lua.LVAsString(rt.L.GetGlobal("result_t3")))
+	})
+
+	t.Run("inline formatting in cells", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| Header |\n| --- |\n| **bold** text |\n")
+			result_cell = ast[1].rows[1][1]
+		`
+		require.NoError(t, rt.RunString(code))
+
+		assert.Equal(t, "bold text", lua.LVAsString(rt.L.GetGlobal("result_cell")))
+	})
+}
+
+func TestMdTableRender(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	t.Run("render simple table with padding", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| Name | Age |\n| ---- | --- |\n| Alice | 30 |\n")
+			return rela.md.render(ast)
+		`
+		require.NoError(t, rt.RunString(code))
+
+		result := lua.LVAsString(rt.L.Get(-1))
+		rt.L.Pop(1)
+		// "Name" is 4 chars, "Alice" is 5 → column width 5, so "Name" gets padded
+		assert.Contains(t, result, "| Name  | Age |")
+		assert.Contains(t, result, "| Alice | 30  |")
+	})
+
+	t.Run("render with alignments and padding", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| Left | Center | Right |\n| :--- | :---: | ---: |\n| a | b | c |\n")
+			return rela.md.render(ast)
+		`
+		require.NoError(t, rt.RunString(code))
+
+		result := lua.LVAsString(rt.L.Get(-1))
+		rt.L.Pop(1)
+		// Check alignment markers are present in separator
+		assert.Contains(t, result, ":---")   // left align
+		assert.Contains(t, result, ":----:") // center align
+		assert.Contains(t, result, "----:")  // right align
+		// Check right-aligned cell is right-padded
+		assert.Contains(t, result, "     c |")
+	})
+
+	t.Run("render header only", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| Col |\n| --- |\n")
+			return rela.md.render(ast)
+		`
+		require.NoError(t, rt.RunString(code))
+
+		result := lua.LVAsString(rt.L.Get(-1))
+		rt.L.Pop(1)
+		assert.Contains(t, result, "| Col |")
+		assert.Contains(t, result, "---")
+	})
+
+	t.Run("render missing header gracefully", func(t *testing.T) {
+		code := `
+			local node = {type = "table", rows = {{"a", "b"}}}
+			local ast = {node}
+			return rela.md.render(ast)
+		`
+		require.NoError(t, rt.RunString(code))
+
+		result := lua.LVAsString(rt.L.Get(-1))
+		rt.L.Pop(1)
+		// Should produce empty output since header is nil
+		assert.Equal(t, "", result)
+	})
+}
+
+func TestMdTableRoundTrip(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "simple table",
+			input: "| Name | Age |\n| -------- | -------- |\n| Alice | 30 |\n",
+		},
+		{
+			name:  "table with alignments",
+			input: "| L | C | R |\n| :-------- | :-------: | --------: |\n| a | b | c |\n",
+		},
+		{
+			name:  "single column",
+			input: "| Col |\n| -------- |\n| val |\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code := fmt.Sprintf(`
+				local ast = rela.md.parse(%q)
+				return rela.md.render(ast)
+			`, tt.input)
+			require.NoError(t, rt.RunString(code))
+
+			result1 := lua.LVAsString(rt.L.Get(-1))
+			rt.L.Pop(1)
+
+			// Parse again and render to ensure stability
+			code2 := fmt.Sprintf(`
+				local ast = rela.md.parse(%q)
+				return rela.md.render(ast)
+			`, result1)
+			require.NoError(t, rt.RunString(code2))
+
+			result2 := lua.LVAsString(rt.L.Get(-1))
+			rt.L.Pop(1)
+
+			assert.Equal(t, result1, result2, "round-trip should be stable")
+		})
+	}
+}
+
+func TestMdTableRenderFormatting(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	t.Run("columns padded to widest cell", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| X | Y |\n| --- | --- |\n| short | longer value |\n")
+			return rela.md.render(ast)
+		`
+		require.NoError(t, rt.RunString(code))
+
+		result := lua.LVAsString(rt.L.Get(-1))
+		rt.L.Pop(1)
+		want := "| X     | Y            |\n" +
+			"| ----- | ------------ |\n" +
+			"| short | longer value |\n"
+		assert.Equal(t, want, result)
+	})
+
+	t.Run("right-aligned numbers padded right", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| Item | Price |\n| :--- | ---: |\n| Apple | 1 |\n| Banana Split | 1250 |\n")
+			return rela.md.render(ast)
+		`
+		require.NoError(t, rt.RunString(code))
+
+		result := lua.LVAsString(rt.L.Get(-1))
+		rt.L.Pop(1)
+		want := "| Item         | Price |\n" +
+			"| :----------- | ----: |\n" +
+			"| Apple        |     1 |\n" +
+			"| Banana Split |  1250 |\n"
+		assert.Equal(t, want, result)
+	})
+
+	t.Run("center-aligned cells centered", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| Status |\n| :---: |\n| OK |\n| FAILED |\n")
+			return rela.md.render(ast)
+		`
+		require.NoError(t, rt.RunString(code))
+
+		result := lua.LVAsString(rt.L.Get(-1))
+		rt.L.Pop(1)
+		want := "| Status |\n" +
+			"| :----: |\n" +
+			"|   OK   |\n" +
+			"| FAILED |\n"
+		assert.Equal(t, want, result)
+	})
+
+	t.Run("multi-byte characters aligned correctly", func(t *testing.T) {
+		code := `
+			local ast = rela.md.parse("| Name | Price |\n| --- | ---: |\n| 日本語 | 100 |\n| Go | 2000 |\n")
+			return rela.md.render(ast)
+		`
+		require.NoError(t, rt.RunString(code))
+
+		result := lua.LVAsString(rt.L.Get(-1))
+		rt.L.Pop(1)
+		// 日本語 is 6 display columns wide, "Name" is 4 → column width 6
+		assert.Contains(t, result, "| Name   |")
+		assert.Contains(t, result, "| 日本語 |")
+		assert.Contains(t, result, "| Go     |")
+	})
+}
+
 func TestMdParseErrors(t *testing.T) {
 	rt := newMdTestRuntime(t)
 	defer rt.Close()

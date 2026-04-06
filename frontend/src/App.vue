@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useKeyboardShortcuts, shortcutsModalOpen, useEvents } from '@/composables'
 import Sidebar from '@/components/common/Sidebar.vue'
@@ -28,6 +28,19 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+// Apply palette CSS variables when schema loads or theme toggles
+watch(
+  [() => schemaStore.loaded, () => uiStore.darkMode, () => schemaStore.paletteLight, () => schemaStore.paletteDark],
+  () => {
+    if (!schemaStore.loaded) return
+    const palette = uiStore.darkMode ? schemaStore.paletteDark : schemaStore.paletteLight
+    if (Object.keys(palette).length > 0) {
+      uiStore.applyPalette(palette)
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
@@ -72,6 +85,13 @@ onMounted(async () => {
   --input-bg: #ffffff;
   --hover-bg: #f1f5f9;
   --muted-text: #64748b;
+  --badge-blue: #3b82f6;
+  --badge-purple: #8b5cf6;
+  --badge-green: #22c55e;
+  --badge-gray: #6b7280;
+  --badge-red: #ef4444;
+  --badge-orange: #f97316;
+  --badge-yellow: #eab308;
 }
 
 :root.dark {
@@ -89,6 +109,13 @@ onMounted(async () => {
   --input-bg: #1e1e28;
   --hover-bg: #252530;
   --muted-text: #94a3b8;
+  --badge-blue: #60a5fa;
+  --badge-purple: #c4b5fd;
+  --badge-green: #4ade80;
+  --badge-gray: #6b7280;
+  --badge-red: #f87171;
+  --badge-orange: #fb923c;
+  --badge-yellow: #fde047;
 }
 
 * {

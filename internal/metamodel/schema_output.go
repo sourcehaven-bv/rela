@@ -126,6 +126,8 @@ func (m *Metamodel) ResolveWidgetFromType(propType string) string {
 		return "checkbox"
 	case PropertyTypeEnum:
 		return "select"
+	case PropertyTypeRrule:
+		return "rrule"
 	default:
 		if ct, ok := m.Types[propType]; ok && len(ct.Values) > 0 {
 			return "select"

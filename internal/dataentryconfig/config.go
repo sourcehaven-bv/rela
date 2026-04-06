@@ -26,6 +26,7 @@ const (
 	WidgetTextarea    = "textarea"
 	WidgetNumber      = "number"
 	WidgetDate        = "date"
+	WidgetRrule       = "rrule"
 	WidgetCards       = "cards" // card-based UI for relations with properties
 )
 
@@ -65,6 +66,7 @@ type Config struct {
 	Version    string                       `yaml:"version"`
 	App        AppConfig                    `yaml:"app"`
 	Git        *git.Config                  `yaml:"git,omitempty"`
+	Palette    *PaletteConfig               `yaml:"palette,omitempty"`
 	Styles     map[string]map[string]string `yaml:"styles"`
 	Forms      map[string]Form              `yaml:"forms"`
 	Lists      map[string]List              `yaml:"lists"`

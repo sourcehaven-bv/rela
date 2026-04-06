@@ -590,7 +590,7 @@ func TestValidatePropertyValue_RegexValidation(t *testing.T) {
 func TestValidatePropertyValue_MultipleRegexValidations(t *testing.T) {
 	meta := &Metamodel{
 		Types: map[string]CustomType{
-			"rrule": {
+			"recurrence-pattern": {
 				Description: "iCal recurrence rule",
 				Validations: []TypeValidation{
 					{
@@ -605,7 +605,7 @@ func TestValidatePropertyValue_MultipleRegexValidations(t *testing.T) {
 			},
 		},
 	}
-	propDef := &PropertyDef{Type: "rrule"}
+	propDef := &PropertyDef{Type: "recurrence-pattern"}
 
 	tests := []struct {
 		name        string
@@ -839,5 +839,43 @@ func TestValidatePropertyValue_EmptyListWithRegexOnly(t *testing.T) {
 	err := meta.ValidatePropertyValue("versions", propDef, []string{})
 	if err != nil {
 		t.Errorf("expected empty list to pass for regex-only type, got: %v", err)
+	}
+}
+
+func TestValidatePropertyValue_Rrule(t *testing.T) {
+	meta := &Metamodel{}
+	propDef := &PropertyDef{Type: PropertyTypeRrule}
+
+	tests := []struct {
+		name    string
+		value   interface{}
+		wantErr bool
+		errMsg  string
+	}{
+		{"valid daily", "FREQ=DAILY", false, ""},
+		{"valid weekly with byday", "FREQ=WEEKLY;BYDAY=SA", false, ""},
+		{"valid with RRULE prefix", "RRULE:FREQ=WEEKLY;BYDAY=MO", false, ""},
+		{"valid interval with dtstart", "FREQ=WEEKLY;INTERVAL=2;DTSTART=20250106T000000Z", false, ""},
+		{"valid monthly bymonthday", "FREQ=MONTHLY;BYMONTHDAY=15", false, ""},
+		{"valid monthly last day", "FREQ=MONTHLY;BYMONTHDAY=-1", false, ""},
+		{"invalid string", "INVALID_RRULE", true, "invalid RRULE"},
+		{"interval without dtstart", "FREQ=WEEKLY;INTERVAL=2", true, "INTERVAL > 1 requires DTSTART"},
+		{"interval 3 without dtstart", "FREQ=MONTHLY;INTERVAL=3", true, "INTERVAL > 1 requires DTSTART"},
+		{"not a string", 42, true, "Must be an RRULE string"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := meta.ValidatePropertyValue("recurrence", propDef, tt.value)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for %v, got nil", tt.value)
+				} else if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("expected error containing %q, got %q", tt.errMsg, err.Error())
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error for %v: %v", tt.value, err)
+			}
+		})
 	}
 }
