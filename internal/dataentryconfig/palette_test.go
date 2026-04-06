@@ -1,6 +1,7 @@
 package dataentryconfig
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -132,6 +133,85 @@ func TestDarkModeMarshalYAML(t *testing.T) {
 		out, err := yaml.Marshal(d)
 		require.NoError(t, err)
 		assert.Contains(t, string(out), "#818cf8")
+	})
+}
+
+func TestDarkModeJSON(t *testing.T) {
+	t.Run("marshal auto", func(t *testing.T) {
+		d := DarkMode{Mode: "auto"}
+		out, err := json.Marshal(d)
+		require.NoError(t, err)
+		assert.Equal(t, `"auto"`, string(out))
+	})
+
+	t.Run("marshal false", func(t *testing.T) {
+		d := DarkMode{Mode: "false"}
+		out, err := json.Marshal(d)
+		require.NoError(t, err)
+		assert.Equal(t, "false", string(out))
+	})
+
+	t.Run("marshal explicit", func(t *testing.T) {
+		d := DarkMode{Explicit: &PaletteColors{Accent: "#818cf8"}}
+		out, err := json.Marshal(d)
+		require.NoError(t, err)
+		assert.Contains(t, string(out), `"accent":"#818cf8"`)
+	})
+
+	t.Run("unmarshal auto string", func(t *testing.T) {
+		var d DarkMode
+		require.NoError(t, json.Unmarshal([]byte(`"auto"`), &d))
+		assert.True(t, d.IsAuto())
+	})
+
+	t.Run("unmarshal false bool", func(t *testing.T) {
+		var d DarkMode
+		require.NoError(t, json.Unmarshal([]byte(`false`), &d))
+		assert.True(t, d.IsDisabled())
+	})
+
+	t.Run("unmarshal explicit object", func(t *testing.T) {
+		var d DarkMode
+		require.NoError(t, json.Unmarshal([]byte(`{"accent":"#818cf8","surface":"#121218"}`), &d))
+		assert.True(t, d.IsExplicit())
+		assert.Equal(t, "#818cf8", d.Explicit.Accent)
+		assert.Equal(t, "#121218", d.Explicit.Surface)
+	})
+
+	t.Run("round-trip auto", func(t *testing.T) {
+		original := DarkMode{Mode: "auto"}
+		data, err := json.Marshal(original)
+		require.NoError(t, err)
+		var decoded DarkMode
+		require.NoError(t, json.Unmarshal(data, &decoded))
+		assert.True(t, decoded.IsAuto())
+	})
+
+	t.Run("round-trip explicit", func(t *testing.T) {
+		original := DarkMode{Explicit: &PaletteColors{Accent: "#818cf8", Base: "#0f0f1a"}}
+		data, err := json.Marshal(original)
+		require.NoError(t, err)
+		var decoded DarkMode
+		require.NoError(t, json.Unmarshal(data, &decoded))
+		assert.True(t, decoded.IsExplicit())
+		assert.Equal(t, original.Explicit.Accent, decoded.Explicit.Accent)
+		assert.Equal(t, original.Explicit.Base, decoded.Explicit.Base)
+	})
+
+	t.Run("full PaletteConfig JSON round-trip", func(t *testing.T) {
+		original := PaletteConfig{
+			PaletteColors: PaletteColors{Accent: "#e11d48"},
+			Badges:        map[string]string{"blue": "#1e40af"},
+			Dark:          DarkMode{Explicit: &PaletteColors{Accent: "#818cf8"}},
+		}
+		data, err := json.Marshal(original)
+		require.NoError(t, err)
+		var decoded PaletteConfig
+		require.NoError(t, json.Unmarshal(data, &decoded))
+		assert.Equal(t, "#e11d48", decoded.Accent)
+		assert.Equal(t, "#1e40af", decoded.Badges["blue"])
+		assert.True(t, decoded.Dark.IsExplicit())
+		assert.Equal(t, "#818cf8", decoded.Dark.Explicit.Accent)
 	})
 }
 

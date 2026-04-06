@@ -1,6 +1,7 @@
 package dataentryconfig
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -21,8 +22,8 @@ var ValidBadgeNames = map[string]bool{
 // PaletteConfig is the top-level palette configuration in data-entry.yaml.
 type PaletteConfig struct {
 	PaletteColors `yaml:",inline"`
-	Badges        map[string]string `yaml:"badges,omitempty"`
-	Dark          DarkMode          `yaml:"dark,omitempty"`
+	Badges        map[string]string `yaml:"badges,omitempty" json:"badges,omitempty"`
+	Dark          DarkMode          `yaml:"dark,omitempty"   json:"dark,omitempty"`
 }
 
 // PaletteColors holds the 8 named color roles. All fields are optional;
@@ -106,6 +107,54 @@ func (d DarkMode) MarshalYAML() (interface{}, error) {
 		return false, nil
 	}
 	return "auto", nil
+}
+
+// MarshalJSON serializes DarkMode to JSON.
+// Returns "auto", false, or the explicit PaletteColors object.
+func (d DarkMode) MarshalJSON() ([]byte, error) {
+	if d.Explicit != nil {
+		return json.Marshal(d.Explicit)
+	}
+	if d.Mode == "false" {
+		return json.Marshal(false)
+	}
+	return json.Marshal("auto")
+}
+
+// UnmarshalJSON handles the three-way union for JSON: string "auto", bool false, or object.
+func (d *DarkMode) UnmarshalJSON(data []byte) error {
+	// Try bool first (handles false/true)
+	var boolVal bool
+	if err := json.Unmarshal(data, &boolVal); err == nil {
+		if !boolVal {
+			d.Mode = "false"
+			return nil
+		}
+		d.Mode = "auto"
+		return nil
+	}
+
+	// Try string ("auto", "false", "disabled")
+	var strVal string
+	if err := json.Unmarshal(data, &strVal); err == nil {
+		switch strings.ToLower(strVal) {
+		case "", "auto":
+			d.Mode = "auto"
+		case "false", "disabled":
+			d.Mode = "false"
+		default:
+			return fmt.Errorf("invalid dark mode %q", strVal)
+		}
+		return nil
+	}
+
+	// Try object (explicit palette)
+	var colors PaletteColors
+	if err := json.Unmarshal(data, &colors); err != nil {
+		return fmt.Errorf("invalid dark mode: must be \"auto\", false, or a palette object: %w", err)
+	}
+	d.Explicit = &colors
+	return nil
 }
 
 // ResolvedPalette contains the fully resolved CSS variable values for both themes.

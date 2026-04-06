@@ -11,7 +11,7 @@ import type {
   PaletteConfig,
 } from '@/api/settings'
 import TagSelect from '@/components/ui/TagSelect.vue'
-import { parsePalette, assignPalette } from '@/utils/palette'
+import { parsePalette, parseRelaPalette, assignPalette } from '@/utils/palette'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
@@ -52,6 +52,35 @@ const badgeNames = ['blue', 'purple', 'green', 'gray', 'red', 'orange', 'yellow'
 const importText = ref('')
 const importedColors = ref<string[]>([])
 const selectedRole = ref<{ type: 'color' | 'badge'; key: string } | null>(null)
+const dragging = ref(false)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+// Dark mode editing state
+const paletteDarkColors = ref<Record<string, string>>({})
+const paletteDarkBadges = ref<Record<string, string>>({})
+const editingDark = ref(false)
+
+const MAX_FILE_SIZE = 102400 // 100KB
+
+// Computed: which palette refs to show based on light/dark toggle
+const activeColors = computed(() => editingDark.value ? paletteDarkColors.value : paletteColors.value)
+const activeBadges = computed(() => editingDark.value ? paletteDarkBadges.value : paletteBadges.value)
+
+function setColor(key: string, value: string) {
+  if (editingDark.value) {
+    paletteDarkColors.value[key] = value
+  } else {
+    paletteColors.value[key] = value
+  }
+}
+
+function setBadge(key: string, value: string) {
+  if (editingDark.value) {
+    paletteDarkBadges.value[key] = value
+  } else {
+    paletteBadges.value[key] = value
+  }
+}
 
 // UI state for adding new items
 const selectedNewProperty = ref('')
@@ -148,6 +177,18 @@ async function handleSavePalette() {
     }
     if (Object.keys(badges).length > 0) palette.badges = badges
 
+    // Include dark mode overrides if any are set
+    const darkColors: Record<string, string> = {}
+    for (const [key, val] of Object.entries(paletteDarkColors.value)) {
+      if (val) darkColors[key] = val
+    }
+    for (const [key, val] of Object.entries(paletteDarkBadges.value)) {
+      if (val) darkColors[key] = val
+    }
+    if (Object.keys(darkColors).length > 0) {
+      (palette as Record<string, unknown>).dark = darkColors
+    }
+
     await savePalette(palette)
     uiStore.success('Palette saved — reload page to see changes')
     await schemaStore.reload()
@@ -184,6 +225,67 @@ function clearImport() {
   selectedRole.value = null
 }
 
+function handleFilePick() {
+  fileInput.value?.click()
+}
+
+function handleFileSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) readFile(file)
+  input.value = '' // reset so same file can be re-selected
+}
+
+function handleDragOver(event: DragEvent) {
+  event.preventDefault()
+  dragging.value = true
+}
+
+function handleDragLeave() {
+  dragging.value = false
+}
+
+function handleDrop(event: DragEvent) {
+  event.preventDefault()
+  dragging.value = false
+  const file = event.dataTransfer?.files[0]
+  if (file) readFile(file)
+}
+
+function readFile(file: File) {
+  if (file.size > MAX_FILE_SIZE) {
+    uiStore.warning('File too large (max 100KB)')
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    const text = reader.result as string
+    importText.value = text
+
+    // If it's a rela palette YAML, do structured import
+    const isYaml = file.name.endsWith('.yaml') || file.name.endsWith('.yml')
+    if (isYaml) {
+      const result = parseRelaPalette(text)
+      importedColors.value = result.allColors
+      for (const [key, val] of Object.entries(result.colors)) {
+        paletteColors.value[key] = val
+      }
+      for (const [key, val] of Object.entries(result.badges)) {
+        paletteBadges.value[key] = val
+      }
+      if (result.dark) {
+        for (const [key, val] of Object.entries(result.dark)) {
+          paletteDarkColors.value[key] = val
+        }
+      }
+      uiStore.success(`Imported palette from ${file.name}`)
+    } else {
+      handleImport()
+    }
+  }
+  reader.readAsText(file)
+}
+
 function selectRole(type: 'color' | 'badge', key: string) {
   if (selectedRole.value?.type === type && selectedRole.value?.key === key) {
     selectedRole.value = null // deselect
@@ -194,10 +296,12 @@ function selectRole(type: 'color' | 'badge', key: string) {
 
 function assignSwatch(hex: string) {
   if (!selectedRole.value) return
+  const colorsRef = editingDark.value ? paletteDarkColors : paletteColors
+  const badgesRef = editingDark.value ? paletteDarkBadges : paletteBadges
   if (selectedRole.value.type === 'color') {
-    paletteColors.value[selectedRole.value.key] = hex
+    colorsRef.value[selectedRole.value.key] = hex
   } else {
-    paletteBadges.value[selectedRole.value.key] = hex
+    badgesRef.value[selectedRole.value.key] = hex
   }
 }
 
@@ -206,11 +310,19 @@ function isRoleSelected(type: 'color' | 'badge', key: string): boolean {
 }
 
 function clearPaletteColor(key: string) {
-  delete paletteColors.value[key]
+  if (editingDark.value) {
+    delete paletteDarkColors.value[key]
+  } else {
+    delete paletteColors.value[key]
+  }
 }
 
 function clearBadgeColor(key: string) {
-  delete paletteBadges.value[key]
+  if (editingDark.value) {
+    delete paletteDarkBadges.value[key]
+  } else {
+    delete paletteBadges.value[key]
+  }
 }
 
 function addPropertyDefault() {
@@ -598,11 +710,24 @@ onMounted(() => {
         <p class="file-path">.rela/palette.yaml</p>
 
         <h4 class="section-subtitle">Import Palette</h4>
-        <div class="import-section">
+        <div
+          class="import-section"
+          :class="{ 'drop-active': dragging }"
+          @dragover="handleDragOver"
+          @dragleave="handleDragLeave"
+          @drop="handleDrop"
+        >
+          <input
+            ref="fileInput"
+            type="file"
+            accept=".gpl,.hex,.txt,.yaml,.yml"
+            class="file-input-hidden"
+            @change="handleFileSelected"
+          />
           <textarea
             v-model="importText"
             class="import-textarea"
-            placeholder="Paste hex colors (one per line) or GIMP Palette (.gpl) content"
+            placeholder="Paste hex colors, GIMP Palette (.gpl), or drag & drop a palette file"
             rows="4"
           />
           <div class="import-actions">
@@ -612,6 +737,11 @@ onMounted(() => {
               :disabled="!importText.trim()"
               @click="handleImport"
             >Import</button>
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm"
+              @click="handleFilePick"
+            >Browse File</button>
             <button
               v-if="importedColors.length"
               type="button"
@@ -637,6 +767,21 @@ onMounted(() => {
           </div>
         </div>
 
+        <div class="mode-toggle">
+          <button
+            type="button"
+            class="toggle-pill"
+            :class="{ active: !editingDark }"
+            @click="editingDark = false"
+          >Light</button>
+          <button
+            type="button"
+            class="toggle-pill"
+            :class="{ active: editingDark }"
+            @click="editingDark = true"
+          >Dark</button>
+        </div>
+
         <h4 class="section-subtitle">Theme Colors</h4>
         <div class="color-grid">
           <div
@@ -653,19 +798,19 @@ onMounted(() => {
             <div class="color-input-group">
               <input
                 type="color"
-                :value="paletteColors[role.key] || '#808080'"
+                :value="activeColors[role.key] || '#808080'"
                 class="color-picker"
-                @input="paletteColors[role.key] = ($event.target as HTMLInputElement).value"
+                @input="setColor(role.key, ($event.target as HTMLInputElement).value)"
               />
               <input
                 type="text"
-                :value="paletteColors[role.key] || ''"
+                :value="activeColors[role.key] || ''"
                 placeholder="#hex"
                 class="color-text"
-                @input="paletteColors[role.key] = ($event.target as HTMLInputElement).value"
+                @input="setColor(role.key, ($event.target as HTMLInputElement).value)"
               />
               <button
-                v-if="paletteColors[role.key]"
+                v-if="activeColors[role.key]"
                 type="button"
                 class="btn-icon btn-remove"
                 title="Clear (use default)"
@@ -690,19 +835,19 @@ onMounted(() => {
             <div class="color-input-group">
               <input
                 type="color"
-                :value="paletteBadges[name] || '#808080'"
+                :value="activeBadges[name] || '#808080'"
                 class="color-picker"
-                @input="paletteBadges[name] = ($event.target as HTMLInputElement).value"
+                @input="setBadge(name, ($event.target as HTMLInputElement).value)"
               />
               <input
                 type="text"
-                :value="paletteBadges[name] || ''"
+                :value="activeBadges[name] || ''"
                 placeholder="#hex"
                 class="color-text"
-                @input="paletteBadges[name] = ($event.target as HTMLInputElement).value"
+                @input="setBadge(name, ($event.target as HTMLInputElement).value)"
               />
               <button
-                v-if="paletteBadges[name]"
+                v-if="activeBadges[name]"
                 type="button"
                 class="btn-icon btn-remove"
                 title="Clear (use default)"
@@ -1130,6 +1275,47 @@ h1 {
   outline: 2px solid var(--accent-color);
   outline-offset: -2px;
   border-radius: 6px;
+}
+
+.file-input-hidden {
+  display: none;
+}
+
+.drop-active {
+  outline: 2px dashed var(--accent-color);
+  outline-offset: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-color) 5%, transparent);
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 0;
+  margin: 16px 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.toggle-pill {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  background: var(--input-bg);
+  color: var(--muted-text);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.toggle-pill.active {
+  background: var(--accent-color);
+  color: white;
+}
+
+.toggle-pill:hover:not(.active) {
+  background: var(--hover-bg);
 }
 
 /* Uses global .btn, .btn-primary, .btn-secondary, .btn-sm, .loading-state, .spinner, .error-state from App.vue */
