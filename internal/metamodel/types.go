@@ -147,6 +147,7 @@ const (
 	PropertyTypeBoolean = "boolean"
 	PropertyTypeEnum    = "enum"
 	PropertyTypeFile    = "file"
+	PropertyTypeRrule   = "rrule"
 )
 
 // ID types for entities
@@ -179,7 +180,7 @@ const DefaultDateFormat = "2006-01-02"
 func IsBuiltinType(t string) bool {
 	switch t {
 	case PropertyTypeString, PropertyTypeDate, PropertyTypeInteger,
-		PropertyTypeBoolean, PropertyTypeEnum, PropertyTypeFile:
+		PropertyTypeBoolean, PropertyTypeEnum, PropertyTypeFile, PropertyTypeRrule:
 		return true
 	}
 	return false

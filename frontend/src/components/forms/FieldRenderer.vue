@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { FormFieldOrRelation, PropertyDef } from '@/types'
+import RruleBuilder from './RruleBuilder.vue'
 
 const props = defineProps<{
   field: FormFieldOrRelation
@@ -46,6 +47,10 @@ const isMultiSelect = computed(() => {
 
 const isCheckbox = computed(() => {
   return props.propertyDef?.type === 'boolean' || props.field.widget === 'checkbox'
+})
+
+const isRrule = computed(() => {
+  return props.propertyDef?.type === 'rrule' || props.field.widget === 'rrule'
 })
 
 const options = computed(() => props.propertyDef?.values || [])
@@ -188,9 +193,18 @@ function handleMultiSelect(event: Event) {
       </div>
     </div>
 
+    <!-- RRULE builder -->
+    <RruleBuilder
+      v-else-if="isRrule"
+      :model-value="stringValue"
+      :help="help"
+      :readonly="readonly"
+      @update:model-value="emit('update', $event)"
+    />
+
     <!-- Standard input -->
     <input
-      v-if="!isCheckbox && !isTextarea && !isMultiSelect && !isSelect"
+      v-if="!isCheckbox && !isTextarea && !isMultiSelect && !isSelect && !isRrule"
       :id="`field-${field.property}`"
       :type="inputType"
       :value="stringValue"

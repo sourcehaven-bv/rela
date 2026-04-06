@@ -8,6 +8,8 @@ import (
 
 	rrule "github.com/teambition/rrule-go"
 	lua "github.com/yuin/gopher-lua"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 const daysPerWeek = 7
@@ -144,20 +146,17 @@ func luaRruleNext(ls *lua.LState) int {
 		}
 	}
 
-	// Strip RRULE: prefix if present
-	rruleStr = strings.TrimPrefix(rruleStr, "RRULE:")
-
-	// Parse in UTC — RRULE deals with dates, not times.
-	opt, err := rrule.StrToROption(rruleStr)
-	if err != nil {
-		ls.RaiseError("rrule_next: invalid RRULE %q: %s", rruleStr, err)
+	// Validate the RRULE using shared validation (prefix stripping, parse, INTERVAL/DTSTART).
+	if err := metamodel.ValidateRrule(rruleStr); err != nil {
+		ls.RaiseError("rrule_next: %s", err)
 		return 0
 	}
 
-	// Reject INTERVAL > 1 without DTSTART — the interval cadence needs a
-	// stable anchor point, otherwise it drifts on every invocation.
-	if opt.Interval > 1 && opt.Dtstart.IsZero() {
-		ls.RaiseError("rrule_next: INTERVAL > 1 requires DTSTART in the RRULE string")
+	// Parse the validated rule for occurrence computation.
+	cleaned := strings.TrimPrefix(rruleStr, "RRULE:")
+	opt, err := rrule.StrToROption(cleaned)
+	if err != nil {
+		ls.RaiseError("rrule_next: %s", err)
 		return 0
 	}
 
