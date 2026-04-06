@@ -280,6 +280,8 @@ deps:
   metamodel:
     mayDependOn:
       - storage
+    canUse:
+      - rrulego
   migration:
     mayDependOn:
       - storage
