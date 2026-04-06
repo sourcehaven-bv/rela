@@ -40,8 +40,11 @@ function parseRrule(value: string) {
   if (!value) return
 
   try {
-    const cleaned = value.replace(/^RRULE:/, '')
-    const rule = RRule.fromString(`RRULE:${cleaned}`)
+    // Handle both "FREQ=...", "RRULE:FREQ=...", and "DTSTART:...\nRRULE:FREQ=..." formats
+    const normalized = value.includes('RRULE:')
+      ? value.replace(/\s+/g, '\n') // ensure newlines between DTSTART and RRULE
+      : `RRULE:${value}`
+    const rule = RRule.fromString(normalized)
     const opts = rule.origOptions
 
     if (opts.freq !== undefined) freq.value = opts.freq
@@ -89,15 +92,21 @@ const rruleString = computed(() => {
   }
 
   const rule = new RRule(opts)
-  // Return without RRULE: prefix — the metamodel stores the raw string
-  return rule.toString().replace(/^RRULE:/, '')
+  // Strip the RRULE: prefix from the RRULE part, keep DTSTART if present.
+  // RRule.toString() produces "RRULE:FREQ=..." or "DTSTART:...\nRRULE:FREQ=..."
+  return rule.toString().replace('RRULE:', '')
 })
 
 // Human-readable preview
 const preview = computed(() => {
   try {
-    const rule = RRule.fromString(`RRULE:${rruleString.value}`)
-    return rule.toText()
+    const str = rruleString.value
+    const normalized = str.includes('RRULE:')
+      ? str.replace(/\s+/g, '\n')
+      : str.includes('FREQ=')
+        ? `RRULE:${str}`
+        : str
+    return RRule.fromString(normalized).toText()
   } catch {
     return ''
   }
