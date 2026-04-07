@@ -164,6 +164,7 @@ deps:
       - migration
       - openapi
       - project
+      - script
       - search
       - workspace
     canUse:

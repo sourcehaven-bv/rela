@@ -21,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -92,6 +93,13 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 	// Validate config against metamodel
 	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
+	}
+
+	// Verify action scripts exist on disk (catches typos at startup)
+	for id, action := range cfg.Actions {
+		if err := script.CheckActionScriptExists(ws.Paths().Root, action.Script); err != nil {
+			return nil, fmt.Errorf("invalid %s: action %q: %w", ConfigFile, id, err)
+		}
 	}
 
 	log.Printf("Loaded %d entities and %d relations", g.NodeCount(), g.EdgeCount())

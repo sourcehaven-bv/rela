@@ -3,6 +3,7 @@ package lua
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -2111,4 +2112,135 @@ func TestRunFile_Errors(t *testing.T) {
 			t.Errorf("Expected error to include filename, got: %v", err)
 		}
 	})
+}
+
+func TestWithParams(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	params := map[string]string{
+		"entity_type":  "ticket",
+		"key_property": "date",
+	}
+	r := New(ws, ws.Meta(), "/tmp", &buf, WithParams(params))
+	defer r.Close()
+
+	script := `rela.output({et = rela.params.entity_type, kp = rela.params.key_property})`
+	if err := r.RunString(script); err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]string
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if result["et"] != "ticket" || result["kp"] != "date" {
+		t.Errorf("Expected ticket/date, got %v", result)
+	}
+}
+
+func TestWithParams_Empty(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	// rela.params should exist as an empty table
+	script := `
+		local count = 0
+		for _ in pairs(rela.params) do count = count + 1 end
+		rela.output({count = count})
+	`
+	if err := r.RunString(script); err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]float64
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if result["count"] != 0 {
+		t.Errorf("Expected empty params, got count=%v", result["count"])
+	}
+}
+
+func TestRunActionString_ReturnTable(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf, WithActionMode())
+	defer r.Close()
+
+	script := `return {redirect = "/foo", message = "hi"}`
+	ret, err := r.RunActionString(script, "test.lua")
+	if err != nil {
+		t.Fatalf("RunActionString failed: %v", err)
+	}
+
+	m, ok := ret.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map, got %T", ret)
+	}
+	if m["redirect"] != "/foo" {
+		t.Errorf("expected redirect=/foo, got %v", m["redirect"])
+	}
+	if m["message"] != "hi" {
+		t.Errorf("expected message=hi, got %v", m["message"])
+	}
+}
+
+func TestRunActionString_NoReturn(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf, WithActionMode())
+	defer r.Close()
+
+	script := `local x = 1` // no return statement
+	_, err := r.RunActionString(script, "test.lua")
+	if !errors.Is(err, ErrNoReturnValue) {
+		t.Errorf("expected ErrNoReturnValue, got %v", err)
+	}
+}
+
+func TestRunActionString_Error(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf, WithActionMode())
+	defer r.Close()
+
+	script := `error("boom")`
+	_, err := r.RunActionString(script, "test.lua")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Errorf("expected error to mention 'boom', got %v", err)
+	}
+}
+
+func TestActionMode_OutputIsWarning(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf, WithActionMode())
+	defer r.Close()
+
+	// rela.output in action mode should not write JSON, just a warning
+	script := `rela.output({foo = "bar"})`
+	if err := r.RunString(script); err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "warning") {
+		t.Errorf("expected warning in output, got %q", out)
+	}
+	if strings.Contains(out, `"foo"`) {
+		t.Errorf("expected output to be dropped in action mode, got %q", out)
+	}
 }

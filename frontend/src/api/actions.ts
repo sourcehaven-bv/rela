@@ -1,0 +1,19 @@
+import { api } from './client'
+
+export interface ActionResponse {
+  redirect?: string
+  message?: string
+  message_type?: 'success' | 'info' | 'warning' | 'error'
+  // Error fields (returned with non-2xx status)
+  error?: string
+  correlation_id?: string
+}
+
+/**
+ * Run a server-side action by ID. Actions are configured in data-entry.yaml
+ * and execute Lua scripts. Returns the script's response (redirect URL or
+ * toast message). May return null for 204 No Content responses.
+ */
+export async function runAction(id: string): Promise<ActionResponse | null> {
+  return api.post<ActionResponse | null>(`/_action/${id}`)
+}

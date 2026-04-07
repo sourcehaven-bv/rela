@@ -172,6 +172,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.handleV1Views)
+	mux.HandleFunc("/api/v1/_action/", a.handleV1Action)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
@@ -1466,10 +1467,11 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 
 // V1SidebarItem represents a navigation item with count.
 type V1SidebarItem struct {
-	Label string `json:"label"`
-	Href  string `json:"href"`
-	Icon  string `json:"icon,omitempty"`
-	Count *int   `json:"count,omitempty"`
+	Label  string `json:"label"`
+	Href   string `json:"href"`
+	Icon   string `json:"icon,omitempty"`
+	Count  *int   `json:"count,omitempty"`
+	Action string `json:"action,omitempty"`
 }
 
 // V1SidebarGroup represents a navigation group with items.
@@ -1573,6 +1575,9 @@ func (a *App) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, count
 	case entry.Settings:
 		item.Href = "/settings"
 		item.Icon = "settings"
+	case entry.Action != "":
+		item.Action = entry.Action
+		// Href stays empty — frontend renders this as a button
 	}
 
 	return item

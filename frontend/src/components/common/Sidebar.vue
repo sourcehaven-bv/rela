@@ -2,13 +2,16 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { getSidebar } from '@/api'
-import type { SidebarGroup } from '@/types'
+import { getSidebar, runAction } from '@/api'
+import type { SidebarGroup, SidebarItem } from '@/types'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const route = useRoute()
 const router = useRouter()
+
+// Tracks which action items are currently in-flight (prevents double-click).
+const actionInFlight = ref<Set<string>>(new Set())
 
 // Sidebar data from API
 const sidebarGroups = ref<SidebarGroup[]>([])
@@ -57,6 +60,33 @@ function getIconEmoji(icon?: string): string {
     default: return '📄'
   }
 }
+
+async function handleAction(item: SidebarItem) {
+  if (!item.action) return
+  if (actionInFlight.value.has(item.action)) return
+
+  actionInFlight.value.add(item.action)
+  try {
+    const response = await runAction(item.action)
+    if (response?.message) {
+      const type = response.message_type || 'success'
+      uiStore[type](response.message)
+    }
+    if (response?.redirect) {
+      router.push(response.redirect)
+    }
+  } catch (err: unknown) {
+    let msg = 'Action failed'
+    const e = err as { response?: { data?: { correlation_id?: string } } }
+    const corrID = e?.response?.data?.correlation_id
+    if (corrID) {
+      msg = `Action failed (ref: ${corrID})`
+    }
+    uiStore.error(msg)
+  } finally {
+    actionInFlight.value.delete(item.action)
+  }
+}
 </script>
 
 <template>
@@ -90,30 +120,54 @@ function getIconEmoji(icon?: string): string {
       <template v-for="(group, index) in sidebarGroups" :key="index">
         <div v-if="group.group" class="nav-section">
           <div class="nav-section-title">{{ group.group }}</div>
-          <RouterLink
-            v-for="item in group.items"
-            :key="item.href"
-            :to="item.href"
-            class="nav-item"
-            :class="{ active: isActive(item.href) }"
-          >
-            <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
-            <span class="nav-label">{{ item.label }}</span>
-            <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
-          </RouterLink>
+          <template v-for="item in group.items" :key="item.label + (item.href || item.action || '')">
+            <button
+              v-if="item.action"
+              type="button"
+              class="nav-item nav-action"
+              :aria-label="item.label"
+              :disabled="actionInFlight.has(item.action)"
+              @click="handleAction(item)"
+            >
+              <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
+              <span class="nav-label">{{ item.label }}</span>
+            </button>
+            <RouterLink
+              v-else-if="item.href"
+              :to="item.href"
+              class="nav-item"
+              :class="{ active: isActive(item.href) }"
+            >
+              <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
+              <span class="nav-label">{{ item.label }}</span>
+              <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
+            </RouterLink>
+          </template>
         </div>
         <template v-else>
-          <RouterLink
-            v-for="item in group.items"
-            :key="item.href"
-            :to="item.href"
-            class="nav-item"
-            :class="{ active: isActive(item.href) }"
-          >
-            <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
-            <span class="nav-label">{{ item.label }}</span>
-            <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
-          </RouterLink>
+          <template v-for="item in group.items" :key="item.label + (item.href || item.action || '')">
+            <button
+              v-if="item.action"
+              type="button"
+              class="nav-item nav-action"
+              :aria-label="item.label"
+              :disabled="actionInFlight.has(item.action)"
+              @click="handleAction(item)"
+            >
+              <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
+              <span class="nav-label">{{ item.label }}</span>
+            </button>
+            <RouterLink
+              v-else-if="item.href"
+              :to="item.href"
+              class="nav-item"
+              :class="{ active: isActive(item.href) }"
+            >
+              <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
+              <span class="nav-label">{{ item.label }}</span>
+              <span v-if="item.count !== undefined && !uiStore.sidebarCollapsed" class="nav-count">{{ item.count }}</span>
+            </RouterLink>
+          </template>
         </template>
       </template>
     </nav>
@@ -239,6 +293,23 @@ function getIconEmoji(icon?: string): string {
   font-weight: 500;
   min-width: 20px;
   text-align: center;
+}
+
+/* Action buttons in the sidebar — same look as RouterLink nav items */
+.nav-action {
+  width: 100%;
+  background: none;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.nav-action:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 /* Mobile overlay */
