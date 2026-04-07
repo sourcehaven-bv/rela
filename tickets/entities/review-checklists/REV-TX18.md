@@ -2,7 +2,7 @@
 id: REV-TX18
 type: review-checklist
 title: 'Review: Harden rela-server against browser-based local attacks'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -82,8 +82,8 @@ the AC → test mapping. Post-review additions:
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** *to be created via /pr*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/318

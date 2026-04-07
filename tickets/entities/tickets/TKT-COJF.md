@@ -5,7 +5,7 @@ title: Harden rela-server against browser-based local attacks
 kind: enhancement
 priority: high
 effort: l
-status: review
+status: done
 ---
 
 ## Summary
