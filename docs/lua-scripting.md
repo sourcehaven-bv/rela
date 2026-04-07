@@ -403,6 +403,136 @@ rela.rrule_next("FREQ=DAILY")  -- tomorrow's date
 | `rela.args` | Script arguments (table) |
 | `rela.today` | Current date as "YYYY-MM-DD" |
 
+### Markdown AST: Task Lists
+
+The `rela.md` module exposes a markdown AST API for parsing and rendering
+content. This section documents the task list (checkbox) support; the rest
+of the `rela.md` surface is documented inline in the Go source.
+
+Use `rela.md.parse(content)` to turn a markdown string into an AST table,
+and `rela.md.render(ast)` to serialize it back. Task list items (`- [x]`
+and `- [ ]`) round-trip through the AST as Lua tables.
+
+#### Task item shape
+
+A task list item is represented as a Lua table with three fields:
+
+```lua
+{task = true, checked = <bool>, text = <string>}
+```
+
+- `task = true` marks the item as a checkbox item. Only an explicit Lua
+  boolean `true` qualifies — strings, numbers, `nil`, and `false` all fall
+  through to plain rendering.
+- `checked` is the checkbox state (`true` for `[x]`, `false` for `[ ]`).
+- `text` is the item's text content.
+
+Plain (non-task) list items are still represented as bare strings, so
+existing scripts continue to work without changes.
+
+#### Reading checkbox state
+
+```lua
+local ast = rela.md.parse([[
+- [x] write the code
+- [ ] write the tests
+- [x] ~~obsolete item~~
+]])
+
+for _, item in ipairs(ast[1].items) do
+    if type(item) == "table" and item.task then
+        local mark = item.checked and "DONE" or "TODO"
+        print(mark, item.text)
+    end
+end
+-- Output:
+-- DONE  write the code
+-- TODO  write the tests
+-- DONE  ~~obsolete item~~
+```
+
+#### Building a task list
+
+```lua
+local ast = {
+    rela.md.list({
+        {task = true, checked = true,  text = "design API"},
+        {task = true, checked = false, text = "implement"},
+        {task = true, checked = false, text = "write docs"},
+    }),
+}
+print(rela.md.render(ast))
+-- - [x] design API
+-- - [ ] implement
+-- - [ ] write docs
+```
+
+`rela.md.list(items, ordered?)` accepts plain strings, task tables, or a
+mix. Pass `true` as the second argument for an ordered list.
+
+#### Mutating an existing checklist
+
+A common pattern is to read a ticket's checklist, flip a checkbox, and
+write it back:
+
+```lua
+local ticket = rela.get_entity("TKT-001")
+local ast = rela.md.parse(ticket.content)
+
+for _, node in ipairs(ast) do
+    if node.type == "list" then
+        for _, item in ipairs(node.items) do
+            if type(item) == "table" and item.task and item.text == "implement" then
+                item.checked = true
+            end
+        end
+    end
+end
+
+rela.update_entity("TKT-001", {}, rela.md.render(ast))
+```
+
+#### Inline marker preservation policy
+
+When `rela.md.parse` extracts the text of a list item (or paragraph,
+heading, blockquote, or table cell), the following inline markers are
+**preserved**:
+
+- **Strikethrough** (`~~...~~`) — load-bearing because the checklist
+  validation layer treats strikethrough as the "skip" marker for items
+  that are intentionally not done.
+- **Code spans** (`` `...` ``) — preserved because identifiers and code
+  references are structural and round-tripping should not mangle them.
+
+The following inline markers are **dropped** (only the inner text is
+captured):
+
+- Bold (`**...**`), italic (`*...*` or `_..._`)
+- Links (`[text](url)` becomes just `text`)
+- Autolinks and raw HTML
+
+This policy is intentional and pinned by tests in
+`internal/lua/markdown_test.go` (`TestMdInlineTextPolicy`). If you need
+to round-trip content with full inline fidelity, do not pass it through
+`rela.md.parse`/`render` — read and write the raw `entity.content`
+string instead.
+
+#### Limitations
+
+- **First text block only.** A list item that contains multiple
+  paragraphs, nested lists, or fenced code blocks will only have its
+  first text block captured in `text`. This matches the GFM task list
+  spec, which requires the checkbox in the first text block.
+- **Mixed lists.** A list mixing task and plain items may not be
+  symmetrically re-parseable: goldmark only classifies an item as a
+  task if it carries its own checkbox. The renderer always emits
+  checkbox syntax for items with `task = true`.
+- **Sparse item tables.** Scripts that delete items via
+  `items[i] = nil` will get a compact rendering (the renderer skips
+  `nil` holes), but they should compact the table explicitly if they
+  rely on `#items` afterwards — Lua's length operator returns a
+  "border", not a count.
+
 ## Entity Structure
 
 Entities returned by query functions have this structure:
