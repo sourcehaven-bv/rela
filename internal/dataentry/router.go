@@ -1,10 +1,28 @@
 package dataentry
 
 import (
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
 )
+
+// CheckEmbeddedSPA verifies that the embedded Vue SPA bundle is present and
+// usable. Production entry points (cmd/rela-server, cmd/rela-desktop) should
+// call this at startup so a missing or empty build fails loudly with a clear
+// message instead of silently serving a directory listing (the BUG-W144
+// regression class). Tests that construct routers via NewRouter do not need
+// to call this.
+func CheckEmbeddedSPA() error {
+	spaFS, err := fs.Sub(staticFiles, "static/v2")
+	if err != nil {
+		return fmt.Errorf("mount embedded SPA filesystem (static/v2): %w", err)
+	}
+	if _, err := fs.Stat(spaFS, "index.html"); err != nil {
+		return fmt.Errorf("embedded SPA is missing index.html (run `just build-frontend`): %w", err)
+	}
+	return nil
+}
 
 // NewRouter returns an http.Handler with all data entry routes registered.
 // The Vue SPA serves as the primary UI at the root path.
@@ -21,14 +39,11 @@ func (a *App) NewRouter() http.Handler {
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
 	// Vue SPA served at root. The build output dir is kept as `static/v2` to
-	// avoid churn in frontend/vite.config.ts; see TKT-MNOO.
+	// avoid churn in frontend/vite.config.ts; see TKT-MNOO. Presence of
+	// index.html is verified at startup by CheckEmbeddedSPA.
 	spaFS, err := fs.Sub(staticFiles, "static/v2")
 	if err != nil {
 		panic("failed to mount embedded SPA filesystem (static/v2): " + err.Error())
-	}
-	// Fail fast if the SPA bundle is missing — BUG-W144 class regression.
-	if _, err := fs.Stat(spaFS, "index.html"); err != nil {
-		panic("embedded SPA is missing index.html (run `just build-frontend`): " + err.Error())
 	}
 
 	// SSE endpoints — excluded from reload-lock (long-lived connection)

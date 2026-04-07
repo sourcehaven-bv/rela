@@ -6,7 +6,7 @@ import { fileURLToPath, URL } from 'node:url'
 // For e2e tests, VITE_API_BASE is set by global-setup.ts
 const apiBase = process.env.VITE_API_BASE || 'http://localhost:8080'
 
-export default defineConfig(({ command }) => {
+export default defineConfig(() => {
   // Log at config evaluation time so we can see what port is being used
   console.error(`[vite.config] API proxy target: ${apiBase}`)
 
