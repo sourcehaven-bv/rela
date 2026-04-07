@@ -10,7 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -156,7 +156,7 @@ func (d *Desktop) LoadProject(dir string) string {
 	// Update preferences with successfully opened project.
 	d.prefs.AddRecentProject(app.ProjectRoot(), app.ProjectName())
 	if saveErr := d.prefs.Save(); saveErr != nil {
-		log.Printf("Warning: could not save preferences: %v", saveErr)
+		slog.Warn("could not save preferences", "error", saveErr)
 	}
 	d.refreshMenu()
 
@@ -470,7 +470,7 @@ func (d *Desktop) CompleteGitHubAuth() string {
 	// Store token
 	d.prefs.GitHubToken = token.AccessToken
 	if err := d.prefs.Save(); err != nil {
-		log.Printf("Warning: could not save token: %v", err)
+		slog.Warn("could not save token", "error", err)
 	}
 
 	d.mu.Lock()
@@ -597,7 +597,7 @@ func (d *Desktop) buildAppMenu() *menu.Menu {
 		recentMenu.AddText("Clear Recent Projects", nil, func(_ *menu.CallbackData) {
 			d.prefs.ClearRecentProjects()
 			if err := d.prefs.Save(); err != nil {
-				log.Printf("Warning: could not save preferences: %v", err)
+				slog.Warn("could not save preferences", "error", err)
 			}
 			d.refreshMenu()
 		})
@@ -639,12 +639,16 @@ func (d *Desktop) refreshMenu() {
 // coverage-ignore: main function - entry point
 func main() {
 	projectDir := flag.String("project", ".", "Path to the rela project directory")
+	verbose := flag.Bool("verbose", false, "Verbose (debug) logging")
+	quiet := flag.Bool("quiet", false, "Quiet (warn-only) logging")
 	flag.Parse()
+
+	configureLogging(*verbose, *quiet)
 
 	// Load desktop preferences.
 	prefs, err := desktop.Load()
 	if err != nil {
-		log.Printf("Warning: could not load preferences: %v", err)
+		slog.Warn("could not load preferences", "error", err)
 		prefs = &desktop.Preferences{}
 	}
 
@@ -654,7 +658,7 @@ func main() {
 	projectToLoad := resolveProjectDir(*projectDir, prefs)
 	if projectToLoad != "" {
 		if errMsg := d.LoadProject(projectToLoad); errMsg != "" {
-			log.Printf("Could not load project from %q: %s", projectToLoad, errMsg)
+			slog.Warn("could not load project", "path", projectToLoad, "error", errMsg)
 		}
 	}
 
@@ -675,8 +679,22 @@ func main() {
 		Bind:      []interface{}{d},
 	})
 	if wailsErr != nil {
-		log.Fatalf("Wails error: %v", wailsErr)
+		slog.Error("wails error", "error", wailsErr)
+		os.Exit(1)
 	}
+}
+
+// configureLogging sets the default slog logger based on verbose/quiet flags.
+func configureLogging(verbose, quiet bool) {
+	level := slog.LevelInfo
+	switch {
+	case verbose:
+		level = slog.LevelDebug
+	case quiet:
+		level = slog.LevelWarn
+	}
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	slog.SetDefault(slog.New(handler))
 }
 
 // resolveProjectDir determines which project directory to load at startup.

@@ -278,7 +278,7 @@ func (s *Server) handleRenameEntity(
 
 	if !dryRun {
 		if cacheErr := s.ws.SaveCache(); cacheErr != nil {
-			s.logger.Printf("Warning: failed to save cache: %v", cacheErr)
+			s.logger.Warn("failed to save cache", "error", cacheErr)
 		}
 	}
 

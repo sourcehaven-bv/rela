@@ -3,7 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -63,7 +64,7 @@ func makeTestServer(t *testing.T) *Server {
 
 	return &Server{
 		ws:     ws,
-		logger: log.New(&strings.Builder{}, "", 0),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

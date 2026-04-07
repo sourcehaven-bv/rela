@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
-	"log"
+	"log/slog"
 	"net/url"
 	"os/exec"
 	"regexp"
@@ -118,7 +118,7 @@ func (w *Workspace) doRenderDocument(
 	// hid validation regressions where unsafe IDs caused every render to
 	// re-execute the command.
 	if writeErr := w.WriteCacheFile(cacheFile, []byte(htmlContent)); writeErr != nil {
-		log.Printf("document cache write failed: %v", writeErr)
+		slog.Warn("document cache write failed", "error", writeErr)
 	}
 
 	return &DocumentResult{

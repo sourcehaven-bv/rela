@@ -3,6 +3,7 @@ package cli
 import (
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -14,6 +15,21 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
+
+// configureLogging sets the default slog logger based on the global
+// --verbose/--quiet flags. Logs are written to stderr so they don't
+// pollute structured CLI output on stdout.
+func configureLogging() {
+	level := slog.LevelInfo
+	switch {
+	case verbose:
+		level = slog.LevelDebug
+	case quiet:
+		level = slog.LevelWarn
+	}
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	slog.SetDefault(slog.New(handler))
+}
 
 var (
 	// Version is set at build time
@@ -44,6 +60,7 @@ and maintain semantic relationships between them.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		configureLogging()
 		// Skip project discovery for commands that don't need it
 		// Note: We check both command name and that it's a direct child of root
 		// to avoid matching subcommands like "template init"

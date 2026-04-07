@@ -3,7 +3,7 @@ package dataentry
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -81,7 +81,7 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	engine := script.NewEngine()
 	resp, err := engine.ExecuteAction(action.Script, ctx, action.Params, actionTimeout)
 	if err != nil {
-		log.Printf("action %q failed [correlation=%s]: %v", id, correlationID, err)
+		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
 		writeV1JSON(w, http.StatusInternalServerError, V1ActionResponse{
 			Error:         "action_failed",
 			Message:       "Action failed",
