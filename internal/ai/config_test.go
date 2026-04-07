@@ -118,6 +118,34 @@ model: gpt-4
 	}
 }
 
+// Some legacy providers use ?api_key=... in the URL. We reject this
+// because the key would land in every request log line via
+// logRequestStart and never be redacted (the redactKey helper only
+// knows about env-var-sourced keys). Review finding F6.
+func TestLoadConfig_BaseURLWithQueryString(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `
+base_url: "https://api.example.com/v1?api_key=secret"
+model: gpt-4
+`)
+	_, err := LoadConfig(dir)
+	if err == nil || !strings.Contains(err.Error(), "query") {
+		t.Fatalf("expected query string error, got %v", err)
+	}
+}
+
+func TestLoadConfig_BaseURLWithFragment(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `
+base_url: "https://api.example.com/v1#frag"
+model: gpt-4
+`)
+	_, err := LoadConfig(dir)
+	if err == nil || !strings.Contains(err.Error(), "fragment") {
+		t.Fatalf("expected fragment error, got %v", err)
+	}
+}
+
 func TestLoadConfig_UnsupportedProvider(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, `

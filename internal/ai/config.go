@@ -97,6 +97,18 @@ func (c *Config) Validate() error {
 	if u.User != nil {
 		return errors.New("base_url must not contain credentials (use api_key_env instead)")
 	}
+	if u.RawQuery != "" {
+		// Some legacy providers (notably old Azure) carry the API key
+		// in a query parameter like ?api_key=... or ?token=.... If we
+		// allowed that the key would be embedded in every log line via
+		// logRequestStart and never redacted (the redactKey helper only
+		// knows about env-var-sourced keys). Force users to authenticate
+		// via api_key_env so the key never lands in the URL.
+		return errors.New("base_url must not contain a query string (use api_key_env for authentication)")
+	}
+	if u.Fragment != "" {
+		return errors.New("base_url must not contain a fragment")
+	}
 
 	if c.Provider != "" && c.Provider != "openai-compatible" {
 		return fmt.Errorf("provider %q is not supported (only openai-compatible)", c.Provider)

@@ -160,10 +160,12 @@ func parseChatRequest(opts *lua.LTable) (ai.ChatRequest, error) {
 	}
 
 	// model (optional)
-	if v, ok := opts.RawGetString("model").(lua.LString); ok {
-		req.Model = string(v)
-	} else if opts.RawGetString("model") != lua.LNil {
-		return req, errors.New("model must be a string")
+	if v := opts.RawGetString("model"); v != lua.LNil {
+		s, ok := v.(lua.LString)
+		if !ok {
+			return req, errors.New("model must be a string")
+		}
+		req.Model = string(s)
 	}
 
 	// temperature (optional)
@@ -214,11 +216,21 @@ func pushAIError(ls *lua.LState, e *ai.Error) int {
 }
 
 // aiErrorToTable converts a *ai.Error to a Lua table with stable fields.
+//
+// The "details" field exposes the wrapped underlying error (if any) so
+// scripts can surface low-level transport detail (TLS cert issue, DNS
+// record, etc.) when the top-level Message isn't enough to diagnose a
+// failure. Empty when there is no cause.
 func aiErrorToTable(ls *lua.LState, e *ai.Error) *lua.LTable {
 	tbl := ls.NewTable()
 	tbl.RawSetString("kind", lua.LString(e.Kind))
 	tbl.RawSetString("status", lua.LNumber(e.Status))
 	tbl.RawSetString("message", lua.LString(e.Message))
 	tbl.RawSetString("retry_after", lua.LNumber(e.RetryAfter.Seconds()))
+	if cause := errors.Unwrap(e); cause != nil {
+		tbl.RawSetString("details", lua.LString(cause.Error()))
+	} else {
+		tbl.RawSetString("details", lua.LString(""))
+	}
 	return tbl
 }

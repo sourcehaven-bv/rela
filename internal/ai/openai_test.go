@@ -475,6 +475,62 @@ func TestProvider_Chat_OptionalFieldsMissing(t *testing.T) {
 	}
 }
 
+// TestProvider_Chat_ChoiceWithoutMessage covers the edge case where the
+// upstream returns a 2xx JSON body containing a choice that omits the
+// "message" object entirely. Some providers have been observed to do
+// this under load. Without explicit handling we would silently surface
+// empty content as success — see review finding F5.
+func TestProvider_Chat_ChoiceWithoutMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"x","choices":[{"finish_reason":"stop"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	p := newTestProvider(t, server, "TEST_KEY")
+	_, err := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()})
+	aiErr := assertAIError(t, err)
+	if aiErr.Kind != ErrBadResponse {
+		t.Errorf("Kind = %q, want %q", aiErr.Kind, ErrBadResponse)
+	}
+	if !strings.Contains(aiErr.Message, "no message") {
+		t.Errorf("expected 'no message' in error, got %q", aiErr.Message)
+	}
+}
+
+// TestProvider_Chat_NoRedirectFollow verifies that the provider does
+// not follow HTTP redirects. None of the OpenAI-compat providers we
+// target use redirects in their normal flow; following them would let
+// a misconfigured proxy or DNS cache redirect a request to a path the
+// user did not authorize. Review finding F7.
+func TestProvider_Chat_NoRedirectFollow(t *testing.T) {
+	var followed bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/elsewhere" {
+			followed = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(canonicalSuccessBody))
+			return
+		}
+		http.Redirect(w, r, "/elsewhere", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(server.Close)
+
+	p := newTestProvider(t, server, "TEST_KEY")
+	_, err := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()})
+	if err == nil {
+		t.Fatal("expected error when upstream returns a redirect")
+	}
+	if followed {
+		t.Error("client followed the redirect; CheckRedirect should have refused")
+	}
+	// The 307 has no Content-Type, so we surface it as ErrBadResponse.
+	aiErr := assertAIError(t, err)
+	if aiErr.Kind != ErrBadResponse {
+		t.Errorf("Kind = %q, want %q", aiErr.Kind, ErrBadResponse)
+	}
+}
+
 func TestProvider_Chat_ErrorEnvelopeOn200(t *testing.T) {
 	// apfel quirk: streaming endpoint returns 200 + SSE body containing
 	// {"error":...}. We catch this via the Content-Type check.
@@ -608,6 +664,71 @@ func TestProvider_Chat_KeyNeverLeaks(t *testing.T) {
 	}
 }
 
+// TestProvider_Chat_KeyNeverLeaks_SuccessPath complements the
+// error-path leak test by exercising the happy path: logRequestStart
+// and logRequestSuccess must not embed the API key in their structured
+// log fields, even though they have access to base_url and model.
+func TestProvider_Chat_KeyNeverLeaks_SuccessPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(canonicalSuccessBody))
+	}))
+	t.Cleanup(server.Close)
+
+	var logBuf strings.Builder
+	restore := captureLog(&logBuf)
+	t.Cleanup(restore)
+
+	p := newTestProvider(t, server, "LEAK_TEST_KEY")
+	if _, err := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if strings.Contains(logBuf.String(), sentinelKey) {
+		t.Errorf("API key leaked into log on success path: %q", logBuf.String())
+	}
+	// Sanity check: we should at least have logged something on the
+	// success path, otherwise the leak check is meaningless.
+	if !strings.Contains(logBuf.String(), "ai request ok") {
+		t.Errorf("expected success log line, got %q", logBuf.String())
+	}
+}
+
+// TestProvider_Chat_KeyNeverLeaks_NetworkError covers the network-failure
+// log/error path. wrapNetworkError pulls the underlying error string into
+// the typed *Error.Message field; that string could in principle contain
+// the URL, which on a misconfigured base_url could embed credentials.
+// Defense in depth: assert the sentinel never appears even when the
+// transport itself fails.
+func TestProvider_Chat_KeyNeverLeaks_NetworkError(t *testing.T) {
+	cfg := &Config{
+		BaseURL:        "http://127.0.0.1:1/v1",
+		Model:          "x",
+		APIKeyEnv:      "LEAK_TEST_KEY",
+		TimeoutSeconds: 2,
+	}
+	t.Setenv("LEAK_TEST_KEY", sentinelKey)
+
+	p, err := NewOpenAICompatProvider(cfg)
+	if err != nil {
+		t.Fatalf("NewOpenAICompatProvider: %v", err)
+	}
+
+	var logBuf strings.Builder
+	restore := captureLog(&logBuf)
+	t.Cleanup(restore)
+
+	_, chatErr := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()})
+	if chatErr == nil {
+		t.Fatal("expected network error")
+	}
+	if strings.Contains(chatErr.Error(), sentinelKey) {
+		t.Errorf("API key leaked into network error: %q", chatErr.Error())
+	}
+	if strings.Contains(logBuf.String(), sentinelKey) {
+		t.Errorf("API key leaked into network failure log: %q", logBuf.String())
+	}
+}
+
 func TestProvider_Chat_BodySnippetUTF8Safe(t *testing.T) {
 	// Build a body where a multi-byte rune (’ = U+2019, 3 bytes in
 	// UTF-8) starts before byte 200 but ends after.
@@ -703,10 +824,11 @@ func TestProvider_Chat_ResponseTooLarge(t *testing.T) {
 	p := newTestProvider(t, server, "TEST_KEY")
 	_, err := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()})
 	aiErr := assertAIError(t, err)
-	// Either ErrBadResponse (truncation hit) or ErrNetwork (depending on
-	// whether the limit error trips at read time).
-	if aiErr.Kind != ErrBadResponse && aiErr.Kind != ErrNetwork {
-		t.Errorf("Kind = %q, want bad_response or network", aiErr.Kind)
+	if aiErr.Kind != ErrBadResponse {
+		t.Errorf("Kind = %q, want %q", aiErr.Kind, ErrBadResponse)
+	}
+	if !strings.Contains(aiErr.Message, "exceeded") {
+		t.Errorf("expected size limit message, got %q", aiErr.Message)
 	}
 }
 

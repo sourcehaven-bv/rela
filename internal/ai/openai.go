@@ -43,6 +43,16 @@ func NewOpenAICompatProvider(cfg *Config) (Provider, error) {
 		cfg: cfg,
 		httpClient: &http.Client{
 			Timeout: time.Duration(cfg.Timeout()) * time.Second,
+			// Disable redirect-following. None of the OpenAI-compat
+			// providers we target use redirects in their normal flow.
+			// Following them would let a misconfigured proxy or DNS
+			// cache redirect a request to a path the user did not
+			// authorize, and Go's stdlib only strips Authorization
+			// on cross-host redirects (not same-host), which is a
+			// thinner defense than just refusing to follow.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}, nil
 }
@@ -74,8 +84,13 @@ type chatResponseWire struct {
 }
 
 type choiceWire struct {
-	Message      messageRawWire `json:"message"`
-	FinishReason string         `json:"finish_reason"`
+	// Message is a pointer so we can tell when the upstream omitted it
+	// entirely (vs. sending an empty message object). Some providers
+	// have been observed to return choices without a message under
+	// edge conditions; that should be ErrBadResponse, not silently
+	// produce empty content.
+	Message      *messageRawWire `json:"message"`
+	FinishReason string          `json:"finish_reason"`
 }
 
 type messageRawWire struct {
@@ -119,9 +134,19 @@ func (p *openAICompatProvider) Chat(ctx context.Context, req ChatRequest) (*Chat
 
 	respBody, readErr := readLimitedBody(resp.Body)
 	if readErr != nil {
-		netErr := wrapNetworkError(readErr, apiKey)
-		logRequestFailure(string(netErr.Kind), resp.StatusCode, time.Since(start), netErr.Message)
-		return nil, netErr
+		var aiErr *Error
+		if errors.Is(readErr, errBodyTooLarge) {
+			aiErr = &Error{
+				Kind:    ErrBadResponse,
+				Status:  resp.StatusCode,
+				Message: fmt.Sprintf("upstream response exceeded %d bytes", maxResponseBytes),
+				cause:   readErr,
+			}
+		} else {
+			aiErr = wrapNetworkError(readErr, apiKey)
+		}
+		logRequestFailure(string(aiErr.Kind), resp.StatusCode, time.Since(start), aiErr.Message)
+		return nil, aiErr
 	}
 
 	return p.parseResponse(resp, respBody, apiKey, start)
@@ -235,6 +260,10 @@ func decodeChatResponse(respBody []byte, apiKey string) (*ChatResponse, *Error) 
 		return nil, &Error{Kind: ErrBadResponse, Message: "upstream returned no choices"}
 	}
 
+	if parsed.Choices[0].Message == nil {
+		return nil, &Error{Kind: ErrBadResponse, Message: "upstream returned choice with no message"}
+	}
+
 	content, contentErr := decodeContent(parsed.Choices[0].Message.Content)
 	if contentErr != nil {
 		return nil, &Error{Kind: ErrBadResponse, Message: contentErr.Error(), cause: contentErr}
@@ -272,8 +301,15 @@ func (p *openAICompatProvider) resolveAPIKey() (string, *Error) {
 	return key, nil
 }
 
+// errBodyTooLarge is returned by readLimitedBody when the upstream
+// response exceeds maxResponseBytes. Distinguished as a sentinel so
+// Chat() can classify it as ErrBadResponse (an upstream protocol
+// violation) rather than ErrNetwork (a transport failure).
+var errBodyTooLarge = errors.New("response body exceeded size limit")
+
 // readLimitedBody reads up to maxResponseBytes from r. If the limit is
-// hit it returns an error so the caller can surface ErrBadResponse.
+// hit it returns errBodyTooLarge so the caller can surface
+// ErrBadResponse.
 func readLimitedBody(r io.Reader) ([]byte, error) {
 	limited := io.LimitReader(r, maxResponseBytes+1)
 	body, err := io.ReadAll(limited)
@@ -281,7 +317,7 @@ func readLimitedBody(r io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(body)) > maxResponseBytes {
-		return nil, fmt.Errorf("response body exceeded %d bytes", maxResponseBytes)
+		return nil, errBodyTooLarge
 	}
 	return body, nil
 }

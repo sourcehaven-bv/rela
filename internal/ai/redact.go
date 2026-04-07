@@ -1,7 +1,6 @@
 package ai
 
 import (
-	"encoding/json"
 	"strings"
 )
 
@@ -22,11 +21,4 @@ func redactKey(s, key string) string {
 	out = strings.ReplaceAll(out, "Bearer "+key, "<REDACTED>")
 	out = strings.ReplaceAll(out, key, "<REDACTED>")
 	return out
-}
-
-// jsonUnmarshal is a thin wrapper that exists so errors.go can call into
-// encoding/json without an import cycle when we eventually move helpers
-// around. Today it is just json.Unmarshal.
-func jsonUnmarshal(data []byte, v any) error {
-	return json.Unmarshal(data, v)
 }

@@ -263,6 +263,13 @@ func TestLuaAI_CompleteRejectsNonString(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Lua error")
 	}
+	// gopher-lua's CheckString reports the type mismatch like
+	// "string expected, got table". Assert a specific substring so a
+	// regression that breaks ai.complete entirely (e.g. global no longer
+	// registered) doesn't accidentally satisfy this test.
+	if !strings.Contains(err.Error(), "string expected") {
+		t.Errorf("expected 'string expected' in error, got: %v", err)
+	}
 }
 
 func TestLuaAI_NoAuthHeaderWhenAPIKeyEnvEmpty(t *testing.T) {

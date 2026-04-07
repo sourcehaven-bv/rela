@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -79,10 +80,8 @@ func (e *Error) Unwrap() error {
 	return e.cause
 }
 
-// errBodySnippetBytes is how much of an unrecognized response body is
-// included in error messages for diagnostics. Must be kept in sync with
-// the openai.go snippetBytes constant; both exist so the package
-// compiles even if files are reorganized.
+// errBodySnippetBytes caps how much of an unrecognized response body is
+// included in error messages for diagnostics.
 const errBodySnippetBytes = 200
 
 // wrapNetworkError converts a network/transport-level error from
@@ -185,7 +184,7 @@ func parseErrorEnvelope(body []byte) (errType, message string) {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := jsonUnmarshal(body, &env); err != nil {
+	if err := json.Unmarshal(body, &env); err != nil {
 		return "", ""
 	}
 	return env.Error.Type, env.Error.Message
