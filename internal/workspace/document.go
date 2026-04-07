@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"net/url"
 	"os/exec"
 	"regexp"
@@ -112,8 +113,13 @@ func (w *Workspace) doRenderDocument(
 		return nil, fmt.Errorf("markdown conversion: %w", err)
 	}
 
-	// Cache the result to disk (ignore write errors, cache is optional)
-	_ = w.WriteCacheFile(cacheFile, []byte(htmlContent))
+	// Cache the result to disk. The cache is optional — a failure here is
+	// not fatal — but it must be visible: silent cache rejections previously
+	// hid validation regressions where unsafe IDs caused every render to
+	// re-execute the command.
+	if writeErr := w.WriteCacheFile(cacheFile, []byte(htmlContent)); writeErr != nil {
+		log.Printf("document cache write failed: %v", writeErr)
+	}
 
 	return &DocumentResult{
 		HTML:        htmlContent,

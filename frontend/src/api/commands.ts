@@ -20,20 +20,3 @@ export async function getCommands(params: GetCommandsParams): Promise<Command[]>
   return api.get<Command[]>('/_commands', queryParams)
 }
 
-// Execute a command and return an EventSource for SSE streaming
-export function executeCommand(
-  commandId: string,
-  context: {
-    entityId?: string
-    listId?: string
-    viewId?: string
-  }
-): EventSource {
-  const params = new URLSearchParams()
-  if (context.entityId) params.set('entity_id', context.entityId)
-  if (context.listId) params.set('list_id', context.listId)
-  if (context.viewId) params.set('view_id', context.viewId)
-
-  const url = `/api/command/${commandId}?${params.toString()}`
-  return new EventSource(url)
-}

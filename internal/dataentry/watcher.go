@@ -216,12 +216,10 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// CORS headers for cross-origin EventSource (e.g., e2e tests with separate backend)
-	origin := r.Header.Get("Origin")
-	if origin != "" {
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-	}
+	// SSE is reachable only from same-origin or explicitly allow-listed
+	// dev origins (enforced by requireSameOrigin middleware). No CORS
+	// reflection — that previously let any website subscribe to live
+	// project events.
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

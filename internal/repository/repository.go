@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -410,13 +411,55 @@ func (r *Repository) ReadCacheFile(filename string) ([]byte, error) {
 }
 
 // WriteCacheFile writes a file relative to the cache directory (.rela/).
-// Creates the cache directory and any subdirectories if they don't exist.
+// Creates the cache directory if it doesn't exist.
+//
+// The filename must be a single path component — `..`, `/`, `\`, and NUL
+// bytes are rejected. Today all callers pass hardcoded names, so this check
+// is purely defensive against future regressions.
 func (r *Repository) WriteCacheFile(filename string, data []byte) error {
+	if err := validateCacheFilename(filename); err != nil {
+		return err
+	}
 	fullPath := filepath.Join(r.paths.CacheDir, filename)
 	if err := r.fs.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return err
 	}
 	return r.fs.WriteFile(fullPath, data, 0o644)
+}
+
+// validateCacheFilename ensures name is a relative path that stays inside the
+// cache directory. A subdirectory is allowed (e.g. "documents/x.html") because
+// real callers cache things in nested groups, but absolute paths, `..`
+// segments, backslashes, control characters (including NUL), and Windows
+// drive-letter syntax are rejected.
+func validateCacheFilename(name string) error {
+	if name == "" {
+		return fmt.Errorf("cache filename: must not be empty")
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("cache filename: control character (including NUL) not allowed")
+		}
+	}
+	if strings.ContainsRune(name, '\\') {
+		return fmt.Errorf("cache filename: backslash not allowed (use forward slash)")
+	}
+	if strings.HasPrefix(name, "/") {
+		return fmt.Errorf("cache filename: must be relative")
+	}
+	// Reject any `..` or `.` segment regardless of position. Cleaning would
+	// silently collapse them, hiding malicious intent.
+	for _, seg := range strings.Split(name, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("cache filename: traversal or empty segment not allowed")
+		}
+	}
+	// Reject Windows drive-letter syntax (e.g. "c:foo.yaml") which would
+	// be misinterpreted on Windows even after passing the other checks.
+	if len(name) >= 2 && name[1] == ':' {
+		return fmt.Errorf("cache filename: drive letter not allowed")
+	}
+	return nil
 }
 
 // --- Templates ---

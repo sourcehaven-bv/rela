@@ -129,7 +129,20 @@ func (c *Context) EntityFilePathWithPlural(plural, id string) string {
 	return filepath.Join(c.EntityTypeDirWithPlural(plural), id+".md")
 }
 
-// RelationFilePath returns the file path for a relation
+// RelationFilePath returns the file path for a relation.
+//
+// Callers are responsible for validating from / relationType / to upstream:
+//
+//   - entity IDs go through model.ValidateID at creation time
+//   - relation types come from the metamodel and are checked by
+//     metamodel.ValidateRelation before any write reaches this code path
+//
+// This function deliberately does NOT defensively reject malformed inputs:
+// turning a programming-error panic into a returned error here would force
+// every caller (sync, write, rename) to grow an error path for a condition
+// that the validation gates above already make impossible. If those gates
+// ever change, the test in IsSafeRelationComponent should be reused to
+// reject untrusted input at the new entry point instead.
 func (c *Context) RelationFilePath(from, relationType, to string) string {
 	filename := from + "--" + relationType + "--" + to + ".md"
 	return filepath.Join(c.RelationsDir, filename)

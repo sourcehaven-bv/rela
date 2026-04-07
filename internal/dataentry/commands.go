@@ -3,8 +3,10 @@ package dataentry
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -250,8 +252,12 @@ var (
 // --- HTTP Handlers ---
 
 // handleCommandExec handles POST /api/command/{commandID} and streams results as SSE.
+//
+// Restricted to POST: this endpoint runs configured shell commands and a GET
+// would let `<img src=/api/command/X>` invoke them cross-origin from any
+// browser tab, bypassing same-origin policy entirely.
 func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -441,10 +447,16 @@ func (a *App) handleOpenFile(w http.ResponseWriter, r *http.Request) { // covera
 		return
 	}
 
-	// Resolve relative paths against project root.
-	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(a.ProjectRoot(), filePath)
+	resolved, err := containedProjectPath(a.ProjectRoot(), filePath)
+	switch {
+	case errors.Is(err, errPathNotFound):
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	case err != nil:
+		http.Error(w, "path outside project", http.StatusForbidden)
+		return
 	}
+	filePath = resolved
 
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -490,7 +502,7 @@ func (a *App) handleOpenURL(w http.ResponseWriter, r *http.Request) { // coverag
 		http.Error(w, "url is required", http.StatusBadRequest)
 		return
 	}
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+	if err := validateOpenURL(rawURL); err != nil {
 		http.Error(w, "Invalid URL scheme", http.StatusBadRequest)
 		return
 	}
@@ -516,6 +528,89 @@ func (a *App) handleOpenURL(w http.ResponseWriter, r *http.Request) { // coverag
 }
 
 // --- Helpers ---
+
+// errPathOutsideProject is returned by containedProjectPath when the input
+// resolves to a location outside the project root.
+var errPathOutsideProject = errors.New("path outside project")
+
+// errPathNotFound is returned by containedProjectPath when the path is
+// inside the project root structurally but does not exist on disk.
+var errPathNotFound = errors.New("path not found")
+
+// containedProjectPath cleans, resolves, and validates that filePath lives
+// inside projectRoot. The returned path has absolute, symlink-resolved form
+// suitable for passing to OS commands.
+//
+// A small TOCTOU window remains: between this check and the synchronous
+// invocation of the OS open command, an attacker with local FS write
+// privileges could swap a contained path for a symlink. The local
+// filesystem is the trust boundary; we accept this residual risk because
+// portable mitigation (file descriptor passing through `open`/`xdg-open`/
+// `explorer`) does not exist.
+func containedProjectPath(projectRoot, filePath string) (string, error) {
+	if strings.ContainsRune(filePath, 0) {
+		return "", errPathOutsideProject
+	}
+
+	clean := filepath.Clean(filePath)
+	if !filepath.IsAbs(clean) {
+		clean = filepath.Join(projectRoot, clean)
+	}
+	abs, err := filepath.Abs(clean)
+	if err != nil {
+		return "", errPathOutsideProject
+	}
+
+	rootAbs, err := filepath.Abs(filepath.Clean(projectRoot))
+	if err != nil {
+		return "", errPathOutsideProject
+	}
+	rootResolved, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		rootResolved = rootAbs
+	}
+
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		// Path does not exist (or contains a broken symlink). Distinguish
+		// "not found inside project" from "outside project" so the handler
+		// can return 404 vs 403. Verify the unresolved abs path is at
+		// least structurally inside the project root before reporting it
+		// as a 404; otherwise it's a traversal attempt against a
+		// non-existent file.
+		insideProject := abs == rootResolved ||
+			strings.HasPrefix(abs, rootResolved+string(os.PathSeparator)) ||
+			abs == rootAbs ||
+			strings.HasPrefix(abs, rootAbs+string(os.PathSeparator))
+		if insideProject {
+			return "", errPathNotFound
+		}
+		return "", errPathOutsideProject
+	}
+
+	if resolved == rootResolved {
+		return resolved, nil
+	}
+	if strings.HasPrefix(resolved, rootResolved+string(os.PathSeparator)) {
+		return resolved, nil
+	}
+	return "", errPathOutsideProject
+}
+
+// validateOpenURL allows only safe URL schemes for /api/open-url. Without
+// this, an attacker could pass file:// (file disclosure) or javascript:
+// (XSS in some default handlers).
+func validateOpenURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "mailto":
+		return nil
+	}
+	return errors.New("disallowed url scheme")
+}
 
 func (a *App) buildCommandEnv(cmd CommandConfig, input *commandInput) []string {
 	env := os.Environ()

@@ -51,7 +51,16 @@ func (a *App) NewRouter() http.Handler {
 	// Serve Vue SPA at root (catch-all for client-side routing)
 	mux.Handle("/", spaHandler(v2FS))
 
-	return mux
+	// Apply security middlewares as the outermost wrapper so they protect
+	// every route, including the SSE handlers and static assets. The
+	// requireSameOrigin middleware internally exempts non-sensitive paths
+	// (e.g. static assets, SPA shell) so the SPA still loads cross-origin.
+	var handler http.Handler = mux
+	if a.security != nil {
+		handler = a.security.requireSameOrigin(handler)
+		handler = a.security.requireLocalHost(handler)
+	}
+	return handler
 }
 
 // spaHandler wraps a filesystem and serves index.html for any path that doesn't

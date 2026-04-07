@@ -593,7 +593,7 @@ func TestHandleCommandExec(t *testing.T) {
 	}
 
 	t.Run("success stream", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/api/command/test-echo?entity_id=TKT-001&entity_type=ticket", http.NoBody)
+		r := httptest.NewRequest(http.MethodPost, "/api/command/test-echo?entity_id=TKT-001&entity_type=ticket", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleCommandExec(w, r)
 
@@ -635,7 +635,7 @@ func TestHandleCommandExec(t *testing.T) {
 	})
 
 	t.Run("unknown command", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/api/command/nonexistent", http.NoBody)
+		r := httptest.NewRequest(http.MethodPost, "/api/command/nonexistent", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleCommandExec(w, r)
 		if w.Code != http.StatusNotFound {
@@ -644,7 +644,7 @@ func TestHandleCommandExec(t *testing.T) {
 	})
 
 	t.Run("entity not found", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/api/command/test-echo?entity_id=NOPE", http.NoBody)
+		r := httptest.NewRequest(http.MethodPost, "/api/command/test-echo?entity_id=NOPE", http.NoBody)
 		w := httptest.NewRecorder()
 		app.handleCommandExec(w, r)
 		if w.Code != http.StatusNotFound {
@@ -675,7 +675,7 @@ func TestHandleCommandExecFailing(t *testing.T) {
 		},
 	}
 
-	r := httptest.NewRequest(http.MethodGet, "/api/command/fail-cmd?entity_id=TKT-001", http.NoBody)
+	r := httptest.NewRequest(http.MethodPost, "/api/command/fail-cmd?entity_id=TKT-001", http.NoBody)
 	w := httptest.NewRecorder()
 	app.handleCommandExec(w, r)
 
@@ -713,7 +713,7 @@ func TestHandleCommandExecGlobalContext(t *testing.T) {
 		},
 	}
 
-	r := httptest.NewRequest(http.MethodGet, "/api/command/global-cmd", http.NoBody)
+	r := httptest.NewRequest(http.MethodPost, "/api/command/global-cmd", http.NoBody)
 	w := httptest.NewRecorder()
 	app.handleCommandExec(w, r)
 
@@ -745,7 +745,7 @@ func TestHandleCommandExecListContext(t *testing.T) {
 		},
 	}
 
-	r := httptest.NewRequest(http.MethodGet, "/api/command/list-cmd?list_id=tickets", http.NoBody)
+	r := httptest.NewRequest(http.MethodPost, "/api/command/list-cmd?list_id=tickets", http.NoBody)
 	w := httptest.NewRecorder()
 	app.handleCommandExec(w, r)
 
@@ -767,7 +767,7 @@ func TestHandleCommandExecViewContext(t *testing.T) {
 		},
 	}
 
-	r := httptest.NewRequest(http.MethodGet, "/api/command/view-cmd?view_id=ticket_detail&entity_id=TKT-001", http.NoBody)
+	r := httptest.NewRequest(http.MethodPost, "/api/command/view-cmd?view_id=ticket_detail&entity_id=TKT-001", http.NoBody)
 	w := httptest.NewRecorder()
 	app.handleCommandExec(w, r)
 

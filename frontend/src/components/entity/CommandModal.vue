@@ -34,7 +34,7 @@ async function runCommand(cmd: Command) {
   const url = `/api/command/${cmd.id}?${params.toString()}`
 
   try {
-    const response = await fetch(url)
+    const response = await fetch(url, { method: 'POST' })
     if (!response.ok) {
       const text = await response.text()
       throw new Error(text || response.statusText)
