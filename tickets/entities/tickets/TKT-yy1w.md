@@ -1,12 +1,12 @@
 ---
-description: Add properties and content support to relations, using a shared PropertySchema interface to maximize code reuse with entity property handling
-effort: l
 id: TKT-yy1w
+type: ticket
+title: Implement relation properties with PropertySchema interface
 kind: enhancement
 priority: medium
-status: in-progress
-title: Implement relation properties with PropertySchema interface
-type: ticket
+effort: l
+status: done
+description: Add properties and content support to relations, using a shared PropertySchema interface to maximize code reuse with entity property handling
 ---
 
 # Implementation Plan
@@ -99,7 +99,7 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
 
     errs := m.ValidateProperties(entity.Properties, def)
     errs = append(errs, m.validateEntityID(entity, def)...)
-    
+
     return errs
 }
 ```
