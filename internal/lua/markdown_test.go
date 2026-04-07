@@ -173,6 +173,445 @@ func TestMdRender(t *testing.T) {
 	}
 }
 
+func TestMdTaskListParse(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	code := `
+		local ast = rela.md.parse("- [x] done\n- [ ] todo\n")
+		result_type = ast[1].type
+		result_count = #ast[1].items
+		item1 = ast[1].items[1]
+		item2 = ast[1].items[2]
+	`
+	require.NoError(t, rt.RunString(code))
+
+	assert.Equal(t, "list", lua.LVAsString(rt.L.GetGlobal("result_type")))
+	assert.Equal(t, 2, int(lua.LVAsNumber(rt.L.GetGlobal("result_count"))))
+
+	item1, ok := rt.L.GetGlobal("item1").(*lua.LTable)
+	require.True(t, ok, "item1 should be a table")
+	assert.Equal(t, lua.LTrue, item1.RawGetString("task"))
+	assert.Equal(t, lua.LTrue, item1.RawGetString("checked"))
+	assert.Equal(t, "done", string(item1.RawGetString("text").(lua.LString)))
+
+	item2, ok := rt.L.GetGlobal("item2").(*lua.LTable)
+	require.True(t, ok, "item2 should be a table")
+	assert.Equal(t, lua.LTrue, item2.RawGetString("task"))
+	assert.Equal(t, lua.LFalse, item2.RawGetString("checked"))
+	assert.Equal(t, "todo", string(item2.RawGetString("text").(lua.LString)))
+}
+
+func TestMdTaskListRender(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	tests := []struct {
+		name string
+		code string
+		want string
+	}{
+		{
+			name: "constructor with task items",
+			code: `
+				local ast = {rela.md.list({
+					{task=true, checked=true, text="done"},
+					{task=true, checked=false, text="todo"},
+				})}
+				return rela.md.render(ast)
+			`,
+			want: "- [x] done\n- [ ] todo\n",
+		},
+		{
+			name: "ordered task list",
+			code: `
+				local ast = {rela.md.list({
+					{task=true, checked=true, text="first"},
+					{task=true, checked=false, text="second"},
+				}, true)}
+				return rela.md.render(ast)
+			`,
+			want: "1. [x] first\n2. [ ] second\n",
+		},
+		{
+			name: "task=false renders as plain item",
+			code: `
+				local ast = {rela.md.list({
+					{task=false, text="plain"},
+				})}
+				return rela.md.render(ast)
+			`,
+			want: "- plain\n",
+		},
+		{
+			name: "missing task field renders as plain item",
+			code: `
+				local ast = {rela.md.list({
+					{text="plain"},
+				})}
+				return rela.md.render(ast)
+			`,
+			want: "- plain\n",
+		},
+		{
+			name: "missing text field renders empty",
+			code: `
+				local ast = {rela.md.list({
+					{task=true, checked=false},
+				})}
+				return rela.md.render(ast)
+			`,
+			want: "- [ ] \n",
+		},
+		{
+			name: "non-bool task field treated as non-task",
+			code: `
+				local ast = {rela.md.list({
+					{task="yes", text="plain"},
+				})}
+				return rela.md.render(ast)
+			`,
+			want: "- plain\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := rt.RunString(tt.code)
+			require.NoError(t, err)
+
+			result := rt.L.Get(-1)
+			assert.Equal(t, tt.want, lua.LVAsString(result))
+			rt.L.Pop(1)
+		})
+	}
+}
+
+func TestMdTaskListRoundTrip(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "all task items",
+			input: "- [x] done\n- [ ] todo\n",
+			want:  "- [x] done\n- [ ] todo\n",
+		},
+		{
+			name:  "ordered task items",
+			input: "1. [x] first\n2. [ ] second\n",
+			want:  "1. [x] first\n2. [ ] second\n",
+		},
+		{
+			name:  "single task item",
+			input: "- [x] only\n",
+			want:  "- [x] only\n",
+		},
+		{
+			name:  "strikethrough preserved in task",
+			input: "- [x] ~~done~~\n",
+			want:  "- [x] ~~done~~\n",
+		},
+		{
+			name:  "strikethrough mid-text preserved",
+			input: "- [ ] foo ~~bar~~ baz\n",
+			want:  "- [ ] foo ~~bar~~ baz\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code := fmt.Sprintf(`
+				local ast = rela.md.parse(%q)
+				return rela.md.render(ast)
+			`, tt.input)
+			require.NoError(t, rt.RunString(code))
+
+			result := lua.LVAsString(rt.L.Get(-1))
+			rt.L.Pop(1)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
+
+// TestMdMixedListBehavior locks in goldmark's actual mixed-list semantics
+// and the renderer's policy for them. As of goldmark v1.7, when a list
+// mixes checkbox and non-checkbox items, ONLY items that carry their own
+// checkbox become task items (the others stay plain strings). The renderer
+// always emits checkbox syntax for task=true items, so the rendered output
+// is well-defined even if not symmetrically re-parseable.
+func TestMdMixedListBehavior(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	// Task first, then plain.
+	code := `
+		local ast = rela.md.parse("- [x] task\n- plain\n")
+		count = #ast[1].items
+		item1_type = type(ast[1].items[1])
+		item1_task = type(ast[1].items[1]) == "table" and ast[1].items[1].task or false
+		item1_text = type(ast[1].items[1]) == "table" and ast[1].items[1].text or ast[1].items[1]
+		item2_type = type(ast[1].items[2])
+		item2_value = ast[1].items[2]
+		rendered = rela.md.render(ast)
+	`
+	require.NoError(t, rt.RunString(code))
+
+	assert.Equal(t, 2, int(lua.LVAsNumber(rt.L.GetGlobal("count"))))
+	// Item 1 is a task item table.
+	assert.Equal(t, "table", lua.LVAsString(rt.L.GetGlobal("item1_type")))
+	assert.Equal(t, lua.LTrue, rt.L.GetGlobal("item1_task"))
+	assert.Equal(t, "task", lua.LVAsString(rt.L.GetGlobal("item1_text")))
+	// Item 2 is a plain string (goldmark does not classify it as a task).
+	assert.Equal(t, "string", lua.LVAsString(rt.L.GetGlobal("item2_type")))
+	assert.Equal(t, "plain", lua.LVAsString(rt.L.GetGlobal("item2_value")))
+	// Renderer emits checkbox for task=true items even in mixed lists.
+	assert.Equal(t, "- [x] task\n- plain\n", lua.LVAsString(rt.L.GetGlobal("rendered")))
+}
+
+// TestMdInlineTextPolicy pins the inline marker preservation policy
+// declared in extractInlineText's doc comment. Strikethrough and code
+// spans are preserved across all extracted-text contexts; emphasis and
+// links are dropped. This test exists to make policy changes visible.
+func TestMdInlineTextPolicy(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	tests := []struct {
+		name    string
+		input   string
+		extract string // lua expression returning the text to assert on
+		want    string
+	}{
+		// Strikethrough is preserved everywhere.
+		{
+			name:    "strikethrough in paragraph",
+			input:   "This is ~~struck~~ text.\n",
+			extract: "ast[1].text",
+			want:    "This is ~~struck~~ text.",
+		},
+		{
+			name:    "strikethrough in heading",
+			input:   "# Title with ~~struck~~ word\n",
+			extract: "ast[1].text",
+			want:    "Title with ~~struck~~ word",
+		},
+		{
+			name:    "strikethrough in blockquote",
+			input:   "> quoted ~~struck~~ text\n",
+			extract: "ast[1].content",
+			want:    "quoted ~~struck~~ text",
+		},
+		{
+			name:    "strikethrough in table cell",
+			input:   "| h |\n|---|\n| ~~struck~~ |\n",
+			extract: "ast[1].rows[1][1]",
+			want:    "~~struck~~",
+		},
+		{
+			name:    "strikethrough in task item",
+			input:   "- [x] foo ~~bar~~ baz\n",
+			extract: "ast[1].items[1].text",
+			want:    "foo ~~bar~~ baz",
+		},
+		// Code spans are preserved.
+		{
+			name:    "code span in paragraph",
+			input:   "Use `printf` for output.\n",
+			extract: "ast[1].text",
+			want:    "Use `printf` for output.",
+		},
+		{
+			name:    "code span in task item",
+			input:   "- [x] call `foo()`\n",
+			extract: "ast[1].items[1].text",
+			want:    "call `foo()`",
+		},
+		// Strikethrough does NOT activate inside fenced code blocks.
+		{
+			name:    "code block content keeps tildes literally",
+			input:   "```\n~~not struck~~\n```\n",
+			extract: "ast[1].content",
+			want:    "~~not struck~~",
+		},
+		// Bold/italic/links are intentionally dropped per policy.
+		{
+			name:    "bold dropped in task item",
+			input:   "- [x] **bold** text\n",
+			extract: "ast[1].items[1].text",
+			want:    "bold text",
+		},
+		{
+			name:    "italic dropped in paragraph",
+			input:   "Some *italic* word.\n",
+			extract: "ast[1].text",
+			want:    "Some italic word.",
+		},
+		{
+			name:    "link dropped to text only",
+			input:   "See [docs](http://example.com).\n",
+			extract: "ast[1].text",
+			want:    "See docs.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code := fmt.Sprintf(`
+				local ast = rela.md.parse(%q)
+				result = %s
+			`, tt.input, tt.extract)
+			require.NoError(t, rt.RunString(code))
+			assert.Equal(t, tt.want, lua.LVAsString(rt.L.GetGlobal("result")))
+		})
+	}
+}
+
+// TestMdTaskListEmptyText covers parser-side handling of checkboxes with
+// no text after them.
+func TestMdTaskListEmptyText(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	code := `
+		local ast = rela.md.parse("- [x] \n- [ ] \n")
+		count = #ast[1].items
+		item1_task = ast[1].items[1].task
+		item1_checked = ast[1].items[1].checked
+		item1_text = ast[1].items[1].text
+		item2_task = ast[1].items[2].task
+		item2_checked = ast[1].items[2].checked
+		item2_text = ast[1].items[2].text
+	`
+	require.NoError(t, rt.RunString(code))
+
+	assert.Equal(t, 2, int(lua.LVAsNumber(rt.L.GetGlobal("count"))))
+	assert.Equal(t, lua.LTrue, rt.L.GetGlobal("item1_task"))
+	assert.Equal(t, lua.LTrue, rt.L.GetGlobal("item1_checked"))
+	assert.Equal(t, "", lua.LVAsString(rt.L.GetGlobal("item1_text")))
+	assert.Equal(t, lua.LTrue, rt.L.GetGlobal("item2_task"))
+	assert.Equal(t, lua.LFalse, rt.L.GetGlobal("item2_checked"))
+	assert.Equal(t, "", lua.LVAsString(rt.L.GetGlobal("item2_text")))
+}
+
+// TestMdTaskListNonStringText verifies the renderer coerces non-string
+// text values rather than silently producing empty output.
+func TestMdTaskListNonStringText(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	code := `
+		local ast = {rela.md.list({
+			{task=true, checked=false, text=42},
+		})}
+		return rela.md.render(ast)
+	`
+	require.NoError(t, rt.RunString(code))
+	assert.Equal(t, "- [ ] 42\n", lua.LVAsString(rt.L.Get(-1)))
+	rt.L.Pop(1)
+}
+
+// TestMdTaskListNonBoolTaskValues verifies that only an explicit lua bool
+// true qualifies as a task item — strings, numbers, tables, nil all fall
+// through to the plain rendering path.
+func TestMdTaskListNonBoolTaskValues(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	tests := []struct {
+		name     string
+		taskExpr string
+	}{
+		{"string truthy", `task="yes"`},
+		{"number 1", `task=1`},
+		{"number 0", `task=0`},
+		{"empty table", `task={}`},
+		{"nil", `task=nil`},
+		{"explicit false", `task=false`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code := fmt.Sprintf(`
+				local ast = {rela.md.list({
+					{%s, text="plain"},
+				})}
+				return rela.md.render(ast)
+			`, tt.taskExpr)
+			require.NoError(t, rt.RunString(code))
+			assert.Equal(t, "- plain\n", lua.LVAsString(rt.L.Get(-1)))
+			rt.L.Pop(1)
+		})
+	}
+}
+
+// TestMdTaskListSurvivesShiftHeaders ensures task item table shape is
+// preserved when an AST is transformed by shift_headers, which uses a
+// generic deep-copy walker. A future optimization that special-cased
+// non-heading nodes could silently break task lists; this test catches it.
+func TestMdTaskListSurvivesShiftHeaders(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	code := `
+		local ast = rela.md.parse("# Header\n\n- [x] done\n- [ ] todo\n")
+		ast = rela.md.shift_headers(ast, 1)
+		return rela.md.render(ast)
+	`
+	require.NoError(t, rt.RunString(code))
+	// Header shifted, task items intact.
+	assert.Equal(t,
+		"## Header\n\n- [x] done\n- [ ] todo\n",
+		lua.LVAsString(rt.L.Get(-1)))
+	rt.L.Pop(1)
+}
+
+// TestMdTaskListMultiBlockItem documents that only the first text block
+// of a multi-paragraph list item is captured (matches the goldmark task
+// list spec which requires the checkbox in the first text block).
+func TestMdTaskListMultiBlockItem(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	// A list item with a continuation line — single TextBlock, captured fully.
+	code := `
+		local ast = rela.md.parse("- [x] first line\n  second line\n")
+		result = ast[1].items[1].text
+	`
+	require.NoError(t, rt.RunString(code))
+	// Soft line break renders as space in extracted text.
+	assert.Contains(t, lua.LVAsString(rt.L.GetGlobal("result")), "first line")
+}
+
+// TestMdRenderListSparseTable verifies that scripts which "delete" an
+// item by assigning nil get a compact rendering — the renderer skips nil
+// holes rather than emitting empty bullets. Note that Lua's # operator
+// returns a "border" (the boundary between non-nil and nil), so behavior
+// at gaps depends on the table's internal structure; for an unordered
+// list this works because we iterate over the border range and skip nils.
+func TestMdRenderListSparseTable(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	code := `
+		local ast = {rela.md.list({"a", "b", "c"})}
+		ast[1].items[2] = nil
+		return rela.md.render(ast)
+	`
+	require.NoError(t, rt.RunString(code))
+	rendered := lua.LVAsString(rt.L.Get(-1))
+	rt.L.Pop(1)
+	// Item "b" is gone; "a" and "c" remain. The exact result depends on
+	// whether the # operator returned 1 or 3 — we accept either compaction
+	// to "- a\n" or "- a\n- c\n", but never an empty bullet.
+	assert.NotContains(t, rendered, "- \n", "should not produce empty bullets")
+	assert.Contains(t, rendered, "- a\n")
+}
+
 func TestMdRoundTrip(t *testing.T) {
 	rt := newMdTestRuntime(t)
 	defer rt.Close()

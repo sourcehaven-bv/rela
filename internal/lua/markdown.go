@@ -82,7 +82,11 @@ func (r *Runtime) luaMdParse(ls *lua.LState) int {
 	content := ls.CheckString(1)
 
 	source := []byte(content)
-	md := goldmark.New(goldmark.WithExtensions(extension.NewTable()))
+	md := goldmark.New(goldmark.WithExtensions(
+		extension.NewTable(),
+		extension.TaskList,
+		extension.Strikethrough,
+	))
 	reader := text.NewReader(source)
 	doc := md.Parser().Parse(reader)
 
@@ -454,7 +458,24 @@ func luaMdBlockquote(ls *lua.LState) int {
 }
 
 // luaMdList creates a list node.
-// Usage: local node = rela.md.list({"item1", "item2"}, false)
+//
+// Items may be plain strings or tables. A table item with task=true (an
+// explicit lua boolean true) becomes a task list checkbox; the table is
+// expected to have:
+//
+//	{task=true, checked=<bool>, text=<string>}
+//
+// Plain table items (without task=true) render using the text field as a
+// regular bullet item. Missing text renders as empty string.
+//
+// Usage:
+//
+//	rela.md.list({"item1", "item2"})                       -- plain
+//	rela.md.list({"item1", "item2"}, true)                 -- ordered
+//	rela.md.list({                                         -- task list
+//	    {task=true, checked=true,  text="done"},
+//	    {task=true, checked=false, text="todo"},
+//	})
 func luaMdList(ls *lua.LState) int {
 	itemsTable := ls.CheckTable(1)
 	ordered := ls.OptBool(2, false)
@@ -561,6 +582,29 @@ func (r *Runtime) extractText(n ast.Node, source []byte) string {
 }
 
 // extractInlineText recursively extracts text from inline nodes.
+//
+// Inline marker preservation policy (applies to all extracted text:
+// paragraphs, headings, blockquotes, list items, table cells):
+//
+//   - Strikethrough (~~...~~):  PRESERVED. The checklist validation layer
+//     uses strikethrough as the "skip" marker, so scripts that round-trip
+//     checklists must not silently strip it.
+//   - Code spans (`...`):       PRESERVED. Code spans are structural and
+//     scripts that read content with code references would otherwise mangle
+//     them on round-trip.
+//   - Emphasis (* / _ / ** / __): DROPPED. Inline emphasis is treated as
+//     formatting noise; only the inner text is captured.
+//   - Links ([text](url)):      DROPPED — only the link text is captured.
+//   - Autolinks, raw HTML:      DROPPED — only inner text is captured.
+//   - TaskCheckBox:             SKIPPED — state is captured separately by
+//     extractListItems via detectTaskCheckbox.
+//
+// This policy is intentionally conservative: anything that the checklist
+// layer treats as load-bearing (strikethrough) plus anything that has
+// distinct semantic meaning a script would mangle (code spans) is preserved.
+// Other inline formatting is dropped to keep extracted text simple. Future
+// iterations may broaden preservation; the current policy is documented and
+// pinned by tests.
 func (r *Runtime) extractInlineText(sb *strings.Builder, n ast.Node, source []byte) {
 	switch n := n.(type) {
 	case *ast.Text:
@@ -570,6 +614,20 @@ func (r *Runtime) extractInlineText(sb *strings.Builder, n ast.Node, source []by
 		}
 	case *ast.String:
 		sb.Write(n.Value)
+	case *east.Strikethrough:
+		sb.WriteString("~~")
+		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+			r.extractInlineText(sb, child, source)
+		}
+		sb.WriteString("~~")
+	case *ast.CodeSpan:
+		sb.WriteString("`")
+		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+			r.extractInlineText(sb, child, source)
+		}
+		sb.WriteString("`")
+	case *east.TaskCheckBox:
+		// Skip: checkbox state is captured by the list-item extractor.
 	default:
 		// Recurse into children for other inline types (emphasis, links, etc.)
 		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
@@ -603,23 +661,65 @@ func (r *Runtime) extractLinesContent(n ast.Node, source []byte) string {
 }
 
 // extractListItems extracts list items as a Lua table.
+//
+// Task list items (with - [x] / - [ ] checkboxes) are represented as tables
+// with task=true, checked=bool, text=string fields. Plain items are strings.
+//
+// Limitation: only the first text block of a list item is captured. Items
+// containing multiple paragraphs, nested lists, or block content (e.g.,
+// fenced code blocks) lose everything after the first text block. This
+// matches goldmark's task list spec, which requires the checkbox in the
+// first text block, and avoids silently concatenating unrelated content.
 func (r *Runtime) extractListItems(n ast.Node, source []byte) *lua.LTable {
 	items := r.L.NewTable()
 	idx := 1
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-		if child.Kind() == ast.KindListItem {
-			// Extract text from the list item's children
-			var sb strings.Builder
-			for itemChild := child.FirstChild(); itemChild != nil; itemChild = itemChild.NextSibling() {
-				if itemChild.Kind() == ast.KindTextBlock || itemChild.Kind() == ast.KindParagraph {
-					sb.WriteString(r.extractText(itemChild, source))
-				}
-			}
-			items.RawSetInt(idx, lua.LString(sb.String()))
-			idx++
+		if child.Kind() != ast.KindListItem {
+			continue
 		}
+		isTask, checked := detectTaskCheckbox(child)
+
+		// Capture only the first text block. See function comment.
+		var itemText string
+		for itemChild := child.FirstChild(); itemChild != nil; itemChild = itemChild.NextSibling() {
+			if itemChild.Kind() == ast.KindTextBlock || itemChild.Kind() == ast.KindParagraph {
+				itemText = strings.TrimLeft(r.extractText(itemChild, source), " \t")
+				break
+			}
+		}
+
+		if isTask {
+			item := r.L.NewTable()
+			item.RawSetString("task", lua.LBool(true))
+			item.RawSetString("checked", lua.LBool(checked))
+			item.RawSetString("text", lua.LString(itemText))
+			items.RawSetInt(idx, item)
+		} else {
+			items.RawSetInt(idx, lua.LString(itemText))
+		}
+		idx++
 	}
 	return items
+}
+
+// detectTaskCheckbox returns whether the list item is a task item and its
+// checked state. Per the GFM task list spec, the TaskCheckBox must be the
+// first inline node of the FIRST TextBlock/Paragraph child of the ListItem.
+// We do not scan subsequent siblings — a checkbox in a later block would
+// not be parsed as a task marker by goldmark anyway.
+func detectTaskCheckbox(li ast.Node) (isTask, checked bool) {
+	for c := li.FirstChild(); c != nil; c = c.NextSibling() {
+		if c.Kind() != ast.KindTextBlock && c.Kind() != ast.KindParagraph {
+			continue
+		}
+		for inline := c.FirstChild(); inline != nil; inline = inline.NextSibling() {
+			if cb, ok := inline.(*east.TaskCheckBox); ok {
+				return true, cb.IsChecked
+			}
+		}
+		return false, false
+	}
+	return false, false
 }
 
 // extractBlockquoteContent extracts text from a blockquote.
@@ -834,7 +934,13 @@ func (r *Runtime) renderCodeBlock(sb *strings.Builder, node *lua.LTable) {
 	sb.WriteString("```\n")
 }
 
-// renderList renders a list node.
+// renderList renders a list node. Items may be plain strings or tables.
+// Table items with task=true render as checkboxes (- [x] / - [ ]).
+//
+// Items must be stored at sequential 1..N indices. Sparse tables (e.g.,
+// items[2] = nil to "delete" an item) will truncate at the first gap
+// because Lua's table length operator returns a "border", not a count.
+// Scripts that mutate items in place should compact the table afterwards.
 func (r *Runtime) renderList(sb *strings.Builder, node *lua.LTable) {
 	ordered := false
 	if o, ok := node.RawGetString("ordered").(lua.LBool); ok {
@@ -844,20 +950,62 @@ func (r *Runtime) renderList(sb *strings.Builder, node *lua.LTable) {
 	if !ok {
 		return
 	}
-	// Use sequential access to preserve order
+	// Use sequential access to preserve order. Skip nil holes so that
+	// scripts which mutate items via `items[i] = nil` produce a compact
+	// rendering instead of empty bullets.
 	for i := 1; i <= items.Len(); i++ {
 		v := items.RawGetInt(i)
-		s, ok := v.(lua.LString)
-		if !ok {
+		if v == lua.LNil {
 			continue
 		}
+
 		if ordered {
 			fmt.Fprintf(sb, "%d. ", i)
 		} else {
 			sb.WriteString("- ")
 		}
-		sb.WriteString(string(s))
+
+		switch item := v.(type) {
+		case lua.LString:
+			sb.WriteString(string(item))
+		case *lua.LTable:
+			r.renderListItemTable(sb, item)
+		default:
+			// Unknown item type — render an empty bullet rather than crashing
+			// so a script bug produces visible (but inert) output.
+		}
 		sb.WriteString("\n")
+	}
+}
+
+// isTaskItem reports whether a list item table represents a task item.
+// Only an explicit lua.LBool(true) qualifies — strings, numbers, nil, and
+// LBool(false) are all treated as non-task (plain) items.
+func isTaskItem(item *lua.LTable) bool {
+	v, ok := item.RawGetString("task").(lua.LBool)
+	return ok && bool(v)
+}
+
+// renderListItemTable renders a table-form list item (task or plain).
+// Task items emit "[x] text" or "[ ] text"; non-task items emit just text.
+// The text field is coerced via lua.LVAsString, so numbers and other
+// printable values render as their string form rather than disappearing
+// silently. Missing text renders as empty string.
+func (r *Runtime) renderListItemTable(sb *strings.Builder, item *lua.LTable) {
+	if isTaskItem(item) {
+		checked := false
+		if c, ok := item.RawGetString("checked").(lua.LBool); ok {
+			checked = bool(c)
+		}
+		if checked {
+			sb.WriteString("[x] ")
+		} else {
+			sb.WriteString("[ ] ")
+		}
+	}
+	textVal := item.RawGetString("text")
+	if textVal != lua.LNil {
+		sb.WriteString(lua.LVAsString(textVal))
 	}
 }
 
