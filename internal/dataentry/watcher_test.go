@@ -497,6 +497,14 @@ func TestHandleSSEHeaders(t *testing.T) {
 	if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
 		t.Errorf("expected Cache-Control 'no-cache', got %q", cc)
 	}
+	// Regression: SSE must NOT reflect cross-origin requests via CORS headers.
+	// The original bug let any website subscribe to live project events.
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("SSE must not set Access-Control-Allow-Origin (security regression), got %q", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("SSE must not set Access-Control-Allow-Credentials (security regression), got %q", got)
+	}
 	body := w.Body.String()
 	if !strings.Contains(body, ": connected") {
 		t.Errorf("expected initial keepalive comment, got %q", body)

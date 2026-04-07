@@ -1902,6 +1902,14 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 
 	docName, entityID := parts[0], parts[1]
 
+	// Both segments flow into the on-disk document cache filename
+	// (workspace/document.go). Reject anything that could escape the cache
+	// directory before any filesystem work happens.
+	if !isSafePathSegment(docName) || !isSafePathSegment(entityID) {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
+		return
+	}
+
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 

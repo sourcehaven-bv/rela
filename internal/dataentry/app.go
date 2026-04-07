@@ -63,6 +63,21 @@ type App struct {
 	mu sync.RWMutex
 	// broker delivers SSE events to connected browsers for live-reload.
 	broker *eventBroker
+	// security holds the configured Host/Origin allowlists. Set via
+	// SetSecurityConfig before NewRouter; nil disables the middlewares
+	// (only sensible in unit tests where no HTTP layer is exercised).
+	security *security
+}
+
+// SetSecurityConfig configures the HTTP security middlewares applied by
+// NewRouter. It must be called before NewRouter.
+func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
+	s, err := newSecurity(cfg)
+	if err != nil {
+		return err
+	}
+	a.security = s
+	return nil
 }
 
 // NewApp creates and initializes an App using the given workspace.

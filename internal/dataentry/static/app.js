@@ -241,8 +241,9 @@ function runCommand(commandID, params) {
   toast.addEventListener('mouseleave', function() { _cmdToasts[execID].hoverPause = false; });
 
   // Use fetch+ReadableStream instead of EventSource for Wails compatibility.
+  // POST is required by the server's CSRF protection (handleCommandExec).
   var url = '/api/command/' + encodeURIComponent(commandID) + '?' + qs.toString();
-  fetch(url).then(function(resp) {
+  fetch(url, { method: 'POST' }).then(function(resp) {
     if (!resp.ok) {
       return resp.text().then(function(t) { throw new Error(t || resp.statusText); });
     }
