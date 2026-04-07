@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
@@ -62,6 +63,9 @@ Example:
 		opts := []lua.Option{lua.WithContext(cmd.Context())}
 		if scriptOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
+		}
+		if provider := ai.LoadProvider(projectCtx.CacheDir); provider != nil {
+			opts = append(opts, lua.WithAIProvider(provider))
 		}
 
 		runtime := lua.New(ws, meta, projectCtx.Root, os.Stdout, opts...)

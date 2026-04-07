@@ -112,6 +112,134 @@ sync) independently from the standard CLI state setup in `PersistentPreRunE`.
 
 All commands share `projectCtx`, `meta`, `g` (graph), and `out` (output writer).
 
+## AI Integration
+
+The `internal/ai` package provides LLM access via OpenAI-compatible providers
+(OpenAI, Anthropic via compat layer, Ollama, LM Studio, Groq, apfel, etc.).
+It is exposed to Lua scripts as a top-level `ai` global.
+
+### Configuration
+
+User config lives in `.rela/ai.yaml` (gitignored, per-user):
+
+```yaml
+base_url: http://127.0.0.1:11434/v1   # required, must include scheme
+model: gemma3:12b                      # required, default model
+api_key_env: OPENAI_API_KEY            # optional; absent = no auth header
+timeout_seconds: 60                    # optional, default 30
+```
+
+`api_key_env` is **optional**. When absent, no `Authorization` header is sent —
+this supports local providers like ollama, apfel, and LM Studio that run without
+authentication. When set, the named env var is read at request time (not at
+startup), so commands that don't use AI never fail because the env var is unset.
+
+### Lua API
+
+```lua
+-- Full form
+local result, err = ai.chat({
+  messages = {
+    {role = "system", content = "You are concise."},
+    {role = "user",   content = "What is 2+2?"},
+  },
+  model = "gemma3:12b",   -- optional, falls back to .rela/ai.yaml
+  temperature = 0,        -- optional; 0 is sent distinctly from "unset"
+  max_tokens = 50,        -- optional
+})
+
+-- Convenience: single user message, returns just the content string
+local text, err = ai.complete("Summarize: " .. content)
+```
+
+On success: `result` is a table `{content, model, finish_reason, usage}` with
+flat fields. `usage` is a sub-table `{prompt_tokens, completion_tokens, total_tokens}`.
+
+On failure: `err` is a typed table `{kind, status, message, retry_after}` with
+stable `kind` values:
+
+| `err.kind` | When |
+|---|---|
+| `not_configured` | No `.rela/ai.yaml` or it failed to load |
+| `auth` | API key missing/invalid; HTTP 401/403 |
+| `bad_request` | HTTP 400/4xx; unknown model, unsupported parameter |
+| `rate_limited` | HTTP 429; `err.retry_after` populated when server provides Retry-After |
+| `server_error` | HTTP 5xx |
+| `timeout` | Request exceeded its deadline |
+| `network` | DNS, connection refused, TLS, etc. |
+| `bad_response` | Non-JSON, malformed JSON, missing choices, unrecognized content shape |
+| `streaming_unsupported` | Provider returned SSE despite `stream: false` |
+
+**Convention deviation**: `ai.chat` and `ai.complete` are the *only* rela Lua
+bindings that return `(nil, err_table)` for runtime failures. All other rela
+bindings raise via `RaiseError`. The deviation is deliberate — AI calls are
+network-bound, failure is expected, and scripts should handle it inline rather
+than wrap every call in `pcall`. Programming errors (wrong arg type, empty
+messages list) still raise. See `internal/lua/ai.go` top-of-file comment for
+the full rationale.
+
+### Security: New threat surface
+
+Adding AI to the Lua sandbox introduces a **new threat class**: a malicious or
+compromised Lua script can now silently exfiltrate every entity in the project
+to the user's *own* legitimate provider via
+`ai.chat({messages = {{role="user", content=entity_dump}}})`. The data lands in
+the provider's logs, possibly in training data, possibly readable by junior
+staff, possibly billed to the user. The script needs no malicious config and no
+filesystem write — it uses the user's own working setup.
+
+**Mitigations in place:**
+
+- Operational logging (debug/info/warn) makes unusual call patterns visible
+- API is opt-in: requires `.rela/ai.yaml` to exist
+- API key is read at call time and never logged or echoed in errors (`redactKey` helper + table-driven leak test)
+- Config rejects URLs with embedded credentials (`https://user:pass@host`)
+- Response body is capped at 10 MiB to prevent OOM
+
+**Treat Lua scripts as trusted code.** The `rela.write_file` and `ai.chat`
+capabilities together mean a malicious script can do real damage. Don't run
+Lua scripts you don't trust.
+
+### Operational logging
+
+Every AI request emits structured log lines via the stdlib `log` package:
+
+- `ai: request start base_url=... model=... messages=N` (debug-equivalent)
+- `ai: request ok status=200 model=... latency_ms=... prompt_tokens=... completion_tokens=... total_tokens=...`
+- `ai: request failed kind=... status=... latency_ms=... message=...`
+
+No headers, no API keys, no message content are ever logged.
+
+### Architecture
+
+```text
+internal/ai/
+  config.go     Config struct, LoadConfig (ErrConfigNotFound on missing file)
+  errors.go     ErrKind enum, *Error type, classify(), redaction
+  provider.go   Provider interface, ChatRequest, ChatResponse
+  openai.go     OpenAICompatProvider implementation (HTTP, no SDK)
+  loader.go     LoadProvider helper for entry-point wiring
+  redact.go     redactKey(s, key) helper
+```
+
+The `Provider` interface is intentionally an aggregate (currently only `Chat`,
+will gain `Embed` in a future ticket). The Lua runtime takes a single
+`ai.Provider` via `lua.WithAIProvider(p)`, so embeddings will not require
+parallel wiring paths.
+
+Four entry points wire AI into the Lua runtime: `internal/cli/script.go`,
+`internal/cli/flow.go`, `internal/script/executor.go`, `internal/mcp/tools_lua.go`.
+Each calls `ai.LoadProvider(.rela_dir)` and passes the result to `lua.New` via
+`WithAIProvider`. Missing or malformed config silently disables AI for that
+runtime; the Lua bindings return `not_configured` at call time.
+
+**`internal/validation/lua.go` is intentionally NOT wired with AI.** A validation
+rule that calls `ai.chat` would hit the provider on every entity on every
+`analyze` run with no quota, no kill switch, and no cost warning. The 5-second
+validation timeout would also silently clip slow calls. AI-powered validation
+rules need their own design (per-rule opt-in, cost guardrails, longer per-rule
+budget) and are tracked as a follow-up.
+
 ## Test Coverage
 
 The project uses [go-test-coverage](https://github.com/vladopajic/go-test-coverage) with a

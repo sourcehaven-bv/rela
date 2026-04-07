@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -69,6 +70,9 @@ Example:
 		opts := []lua.Option{lua.WithContext(cmd.Context())}
 		if flowOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(flowOutputDir))
+		}
+		if provider := ai.LoadProvider(flowWs.Paths().CacheDir); provider != nil {
+			opts = append(opts, lua.WithAIProvider(provider))
 		}
 
 		runtime := lua.New(flowWs, flowWs.Meta(), flowWs.Paths().Root, os.Stdout, opts...)

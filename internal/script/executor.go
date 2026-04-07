@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -61,7 +62,11 @@ func (e *Engine) execute(code string, ctx metamodel.ScriptContext) error {
 	}
 
 	var output bytes.Buffer
-	runtime := lua.New(ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output)
+	var opts []lua.Option
+	if provider := ai.LoadProvider(filepath.Join(ctx.GetProjectRoot(), ".rela")); provider != nil {
+		opts = append(opts, lua.WithAIProvider(provider))
+	}
+	runtime := lua.New(ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output, opts...)
 	defer runtime.Close()
 
 	// Set entity context as Lua globals

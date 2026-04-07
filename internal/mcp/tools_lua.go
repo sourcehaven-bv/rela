@@ -12,6 +12,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
@@ -64,7 +65,11 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	// Capture output
 	var output bytes.Buffer
 
-	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, lua.WithContext(ctx))
+	opts := []lua.Option{lua.WithContext(ctx)}
+	if provider := ai.LoadProvider(filepath.Join(projectRoot, ".rela")); provider != nil {
+		opts = append(opts, lua.WithAIProvider(provider))
+	}
+	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, opts...)
 	defer runtime.Close()
 
 	if err := runtime.RunString(code); err != nil {
@@ -131,7 +136,11 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Capture output
 	var output bytes.Buffer
 
-	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, lua.WithContext(ctx))
+	opts := []lua.Option{lua.WithContext(ctx)}
+	if provider := ai.LoadProvider(filepath.Join(projectRoot, ".rela")); provider != nil {
+		opts = append(opts, lua.WithAIProvider(provider))
+	}
+	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, opts...)
 	defer runtime.Close()
 
 	// Set script args before execution

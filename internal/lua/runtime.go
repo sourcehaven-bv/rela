@@ -22,6 +22,7 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
+	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -66,6 +67,7 @@ type Runtime struct {
 	cancelTimeout context.CancelFunc
 	params        map[string]string // rela.params values (used by action scripts)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
+	aiProvider    ai.Provider       // nil means AI is not configured
 }
 
 // Option configures a Runtime.
@@ -119,6 +121,15 @@ func WithParams(params map[string]string) Option {
 func WithActionMode() Option {
 	return func(r *Runtime) {
 		r.isAction = true
+	}
+}
+
+// WithAIProvider wires an AI provider into the runtime so the ai.* Lua
+// bindings are functional. When omitted, ai.chat and ai.complete return
+// a typed not_configured error.
+func WithAIProvider(p ai.Provider) Option {
+	return func(r *Runtime) {
+		r.aiProvider = p
 	}
 }
 
@@ -393,6 +404,10 @@ func (r *Runtime) registerBindings() {
 	r.registerMarkdownModule(rela)
 
 	r.L.SetGlobal("rela", rela)
+
+	// Top-level ai.* module (always registered; functions return a
+	// typed not_configured error when no provider is wired).
+	r.registerAIModule()
 }
 
 // luaGetEntity implements rela.get_entity(id) -> table|nil
