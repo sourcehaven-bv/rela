@@ -1041,7 +1041,7 @@ validations:
     entity_type: bug
     then:
       - "description!="
-    severity: warning
+    severity: error
   - name: ready-bugs-need-effort
     description: "Ready bugs must have effort estimated"
     entity_type: bug
@@ -1081,7 +1081,7 @@ validations:
       - "status=in-progress"
     then:
       - "why1!="
-    severity: warning
+    severity: error
   - name: in-progress-bugs-should-have-why2
     description: "In-progress bugs should start 5-whys analysis"
     entity_type: bug
@@ -1089,7 +1089,7 @@ validations:
       - "status=in-progress"
     then:
       - "why2!="
-    severity: warning
+    severity: error
   - name: done-bugs-need-5-whys
     description: "Done bugs must have 5-whys analysis (at least 3 levels)"
     entity_type: bug
@@ -1108,7 +1108,7 @@ validations:
     then:
       - "why4!="
       - "why5!="
-    severity: warning
+    severity: error
   - name: done-bugs-need-prevention
     description: "Done bugs must document prevention strategy"
     entity_type: bug
@@ -1142,7 +1142,7 @@ validations:
       - "status=proposed"
     then:
       - "description!="
-    severity: warning
+    severity: error
   # --- Manual measure completeness ---
   - name: active-manual-measures-need-description
     description: "Active manual measures must have a description"
@@ -1159,7 +1159,7 @@ validations:
       - "status=proposed"
     then:
       - "description!="
-    severity: warning
+    severity: error
   # --- Decision completeness (progressive) ---
   - name: proposed-decisions-should-have-date
     description: "Proposed decisions should have a date"
@@ -1168,7 +1168,7 @@ validations:
       - "status=proposed"
     then:
       - "date!="
-    severity: warning
+    severity: error
   - name: proposed-decisions-should-have-context
     description: "Proposed decisions should document their context"
     entity_type: decision
@@ -1176,7 +1176,7 @@ validations:
       - "status=proposed"
     then:
       - "context!="
-    severity: warning
+    severity: error
   - name: accepted-decisions-need-date
     description: "Accepted decisions must have a date"
     entity_type: decision
@@ -1209,7 +1209,7 @@ validations:
       - "status=proposed"
     then:
       - "description!="
-    severity: warning
+    severity: error
   - name: planned-features-need-priority
     description: "Planned features must have priority assigned"
     entity_type: feature
@@ -1267,7 +1267,7 @@ validations:
       - "status=identified"
     then:
       - "description!="
-    severity: warning
+    severity: error
   - name: mitigated-risks-need-mitigation
     description: "Mitigated risks must document the mitigation"
     entity_type: risk
@@ -1308,7 +1308,7 @@ validations:
       - "status=active"
     then:
       - "description!="
-    severity: warning
+    severity: error
   - name: test-suites-need-kind
     description: "Test suites must specify their kind"
     entity_type: test-suite
@@ -1322,7 +1322,7 @@ validations:
       - "status=active"
     then:
       - "description!="
-    severity: warning
+    severity: error
   # --- QA completeness ---
   - name: completed-qa-needs-counts
     description: "Completed QA reports must have test counts"
@@ -1331,7 +1331,7 @@ validations:
       - "status=passed"
     then:
       - "passed!="
-    severity: warning
+    severity: error
   - name: failed-qa-needs-counts
     description: "Failed QA reports must document failure count"
     entity_type: qa-report
@@ -1370,13 +1370,13 @@ validations:
     entity_type: guide
     then:
       - "audience!="
-    severity: warning
+    severity: error
   - name: tutorials-should-have-audience
     description: "Tutorials should specify target audience"
     entity_type: tutorial
     then:
       - "audience!="
-    severity: warning
+    severity: error
   # --- Doc task completeness (progressive) ---
   - name: ready-doc-tasks-need-priority
     description: "Ready doc tasks must have priority set"
@@ -1410,7 +1410,7 @@ validations:
       - "status=draft"
     then:
       - "layer!="
-    severity: warning
+    severity: error
   - name: draft-concepts-should-have-description
     description: "Draft concepts should have a description"
     entity_type: concept
@@ -1418,7 +1418,7 @@ validations:
       - "status=draft"
     then:
       - "description!="
-    severity: warning
+    severity: error
   - name: stable-concepts-need-layer
     description: "Stable concepts must specify their layer"
     entity_type: concept
@@ -1459,7 +1459,7 @@ validations:
       - "status=captured"
     then:
       - "description!="
-    severity: warning
+    severity: error
   - name: exploring-ideas-need-category
     description: "Ideas being explored must have a category"
     entity_type: idea
@@ -1507,7 +1507,7 @@ validations:
       - "status=parked"
     then:
       - "notes!="
-    severity: warning
+    severity: error
   - name: rejected-ideas-need-notes
     description: "Rejected ideas must document why they were rejected"
     entity_type: idea
@@ -1524,7 +1524,7 @@ validations:
       - "status=captured"
     then:
       - "summary!="
-    severity: warning
+    severity: error
   - name: exploring-future-concepts-need-description
     description: "Future concepts being explored must have a description"
     entity_type: future-concept
@@ -1572,7 +1572,7 @@ validations:
       - "status=parked"
     then:
       - "description!="
-    severity: warning
+    severity: error
   - name: rejected-future-concepts-need-description
     description: "Rejected future concepts must document the reasoning"
     entity_type: future-concept
@@ -1965,7 +1965,7 @@ validations:
       - "status=identified"
     then:
       - "description!="
-    severity: warning
+    severity: error
   - name: mitigated-risk-needs-mitigation
     description: "Mitigated risks must document how they were addressed"
     entity_type: risk
@@ -1998,7 +1998,7 @@ validations:
       - "status=active"
     then:
       - "location!="
-    severity: warning
+    severity: error
   - name: active-test-case-needs-description
     description: "Active test cases should have a description"
     entity_type: test-case
@@ -2006,7 +2006,7 @@ validations:
       - "status=active"
     then:
       - "description!="
-    severity: warning
+    severity: error
   - name: active-test-suite-needs-description
     description: "Active test suites should have a description"
     entity_type: test-suite
@@ -2014,7 +2014,7 @@ validations:
       - "status=active"
     then:
       - "description!="
-    severity: warning
+    severity: error
   # --- Doc-task validations ---
   - name: in-progress-doc-task-needs-priority
     description: "In-progress doc tasks must have priority assigned"
@@ -2031,7 +2031,7 @@ validations:
       - "status=ready"
     then:
       - "description!="
-    severity: warning
+    severity: error
   - name: in-progress-doc-task-needs-description
     description: "In-progress doc tasks must have a description"
     entity_type: doc-task

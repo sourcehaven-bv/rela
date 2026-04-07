@@ -1,15 +1,17 @@
 ---
 id: FEAT-qos
+type: feature
+title: Query-as-Output-Structure View System
+summary: Redesign view system where query structure mirrors output structure, with JSONPath-based scope filtering
+description: Redesign the view system so the YAML query structure mirrors the output structure, with JSONPath-based scope filtering, type filters, recursive traversal, and a two-pass collect/filter execution model.
 priority: high
 status: proposed
-summary: Redesign view system where query structure mirrors output structure, with JSONPath-based scope filtering
-title: Query-as-Output-Structure View System
-type: feature
 ---
 
 # Query-as-Output-Structure View System
 
-Redesign the view system so the YAML query structure directly mirrors the output structure. Uses JSONPath for scope filtering.
+Redesign the view system so the YAML query structure directly mirrors the output
+structure. Uses JSONPath for scope filtering.
 
 ## Problem
 
@@ -31,18 +33,18 @@ views:
     query:
       $:  # Root (entry)
         type: document
-        
+
         bouwbloks:
           via: describesBouwblok
-          
+
           functions:
             via_incoming: partOfBouwblok
             type: function
-            
+
             components:
               via_incoming: realizes
               type: component
-              
+
               dependencies:
                 via: dependsOn
                 recursive: 5
@@ -127,7 +129,8 @@ entities:
 
 ## Migration
 
-This replaces the current traverse/filter model. Existing views.yaml files will need rewriting, but the new format is more intuitive and self-documenting.
+This replaces the current traverse/filter model. Existing views.yaml files will
+need rewriting, but the new format is more intuitive and self-documenting.
 
 ## Implementation Steps
 
