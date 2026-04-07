@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 
 /**
- * Basic navigation and smoke tests for the Data Entry v2 app.
+ * Basic navigation and smoke tests for the Data Entry SPA.
  * More comprehensive tests are in separate spec files:
  * - crud.spec.ts - Entity CRUD operations
  * - list.spec.ts - List view (sorting, filtering, pagination)
@@ -9,7 +9,7 @@ import { test, expect } from './fixtures';
  * - search.spec.ts - Search functionality
  * - settings.spec.ts - Settings page
  */
-test.describe('Data Entry App v2 - Navigation', () => {
+test.describe('Data Entry App - Navigation', () => {
   test('loads and shows navigation', async ({ appPage }) => {
     // Check for navigation items from our test project
     await expect(appPage.getByRole('link', { name: 'Features' })).toBeVisible();
@@ -18,8 +18,8 @@ test.describe('Data Entry App v2 - Navigation', () => {
   });
 
   test('shows dashboard by default', async ({ appPage }) => {
-    // v2 redirects to /dashboard
-    await expect(appPage).toHaveURL(/\/v2\/(dashboard)?/);
+    // SPA redirects to /dashboard
+    await expect(appPage).toHaveURL(/\/(dashboard)?/);
   });
 
   test('can navigate to Features list', async ({ appPage }) => {
@@ -85,7 +85,7 @@ test.describe('Data Entry App v2 - Navigation', () => {
   });
 });
 
-test.describe('Data Entry App v2 - Basic CRUD', () => {
+test.describe('Data Entry App - Basic CRUD', () => {
   test('can create a new feature via API and see it in list', async ({ appPage, serverUrl }) => {
     // Create a feature using the API
     // API v1 uses: /api/v1/{plural} - e.g. /api/v1/features for entity type "feature"

@@ -11,19 +11,25 @@ import (
 func (a *App) NewRouter() http.Handler {
 	mux := http.NewServeMux()
 
-	// Static files (favicon only - v1 assets removed)
+	// Legacy /static/ mount. The Vue bundle is also reachable here as
+	// /static/v2/*, but the SPA's built index.html references assets as
+	// /assets/*, served via the catch-all below.
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
-		panic("embedded static filesystem: " + err.Error())
+		panic("failed to mount embedded static filesystem (static): " + err.Error())
 	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
-	// Vue SPA - serve at root and /v2/ for backward compatibility
-	v2FS, err := fs.Sub(staticFiles, "static/v2")
+	// Vue SPA served at root. The build output dir is kept as `static/v2` to
+	// avoid churn in frontend/vite.config.ts; see TKT-MNOO.
+	spaFS, err := fs.Sub(staticFiles, "static/v2")
 	if err != nil {
-		panic("embedded v2 filesystem: " + err.Error())
+		panic("failed to mount embedded SPA filesystem (static/v2): " + err.Error())
 	}
-	mux.Handle("/v2/", http.StripPrefix("/v2/", spaHandler(v2FS)))
+	// Fail fast if the SPA bundle is missing — BUG-W144 class regression.
+	if _, err := fs.Stat(spaFS, "index.html"); err != nil {
+		panic("embedded SPA is missing index.html (run `just build-frontend`): " + err.Error())
+	}
 
 	// SSE endpoints — excluded from reload-lock (long-lived connection)
 	mux.HandleFunc("/api/events", a.handleSSE)
@@ -49,7 +55,7 @@ func (a *App) NewRouter() http.Handler {
 	mux.Handle("/api/", locked)
 
 	// Serve Vue SPA at root (catch-all for client-side routing)
-	mux.Handle("/", spaHandler(v2FS))
+	mux.Handle("/", spaHandler(spaFS))
 
 	// Apply security middlewares as the outermost wrapper so they protect
 	// every route, including the SSE handlers and static assets. The

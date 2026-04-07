@@ -12,8 +12,7 @@ export default defineConfig(({ command }) => {
 
   return {
     plugins: [vue()],
-    // Use /v2/ base in production build, root in dev for simpler URLs
-    base: command === 'build' ? '/v2/' : '/',
+    base: '/',
     build: {
       outDir: '../internal/dataentry/static/v2',
       emptyOutDir: true,

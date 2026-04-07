@@ -368,8 +368,7 @@ export const test = base.extend<DesktopFixtures>({
 
     for (let i = 0; i < maxAttempts && !ready; i++) {
       try {
-        // Check both root and v2 paths
-        const response = await fetch(`${serverUrl}/v2/`);
+        const response = await fetch(`${serverUrl}/`);
         if (response.ok || response.status === 200) {
           ready = true;
         }
@@ -387,10 +386,10 @@ export const test = base.extend<DesktopFixtures>({
     // Give server a moment to fully initialize
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    // Create a new page and navigate to the v2 app
+    // Create a new page and navigate to the SPA.
     const context = await browser.newContext();
     const page = await context.newPage();
-    await page.goto(`${serverUrl}/v2/`);
+    await page.goto(`${serverUrl}/`);
 
     await use(page);
 

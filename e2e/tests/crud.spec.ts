@@ -128,7 +128,7 @@ test.describe('Entity CRUD Operations', () => {
       expect(relResp.ok()).toBeTruthy();
 
       // Navigate to the task entity page
-      await appPage.goto(`${serverUrl}/v2/entity/task/${task.id}`);
+      await appPage.goto(`${serverUrl}/entity/task/${task.id}`);
       await expect(appPage.locator('h1').filter({ hasText: 'Relation Navigation Test Task' })).toBeVisible({ timeout: 10000 });
 
       // Find and click the relation link to the feature

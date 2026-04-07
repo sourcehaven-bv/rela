@@ -75,7 +75,7 @@ func TestRequireSameOrigin_AllowsExemptPath(t *testing.T) {
 	h := s.requireSameOrigin(okHandler())
 
 	// Static / SPA paths bypass the Origin check entirely.
-	for _, path := range []string{"/", "/index.html", "/static/favicon.ico", "/v2/"} {
+	for _, path := range []string{"/", "/index.html", "/static/favicon.ico"} {
 		t.Run(path, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, path, http.NoBody)
 			r.Header.Set("Origin", "https://evil.example")
