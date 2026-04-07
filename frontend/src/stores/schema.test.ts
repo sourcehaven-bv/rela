@@ -256,6 +256,14 @@ describe('Schema Store', () => {
       expect(store.getList('nonexistent')).toBeUndefined()
     })
 
+    it('findListIdForEntityType returns the list ID for a given entity type', async () => {
+      const store = useSchemaStore()
+      await store.load()
+
+      expect(store.findListIdForEntityType('task')).toBe('tasks')
+      expect(store.findListIdForEntityType('nonexistent-type')).toBeUndefined()
+    })
+
     it('getView returns view config', async () => {
       const store = useSchemaStore()
       await store.load()
