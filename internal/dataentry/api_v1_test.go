@@ -999,105 +999,157 @@ func TestV1FilteringIn(t *testing.T) {
 	}
 }
 
-func TestV1FilteringLte(t *testing.T) {
-	app := newTestAppV1(t)
-
-	app.g.AddNode(&model.Entity{
-		ID:         "TKT-001",
-		Type:       "ticket",
-		Properties: map[string]interface{}{"due_date": "2025-12-31"},
-	})
-	app.g.AddNode(&model.Entity{
-		ID:         "TKT-002",
-		Type:       "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-04-07"},
-	})
-	app.g.AddNode(&model.Entity{
-		ID:         "TKT-003",
-		Type:       "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-12-31"},
-	})
-
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/tickets?filter[due_date][lte]=2026-04-07", http.NoBody)
+// runListFilter is a tiny helper for filter tests: builds the request,
+// invokes the handler under the read lock, and returns the IDs in the
+// response in document order.
+func runListFilter(t *testing.T, app *App, query string) []string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?"+query, http.NoBody)
 	rec := httptest.NewRecorder()
-
 	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
 	app.mu.RUnlock()
-
 	var resp V1ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode: %v", err)
+		t.Fatalf("decode failed: %v", err)
 	}
-	if len(resp.Data) != 2 {
-		t.Errorf("expected 2 entities (TKT-001, TKT-002), got %d", len(resp.Data))
+	ids := make([]string, len(resp.Data))
+	for i, e := range resp.Data {
+		ids[i] = e.ID
+	}
+	return ids
+}
+
+func TestV1FilteringLte(t *testing.T) {
+	app := newTestAppV1(t)
+
+	earlier := "2025-12-31"
+	threshold := "2026-04-07"
+	later := "2026-12-31"
+
+	earlierID := "TKT-earlier"
+	thresholdID := "TKT-threshold"
+	laterID := "TKT-later"
+
+	app.g.AddNode(&model.Entity{ID: earlierID, Type: "ticket",
+		Properties: map[string]interface{}{"due_date": earlier}})
+	app.g.AddNode(&model.Entity{ID: thresholdID, Type: "ticket",
+		Properties: map[string]interface{}{"due_date": threshold}})
+	app.g.AddNode(&model.Entity{ID: laterID, Type: "ticket",
+		Properties: map[string]interface{}{"due_date": later}})
+
+	got := runListFilter(t, app, "filter[due_date][lte]="+threshold)
+	gotSet := map[string]bool{}
+	for _, id := range got {
+		gotSet[id] = true
+	}
+	if len(got) != 2 || !gotSet[earlierID] || !gotSet[thresholdID] {
+		t.Errorf("expected %v, got %v", []string{earlierID, thresholdID}, got)
 	}
 }
 
 func TestV1FilteringGte(t *testing.T) {
 	app := newTestAppV1(t)
-	app.g.AddNode(&model.Entity{
-		ID:         "TKT-001",
-		Type:       "ticket",
-		Properties: map[string]interface{}{"due_date": "2025-12-31"},
-	})
-	app.g.AddNode(&model.Entity{
-		ID:         "TKT-002",
-		Type:       "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-12-31"},
-	})
 
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/tickets?filter[due_date][gte]=2026-01-01", http.NoBody)
-	rec := httptest.NewRecorder()
+	earlier := "2025-12-31"
+	later := "2026-12-31"
+	earlierID := "TKT-earlier"
+	laterID := "TKT-later"
 
-	app.mu.RLock()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
+	app.g.AddNode(&model.Entity{ID: earlierID, Type: "ticket",
+		Properties: map[string]interface{}{"due_date": earlier}})
+	app.g.AddNode(&model.Entity{ID: laterID, Type: "ticket",
+		Properties: map[string]interface{}{"due_date": later}})
 
-	var resp V1ListResponse
-	_ = json.NewDecoder(rec.Body).Decode(&resp)
-	if len(resp.Data) != 1 || resp.Data[0].ID != "TKT-002" {
-		t.Errorf("expected TKT-002 only, got %d entities", len(resp.Data))
+	got := runListFilter(t, app, "filter[due_date][gte]=2026-01-01")
+	if len(got) != 1 || got[0] != laterID {
+		t.Errorf("expected [%s], got %v", laterID, got)
 	}
 }
 
 func TestV1FilteringTodaySubstitution(t *testing.T) {
+	// Pin the clock for deterministic test behavior.
+	pinned := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	prev := nowFunc
+	nowFunc = func() time.Time { return pinned }
+	defer func() { nowFunc = prev }()
+
 	app := newTestAppV1(t)
-	today := time.Now().Format("2006-01-02")
-	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 
-	app.g.AddNode(&model.Entity{
-		ID:         "TKT-overdue",
-		Type:       "ticket",
-		Properties: map[string]interface{}{"due_date": yesterday},
-	})
-	app.g.AddNode(&model.Entity{
-		ID:         "TKT-today",
-		Type:       "ticket",
-		Properties: map[string]interface{}{"due_date": today},
-	})
-	app.g.AddNode(&model.Entity{
-		ID:         "TKT-future",
-		Type:       "ticket",
-		Properties: map[string]interface{}{"due_date": tomorrow},
-	})
+	overdueID := "TKT-overdue"
+	todayID := "TKT-today"
+	futureID := "TKT-future"
 
-	// $today should resolve to today's date; lte should match overdue + today
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/tickets?filter[due_date][lte]=$today", http.NoBody)
-	rec := httptest.NewRecorder()
+	app.g.AddNode(&model.Entity{ID: overdueID, Type: "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-04-06"}})
+	app.g.AddNode(&model.Entity{ID: todayID, Type: "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
+	app.g.AddNode(&model.Entity{ID: futureID, Type: "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-04-08"}})
 
-	app.mu.RLock()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
+	got := runListFilter(t, app, "filter[due_date][lte]=$today")
+	gotSet := map[string]bool{}
+	for _, id := range got {
+		gotSet[id] = true
+	}
+	if len(got) != 2 || !gotSet[overdueID] || !gotSet[todayID] {
+		t.Errorf("expected [%s, %s], got %v", overdueID, todayID, got)
+	}
+}
 
-	var resp V1ListResponse
-	_ = json.NewDecoder(rec.Body).Decode(&resp)
-	if len(resp.Data) != 2 {
-		t.Errorf("expected 2 entities (overdue + today), got %d", len(resp.Data))
+// TestV1FilteringTypeMismatch verifies that comparing a date property against
+// a non-date filter value excludes the entity rather than silently lying.
+func TestV1FilteringTypeMismatch(t *testing.T) {
+	app := newTestAppV1(t)
+	app.g.AddNode(&model.Entity{ID: "TKT-1", Type: "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
+
+	// "tomorrow" is not a date and not a known variable; should NOT silently
+	// match via lexicographic comparison.
+	got := runListFilter(t, app, "filter[due_date][lt]=tomorrow")
+	if len(got) != 0 {
+		t.Errorf("expected 0 entities (type mismatch), got %v", got)
+	}
+}
+
+// TestV1FilteringMissingProperty verifies that lt/gte against a property that
+// the entity doesn't have excludes the entity (no panic, no inclusion).
+func TestV1FilteringMissingProperty(t *testing.T) {
+	app := newTestAppV1(t)
+	app.g.AddNode(&model.Entity{ID: "TKT-no-due", Type: "ticket",
+		Properties: map[string]interface{}{"title": "no due date"}})
+	app.g.AddNode(&model.Entity{ID: "TKT-with-due", Type: "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
+
+	got := runListFilter(t, app, "filter[due_date][lte]=2026-12-31")
+	if len(got) != 1 || got[0] != "TKT-with-due" {
+		t.Errorf("expected [TKT-with-due], got %v", got)
+	}
+}
+
+// TestV1FilteringInWithVariableTokens verifies $today substitution works
+// for individual tokens in a comma-separated `in` filter.
+func TestV1FilteringInWithVariableTokens(t *testing.T) {
+	pinned := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	prev := nowFunc
+	nowFunc = func() time.Time { return pinned }
+	defer func() { nowFunc = prev }()
+
+	app := newTestAppV1(t)
+	app.g.AddNode(&model.Entity{ID: "TKT-yesterday", Type: "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-04-06"}})
+	app.g.AddNode(&model.Entity{ID: "TKT-today", Type: "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
+	app.g.AddNode(&model.Entity{ID: "TKT-other", Type: "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-04-09"}})
+
+	got := runListFilter(t, app, "filter[due_date][in]=$yesterday,$today")
+	gotSet := map[string]bool{}
+	for _, id := range got {
+		gotSet[id] = true
+	}
+	if len(got) != 2 || !gotSet["TKT-yesterday"] || !gotSet["TKT-today"] {
+		t.Errorf("expected [TKT-yesterday, TKT-today], got %v", got)
 	}
 }
 

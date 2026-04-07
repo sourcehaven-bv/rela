@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -1232,7 +1233,13 @@ func (a *App) applyV1Filters(entities []*model.Entity, query map[string][]string
 		if len(parts) > 1 {
 			operator = parts[1]
 		}
-		value := resolveFilterVariable(values[0])
+		// in/ne accept comma-separated values; resolve variables per token.
+		value := values[0]
+		if operator == "in" || operator == "ne" {
+			value = resolveFilterVariablesInList(value)
+		} else {
+			value = resolveFilterVariable(value)
+		}
 
 		var newFiltered []*model.Entity
 		for _, e := range filtered {
@@ -1277,7 +1284,15 @@ func (a *App) applyV1Filters(entities []*model.Entity, query map[string][]string
 					}
 				}
 			case "lt", "lte", "gt", "gte":
-				if compareValues(propStr, value, operator) {
+				match, err := compareValues(propStr, value, operator)
+				if err != nil {
+					// Type mismatch (e.g. property is a date, filter value isn't).
+					// Exclude the entity rather than silently lying via lexicographic
+					// fallback. Log so users notice.
+					log.Printf("filter compare error on property %q: %v", property, err)
+					continue
+				}
+				if match {
 					newFiltered = append(newFiltered, e)
 				}
 			default:

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/net/html"
 
@@ -1401,47 +1402,90 @@ func TestResolveScope(t *testing.T) {
 }
 
 func TestResolveFilterVariable(t *testing.T) {
+	// Pin the clock so date variables are deterministic.
+	pinned := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	prev := nowFunc
+	nowFunc = func() time.Time { return pinned }
+	defer func() { nowFunc = prev }()
+
 	tests := []struct {
-		input    string
-		wantSame bool // if true, expect the value unchanged
+		name  string
+		input string
+		want  string
 	}{
-		{"plain value", true},
-		{"2026-04-07", true},
-		{"$today", false},
-		{"$tomorrow", false},
-		{"$yesterday", false},
-		{"$unknown", true}, // unknown variables pass through
+		{"plain string passes through", "plain value", "plain value"},
+		{"date string passes through", "2026-04-07", "2026-04-07"},
+		{"empty string passes through", "", ""},
+		{"unknown $variable passes through", "$unknown", "$unknown"},
+		{"$today resolves", "$today", "2026-04-07"},
+		{"$tomorrow resolves", "$tomorrow", "2026-04-08"},
+		{"$yesterday resolves", "$yesterday", "2026-04-06"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			got := resolveFilterVariable(tt.input)
-			if tt.wantSame && got != tt.input {
-				t.Errorf("expected %q to pass through, got %q", tt.input, got)
+			if got != tt.want {
+				t.Errorf("resolveFilterVariable(%q) = %q, want %q", tt.input, got, tt.want)
 			}
-			if !tt.wantSame {
-				// Should be a YYYY-MM-DD date
-				if len(got) != 10 || got[4] != '-' || got[7] != '-' {
-					t.Errorf("expected date format, got %q", got)
-				}
+		})
+	}
+}
+
+func TestResolveFilterVariablesInList(t *testing.T) {
+	pinned := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	prev := nowFunc
+	nowFunc = func() time.Time { return pinned }
+	defer func() { nowFunc = prev }()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"single value", "$today", "2026-04-07"},
+		{"multiple variables", "$yesterday,$today,$tomorrow", "2026-04-06,2026-04-07,2026-04-08"},
+		{"mixed variables and literals", "$today,2026-12-31", "2026-04-07,2026-12-31"},
+		{"trims whitespace", "$today, $tomorrow", "2026-04-07,2026-04-08"},
+		{"plain list passes through", "open,closed,wip", "open,closed,wip"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveFilterVariablesInList(tt.input)
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestCompareValues_Date(t *testing.T) {
+	earlier := "2026-01-01"
+	threshold := "2026-04-07"
+	later := "2026-12-31"
+
 	tests := []struct {
+		name            string
 		left, right, op string
 		want            bool
 	}{
-		{"2026-01-01", "2026-04-07", "lt", true},
-		{"2026-04-07", "2026-04-07", "lte", true},
-		{"2026-04-07", "2026-04-07", "lt", false},
-		{"2026-12-31", "2026-04-07", "gt", true},
-		{"2026-04-07", "2026-04-07", "gte", true},
+		{"lt earlier than threshold", earlier, threshold, "lt", true},
+		{"lt equal", threshold, threshold, "lt", false},
+		{"lt later", later, threshold, "lt", false},
+		{"lte earlier", earlier, threshold, "lte", true},
+		{"lte equal", threshold, threshold, "lte", true},
+		{"lte later", later, threshold, "lte", false},
+		{"gt later", later, threshold, "gt", true},
+		{"gt equal", threshold, threshold, "gt", false},
+		{"gte equal", threshold, threshold, "gte", true},
+		{"gte later", later, threshold, "gte", true},
 	}
 	for _, tt := range tests {
-		t.Run(tt.left+tt.op+tt.right, func(t *testing.T) {
-			if got := compareValues(tt.left, tt.right, tt.op); got != tt.want {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := compareValues(tt.left, tt.right, tt.op)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
 				t.Errorf("compareValues(%q, %q, %q) = %v, want %v",
 					tt.left, tt.right, tt.op, got, tt.want)
 			}
@@ -1450,19 +1494,71 @@ func TestCompareValues_Date(t *testing.T) {
 }
 
 func TestCompareValues_Numeric(t *testing.T) {
-	if !compareValues("5", "10", "lt") {
-		t.Error("5 < 10 should be true")
+	tests := []struct {
+		name            string
+		left, right, op string
+		want            bool
+	}{
+		{"int lt", "5", "10", "lt", true},
+		{"int gt", "10", "5", "gt", true},
+		{"float lt", "3.14", "3.15", "lt", true},
+		{"int gte equal", "42", "42", "gte", true},
+		{"int lte equal", "42", "42", "lte", true},
 	}
-	if compareValues("10", "5", "lt") {
-		t.Error("10 < 5 should be false")
-	}
-	if !compareValues("3.14", "3.15", "lt") {
-		t.Error("3.14 < 3.15 should be true")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := compareValues(tt.left, tt.right, tt.op)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("compareValues(%q, %q, %q) = %v, want %v",
+					tt.left, tt.right, tt.op, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestCompareValues_String(t *testing.T) {
-	if !compareValues("apple", "banana", "lt") {
+	got, err := compareValues("apple", "banana", "lt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
 		t.Error("'apple' < 'banana' should be true")
+	}
+}
+
+// TestCompareValues_TypeMismatch verifies that mixing types returns an error
+// instead of silently producing wrong answers via lexicographic fallback.
+func TestCompareValues_TypeMismatch(t *testing.T) {
+	tests := []struct {
+		name        string
+		left, right string
+	}{
+		{"date vs non-date right", "2026-04-07", "tomorrow"},
+		{"date vs non-date left", "tomorrow", "2026-04-07"},
+		{"date vs different format", "2026-04-07", "07/04/2026"},
+		{"number vs non-number right", "42", "high"},
+		{"number vs non-number left", "high", "42"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			match, err := compareValues(tt.left, tt.right, "lt")
+			if err == nil {
+				t.Errorf("expected error for compareValues(%q, %q, lt), got match=%v",
+					tt.left, tt.right, match)
+			}
+			if match {
+				t.Errorf("type mismatch should return match=false, got true")
+			}
+		})
+	}
+}
+
+// TestCompareOrdered_UnknownOperator confirms unknown operators return false.
+func TestCompareOrdered_UnknownOperator(t *testing.T) {
+	if compareOrdered(1, 2, "bogus") {
+		t.Error("unknown operator should return false")
 	}
 }
