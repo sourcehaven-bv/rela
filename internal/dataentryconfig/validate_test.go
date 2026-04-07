@@ -1068,3 +1068,98 @@ func TestValidateConfig_KanbanFilterControlUnknownRelation(t *testing.T) {
 		t.Errorf("expected error about unknown relation, got: %v", err)
 	}
 }
+
+func TestValidateActions_ValidConfig(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{
+			"today_note": {Script: "today.lua"},
+			"find_or_create": {
+				Script: "find-or-create.lua",
+				Params: map[string]string{"entity_type": "ticket"},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateActions_InvalidID(t *testing.T) {
+	meta := testMetamodel()
+	tests := []string{"Today_Note", "today note", "today/note", "today..note", "x" + strings.Repeat("y", 64)}
+	for _, id := range tests {
+		t.Run(id, func(t *testing.T) {
+			cfg := &Config{
+				Actions: map[string]Action{id: {Script: "x.lua"}},
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if err == nil {
+				t.Fatalf("expected error for invalid ID %q", id)
+			}
+		})
+	}
+}
+
+func TestValidateActions_EmptyScript(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{"foo": {Script: ""}},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), "empty script") {
+		t.Errorf("expected empty script error, got: %v", err)
+	}
+}
+
+func TestValidateActions_PathTraversal(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{"foo": {Script: "../etc/passwd.lua"}},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), "local path") {
+		t.Errorf("expected path traversal error, got: %v", err)
+	}
+}
+
+func TestValidateActions_WrongExtension(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{"foo": {Script: "script.txt"}},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), ".lua") {
+		t.Errorf("expected extension error, got: %v", err)
+	}
+}
+
+func TestValidateNavigation_UnknownAction(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Navigation: []NavigationEntry{
+			{Label: "Today", Action: "missing_action"},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), `unknown action "missing_action"`) {
+		t.Errorf("expected unknown action error, got: %v", err)
+	}
+}
+
+func TestValidateNavigation_KnownAction(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{
+			"today_note": {Script: "today.lua"},
+		},
+		Navigation: []NavigationEntry{
+			{Label: "Today", Action: "today_note"},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}

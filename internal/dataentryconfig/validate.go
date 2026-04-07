@@ -2,6 +2,8 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -23,6 +25,7 @@ var validTopLevelKeys = map[string]bool{
 	"documents":  true,
 	"dashboard":  true,
 	"commands":   true,
+	"actions":    true,
 	"navigation": true,
 	"palette":    true,
 }
@@ -114,6 +117,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateKanbans(cfg, meta)...)
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
+	errs = append(errs, validateActions(cfg)...)
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
@@ -185,6 +189,13 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 		if _, ok := cfg.Kanbans[nav.Kanban]; !ok {
 			errs = append(errs, fmt.Sprintf(
 				"navigation: references unknown kanban %q", nav.Kanban))
+		}
+	}
+
+	if nav.Action != "" {
+		if _, ok := cfg.Actions[nav.Action]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: references unknown action %q", nav.Action))
 		}
 	}
 
@@ -806,6 +817,42 @@ func validateDashboard(cfg *Config, _ *metamodel.Metamodel) []string {
 }
 
 // validateCommands validates command definitions.
+// actionIDRegex defines the allowed format for action IDs.
+// Lowercase letters, digits, hyphens, underscores, 1-64 characters.
+var actionIDRegex = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
+
+// validateActions checks action definitions: ID format, script path safety,
+// and that referenced scripts exist on disk.
+func validateActions(cfg *Config) []string {
+	var errs []string
+
+	for id, action := range cfg.Actions {
+		if !actionIDRegex.MatchString(id) {
+			errs = append(errs, fmt.Sprintf(
+				"actions: invalid action ID %q (must match ^[a-z0-9_-]{1,64}$)", id))
+			continue
+		}
+
+		if action.Script == "" {
+			errs = append(errs, fmt.Sprintf("actions: %q has empty script field", id))
+			continue
+		}
+
+		if !strings.HasSuffix(action.Script, ".lua") {
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q script %q must have .lua extension", id, action.Script))
+		}
+
+		if !filepath.IsLocal(action.Script) {
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q script %q must be a local path (no '..' or absolute paths)",
+				id, action.Script))
+		}
+	}
+
+	return errs
+}
+
 func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 

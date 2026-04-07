@@ -231,6 +231,7 @@ export interface NavigationEntry {
   dashboard?: boolean
   graph?: boolean
   kanban?: string
+  action?: string
   icon?: string
   // Group fields
   group?: string
@@ -241,9 +242,10 @@ export interface NavigationEntry {
 // Sidebar API types (denormalized navigation with counts)
 export interface SidebarItem {
   label: string
-  href: string
+  href?: string
   icon?: string
   count?: number
+  action?: string
 }
 
 export interface SidebarGroup {

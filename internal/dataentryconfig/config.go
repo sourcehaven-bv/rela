@@ -75,7 +75,18 @@ type Config struct {
 	Documents  map[string]DocumentConfig    `yaml:"documents,omitempty"`
 	Dashboard  *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands   map[string]CommandConfig     `yaml:"commands,omitempty"`
+	Actions    map[string]Action            `yaml:"actions,omitempty"`
 	Navigation []NavigationEntry            `yaml:"navigation"`
+}
+
+// Action defines a server-side operation triggered from the UI sidebar.
+// When clicked, the configured Lua script runs with rela.params populated
+// from the static Params map. Scripts return a table that becomes the
+// HTTP response (redirect URL or toast message).
+type Action struct {
+	Description string            `yaml:"description,omitempty" json:"description,omitempty"`
+	Script      string            `yaml:"script" json:"script"`
+	Params      map[string]string `yaml:"params,omitempty" json:"params,omitempty"`
 }
 
 // AppConfig holds display metadata for the application.
@@ -261,6 +272,7 @@ type NavigationEntry struct {
 	Kanban    string `yaml:"kanban,omitempty" json:"kanban,omitempty"`
 	Search    bool   `yaml:"search,omitempty" json:"search,omitempty"`
 	Settings  bool   `yaml:"settings,omitempty" json:"settings,omitempty"`
+	Action    string `yaml:"action,omitempty" json:"action,omitempty"`
 
 	// Group fields
 	Group     string            `yaml:"group,omitempty" json:"group,omitempty"`

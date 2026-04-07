@@ -11,6 +11,7 @@ package lua
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -62,6 +63,8 @@ type Runtime struct {
 	outputDir     string        // Directory where write_file can write (defaults to "output")
 	timeout       time.Duration // Execution timeout (0 = no timeout)
 	cancelTimeout context.CancelFunc
+	params        map[string]string // rela.params values (used by action scripts)
+	isAction      bool              // true when running as an action (changes rela.output behavior)
 }
 
 // Option configures a Runtime.
@@ -85,6 +88,22 @@ func WithTimeout(d time.Duration) Option {
 func WithOutputDir(dir string) Option {
 	return func(r *Runtime) {
 		r.outputDir = dir
+	}
+}
+
+// WithParams sets the rela.params table contents for action scripts.
+// Params are static key-value strings from the data-entry config.
+func WithParams(params map[string]string) Option {
+	return func(r *Runtime) {
+		r.params = params
+	}
+}
+
+// WithActionMode marks the runtime as running in action mode, which changes
+// rela.output behavior (logs a warning instead of writing to stdout).
+func WithActionMode() Option {
+	return func(r *Runtime) {
+		r.isAction = true
 	}
 }
 
@@ -205,6 +224,44 @@ func (r *Runtime) RunString(code string) error {
 	return r.L.DoString(stripShebang(code))
 }
 
+// ErrNoReturnValue is returned by RunActionString when the script did not
+// return a value. Action handlers can use errors.Is to check for this.
+var ErrNoReturnValue = errors.New("script did not return a value")
+
+// RunActionString executes Lua code as an action, returning the script's
+// top-of-stack return value as a Go interface{}. Returns ErrNoReturnValue
+// if the script did not return any values.
+func (r *Runtime) RunActionString(code, name string) (interface{}, error) {
+	r.applyTimeout()
+
+	cleaned := stripShebang(code)
+	fn, err := r.L.Load(strings.NewReader(cleaned), name)
+	if err != nil {
+		return nil, fmt.Errorf("cannot compile script: %w", err)
+	}
+
+	// Record stack depth before so we can detect if the script returned anything
+	topBefore := r.L.GetTop()
+	r.L.Push(fn)
+	if pcallErr := r.L.PCall(0, lua.MultRet, nil); pcallErr != nil {
+		return nil, pcallErr
+	}
+	topAfter := r.L.GetTop()
+
+	if topAfter <= topBefore {
+		// Script did not return a value
+		return nil, ErrNoReturnValue
+	}
+
+	// Script may have returned multiple values; the first one is the primary return.
+	// We read topBefore+1 (stack is 1-indexed; Get returns LNil for invalid indices).
+	ret := r.L.Get(topBefore + 1)
+	// Pop all returned values to leave the stack as we found it
+	r.L.SetTop(topBefore)
+
+	return luaValueToGo(ret), nil
+}
+
 // applyTimeout sets the execution timeout on the Lua state.
 // Must be called before executing any Lua code.
 func (r *Runtime) applyTimeout() {
@@ -293,6 +350,13 @@ func (r *Runtime) registerBindings() {
 	// Context
 	r.L.SetField(rela, "project_root", lua.LString(r.projectRoot))
 	r.L.SetField(rela, "args", r.L.NewTable()) // Will be set before running script
+
+	// Params table (populated from WithParams option, used by action scripts)
+	paramsTable := r.L.NewTable()
+	for k, v := range r.params {
+		r.L.SetField(paramsTable, k, lua.LString(v))
+	}
+	r.L.SetField(rela, "params", paramsTable)
 
 	// Date and RRULE utility functions
 	registerDateHelpers(r.L, rela)
@@ -452,6 +516,13 @@ func (r *Runtime) luaOutput(ls *lua.LState) int {
 	data := ls.CheckAny(1)
 
 	goData := luaValueToGo(data)
+
+	if r.isAction {
+		// In action mode, rela.output is a no-op. Log a warning so script
+		// authors notice that output should use the return statement instead.
+		fmt.Fprintln(r.stdout, "warning: rela.output() called in action mode; use 'return' to produce the response")
+		return 0
+	}
 
 	encoder := json.NewEncoder(r.stdout)
 	encoder.SetIndent("", "  ")
