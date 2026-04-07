@@ -2,6 +2,7 @@ package lua
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -2242,5 +2244,69 @@ func TestActionMode_OutputIsWarning(t *testing.T) {
 	}
 	if strings.Contains(out, `"foo"`) {
 		t.Errorf("expected output to be dropped in action mode, got %q", out)
+	}
+}
+
+// TestWithContext_CancellationInterruptsBusyLoop verifies that canceling the
+// parent context passed via WithContext interrupts an in-flight Lua busy loop,
+// rather than waiting for the internal timeout to fire.
+func TestWithContext_CancellationInterruptsBusyLoop(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	// Parent context with a tight deadline. The internal Lua timeout is left
+	// at its default (30s) so that any cancellation we observe must come from
+	// the parent context, not the timeout fallback.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	r := New(ws, ws.Meta(), "/tmp", &buf, WithContext(ctx))
+	defer r.Close()
+
+	start := time.Now()
+	err := r.RunString(`while true do end`)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected busy loop to be interrupted, got nil error")
+	}
+	// Must finish well before the default 30s timeout would fire.
+	if elapsed > 5*time.Second {
+		t.Fatalf("busy loop ran for %v; expected parent context to interrupt quickly", elapsed)
+	}
+	// gopher-lua surfaces context cancellation as "context deadline exceeded"
+	// or "context canceled" embedded in the error message.
+	msg := err.Error()
+	if !strings.Contains(msg, "context") {
+		t.Errorf("expected context-related error, got: %v", err)
+	}
+}
+
+// TestWithContext_NoTimeoutStillCancels verifies that even with the internal
+// timeout disabled, a cancelled parent context interrupts execution.
+func TestWithContext_NoTimeoutStillCancels(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	r := New(ws, ws.Meta(), "/tmp", &buf, WithContext(ctx), WithTimeout(0))
+	defer r.Close()
+
+	// Cancel shortly after starting.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	err := r.RunString(`while true do end`)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected busy loop to be interrupted, got nil error")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("busy loop ran for %v; expected parent cancel to interrupt", elapsed)
 	}
 }

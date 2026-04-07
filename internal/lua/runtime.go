@@ -60,8 +60,9 @@ type Runtime struct {
 	meta          *metamodel.Metamodel
 	stdout        io.Writer
 	projectRoot   string
-	outputDir     string        // Directory where write_file can write (defaults to "output")
-	timeout       time.Duration // Execution timeout (0 = no timeout)
+	outputDir     string          // Directory where write_file can write (defaults to "output")
+	timeout       time.Duration   // Execution timeout (0 = no timeout)
+	parentCtx     context.Context // Parent context for cancellation propagation (nil = Background)
 	cancelTimeout context.CancelFunc
 	params        map[string]string // rela.params values (used by action scripts)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
@@ -79,6 +80,20 @@ const DefaultTimeout = 30 * time.Second
 func WithTimeout(d time.Duration) Option {
 	return func(r *Runtime) {
 		r.timeout = d
+	}
+}
+
+// WithContext sets a parent context for the runtime. Cancellation of this
+// context propagates into in-flight Lua operations (e.g. long-running loops
+// or blocking calls from bindings). When combined with WithTimeout, the
+// timeout is derived from this parent so canceling the parent also cancels
+// the timeout-bound context.
+//
+// Typical usage: pass cmd.Context() from a cobra RunE so that Ctrl+C
+// interrupts script execution.
+func WithContext(ctx context.Context) Option {
+	return func(r *Runtime) {
+		r.parentCtx = ctx
 	}
 }
 
@@ -264,12 +279,25 @@ func (r *Runtime) RunActionString(code, name string) (interface{}, error) {
 
 // applyTimeout sets the execution timeout on the Lua state.
 // Must be called before executing any Lua code.
+//
+// The derived context is rooted at r.parentCtx (if set) so that canceling
+// the caller's context (e.g. Ctrl+C via a cobra command context) interrupts
+// in-flight Lua execution. When no timeout is configured but a parent context
+// is set, the parent is attached directly so cancellation still propagates.
 func (r *Runtime) applyTimeout() {
 	r.clearTimeout()
+	parent := r.parentCtx
+	if parent == nil {
+		parent = context.Background()
+	}
 	if r.timeout > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+		ctx, cancel := context.WithTimeout(parent, r.timeout)
 		r.cancelTimeout = cancel
 		r.L.SetContext(ctx)
+		return
+	}
+	if r.parentCtx != nil {
+		r.L.SetContext(r.parentCtx)
 	}
 }
 

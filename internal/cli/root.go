@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -99,15 +102,30 @@ and maintain semantic relationships between them.`,
 // Execute runs the root command
 // coverage-ignore: CLI entry point - tested via integration tests
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		// Check for ExitError to use custom exit code
-		var exitErr *errors.ExitError
-		if stderrors.As(err, &exitErr) {
-			os.Exit(exitErr.Code)
-		}
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	os.Exit(run())
+}
+
+// run executes the root command with a signal-aware context and returns the
+// process exit code. It is split out from Execute so that signal.NotifyContext
+// cleanup runs before os.Exit.
+// coverage-ignore: CLI entry point - tested via integration tests
+func run() int {
+	// Set up a signal-aware context so Ctrl+C (SIGINT) and SIGTERM cancel
+	// in-flight operations, including embedded Lua execution.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	err := rootCmd.ExecuteContext(ctx)
+	if err == nil {
+		return 0
 	}
+	// Check for ExitError to use custom exit code
+	var exitErr *errors.ExitError
+	if stderrors.As(err, &exitErr) {
+		return exitErr.Code
+	}
+	fmt.Fprintln(os.Stderr, err)
+	return 1
 }
 
 func init() {
