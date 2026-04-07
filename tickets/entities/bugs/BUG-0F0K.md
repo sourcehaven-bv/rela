@@ -8,6 +8,8 @@ effort: s
 why1: go-runewidth was added as a direct import in lua/markdown.go but not declared in .go-arch-lint.yml
 why2: The arch config was not updated in the same PR that added the import
 why3: The PR was auto-merged before the arch fix could be pushed
+why4: There is no local pre-push step that runs the architecture lint before merging
+why5: Architecture lint is only enforced in CI, so coupled changes (code + arch config) can land out of sync
 prevention: Run just arch-lint locally before pushing
 status: done
 ---
