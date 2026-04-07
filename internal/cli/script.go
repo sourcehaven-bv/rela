@@ -59,7 +59,7 @@ Example:
 		scriptPath := args[0]
 		scriptArgs := args[1:]
 
-		var opts []lua.Option
+		opts := []lua.Option{lua.WithContext(cmd.Context())}
 		if scriptOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
 		}

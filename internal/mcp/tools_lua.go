@@ -53,7 +53,7 @@ func toolLuaList() mcp.Tool {
 	)
 }
 
-func (s *Server) handleLuaEval(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	code, err := req.RequireString("code")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -64,7 +64,7 @@ func (s *Server) handleLuaEval(_ context.Context, req mcp.CallToolRequest) (*mcp
 	// Capture output
 	var output bytes.Buffer
 
-	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output)
+	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, lua.WithContext(ctx))
 	defer runtime.Close()
 
 	if err := runtime.RunString(code); err != nil {
@@ -79,7 +79,7 @@ func (s *Server) handleLuaEval(_ context.Context, req mcp.CallToolRequest) (*mcp
 	return mcp.NewToolResultText(result), nil
 }
 
-func (s *Server) handleLuaRun(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	path, err := req.RequireString("path")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -131,7 +131,7 @@ func (s *Server) handleLuaRun(_ context.Context, req mcp.CallToolRequest) (*mcp.
 	// Capture output
 	var output bytes.Buffer
 
-	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output)
+	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, lua.WithContext(ctx))
 	defer runtime.Close()
 
 	// Set script args before execution
