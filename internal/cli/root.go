@@ -65,7 +65,7 @@ and maintain semantic relationships between them.`,
 		var err error
 		ws, err = workspace.Discover(startDir, script.NewEngine())
 		if err != nil {
-			return fmt.Errorf("no project found: run 'rela init' to create one")
+			return wrapDiscoverError(err)
 		}
 
 		// Convenience aliases for read-only commands
@@ -107,6 +107,18 @@ func init() {
 			fmt.Printf("rela version %s\n", Version)
 		},
 	})
+}
+
+// wrapDiscoverError translates errors from workspace.Discover into user-facing
+// messages. Only the "no metamodel.yaml found" case (errors.ErrNoProject) gets
+// the "run 'rela init'" hint; all other failures (parse errors, permission
+// denied, corrupt cache, pending migration, etc.) are surfaced verbatim so the
+// user can see what actually went wrong.
+func wrapDiscoverError(err error) error {
+	if stderrors.Is(err, errors.ErrNoProject) {
+		return fmt.Errorf("no project found: run 'rela init' to create one")
+	}
+	return err
 }
 
 // saveCache saves the graph to the cache file.
