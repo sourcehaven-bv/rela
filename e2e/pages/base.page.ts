@@ -12,11 +12,10 @@ export class BasePage {
   }
 
   async navigateTo(path: string) {
-    // v2 routes are served at /v2/ in production
-    // Get the base URL from the current page's URL
+    // SPA routes are served at the root path.
     const currentUrl = this.page.url();
     const baseUrl = new URL(currentUrl).origin;
-    const fullPath = path.startsWith('/v2/') ? path : `/v2${path}`;
+    const fullPath = path.startsWith('/') ? path : `/${path}`;
     await this.page.goto(`${baseUrl}${fullPath}`);
     await this.page.waitForLoadState('networkidle');
   }

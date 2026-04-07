@@ -46,6 +46,11 @@ func main() {
 
 	configureLogging(*verbose, *quiet)
 
+	if err := dataentry.CheckEmbeddedSPA(); err != nil {
+		slog.Error("embedded SPA check failed", "error", err)
+		os.Exit(1)
+	}
+
 	repo, err := createRepo(*projectDir)
 	if err != nil {
 		slog.Error("failed to initialize repository", "error", err)

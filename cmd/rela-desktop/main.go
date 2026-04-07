@@ -645,6 +645,12 @@ func main() {
 
 	configureLogging(*verbose, *quiet)
 
+	// Fail fast if the embedded SPA is missing (BUG-W144 class regression).
+	if err := dataentry.CheckEmbeddedSPA(); err != nil {
+		slog.Error("embedded SPA check failed", "error", err)
+		os.Exit(1)
+	}
+
 	// Load desktop preferences.
 	prefs, err := desktop.Load()
 	if err != nil {
