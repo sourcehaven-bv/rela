@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -995,6 +996,108 @@ func TestV1FilteringIn(t *testing.T) {
 
 	if len(resp.Data) != 2 {
 		t.Errorf("expected 2 filtered entities, got %d", len(resp.Data))
+	}
+}
+
+func TestV1FilteringLte(t *testing.T) {
+	app := newTestAppV1(t)
+
+	app.g.AddNode(&model.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"due_date": "2025-12-31"},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:         "TKT-002",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-04-07"},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:         "TKT-003",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-12-31"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/tickets?filter[due_date][lte]=2026-04-07", http.NoBody)
+	rec := httptest.NewRecorder()
+
+	app.mu.RLock()
+	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.mu.RUnlock()
+
+	var resp V1ListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(resp.Data) != 2 {
+		t.Errorf("expected 2 entities (TKT-001, TKT-002), got %d", len(resp.Data))
+	}
+}
+
+func TestV1FilteringGte(t *testing.T) {
+	app := newTestAppV1(t)
+	app.g.AddNode(&model.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"due_date": "2025-12-31"},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:         "TKT-002",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"due_date": "2026-12-31"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/tickets?filter[due_date][gte]=2026-01-01", http.NoBody)
+	rec := httptest.NewRecorder()
+
+	app.mu.RLock()
+	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.mu.RUnlock()
+
+	var resp V1ListResponse
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if len(resp.Data) != 1 || resp.Data[0].ID != "TKT-002" {
+		t.Errorf("expected TKT-002 only, got %d entities", len(resp.Data))
+	}
+}
+
+func TestV1FilteringTodaySubstitution(t *testing.T) {
+	app := newTestAppV1(t)
+	today := time.Now().Format("2006-01-02")
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+
+	app.g.AddNode(&model.Entity{
+		ID:         "TKT-overdue",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"due_date": yesterday},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:         "TKT-today",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"due_date": today},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:         "TKT-future",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"due_date": tomorrow},
+	})
+
+	// $today should resolve to today's date; lte should match overdue + today
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/tickets?filter[due_date][lte]=$today", http.NoBody)
+	rec := httptest.NewRecorder()
+
+	app.mu.RLock()
+	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	app.mu.RUnlock()
+
+	var resp V1ListResponse
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if len(resp.Data) != 2 {
+		t.Errorf("expected 2 entities (overdue + today), got %d", len(resp.Data))
 	}
 }
 

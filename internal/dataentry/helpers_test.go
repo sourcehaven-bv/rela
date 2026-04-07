@@ -1399,3 +1399,70 @@ func TestResolveScope(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveFilterVariable(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantSame bool // if true, expect the value unchanged
+	}{
+		{"plain value", true},
+		{"2026-04-07", true},
+		{"$today", false},
+		{"$tomorrow", false},
+		{"$yesterday", false},
+		{"$unknown", true}, // unknown variables pass through
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := resolveFilterVariable(tt.input)
+			if tt.wantSame && got != tt.input {
+				t.Errorf("expected %q to pass through, got %q", tt.input, got)
+			}
+			if !tt.wantSame {
+				// Should be a YYYY-MM-DD date
+				if len(got) != 10 || got[4] != '-' || got[7] != '-' {
+					t.Errorf("expected date format, got %q", got)
+				}
+			}
+		})
+	}
+}
+
+func TestCompareValues_Date(t *testing.T) {
+	tests := []struct {
+		left, right, op string
+		want            bool
+	}{
+		{"2026-01-01", "2026-04-07", "lt", true},
+		{"2026-04-07", "2026-04-07", "lte", true},
+		{"2026-04-07", "2026-04-07", "lt", false},
+		{"2026-12-31", "2026-04-07", "gt", true},
+		{"2026-04-07", "2026-04-07", "gte", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.left+tt.op+tt.right, func(t *testing.T) {
+			if got := compareValues(tt.left, tt.right, tt.op); got != tt.want {
+				t.Errorf("compareValues(%q, %q, %q) = %v, want %v",
+					tt.left, tt.right, tt.op, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompareValues_Numeric(t *testing.T) {
+	if !compareValues("5", "10", "lt") {
+		t.Error("5 < 10 should be true")
+	}
+	if compareValues("10", "5", "lt") {
+		t.Error("10 < 5 should be false")
+	}
+	if !compareValues("3.14", "3.15", "lt") {
+		t.Error("3.14 < 3.15 should be true")
+	}
+}
+
+func TestCompareValues_String(t *testing.T) {
+	if !compareValues("apple", "banana", "lt") {
+		t.Error("'apple' < 'banana' should be true")
+	}
+}

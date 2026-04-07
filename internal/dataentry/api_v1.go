@@ -1232,7 +1232,7 @@ func (a *App) applyV1Filters(entities []*model.Entity, query map[string][]string
 		if len(parts) > 1 {
 			operator = parts[1]
 		}
-		value := values[0]
+		value := resolveFilterVariable(values[0])
 
 		var newFiltered []*model.Entity
 		for _, e := range filtered {
@@ -1275,6 +1275,10 @@ func (a *App) applyV1Filters(entities []*model.Entity, query map[string][]string
 						newFiltered = append(newFiltered, e)
 						break
 					}
+				}
+			case "lt", "lte", "gt", "gte":
+				if compareValues(propStr, value, operator) {
+					newFiltered = append(newFiltered, e)
 				}
 			default:
 				// Unknown operator, include entity

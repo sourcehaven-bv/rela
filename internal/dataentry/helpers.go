@@ -8,7 +8,9 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -23,6 +25,60 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 )
+
+// resolveFilterVariable substitutes special variable references in filter
+// values. Currently supports:
+//
+//	$today          today's date in YYYY-MM-DD format (local time)
+//	$tomorrow       tomorrow's date
+//	$yesterday      yesterday's date
+//
+// Other values are returned unchanged.
+func resolveFilterVariable(value string) string {
+	switch value {
+	case "$today":
+		return time.Now().Format("2006-01-02")
+	case "$tomorrow":
+		return time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	case "$yesterday":
+		return time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	return value
+}
+
+// compareValues compares two values using the given comparison operator
+// (lt, lte, gt, gte). It tries date comparison first (YYYY-MM-DD), then
+// numeric, then falls back to lexicographic string comparison.
+func compareValues(left, right, operator string) bool {
+	// Try date comparison first
+	if lt, lerr := time.Parse("2006-01-02", left); lerr == nil {
+		if rt, rerr := time.Parse("2006-01-02", right); rerr == nil {
+			return compareOrdered(lt.Unix(), rt.Unix(), operator)
+		}
+	}
+	// Try numeric comparison
+	if lf, lerr := strconv.ParseFloat(left, 64); lerr == nil {
+		if rf, rerr := strconv.ParseFloat(right, 64); rerr == nil {
+			return compareOrdered(lf, rf, operator)
+		}
+	}
+	// Fall back to string comparison
+	return compareOrdered(left, right, operator)
+}
+
+func compareOrdered[T int64 | float64 | string](left, right T, operator string) bool {
+	switch operator {
+	case "lt":
+		return left < right
+	case "lte":
+		return left <= right
+	case "gt":
+		return left > right
+	case "gte":
+		return left >= right
+	}
+	return false
+}
 
 // ResolvedField represents a form field with all values resolved for rendering.
 // Used by form templates to render property inputs consistently.
