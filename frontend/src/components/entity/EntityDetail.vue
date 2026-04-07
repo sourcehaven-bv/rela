@@ -195,7 +195,7 @@ async function deleteEntity() {
   try {
     await entitiesStore.remove(props.entityType, props.entityId)
     uiStore.success('Entity deleted successfully')
-    router.push(`/list/${props.entityType}s`)
+    router.push(backTargetAfterDelete())
   } catch (err) {
     uiStore.error('Failed to delete entity')
     console.error(err)
@@ -203,6 +203,18 @@ async function deleteEntity() {
     deleting.value = false
     showDeleteConfirm.value = false
   }
+}
+
+// Determine where to navigate after deleting this entity.
+// Priority:
+//   1. The list we came from (scope navigation)
+//   2. A list configured for this entity type
+//   3. The dashboard
+function backTargetAfterDelete(): string {
+  if (scopeNav.value?.backUrl) return scopeNav.value.backUrl
+  const listId = schemaStore.findListIdForEntityType(props.entityType)
+  if (listId) return `/list/${listId}`
+  return '/'
 }
 
 // Commands
@@ -408,7 +420,7 @@ onMounted(() => loadEntity())
     <div v-else class="error-state">
       <h2>Entity not found</h2>
       <p>{{ entityType }} "{{ entityId }}" could not be found.</p>
-      <router-link :to="`/list/${entityType}s`" class="btn btn-secondary">
+      <router-link :to="backTargetAfterDelete()" class="btn btn-secondary">
         Back to list
       </router-link>
     </div>

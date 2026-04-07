@@ -41,6 +41,14 @@ export const useSchemaStore = defineStore('schema', () => {
   const getRelationType = computed(() => (name: string) => relationTypes.value.get(name))
   const getForm = computed(() => (id: string) => forms.value.get(id))
   const getList = computed(() => (id: string) => lists.value.get(id))
+  // Find the first list ID that shows entities of the given type.
+  // Returns undefined if no list is configured for that type.
+  const findListIdForEntityType = computed(() => (entityType: string) => {
+    for (const [id, cfg] of lists.value.entries()) {
+      if (cfg.entity === entityType) return id
+    }
+    return undefined
+  })
   const getView = computed(() => (id: string) => views.value.get(id))
   const getKanban = computed(() => (id: string) => kanbans.value.get(id))
 
@@ -124,6 +132,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getRelationType,
     getForm,
     getList,
+    findListIdForEntityType,
     getView,
     getKanban,
     entityTypeList,
