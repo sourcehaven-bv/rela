@@ -23,13 +23,13 @@ build-server: build-frontend
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server ./cmd/rela-server
 
 # Build the desktop app
-build-desktop:
+build-desktop: build-frontend
     @echo "Building rela-desktop..."
     @mkdir -p {{build_dir}}
     CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,production -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
 # Build the desktop app with debug/devtools support for E2E testing
-build-desktop-debug:
+build-desktop-debug: build-frontend
     @echo "Building rela-desktop (debug)..."
     @mkdir -p {{build_dir}}
     CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
