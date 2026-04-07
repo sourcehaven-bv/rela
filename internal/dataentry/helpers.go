@@ -2,13 +2,16 @@ package dataentry
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -23,6 +26,131 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 )
+
+// nowFunc is the clock used for filter variable substitution. Tests can
+// override this to pin a deterministic "now". Default returns UTC time
+// to keep $today consistent regardless of server timezone.
+var nowFunc = func() time.Time { return time.Now().UTC() }
+
+// resolveFilterVariable substitutes special variable references in filter
+// values. Currently supports:
+//
+//	$today          today's date in YYYY-MM-DD format (UTC)
+//	$tomorrow       tomorrow's date (UTC)
+//	$yesterday      yesterday's date (UTC)
+//
+// Times are evaluated in UTC for predictability across server timezones.
+// Other values are returned unchanged.
+func resolveFilterVariable(value string) string {
+	switch value {
+	case "$today":
+		return nowFunc().Format("2006-01-02")
+	case "$tomorrow":
+		return nowFunc().AddDate(0, 0, 1).Format("2006-01-02")
+	case "$yesterday":
+		return nowFunc().AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	return value
+}
+
+// resolveFilterVariablesInList applies resolveFilterVariable to each
+// comma-separated token in value. Used by the in/ne operators.
+func resolveFilterVariablesInList(value string) string {
+	if !strings.Contains(value, ",") {
+		return resolveFilterVariable(value)
+	}
+	parts := strings.Split(value, ",")
+	for i, p := range parts {
+		parts[i] = resolveFilterVariable(strings.TrimSpace(p))
+	}
+	return strings.Join(parts, ",")
+}
+
+// compareValues compares two values using the given comparison operator
+// (lt, lte, gt, gte). It uses strict same-type comparison: if both sides
+// parse as dates, dates are compared; if both parse as numbers, numbers
+// are compared; otherwise strings are compared lexicographically.
+//
+// On a type mismatch (e.g. left is a date string, right is not), the
+// comparison returns false and a non-nil error so callers can decide
+// whether to log/reject. This prevents the silent lexicographic-fallback
+// trap where "2026-04-07" < "tomorrow" returned true.
+func compareValues(left, right, operator string) (match bool, err error) {
+	// Both sides parse as dates → compare as dates
+	lt, lDateErr := time.Parse("2006-01-02", left)
+	rt, rDateErr := time.Parse("2006-01-02", right)
+	switch {
+	case lDateErr == nil && rDateErr == nil:
+		return compareOrdered(lt.Unix(), rt.Unix(), operator), nil
+	case lDateErr == nil || rDateErr == nil:
+		// One side is a date, the other isn't — refuse to guess.
+		return false, fmt.Errorf("cannot compare date %q with non-date %q",
+			pickDate(left, right, lDateErr == nil), pickNonDate(left, right, lDateErr == nil))
+	}
+
+	// Both sides parse as numbers → compare as numbers
+	lf, lNumErr := strconv.ParseFloat(left, 64)
+	rf, rNumErr := strconv.ParseFloat(right, 64)
+	switch {
+	case lNumErr == nil && rNumErr == nil:
+		return compareOrdered(lf, rf, operator), nil
+	case lNumErr == nil || rNumErr == nil:
+		// One side is numeric, the other isn't — refuse to guess.
+		return false, fmt.Errorf("cannot compare number %q with non-number %q",
+			pickNumber(left, right, lNumErr == nil), pickNonNumber(left, right, lNumErr == nil))
+	}
+
+	// Neither parses as date or number → string comparison
+	return compareOrdered(left, right, operator), nil
+}
+
+// pickDate returns the side that successfully parsed as a date.
+func pickDate(left, right string, leftIsDate bool) string {
+	if leftIsDate {
+		return left
+	}
+	return right
+}
+
+// pickNonDate returns the side that did NOT parse as a date.
+func pickNonDate(left, right string, leftIsDate bool) string {
+	if leftIsDate {
+		return right
+	}
+	return left
+}
+
+// pickNumber / pickNonNumber are the numeric equivalents.
+func pickNumber(left, right string, leftIsNum bool) string {
+	if leftIsNum {
+		return left
+	}
+	return right
+}
+
+func pickNonNumber(left, right string, leftIsNum bool) string {
+	if leftIsNum {
+		return right
+	}
+	return left
+}
+
+// compareOrdered applies an ordering operator to two ordered values.
+// Returns false for unknown operators (caller is expected to validate).
+func compareOrdered[T cmp.Ordered](left, right T, operator string) bool {
+	c := cmp.Compare(left, right)
+	switch operator {
+	case "lt":
+		return c < 0
+	case "lte":
+		return c <= 0
+	case "gt":
+		return c > 0
+	case "gte":
+		return c >= 0
+	}
+	return false
+}
 
 // ResolvedField represents a form field with all values resolved for rendering.
 // Used by form templates to render property inputs consistently.

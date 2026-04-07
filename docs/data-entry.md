@@ -505,19 +505,56 @@ filters:
 | Field      | Type   | Description                              |
 | ---------- | ------ | ---------------------------------------- |
 | `property` | string | Property to filter on                    |
-| `operator` | string | `"="`, `"!="`, `"<"`, `"<="`, `">"`, `">="` |
+| `operator` | string | See operators below                      |
 | `value`    | string | Value to compare against                 |
 
-**Special values:**
+**Operators:**
 
-- `$USER` - Replaced with the current system username at runtime
+| Operator   | Type support              | Behavior                                              |
+| ---------- | ------------------------- | ----------------------------------------------------- |
+| `=`        | string, enum              | Exact match                                           |
+| `!=`       | string, enum              | Not equal; supports comma-separated values (NOT IN)   |
+| `~`        | string                    | Substring match (case-insensitive)                    |
+| `<`, `<=`  | date, number              | Less than / less than or equal                        |
+| `>`, `>=`  | date, number              | Greater than / greater than or equal                  |
+| `in`       | string, enum              | Comma-separated list; matches any                     |
+
+The ordering operators (`<`, `<=`, `>`, `>=`) compare with type-aware
+parsing: dates are tried first (`YYYY-MM-DD`), then numbers, then string
+comparison. If one side parses as a date or number and the other doesn't,
+the comparison is **rejected** (the entity is excluded) — there is no
+silent lexicographic fallback.
+
+**Variable substitution in filter values:**
+
+Filter values starting with `$` are reserved for variables. The following
+date variables are supported:
+
+| Variable     | Resolves to                          |
+| ------------ | ------------------------------------ |
+| `$today`     | Today's date in `YYYY-MM-DD` (UTC)   |
+| `$tomorrow`  | Tomorrow's date                      |
+| `$yesterday` | Yesterday's date                     |
+
+Variables are evaluated in **UTC** for predictability across server
+timezones. Variables work in single-value operators and in comma-separated
+lists (`in`, `!=`):
 
 ```yaml
 filters:
-  - property: assignee
-    operator: "="
-    value: "$USER"
+  # Show overdue tasks
+  - property: due_date
+    operator: "<="
+    value: $today
+
+  # Multiple variable tokens in a list
+  - property: due_date
+    operator: in
+    value: "$yesterday,$today,$tomorrow"
 ```
+
+To filter for a literal value that starts with `$`, you currently cannot
+escape it — choose property values that don't start with `$`.
 
 ### Filter Controls
 
