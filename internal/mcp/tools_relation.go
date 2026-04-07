@@ -9,6 +9,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func (s *Server) handleListRelations(
@@ -76,7 +77,15 @@ func (s *Server) handleCreateRelation(
 	}
 	toID = trimID(toID)
 
-	if _, createErr := s.ws.CreateRelation(fromID, relType, toID); createErr != nil {
+	content := request.GetString("content", "")
+	properties := s.extractProperties(request)
+
+	opts := workspace.CreateRelationOptions{
+		Properties: properties,
+		Content:    content,
+	}
+
+	if _, createErr := s.ws.CreateRelation(fromID, relType, toID, opts); createErr != nil {
 		return mcp.NewToolResultError(createErr.Error()), nil
 	}
 

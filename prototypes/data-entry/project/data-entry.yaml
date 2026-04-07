@@ -103,14 +103,40 @@ forms:
         allow_create: true
         create_form: create_category
       - relation: tagged
-        widget: multi-select
+        widget: cards
         allow_create: true
         create_form: create_label
+        properties:
+          - property: added_by
+            label: "Added By"
+          - property: added_date
+            label: "Added"
       - relation: blocks
         direction: outgoing
+        widget: cards
         properties:
           - property: reason
             label: "Block Reason"
+          - property: severity
+          - property: resolved_date
+            label: "Resolved"
+          - property: impact_score
+            label: "Impact"
+          - property: is_workaround_available
+            label: "Workaround?"
+      - relation: blocks
+        direction: incoming
+        widget: cards
+        properties:
+          - property: reason
+            label: "Block Reason"
+          - property: severity
+          - property: resolved_date
+            label: "Resolved"
+          - property: impact_score
+            label: "Impact"
+          - property: is_workaround_available
+            label: "Workaround?"
     side_panel:
       traverse:
         - from: entry

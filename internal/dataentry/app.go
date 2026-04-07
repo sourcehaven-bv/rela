@@ -305,16 +305,24 @@ func firstNavTarget(nav []NavigationEntry) *NavigationEntry {
 }
 
 // editFormForType returns the first edit form ID configured for the given entity type,
-// or "" if no edit form is found.
+// or "" if no edit form is found. Forms with explicit mode="edit" are preferred.
 func (a *App) editFormForType(entityType string) string {
 	ids := make([]string, 0, len(a.Cfg.Forms))
 	for id := range a.Cfg.Forms {
 		ids = append(ids, id)
 	}
 	natsort.Strings(ids)
+	// First pass: look for explicit edit mode
 	for _, id := range ids {
 		f := a.Cfg.Forms[id]
-		if f.EntityType == entityType && (f.Mode == "edit" || f.Mode == "") {
+		if f.EntityType == entityType && f.Mode == "edit" {
+			return id
+		}
+	}
+	// Second pass: fall back to forms with no mode specified
+	for _, id := range ids {
+		f := a.Cfg.Forms[id]
+		if f.EntityType == entityType && f.Mode == "" {
 			return id
 		}
 	}

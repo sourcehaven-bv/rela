@@ -133,6 +133,7 @@ func toolCreateRelation() mcp.Tool {
 		mcp.WithString("type", mcp.Required(), mcp.Description("Relation type (e.g. addresses, implements)")),
 		mcp.WithString("to", mcp.Required(), mcp.Description("Target entity ID")),
 		mcp.WithString("content", mcp.Description("Markdown content for the relation")),
+		mcp.WithObject("properties", mcp.Description("Property map for the relation (e.g. {\"weight\": \"high\"})")),
 	)
 }
 

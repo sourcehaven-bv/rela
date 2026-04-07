@@ -335,6 +335,29 @@ func (w *Workspace) ValidateProperties(opts AnalyzeOptions) []PropertyError {
 	return allErrors
 }
 
+// RelationPropertyError represents a relation property validation error.
+type RelationPropertyError struct {
+	RelationKey  string // "from--type--to"
+	RelationType string
+	Errors       []*metamodel.ValidationError
+}
+
+// ValidateRelationProperties validates relation properties against the metamodel.
+func (w *Workspace) ValidateRelationProperties() []RelationPropertyError {
+	var allErrors []RelationPropertyError
+	for _, rel := range w.graph.AllEdges() {
+		errs := w.meta.ValidateRelationProperties(rel)
+		if len(errs) > 0 {
+			allErrors = append(allErrors, RelationPropertyError{
+				RelationKey:  rel.From + "--" + rel.Type + "--" + rel.To,
+				RelationType: rel.Type,
+				Errors:       errs,
+			})
+		}
+	}
+	return allErrors
+}
+
 // --- Custom Validations ---
 
 // ValidationViolation is re-exported from the validation package.

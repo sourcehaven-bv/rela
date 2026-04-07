@@ -399,30 +399,6 @@ func TestResolveWidget(t *testing.T) {
 	}
 }
 
-func TestWidgetToInputType(t *testing.T) {
-	tests := []struct {
-		widget string
-		want   string
-	}{
-		{WidgetTextarea, WidgetTextarea},
-		{WidgetSelect, WidgetSelect},
-		{WidgetMultiSelect, WidgetSelect},
-		{WidgetText, WidgetText},
-		{WidgetDate, WidgetDate},
-		{WidgetNumber, WidgetNumber},
-		{WidgetCheckbox, WidgetCheckbox},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.widget, func(t *testing.T) {
-			got := widgetToInputType(tt.widget)
-			if got != tt.want {
-				t.Errorf("widgetToInputType(%q) = %q, want %q", tt.widget, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestCoalesce(t *testing.T) {
 	tests := []struct {
 		name string

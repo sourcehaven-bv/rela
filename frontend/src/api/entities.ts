@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Entity, CreateEntity, ListResponse, ListParams, AnalyzeResult, Template } from '@/types'
+import type { Entity, CreateEntity, ListResponse, ListParams, AnalyzeResult, Template, RelationEntry } from '@/types'
 import { useSchemaStore } from '@/stores/schema'
 
 function getPlural(type: string): string {
@@ -63,9 +63,56 @@ export async function createRelation(
   type: string,
   entityId: string,
   relationName: string,
-  targetId: string
+  targetId: string,
+  meta?: Record<string, unknown>,
+  direction?: string
 ): Promise<void> {
-  return api.post(`/${getPlural(type)}/${entityId}/relations/${relationName}`, { id: targetId })
+  const body: { id: string; meta?: Record<string, unknown>; direction?: string } = { id: targetId }
+  if (meta && Object.keys(meta).length > 0) {
+    body.meta = meta
+  }
+  if (direction === 'incoming') {
+    body.direction = direction
+  }
+  return api.post(`/${getPlural(type)}/${entityId}/relations/${relationName}`, body)
+}
+
+export async function getEntityRelations(
+  type: string,
+  entityId: string,
+  relationName: string,
+  direction?: string
+): Promise<RelationEntry[]> {
+  const params = direction === 'incoming' ? { direction } : undefined
+  return api.get<RelationEntry[]>(
+    `/${getPlural(type)}/${entityId}/relations/${relationName}`,
+    params
+  )
+}
+
+export async function updateRelationProperties(
+  type: string,
+  entityId: string,
+  relationName: string,
+  targetId: string,
+  meta: Record<string, unknown>,
+  direction?: string
+): Promise<void> {
+  return api.patch(`/${getPlural(type)}/${entityId}/relations/${relationName}/${targetId}`, {
+    meta,
+    ...(direction === 'incoming' ? { direction } : {}),
+  })
+}
+
+export async function deleteRelation(
+  type: string,
+  entityId: string,
+  relationName: string,
+  targetId: string,
+  direction?: string
+): Promise<void> {
+  const query = direction === 'incoming' ? `?direction=${direction}` : ''
+  return api.delete(`/${getPlural(type)}/${entityId}/relations/${relationName}/${targetId}${query}`)
 }
 
 export async function toggleCheckbox(entityId: string, index: number): Promise<string> {

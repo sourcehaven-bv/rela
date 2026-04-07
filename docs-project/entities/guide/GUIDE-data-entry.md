@@ -346,10 +346,10 @@ Each entry in `relations:` configures a relation picker:
 | `target_type`  | string | Entity type of the related entity                              |
 | `label`        | string | Display label                                                  |
 | `required`     | bool   | At least one relation must be selected                         |
-| `widget`       | string | `"select"`, `"multi-select"`, or `"search"`                   |
+| `widget`       | string | `"select"`, `"multi-select"`, `"cards"`, or `"search"` (auto-detected) |
 | `allow_create` | bool   | Show an inline "create new" button                             |
 | `create_form`  | string | Form name to use for inline creation                           |
-| `properties`   | list   | Editable properties on the relation itself                     |
+| `properties`   | list   | Editable properties on the relation (only with `cards` widget) |
 
 **Relation widget types:**
 
@@ -357,7 +357,11 @@ Each entry in `relations:` configures a relation picker:
 | -------------- | ------------------------------------------------------------ |
 | `select`       | Dropdown listing all entities of the target type (pick one)  |
 | `multi-select` | Tag-style picker for selecting multiple entities             |
+| `cards`        | Card-based UI with inline property editing (auto-selected when relation has properties or content) |
 | `search`       | Type-ahead search field for large entity sets                |
+
+Widget is auto-detected based on metamodel: if the relation type has `properties` or `content: true` defined,
+the UI uses `cards`. Otherwise, cardinality determines `select` vs `multi-select`.
 
 **Inline creation:** When `allow_create: true` and `create_form` is set, a button appears next to
 the relation picker. Clicking it opens a modal with the referenced form, and the newly created
@@ -365,7 +369,8 @@ entity is automatically linked.
 
 ### Relation Properties
 
-Relations can have their own editable properties:
+When a relation type has `properties` defined in the metamodel, the `cards` widget is automatically
+used and you can configure which properties are editable in the form:
 
 ```yaml
 relations:
@@ -373,7 +378,7 @@ relations:
     direction: outgoing
     target_type: ticket
     label: "Blocks"
-    widget: search
+    # widget: cards  (auto-selected because 'blocks' has properties in metamodel)
     properties:
       - property: reason
         label: "Block Reason"

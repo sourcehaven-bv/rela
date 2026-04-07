@@ -66,8 +66,33 @@ relations:
     from: [ticket]
     to: [label]
     inverse: appliedTo
+    properties:
+      added_by:
+        type: string
+        description: Who added this tag
+      added_date:
+        type: date
+        description: When the tag was added
   blocks:
     label: blocks
     from: [ticket]
     to: [ticket]
     inverse: blockedBy
+    properties:
+      reason:
+        type: string
+        required: true
+        description: Why this ticket blocks the other
+      severity:
+        type: enum
+        values: [critical, high, medium, low]
+        default: medium
+      resolved_date:
+        type: date
+        description: When the blocker was resolved
+      impact_score:
+        type: integer
+        description: Impact score from 1-10
+      is_workaround_available:
+        type: boolean
+        description: Whether a workaround exists

@@ -27,6 +27,7 @@ const (
 	WidgetNumber      = "number"
 	WidgetDate        = "date"
 	WidgetRrule       = "rrule"
+	WidgetCards       = "cards" // card-based UI for relations with properties
 )
 
 // Direction represents the edge direction for relation columns and form relations.

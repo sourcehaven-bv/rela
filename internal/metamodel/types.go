@@ -128,7 +128,31 @@ type EntityDef struct {
 	BorderColor   string                 `yaml:"border_color,omitempty"`
 }
 
-// PropertyDef defines a property on an entity
+// PropertyDefs implements PropertySchema for EntityDef.
+func (e *EntityDef) PropertyDefs() map[string]PropertyDef {
+	return e.Properties
+}
+
+// HasContent implements PropertySchema for EntityDef.
+// Entities always support markdown body content.
+func (e *EntityDef) HasContent() bool {
+	return true
+}
+
+// Ensure EntityDef implements PropertySchema
+var _ PropertySchema = (*EntityDef)(nil)
+
+// PropertySchema abstracts property definitions for entities and relations.
+// Both EntityDef and RelationDef implement this interface, allowing shared
+// validation and form generation logic.
+type PropertySchema interface {
+	// PropertyDefs returns the property definitions map
+	PropertyDefs() map[string]PropertyDef
+	// HasContent returns true if markdown body content is supported
+	HasContent() bool
+}
+
+// PropertyDef defines a property on an entity or relation
 type PropertyDef struct {
 	Type        string   `yaml:"type"`
 	Required    bool     `yaml:"required,omitempty"`
@@ -206,7 +230,34 @@ type RelationDef struct {
 	MaxOutgoing *int        `yaml:"max_outgoing,omitempty"`
 	MinIncoming *int        `yaml:"min_incoming,omitempty"`
 	MaxIncoming *int        `yaml:"max_incoming,omitempty"`
+
+	// Properties defines typed properties that can be attached to relations of this type.
+	// Uses the same PropertyDef structure as entity properties.
+	Properties map[string]PropertyDef `yaml:"properties,omitempty"`
+
+	// Content indicates whether relations of this type support markdown body content.
+	// When true, the data-entry UI will show a content editor for the relation.
+	Content bool `yaml:"content,omitempty"`
 }
+
+// PropertyDefs implements PropertySchema for RelationDef.
+func (r *RelationDef) PropertyDefs() map[string]PropertyDef {
+	return r.Properties
+}
+
+// HasContent implements PropertySchema for RelationDef.
+func (r *RelationDef) HasContent() bool {
+	return r.Content
+}
+
+// HasAdvancedFeatures returns true if this relation type has properties or content,
+// indicating that the data-entry UI should use the advanced cards+modal interface.
+func (r *RelationDef) HasAdvancedFeatures() bool {
+	return len(r.Properties) > 0 || r.Content
+}
+
+// Ensure RelationDef implements PropertySchema
+var _ PropertySchema = (*RelationDef)(nil)
 
 // InverseDef defines the inverse of a relation.
 // Can be unmarshaled from either a simple string (inverse identifier only)

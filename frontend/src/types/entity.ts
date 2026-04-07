@@ -25,6 +25,12 @@ export interface CreateEntity {
   relations?: Record<string, string[]>
 }
 
+export interface RelationEntry {
+  id: string
+  direction?: 'outgoing' | 'incoming'
+  meta?: Record<string, unknown>
+}
+
 export interface ListResponse<T> {
   data: T[]
   meta: ListMeta

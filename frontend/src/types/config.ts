@@ -52,6 +52,12 @@ export interface FormField {
   hidden?: boolean
 }
 
+export interface RelationProperty {
+  property: string
+  label?: string
+  required?: boolean
+}
+
 export interface FormRelation {
   relation: string
   direction?: 'outgoing' | 'incoming'
@@ -61,6 +67,7 @@ export interface FormRelation {
   widget?: string
   allow_create?: boolean
   create_form?: string
+  properties?: RelationProperty[]
 }
 
 // Unified type for form fields that can be either property fields or relation fields
@@ -80,6 +87,7 @@ export interface FormFieldOrRelation {
   required?: boolean
   allow_create?: boolean
   create_form?: string
+  properties?: RelationProperty[]
   // Common props
   label?: string
   widget?: string

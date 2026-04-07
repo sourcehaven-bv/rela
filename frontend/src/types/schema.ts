@@ -38,6 +38,7 @@ export interface RelationType {
   max_outgoing?: number
   min_incoming?: number
   max_incoming?: number
+  properties?: Record<string, PropertyDef>
 }
 
 export interface InverseDef {

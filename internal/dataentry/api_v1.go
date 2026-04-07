@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -87,16 +88,33 @@ type V1PropertyDef struct {
 	List        bool     `json:"list,omitempty"`
 }
 
+func (a *App) toV1PropertyDef(propDef metamodel.PropertyDef) V1PropertyDef {
+	pd := V1PropertyDef{
+		Type:        propDef.Type,
+		Required:    propDef.Required,
+		Default:     propDef.Default,
+		Description: propDef.Description,
+		List:        propDef.List,
+	}
+	if ct, ok := a.meta.Types[propDef.Type]; ok {
+		pd.Values = ct.Values
+	} else if len(propDef.Values) > 0 {
+		pd.Values = propDef.Values
+	}
+	return pd
+}
+
 // V1RelationType is the JSON representation of a relation type.
 type V1RelationType struct {
-	Label       string   `json:"label"`
-	Description string   `json:"description,omitempty"`
-	From        []string `json:"from"`
-	To          []string `json:"to"`
-	MinOutgoing *int     `json:"min_outgoing,omitempty"`
-	MaxOutgoing *int     `json:"max_outgoing,omitempty"`
-	MinIncoming *int     `json:"min_incoming,omitempty"`
-	MaxIncoming *int     `json:"max_incoming,omitempty"`
+	Label       string                   `json:"label"`
+	Description string                   `json:"description,omitempty"`
+	From        []string                 `json:"from"`
+	To          []string                 `json:"to"`
+	MinOutgoing *int                     `json:"min_outgoing,omitempty"`
+	MaxOutgoing *int                     `json:"max_outgoing,omitempty"`
+	MinIncoming *int                     `json:"min_incoming,omitempty"`
+	MaxIncoming *int                     `json:"max_incoming,omitempty"`
+	Properties  map[string]V1PropertyDef `json:"properties,omitempty"`
 }
 
 // V1CustomType is the JSON representation of a custom type.
@@ -590,6 +608,15 @@ func (a *App) handleV1EntityRelationType(w http.ResponseWriter, r *http.Request,
 	}
 }
 
+// resolveRelationEndpoints returns the from/to entity IDs for a relation operation,
+// swapping them when direction is incoming.
+func resolveRelationEndpoints(entityID, peerID, direction string) (from, to string) {
+	if direction == string(DirectionIncoming) {
+		return peerID, entityID
+	}
+	return entityID, peerID
+}
+
 func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
 	entity, found := a.g.GetNode(entityID)
 	if !found || entity.Type != typeName {
@@ -597,15 +624,27 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		return
 	}
 
-	edges := a.g.OutgoingEdges(entityID)
+	incoming := r.URL.Query().Get("direction") == string(DirectionIncoming)
+
+	var edges []*model.Relation
+	if incoming {
+		edges = a.g.IncomingEdges(entityID)
+	} else {
+		edges = a.g.OutgoingEdges(entityID)
+	}
+
 	relations := make([]map[string]interface{}, 0, len(edges))
 
 	for _, edge := range edges {
 		if edge.Type != relType {
 			continue
 		}
+		peerID := edge.To
+		if incoming {
+			peerID = edge.From
+		}
 		rel := map[string]interface{}{
-			"id": edge.To,
+			"id": peerID,
 		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
@@ -632,8 +671,9 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	}
 
 	var req struct {
-		ID         string                 `json:"id"`
-		Properties map[string]interface{} `json:"meta,omitempty"`
+		ID        string                 `json:"id"`
+		Meta      map[string]interface{} `json:"meta,omitempty"`
+		Direction string                 `json:"direction,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -647,11 +687,13 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	}
 
 	var opts []workspace.CreateRelationOptions
-	if len(req.Properties) > 0 {
-		opts = append(opts, workspace.CreateRelationOptions{Properties: req.Properties})
+	if len(req.Meta) > 0 {
+		opts = append(opts, workspace.CreateRelationOptions{Properties: req.Meta})
 	}
 
-	_, err := a.ws.CreateRelation(entity.ID, relType, req.ID, opts...)
+	from, to := resolveRelationEndpoints(entity.ID, req.ID, req.Direction)
+
+	_, err := a.ws.CreateRelation(from, relType, to, opts...)
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())
 		return
@@ -661,11 +703,17 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 }
 
 func (a *App) handleV1RelationTarget(w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string) {
-	if r.Method != http.MethodDelete {
+	switch r.Method {
+	case http.MethodPatch:
+		a.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
+	case http.MethodDelete:
+		a.handleV1DeleteRelation(w, r, typeName, entityID, relType, targetID)
+	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
-		return
 	}
+}
 
+func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string) {
 	// Need write lock
 	a.mu.RUnlock()
 	a.mu.Lock()
@@ -680,7 +728,55 @@ func (a *App) handleV1RelationTarget(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	if err := a.ws.DeleteRelation(entity.ID, relType, targetID); err != nil {
+	var req struct {
+		Meta      map[string]interface{} `json:"meta"`
+		Direction string                 `json:"direction,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
+		return
+	}
+
+	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
+
+	rel, err := a.ws.UpdateRelation(from, relType, to, workspace.CreateRelationOptions{
+		Properties: req.Meta,
+	})
+	if err != nil {
+		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
+		return
+	}
+
+	result := map[string]interface{}{
+		"from": rel.From,
+		"type": rel.Type,
+		"to":   rel.To,
+	}
+	if len(rel.Properties) > 0 {
+		result["meta"] = rel.Properties
+	}
+
+	writeV1JSON(w, http.StatusOK, result)
+}
+
+func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string) {
+	// Need write lock
+	a.mu.RUnlock()
+	a.mu.Lock()
+	defer func() {
+		a.mu.Unlock()
+		a.mu.RLock()
+	}()
+
+	entity, found := a.g.GetNode(entityID)
+	if !found || entity.Type != typeName {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	}
+
+	from, to := resolveRelationEndpoints(entity.ID, targetID, r.URL.Query().Get("direction"))
+
+	if err := a.ws.DeleteRelation(from, relType, to); err != nil {
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
 		return
 	}
@@ -772,25 +868,13 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 			et.IDPrefix = def.GetIDPrefixes()[0]
 		}
 		for propName, propDef := range def.Properties {
-			pd := V1PropertyDef{
-				Type:        propDef.Type,
-				Required:    propDef.Required,
-				Default:     propDef.Default,
-				Description: propDef.Description,
-				List:        propDef.List,
-			}
-			if ct, ok := a.meta.Types[propDef.Type]; ok {
-				pd.Values = ct.Values
-			} else if len(propDef.Values) > 0 {
-				pd.Values = propDef.Values
-			}
-			et.Properties[propName] = pd
+			et.Properties[propName] = a.toV1PropertyDef(propDef)
 		}
 		schema.Entities[name] = et
 	}
 
 	for name, def := range a.meta.Relations {
-		schema.Relations[name] = V1RelationType{
+		rt := V1RelationType{
 			Label:       def.Label,
 			Description: def.Description,
 			From:        def.From,
@@ -800,6 +884,13 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 			MinIncoming: def.MinIncoming,
 			MaxIncoming: def.MaxIncoming,
 		}
+		if len(def.Properties) > 0 {
+			rt.Properties = make(map[string]V1PropertyDef, len(def.Properties))
+			for propName, propDef := range def.Properties {
+				rt.Properties[propName] = a.toV1PropertyDef(propDef)
+			}
+		}
+		schema.Relations[name] = rt
 	}
 
 	for name, def := range a.meta.Types {
@@ -874,13 +965,30 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
+	// Resolve relation widgets: auto-detect "cards" for relations with properties/content
+	forms := make(map[string]dataentryconfig.Form, len(a.Cfg.Forms))
+	for id, form := range a.Cfg.Forms {
+		f := form
+		resolved := make([]dataentryconfig.FormRelation, len(f.Relations))
+		copy(resolved, f.Relations)
+		for i := range resolved {
+			if resolved[i].Widget == "" {
+				if def, ok := a.meta.GetRelationDef(resolved[i].Relation); ok && def.HasAdvancedFeatures() {
+					resolved[i].Widget = WidgetCards
+				}
+			}
+		}
+		f.Relations = resolved
+		forms[id] = f
+	}
+
 	config := V1Config{
 		App: V1AppConfig{
 			Name:        a.Cfg.App.Name,
 			Description: a.Cfg.App.Description,
 		},
 		Styles:     a.styleMap,
-		Forms:      a.Cfg.Forms,
+		Forms:      forms,
 		Lists:      a.Cfg.Lists,
 		Views:      a.Cfg.Views,
 		Kanbans:    a.Cfg.Kanbans,

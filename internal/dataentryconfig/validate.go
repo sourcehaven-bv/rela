@@ -94,6 +94,7 @@ var validRelationWidgets = map[string]bool{
 	"":                true, // default (auto-detect from cardinality)
 	WidgetSelect:      true,
 	WidgetMultiSelect: true,
+	WidgetCards:       true,
 }
 
 // ValidateConfig performs comprehensive validation of a data-entry config.
@@ -242,7 +243,7 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 			// Validate widget
 			if !validRelationWidgets[r.Widget] {
 				errs = append(errs, fmt.Sprintf(
-					"form %q: relation[%d] has invalid widget %q (valid: select, multi-select)",
+					"form %q: relation[%d] has invalid widget %q (valid: select, multi-select, cards)",
 					formID, i, r.Widget))
 			}
 

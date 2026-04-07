@@ -235,56 +235,112 @@ This catches issues in manually-edited markdown files that bypass CLI validation
 	},
 }
 
-// runPropertyValidation validates entity properties against the metamodel.
+// runPropertyValidation validates entity and relation properties against the metamodel.
 func runPropertyValidation(opts workspace.AnalyzeOptions) error {
-	allErrors := ws.ValidateProperties(opts)
+	allEntityErrors := ws.ValidateProperties(opts)
+	allRelationErrors := ws.ValidateRelationProperties()
+
 	errorCount := 0
-	for _, ee := range allErrors {
+	for _, ee := range allEntityErrors {
 		errorCount += len(ee.Errors)
 	}
+	for _, re := range allRelationErrors {
+		errorCount += len(re.Errors)
+	}
 
-	// Handle JSON output format
 	if out.Format == "json" {
-		var results []output.PropertyValidationResult
-		for _, ee := range allErrors {
-			errStrings := make([]string, len(ee.Errors))
-			for i, err := range ee.Errors {
-				errStrings[i] = err.Message
-			}
-			results = append(results, output.PropertyValidationResult{
-				EntityID:   ee.EntityID,
-				EntityType: ee.EntityType,
-				Errors:     errStrings,
-			})
-		}
+		return writePropertyValidationJSON(allEntityErrors, allRelationErrors, errorCount)
+	}
 
-		status := "success"
-		message := "All entity properties are valid"
-		if errorCount > 0 {
-			status = "error"
-			message = fmt.Sprintf("Found %d property errors across %d entities", errorCount, len(allErrors))
-		}
+	return writePropertyValidationText(allEntityErrors, allRelationErrors, errorCount)
+}
 
-		return out.WriteAnalysisResult(output.AnalysisResult{
-			Status:  status,
-			Message: message,
-			Count:   errorCount,
-			Details: results,
+func writePropertyValidationJSON(
+	allEntityErrors []workspace.PropertyError,
+	allRelationErrors []workspace.RelationPropertyError,
+	errorCount int,
+) error {
+	entityResults := make([]output.PropertyValidationResult, 0, len(allEntityErrors))
+	for _, ee := range allEntityErrors {
+		errStrings := make([]string, len(ee.Errors))
+		for i, err := range ee.Errors {
+			errStrings[i] = err.Message
+		}
+		entityResults = append(entityResults, output.PropertyValidationResult{
+			EntityID:   ee.EntityID,
+			EntityType: ee.EntityType,
+			Errors:     errStrings,
 		})
 	}
 
-	// Text output format
+	relationResults := make([]output.RelationPropertyValidationResult, 0, len(allRelationErrors))
+	for _, re := range allRelationErrors {
+		errStrings := make([]string, len(re.Errors))
+		for i, err := range re.Errors {
+			errStrings[i] = err.Message
+		}
+		relationResults = append(relationResults, output.RelationPropertyValidationResult{
+			RelationKey:  re.RelationKey,
+			RelationType: re.RelationType,
+			Errors:       errStrings,
+		})
+	}
+
+	status := "success"
+	message := "All entity and relation properties are valid"
+	if errorCount > 0 {
+		status = "error"
+		message = fmt.Sprintf("Found %d property errors across %d entities and %d relations",
+			errorCount, len(allEntityErrors), len(allRelationErrors))
+	}
+
+	details := make(map[string]interface{})
+	if len(entityResults) > 0 {
+		details["entities"] = entityResults
+	}
+	if len(relationResults) > 0 {
+		details["relations"] = relationResults
+	}
+
+	return out.WriteAnalysisResult(output.AnalysisResult{
+		Status:  status,
+		Message: message,
+		Count:   errorCount,
+		Details: details,
+	})
+}
+
+func writePropertyValidationText(
+	allEntityErrors []workspace.PropertyError,
+	allRelationErrors []workspace.RelationPropertyError,
+	errorCount int,
+) error {
 	if errorCount == 0 {
-		out.WriteSuccess("All entity properties are valid")
+		out.WriteSuccess("All entity and relation properties are valid")
 		return nil
 	}
 
-	out.WriteError("Found %d property errors across %d entities:", errorCount, len(allErrors))
-	for _, ee := range allErrors {
+	out.WriteError("Found %d property errors:", errorCount)
+
+	if len(allEntityErrors) > 0 {
 		out.WriteMessage("")
-		out.WriteMessage("  %s (%s):", ee.EntityID, ee.EntityType)
-		for _, err := range ee.Errors {
-			out.WriteMessage("    - %s", err.Error())
+		out.WriteMessage("Entities (%d):", len(allEntityErrors))
+		for _, ee := range allEntityErrors {
+			out.WriteMessage("  %s (%s):", ee.EntityID, ee.EntityType)
+			for _, err := range ee.Errors {
+				out.WriteMessage("    - %s", err.Error())
+			}
+		}
+	}
+
+	if len(allRelationErrors) > 0 {
+		out.WriteMessage("")
+		out.WriteMessage("Relations (%d):", len(allRelationErrors))
+		for _, re := range allRelationErrors {
+			out.WriteMessage("  %s:", re.RelationKey)
+			for _, err := range re.Errors {
+				out.WriteMessage("    - %s", err.Error())
+			}
 		}
 	}
 

@@ -24,6 +24,26 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 )
 
+// ResolvedField represents a form field with all values resolved for rendering.
+// Used by form templates to render property inputs consistently.
+type ResolvedField struct {
+	Name           string              // HTML input name attribute (defaults to Property if empty)
+	Property       string              // Property name (used for IDs)
+	Label          string              // Display label
+	Placeholder    string              // Input placeholder
+	Help           string              // Help text shown below field
+	Required       bool                // Field is required
+	Default        string              // Default value
+	Value          string              // Current value
+	SelectedValues []string            // For multi-select widgets
+	Hidden         bool                // Field is hidden (rendered as hidden input)
+	Widget         string              // Widget type: text, textarea, select, multi-select, checkbox
+	InputType      string              // HTML input type: text, date, number, etc.
+	Values         []string            // Allowed values for select/multi-select
+	Transitions    map[string][]string // Status transitions (for workflow fields)
+	Error          string              // Validation error message
+}
+
 // propertyContains checks if a property value contains the given string.
 // Handles string, []string, and []interface{} property types.
 func propertyContains(prop interface{}, value string) bool {
@@ -145,18 +165,6 @@ func resolveWidget(prop metamodel.PropertyDef, meta *metamodel.Metamodel) string
 	}
 
 	return meta.ResolveWidgetFromType(prop.Type)
-}
-
-// widgetToInputType maps a widget name to an HTML input type.
-func widgetToInputType(widget string) string {
-	switch widget {
-	case WidgetTextarea:
-		return WidgetTextarea
-	case WidgetSelect, WidgetMultiSelect:
-		return WidgetSelect
-	default:
-		return widget
-	}
 }
 
 // coalesce returns the first non-empty string.
