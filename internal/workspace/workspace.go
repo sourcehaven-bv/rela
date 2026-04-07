@@ -8,7 +8,7 @@ package workspace
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -148,7 +148,7 @@ func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
 	if !needsSync {
 		if cacheErr := repo.LoadCache(g); cacheErr != nil {
 			if errors.Is(cacheErr, repository.ErrCacheVersionMismatch) {
-				log.Printf("Cache outdated, rebuilding: %v", cacheErr)
+				slog.Warn("cache outdated, rebuilding", "error", cacheErr)
 			}
 			needsSync = true
 		}
@@ -159,7 +159,7 @@ func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
 		}
 		// Save the new cache after sync
 		if saveErr := repo.SaveCache(g); saveErr != nil {
-			log.Printf("Warning: failed to save cache: %v", saveErr)
+			slog.Warn("failed to save cache", "error", saveErr)
 		}
 	}
 
@@ -194,11 +194,11 @@ func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
 	// Initialize search index for test workspaces.
 	idx, err := search.NewIndex()
 	if err != nil {
-		log.Printf("Warning: failed to create test search index: %v", err)
+		slog.Warn("failed to create test search index", "error", err)
 	} else {
 		docs := entitiesToSearchDocuments(g.AllNodes(), meta)
 		if indexErr := idx.IndexBatch(docs); indexErr != nil {
-			log.Printf("Warning: failed to index test entities: %v", indexErr)
+			slog.Warn("failed to index test entities", "error", indexErr)
 		}
 		ws.searchIdx = idx
 	}
@@ -217,11 +217,11 @@ func newWorkspace(
 	// Create search index and index all entities.
 	searchIdx, err := search.NewIndex()
 	if err != nil {
-		log.Printf("Warning: failed to create search index: %v", err)
+		slog.Warn("failed to create search index", "error", err)
 	} else {
 		docs := entitiesToSearchDocuments(g.AllNodes(), meta)
 		if err := searchIdx.IndexBatch(docs); err != nil {
-			log.Printf("Warning: failed to index entities: %v", err)
+			slog.Warn("failed to index entities", "error", err)
 		}
 	}
 
@@ -231,7 +231,7 @@ func newWorkspace(
 		var err error
 		cfg, err = project.LoadConfig(repo.Paths())
 		if err != nil {
-			log.Printf("Warning: failed to load config: %v", err)
+			slog.Warn("failed to load config", "error", err)
 			cfg = project.DefaultConfig()
 		}
 	} else {
@@ -370,7 +370,7 @@ func (w *Workspace) reloadLocked() (*model.SyncResult, error) {
 	newMeta, err := w.repo.LoadMetamodel()
 	if err != nil {
 		if migration.IsMigrationError(err) {
-			log.Printf("Metamodel needs migration, skipping reload: run 'rela migrate'")
+			slog.Warn("metamodel needs migration, skipping reload: run 'rela migrate'")
 			// Sync with current meta even if metamodel file changed.
 			return w.repo.Sync(w.meta, w.graph)
 		}
@@ -402,18 +402,18 @@ func (w *Workspace) reloadLocked() (*model.SyncResult, error) {
 func (w *Workspace) rebuildSearchIndex() {
 	if w.searchIdx != nil {
 		if err := w.searchIdx.Close(); err != nil {
-			log.Printf("Warning: failed to close search index: %v", err)
+			slog.Warn("failed to close search index", "error", err)
 		}
 	}
 	idx, err := search.NewIndex()
 	if err != nil {
-		log.Printf("Warning: failed to create search index: %v", err)
+		slog.Warn("failed to create search index", "error", err)
 		w.searchIdx = nil
 		return
 	}
 	docs := entitiesToSearchDocuments(w.graph.AllNodes(), w.meta)
 	if err := idx.IndexBatch(docs); err != nil {
-		log.Printf("Warning: failed to index entities: %v", err)
+		slog.Warn("failed to index entities", "error", err)
 	}
 	w.searchIdx = idx
 }
@@ -428,7 +428,7 @@ func (w *Workspace) indexEntity(entity *model.Entity) {
 	if idx != nil {
 		doc := entityToSearchDocument(entity, meta)
 		if err := idx.Index(doc); err != nil {
-			log.Printf("Warning: failed to index entity %s: %v", entity.ID, err)
+			slog.Warn("failed to index entity", "id", entity.ID, "error", err)
 		}
 	}
 }
@@ -441,7 +441,7 @@ func (w *Workspace) removeFromIndex(id string) {
 
 	if idx != nil {
 		if err := idx.Remove(id); err != nil {
-			log.Printf("Warning: failed to remove entity %s from index: %v", id, err)
+			slog.Warn("failed to remove entity from index", "id", id, "error", err)
 		}
 	}
 }
@@ -453,7 +453,7 @@ func (w *Workspace) SaveCache() error {
 
 func (w *Workspace) saveCacheQuietly() {
 	if err := w.repo.SaveCache(w.graph); err != nil {
-		log.Printf("Warning: failed to save cache: %v", err)
+		slog.Warn("failed to save cache", "error", err)
 	}
 }
 
@@ -677,14 +677,14 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 	// Delete relations first.
 	for _, rel := range incoming {
 		if err := w.repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil {
-			log.Printf("Warning: failed to delete relation %s--%s-->%s: %v", rel.From, rel.Type, rel.To, err)
+			slog.Warn("failed to delete relation", "from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
 		}
 		w.graph.RemoveEdge(rel.From, rel.Type, rel.To)
 		result.RelationsDeleted++
 	}
 	for _, rel := range outgoing {
 		if err := w.repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil {
-			log.Printf("Warning: failed to delete relation %s--%s-->%s: %v", rel.From, rel.Type, rel.To, err)
+			slog.Warn("failed to delete relation", "from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
 		}
 		w.graph.RemoveEdge(rel.From, rel.Type, rel.To)
 		result.RelationsDeleted++
@@ -1316,7 +1316,7 @@ func (w *Workspace) StartWatching(opts WatchOptions) error {
 		w.mu.Unlock()
 
 		if reloadErr != nil {
-			log.Printf("Reload error: %v", reloadErr)
+			slog.Error("reload error", "error", reloadErr)
 		}
 		if opts.OnReload != nil {
 			opts.OnReload(events)

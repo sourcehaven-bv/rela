@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,7 +79,7 @@ func (e *luaExecutor) validate(
 		var err error
 		code, err = e.loadScript(rule.LuaFile)
 		if err != nil {
-			log.Printf("validation rule %q: %v", rule.Name, err)
+			slog.Warn("validation rule failed to load script", "rule", rule.Name, "error", err)
 			return nil // fail open - skip rule on load error
 		}
 	}
@@ -104,7 +104,7 @@ func (e *luaExecutor) validate(
 	// Compile the code into a function
 	fn, err := ls.LoadString(code)
 	if err != nil {
-		log.Printf("validation rule %q: Lua compile error: %v", rule.Name, err)
+		slog.Warn("validation rule Lua compile error", "rule", rule.Name, "error", err)
 		return nil // fail open - skip rule on compile error
 	}
 
@@ -116,7 +116,7 @@ func (e *luaExecutor) validate(
 	// Push the function and call it with 0 args, expecting 1 return value
 	ls.Push(fn)
 	if err := ls.PCall(0, 1, nil); err != nil {
-		log.Printf("validation rule %q: Lua runtime error: %v", rule.Name, err)
+		slog.Warn("validation rule Lua runtime error", "rule", rule.Name, "error", err)
 		return nil // fail open - skip rule on runtime error
 	}
 
@@ -140,8 +140,8 @@ func (e *luaExecutor) parseReturnValue(
 	// Must be a table
 	tbl, ok := ret.(*golua.LTable)
 	if !ok {
-		log.Printf("validation rule %q: Lua must return nil or table, got %s",
-			rule.Name, ret.Type().String())
+		slog.Warn("validation rule must return nil or table",
+			"rule", rule.Name, "got", ret.Type().String())
 		return nil // fail open
 	}
 
@@ -181,7 +181,7 @@ func (e *luaExecutor) tableToViolation(
 	msgVal := tbl.RawGetString("message")
 	msg, ok := msgVal.(golua.LString)
 	if !ok || msg == "" {
-		log.Printf("validation rule %q: violation table missing 'message' field", rule.Name)
+		slog.Warn("validation rule violation table missing 'message' field", "rule", rule.Name)
 		return nil
 	}
 

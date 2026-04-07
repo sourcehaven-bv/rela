@@ -3,7 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -834,7 +835,7 @@ func makeTestServerWithViews(t *testing.T, viewsYAML string) *Server {
 	ws := workspace.NewWithGraph(repo, meta, g)
 	return &Server{
 		ws:     ws,
-		logger: log.New(&strings.Builder{}, "", 0),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

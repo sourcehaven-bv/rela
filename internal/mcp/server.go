@@ -2,8 +2,7 @@
 package mcp
 
 import (
-	"log"
-	"os"
+	"log/slog"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -15,16 +14,14 @@ import (
 type Server struct {
 	mcp    *server.MCPServer
 	ws     *workspace.Workspace
-	logger *log.Logger
+	logger *slog.Logger
 }
 
 // NewServer creates a new MCP server for a rela project.
 func NewServer(ws *workspace.Workspace, version string) *Server {
-	logger := log.New(os.Stderr, "[rela-mcp] ", log.LstdFlags)
-
 	s := &Server{
 		ws:     ws,
-		logger: logger,
+		logger: slog.Default().With("component", "mcp"),
 	}
 
 	mcpServer := server.NewMCPServer(
@@ -53,12 +50,12 @@ func NewServer(ws *workspace.Workspace, version string) *Server {
 
 // Serve starts the MCP server on stdio.
 func (s *Server) Serve() error {
-	s.logger.Println("Starting rela MCP server on stdio")
+	s.logger.Info("starting rela MCP server on stdio")
 
 	// Start file watcher via workspace
 	if err := s.ws.StartWatching(workspace.WatchOptions{
 		OnReload: func(_ []workspace.ChangeEvent) {
-			s.logger.Println("Graph re-synced from file changes")
+			s.logger.Info("graph re-synced from file changes")
 			if s.mcp != nil {
 				s.mcp.SendNotificationToAllClients(
 					mcpgo.MethodNotificationResourcesListChanged, nil,
@@ -66,10 +63,13 @@ func (s *Server) Serve() error {
 			}
 		},
 	}); err != nil {
-		s.logger.Printf("Warning: file watcher not started: %v", err)
+		s.logger.Warn("file watcher not started", "error", err)
 	}
 
 	defer s.ws.StopWatching()
 
-	return server.ServeStdio(s.mcp, server.WithErrorLogger(s.logger))
+	// mcp-go's WithErrorLogger expects a stdlib *log.Logger; bridge to slog
+	// so all output flows through the configured slog handler.
+	bridged := slog.NewLogLogger(s.logger.Handler(), slog.LevelError)
+	return server.ServeStdio(s.mcp, server.WithErrorLogger(bridged))
 }

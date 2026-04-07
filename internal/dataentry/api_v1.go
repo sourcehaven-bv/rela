@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -1289,7 +1289,7 @@ func (a *App) applyV1Filters(entities []*model.Entity, query map[string][]string
 					// Type mismatch (e.g. property is a date, filter value isn't).
 					// Exclude the entity rather than silently lying via lexicographic
 					// fallback. Log so users notice.
-					log.Printf("filter compare error on property %q: %v", property, err)
+					slog.Warn("filter compare error", "property", property, "error", err)
 					continue
 				}
 				if match {

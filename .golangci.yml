@@ -27,6 +27,7 @@ linters:
     # Additional linters - Code Quality
     - bodyclose         # Check whether HTTP response body is closed
     # - copyloopvar     # Detect loop variable copy issues (requires Go 1.22+)
+    - depguard          # Forbid specific imports (enforces log/slog over stdlib log)
     - dupl              # Detect duplicate code
     - durationcheck     # Check for two durations multiplied together
     - errname           # Check that sentinel errors are prefixed with Err
@@ -76,6 +77,28 @@ linters:
     - whitespace        # Check for unnecessary newlines
 
 linters-settings:
+  depguard:
+    rules:
+      # Force the use of log/slog instead of the stdlib "log" package.
+      # The stdlib log package is global mutable state, has no levels, and
+      # is not safe to capture from parallel tests. See the adopt-slog
+      # refactor for the migration rationale.
+      #
+      # Note: `deny.pkg: log` matches `log/slog` too because depguard uses
+      # prefix matching, so we allow `log/slog` explicitly via `allow`.
+      no-stdlib-log:
+        list-mode: lax
+        allow:
+          - "log/slog"
+        deny:
+          - pkg: "log"
+            desc: "use log/slog instead of stdlib log; the stdlib log package is global mutable state with no levels and races with parallel tests"
+        files:
+          # internal/mcp must bridge to mcp-go's WithErrorLogger which
+          # takes a *log.Logger. It builds one via slog.NewLogLogger so
+          # everything still flows through the slog handler.
+          - "!**/internal/mcp/server.go"
+
   dupl:
     threshold: 150
 

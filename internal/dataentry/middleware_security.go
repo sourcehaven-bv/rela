@@ -2,7 +2,7 @@ package dataentry
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -156,12 +156,11 @@ func (s *security) reject(w http.ResponseWriter, r *http.Request, reason string)
 	if origin == "" {
 		origin = r.Header.Get("Referer")
 	}
-	log.Printf(
-		"security: blocked rule=%s host=%s origin=%s path=%s",
-		reason,
-		strconv.Quote(truncate(r.Host, 200)),
-		strconv.Quote(truncate(origin, 200)),
-		strconv.Quote(truncate(r.URL.Path, 200)),
+	slog.Warn("security blocked request",
+		"rule", reason,
+		"host", strconv.Quote(truncate(r.Host, 200)),
+		"origin", strconv.Quote(truncate(origin, 200)),
+		"path", strconv.Quote(truncate(r.URL.Path, 200)),
 	)
 
 	w.Header().Set("Content-Type", "application/json")

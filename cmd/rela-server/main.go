@@ -9,7 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -40,16 +40,22 @@ func main() {
 	var allowedOrigins stringSliceFlag
 	flag.Var(&allowedOrigins, "allowed-origin",
 		"Extra origin permitted to call the API (repeatable). Used for dev servers like Vite on http://localhost:5173.")
+	verbose := flag.Bool("verbose", false, "Verbose (debug) logging")
+	quiet := flag.Bool("quiet", false, "Quiet (warn-only) logging")
 	flag.Parse()
+
+	configureLogging(*verbose, *quiet)
 
 	repo, err := createRepo(*projectDir)
 	if err != nil {
-		log.Fatalf("Failed to initialize repository: %v", err)
+		slog.Error("failed to initialize repository", "error", err)
+		os.Exit(1)
 	}
 
 	ws, err := workspace.New(repo, script.NewEngine())
 	if err != nil {
-		log.Fatalf("Failed to initialize workspace: %v", err)
+		slog.Error("failed to initialize workspace", "error", err)
+		os.Exit(1)
 	}
 
 	app, err := dataentry.NewApp(ws)
@@ -62,16 +68,16 @@ func main() {
 			}
 			os.Exit(1)
 		}
-		log.Fatalf("Failed to initialize: %v", err)
+		slog.Error("failed to initialize", "error", err)
+		os.Exit(1)
 	}
 
 	// Start file watcher for live-reload.
-	// The watcher goroutine is cleaned up on process exit; no explicit stop
-	// is needed since log.Fatal calls os.Exit.
+	// The watcher goroutine is cleaned up on process exit.
 	if err := app.StartWatching(); err != nil {
-		log.Printf("Warning: file watcher not started: %v", err)
+		slog.Warn("file watcher not started", "error", err)
 	} else {
-		log.Println("File watcher started for live-reload")
+		slog.Info("file watcher started for live-reload")
 	}
 
 	addr := net.JoinHostPort(*bind, *port)
@@ -79,7 +85,8 @@ func main() {
 		BindAddress:    addr,
 		AllowedOrigins: allowedOrigins,
 	}); err != nil {
-		log.Fatalf("Invalid security configuration: %v", err)
+		slog.Error("invalid security configuration", "error", err)
+		os.Exit(1)
 	}
 
 	handler := app.NewRouter()
@@ -101,11 +108,27 @@ func main() {
 	}
 
 	if !isLoopbackHost(*bind) {
-		log.Printf("WARNING: rela-server bound to %q, exposing it beyond loopback. "+
-			"See docs/security.md for the threat model.", *bind)
+		slog.Warn("rela-server bound beyond loopback; see docs/security.md for threat model",
+			"bind", *bind)
 	}
-	log.Printf("Starting %s on http://%s", app.Cfg.App.Name, addr)
-	log.Fatal(srv.ListenAndServe())
+	slog.Info("starting server", "name", app.Cfg.App.Name, "addr", "http://"+addr)
+	if err := srv.ListenAndServe(); err != nil {
+		slog.Error("server stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+// configureLogging sets the default slog logger based on verbose/quiet flags.
+func configureLogging(verbose, quiet bool) {
+	level := slog.LevelInfo
+	switch {
+	case verbose:
+		level = slog.LevelDebug
+	case quiet:
+		level = slog.LevelWarn
+	}
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	slog.SetDefault(slog.New(handler))
 }
 
 // isLoopbackHost reports whether host is the loopback interface.

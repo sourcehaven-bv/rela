@@ -3,7 +3,7 @@ package dataentry
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -95,7 +95,7 @@ func (a *App) StartWatching() error {
 		ExtraDirs:  []string{metamodelDir},
 		OnReload: func(events []workspace.ChangeEvent) {
 			for _, e := range events {
-				log.Printf("File changed: %s (%s)", e.Path, e.Op)
+				slog.Debug("file changed", "path", e.Path, "op", e.Op)
 			}
 			a.onReload(events)
 			a.broker.broadcast("refresh")
@@ -126,7 +126,7 @@ func (a *App) StartGitFetch() (stop func()) {
 			select {
 			case <-ticker.C:
 				if err := gitOps.Fetch(); err != nil {
-					log.Printf("Git fetch error: %v", err)
+					slog.Warn("git fetch error", "error", err)
 				} else {
 					// Broadcast git status update so UI can refresh
 					a.broker.broadcast("git")
@@ -138,7 +138,7 @@ func (a *App) StartGitFetch() (stop func()) {
 		}
 	}()
 
-	log.Printf("Git background fetch started (every %v)", interval)
+	slog.Info("git background fetch started", "interval", interval)
 	return func() {
 		close(done)
 	}
@@ -172,14 +172,14 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 	if needConfigReload {
 		cfgData, err := a.ws.ReadProjectFile(ConfigFile)
 		if err != nil {
-			log.Printf("Config reload error: %v", err)
+			slog.Warn("config reload error", "error", err)
 		} else {
 			var cfg Config
 			if unmarshalErr := yaml.Unmarshal(cfgData, &cfg); unmarshalErr != nil {
-				log.Printf("Config parse error: %v", unmarshalErr)
+				slog.Warn("config parse error", "error", unmarshalErr)
 			} else {
 				a.Cfg = &cfg
-				log.Println("Config reloaded")
+				slog.Info("config reloaded")
 			}
 		}
 	}

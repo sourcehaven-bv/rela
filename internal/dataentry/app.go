@@ -3,7 +3,7 @@ package dataentry
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -117,7 +117,7 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		}
 	}
 
-	log.Printf("Loaded %d entities and %d relations", g.NodeCount(), g.EdgeCount())
+	slog.Info("loaded project graph", "entities", g.NodeCount(), "relations", g.EdgeCount())
 
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(&cfg, meta)
@@ -143,7 +143,7 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 	// Initialize git ops if enabled and repo is a git repository
 	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(ws.Paths().Root) {
 		app.gitOps = git.NewOps(ws.Paths().Root, *cfg.Git)
-		log.Printf("Git sync enabled (mode: %s)", cfg.Git.Mode)
+		slog.Info("git sync enabled", "mode", cfg.Git.Mode)
 	}
 
 	return app, nil
