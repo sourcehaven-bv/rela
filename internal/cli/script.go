@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -64,7 +66,19 @@ Example:
 		if scriptOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
 		}
-		if provider := ai.LoadProvider(projectCtx.CacheDir); provider != nil {
+		// AI is often the whole point of running a script, so a
+		// misconfigured ai.yaml should surface immediately rather
+		// than silently disable AI and let the script blow up later
+		// with a not_configured error. ErrConfigNotFound is the
+		// normal "no AI" state and is not propagated.
+		provider, err := ai.LoadProvider(projectCtx.CacheDir)
+		switch {
+		case errors.Is(err, ai.ErrConfigNotFound):
+			// no AI configured; the Lua bindings will return
+			// not_configured if the script tries to call ai.*
+		case err != nil:
+			return fmt.Errorf("ai: %w", err)
+		default:
 			opts = append(opts, lua.WithAIProvider(provider))
 		}
 

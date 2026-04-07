@@ -1,14 +1,20 @@
 package ai
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestLoadProvider_Missing(t *testing.T) {
 	dir := t.TempDir()
-	if p := LoadProvider(dir); p != nil {
+	p, err := LoadProvider(dir)
+	if !errors.Is(err, ErrConfigNotFound) {
+		t.Errorf("expected ErrConfigNotFound, got %v", err)
+	}
+	if p != nil {
 		t.Errorf("expected nil provider when config missing, got %T", p)
 	}
 }
@@ -19,7 +25,10 @@ func TestLoadProvider_Valid(t *testing.T) {
 base_url: https://example.com/v1
 model: test-model
 `)
-	p := LoadProvider(dir)
+	p, err := LoadProvider(dir)
+	if err != nil {
+		t.Fatalf("LoadProvider: %v", err)
+	}
 	if p == nil {
 		t.Fatal("expected non-nil provider")
 	}
@@ -28,7 +37,11 @@ model: test-model
 func TestLoadProvider_Malformed(t *testing.T) {
 	dir := t.TempDir()
 	writeAIYaml(t, dir, `not: valid: yaml: at: all`)
-	if p := LoadProvider(dir); p != nil {
+	p, err := LoadProvider(dir)
+	if err == nil {
+		t.Fatal("expected error on malformed config")
+	}
+	if p != nil {
 		t.Errorf("expected nil provider on malformed config, got %T", p)
 	}
 }
@@ -36,7 +49,14 @@ func TestLoadProvider_Malformed(t *testing.T) {
 func TestLoadProvider_InvalidConfig(t *testing.T) {
 	dir := t.TempDir()
 	writeAIYaml(t, dir, `model: only-model-no-url`)
-	if p := LoadProvider(dir); p != nil {
+	p, err := LoadProvider(dir)
+	if err == nil {
+		t.Fatal("expected error on invalid config")
+	}
+	if !strings.Contains(err.Error(), "base_url") {
+		t.Errorf("expected base_url error, got %v", err)
+	}
+	if p != nil {
 		t.Errorf("expected nil provider on invalid config, got %T", p)
 	}
 }

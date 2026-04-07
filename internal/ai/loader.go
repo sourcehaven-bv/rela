@@ -1,33 +1,27 @@
 package ai
 
-import (
-	"errors"
-	"log/slog"
-)
-
 // LoadProvider is a convenience for entry points: load .rela/ai.yaml
-// from the given directory and build a Provider if it exists. Returns
-// nil when no AI config is present, so callers can pass the returned
-// Provider directly to lua.WithAIProvider — the Lua bindings will
-// surface a typed not_configured error at call time.
+// from the given directory and build a Provider if it exists.
 //
-// On config-load errors (malformed YAML, invalid fields), this logs a
-// warning and returns nil. The rationale: a misconfigured ai.yaml
-// should not prevent unrelated rela commands from running. The user
-// will see the warning the next time they invoke an AI script and the
-// not_configured error message will direct them to fix the config.
-func LoadProvider(relaDir string) Provider {
+// Returns:
+//   - (provider, nil) when the config loaded successfully
+//   - (nil, ErrConfigNotFound) when no config exists (AI is "not
+//     configured" — this is a normal state, not an error). Callers
+//     check via errors.Is(err, ErrConfigNotFound).
+//   - (nil, err) when the config exists but cannot be loaded or
+//     validated, or when provider construction fails
+//
+// Callers decide policy: interactive entry points like `rela script`
+// and `rela flow` should surface non-ErrConfigNotFound errors to the
+// user (AI may be the whole point of the command). Background contexts
+// (automation script executor, MCP tool handlers) typically log + ignore
+// so a misconfigured ai.yaml doesn't break the host process.
+func LoadProvider(relaDir string) (Provider, error) {
 	cfg, err := LoadConfig(relaDir)
 	if err != nil {
-		if !errors.Is(err, ErrConfigNotFound) {
-			slog.Warn("ai: failed to load config", "rela_dir", relaDir, "error", err)
-		}
-		return nil
+		// LoadConfig already returns ErrConfigNotFound (wrapped) for
+		// the missing-file case, so we just propagate.
+		return nil, err
 	}
-	provider, err := NewOpenAICompatProvider(cfg)
-	if err != nil {
-		slog.Warn("ai: failed to build provider", "error", err)
-		return nil
-	}
-	return provider
+	return NewOpenAICompatProvider(cfg)
 }

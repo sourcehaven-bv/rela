@@ -71,7 +71,17 @@ Example:
 		if flowOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(flowOutputDir))
 		}
-		if provider := ai.LoadProvider(flowWs.Paths().CacheDir); provider != nil {
+		// AI is often the whole point of running a flow script, so a
+		// misconfigured ai.yaml should surface immediately rather
+		// than silently disable AI. ErrConfigNotFound is the normal
+		// "no AI" state and is not propagated.
+		provider, providerErr := ai.LoadProvider(flowWs.Paths().CacheDir)
+		switch {
+		case errors.Is(providerErr, ai.ErrConfigNotFound):
+			// no AI configured
+		case providerErr != nil:
+			return fmt.Errorf("ai: %w", providerErr)
+		default:
 			opts = append(opts, lua.WithAIProvider(provider))
 		}
 
