@@ -2,7 +2,7 @@
 id: PLAN-R7BQ
 type: planning-checklist
 title: 'Planning: Add server-side actions to data-entry (Lua scripts with redirect/message responses)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
