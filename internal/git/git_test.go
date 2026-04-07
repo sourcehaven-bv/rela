@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,8 +96,19 @@ func runCmd(dir string, args ...string) error {
 	}
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	// Strip inherited GIT_* env vars (e.g., GIT_INDEX_FILE set when these
+	// tests run inside a parent `git commit` pre-commit hook) so subprocess
+	// git commands operate on the test repo instead of the parent repo.
+	env := make([]string, 0, len(os.Environ()))
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "GIT_") {
+			continue
+		}
+		env = append(env, e)
+	}
 	// Explicitly set GIT_DIR to prevent git from using parent repos
-	cmd.Env = append(os.Environ(), "GIT_DIR="+filepath.Join(dir, ".git"))
+	env = append(env, "GIT_DIR="+filepath.Join(dir, ".git"))
+	cmd.Env = env
 	return cmd.Run()
 }
 

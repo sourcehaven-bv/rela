@@ -1,10 +1,15 @@
 package cli
 
 import (
+	stderrors "errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/Sourcehaven-BV/rela/internal/errors"
 )
 
 // TestNoShorthandConflicts ensures persistent flags don't conflict with local flags.
@@ -54,6 +59,38 @@ func checkCommandForConflicts(t *testing.T, cmd *cobra.Command, parentShorthands
 	for _, subCmd := range cmd.Commands() {
 		checkCommandForConflicts(t, subCmd, combinedShorthands)
 	}
+}
+
+func TestWrapDiscoverError(t *testing.T) {
+	t.Run("no project returns init hint", func(t *testing.T) {
+		wrapped := fmt.Errorf("discover: %w", errors.ErrNoProject)
+		got := wrapDiscoverError(wrapped)
+		if got == nil {
+			t.Fatal("expected error, got nil")
+		}
+		msg := got.Error()
+		if !strings.Contains(msg, "run 'rela init'") {
+			t.Errorf("expected init hint, got: %q", msg)
+		}
+	})
+
+	t.Run("other errors are surfaced verbatim", func(t *testing.T) {
+		underlying := stderrors.New("load metamodel: yaml: line 3: mapping values are not allowed in this context")
+		got := wrapDiscoverError(underlying)
+		if got == nil {
+			t.Fatal("expected error, got nil")
+		}
+		msg := got.Error()
+		if strings.Contains(msg, "run 'rela init'") {
+			t.Errorf("should not suggest init for load failures, got: %q", msg)
+		}
+		if !strings.Contains(msg, "yaml: line 3") {
+			t.Errorf("expected underlying error to be surfaced, got: %q", msg)
+		}
+		if !stderrors.Is(got, underlying) && got.Error() != underlying.Error() {
+			t.Errorf("expected underlying error preserved, got: %v", got)
+		}
+	})
 }
 
 func TestRootCmdProjectFlag(t *testing.T) {
