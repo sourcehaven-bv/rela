@@ -39,6 +39,13 @@ export interface PaletteColors {
   info?: string
 }
 
+/** Dark palette payload: 8 base colors + optional badge overrides.
+ *  Mirrors `dataentryconfig.DarkPalette` (Go). Empty fields inherit
+ *  from the resolved light palette on the backend. */
+export interface DarkPalette extends PaletteColors {
+  badges?: Record<string, string>
+}
+
 export interface PaletteConfig {
   base?: string
   surface?: string
@@ -49,7 +56,7 @@ export interface PaletteConfig {
   warning?: string
   info?: string
   badges?: Record<string, string>
-  dark?: PaletteColors | 'auto' | false
+  dark?: DarkPalette | false
 }
 
 export interface SettingsData {

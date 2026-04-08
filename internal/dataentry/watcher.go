@@ -191,8 +191,16 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 	// Rebuild styles if config or metamodel changed
 	if needConfigReload || needMetamodelReload {
 		a.styleMap, a.styledTypes = buildStyleMap(a.Cfg, a.meta)
-		a.userPalette = a.loadUserPalette()
-		a.palette = ResolvePalette(a.Cfg.Palette, a.userPalette)
+		// On reload, keep the previous palette if the new file is
+		// broken — better to show stale colors than crash or wipe.
+		userPalette, err := a.loadUserPalette()
+		if err != nil {
+			slog.Warn("watcher: keeping previous user palette",
+				"file", userPaletteFile, "error", err)
+		} else {
+			a.userPalette = userPalette
+			a.palette = ResolvePalette(a.Cfg.Palette, a.userPalette)
+		}
 		// Update OpenAPI generator with new metamodel
 		if a.openAPIGen != nil {
 			a.openAPIGen.UpdateMetamodel(a.meta)

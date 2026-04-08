@@ -58,7 +58,7 @@ func TestValidatePalette(t *testing.T) {
 	})
 
 	t.Run("invalid dark explicit color", func(t *testing.T) {
-		p := &PaletteConfig{Dark: DarkMode{Explicit: &PaletteColors{Accent: "bad"}}}
+		p := &PaletteConfig{Dark: DarkMode{Explicit: &DarkPalette{PaletteColors: PaletteColors{Accent: "bad"}}}}
 		err := ValidatePalette(p)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "dark")
@@ -66,31 +66,36 @@ func TestValidatePalette(t *testing.T) {
 }
 
 func TestDarkModeUnmarshalYAML(t *testing.T) {
-	t.Run("auto string", func(t *testing.T) {
+	t.Run("empty defaults to neither disabled nor explicit", func(t *testing.T) {
 		var d DarkMode
-		require.NoError(t, yaml.Unmarshal([]byte(`auto`), &d))
-		assert.True(t, d.IsAuto())
 		assert.False(t, d.IsDisabled())
 		assert.False(t, d.IsExplicit())
-	})
-
-	t.Run("empty defaults to auto", func(t *testing.T) {
-		var d DarkMode
-		// When omitted, zero value
-		assert.True(t, d.IsAuto())
 	})
 
 	t.Run("false bool", func(t *testing.T) {
 		var d DarkMode
 		require.NoError(t, yaml.Unmarshal([]byte(`false`), &d))
 		assert.True(t, d.IsDisabled())
-		assert.False(t, d.IsAuto())
+		assert.False(t, d.IsExplicit())
 	})
 
-	t.Run("disabled string", func(t *testing.T) {
+	t.Run("true bool is rejected", func(t *testing.T) {
 		var d DarkMode
-		require.NoError(t, yaml.Unmarshal([]byte(`disabled`), &d))
-		assert.True(t, d.IsDisabled())
+		err := yaml.Unmarshal([]byte(`true`), &d)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid dark mode")
+	})
+
+	t.Run("auto string is rejected (legacy)", func(t *testing.T) {
+		var d DarkMode
+		err := yaml.Unmarshal([]byte(`auto`), &d)
+		require.Error(t, err)
+	})
+
+	t.Run("disabled string is rejected", func(t *testing.T) {
+		var d DarkMode
+		err := yaml.Unmarshal([]byte(`disabled`), &d)
+		require.Error(t, err)
 	})
 
 	t.Run("explicit palette", func(t *testing.T) {
@@ -109,65 +114,77 @@ surface: "#121218"
 		var d DarkMode
 		err := yaml.Unmarshal([]byte(`something_wrong`), &d)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid dark mode")
 	})
 }
 
 func TestDarkModeMarshalYAML(t *testing.T) {
-	t.Run("auto", func(t *testing.T) {
-		d := DarkMode{Mode: "auto"}
-		out, err := yaml.Marshal(d)
-		require.NoError(t, err)
-		assert.Contains(t, string(out), "auto")
-	})
-
-	t.Run("false", func(t *testing.T) {
-		d := DarkMode{Mode: "false"}
+	t.Run("disabled", func(t *testing.T) {
+		d := DarkMode{Disabled: true}
 		out, err := yaml.Marshal(d)
 		require.NoError(t, err)
 		assert.Contains(t, string(out), "false")
 	})
 
 	t.Run("explicit", func(t *testing.T) {
-		d := DarkMode{Explicit: &PaletteColors{Accent: "#818cf8"}}
+		d := DarkMode{Explicit: &DarkPalette{PaletteColors: PaletteColors{Accent: "#818cf8"}}}
 		out, err := yaml.Marshal(d)
 		require.NoError(t, err)
 		assert.Contains(t, string(out), "#818cf8")
 	})
+
+	t.Run("zero value marshals to null", func(t *testing.T) {
+		d := DarkMode{}
+		out, err := yaml.Marshal(d)
+		require.NoError(t, err)
+		assert.Equal(t, "null\n", string(out))
+	})
 }
 
 func TestDarkModeJSON(t *testing.T) {
-	t.Run("marshal auto", func(t *testing.T) {
-		d := DarkMode{Mode: "auto"}
-		out, err := json.Marshal(d)
-		require.NoError(t, err)
-		assert.Equal(t, `"auto"`, string(out))
-	})
-
-	t.Run("marshal false", func(t *testing.T) {
-		d := DarkMode{Mode: "false"}
+	t.Run("marshal disabled", func(t *testing.T) {
+		d := DarkMode{Disabled: true}
 		out, err := json.Marshal(d)
 		require.NoError(t, err)
 		assert.Equal(t, "false", string(out))
 	})
 
 	t.Run("marshal explicit", func(t *testing.T) {
-		d := DarkMode{Explicit: &PaletteColors{Accent: "#818cf8"}}
+		d := DarkMode{Explicit: &DarkPalette{PaletteColors: PaletteColors{Accent: "#818cf8"}}}
 		out, err := json.Marshal(d)
 		require.NoError(t, err)
 		assert.Contains(t, string(out), `"accent":"#818cf8"`)
 	})
 
-	t.Run("unmarshal auto string", func(t *testing.T) {
-		var d DarkMode
-		require.NoError(t, json.Unmarshal([]byte(`"auto"`), &d))
-		assert.True(t, d.IsAuto())
+	t.Run("marshal zero value", func(t *testing.T) {
+		d := DarkMode{}
+		out, err := json.Marshal(d)
+		require.NoError(t, err)
+		assert.Equal(t, "null", string(out))
 	})
 
 	t.Run("unmarshal false bool", func(t *testing.T) {
 		var d DarkMode
 		require.NoError(t, json.Unmarshal([]byte(`false`), &d))
 		assert.True(t, d.IsDisabled())
+	})
+
+	t.Run("unmarshal true bool is rejected", func(t *testing.T) {
+		var d DarkMode
+		err := json.Unmarshal([]byte(`true`), &d)
+		require.Error(t, err)
+	})
+
+	t.Run("unmarshal auto string is rejected (legacy)", func(t *testing.T) {
+		var d DarkMode
+		err := json.Unmarshal([]byte(`"auto"`), &d)
+		require.Error(t, err)
+	})
+
+	t.Run("unmarshal null", func(t *testing.T) {
+		var d DarkMode
+		require.NoError(t, json.Unmarshal([]byte(`null`), &d))
+		assert.False(t, d.IsDisabled())
+		assert.False(t, d.IsExplicit())
 	})
 
 	t.Run("unmarshal explicit object", func(t *testing.T) {
@@ -178,17 +195,17 @@ func TestDarkModeJSON(t *testing.T) {
 		assert.Equal(t, "#121218", d.Explicit.Surface)
 	})
 
-	t.Run("round-trip auto", func(t *testing.T) {
-		original := DarkMode{Mode: "auto"}
+	t.Run("round-trip disabled", func(t *testing.T) {
+		original := DarkMode{Disabled: true}
 		data, err := json.Marshal(original)
 		require.NoError(t, err)
 		var decoded DarkMode
 		require.NoError(t, json.Unmarshal(data, &decoded))
-		assert.True(t, decoded.IsAuto())
+		assert.True(t, decoded.IsDisabled())
 	})
 
 	t.Run("round-trip explicit", func(t *testing.T) {
-		original := DarkMode{Explicit: &PaletteColors{Accent: "#818cf8", Base: "#0f0f1a"}}
+		original := DarkMode{Explicit: &DarkPalette{PaletteColors: PaletteColors{Accent: "#818cf8", Base: "#0f0f1a"}}}
 		data, err := json.Marshal(original)
 		require.NoError(t, err)
 		var decoded DarkMode
@@ -202,7 +219,7 @@ func TestDarkModeJSON(t *testing.T) {
 		original := PaletteConfig{
 			PaletteColors: PaletteColors{Accent: "#e11d48"},
 			Badges:        map[string]string{"blue": "#1e40af"},
-			Dark:          DarkMode{Explicit: &PaletteColors{Accent: "#818cf8"}},
+			Dark:          DarkMode{Explicit: &DarkPalette{PaletteColors: PaletteColors{Accent: "#818cf8"}}},
 		}
 		data, err := json.Marshal(original)
 		require.NoError(t, err)
@@ -216,13 +233,13 @@ func TestDarkModeJSON(t *testing.T) {
 }
 
 func TestResolvePalette(t *testing.T) {
-	t.Run("nil palettes return defaults", func(t *testing.T) {
+	t.Run("nil palettes return defaults with dark disabled", func(t *testing.T) {
 		r := ResolvePalette(nil, nil)
 		require.NotNil(t, r)
 		assert.Equal(t, defaultLightColors.Accent, r.Light["--accent-color"])
 		assert.Equal(t, defaultBadgeColors["blue"], r.Light["--badge-blue"])
-		assert.NotEmpty(t, r.Dark) // auto dark generated
-		assert.False(t, r.DarkDisabled)
+		assert.True(t, r.DarkDisabled, "dark should be disabled when no explicit dark configured")
+		assert.Empty(t, r.Dark)
 	})
 
 	t.Run("partial project palette merges with defaults", func(t *testing.T) {
@@ -246,44 +263,90 @@ func TestResolvePalette(t *testing.T) {
 		assert.Equal(t, defaultBadgeColors["red"], r.Light["--badge-red"]) // unchanged
 	})
 
-	t.Run("dark disabled", func(t *testing.T) {
-		project := &PaletteConfig{Dark: DarkMode{Mode: "false"}}
+	t.Run("dark explicitly disabled", func(t *testing.T) {
+		project := &PaletteConfig{Dark: DarkMode{Disabled: true}}
 		r := ResolvePalette(project, nil)
 		assert.True(t, r.DarkDisabled)
 		assert.Empty(t, r.Dark)
 	})
 
-	t.Run("explicit dark palette", func(t *testing.T) {
+	t.Run("fully-explicit dark palette", func(t *testing.T) {
 		project := &PaletteConfig{
-			Dark: DarkMode{Explicit: &PaletteColors{Accent: "#818cf8", Surface: "#121218"}},
+			Dark: DarkMode{Explicit: &DarkPalette{PaletteColors: PaletteColors{
+				Base: "#0a0a14", Surface: "#121218", Accent: "#818cf8", Text: "#e8e8f0",
+				Success: "#34d399", Error: "#f87171", Warning: "#fbbf24", Info: "#60a5fa",
+			}}},
+		}
+		r := ResolvePalette(project, nil)
+		assert.False(t, r.DarkDisabled)
+		assert.Equal(t, "#818cf8", r.Dark["--accent-color"])
+		assert.Equal(t, "#121218", r.Dark["--bg-color"])
+		assert.Equal(t, "#0a0a14", r.Dark["--sidebar-bg"])
+	})
+
+	t.Run("partial explicit dark palette inherits unset fields from light", func(t *testing.T) {
+		// User specified only the dark accent. The other dark slots
+		// should fall back to the resolved light palette so nothing
+		// from defaultLightColors leaks into the rendered theme.
+		project := &PaletteConfig{
+			PaletteColors: PaletteColors{Surface: "#fafafa"},
+			Dark:          DarkMode{Explicit: &DarkPalette{PaletteColors: PaletteColors{Accent: "#818cf8"}}},
 		}
 		r := ResolvePalette(project, nil)
 		assert.Equal(t, "#818cf8", r.Dark["--accent-color"])
-		assert.Equal(t, "#121218", r.Dark["--bg-color"])
+		assert.Equal(t, "#fafafa", r.Dark["--bg-color"], "unset dark surface should inherit from light")
+	})
+
+	t.Run("explicit dark badges override light badges", func(t *testing.T) {
+		project := &PaletteConfig{
+			Badges: map[string]string{"blue": "#1e40af", "red": "#dc2626"},
+			Dark: DarkMode{Explicit: &DarkPalette{
+				PaletteColors: PaletteColors{Accent: "#818cf8"},
+				Badges:        map[string]string{"blue": "#5fa9ff"},
+			}},
+		}
+		r := ResolvePalette(project, nil)
+		// dark.blue is explicitly overridden
+		assert.Equal(t, "#5fa9ff", r.Dark["--badge-blue"])
+		// dark.red was not set → inherits from the resolved light badges
+		assert.Equal(t, "#dc2626", r.Dark["--badge-red"])
+	})
+
+	t.Run("user dark overrides project dark", func(t *testing.T) {
+		project := &PaletteConfig{Dark: DarkMode{Disabled: true}}
+		user := &PaletteConfig{Dark: DarkMode{Explicit: &DarkPalette{PaletteColors: PaletteColors{Accent: "#abcdef"}}}}
+		r := ResolvePalette(project, user)
 		assert.False(t, r.DarkDisabled)
+		assert.Equal(t, "#abcdef", r.Dark["--accent-color"])
 	})
 
-	t.Run("auto dark is generated", func(t *testing.T) {
-		r := ResolvePalette(nil, nil)
-		// Dark surface should be much darker than light surface
-		assert.NotEqual(t, r.Light["--bg-color"], r.Dark["--bg-color"])
-		// Dark text should be lighter than light text
-		assert.NotEqual(t, r.Light["--text-color"], r.Dark["--text-color"])
-	})
-
-	t.Run("derived variables present", func(t *testing.T) {
+	t.Run("derived light variables present", func(t *testing.T) {
 		r := ResolvePalette(nil, nil)
 		derivedKeys := []string{"--card-bg", "--input-bg", "--hover-bg", "--border-color", "--muted-text", "--sidebar-text"}
 		for _, key := range derivedKeys {
 			assert.NotEmpty(t, r.Light[key], "light missing %s", key)
-			assert.NotEmpty(t, r.Dark[key], "dark missing %s", key)
 		}
 	})
 
-	t.Run("all 21 variables in light and dark", func(t *testing.T) {
+	t.Run("21 light variables when dark disabled", func(t *testing.T) {
 		r := ResolvePalette(nil, nil)
 		assert.Len(t, r.Light, 21) // 8 base + 6 derived + 7 badges
-		assert.Len(t, r.Dark, 21)
+		assert.Empty(t, r.Dark)
+	})
+
+	t.Run("zero-value DarkMode (from JSON null) is treated as disabled", func(t *testing.T) {
+		// JSON `null` decoded into DarkMode produces a zero value:
+		// neither Disabled nor Explicit set. Without the defensive
+		// check this would panic on `*darkMode.Explicit`.
+		var p PaletteConfig
+		require.NoError(t, json.Unmarshal([]byte(`{"accent":"#ffcd75","dark":null}`), &p))
+		assert.False(t, p.Dark.IsDisabled())
+		assert.False(t, p.Dark.IsExplicit())
+
+		require.NotPanics(t, func() {
+			r := ResolvePalette(nil, &p)
+			assert.True(t, r.DarkDisabled)
+		})
 	})
 }
 

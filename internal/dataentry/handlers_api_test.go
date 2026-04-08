@@ -89,6 +89,59 @@ func TestWriteJSON(t *testing.T) {
 	}
 }
 
+func TestLoadUserPalette(t *testing.T) {
+	t.Run("missing file returns nil with no error", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		p, err := app.loadUserPalette()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if p != nil {
+			t.Errorf("expected nil palette for missing file, got %+v", p)
+		}
+	})
+
+	t.Run("malformed YAML returns error (legacy dark: auto)", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		// Write a legacy palette.yaml that the new two-state DarkMode
+		// can't parse. Without the error path, the loader would
+		// return nil and a subsequent save would silently overwrite
+		// the user's palette with framework defaults.
+		err := app.ws.WriteCacheFile(userPaletteFile, []byte("accent: '#e11d48'\ndark: auto\n"))
+		if err != nil {
+			t.Fatalf("write fixture: %v", err)
+		}
+		p, perr := app.loadUserPalette()
+		if perr == nil {
+			t.Fatal("expected error for legacy `dark: auto`, got nil")
+		}
+		if p != nil {
+			t.Errorf("expected nil palette on parse error, got %+v", p)
+		}
+		if !strings.Contains(perr.Error(), "dark: auto") {
+			t.Errorf("error should mention legacy dark: auto migration, got: %v", perr)
+		}
+	})
+
+	t.Run("valid file parses successfully", func(t *testing.T) {
+		app := newHandlerTestApp(t)
+		err := app.ws.WriteCacheFile(userPaletteFile, []byte("accent: '#e11d48'\ndark: false\n"))
+		if err != nil {
+			t.Fatalf("write fixture: %v", err)
+		}
+		p, perr := app.loadUserPalette()
+		if perr != nil {
+			t.Fatalf("unexpected error: %v", perr)
+		}
+		if p == nil || p.Accent != "#e11d48" {
+			t.Errorf("expected accent #e11d48, got %+v", p)
+		}
+		if !p.Dark.IsDisabled() {
+			t.Errorf("expected dark disabled, got %+v", p.Dark)
+		}
+	})
+}
+
 func TestWriteJSONError(t *testing.T) {
 	w := httptest.NewRecorder()
 	writeJSONError(w, http.StatusNotFound, "not found")

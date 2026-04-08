@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -137,7 +138,14 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		}),
 	}
 	app.userDefaults = app.loadUserDefaults()
-	app.userPalette = app.loadUserPalette()
+	userPalette, paletteErr := app.loadUserPalette()
+	if paletteErr != nil {
+		// Surface the error so users notice their palette is broken
+		// rather than silently falling back to defaults (which would
+		// then be persisted on the next save, destroying their data).
+		return nil, fmt.Errorf("load user palette: %w", paletteErr)
+	}
+	app.userPalette = userPalette
 	app.palette = ResolvePalette(cfg.Palette, app.userPalette)
 
 	// Initialize git ops if enabled and repo is a git repository
@@ -283,21 +291,33 @@ func (a *App) saveUserDefaults(ud *UserDefaults) error {
 
 // coverage-ignore: requires running workspace, tested via e2e
 
-// loadUserPalette reads .rela/palette.yaml and returns the parsed palette.
-// Returns nil if the file doesn't exist or can't be parsed.
-func (a *App) loadUserPalette() *PaletteConfig {
+// loadUserPalette reads .rela/palette.yaml and returns the parsed
+// palette. Returns (nil, nil) when the file does not exist (clean
+// "no user palette" state — matches how ResolvePalette consumes a
+// nil user palette pointer; a sentinel error or three-return shape
+// would be more confusing for the only two callers). Returns a
+// non-nil error if the file exists but cannot be read or parsed —
+// callers MUST surface this instead of silently falling back to
+// defaults, otherwise a subsequent save would silently overwrite
+// the user's palette with framework defaults (RR-OA4A).
+//
+//nolint:nilnil // see comment above
+func (a *App) loadUserPalette() (*PaletteConfig, error) {
 	if a.ws == nil {
-		return nil
+		return nil, nil
 	}
 	data, err := a.ws.ReadCacheFile(userPaletteFile)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", userPaletteFile, err)
 	}
 	var p PaletteConfig
 	if err := yaml.Unmarshal(data, &p); err != nil {
-		return nil
+		return nil, fmt.Errorf("parse %s: %w (legacy `dark: auto` is no longer supported — remove the `dark` line or set it to `false` or an explicit object)", userPaletteFile, err)
 	}
-	return &p
+	return &p, nil
 }
 
 // saveUserPalette writes the user palette to .rela/palette.yaml.

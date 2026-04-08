@@ -220,6 +220,74 @@ const DEFAULT_BADGES: Record<string, string> = {
   red: '#ef4444', orange: '#f97316', yellow: '#eab308',
 }
 
+// Dark mode generation constants — must mirror Go palette.go.
+const DARK_BRIGHTEN_DELTA = 0.10
+const DARK_SURFACE_TARGET = 0.08
+const DARK_TEXT_TARGET = 0.85
+const DARK_BASE_DELTA = -0.05
+
+// Strict full-hex check used by the dark generators. The text inputs
+// in SettingsView store partial hex while the user is typing
+// (`#ab`, ` `, etc.) — passing those into the HSL math would produce
+// `#NaNNaNNaN`. generateDark falls back to empty string for any
+// input that isn't a complete hex.
+const FULL_HEX_RE = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
+
+function isFullHex(s: string): boolean {
+  return typeof s === 'string' && FULL_HEX_RE.test(s.trim())
+}
+
+/** Adjust the lightness of a hex color by delta (clamped to [0,1]). */
+function adjustLightness(hex: string, delta: number): string {
+  const c = hexToHSL(hex)
+  return hslToHex(c.h, c.s, clamp01(c.l + delta))
+}
+
+/** Map a color's lightness to targetL. */
+function invertLightness(hex: string, targetL: number): string {
+  const c = hexToHSL(hex)
+  return hslToHex(c.h, c.s, clamp01(targetL))
+}
+
+/**
+ * Generate a dark palette from a light palette by inverting lightness.
+ * Mirrors the Go generateDark() in palette.go — locked via goldens in
+ * internal/dataentryconfig/testdata/generate_dark_goldens.json.
+ *
+ * Input fields that are not a complete hex color (empty, partial
+ * input like `#ab`, whitespace) are passed through as empty strings.
+ * This is critical because the UI text inputs store partial input
+ * while the user is typing, and passing those into the HSL math
+ * would produce `#NaNNaNNaN`.
+ */
+export function generateDark(light: Record<string, string>): Record<string, string> {
+  const safe = (val: string | undefined, fn: (h: string) => string): string => {
+    return val !== undefined && isFullHex(val) ? fn(val.trim()) : ''
+  }
+  return {
+    base: safe(light.base, (h) => adjustLightness(h, DARK_BASE_DELTA)),
+    surface: safe(light.surface, (h) => invertLightness(h, DARK_SURFACE_TARGET)),
+    accent: safe(light.accent, (h) => adjustLightness(h, DARK_BRIGHTEN_DELTA)),
+    text: safe(light.text, (h) => invertLightness(h, DARK_TEXT_TARGET)),
+    success: safe(light.success, (h) => adjustLightness(h, DARK_BRIGHTEN_DELTA)),
+    error: safe(light.error, (h) => adjustLightness(h, DARK_BRIGHTEN_DELTA)),
+    warning: safe(light.warning, (h) => adjustLightness(h, DARK_BRIGHTEN_DELTA)),
+    info: safe(light.info, (h) => adjustLightness(h, DARK_BRIGHTEN_DELTA)),
+  }
+}
+
+/** Generate dark badge colors by brightening light badges. Skips
+ *  entries whose value isn't a complete hex (see generateDark). */
+export function generateDarkBadges(badges: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [name, color] of Object.entries(badges)) {
+    if (isFullHex(color)) {
+      out[name] = adjustLightness(color.trim(), DARK_BRIGHTEN_DELTA)
+    }
+  }
+  return out
+}
+
 /**
  * Derive the full 21-variable CSS map from 8 base colors + 7 badges.
  * Mirrors the Go deriveTheme() in palette.go.
@@ -312,15 +380,23 @@ const BADGE_TARGETS: { key: string; h: number; s: number; l: number; isGray?: bo
   { key: 'gray',   h: 0,         s: 0,   l: 0.5, isGray: true },
 ]
 
+/** Options for assignPalette. `darkTheme=true` flips the lightness
+ *  heuristics so a generic hex list gets turned into a *dark* palette:
+ *  darkest color → surface (background), lightest → text. */
+export interface AssignOptions {
+  darkTheme?: boolean
+}
+
 /** Assign imported colors to palette roles using heuristic matching. */
-export function assignPalette(hexColors: string[]): PaletteAssignment {
+export function assignPalette(hexColors: string[], options: AssignOptions = {}): PaletteAssignment {
   if (hexColors.length === 0) return { colors: {}, badges: {} }
 
   const result: PaletteAssignment = { colors: {}, badges: {} }
   const hsls = hexColors.map((c) => ({ hex: c, hsl: hexToHSL(c) }))
   const used = new Set<string>()
 
-  // Step 1: Assign UI structural roles by lightness
+  // Step 1: Assign UI structural roles by lightness. Ordered from
+  // darkest (index 0) to lightest (last).
   const byLightness = [...hsls].sort((a, b) => a.hsl.l - b.hsl.l)
 
   if (hexColors.length === 1) {
@@ -329,20 +405,40 @@ export function assignPalette(hexColors: string[]): PaletteAssignment {
     return result
   }
 
-  // base = darkest, surface = lightest
+  // base = darkest in both themes (sidebar is dark in light AND dark
+  // themes for most rela projects — the sidebar provides consistent
+  // branding).
   result.colors.base = byLightness[0].hex
   used.add(byLightness[0].hex)
 
-  result.colors.surface = byLightness[byLightness.length - 1].hex
-  used.add(byLightness[byLightness.length - 1].hex)
-
-  if (hexColors.length >= 3) {
-    // text = second darkest (skip if same as base)
+  if (options.darkTheme) {
+    // Dark theme: surface = second darkest (slightly lighter than
+    // the sidebar so the two are distinguishable), text = lightest
+    // so body text is readable on the dark surface.
     for (let i = 1; i < byLightness.length; i++) {
       if (!used.has(byLightness[i].hex)) {
-        result.colors.text = byLightness[i].hex
+        result.colors.surface = byLightness[i].hex
         used.add(byLightness[i].hex)
         break
+      }
+    }
+    if (hexColors.length >= 3) {
+      result.colors.text = byLightness[byLightness.length - 1].hex
+      used.add(byLightness[byLightness.length - 1].hex)
+    }
+  } else {
+    // Light theme: surface = lightest (main background is light),
+    // text = second darkest (body text is dark on a light bg).
+    result.colors.surface = byLightness[byLightness.length - 1].hex
+    used.add(byLightness[byLightness.length - 1].hex)
+
+    if (hexColors.length >= 3) {
+      for (let i = 1; i < byLightness.length; i++) {
+        if (!used.has(byLightness[i].hex)) {
+          result.colors.text = byLightness[i].hex
+          used.add(byLightness[i].hex)
+          break
+        }
       }
     }
   }
