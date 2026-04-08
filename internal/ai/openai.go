@@ -25,21 +25,50 @@ const maxResponseBytes = 10 * 1024 * 1024 // 10 MiB
 type openAICompatProvider struct {
 	cfg        *Config
 	httpClient *http.Client
+	// logger is the destination for operational logs (request start,
+	// success, failure). Defaults to slog.Default() when no
+	// WithLogger option is supplied. Per-provider rather than
+	// per-package so tests can use per-test loggers via WithLogger
+	// instead of swapping slog.SetDefault, which is process-global
+	// and blocks t.Parallel().
+	logger *slog.Logger
 }
 
-// NewOpenAICompatProvider builds a Provider from a Config.
+// Option configures an openAICompatProvider at construction time.
+type Option func(*openAICompatProvider)
+
+// WithLogger sets the *slog.Logger used for operational logs emitted
+// by this provider. Passing nil leaves the default
+// (slog.Default()) in place — matches the "zero means default" pattern
+// used by http.Client.Timeout and friends.
+//
+// Typical production callers do NOT pass WithLogger and inherit
+// slog.Default(), which the CLI/MCP entry points configure via
+// --verbose / --quiet wiring. Tests use WithLogger to route logs into
+// a per-test buffer so multiple tests can run under t.Parallel()
+// without contaminating each other's captured output.
+func WithLogger(l *slog.Logger) Option {
+	return func(p *openAICompatProvider) {
+		if l != nil {
+			p.logger = l
+		}
+	}
+}
+
+// NewOpenAICompatProvider builds a Provider from a Config and optional
+// construction-time options (e.g. WithLogger).
 //
 // It does NOT read the API key. The key (if any) is read at Chat() call
 // time so commands that never use AI can still start when the env var
 // is unset.
-func NewOpenAICompatProvider(cfg *Config) (Provider, error) {
+func NewOpenAICompatProvider(cfg *Config, opts ...Option) (Provider, error) {
 	if cfg == nil {
 		return nil, errors.New("ai: nil config")
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &openAICompatProvider{
+	p := &openAICompatProvider{
 		cfg: cfg,
 		httpClient: &http.Client{
 			Timeout: time.Duration(cfg.Timeout()) * time.Second,
@@ -54,7 +83,12 @@ func NewOpenAICompatProvider(cfg *Config) (Provider, error) {
 				return http.ErrUseLastResponse
 			},
 		},
-	}, nil
+		logger: slog.Default(),
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p, nil
 }
 
 // chatRequestWire is the JSON shape sent to the upstream. We deliberately
@@ -121,13 +155,13 @@ func (p *openAICompatProvider) Chat(ctx context.Context, req ChatRequest) (*Chat
 		return nil, err
 	}
 
-	logRequestStart(p.cfg.BaseURL, model, len(req.Messages))
+	p.logRequestStart(p.cfg.BaseURL, model, len(req.Messages))
 	start := time.Now()
 
 	resp, doErr := p.httpClient.Do(httpReq)
 	if doErr != nil {
 		netErr := wrapNetworkError(doErr, apiKey)
-		logRequestFailure(string(netErr.Kind), 0, time.Since(start), netErr.Message)
+		p.logRequestFailure(string(netErr.Kind), 0, time.Since(start), netErr.Message)
 		return nil, netErr
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -145,7 +179,7 @@ func (p *openAICompatProvider) Chat(ctx context.Context, req ChatRequest) (*Chat
 		} else {
 			aiErr = wrapNetworkError(readErr, apiKey)
 		}
-		logRequestFailure(string(aiErr.Kind), resp.StatusCode, time.Since(start), aiErr.Message)
+		p.logRequestFailure(string(aiErr.Kind), resp.StatusCode, time.Since(start), aiErr.Message)
 		return nil, aiErr
 	}
 
@@ -198,7 +232,7 @@ func (p *openAICompatProvider) parseResponse(
 			Status:  resp.StatusCode,
 			Message: fmt.Sprintf("upstream returned streaming response (Content-Type %q) but stream=false was requested", contentType),
 		}
-		logRequestFailure(string(streamErr.Kind), resp.StatusCode, time.Since(start), streamErr.Message)
+		p.logRequestFailure(string(streamErr.Kind), resp.StatusCode, time.Since(start), streamErr.Message)
 		return nil, streamErr
 	}
 	if !isJSONContentType(contentType) {
@@ -207,14 +241,14 @@ func (p *openAICompatProvider) parseResponse(
 			Status:  resp.StatusCode,
 			Message: fmt.Sprintf("upstream returned non-JSON response (Content-Type %q, status %d): %s", contentType, resp.StatusCode, redactKey(snippet(respBody), apiKey)),
 		}
-		logRequestFailure(string(badResp.Kind), resp.StatusCode, time.Since(start), badResp.Message)
+		p.logRequestFailure(string(badResp.Kind), resp.StatusCode, time.Since(start), badResp.Message)
 		return nil, badResp
 	}
 
 	// Non-2xx → classify and return.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		classified := classify(resp.StatusCode, resp.Header, respBody, apiKey)
-		logRequestFailure(string(classified.Kind), resp.StatusCode, time.Since(start), classified.Message)
+		p.logRequestFailure(string(classified.Kind), resp.StatusCode, time.Since(start), classified.Message)
 		return nil, classified
 	}
 
@@ -229,18 +263,18 @@ func (p *openAICompatProvider) parseResponse(
 		if envMessage != "" {
 			classified.Message = redactKey(envMessage, apiKey)
 		}
-		logRequestFailure(string(classified.Kind), resp.StatusCode, time.Since(start), classified.Message)
+		p.logRequestFailure(string(classified.Kind), resp.StatusCode, time.Since(start), classified.Message)
 		return nil, classified
 	}
 
 	out, parseErr := decodeChatResponse(respBody, apiKey)
 	if parseErr != nil {
 		parseErr.Status = resp.StatusCode
-		logRequestFailure(string(parseErr.Kind), resp.StatusCode, time.Since(start), parseErr.Message)
+		p.logRequestFailure(string(parseErr.Kind), resp.StatusCode, time.Since(start), parseErr.Message)
 		return nil, parseErr
 	}
 
-	logRequestSuccess(resp.StatusCode, out.Model, time.Since(start), out.Usage)
+	p.logRequestSuccess(resp.StatusCode, out.Model, time.Since(start), out.Usage)
 	return out, nil
 }
 
@@ -385,16 +419,16 @@ func isStreamContentType(ct string) bool {
 // logRequestStart emits a debug log when an AI request begins.
 // We log the base URL (which has no path), model, and message count —
 // never headers, content, or the API key.
-func logRequestStart(baseURL, model string, messageCount int) {
-	slog.Debug("ai request start",
+func (p *openAICompatProvider) logRequestStart(baseURL, model string, messageCount int) {
+	p.logger.Debug("ai request start",
 		"base_url", baseURL,
 		"model", model,
 		"messages", messageCount)
 }
 
 // logRequestSuccess emits an info log on successful response.
-func logRequestSuccess(status int, model string, latency time.Duration, usage Usage) {
-	slog.Info("ai request ok",
+func (p *openAICompatProvider) logRequestSuccess(status int, model string, latency time.Duration, usage Usage) {
+	p.logger.Info("ai request ok",
 		"status", status,
 		"model", model,
 		"latency_ms", latency.Milliseconds(),
@@ -405,8 +439,8 @@ func logRequestSuccess(status int, model string, latency time.Duration, usage Us
 
 // logRequestFailure emits a warn log on any error path. The message has
 // already been redacted.
-func logRequestFailure(kind string, status int, latency time.Duration, message string) {
-	slog.Warn("ai request failed",
+func (p *openAICompatProvider) logRequestFailure(kind string, status int, latency time.Duration, message string) {
+	p.logger.Warn("ai request failed",
 		"kind", kind,
 		"status", status,
 		"latency_ms", latency.Milliseconds(),

@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,8 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -18,6 +19,23 @@ import (
 // sentinelKey is a unique string we set as the API key in tests so we
 // can assert it never appears in any error or log message.
 const sentinelKey = "SENTINEL_KEY_ZZZZZ_DO_NOT_LEAK"
+
+// TestMain sets the leak-test env vars for the entire test binary so
+// individual tests can call t.Parallel() without conflicting with
+// t.Setenv (which panics when called from a parallel test). Setting
+// env vars once at startup is safe because all leak tests use the
+// same sentinel value and neither env var is consumed elsewhere in
+// the test binary. A Setenv failure (rare but possible, e.g. on a
+// read-only process environment) makes the whole suite meaningless,
+// so panic instead of silently degrading.
+func TestMain(m *testing.M) {
+	for _, envVar := range []string{"TEST_KEY", "LEAK_TEST_KEY"} {
+		if err := os.Setenv(envVar, sentinelKey); err != nil {
+			panic(fmt.Sprintf("TestMain: failed to set %s: %v", envVar, err))
+		}
+	}
+	os.Exit(m.Run())
+}
 
 // canonicalSuccessBody is the canonical OpenAI response shape, taken
 // from a real ollama gemma3:12b round trip.
@@ -34,23 +52,36 @@ const canonicalSuccessBody = `{
 }`
 
 // newTestProvider builds a Provider pointing at the given test server.
-// Sets the env var to sentinelKey unless apiKeyEnv is empty.
-func newTestProvider(t *testing.T, server *httptest.Server, apiKeyEnv string) Provider {
+// The env var named by apiKeyEnv (TEST_KEY or LEAK_TEST_KEY) is
+// pre-set to sentinelKey by TestMain so this helper is safe to call
+// from parallel tests. Variadic opts lets tests pass construction-time
+// options such as WithLogger for log-capture assertions.
+func newTestProvider(t *testing.T, server *httptest.Server, apiKeyEnv string, opts ...Option) Provider {
 	t.Helper()
-	if apiKeyEnv != "" {
-		t.Setenv(apiKeyEnv, sentinelKey)
-	}
 	cfg := &Config{
 		BaseURL:        server.URL + "/v1",
 		Model:          "test-model",
 		APIKeyEnv:      apiKeyEnv,
 		TimeoutSeconds: 5,
 	}
-	p, err := NewOpenAICompatProvider(cfg)
+	p, err := NewOpenAICompatProvider(cfg, opts...)
 	if err != nil {
 		t.Fatalf("NewOpenAICompatProvider: %v", err)
 	}
 	return p
+}
+
+// newCapturedLogger returns a fresh *slog.Logger that writes to the
+// returned bytes.Buffer, and the buffer. Used by log-capture tests to
+// avoid the process-global slog.Default() entirely — safe under
+// t.Parallel() because each call produces a fresh independent pair.
+//
+// Level is LevelDebug so DEBUG-level request-start lines are captured
+// alongside INFO success and WARN failure lines.
+func newCapturedLogger() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	return logger, &buf
 }
 
 // hiMessages returns a single user message with content "hi". Used by
@@ -581,6 +612,7 @@ func TestProvider_Chat_BaseURLTrailingSlash(t *testing.T) {
 // exercises every error path and asserts the API key sentinel string
 // appears in NO returned error message and NO captured log line.
 func TestProvider_Chat_KeyNeverLeaks(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		handler http.HandlerFunc
@@ -642,14 +674,12 @@ func TestProvider_Chat_KeyNeverLeaks(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			server := httptest.NewServer(tc.handler)
 			t.Cleanup(server.Close)
 
-			var logBuf strings.Builder
-			restore := captureLog(&logBuf)
-			t.Cleanup(restore)
-
-			p := newTestProvider(t, server, "LEAK_TEST_KEY")
+			logger, logBuf := newCapturedLogger()
+			p := newTestProvider(t, server, "LEAK_TEST_KEY", WithLogger(logger))
 			_, err := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()})
 			if err == nil {
 				t.Fatal("expected error")
@@ -669,17 +699,15 @@ func TestProvider_Chat_KeyNeverLeaks(t *testing.T) {
 // and logRequestSuccess must not embed the API key in their structured
 // log fields, even though they have access to base_url and model.
 func TestProvider_Chat_KeyNeverLeaks_SuccessPath(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(canonicalSuccessBody))
 	}))
 	t.Cleanup(server.Close)
 
-	var logBuf strings.Builder
-	restore := captureLog(&logBuf)
-	t.Cleanup(restore)
-
-	p := newTestProvider(t, server, "LEAK_TEST_KEY")
+	logger, logBuf := newCapturedLogger()
+	p := newTestProvider(t, server, "LEAK_TEST_KEY", WithLogger(logger))
 	if _, err := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()}); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
@@ -700,22 +728,21 @@ func TestProvider_Chat_KeyNeverLeaks_SuccessPath(t *testing.T) {
 // Defense in depth: assert the sentinel never appears even when the
 // transport itself fails.
 func TestProvider_Chat_KeyNeverLeaks_NetworkError(t *testing.T) {
+	t.Parallel()
+	// LEAK_TEST_KEY is pre-set to sentinelKey in TestMain so this
+	// test is safe to run in parallel.
 	cfg := &Config{
 		BaseURL:        "http://127.0.0.1:1/v1",
 		Model:          "x",
 		APIKeyEnv:      "LEAK_TEST_KEY",
 		TimeoutSeconds: 2,
 	}
-	t.Setenv("LEAK_TEST_KEY", sentinelKey)
 
-	p, err := NewOpenAICompatProvider(cfg)
+	logger, logBuf := newCapturedLogger()
+	p, err := NewOpenAICompatProvider(cfg, WithLogger(logger))
 	if err != nil {
 		t.Fatalf("NewOpenAICompatProvider: %v", err)
 	}
-
-	var logBuf strings.Builder
-	restore := captureLog(&logBuf)
-	t.Cleanup(restore)
 
 	_, chatErr := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()})
 	if chatErr == nil {
@@ -753,6 +780,7 @@ func TestProvider_Chat_BodySnippetUTF8Safe(t *testing.T) {
 }
 
 func TestProvider_Chat_LogsSuccessAndFailure(t *testing.T) {
+	t.Parallel()
 	// Success path
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -760,11 +788,8 @@ func TestProvider_Chat_LogsSuccessAndFailure(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	var logBuf strings.Builder
-	restore := captureLog(&logBuf)
-	t.Cleanup(restore)
-
-	p := newTestProvider(t, server, "TEST_KEY")
+	logger, logBuf := newCapturedLogger()
+	p := newTestProvider(t, server, "TEST_KEY", WithLogger(logger))
 	if _, err := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()}); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
@@ -784,6 +809,7 @@ func TestProvider_Chat_LogsSuccessAndFailure(t *testing.T) {
 }
 
 func TestProvider_Chat_LogsFailure(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -791,11 +817,8 @@ func TestProvider_Chat_LogsFailure(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	var logBuf strings.Builder
-	restore := captureLog(&logBuf)
-	t.Cleanup(restore)
-
-	p := newTestProvider(t, server, "TEST_KEY")
+	logger, logBuf := newCapturedLogger()
+	p := newTestProvider(t, server, "TEST_KEY", WithLogger(logger))
 	_, _ = p.Chat(context.Background(), ChatRequest{Messages: hiMessages()})
 	logs := logBuf.String()
 	if !strings.Contains(logs, `msg="ai request failed"`) {
@@ -844,27 +867,6 @@ func assertAIError(t *testing.T, err error) *Error {
 		t.Fatalf("expected *Error, got %T: %v", err, err)
 	}
 	return aiErr
-}
-
-// captureLog redirects the slog default logger output to a buffer and
-// returns a function that restores it. We have to serialize through a
-// global mutex because slog.SetDefault is process-global state.
-//
-// IMPORTANT: do not call t.Parallel() in tests that use captureLog —
-// they will race against each other and against any other test that
-// emits a log line via slog.
-var logMu sync.Mutex
-
-func captureLog(buf io.Writer) func() {
-	logMu.Lock()
-	prev := slog.Default()
-	// Use LevelDebug so we capture every level the production code emits.
-	handler := slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	slog.SetDefault(slog.New(handler))
-	return func() {
-		slog.SetDefault(prev)
-		logMu.Unlock()
-	}
 }
 
 // Static check: chatRequestWire should round-trip with omitempty for
