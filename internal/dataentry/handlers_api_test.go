@@ -12,7 +12,7 @@ import (
 
 func TestHandleAPIPaletteCRUD(t *testing.T) {
 	app := newHandlerTestApp(t)
-	app.palette = ResolvePalette(nil, nil)
+	app.State().Palette = ResolvePalette(nil, nil)
 
 	t.Run("GET returns empty palette when none set", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/_palette", http.NoBody)
@@ -31,14 +31,11 @@ func TestHandleAPIPaletteCRUD(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		// Need to hold RLock to simulate reloadLockMiddleware
-		app.mu.RLock()
 		app.handleAPISavePalette(w, req)
-		app.mu.RUnlock()
-
 		if w.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
-		if app.userPalette == nil || app.userPalette.Accent != "#e11d48" {
+		if app.State().UserPalette == nil || app.State().UserPalette.Accent != "#e11d48" {
 			t.Error("palette not saved")
 		}
 	})
@@ -48,11 +45,7 @@ func TestHandleAPIPaletteCRUD(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/_palette", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-
-		app.mu.RLock()
 		app.handleAPISavePalette(w, req)
-		app.mu.RUnlock()
-
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", w.Code)
 		}
@@ -190,7 +183,7 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 	app, entities := testAppInstance()
 
 	// Add a relation to test graph
-	app.g.AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
+	app.Graph().AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
 	result := app.entityToAPI(entities.ticket1, true)
 

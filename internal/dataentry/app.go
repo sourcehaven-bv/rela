@@ -27,17 +27,17 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-// appState bundles the reloadable fields of App into an immutable snapshot.
+// AppState bundles the reloadable fields of App into an immutable snapshot.
 //
 // During this PR, App still holds the same fields as plain struct fields
 // (Cfg, meta, g, styleMap, styledTypes, userDefaults, palette, userPalette,
-// openAPIGen) and the appState is published in parallel via atomic.Pointer.
+// openAPIGen) and the AppState is published in parallel via atomic.Pointer.
 // Handlers will be migrated to read from the snapshot in a subsequent PR.
 //
 // The fields here mirror the workspace.workspaceState pattern: callers
 // Load() once and work against a coherent snapshot, instead of holding a
 // read lock around the entire request.
-type appState struct {
+type AppState struct {
 	Cfg          *Config
 	Meta         *metamodel.Metamodel
 	Graph        *graph.Graph
@@ -61,59 +61,82 @@ const userDefaultsFile = "user-defaults.yaml"
 // userPaletteFile is the filename for user-specific palette overrides within the .rela directory.
 const userPaletteFile = "palette.yaml"
 
-// App is the central application struct holding config, metamodel, and graph.
+// App is the central application struct for the data-entry server.
+//
+// # Concurrency model
+//
+// All reloadable state (config, metamodel, graph, style map, palette,
+// user defaults, OpenAPI generator) lives in an immutable AppState struct
+// held via atomic.Pointer. Handlers call a.State() once at entry and work
+// against a coherent snapshot for the duration of the request — no lock
+// acquisition, no risk of observing a half-reloaded world.
+//
+// Reloads (triggered by the file watcher or by Reload) build a new
+// AppState and publish it atomically via a.state.Store. The previous
+// state is garbage-collected once no reader holds it.
+//
+// Mutations (CreateEntity, UpdateEntity, DeleteEntity, CreateRelation,
+// UpdateRelation, DeleteRelation, SetProperty, action scripts) serialize
+// via writeMu. writeMu excludes concurrent mutations but does NOT block
+// readers — readers go through state.Load(). The workspace's internal
+// reloadMu coordinates the reload itself with the mutation path.
 type App struct {
-	Cfg *Config
-	ws  *workspace.Workspace
-	// Convenience aliases set from workspace; avoid method-call overhead in hot paths.
-	meta *metamodel.Metamodel
-	g    *graph.Graph
-	// styleMap: property type name -> value -> CSS class name
-	styleMap map[string]map[string]string
-	// styledTypes: set of property type names that have style entries
-	styledTypes map[string]bool
-	// userDefaults holds the loaded user defaults (nil if not yet loaded or no file).
-	userDefaults *UserDefaults
-	// palette holds the resolved palette for both light and dark themes.
-	palette *ResolvedPalette
-	// userPalette holds the user-specific palette overrides.
-	userPalette *PaletteConfig
-	// gitOps provides git operations when git is enabled.
+	ws *workspace.Workspace
+
+	// state holds the current reloadable snapshot. Readers: a.State().
+	// Writers: onReload rebuilds and publishes a new state after file
+	// changes. Initial state is published in NewApp.
+	state atomic.Pointer[AppState]
+
+	// writeMu serializes mutation handlers (CreateEntity, UpdateEntity,
+	// etc.) against each other and against the reload path inside
+	// Workspace. Readers never take it.
+	writeMu sync.Mutex
+
+	// gitOps provides git operations when git is enabled. Set once in
+	// NewApp; never reloaded.
 	gitOps *git.Ops
-	// openAPIGen generates OpenAPI specs from the metamodel.
-	openAPIGen *openapi.Generator
-	// state is an immutable snapshot of all reloadable fields above. It is
-	// published in parallel with the convenience aliases during this PR
-	// (dual-write phase). A subsequent PR migrates handlers to read from
-	// the snapshot via state.Load() instead of taking the App.mu read
-	// lock and reading the convenience aliases.
-	state atomic.Pointer[appState]
-	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
-	// during live-reload. Handlers acquire RLock; reload acquires Lock.
-	mu sync.RWMutex
+
 	// broker delivers SSE events to connected browsers for live-reload.
 	broker *eventBroker
+
 	// security holds the configured Host/Origin allowlists. Set via
 	// SetSecurityConfig before NewRouter; nil disables the middlewares
 	// (only sensible in unit tests where no HTTP layer is exercised).
 	security *security
 }
 
-// publishState builds an appState snapshot from the current convenience
-// aliases and publishes it via state.Store. Called from NewApp and from
-// onReload (under App.mu.Lock) during the dual-write phase.
-func (a *App) publishState() {
-	a.state.Store(&appState{
-		Cfg:          a.Cfg,
-		Meta:         a.meta,
-		Graph:        a.g,
-		StyleMap:     a.styleMap,
-		StyledTypes:  a.styledTypes,
-		UserDefaults: a.userDefaults,
-		Palette:      a.palette,
-		UserPalette:  a.userPalette,
-		OpenAPIGen:   a.openAPIGen,
-	})
+// State returns the current reloadable snapshot. Handlers should call
+// State() once at entry and use the returned snapshot consistently
+// throughout, instead of making multiple calls that could see different
+// snapshots after a concurrent reload.
+func (a *App) State() *AppState { return a.state.Load() }
+
+// Cfg returns the current data-entry config (convenience accessor).
+// Equivalent to a.State().Cfg.
+func (a *App) Cfg() *Config { return a.State().Cfg }
+
+// Meta returns the current metamodel (convenience accessor).
+func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
+
+// Graph returns the current in-memory graph (convenience accessor).
+func (a *App) Graph() *graph.Graph { return a.State().Graph }
+
+// mutateState atomically updates the published AppState. It takes
+// writeMu, builds a shallow copy of the current snapshot, runs the
+// caller's mutator on the copy, and publishes the copy via state.Store.
+//
+// This is the canonical way for mutation handlers to change reloadable
+// fields like UserDefaults or UserPalette. Reaching through a.State()
+// to assign field values directly is a bug — it scribbles on the shared
+// snapshot pointer that lock-free readers also hold.
+func (a *App) mutateState(fn func(*AppState)) {
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+	cur := a.state.Load()
+	next := *cur // shallow copy of the snapshot
+	fn(&next)
+	a.state.Store(&next)
 }
 
 // SetSecurityConfig configures the HTTP security middlewares applied by
@@ -170,20 +193,11 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 	styleMap, styledTypes := buildStyleMap(&cfg, meta)
 
 	app := &App{
-		Cfg:         &cfg,
-		ws:          ws,
-		meta:        meta,
-		g:           g,
-		styleMap:    styleMap,
-		styledTypes: styledTypes,
-		broker:      newEventBroker(),
-		openAPIGen: openapi.New(meta, openapi.Config{
-			Title:       cfg.App.Name + " API",
-			Description: cfg.App.Description,
-			Version:     "1.0.0",
-		}),
+		ws:     ws,
+		broker: newEventBroker(),
 	}
-	app.userDefaults = app.loadUserDefaults()
+
+	userDefaults := app.loadUserDefaults()
 	userPalette, paletteErr := app.loadUserPalette()
 	if paletteErr != nil {
 		// Surface the error so users notice their palette is broken
@@ -191,19 +205,31 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		// then be persisted on the next save, destroying their data).
 		return nil, fmt.Errorf("load user palette: %w", paletteErr)
 	}
-	app.userPalette = userPalette
-	app.palette = ResolvePalette(cfg.Palette, app.userPalette)
+
+	// Build and publish the initial AppState snapshot. All reloadable
+	// state lives here; there are no convenience aliases on App to keep
+	// in sync.
+	app.state.Store(&AppState{
+		Cfg:          &cfg,
+		Meta:         meta,
+		Graph:        g,
+		StyleMap:     styleMap,
+		StyledTypes:  styledTypes,
+		UserDefaults: userDefaults,
+		Palette:      ResolvePalette(cfg.Palette, userPalette),
+		UserPalette:  userPalette,
+		OpenAPIGen: openapi.New(meta, openapi.Config{
+			Title:       cfg.App.Name + " API",
+			Description: cfg.App.Description,
+			Version:     "1.0.0",
+		}),
+	})
 
 	// Initialize git ops if enabled and repo is a git repository
 	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(ws.Paths().Root) {
 		app.gitOps = git.NewOps(ws.Paths().Root, *cfg.Git)
 		slog.Info("git sync enabled", "mode", cfg.Git.Mode)
 	}
-
-	// Publish the initial appState snapshot in parallel with the
-	// convenience aliases. Handlers will be migrated to read from
-	// the snapshot in a follow-up PR.
-	app.publishState()
 
 	return app, nil
 }
@@ -239,9 +265,9 @@ func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
 	if nav.Dashboard || nav.Graph || nav.Kanban != "" {
 		return item
 	}
-	if list, ok := a.Cfg.Lists[nav.List]; ok {
+	if list, ok := a.Cfg().Lists[nav.List]; ok {
 		item.EntityType = list.EntityType
-		entities := a.g.NodesByType(list.EntityType)
+		entities := a.Graph().NodesByType(list.EntityType)
 		entities = applyFilters(entities, list.Filters)
 		item.Count = len(entities)
 	}
@@ -252,8 +278,8 @@ func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
 // The activeList parameter is used to auto-expand the group containing the active item.
 func (a *App) navElements(activeList string) []NavElement {
 	uiState := a.loadUIState()
-	elements := make([]NavElement, 0, len(a.Cfg.Navigation))
-	for _, nav := range a.Cfg.Navigation {
+	elements := make([]NavElement, 0, len(a.Cfg().Navigation))
+	for _, nav := range a.Cfg().Navigation {
 		if nav.IsGroup() {
 			grp := NavGroup{Group: nav.Group}
 			// Determine collapsed state: UIState overrides config default
@@ -401,21 +427,21 @@ func firstNavTarget(nav []NavigationEntry) *NavigationEntry {
 // editFormForType returns the first edit form ID configured for the given entity type,
 // or "" if no edit form is found. Forms with explicit mode="edit" are preferred.
 func (a *App) editFormForType(entityType string) string {
-	ids := make([]string, 0, len(a.Cfg.Forms))
-	for id := range a.Cfg.Forms {
+	ids := make([]string, 0, len(a.Cfg().Forms))
+	for id := range a.Cfg().Forms {
 		ids = append(ids, id)
 	}
 	natsort.Strings(ids)
 	// First pass: look for explicit edit mode
 	for _, id := range ids {
-		f := a.Cfg.Forms[id]
+		f := a.Cfg().Forms[id]
 		if f.EntityType == entityType && f.Mode == "edit" {
 			return id
 		}
 	}
 	// Second pass: fall back to forms with no mode specified
 	for _, id := range ids {
-		f := a.Cfg.Forms[id]
+		f := a.Cfg().Forms[id]
 		if f.EntityType == entityType && f.Mode == "" {
 			return id
 		}
@@ -427,14 +453,14 @@ func (a *App) editFormForType(entityType string) string {
 // of the given type. It prefers forms with mode "create" or unset, but falls back
 // to edit-mode forms (which work for creation when no entity ID is provided).
 func (a *App) createFormForType(entityType string) string {
-	ids := make([]string, 0, len(a.Cfg.Forms))
-	for id := range a.Cfg.Forms {
+	ids := make([]string, 0, len(a.Cfg().Forms))
+	for id := range a.Cfg().Forms {
 		ids = append(ids, id)
 	}
 	natsort.Strings(ids)
 	fallback := ""
 	for _, id := range ids {
-		f := a.Cfg.Forms[id]
+		f := a.Cfg().Forms[id]
 		if f.EntityType != entityType {
 			continue
 		}
@@ -450,7 +476,7 @@ func (a *App) createFormForType(entityType string) string {
 
 // entityDisplayTitle returns the display title for an entity.
 func (a *App) entityDisplayTitle(e *model.Entity) string {
-	return a.meta.DisplayTitle(e)
+	return a.Meta().DisplayTitle(e)
 }
 
 // resolveLinkTarget resolves a link configuration value to a URL.
@@ -475,7 +501,7 @@ func (a *App) resolveLinkTarget(link, entityType, entityID string) string {
 // activeListForEntityType returns the first navigation list ID whose entity type
 // matches the given type, or "" if none match. Walks into groups.
 func (a *App) activeListForEntityType(entityType string) string {
-	return a.findListByEntityType(a.Cfg.Navigation, entityType)
+	return a.findListByEntityType(a.Cfg().Navigation, entityType)
 }
 
 func (a *App) findListByEntityType(entries []NavigationEntry, entityType string) string {
@@ -486,7 +512,7 @@ func (a *App) findListByEntityType(entries []NavigationEntry, entityType string)
 			}
 			continue
 		}
-		if list, ok := a.Cfg.Lists[nav.List]; ok && list.EntityType == entityType {
+		if list, ok := a.Cfg().Lists[nav.List]; ok && list.EntityType == entityType {
 			return nav.List
 		}
 	}
@@ -510,7 +536,7 @@ func (a *App) activeListFromReferer(r *http.Request) string {
 		return ""
 	}
 	listID := strings.TrimPrefix(path, "/list/")
-	if _, ok := a.Cfg.Lists[listID]; ok {
+	if _, ok := a.Cfg().Lists[listID]; ok {
 		return listID
 	}
 	return ""
@@ -522,7 +548,7 @@ func (a *App) activeListFromReferer(r *http.Request) string {
 // Referer header.
 func (a *App) resolveActiveList(entityType string, r *http.Request) string {
 	if from := r.URL.Query().Get("from"); from != "" {
-		if _, ok := a.Cfg.Lists[from]; ok {
+		if _, ok := a.Cfg().Lists[from]; ok {
 			return from
 		}
 	}
@@ -534,7 +560,7 @@ func (a *App) resolveActiveList(entityType string, r *http.Request) string {
 
 // ProjectName returns the display name of the loaded project.
 func (a *App) ProjectName() string {
-	return a.Cfg.App.Name
+	return a.Cfg().App.Name
 }
 
 // ProjectRoot returns the root directory of the loaded project.

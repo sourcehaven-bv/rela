@@ -16,11 +16,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-// callAction simulates the reloadLockMiddleware by holding RLock around
-// the handler call, matching how requests reach handlers in production.
+// callAction is a thin wrapper that invokes handleV1Action directly. It
+// used to simulate the reloadLockMiddleware by holding RLock around the
+// call; since App.mu was deleted this is now just a direct call, but
+// keeping the helper avoids touching every test body in this file.
 func callAction(app *App, req *http.Request, rec *httptest.ResponseRecorder) {
-	app.mu.RLock()
-	defer app.mu.RUnlock()
 	app.handleV1Action(rec, req)
 }
 
@@ -43,7 +43,7 @@ func newActionTestApp(t *testing.T, scripts map[string]string) *App {
 	app := newTestAppV1(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: tmpDir}),
-		app.meta, app.g)
+		app.Meta(), app.Graph())
 
 	return app
 }
@@ -52,7 +52,7 @@ func TestHandleV1Action_Success(t *testing.T) {
 	app := newActionTestApp(t, map[string]string{
 		"hello.lua": `return {redirect = "/done", message = "ok"}`,
 	})
-	app.Cfg.Actions = map[string]dataentryconfig.Action{
+	app.Cfg().Actions = map[string]dataentryconfig.Action{
 		"hello": {Script: "hello.lua"},
 	}
 
@@ -81,7 +81,7 @@ func TestHandleV1Action_NoReturn(t *testing.T) {
 	app := newActionTestApp(t, map[string]string{
 		"noop.lua": `local x = 1`,
 	})
-	app.Cfg.Actions = map[string]dataentryconfig.Action{
+	app.Cfg().Actions = map[string]dataentryconfig.Action{
 		"noop": {Script: "noop.lua"},
 	}
 
@@ -97,7 +97,7 @@ func TestHandleV1Action_NoReturn(t *testing.T) {
 
 func TestHandleV1Action_NotFound(t *testing.T) {
 	app := newActionTestApp(t, nil)
-	app.Cfg.Actions = map[string]dataentryconfig.Action{}
+	app.Cfg().Actions = map[string]dataentryconfig.Action{}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_action/missing", http.NoBody)
 	rec := httptest.NewRecorder()
@@ -150,7 +150,7 @@ func TestHandleV1Action_ScriptError(t *testing.T) {
 	app := newActionTestApp(t, map[string]string{
 		"boom.lua": `error("kaboom")`,
 	})
-	app.Cfg.Actions = map[string]dataentryconfig.Action{
+	app.Cfg().Actions = map[string]dataentryconfig.Action{
 		"boom": {Script: "boom.lua"},
 	}
 
@@ -179,7 +179,7 @@ func TestHandleV1Action_ParamsPassed(t *testing.T) {
 	app := newActionTestApp(t, map[string]string{
 		"echo.lua": `return {message = rela.params.greeting}`,
 	})
-	app.Cfg.Actions = map[string]dataentryconfig.Action{
+	app.Cfg().Actions = map[string]dataentryconfig.Action{
 		"echo": {
 			Script: "echo.lua",
 			Params: map[string]string{"greeting": "hello world"},
@@ -208,7 +208,7 @@ func TestHandleV1Action_OpenRedirectRejected(t *testing.T) {
 	app := newActionTestApp(t, map[string]string{
 		"evil.lua": `return {redirect = "//evil.com"}`,
 	})
-	app.Cfg.Actions = map[string]dataentryconfig.Action{
+	app.Cfg().Actions = map[string]dataentryconfig.Action{
 		"evil": {Script: "evil.lua"},
 	}
 
@@ -229,7 +229,7 @@ func TestHandleV1Action_Concurrent(t *testing.T) {
 	app := newActionTestApp(t, map[string]string{
 		"noop.lua": `return {message = "done"}`,
 	})
-	app.Cfg.Actions = map[string]dataentryconfig.Action{
+	app.Cfg().Actions = map[string]dataentryconfig.Action{
 		"noop": {Script: "noop.lua"},
 	}
 

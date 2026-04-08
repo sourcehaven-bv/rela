@@ -141,14 +141,7 @@ func testAppInstance() (*App, testEntities) {
 	cfg := testConfig()
 	meta := testMeta()
 	g, entities := testGraph(meta)
-	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	return &App{
-		Cfg:         cfg,
-		meta:        meta,
-		g:           g,
-		styleMap:    styleMap,
-		styledTypes: styledTypes,
-	}, entities
+	return newAppFromParts(cfg, meta, g), entities
 }
 
 func TestValidateConfig(t *testing.T) {
@@ -336,7 +329,7 @@ func TestEditFormForType(t *testing.T) {
 
 	t.Run("form with empty mode treated as edit", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.Cfg.Forms = map[string]Form{
+		app2.Cfg().Forms = map[string]Form{
 			"default-form": {EntityType: "ticket", Mode: ""},
 		}
 		got := app2.editFormForType("ticket")
@@ -358,7 +351,7 @@ func TestCreateFormForType(t *testing.T) {
 
 	t.Run("falls back to edit form", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.Cfg.Forms = map[string]Form{
+		app2.Cfg().Forms = map[string]Form{
 			"edit-ticket": {EntityType: "ticket", Mode: "edit"},
 		}
 		got := app2.createFormForType("ticket")
@@ -532,7 +525,7 @@ func TestNavElements(t *testing.T) {
 
 	t.Run("dashboard items skip entity lookup", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.Cfg.Navigation = []NavigationEntry{
+		app2.Cfg().Navigation = []NavigationEntry{
 			{Label: "Dashboard", Dashboard: true},
 			{Label: "Tickets", List: "tickets"},
 		}
@@ -550,7 +543,7 @@ func TestNavElements(t *testing.T) {
 
 	t.Run("filters applied to count", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.Cfg.Lists["tickets"] = List{
+		app2.Cfg().Lists["tickets"] = List{
 			EntityType: "ticket",
 			Filters: []FilterConfig{
 				{Property: "status", Operator: "=", Value: "open"},
@@ -568,7 +561,7 @@ func TestNavElements(t *testing.T) {
 
 	t.Run("groups with items", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.Cfg.Navigation = []NavigationEntry{
+		app2.Cfg().Navigation = []NavigationEntry{
 			{Label: "Dashboard", Dashboard: true},
 			{
 				Group: "Tickets",
@@ -611,7 +604,7 @@ func TestNavElements(t *testing.T) {
 
 	t.Run("group collapsed from config", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.Cfg.Navigation = []NavigationEntry{
+		app2.Cfg().Navigation = []NavigationEntry{
 			{
 				Group:     "Hidden",
 				Collapsed: true,
@@ -631,7 +624,7 @@ func TestNavElements(t *testing.T) {
 
 	t.Run("auto-expand group containing active list", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.Cfg.Navigation = []NavigationEntry{
+		app2.Cfg().Navigation = []NavigationEntry{
 			{
 				Group:     "Tickets",
 				Collapsed: true,
@@ -716,7 +709,7 @@ func TestUIStateLoadSave(t *testing.T) {
 	repo := repository.New(fs, ctx)
 
 	app, _ := testAppInstance()
-	app.ws = workspace.NewWithGraph(repo, app.meta, app.g)
+	app.ws = workspace.NewWithGraph(repo, app.Meta(), app.Graph())
 
 	t.Run("load returns defaults when file missing", func(t *testing.T) {
 		state := app.loadUIState()
@@ -738,8 +731,8 @@ func TestUIStateLoadSave(t *testing.T) {
 
 	t.Run("UIState overrides config default", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.ws = workspace.NewWithGraph(repo, app2.meta, app2.g)
-		app2.Cfg.Navigation = []NavigationEntry{
+		app2.ws = workspace.NewWithGraph(repo, app2.Meta(), app2.Graph())
+		app2.Cfg().Navigation = []NavigationEntry{
 			{
 				Group:     "Tickets",
 				Collapsed: false,
@@ -785,7 +778,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 	repo := repository.New(fs, ctx)
 
 	app, _ := testAppInstance()
-	app.ws = workspace.NewWithGraph(repo, app.meta, app.g)
+	app.ws = workspace.NewWithGraph(repo, app.Meta(), app.Graph())
 
 	t.Run("load returns nil when file missing", func(t *testing.T) {
 		ud := app.loadUserDefaults()
@@ -895,7 +888,7 @@ func TestValidateConfigNestedGroups(t *testing.T) {
 
 func TestActiveListForEntityTypeWithGroups(t *testing.T) {
 	app, _ := testAppInstance()
-	app.Cfg.Navigation = []NavigationEntry{
+	app.Cfg().Navigation = []NavigationEntry{
 		{
 			Group: "Tickets",
 			Items: []NavigationEntry{

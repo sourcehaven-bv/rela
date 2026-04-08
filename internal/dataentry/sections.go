@@ -110,7 +110,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 
 		if sec.Source == "entry" {
 			e := result.Entry
-			entDef, _ := a.meta.GetEntityDef(e.Type)
+			entDef, _ := a.Meta().GetEntityDef(e.Type)
 
 			switch sec.Display {
 			case "properties":
@@ -147,7 +147,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 			switch sec.Display {
 			case "properties", "list":
 				for _, e := range entities {
-					eDef, _ := a.meta.GetEntityDef(e.Type)
+					eDef, _ := a.Meta().GetEntityDef(e.Type)
 					sed := SectionEntityData{
 						ID:         e.ID,
 						Title:      a.entityDisplayTitle(e),
@@ -178,7 +178,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 			case "table":
 				sd.Columns = sec.Columns
 				buildRow := func(e *model.Entity) SectionRowData {
-					eDef, _ := a.meta.GetEntityDef(e.Type)
+					eDef, _ := a.Meta().GetEntityDef(e.Type)
 					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
 					for _, col := range sec.Columns {
 						cell := SectionColumnData{
@@ -194,7 +194,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 									cell.PropType = pd.Type
 								}
 							}
-							cell.Widget = resolveWidget(pd, a.meta)
+							cell.Widget = resolveWidget(pd, a.Meta())
 							if vs := e.GetAttributeStrings(col.Property); vs != nil {
 								cell.Values = vs
 							} else if val := e.GetAttributeString(col.Property); val != "" {
@@ -236,7 +236,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 
 			case "content", "cards":
 				for _, e := range entities {
-					eDef, _ := a.meta.GetEntityDef(e.Type)
+					eDef, _ := a.Meta().GetEntityDef(e.Type)
 					sed := SectionEntityData{
 						ID:         e.ID,
 						Title:      a.entityDisplayTitle(e),
@@ -313,7 +313,7 @@ func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections 
 				relName = rule.FollowIncoming
 				linkAs = "from" // new entity is the source (incoming to entry)
 			}
-			relDef, ok := a.meta.GetRelationDef(relName)
+			relDef, ok := a.Meta().GetRelationDef(relName)
 			if !ok {
 				break
 			}
@@ -331,7 +331,7 @@ func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections 
 					continue
 				}
 				label := et
-				if ed, ok := a.meta.GetEntityDef(et); ok && ed.Label != "" {
+				if ed, ok := a.Meta().GetEntityDef(et); ok && ed.Label != "" {
 					label = ed.Label
 				}
 				targets = append(targets, SectionAddTarget{

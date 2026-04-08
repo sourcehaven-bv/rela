@@ -53,14 +53,7 @@ func testViewApp() *App {
 	g.AddEdge(testutil.NewRelation("TKT-002", "depends_on", "TKT-003").Build())
 	g.AddEdge(testutil.NewRelation("TKT-001", "belongs_to", "CMP-001").Build())
 
-	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	return &App{
-		Cfg:         cfg,
-		meta:        meta,
-		g:           g,
-		styleMap:    styleMap,
-		styledTypes: styledTypes,
-	}
+	return newAppFromParts(cfg, meta, g)
 }
 
 func TestCountViewEntities(t *testing.T) {
@@ -337,14 +330,7 @@ func testViewAppWithMixedTypes() *App {
 	g.AddEdge(testutil.NewRelation("UC-001", "partOfBouwblok", "BOUWBLOK-001").Build())
 	g.AddEdge(testutil.NewRelation("SCEN-001", "partOfBouwblok", "BOUWBLOK-001").Build())
 
-	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	return &App{
-		Cfg:         cfg,
-		meta:        meta,
-		g:           g,
-		styleMap:    styleMap,
-		styledTypes: styledTypes,
-	}
+	return newAppFromParts(cfg, meta, g)
 }
 
 func TestExecuteViewWithWhere(t *testing.T) {
@@ -522,10 +508,10 @@ func TestFilterEntities(t *testing.T) {
 	app := testViewAppWithMixedTypes()
 
 	entities := []*model.Entity{
-		testutil.EntityFor(app.meta, "function").ID("FUNC-001").With("status", "active").Build(),
-		testutil.EntityFor(app.meta, "function").ID("FUNC-002").With("status", "draft").Build(),
-		testutil.EntityFor(app.meta, "usecase").ID("UC-001").With("status", "active").Build(),
-		testutil.EntityFor(app.meta, "scenario").ID("SCEN-001").Build(),
+		testutil.EntityFor(app.Meta(), "function").ID("FUNC-001").With("status", "active").Build(),
+		testutil.EntityFor(app.Meta(), "function").ID("FUNC-002").With("status", "draft").Build(),
+		testutil.EntityFor(app.Meta(), "usecase").ID("UC-001").With("status", "active").Build(),
+		testutil.EntityFor(app.Meta(), "scenario").ID("SCEN-001").Build(),
 	}
 
 	t.Run("filter by type", func(t *testing.T) {

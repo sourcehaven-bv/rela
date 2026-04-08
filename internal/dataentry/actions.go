@@ -21,7 +21,7 @@ var actionIDRegex = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
 // actionTimeout is the maximum execution time for an action script.
 // Tighter than the default Lua timeout because the action handler holds
-// the workspace write lock for the entire script execution.
+// writeMu for the entire script execution, blocking other mutations.
 const actionTimeout = 5 * time.Second
 
 // V1ActionResponse mirrors script.ActionResponse for API JSON output.
@@ -37,10 +37,9 @@ type V1ActionResponse struct {
 // handleV1Action executes a configured action script and returns the result.
 // Endpoint: POST /api/v1/_action/{id}
 //
-// Note: Called under reloadLockMiddleware which holds RLock. Action scripts
-// may mutate the workspace, so we release the read lock and acquire the
-// write lock for the duration of script execution, then restore the read
-// lock for the middleware's defer.
+// Action scripts may mutate the workspace, so we serialize them via
+// writeMu for the duration of script execution. Concurrent reloads,
+// other mutations, and other action scripts wait for writeMu.
 func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
@@ -55,8 +54,7 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// We're under RLock from middleware. Read the action config first.
-	action, ok := a.Cfg.Actions[id]
+	action, ok := a.Cfg().Actions[id]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "action_not_found", "Action not found", "")
 		return
@@ -64,17 +62,14 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 
 	correlationID := newCorrelationID()
 
-	// Swap to write lock for the duration of script execution.
-	a.mu.RUnlock()
-	a.mu.Lock()
-	defer func() {
-		a.mu.Unlock()
-		a.mu.RLock()
-	}()
+	// Serialize action script execution against other mutations and
+	// against workspace reloads via writeMu.
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
 
 	ctx := &actionScriptContext{
 		ws:          a.ws,
-		meta:        a.meta,
+		meta:        a.Meta(),
 		projectRoot: a.ws.Paths().Root,
 	}
 

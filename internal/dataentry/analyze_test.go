@@ -10,11 +10,7 @@ import (
 
 // newTestApp creates a minimal App with the given graph and metamodel for testing.
 func newTestApp(g *graph.Graph, meta *metamodel.Metamodel) *App {
-	return &App{
-		g:    g,
-		meta: meta,
-		Cfg:  &Config{},
-	}
+	return newAppFromParts(&Config{}, meta, g)
 }
 
 func TestAnalyzeOrphans(t *testing.T) {

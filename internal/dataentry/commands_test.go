@@ -22,10 +22,10 @@ import (
 
 func TestResolveCommands(t *testing.T) {
 	app, _ := testAppInstance()
-	app.Cfg.Views = map[string]ViewConfig{
+	app.Cfg().Views = map[string]ViewConfig{
 		"ticket_detail": {Title: "Ticket Detail", Entry: ViewEntry{Type: "ticket"}},
 	}
-	app.Cfg.Commands = map[string]CommandConfig{
+	app.Cfg().Commands = map[string]CommandConfig{
 		"entity-cmd": {
 			Label:   "Entity Cmd",
 			Script:  "echo hi",
@@ -120,7 +120,7 @@ func TestResolveCommands(t *testing.T) {
 	t.Run("auto_open propagated to resolved command", func(t *testing.T) {
 		app2, _ := testAppInstance()
 		trueVal := true
-		app2.Cfg.Commands = map[string]CommandConfig{
+		app2.Cfg().Commands = map[string]CommandConfig{
 			"auto-cmd": {
 				Label:    "Auto",
 				Script:   "echo hi",
@@ -257,8 +257,8 @@ func TestBuildEntityInput(t *testing.T) {
 	app, entities := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
-	app.g.AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
+		app.Meta(), app.Graph())
+	app.Graph().AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
 	input := app.buildEntityInput(entities.ticket1)
 
@@ -293,8 +293,8 @@ func TestBuildListInput(t *testing.T) {
 	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
-	entities := app.g.NodesByType("ticket")
+		app.Meta(), app.Graph())
+	entities := app.Graph().NodesByType("ticket")
 
 	input := app.buildListInput("tickets", entities)
 
@@ -313,8 +313,8 @@ func TestBuildViewInput(t *testing.T) {
 	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
-	app.g.AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
+		app.Meta(), app.Graph())
+	app.Graph().AddEdge(model.NewRelation("TKT-001", "belongs_to", "CMP-001"))
 
 	view := ViewConfig{
 		Title: "Test View",
@@ -351,7 +351,7 @@ func TestBuildGlobalInput(t *testing.T) {
 	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.Meta(), app.Graph())
 
 	input := app.buildGlobalInput()
 
@@ -369,7 +369,7 @@ func TestBuildCommandEnv(t *testing.T) {
 	app, entities := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.Meta(), app.Graph())
 
 	cmd := CommandConfig{
 		Script:  "echo hi",
@@ -401,7 +401,7 @@ func TestBuildCommandEnvListContext(t *testing.T) {
 	app, _ := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.Meta(), app.Graph())
 
 	cmd := CommandConfig{Script: "echo hi", Context: "list"}
 	input := app.buildListInput("tickets", nil)
@@ -417,7 +417,7 @@ func TestBuildCommandEnvViewContext(t *testing.T) {
 	app, entities := testAppInstance()
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
-		app.meta, app.g)
+		app.Meta(), app.Graph())
 
 	cmd := CommandConfig{Script: "echo hi", Context: "view"}
 	input := &commandInput{
@@ -583,8 +583,8 @@ func TestHandleCommandExec(t *testing.T) {
 	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
-		app.meta, app.g)
-	app.Cfg.Commands = map[string]CommandConfig{
+		app.Meta(), app.Graph())
+	app.Cfg().Commands = map[string]CommandConfig{
 		"test-echo": {
 			Label:   "Test Echo",
 			Script:  `echo '::rela::{"type":"message","text":"hello from test"}' && echo 'raw log line'`,
@@ -666,8 +666,8 @@ func TestHandleCommandExecFailing(t *testing.T) {
 	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
-		app.meta, app.g)
-	app.Cfg.Commands = map[string]CommandConfig{
+		app.Meta(), app.Graph())
+	app.Cfg().Commands = map[string]CommandConfig{
 		"fail-cmd": {
 			Label:   "Fail",
 			Script:  "echo 'failing' >&2 && exit 1",
@@ -704,8 +704,8 @@ func TestHandleCommandExecGlobalContext(t *testing.T) {
 	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
-		app.meta, app.g)
-	app.Cfg.Commands = map[string]CommandConfig{
+		app.Meta(), app.Graph())
+	app.Cfg().Commands = map[string]CommandConfig{
 		"global-cmd": {
 			Label:   "Global",
 			Script:  `echo '::rela::{"type":"message","text":"global ok"}'`,
@@ -736,8 +736,8 @@ func TestHandleCommandExecListContext(t *testing.T) {
 	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
-		app.meta, app.g)
-	app.Cfg.Commands = map[string]CommandConfig{
+		app.Meta(), app.Graph())
+	app.Cfg().Commands = map[string]CommandConfig{
 		"list-cmd": {
 			Label:   "List",
 			Script:  `echo '::rela::{"type":"message","text":"list ok"}'`,
@@ -758,8 +758,8 @@ func TestHandleCommandExecViewContext(t *testing.T) {
 	app := newHandlerTestApp(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: t.TempDir()}),
-		app.meta, app.g)
-	app.Cfg.Commands = map[string]CommandConfig{
+		app.Meta(), app.Graph())
+	app.Cfg().Commands = map[string]CommandConfig{
 		"view-cmd": {
 			Label:   "View",
 			Script:  `echo '::rela::{"type":"message","text":"view ok"}'`,

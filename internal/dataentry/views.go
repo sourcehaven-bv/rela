@@ -15,7 +15,7 @@ type viewResult struct {
 
 // executeView runs a view's traversal rules and returns the result.
 func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) {
-	entry, ok := a.g.GetNode(entryID)
+	entry, ok := a.Graph().GetNode(entryID)
 	if !ok {
 		return nil, fmt.Errorf("entry entity not found: %s", entryID)
 	}
@@ -106,17 +106,17 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*model.Entity {
 	var out []*model.Entity
 	if rule.Follow != "" {
-		for _, edge := range a.g.OutgoingEdges(sourceID) {
+		for _, edge := range a.Graph().OutgoingEdges(sourceID) {
 			if edge.Type == rule.Follow {
-				if target, ok := a.g.GetNode(edge.To); ok {
+				if target, ok := a.Graph().GetNode(edge.To); ok {
 					out = append(out, target)
 				}
 			}
 		}
 	} else if rule.FollowIncoming != "" {
-		for _, edge := range a.g.IncomingEdges(sourceID) {
+		for _, edge := range a.Graph().IncomingEdges(sourceID) {
 			if edge.Type == rule.FollowIncoming {
-				if src, ok := a.g.GetNode(edge.From); ok {
+				if src, ok := a.Graph().GetNode(edge.From); ok {
 					out = append(out, src)
 				}
 			}
@@ -168,7 +168,7 @@ func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*mod
 		}
 
 		// Regular property - use metamodel-aware matching
-		entityDef, ok := a.meta.GetEntityDef(entity.Type)
+		entityDef, ok := a.Meta().GetEntityDef(entity.Type)
 		if !ok {
 			continue
 		}
@@ -176,7 +176,7 @@ func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*mod
 		if !ok {
 			continue
 		}
-		matches, err := filter.Match(entity, f, &propDef, a.meta)
+		matches, err := filter.Match(entity, f, &propDef, a.Meta())
 		if err != nil {
 			continue
 		}

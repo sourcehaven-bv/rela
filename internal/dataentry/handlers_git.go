@@ -30,10 +30,7 @@ func (a *App) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := GitStatusResponse{Available: false}
-
-	a.mu.RLock()
 	gitOps := a.gitOps
-	a.mu.RUnlock()
 
 	if gitOps == nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -68,10 +65,7 @@ func (a *App) handleGitSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := GitSyncResponse{}
-
-	a.mu.RLock()
 	gitOps := a.gitOps
-	a.mu.RUnlock()
 
 	if gitOps == nil {
 		resp.Error = "git not configured"

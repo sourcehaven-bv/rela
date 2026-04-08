@@ -19,15 +19,8 @@ func newGraphTestApp(t *testing.T) *App {
 	// Add a relation edge for testing
 	g.AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
-	styleMap, styledTypes := buildStyleMap(cfg, meta)
-
-	return &App{
-		Cfg:         cfg,
-		meta:        meta,
-		g:           g,
-		styleMap:    styleMap,
-		styledTypes: styledTypes,
-	}
+	_, _ = buildStyleMap(cfg, meta) // exercised by newAppFromParts
+	return newAppFromParts(cfg, meta, g)
 }
 
 func TestHandleGraphData(t *testing.T) {
@@ -337,7 +330,7 @@ func TestBuildMetaInfo(t *testing.T) {
 
 func TestNavElementsGraphSkipsCount(t *testing.T) {
 	app := newGraphTestApp(t)
-	app.Cfg.Navigation = []NavigationEntry{
+	app.Cfg().Navigation = []NavigationEntry{
 		{Label: "Graph", Graph: true},
 		{Label: "Tickets", List: "tickets"},
 	}
@@ -367,7 +360,9 @@ func TestBuildContentGraphDataEmptyGraph(t *testing.T) {
 	}
 
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
-	app := &App{Cfg: cfg, meta: meta, g: g, styleMap: styleMap, styledTypes: styledTypes}
+	_ = styleMap
+	_ = styledTypes
+	app := newAppFromParts(cfg, meta, g)
 	resp := app.buildContentGraphData()
 
 	if len(resp.Nodes) != 0 {

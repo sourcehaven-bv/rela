@@ -114,19 +114,11 @@ status: open
 		App: AppConfig{Name: "Test App"},
 	}
 
-	styleMap, styledTypes := buildStyleMap(cfg, meta)
-
 	ws := workspace.NewWithGraph(repo, meta, g)
 
-	app := &App{
-		Cfg:         cfg,
-		ws:          ws,
-		meta:        meta,
-		g:           g,
-		styleMap:    styleMap,
-		styledTypes: styledTypes,
-		broker:      newEventBroker(),
-	}
+	app := newAppFromParts(cfg, meta, g)
+	app.ws = ws
+	app.broker = newEventBroker()
 
 	return app, fs
 }
@@ -268,7 +260,7 @@ func TestReloadEntityChanges(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
 	// Verify initial state
-	initialCount := len(app.g.AllNodes())
+	initialCount := len(app.Graph().AllNodes())
 
 	// Add a new entity file
 	_ = fs.WriteFile(app.ws.Paths().EntitiesDir+"/tickets/TKT-002.md", []byte(`---
@@ -284,7 +276,7 @@ status: open
 		{Path: app.ws.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: repository.OpCreate},
 	})
 
-	newCount := len(app.g.AllNodes())
+	newCount := len(app.Graph().AllNodes())
 	if newCount != initialCount+1 {
 		t.Errorf("expected %d entities after reload, got %d", initialCount+1, newCount)
 	}
@@ -294,7 +286,7 @@ func TestReloadMetamodelChange(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
 	// Verify initial metamodel has 'ticket' entity
-	if _, ok := app.meta.GetEntityDef("ticket"); !ok {
+	if _, ok := app.Meta().GetEntityDef("ticket"); !ok {
 		t.Fatal("expected 'ticket' in initial metamodel")
 	}
 
@@ -333,7 +325,7 @@ relations:
 		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
 	})
 
-	if _, ok := app.meta.GetEntityDef("component"); !ok {
+	if _, ok := app.Meta().GetEntityDef("component"); !ok {
 		t.Error("expected 'component' entity in reloaded metamodel")
 	}
 }
@@ -341,7 +333,7 @@ relations:
 func TestReloadConfigChange(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
-	originalName := app.Cfg.App.Name
+	originalName := app.Cfg().App.Name
 
 	// Write updated config with a different app name
 	updatedConfig := `version: "1.0"
@@ -358,18 +350,18 @@ navigation: []
 		{Path: configPath, Op: repository.OpModify},
 	})
 
-	if app.Cfg.App.Name == originalName {
+	if app.Cfg().App.Name == originalName {
 		t.Error("expected config app name to change after reload")
 	}
-	if app.Cfg.App.Name != "Updated App" {
-		t.Errorf("expected 'Updated App', got %q", app.Cfg.App.Name)
+	if app.Cfg().App.Name != "Updated App" {
+		t.Errorf("expected 'Updated App', got %q", app.Cfg().App.Name)
 	}
 }
 
 func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
-	original := app.meta
+	original := app.Meta()
 
 	// Write invalid metamodel
 	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
@@ -379,7 +371,7 @@ func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
 	})
 
 	// Metamodel should be unchanged
-	if app.meta != original {
+	if app.Meta() != original {
 		t.Error("expected metamodel to remain unchanged after bad reload")
 	}
 }
@@ -387,7 +379,7 @@ func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
 func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
-	originalName := app.Cfg.App.Name
+	originalName := app.Cfg().App.Name
 	configPath := app.ws.Paths().Root + "/" + ConfigFile
 
 	// Write invalid YAML config
@@ -398,8 +390,8 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	})
 
 	// Config should be unchanged
-	if app.Cfg.App.Name != originalName {
-		t.Errorf("expected config to remain unchanged, got %q", app.Cfg.App.Name)
+	if app.Cfg().App.Name != originalName {
+		t.Errorf("expected config to remain unchanged, got %q", app.Cfg().App.Name)
 	}
 }
 
@@ -445,11 +437,11 @@ relations:
 		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
 	})
 
-	if app.Cfg.App.Name != "Mixed Update" {
-		t.Errorf("expected config name 'Mixed Update', got %q", app.Cfg.App.Name)
+	if app.Cfg().App.Name != "Mixed Update" {
+		t.Errorf("expected config name 'Mixed Update', got %q", app.Cfg().App.Name)
 	}
 
-	entDef, ok := app.meta.GetEntityDef("ticket")
+	entDef, ok := app.Meta().GetEntityDef("ticket")
 	if !ok {
 		t.Fatal("expected 'ticket' in reloaded metamodel")
 	}
@@ -571,9 +563,9 @@ func (w *nonFlusherWriter) Header() http.Header         { return w.header }
 func (w *nonFlusherWriter) WriteHeader(code int)        { w.code = code }
 func (w *nonFlusherWriter) Write(b []byte) (int, error) { return w.body.Write(b) }
 
-// --- reloadLockMiddleware tests ---
+// --- noCacheMiddleware tests ---
 
-func TestReloadLockMiddleware(t *testing.T) {
+func TestNoCacheMiddleware(t *testing.T) {
 	app, _ := setupReloadTestApp(t)
 
 	called := false
@@ -582,7 +574,7 @@ func TestReloadLockMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := app.reloadLockMiddleware(inner)
+	handler := app.noCacheMiddleware(inner)
 	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	w := httptest.NewRecorder()
 
@@ -596,14 +588,14 @@ func TestReloadLockMiddleware(t *testing.T) {
 	}
 }
 
-func TestReloadLockMiddlewareSetsNoCacheHeader(t *testing.T) {
+func TestNoCacheMiddlewareSetsHeader(t *testing.T) {
 	app, _ := setupReloadTestApp(t)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := app.reloadLockMiddleware(inner)
+	handler := app.noCacheMiddleware(inner)
 	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	w := httptest.NewRecorder()
 
@@ -615,48 +607,69 @@ func TestReloadLockMiddlewareSetsNoCacheHeader(t *testing.T) {
 	}
 }
 
-func TestReloadLockMiddlewareBlocksDuringReload(t *testing.T) {
+func TestConcurrentReadDuringOnReload(t *testing.T) {
+	// With App.mu deleted, handlers never block on reload — they
+	// observe either the pre-reload or post-reload snapshot.
+	//
+	// This test asserts the snapshot's *cross-field* invariants hold
+	// at every observation: a reader that loads State() sees a Cfg,
+	// Meta, Graph, StyleMap, etc. that all came from the same publish.
+	// A regression that publishes one field independently of another
+	// would break the StyleMap entry-count invariant below.
 	app, _ := setupReloadTestApp(t)
 
-	handlerStarted := make(chan struct{})
-	handlerDone := make(chan struct{})
+	const readers = 8
+	const duration = 200 * time.Millisecond
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
 
-	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	for i := 0; i < readers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				s := app.State()
+				if s == nil {
+					t.Errorf("state.Load() returned nil")
+					return
+				}
+				if s.Cfg == nil || s.Meta == nil || s.Graph == nil {
+					t.Errorf("state.Load() returned incomplete snapshot: cfg=%v meta=%v graph=%v",
+						s.Cfg != nil, s.Meta != nil, s.Graph != nil)
+					return
+				}
+				// Cross-field invariant: a published AppState always
+				// has a StyleMap that covers every property type in
+				// its metamodel. A torn publish would yield zero or
+				// fewer entries.
+				if len(s.StyleMap) < len(s.Meta.Types) {
+					t.Errorf("torn snapshot: %d StyleMap entries vs %d metamodel types",
+						len(s.StyleMap), len(s.Meta.Types))
+					return
+				}
+			}
+		}()
+	}
 
-	handler := app.reloadLockMiddleware(inner)
-
-	// Acquire write lock (simulating a reload in progress)
-	app.mu.Lock()
-
-	// Try to serve a request — should block on RLock
+	wg.Add(1)
 	go func() {
-		close(handlerStarted)
-		r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
-		close(handlerDone)
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			app.onReload(nil)
+		}
 	}()
 
-	<-handlerStarted
-	// Give goroutine time to reach the RLock call
-	time.Sleep(50 * time.Millisecond)
-
-	select {
-	case <-handlerDone:
-		t.Error("handler should be blocked while write lock is held")
-	default:
-		// expected: handler is blocked
-	}
-
-	// Release write lock
-	app.mu.Unlock()
-
-	select {
-	case <-handlerDone:
-		// expected: handler completes
-	case <-time.After(time.Second):
-		t.Error("handler did not complete after write lock released")
-	}
+	time.Sleep(duration)
+	close(stop)
+	wg.Wait()
 }

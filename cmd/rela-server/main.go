@@ -116,7 +116,7 @@ func main() {
 		slog.Warn("rela-server bound beyond loopback; see docs/security.md for threat model",
 			"bind", *bind)
 	}
-	slog.Info("starting server", "name", app.Cfg.App.Name, "addr", "http://"+addr)
+	slog.Info("starting server", "name", app.Cfg().App.Name, "addr", "http://"+addr)
 	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)

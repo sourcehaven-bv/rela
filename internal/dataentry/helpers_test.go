@@ -277,7 +277,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 		}
 	}
 
-	app := &App{meta: meta}
+	app := newAppFromParts(nil, meta, nil)
 
 	t.Run("nil specs does nothing", func(t *testing.T) {
 		entities := makeEntities()
@@ -801,7 +801,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	g.AddEdge(testutil.NewRelation(assessment.ID, "assessmentBy", person2.ID).Build())
 	g.AddEdge(testutil.NewRelation(assessment.ID, "otherRel", person1.ID).Build())
 
-	app := &App{meta: meta, g: g}
+	app := newAppFromParts(nil, meta, g)
 
 	t.Run("resolves multiple targets", func(t *testing.T) {
 		got := app.resolveRelationColumnValues(assessment.ID, "assessmentBy", "")
@@ -884,7 +884,7 @@ func TestIsRelationLinked(t *testing.T) {
 			},
 		},
 	}
-	app := &App{meta: meta}
+	app := newAppFromParts(nil, meta, nil)
 
 	tests := []struct {
 		name     string
@@ -977,7 +977,7 @@ func TestFilterByRelation(t *testing.T) {
 	g.AddNode(tkt4)
 	// No relation for TKT-004
 
-	app := &App{meta: meta, g: g}
+	app := newAppFromParts(nil, meta, g)
 	allTickets := g.NodesByType("ticket")
 
 	t.Run("filters by relation target title", func(t *testing.T) {
@@ -1076,7 +1076,7 @@ func TestResolveRelationFilterValues(t *testing.T) {
 	tkt4 := testutil.EntityFor(meta, "ticket").ID("TKT-004").With("title", "Ticket 4").Build()
 	g.AddNode(tkt4)
 
-	app := &App{meta: meta, g: g}
+	app := newAppFromParts(nil, meta, g)
 	allTickets := g.NodesByType("ticket")
 
 	t.Run("returns unique sorted values", func(t *testing.T) {
@@ -1140,23 +1140,19 @@ func TestResolveScope(t *testing.T) {
 	}
 
 	makeApp := func() *App {
-		return &App{
-			meta: meta,
-			g:    makeGraph(),
-			Cfg: &Config{
-				Lists: map[string]List{
-					"tickets": {
-						EntityType: "ticket",
-						Title:      "Tickets",
-						Sort:       []SortSpec{{Property: "priority", Direction: "asc"}},
-						Filters:    nil,
-						FilterControls: []FilterControl{
-							{Property: "status"},
-						},
+		return newAppFromParts(&Config{
+			Lists: map[string]List{
+				"tickets": {
+					EntityType: "ticket",
+					Title:      "Tickets",
+					Sort:       []SortSpec{{Property: "priority", Direction: "asc"}},
+					Filters:    nil,
+					FilterControls: []FilterControl{
+						{Property: "status"},
 					},
 				},
 			},
-		}
+		}, meta, makeGraph())
 	}
 
 	makeRequest := func(urlStr string) *http.Request {
@@ -1358,21 +1354,17 @@ func TestResolveScope(t *testing.T) {
 		relGraph.AddEdge(testutil.NewRelation(t1.ID, "belongs_to", cmp.ID).Build())
 		relGraph.AddEdge(testutil.NewRelation(t2.ID, "belongs_to", cmp.ID).Build())
 
-		relApp := &App{
-			meta: relMeta,
-			g:    relGraph,
-			Cfg: &Config{
-				Lists: map[string]List{
-					"tickets": {
-						EntityType: "ticket",
-						Title:      "Tickets",
-						FilterControls: []FilterControl{
-							{Relation: "belongs_to"},
-						},
+		relApp := newAppFromParts(&Config{
+			Lists: map[string]List{
+				"tickets": {
+					EntityType: "ticket",
+					Title:      "Tickets",
+					FilterControls: []FilterControl{
+						{Relation: "belongs_to"},
 					},
 				},
 			},
-		}
+		}, relMeta, relGraph)
 
 		r := makeRequest("/entity/ticket/" + t1.ID + "?scope=list:tickets&filter_belongs_to=Frontend")
 		got := relApp.resolveScope(t1.ID, r)
