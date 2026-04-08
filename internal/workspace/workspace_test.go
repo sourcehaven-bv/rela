@@ -2,8 +2,11 @@ package workspace
 
 import (
 	"errors"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -607,15 +610,130 @@ func TestReload(t *testing.T) {
 	}
 }
 
-// --- Locking ---
+// --- Concurrency ---
 
-func TestRLock(t *testing.T) {
+// TestConcurrentReloadStateSnapshot exercises concurrent Reload() vs readers
+// vs a writer goroutine, modeling the production locking discipline where
+// an external mutex (App.writeMu in the data-entry server) serializes
+// mutations — including reloads that rebuild the search index from the
+// graph — against each other.
+//
+// This test specifically targets the atomic.Pointer-based workspaceState
+// publication. It would catch a regression that leaves
+// {meta, automation, searchIdx} non-coherent across a reload, or a reader
+// observing a nil workspaceState.
+//
+// Scope notes:
+//   - Readers only touch the atomic workspaceState (Meta, Search). They
+//     do NOT iterate graph nodes, because the graph is still mutated in
+//     place by repo.Sync — that is a pre-existing limitation documented
+//     on the Workspace struct.
+//   - Writers and reloader share an external mutex (mimicking
+//     App.writeMu). Without that, CreateEntity's entity-property map
+//     writes race against Reload's entityToSearchDocument reads. That
+//     race is also pre-existing (the old RWMutex-based workspace had it
+//     for the same reason); tracked as a future ticket, out of scope
+//     for TKT-252Y.
+func TestConcurrentReloadStateSnapshot(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	// Just verify it doesn't deadlock.
-	ws.RLock()
-	_ = ws.Meta()
-	ws.RUnlock()
+	// Seed the workspace with an entity so there is something to find.
+	mustCreate(t, ws, "requirement", CreateOptions{
+		Properties: map[string]any{"title": "seed"},
+	})
+
+	readerCount := 2 * runtime.GOMAXPROCS(0)
+	if readerCount < 4 {
+		readerCount = 4
+	}
+	const duration = 300 * time.Millisecond
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// writeMu mimics the App.writeMu serialization discipline used by
+	// the data-entry server. Writers and reloaders both take it; readers
+	// never do.
+	var writeMu sync.Mutex
+
+	// Reader goroutines: only touch the atomic workspaceState.
+	for i := 0; i < readerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				m := ws.Meta()
+				if m == nil {
+					t.Errorf("Meta() returned nil during concurrent reload")
+					return
+				}
+				// GetEntityDef reads the metamodel struct just loaded
+				// via Meta(). If a reload races, we observe either the
+				// old or the new metamodel — both should have this type.
+				if _, ok := m.GetEntityDef("requirement"); !ok {
+					t.Errorf("Meta().GetEntityDef(requirement) returned !ok")
+					return
+				}
+				// Search snapshots state.searchIdx; any result is fine.
+				_, _, _ = ws.Search([]string{"seed"}, nil, 10)
+			}
+		}()
+	}
+
+	// Writer goroutine: takes writeMu around each CreateEntity so that
+	// Reload (which also takes writeMu) never observes an entity in the
+	// middle of being constructed.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			writeMu.Lock()
+			_, _, err := ws.CreateEntity("requirement", CreateOptions{
+				Properties: map[string]any{"title": "writer entity"},
+			})
+			writeMu.Unlock()
+			if err != nil {
+				t.Errorf("CreateEntity failed: %v", err)
+				return
+			}
+		}
+	}()
+
+	// Reloader goroutine: takes the same writeMu so reload's graph
+	// iteration sees a consistent set of entities. Also exercises the
+	// internal reloadMu.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			writeMu.Lock()
+			_, err := ws.Reload()
+			writeMu.Unlock()
+			if err != nil {
+				t.Errorf("Reload() failed: %v", err)
+				return
+			}
+		}
+	}()
+
+	time.Sleep(duration)
+	close(stop)
+	wg.Wait()
 }
 
 // --- Errors ---

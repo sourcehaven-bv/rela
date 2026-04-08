@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -83,19 +84,59 @@ func (nopScriptExecutor) ExecuteFile(string, metamodel.ScriptContext) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
+// workspaceState holds the reloadable parts of a Workspace as an immutable
+// snapshot. A reload publishes a new state via atomic.Pointer.Store(); readers
+// call Load() once and work against the resulting snapshot, guaranteeing
+// that meta, automation, and searchIdx are always observed as a coherent
+// triple from the same reload epoch.
+type workspaceState struct {
+	meta       *metamodel.Metamodel
+	automation *automation.Engine // may be nil if the metamodel has no automations
+	searchIdx  *search.Index      // may be nil if index construction failed
+}
+
 // Workspace is a stateful domain session that ties together the repository
 // (persistence), graph (in-memory query), metamodel (schema), and automation
 // engine. All write operations go through Workspace so that disk and memory
 // stay in sync.
+//
+// # Concurrency model
+//
+// The reloadable state (metamodel, automation engine, search index) is held
+// in an immutable workspaceState struct and published via atomic.Pointer.
+// Readers call Load() once and work against a coherent snapshot. Reloads
+// build a new state and publish it atomically. This guarantees that no
+// caller ever observes a torn meta+automation+searchIdx triple.
+//
+// Reloads are serialized against each other and against Close via reloadMu.
+// Readers never take reloadMu. Writers (CreateEntity, UpdateEntity,
+// DeleteEntity) are expected to be serialized by the caller — within the
+// data-entry server this happens via App.writeMu.
+//
+// # Known limitation: graph-torn-during-reload
+//
+// The underlying *graph.Graph is mutated in place by repo.Sync (via
+// g.Clear()) during a reload. Readers that hold no reloadMu can observe
+// the graph in a transiently empty state, which leads to false-empty
+// results from Search, analyze commands, and anything that iterates the
+// graph. This is a pre-existing condition: the old RWMutex-based workspace
+// also had it, because readers released their RLock before actually using
+// the graph. Fixing it requires publishing the graph itself via atomic
+// pointer swap, which is a wider refactor tracked separately.
 type Workspace struct {
 	repo       repository.Store
 	graph      *graph.Graph
-	meta       *metamodel.Metamodel
-	automation *automation.Engine
-	searchIdx  *search.Index
+	state      atomic.Pointer[workspaceState]
 	config     *project.Config
 	scriptExec ScriptExecutor
-	mu         sync.RWMutex
+
+	// reloadMu serializes Reload/Sync/Close against each other. Readers
+	// never acquire it — they snapshot state via state.Load().
+	reloadMu sync.Mutex
+
+	// closed is set once Close has been called. Reload becomes a no-op
+	// after the workspace is closed.
+	closed atomic.Bool
 
 	// Watcher state (nil when not watching).
 	watchHandle *repository.WatchHandle
@@ -184,25 +225,27 @@ func NewWithGraph(
 // NewForTest creates a minimal workspace for testing. It has no repository,
 // so write operations will panic. Use this for unit tests that only need
 // to query the graph. It initializes a search index with all entities.
+//
+// This helper fails fast (panics) if the search index cannot be created,
+// because a silently-nil index leads to confusing downstream test failures.
 func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
-	ws := &Workspace{
-		graph:  g,
-		meta:   meta,
-		config: project.DefaultConfig(),
-	}
-
-	// Initialize search index for test workspaces.
 	idx, err := search.NewIndex()
 	if err != nil {
-		slog.Warn("failed to create test search index", "error", err)
-	} else {
-		docs := entitiesToSearchDocuments(g.AllNodes(), meta)
-		if indexErr := idx.IndexBatch(docs); indexErr != nil {
-			slog.Warn("failed to index test entities", "error", indexErr)
-		}
-		ws.searchIdx = idx
+		panic(fmt.Sprintf("NewForTest: create search index: %v", err))
+	}
+	docs := entitiesToSearchDocuments(g.AllNodes(), meta)
+	if indexErr := idx.IndexBatch(docs); indexErr != nil {
+		panic(fmt.Sprintf("NewForTest: index entities: %v", indexErr))
 	}
 
+	ws := &Workspace{
+		graph:  g,
+		config: project.DefaultConfig(),
+	}
+	ws.state.Store(&workspaceState{
+		meta:      meta,
+		searchIdx: idx,
+	})
 	return ws
 }
 
@@ -214,14 +257,23 @@ func newWorkspace(
 		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
 	}
 
-	// Create search index and index all entities.
-	searchIdx, err := search.NewIndex()
+	// Create search index and index all entities. Failures degrade search
+	// but don't block workspace construction — Search() will surface the
+	// nil index as an explicit error.
+	var searchIdx *search.Index
+	idx, err := search.NewIndex()
 	if err != nil {
 		slog.Warn("failed to create search index", "error", err)
 	} else {
 		docs := entitiesToSearchDocuments(g.AllNodes(), meta)
-		if err := searchIdx.IndexBatch(docs); err != nil {
+		if err := idx.IndexBatch(docs); err != nil {
 			slog.Warn("failed to index entities", "error", err)
+			// Don't publish a partial index.
+			if closeErr := idx.Close(); closeErr != nil {
+				slog.Warn("failed to close partial search index", "error", closeErr)
+			}
+		} else {
+			searchIdx = idx
 		}
 	}
 
@@ -238,15 +290,18 @@ func newWorkspace(
 		cfg = project.DefaultConfig()
 	}
 
-	return &Workspace{
+	ws := &Workspace{
 		repo:       repo,
 		graph:      g,
-		meta:       meta,
-		automation: autoEngine,
-		searchIdx:  searchIdx,
 		config:     cfg,
 		scriptExec: scriptExec,
 	}
+	ws.state.Store(&workspaceState{
+		meta:       meta,
+		automation: autoEngine,
+		searchIdx:  searchIdx,
+	})
+	return ws
 }
 
 // --- Accessors ---
@@ -254,11 +309,15 @@ func newWorkspace(
 // Graph returns the in-memory graph for direct read queries.
 func (w *Workspace) Graph() *graph.Graph { return w.graph }
 
-// Meta returns the current metamodel.
+// Meta returns the current metamodel. The returned pointer is a snapshot:
+// callers should not hold it across operations that could trigger a reload
+// (file watcher, explicit Reload call), because a newer metamodel may have
+// been published in the meantime.
 func (w *Workspace) Meta() *metamodel.Metamodel {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	return w.meta
+	if s := w.state.Load(); s != nil {
+		return s.meta
+	}
+	return nil
 }
 
 // Repo returns the underlying repository for low-level operations not
@@ -268,13 +327,11 @@ func (w *Workspace) Repo() repository.Store { return w.repo }
 // Search performs a full-text search and returns matching entities with scores.
 // words are OR'd together with fuzzy matching; phrases must all match exactly.
 func (w *Workspace) Search(words, phrases []string, limit int) ([]*model.Entity, []float64, error) {
-	w.mu.RLock()
-	idx := w.searchIdx
-	w.mu.RUnlock()
-
-	if idx == nil {
+	s := w.state.Load()
+	if s == nil || s.searchIdx == nil {
 		return nil, nil, fmt.Errorf("search index not available")
 	}
+	idx := s.searchIdx
 	results, err := idx.Search(words, phrases, limit)
 	if err != nil {
 		return nil, nil, err
@@ -344,10 +401,19 @@ func (w *Workspace) CleanupOrphanedTempFiles() (int, error) {
 // --- Lifecycle ---
 
 // Sync clears the graph and reloads all entities and relations from disk.
+// Serialized against Reload and Close via reloadMu; readers see a graph
+// that is transiently cleared while Sync runs (pre-existing behavior).
 func (w *Workspace) Sync() (*model.SyncResult, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.repo.Sync(w.meta, w.graph)
+	w.reloadMu.Lock()
+	defer w.reloadMu.Unlock()
+	if w.closed.Load() {
+		return nil, fmt.Errorf("workspace is closed")
+	}
+	s := w.state.Load()
+	if s == nil {
+		return nil, fmt.Errorf("workspace not initialized")
+	}
+	return w.repo.Sync(s.meta, w.graph)
 }
 
 // SyncLua is a Lua-friendly wrapper for Sync that doesn't return the result.
@@ -360,89 +426,133 @@ func (w *Workspace) SyncLua() error {
 // Reload reloads the metamodel and re-syncs the graph from disk. This is
 // called automatically by the file watcher but is also available for
 // programmatic use (after migration, in tests, etc.).
+//
+// Reload is serialized against concurrent Reload, Sync, and Close via
+// reloadMu. Readers (Meta, Search, etc.) do not take the lock; they get
+// a coherent snapshot via state.Load() regardless of reload timing.
+//
+// On success, a new workspaceState containing the new metamodel, automation
+// engine, and search index is published atomically. On failure, the old
+// state remains in place so concurrent readers never observe a broken
+// workspace.
 func (w *Workspace) Reload() (*model.SyncResult, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.reloadLocked()
-}
+	w.reloadMu.Lock()
+	defer w.reloadMu.Unlock()
 
-func (w *Workspace) reloadLocked() (*model.SyncResult, error) {
+	// Skip reloads after Close: they would resurrect the workspace with
+	// fresh resources that no one would close.
+	if w.closed.Load() {
+		return nil, fmt.Errorf("workspace is closed")
+	}
+
+	oldState := w.state.Load()
+
 	newMeta, err := w.repo.LoadMetamodel()
 	if err != nil {
 		if migration.IsMigrationError(err) {
 			slog.Warn("metamodel needs migration, skipping reload: run 'rela migrate'")
 			// Sync with current meta even if metamodel file changed.
-			return w.repo.Sync(w.meta, w.graph)
+			if oldState == nil {
+				return nil, fmt.Errorf("reload: no current metamodel and new one needs migration")
+			}
+			return w.repo.Sync(oldState.meta, w.graph)
 		}
 		return nil, fmt.Errorf("reload metamodel: %w", err)
 	}
-	w.meta = newMeta
 
-	// Rebuild automation engine for new metamodel.
-	if len(newMeta.Automations) > 0 {
-		w.automation = automation.NewEngineFromMetamodel(newMeta.Automations)
-	} else {
-		w.automation = nil
-	}
-
-	result, err := w.repo.Sync(w.meta, w.graph)
+	// Sync the graph with the new metamodel. repo.Sync only reads from
+	// newMeta; it does not call back into Workspace.Meta(). If this
+	// fails, we do not publish the new state, so the old meta/automation/
+	// searchIdx remain live.
+	result, err := w.repo.Sync(newMeta, w.graph)
 	if err != nil {
 		return nil, fmt.Errorf("sync: %w", err)
 	}
 
-	// Rebuild search index.
-	w.rebuildSearchIndex()
+	// Build a new automation engine from the new metamodel.
+	var newAuto *automation.Engine
+	if len(newMeta.Automations) > 0 {
+		newAuto = automation.NewEngineFromMetamodel(newMeta.Automations)
+	}
+
+	// Build the new search index against the new metamodel and the freshly
+	// synced graph. Only publish if it is fully usable; on any failure,
+	// keep the previous index to avoid dropping a working index in favor
+	// of a broken one.
+	newIdx := w.buildReloadSearchIndex(newMeta, oldState)
+
+	// Publish the new state atomically. Readers that call state.Load()
+	// after this point see a coherent {newMeta, newAuto, newIdx} triple.
+	w.state.Store(&workspaceState{
+		meta:       newMeta,
+		automation: newAuto,
+		searchIdx:  newIdx,
+	})
+
+	// Close the old search index if it was replaced (not carried over).
+	if oldState != nil && oldState.searchIdx != nil && oldState.searchIdx != newIdx {
+		if closeErr := oldState.searchIdx.Close(); closeErr != nil {
+			slog.Warn("failed to close old search index", "error", closeErr)
+		}
+	}
 
 	w.saveCacheQuietly()
 	return result, nil
 }
 
-// rebuildSearchIndex recreates and repopulates the search index.
-// Caller must hold w.mu.Lock.
-func (w *Workspace) rebuildSearchIndex() {
-	if w.searchIdx != nil {
-		if err := w.searchIdx.Close(); err != nil {
-			slog.Warn("failed to close search index", "error", err)
+// buildReloadSearchIndex creates a fresh search index for a reload. On any
+// failure (creating the index, batch-indexing the documents), it returns
+// the old index from oldState instead of dropping indexing entirely.
+// Caller must hold reloadMu.
+func (w *Workspace) buildReloadSearchIndex(
+	newMeta *metamodel.Metamodel, oldState *workspaceState,
+) *search.Index {
+	carryOver := func() *search.Index {
+		if oldState == nil {
+			return nil
 		}
+		return oldState.searchIdx
 	}
-	idx, err := search.NewIndex()
+
+	candidate, err := search.NewIndex()
 	if err != nil {
-		slog.Warn("failed to create search index", "error", err)
-		w.searchIdx = nil
-		return
+		slog.Warn("failed to create search index during reload; keeping previous", "error", err)
+		return carryOver()
 	}
-	docs := entitiesToSearchDocuments(w.graph.AllNodes(), w.meta)
-	if err := idx.IndexBatch(docs); err != nil {
-		slog.Warn("failed to index entities", "error", err)
+
+	docs := entitiesToSearchDocuments(w.graph.AllNodes(), newMeta)
+	if err := candidate.IndexBatch(docs); err != nil {
+		slog.Warn("failed to index entities during reload; keeping previous index", "error", err)
+		if closeErr := candidate.Close(); closeErr != nil {
+			slog.Warn("failed to close partial search index", "error", closeErr)
+		}
+		return carryOver()
 	}
-	w.searchIdx = idx
+
+	return candidate
 }
 
-// indexEntity adds or updates an entity in the search index.
+// indexEntity adds or updates an entity in the search index. Uses a single
+// state snapshot so the index and metamodel come from the same reload epoch.
 func (w *Workspace) indexEntity(entity *model.Entity) {
-	w.mu.RLock()
-	idx := w.searchIdx
-	meta := w.meta
-	w.mu.RUnlock()
-
-	if idx != nil {
-		doc := entityToSearchDocument(entity, meta)
-		if err := idx.Index(doc); err != nil {
-			slog.Warn("failed to index entity", "id", entity.ID, "error", err)
-		}
+	s := w.state.Load()
+	if s == nil || s.searchIdx == nil {
+		return
+	}
+	doc := entityToSearchDocument(entity, s.meta)
+	if err := s.searchIdx.Index(doc); err != nil {
+		slog.Warn("failed to index entity", "id", entity.ID, "error", err)
 	}
 }
 
 // removeFromIndex removes an entity from the search index.
 func (w *Workspace) removeFromIndex(id string) {
-	w.mu.RLock()
-	idx := w.searchIdx
-	w.mu.RUnlock()
-
-	if idx != nil {
-		if err := idx.Remove(id); err != nil {
-			slog.Warn("failed to remove entity from index", "id", id, "error", err)
-		}
+	s := w.state.Load()
+	if s == nil || s.searchIdx == nil {
+		return
+	}
+	if err := s.searchIdx.Remove(id); err != nil {
+		slog.Warn("failed to remove entity from index", "id", id, "error", err)
 	}
 }
 
@@ -557,8 +667,8 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 	// Run automation and apply property changes.
 	result := &CreateResult{}
 	var autoResult *automation.Result
-	if w.automation != nil {
-		autoResult = w.automation.Process(automation.Event{
+	if s := w.state.Load(); s != nil && s.automation != nil {
+		autoResult = s.automation.Process(automation.Event{
 			Type:   automation.EventEntityCreated,
 			Entity: entity,
 		})
@@ -614,8 +724,8 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 
 	// Run automation to get property changes and side effects.
 	var autoResult *automation.Result
-	if w.automation != nil && oldEntity != nil {
-		autoResult = w.automation.Process(automation.Event{
+	if s := w.state.Load(); s != nil && s.automation != nil && oldEntity != nil {
+		autoResult = s.automation.Process(automation.Event{
 			Type:      automation.EventEntityUpdated,
 			Entity:    entity,
 			OldEntity: oldEntity,
@@ -934,11 +1044,12 @@ func (w *Workspace) runCreatedEntityAutomation(
 	meta *metamodel.Metamodel,
 	effects *automationSideEffects,
 ) *automationQueueItem {
-	if w.automation == nil {
+	s := w.state.Load()
+	if s == nil || s.automation == nil {
 		return nil
 	}
 
-	newAutoResult := w.automation.Process(automation.Event{
+	newAutoResult := s.automation.Process(automation.Event{
 		Type:   automation.EventEntityCreated,
 		Entity: created,
 	})
@@ -1012,7 +1123,7 @@ func (w *Workspace) executeLuaActions(
 	// Build script context once for all actions
 	ctx := &scriptContextImpl{
 		workspace:   w,
-		meta:        w.meta,
+		meta:        w.Meta(),
 		projectRoot: w.repo.Paths().Root,
 		entity:      entity,
 		oldEntity:   oldEntity,
@@ -1226,9 +1337,10 @@ func (w *Workspace) RenameEntity(entityType, oldID, newID string, dryRun bool) (
 // FormatEntity checks if an entity file needs formatting and optionally writes
 // the formatted version. Returns true if the file was (or would be) modified.
 func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error) {
+	meta := w.Meta()
 	// Get property order from metamodel
 	var propertyOrder []string
-	if entityDef, ok := w.meta.GetEntityDef(entity.Type); ok {
+	if entityDef, ok := meta.GetEntityDef(entity.Type); ok {
 		propertyOrder = entityDef.GetPropertyOrder()
 	}
 
@@ -1251,7 +1363,7 @@ func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error
 
 	// Write if not dry-run
 	if !dryRun {
-		if err := w.repo.WriteEntity(entity, w.meta); err != nil {
+		if err := w.repo.WriteEntity(entity, meta); err != nil {
 			return false, fmt.Errorf("write entity: %w", err)
 		}
 	}
@@ -1311,11 +1423,7 @@ func (w *Workspace) StartWatching(opts WatchOptions) error {
 		ExtraDirs:  opts.ExtraDirs,
 	}
 	handle, err := w.repo.WatchWithHandle(repoOpts, func(events []repository.ChangeEvent) {
-		w.mu.Lock()
-		_, reloadErr := w.reloadLocked()
-		w.mu.Unlock()
-
-		if reloadErr != nil {
+		if _, reloadErr := w.Reload(); reloadErr != nil {
 			slog.Error("reload error", "error", reloadErr)
 		}
 		if opts.OnReload != nil {
@@ -1338,15 +1446,31 @@ func (w *Workspace) StopWatching() {
 }
 
 // Close releases resources held by the workspace (search index, watcher).
+// Close is idempotent and serialized against concurrent Reload/Sync via
+// reloadMu; the closed flag prevents any Reload that arrives after Close
+// from resurrecting the workspace.
 func (w *Workspace) Close() error {
 	w.StopWatching()
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.searchIdx != nil {
-		if err := w.searchIdx.Close(); err != nil {
+	w.reloadMu.Lock()
+	defer w.reloadMu.Unlock()
+	if w.closed.Swap(true) {
+		return nil // already closed
+	}
+	s := w.state.Load()
+	if s != nil && s.searchIdx != nil {
+		if err := s.searchIdx.Close(); err != nil {
 			return fmt.Errorf("close search index: %w", err)
 		}
-		w.searchIdx = nil
+	}
+	// Publish a state with nil searchIdx so that any reader still calling
+	// Search() after Close gets the "not available" error path instead of
+	// touching the closed index.
+	if s != nil {
+		w.state.Store(&workspaceState{
+			meta:       s.meta,
+			automation: s.automation,
+			searchIdx:  nil,
+		})
 	}
 	return nil
 }
@@ -1364,14 +1488,6 @@ func (w *Workspace) ResumeWatching() {
 		w.watchHandle.Resume()
 	}
 }
-
-// --- Locking for consumers ---
-
-// RLock acquires a read lock on the workspace. Consumers that need
-// consistent reads across multiple graph queries (e.g., HTTP handlers)
-// should hold this lock for the duration of the request.
-func (w *Workspace) RLock()   { w.mu.RLock() }
-func (w *Workspace) RUnlock() { w.mu.RUnlock() }
 
 // --- Views ---
 
@@ -1393,7 +1509,7 @@ func (w *Workspace) ExecuteView(viewName, entryID string) (*views.ViewResult, er
 		return nil, fmt.Errorf("view %q not found in views.yaml", viewName)
 	}
 
-	engine := views.NewEngine(w.graph, w.meta)
+	engine := views.NewEngine(w.graph, w.Meta())
 	return engine.Execute(viewDef, entryID)
 }
 
