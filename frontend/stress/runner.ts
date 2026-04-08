@@ -149,7 +149,7 @@ async function runScenario(
   // We then wait for an entity row to appear as a soft signal that the
   // SPA's bootstrap chain (schema → config → list) actually completed.
   for (let i = 0; i < pages.length; i++) {
-    const target = `${server.baseUrl}/v2/list/all_tickets`
+    const target = `${server.baseUrl}/list/all_tickets`
     const navStart = performance.now()
     try {
       await pages[i]!.goto(target, { waitUntil: 'domcontentloaded', timeout: 15_000 })

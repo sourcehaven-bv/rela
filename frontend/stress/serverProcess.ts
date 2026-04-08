@@ -61,7 +61,7 @@ export async function startServer(opts: StartServerOptions): Promise<ServerHandl
   child.stderr?.pipe(logStream)
 
   const baseUrl = `http://127.0.0.1:${port}`
-  await waitForServer(`${baseUrl}/v2/`)
+  await waitForServer(`${baseUrl}/`)
 
   return {
     baseUrl,

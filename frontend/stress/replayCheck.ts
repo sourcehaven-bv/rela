@@ -90,7 +90,7 @@ async function main(): Promise<void> {
 
       try {
         // Initial nav: same as the fuzzer's setup.
-        await page.goto(`${server.baseUrl}/v2/list/all_tickets`, {
+        await page.goto(`${server.baseUrl}/list/all_tickets`, {
           waitUntil: 'domcontentloaded',
           timeout: 10_000,
         })
@@ -155,7 +155,7 @@ async function runAction(
   try {
     switch (action.kind) {
       case 'goto':
-        await page.goto(`${baseUrl}/v2/list/${action.list}`, {
+        await page.goto(`${baseUrl}/list/${action.list}`, {
           waitUntil: 'domcontentloaded',
           timeout: 5_000,
         })

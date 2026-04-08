@@ -34,7 +34,7 @@ export const watcherPressureScenario: Scenario = {
       async fn(ctx) {
         const lists = ['all_tickets', 'all_bugs', 'all_features', 'all_ideas']
         const target = ctx.rand.pick(lists)
-        await ctx.page.goto(`${ctx.baseUrl}/v2/list/${target}`, {
+        await ctx.page.goto(`${ctx.baseUrl}/list/${target}`, {
           waitUntil: 'domcontentloaded',
           timeout: 10_000,
         })
@@ -48,8 +48,8 @@ export const watcherPressureScenario: Scenario = {
         // random row. We don't care which entity, only that the SPA does
         // a real entity-detail fetch through the SSE-connected page.
         const url = ctx.page.url()
-        if (!url.includes('/v2/list/')) {
-          await ctx.page.goto(`${ctx.baseUrl}/v2/list/all_tickets`, {
+        if (!url.includes('/list/')) {
+          await ctx.page.goto(`${ctx.baseUrl}/list/all_tickets`, {
             waitUntil: 'domcontentloaded',
           })
         }

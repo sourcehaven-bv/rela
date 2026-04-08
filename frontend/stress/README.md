@@ -80,7 +80,7 @@ The fuzzer picks randomly from these actions (see `fuzzRunner.ts`):
 
 | Action | Description |
 |---|---|
-| `goto(list)` | Navigate to `/v2/list/<list>` |
+| `goto(list)` | Navigate to `/list/<list>` |
 | `click-row(index)` | Click the Nth entity row on the current list |
 | `reload` | Reload the current page |
 | `back` | `history.back()` |
@@ -125,7 +125,7 @@ sequence and fast-check shrinks it to a minimal counter-example.
    action (goto/click-row/reload/back) that exceeds the budget fails
    the sequence. This is the "long long time hang" guard.
 2. **Post-sequence liveness nav** (default 10 s). After the sequence
-   replays, a fresh `page.goto(/v2/list/all_tickets)` must complete and
+   replays, a fresh `page.goto(/list/all_tickets)` must complete and
    show at least one entity row within the timeout. Catches "sequence
    left the SPA in a permanently broken state" cases.
 3. **No non-benign console errors** during the sequence. The benign

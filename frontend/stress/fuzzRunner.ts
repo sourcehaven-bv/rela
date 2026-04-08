@@ -350,7 +350,7 @@ async function runOneSequence(
   let oracleError: string | undefined
   try {
     // Initial navigation: every sequence starts from a known-good state.
-    await page.goto(`${server.baseUrl}/v2/list/all_tickets`, {
+    await page.goto(`${server.baseUrl}/list/all_tickets`, {
       waitUntil: 'domcontentloaded',
       timeout: 10_000,
     })
@@ -399,7 +399,7 @@ async function runOneSequence(
     // case, distinct from "one action was slow".
     if (oraclePassed) {
       const oracleStart = performance.now()
-      await page.goto(`${server.baseUrl}/v2/list/all_tickets`, {
+      await page.goto(`${server.baseUrl}/list/all_tickets`, {
         waitUntil: 'domcontentloaded',
         timeout: opts.oracleNavTimeoutMs,
       })
@@ -481,7 +481,7 @@ async function runAction(ctx: FuzzContext, action: Action): Promise<void> {
     switch (action.kind) {
       case 'goto':
         label = `goto:${action.list}`
-        await ctx.page.goto(`${ctx.baseUrl}/v2/list/${action.list}`, {
+        await ctx.page.goto(`${ctx.baseUrl}/list/${action.list}`, {
           waitUntil: 'domcontentloaded',
           timeout: PER_ACTION_TIMEOUT,
         })
@@ -565,7 +565,7 @@ async function createEntityViaUI(
   timeoutMs: number,
 ): Promise<void> {
   const formId = CREATE_FORM_BY_TYPE[entityType]
-  await ctx.page.goto(`${ctx.baseUrl}/v2/form/${formId}`, {
+  await ctx.page.goto(`${ctx.baseUrl}/form/${formId}`, {
     waitUntil: 'domcontentloaded',
     timeout: timeoutMs,
   })
@@ -581,7 +581,7 @@ async function createEntityViaUI(
     const submit = ctx.page.locator('button[type="submit"]').first()
     await submit.click({ timeout: timeoutMs }).catch(() => undefined)
     await ctx.page
-      .waitForURL(/\/v2\/(entity|list|form)\//, { timeout: timeoutMs })
+      .waitForURL(/\/(entity|list|form)\//, { timeout: timeoutMs })
       .catch(() => undefined)
   } else {
     // Navigate away without submitting — stateless mode.
@@ -599,8 +599,8 @@ async function editEntityViaUI(
   rowIndex: number,
   timeoutMs: number,
 ): Promise<void> {
-  if (!ctx.page.url().includes('/v2/list/')) {
-    await ctx.page.goto(`${ctx.baseUrl}/v2/list/all_tickets`, {
+  if (!ctx.page.url().includes('/list/')) {
+    await ctx.page.goto(`${ctx.baseUrl}/list/all_tickets`, {
       waitUntil: 'domcontentloaded',
       timeout: timeoutMs,
     })
@@ -628,7 +628,7 @@ async function editEntityViaUI(
     const submit = ctx.page.locator('button[type="submit"]').first()
     await submit.click({ timeout: timeoutMs }).catch(() => undefined)
     await ctx.page
-      .waitForURL(/\/v2\/(entity|list|form)\//, { timeout: timeoutMs })
+      .waitForURL(/\/(entity|list|form)\//, { timeout: timeoutMs })
       .catch(() => undefined)
   } else {
     // Navigate back without submitting — exercises the form-load path
