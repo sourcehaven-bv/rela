@@ -50,7 +50,7 @@ type Store interface {
 
 	// --- Sync ---
 
-	Sync(meta *metamodel.Metamodel, g *graph.Graph) (*model.SyncResult, error)
+	Sync(meta *metamodel.Metamodel) (*graph.Graph, *model.SyncResult, error)
 
 	// --- Cache ---
 
@@ -254,18 +254,27 @@ func (r *Repository) ListRelations() ([]*model.Relation, error) {
 
 // --- Sync ---
 
-// Sync rebuilds the graph from all entity and relation files on disk.
-func (r *Repository) Sync(meta *metamodel.Metamodel, g *graph.Graph) (*model.SyncResult, error) {
+// Sync loads all entities and relations from disk and returns them as a
+// freshly-built graph. The caller is responsible for publishing the new
+// graph (e.g. by atomically swapping a pointer). Sync never mutates any
+// pre-existing graph — if it fails, the caller's previous graph remains
+// valid.
+//
+// This contract is what allows Workspace.Reload to satisfy readers holding
+// a pre-reload graph snapshot: the old graph is never touched, so those
+// readers continue to see a coherent (if stale) world until they reload
+// the snapshot.
+func (r *Repository) Sync(meta *metamodel.Metamodel) (*graph.Graph, *model.SyncResult, error) {
 	data, err := r.fio.LoadSyncData(r.paths.EntitiesDir, r.paths.RelationsDir, meta)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	result := &model.SyncResult{
 		Conflicted: data.Conflicted,
 	}
 
-	g.Clear()
+	g := graph.New()
 
 	for _, entity := range data.Entities {
 		g.AddNode(entity)
@@ -291,7 +300,7 @@ func (r *Repository) Sync(meta *metamodel.Metamodel, g *graph.Graph) (*model.Syn
 		result.RelationsLoaded++
 	}
 
-	return result, nil
+	return g, result, nil
 }
 
 // --- Cache ---

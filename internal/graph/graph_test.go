@@ -297,17 +297,6 @@ func TestIDsByType(t *testing.T) {
 	assertEqual(t, len(decIDs), 1)
 }
 
-func TestClear(t *testing.T) {
-	g := New()
-	g.AddNode(newEntity("TEST-001", "test"))
-	g.AddEdge(newRelation("TEST-001", "links_to", "TEST-002"))
-
-	g.Clear()
-
-	assertEqual(t, g.NodeCount(), 0)
-	assertEqual(t, g.EdgeCount(), 0)
-}
-
 func TestTraceTo(t *testing.T) {
 	g := New()
 	a := newEntity("A", "test")

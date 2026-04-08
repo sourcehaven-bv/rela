@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -106,8 +105,8 @@ status: open
 		t.Fatalf("failed to load metamodel: %v", err)
 	}
 
-	g := graph.New()
-	if _, syncErr := repo.Sync(meta, g); syncErr != nil {
+	g, _, syncErr := repo.Sync(meta)
+	if syncErr != nil {
 		t.Fatalf("failed to sync graph: %v", syncErr)
 	}
 

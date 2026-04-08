@@ -13,8 +13,8 @@ import (
 // Query tests don't exercise Search or automation, so we skip those to
 // keep the test setup lean.
 func newQueryTestWorkspace(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
-	ws := &Workspace{graph: g}
-	ws.state.Store(&workspaceState{meta: meta})
+	ws := &Workspace{}
+	ws.state.Store(&workspaceState{graph: g, meta: meta})
 	return ws
 }
 
