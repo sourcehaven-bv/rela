@@ -87,9 +87,16 @@ func (nopScriptExecutor) ExecuteFile(string, metamodel.ScriptContext) error {
 // workspaceState holds the reloadable parts of a Workspace as an immutable
 // snapshot. A reload publishes a new state via atomic.Pointer.Store(); readers
 // call Load() once and work against the resulting snapshot, guaranteeing
-// that meta, automation, and searchIdx are always observed as a coherent
-// triple from the same reload epoch.
+// that graph, meta, automation, and searchIdx are always observed as a
+// coherent tuple from the same reload epoch.
+//
+// The graph is held by pointer; mutations through CreateEntity/UpdateEntity/
+// DeleteEntity/CreateRelation/DeleteRelation modify the graph in place under
+// the caller's writeMu discipline. A Reload publishes a NEW graph (returned
+// by repo.Sync) so readers holding a pre-reload state continue to see a
+// fully-populated, never-mutated-by-Reload world.
 type workspaceState struct {
+	graph      *graph.Graph
 	meta       *metamodel.Metamodel
 	automation *automation.Engine // may be nil if the metamodel has no automations
 	searchIdx  *search.Index      // may be nil if index construction failed
@@ -102,30 +109,26 @@ type workspaceState struct {
 //
 // # Concurrency model
 //
-// The reloadable state (metamodel, automation engine, search index) is held
-// in an immutable workspaceState struct and published via atomic.Pointer.
-// Readers call Load() once and work against a coherent snapshot. Reloads
-// build a new state and publish it atomically. This guarantees that no
-// caller ever observes a torn meta+automation+searchIdx triple.
+// All reloadable state (graph, metamodel, automation engine, search index)
+// is held in an immutable workspaceState struct and published via
+// atomic.Pointer. Readers call state.Load() once and work against a
+// coherent snapshot — no torn reads, no out-of-order publication, no need
+// to coordinate two atomic loads.
 //
-// Reloads are serialized against each other and against Close via reloadMu.
-// Readers never take reloadMu. Writers (CreateEntity, UpdateEntity,
-// DeleteEntity) are expected to be serialized by the caller — within the
-// data-entry server this happens via App.writeMu.
+// Reloads are serialized against each other and against Close via reloadMu;
+// they build a new state (with a freshly-synced graph from disk) and
+// publish it atomically. Readers holding a pre-reload state keep their
+// graph reference forever — it is never mutated by Reload.
 //
-// # Known limitation: graph-torn-during-reload
-//
-// The underlying *graph.Graph is mutated in place by repo.Sync (via
-// g.Clear()) during a reload. Readers that hold no reloadMu can observe
-// the graph in a transiently empty state, which leads to false-empty
-// results from Search, analyze commands, and anything that iterates the
-// graph. This is a pre-existing condition: the old RWMutex-based workspace
-// also had it, because readers released their RLock before actually using
-// the graph. Fixing it requires publishing the graph itself via atomic
-// pointer swap, which is a wider refactor tracked separately.
+// Mutations (CreateEntity, UpdateEntity, DeleteEntity, CreateRelation,
+// UpdateRelation, DeleteRelation) modify the currently-published graph
+// in place. The caller is expected to serialize mutations against each
+// other and against Reload — within the data-entry server this happens
+// via App.writeMu. Each mutation method captures a single state snapshot
+// at entry and uses that snapshot consistently throughout, so a Reload
+// that arrives mid-mutation cannot interleave on the wrong graph.
 type Workspace struct {
 	repo       repository.Store
-	graph      *graph.Graph
 	state      atomic.Pointer[workspaceState]
 	config     *project.Config
 	scriptExec ScriptExecutor
@@ -182,22 +185,24 @@ func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	g := graph.New()
-
 	// Try cache first, fall back to full sync.
-	needsSync := !repo.CacheExists()
-	if !needsSync {
+	var g *graph.Graph
+	useCache := repo.CacheExists()
+	if useCache {
+		g = graph.New()
 		if cacheErr := repo.LoadCache(g); cacheErr != nil {
 			if errors.Is(cacheErr, repository.ErrCacheVersionMismatch) {
 				slog.Warn("cache outdated, rebuilding", "error", cacheErr)
 			}
-			needsSync = true
+			useCache = false
 		}
 	}
-	if needsSync {
-		if _, syncErr := repo.Sync(meta, g); syncErr != nil {
+	if !useCache {
+		syncedGraph, _, syncErr := repo.Sync(meta)
+		if syncErr != nil {
 			return nil, fmt.Errorf("sync: %w", syncErr)
 		}
+		g = syncedGraph
 		// Save the new cache after sync
 		if saveErr := repo.SaveCache(g); saveErr != nil {
 			slog.Warn("failed to save cache", "error", saveErr)
@@ -239,10 +244,10 @@ func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
 	}
 
 	ws := &Workspace{
-		graph:  g,
 		config: project.DefaultConfig(),
 	}
 	ws.state.Store(&workspaceState{
+		graph:     g,
 		meta:      meta,
 		searchIdx: idx,
 	})
@@ -292,11 +297,11 @@ func newWorkspace(
 
 	ws := &Workspace{
 		repo:       repo,
-		graph:      g,
 		config:     cfg,
 		scriptExec: scriptExec,
 	}
 	ws.state.Store(&workspaceState{
+		graph:      g,
 		meta:       meta,
 		automation: autoEngine,
 		searchIdx:  searchIdx,
@@ -306,8 +311,20 @@ func newWorkspace(
 
 // --- Accessors ---
 
-// Graph returns the in-memory graph for direct read queries.
-func (w *Workspace) Graph() *graph.Graph { return w.graph }
+// Graph returns the in-memory graph from the current workspace state
+// snapshot. The returned pointer reflects the state at the time of the
+// call; a concurrent Reload that publishes a new state will not affect
+// the returned graph (the old graph is never mutated by Reload).
+//
+// Operations that perform multiple reads or that mix graph reads with
+// other state reads should call w.state.Load() once and use the snapshot
+// fields directly, to guarantee a coherent view across the operation.
+func (w *Workspace) Graph() *graph.Graph {
+	if s := w.state.Load(); s != nil {
+		return s.graph
+	}
+	return nil
+}
 
 // Meta returns the current metamodel. The returned pointer is a snapshot:
 // callers should not hold it across operations that could trigger a reload
@@ -326,20 +343,23 @@ func (w *Workspace) Repo() repository.Store { return w.repo }
 
 // Search performs a full-text search and returns matching entities with scores.
 // words are OR'd together with fuzzy matching; phrases must all match exactly.
+//
+// The state snapshot is captured once so that the search index, the graph
+// it was built from, and the entities returned by GetNode all come from
+// the same workspace epoch.
 func (w *Workspace) Search(words, phrases []string, limit int) ([]*model.Entity, []float64, error) {
 	s := w.state.Load()
 	if s == nil || s.searchIdx == nil {
 		return nil, nil, fmt.Errorf("search index not available")
 	}
-	idx := s.searchIdx
-	results, err := idx.Search(words, phrases, limit)
+	results, err := s.searchIdx.Search(words, phrases, limit)
 	if err != nil {
 		return nil, nil, err
 	}
 	entities := make([]*model.Entity, 0, len(results))
 	scores := make([]float64, 0, len(results))
 	for _, r := range results {
-		if e, ok := w.graph.GetNode(r.ID); ok {
+		if e, ok := s.graph.GetNode(r.ID); ok {
 			entities = append(entities, e)
 			scores = append(scores, r.Score)
 		}
@@ -400,20 +420,51 @@ func (w *Workspace) CleanupOrphanedTempFiles() (int, error) {
 
 // --- Lifecycle ---
 
-// Sync clears the graph and reloads all entities and relations from disk.
-// Serialized against Reload and Close via reloadMu; readers see a graph
-// that is transiently cleared while Sync runs (pre-existing behavior).
+// Sync rebuilds the in-memory graph from all entity and relation files
+// on disk and publishes a new workspace state atomically. The metamodel,
+// automation engine, and search index are also rebuilt so that all four
+// fields stay coherent — Sync is a "graph reload using the current
+// metamodel" operation, equivalent to Reload minus the metamodel reload.
+//
+// Serialized against Reload and Close via reloadMu. On failure, the
+// previously-loaded state remains live — readers holding a pre-sync
+// snapshot are never yanked.
 func (w *Workspace) Sync() (*model.SyncResult, error) {
 	w.reloadMu.Lock()
 	defer w.reloadMu.Unlock()
 	if w.closed.Load() {
 		return nil, fmt.Errorf("workspace is closed")
 	}
-	s := w.state.Load()
-	if s == nil {
+	oldState := w.state.Load()
+	if oldState == nil {
 		return nil, fmt.Errorf("workspace not initialized")
 	}
-	return w.repo.Sync(s.meta, w.graph)
+
+	newGraph, result, err := w.repo.Sync(oldState.meta)
+	if err != nil {
+		return nil, err
+	}
+
+	// Rebuild the search index against the new graph so it stays
+	// consistent with what Search will return. The metamodel and
+	// automation engine carry over unchanged from the previous state.
+	newIdx := w.buildReloadSearchIndex(newGraph, oldState.meta, oldState)
+
+	w.saveCacheQuietlyFor(newGraph)
+	w.state.Store(&workspaceState{
+		graph:      newGraph,
+		meta:       oldState.meta,
+		automation: oldState.automation,
+		searchIdx:  newIdx,
+	})
+
+	if oldState.searchIdx != nil && oldState.searchIdx != newIdx {
+		if closeErr := oldState.searchIdx.Close(); closeErr != nil {
+			slog.Warn("failed to close old search index", "error", closeErr)
+		}
+	}
+
+	return result, nil
 }
 
 // SyncLua is a Lua-friendly wrapper for Sync that doesn't return the result.
@@ -428,13 +479,14 @@ func (w *Workspace) SyncLua() error {
 // programmatic use (after migration, in tests, etc.).
 //
 // Reload is serialized against concurrent Reload, Sync, and Close via
-// reloadMu. Readers (Meta, Search, etc.) do not take the lock; they get
-// a coherent snapshot via state.Load() regardless of reload timing.
+// reloadMu. Readers (Meta, Search, etc.) never take the lock; they get
+// a coherent {graph, meta, automation, searchIdx} snapshot via state.Load().
 //
-// On success, a new workspaceState containing the new metamodel, automation
-// engine, and search index is published atomically. On failure, the old
-// state remains in place so concurrent readers never observe a broken
-// workspace.
+// On success, a single new workspaceState is published atomically. The
+// new state contains a freshly-built graph (returned by repo.Sync), the
+// new metamodel, a new automation engine, and a new search index. On
+// failure, nothing is published — the previous state remains live and
+// concurrent readers never observe a broken or partial workspace.
 func (w *Workspace) Reload() (*model.SyncResult, error) {
 	w.reloadMu.Lock()
 	defer w.reloadMu.Unlock()
@@ -450,21 +502,14 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 	newMeta, err := w.repo.LoadMetamodel()
 	if err != nil {
 		if migration.IsMigrationError(err) {
-			slog.Warn("metamodel needs migration, skipping reload: run 'rela migrate'")
-			// Sync with current meta even if metamodel file changed.
-			if oldState == nil {
-				return nil, fmt.Errorf("reload: no current metamodel and new one needs migration")
-			}
-			return w.repo.Sync(oldState.meta, w.graph)
+			return w.reloadKeepingOldMetamodel(oldState)
 		}
 		return nil, fmt.Errorf("reload metamodel: %w", err)
 	}
 
-	// Sync the graph with the new metamodel. repo.Sync only reads from
-	// newMeta; it does not call back into Workspace.Meta(). If this
-	// fails, we do not publish the new state, so the old meta/automation/
-	// searchIdx remain live.
-	result, err := w.repo.Sync(newMeta, w.graph)
+	// Sync the graph with the new metamodel. repo.Sync returns a fresh
+	// graph; the old graph is never mutated.
+	newGraph, result, err := w.repo.Sync(newMeta)
 	if err != nil {
 		return nil, fmt.Errorf("sync: %w", err)
 	}
@@ -475,15 +520,18 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 		newAuto = automation.NewEngineFromMetamodel(newMeta.Automations)
 	}
 
-	// Build the new search index against the new metamodel and the freshly
-	// synced graph. Only publish if it is fully usable; on any failure,
-	// keep the previous index to avoid dropping a working index in favor
-	// of a broken one.
-	newIdx := w.buildReloadSearchIndex(newMeta, oldState)
+	// Build the new search index against the new metamodel and the
+	// freshly synced graph. Keep the previous index if construction or
+	// indexing fails — never drop a working index in favor of a broken one.
+	newIdx := w.buildReloadSearchIndex(newGraph, newMeta, oldState)
+
+	w.saveCacheQuietlyFor(newGraph)
 
 	// Publish the new state atomically. Readers that call state.Load()
-	// after this point see a coherent {newMeta, newAuto, newIdx} triple.
+	// after this point see a fully coherent {newGraph, newMeta, newAuto,
+	// newIdx} tuple — no torn reads, no out-of-order publication.
 	w.state.Store(&workspaceState{
+		graph:      newGraph,
 		meta:       newMeta,
 		automation: newAuto,
 		searchIdx:  newIdx,
@@ -496,16 +544,58 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 		}
 	}
 
-	w.saveCacheQuietly()
 	return result, nil
 }
 
-// buildReloadSearchIndex creates a fresh search index for a reload. On any
-// failure (creating the index, batch-indexing the documents), it returns
-// the old index from oldState instead of dropping indexing entirely.
+// reloadKeepingOldMetamodel handles the migration-error path of Reload:
+// the metamodel file changed in a way that requires `rela migrate`, but
+// we still want to pick up entity-file changes from disk. We re-sync the
+// graph with the OLD metamodel and rebuild the search index against the
+// new graph, so the published state remains internally consistent.
+//
 // Caller must hold reloadMu.
+func (w *Workspace) reloadKeepingOldMetamodel(
+	oldState *workspaceState,
+) (*model.SyncResult, error) {
+	slog.Warn("metamodel needs migration, skipping metamodel reload: run 'rela migrate'")
+	if oldState == nil {
+		return nil, fmt.Errorf("reload: no current metamodel and new one needs migration")
+	}
+
+	newGraph, result, syncErr := w.repo.Sync(oldState.meta)
+	if syncErr != nil {
+		return nil, syncErr
+	}
+
+	// Rebuild the search index against the freshly-synced graph (with
+	// the OLD metamodel) so Search returns consistent results. Without
+	// this, the published state would have a new graph paired with an
+	// index built from the previous graph — a torn snapshot.
+	newIdx := w.buildReloadSearchIndex(newGraph, oldState.meta, oldState)
+
+	w.saveCacheQuietlyFor(newGraph)
+	w.state.Store(&workspaceState{
+		graph:      newGraph,
+		meta:       oldState.meta,
+		automation: oldState.automation,
+		searchIdx:  newIdx,
+	})
+
+	if oldState.searchIdx != nil && oldState.searchIdx != newIdx {
+		if closeErr := oldState.searchIdx.Close(); closeErr != nil {
+			slog.Warn("failed to close old search index", "error", closeErr)
+		}
+	}
+
+	return result, nil
+}
+
+// buildReloadSearchIndex creates a fresh search index for a reload built
+// against the given newGraph. On any failure (creating the index,
+// batch-indexing the documents), it returns the old index from oldState
+// instead of dropping indexing entirely. Caller must hold reloadMu.
 func (w *Workspace) buildReloadSearchIndex(
-	newMeta *metamodel.Metamodel, oldState *workspaceState,
+	newGraph *graph.Graph, newMeta *metamodel.Metamodel, oldState *workspaceState,
 ) *search.Index {
 	carryOver := func() *search.Index {
 		if oldState == nil {
@@ -520,7 +610,7 @@ func (w *Workspace) buildReloadSearchIndex(
 		return carryOver()
 	}
 
-	docs := entitiesToSearchDocuments(w.graph.AllNodes(), newMeta)
+	docs := entitiesToSearchDocuments(newGraph.AllNodes(), newMeta)
 	if err := candidate.IndexBatch(docs); err != nil {
 		slog.Warn("failed to index entities during reload; keeping previous index", "error", err)
 		if closeErr := candidate.Close(); closeErr != nil {
@@ -556,13 +646,26 @@ func (w *Workspace) removeFromIndex(id string) {
 	}
 }
 
-// SaveCache persists the graph to the cache file.
+// SaveCache persists the current graph to the cache file.
 func (w *Workspace) SaveCache() error {
-	return w.repo.SaveCache(w.graph)
+	if g := w.Graph(); g != nil {
+		return w.repo.SaveCache(g)
+	}
+	return nil
 }
 
 func (w *Workspace) saveCacheQuietly() {
-	if err := w.repo.SaveCache(w.graph); err != nil {
+	if g := w.Graph(); g != nil {
+		w.saveCacheQuietlyFor(g)
+	}
+}
+
+// saveCacheQuietlyFor persists a specific graph snapshot to the cache
+// file. Used by Reload and Sync to persist a freshly-built graph BEFORE
+// publishing it via state.Store, so the on-disk cache never advances
+// past what readers can see.
+func (w *Workspace) saveCacheQuietlyFor(g *graph.Graph) {
+	if err := w.repo.SaveCache(g); err != nil {
 		slog.Warn("failed to save cache", "error", err)
 	}
 }
@@ -601,8 +704,11 @@ func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.Entit
 // GenerateID generates the next ID for the given entity type. If prefix is
 // non-empty it is used instead of the default prefix from the metamodel.
 func (w *Workspace) GenerateID(entityType, prefix string) (string, error) {
-	meta := w.Meta()
-	entityDef, ok := meta.GetEntityDef(entityType)
+	s := w.state.Load()
+	if s == nil {
+		return "", fmt.Errorf("workspace not initialized")
+	}
+	entityDef, ok := s.meta.GetEntityDef(entityType)
 	if !ok {
 		return "", fmt.Errorf("unknown entity type: %s", entityType)
 	}
@@ -617,9 +723,9 @@ func (w *Workspace) GenerateID(entityType, prefix string) (string, error) {
 		prefix = prefixes[0]
 	}
 
-	existingIDs := w.graph.AllIDs()
+	existingIDs := s.graph.AllIDs()
 	if entityDef.IsShortID() {
-		return model.GenerateShortID(existingIDs, prefix, w.graph.NodeCount(), entityDef.GetIDCaps()), nil
+		return model.GenerateShortID(existingIDs, prefix, s.graph.NodeCount(), entityDef.GetIDCaps()), nil
 	}
 	return model.GenerateNextID(existingIDs, prefix), nil
 }
@@ -645,10 +751,19 @@ type CreateResult struct {
 // CreateEntity generates an ID (unless provided), applies templates and
 // defaults, validates, writes to disk, updates the graph, and runs
 // automation.
+//
+// Captures a single workspace state snapshot at entry. Callers must
+// serialize CreateEntity against concurrent Reload via an external mutex
+// (App.writeMu in the data-entry server).
 func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.Entity, *CreateResult, error) {
+	s := w.state.Load()
+	if s == nil {
+		return nil, nil, fmt.Errorf("workspace not initialized")
+	}
+
 	// Check for duplicates if custom ID provided.
 	if opts.ID != "" {
-		if _, exists := w.graph.GetNode(opts.ID); exists {
+		if _, exists := s.graph.GetNode(opts.ID); exists {
 			return nil, nil, fmt.Errorf("entity with ID %s already exists", opts.ID)
 		}
 	}
@@ -667,7 +782,7 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 	// Run automation and apply property changes.
 	result := &CreateResult{}
 	var autoResult *automation.Result
-	if s := w.state.Load(); s != nil && s.automation != nil {
+	if s.automation != nil {
 		autoResult = s.automation.Process(automation.Event{
 			Type:   automation.EventEntityCreated,
 			Entity: entity,
@@ -678,7 +793,7 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 				entity.SetString(prop, val)
 			}
 			// Re-write entity with automation-set properties.
-			if err := w.repo.WriteEntity(entity, w.Meta()); err != nil {
+			if err := w.repo.WriteEntity(entity, s.meta); err != nil {
 				return nil, nil, fmt.Errorf("write entity after automation: %w", err)
 			}
 		}
@@ -712,8 +827,18 @@ type UpdateResult struct {
 
 // UpdateEntity validates and writes an existing entity, runs automation,
 // and updates the graph.
+//
+// Captures a single workspace state snapshot at entry; all reads of meta,
+// automation, and graph during this call use that snapshot. Callers must
+// serialize UpdateEntity against concurrent Reload via an external mutex
+// (App.writeMu in the data-entry server) so the snapshot the method
+// holds matches the workspace's current state until the method returns.
 func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult, error) {
-	meta := w.Meta()
+	s := w.state.Load()
+	if s == nil {
+		return nil, fmt.Errorf("workspace not initialized")
+	}
+	meta := s.meta
 
 	// Validate.
 	if errs := meta.ValidateEntity(entity); len(errs) > 0 {
@@ -724,7 +849,7 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 
 	// Run automation to get property changes and side effects.
 	var autoResult *automation.Result
-	if s := w.state.Load(); s != nil && s.automation != nil && oldEntity != nil {
+	if s.automation != nil && oldEntity != nil {
 		autoResult = s.automation.Process(automation.Event{
 			Type:      automation.EventEntityUpdated,
 			Entity:    entity,
@@ -742,7 +867,7 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 	if err := w.repo.WriteEntity(entity, meta); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
-	w.graph.AddNode(entity)
+	s.graph.AddNode(entity)
 	w.indexEntity(entity)
 
 	// Apply automation side effects (relations, entities, Lua) AFTER entity is written.
@@ -769,12 +894,18 @@ var ErrHasRelations = fmt.Errorf("entity has relations; set cascade=true to dele
 
 // DeleteEntity removes an entity and optionally cascades to its relations.
 func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteResult, error) {
-	if _, ok := w.graph.GetNode(id); !ok {
+	s := w.state.Load()
+	if s == nil {
+		return nil, fmt.Errorf("workspace not initialized")
+	}
+	g := s.graph
+
+	if _, ok := g.GetNode(id); !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
-	incoming := w.graph.IncomingEdges(id)
-	outgoing := w.graph.OutgoingEdges(id)
+	incoming := g.IncomingEdges(id)
+	outgoing := g.OutgoingEdges(id)
 	totalRelations := len(incoming) + len(outgoing)
 
 	if totalRelations > 0 && !cascade {
@@ -782,21 +913,21 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 	}
 
 	result := &DeleteResult{}
-	meta := w.Meta()
+	meta := s.meta
 
 	// Delete relations first.
 	for _, rel := range incoming {
 		if err := w.repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil {
 			slog.Warn("failed to delete relation", "from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
 		}
-		w.graph.RemoveEdge(rel.From, rel.Type, rel.To)
+		g.RemoveEdge(rel.From, rel.Type, rel.To)
 		result.RelationsDeleted++
 	}
 	for _, rel := range outgoing {
 		if err := w.repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil {
 			slog.Warn("failed to delete relation", "from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
 		}
-		w.graph.RemoveEdge(rel.From, rel.Type, rel.To)
+		g.RemoveEdge(rel.From, rel.Type, rel.To)
 		result.RelationsDeleted++
 	}
 
@@ -804,7 +935,7 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 	if err := w.repo.DeleteEntity(entityType, id, meta); err != nil {
 		return nil, fmt.Errorf("delete entity: %w", err)
 	}
-	w.graph.RemoveNode(id)
+	g.RemoveNode(id)
 	w.removeFromIndex(id)
 
 	w.saveCacheQuietly()
@@ -919,7 +1050,7 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 	if err := w.repo.WriteEntity(entity, meta); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
-	w.graph.AddNode(entity)
+	w.Graph().AddNode(entity)
 
 	return entity, nil
 }
@@ -936,9 +1067,9 @@ type automationSideEffects struct {
 // the target of a relation from the source entity with the given relation type.
 // Returns nil if no such entity exists.
 func (w *Workspace) findExistingRelationTarget(sourceID, relationType, targetType string) *model.Entity {
-	for _, rel := range w.graph.OutgoingEdges(sourceID) {
+	for _, rel := range w.Graph().OutgoingEdges(sourceID) {
 		if rel.Type == relationType {
-			if target, ok := w.graph.GetNode(rel.To); ok && target.Type == targetType {
+			if target, ok := w.Graph().GetNode(rel.To); ok && target.Type == targetType {
 				return target
 			}
 		}
@@ -1088,7 +1219,7 @@ func (w *Workspace) applyRelationCreations(
 	for _, rel := range relations {
 		rel.From = triggerEntity.ID
 
-		targetEntity, ok := w.graph.GetNode(rel.To)
+		targetEntity, ok := w.Graph().GetNode(rel.To)
 		if !ok {
 			effects.Errors = append(effects.Errors,
 				fmt.Sprintf("automation relation target not found: %s", rel.To))
@@ -1223,7 +1354,7 @@ func (w *Workspace) writeRelationCore(rel *model.Relation) error {
 	if err := w.repo.WriteRelation(rel); err != nil {
 		return fmt.Errorf("write relation: %w", err)
 	}
-	w.graph.AddEdge(rel)
+	w.Graph().AddEdge(rel)
 	return nil
 }
 
@@ -1236,24 +1367,27 @@ type CreateRelationOptions struct {
 // CreateRelation validates both endpoints exist, checks for duplicates,
 // validates against the metamodel, writes to disk, and updates the graph.
 func (w *Workspace) CreateRelation(from, relType, to string, opts ...CreateRelationOptions) (*model.Relation, error) {
-	meta := w.Meta()
+	s := w.state.Load()
+	if s == nil {
+		return nil, fmt.Errorf("workspace not initialized")
+	}
 
-	fromEntity, ok := w.graph.GetNode(from)
+	fromEntity, ok := s.graph.GetNode(from)
 	if !ok {
 		return nil, fmt.Errorf("source entity not found: %s", from)
 	}
-	toEntity, ok := w.graph.GetNode(to)
+	toEntity, ok := s.graph.GetNode(to)
 	if !ok {
 		return nil, fmt.Errorf("target entity not found: %s", to)
 	}
 
 	// Validate relation type.
-	if err := meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); err != nil {
+	if err := s.meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); err != nil {
 		return nil, fmt.Errorf("invalid relation: %w", err)
 	}
 
 	// Check for duplicates.
-	if _, exists := w.graph.GetEdge(from, relType, to); exists {
+	if _, exists := s.graph.GetEdge(from, relType, to); exists {
 		return nil, fmt.Errorf("relation already exists: %s --%s--> %s", from, relType, to)
 	}
 
@@ -1291,7 +1425,7 @@ func (w *Workspace) CreateRelation(from, relType, to string, opts ...CreateRelat
 
 // UpdateRelation updates properties on an existing relation.
 func (w *Workspace) UpdateRelation(from, relType, to string, opts CreateRelationOptions) (*model.Relation, error) {
-	rel, exists := w.graph.GetEdge(from, relType, to)
+	rel, exists := w.Graph().GetEdge(from, relType, to)
 	if !exists {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", from, relType, to)
 	}
@@ -1320,7 +1454,7 @@ func (w *Workspace) DeleteRelation(from, relType, to string) error {
 	if err := w.repo.DeleteRelation(from, relType, to); err != nil {
 		return fmt.Errorf("delete relation: %w", err)
 	}
-	w.graph.RemoveEdge(from, relType, to)
+	w.Graph().RemoveEdge(from, relType, to)
 	w.saveCacheQuietly()
 	return nil
 }
@@ -1329,7 +1463,7 @@ func (w *Workspace) DeleteRelation(from, relType, to string) error {
 
 // RenameEntity renames an entity, updating all references in relations.
 func (w *Workspace) RenameEntity(entityType, oldID, newID string, dryRun bool) (*rename.Result, error) {
-	return rename.Rename(w.repo, w.Meta(), w.graph, entityType, oldID, newID, rename.Options{DryRun: dryRun})
+	return rename.Rename(w.repo, w.Meta(), w.Graph(), entityType, oldID, newID, rename.Options{DryRun: dryRun})
 }
 
 // --- Formatting ---
@@ -1509,7 +1643,7 @@ func (w *Workspace) ExecuteView(viewName, entryID string) (*views.ViewResult, er
 		return nil, fmt.Errorf("view %q not found in views.yaml", viewName)
 	}
 
-	engine := views.NewEngine(w.graph, w.Meta())
+	engine := views.NewEngine(w.Graph(), w.Meta())
 	return engine.Execute(viewDef, entryID)
 }
 

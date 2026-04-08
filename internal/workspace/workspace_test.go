@@ -185,7 +185,7 @@ func TestGenerateID_Sequential(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	// Add an existing entity so the next ID is REQ-002.
-	ws.graph.AddNode(testutil.EntityFor(ws.Meta(), "requirement").ID("REQ-001").Build())
+	ws.Graph().AddNode(testutil.EntityFor(ws.Meta(), "requirement").ID("REQ-001").Build())
 
 	id, err := ws.GenerateID("requirement", "")
 	if err != nil {
@@ -309,7 +309,7 @@ func TestCreateEntity(t *testing.T) {
 	}
 
 	// Verify entity is in graph.
-	if _, ok := ws.graph.GetNode("REQ-001"); !ok {
+	if _, ok := ws.Graph().GetNode("REQ-001"); !ok {
 		t.Error("entity not found in graph after create")
 	}
 }
@@ -416,7 +416,7 @@ func TestUpdateEntity(t *testing.T) {
 	}
 
 	// Verify update in graph.
-	updated, ok := ws.graph.GetNode(entity.ID)
+	updated, ok := ws.Graph().GetNode(entity.ID)
 	if !ok {
 		t.Fatal("entity not found in graph")
 	}
@@ -444,7 +444,7 @@ func TestDeleteEntity_NoCascade_NoRelations(t *testing.T) {
 	if result.RelationsDeleted != 0 {
 		t.Errorf("relations deleted = %d, want 0", result.RelationsDeleted)
 	}
-	if _, ok := ws.graph.GetNode("REQ-001"); ok {
+	if _, ok := ws.Graph().GetNode("REQ-001"); ok {
 		t.Error("entity still in graph after delete")
 	}
 }
@@ -516,7 +516,7 @@ func TestCreateRelation(t *testing.T) {
 	}
 
 	// Verify in graph.
-	if _, ok := ws.graph.GetEdge("DEC-001", "addresses", "REQ-001"); !ok {
+	if _, ok := ws.Graph().GetEdge("DEC-001", "addresses", "REQ-001"); !ok {
 		t.Error("relation not found in graph")
 	}
 }
@@ -569,7 +569,7 @@ func TestDeleteRelation(t *testing.T) {
 		t.Fatalf("DeleteRelation() error = %v", err)
 	}
 
-	if _, ok := ws.graph.GetEdge("DEC-001", "addresses", "REQ-001"); ok {
+	if _, ok := ws.Graph().GetEdge("DEC-001", "addresses", "REQ-001"); ok {
 		t.Error("relation still in graph after delete")
 	}
 }
@@ -612,35 +612,34 @@ func TestReload(t *testing.T) {
 
 // --- Concurrency ---
 
-// TestConcurrentReloadStateSnapshot exercises concurrent Reload() vs readers
-// vs a writer goroutine, modeling the production locking discipline where
-// an external mutex (App.writeMu in the data-entry server) serializes
-// mutations — including reloads that rebuild the search index from the
-// graph — against each other.
+// TestConcurrentReloadStateSnapshot exercises concurrent Reload() vs
+// readers vs a writer goroutine.
 //
-// This test specifically targets the atomic.Pointer-based workspaceState
-// publication. It would catch a regression that leaves
-// {meta, automation, searchIdx} non-coherent across a reload, or a reader
-// observing a nil workspaceState.
+// This test targets both the atomic.Pointer-based workspaceState
+// publication (meta/automation/searchIdx) AND the atomic.Pointer-based
+// graph publication. It would catch a regression that leaves any of
+// these fields torn across a reload.
 //
-// Scope notes:
-//   - Readers only touch the atomic workspaceState (Meta, Search). They
-//     do NOT iterate graph nodes, because the graph is still mutated in
-//     place by repo.Sync — that is a pre-existing limitation documented
-//     on the Workspace struct.
-//   - Writers and reloader share an external mutex (mimicking
-//     App.writeMu). Without that, CreateEntity's entity-property map
-//     writes race against Reload's entityToSearchDocument reads. That
-//     race is also pre-existing (the old RWMutex-based workspace had it
-//     for the same reason); tracked as a future ticket, out of scope
-//     for TKT-252Y.
+// With repo.Sync now returning a fresh *graph.Graph and Reload publishing
+// it via atomic.Pointer, readers can iterate the graph during a reload
+// and never see a transiently empty state: they either observe the
+// pre-reload graph (fully populated) or the post-reload graph (fully
+// populated), never an in-flight mutation.
+//
+// Writers and the reloader still share an external mutex (mimicking
+// App.writeMu in the data-entry server). Without that, the concurrent
+// writer's entity-property map mutations would race against Reload's
+// entityToSearchDocument reads — a separate, pre-existing entity-level
+// data race that is not part of this ticket's scope.
 func TestConcurrentReloadStateSnapshot(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	// Seed the workspace with an entity so there is something to find.
-	mustCreate(t, ws, "requirement", CreateOptions{
-		Properties: map[string]any{"title": "seed"},
-	})
+	// Seed the workspace with entities so graph iteration has work.
+	for i := 0; i < 5; i++ {
+		mustCreate(t, ws, "requirement", CreateOptions{
+			Properties: map[string]any{"title": "seed"},
+		})
+	}
 
 	readerCount := 2 * runtime.GOMAXPROCS(0)
 	if readerCount < 4 {
@@ -656,7 +655,10 @@ func TestConcurrentReloadStateSnapshot(t *testing.T) {
 	// never do.
 	var writeMu sync.Mutex
 
-	// Reader goroutines: only touch the atomic workspaceState.
+	// Reader goroutines: exercise both the workspaceState snapshot AND
+	// the graph. A reader that captures w.Graph() into a local variable
+	// holds a frozen view for the duration of the iteration, regardless
+	// of concurrent reloads.
 	for i := 0; i < readerCount; i++ {
 		wg.Add(1)
 		go func() {
@@ -672,11 +674,22 @@ func TestConcurrentReloadStateSnapshot(t *testing.T) {
 					t.Errorf("Meta() returned nil during concurrent reload")
 					return
 				}
-				// GetEntityDef reads the metamodel struct just loaded
-				// via Meta(). If a reload races, we observe either the
-				// old or the new metamodel — both should have this type.
 				if _, ok := m.GetEntityDef("requirement"); !ok {
 					t.Errorf("Meta().GetEntityDef(requirement) returned !ok")
+					return
+				}
+				// Iterate the graph: captures the current graph snapshot
+				// and walks its nodes. If repo.Sync were still mutating
+				// a shared graph in place, this would see transiently
+				// empty results during a reload.
+				g := ws.Graph()
+				if g == nil {
+					t.Errorf("Graph() returned nil during concurrent reload")
+					return
+				}
+				nodes := g.AllNodes()
+				if len(nodes) == 0 {
+					t.Errorf("graph snapshot was empty during concurrent reload")
 					return
 				}
 				// Search snapshots state.searchIdx; any result is fine.
@@ -913,7 +926,7 @@ func TestCreateEntity_AutomationWithIfExistsReplace(t *testing.T) {
 	}
 
 	// Old checklist should be gone from graph.
-	if _, ok := ws.graph.GetNode(checklist1.ID); ok {
+	if _, ok := ws.Graph().GetNode(checklist1.ID); ok {
 		t.Errorf("old checklist %s should be deleted from graph", checklist1.ID)
 	}
 }

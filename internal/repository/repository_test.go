@@ -283,9 +283,8 @@ func TestRepository_Sync(t *testing.T) {
 	rel := testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build()
 	_ = repo.WriteRelation(rel)
 
-	// Sync into a fresh graph
-	g := graph.New()
-	result, err := repo.Sync(meta, g)
+	// Sync returns a fresh graph populated from disk.
+	g, result, err := repo.Sync(meta)
 	if err != nil {
 		t.Fatalf("Sync() error = %v", err)
 	}
@@ -318,8 +317,7 @@ func TestRepository_Sync_MissingSourceEntity(t *testing.T) {
 	relPath := "/project/relations/DEC-999--addresses--REQ-001.md"
 	_ = fs.WriteFile(relPath, relContent, 0o644)
 
-	g := graph.New()
-	result, err := repo.Sync(meta, g)
+	_, result, err := repo.Sync(meta)
 	if err != nil {
 		t.Fatalf("Sync() error = %v", err)
 	}
@@ -347,8 +345,7 @@ func TestRepository_Sync_MissingTargetEntity(t *testing.T) {
 	relPath := "/project/relations/DEC-001--addresses--REQ-999.md"
 	_ = fs.WriteFile(relPath, relContent, 0o644)
 
-	g := graph.New()
-	result, err := repo.Sync(meta, g)
+	_, result, err := repo.Sync(meta)
 	if err != nil {
 		t.Fatalf("Sync() error = %v", err)
 	}
@@ -364,41 +361,42 @@ func TestRepository_Sync_MissingTargetEntity(t *testing.T) {
 	}
 }
 
-func TestRepository_Sync_ClearsExistingGraph(t *testing.T) {
+func TestRepository_Sync_ReturnsFreshGraph(t *testing.T) {
 	repo, meta, _ := setupTestRepo(t)
 
 	// Write one entity
 	e1 := testutil.NewEntity("REQ-001", "requirement").With("title", "Req 1").Build()
 	_ = repo.WriteEntity(e1, meta)
 
-	// Pre-populate graph with different data
-	g := graph.New()
-	old := testutil.NewEntity("OLD-001", "old").Build()
-	g.AddNode(old)
-
-	if g.NodeCount() != 1 {
-		t.Fatalf("pre-sync: graph has %d nodes, want 1", g.NodeCount())
+	// First sync — returns a graph populated from disk.
+	first, _, err := repo.Sync(meta)
+	if err != nil {
+		t.Fatalf("first Sync() error = %v", err)
 	}
 
-	result, err := repo.Sync(meta, g)
+	// Second sync — must return a different graph instance, not alias
+	// the first. This is the contract that Workspace.Reload depends on
+	// to leave readers' pre-reload snapshots intact.
+	second, result, err := repo.Sync(meta)
 	if err != nil {
-		t.Fatalf("Sync() error = %v", err)
+		t.Fatalf("second Sync() error = %v", err)
+	}
+	if first == second {
+		t.Error("Sync() returned the same graph instance on consecutive calls; must return a fresh graph")
 	}
 
 	if result.EntitiesLoaded != 1 {
 		t.Errorf("EntitiesLoaded = %d, want 1", result.EntitiesLoaded)
 	}
+	if _, ok := second.GetNode("REQ-001"); !ok {
+		t.Error("REQ-001 should exist in returned graph")
+	}
 
-	// Old entity should be gone
-	if _, ok := g.GetNode("OLD-001"); ok {
-		t.Error("OLD-001 should not exist after sync (graph should be cleared)")
-	}
-	// New entity should exist
-	if _, ok := g.GetNode("REQ-001"); !ok {
-		t.Error("REQ-001 should exist after sync")
-	}
-	if g.NodeCount() != 1 {
-		t.Errorf("graph has %d nodes, want 1", g.NodeCount())
+	// Mutating the second graph must not affect the first — proves
+	// they are not aliases.
+	second.AddNode(testutil.NewEntity("AFTER-001", "after").Build())
+	if _, ok := first.GetNode("AFTER-001"); ok {
+		t.Error("mutation to second graph leaked into first; Sync must return independent graphs")
 	}
 }
 
