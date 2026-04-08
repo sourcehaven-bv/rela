@@ -271,7 +271,7 @@ func (s *Server) handleRenameEntity(
 	s.ws.PauseWatching()
 	defer s.ws.ResumeWatching()
 
-	result, renameErr := s.ws.RenameEntity(entity.Type, oldID, newID, dryRun)
+	result, renameErr := s.ws.Rename(entity.Type, oldID, newID, rename.Options{DryRun: dryRun})
 	if renameErr != nil {
 		return mcp.NewToolResultError(renameErr.Error()), nil
 	}

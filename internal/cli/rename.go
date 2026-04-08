@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/rename"
 )
 
 var (
@@ -250,7 +251,7 @@ func runRenameID(oldID, newID string) error {
 		return fmt.Errorf("entity not found: %s", oldID)
 	}
 
-	result, err := ws.RenameEntity(entity.Type, oldID, newID, renameIDDryRun)
+	result, err := ws.Rename(entity.Type, oldID, newID, rename.Options{DryRun: renameIDDryRun})
 	if err != nil {
 		return err
 	}

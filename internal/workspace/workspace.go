@@ -21,7 +21,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -1539,11 +1538,6 @@ func (w *Workspace) DeleteRelation(from, relType, to string) error {
 }
 
 // --- Rename ---
-
-// RenameEntity renames an entity, updating all references in relations.
-func (w *Workspace) RenameEntity(entityType, oldID, newID string, dryRun bool) (*rename.Result, error) {
-	return rename.Rename(w.repo, w.Meta(), w.Graph(), entityType, oldID, newID, rename.Options{DryRun: dryRun})
-}
 
 // --- Formatting ---
 
