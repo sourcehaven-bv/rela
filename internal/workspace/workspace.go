@@ -133,8 +133,8 @@ type Workspace struct {
 	config     *project.Config
 	scriptExec ScriptExecutor
 
-	// reloadMu serializes Reload/Sync/Close against each other. Readers
-	// never acquire it — they snapshot state via state.Load().
+	// reloadMu serializes Reload/Sync/WithTx/Close against each other.
+	// Readers never acquire it — they snapshot state via state.Load().
 	reloadMu sync.Mutex
 
 	// closed is set once Close has been called. Reload becomes a no-op
@@ -416,6 +416,85 @@ func (w *Workspace) FindOrphanedTempFiles() ([]string, error) {
 // CleanupOrphanedTempFiles removes leftover .new temp files.
 func (w *Workspace) CleanupOrphanedTempFiles() (int, error) {
 	return w.repo.CleanupOrphanedTempFiles()
+}
+
+// --- Transactions ---
+
+// WithTx runs fn inside a workspace transaction. The transaction provides:
+//
+//   - Atomic file persistence via repository.Transaction. Disk writes
+//     are staged to .new files; on closure success they atomically
+//     rename, on closure error they roll back.
+//   - Deferred graph mutation: fn's calls to tx.WriteEntity /
+//     WriteRelation / DeleteEntity / DeleteRelation accumulate graph
+//     operations that are applied to the live workspace graph (and
+//     the search index) only after the disk transaction commits. On
+//     rollback, the graph is never touched, so a failed transaction
+//     leaves the workspace state byte-identical to its pre-transaction
+//     state.
+//
+// WithTx acquires reloadMu for the duration of the transaction, so it
+// excludes concurrent Reload, Sync, Close, and other WithTx calls. The
+// dataentry App's writeMu stacks on top to additionally serialize HTTP
+// mutation handlers — both layers are required for the full safety
+// story.
+//
+// # Caveats
+//
+//  1. **No nested WithTx.** Calling WithTx from inside another WithTx
+//     callback on the same workspace deadlocks on reloadMu. Same for
+//     calling Reload, Sync, or Close from inside fn. Detection of this
+//     case (with a clear error instead of a hang) is tracked as a
+//     follow-up — for now, callers must not nest.
+//  2. **No read-your-own-writes.** Tx read methods (GetEntity, etc.)
+//     return the workspace's current committed state. They do NOT see
+//     the tx's own pending writes. Migrating this restriction away is
+//     tracked separately.
+//  3. **Pre-existing repository commit hazards.** repository.Transaction
+//     silently swallows phase-2 delete failures and the rollback path
+//     for partial renames is destructive (see C2 in PR review). These
+//     are upstream issues this primitive inherits; they will be
+//     addressed in their own ticket before any high-traffic caller
+//     relies on rollback safety.
+//
+// WithTx is the canonical mutation primitive going forward. No callers
+// have been migrated yet — this PR ships the primitive only. Follow-up
+// tickets migrate rename.Rename, then the workspace's own
+// CreateEntity/UpdateEntity/etc. methods.
+func (w *Workspace) WithTx(fn func(tx *Tx) error) error {
+	w.reloadMu.Lock()
+	defer w.reloadMu.Unlock()
+
+	if w.closed.Load() {
+		return fmt.Errorf("workspace is closed")
+	}
+	base := w.state.Load()
+	if base == nil {
+		return fmt.Errorf("workspace not initialized")
+	}
+
+	var tx *Tx
+	err := w.repo.Transaction(func(repoTx repository.Tx) error {
+		tx = &Tx{ws: w, repoTx: repoTx, base: base}
+		return fn(tx)
+	})
+	// Defang the Tx so a leaked reference cannot operate on a closed
+	// repository transaction. Method calls after this point will hit a
+	// nil deref instead of silently corrupting state.
+	defer func() {
+		if tx != nil {
+			tx.repoTx = nil
+		}
+	}()
+	if err != nil {
+		return err
+	}
+
+	// Repo transaction committed successfully — apply the staged graph
+	// mutations to the live graph and persist the cache.
+	tx.applyGraphMutations()
+	w.saveCacheQuietlyFor(base.graph)
+	return nil
 }
 
 // --- Lifecycle ---

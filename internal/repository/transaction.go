@@ -28,13 +28,24 @@ type Tx interface {
 
 // Transaction executes a function within a transaction context.
 // All write/delete operations are batched and applied atomically.
-// On error, all staged changes are rolled back.
-func (r *Repository) Transaction(fn func(tx Tx) error) error {
+// On error, all staged changes are rolled back. If fn panics, the
+// staged temp files are cleaned up before the panic propagates so
+// the filesystem is not left littered with .new files.
+func (r *Repository) Transaction(fn func(tx Tx) error) (err error) {
 	tx := &transaction{
 		repo:          r,
 		stagedWrites:  make(map[string]string), // target -> temp path
 		stagedDeletes: make([]string, 0),
 	}
+
+	// On panic, clean up staged temp files before re-panicking so
+	// callers do not have to mop up orphaned .new files.
+	defer func() {
+		if p := recover(); p != nil {
+			tx.rollback()
+			panic(p)
+		}
+	}()
 
 	// Execute the user function
 	if err := fn(tx); err != nil {
