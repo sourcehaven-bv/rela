@@ -2,7 +2,7 @@
 id: REV-MB3YV
 type: review-checklist
 title: 'Review: Unify delete confirmation on custom modal and wire Delete shortcut in list & detail views'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -79,8 +79,8 @@ ticket.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (see PR status)
+- [x] PR URL documented below
 
-**PR:** <!-- pending user instruction -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/361

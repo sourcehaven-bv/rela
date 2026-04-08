@@ -5,7 +5,7 @@ title: Unify delete confirmation on custom modal and wire Delete shortcut in lis
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## Problem
