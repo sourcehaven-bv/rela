@@ -206,6 +206,11 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 			a.openAPIGen.UpdateMetamodel(a.meta)
 		}
 	}
+
+	// Publish the new appState snapshot. Handlers will be migrated to
+	// read from this snapshot in a follow-up PR; for now both the old
+	// convenience aliases above and the snapshot are kept in sync.
+	a.publishState()
 }
 
 // handleSSE serves Server-Sent Events for live-reload notifications.

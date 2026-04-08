@@ -331,17 +331,6 @@ func (g *Graph) IDsByType(entityType string) []string {
 	return ids
 }
 
-// Clear removes all nodes and edges from the graph
-func (g *Graph) Clear() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	g.nodes = make(map[string]*model.Entity)
-	g.edges = make([]*model.Relation, 0)
-	g.outgoing = make(map[string][]*model.Relation)
-	g.incoming = make(map[string][]*model.Relation)
-}
-
 // rebuildAdjacency rebuilds the outgoing/incoming maps from edges
 // Must be called with lock held
 func (g *Graph) rebuildAdjacency() {

@@ -4,13 +4,24 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
+
+// newQueryTestWorkspace builds a minimal Workspace whose reloadable state
+// holds only the given metamodel — no search index, no automation engine.
+// Query tests don't exercise Search or automation, so we skip those to
+// keep the test setup lean.
+func newQueryTestWorkspace(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
+	ws := &Workspace{}
+	ws.state.Store(&workspaceState{graph: g, meta: meta})
+	return ws
+}
 
 func TestEntityQueries(t *testing.T) {
 	meta := testutil.WorkspaceMetamodel()
 	g := graph.New()
-	ws := &Workspace{graph: g, meta: meta}
+	ws := newQueryTestWorkspace(g, meta)
 
 	// Add test entities
 	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Test Requirement").Build())
@@ -58,7 +69,7 @@ func TestEntityQueries(t *testing.T) {
 func TestRelationQueries(t *testing.T) {
 	meta := testutil.WorkspaceMetamodel()
 	g := graph.New()
-	ws := &Workspace{graph: g, meta: meta}
+	ws := newQueryTestWorkspace(g, meta)
 
 	// Add entities
 	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
@@ -104,7 +115,7 @@ func TestRelationQueries(t *testing.T) {
 func TestGraphAnalysis(t *testing.T) {
 	meta := testutil.WorkspaceMetamodel()
 	g := graph.New()
-	ws := &Workspace{graph: g, meta: meta}
+	ws := newQueryTestWorkspace(g, meta)
 
 	// Add entities
 	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())

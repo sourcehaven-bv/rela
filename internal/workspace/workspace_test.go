@@ -2,8 +2,11 @@ package workspace
 
 import (
 	"errors"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -182,7 +185,7 @@ func TestGenerateID_Sequential(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	// Add an existing entity so the next ID is REQ-002.
-	ws.graph.AddNode(testutil.EntityFor(ws.Meta(), "requirement").ID("REQ-001").Build())
+	ws.Graph().AddNode(testutil.EntityFor(ws.Meta(), "requirement").ID("REQ-001").Build())
 
 	id, err := ws.GenerateID("requirement", "")
 	if err != nil {
@@ -306,7 +309,7 @@ func TestCreateEntity(t *testing.T) {
 	}
 
 	// Verify entity is in graph.
-	if _, ok := ws.graph.GetNode("REQ-001"); !ok {
+	if _, ok := ws.Graph().GetNode("REQ-001"); !ok {
 		t.Error("entity not found in graph after create")
 	}
 }
@@ -413,7 +416,7 @@ func TestUpdateEntity(t *testing.T) {
 	}
 
 	// Verify update in graph.
-	updated, ok := ws.graph.GetNode(entity.ID)
+	updated, ok := ws.Graph().GetNode(entity.ID)
 	if !ok {
 		t.Fatal("entity not found in graph")
 	}
@@ -441,7 +444,7 @@ func TestDeleteEntity_NoCascade_NoRelations(t *testing.T) {
 	if result.RelationsDeleted != 0 {
 		t.Errorf("relations deleted = %d, want 0", result.RelationsDeleted)
 	}
-	if _, ok := ws.graph.GetNode("REQ-001"); ok {
+	if _, ok := ws.Graph().GetNode("REQ-001"); ok {
 		t.Error("entity still in graph after delete")
 	}
 }
@@ -513,7 +516,7 @@ func TestCreateRelation(t *testing.T) {
 	}
 
 	// Verify in graph.
-	if _, ok := ws.graph.GetEdge("DEC-001", "addresses", "REQ-001"); !ok {
+	if _, ok := ws.Graph().GetEdge("DEC-001", "addresses", "REQ-001"); !ok {
 		t.Error("relation not found in graph")
 	}
 }
@@ -566,7 +569,7 @@ func TestDeleteRelation(t *testing.T) {
 		t.Fatalf("DeleteRelation() error = %v", err)
 	}
 
-	if _, ok := ws.graph.GetEdge("DEC-001", "addresses", "REQ-001"); ok {
+	if _, ok := ws.Graph().GetEdge("DEC-001", "addresses", "REQ-001"); ok {
 		t.Error("relation still in graph after delete")
 	}
 }
@@ -607,15 +610,143 @@ func TestReload(t *testing.T) {
 	}
 }
 
-// --- Locking ---
+// --- Concurrency ---
 
-func TestRLock(t *testing.T) {
+// TestConcurrentReloadStateSnapshot exercises concurrent Reload() vs
+// readers vs a writer goroutine.
+//
+// This test targets both the atomic.Pointer-based workspaceState
+// publication (meta/automation/searchIdx) AND the atomic.Pointer-based
+// graph publication. It would catch a regression that leaves any of
+// these fields torn across a reload.
+//
+// With repo.Sync now returning a fresh *graph.Graph and Reload publishing
+// it via atomic.Pointer, readers can iterate the graph during a reload
+// and never see a transiently empty state: they either observe the
+// pre-reload graph (fully populated) or the post-reload graph (fully
+// populated), never an in-flight mutation.
+//
+// Writers and the reloader still share an external mutex (mimicking
+// App.writeMu in the data-entry server). Without that, the concurrent
+// writer's entity-property map mutations would race against Reload's
+// entityToSearchDocument reads — a separate, pre-existing entity-level
+// data race that is not part of this ticket's scope.
+func TestConcurrentReloadStateSnapshot(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	// Just verify it doesn't deadlock.
-	ws.RLock()
-	_ = ws.Meta()
-	ws.RUnlock()
+	// Seed the workspace with entities so graph iteration has work.
+	for i := 0; i < 5; i++ {
+		mustCreate(t, ws, "requirement", CreateOptions{
+			Properties: map[string]any{"title": "seed"},
+		})
+	}
+
+	readerCount := 2 * runtime.GOMAXPROCS(0)
+	if readerCount < 4 {
+		readerCount = 4
+	}
+	const duration = 300 * time.Millisecond
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// writeMu mimics the App.writeMu serialization discipline used by
+	// the data-entry server. Writers and reloaders both take it; readers
+	// never do.
+	var writeMu sync.Mutex
+
+	// Reader goroutines: exercise both the workspaceState snapshot AND
+	// the graph. A reader that captures w.Graph() into a local variable
+	// holds a frozen view for the duration of the iteration, regardless
+	// of concurrent reloads.
+	for i := 0; i < readerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				m := ws.Meta()
+				if m == nil {
+					t.Errorf("Meta() returned nil during concurrent reload")
+					return
+				}
+				if _, ok := m.GetEntityDef("requirement"); !ok {
+					t.Errorf("Meta().GetEntityDef(requirement) returned !ok")
+					return
+				}
+				// Iterate the graph: captures the current graph snapshot
+				// and walks its nodes. If repo.Sync were still mutating
+				// a shared graph in place, this would see transiently
+				// empty results during a reload.
+				g := ws.Graph()
+				if g == nil {
+					t.Errorf("Graph() returned nil during concurrent reload")
+					return
+				}
+				nodes := g.AllNodes()
+				if len(nodes) == 0 {
+					t.Errorf("graph snapshot was empty during concurrent reload")
+					return
+				}
+				// Search snapshots state.searchIdx; any result is fine.
+				_, _, _ = ws.Search([]string{"seed"}, nil, 10)
+			}
+		}()
+	}
+
+	// Writer goroutine: takes writeMu around each CreateEntity so that
+	// Reload (which also takes writeMu) never observes an entity in the
+	// middle of being constructed.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			writeMu.Lock()
+			_, _, err := ws.CreateEntity("requirement", CreateOptions{
+				Properties: map[string]any{"title": "writer entity"},
+			})
+			writeMu.Unlock()
+			if err != nil {
+				t.Errorf("CreateEntity failed: %v", err)
+				return
+			}
+		}
+	}()
+
+	// Reloader goroutine: takes the same writeMu so reload's graph
+	// iteration sees a consistent set of entities. Also exercises the
+	// internal reloadMu.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			writeMu.Lock()
+			_, err := ws.Reload()
+			writeMu.Unlock()
+			if err != nil {
+				t.Errorf("Reload() failed: %v", err)
+				return
+			}
+		}
+	}()
+
+	time.Sleep(duration)
+	close(stop)
+	wg.Wait()
 }
 
 // --- Errors ---
@@ -795,7 +926,7 @@ func TestCreateEntity_AutomationWithIfExistsReplace(t *testing.T) {
 	}
 
 	// Old checklist should be gone from graph.
-	if _, ok := ws.graph.GetNode(checklist1.ID); ok {
+	if _, ok := ws.Graph().GetNode(checklist1.ID); ok {
 		t.Errorf("old checklist %s should be deleted from graph", checklist1.ID)
 	}
 }

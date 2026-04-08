@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 
@@ -25,6 +26,28 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
+
+// appState bundles the reloadable fields of App into an immutable snapshot.
+//
+// During this PR, App still holds the same fields as plain struct fields
+// (Cfg, meta, g, styleMap, styledTypes, userDefaults, palette, userPalette,
+// openAPIGen) and the appState is published in parallel via atomic.Pointer.
+// Handlers will be migrated to read from the snapshot in a subsequent PR.
+//
+// The fields here mirror the workspace.workspaceState pattern: callers
+// Load() once and work against a coherent snapshot, instead of holding a
+// read lock around the entire request.
+type appState struct {
+	Cfg          *Config
+	Meta         *metamodel.Metamodel
+	Graph        *graph.Graph
+	StyleMap     map[string]map[string]string
+	StyledTypes  map[string]bool
+	UserDefaults *UserDefaults
+	Palette      *ResolvedPalette
+	UserPalette  *PaletteConfig
+	OpenAPIGen   *openapi.Generator
+}
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
 const ConfigFile = dataentryconfig.ConfigFile
@@ -59,6 +82,12 @@ type App struct {
 	gitOps *git.Ops
 	// openAPIGen generates OpenAPI specs from the metamodel.
 	openAPIGen *openapi.Generator
+	// state is an immutable snapshot of all reloadable fields above. It is
+	// published in parallel with the convenience aliases during this PR
+	// (dual-write phase). A subsequent PR migrates handlers to read from
+	// the snapshot via state.Load() instead of taking the App.mu read
+	// lock and reading the convenience aliases.
+	state atomic.Pointer[appState]
 	// mu protects reloadable state (Cfg, meta, g, tmpl, styleMap, styledTypes)
 	// during live-reload. Handlers acquire RLock; reload acquires Lock.
 	mu sync.RWMutex
@@ -68,6 +97,23 @@ type App struct {
 	// SetSecurityConfig before NewRouter; nil disables the middlewares
 	// (only sensible in unit tests where no HTTP layer is exercised).
 	security *security
+}
+
+// publishState builds an appState snapshot from the current convenience
+// aliases and publishes it via state.Store. Called from NewApp and from
+// onReload (under App.mu.Lock) during the dual-write phase.
+func (a *App) publishState() {
+	a.state.Store(&appState{
+		Cfg:          a.Cfg,
+		Meta:         a.meta,
+		Graph:        a.g,
+		StyleMap:     a.styleMap,
+		StyledTypes:  a.styledTypes,
+		UserDefaults: a.userDefaults,
+		Palette:      a.palette,
+		UserPalette:  a.userPalette,
+		OpenAPIGen:   a.openAPIGen,
+	})
 }
 
 // SetSecurityConfig configures the HTTP security middlewares applied by
@@ -153,6 +199,11 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		app.gitOps = git.NewOps(ws.Paths().Root, *cfg.Git)
 		slog.Info("git sync enabled", "mode", cfg.Git.Mode)
 	}
+
+	// Publish the initial appState snapshot in parallel with the
+	// convenience aliases. Handlers will be migrated to read from
+	// the snapshot in a follow-up PR.
+	app.publishState()
 
 	return app, nil
 }
