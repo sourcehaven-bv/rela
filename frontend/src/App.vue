@@ -29,11 +29,39 @@ onMounted(async () => {
   }
 })
 
-// Apply palette CSS variables when schema loads or theme toggles
+// Apply palette CSS variables when schema loads, theme toggles, or
+// the saved palette changes (e.g. after the user clicks Save Palette
+// in Settings — schemaStore.reload() rewrites paletteLight/paletteDark/
+// darkDisabled, this watch picks it up and re-applies inline styles
+// to <html> so the change is visible immediately on the current
+// screen).
+//
+// When the project palette has dark disabled (Regular mode), we
+// always render the light palette regardless of the user's global
+// dark toggle, AND we strip the `dark` class from <html> so any
+// dark-mode CSS rules don't apply. The toggle button is hidden in
+// the status bar in this case.
 watch(
-  [() => schemaStore.loaded, () => uiStore.darkMode, () => schemaStore.paletteLight, () => schemaStore.paletteDark],
+  [
+    () => schemaStore.loaded,
+    () => uiStore.darkMode,
+    () => schemaStore.paletteLight,
+    () => schemaStore.paletteDark,
+    () => schemaStore.darkDisabled,
+  ],
   () => {
     if (!schemaStore.loaded) return
+
+    // Regular-mode project: force-render as light, no html.dark class.
+    if (schemaStore.darkDisabled) {
+      document.documentElement.classList.remove('dark')
+      if (Object.keys(schemaStore.paletteLight).length > 0) {
+        uiStore.applyPalette(schemaStore.paletteLight)
+      }
+      return
+    }
+
+    // Light+Dark project: respect the user's global toggle.
     const palette = uiStore.darkMode ? schemaStore.paletteDark : schemaStore.paletteLight
     if (Object.keys(palette).length > 0) {
       uiStore.applyPalette(palette)

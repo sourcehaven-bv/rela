@@ -1,0 +1,166 @@
+[
+  {
+    "name": "framework_defaults",
+    "light": {
+      "base": "#1a1a2e",
+      "surface": "#f8fafc",
+      "accent": "#6366f1",
+      "text": "#1e293b",
+      "success": "#10b981",
+      "error": "#ef4444",
+      "warning": "#f59e0b",
+      "info": "#3b82f6"
+    },
+    "badges": {
+      "blue": "#3b82f6",
+      "gray": "#6b7280",
+      "green": "#22c55e",
+      "orange": "#f97316",
+      "purple": "#8b5cf6",
+      "red": "#ef4444",
+      "yellow": "#eab308"
+    },
+    "dark": {
+      "base": "#11111e",
+      "surface": "#0c141d",
+      "accent": "#9294f5",
+      "text": "#ccd6e5",
+      "success": "#14e8a2",
+      "error": "#f37373",
+      "warning": "#f7b13c",
+      "info": "#6ca1f8"
+    },
+    "darkBadges": {
+      "blue": "#6ca1f8",
+      "gray": "#858c99",
+      "green": "#3ddd78",
+      "orange": "#fa9148",
+      "purple": "#ad8cf9",
+      "red": "#f37373",
+      "yellow": "#f8c72d"
+    }
+  },
+  {
+    "name": "lospec_sweetie16",
+    "light": {
+      "base": "#1a1c2c",
+      "surface": "#f4f4f4",
+      "accent": "#ffcd75",
+      "text": "#5d275d",
+      "success": "#38b764",
+      "error": "#ef7d57",
+      "warning": "#a7f070",
+      "info": "#41a6f6"
+    },
+    "badges": {
+      "blue": "#41a6f6",
+      "gray": "#94b0c2",
+      "green": "#38b764",
+      "orange": "#ef7d57",
+      "purple": "#3b5dc9",
+      "red": "#b13e53",
+      "yellow": "#ffcd75"
+    },
+    "dark": {
+      "base": "#11121c",
+      "surface": "#141414",
+      "accent": "#ffdfa8",
+      "text": "#e8c9e8",
+      "success": "#57cb7f",
+      "error": "#f3a186",
+      "warning": "#c3f59e",
+      "info": "#72bdf8"
+    },
+    "darkBadges": {
+      "blue": "#72bdf8",
+      "gray": "#b4c8d5",
+      "green": "#57cb7f",
+      "orange": "#f3a186",
+      "purple": "#637ed4",
+      "red": "#c65c6f",
+      "yellow": "#ffdfa8"
+    }
+  },
+  {
+    "name": "high_contrast_purple",
+    "light": {
+      "base": "#0f0f1e",
+      "surface": "#fafafa",
+      "accent": "#7c3aed",
+      "text": "#0f172a",
+      "success": "#16a34a",
+      "error": "#dc2626",
+      "warning": "#ea580c",
+      "info": "#2563eb"
+    },
+    "badges": {
+      "blue": "#2563eb",
+      "gray": "#64748b",
+      "green": "#16a34a",
+      "orange": "#ea580c",
+      "purple": "#7c3aed",
+      "red": "#dc2626",
+      "yellow": "#ca8a04"
+    },
+    "dark": {
+      "base": "#06060d",
+      "surface": "#141414",
+      "accent": "#9b69f1",
+      "text": "#c7d1eb",
+      "success": "#1cd05e",
+      "error": "#e35252",
+      "warning": "#f57634",
+      "info": "#5484ef"
+    },
+    "darkBadges": {
+      "blue": "#5484ef",
+      "gray": "#7f8ea3",
+      "green": "#1cd05e",
+      "orange": "#f57634",
+      "purple": "#9b69f1",
+      "red": "#e35252",
+      "yellow": "#faab07"
+    }
+  },
+  {
+    "name": "near_pure_black_white",
+    "light": {
+      "base": "#000000",
+      "surface": "#ffffff",
+      "accent": "#ff00ff",
+      "text": "#000000",
+      "success": "#00ff00",
+      "error": "#ff0000",
+      "warning": "#ffff00",
+      "info": "#0000ff"
+    },
+    "badges": {
+      "blue": "#0000ff",
+      "gray": "#808080",
+      "green": "#00ff00",
+      "orange": "#ff8000",
+      "purple": "#8000ff",
+      "red": "#ff0000",
+      "yellow": "#ffff00"
+    },
+    "dark": {
+      "base": "#000000",
+      "surface": "#141414",
+      "accent": "#ff33ff",
+      "text": "#d9d9d9",
+      "success": "#33ff33",
+      "error": "#ff3333",
+      "warning": "#ffff33",
+      "info": "#3333ff"
+    },
+    "darkBadges": {
+      "blue": "#3333ff",
+      "gray": "#9a9a9a",
+      "green": "#33ff33",
+      "orange": "#ff9933",
+      "purple": "#9933ff",
+      "red": "#ff3333",
+      "yellow": "#ffff33"
+    }
+  }
+]

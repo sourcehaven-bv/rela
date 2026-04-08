@@ -39,21 +39,27 @@ type PaletteColors struct {
 	Info    string `yaml:"info,omitempty"    json:"info,omitempty"`
 }
 
-// DarkMode represents the dark mode setting: "auto" (default), "false" (disabled),
-// or an explicit PaletteColors object.
-type DarkMode struct {
-	Mode     string         // "auto" or "false"
-	Explicit *PaletteColors // non-nil when explicit palette provided
+// DarkPalette is the explicit dark-mode payload. It carries the same
+// 8 base color roles as the light palette plus an optional dark badge
+// override map. Empty fields inherit from the resolved light palette.
+type DarkPalette struct {
+	PaletteColors `yaml:",inline"`
+	Badges        map[string]string `yaml:"badges,omitempty" json:"badges,omitempty"`
 }
 
-// IsAuto returns true if dark mode is auto-generated.
-func (d DarkMode) IsAuto() bool {
-	return d.Mode == "" || d.Mode == "auto"
+// DarkMode represents the dark mode setting: either disabled (`false`)
+// or an explicit DarkPalette object. There is no `auto` mode at
+// runtime — auto-derivation is performed in the frontend Settings UI
+// via an explicit Derive button which writes a fully-populated dark
+// palette into this field.
+type DarkMode struct {
+	Disabled bool         // true when dark mode is turned off (`dark: false`)
+	Explicit *DarkPalette // non-nil when an explicit palette is provided
 }
 
 // IsDisabled returns true if dark mode is disabled.
 func (d DarkMode) IsDisabled() bool {
-	return d.Mode == "false"
+	return d.Disabled
 }
 
 // IsExplicit returns true if an explicit dark palette was provided.
@@ -61,40 +67,24 @@ func (d DarkMode) IsExplicit() bool {
 	return d.Explicit != nil
 }
 
-// UnmarshalYAML handles the three-way union: string "auto", bool false, or object.
+// UnmarshalYAML handles the two-way union: bool false or an object.
 func (d *DarkMode) UnmarshalYAML(value *yaml.Node) error {
-	// Try bool first (handles false)
+	// Try bool (only `false` is meaningful; `true` is rejected).
 	var boolVal bool
 	if err := value.Decode(&boolVal); err == nil {
-		if !boolVal {
-			d.Mode = "false"
-			return nil
+		if boolVal {
+			return fmt.Errorf("invalid dark mode `true`: use either `false` or an explicit palette object")
 		}
-		// true is treated as auto
-		d.Mode = "auto"
+		d.Disabled = true
 		return nil
 	}
 
-	// Try string ("auto")
-	var strVal string
-	if err := value.Decode(&strVal); err == nil {
-		switch strings.ToLower(strVal) {
-		case "", "auto":
-			d.Mode = "auto"
-		case "false", "disabled":
-			d.Mode = "false"
-		default:
-			return fmt.Errorf("invalid dark mode %q (must be 'auto', 'false', or a palette object)", strVal)
-		}
-		return nil
+	// Try object (explicit palette with optional dark badges).
+	var dp DarkPalette
+	if err := value.Decode(&dp); err != nil {
+		return fmt.Errorf("invalid dark mode: must be `false` or a palette object: %w", err)
 	}
-
-	// Try object (explicit palette)
-	var colors PaletteColors
-	if err := value.Decode(&colors); err != nil {
-		return fmt.Errorf("invalid dark mode: must be 'auto', false, or a palette object: %w", err)
-	}
-	d.Explicit = &colors
+	d.Explicit = &dp
 	return nil
 }
 
@@ -103,57 +93,52 @@ func (d DarkMode) MarshalYAML() (interface{}, error) {
 	if d.Explicit != nil {
 		return d.Explicit, nil
 	}
-	if d.Mode == "false" {
+	if d.Disabled {
 		return false, nil
 	}
-	return "auto", nil
+	// Zero value → emit explicit YAML null. Reachable when a parent
+	// struct without `omitempty` (or with a non-effective omitempty
+	// for custom marshalers) decides to include the field.
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: "null"}, nil
 }
 
-// MarshalJSON serializes DarkMode to JSON.
-// Returns "auto", false, or the explicit PaletteColors object.
+// MarshalJSON serializes DarkMode to JSON. Returns `false` or the
+// explicit PaletteColors object. A zero-value DarkMode marshals to
+// `null` (omitted in `omitempty` contexts).
 func (d DarkMode) MarshalJSON() ([]byte, error) {
 	if d.Explicit != nil {
 		return json.Marshal(d.Explicit)
 	}
-	if d.Mode == "false" {
+	if d.Disabled {
 		return json.Marshal(false)
 	}
-	return json.Marshal("auto")
+	return []byte("null"), nil
 }
 
-// UnmarshalJSON handles the three-way union for JSON: string "auto", bool false, or object.
+// UnmarshalJSON handles the two-way union for JSON: bool false or
+// an object.
 func (d *DarkMode) UnmarshalJSON(data []byte) error {
-	// Try bool first (handles false/true)
+	// Allow JSON null → zero-value DarkMode.
+	if string(data) == "null" {
+		return nil
+	}
+
+	// Try bool (only `false`; `true` is rejected).
 	var boolVal bool
 	if err := json.Unmarshal(data, &boolVal); err == nil {
-		if !boolVal {
-			d.Mode = "false"
-			return nil
+		if boolVal {
+			return fmt.Errorf("invalid dark mode `true`: use either `false` or an explicit palette object")
 		}
-		d.Mode = "auto"
+		d.Disabled = true
 		return nil
 	}
 
-	// Try string ("auto", "false", "disabled")
-	var strVal string
-	if err := json.Unmarshal(data, &strVal); err == nil {
-		switch strings.ToLower(strVal) {
-		case "", "auto":
-			d.Mode = "auto"
-		case "false", "disabled":
-			d.Mode = "false"
-		default:
-			return fmt.Errorf("invalid dark mode %q", strVal)
-		}
-		return nil
+	// Try object (explicit palette with optional dark badges).
+	var dp DarkPalette
+	if err := json.Unmarshal(data, &dp); err != nil {
+		return fmt.Errorf("invalid dark mode: must be `false` or a palette object: %w", err)
 	}
-
-	// Try object (explicit palette)
-	var colors PaletteColors
-	if err := json.Unmarshal(data, &colors); err != nil {
-		return fmt.Errorf("invalid dark mode: must be \"auto\", false, or a palette object: %w", err)
-	}
-	d.Explicit = &colors
+	d.Explicit = &dp
 	return nil
 }
 
@@ -212,8 +197,16 @@ func ValidatePalette(p *PaletteConfig) error {
 		}
 	}
 	if p.Dark.IsExplicit() {
-		if err := validateColors(p.Dark.Explicit); err != nil {
+		if err := validateColors(&p.Dark.Explicit.PaletteColors); err != nil {
 			return fmt.Errorf("palette.dark: %w", err)
+		}
+		for name, color := range p.Dark.Explicit.Badges {
+			if !ValidBadgeNames[name] {
+				return fmt.Errorf("palette.dark.badges: unknown badge color %q", name)
+			}
+			if err := ValidateHexColor(color); err != nil {
+				return fmt.Errorf("palette.dark.badges.%s: %w", name, err)
+			}
 		}
 	}
 	return nil
@@ -263,34 +256,42 @@ func mergeColors(dst, src *PaletteColors) {
 	}
 }
 
-// ResolvePalette merges project and user palettes with defaults, derives
-// the 6 computed CSS variables, and generates dark mode if needed.
+// ResolvePalette merges project and user palettes with defaults and
+// produces a ResolvedPalette containing the fully derived CSS
+// variable map.
+//
+// Dark mode is opt-in and explicit: if neither project nor user
+// supplied a dark configuration, dark mode is reported as disabled.
+// Auto-derivation lives in the frontend (Settings → Derive Dark) and
+// produces a fully-populated PaletteColors object that arrives here
+// via the user palette. Empty fields in an explicit dark palette
+// inherit from the resolved light palette so that partial overrides
+// compose cleanly with the user's chosen light theme.
 func ResolvePalette(project, user *PaletteConfig) *ResolvedPalette {
-	// Start with defaults
+	// Start with defaults.
 	light := defaultLightColors
 	badges := copyBadges(defaultBadgeColors)
 
-	// Layer project palette
+	// Layer project palette.
 	if project != nil {
-		mergeColors(&light, &project.PaletteColors)
-		// Project colors override defaults — but mergeColors fills gaps,
-		// so we need to apply project colors on top.
 		light = applyOver(light, project.PaletteColors)
 		mergeBadges(badges, project.Badges)
 	}
 
-	// Layer user palette (highest priority)
+	// Layer user palette (highest priority).
 	if user != nil {
 		light = applyOver(light, user.PaletteColors)
 		mergeBadges(badges, user.Badges)
 	}
 
-	// Determine dark mode
-	darkMode := DarkMode{Mode: "auto"}
-	if project != nil {
+	// Determine dark mode. The user palette wins if it specifies
+	// anything; otherwise the project palette; otherwise dark is
+	// disabled by default.
+	darkMode := DarkMode{Disabled: true}
+	if project != nil && (project.Dark.Disabled || project.Dark.Explicit != nil) {
 		darkMode = project.Dark
 	}
-	if user != nil && (user.Dark.Mode != "" || user.Dark.Explicit != nil) {
+	if user != nil && (user.Dark.Disabled || user.Dark.Explicit != nil) {
 		darkMode = user.Dark
 	}
 
@@ -303,16 +304,22 @@ func ResolvePalette(project, user *PaletteConfig) *ResolvedPalette {
 		return result
 	}
 
-	var darkColors PaletteColors
-	var darkBadges map[string]string
-	if darkMode.IsExplicit() {
-		darkColors = *darkMode.Explicit
-		mergeColors(&darkColors, &defaultLightColors) // fill gaps with defaults
-		darkBadges = copyBadges(defaultBadgeColors)
-	} else {
-		darkColors = generateDark(light)
-		darkBadges = generateDarkBadges(badges)
+	// Defensive: a zero-value DarkMode (e.g. from a JSON `null`
+	// payload) would reach here without Explicit set. Treat that as
+	// disabled rather than panicking on a nil dereference.
+	if darkMode.Explicit == nil {
+		result.DarkDisabled = true
+		return result
 	}
+
+	// Explicit dark palette: empty fields inherit from light so that
+	// partial overrides compose with the user's chosen light theme.
+	// Same rule for dark badges: unset entries fall back to the
+	// resolved light badges.
+	darkColors := darkMode.Explicit.PaletteColors
+	mergeColors(&darkColors, &light)
+	darkBadges := copyBadges(badges)
+	mergeBadges(darkBadges, darkMode.Explicit.Badges)
 	result.Dark = deriveTheme(darkColors, darkBadges)
 
 	return result
@@ -417,7 +424,21 @@ func deriveTheme(colors PaletteColors, badges map[string]string) map[string]stri
 	return m
 }
 
-// generateDark creates a dark palette from a light palette by inverting lightness.
+// generateDark creates a dark palette from a light palette by
+// inverting lightness.
+//
+// This function is the *reference implementation* for dark
+// derivation. It is no longer called from production code paths —
+// dark derivation is performed in the frontend
+// (frontend/src/utils/palette.ts: generateDark) so users can preview
+// it via the "Derive Dark from Light" button before saving. This Go
+// version is kept solely as the source of truth for the parity
+// goldens generated by TestGenerateDarkParityGoldens (see
+// palette_parity_test.go), which the TS test consumes verbatim.
+//
+// If you change the algorithm here, regenerate the goldens with
+// `UPDATE_GOLDENS=1 go test ./internal/dataentryconfig/ -run TestGenerateDarkParityGoldens`
+// and re-run the frontend palette test suite to confirm parity.
 func generateDark(light PaletteColors) PaletteColors {
 	return PaletteColors{
 		Base:    adjustLightness(light.Base, darkBaseDelta),
@@ -431,7 +452,9 @@ func generateDark(light PaletteColors) PaletteColors {
 	}
 }
 
-// generateDarkBadges slightly brightens badge colors for dark mode visibility.
+// generateDarkBadges slightly brightens badge colors for dark mode
+// visibility. Like generateDark, this is the reference impl kept
+// only for the parity goldens — see generateDark's comment.
 func generateDarkBadges(badges map[string]string) map[string]string {
 	dark := make(map[string]string, len(badges))
 	for name, color := range badges {

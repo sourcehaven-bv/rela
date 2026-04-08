@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { useGitStore, useUIStore } from '@/stores'
+import { useGitStore, useSchemaStore, useUIStore } from '@/stores'
 import { shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
 
 const gitStore = useGitStore()
 const uiStore = useUIStore()
+const schemaStore = useSchemaStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -51,7 +52,13 @@ async function handleSync() {
 
     <!-- Right side: Theme, Settings, and shortcuts -->
     <div class="status-right">
+      <!--
+        Hide the dark/light toggle when the project's palette is in
+        Regular mode — there's only one set of colors so the toggle
+        would be a no-op (and confusing).
+      -->
       <button
+        v-if="!schemaStore.darkDisabled"
         class="status-item theme-toggle"
         :title="uiStore.isDark ? 'Switch to light mode' : 'Switch to dark mode'"
         @click="uiStore.toggleDarkMode()"
