@@ -93,6 +93,10 @@ vendors:
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
   singleflight: { in: golang.org/x/sync/singleflight }
+  http2:
+    in:
+      - golang.org/x/net/http2
+      - golang.org/x/net/http2/**
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
@@ -119,6 +123,8 @@ deps:
       - script
       - storage
       - workspace
+    canUse:
+      - http2
   cmdDesktop:
     mayDependOn:
       - dataentry
