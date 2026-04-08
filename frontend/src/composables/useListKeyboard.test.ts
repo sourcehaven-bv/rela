@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, ref, type Ref } from 'vue'
 import { useListKeyboard } from './useListKeyboard'
+import { _resetModalStack, registerModal } from './modalStack'
 
 // Mock the dom utility
 vi.mock('@/utils/dom', () => ({
@@ -38,6 +39,7 @@ describe('useListKeyboard', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    _resetModalStack()
     mockElement = document.createElement('div')
     mockElement.className = 'entity-row'
     mockElement.scrollIntoView = vi.fn()
@@ -46,6 +48,7 @@ describe('useListKeyboard', () => {
 
   afterEach(() => {
     document.body.innerHTML = ''
+    _resetModalStack()
   })
 
   describe('initialization', () => {
@@ -230,13 +233,35 @@ describe('useListKeyboard', () => {
       wrapper.unmount()
     })
 
-    it('does not call onDelete with Backspace', () => {
+    it('calls onDelete with Backspace when item selected', () => {
       const itemCount = ref(5)
       const onDelete = vi.fn()
       const wrapper = mount(createTestComponent({ itemCount, onDelete }))
 
       document.dispatchEvent(createKeyEvent('j'))
       document.dispatchEvent(createKeyEvent('Backspace'))
+
+      expect(onDelete).toHaveBeenCalledWith(0)
+      wrapper.unmount()
+    })
+
+    it('does not call onDelete with Backspace when nothing selected', () => {
+      const itemCount = ref(5)
+      const onDelete = vi.fn()
+      const wrapper = mount(createTestComponent({ itemCount, onDelete }))
+
+      document.dispatchEvent(createKeyEvent('Backspace'))
+
+      expect(onDelete).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('does not call onDelete with Delete when nothing selected', () => {
+      const itemCount = ref(5)
+      const onDelete = vi.fn()
+      const wrapper = mount(createTestComponent({ itemCount, onDelete }))
+
+      document.dispatchEvent(createKeyEvent('Delete'))
 
       expect(onDelete).not.toHaveBeenCalled()
       wrapper.unmount()
@@ -339,10 +364,8 @@ describe('useListKeyboard', () => {
       wrapper.unmount()
     })
 
-    it('ignores keys when modal overlay is open', () => {
-      const overlay = document.createElement('div')
-      overlay.className = 'modal-overlay'
-      document.body.appendChild(overlay)
+    it('ignores keys when a modal is registered in the modal stack', () => {
+      registerModal(Symbol('test-modal'))
 
       const itemCount = ref(5)
       const wrapper = mount(createTestComponent({ itemCount }))

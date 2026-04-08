@@ -38,11 +38,15 @@ const shortcuts = computed(() => [
       { keys: 'Enter or O', description: 'Open selected entity' },
       { keys: 'E', description: 'Edit selected entity' },
       { keys: 'N', description: 'Create new entity' },
+      { keys: 'Del or Backspace', description: 'Delete selected entity' },
     ],
   },
   {
     group: 'Entity Detail',
-    items: [{ keys: 'E', description: 'Edit entity' }],
+    items: [
+      { keys: 'E', description: 'Edit entity' },
+      { keys: 'Del or Backspace', description: 'Delete entity' },
+    ],
   },
   {
     group: 'Form / Editor',

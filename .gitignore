@@ -37,6 +37,7 @@ e2e/.playwright/
 # Frontend build artifacts
 frontend/node_modules/
 frontend/dist/
+frontend/coverage/
 frontend/.e2e-server-info.json
 frontend/test-results/
 frontend/playwright-report/

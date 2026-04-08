@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import type { Command } from '@/types'
+import { useModalStack } from '@/composables/modalStack'
 
 const props = defineProps<{
   entityId: string
@@ -12,6 +13,7 @@ const emit = defineEmits<{
 
 // State
 const showModal = ref(false)
+useModalStack(showModal)
 const activeCommand = ref<Command | null>(null)
 const running = ref(false)
 const output = ref<Array<{ type: 'text' | 'file'; text?: string; path?: string; label?: string }>>([])

@@ -1,5 +1,6 @@
 import { ref, onMounted, onBeforeUnmount, type Ref } from 'vue'
 import { isInputFocused } from '@/utils/dom'
+import { isAnyModalOpen } from './modalStack'
 
 interface UseListKeyboardOptions {
   itemCount: Ref<number>
@@ -48,8 +49,13 @@ export function useListKeyboard(options: UseListKeyboardOptions) {
     // Don't handle if in input field
     if (isInputFocused()) return
 
-    // Don't handle if a modal is open
-    if (document.querySelector('.shortcuts-overlay, .modal-overlay')) return
+    // Don't handle if any modal is open. Uses an explicit stack registry
+    // rather than a CSS-class query so unrelated modals (Command, etc.)
+    // don't accidentally enable/disable list shortcuts based on class reuse.
+    if (isAnyModalOpen()) return
+    // Legacy fallback for the shortcuts modal which does not register with
+    // the stack yet.
+    if (document.querySelector('.shortcuts-overlay')) return
 
     switch (e.key) {
       case 'j':
@@ -88,7 +94,12 @@ export function useListKeyboard(options: UseListKeyboardOptions) {
 
       case 'Delete':
       case 'Backspace':
-        if (selectedIndex.value >= 0 && options.onDelete && e.key === 'Delete') {
+        // Backspace is included so Mac users (no dedicated Delete key) can use
+        // it. Guarded by selectedIndex >= 0, so browser back-nav only loses
+        // when a row is explicitly selected — at which point a confirm modal
+        // intercepts anyway. preventDefault stops the browser back-nav side
+        // effect when we own the key.
+        if (selectedIndex.value >= 0 && options.onDelete) {
           e.preventDefault()
           options.onDelete(selectedIndex.value)
         }
