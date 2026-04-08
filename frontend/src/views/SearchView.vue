@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchEntities } from '@/api'
 import { useSchemaStore } from '@/stores'
+import { parseFilterQueryParams } from '@/utils/filters'
 import type { Entity, PropertyDef } from '@/types'
 
 const route = useRoute()
@@ -177,7 +178,7 @@ async function search() {
     if (filter.type === 'type') {
       urlParams.type = filter.value
     } else {
-      urlParams[`filter_${filter.property}`] = filter.value
+      urlParams[`filter[${filter.property}]`] = filter.value
     }
   }
   router.replace({ query: urlParams })
@@ -423,19 +424,20 @@ watch(
       })
     }
 
-    // Property filters (filter_<prop>=value)
-    for (const [key, value] of Object.entries(newQuery)) {
-      if (key.startsWith('filter_') && typeof value === 'string') {
-        const propName = key.replace('filter_', '')
-        const propLabel = propName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-        restoredFilters.push({
-          id: `${propName}-${Date.now()}`,
-          type: 'property',
-          property: propName,
-          value,
-          label: `${propLabel}: ${value}`,
-        })
-      }
+    // Property filters: parse bracket-format `filter[prop]=value`. SearchView
+    // only emits the equality form (no operator suffix), so we restore those
+    // and ignore any operator-suffixed entries deep-linked from elsewhere.
+    const restoredFromBrackets = parseFilterQueryParams(newQuery)
+    for (const [propName, fv] of Object.entries(restoredFromBrackets)) {
+      if (fv.op && fv.op !== '=') continue
+      const propLabel = propName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+      restoredFilters.push({
+        id: `${propName}-${Date.now()}`,
+        type: 'property',
+        property: propName,
+        value: fv.value,
+        label: `${propLabel}: ${fv.value}`,
+      })
     }
 
     if (restoredFilters.length > 0) {

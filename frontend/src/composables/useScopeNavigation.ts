@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
-import { toApiOperator } from '@/utils/filters'
+import { toApiOperator, parseFilterQueryParams, filterStateToApiParams } from '@/utils/filters'
 import type { ListParams } from '@/types'
 
 export interface ScopeNav {
@@ -62,12 +62,14 @@ export function useScopeNavigation(entityType: () => string, entityId: () => str
         }
       }
 
-      // Add user-selected filters from query
-      for (const [key, value] of Object.entries(route.query)) {
-        if (key.startsWith('filter_') && value) {
-          const prop = key.replace('filter_', '')
-          params[`filter[${prop}]`] = value as string
-        }
+      // Add user-selected filters from query (bracket format `filter[prop][op]`).
+      // We re-serialize via the shared filterStateToApiParams helper so the
+      // backend gets identical params to what EntityList sends.
+      const userFilters = parseFilterQueryParams(route.query)
+      const userParams = filterStateToApiParams(userFilters)
+      const paramsRecord = params as Record<string, string | number | undefined>
+      for (const [key, value] of Object.entries(userParams)) {
+        paramsRecord[key] = value
       }
 
       const result = await entitiesStore.fetchList(listConfig.entity, params)

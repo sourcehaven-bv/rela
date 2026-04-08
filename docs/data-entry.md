@@ -575,6 +575,46 @@ filter_controls:
 | `property` | string | Property to filter on                                    |
 | `widget`   | string | `"select"`, `"multi-select"`, or `"search"`             |
 
+### URL Sync for Filters
+
+Interactive filter selections are mirrored into the page's URL query string so
+lists are deep-linkable and survive browser back/forward. The format is
+bracketed:
+
+```text
+/v2/list/all_tasks?filter[status]=open
+/v2/list/all_tasks?filter[due_date][lte]=$today
+/v2/list/all_tasks?filter[tags][in][]=urgent&filter[tags][in][]=blocker
+```
+
+Rules:
+
+- The implicit equality form (`filter[prop]=value`) is the most concise; it
+  matches the API's default `eq` operator.
+- Operator suffixes (`[lte]`, `[gt]`, `[contains]`, `[in]`, …) follow the same
+  names as the REST API operators. The full list is `eq`, `ne`, `contains`,
+  `in`, `lt`, `lte`, `gt`, `gte` — see the ["Static Filters"](#static-filters)
+  section above and the `applyV1Filters` source in
+  `internal/dataentry/api_v1.go` for semantics.
+- Unknown operators (typos like `[equals]`) are **skipped** with a server-side
+  warning rather than treated as a pass-all fallback. This is a deliberate
+  fail-closed behavior so a typo can't silently bypass a configured scope.
+- Multi-value filters use the repeated array form (`filter[prop][in][]=a&…`).
+  Only `in` and `ne` join all repeated values; other operators take
+  last-write-wins if a key appears multiple times.
+- Static `filters:` entries (the always-active list config above) take
+  precedence: a URL filter on the same property is dropped with a console
+  warning rather than silently overriding the locked scope. **Important:**
+  the lock is whole-property granularity, not per-operator — a static
+  `filter[date][gte]=2024-01-01` blocks *any* URL filter on `date`,
+  including `filter[date][lte]`. If you need a range combined with a static
+  lower bound, define both bounds in `data-entry.yaml` rather than via URL.
+- Text-input filters debounce at 250ms — typing into a search filter only
+  fires one backend request after you stop typing, not one per keystroke.
+- Clearing all filters from the FilterBar removes every `filter[*]` param
+  from the URL while preserving non-filter params (`from`, `sort`, `page`,
+  `scope`).
+
 ### Sort Configuration
 
 Sort supports multiple criteria as a list. The first entry is the primary sort key:

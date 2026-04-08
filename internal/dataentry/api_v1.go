@@ -1223,22 +1223,59 @@ func (a *App) applyV1Filters(entities []*model.Entity, query map[string][]string
 			continue
 		}
 
-		// Parse filter[property] or filter[property][operator]
+		// Parse filter[property] or filter[property][operator] or
+		// filter[property][operator][] (multi-value array form). Strip the
+		// optional `[]` array suffix before splitting so we get clean parts.
 		filterKey := strings.TrimPrefix(key, "filter[")
 		filterKey = strings.TrimSuffix(filterKey, "]")
+		filterKey = strings.TrimSuffix(filterKey, "][") // was "...[]"
 		parts := strings.Split(filterKey, "][")
 
+		// Validate parsed shape. A malformed key like `filter[prop][][weird]`
+		// produces parts=["prop", "", "weird"] — more than 2 parts or an
+		// empty property/operator means the URL is bogus. Fail CLOSED by
+		// skipping the filter entirely (logging so users notice) rather
+		// than silently including every entity via the switch's default
+		// case, which would be a fail-open scope bypass.
+		if len(parts) > 2 {
+			slog.Warn("filter key has too many segments", "key", key)
+			continue
+		}
 		property := parts[0]
+		if property == "" {
+			slog.Warn("filter key has empty property", "key", key)
+			continue
+		}
 		operator := "eq"
-		if len(parts) > 1 {
+		if len(parts) == 2 {
+			if parts[1] == "" {
+				slog.Warn("filter key has empty operator segment", "key", key)
+				continue
+			}
 			operator = parts[1]
 		}
-		// in/ne accept comma-separated values; resolve variables per token.
-		value := values[0]
+
+		// Reject unknown operators BEFORE the per-entity loop. A typo like
+		// `filter[status][equals]=done` used to fall through to the switch's
+		// default case and include every entity, silently bypassing the
+		// configured scope. Fail closed instead.
+		switch operator {
+		case "eq", "ne", "contains", "in", "lt", "lte", "gt", "gte":
+			// known
+		default:
+			slog.Warn("filter uses unknown operator", "key", key, "operator", operator)
+			continue
+		}
+
+		// Multi-value support: `in`/`ne` collect ALL repeated values from the
+		// query (e.g. `filter[tags][in][]=a&filter[tags][in][]=b`) and join
+		// them with commas, matching the comma-separated form. Other
+		// operators stay last-write-wins on values[len-1] for predictability.
+		var value string
 		if operator == "in" || operator == "ne" {
-			value = resolveFilterVariablesInList(value)
+			value = resolveFilterVariablesInList(strings.Join(values, ","))
 		} else {
-			value = resolveFilterVariable(value)
+			value = resolveFilterVariable(values[len(values)-1])
 		}
 
 		var newFiltered []*model.Entity
@@ -1295,9 +1332,6 @@ func (a *App) applyV1Filters(entities []*model.Entity, query map[string][]string
 				if match {
 					newFiltered = append(newFiltered, e)
 				}
-			default:
-				// Unknown operator, include entity
-				newFiltered = append(newFiltered, e)
 			}
 		}
 		filtered = newFiltered
