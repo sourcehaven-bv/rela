@@ -142,6 +142,7 @@ deps:
       - metamodel
       - output
       - project
+      - rename
       - schema
       - script
       - views
