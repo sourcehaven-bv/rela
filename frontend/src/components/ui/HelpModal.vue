@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import axios from 'axios'
+import { isCancelledFetch } from '@/composables/usePageData'
 
 const props = defineProps<{
   open: boolean
@@ -26,6 +27,9 @@ async function loadHelp() {
     const response = await axios.get(`/api/help/${props.entityType}`)
     helpContent.value = response.data
   } catch (err) {
+    // Suppress cancellation errors from rapid navigation in Firefox
+    // (see BUG-6C3V and src/composables/usePageData.ts).
+    if (isCancelledFetch(err)) return
     console.error('Failed to load help:', err)
     error.value = 'Failed to load help content'
     helpContent.value = ''

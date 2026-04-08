@@ -37,6 +37,13 @@ export const useSchemaStore = defineStore('schema', () => {
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  // In-flight promise shared between concurrent callers of load().
+  // Without this, a second call to load() while the first is still
+  // awaiting its fetch would see `loading === true`, return immediately
+  // with `loaded === false`, and its caller would proceed without a
+  // schema — leaving the SPA stuck on the Loading... spinner. See the
+  // fuzzer findings around rapid navigation.
+  let loadPromise: Promise<void> | null = null
 
   // Getters
   const getEntityType = computed(() => (name: string) => entityTypes.value.get(name))
@@ -59,9 +66,20 @@ export const useSchemaStore = defineStore('schema', () => {
   const relationTypeList = computed(() => Array.from(relationTypes.value.entries()))
 
   // Actions
-  async function load() {
-    if (loaded.value || loading.value) return
+  async function load(): Promise<void> {
+    if (loaded.value) return
+    // Share one in-flight promise across concurrent callers. The old
+    // guard `if (loading.value) return` returned an already-resolved
+    // undefined to the second caller, which then proceeded as if the
+    // load had completed.
+    if (loadPromise) return loadPromise
+    loadPromise = doLoad().finally(() => {
+      loadPromise = null
+    })
+    return loadPromise
+  }
 
+  async function doLoad(): Promise<void> {
     loading.value = true
     error.value = null
 

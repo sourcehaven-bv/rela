@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSchemaStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
+import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView } from '@/api'
 import type { ViewResponse } from '@/api'
 import { getEditFormId } from '@/types'
@@ -93,6 +94,9 @@ async function loadView() {
     // Load scope nav after we have the entry type
     await loadScopeNav()
   } catch (err) {
+    // Suppress cancellation errors from rapid navigation in Firefox
+    // (see BUG-6C3V and src/composables/usePageData.ts).
+    if (isCancelledFetch(err)) return
     error.value = err instanceof Error ? err.message : 'Failed to load view'
     console.error('Failed to load view:', err)
   } finally {

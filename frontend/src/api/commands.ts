@@ -7,7 +7,10 @@ interface GetCommandsParams {
   entityType?: string
 }
 
-export async function getCommands(params: GetCommandsParams): Promise<Command[]> {
+export async function getCommands(
+  params: GetCommandsParams,
+  signal?: AbortSignal,
+): Promise<Command[]> {
   const queryParams: Record<string, string> = {
     page_type: params.pageType,
   }
@@ -17,6 +20,6 @@ export async function getCommands(params: GetCommandsParams): Promise<Command[]>
   if (params.entityType) {
     queryParams.entity_type = params.entityType
   }
-  return api.get<Command[]>('/_commands', queryParams)
+  return api.get<Command[]>('/_commands', queryParams, signal)
 }
 

@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
+import { isCancelledFetch } from '@/composables/usePageData'
 import type { SidePanelSection, SidePanelEntity, SidePanelAddTarget } from '@/types'
 import Badge from '@/components/common/Badge.vue'
 
@@ -34,6 +35,9 @@ async function loadSidePanel() {
     )
     sections.value = data
   } catch (err) {
+    // Suppress cancellation errors from rapid navigation in Firefox
+    // (see BUG-6C3V and src/composables/usePageData.ts).
+    if (isCancelledFetch(err)) return
     console.error('Failed to load side panel:', err)
     error.value = 'Failed to load side panel'
     sections.value = []

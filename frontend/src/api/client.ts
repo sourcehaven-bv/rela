@@ -39,8 +39,12 @@ class ApiClient {
     )
   }
 
-  async get<T>(url: string, params?: Record<string, unknown>): Promise<T> {
-    const response: AxiosResponse<T> = await this.client.get(url, { params })
+  async get<T>(
+    url: string,
+    params?: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const response: AxiosResponse<T> = await this.client.get(url, { params, signal })
     return response.data
   }
 

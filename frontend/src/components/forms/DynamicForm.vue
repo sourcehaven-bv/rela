@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
+import { isCancelledFetch } from '@/composables/usePageData'
 import type { PropertyDef, FormFieldOrRelation, Template } from '@/types'
 import { getTemplates, createRelation, updateRelationProperties, deleteRelation } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
@@ -99,6 +100,9 @@ async function loadEntity() {
     content.value = entity.content || ''
     originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
   } catch (err) {
+    // Suppress cancellation errors from rapid navigation in Firefox
+    // (see BUG-6C3V and src/composables/usePageData.ts).
+    if (isCancelledFetch(err)) return
     uiStore.error('Failed to load entity')
     console.error(err)
   }
@@ -360,6 +364,11 @@ async function handleSubmit() {
       router.back()
     }
   } catch (err) {
+    // Suppress cancellation errors from rapid navigation in Firefox
+    // (see BUG-6C3V). A save that was interrupted by navigation is
+    // not a user-facing failure; the user clicked away before the
+    // save completed, which is their choice.
+    if (isCancelledFetch(err)) return
     if (err && typeof err === 'object' && 'errors' in err) {
       const problemErrors = (err as { errors: Array<{ field?: string; message?: string; detail?: string }> }).errors
       for (const e of problemErrors) {

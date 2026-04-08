@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
+import { isCancelledFetch } from '@/composables/usePageData'
 import type { FormFieldOrRelation, Entity } from '@/types'
 import InlineCreateModal from './InlineCreateModal.vue'
 
@@ -73,6 +74,9 @@ async function loadCandidates() {
     }
     candidates.value = allCandidates
   } catch (err) {
+    // Suppress cancellation errors from rapid navigation in Firefox
+    // (see BUG-6C3V and src/composables/usePageData.ts).
+    if (isCancelledFetch(err)) return
     console.error('Failed to load relation candidates:', err)
   } finally {
     loading.value = false

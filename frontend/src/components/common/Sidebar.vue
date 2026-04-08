@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore, useGitStore } from '@/stores'
 import { getSidebar, runAction } from '@/api'
+import { isCancelledFetch } from '@/composables/usePageData'
 import type { SidebarGroup, SidebarItem } from '@/types'
 
 const schemaStore = useSchemaStore()
@@ -27,6 +28,9 @@ async function loadSidebar() {
     sidebarAppName.value = data.app.name
     sidebarGroups.value = data.navigation
   } catch (err) {
+    // Suppress cancellation errors from rapid navigation in Firefox
+    // (see BUG-6C3V and src/composables/usePageData.ts).
+    if (isCancelledFetch(err)) return
     console.error('Failed to load sidebar:', err)
   }
 }

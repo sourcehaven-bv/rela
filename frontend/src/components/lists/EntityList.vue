@@ -6,6 +6,7 @@ import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
+import { isCancelledFetch } from '@/composables/usePageData'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { getCellValue, formatCellValue, isEnumPropertyDef } from '@/utils/format'
 import type { Entity, ListMeta, ListParams, FilterState, ActionConfig } from '@/types'
@@ -238,7 +239,11 @@ async function loadEntities() {
     // Store included entities for relation column rendering
     includedEntities.value = result.included || {}
   } catch (err) {
+    // Drop stale responses (a newer fetch superseded us).
     if (myGeneration !== fetchGeneration) return
+    // Suppress cancellation errors from rapid navigation in Firefox
+    // (see BUG-6C3V and src/composables/usePageData.ts).
+    if (isCancelledFetch(err)) return
     uiStore.error('Failed to load entities')
     console.error(err)
   } finally {
