@@ -226,8 +226,8 @@ describe('useScopeNavigation', () => {
       )
     })
 
-    it('applies user filters from query', async () => {
-      mockRouteQuery.value = { from: 'tasks', filter_priority: 'high' }
+    it('applies user filters from query (bracket format)', async () => {
+      mockRouteQuery.value = { from: 'tasks', 'filter[priority]': 'high' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
       mockEntitiesStore.fetchList.mockResolvedValue({ data: [{ id: 'TASK-001' }] })
 
@@ -241,6 +241,24 @@ describe('useScopeNavigation', () => {
       expect(mockEntitiesStore.fetchList).toHaveBeenCalledWith(
         'task',
         expect.objectContaining({ 'filter[priority]': 'high' })
+      )
+    })
+
+    it('applies user filters with non-default operator', async () => {
+      mockRouteQuery.value = { from: 'tasks', 'filter[due_date][lte]': '$today' }
+      mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
+      mockEntitiesStore.fetchList.mockResolvedValue({ data: [{ id: 'TASK-001' }] })
+
+      const { loadScopeNav } = useScopeNavigation(
+        () => 'task',
+        () => 'TASK-001'
+      )
+
+      await loadScopeNav()
+
+      expect(mockEntitiesStore.fetchList).toHaveBeenCalledWith(
+        'task',
+        expect.objectContaining({ 'filter[due_date][lte]': '$today' })
       )
     })
 

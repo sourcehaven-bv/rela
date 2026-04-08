@@ -1,16 +1,26 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
-import type { ListConfig, EntityType, FilterControl, PropertyDef } from '@/types'
+import { ref, watch, computed, onBeforeUnmount } from 'vue'
+import type {
+  ListConfig,
+  EntityType,
+  FilterControl,
+  PropertyDef,
+  FilterState,
+} from '@/types'
 
 const props = defineProps<{
   config: ListConfig
   entityType?: EntityType
-  filters: Record<string, string>
+  filters: FilterState
 }>()
 
 const emit = defineEmits<{
-  filter: [filters: Record<string, string>]
+  filter: [filters: FilterState]
 }>()
+
+// Debounce window for text-input filters. Select/multi-select fire immediately
+// because they only change on a deliberate click.
+const TEXT_DEBOUNCE_MS = 250
 
 // Resolved filter control with computed widget type and options
 interface ResolvedFilter {
@@ -66,36 +76,110 @@ function titleCase(str: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-// Initialize local filters with empty strings for each filter control
-function initializeFilters(existingFilters: Record<string, string>): Record<string, string> {
+// Which control keys are text widgets (vs select / multi-select). Text
+// widgets debounce and may have in-progress unsent input; the props.filters
+// watcher must NOT clobber them. Select widgets fire immediately on change
+// so there's no in-progress state to preserve.
+const textWidgetKeys = computed(() => {
+  const set = new Set<string>()
+  for (const filter of resolvedFilters.value) {
+    if (filter.widget === 'text') set.add(filter.key)
+  }
+  return set
+})
+
+// Local widget state is just a string per control, but we hold onto each
+// property's incoming operator separately so non-default ops (e.g. `<=` from a
+// deep-linked URL) survive a user edit. Widgets don't yet expose operator
+// selection — that's a future enhancement.
+function initializeFilters(existingFilters: FilterState): Record<string, string> {
   const result: Record<string, string> = {}
   for (const control of props.config.filter_controls || []) {
     const key = control.property || control.relation
     if (key) {
-      result[key] = existingFilters[key] ?? ''
+      result[key] = existingFilters[key]?.value ?? ''
     }
   }
   return result
 }
 
+function captureOperators(existingFilters: FilterState): Record<string, string | undefined> {
+  const ops: Record<string, string | undefined> = {}
+  for (const control of props.config.filter_controls || []) {
+    const key = control.property || control.relation
+    if (key) ops[key] = existingFilters[key]?.op
+  }
+  return ops
+}
+
 const localFilters = ref<Record<string, string>>(initializeFilters(props.filters))
+const preservedOps = ref<Record<string, string | undefined>>(captureOperators(props.filters))
+
+// Debounce timer for text-input filters. Hoisted above the props.filters
+// watcher because that watcher needs to check whether an edit is mid-flight.
+let textDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
 watch(
   () => props.filters,
   (newFilters) => {
-    localFilters.value = initializeFilters(newFilters)
-  }
+    // When an external change arrives (back/forward nav, programmatic URL
+    // update, another tab) while the user is mid-type in a text widget,
+    // naively reassigning localFilters would drop their keystrokes. Preserve
+    // the text-widget values when a debounce is pending; the pending timer
+    // will then emit what the user *actually* typed, not the externally
+    // supplied value.
+    const rebuilt = initializeFilters(newFilters)
+    if (textDebounceTimer !== null) {
+      for (const key of textWidgetKeys.value) {
+        rebuilt[key] = localFilters.value[key] ?? ''
+      }
+    }
+    localFilters.value = rebuilt
+    preservedOps.value = captureOperators(newFilters)
+  },
 )
 
+function buildState(): FilterState {
+  const state: FilterState = {}
+  for (const [key, value] of Object.entries(localFilters.value)) {
+    if (!value) continue
+    const fv: FilterState[string] = { value }
+    const op = preservedOps.value[key]
+    // Omit op when it's absent or the default '=' form — same convention
+    // as buildQueryWithFilters, so the state shape is canonical throughout.
+    if (op && op !== '=') fv.op = op
+    state[key] = fv
+  }
+  return state
+}
+
+function emitFilters() {
+  emit('filter', buildState())
+}
+
+function handleTextInput() {
+  if (textDebounceTimer) clearTimeout(textDebounceTimer)
+  textDebounceTimer = setTimeout(() => {
+    textDebounceTimer = null
+    emitFilters()
+  }, TEXT_DEBOUNCE_MS)
+}
+
 function handleFilterChange() {
-  emit('filter', { ...localFilters.value })
+  // Select widgets fire here — flush any pending text debounce so a select
+  // change doesn't get clobbered by a stale text emit.
+  if (textDebounceTimer) {
+    clearTimeout(textDebounceTimer)
+    textDebounceTimer = null
+  }
+  emitFilters()
 }
 
 function handleMultiSelectChange(key: string, event: Event) {
   const select = event.target as HTMLSelectElement
   const selected = Array.from(select.selectedOptions).map((opt) => opt.value)
   localFilters.value[key] = selected.join(',')
-  emit('filter', { ...localFilters.value })
+  handleFilterChange()
 }
 
 function getMultiSelectValues(key: string): string[] {
@@ -105,13 +189,25 @@ function getMultiSelectValues(key: string): string[] {
 }
 
 function clearFilters() {
+  if (textDebounceTimer) {
+    clearTimeout(textDebounceTimer)
+    textDebounceTimer = null
+  }
   localFilters.value = {}
+  preservedOps.value = {}
   emit('filter', {})
 }
 
 function hasActiveFilters(): boolean {
   return Object.values(localFilters.value).some((v) => v)
 }
+
+onBeforeUnmount(() => {
+  if (textDebounceTimer !== null) {
+    clearTimeout(textDebounceTimer)
+    textDebounceTimer = null
+  }
+})
 </script>
 
 <template>
@@ -161,14 +257,14 @@ function hasActiveFilters(): boolean {
           </option>
         </select>
 
-        <!-- Text widget (default) -->
+        <!-- Text widget (default) — debounced to avoid a fetch per keystroke -->
         <input
           v-else
           :id="`filter-${filter.key}`"
           v-model="localFilters[filter.key]"
           type="text"
           :placeholder="`Filter by ${filter.label}`"
-          @input="handleFilterChange"
+          @input="handleTextInput"
         />
       </div>
     </div>

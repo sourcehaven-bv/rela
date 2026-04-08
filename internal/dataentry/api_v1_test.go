@@ -999,6 +999,91 @@ func TestV1FilteringIn(t *testing.T) {
 	}
 }
 
+// TestV1FilteringPercentEncodedBrackets verifies the parser accepts the
+// percent-encoded form Vue Router emits (`filter%5Bstatus%5D=open`). Without
+// this, the FE→BE round-trip silently no-ops because the key prefix check
+// looks for the literal `filter[`.
+func TestV1FilteringPercentEncodedBrackets(t *testing.T) {
+	app := newTestAppV1(t)
+
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"status": "open",
+		},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-002",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"status": "closed",
+		},
+	})
+
+	// Plain percent-encoded form
+	got := runListFilter(t, app, "filter%5Bstatus%5D=open")
+	if len(got) != 1 || got[0] != "TKT-001" {
+		t.Errorf("plain encoded brackets: expected [TKT-001], got %v", got)
+	}
+
+	// Percent-encoded with operator
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-003",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"due_date": "2026-01-01",
+		},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-004",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"due_date": "2027-01-01",
+		},
+	})
+	got = runListFilter(t, app, "filter%5Bdue_date%5D%5Blte%5D=2026-06-01")
+	if len(got) != 1 || got[0] != "TKT-003" {
+		t.Errorf("encoded operator: expected [TKT-003], got %v", got)
+	}
+}
+
+// TestV1FilteringMultiValueRepeatedParams verifies that the `in` operator
+// honors repeated query params (`filter[tags][in][]=a&filter[tags][in][]=b`),
+// matching the array form Vue Router emits for multi-select widgets. Before
+// the fix, only the first value survived because the handler took values[0].
+func TestV1FilteringMultiValueRepeatedParams(t *testing.T) {
+	app := newTestAppV1(t)
+
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"status": "open",
+		},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-002",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"status": "in_progress",
+		},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-003",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"status": "closed",
+		},
+	})
+
+	// Repeated params (array form): should match BOTH values, not just the first
+	got := runListFilter(t, app, "filter%5Bstatus%5D%5Bin%5D%5B%5D=open&filter%5Bstatus%5D%5Bin%5D%5B%5D=in_progress")
+	if len(got) != 2 {
+		t.Errorf("repeated params: expected 2 results, got %d (%v)", len(got), got)
+	}
+}
+
 // runListFilter is a tiny helper for filter tests: builds the request,
 // invokes the handler under the read lock, and returns the IDs in the
 // response in document order.
@@ -1678,6 +1763,10 @@ func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
 	}
 }
 
+// TestV1FilterUnknownOperator verifies that an unknown operator (e.g. a
+// typo) is SKIPPED entirely rather than falling through to a pass-all
+// default. The previous fail-open behavior would have silently bypassed any
+// configured scope filter whenever the URL carried a malformed operator.
 func TestV1FilterUnknownOperator(t *testing.T) {
 	app := newTestAppV1(t)
 
@@ -1688,23 +1777,53 @@ func TestV1FilterUnknownOperator(t *testing.T) {
 			"title": "Test Ticket",
 		},
 	})
+	app.g.AddNode(&model.Entity{
+		ID:   "TKT-002",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title": "Another Ticket",
+		},
+	})
 
-	// Unknown operator should include entity (fallback)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[title][unknown]=test", http.NoBody)
-	rec := httptest.NewRecorder()
+	// Unknown operator: the filter is dropped entirely (fail-closed), so
+	// all entities are returned because no filter was actually applied.
+	// Importantly, this is NOT "unknown operator matches everything" — it's
+	// "unknown operator is logged and skipped, so the remaining filter set
+	// is empty, so nothing constrains the list".
+	got := runListFilter(t, app, "filter[title][unknown]=test")
+	if len(got) != 2 {
+		t.Errorf("expected 2 entities when unknown operator is skipped, got %d", len(got))
+	}
+}
 
-	app.mu.RLock()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
+// TestV1FilterMalformedKeySkipped verifies that malformed filter keys
+// (empty property, empty operator, too many segments) are skipped with a
+// log warning rather than silently passing every entity.
+func TestV1FilterMalformedKeySkipped(t *testing.T) {
+	app := newTestAppV1(t)
+	app.g.AddNode(&model.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"status": "open"},
+	})
+	app.g.AddNode(&model.Entity{
+		ID:         "TKT-002",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"status": "closed"},
+	})
 
-	var resp V1ListResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
+	// Malformed keys: should be dropped, so another valid filter on the
+	// same request still applies cleanly. Here we combine a bogus key with
+	// a legit status=open filter and assert the legit one still works.
+	got := runListFilter(t, app, "filter[status][][weird]=nope&filter[status]=open")
+	if len(got) != 1 || got[0] != "TKT-001" {
+		t.Errorf("malformed key + valid filter: expected [TKT-001], got %v", got)
 	}
 
-	// Entity should still be included with unknown operator
-	if len(resp.Data) != 1 {
-		t.Errorf("expected 1 entity with unknown filter operator, got %d", len(resp.Data))
+	// Empty property: dropped.
+	got = runListFilter(t, app, "filter[][eq]=anything&filter[status]=closed")
+	if len(got) != 1 || got[0] != "TKT-002" {
+		t.Errorf("empty property + valid filter: expected [TKT-002], got %v", got)
 	}
 }
 

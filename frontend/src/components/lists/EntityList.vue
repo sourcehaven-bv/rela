@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
-import { toApiOperator } from '@/utils/filters'
+import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
+import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { getCellValue, formatCellValue, isEnumPropertyDef } from '@/utils/format'
-import type { Entity, ListMeta, ListParams } from '@/types'
+import type { Entity, ListMeta, ListParams, FilterState } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import Badge from '@/components/common/Badge.vue'
@@ -14,6 +15,7 @@ const props = defineProps<{
   listId: string
 }>()
 
+const route = useRoute()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
@@ -23,8 +25,22 @@ const uiStore = useUIStore()
 const entities = ref<Entity[]>([])
 const meta = ref<ListMeta>({ total: 0, page: 1, per_page: 25, has_more: false })
 const loading = ref(true)
-const filters = ref<Record<string, string>>({})
 const includedEntities = ref<Record<string, Entity>>({})
+
+// Static (config-pinned) filter properties — used by useUrlFilterSync to
+// reject URL filters that would silently override the list's intended scope.
+// Computed inline (not via configuredFilters) to avoid a forward reference.
+function staticFilterProperties(): Set<string> {
+  const list = schemaStore.getList(props.listId)
+  const set = new Set<string>()
+  for (const f of list?.filters || []) {
+    if (f.operator && f.value && f.property) set.add(f.property)
+  }
+  return set
+}
+
+// User-selected filters synced bidirectionally with the URL.
+const { filters, writeToQuery } = useUrlFilterSync({ staticFilterProperties })
 
 // Sort specs: array of { property, direction } for multi-field sorting
 interface SortSpec {
@@ -108,11 +124,12 @@ const queryParams = computed((): ListParams => {
     }
   }
 
-  // Add user-selected filters
-  for (const [key, value] of Object.entries(filters.value)) {
-    if (value) {
-      (params as Record<string, string | number | undefined>)[`filter[${key}]`] = value
-    }
+  // Add user-selected filters via the shared serializer so EntityList and
+  // useScopeNavigation stay in lockstep on the wire format.
+  const userParams = filterStateToApiParams(filters.value)
+  const paramsRecord = params as Record<string, string | number | undefined>
+  for (const [key, value] of Object.entries(userParams)) {
+    paramsRecord[key] = value
   }
 
   // Add sorting - supports multi-field sorting
@@ -135,25 +152,55 @@ const queryParams = computed((): ListParams => {
   return params
 })
 
+// Generation counter for stale-response protection. Every call to
+// loadEntities captures the current generation; when the fetch resolves, we
+// drop the result if the generation has advanced (meaning a newer fetch was
+// triggered by a list switch, filter change, sort, etc.). Without this, a
+// slow fetch for list A can resolve AFTER a fast fetch for list B and
+// overwrite B's UI state.
+let fetchGeneration = 0
+
+// Coalesce multiple synchronous triggers (list switch + filter reseed + sort)
+// into a single fetch per microtask. Every trigger sets the flag; the next
+// microtask fires one loadEntities() and the generation counter above drops
+// anything already in flight.
+let fetchPending = false
+function scheduleFetch() {
+  if (fetchPending) return
+  fetchPending = true
+  nextTick(() => {
+    fetchPending = false
+    loadEntities()
+  })
+}
+
 // Methods
 async function loadEntities() {
   if (!listConfig.value) return
 
+  const myGeneration = ++fetchGeneration
+  const requestedListEntity = listConfig.value.entity
   loading.value = true
   try {
     const result = await entitiesStore.fetchList(
-      listConfig.value.entity,
+      requestedListEntity,
       queryParams.value
     )
+    // Drop stale responses: if another fetch was started while we were
+    // awaiting, this result is for a previous filter/list/sort state.
+    if (myGeneration !== fetchGeneration) return
     entities.value = result.data
     meta.value = result.meta
     // Store included entities for relation column rendering
     includedEntities.value = result.included || {}
   } catch (err) {
+    if (myGeneration !== fetchGeneration) return
     uiStore.error('Failed to load entities')
     console.error(err)
   } finally {
-    loading.value = false
+    if (myGeneration === fetchGeneration) {
+      loading.value = false
+    }
   }
 }
 
@@ -187,7 +234,7 @@ function handleSort(field: string, event: MouseEvent) {
   }
 
   meta.value.page = 1
-  loadEntities()
+  scheduleFetch()
 }
 
 // Helper to get sort index and direction for a field
@@ -197,15 +244,14 @@ function getSortInfo(field: string): { index: number; direction: 'asc' | 'desc' 
   return { index: idx, direction: sortSpecs.value[idx].direction }
 }
 
-function handleFilter(newFilters: Record<string, string>) {
-  filters.value = newFilters
-  meta.value.page = 1
-  loadEntities()
+function handleFilter(newFilters: FilterState) {
+  // The filters watcher reacts to this and triggers loadEntities.
+  writeToQuery(newFilters)
 }
 
 function handlePageChange(page: number) {
   meta.value.page = page
-  loadEntities()
+  scheduleFetch()
 }
 
 // Resolve a link configuration value to a path (mirrors backend resolveLinkTarget)
@@ -220,8 +266,11 @@ function resolveLinkTarget(link: string, entityType: string, entityId: string): 
 }
 
 function navigateToEntity(entity: Entity) {
-  // Build query params to preserve navigation context
-  const query: Record<string, string> = {
+  // Build query params to preserve navigation context.
+  // Filters are already in `route.query` via useUrlFilterSync — we just
+  // forward all `filter[*]` entries unchanged so the bracket format is the
+  // single source of truth (no legacy `filter_*` underscore form).
+  const query: Record<string, string | string[]> = {
     from: props.listId,
     scope: `list:${props.listId}`,
   }
@@ -237,10 +286,16 @@ function navigateToEntity(entity: Entity) {
       .join(',')
   }
 
-  // Include active filters
-  for (const [key, value] of Object.entries(filters.value)) {
-    if (value) {
-      query[`filter_${key}`] = value
+  // Forward bracket-format filter params from the current URL. Narrow the
+  // LocationQueryValue type explicitly (it's string | null | (string|null)[]).
+  for (const [key, value] of Object.entries(route.query)) {
+    if (!key.startsWith('filter[')) continue
+    if (value === null) continue
+    if (Array.isArray(value)) {
+      const filtered = value.filter((v): v is string => v !== null)
+      if (filtered.length > 0) query[key] = filtered
+    } else {
+      query[key] = value
     }
   }
 
@@ -291,20 +346,23 @@ async function handleDelete(entity: Entity, event: Event) {
   try {
     await entitiesStore.remove(entity.type, entity.id)
     uiStore.success(`Deleted ${entity.id}`)
-    loadEntities()
+    scheduleFetch()
   } catch (err) {
     uiStore.error('Failed to delete entity')
     console.error(err)
   }
 }
 
-// Watchers
+// Watchers — all three converge on scheduleFetch(), which coalesces into a
+// single fetch per microtask (with stale-response protection via the
+// generation counter above). This is how we avoid a double-fetch when a list
+// switch ALSO changes the filter state: both watchers set fetchPending, but
+// only one loadEntities() runs on the next tick.
 watch(() => props.listId, () => {
-  filters.value = {}
   sortSpecs.value = []
   meta.value.page = 1
   clearSelection()
-  loadEntities()
+  scheduleFetch()
 })
 
 // Clear selection when entities change
@@ -312,9 +370,16 @@ watch(entities, () => {
   clearSelection()
 })
 
+// Re-fetch when filters change (covers both user edits via writeToQuery and
+// external nav like back/forward that the URL sync composable picks up).
+watch(filters, () => {
+  meta.value.page = 1
+  scheduleFetch()
+}, { deep: true })
+
 // Lifecycle
 onMounted(() => {
-  loadEntities()
+  scheduleFetch()
 })
 </script>
 
