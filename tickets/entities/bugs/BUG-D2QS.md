@@ -7,5 +7,9 @@ priority: medium
 effort: m
 why1: SPA's App.vue is stuck awaiting schemaStore.load() — the Loading spinner never clears.
 why2: schemaStore.load() is either waiting on a schema/config fetch that never completes, or the response doesn't trigger the watch that clears loading.value.
-status: ready
+why3: 'Empirical: after rebasing onto upstream commits 529671b (workspace atomic.Pointer state) and 2b1fc21 (dataentry App.mu removal + writeMu + mutateState), 200 consecutive Firefox mutate-mode fuzz iterations pass cleanly. Pre-rebase: same harness configuration failed within 5-97 iterations every run. The lock-upgrade dance on App.mu combined with the RWMutex writer-priority starvation was the contention source — the upstream refactor eliminated both.'
+why4: This bug was incidentally fixed by work done in parallel to track down a broader concurrency smell. The refactor (FEAT-W5T8 / TKT-PYN1 / TKT-WYYP / TKT-9NFK / TKT-252Y / TKT-Z7HL) was proposed as architectural hygiene rather than as a fix for any specific user-reported symptom, but it turns out to have fixed this one too.
+why5: 'The pre-existing dataentry locking was an ad-hoc mix of request-scoped RWMutex + lock-upgrade dance in mutating handlers + reloadLockMiddleware — three patterns layered on top of each other, none individually wrong but collectively generating contention under load. The systemic fix is what #347 delivered: one atomic snapshot for read state, one writeMu for mutation serialization, no lock-upgrade dance, no middleware. Prevention going forward is the stress harness + fuzzer: any concurrency regression that produces an observable UI symptom is now catchable in seconds.'
+prevention: The fuzzer harness is now the regression guard for this class of issue. Run `npm run stress -- --mode=fuzz --browser=firefox --mutate --num-runs=200` on any PR that touches dataentry handlers, workspace state, or the file watcher. The mutation path is the harder target; if it stays green, the read-only path is almost certainly fine too.
+status: done
 ---
