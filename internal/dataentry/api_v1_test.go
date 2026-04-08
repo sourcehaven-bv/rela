@@ -67,7 +67,7 @@ func TestV1ListEntities(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entity
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -78,11 +78,7 @@ func TestV1ListEntities(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -114,7 +110,7 @@ func TestV1GetEntity(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entity
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -126,11 +122,7 @@ func TestV1GetEntity(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -159,11 +151,7 @@ func TestV1GetEntityNotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/NONEXISTENT", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -179,7 +167,7 @@ func TestV1DynamicRouting(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entity
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -202,11 +190,7 @@ func TestV1DynamicRouting(t *testing.T) {
 		t.Run(tc.path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.path, http.NoBody)
 			rec := httptest.NewRecorder()
-
-			app.mu.RLock()
 			app.handleV1DynamicRoutes(rec, req)
-			app.mu.RUnlock()
-
 			if rec.Code != tc.expectedStatus {
 				t.Errorf("path %s: expected status %d, got %d", tc.path, tc.expectedStatus, rec.Code)
 			}
@@ -218,7 +202,7 @@ func TestV1Filtering(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entities
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -226,7 +210,7 @@ func TestV1Filtering(t *testing.T) {
 			"status": "open",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -237,11 +221,7 @@ func TestV1Filtering(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status]=open", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -264,7 +244,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entities with various statuses
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -272,7 +252,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 			"status": "open",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -280,7 +260,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 			"status": "completed",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -288,7 +268,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 			"status": "superseded",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-004",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -300,11 +280,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 	// Test filtering with ne operator and comma-separated values (NOT IN semantics)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status][ne]=completed,superseded", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -342,14 +318,14 @@ func TestV1Sorting(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entities
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "B Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -359,11 +335,7 @@ func TestV1Sorting(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=title", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	var resp V1ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -384,7 +356,7 @@ func TestV1Pagination(t *testing.T) {
 
 	// Add multiple entities
 	for i := 1; i <= 30; i++ {
-		app.g.AddNode(&model.Entity{
+		app.Graph().AddNode(&model.Entity{
 			ID:   "TKT-" + padInt(i),
 			Type: "ticket",
 			Properties: map[string]interface{}{
@@ -395,11 +367,7 @@ func TestV1Pagination(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=2&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	var resp V1ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -491,11 +459,7 @@ func TestV1SearchEmptyQuery(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1Search(rec, req)
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -514,7 +478,7 @@ func TestV1SearchWithQuery(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entity
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -525,11 +489,7 @@ func TestV1SearchWithQuery(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=Search", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1Search(rec, req)
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -538,14 +498,14 @@ func TestV1SearchWithQuery(t *testing.T) {
 func TestV1SearchWithTypeFilter(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
@@ -555,11 +515,7 @@ func TestV1SearchWithTypeFilter(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q=Test&type=ticket", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1Search(rec, req)
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -633,21 +589,21 @@ func TestV1GetEntityWithIncludesAll(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities with relations
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	app.g.AddEdge(&model.Relation{
+	app.Graph().AddEdge(&model.Relation{
 		From: "TKT-001",
 		To:   "FEA-001",
 		Type: "implements",
@@ -655,11 +611,7 @@ func TestV1GetEntityWithIncludesAll(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=*", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -677,21 +629,21 @@ func TestV1GetEntityWithIncludesAll(t *testing.T) {
 func TestV1GetEntityWithIncludesSpecific(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	app.g.AddEdge(&model.Relation{
+	app.Graph().AddEdge(&model.Relation{
 		From: "TKT-001",
 		To:   "FEA-001",
 		Type: "implements",
@@ -699,11 +651,7 @@ func TestV1GetEntityWithIncludesSpecific(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=implements", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -728,16 +676,12 @@ func TestV1GetEntityIfNoneMatch(t *testing.T) {
 			"title": "Test Ticket",
 		},
 	}
-	app.g.AddNode(entity)
+	app.Graph().AddNode(entity)
 
 	// First request to get ETag
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	etag := rec.Header().Get("ETag")
 	if etag == "" {
 		t.Fatal("expected ETag header")
@@ -747,11 +691,7 @@ func TestV1GetEntityIfNoneMatch(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	req.Header.Set("If-None-Match", etag)
 	rec = httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusNotModified {
 		t.Errorf("expected status 304, got %d", rec.Code)
 	}
@@ -761,7 +701,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Set up status property with values
-	app.meta.Entities["ticket"] = metamodel.EntityDef{
+	app.Meta().Entities["ticket"] = metamodel.EntityDef{
 		Label: "Ticket",
 		Properties: map[string]metamodel.PropertyDef{
 			"title":  {Type: "string", Required: true},
@@ -769,7 +709,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 		},
 	}
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -780,11 +720,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=_actions", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -806,7 +742,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 func TestV1SingleEntityOptions(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -816,11 +752,7 @@ func TestV1SingleEntityOptions(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1SingleEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("expected status 204, got %d", rec.Code)
 	}
@@ -834,7 +766,7 @@ func TestV1SingleEntityOptions(t *testing.T) {
 func TestV1SingleEntityMethodNotAllowed(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -844,11 +776,7 @@ func TestV1SingleEntityMethodNotAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1SingleEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
 	}
@@ -859,11 +787,7 @@ func TestV1ListEntitiesEmpty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -881,14 +805,14 @@ func TestV1ListEntitiesEmpty(t *testing.T) {
 func TestV1ListEntitiesDescendingSort(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "A Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -898,11 +822,7 @@ func TestV1ListEntitiesDescendingSort(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=-title", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	var resp V1ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -921,14 +841,14 @@ func TestV1ListEntitiesDescendingSort(t *testing.T) {
 func TestV1FilteringContains(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Bug Fix Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -938,11 +858,7 @@ func TestV1FilteringContains(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[title][contains]=Bug", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	var resp V1ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -960,21 +876,21 @@ func TestV1FilteringContains(t *testing.T) {
 func TestV1FilteringIn(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"status": "open",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"status": "in_progress",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -984,11 +900,7 @@ func TestV1FilteringIn(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status][in]=open,in_progress", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	var resp V1ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -1006,14 +918,14 @@ func TestV1FilteringIn(t *testing.T) {
 func TestV1FilteringPercentEncodedBrackets(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"status": "open",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1028,14 +940,14 @@ func TestV1FilteringPercentEncodedBrackets(t *testing.T) {
 	}
 
 	// Percent-encoded with operator
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"due_date": "2026-01-01",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-004",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1055,21 +967,21 @@ func TestV1FilteringPercentEncodedBrackets(t *testing.T) {
 func TestV1FilteringMultiValueRepeatedParams(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"status": "open",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"status": "in_progress",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1091,9 +1003,7 @@ func runListFilter(t *testing.T, app *App, query string) []string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?"+query, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
 	var resp V1ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode failed: %v", err)
@@ -1116,11 +1026,11 @@ func TestV1FilteringLte(t *testing.T) {
 	thresholdID := "TKT-threshold"
 	laterID := "TKT-later"
 
-	app.g.AddNode(&model.Entity{ID: earlierID, Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: earlierID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": earlier}})
-	app.g.AddNode(&model.Entity{ID: thresholdID, Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: thresholdID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": threshold}})
-	app.g.AddNode(&model.Entity{ID: laterID, Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: laterID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": later}})
 
 	got := runListFilter(t, app, "filter[due_date][lte]="+threshold)
@@ -1141,9 +1051,9 @@ func TestV1FilteringGte(t *testing.T) {
 	earlierID := "TKT-earlier"
 	laterID := "TKT-later"
 
-	app.g.AddNode(&model.Entity{ID: earlierID, Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: earlierID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": earlier}})
-	app.g.AddNode(&model.Entity{ID: laterID, Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: laterID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": later}})
 
 	got := runListFilter(t, app, "filter[due_date][gte]=2026-01-01")
@@ -1165,11 +1075,11 @@ func TestV1FilteringTodaySubstitution(t *testing.T) {
 	todayID := "TKT-today"
 	futureID := "TKT-future"
 
-	app.g.AddNode(&model.Entity{ID: overdueID, Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: overdueID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-06"}})
-	app.g.AddNode(&model.Entity{ID: todayID, Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: todayID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
-	app.g.AddNode(&model.Entity{ID: futureID, Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: futureID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-08"}})
 
 	got := runListFilter(t, app, "filter[due_date][lte]=$today")
@@ -1186,7 +1096,7 @@ func TestV1FilteringTodaySubstitution(t *testing.T) {
 // a non-date filter value excludes the entity rather than silently lying.
 func TestV1FilteringTypeMismatch(t *testing.T) {
 	app := newTestAppV1(t)
-	app.g.AddNode(&model.Entity{ID: "TKT-1", Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: "TKT-1", Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
 
 	// "tomorrow" is not a date and not a known variable; should NOT silently
@@ -1201,9 +1111,9 @@ func TestV1FilteringTypeMismatch(t *testing.T) {
 // the entity doesn't have excludes the entity (no panic, no inclusion).
 func TestV1FilteringMissingProperty(t *testing.T) {
 	app := newTestAppV1(t)
-	app.g.AddNode(&model.Entity{ID: "TKT-no-due", Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: "TKT-no-due", Type: "ticket",
 		Properties: map[string]interface{}{"title": "no due date"}})
-	app.g.AddNode(&model.Entity{ID: "TKT-with-due", Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: "TKT-with-due", Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
 
 	got := runListFilter(t, app, "filter[due_date][lte]=2026-12-31")
@@ -1221,11 +1131,11 @@ func TestV1FilteringInWithVariableTokens(t *testing.T) {
 	defer func() { nowFunc = prev }()
 
 	app := newTestAppV1(t)
-	app.g.AddNode(&model.Entity{ID: "TKT-yesterday", Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: "TKT-yesterday", Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-06"}})
-	app.g.AddNode(&model.Entity{ID: "TKT-today", Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: "TKT-today", Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
-	app.g.AddNode(&model.Entity{ID: "TKT-other", Type: "ticket",
+	app.Graph().AddNode(&model.Entity{ID: "TKT-other", Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-09"}})
 
 	got := runListFilter(t, app, "filter[due_date][in]=$yesterday,$today")
@@ -1241,14 +1151,14 @@ func TestV1FilteringInWithVariableTokens(t *testing.T) {
 func TestV1FilteringEmptyValue(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Has Title",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1260,11 +1170,7 @@ func TestV1FilteringEmptyValue(t *testing.T) {
 	// Filter for entities without status
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status]=", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -1273,7 +1179,7 @@ func TestV1FilteringEmptyValue(t *testing.T) {
 func TestV1MultipleSort(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1281,7 +1187,7 @@ func TestV1MultipleSort(t *testing.T) {
 			"title":  "B Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1289,7 +1195,7 @@ func TestV1MultipleSort(t *testing.T) {
 			"title":  "A Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1300,11 +1206,7 @@ func TestV1MultipleSort(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=status,title", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	var resp V1ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -1319,39 +1221,39 @@ func TestV1GetEntityWithNestedIncludes(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities with relations
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "FEA-002",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Another Feature",
 		},
 	})
-	app.g.AddEdge(&model.Relation{
+	app.Graph().AddEdge(&model.Relation{
 		From: "TKT-001",
 		To:   "FEA-001",
 		Type: "implements",
 	})
 	// Create another relation type for nested includes
-	app.meta.Relations["requires"] = metamodel.RelationDef{
+	app.Meta().Relations["requires"] = metamodel.RelationDef{
 		Label: "requires",
 		From:  []string{"feature"},
 		To:    []string{"feature"},
 	}
-	app.g.AddEdge(&model.Relation{
+	app.Graph().AddEdge(&model.Relation{
 		From: "FEA-001",
 		To:   "FEA-002",
 		Type: "requires",
@@ -1359,11 +1261,7 @@ func TestV1GetEntityWithNestedIncludes(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=implements.requires", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -1386,21 +1284,21 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities with incoming relation
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	app.g.AddEdge(&model.Relation{
+	app.Graph().AddEdge(&model.Relation{
 		From: "TKT-001",
 		To:   "FEA-001",
 		Type: "implements",
@@ -1408,11 +1306,7 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001?include=_actions", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
-	app.mu.RUnlock()
-
 	var entity V1Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -1433,11 +1327,7 @@ func TestV1DynamicRoutesPostToCollection(t *testing.T) {
 	// POST without workspace should fail gracefully
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1DynamicRoutes(rec, req)
-	app.mu.RUnlock()
-
 	// Should return 400 or 422 because body is empty/invalid
 	if rec.Code != http.StatusBadRequest && rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("expected status 400 or 422, got %d", rec.Code)
@@ -1449,11 +1339,7 @@ func TestV1DynamicRoutesOptionsCollection(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1DynamicRoutes(rec, req)
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("expected status 204, got %d", rec.Code)
 	}
@@ -1469,11 +1355,7 @@ func TestV1SearchMethodNotAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_search", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1Search(rec, req)
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
 	}
@@ -1520,7 +1402,7 @@ func TestV1SidePanelFormNotFound(t *testing.T) {
 
 func TestV1SidePanelNoConfig(t *testing.T) {
 	app := newTestAppV1(t)
-	app.Cfg.Forms["ticket"] = dataentryconfig.Form{
+	app.Cfg().Forms["ticket"] = dataentryconfig.Form{
 		EntityType: "ticket",
 		SidePanel:  nil, // No side panel config
 	}
@@ -1539,14 +1421,14 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add custom type
-	app.meta.Types = map[string]metamodel.CustomType{
+	app.Meta().Types = map[string]metamodel.CustomType{
 		"status_type": {
 			Values:  []string{"open", "in_progress", "closed"},
 			Default: "open",
 		},
 	}
 	// Update property to use custom type
-	app.meta.Entities["ticket"] = metamodel.EntityDef{
+	app.Meta().Entities["ticket"] = metamodel.EntityDef{
 		Label: "Ticket",
 		Properties: map[string]metamodel.PropertyDef{
 			"title":  {Type: "string", Required: true},
@@ -1585,7 +1467,7 @@ func TestV1PaginationLinkHeaders(t *testing.T) {
 
 	// Add 30 entities
 	for i := 1; i <= 30; i++ {
-		app.g.AddNode(&model.Entity{
+		app.Graph().AddNode(&model.Entity{
 			ID:   "TKT-" + padInt(i),
 			Type: "ticket",
 			Properties: map[string]interface{}{
@@ -1597,11 +1479,7 @@ func TestV1PaginationLinkHeaders(t *testing.T) {
 	// Get first page
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=1&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	link := rec.Header().Get("Link")
 	if !strings.Contains(link, "rel=\"first\"") {
 		t.Error("expected 'first' link in Link header")
@@ -1616,11 +1494,7 @@ func TestV1PaginationLinkHeaders(t *testing.T) {
 	// Get middle page (should have prev)
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=2&per_page=10", http.NoBody)
 	rec = httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	link = rec.Header().Get("Link")
 	if !strings.Contains(link, "rel=\"prev\"") {
 		t.Error("expected 'prev' link in Link header for page 2")
@@ -1632,11 +1506,7 @@ func TestV1DynamicRoutesEmptyPath(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1DynamicRoutes(rec, req)
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -1672,11 +1542,11 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities to get counts
-	app.g.AddNode(&model.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "Test"}})
-	app.g.AddNode(&model.Entity{ID: "FEA-001", Type: "feature", Properties: map[string]interface{}{"title": "Test Feature"}})
+	app.Graph().AddNode(&model.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "Test"}})
+	app.Graph().AddNode(&model.Entity{ID: "FEA-001", Type: "feature", Properties: map[string]interface{}{"title": "Test Feature"}})
 
 	// Set up navigation with groups using actual struct fields
-	app.Cfg.Navigation = []dataentryconfig.NavigationEntry{
+	app.Cfg().Navigation = []dataentryconfig.NavigationEntry{
 		{
 			Group: "Main",
 			Items: []dataentryconfig.NavigationEntry{
@@ -1715,13 +1585,13 @@ func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Set up status property with custom type
-	app.meta.Types = map[string]metamodel.CustomType{
+	app.Meta().Types = map[string]metamodel.CustomType{
 		"ticket_status": {
 			Values:  []string{"open", "in_progress", "closed"},
 			Default: "open",
 		},
 	}
-	app.meta.Entities["ticket"] = metamodel.EntityDef{
+	app.Meta().Entities["ticket"] = metamodel.EntityDef{
 		Label: "Ticket",
 		Properties: map[string]metamodel.PropertyDef{
 			"title":  {Type: "string", Required: true},
@@ -1729,7 +1599,7 @@ func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
 		},
 	}
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1740,11 +1610,7 @@ func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=_actions", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	var entity V1Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -1770,14 +1636,14 @@ func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
 func TestV1FilterUnknownOperator(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1801,12 +1667,12 @@ func TestV1FilterUnknownOperator(t *testing.T) {
 // log warning rather than silently passing every entity.
 func TestV1FilterMalformedKeySkipped(t *testing.T) {
 	app := newTestAppV1(t)
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
 		Properties: map[string]interface{}{"status": "open"},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:         "TKT-002",
 		Type:       "ticket",
 		Properties: map[string]interface{}{"status": "closed"},
@@ -1831,7 +1697,7 @@ func TestV1SchemaTypesSpecific(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add custom type that should be reflected in property
-	app.meta.Types = map[string]metamodel.CustomType{
+	app.Meta().Types = map[string]metamodel.CustomType{
 		"priority_type": {
 			Values:  []string{"low", "medium", "high"},
 			Default: "medium",
@@ -1861,21 +1727,21 @@ func TestV1GetEntityIncludeIncoming(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities with relations
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	app.g.AddEdge(&model.Relation{
+	app.Graph().AddEdge(&model.Relation{
 		From: "TKT-001",
 		To:   "FEA-001",
 		Type: "implements",
@@ -1884,11 +1750,7 @@ func TestV1GetEntityIncludeIncoming(t *testing.T) {
 	// Get the feature entity with include=* to get incoming relations
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001?include=*", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -1907,7 +1769,7 @@ func TestV1GetEntityIncludeIncoming(t *testing.T) {
 func TestV1DynamicRoutesMethodNotAllowed(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1918,11 +1780,7 @@ func TestV1DynamicRoutesMethodNotAllowed(t *testing.T) {
 	// CONNECT method is not allowed
 	req := httptest.NewRequest(http.MethodConnect, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1DynamicRoutes(rec, req)
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
 	}
@@ -1933,7 +1791,7 @@ func TestV1PaginationEdgeCases(t *testing.T) {
 
 	// Add some entities
 	for i := 1; i <= 5; i++ {
-		app.g.AddNode(&model.Entity{
+		app.Graph().AddNode(&model.Entity{
 			ID:   "TKT-" + padInt(i),
 			Type: "ticket",
 			Properties: map[string]interface{}{
@@ -1945,11 +1803,7 @@ func TestV1PaginationEdgeCases(t *testing.T) {
 	// Test page beyond total (should return empty)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=100&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	var resp V1ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -1968,7 +1822,7 @@ func TestV1AnalyzeWithIssues(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entity without required property
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
 		Properties: map[string]interface{}{
@@ -1997,7 +1851,7 @@ func TestV1AnalyzeWithIssues(t *testing.T) {
 func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -2005,7 +1859,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 			"title":  "A Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -2013,7 +1867,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 			"title":  "B Ticket",
 		},
 	})
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -2024,11 +1878,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=status,title", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -2037,7 +1887,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 func TestV1ResolveIncludesEmptyPart(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -2048,11 +1898,7 @@ func TestV1ResolveIncludesEmptyPart(t *testing.T) {
 	// Include with empty parts (trailing comma)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=implements,,_actions", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
@@ -2064,7 +1910,7 @@ func TestV1SchemaWithRelationCardinality(t *testing.T) {
 	// Add relation with cardinality constraints
 	minOut := 1
 	maxOut := 5
-	app.meta.Relations["requires"] = metamodel.RelationDef{
+	app.Meta().Relations["requires"] = metamodel.RelationDef{
 		Label:       "requires",
 		From:        []string{"ticket"},
 		To:          []string{"feature"},
@@ -2094,7 +1940,7 @@ func TestV1SchemaWithRelationCardinality(t *testing.T) {
 func TestV1EntityToV1WithoutRelations(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -2106,11 +1952,7 @@ func TestV1EntityToV1WithoutRelations(t *testing.T) {
 	// Call without relations (first list endpoint)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	app.mu.RUnlock()
-
 	var resp V1ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -2265,12 +2107,9 @@ func newTestAppV1(t *testing.T) *App {
 
 	ws := workspace.NewForTest(g, meta)
 
-	return &App{
-		meta: meta,
-		g:    g,
-		ws:   ws,
-		Cfg:  cfg,
-	}
+	app := newAppFromParts(cfg, meta, g)
+	app.ws = ws
+	return app
 }
 
 func TestV1EntityRelationsNotFound(t *testing.T) {
@@ -2278,11 +2117,7 @@ func TestV1EntityRelationsNotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/NONEXISTENT/relations", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1EntityRelations(rec, req, "ticket", "NONEXISTENT")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -2296,7 +2131,7 @@ func TestV1EntityRelationsNotFound(t *testing.T) {
 func TestV1EntityRelationsWrongType(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -2307,11 +2142,7 @@ func TestV1EntityRelationsWrongType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/TKT-001/relations", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1EntityRelations(rec, req, "feature", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -2322,11 +2153,7 @@ func TestV1DeleteEntityNotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tickets/NONEXISTENT", http.NoBody)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1DeleteEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -2343,11 +2170,7 @@ func TestV1UpdateEntityNotFound(t *testing.T) {
 	body := strings.NewReader(`{"properties":{"title":"Updated"}}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/NONEXISTENT", body)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -2356,7 +2179,7 @@ func TestV1UpdateEntityNotFound(t *testing.T) {
 func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 	app := newTestAppV1(t)
 
-	app.g.AddNode(&model.Entity{
+	app.Graph().AddNode(&model.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -2368,11 +2191,7 @@ func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 	body := strings.NewReader(`{invalid json`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001", body)
 	rec := httptest.NewRecorder()
-
-	app.mu.RLock()
 	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
-	app.mu.RUnlock()
-
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}

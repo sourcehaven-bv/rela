@@ -125,11 +125,8 @@ func (a *App) handleAPIRelationsCRUD(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIEntityTypes returns a list of entity type definitions.
 func (a *App) handleAPIEntityTypes(w http.ResponseWriter, _ *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	types := make([]APIEntityType, 0, len(a.meta.Entities))
-	for name, def := range a.meta.Entities {
+	types := make([]APIEntityType, 0, len(a.Meta().Entities))
+	for name, def := range a.Meta().Entities {
 		apiType := APIEntityType{
 			Name:       name,
 			Plural:     def.GetPlural(),
@@ -143,7 +140,7 @@ func (a *App) handleAPIEntityTypes(w http.ResponseWriter, _ *http.Request) {
 				Default:  propDef.Default,
 			}
 			// Include enum values if this is a custom type
-			if ct, ok := a.meta.Types[propDef.Type]; ok {
+			if ct, ok := a.Meta().Types[propDef.Type]; ok {
 				apiProp.Values = ct.Values
 			}
 			apiType.Properties[propName] = apiProp
@@ -156,16 +153,13 @@ func (a *App) handleAPIEntityTypes(w http.ResponseWriter, _ *http.Request) {
 
 // handleAPIEntities returns entities, optionally filtered by type.
 func (a *App) handleAPIEntities(w http.ResponseWriter, r *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
 	entityType := r.URL.Query().Get("type")
 
 	var entities []*model.Entity
 	if entityType != "" {
-		entities = a.g.NodesByType(entityType)
+		entities = a.Graph().NodesByType(entityType)
 	} else {
-		entities = a.g.AllNodes()
+		entities = a.Graph().AllNodes()
 	}
 
 	result := make([]APIEntity, 0, len(entities))
@@ -177,18 +171,14 @@ func (a *App) handleAPIEntities(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPIEntity returns a single entity by ID.
-func (a *App) handleAPIEntity(w http.ResponseWriter, r *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	// Extract entity ID from path: /api/entities/{id}
+func (a *App) handleAPIEntity(w http.ResponseWriter, r *http.Request) { // Extract entity ID from path: /api/entities/{id}
 	path := strings.TrimPrefix(r.URL.Path, "/api/entities/")
 	if path == "" {
 		writeJSONError(w, http.StatusBadRequest, "missing entity ID")
 		return
 	}
 
-	entity, found := a.g.GetNode(path)
+	entity, found := a.Graph().GetNode(path)
 	if !found {
 		writeJSONError(w, http.StatusNotFound, "entity not found")
 		return
@@ -200,16 +190,13 @@ func (a *App) handleAPIEntity(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIMetamodel returns the project metamodel.
 func (a *App) handleAPIMetamodel(w http.ResponseWriter, _ *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
 	result := APIMetamodel{
-		EntityTypes:   make([]APIEntityType, 0, len(a.meta.Entities)),
-		RelationTypes: make([]APIRelationType, 0, len(a.meta.Relations)),
+		EntityTypes:   make([]APIEntityType, 0, len(a.Meta().Entities)),
+		RelationTypes: make([]APIRelationType, 0, len(a.Meta().Relations)),
 	}
 
 	// Entity types
-	for name, def := range a.meta.Entities {
+	for name, def := range a.Meta().Entities {
 		apiType := APIEntityType{
 			Name:       name,
 			Plural:     def.Plural,
@@ -222,7 +209,7 @@ func (a *App) handleAPIMetamodel(w http.ResponseWriter, _ *http.Request) {
 				Required: propDef.Required,
 				Default:  propDef.Default,
 			}
-			if ct, ok := a.meta.Types[propDef.Type]; ok {
+			if ct, ok := a.Meta().Types[propDef.Type]; ok {
 				apiProp.Values = ct.Values
 			}
 			apiType.Properties[propName] = apiProp
@@ -231,7 +218,7 @@ func (a *App) handleAPIMetamodel(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// Relation types
-	for name, def := range a.meta.Relations {
+	for name, def := range a.Meta().Relations {
 		result.RelationTypes = append(result.RelationTypes, APIRelationType{
 			Name: name,
 			From: def.From,
@@ -259,8 +246,8 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 		api.Relations = make([]APIRelation, 0)
 
 		// Outgoing relations
-		for _, edge := range a.g.OutgoingEdges(e.ID) {
-			target, found := a.g.GetNode(edge.To)
+		for _, edge := range a.Graph().OutgoingEdges(e.ID) {
+			target, found := a.Graph().GetNode(edge.To)
 			if !found {
 				continue
 			}
@@ -283,8 +270,8 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 		}
 
 		// Incoming relations
-		for _, edge := range a.g.IncomingEdges(e.ID) {
-			source, found := a.g.GetNode(edge.From)
+		for _, edge := range a.Graph().IncomingEdges(e.ID) {
+			source, found := a.Graph().GetNode(edge.From)
 			if !found {
 				continue
 			}
@@ -367,8 +354,8 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
 
 	entity, _, err := a.ws.CreateEntity(req.Type, workspace.CreateOptions{
 		ID:         req.ID,
@@ -412,10 +399,10 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
 
-	entity, found := a.g.GetNode(path)
+	entity, found := a.Graph().GetNode(path)
 	if !found {
 		writeJSONError(w, http.StatusNotFound, "entity not found")
 		return
@@ -464,10 +451,10 @@ func (a *App) handleAPIDeleteEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
 
-	entity, found := a.g.GetNode(path)
+	entity, found := a.Graph().GetNode(path)
 	if !found {
 		writeJSONError(w, http.StatusNotFound, "entity not found")
 		return
@@ -499,8 +486,8 @@ func (a *App) handleAPICreateRelation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
 
 	var opts []workspace.CreateRelationOptions
 	if len(req.Properties) > 0 {
@@ -538,12 +525,12 @@ func (a *App) handleAPIDeleteRelation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
 
 	// Find the relation
 	var targetEdge *model.Relation
-	for _, edge := range a.g.OutgoingEdges(from) {
+	for _, edge := range a.Graph().OutgoingEdges(from) {
 		if edge.Type == relType && edge.To == to {
 			targetEdge = edge
 			break
@@ -565,9 +552,6 @@ func (a *App) handleAPIDeleteRelation(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIListRelations handles GET /api/relations to list relations.
 func (a *App) handleAPIListRelations(w http.ResponseWriter, r *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
 
@@ -591,10 +575,10 @@ func (a *App) handleAPIListRelations(w http.ResponseWriter, r *http.Request) {
 
 // listOutgoingRelations returns relations where the given entity is the source.
 func (a *App) listOutgoingRelations(from string) []APIRelation {
-	edges := a.g.OutgoingEdges(from)
+	edges := a.Graph().OutgoingEdges(from)
 	relations := make([]APIRelation, 0, len(edges))
 	for _, edge := range edges {
-		target, found := a.g.GetNode(edge.To)
+		target, found := a.Graph().GetNode(edge.To)
 		if !found {
 			continue
 		}
@@ -606,10 +590,10 @@ func (a *App) listOutgoingRelations(from string) []APIRelation {
 
 // listIncomingRelations returns relations where the given entity is the target.
 func (a *App) listIncomingRelations(to string) []APIRelation {
-	edges := a.g.IncomingEdges(to)
+	edges := a.Graph().IncomingEdges(to)
 	relations := make([]APIRelation, 0, len(edges))
 	for _, edge := range edges {
-		source, found := a.g.GetNode(edge.From)
+		source, found := a.Graph().GetNode(edge.From)
 		if !found {
 			continue
 		}
@@ -621,10 +605,10 @@ func (a *App) listIncomingRelations(to string) []APIRelation {
 
 // listAllRelations returns all relations in the graph.
 func (a *App) listAllRelations() []APIRelation {
-	edges := a.g.AllEdges()
+	edges := a.Graph().AllEdges()
 	relations := make([]APIRelation, 0, len(edges))
 	for _, edge := range edges {
-		target, found := a.g.GetNode(edge.To)
+		target, found := a.Graph().GetNode(edge.To)
 		if !found {
 			continue
 		}
@@ -714,10 +698,7 @@ func (a *App) handleAPISettingsCRUD(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIGetSettings returns the settings data for the settings page.
 func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	ud := a.userDefaults
+	ud := a.State().UserDefaults
 	if ud == nil {
 		ud = &UserDefaults{}
 	}
@@ -750,8 +731,8 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 
 	// Collect all properties across entity types
 	propMap := make(map[string]APIPropertyDef)
-	for _, entTypeName := range a.meta.EntityTypes() {
-		entDef, ok := a.meta.GetEntityDef(entTypeName)
+	for _, entTypeName := range a.Meta().EntityTypes() {
+		entDef, ok := a.Meta().GetEntityDef(entTypeName)
 		if !ok {
 			continue
 		}
@@ -760,7 +741,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 				propMap[propName] = APIPropertyDef{
 					Name:   propName,
 					Type:   propDef.Type,
-					Values: resolvePropertyValues(propDef, a.meta),
+					Values: resolvePropertyValues(propDef, a.Meta()),
 				}
 			} else {
 				// Merge values for properties that appear on multiple types
@@ -769,7 +750,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 				for _, v := range existing.Values {
 					seen[v] = true
 				}
-				for _, v := range resolvePropertyValues(propDef, a.meta) {
+				for _, v := range resolvePropertyValues(propDef, a.Meta()) {
 					if !seen[v] {
 						existing.Values = append(existing.Values, v)
 						seen[v] = true
@@ -786,8 +767,8 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 
 	// Collect all relation types with their targets
 	allRelations := make([]APIRelationDef, 0)
-	for _, relName := range a.meta.RelationTypes() {
-		relDef, ok := a.meta.GetRelationDef(relName)
+	for _, relName := range a.Meta().RelationTypes() {
+		relDef, ok := a.Meta().GetRelationDef(relName)
 		if !ok {
 			continue
 		}
@@ -798,7 +779,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 		if len(relDef.To) > 0 {
 			rd.TargetType = relDef.To[0]
 			for _, targetType := range relDef.To {
-				for _, e := range a.g.NodesByType(targetType) {
+				for _, e := range a.Graph().NodesByType(targetType) {
 					rd.Targets = append(rd.Targets, APIRelationTarget{
 						ID:    e.ID,
 						Title: a.entityDisplayTitle(e),
@@ -811,17 +792,18 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 
 	data := APISettingsData{
 		UserDefaults:  apiDefaults,
-		UserPalette:   a.userPalette,
+		UserPalette:   a.State().UserPalette,
 		AllProperties: allProperties,
 		AllRelations:  allRelations,
-		EntityTypes:   a.meta.EntityTypes(),
+		EntityTypes:   a.Meta().EntityTypes(),
 	}
 
 	writeJSON(w, data)
 }
 
-// handleAPISaveSettings saves the user defaults from JSON input.
-// Note: Called under reloadLockMiddleware which holds RLock.
+// handleAPISaveSettings saves the user defaults from JSON input. The save
+// to disk and the publication of the new AppState happen atomically via
+// mutateState so concurrent readers see a coherent snapshot.
 func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 	var input APIUserDefaults
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -842,21 +824,22 @@ func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Upgrade from read lock to write lock (middleware holds RLock)
-	a.mu.RUnlock()
-	a.mu.Lock()
-	defer func() {
-		a.mu.Unlock()
-		a.mu.RLock()
-	}()
-
-	// Save to file
-	if err := a.saveUserDefaults(&ud); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to save settings: "+err.Error())
+	// Save to file under writeMu, then publish a new AppState with the
+	// updated UserDefaults via mutateState. The save and the publish
+	// are wrapped together so a concurrent reader cannot observe a
+	// State whose UserDefaults disagrees with what's on disk.
+	var saveErr error
+	a.mutateState(func(s *AppState) {
+		if err := a.saveUserDefaults(&ud); err != nil {
+			saveErr = err
+			return
+		}
+		s.UserDefaults = &ud
+	})
+	if saveErr != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to save settings: "+saveErr.Error())
 		return
 	}
-
-	a.userDefaults = &ud
 
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -877,10 +860,7 @@ func (a *App) handleAPIPaletteCRUD(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIGetPalette returns the current user palette.
 func (a *App) handleAPIGetPalette(w http.ResponseWriter, _ *http.Request) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	p := a.userPalette
+	p := a.State().UserPalette
 	if p == nil {
 		p = &dataentryconfig.PaletteConfig{}
 	}
@@ -900,21 +880,22 @@ func (a *App) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Upgrade from read lock to write lock (middleware holds RLock)
-	a.mu.RUnlock()
-	a.mu.Lock()
-	defer func() {
-		a.mu.Unlock()
-		a.mu.RLock()
-	}()
-
-	if err := a.saveUserPalette(&input); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to save palette: "+err.Error())
+	// Save to file and publish a new AppState atomically so concurrent
+	// readers see the new palette via state.Load() rather than
+	// observing torn writes through a shared snapshot pointer.
+	var saveErr error
+	a.mutateState(func(s *AppState) {
+		if err := a.saveUserPalette(&input); err != nil {
+			saveErr = err
+			return
+		}
+		s.UserPalette = &input
+		s.Palette = dataentryconfig.ResolvePalette(s.Cfg.Palette, &input)
+	})
+	if saveErr != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to save palette: "+saveErr.Error())
 		return
 	}
-
-	a.userPalette = &input
-	a.palette = dataentryconfig.ResolvePalette(a.Cfg.Palette, a.userPalette)
 
 	writeJSON(w, map[string]bool{"ok": true})
 }

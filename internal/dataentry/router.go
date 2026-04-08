@@ -66,8 +66,9 @@ func (a *App) NewRouter() http.Handler {
 	// REST API v1 - main API for Vue SPA
 	a.registerAPIV1Routes(inner)
 
-	locked := a.reloadLockMiddleware(inner)
-	mux.Handle("/api/", locked)
+	// noCacheMiddleware sets no-cache headers on API responses so that
+	// browsers always fetch fresh data after file changes trigger a reload.
+	mux.Handle("/api/", a.noCacheMiddleware(inner))
 
 	// Serve Vue SPA at root (catch-all for client-side routing)
 	mux.Handle("/", spaHandler(spaFS))

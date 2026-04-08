@@ -95,7 +95,7 @@ func (a *App) analyzeOrphans() AnalysisSection {
 		Description: "Entities with no incoming or outgoing relations",
 	}
 
-	orphans := a.g.FindOrphans()
+	orphans := a.Graph().FindOrphans()
 	sortEntitiesByID(orphans)
 
 	for _, e := range orphans {
@@ -118,7 +118,7 @@ func (a *App) analyzeDuplicates() AnalysisSection {
 		Description: "Entities with identical titles",
 	}
 
-	entities := a.g.AllNodes()
+	entities := a.Graph().AllNodes()
 	titleGroups := make(map[string][]*model.Entity)
 	for _, e := range entities {
 		title := normalizeTitle(a.entityDisplayTitle(e))
@@ -166,7 +166,7 @@ func (a *App) analyzeGaps() AnalysisSection {
 
 	// Build set of manual ID prefixes to skip
 	manualPrefixes := make(map[string]bool)
-	for _, entityDef := range a.meta.Entities {
+	for _, entityDef := range a.Meta().Entities {
 		if entityDef.IsManualID() {
 			for _, idPrefix := range entityDef.GetIDPrefixes() {
 				manualPrefixes[strings.TrimSuffix(idPrefix, "-")] = true
@@ -176,7 +176,7 @@ func (a *App) analyzeGaps() AnalysisSection {
 
 	// Group IDs by prefix
 	prefixGroups := make(map[string][]int)
-	for _, id := range a.g.AllIDs() {
+	for _, id := range a.Graph().AllIDs() {
 		parsed, err := model.ParseEntityID(id)
 		if err != nil || parsed.Prefix == "" {
 			continue
@@ -225,22 +225,22 @@ func (a *App) analyzeCardinality() AnalysisSection {
 	}
 
 	// Sort relation names for deterministic output
-	relNames := make([]string, 0, len(a.meta.Relations))
-	for name := range a.meta.Relations {
+	relNames := make([]string, 0, len(a.Meta().Relations))
+	for name := range a.Meta().Relations {
 		relNames = append(relNames, name)
 	}
 	natsort.Strings(relNames)
 
 	for _, relName := range relNames {
-		relDef := a.meta.Relations[relName]
+		relDef := a.Meta().Relations[relName]
 
 		// Check min_outgoing
 		if relDef.MinOutgoing != nil && *relDef.MinOutgoing > 0 {
 			for _, sourceType := range relDef.From {
-				entities := a.g.NodesByType(sourceType)
+				entities := a.Graph().NodesByType(sourceType)
 				sortEntitiesByID(entities)
 				for _, e := range entities {
-					count := countEdgesByType(a.g.OutgoingEdges(e.ID), relName)
+					count := countEdgesByType(a.Graph().OutgoingEdges(e.ID), relName)
 					if count < *relDef.MinOutgoing {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
@@ -257,10 +257,10 @@ func (a *App) analyzeCardinality() AnalysisSection {
 		// Check max_outgoing
 		if relDef.MaxOutgoing != nil {
 			for _, sourceType := range relDef.From {
-				entities := a.g.NodesByType(sourceType)
+				entities := a.Graph().NodesByType(sourceType)
 				sortEntitiesByID(entities)
 				for _, e := range entities {
-					count := countEdgesByType(a.g.OutgoingEdges(e.ID), relName)
+					count := countEdgesByType(a.Graph().OutgoingEdges(e.ID), relName)
 					if count > *relDef.MaxOutgoing {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
@@ -277,10 +277,10 @@ func (a *App) analyzeCardinality() AnalysisSection {
 		// Check min_incoming
 		if relDef.MinIncoming != nil && *relDef.MinIncoming > 0 {
 			for _, targetType := range relDef.To {
-				entities := a.g.NodesByType(targetType)
+				entities := a.Graph().NodesByType(targetType)
 				sortEntitiesByID(entities)
 				for _, e := range entities {
-					count := countEdgesByType(a.g.IncomingEdges(e.ID), relName)
+					count := countEdgesByType(a.Graph().IncomingEdges(e.ID), relName)
 					if count < *relDef.MinIncoming {
 						relLabel := relName
 						if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
@@ -301,10 +301,10 @@ func (a *App) analyzeCardinality() AnalysisSection {
 		// Check max_incoming
 		if relDef.MaxIncoming != nil {
 			for _, targetType := range relDef.To {
-				entities := a.g.NodesByType(targetType)
+				entities := a.Graph().NodesByType(targetType)
 				sortEntitiesByID(entities)
 				for _, e := range entities {
-					count := countEdgesByType(a.g.IncomingEdges(e.ID), relName)
+					count := countEdgesByType(a.Graph().IncomingEdges(e.ID), relName)
 					if count > *relDef.MaxIncoming {
 						relLabel := relName
 						if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
@@ -333,11 +333,11 @@ func (a *App) analyzeProperties() AnalysisSection {
 		Description: "Property validation errors (required fields, invalid values, ID patterns)",
 	}
 
-	entities := a.g.AllNodes()
+	entities := a.Graph().AllNodes()
 	sortEntitiesByID(entities)
 
 	for _, entity := range entities {
-		errs := a.meta.ValidateEntity(entity)
+		errs := a.Meta().ValidateEntity(entity)
 		for _, err := range errs {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   entity.ID,
@@ -359,7 +359,7 @@ func (a *App) analyzeValidations() AnalysisSection {
 		Description: "Custom validation rules defined in the metamodel",
 	}
 
-	for _, rule := range a.meta.Validations {
+	for _, rule := range a.Meta().Validations {
 		violations := a.checkValidationRule(rule)
 		severity := rule.GetSeverity()
 		for _, e := range violations {
@@ -389,20 +389,20 @@ func (a *App) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity
 
 	var entities []*model.Entity
 	if rule.EntityType != "" {
-		entities = a.g.NodesByType(rule.EntityType)
+		entities = a.Graph().NodesByType(rule.EntityType)
 	} else {
-		entities = a.g.AllNodes()
+		entities = a.Graph().AllNodes()
 	}
 
 	var violations []*model.Entity
 	for _, entity := range entities {
-		entityDef, ok := a.meta.GetEntityDef(entity.Type)
+		entityDef, ok := a.Meta().GetEntityDef(entity.Type)
 		if !ok {
 			continue
 		}
 
 		if len(whenFilters) > 0 {
-			matches, err := filter.MatchAll(entity, whenFilters, entityDef, a.meta)
+			matches, err := filter.MatchAll(entity, whenFilters, entityDef, a.Meta())
 			if err != nil || !matches {
 				continue
 			}
@@ -410,7 +410,7 @@ func (a *App) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity
 
 		// Check property-based then conditions
 		if len(thenFilters) > 0 {
-			satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, a.meta)
+			satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, a.Meta())
 			if err != nil {
 				violations = append(violations, entity)
 				continue

@@ -3,12 +3,52 @@ package dataentry
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
+
+// newAppFromParts builds an App with a populated AppState snapshot for
+// tests that previously used the struct-literal pattern
+// `&App{Cfg: cfg, meta: meta, g: g}`. The App.state pointer must be
+// populated because handlers now read from it; a nil snapshot would
+// nil-deref inside a.State().
+//
+// Populates ALL AppState fields with safe defaults (UserDefaults,
+// Palette, UserPalette, OpenAPIGen) so handlers that touch the
+// less-common fields don't nil-deref in tests that didn't ask for them.
+func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, g *graph.Graph) *App {
+	app := &App{}
+	if cfg == nil {
+		cfg = &Config{}
+	}
+	var styleMap map[string]map[string]string
+	var styledTypes map[string]bool
+	if meta != nil {
+		styleMap, styledTypes = buildStyleMap(cfg, meta)
+	}
+	var openAPIGen *openapi.Generator
+	if meta != nil {
+		openAPIGen = openapi.New(meta, openapi.Config{Title: cfg.App.Name})
+	}
+	app.state.Store(&AppState{
+		Cfg:          cfg,
+		Meta:         meta,
+		Graph:        g,
+		StyleMap:     styleMap,
+		StyledTypes:  styledTypes,
+		UserDefaults: &UserDefaults{},
+		Palette:      ResolvePalette(cfg.Palette, nil),
+		UserPalette:  &PaletteConfig{},
+		OpenAPIGen:   openAPIGen,
+	})
+	return app
+}
 
 // newHandlerTestApp builds an App for handler tests.
 func newHandlerTestApp(t *testing.T) *App {
@@ -55,12 +95,13 @@ func newHandlerTestApp(t *testing.T) *App {
 
 	ws := workspace.NewWithGraph(repo, meta, g)
 
-	return &App{
+	app := &App{ws: ws}
+	app.state.Store(&AppState{
 		Cfg:         cfg,
-		meta:        meta,
-		g:           g,
-		styleMap:    styleMap,
-		styledTypes: styledTypes,
-		ws:          ws,
-	}
+		Meta:        meta,
+		Graph:       g,
+		StyleMap:    styleMap,
+		StyledTypes: styledTypes,
+	})
+	return app
 }

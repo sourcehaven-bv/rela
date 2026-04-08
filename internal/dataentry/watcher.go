@@ -108,10 +108,8 @@ func (a *App) StartWatching() error {
 //
 // coverage-ignore: background goroutine with timer
 func (a *App) StartGitFetch() (stop func()) {
-	a.mu.RLock()
 	gitOps := a.gitOps
-	cfg := a.Cfg.Git
-	a.mu.RUnlock()
+	cfg := a.State().Cfg.Git
 
 	if gitOps == nil || cfg == nil || cfg.FetchInterval <= 0 {
 		return func() {} // no-op if git not configured or fetch disabled
@@ -144,14 +142,13 @@ func (a *App) StartGitFetch() (stop func()) {
 	}
 }
 
-// onReload handles dataentry-specific side-effects after the workspace has
-// already reloaded the metamodel and re-synced the graph. It re-reads the
-// data-entry config if changed, updates convenience aliases, and rebuilds
-// styles/templates.
+// onReload handles dataentry-specific side-effects after the workspace
+// has already reloaded the metamodel and re-synced the graph. It re-reads
+// the data-entry config if changed, rebuilds styles and palette if either
+// config or metamodel changed, then publishes a new AppState snapshot
+// atomically. Readers observe either the pre-reload or the post-reload
+// snapshot, never a torn state.
 func (a *App) onReload(events []workspace.ChangeEvent) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	paths := a.ws.Paths()
 	configPath := filepath.Join(paths.Root, ConfigFile)
 	metamodelDir := filepath.Join(paths.Root, "metamodel") + string(filepath.Separator)
@@ -169,6 +166,13 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 		}
 	}
 
+	current := a.State()
+	if current == nil {
+		return
+	}
+
+	// Start from the current snapshot and override fields that changed.
+	newCfg := current.Cfg
 	if needConfigReload {
 		cfgData, err := a.ws.ReadProjectFile(ConfigFile)
 		if err != nil {
@@ -178,39 +182,50 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 			if unmarshalErr := yaml.Unmarshal(cfgData, &cfg); unmarshalErr != nil {
 				slog.Warn("config parse error", "error", unmarshalErr)
 			} else {
-				a.Cfg = &cfg
+				newCfg = &cfg
 				slog.Info("config reloaded")
 			}
 		}
 	}
 
-	// Update convenience aliases (workspace already reloaded)
-	a.meta = a.ws.Meta()
-	a.g = a.ws.Graph()
+	newMeta := a.ws.Meta()
+	newGraph := a.ws.Graph()
 
-	// Rebuild styles if config or metamodel changed
+	newStyleMap := current.StyleMap
+	newStyledTypes := current.StyledTypes
+	newUserPalette := current.UserPalette
+	newPalette := current.Palette
+	newOpenAPI := current.OpenAPIGen
+
 	if needConfigReload || needMetamodelReload {
-		a.styleMap, a.styledTypes = buildStyleMap(a.Cfg, a.meta)
+		newStyleMap, newStyledTypes = buildStyleMap(newCfg, newMeta)
 		// On reload, keep the previous palette if the new file is
 		// broken — better to show stale colors than crash or wipe.
-		userPalette, err := a.loadUserPalette()
-		if err != nil {
+		if up, err := a.loadUserPalette(); err != nil {
 			slog.Warn("watcher: keeping previous user palette",
 				"file", userPaletteFile, "error", err)
 		} else {
-			a.userPalette = userPalette
-			a.palette = ResolvePalette(a.Cfg.Palette, a.userPalette)
+			newUserPalette = up
+			newPalette = ResolvePalette(newCfg.Palette, newUserPalette)
 		}
-		// Update OpenAPI generator with new metamodel
-		if a.openAPIGen != nil {
-			a.openAPIGen.UpdateMetamodel(a.meta)
+		// Update OpenAPI generator with new metamodel (the generator
+		// is internally synchronized; we reuse the same instance).
+		if newOpenAPI != nil {
+			newOpenAPI.UpdateMetamodel(newMeta)
 		}
 	}
 
-	// Publish the new appState snapshot. Handlers will be migrated to
-	// read from this snapshot in a follow-up PR; for now both the old
-	// convenience aliases above and the snapshot are kept in sync.
-	a.publishState()
+	a.state.Store(&AppState{
+		Cfg:          newCfg,
+		Meta:         newMeta,
+		Graph:        newGraph,
+		StyleMap:     newStyleMap,
+		StyledTypes:  newStyledTypes,
+		UserDefaults: current.UserDefaults,
+		Palette:      newPalette,
+		UserPalette:  newUserPalette,
+		OpenAPIGen:   newOpenAPI,
+	})
 }
 
 // handleSSE serves Server-Sent Events for live-reload notifications.
@@ -257,17 +272,16 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// reloadLockMiddleware wraps an http.Handler so that every request holds
-// the App's read-lock, preventing concurrent reloads from swapping state
-// mid-request. It also sets no-cache headers to ensure browsers always
-// fetch fresh data after file changes trigger a reload.
+// noCacheMiddleware sets no-cache headers on dynamic responses so that
+// browsers always fetch fresh data after file changes trigger a reload.
+// This replaces the previous reloadLockMiddleware, which also held the
+// now-deleted App.mu read lock — handlers now get coherent reloadable
+// state via a.State() without any lock acquisition.
 //
-// Note: Static files (/static/*) are served separately and bypass this
+// Static files (/static/*) are served separately and bypass this
 // middleware, so they retain normal caching behavior.
-func (a *App) reloadLockMiddleware(next http.Handler) http.Handler {
+func (a *App) noCacheMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		a.mu.RLock()
-		defer a.mu.RUnlock()
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		next.ServeHTTP(w, r)
 	})

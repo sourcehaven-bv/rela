@@ -38,33 +38,40 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 	entityID := r.FormValue("entity_id")
 	indexStr := r.FormValue("index")
 
-	entity, ok := a.g.GetNode(entityID)
-	if !ok {
-		http.Error(w, "Entity not found", http.StatusNotFound)
-		return
-	}
-
 	idx, err := strconv.Atoi(indexStr)
 	if err != nil {
 		http.Error(w, "Invalid checkbox index", http.StatusBadRequest)
 		return
 	}
 
-	newContent, err := toggleCheckbox(entity.Content, idx)
+	// Serialize against other mutations and against workspace reloads.
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+
+	live, ok := a.Graph().GetNode(entityID)
+	if !ok {
+		http.Error(w, "Entity not found", http.StatusNotFound)
+		return
+	}
+
+	newContent, err := toggleCheckbox(live.Content, idx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	oldEntity := entity.Clone()
-	entity.Content = newContent
-	if _, err := a.ws.UpdateEntity(entity, oldEntity); err != nil {
+	// Clone to avoid mutating the live graph node while other readers
+	// (which take no lock) may be iterating it.
+	oldEntity := live.Clone()
+	updated := live.Clone()
+	updated.Content = newContent
+	if _, err := a.ws.UpdateEntity(updated, oldEntity); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = fmt.Fprint(w, simpleMarkdownToHTML(entity.Content))
+	_, _ = fmt.Fprint(w, simpleMarkdownToHTML(updated.Content))
 }
 
 // handleEntityHelp returns HTML fragment with documentation for an entity type.
@@ -76,7 +83,7 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entDef, ok := a.meta.GetEntityDef(entityType)
+	entDef, ok := a.Meta().GetEntityDef(entityType)
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -177,8 +184,8 @@ func (a *App) renderHelpContent(w http.ResponseWriter, entityDesc htmltemplate.H
 // If outgoing is true, gathers relations where entityType is in "from";
 // otherwise gathers relations where entityType is in "to".
 func (a *App) gatherRelations(entityType string, outgoing bool) []RelationHelp {
-	rels := make([]RelationHelp, 0, len(a.meta.Relations))
-	for name, rel := range a.meta.Relations {
+	rels := make([]RelationHelp, 0, len(a.Meta().Relations))
+	for name, rel := range a.Meta().Relations {
 		var matchTypes, targetTypes []string
 		var minCard, maxCard *int
 		if outgoing {

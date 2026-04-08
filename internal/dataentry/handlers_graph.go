@@ -113,26 +113,26 @@ func (a *App) handleGraphData(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) buildContentGraphData() graphDataResponse {
-	allNodes := a.g.AllNodes()
-	allEdges := a.g.AllEdges()
+	allNodes := a.Graph().AllNodes()
+	allEdges := a.Graph().AllEdges()
 
 	// Collect entity types
-	entityTypes := a.meta.EntityTypes()
+	entityTypes := a.Meta().EntityTypes()
 	natsort.Strings(entityTypes)
 
 	etList := make([]graphEntityType, 0, len(entityTypes))
 	for i, et := range entityTypes {
 		// Use metamodel color if available, otherwise cycle through palette
 		color := entityTypeColors[i%len(entityTypeColors)]
-		if entDef, ok := a.meta.GetEntityDef(et); ok && entDef.Color != "" {
+		if entDef, ok := a.Meta().GetEntityDef(et); ok && entDef.Color != "" {
 			color = entDef.Color
 		}
 
 		label := et
-		if entDef, ok := a.meta.GetEntityDef(et); ok && entDef.Label != "" {
+		if entDef, ok := a.Meta().GetEntityDef(et); ok && entDef.Label != "" {
 			label = entDef.Label
 		}
-		count := len(a.g.NodesByType(et))
+		count := len(a.Graph().NodesByType(et))
 		etList = append(etList, graphEntityType{Type: et, Label: label, Color: color, Count: count})
 	}
 
@@ -166,12 +166,12 @@ func (a *App) buildContentGraphData() graphDataResponse {
 	}
 
 	// Collect relation types
-	relTypes := a.meta.RelationTypes()
+	relTypes := a.Meta().RelationTypes()
 	natsort.Strings(relTypes)
 	rtList := make([]graphRelationType, 0, len(relTypes))
 	for _, rt := range relTypes {
 		label := rt
-		if relDef, ok := a.meta.GetRelationDef(rt); ok && relDef.Label != "" {
+		if relDef, ok := a.Meta().GetRelationDef(rt); ok && relDef.Label != "" {
 			label = relDef.Label
 		}
 		rtList = append(rtList, graphRelationType{Type: rt, Label: label, Count: relTypeCounts[rt]})
@@ -190,7 +190,7 @@ func (a *App) buildContentGraphData() graphDataResponse {
 }
 
 func (a *App) buildMetamodelGraphData() graphDataResponse {
-	entityTypes := a.meta.EntityTypes()
+	entityTypes := a.Meta().EntityTypes()
 	natsort.Strings(entityTypes)
 
 	etList := make([]graphEntityType, 0, len(entityTypes))
@@ -198,18 +198,18 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 
 	for i, et := range entityTypes {
 		color := entityTypeColors[i%len(entityTypeColors)]
-		if entDef, ok := a.meta.GetEntityDef(et); ok && entDef.Color != "" {
+		if entDef, ok := a.Meta().GetEntityDef(et); ok && entDef.Color != "" {
 			color = entDef.Color
 		}
 
 		label := et
-		if entDef, ok := a.meta.GetEntityDef(et); ok && entDef.Label != "" {
+		if entDef, ok := a.Meta().GetEntityDef(et); ok && entDef.Label != "" {
 			label = entDef.Label
 		}
 
 		// Build properties as metadata for each entity type node
 		props := make(map[string]string)
-		if entDef, ok := a.meta.GetEntityDef(et); ok {
+		if entDef, ok := a.Meta().GetEntityDef(et); ok {
 			propNames := make([]string, 0, len(entDef.Properties))
 			for pn := range entDef.Properties {
 				propNames = append(propNames, pn)
@@ -221,7 +221,7 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 			}
 		}
 
-		count := len(a.g.NodesByType(et))
+		count := len(a.Graph().NodesByType(et))
 		etList = append(etList, graphEntityType{Type: et, Label: label, Color: color, Count: count})
 		nodes = append(nodes, graphNode{
 			ID:         et,
@@ -232,14 +232,14 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 	}
 
 	// Build edges from relation definitions (from-type → to-type)
-	relTypes := a.meta.RelationTypes()
+	relTypes := a.Meta().RelationTypes()
 	natsort.Strings(relTypes)
 
 	var edges []graphEdge
 	relTypeCounts := make(map[string]int)
 
 	for _, rt := range relTypes {
-		relDef, ok := a.meta.GetRelationDef(rt)
+		relDef, ok := a.Meta().GetRelationDef(rt)
 		if !ok {
 			continue
 		}
@@ -258,7 +258,7 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 	rtList := make([]graphRelationType, 0, len(relTypes))
 	for _, rt := range relTypes {
 		label := rt
-		if relDef, ok := a.meta.GetRelationDef(rt); ok && relDef.Label != "" {
+		if relDef, ok := a.Meta().GetRelationDef(rt); ok && relDef.Label != "" {
 			label = relDef.Label
 		}
 		rtList = append(rtList, graphRelationType{Type: rt, Label: label, Count: relTypeCounts[rt]})
@@ -279,7 +279,7 @@ func (a *App) buildMetaInfo(entityTypes, relTypes []string) graphMetaData {
 	metaEntities := make([]graphMetaEntity, 0, len(entityTypes))
 	for _, et := range entityTypes {
 		me := graphMetaEntity{Type: et, Label: et}
-		if entDef, ok := a.meta.GetEntityDef(et); ok {
+		if entDef, ok := a.Meta().GetEntityDef(et); ok {
 			if entDef.Label != "" {
 				me.Label = entDef.Label
 			}
@@ -299,7 +299,7 @@ func (a *App) buildMetaInfo(entityTypes, relTypes []string) graphMetaData {
 	metaRelations := make([]graphMetaRelation, 0, len(relTypes))
 	for _, rt := range relTypes {
 		mr := graphMetaRelation{Type: rt}
-		if relDef, ok := a.meta.GetRelationDef(rt); ok {
+		if relDef, ok := a.Meta().GetRelationDef(rt); ok {
 			mr.From = relDef.From
 			mr.To = relDef.To
 		}
