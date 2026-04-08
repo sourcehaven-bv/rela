@@ -13,12 +13,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
 // scriptsDir is the directory where script files must be located.
@@ -61,7 +64,21 @@ func (e *Engine) execute(code string, ctx metamodel.ScriptContext) error {
 	}
 
 	var output bytes.Buffer
-	runtime := lua.New(ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output)
+	var opts []lua.Option
+	// Soft-fail on misconfigured ai.yaml: an automation script firing
+	// on every entity write must not crash the host because the user
+	// has a typo in their AI config. Log it so the user notices.
+	// ErrConfigNotFound is the normal "no AI" state and is silent.
+	provider, providerErr := ai.LoadProvider(filepath.Join(ctx.GetProjectRoot(), project.CacheDir))
+	switch {
+	case errors.Is(providerErr, ai.ErrConfigNotFound):
+		// no AI configured; nothing to log
+	case providerErr != nil:
+		slog.Warn("ai: failed to load config; AI bindings disabled for this run", "error", providerErr)
+	default:
+		opts = append(opts, lua.WithAIProvider(provider))
+	}
+	runtime := lua.New(ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output, opts...)
 	defer runtime.Close()
 
 	// Set entity context as Lua globals

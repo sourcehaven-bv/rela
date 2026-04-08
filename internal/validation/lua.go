@@ -88,7 +88,14 @@ func (e *luaExecutor) validate(
 		return nil // no Lua validation
 	}
 
-	// Create runtime with read-only workspace and discarded stdout
+	// Create runtime with read-only workspace and discarded stdout.
+	//
+	// AI is intentionally NOT wired into validation rules: an AI-powered
+	// rule would call out to a provider on every entity on every analyze
+	// run, with no quota or kill switch. The 5s validation timeout would
+	// also silently clip slow calls. AI-in-validations is tracked as a
+	// follow-up that needs its own design (cost guardrails, opt-in
+	// per rule, longer per-rule budget).
 	runtime := lua.New(e.ws, e.meta, e.projectRoot, io.Discard)
 	defer runtime.Close()
 

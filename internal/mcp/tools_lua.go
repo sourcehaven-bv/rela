@@ -4,14 +4,17 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
@@ -64,7 +67,21 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	// Capture output
 	var output bytes.Buffer
 
-	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, lua.WithContext(ctx))
+	opts := []lua.Option{lua.WithContext(ctx)}
+	// Soft-fail on misconfigured ai.yaml: log + continue without AI
+	// rather than crashing every Lua tool call. The MCP client will
+	// see the not_configured error if their script tries to call ai.*.
+	// ErrConfigNotFound is the normal "no AI" state and is silent.
+	provider, providerErr := ai.LoadProvider(s.ws.Paths().CacheDir)
+	switch {
+	case errors.Is(providerErr, ai.ErrConfigNotFound):
+		// no AI configured
+	case providerErr != nil:
+		slog.Warn("ai: failed to load config; AI bindings disabled", "error", providerErr)
+	default:
+		opts = append(opts, lua.WithAIProvider(provider))
+	}
+	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, opts...)
 	defer runtime.Close()
 
 	if err := runtime.RunString(code); err != nil {
@@ -131,7 +148,15 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Capture output
 	var output bytes.Buffer
 
-	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, lua.WithContext(ctx))
+	opts := []lua.Option{lua.WithContext(ctx)}
+	// Soft-fail on misconfigured ai.yaml: log + continue without AI
+	// rather than crashing every Lua tool call.
+	if provider, providerErr := ai.LoadProvider(s.ws.Paths().CacheDir); providerErr != nil {
+		slog.Warn("ai: failed to load config; AI bindings disabled", "error", providerErr)
+	} else if provider != nil {
+		opts = append(opts, lua.WithAIProvider(provider))
+	}
+	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, opts...)
 	defer runtime.Close()
 
 	// Set script args before execution

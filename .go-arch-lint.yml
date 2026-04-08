@@ -7,6 +7,7 @@ allow:
 exclude:
   - internal/testutil
   - frontend
+  - .claude
 
 excludeFiles:
   - "_test\\.go$"
@@ -56,6 +57,7 @@ components:
   search:           { in: internal/search/** }
 
   # Infrastructure
+  ai:               { in: internal/ai }
   attachment:       { in: internal/attachment }
   git:              { in: internal/git }
   output:           { in: internal/output }
@@ -130,6 +132,7 @@ deps:
   # CLI layer — orchestrates everything
   cli:
     mayDependOn:
+      - ai
       - dataentryconfig
       - filter
       - importer
@@ -181,6 +184,7 @@ deps:
   # Server protocols
   mcp:
     mayDependOn:
+      - ai
       - dataentryconfig
       - filter
       - lua
@@ -298,6 +302,7 @@ deps:
       - pattern
   lua:
     mayDependOn:
+      - ai
       - filter
       - metamodel
       - workspace
@@ -308,8 +313,10 @@ deps:
       - rrulego
   script:
     mayDependOn:
+      - ai
       - lua
       - metamodel
+      - project
   search:
     mayDependOn:
       - filter
@@ -317,6 +324,10 @@ deps:
       - bleve
 
   # Infrastructure
+  # ai: pure leaf — only stdlib (net/http, log/slog, encoding/json) plus
+  # yaml (already in commonVendors). The Provider interface is consumed
+  # by lua, script, cli, and mcp. No mayDependOn/canUse entry needed
+  # because the component is component-only with no internal deps.
   attachment:
     mayDependOn:
       - storage
