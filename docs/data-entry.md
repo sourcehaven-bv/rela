@@ -582,9 +582,9 @@ lists are deep-linkable and survive browser back/forward. The format is
 bracketed:
 
 ```text
-/v2/list/all_tasks?filter[status]=open
-/v2/list/all_tasks?filter[due_date][lte]=$today
-/v2/list/all_tasks?filter[tags][in][]=urgent&filter[tags][in][]=blocker
+/list/all_tasks?filter[status]=open
+/list/all_tasks?filter[due_date][lte]=$today
+/list/all_tasks?filter[tags][in][]=urgent&filter[tags][in][]=blocker
 ```
 
 Rules:
