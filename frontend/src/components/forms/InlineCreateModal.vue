@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, toRef, watch } from 'vue'
 import { useSchemaStore } from '@/stores'
 import { createEntity } from '@/api'
+import { useModalStack } from '@/composables/modalStack'
 import type { Entity, PropertyDef } from '@/types'
 
 const props = defineProps<{
@@ -15,6 +16,7 @@ const emit = defineEmits<{
 }>()
 
 const schemaStore = useSchemaStore()
+useModalStack(toRef(props, 'show'))
 
 // State
 const loading = ref(false)

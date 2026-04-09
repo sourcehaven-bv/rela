@@ -10,6 +10,7 @@ import type { Entity, ListMeta, ListParams, FilterState } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import Badge from '@/components/common/Badge.vue'
+import ConfirmModal from '@/components/ui/ConfirmModal.vue'
 
 const props = defineProps<{
   listId: string
@@ -26,6 +27,8 @@ const entities = ref<Entity[]>([])
 const meta = ref<ListMeta>({ total: 0, page: 1, per_page: 25, has_more: false })
 const loading = ref(true)
 const includedEntities = ref<Record<string, Entity>>({})
+const pendingDelete = ref<Entity | null>(null)
+const deleting = ref(false)
 
 // Static (config-pinned) filter properties — used by useUrlFilterSync to
 // reject URL filters that would silently override the list's intended scope.
@@ -73,6 +76,10 @@ const { selectedIndex, clearSelection } = useListKeyboard({
     if (listConfig.value?.create_form) {
       router.push(`/form/${listConfig.value.create_form}`)
     }
+  },
+  onDelete: (index) => {
+    const entity = entities.value[index]
+    if (entity) pendingDelete.value = entity
   },
   onPrevPage: () => {
     if (hasPrevPage.value) {
@@ -338,19 +345,32 @@ function getFormattedCellValue(entity: Entity, column: { property?: string; rela
   return formatCellValue(value, column.property, entityType.value)
 }
 
-async function handleDelete(entity: Entity, event: Event) {
+function handleDelete(entity: Entity, event: Event) {
   event.stopPropagation()
-  const confirmed = window.confirm(`Are you sure you want to delete "${entity.id}"?`)
-  if (!confirmed) return
+  pendingDelete.value = entity
+}
 
+async function confirmDelete() {
+  const entity = pendingDelete.value
+  if (!entity) return
+
+  deleting.value = true
   try {
     await entitiesStore.remove(entity.type, entity.id)
     uiStore.success(`Deleted ${entity.id}`)
+    pendingDelete.value = null
     scheduleFetch()
   } catch (err) {
     uiStore.error('Failed to delete entity')
     console.error(err)
+  } finally {
+    deleting.value = false
   }
+}
+
+function cancelDelete() {
+  if (deleting.value) return
+  pendingDelete.value = null
 }
 
 // Watchers — all three converge on scheduleFetch(), which coalesces into a
@@ -492,6 +512,19 @@ onMounted(() => {
         @page-change="handlePageChange"
       />
     </div>
+
+    <ConfirmModal
+      :open="pendingDelete !== null"
+      title="Delete Entity?"
+      confirm-label="Delete"
+      :busy="deleting"
+      danger
+      @confirm="confirmDelete"
+      @cancel="cancelDelete"
+    >
+      Are you sure you want to delete <strong>{{ pendingDelete?.id }}</strong>?
+      This action cannot be undone.
+    </ConfirmModal>
   </div>
 
   <div v-else class="error-state">

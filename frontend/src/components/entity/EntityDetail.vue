@@ -6,11 +6,13 @@ import { useScopeNavigation } from '@/composables'
 import type { Entity, Command } from '@/types'
 import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
+import { isAnyModalOpen } from '@/composables/modalStack'
 import { renderMarkdown, renderMermaidDiagrams, getCheckboxStats } from '@/utils/markdown'
 import { getCommands, toggleCheckbox } from '@/api'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
+import ConfirmModal from '@/components/ui/ConfirmModal.vue'
 
 const props = defineProps<{
   entityType: string
@@ -33,9 +35,21 @@ const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
 
 function handleKeydown(e: KeyboardEvent) {
   if (isInputFocused()) return
+  // Don't handle shortcuts while any modal is open — the modal owns Escape,
+  // and Delete/Backspace must not reopen a second confirmation.
+  if (isAnyModalOpen()) return
+  if (document.querySelector('.shortcuts-overlay')) return
   if (e.key === 'e' || e.key === 'E') {
     e.preventDefault()
     editEntity()
+  }
+  // Delete / Backspace: open delete confirmation modal. Only active once the
+  // entity has loaded — otherwise Backspace during initial load would both
+  // hijack browser back-nav and render a modal referencing a null entity.
+  // preventDefault stops the browser back-nav side effect of Backspace.
+  if ((e.key === 'Delete' || e.key === 'Backspace') && entity.value) {
+    e.preventDefault()
+    showDeleteConfirm.value = true
   }
   // Scope navigation: p/n for prev/next
   if (e.key === 'p' && scopeNav.value?.prevId) {
@@ -195,13 +209,15 @@ async function deleteEntity() {
   try {
     await entitiesStore.remove(props.entityType, props.entityId)
     uiStore.success('Entity deleted successfully')
+    // Close modal only on success. On error the modal stays open (with busy
+    // cleared) so the user keeps context and can retry or cancel.
+    showDeleteConfirm.value = false
     router.push(backTargetAfterDelete())
   } catch (err) {
     uiStore.error('Failed to delete entity')
     console.error(err)
   } finally {
     deleting.value = false
-    showDeleteConfirm.value = false
   }
 }
 
@@ -343,7 +359,7 @@ onMounted(() => loadEntity())
             Edit <kbd>E</kbd>
           </button>
           <button class="btn btn-danger" @click="showDeleteConfirm = true">
-            Delete
+            Delete <kbd>Del</kbd>
           </button>
         </div>
       </header>
@@ -387,31 +403,18 @@ onMounted(() => loadEntity())
       </section>
 
       <!-- Delete Confirmation Modal -->
-      <div v-if="showDeleteConfirm" class="modal-overlay" @click.self="showDeleteConfirm = false">
-        <div class="modal">
-          <h3>Delete Entity?</h3>
-          <p>
-            Are you sure you want to delete <strong>{{ entity.id }}</strong>?
-            This action cannot be undone.
-          </p>
-          <div class="modal-actions">
-            <button
-              class="btn btn-secondary"
-              :disabled="deleting"
-              @click="showDeleteConfirm = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleting"
-              @click="deleteEntity"
-            >
-              {{ deleting ? 'Deleting...' : 'Delete' }}
-            </button>
-          </div>
-        </div>
-      </div>
+      <ConfirmModal
+        :open="showDeleteConfirm"
+        title="Delete Entity?"
+        confirm-label="Delete"
+        :busy="deleting"
+        danger
+        @confirm="deleteEntity"
+        @cancel="showDeleteConfirm = false"
+      >
+        Are you sure you want to delete <strong>{{ entity.id }}</strong>?
+        This action cannot be undone.
+      </ConfirmModal>
 
       <!-- Command Execution Modal -->
       <CommandModal ref="commandModalRef" :entity-id="entityId" />

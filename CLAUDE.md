@@ -69,7 +69,7 @@ relations/*.md → Relation ↗      ↓
 | `cmd/rela-server`    | Data entry HTTP server entry point                      |
 | `cmd/rela-desktop`   | Wails desktop app entry point                           |
 | `internal/cli`       | Cobra commands (create, link, analyze, export, etc.)    |
-| `internal/dataentry` | Config-driven data entry web app (HTMX, handlers, views)|
+| `internal/dataentry` | Config-driven data entry web app (Go API handlers serving Vue 3 SPA in `frontend/`) |
 | `internal/model`     | Core types: `Entity`, `Relation`, `Status`              |
 | `internal/graph`     | In-memory graph with adjacency lists, tracing, analysis |
 | `internal/metamodel` | Schema loading, validation, custom types                |
