@@ -2,7 +2,7 @@
 id: IMPL-J0WJF
 type: implementation-checklist
 title: 'Implementation: Configurable list actions with keyboard shortcuts for bulk property updates'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

@@ -5,7 +5,7 @@ title: Configurable list actions with keyboard shortcuts for bulk property updat
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Description
