@@ -3,6 +3,7 @@ package dataentry
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -34,8 +35,19 @@ type V1ActionResponse struct {
 	CorrelationID string `json:"correlation_id,omitempty"`
 }
 
+// v1ActionRequest is the optional JSON body for action invocation.
+// When entity_id is provided, the script context includes the entity.
+type v1ActionRequest struct {
+	EntityID   string `json:"entity_id"`
+	EntityType string `json:"entity_type"`
+}
+
 // handleV1Action executes a configured action script and returns the result.
 // Endpoint: POST /api/v1/_action/{id}
+//
+// The request body is optional. When provided, it may contain entity_id and
+// entity_type to set the entity context for the script (used by list actions
+// that invoke a script once per selected entity).
 //
 // Action scripts may mutate the workspace, so we serialize them via
 // writeMu for the duration of script execution. Concurrent reloads,
@@ -60,6 +72,16 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse optional entity context from request body.
+	var req v1ActionRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeV1Error(w, r, http.StatusBadRequest, "invalid_body",
+				"Invalid request body", err.Error())
+			return
+		}
+	}
+
 	correlationID := newCorrelationID()
 
 	// Serialize action script execution against other mutations and
@@ -67,10 +89,19 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
+	// Resolve entity if provided in the request.
+	var entity *model.Entity
+	if req.EntityID != "" {
+		if e, ok := a.Graph().GetNode(req.EntityID); ok {
+			entity = e
+		}
+	}
+
 	ctx := &actionScriptContext{
 		ws:          a.ws,
 		meta:        a.Meta(),
 		projectRoot: a.ws.Paths().Root,
+		entity:      entity,
 	}
 
 	engine := script.NewEngine()
@@ -108,15 +139,17 @@ func newCorrelationID() string {
 }
 
 // actionScriptContext implements metamodel.ScriptContext for action scripts.
-// Actions don't have a triggering entity context — they're user-initiated.
+// The entity field is optionally populated when the action is invoked with
+// entity context (e.g., from a list action applied to selected rows).
 type actionScriptContext struct {
 	ws          *workspace.Workspace
 	meta        *metamodel.Metamodel
 	projectRoot string
+	entity      *model.Entity
 }
 
 func (c *actionScriptContext) GetWorkspace() interface{}     { return c.ws }
 func (c *actionScriptContext) GetMeta() *metamodel.Metamodel { return c.meta }
 func (c *actionScriptContext) GetProjectRoot() string        { return c.projectRoot }
-func (c *actionScriptContext) GetEntity() *model.Entity      { return nil }
+func (c *actionScriptContext) GetEntity() *model.Entity      { return c.entity }
 func (c *actionScriptContext) GetOldEntity() *model.Entity   { return nil }

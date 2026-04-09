@@ -180,8 +180,12 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
 	}
 
-	// Verify action scripts exist on disk (catches typos at startup)
+	// Verify action scripts exist on disk (catches typos at startup).
+	// Skip set-only actions which have no script.
 	for id, action := range cfg.Actions {
+		if action.Script == "" {
+			continue
+		}
 		if err := script.CheckActionScriptExists(ws.Paths().Root, action.Script); err != nil {
 			return nil, fmt.Errorf("invalid %s: action %q: %w", ConfigFile, id, err)
 		}

@@ -133,6 +133,7 @@ type V1Config struct {
 	Views      map[string]dataentryconfig.ViewConfig     `json:"views"`
 	Kanbans    map[string]dataentryconfig.Kanban         `json:"kanbans"`
 	Dashboard  *dataentryconfig.DashboardConfig          `json:"dashboard,omitempty"`
+	Actions    map[string]dataentryconfig.Action         `json:"actions,omitempty"`
 	Navigation []dataentryconfig.NavigationEntry         `json:"navigation"`
 	Documents  map[string]dataentryconfig.DocumentConfig `json:"documents,omitempty"`
 	Palette    *dataentryconfig.ResolvedPalette          `json:"palette,omitempty"`
@@ -516,15 +517,6 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 	entity, found := a.Graph().GetNode(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
-
-	// Check for incoming relations
-	incoming := a.Graph().IncomingEdges(entityID)
-	if len(incoming) > 0 {
-		writeV1Error(w, r, http.StatusConflict, "has_relations",
-			"Cannot delete entity with incoming relations",
-			fmt.Sprintf("Entity has %d incoming relations", len(incoming)))
 		return
 	}
 
@@ -955,6 +947,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Views:      a.Cfg().Views,
 		Kanbans:    a.Cfg().Kanbans,
 		Dashboard:  a.Cfg().Dashboard,
+		Actions:    a.Cfg().Actions,
 		Navigation: a.Cfg().Navigation,
 		Documents:  a.Cfg().Documents,
 		Palette:    a.State().Palette,
@@ -1071,16 +1064,8 @@ func (a *App) entityToV1(e *model.Entity, plural string, includeRelations, inclu
 func (a *App) computeEntityActions(e *model.Entity) *V1Actions {
 	actions := &V1Actions{}
 
-	// Check if entity can be deleted
-	incoming := a.Graph().IncomingEdges(e.ID)
-	if len(incoming) > 0 {
-		actions.Delete = &V1ActionStatus{
-			Allowed: false,
-			Reason:  fmt.Sprintf("Has %d incoming relations", len(incoming)),
-		}
-	} else {
-		actions.Delete = &V1ActionStatus{Allowed: true}
-	}
+	// Delete is always allowed; cascade removes associated relations.
+	actions.Delete = &V1ActionStatus{Allowed: true}
 
 	// Get valid status transitions
 	if status, ok := e.Properties["status"].(string); ok {

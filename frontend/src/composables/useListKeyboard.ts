@@ -8,6 +8,9 @@ interface UseListKeyboardOptions {
   onEdit?: (index: number) => void
   onCreate?: () => void
   onDelete?: (index: number) => void
+  onSelect?: (index: number) => void
+  onClearSelection?: () => void
+  hasSelection?: Ref<boolean>
   onPrevPage?: () => void
   onNextPage?: () => void
   hasPrevPage?: Ref<boolean>
@@ -68,6 +71,20 @@ export function useListKeyboard(options: UseListKeyboardOptions) {
       case 'ArrowUp':
         e.preventDefault()
         moveSelection(-1)
+        break
+
+      case ' ':
+        if (selectedIndex.value >= 0 && options.onSelect) {
+          e.preventDefault()
+          options.onSelect(selectedIndex.value)
+        }
+        break
+
+      case 'Escape':
+        if (options.hasSelection?.value && options.onClearSelection) {
+          e.preventDefault()
+          options.onClearSelection()
+        }
         break
 
       case 'Enter':

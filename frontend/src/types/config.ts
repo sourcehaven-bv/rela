@@ -15,8 +15,19 @@ export interface Config {
   views: Record<string, ViewConfig>
   kanbans: Record<string, KanbanConfig>
   dashboard?: DashboardConfig
+  actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
   documents?: Record<string, DocumentConfig>
+}
+
+export interface ActionConfig {
+  label?: string
+  key?: string
+  confirm?: boolean
+  set?: Record<string, string>
+  script?: string
+  description?: string
+  params?: Record<string, string>
 }
 
 export interface AppConfig {
@@ -105,6 +116,7 @@ export interface ListConfig {
   edit_form?: string
   detail_view?: string
   page_size?: number
+  actions?: string[]
 }
 
 // Helper to get edit form for an entity type

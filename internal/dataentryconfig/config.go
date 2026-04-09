@@ -79,14 +79,20 @@ type Config struct {
 	Navigation []NavigationEntry            `yaml:"navigation"`
 }
 
-// Action defines a server-side operation triggered from the UI sidebar.
-// When clicked, the configured Lua script runs with rela.params populated
-// from the static Params map. Scripts return a table that becomes the
-// HTTP response (redirect URL or toast message).
+// Action defines an operation that can be triggered from the UI.
+//
+// An action has either a declarative property mutation (Set) or a Lua script
+// (Script), but not both. When referenced by a list's Actions field, the
+// action is available as a keyboard-driven bulk operation on selected rows.
+// When referenced by a navigation entry, it appears as a sidebar button.
 type Action struct {
 	Description string            `yaml:"description,omitempty" json:"description,omitempty"`
-	Script      string            `yaml:"script" json:"script"`
+	Script      string            `yaml:"script,omitempty" json:"script,omitempty"`
 	Params      map[string]string `yaml:"params,omitempty" json:"params,omitempty"`
+	Label       string            `yaml:"label,omitempty" json:"label,omitempty"`
+	Key         string            `yaml:"key,omitempty" json:"key,omitempty"`
+	Confirm     bool              `yaml:"confirm,omitempty" json:"confirm,omitempty"`
+	Set         map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
 }
 
 // AppConfig holds display metadata for the application.
@@ -163,6 +169,7 @@ type List struct {
 	EditForm       string          `yaml:"edit_form" json:"edit_form,omitempty"`
 	DetailView     string          `yaml:"detail_view" json:"detail_view,omitempty"`
 	PageSize       int             `yaml:"page_size" json:"page_size,omitempty"`
+	Actions        []string        `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 
 // ListColumn defines a column in a list view.

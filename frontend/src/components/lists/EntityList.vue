@@ -3,10 +3,12 @@ import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
+import { useListSelection } from '@/composables/useListSelection'
+import { useListActions } from '@/composables/useListActions'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { getCellValue, formatCellValue, isEnumPropertyDef } from '@/utils/format'
-import type { Entity, ListMeta, ListParams, FilterState } from '@/types'
+import type { Entity, ListMeta, ListParams, FilterState, ActionConfig } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import Badge from '@/components/common/Badge.vue'
@@ -29,6 +31,29 @@ const loading = ref(true)
 const includedEntities = ref<Record<string, Entity>>({})
 const pendingDelete = ref<Entity | null>(null)
 const deleting = ref(false)
+
+// Selection and actions
+const { selectedIds, toggle: toggleSelection, clear: clearActionSelection, isSelected, selectAll } = useListSelection()
+const hasSelection = computed(() => selectedIds.value.size > 0)
+const pendingAction = ref<{ id: string; config: ActionConfig } | null>(null)
+
+const listIdRef = computed(() => props.listId)
+// Forwarded to useListActions — scheduleFetch is defined below.
+let reloadList: () => void = () => {}
+
+const { resolvedActions, processing: actionProcessing, executeAction, triggerAction } = useListActions({
+  listId: listIdRef,
+  selectedIds,
+  entities,
+  onClearSelection: () => clearActionSelection(),
+  onRequestConfirm: (action, actionId) => {
+    pendingAction.value = { id: actionId, config: action }
+  },
+  onComplete: () => reloadList(),
+  onRemoveEntities: (ids) => {
+    entities.value = entities.value.filter(e => !ids.includes(e.id))
+  },
+})
 
 // Static (config-pinned) filter properties — used by useUrlFilterSync to
 // reject URL filters that would silently override the list's intended scope.
@@ -62,6 +87,7 @@ const { selectedIndex, clearSelection } = useListKeyboard({
   itemCount,
   hasPrevPage,
   hasNextPage,
+  hasSelection,
   onOpen: (index) => {
     const entity = entities.value[index]
     if (entity) navigateToEntity(entity)
@@ -80,6 +106,13 @@ const { selectedIndex, clearSelection } = useListKeyboard({
   onDelete: (index) => {
     const entity = entities.value[index]
     if (entity) pendingDelete.value = entity
+  },
+  onSelect: (index) => {
+    const entity = entities.value[index]
+    if (entity) toggleSelection(entity.id)
+  },
+  onClearSelection: () => {
+    clearActionSelection()
   },
   onPrevPage: () => {
     if (hasPrevPage.value) {
@@ -109,6 +142,8 @@ const configuredFilters = computed(() => {
 const hasRelationColumns = computed(() => {
   return listConfig.value?.columns?.some(col => col.relation) || false
 })
+
+const hasActions = computed(() => resolvedActions.value.length > 0)
 
 // Build query params
 const queryParams = computed((): ListParams => {
@@ -180,6 +215,9 @@ function scheduleFetch() {
     loadEntities()
   })
 }
+
+// Wire up the forward reference for useListActions
+reloadList = scheduleFetch
 
 // Methods
 async function loadEntities() {
@@ -382,12 +420,14 @@ watch(() => props.listId, () => {
   sortSpecs.value = []
   meta.value.page = 1
   clearSelection()
+  clearActionSelection()
   scheduleFetch()
 })
 
 // Clear selection when entities change
 watch(entities, () => {
   clearSelection()
+  clearActionSelection()
 })
 
 // Re-fetch when filters change (covers both user edits via writeToQuery and
@@ -448,7 +488,37 @@ onMounted(() => {
 
       <table v-else class="entity-table">
         <thead>
-          <tr>
+          <tr v-if="hasSelection" class="action-header-row">
+            <th class="select-column">
+              <input
+                type="checkbox"
+                :checked="selectedIds.size === entities.length"
+                :indeterminate="selectedIds.size > 0 && selectedIds.size < entities.length"
+                @change="selectedIds.size === entities.length ? clearActionSelection() : selectAll(entities.map(e => e.id))"
+              />
+            </th>
+            <th :colspan="listConfig.columns.length + 1" class="action-header-cell">
+              <span class="action-header-count">{{ selectedIds.size }} selected</span>
+              <button
+                v-for="{ id, config } in resolvedActions"
+                :key="id"
+                class="action-header-btn"
+                :disabled="actionProcessing"
+                @click="triggerAction(id, config)"
+              >
+                <kbd>{{ config.key }}</kbd>
+                {{ config.label }}
+              </button>
+            </th>
+          </tr>
+          <tr v-else>
+            <th v-if="hasActions" class="select-column">
+              <input
+                type="checkbox"
+                :checked="false"
+                @change="selectAll(entities.map(e => e.id))"
+              />
+            </th>
             <th
               v-for="column in listConfig.columns"
               :key="column.property || column.relation"
@@ -468,14 +538,21 @@ onMounted(() => {
             <th class="actions-column"/>
           </tr>
         </thead>
-        <tbody>
+        <TransitionGroup tag="tbody" name="row">
           <tr
             v-for="(entity, index) in entities"
             :key="entity.id"
             class="entity-row"
-            :class="{ selected: index === selectedIndex }"
+            :class="{ selected: index === selectedIndex, 'action-selected': isSelected(entity.id) }"
             @click="navigateToEntity(entity)"
           >
+            <td v-if="hasActions" class="select-cell" @click.stop>
+              <input
+                type="checkbox"
+                :checked="isSelected(entity.id)"
+                @change="toggleSelection(entity.id)"
+              />
+            </td>
             <td
               v-for="column in listConfig.columns"
               :key="column.property || column.relation"
@@ -503,7 +580,7 @@ onMounted(() => {
               </button>
             </td>
           </tr>
-        </tbody>
+        </TransitionGroup>
       </table>
 
       <Pagination
@@ -524,6 +601,17 @@ onMounted(() => {
     >
       Are you sure you want to delete <strong>{{ pendingDelete?.id }}</strong>?
       This action cannot be undone.
+    </ConfirmModal>
+
+    <ConfirmModal
+      :open="pendingAction !== null"
+      :title="`${pendingAction?.config.label}?`"
+      :confirm-label="pendingAction?.config.label || 'Confirm'"
+      :busy="actionProcessing"
+      @confirm="() => { if (pendingAction) { executeAction(pendingAction.id, pendingAction.config); pendingAction = null } }"
+      @cancel="pendingAction = null"
+    >
+      Apply <strong>{{ pendingAction?.config.label }}</strong> to {{ selectedIds.size }} selected entities?
     </ConfirmModal>
   </div>
 
@@ -638,6 +726,12 @@ onMounted(() => {
   border-collapse: collapse;
 }
 
+.entity-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
 .entity-table th {
   text-align: left;
   padding: 12px 16px;
@@ -648,6 +742,58 @@ onMounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--muted-text);
+}
+
+.action-header-row th {
+  background: var(--hover-bg);
+}
+
+.action-header-cell {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.action-header-count {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-color);
+  margin-right: 0.75rem;
+}
+
+.action-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--card-bg);
+  color: var(--text-color);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.action-header-btn:hover:not(:disabled) {
+  background: var(--hover-bg);
+}
+
+.action-header-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-header-btn kbd {
+  display: inline-block;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--hover-bg);
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1;
 }
 
 .entity-table th.sortable {
@@ -700,6 +846,53 @@ onMounted(() => {
 
 .entity-row.selected:hover {
   background: color-mix(in srgb, var(--accent-color) 25%, transparent);
+}
+
+.entity-row.action-selected {
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+.entity-row.action-selected:hover {
+  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
+}
+
+.row-leave-active {
+  transition: opacity 0.35s ease, background-color 0.35s ease;
+  overflow: hidden;
+}
+
+.row-leave-active td {
+  transition: padding 0.35s ease, line-height 0.35s ease, font-size 0.35s ease, border-color 0.35s ease;
+  overflow: hidden;
+}
+
+.row-leave-from {
+  opacity: 1;
+}
+
+.row-leave-to {
+  opacity: 0;
+  background-color: color-mix(in srgb, var(--accent-color) 20%, transparent);
+}
+
+.row-leave-to td {
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 0;
+  font-size: 0;
+  border-color: transparent;
+}
+
+.select-column,
+.select-cell {
+  width: 32px;
+  text-align: center;
+}
+
+.select-cell input[type="checkbox"],
+.select-column input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--accent-color, #6366f1);
 }
 
 .error-state {
