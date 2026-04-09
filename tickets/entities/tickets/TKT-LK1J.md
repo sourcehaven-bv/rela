@@ -5,7 +5,7 @@ title: Inject *slog.Logger into ai.Provider for parallel-test-safe log capture
 kind: refactor
 priority: low
 effort: s
-status: ready
+status: done
 ---
 
 ## Goal
@@ -45,53 +45,50 @@ fix is dependency injection.
 
 - Add a `*slog.Logger` field to `openAICompatProvider` (default to
 `slog.Default()` if not set so existing callers don't break)
-- Add a `WithLogger(*slog.Logger) Option` mirroring the existing
-options pattern, OR add a `Logger` field on `Config`/the constructor signature —
-pick whichever is least invasive at the call sites
-- Replace the three `logRequest*` package-level functions with methods
-on `*openAICompatProvider` so they can use `p.logger` directly
+- Add a `WithLogger(*slog.Logger) Option` mirroring the existing options pattern
+- Replace the three `logRequest*` package-level functions with methods on
+`*openAICompatProvider` so they can use `p.logger` directly
 - Rewrite `captureLog` in `openai_test.go` to construct a per-test
 `*slog.Logger` and pass it to the provider via `WithLogger`. The `logMu` global
 serialization disappears.
-- Once the global mutex is gone, opt the noisier tests into
-`t.Parallel()` to demonstrate the fix is real
+- Add a `TestMain` that pre-sets the leak-test env vars so tests can call
+`t.Parallel()` without hitting `t.Setenv`-after-`t.Parallel` panics
+- Opt the noisier tests into `t.Parallel()` to demonstrate the fix is real
 
 ## Out of Scope
 
-- Changing the format of any log lines (the existing `slog.TextHandler`
-output is fine)
-- Wiring a custom logger from CLI/MCP entry points — they continue to
-use `slog.Default()` via the constructor default. Logger DI here is about
+- Changing the format of any log lines (the existing `slog.TextHandler` output
+is fine)
+- Wiring a custom logger from CLI/MCP entry points — they continue to use
+`slog.Default()` via the constructor default. Logger DI here is about
 test-isolation, not about making production loggers configurable per-call.
-(That's a separate concern, see below.)
 - Removing the `--verbose`/`--quiet` Cobra flag wiring from
 `internal/cli/root.go` (added by FEAT-VH7Z / PR #328)
 
 ## Acceptance Criteria
 
-1. `OpenAICompatProvider` has a `logger *slog.Logger` field that
-defaults to `slog.Default()` when not set.
-2. `WithLogger(*slog.Logger) Option` (or equivalent) lets callers
-inject a logger.
-3. The three `logRequest*` functions become methods on the provider
-and use `p.logger` instead of `slog.Default()`.
-4. `captureLog` no longer swaps the process-global default and no
-longer uses `logMu`. Each test that wants log capture constructs its own
-`*slog.Logger` over a `*bytes.Buffer`.
+1. `OpenAICompatProvider` has a `logger *slog.Logger` field that defaults to
+`slog.Default()` when not set.
+2. `WithLogger(*slog.Logger) Option` lets callers inject a logger.
+3. The three `logRequest*` functions become methods on the provider and use
+`p.logger` instead of `slog.Default()`.
+4. `captureLog` no longer swaps the process-global default and no longer uses
+`logMu`. Each test that wants log capture constructs its own `*slog.Logger` over
+a `*bytes.Buffer`.
 5. At least one log-capturing test (e.g.
 `TestProvider_Chat_KeyNeverLeaks_SuccessPath`) opts into `t.Parallel()` and
 still passes deterministically.
 6. `go test -race ./internal/ai/...` passes.
-7. No production behavior change: CLI/MCP entry points still emit
-logs via `slog.Default()` as today (no entry-point wiring change).
+7. No production behavior change: CLI/MCP entry points still emit logs via
+`slog.Default()` as today (no entry-point wiring change).
 
 ## Notes
 
-- This is a small mechanical refactor. The whole change should be under
-~150 lines of Go.
-- The `ai.LoadProvider` convenience helper does not need to change —
-it builds a default-logger provider, and entry points that want a custom logger
-can still use `NewOpenAICompatProvider(cfg, WithLogger(...))` directly.
-- A future ticket could thread a per-call `*slog.Logger` through the CLI
-for `--verbose` runs that want richer AI-specific logging, but that is not this
+- This is a small mechanical refactor. The whole change should be under ~150
+lines of Go.
+- The `ai.LoadProvider` convenience helper does not need to change — it builds
+a default-logger provider, and entry points that want a custom logger can still
+use `NewOpenAICompatProvider(cfg, WithLogger(...))` directly.
+- A future ticket could thread a per-call `*slog.Logger` through the CLI for
+`--verbose` runs that want richer AI-specific logging, but that is not this
 ticket.
