@@ -83,7 +83,7 @@ func (s *Service) CheckRules(entities []*model.Entity, scope, ruleNames map[stri
 			continue
 		}
 
-		ruleViolations := s.checkRule(rule, entities, scope)
+		ruleViolations := s.CheckRule(rule, entities, scope)
 		violations = append(violations, ruleViolations...)
 	}
 
@@ -102,8 +102,8 @@ func CountBySeverity(violations []Violation) (errors, warnings int) {
 	return
 }
 
-// checkRule checks a single rule against entities.
-func (s *Service) checkRule(
+// CheckRule checks a single rule against entities.
+func (s *Service) CheckRule(
 	rule metamodel.ValidationRule,
 	entities []*model.Entity,
 	scope map[string]bool,

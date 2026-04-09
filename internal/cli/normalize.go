@@ -3,7 +3,6 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -58,7 +57,7 @@ Examples:
 
 		modified := 0
 		for _, entity := range entities {
-			normalized := markdown.NormalizeHeaders(entity.Content)
+			normalized := ws.NormalizeContent(entity.Content)
 			if normalized == entity.Content {
 				continue
 			}

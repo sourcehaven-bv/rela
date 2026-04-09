@@ -24,6 +24,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/validation"
 	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
@@ -393,7 +394,7 @@ func (w *Workspace) WriteCacheFile(name string, data []byte) error {
 }
 
 // DiscoverEntityTemplates returns all templates (including variants) for an entity type.
-func (w *Workspace) DiscoverEntityTemplates(entityType string) ([]*markdown.EntityTemplate, error) {
+func (w *Workspace) DiscoverEntityTemplates(entityType string) ([]*model.EntityTemplate, error) {
 	return w.repo.DiscoverEntityTemplates(entityType)
 }
 
@@ -1726,6 +1727,40 @@ func (w *Workspace) ExecuteView(viewName, entryID string) (*views.ViewResult, er
 // file access (e.g., attachment store, writing output files).
 func (w *Workspace) FS() storage.FS {
 	return w.repo.FS()
+}
+
+// NormalizeContent normalizes markdown headers in content so the minimum
+// level is ## (h2). Returns the normalized content.
+func (w *Workspace) NormalizeContent(content string) string {
+	return markdown.NormalizeHeaders(content)
+}
+
+// CheckValidationRule checks a single validation rule against the given entities.
+// Returns the entities that violate the rule. This is a package-level function
+// so callers without a full Workspace (e.g. test fixtures) can use it.
+func CheckValidationRule(
+	meta *metamodel.Metamodel, rule metamodel.ValidationRule, entities []*model.Entity,
+) []*model.Entity {
+	svc := validation.New(meta)
+	violations := svc.CheckRule(rule, entities, nil)
+
+	byID := make(map[string]*model.Entity, len(entities))
+	for _, e := range entities {
+		byID[e.ID] = e
+	}
+
+	seen := make(map[string]bool, len(violations))
+	var result []*model.Entity
+	for _, v := range violations {
+		if seen[v.EntityID] {
+			continue
+		}
+		seen[v.EntityID] = true
+		if entity, ok := byID[v.EntityID]; ok {
+			result = append(result, entity)
+		}
+	}
+	return result
 }
 
 // --- Search document conversion ---

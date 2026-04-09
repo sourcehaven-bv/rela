@@ -137,7 +137,6 @@ deps:
       - filter
       - importer
       - lua
-      - markdown
       - mcp
       - metamodel
       - output
@@ -163,7 +162,6 @@ deps:
       - git
       - graph
       - htmlutil
-      - markdown
       - metamodel
       - migration
       - openapi
@@ -189,7 +187,6 @@ deps:
       - dataentryconfig
       - filter
       - lua
-      - markdown
       - metamodel
       - rename
       - schema

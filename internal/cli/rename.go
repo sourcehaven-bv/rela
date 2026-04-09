@@ -9,8 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 )
 
@@ -166,41 +164,13 @@ func confirmRename() (bool, error) {
 }
 
 func applyRenameEntity(info *renameEntityInfo) error {
-	fs := ws.FS()
-	renameErr := metamodel.RenameEntityType(projectCtx.MetamodelPath, info.resolvedOld, info.newType, fs)
-	if renameErr != nil {
-		return fmt.Errorf("failed to update metamodel: %w", renameErr)
+	count, err := ws.RenameEntityType(info.resolvedOld, info.newType, info.newPlural)
+	if err != nil {
+		return err
 	}
-
-	if _, err := fs.Stat(info.oldDir); err == nil {
-		if renameErr := fs.Rename(info.oldDir, info.newDir); renameErr != nil {
-			return fmt.Errorf("failed to rename directory: %w", renameErr)
-		}
+	if count > 0 {
+		out.WriteMessage("  Updated %d entity file(s)", count)
 	}
-
-	if _, err := fs.Stat(info.newDir); err == nil {
-		count, updateErr := markdown.NewFileIO(fs).UpdateEntityTypesInDir(info.newDir, info.newType, meta)
-		if updateErr != nil {
-			return fmt.Errorf("failed to update entity files: %w", updateErr)
-		}
-		if count > 0 {
-			out.WriteMessage("  Updated %d entity file(s)", count)
-		}
-	}
-
-	if info.hasTemplate {
-		newTemplatePath := projectCtx.EntityTemplatePath(info.newType)
-		if mkdirErr := fs.MkdirAll(projectCtx.EntityTemplatesDir, 0755); mkdirErr != nil {
-			out.WriteWarning("Failed to create templates directory: %v", mkdirErr)
-		} else if renameErr := fs.Rename(info.oldTemplatePath, newTemplatePath); renameErr != nil {
-			out.WriteWarning("Failed to rename template: %v", renameErr)
-		}
-	}
-
-	if err := fs.Remove(projectCtx.CachePath); err != nil && !os.IsNotExist(err) {
-		out.WriteWarning("Failed to remove cache: %v", err)
-	}
-
 	out.WriteSuccess("Renamed entity type: %s → %s", info.resolvedOld, info.newType)
 	return nil
 }
