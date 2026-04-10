@@ -4,6 +4,7 @@ description: 'Fast entity creation: `rela quick "Bug: Graph crashes on empty inp
 effort: small
 id: IDEA-010
 inspiration: Task capture apps, inbox zero workflows
+notes: Rejected - The existing `rela create` command with templates provides sufficient speed. Adding a natural-language parser adds complexity without meaningful UX improvement.
 status: rejected
 title: Quick Capture
 type: idea
