@@ -64,13 +64,14 @@ func (s *Server) handleAnalyzeTraceabilityPrompt(
 		return nil, fmt.Errorf("id argument is required")
 	}
 
-	entity, ok := s.ws.GetEntity(id)
+	snap := s.ws.Snapshot()
+	entity, ok := snap.GetEntity(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
 	// Get entity details
-	entityText, err := convertEntity(entity, s.ws, true)
+	entityText, err := convertEntity(entity, snap, true)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +126,8 @@ func (s *Server) handleReviewOrphansPrompt(
 ) (*mcp.GetPromptResult, error) {
 	entityType := request.Params.Arguments["type"]
 
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	g := snap.Graph()
 	orphans := g.FindOrphans()
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
@@ -146,7 +148,7 @@ func (s *Server) handleReviewOrphansPrompt(
 	}
 
 	// Get available relation types
-	meta := s.ws.Meta()
+	meta := snap.Meta()
 	relTypes := meta.RelationTypes()
 	natsort.Strings(relTypes)
 	var relInfo strings.Builder
@@ -191,8 +193,9 @@ func (s *Server) handleSummarizeProjectPrompt(
 	_ context.Context, _ mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	// Entity counts by type
-	meta := s.ws.Meta()
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	meta := snap.Meta()
+	g := snap.Graph()
 	entityTypes := meta.EntityTypes()
 	natsort.Strings(entityTypes)
 	var entityCounts strings.Builder
@@ -268,18 +271,19 @@ func (s *Server) handleReviewEntityPrompt(
 		return nil, fmt.Errorf("id argument is required")
 	}
 
-	entity, ok := s.ws.GetEntity(id)
+	snap := s.ws.Snapshot()
+	entity, ok := snap.GetEntity(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
-	entityText, err := convertEntity(entity, s.ws, true)
+	entityText, err := convertEntity(entity, snap, true)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get entity type schema
-	meta := s.ws.Meta()
+	meta := snap.Meta()
 	def, _ := meta.GetEntityDef(entity.Type)
 	var schemaText string
 	if def != nil {

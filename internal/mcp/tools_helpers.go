@@ -95,7 +95,8 @@ func filterNilAndEmpty(props map[string]interface{}) map[string]interface{} {
 }
 
 func (s *Server) validateEntity(entity *model.Entity) *mcp.CallToolResult {
-	errs := s.ws.Meta().ValidateEntity(entity)
+	snap := s.ws.Snapshot()
+	errs := snap.Meta().ValidateEntity(entity)
 	if len(errs) == 0 {
 		return nil
 	}
@@ -112,7 +113,8 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 		return nil
 	}
 
-	meta := s.ws.Meta()
+	snap := s.ws.Snapshot()
+	meta := snap.Meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
 		return nil // Type validation will catch this
@@ -139,14 +141,15 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 }
 
 func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	g := snap.Graph()
 	var entities []*model.Entity
 	if rule.EntityType != "" {
 		entities = g.NodesByType(rule.EntityType)
 	} else {
 		entities = g.AllNodes()
 	}
-	return workspace.CheckValidationRule(s.ws.Meta(), rule, entities)
+	return workspace.CheckValidationRule(snap.Meta(), rule, entities)
 }
 
 func countEdgesByType(edges []*model.Relation, relType string) int {

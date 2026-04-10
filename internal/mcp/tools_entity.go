@@ -21,7 +21,8 @@ func (s *Server) handleListEntities(
 	limit := request.GetInt("limit", 0)
 	offset := request.GetInt("offset", 0)
 
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	g := snap.Graph()
 	var entities []*model.Entity
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
@@ -60,12 +61,13 @@ func (s *Server) handleShowEntity(
 	}
 	id = trimID(id)
 
-	entity, ok := s.ws.GetEntity(id)
+	snap := s.ws.Snapshot()
+	entity, ok := snap.GetEntity(id)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
-	text, err := convertEntity(entity, s.ws, true)
+	text, err := convertEntity(entity, snap, true)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -85,12 +87,13 @@ func (s *Server) handleSearchEntities(
 
 	// Search via Bleve index (returns results sorted by relevance).
 	// Fetch extra when type filtering is needed since some results may be discarded.
+	snap := s.ws.Snapshot()
 	words := strings.Fields(query)
 	fetchLimit := limit
 	if entityType != "" {
 		fetchLimit = limit * 2
 	}
-	entities, _, err := s.ws.Search(words, nil, fetchLimit)
+	entities, _, err := snap.Search(words, nil, fetchLimit)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
@@ -151,7 +154,8 @@ func (s *Server) handleCreateEntity(
 		return mcp.NewToolResultError(createErr.Error()), nil
 	}
 
-	text, err := convertEntity(entity, s.ws, false)
+	snap := s.ws.Snapshot()
+	text, err := convertEntity(entity, snap, false)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -199,7 +203,8 @@ func (s *Server) handleUpdateEntity(
 		return mcp.NewToolResultError(updateErr.Error()), nil
 	}
 
-	text, convertErr := convertEntity(entity, s.ws, true)
+	snap := s.ws.Snapshot()
+	text, convertErr := convertEntity(entity, snap, true)
 	if convertErr != nil {
 		return mcp.NewToolResultError(convertErr.Error()), nil
 	}
@@ -216,7 +221,8 @@ func (s *Server) handleDeleteEntity(
 	id = trimID(id)
 	cascade := request.GetBool("cascade", false)
 
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	g := snap.Graph()
 	entity, ok := g.GetNode(id)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
@@ -262,7 +268,8 @@ func (s *Server) handleRenameEntity(
 	dryRun := request.GetBool("dry_run", false)
 
 	// Get entity to find type
-	entity, ok := s.ws.Graph().GetNode(oldID)
+	snap := s.ws.Snapshot()
+	entity, ok := snap.Graph().GetNode(oldID)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", oldID)), nil
 	}

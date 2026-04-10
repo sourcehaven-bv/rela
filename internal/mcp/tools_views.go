@@ -80,8 +80,9 @@ func (s *Server) handleExecuteView(
 			fmt.Sprintf("view not found: %s (available: %s)", viewName, strings.Join(names, ", "))), nil
 	}
 
-	meta := s.ws.Meta()
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	meta := snap.Meta()
+	g := snap.Graph()
 	if validationErr := viewDef.Validate(meta, viewName); validationErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("view validation failed: %v", validationErr)), nil
 	}
