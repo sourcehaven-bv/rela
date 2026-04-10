@@ -63,7 +63,7 @@ Examples:
 		}
 
 		// Execute and collect deps
-		engine := views.NewEngine(ws.Graph(), meta)
+		engine := views.NewEngine(ws.Snapshot().Graph(), meta)
 		ids, err := engine.CollectDeps(viewDef, rootIDs)
 		if err != nil {
 			return fmt.Errorf("failed to collect dependencies: %w", err)

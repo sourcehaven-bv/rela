@@ -90,7 +90,7 @@ and maintain semantic relationships between them.`,
 
 		// Convenience aliases for read-only commands
 		projectCtx = ws.Paths()
-		meta = ws.Meta()
+		meta = ws.Snapshot().Meta()
 
 		// Set up output writer
 		out = output.New(output.Format(outputFormat))
