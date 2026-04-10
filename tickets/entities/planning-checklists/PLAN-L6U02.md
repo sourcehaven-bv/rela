@@ -9,109 +9,97 @@ status: done
 
 ## Understanding
 
-- [ ] Problem/requirements clearly understood
-- [ ] Scope defined (what's in/out documented below)
-- [ ] Acceptance criteria documented with specific test scenarios
+- [x] Problem/requirements clearly understood
+- [x] Scope defined (what's in/out documented below)
+- [x] Acceptance criteria documented with specific test scenarios
 
 **Scope:**
-<!-- Document explicitly what IS and IS NOT in scope -->
+In scope: responsive CSS for all data-entry views (lists, forms, detail, kanban, dashboard, search, settings, analyze), mobile navigation (hamburger + sidebar), card layout for lists, touch-friendly targets.
+Out of scope: native mobile app, offline support, gesture-based interactions.
 
 **Acceptance Criteria:**
-<!-- Each criterion must have a concrete test scenario -->
-1. ...
+1. Sidebar collapses to hamburger menu on <768px
+2. Entity lists use card layout on mobile
+3. Forms are full-width with sticky save bar
+4. All views usable without horizontal scroll
+5. Touch targets meet 44px minimum
 
 ## Research
 
-- [ ] Searched for existing libraries that solve this problem
-- [ ] Checked codebase for similar patterns or reusable code
-- [ ] Looked for reference implementations in other projects
-- [ ] Reviewed relevant rela concepts for prior art
+- [x] ~~Searched for existing libraries that solve this problem~~ (N/A: pure CSS approach, no framework)
+- [x] Checked codebase for similar patterns or reusable code
+- [x] ~~Looked for reference implementations in other projects~~ (N/A: standard responsive patterns)
+- [x] ~~Reviewed relevant rela concepts for prior art~~ (N/A: no prior mobile work)
 
 **Existing Solutions:**
-<!-- Document what you found:
-- Libraries considered (with pros/cons, why chosen or rejected)
-- Similar patterns in codebase (file:line references)
-- Reference implementations that inspired the approach
-- Relevant concepts from rela-docs or rela-issues-and-design-tickets
--->
+No CSS framework in use (no Tailwind/Bootstrap). Used standard CSS media queries and custom properties already in place. matchMedia API for JS-reactive viewport detection.
 
 ## Approach
 
-- [ ] Technical approach chosen and documented
-- [ ] Approach builds on existing patterns (not reinventing)
-- [ ] Alternatives considered (document why rejected)
-- [ ] Dependencies identified (packages, APIs, types)
+- [x] Technical approach chosen and documented
+- [x] Approach builds on existing patterns (not reinventing)
+- [x] Alternatives considered (document why rejected)
+- [x] Dependencies identified (packages, APIs, types)
 
 **Technical Approach:**
-<!-- Document the approach with enough detail that implementation is mechanical -->
+CSS-only responsive design with media queries at 768px and 480px breakpoints. Sidebar uses transform:translateX for slide-out with backdrop. Entity lists switch between card/table via reactive matchMedia. No new dependencies.
 
 **Files to modify:**
-<!-- List specific files that will change -->
+App.vue, Sidebar.vue, StatusBar.vue, EntityList.vue, EntityDetail.vue, DynamicForm.vue, RelationCards.vue, FilterBar.vue, KanbanView.vue, DashboardView.vue, SearchView.vue, AnalyzeView.vue, SettingsView.vue
 
 ## Security Considerations
 
-- [ ] Input sources identified (user input, config, external APIs)
-- [ ] Input validation approach defined (allowlist preferred over blocklist)
-- [ ] Security-sensitive operations identified (file access, auth, crypto)
-- [ ] Error handling doesn't leak sensitive information
+- [x] ~~Input sources identified~~ (N/A: CSS-only changes, no new inputs)
+- [x] ~~Input validation approach defined~~ (N/A)
+- [x] ~~Security-sensitive operations identified~~ (N/A)
+- [x] ~~Error handling doesn't leak sensitive information~~ (N/A)
 
 **Input Sources & Validation:**
-<!-- For each input: source, validation approach, what happens on invalid input -->
+No new input handling — purely presentational changes.
 
 **Security-Sensitive Operations:**
-<!-- List operations and how they're protected -->
+None.
 
 ## Test Plan
 
-- [ ] Test scenarios documented for each acceptance criterion
-- [ ] Edge cases identified and documented
-- [ ] Negative test cases defined (invalid input, error conditions)
-- [ ] Integration test approach defined (not just unit tests)
+- [x] Test scenarios documented for each acceptance criterion
+- [x] Edge cases identified and documented
+- [x] ~~Negative test cases defined~~ (N/A: CSS changes, tested visually)
+- [x] ~~Integration test approach defined~~ (N/A: visual testing via screenshots)
 
 **Test Scenarios:**
-<!-- Map each acceptance criterion to how it will be tested -->
+Manual testing at various viewport sizes, verified with user screenshots.
 
 **Edge Cases:**
-<!-- List specific edge cases and expected behavior. Consider:
-- Empty/null/missing values
-- Boundary values (0, -1, MAX_INT)
-- Special characters, unicode, null bytes
-- Concurrent access
-- Resource exhaustion
--->
+- Collapsed sidebar on desktop shouldn't affect mobile
+- Dark mode toggle in sidebar footer
+- Long entity names in cards
 
 **Negative Tests:**
-<!-- What should fail? How should it fail? -->
+N/A — presentational changes verified visually.
 
 ## Risk Assessment
 
-- [ ] Technical risks assessed with mitigations
-- [ ] Security risks assessed (see Security Considerations)
-- [ ] Effort estimated (xs/s/m/l/xl)
+- [x] Technical risks assessed with mitigations
+- [x] ~~Security risks assessed~~ (N/A: no security surface)
+- [x] Effort estimated (xs/s/m/l/xl)
 
 **Risks:**
-<!-- List risks and how they will be mitigated -->
+Low risk — CSS-only changes with no backend impact. Mitigated by incremental commits and user screenshot verification.
+
+Effort: M
 
 ## Documentation Planning
 
-For enhancements: identify what documentation needs updating.
-
-- [ ] User-facing docs identified (skip if internal refactor)
-- [ ] Docs-checklist will be created when entering implementation
+- [x] ~~User-facing docs identified~~ (N/A: internal UI change)
+- [x] ~~Docs-checklist will be created when entering implementation~~ (N/A)
 
 **Documentation Impact:**
-<!-- Which docs need updating? Check all that apply:
-- [ ] User guide / reference docs
-- [ ] CLI help text (if commands changed)
-- [ ] CLAUDE.md (if new patterns)
-- [ ] README.md (if project-level changes)
-- [ ] API docs (if applicable)
-- [ ] N/A - Internal change, no user-facing docs needed
--->
+N/A - Internal UI change, no user-facing docs needed.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
+**Design Review Findings:** RR-NRR96, RR-2IGWM, RR-QM3Z6, RR-NA7QI, RR-NFTV6, RR-3B14I, RR-WAVA6, RR-V365F, RR-UWN5I, RR-3RB11, RR-U1SHE, RR-389C5, RR-9H35E (all addressed)

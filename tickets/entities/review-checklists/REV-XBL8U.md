@@ -51,14 +51,14 @@ Code review: RR-XK18Y, RR-G37G8, RR-XONP3, RR-QQYOP, RR-U61CH, RR-KW5RQ, RR-7ZQ2
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
+- [x] Commit message explains the why, not just what
 - [x] No TODOs or FIXMEs left unaddressed
 - [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/381
