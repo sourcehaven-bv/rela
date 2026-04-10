@@ -2,7 +2,7 @@
 id: IMPL-B2UCQ
 type: implementation-checklist
 title: 'Implementation: Add embeddings support: ai.embed Lua binding and Provider.Embed'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

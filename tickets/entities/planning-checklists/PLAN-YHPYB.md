@@ -2,7 +2,7 @@
 id: PLAN-YHPYB
 type: planning-checklist
 title: 'Planning: Add embeddings support: ai.embed Lua binding and Provider.Embed'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
