@@ -824,8 +824,14 @@ onMounted(() => loadEntity())
   }
 
   .detail-section {
-    padding: 16px;
-    margin-bottom: 16px;
+    background: none;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+    padding: 0;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 16px;
   }
 }
 </style>

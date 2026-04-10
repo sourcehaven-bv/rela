@@ -737,10 +737,6 @@ onBeforeRouteLeave((_to, _from, next) => {
 }
 
 .content-field {
-  background: var(--card-bg);
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  padding: 24px;
   margin-top: 16px;
   margin-bottom: 24px;
 }
@@ -806,12 +802,15 @@ onBeforeRouteLeave((_to, _from, next) => {
   }
 
   .form-section {
-    padding: 12px;
-    margin-bottom: 12px;
+    padding: 0;
+    margin-bottom: 16px;
+    border: none;
+    box-shadow: none;
+    background: none;
   }
 
   .content-field {
-    padding: 12px;
+    padding: 0;
     margin-top: 8px;
     margin-bottom: 12px;
   }
