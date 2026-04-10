@@ -2,7 +2,7 @@
 id: IMPL-KTY3Z
 type: implementation-checklist
 title: 'Implementation: Push markdown imports behind repository boundary'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

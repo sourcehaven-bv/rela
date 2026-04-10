@@ -5,7 +5,7 @@ title: Push markdown imports behind repository boundary
 kind: refactor
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 ## Problem
