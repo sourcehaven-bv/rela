@@ -1,14 +1,14 @@
-// Package scheduler runs Lua scripts on cron-like schedules.
-// It provides a long-running scheduler that executes project scripts at
-// configured intervals, with missed-run detection, overlap prevention,
-// and graceful shutdown.
+// Package scheduler runs Lua scripts on simple recurring schedules.
+// It provides a long-running, single-threaded scheduler that executes
+// project scripts sequentially with missed-run detection and graceful shutdown.
 package scheduler
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"time"
 
-	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,14 +22,121 @@ type Config struct {
 
 // TaskConfig defines a single scheduled task.
 type TaskConfig struct {
-	Name     string        `yaml:"name"`
-	Script   string        `yaml:"script"`
-	Schedule string        `yaml:"schedule"`
-	Timeout  time.Duration `yaml:"timeout"`
+	Name   string   `yaml:"name"`
+	Script string   `yaml:"script"`
+	Every  Schedule `yaml:"every"`
 }
 
-// DefaultTimeout is the default execution timeout for a task when none is configured.
-const DefaultTimeout = 5 * time.Minute
+// Schedule represents a recurring schedule interval.
+// Supported values: "day", "week", or a duration like "30m", "2h", "1h30m".
+type Schedule struct {
+	kind     scheduleKind
+	interval time.Duration // only for intervalKind
+	set      bool          // true after successful parse
+}
+
+type scheduleKind int
+
+const (
+	dayKind scheduleKind = iota
+	weekKind
+	intervalKind
+)
+
+// IsDue returns true if enough time has passed since lastRun for the next
+// execution. For day/week schedules, it checks whether the calendar boundary
+// (midnight local time / Monday midnight) has been crossed.
+func (s Schedule) IsDue(lastRun, now time.Time) bool {
+	switch s.kind {
+	case dayKind:
+		// Due if now is on a different day than lastRun (local time).
+		return truncateToDay(now) != truncateToDay(lastRun)
+	case weekKind:
+		// Due if now is in a different ISO week than lastRun.
+		return truncateToWeek(now) != truncateToWeek(lastRun)
+	case intervalKind:
+		return now.Sub(lastRun) >= s.interval
+	}
+	return false
+}
+
+func truncateToDay(t time.Time) int {
+	y, m, d := t.Date()
+	return y*10000 + int(m)*100 + d
+}
+
+func truncateToWeek(t time.Time) int {
+	y, w := t.ISOWeek()
+	return y*100 + w
+}
+
+// String returns a human-readable representation of the schedule.
+func (s Schedule) String() string {
+	switch s.kind {
+	case dayKind:
+		return "day"
+	case weekKind:
+		return "week"
+	case intervalKind:
+		return s.interval.String()
+	}
+	return "unknown"
+}
+
+var durationRe = regexp.MustCompile(`^\d+[mhMH]`)
+
+// UnmarshalYAML implements yaml.Unmarshaler for Schedule.
+func (s *Schedule) UnmarshalYAML(value *yaml.Node) error {
+	var raw string
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	parsed, err := parseSchedule(raw)
+	if err != nil {
+		return err
+	}
+	*s = parsed
+	return nil
+}
+
+// MarshalYAML implements yaml.Marshaler for Schedule.
+func (s Schedule) MarshalYAML() (interface{}, error) {
+	return s.String(), nil
+}
+
+func parseSchedule(raw string) (Schedule, error) {
+	switch raw {
+	case "day":
+		return Schedule{kind: dayKind, set: true}, nil
+	case "week":
+		return Schedule{kind: weekKind, set: true}, nil
+	}
+
+	// Try Go duration (e.g. "30m", "2h", "1h30m")
+	if durationRe.MatchString(raw) {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return Schedule{}, fmt.Errorf("invalid schedule %q: %w", raw, err)
+		}
+		if d <= 0 {
+			return Schedule{}, fmt.Errorf("invalid schedule %q: must be positive", raw)
+		}
+		return Schedule{kind: intervalKind, interval: d, set: true}, nil
+	}
+
+	// Try bare number as minutes (e.g. "30" = 30m)
+	if n, err := strconv.Atoi(raw); err == nil {
+		if n <= 0 {
+			return Schedule{}, fmt.Errorf("invalid schedule %q: must be positive", raw)
+		}
+		return Schedule{kind: intervalKind, interval: time.Duration(n) * time.Minute, set: true}, nil
+	}
+
+	return Schedule{}, fmt.Errorf(
+		"invalid schedule %q: use \"day\", \"week\", or a duration like \"30m\", \"2h\"",
+		raw,
+	)
+}
 
 // ParseConfig parses and validates scheduler configuration from YAML bytes.
 func ParseConfig(data []byte) (*Config, error) {
@@ -47,10 +154,9 @@ func ParseConfig(data []byte) (*Config, error) {
 
 func (c *Config) validate() error {
 	if len(c.Tasks) == 0 {
-		return nil // empty config is valid — scheduler runs but does nothing
+		return nil // empty config is valid
 	}
 
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	seen := make(map[string]struct{}, len(c.Tasks))
 
 	for i, t := range c.Tasks {
@@ -65,14 +171,8 @@ func (c *Config) validate() error {
 		if t.Script == "" {
 			return fmt.Errorf("task %q: script is required", t.Name)
 		}
-		if t.Schedule == "" {
-			return fmt.Errorf("task %q: schedule is required", t.Name)
-		}
-		if _, err := parser.Parse(t.Schedule); err != nil {
-			return fmt.Errorf("task %q: invalid cron expression %q: %w", t.Name, t.Schedule, err)
-		}
-		if t.Timeout < 0 {
-			return fmt.Errorf("task %q: timeout must not be negative", t.Name)
+		if !t.Every.set {
+			return fmt.Errorf("task %q: every is required", t.Name)
 		}
 	}
 

@@ -17,26 +17,31 @@ var schedulerCmd = &cobra.Command{
 	Use:         "scheduler",
 	Short:       "Run scheduled Lua tasks",
 	Annotations: map[string]string{skipProjectDiscovery: "true"},
-	Long: `Starts a long-running process that executes Lua scripts on cron schedules.
+	Long: `Starts a long-running process that executes Lua scripts on recurring schedules.
 
 Schedules are defined in schedules.yaml in the project root:
 
   tasks:
     - name: daily-report
       script: reports/daily.lua
-      schedule: "0 9 * * *"
-      timeout: 5m
-    - name: validate-orphans
+      every: day
+    - name: weekly-review
+      script: checks/weekly.lua
+      every: week
+    - name: quick-check
       script: checks/orphans.lua
-      schedule: "*/30 * * * *"
+      every: 30m
 
-Each task references a Lua script in the scripts/ directory. Scripts have access
-to the same capabilities as 'rela script' (entity CRUD, graph queries, AI).
+Schedule values:
+  day       Run once per day (after midnight local time)
+  week      Run once per week (after Monday midnight)
+  30m, 2h   Run at a fixed interval
 
-On startup, the scheduler checks for missed runs: if a task's scheduled window
-passed while the scheduler was not running, it executes immediately.
+Tasks execute sequentially in config order. Each task references a Lua script
+in the scripts/ directory with the same capabilities as 'rela script'.
 
-The scheduler supports graceful shutdown via Ctrl+C / SIGTERM.`,
+On startup, tasks that missed their window are executed immediately.
+Graceful shutdown via Ctrl+C / SIGTERM.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {

@@ -74,7 +74,6 @@ components:
 vendors:
   bleve:       { in: github.com/blevesearch/bleve/** }
   cobra:       { in: github.com/spf13/cobra }
-  cron:        { in: github.com/robfig/cron/** }
   glamour:     { in: github.com/charmbracelet/glamour }
   huh:         { in: github.com/charmbracelet/huh }
   yaml:        { in: gopkg.in/yaml.v3 }
@@ -317,8 +316,6 @@ deps:
       - metamodel
       - project
       - script
-    canUse:
-      - cron
   script:
     mayDependOn:
       - ai

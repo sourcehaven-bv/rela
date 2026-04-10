@@ -2,12 +2,8 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"sync"
 	"time"
-
-	"github.com/robfig/cron/v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -15,9 +11,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
-// maxLookback is the maximum time to look back for missed scheduled runs.
-// Covers schedules up to weekly frequency.
-const maxLookback = 8 * 24 * time.Hour
+// tickInterval is how often the scheduler wakes to check for due tasks.
+const tickInterval = 60 * time.Second
 
 // WorkspaceProvider is the subset of workspace.Workspace the scheduler needs.
 type WorkspaceProvider interface {
@@ -28,7 +23,7 @@ type WorkspaceProvider interface {
 	WriteCacheFile(name string, data []byte) error
 }
 
-// Scheduler runs Lua scripts on cron schedules.
+// Scheduler runs Lua scripts sequentially on simple recurring schedules.
 type Scheduler struct {
 	config *Config
 	engine *script.Engine
@@ -36,20 +31,23 @@ type Scheduler struct {
 	// wsRaw is the workspace as interface{} for passing to ScriptContext.
 	// It must satisfy lua.WorkspaceInterface.
 	wsRaw  interface{}
+	state  *State
 	logger *slog.Logger
 	now    func() time.Time // for testing
-
-	stateMu sync.Mutex
-	state   *State
 
 	// executeTaskFunc overrides task execution for testing.
 	// When nil, doExecuteTask is used.
 	executeTaskFunc func(ctx context.Context, task TaskConfig)
 }
 
-// New creates a Scheduler. The wsRaw parameter must be the *workspace.Workspace
-// value (satisfying lua.WorkspaceInterface) that the script engine expects.
-func New(cfg *Config, engine *script.Engine, ws WorkspaceProvider, wsRaw interface{}, logger *slog.Logger) *Scheduler {
+// New creates a Scheduler.
+func New(
+	cfg *Config,
+	engine *script.Engine,
+	ws WorkspaceProvider,
+	wsRaw interface{},
+	logger *slog.Logger,
+) *Scheduler {
 	return &Scheduler{
 		config: cfg,
 		engine: engine,
@@ -61,13 +59,10 @@ func New(cfg *Config, engine *script.Engine, ws WorkspaceProvider, wsRaw interfa
 }
 
 // Run starts the scheduler and blocks until ctx is cancelled.
-// It first executes any tasks that missed their scheduled window,
-// then starts the cron loop.
+// Tasks are executed sequentially in a single goroutine — no concurrent
+// script execution, no mutexes needed.
 func (s *Scheduler) Run(ctx context.Context) error {
 	s.loadState()
-
-	// Execute missed runs before starting the cron loop.
-	s.executeMissedRuns(ctx)
 
 	if len(s.config.Tasks) == 0 {
 		s.logger.Info("no tasks configured, waiting for shutdown")
@@ -75,33 +70,50 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		return nil
 	}
 
-	c := cron.New(cron.WithLogger(cron.PrintfLogger(slog.NewLogLogger(s.logger.Handler(), slog.LevelDebug))))
-
-	for _, task := range s.config.Tasks {
-		t := task // capture
-		warnLogger := cron.VerbosePrintfLogger(slog.NewLogLogger(s.logger.Handler(), slog.LevelWarn))
-		skipWrapper := cron.SkipIfStillRunning(warnLogger)
-		job := cron.FuncJob(func() {
-			s.executeTask(ctx, t)
-		})
-		if _, err := c.AddJob(t.Schedule, skipWrapper(job)); err != nil {
-			return fmt.Errorf("task %q: add to cron: %w", t.Name, err)
-		}
-		s.logger.Info("scheduled task", "name", t.Name, "schedule", t.Schedule, "script", t.Script)
+	for _, t := range s.config.Tasks {
+		s.logger.Info("scheduled task", "name", t.Name, "every", t.Every, "script", t.Script)
 	}
 
-	c.Start()
+	// Run due tasks immediately (handles first-ever and missed runs).
+	s.runDueTasks(ctx)
+
 	s.logger.Info("scheduler started", "tasks", len(s.config.Tasks))
 
-	<-ctx.Done()
-	s.logger.Info("shutting down scheduler")
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
 
-	// Stop accepting new runs and wait for in-flight tasks.
-	stopCtx := c.Stop()
-	<-stopCtx.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("scheduler stopped")
+			return nil
+		case <-ticker.C:
+			s.runDueTasks(ctx)
+		}
+	}
+}
 
-	s.logger.Info("scheduler stopped")
-	return nil
+// runDueTasks checks each task and executes it if due. All execution is
+// sequential in the caller's goroutine.
+func (s *Scheduler) runDueTasks(ctx context.Context) {
+	now := s.now()
+	for _, task := range s.config.Tasks {
+		if ctx.Err() != nil {
+			return
+		}
+
+		lastRun, recorded := s.state.Tasks[task.Name]
+		if !recorded {
+			s.logger.Info("first run, executing immediately", "name", task.Name)
+			s.executeTask(ctx, task)
+			continue
+		}
+
+		if task.Every.IsDue(lastRun, now) {
+			s.logger.Info("task due", "name", task.Name, "last_run", lastRun)
+			s.executeTask(ctx, task)
+		}
+	}
 }
 
 func (s *Scheduler) executeTask(ctx context.Context, task TaskConfig) {
@@ -112,10 +124,6 @@ func (s *Scheduler) executeTask(ctx context.Context, task TaskConfig) {
 	s.doExecuteTask(ctx, task)
 }
 
-// doExecuteTask runs a single task. The ctx is used for cancellation awareness
-// in logging, but note that script.Engine does not propagate context cancellation
-// to the Lua VM. The Lua runtime has its own timeout (default 30s) that prevents
-// infinite loops.
 func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	if ctx.Err() != nil {
 		s.logger.Warn("skipping task, scheduler shutting down", "name", task.Name)
@@ -127,7 +135,8 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 
 	// Sync workspace to get fresh graph state.
 	if _, err := s.ws.Sync(); err != nil {
-		s.logger.Warn("workspace sync failed, executing with stale data", "name", task.Name, "error", err)
+		s.logger.Warn("workspace sync failed, executing with stale data",
+			"name", task.Name, "error", err)
 	}
 
 	sctx := &schedulerScriptContext{
@@ -146,11 +155,9 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 
 	s.logger.Info("task completed", "name", task.Name, "duration", elapsed)
 
-	// Record successful run.
-	s.stateMu.Lock()
+	// Record successful run — no mutex needed, single goroutine.
 	s.state.Tasks[task.Name] = s.now()
 	s.saveState()
-	s.stateMu.Unlock()
 }
 
 func (s *Scheduler) loadState() {
@@ -171,59 +178,6 @@ func (s *Scheduler) saveState() {
 	if err := s.ws.WriteCacheFile(stateFile, data); err != nil {
 		s.logger.Error("failed to save scheduler state", "error", err)
 	}
-}
-
-func (s *Scheduler) executeMissedRuns(ctx context.Context) {
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	now := s.now()
-
-	for _, task := range s.config.Tasks {
-		if ctx.Err() != nil {
-			return
-		}
-
-		sched, err := parser.Parse(task.Schedule)
-		if err != nil {
-			continue // already validated in config
-		}
-
-		s.stateMu.Lock()
-		lastRun, recorded := s.state.Tasks[task.Name]
-		s.stateMu.Unlock()
-
-		if !recorded {
-			s.logger.Info("first run, executing immediately", "name", task.Name)
-			s.executeTask(ctx, task)
-			continue
-		}
-
-		prevScheduled := prevScheduleTime(sched, now)
-		if !prevScheduled.IsZero() && prevScheduled.After(lastRun) {
-			s.logger.Info("missed run detected, executing now",
-				"name", task.Name,
-				"last_run", lastRun,
-				"missed_window", prevScheduled,
-			)
-			s.executeTask(ctx, task)
-		}
-	}
-}
-
-// prevScheduleTime finds the most recent scheduled time before `before`.
-// It walks forward from maxLookback ago using the schedule's Next() method.
-// This covers schedules up to weekly frequency.
-func prevScheduleTime(sched cron.Schedule, before time.Time) time.Time {
-	candidate := before.Add(-maxLookback)
-	var prev time.Time
-	for {
-		next := sched.Next(candidate)
-		if next.After(before) || next.Equal(before) {
-			break
-		}
-		prev = next
-		candidate = next
-	}
-	return prev
 }
 
 // schedulerScriptContext implements metamodel.ScriptContext for scheduled tasks.
