@@ -601,7 +601,7 @@ Examples:
 		viewsFile := loadViewsFile()
 
 		// Run analysis
-		analysis := schema.Analyze(meta, ws.Graph(), dataEntry, viewsFile, schemaThreshold)
+		analysis := schema.Analyze(meta, ws.Snapshot().Graph(), dataEntry, viewsFile, schemaThreshold)
 
 		// Handle cleanup mode
 		if schemaCleanup {

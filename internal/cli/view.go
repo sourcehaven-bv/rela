@@ -41,8 +41,11 @@ Examples:
 			return fmt.Errorf("view validation failed: %w", validationErr)
 		}
 
+		snap := ws.Snapshot()
+		g := snap.Graph()
+
 		// Create view engine
-		engine := views.NewEngine(ws.Graph(), meta)
+		engine := views.NewEngine(g, meta)
 
 		// Execute the view
 		result, err := engine.Execute(viewDef, entryID)
@@ -56,7 +59,7 @@ Examples:
 			format = "yaml" // Default to yaml for views
 		}
 
-		output, err := views.Format(result, format, ws.Graph(), meta)
+		output, err := views.Format(result, format, g, meta)
 		if err != nil {
 			return fmt.Errorf("failed to format output: %w", err)
 		}

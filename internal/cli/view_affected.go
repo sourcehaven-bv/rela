@@ -83,7 +83,7 @@ Examples:
 		}
 
 		// Find affected roots
-		engine := views.NewEngine(ws.Graph(), meta)
+		engine := views.NewEngine(ws.Snapshot().Graph(), meta)
 		affected, err := engine.AffectedRoots(viewDef, changedIDs, rootIDs)
 		if err != nil {
 			return fmt.Errorf("failed to find affected roots: %w", err)
