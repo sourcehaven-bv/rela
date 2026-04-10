@@ -17,7 +17,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -615,7 +614,7 @@ func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]
 }
 
 // templatesForType returns all entity templates for a type, or nil on error.
-func (a *App) templatesForType(entityType string) []*markdown.EntityTemplate {
+func (a *App) templatesForType(entityType string) []*model.EntityTemplate {
 	templates, err := a.ws.DiscoverEntityTemplates(entityType)
 	if err != nil {
 		return nil

@@ -8,9 +8,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func (s *Server) resolveType(typeName string) string {
@@ -139,15 +139,6 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 }
 
 func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
-	whenFilters, err := filter.ParseAll(rule.When)
-	if err != nil {
-		return nil
-	}
-	thenFilters, err := filter.ParseAll(rule.Then)
-	if err != nil {
-		return nil
-	}
-
 	g := s.ws.Graph()
 	var entities []*model.Entity
 	if rule.EntityType != "" {
@@ -155,42 +146,7 @@ func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Ent
 	} else {
 		entities = g.AllNodes()
 	}
-
-	meta := s.ws.Meta()
-	var violations []*model.Entity
-	for _, entity := range entities {
-		entityDef, ok := meta.GetEntityDef(entity.Type)
-		if !ok {
-			continue
-		}
-
-		if len(whenFilters) > 0 {
-			matches, matchErr := filter.MatchAll(entity, whenFilters, entityDef, meta)
-			if matchErr != nil || !matches {
-				continue
-			}
-		}
-
-		if len(thenFilters) > 0 {
-			satisfies, matchErr := filter.MatchAll(entity, thenFilters, entityDef, meta)
-			if matchErr != nil {
-				violations = append(violations, entity)
-				continue
-			}
-			if !satisfies {
-				violations = append(violations, entity)
-				continue
-			}
-		}
-
-		if rule.Content != nil {
-			if !markdown.CheckContentRule(entity, rule.Content) {
-				violations = append(violations, entity)
-			}
-		}
-	}
-
-	return violations
+	return workspace.CheckValidationRule(s.ws.Meta(), rule, entities)
 }
 
 func countEdgesByType(edges []*model.Relation, relType string) int {

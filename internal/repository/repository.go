@@ -98,7 +98,7 @@ type Store interface {
 	GenerateRelationTemplate(meta *metamodel.Metamodel, relationType string, force bool) (bool, error)
 	// DiscoverEntityTemplates returns all templates (including variants) for an entity type.
 	// Templates are named <type>.md (default) and <type>--<variant>.md (variants).
-	DiscoverEntityTemplates(entityType string) ([]*markdown.EntityTemplate, error)
+	DiscoverEntityTemplates(entityType string) ([]*model.EntityTemplate, error)
 
 	// --- Path Helpers ---
 
@@ -512,7 +512,7 @@ func (r *Repository) GenerateRelationTemplate(
 }
 
 // DiscoverEntityTemplates returns all templates (including variants) for an entity type.
-func (r *Repository) DiscoverEntityTemplates(entityType string) ([]*markdown.EntityTemplate, error) {
+func (r *Repository) DiscoverEntityTemplates(entityType string) ([]*model.EntityTemplate, error) {
 	return r.fio.DiscoverEntityTemplates(r.paths.EntityTemplatesDir, entityType)
 }
 

@@ -5,11 +5,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // AnalysisIssue represents a single validation issue, optionally linked to an entity.
@@ -378,58 +377,13 @@ func (a *App) analyzeValidations() AnalysisSection {
 
 // checkValidationRule checks a single validation rule against applicable entities.
 func (a *App) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
-	whenFilters, err := filter.ParseAll(rule.When)
-	if err != nil {
-		return nil
-	}
-	thenFilters, err := filter.ParseAll(rule.Then)
-	if err != nil {
-		return nil
-	}
-
 	var entities []*model.Entity
 	if rule.EntityType != "" {
 		entities = a.Graph().NodesByType(rule.EntityType)
 	} else {
 		entities = a.Graph().AllNodes()
 	}
-
-	var violations []*model.Entity
-	for _, entity := range entities {
-		entityDef, ok := a.Meta().GetEntityDef(entity.Type)
-		if !ok {
-			continue
-		}
-
-		if len(whenFilters) > 0 {
-			matches, err := filter.MatchAll(entity, whenFilters, entityDef, a.Meta())
-			if err != nil || !matches {
-				continue
-			}
-		}
-
-		// Check property-based then conditions
-		if len(thenFilters) > 0 {
-			satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, a.Meta())
-			if err != nil {
-				violations = append(violations, entity)
-				continue
-			}
-			if !satisfies {
-				violations = append(violations, entity)
-				continue
-			}
-		}
-
-		// Check content rules
-		if rule.Content != nil {
-			if !markdown.CheckContentRule(entity, rule.Content) {
-				violations = append(violations, entity)
-			}
-		}
-	}
-
-	return violations
+	return workspace.CheckValidationRule(a.Meta(), rule, entities)
 }
 
 // countEdgesByType counts relations of a specific type in a slice.
