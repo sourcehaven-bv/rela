@@ -5,7 +5,7 @@ title: 'Add embeddings support: ai.embed Lua binding and Provider.Embed'
 kind: enhancement
 priority: high
 effort: m
-status: review
+status: done
 ---
 
 ## Goal
