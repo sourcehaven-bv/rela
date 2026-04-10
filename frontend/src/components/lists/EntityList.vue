@@ -1074,6 +1074,13 @@ onMounted(() => {
     font-size: 18px;
   }
 
+  .list-content {
+    background: none;
+    box-shadow: none;
+    border-radius: 0;
+    overflow: visible;
+  }
+
   .mobile-card .delete-btn {
     width: 44px;
     height: 44px;

@@ -1074,6 +1074,8 @@ watch(
     min-width: 0;
     width: calc(100vw - 32px);
     max-width: 320px;
+    left: auto;
+    right: 0;
   }
 }
 </style>

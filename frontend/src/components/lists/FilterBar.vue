@@ -352,6 +352,12 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
+  .filter-bar {
+    border: none;
+    padding: 0 0 12px 0;
+    margin-bottom: 4px;
+  }
+
   .filter-item select,
   .filter-item input {
     min-width: 100px;

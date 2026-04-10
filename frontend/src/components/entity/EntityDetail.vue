@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
@@ -80,6 +80,12 @@ const entity = ref<Entity | null>(null)
 const loading = ref(true)
 const deleting = ref(false)
 const showDeleteConfirm = ref(false)
+const showOverflowMenu = ref(false)
+
+// Close overflow menu on outside click
+function closeOverflow() { showOverflowMenu.value = false }
+onMounted(() => document.addEventListener('click', closeOverflow))
+onUnmounted(() => document.removeEventListener('click', closeOverflow))
 
 // Commands state
 const commands = ref<Command[]>([])
@@ -346,7 +352,8 @@ onMounted(() => loadEntity())
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
           <h1>{{ entity.properties.title || entity.id }}</h1>
         </div>
-        <div class="header-actions">
+        <!-- Desktop actions -->
+        <div class="header-actions desktop-actions">
           <button
             v-for="cmd in commands"
             :key="cmd.id"
@@ -361,6 +368,38 @@ onMounted(() => loadEntity())
           <button class="btn btn-danger" @click="showDeleteConfirm = true">
             Delete <kbd>Del</kbd>
           </button>
+        </div>
+
+        <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
+        <div class="header-actions mobile-actions">
+          <button v-if="editFormId" class="btn btn-secondary" @click="editEntity">
+            Edit
+          </button>
+          <button class="btn btn-danger mobile-delete-btn" @click="showDeleteConfirm = true" aria-label="Delete">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+            </svg>
+          </button>
+          <div v-if="commands.length" class="overflow-menu-wrapper">
+            <button
+              class="btn btn-secondary mobile-overflow-btn"
+              aria-label="More actions"
+              @click.stop="showOverflowMenu = !showOverflowMenu"
+            >
+              ⋯
+            </button>
+            <div v-if="showOverflowMenu" class="overflow-menu" @click="showOverflowMenu = false">
+              <button
+                v-for="cmd in commands"
+                :key="cmd.id"
+                class="overflow-menu-item"
+                @click="runCommand(cmd)"
+              >
+                {{ cmd.label }}
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -656,17 +695,73 @@ onMounted(() => loadEntity())
   color: var(--muted-text);
 }
 
+/* Mobile actions — hidden on desktop */
+.mobile-actions {
+  display: none;
+}
+
+.mobile-delete-btn {
+  padding: 8px 12px;
+}
+
+.overflow-menu-wrapper {
+  position: relative;
+}
+
+.mobile-overflow-btn {
+  font-size: 18px;
+  letter-spacing: 2px;
+  padding: 8px 14px;
+}
+
+.overflow-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 180px;
+  z-index: 20;
+  overflow: hidden;
+}
+
+.overflow-menu-item {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 14px;
+  color: var(--text-color);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.overflow-menu-item:hover {
+  background: var(--hover-bg);
+}
+
+.overflow-menu-item + .overflow-menu-item {
+  border-top: 1px solid var(--border-color);
+}
+
 @media (max-width: 768px) {
+  /* Native-style mobile nav bar — sits in the hamburger area */
   .scope-nav {
     position: sticky;
-    top: 0;
-    z-index: 10;
+    top: -60px; /* pull up into main-content padding-top (60px) */
+    z-index: 102; /* above hamburger (101) */
     background: var(--bg-color);
-    margin: -16px -16px 12px -16px;
-    padding: 8px 12px;
+    margin: -60px -16px 12px -16px;
+    padding: 10px 12px;
     border-bottom: 1px solid var(--border-color);
-    gap: 6px;
+    gap: 0;
     flex-wrap: nowrap;
+    justify-content: space-between;
   }
 
   .scope-nav-label {
@@ -674,13 +769,31 @@ onMounted(() => loadEntity())
   }
 
   .scope-nav-progress {
-    font-size: 12px;
+    font-size: 13px;
+    color: var(--muted-text);
+    flex: 1;
+    text-align: center;
   }
 
   .scope-nav-btn {
-    padding: 6px 10px;
-    font-size: 12px;
+    padding: 8px 12px;
+    font-size: 14px;
     min-height: 36px;
+    background: none;
+    border: none;
+    color: var(--accent-color);
+    font-weight: 500;
+  }
+
+  .scope-nav-btn:hover:not(.disabled) {
+    filter: none;
+    border-color: transparent;
+    opacity: 0.7;
+  }
+
+  .scope-nav-btn.disabled {
+    color: var(--border-color);
+    opacity: 0.4;
   }
 
   .detail-header {
@@ -688,17 +801,22 @@ onMounted(() => loadEntity())
     gap: 12px;
   }
 
-  .header-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+  .desktop-actions {
+    display: none;
   }
 
-  .header-actions .btn {
-    flex: 1;
-    min-width: 0;
-    justify-content: center;
+  .mobile-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .mobile-actions .btn {
     min-height: 44px;
+  }
+
+  .mobile-actions .btn-secondary {
+    flex: 1;
   }
 
   .header-info h1 {
