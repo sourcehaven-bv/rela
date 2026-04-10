@@ -14,8 +14,9 @@ var (
 )
 
 var migrateCmd = &cobra.Command{
-	Use:   "migrate",
-	Short: "Migrate project files to current schema",
+	Use:         "migrate",
+	Short:       "Migrate project files to current schema",
+	Annotations: map[string]string{skipProjectDiscovery: "true"},
 	Long: `Migrate project files (metamodel.yaml, etc.) to the current schema format.
 
 This command detects deprecated syntax patterns and transforms them to the

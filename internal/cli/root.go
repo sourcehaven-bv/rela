@@ -44,6 +44,10 @@ var (
 	quiet        bool
 	projectPath  string
 
+	// skipProjectDiscovery is a Cobra annotation key. Commands that set this
+	// annotation skip workspace initialization in PersistentPreRunE.
+	skipProjectDiscovery = "skipProjectDiscovery"
+
 	// Shared state initialized by PersistentPreRunE
 	ws         *workspace.Workspace
 	projectCtx *project.Context // derived from ws.Paths()
@@ -64,13 +68,9 @@ and maintain semantic relationships between them.`,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		configureLogging()
-		// Skip project discovery for commands that don't need it
-		// Note: We check both command name and that it's a direct child of root
-		// to avoid matching subcommands like "template init"
-		cmdName := cmd.Name()
-		parent := cmd.Parent()
-		isRootChild := parent == nil || parent.Name() == "rela"
-		if isRootChild && (cmdName == "init" || cmdName == "version" || cmdName == "help" || cmdName == "completion" || cmdName == "tui" || cmdName == "migrate" || cmdName == "mcp" || cmdName == "validate" || cmdName == "flow" || cmdName == "scheduler") {
+		// Commands that annotate themselves with skipProjectDiscovery
+		// handle their own initialization (or don't need a project).
+		if cmd.Annotations[skipProjectDiscovery] == "true" {
 			out = output.New(output.Format(outputFormat))
 			return nil
 		}
@@ -138,6 +138,7 @@ func init() {
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
+		Annotations: map[string]string{skipProjectDiscovery: "true"},
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("rela version %s\n", Version)
 		},

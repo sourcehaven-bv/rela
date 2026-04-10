@@ -13,8 +13,9 @@ import (
 
 // coverage-ignore: MCP command - requires stdio server
 var mcpCmd = &cobra.Command{
-	Use:   "mcp",
-	Short: "Start the MCP (Model Context Protocol) server",
+	Use:         "mcp",
+	Short:       "Start the MCP (Model Context Protocol) server",
+	Annotations: map[string]string{skipProjectDiscovery: "true"},
 	Long: `Starts a Model Context Protocol server on stdio.
 
 The MCP server exposes rela's capabilities to AI assistants and other MCP clients.

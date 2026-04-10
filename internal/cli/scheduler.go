@@ -14,8 +14,9 @@ import (
 
 // coverage-ignore: scheduler command - long-running process
 var schedulerCmd = &cobra.Command{
-	Use:   "scheduler",
-	Short: "Run scheduled Lua tasks",
+	Use:         "scheduler",
+	Short:       "Run scheduled Lua tasks",
+	Annotations: map[string]string{skipProjectDiscovery: "true"},
 	Long: `Starts a long-running process that executes Lua scripts on cron schedules.
 
 Schedules are defined in schedules.yaml in the project root:
