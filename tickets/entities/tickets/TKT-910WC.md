@@ -95,4 +95,4 @@ CLI is trivial — 7 call sites.
 
 - Phase 1 (MCP): PR #368, merged
 - Phase 3 (CLI): PR #372, merged
-- Phase 2 (dataentry): deferred — separate follow-up
+- Phase 2 (dataentry): PR #378 — enforce State() snapshot discipline (151+ calls migrated)

@@ -275,7 +275,7 @@ func TestBuildMetamodelGraphData(t *testing.T) {
 
 func TestBuildMetaInfo(t *testing.T) {
 	app := newGraphTestApp(t)
-	metaData := app.buildMetaInfo([]string{"component", "ticket"}, []string{"belongs_to", "depends_on"})
+	metaData := app.buildMetaInfo(app.State().Meta, []string{"component", "ticket"}, []string{"belongs_to", "depends_on"})
 
 	t.Run("meta entities have properties", func(t *testing.T) {
 		if len(metaData.Entities) != 2 {

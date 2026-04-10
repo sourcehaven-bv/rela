@@ -89,19 +89,20 @@ func (a *App) analysisIssueCounts() (errors, warnings int) {
 
 // analyzeOrphans finds entities with no connections.
 func (a *App) analyzeOrphans() AnalysisSection {
+	s := a.State()
 	section := AnalysisSection{
 		Name:        "Orphans",
 		Description: "Entities with no incoming or outgoing relations",
 	}
 
-	orphans := a.Graph().FindOrphans()
+	orphans := s.Graph.FindOrphans()
 	sortEntitiesByID(orphans)
 
 	for _, e := range orphans {
 		section.Issues = append(section.Issues, AnalysisIssue{
 			EntityID:   e.ID,
 			EntityType: e.Type,
-			Title:      a.entityDisplayTitle(e),
+			Title:      s.Meta.DisplayTitle(e),
 			Message:    "No relations",
 			Severity:   "warning",
 		})
@@ -112,15 +113,16 @@ func (a *App) analyzeOrphans() AnalysisSection {
 
 // analyzeDuplicates finds entities with identical normalized titles.
 func (a *App) analyzeDuplicates() AnalysisSection {
+	s := a.State()
 	section := AnalysisSection{
 		Name:        "Duplicates",
 		Description: "Entities with identical titles",
 	}
 
-	entities := a.Graph().AllNodes()
+	entities := s.Graph.AllNodes()
 	titleGroups := make(map[string][]*model.Entity)
 	for _, e := range entities {
-		title := normalizeTitle(a.entityDisplayTitle(e))
+		title := normalizeTitle(s.Meta.DisplayTitle(e))
 		if title != "" {
 			titleGroups[title] = append(titleGroups[title], e)
 		}
@@ -146,7 +148,7 @@ func (a *App) analyzeDuplicates() AnalysisSection {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      a.entityDisplayTitle(e),
+				Title:      s.Meta.DisplayTitle(e),
 				Message:    fmt.Sprintf("Duplicate title (shared by %s)", strings.Join(ids, ", ")),
 				Severity:   "warning",
 			})
@@ -158,6 +160,7 @@ func (a *App) analyzeDuplicates() AnalysisSection {
 
 // analyzeGaps finds gaps in ID sequences for auto-numbered entity types.
 func (a *App) analyzeGaps() AnalysisSection {
+	s := a.State()
 	section := AnalysisSection{
 		Name:        "ID Gaps",
 		Description: "Missing numbers in auto-generated ID sequences",
@@ -165,7 +168,7 @@ func (a *App) analyzeGaps() AnalysisSection {
 
 	// Build set of manual ID prefixes to skip
 	manualPrefixes := make(map[string]bool)
-	for _, entityDef := range a.Meta().Entities {
+	for _, entityDef := range s.Meta.Entities {
 		if entityDef.IsManualID() {
 			for _, idPrefix := range entityDef.GetIDPrefixes() {
 				manualPrefixes[strings.TrimSuffix(idPrefix, "-")] = true
@@ -175,7 +178,7 @@ func (a *App) analyzeGaps() AnalysisSection {
 
 	// Group IDs by prefix
 	prefixGroups := make(map[string][]int)
-	for _, id := range a.Graph().AllIDs() {
+	for _, id := range s.Graph.AllIDs() {
 		parsed, err := model.ParseEntityID(id)
 		if err != nil || parsed.Prefix == "" {
 			continue
@@ -218,33 +221,34 @@ func (a *App) analyzeGaps() AnalysisSection {
 
 // analyzeCardinality checks relation cardinality constraints.
 func (a *App) analyzeCardinality() AnalysisSection {
+	s := a.State()
 	section := AnalysisSection{
 		Name:        "Cardinality",
 		Description: "Relation cardinality constraint violations",
 	}
 
 	// Sort relation names for deterministic output
-	relNames := make([]string, 0, len(a.Meta().Relations))
-	for name := range a.Meta().Relations {
+	relNames := make([]string, 0, len(s.Meta.Relations))
+	for name := range s.Meta.Relations {
 		relNames = append(relNames, name)
 	}
 	natsort.Strings(relNames)
 
 	for _, relName := range relNames {
-		relDef := a.Meta().Relations[relName]
+		relDef := s.Meta.Relations[relName]
 
 		// Check min_outgoing
 		if relDef.MinOutgoing != nil && *relDef.MinOutgoing > 0 {
 			for _, sourceType := range relDef.From {
-				entities := a.Graph().NodesByType(sourceType)
+				entities := s.Graph.NodesByType(sourceType)
 				sortEntitiesByID(entities)
 				for _, e := range entities {
-					count := countEdgesByType(a.Graph().OutgoingEdges(e.ID), relName)
+					count := countEdgesByType(s.Graph.OutgoingEdges(e.ID), relName)
 					if count < *relDef.MinOutgoing {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      a.entityDisplayTitle(e),
+							Title:      s.Meta.DisplayTitle(e),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -256,15 +260,15 @@ func (a *App) analyzeCardinality() AnalysisSection {
 		// Check max_outgoing
 		if relDef.MaxOutgoing != nil {
 			for _, sourceType := range relDef.From {
-				entities := a.Graph().NodesByType(sourceType)
+				entities := s.Graph.NodesByType(sourceType)
 				sortEntitiesByID(entities)
 				for _, e := range entities {
-					count := countEdgesByType(a.Graph().OutgoingEdges(e.ID), relName)
+					count := countEdgesByType(s.Graph.OutgoingEdges(e.ID), relName)
 					if count > *relDef.MaxOutgoing {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      a.entityDisplayTitle(e),
+							Title:      s.Meta.DisplayTitle(e),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -276,10 +280,10 @@ func (a *App) analyzeCardinality() AnalysisSection {
 		// Check min_incoming
 		if relDef.MinIncoming != nil && *relDef.MinIncoming > 0 {
 			for _, targetType := range relDef.To {
-				entities := a.Graph().NodesByType(targetType)
+				entities := s.Graph.NodesByType(targetType)
 				sortEntitiesByID(entities)
 				for _, e := range entities {
-					count := countEdgesByType(a.Graph().IncomingEdges(e.ID), relName)
+					count := countEdgesByType(s.Graph.IncomingEdges(e.ID), relName)
 					if count < *relDef.MinIncoming {
 						relLabel := relName
 						if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
@@ -288,7 +292,7 @@ func (a *App) analyzeCardinality() AnalysisSection {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      a.entityDisplayTitle(e),
+							Title:      s.Meta.DisplayTitle(e),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -300,10 +304,10 @@ func (a *App) analyzeCardinality() AnalysisSection {
 		// Check max_incoming
 		if relDef.MaxIncoming != nil {
 			for _, targetType := range relDef.To {
-				entities := a.Graph().NodesByType(targetType)
+				entities := s.Graph.NodesByType(targetType)
 				sortEntitiesByID(entities)
 				for _, e := range entities {
-					count := countEdgesByType(a.Graph().IncomingEdges(e.ID), relName)
+					count := countEdgesByType(s.Graph.IncomingEdges(e.ID), relName)
 					if count > *relDef.MaxIncoming {
 						relLabel := relName
 						if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
@@ -312,7 +316,7 @@ func (a *App) analyzeCardinality() AnalysisSection {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      a.entityDisplayTitle(e),
+							Title:      s.Meta.DisplayTitle(e),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -327,21 +331,22 @@ func (a *App) analyzeCardinality() AnalysisSection {
 
 // analyzeProperties validates all entity properties against the metamodel.
 func (a *App) analyzeProperties() AnalysisSection {
+	s := a.State()
 	section := AnalysisSection{
 		Name:        "Properties",
 		Description: "Property validation errors (required fields, invalid values, ID patterns)",
 	}
 
-	entities := a.Graph().AllNodes()
+	entities := s.Graph.AllNodes()
 	sortEntitiesByID(entities)
 
 	for _, entity := range entities {
-		errs := a.Meta().ValidateEntity(entity)
+		errs := s.Meta.ValidateEntity(entity)
 		for _, err := range errs {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   entity.ID,
 				EntityType: entity.Type,
-				Title:      a.entityDisplayTitle(entity),
+				Title:      s.Meta.DisplayTitle(entity),
 				Message:    err.Error(),
 				Severity:   "error",
 			})
@@ -353,19 +358,20 @@ func (a *App) analyzeProperties() AnalysisSection {
 
 // analyzeValidations runs custom validation rules from the metamodel.
 func (a *App) analyzeValidations() AnalysisSection {
+	s := a.State()
 	section := AnalysisSection{
 		Name:        "Validations",
 		Description: "Custom validation rules defined in the metamodel",
 	}
 
-	for _, rule := range a.Meta().Validations {
-		violations := a.checkValidationRule(rule)
+	for _, rule := range s.Meta.Validations {
+		violations := a.checkValidationRule(s, rule)
 		severity := rule.GetSeverity()
 		for _, e := range violations {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      a.entityDisplayTitle(e),
+				Title:      s.Meta.DisplayTitle(e),
 				Message:    rule.Description,
 				Severity:   severity,
 			})
@@ -376,14 +382,14 @@ func (a *App) analyzeValidations() AnalysisSection {
 }
 
 // checkValidationRule checks a single validation rule against applicable entities.
-func (a *App) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
+func (a *App) checkValidationRule(s *AppState, rule metamodel.ValidationRule) []*model.Entity {
 	var entities []*model.Entity
 	if rule.EntityType != "" {
-		entities = a.Graph().NodesByType(rule.EntityType)
+		entities = s.Graph.NodesByType(rule.EntityType)
 	} else {
-		entities = a.Graph().AllNodes()
+		entities = s.Graph.AllNodes()
 	}
-	return workspace.CheckValidationRule(a.Meta(), rule, entities)
+	return workspace.CheckValidationRule(s.Meta, rule, entities)
 }
 
 // countEdgesByType counts relations of a specific type in a slice.
