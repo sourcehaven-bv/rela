@@ -13,7 +13,8 @@ import (
 func (s *Server) handleGetMetamodel(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	meta := s.ws.Meta()
+	snap := s.ws.Snapshot()
+	meta := snap.Meta()
 	result := map[string]interface{}{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
@@ -44,8 +45,9 @@ func (s *Server) handleListEntityTypes(
 		Count      int                              `json:"count"`
 	}
 
-	meta := s.ws.Meta()
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	meta := snap.Meta()
+	g := snap.Graph()
 	types := meta.EntityTypes()
 	natsort.Strings(types)
 
@@ -85,8 +87,9 @@ func (s *Server) handleListRelationTypes(
 		Count       int      `json:"count"`
 	}
 
-	meta := s.ws.Meta()
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	meta := snap.Meta()
+	g := snap.Graph()
 	types := meta.RelationTypes()
 	natsort.Strings(types)
 

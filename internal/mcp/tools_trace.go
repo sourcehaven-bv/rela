@@ -6,37 +6,31 @@ import (
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func (s *Server) handleTraceFrom(
 	_ context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	id, err := request.RequireString("id")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	id = trimID(id)
-	maxDepth := request.GetInt("max_depth", 0)
-
-	g := s.ws.Graph()
-	if _, ok := g.GetNode(id); !ok {
-		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
-	}
-
-	result := g.TraceFrom(id, maxDepth)
-	if result == nil {
-		return mcp.NewToolResultText("No dependencies found"), nil
-	}
-
-	text, err := convertTraceResult(result)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	return mcp.NewToolResultText(text), nil
+	return s.handleTrace(request, func(snap *workspace.Snapshot, id string, depth int) *model.TraceResult {
+		return snap.Graph().TraceFrom(id, depth)
+	}, "No dependencies found")
 }
 
 func (s *Server) handleTraceTo(
 	_ context.Context, request mcp.CallToolRequest,
+) (*mcp.CallToolResult, error) {
+	return s.handleTrace(request, func(snap *workspace.Snapshot, id string, depth int) *model.TraceResult {
+		return snap.Graph().TraceTo(id, depth)
+	}, "No upstream dependencies found")
+}
+
+func (s *Server) handleTrace(
+	request mcp.CallToolRequest,
+	traceFn func(*workspace.Snapshot, string, int) *model.TraceResult,
+	emptyMsg string,
 ) (*mcp.CallToolResult, error) {
 	id, err := request.RequireString("id")
 	if err != nil {
@@ -45,14 +39,14 @@ func (s *Server) handleTraceTo(
 	id = trimID(id)
 	maxDepth := request.GetInt("max_depth", 0)
 
-	g := s.ws.Graph()
-	if _, ok := g.GetNode(id); !ok {
+	snap := s.ws.Snapshot()
+	if _, ok := snap.GetEntity(id); !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
-	result := g.TraceTo(id, maxDepth)
+	result := traceFn(snap, id, maxDepth)
 	if result == nil {
-		return mcp.NewToolResultText("No upstream dependencies found"), nil
+		return mcp.NewToolResultText(emptyMsg), nil
 	}
 
 	text, err := convertTraceResult(result)
@@ -76,7 +70,8 @@ func (s *Server) handleFindPath(
 	}
 	to = trimID(to)
 
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	g := snap.Graph()
 	if _, ok := g.GetNode(from); !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("source entity not found: %s", from)), nil
 	}

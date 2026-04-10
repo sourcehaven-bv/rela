@@ -311,6 +311,18 @@ func newWorkspace(
 
 // --- Accessors ---
 
+// Snapshot returns a point-in-time, read-only view of the workspace.
+// All reads from the returned Snapshot are guaranteed to come from the
+// same reload epoch. Consumers should call Snapshot() once at the top
+// of an operation and use it for all reads within that scope.
+func (w *Workspace) Snapshot() *Snapshot {
+	s := w.state.Load()
+	if s == nil {
+		return nil
+	}
+	return &Snapshot{s: s}
+}
+
 // Graph returns the in-memory graph from the current workspace state
 // snapshot. The returned pointer reflects the state at the time of the
 // call; a concurrent Reload that publishes a new state will not affect

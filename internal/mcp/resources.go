@@ -61,7 +61,8 @@ func (s *Server) registerResources() {
 func (s *Server) handleReadMetamodel(
 	_ context.Context, _ mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
-	meta := s.ws.Meta()
+	snap := s.ws.Snapshot()
+	meta := snap.Meta()
 	result := map[string]interface{}{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
@@ -100,7 +101,8 @@ func (s *Server) handleReadEntity(
 	}
 	entityType, id := segments[0], segments[1]
 
-	entity, ok := s.ws.GetEntity(id)
+	snap := s.ws.Snapshot()
+	entity, ok := snap.GetEntity(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
@@ -108,7 +110,7 @@ func (s *Server) handleReadEntity(
 		return nil, fmt.Errorf("entity %s is type %s, not %s", id, entity.Type, entityType)
 	}
 
-	text, err := convertEntity(entity, s.ws, true)
+	text, err := convertEntity(entity, snap, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert entity: %w", err)
 	}
@@ -147,8 +149,9 @@ func (s *Server) handleReadView(
 		return nil, fmt.Errorf("view not found: %s (available: %s)", viewName, strings.Join(names, ", "))
 	}
 
-	meta := s.ws.Meta()
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	meta := snap.Meta()
+	g := snap.Graph()
 	if validationErr := viewDef.Validate(meta, viewName); validationErr != nil {
 		return nil, fmt.Errorf("view validation failed: %w", validationErr)
 	}
@@ -186,7 +189,8 @@ func (s *Server) handleReadRelation(
 	}
 	fromID, relType, toID := segments[0], segments[1], segments[2]
 
-	relation, ok := s.ws.Graph().GetEdge(fromID, relType, toID)
+	snap := s.ws.Snapshot()
+	relation, ok := snap.Graph().GetEdge(fromID, relType, toID)
 	if !ok {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", fromID, relType, toID)
 	}

@@ -39,7 +39,8 @@ func (s *Server) handleExport(
 	}
 	entityType := request.GetString("type", "")
 
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	g := snap.Graph()
 	var entities []*model.Entity
 	if entityType != "" {
 		resolved := s.resolveType(entityType)

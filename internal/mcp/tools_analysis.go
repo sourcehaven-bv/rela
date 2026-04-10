@@ -19,7 +19,8 @@ func (s *Server) handleAnalyzeOrphans(
 ) (*mcp.CallToolResult, error) {
 	entityType := request.GetString("type", "")
 
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	g := snap.Graph()
 	orphans := g.FindOrphans()
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
@@ -54,9 +55,10 @@ type cardinalityViolation struct {
 func (s *Server) handleAnalyzeCardinality(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
+	snap := s.ws.Snapshot()
 	var violations []cardinalityViolation
 
-	for relName, relDef := range s.ws.Meta().Relations {
+	for relName, relDef := range snap.Meta().Relations {
 		violations = append(violations, s.checkCardinalityForRelation(relName, relDef)...)
 	}
 
@@ -93,7 +95,8 @@ func (s *Server) checkCardinalityBound(
 ) []cardinalityViolation {
 	var violations []cardinalityViolation
 
-	g := s.ws.Graph()
+	snap := s.ws.Snapshot()
+	g := snap.Graph()
 	for _, entityType := range entityTypes {
 		for _, e := range g.NodesByType(entityType) {
 			var edges []*model.Relation
@@ -144,11 +147,12 @@ func (s *Server) handleAnalyzeProperties(
 		Errors       []string `json:"errors"`
 	}
 
-	meta := s.ws.Meta()
+	snap := s.ws.Snapshot()
+	meta := snap.Meta()
 	var allEntityErrors []entityErrors
 
 	// Validate entity properties
-	for _, entity := range s.ws.Graph().AllNodes() {
+	for _, entity := range snap.Graph().AllNodes() {
 		errs := meta.ValidateEntity(entity)
 		if len(errs) > 0 {
 			errStrings := make([]string, len(errs))
@@ -216,7 +220,8 @@ func (s *Server) handleAnalyzeProperties(
 func (s *Server) handleAnalyzeValidations(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	rules := s.ws.Meta().Validations
+	snap := s.ws.Snapshot()
+	rules := snap.Meta().Validations
 	if len(rules) == 0 {
 		return mcp.NewToolResultText("No custom validation rules defined in metamodel"), nil
 	}
@@ -266,7 +271,8 @@ func (s *Server) handleAnalyzeSchema(
 	viewsFile, _ := s.loadViews()
 
 	// Run analysis
-	analysis := schema.Analyze(s.ws.Meta(), s.ws.Graph(), dataEntry, viewsFile, threshold)
+	snap := s.ws.Snapshot()
+	analysis := schema.Analyze(snap.Meta(), snap.Graph(), dataEntry, viewsFile, threshold)
 
 	if !analysis.HasIssues() {
 		return mcp.NewToolResultText("All schema types are in use"), nil
