@@ -6,7 +6,6 @@ kind: refactor
 priority: high
 effort: l
 status: done
-tags: phase3-cli-done
 ---
 
 ## Problem
@@ -91,3 +90,9 @@ CLI is trivial — 7 call sites.
 3. All MCP handlers use snapshot instead of direct `ws.Graph()` / `ws.Meta()`
 4. All existing MCP tests pass
 5. `go test -race ./...`, `just lint`, `go-arch-lint check` all pass
+
+## Completion
+
+- Phase 1 (MCP): PR #368, merged
+- Phase 3 (CLI): PR #372, merged
+- Phase 2 (dataentry): deferred — separate follow-up
