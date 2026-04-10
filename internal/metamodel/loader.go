@@ -36,62 +36,83 @@ var knownTypos = map[string]string{
 // If the metamodel contains an `includes:` key, included files are recursively
 // loaded and merged. Include paths are resolved relative to the directory
 // containing the metamodel file.
-func Load(path string, fs storage.FS) (*Metamodel, error) {
+//
+// The returned []string contains the absolute paths of all files that were
+// read: the main metamodel.yaml path plus all include files.
+func Load(path string, fs storage.FS) (*Metamodel, []string, error) {
 	data, err := fs.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// When includes are present, parse without full validation first,
 	// resolve includes, then validate the merged result.
 	m, err := parseRaw(data)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if len(m.Includes) > 0 {
 		rootDir := filepath.Dir(path)
-		if err := loadWithIncludes(m, path, rootDir, fs); err != nil {
-			return nil, err
+		includePaths, err := loadWithIncludes(m, path, rootDir, fs)
+		if err != nil {
+			return nil, nil, err
 		}
 		// Validate the fully merged metamodel
 		if err := validate(m); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return m, nil
+		sourceFiles := append([]string{absPath}, includePaths...)
+		return m, sourceFiles, nil
 	}
 
 	// No includes: validate immediately
 	if err := validate(m); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return m, nil
+	return m, []string{absPath}, nil
 }
 
 // LoadWithoutMigrationCheck loads a metamodel without checking for migrations.
 // This is used by the migrate command itself to avoid chicken-and-egg issues.
 // Returns nil if loading fails (caller should handle gracefully).
-func LoadWithoutMigrationCheck(path string, fs storage.FS) (*Metamodel, error) {
+//
+// The returned []string contains the absolute paths of all files that were read.
+func LoadWithoutMigrationCheck(path string, fs storage.FS) (*Metamodel, []string, error) {
 	data, err := fs.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	m, err := parseRaw(data)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if len(m.Includes) > 0 {
 		rootDir := filepath.Dir(path)
-		if err := loadWithIncludes(m, path, rootDir, fs); err != nil {
-			return nil, err
+		includePaths, err := loadWithIncludes(m, path, rootDir, fs)
+		if err != nil {
+			return nil, nil, err
 		}
+		sourceFiles := append([]string{absPath}, includePaths...)
+		// Skip validation since metamodel may be in a migration state
+		return m, sourceFiles, nil
 	}
 
 	// Skip validation since metamodel may be in a migration state
-	return m, nil
+	return m, []string{absPath}, nil
 }
 
 // Parse parses and validates metamodel YAML content.

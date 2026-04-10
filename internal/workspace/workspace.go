@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -143,6 +144,12 @@ type Workspace struct {
 
 	// Watcher state (nil when not watching).
 	watchHandle *repository.WatchHandle
+
+	// schemaFiles holds the absolute paths of all files that make up the
+	// current metamodel (metamodel.yaml + includes). Updated after each
+	// successful Reload. Used by the watcher to distinguish schema changes
+	// from data changes.
+	schemaFiles []string
 }
 
 // maxAutomationDepth limits recursive automation triggering. When an entity
@@ -180,7 +187,7 @@ func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
 		exec = NopScriptExecutor
 	}
 
-	meta, err := repo.LoadMetamodel()
+	meta, schemaFiles, err := repo.LoadMetamodel()
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
@@ -209,7 +216,9 @@ func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
 		}
 	}
 
-	return newWorkspace(repo, meta, g, exec), nil
+	ws := newWorkspace(repo, meta, g, exec)
+	ws.schemaFiles = schemaFiles
+	return ws, nil
 }
 
 // NewWithGraph creates a workspace with a pre-populated graph. Use this
@@ -590,7 +599,7 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 
 	oldState := w.state.Load()
 
-	newMeta, err := w.repo.LoadMetamodel()
+	newMeta, newSchemaFiles, err := w.repo.LoadMetamodel()
 	if err != nil {
 		if migration.IsMigrationError(err) {
 			return w.reloadKeepingOldMetamodel(oldState)
@@ -627,6 +636,9 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 		automation: newAuto,
 		searchIdx:  newIdx,
 	})
+
+	// Watch any new schema include files that appeared after reload.
+	w.updateSchemaFiles(newSchemaFiles)
 
 	// Close the old search index if it was replaced (not carried over).
 	if oldState != nil && oldState.searchIdx != nil && oldState.searchIdx != newIdx {
@@ -1629,25 +1641,49 @@ type WatchOptions struct {
 	ExtraFiles []string
 	// ExtraDirs lists additional directories to watch (e.g., metamodel/).
 	ExtraDirs []string
-	// OnReload is called after workspace has reloaded metamodel and graph.
-	// Consumers use this for side-effects (SSE broadcast, MCP notifications, etc.).
-	OnReload func(events []ChangeEvent)
+	// OnChange is called after the workspace has handled file changes
+	// (reload, sync, or notify-only). Consumers use this for side-effects
+	// (SSE broadcast, MCP notifications, etc.).
+	OnChange func(events []ChangeEvent)
 }
 
-// StartWatching begins watching for file changes. On each change the
-// workspace reloads the metamodel, re-syncs the graph, saves the cache,
-// and then calls OnReload.
+// StartWatching begins watching for file changes. On each batch of changes
+// the workspace classifies the events and either reloads the metamodel and
+// graph, re-syncs only the graph, or skips reloading (notify-only). Then it
+// calls OnChange with the raw events.
 func (w *Workspace) StartWatching(opts WatchOptions) error {
+	// Include schema include files in the initial watch list so changes to
+	// them are detected immediately.
+	extraFiles := make([]string, 0, len(opts.ExtraFiles)+len(w.schemaFiles))
+	extraFiles = append(extraFiles, opts.ExtraFiles...)
+	extraFiles = append(extraFiles, w.schemaFiles...)
+
 	repoOpts := repository.WatchOptions{
-		ExtraFiles: opts.ExtraFiles,
+		ExtraFiles: extraFiles,
 		ExtraDirs:  opts.ExtraDirs,
 	}
+
+	paths := w.Paths()
+	viewsPath := filepath.Join(paths.Root, "views.yaml")
+
 	handle, err := w.repo.WatchWithHandle(repoOpts, func(events []repository.ChangeEvent) {
-		if _, reloadErr := w.Reload(); reloadErr != nil {
-			slog.Error("reload error", "error", reloadErr)
+		action := classifyEvents(events, w.schemaFiles, viewsPath, paths.EntitiesDir, paths.RelationsDir)
+
+		switch action {
+		case actionReload:
+			if _, reloadErr := w.Reload(); reloadErr != nil {
+				slog.Error("reload error", "error", reloadErr)
+			}
+		case actionSync:
+			if _, syncErr := w.Sync(); syncErr != nil {
+				slog.Error("sync error", "error", syncErr)
+			}
+		case actionNotify:
+			// No data changes — just notify consumers
 		}
-		if opts.OnReload != nil {
-			opts.OnReload(events)
+
+		if opts.OnChange != nil {
+			opts.OnChange(events)
 		}
 	})
 	if err != nil {
@@ -1657,8 +1693,38 @@ func (w *Workspace) StartWatching(opts WatchOptions) error {
 	return nil
 }
 
-// StopWatching stops the file watcher.
+// updateSchemaFiles compares newSchemaFiles against the current w.schemaFiles,
+// adds any newly-seen files to the active watcher, and updates w.schemaFiles.
+// Caller must hold reloadMu.
+func (w *Workspace) updateSchemaFiles(newSchemaFiles []string) {
+	oldSet := make(map[string]bool, len(w.schemaFiles))
+	for _, f := range w.schemaFiles {
+		oldSet[filepath.Clean(f)] = true
+	}
+
+	if w.watchHandle != nil {
+		for _, f := range newSchemaFiles {
+			if !oldSet[filepath.Clean(f)] {
+				if addErr := w.watchHandle.AddFile(f); addErr != nil {
+					slog.Warn("failed to watch new schema file", "path", f, "error", addErr)
+				}
+			}
+		}
+	}
+
+	w.schemaFiles = newSchemaFiles
+}
+
+// StopWatching stops the file watcher. Serialized against Reload/Sync
+// via reloadMu to prevent races with updateSchemaFiles.
 func (w *Workspace) StopWatching() {
+	w.reloadMu.Lock()
+	defer w.reloadMu.Unlock()
+	w.stopWatchingLocked()
+}
+
+// stopWatchingLocked stops the watcher. Caller must hold reloadMu.
+func (w *Workspace) stopWatchingLocked() {
 	if w.watchHandle != nil {
 		w.watchHandle.Stop()
 		w.watchHandle = nil
@@ -1670,9 +1736,9 @@ func (w *Workspace) StopWatching() {
 // reloadMu; the closed flag prevents any Reload that arrives after Close
 // from resurrecting the workspace.
 func (w *Workspace) Close() error {
-	w.StopWatching()
 	w.reloadMu.Lock()
 	defer w.reloadMu.Unlock()
+	w.stopWatchingLocked()
 	if w.closed.Swap(true) {
 		return nil // already closed
 	}
