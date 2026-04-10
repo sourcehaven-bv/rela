@@ -136,8 +136,8 @@ func init() {
 
 	// Add version command
 	rootCmd.AddCommand(&cobra.Command{
-		Use:   "version",
-		Short: "Print version information",
+		Use:         "version",
+		Short:       "Print version information",
 		Annotations: map[string]string{skipProjectDiscovery: "true"},
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("rela version %s\n", Version)
