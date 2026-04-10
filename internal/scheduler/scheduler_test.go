@@ -317,7 +317,7 @@ func TestScheduler_Run_emptyConfig(t *testing.T) {
 		ws:     ws,
 		wsRaw:  ws,
 		logger: discardLogger(),
-		now:    func() time.Time { return time.Now() },
+		now:    time.Now,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -362,7 +362,7 @@ func TestScheduler_doExecuteTask_skipsOnCancelledContext(t *testing.T) {
 		wsRaw:  ws,
 		state:  newState(),
 		logger: discardLogger(),
-		now:    func() time.Time { return time.Now() },
+		now:    time.Now,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

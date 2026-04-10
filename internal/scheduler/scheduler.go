@@ -79,7 +79,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	for _, task := range s.config.Tasks {
 		t := task // capture
-		skipWrapper := cron.SkipIfStillRunning(cron.VerbosePrintfLogger(slog.NewLogLogger(s.logger.Handler(), slog.LevelWarn)))
+		warnLogger := cron.VerbosePrintfLogger(slog.NewLogLogger(s.logger.Handler(), slog.LevelWarn))
+		skipWrapper := cron.SkipIfStillRunning(warnLogger)
 		job := cron.FuncJob(func() {
 			s.executeTask(ctx, t)
 		})
