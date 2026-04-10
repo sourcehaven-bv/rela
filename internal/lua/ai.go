@@ -1,4 +1,4 @@
-// Lua bindings for the ai.* module.
+// Lua bindings for the ai.* module (ai.chat, ai.complete, ai.embed).
 //
 // DELIBERATE CONVENTION DEVIATION:
 //
@@ -10,7 +10,7 @@
 // call in pcall.
 //
 // PROGRAMMING ERRORS still raise via RaiseError (wrong argument type,
-// empty messages list, malformed messages entry). The taxonomy is:
+// empty messages/input, malformed entries). The taxonomy is:
 //
 //	expected runtime failure  -> (nil, err_table)
 //	programming error         -> RaiseError
@@ -47,6 +47,7 @@ func (r *Runtime) registerAIModule() {
 	tbl := r.L.NewTable()
 	r.L.SetField(tbl, "chat", r.L.NewFunction(r.luaAIChat))
 	r.L.SetField(tbl, "complete", r.L.NewFunction(r.luaAIComplete))
+	r.L.SetField(tbl, "embed", r.L.NewFunction(r.luaAIEmbed))
 	r.L.SetGlobal("ai", tbl)
 }
 
@@ -213,6 +214,102 @@ func pushAIError(ls *lua.LState, e *ai.Error) int {
 	ls.Push(lua.LNil)
 	ls.Push(aiErrorToTable(ls, e))
 	return 2
+}
+
+// luaAIEmbed implements ai.embed(input, opts?) -> (result, nil) or
+// (nil, err_table). Input can be a string (single text) or a table of
+// strings (batch). Result is always an array of arrays (one vector per
+// input). Optional second arg is an options table with model override.
+func (r *Runtime) luaAIEmbed(ls *lua.LState) int {
+	if r.aiProvider == nil {
+		return pushAIError(ls, &ai.Error{
+			Kind:    ai.ErrNotConfigured,
+			Message: "AI is not configured: create .rela/ai.yaml with base_url and model",
+		})
+	}
+
+	req, parseErr := parseEmbedArgs(ls)
+	if parseErr != "" {
+		ls.RaiseError("ai.embed: %s", parseErr)
+		return 0
+	}
+
+	resp, err := r.aiProvider.Embed(chatContext(r), req)
+	if err != nil {
+		var aiErr *ai.Error
+		if !errors.As(err, &aiErr) {
+			ls.RaiseError("ai.embed: unexpected error type %T: %v", err, err)
+			return 0
+		}
+		return pushAIError(ls, aiErr)
+	}
+
+	// Always return array-of-arrays for consistency.
+	result := ls.NewTable()
+	for i, vec := range resp.Embeddings {
+		vecTbl := ls.NewTable()
+		for _, v := range vec {
+			vecTbl.Append(lua.LNumber(v))
+		}
+		result.RawSetInt(i+1, vecTbl)
+	}
+
+	ls.Push(result)
+	ls.Push(lua.LNil)
+	return 2
+}
+
+// parseEmbedArgs extracts the EmbedRequest from Lua arguments.
+// Returns an empty error string on success.
+// Arg 1: string or table of strings (required)
+// Arg 2: options table with optional "model" field
+func parseEmbedArgs(ls *lua.LState) (req ai.EmbedRequest, errMsg string) {
+	arg1 := ls.Get(1)
+	switch v := arg1.(type) {
+	case lua.LString:
+		s := string(v)
+		if s == "" {
+			return req, "input must not be an empty string"
+		}
+		req.Input = []string{s}
+	case *lua.LTable:
+		count := v.Len()
+		if count == 0 {
+			return req, "input table must not be empty"
+		}
+		if count > ai.MaxEmbedInputs {
+			return req, fmt.Sprintf("input count %d exceeds maximum %d", count, ai.MaxEmbedInputs)
+		}
+		req.Input = make([]string, 0, count)
+		for i := 1; i <= count; i++ {
+			entry := v.RawGetInt(i)
+			s, ok := entry.(lua.LString)
+			if !ok {
+				return req, fmt.Sprintf("input[%d] must be a string, got %s", i, entry.Type())
+			}
+			if s == "" {
+				return req, fmt.Sprintf("input[%d] must not be an empty string", i)
+			}
+			req.Input = append(req.Input, string(s))
+		}
+	case *lua.LNilType:
+		return req, "input is required (string or table of strings)"
+	default:
+		return req, fmt.Sprintf("input must be a string or table, got %s", arg1.Type())
+	}
+
+	// Optional second arg: options table
+	if opts, ok := ls.Get(2).(*lua.LTable); ok {
+		if v := opts.RawGetString("model"); v != lua.LNil {
+			s, ok := v.(lua.LString)
+			if !ok {
+				return req, "model must be a string"
+			}
+			req.Model = string(s)
+		}
+	}
+
+	return req, ""
 }
 
 // aiErrorToTable converts a *ai.Error to a Lua table with stable fields.

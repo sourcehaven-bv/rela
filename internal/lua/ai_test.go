@@ -290,6 +290,208 @@ func TestLuaAI_NoAuthHeaderWhenAPIKeyEnvEmpty(t *testing.T) {
 	}
 }
 
+// --- ai.embed tests ---
+
+const embedSuccessBody = `{
+  "object": "list",
+  "data": [{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3]}],
+  "model": "nomic-embed-text",
+  "usage": {"prompt_tokens": 4, "total_tokens": 4}
+}`
+
+const embedBatchBody = `{
+  "object": "list",
+  "data": [
+    {"object":"embedding","index":0,"embedding":[0.1,0.2]},
+    {"object":"embedding","index":1,"embedding":[0.3,0.4]}
+  ],
+  "model": "nomic-embed-text",
+  "usage": {"prompt_tokens": 8, "total_tokens": 8}
+}`
+
+func TestLuaAI_EmbedGlobalRegistered(t *testing.T) {
+	rt := newAIRuntimeNoProvider(t)
+	if err := rt.RunString(`
+		assert(type(ai.embed) == "function", "ai.embed must be a function")
+	`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+}
+
+func TestLuaAI_EmbedNotConfigured(t *testing.T) {
+	rt := newAIRuntimeNoProvider(t)
+	if err := rt.RunString(`
+		local result, err = ai.embed("hello")
+		assert(result == nil, "result should be nil")
+		assert(err.kind == "not_configured", "err.kind = " .. tostring(err.kind))
+	`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+}
+
+func TestLuaAI_EmbedSingleString(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(embedSuccessBody))
+	}))
+	t.Cleanup(server.Close)
+
+	rt := newAIRuntime(t, server, "TEST_KEY")
+	if err := rt.RunString(`
+		local result, err = ai.embed("hello")
+		assert(err == nil, "expected nil err, got " .. tostring(err))
+		assert(type(result) == "table", "result should be a table")
+		-- Always returns array-of-arrays, even for single input
+		assert(#result == 1, "#result = " .. #result)
+		assert(type(result[1]) == "table", "result[1] should be a table")
+		assert(#result[1] == 3, "vector length = " .. #result[1])
+		assert(result[1][1] == 0.1, "first value = " .. tostring(result[1][1]))
+		assert(result[1][2] == 0.2)
+		assert(result[1][3] == 0.3)
+	`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+}
+
+func TestLuaAI_EmbedBatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(embedBatchBody))
+	}))
+	t.Cleanup(server.Close)
+
+	rt := newAIRuntime(t, server, "TEST_KEY")
+	if err := rt.RunString(`
+		local result, err = ai.embed({"first", "second"})
+		assert(err == nil, "expected nil err")
+		assert(#result == 2, "#result = " .. #result)
+		assert(result[1][1] == 0.1)
+		assert(result[2][1] == 0.3)
+	`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+}
+
+func TestLuaAI_EmbedModelOverride(t *testing.T) {
+	var bodySeen []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodySeen, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(embedSuccessBody))
+	}))
+	t.Cleanup(server.Close)
+
+	rt := newAIRuntime(t, server, "TEST_KEY")
+	if err := rt.RunString(`
+		ai.embed("hello", {model = "custom-embed-model"})
+	`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+	if !strings.Contains(string(bodySeen), `"model":"custom-embed-model"`) {
+		t.Errorf("expected custom model in body, got %s", bodySeen)
+	}
+}
+
+func TestLuaAI_EmbedHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"type":"server_error","message":"oops"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	rt := newAIRuntime(t, server, "TEST_KEY")
+	if err := rt.RunString(`
+		local result, err = ai.embed("hello")
+		assert(result == nil)
+		assert(err.kind == "server_error", "kind = " .. tostring(err.kind))
+	`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+}
+
+func TestLuaAI_EmbedEmptyStringRaises(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("server should not be called")
+	}))
+	t.Cleanup(server.Close)
+
+	rt := newAIRuntime(t, server, "TEST_KEY")
+	err := rt.RunString(`ai.embed("")`)
+	if err == nil {
+		t.Fatal("expected Lua error")
+	}
+	if !strings.Contains(err.Error(), "empty string") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+func TestLuaAI_EmbedEmptyTableRaises(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("server should not be called")
+	}))
+	t.Cleanup(server.Close)
+
+	rt := newAIRuntime(t, server, "TEST_KEY")
+	err := rt.RunString(`ai.embed({})`)
+	if err == nil {
+		t.Fatal("expected Lua error")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+func TestLuaAI_EmbedNonStringInTableRaises(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("server should not be called")
+	}))
+	t.Cleanup(server.Close)
+
+	rt := newAIRuntime(t, server, "TEST_KEY")
+	err := rt.RunString(`ai.embed({"hello", 42})`)
+	if err == nil {
+		t.Fatal("expected Lua error")
+	}
+	if !strings.Contains(err.Error(), "input[2] must be a string") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+func TestLuaAI_EmbedWrongArgTypeRaises(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("server should not be called")
+	}))
+	t.Cleanup(server.Close)
+
+	rt := newAIRuntime(t, server, "TEST_KEY")
+	err := rt.RunString(`ai.embed(42)`)
+	if err == nil {
+		t.Fatal("expected Lua error")
+	}
+	if !strings.Contains(err.Error(), "string or table") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+func TestLuaAI_EmbedNoAuthHeader(t *testing.T) {
+	var receivedAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(embedSuccessBody))
+	}))
+	t.Cleanup(server.Close)
+
+	rt := newAIRuntime(t, server, "")
+	if err := rt.RunString(`ai.embed("hello")`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+	if receivedAuth != "" {
+		t.Errorf("expected no Authorization header, got %q", receivedAuth)
+	}
+}
+
 func TestLuaAI_AdditionalParametersPassthrough(t *testing.T) {
 	var bodySeen []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
