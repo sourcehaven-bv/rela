@@ -268,9 +268,10 @@ func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
 	if nav.Dashboard || nav.Graph || nav.Kanban != "" {
 		return item
 	}
-	if list, ok := a.Cfg().Lists[nav.List]; ok {
+	s := a.State()
+	if list, ok := s.Cfg.Lists[nav.List]; ok {
 		item.EntityType = list.EntityType
-		entities := a.Graph().NodesByType(list.EntityType)
+		entities := s.Graph.NodesByType(list.EntityType)
 		entities = applyFilters(entities, list.Filters)
 		item.Count = len(entities)
 	}
@@ -281,8 +282,9 @@ func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
 // The activeList parameter is used to auto-expand the group containing the active item.
 func (a *App) navElements(activeList string) []NavElement {
 	uiState := a.loadUIState()
-	elements := make([]NavElement, 0, len(a.Cfg().Navigation))
-	for _, nav := range a.Cfg().Navigation {
+	cfgNav := a.State().Cfg.Navigation
+	elements := make([]NavElement, 0, len(cfgNav))
+	for _, nav := range cfgNav {
 		if nav.IsGroup() {
 			grp := NavGroup{Group: nav.Group}
 			// Determine collapsed state: UIState overrides config default
@@ -430,21 +432,22 @@ func firstNavTarget(nav []NavigationEntry) *NavigationEntry {
 // editFormForType returns the first edit form ID configured for the given entity type,
 // or "" if no edit form is found. Forms with explicit mode="edit" are preferred.
 func (a *App) editFormForType(entityType string) string {
-	ids := make([]string, 0, len(a.Cfg().Forms))
-	for id := range a.Cfg().Forms {
+	s := a.State()
+	ids := make([]string, 0, len(s.Cfg.Forms))
+	for id := range s.Cfg.Forms {
 		ids = append(ids, id)
 	}
 	natsort.Strings(ids)
 	// First pass: look for explicit edit mode
 	for _, id := range ids {
-		f := a.Cfg().Forms[id]
+		f := s.Cfg.Forms[id]
 		if f.EntityType == entityType && f.Mode == "edit" {
 			return id
 		}
 	}
 	// Second pass: fall back to forms with no mode specified
 	for _, id := range ids {
-		f := a.Cfg().Forms[id]
+		f := s.Cfg.Forms[id]
 		if f.EntityType == entityType && f.Mode == "" {
 			return id
 		}
@@ -456,14 +459,15 @@ func (a *App) editFormForType(entityType string) string {
 // of the given type. It prefers forms with mode "create" or unset, but falls back
 // to edit-mode forms (which work for creation when no entity ID is provided).
 func (a *App) createFormForType(entityType string) string {
-	ids := make([]string, 0, len(a.Cfg().Forms))
-	for id := range a.Cfg().Forms {
+	s := a.State()
+	ids := make([]string, 0, len(s.Cfg.Forms))
+	for id := range s.Cfg.Forms {
 		ids = append(ids, id)
 	}
 	natsort.Strings(ids)
 	fallback := ""
 	for _, id := range ids {
-		f := a.Cfg().Forms[id]
+		f := s.Cfg.Forms[id]
 		if f.EntityType != entityType {
 			continue
 		}
@@ -479,7 +483,7 @@ func (a *App) createFormForType(entityType string) string {
 
 // entityDisplayTitle returns the display title for an entity.
 func (a *App) entityDisplayTitle(e *model.Entity) string {
-	return a.Meta().DisplayTitle(e)
+	return a.State().Meta.DisplayTitle(e)
 }
 
 // resolveLinkTarget resolves a link configuration value to a URL.
@@ -504,18 +508,19 @@ func (a *App) resolveLinkTarget(link, entityType, entityID string) string {
 // activeListForEntityType returns the first navigation list ID whose entity type
 // matches the given type, or "" if none match. Walks into groups.
 func (a *App) activeListForEntityType(entityType string) string {
-	return a.findListByEntityType(a.Cfg().Navigation, entityType)
+	s := a.State()
+	return a.findListByEntityType(s, s.Cfg.Navigation, entityType)
 }
 
-func (a *App) findListByEntityType(entries []NavigationEntry, entityType string) string {
+func (a *App) findListByEntityType(s *AppState, entries []NavigationEntry, entityType string) string {
 	for _, nav := range entries {
 		if nav.IsGroup() {
-			if found := a.findListByEntityType(nav.Items, entityType); found != "" {
+			if found := a.findListByEntityType(s, nav.Items, entityType); found != "" {
 				return found
 			}
 			continue
 		}
-		if list, ok := a.Cfg().Lists[nav.List]; ok && list.EntityType == entityType {
+		if list, ok := s.Cfg.Lists[nav.List]; ok && list.EntityType == entityType {
 			return nav.List
 		}
 	}
@@ -539,7 +544,7 @@ func (a *App) activeListFromReferer(r *http.Request) string {
 		return ""
 	}
 	listID := strings.TrimPrefix(path, "/list/")
-	if _, ok := a.Cfg().Lists[listID]; ok {
+	if _, ok := a.State().Cfg.Lists[listID]; ok {
 		return listID
 	}
 	return ""
@@ -551,7 +556,7 @@ func (a *App) activeListFromReferer(r *http.Request) string {
 // Referer header.
 func (a *App) resolveActiveList(entityType string, r *http.Request) string {
 	if from := r.URL.Query().Get("from"); from != "" {
-		if _, ok := a.Cfg().Lists[from]; ok {
+		if _, ok := a.State().Cfg.Lists[from]; ok {
 			return from
 		}
 	}
@@ -563,7 +568,7 @@ func (a *App) resolveActiveList(entityType string, r *http.Request) string {
 
 // ProjectName returns the display name of the loaded project.
 func (a *App) ProjectName() string {
-	return a.Cfg().App.Name
+	return a.State().Cfg.App.Name
 }
 
 // ProjectRoot returns the root directory of the loaded project.

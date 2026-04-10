@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
@@ -113,26 +114,27 @@ func (a *App) handleGraphData(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) buildContentGraphData() graphDataResponse {
-	allNodes := a.Graph().AllNodes()
-	allEdges := a.Graph().AllEdges()
+	s := a.State()
+	allNodes := s.Graph.AllNodes()
+	allEdges := s.Graph.AllEdges()
 
 	// Collect entity types
-	entityTypes := a.Meta().EntityTypes()
+	entityTypes := s.Meta.EntityTypes()
 	natsort.Strings(entityTypes)
 
 	etList := make([]graphEntityType, 0, len(entityTypes))
 	for i, et := range entityTypes {
 		// Use metamodel color if available, otherwise cycle through palette
 		color := entityTypeColors[i%len(entityTypeColors)]
-		if entDef, ok := a.Meta().GetEntityDef(et); ok && entDef.Color != "" {
+		if entDef, ok := s.Meta.GetEntityDef(et); ok && entDef.Color != "" {
 			color = entDef.Color
 		}
 
 		label := et
-		if entDef, ok := a.Meta().GetEntityDef(et); ok && entDef.Label != "" {
+		if entDef, ok := s.Meta.GetEntityDef(et); ok && entDef.Label != "" {
 			label = entDef.Label
 		}
-		count := len(a.Graph().NodesByType(et))
+		count := len(s.Graph.NodesByType(et))
 		etList = append(etList, graphEntityType{Type: et, Label: label, Color: color, Count: count})
 	}
 
@@ -148,7 +150,7 @@ func (a *App) buildContentGraphData() graphDataResponse {
 		nodes = append(nodes, graphNode{
 			ID:         e.ID,
 			Type:       e.Type,
-			Title:      a.entityDisplayTitle(e),
+			Title:      s.Meta.DisplayTitle(e),
 			Properties: props,
 		})
 	}
@@ -166,19 +168,19 @@ func (a *App) buildContentGraphData() graphDataResponse {
 	}
 
 	// Collect relation types
-	relTypes := a.Meta().RelationTypes()
+	relTypes := s.Meta.RelationTypes()
 	natsort.Strings(relTypes)
 	rtList := make([]graphRelationType, 0, len(relTypes))
 	for _, rt := range relTypes {
 		label := rt
-		if relDef, ok := a.Meta().GetRelationDef(rt); ok && relDef.Label != "" {
+		if relDef, ok := s.Meta.GetRelationDef(rt); ok && relDef.Label != "" {
 			label = relDef.Label
 		}
 		rtList = append(rtList, graphRelationType{Type: rt, Label: label, Count: relTypeCounts[rt]})
 	}
 
 	// Build meta info
-	metaData := a.buildMetaInfo(entityTypes, relTypes)
+	metaData := a.buildMetaInfo(s.Meta, entityTypes, relTypes)
 
 	return graphDataResponse{
 		Nodes:         nodes,
@@ -190,7 +192,8 @@ func (a *App) buildContentGraphData() graphDataResponse {
 }
 
 func (a *App) buildMetamodelGraphData() graphDataResponse {
-	entityTypes := a.Meta().EntityTypes()
+	s := a.State()
+	entityTypes := s.Meta.EntityTypes()
 	natsort.Strings(entityTypes)
 
 	etList := make([]graphEntityType, 0, len(entityTypes))
@@ -198,18 +201,18 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 
 	for i, et := range entityTypes {
 		color := entityTypeColors[i%len(entityTypeColors)]
-		if entDef, ok := a.Meta().GetEntityDef(et); ok && entDef.Color != "" {
+		if entDef, ok := s.Meta.GetEntityDef(et); ok && entDef.Color != "" {
 			color = entDef.Color
 		}
 
 		label := et
-		if entDef, ok := a.Meta().GetEntityDef(et); ok && entDef.Label != "" {
+		if entDef, ok := s.Meta.GetEntityDef(et); ok && entDef.Label != "" {
 			label = entDef.Label
 		}
 
 		// Build properties as metadata for each entity type node
 		props := make(map[string]string)
-		if entDef, ok := a.Meta().GetEntityDef(et); ok {
+		if entDef, ok := s.Meta.GetEntityDef(et); ok {
 			propNames := make([]string, 0, len(entDef.Properties))
 			for pn := range entDef.Properties {
 				propNames = append(propNames, pn)
@@ -221,7 +224,7 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 			}
 		}
 
-		count := len(a.Graph().NodesByType(et))
+		count := len(s.Graph.NodesByType(et))
 		etList = append(etList, graphEntityType{Type: et, Label: label, Color: color, Count: count})
 		nodes = append(nodes, graphNode{
 			ID:         et,
@@ -232,14 +235,14 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 	}
 
 	// Build edges from relation definitions (from-type → to-type)
-	relTypes := a.Meta().RelationTypes()
+	relTypes := s.Meta.RelationTypes()
 	natsort.Strings(relTypes)
 
 	var edges []graphEdge
 	relTypeCounts := make(map[string]int)
 
 	for _, rt := range relTypes {
-		relDef, ok := a.Meta().GetRelationDef(rt)
+		relDef, ok := s.Meta.GetRelationDef(rt)
 		if !ok {
 			continue
 		}
@@ -258,13 +261,13 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 	rtList := make([]graphRelationType, 0, len(relTypes))
 	for _, rt := range relTypes {
 		label := rt
-		if relDef, ok := a.Meta().GetRelationDef(rt); ok && relDef.Label != "" {
+		if relDef, ok := s.Meta.GetRelationDef(rt); ok && relDef.Label != "" {
 			label = relDef.Label
 		}
 		rtList = append(rtList, graphRelationType{Type: rt, Label: label, Count: relTypeCounts[rt]})
 	}
 
-	metaData := a.buildMetaInfo(entityTypes, relTypes)
+	metaData := a.buildMetaInfo(s.Meta, entityTypes, relTypes)
 
 	return graphDataResponse{
 		Nodes:         nodes,
@@ -275,11 +278,11 @@ func (a *App) buildMetamodelGraphData() graphDataResponse {
 	}
 }
 
-func (a *App) buildMetaInfo(entityTypes, relTypes []string) graphMetaData {
+func (a *App) buildMetaInfo(meta *metamodel.Metamodel, entityTypes, relTypes []string) graphMetaData {
 	metaEntities := make([]graphMetaEntity, 0, len(entityTypes))
 	for _, et := range entityTypes {
 		me := graphMetaEntity{Type: et, Label: et}
-		if entDef, ok := a.Meta().GetEntityDef(et); ok {
+		if entDef, ok := meta.GetEntityDef(et); ok {
 			if entDef.Label != "" {
 				me.Label = entDef.Label
 			}
@@ -299,7 +302,7 @@ func (a *App) buildMetaInfo(entityTypes, relTypes []string) graphMetaData {
 	metaRelations := make([]graphMetaRelation, 0, len(relTypes))
 	for _, rt := range relTypes {
 		mr := graphMetaRelation{Type: rt}
-		if relDef, ok := a.Meta().GetRelationDef(rt); ok {
+		if relDef, ok := meta.GetRelationDef(rt); ok {
 			mr.From = relDef.From
 			mr.To = relDef.To
 		}

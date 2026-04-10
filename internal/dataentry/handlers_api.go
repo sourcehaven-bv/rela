@@ -125,8 +125,9 @@ func (a *App) handleAPIRelationsCRUD(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIEntityTypes returns a list of entity type definitions.
 func (a *App) handleAPIEntityTypes(w http.ResponseWriter, _ *http.Request) {
-	types := make([]APIEntityType, 0, len(a.Meta().Entities))
-	for name, def := range a.Meta().Entities {
+	s := a.State()
+	types := make([]APIEntityType, 0, len(s.Meta.Entities))
+	for name, def := range s.Meta.Entities {
 		apiType := APIEntityType{
 			Name:       name,
 			Plural:     def.GetPlural(),
@@ -140,7 +141,7 @@ func (a *App) handleAPIEntityTypes(w http.ResponseWriter, _ *http.Request) {
 				Default:  propDef.Default,
 			}
 			// Include enum values if this is a custom type
-			if ct, ok := a.Meta().Types[propDef.Type]; ok {
+			if ct, ok := s.Meta.Types[propDef.Type]; ok {
 				apiProp.Values = ct.Values
 			}
 			apiType.Properties[propName] = apiProp
@@ -153,13 +154,14 @@ func (a *App) handleAPIEntityTypes(w http.ResponseWriter, _ *http.Request) {
 
 // handleAPIEntities returns entities, optionally filtered by type.
 func (a *App) handleAPIEntities(w http.ResponseWriter, r *http.Request) {
+	s := a.State()
 	entityType := r.URL.Query().Get("type")
 
 	var entities []*model.Entity
 	if entityType != "" {
-		entities = a.Graph().NodesByType(entityType)
+		entities = s.Graph.NodesByType(entityType)
 	} else {
-		entities = a.Graph().AllNodes()
+		entities = s.Graph.AllNodes()
 	}
 
 	result := make([]APIEntity, 0, len(entities))
@@ -178,7 +180,7 @@ func (a *App) handleAPIEntity(w http.ResponseWriter, r *http.Request) { // Extra
 		return
 	}
 
-	entity, found := a.Graph().GetNode(path)
+	entity, found := a.State().Graph.GetNode(path)
 	if !found {
 		writeJSONError(w, http.StatusNotFound, "entity not found")
 		return
@@ -190,13 +192,14 @@ func (a *App) handleAPIEntity(w http.ResponseWriter, r *http.Request) { // Extra
 
 // handleAPIMetamodel returns the project metamodel.
 func (a *App) handleAPIMetamodel(w http.ResponseWriter, _ *http.Request) {
+	s := a.State()
 	result := APIMetamodel{
-		EntityTypes:   make([]APIEntityType, 0, len(a.Meta().Entities)),
-		RelationTypes: make([]APIRelationType, 0, len(a.Meta().Relations)),
+		EntityTypes:   make([]APIEntityType, 0, len(s.Meta.Entities)),
+		RelationTypes: make([]APIRelationType, 0, len(s.Meta.Relations)),
 	}
 
 	// Entity types
-	for name, def := range a.Meta().Entities {
+	for name, def := range s.Meta.Entities {
 		apiType := APIEntityType{
 			Name:       name,
 			Plural:     def.Plural,
@@ -209,7 +212,7 @@ func (a *App) handleAPIMetamodel(w http.ResponseWriter, _ *http.Request) {
 				Required: propDef.Required,
 				Default:  propDef.Default,
 			}
-			if ct, ok := a.Meta().Types[propDef.Type]; ok {
+			if ct, ok := s.Meta.Types[propDef.Type]; ok {
 				apiProp.Values = ct.Values
 			}
 			apiType.Properties[propName] = apiProp
@@ -218,7 +221,7 @@ func (a *App) handleAPIMetamodel(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// Relation types
-	for name, def := range a.Meta().Relations {
+	for name, def := range s.Meta.Relations {
 		result.RelationTypes = append(result.RelationTypes, APIRelationType{
 			Name: name,
 			From: def.From,
@@ -231,6 +234,7 @@ func (a *App) handleAPIMetamodel(w http.ResponseWriter, _ *http.Request) {
 
 // entityToAPI converts a model.Entity to APIEntity.
 func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
+	s := a.State()
 	api := APIEntity{
 		ID:         e.ID,
 		Type:       e.Type,
@@ -246,8 +250,8 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 		api.Relations = make([]APIRelation, 0)
 
 		// Outgoing relations
-		for _, edge := range a.Graph().OutgoingEdges(e.ID) {
-			target, found := a.Graph().GetNode(edge.To)
+		for _, edge := range s.Graph.OutgoingEdges(e.ID) {
+			target, found := s.Graph.GetNode(edge.To)
 			if !found {
 				continue
 			}
@@ -257,7 +261,7 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 				To:          edge.To,
 				Direction:   DirectionOutgoing,
 				TargetID:    edge.To,
-				TargetTitle: a.entityDisplayTitle(target),
+				TargetTitle: s.Meta.DisplayTitle(target),
 				TargetType:  target.Type,
 			}
 			if edge.Properties != nil {
@@ -270,8 +274,8 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 		}
 
 		// Incoming relations
-		for _, edge := range a.Graph().IncomingEdges(e.ID) {
-			source, found := a.Graph().GetNode(edge.From)
+		for _, edge := range s.Graph.IncomingEdges(e.ID) {
+			source, found := s.Graph.GetNode(edge.From)
 			if !found {
 				continue
 			}
@@ -281,7 +285,7 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 				To:          edge.To,
 				Direction:   DirectionIncoming,
 				TargetID:    edge.From,
-				TargetTitle: a.entityDisplayTitle(source),
+				TargetTitle: s.Meta.DisplayTitle(source),
 				TargetType:  source.Type,
 			}
 			if edge.Properties != nil {
@@ -402,7 +406,7 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.Graph().GetNode(path)
+	entity, found := a.State().Graph.GetNode(path)
 	if !found {
 		writeJSONError(w, http.StatusNotFound, "entity not found")
 		return
@@ -454,7 +458,7 @@ func (a *App) handleAPIDeleteEntity(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.Graph().GetNode(path)
+	entity, found := a.State().Graph.GetNode(path)
 	if !found {
 		writeJSONError(w, http.StatusNotFound, "entity not found")
 		return
@@ -530,7 +534,7 @@ func (a *App) handleAPIDeleteRelation(w http.ResponseWriter, r *http.Request) {
 
 	// Find the relation
 	var targetEdge *model.Relation
-	for _, edge := range a.Graph().OutgoingEdges(from) {
+	for _, edge := range a.State().Graph.OutgoingEdges(from) {
 		if edge.Type == relType && edge.To == to {
 			targetEdge = edge
 			break
@@ -575,10 +579,11 @@ func (a *App) handleAPIListRelations(w http.ResponseWriter, r *http.Request) {
 
 // listOutgoingRelations returns relations where the given entity is the source.
 func (a *App) listOutgoingRelations(from string) []APIRelation {
-	edges := a.Graph().OutgoingEdges(from)
+	s := a.State()
+	edges := s.Graph.OutgoingEdges(from)
 	relations := make([]APIRelation, 0, len(edges))
 	for _, edge := range edges {
-		target, found := a.Graph().GetNode(edge.To)
+		target, found := s.Graph.GetNode(edge.To)
 		if !found {
 			continue
 		}
@@ -590,10 +595,11 @@ func (a *App) listOutgoingRelations(from string) []APIRelation {
 
 // listIncomingRelations returns relations where the given entity is the target.
 func (a *App) listIncomingRelations(to string) []APIRelation {
-	edges := a.Graph().IncomingEdges(to)
+	s := a.State()
+	edges := s.Graph.IncomingEdges(to)
 	relations := make([]APIRelation, 0, len(edges))
 	for _, edge := range edges {
-		source, found := a.Graph().GetNode(edge.From)
+		source, found := s.Graph.GetNode(edge.From)
 		if !found {
 			continue
 		}
@@ -605,10 +611,11 @@ func (a *App) listIncomingRelations(to string) []APIRelation {
 
 // listAllRelations returns all relations in the graph.
 func (a *App) listAllRelations() []APIRelation {
-	edges := a.Graph().AllEdges()
+	s := a.State()
+	edges := s.Graph.AllEdges()
 	relations := make([]APIRelation, 0, len(edges))
 	for _, edge := range edges {
-		target, found := a.Graph().GetNode(edge.To)
+		target, found := s.Graph.GetNode(edge.To)
 		if !found {
 			continue
 		}
@@ -698,7 +705,8 @@ func (a *App) handleAPISettingsCRUD(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIGetSettings returns the settings data for the settings page.
 func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
-	ud := a.State().UserDefaults
+	s := a.State()
+	ud := s.UserDefaults
 	if ud == nil {
 		ud = &UserDefaults{}
 	}
@@ -731,8 +739,8 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 
 	// Collect all properties across entity types
 	propMap := make(map[string]APIPropertyDef)
-	for _, entTypeName := range a.Meta().EntityTypes() {
-		entDef, ok := a.Meta().GetEntityDef(entTypeName)
+	for _, entTypeName := range s.Meta.EntityTypes() {
+		entDef, ok := s.Meta.GetEntityDef(entTypeName)
 		if !ok {
 			continue
 		}
@@ -741,7 +749,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 				propMap[propName] = APIPropertyDef{
 					Name:   propName,
 					Type:   propDef.Type,
-					Values: resolvePropertyValues(propDef, a.Meta()),
+					Values: resolvePropertyValues(propDef, s.Meta),
 				}
 			} else {
 				// Merge values for properties that appear on multiple types
@@ -750,7 +758,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 				for _, v := range existing.Values {
 					seen[v] = true
 				}
-				for _, v := range resolvePropertyValues(propDef, a.Meta()) {
+				for _, v := range resolvePropertyValues(propDef, s.Meta) {
 					if !seen[v] {
 						existing.Values = append(existing.Values, v)
 						seen[v] = true
@@ -767,8 +775,8 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 
 	// Collect all relation types with their targets
 	allRelations := make([]APIRelationDef, 0)
-	for _, relName := range a.Meta().RelationTypes() {
-		relDef, ok := a.Meta().GetRelationDef(relName)
+	for _, relName := range s.Meta.RelationTypes() {
+		relDef, ok := s.Meta.GetRelationDef(relName)
 		if !ok {
 			continue
 		}
@@ -779,10 +787,10 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 		if len(relDef.To) > 0 {
 			rd.TargetType = relDef.To[0]
 			for _, targetType := range relDef.To {
-				for _, e := range a.Graph().NodesByType(targetType) {
+				for _, e := range s.Graph.NodesByType(targetType) {
 					rd.Targets = append(rd.Targets, APIRelationTarget{
 						ID:    e.ID,
-						Title: a.entityDisplayTitle(e),
+						Title: s.Meta.DisplayTitle(e),
 					})
 				}
 			}
@@ -792,10 +800,10 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 
 	data := APISettingsData{
 		UserDefaults:  apiDefaults,
-		UserPalette:   a.State().UserPalette,
+		UserPalette:   s.UserPalette,
 		AllProperties: allProperties,
 		AllRelations:  allRelations,
-		EntityTypes:   a.Meta().EntityTypes(),
+		EntityTypes:   s.Meta.EntityTypes(),
 	}
 
 	writeJSON(w, data)

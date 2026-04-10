@@ -15,7 +15,7 @@ type viewResult struct {
 
 // executeView runs a view's traversal rules and returns the result.
 func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) {
-	entry, ok := a.Graph().GetNode(entryID)
+	entry, ok := a.State().Graph.GetNode(entryID)
 	if !ok {
 		return nil, fmt.Errorf("entry entity not found: %s", entryID)
 	}
@@ -104,19 +104,20 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 }
 
 func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*model.Entity {
+	g := a.State().Graph
 	var out []*model.Entity
 	if rule.Follow != "" {
-		for _, edge := range a.Graph().OutgoingEdges(sourceID) {
+		for _, edge := range g.OutgoingEdges(sourceID) {
 			if edge.Type == rule.Follow {
-				if target, ok := a.Graph().GetNode(edge.To); ok {
+				if target, ok := g.GetNode(edge.To); ok {
 					out = append(out, target)
 				}
 			}
 		}
 	} else if rule.FollowIncoming != "" {
-		for _, edge := range a.Graph().IncomingEdges(sourceID) {
+		for _, edge := range g.IncomingEdges(sourceID) {
 			if edge.Type == rule.FollowIncoming {
-				if src, ok := a.Graph().GetNode(edge.From); ok {
+				if src, ok := g.GetNode(edge.From); ok {
 					out = append(out, src)
 				}
 			}
@@ -157,6 +158,7 @@ func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*mod
 		return nil, fmt.Errorf("invalid where expression: %w", err)
 	}
 
+	s := a.State()
 	var result []*model.Entity
 	for _, entity := range entities {
 		// Special handling for "type" pseudo-property
@@ -168,7 +170,7 @@ func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*mod
 		}
 
 		// Regular property - use metamodel-aware matching
-		entityDef, ok := a.Meta().GetEntityDef(entity.Type)
+		entityDef, ok := s.Meta.GetEntityDef(entity.Type)
 		if !ok {
 			continue
 		}
@@ -176,7 +178,7 @@ func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*mod
 		if !ok {
 			continue
 		}
-		matches, err := filter.Match(entity, f, &propDef, a.Meta())
+		matches, err := filter.Match(entity, f, &propDef, s.Meta)
 		if err != nil {
 			continue
 		}

@@ -97,6 +97,7 @@ type SectionData struct {
 
 // buildSections builds template-ready section data from view sections and a view result.
 func (a *App) buildSections(sections []ViewSection, result *viewResult) []SectionData {
+	s := a.State()
 	out := make([]SectionData, 0, len(sections))
 
 	for _, sec := range sections {
@@ -110,7 +111,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 
 		if sec.Source == "entry" {
 			e := result.Entry
-			entDef, _ := a.Meta().GetEntityDef(e.Type)
+			entDef, _ := s.Meta.GetEntityDef(e.Type)
 
 			switch sec.Display {
 			case "properties":
@@ -147,10 +148,10 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 			switch sec.Display {
 			case "properties", "list":
 				for _, e := range entities {
-					eDef, _ := a.Meta().GetEntityDef(e.Type)
+					eDef, _ := s.Meta.GetEntityDef(e.Type)
 					sed := SectionEntityData{
 						ID:         e.ID,
-						Title:      a.entityDisplayTitle(e),
+						Title:      s.Meta.DisplayTitle(e),
 						Type:       e.Type,
 						EditFormID: a.editFormForType(e.Type),
 					}
@@ -178,7 +179,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 			case "table":
 				sd.Columns = sec.Columns
 				buildRow := func(e *model.Entity) SectionRowData {
-					eDef, _ := a.Meta().GetEntityDef(e.Type)
+					eDef, _ := s.Meta.GetEntityDef(e.Type)
 					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
 					for _, col := range sec.Columns {
 						cell := SectionColumnData{
@@ -194,7 +195,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 									cell.PropType = pd.Type
 								}
 							}
-							cell.Widget = resolveWidget(pd, a.Meta())
+							cell.Widget = resolveWidget(pd, s.Meta)
 							if vs := e.GetAttributeStrings(col.Property); vs != nil {
 								cell.Values = vs
 							} else if val := e.GetAttributeString(col.Property); val != "" {
@@ -236,10 +237,10 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 
 			case "content", "cards":
 				for _, e := range entities {
-					eDef, _ := a.Meta().GetEntityDef(e.Type)
+					eDef, _ := s.Meta.GetEntityDef(e.Type)
 					sed := SectionEntityData{
 						ID:         e.ID,
-						Title:      a.entityDisplayTitle(e),
+						Title:      s.Meta.DisplayTitle(e),
 						Type:       e.Type,
 						EditFormID: a.editFormForType(e.Type),
 						Content:    e.Content,
@@ -299,6 +300,7 @@ func (a *App) executeSidePanel(panel *SidePanelConfig, entityID, entityType stri
 
 // resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo using full view config.
 func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections []SectionData, entry *model.Entity) {
+	s := a.State()
 	for i, sec := range viewConfig.Sections {
 		if sec.Source == "entry" {
 			continue
@@ -313,7 +315,7 @@ func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections 
 				relName = rule.FollowIncoming
 				linkAs = "from" // new entity is the source (incoming to entry)
 			}
-			relDef, ok := a.Meta().GetRelationDef(relName)
+			relDef, ok := s.Meta.GetRelationDef(relName)
 			if !ok {
 				break
 			}
@@ -331,7 +333,7 @@ func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections 
 					continue
 				}
 				label := et
-				if ed, ok := a.Meta().GetEntityDef(et); ok && ed.Label != "" {
+				if ed, ok := s.Meta.GetEntityDef(et); ok && ed.Label != "" {
 					label = ed.Label
 				}
 				targets = append(targets, SectionAddTarget{

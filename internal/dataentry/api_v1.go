@@ -89,7 +89,7 @@ type V1PropertyDef struct {
 	List        bool     `json:"list,omitempty"`
 }
 
-func (a *App) toV1PropertyDef(propDef metamodel.PropertyDef) V1PropertyDef {
+func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) V1PropertyDef {
 	pd := V1PropertyDef{
 		Type:        propDef.Type,
 		Required:    propDef.Required,
@@ -97,7 +97,7 @@ func (a *App) toV1PropertyDef(propDef metamodel.PropertyDef) V1PropertyDef {
 		Description: propDef.Description,
 		List:        propDef.List,
 	}
-	if ct, ok := a.Meta().Types[propDef.Type]; ok {
+	if ct, ok := meta.Types[propDef.Type]; ok {
 		pd.Values = ct.Values
 	} else if len(propDef.Values) > 0 {
 		pd.Values = propDef.Values
@@ -221,7 +221,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 
 	// Find entity type by plural
 	var typeName string
-	for name, def := range a.Meta().Entities {
+	for name, def := range a.State().Meta.Entities {
 		if def.GetDirPlural(name) == plural {
 			typeName = name
 			break
@@ -286,7 +286,7 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 }
 
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
-	entities := a.Graph().NodesByType(typeName)
+	entities := a.State().Graph.NodesByType(typeName)
 
 	// Apply filters
 	query := r.URL.Query()
@@ -420,7 +420,7 @@ func (a *App) handleV1SingleEntity(w http.ResponseWriter, r *http.Request, typeN
 }
 
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
-	entity, found := a.Graph().GetNode(entityID)
+	entity, found := a.State().Graph.GetNode(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -455,7 +455,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.Graph().GetNode(entityID)
+	entity, found := a.State().Graph.GetNode(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -514,7 +514,7 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.Graph().GetNode(entityID)
+	entity, found := a.State().Graph.GetNode(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -534,14 +534,15 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 // --- Relation Handlers ---
 
 func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
-	entity, found := a.Graph().GetNode(entityID)
+	s := a.State()
+	entity, found := s.Graph.GetNode(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
 
-	outgoing := a.Graph().OutgoingEdges(entityID)
-	incoming := a.Graph().IncomingEdges(entityID)
+	outgoing := s.Graph.OutgoingEdges(entityID)
+	incoming := s.Graph.IncomingEdges(entityID)
 
 	relations := make(map[string][]map[string]interface{})
 
@@ -557,7 +558,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	}
 
 	for _, edge := range incoming {
-		relDef, ok := a.Meta().Relations[edge.Type]
+		relDef, ok := s.Meta.Relations[edge.Type]
 		if !ok {
 			continue
 		}
@@ -599,7 +600,8 @@ func resolveRelationEndpoints(entityID, peerID, direction string) (from, to stri
 }
 
 func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
-	entity, found := a.Graph().GetNode(entityID)
+	s := a.State()
+	entity, found := s.Graph.GetNode(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -609,9 +611,9 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 
 	var edges []*model.Relation
 	if incoming {
-		edges = a.Graph().IncomingEdges(entityID)
+		edges = s.Graph.IncomingEdges(entityID)
 	} else {
-		edges = a.Graph().OutgoingEdges(entityID)
+		edges = s.Graph.OutgoingEdges(entityID)
 	}
 
 	relations := make([]map[string]interface{}, 0, len(edges))
@@ -641,7 +643,7 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.Graph().GetNode(entityID)
+	entity, found := a.State().Graph.GetNode(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -695,7 +697,7 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.Graph().GetNode(entityID)
+	entity, found := a.State().Graph.GetNode(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -737,7 +739,7 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.Graph().GetNode(entityID)
+	entity, found := a.State().Graph.GetNode(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -774,7 +776,8 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.Graph().GetNode(entityID)
+	s := a.State()
+	entity, found := s.Graph.GetNode(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -795,7 +798,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 		return
 	}
 
-	entityDef := a.Meta().Entities[typeName]
+	entityDef := s.Meta.Entities[typeName]
 	plural := entityDef.GetDirPlural(typeName)
 	result := a.entityToV1(newEntity, plural, false, false)
 
@@ -811,13 +814,14 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s := a.State()
 	schema := V1Schema{
 		Entities:  make(map[string]V1EntityType),
 		Relations: make(map[string]V1RelationType),
 		Types:     make(map[string]V1CustomType),
 	}
 
-	for name, def := range a.Meta().Entities {
+	for name, def := range s.Meta.Entities {
 		et := V1EntityType{
 			Label:       def.Label,
 			Plural:      def.GetDirPlural(name),
@@ -830,12 +834,12 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 			et.IDPrefix = def.GetIDPrefixes()[0]
 		}
 		for propName, propDef := range def.Properties {
-			et.Properties[propName] = a.toV1PropertyDef(propDef)
+			et.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
 		}
 		schema.Entities[name] = et
 	}
 
-	for name, def := range a.Meta().Relations {
+	for name, def := range s.Meta.Relations {
 		rt := V1RelationType{
 			Label:       def.Label,
 			Description: def.Description,
@@ -849,13 +853,13 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		if len(def.Properties) > 0 {
 			rt.Properties = make(map[string]V1PropertyDef, len(def.Properties))
 			for propName, propDef := range def.Properties {
-				rt.Properties[propName] = a.toV1PropertyDef(propDef)
+				rt.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
 			}
 		}
 		schema.Relations[name] = rt
 	}
 
-	for name, def := range a.Meta().Types {
+	for name, def := range s.Meta.Types {
 		schema.Types[name] = V1CustomType{
 			Values:  def.Values,
 			Default: def.Default,
@@ -866,13 +870,14 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
+	s := a.State()
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_schema/")
 
 	switch {
 	case path == "types":
 		// List entity type names
-		names := make([]string, 0, len(a.Meta().Entities))
-		for name := range a.Meta().Entities {
+		names := make([]string, 0, len(s.Meta.Entities))
+		for name := range s.Meta.Entities {
 			names = append(names, name)
 		}
 		sort.Strings(names)
@@ -881,7 +886,7 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "types/"):
 		// Get specific entity type
 		typeName := strings.TrimPrefix(path, "types/")
-		def, ok := a.Meta().Entities[typeName]
+		def, ok := s.Meta.Entities[typeName]
 		if !ok {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", "")
 			return
@@ -900,7 +905,7 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 				Required: propDef.Required,
 				Default:  propDef.Default,
 			}
-			if ct, ok := a.Meta().Types[propDef.Type]; ok {
+			if ct, ok := s.Meta.Types[propDef.Type]; ok {
 				pd.Values = ct.Values
 			}
 			et.Properties[propName] = pd
@@ -908,7 +913,7 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 		writeV1JSON(w, http.StatusOK, et)
 
 	case path == "relations":
-		writeV1JSON(w, http.StatusOK, a.Meta().Relations)
+		writeV1JSON(w, http.StatusOK, s.Meta.Relations)
 
 	default:
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
@@ -919,15 +924,17 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
-	} // Resolve relation widgets: auto-detect "cards" for relations with properties/content
-	forms := make(map[string]dataentryconfig.Form, len(a.Cfg().Forms))
-	for id, form := range a.Cfg().Forms {
+	}
+	s := a.State()
+	// Resolve relation widgets: auto-detect "cards" for relations with properties/content
+	forms := make(map[string]dataentryconfig.Form, len(s.Cfg.Forms))
+	for id, form := range s.Cfg.Forms {
 		f := form
 		resolved := make([]dataentryconfig.FormRelation, len(f.Relations))
 		copy(resolved, f.Relations)
 		for i := range resolved {
 			if resolved[i].Widget == "" {
-				if def, ok := a.Meta().GetRelationDef(resolved[i].Relation); ok && def.HasAdvancedFeatures() {
+				if def, ok := s.Meta.GetRelationDef(resolved[i].Relation); ok && def.HasAdvancedFeatures() {
 					resolved[i].Widget = WidgetCards
 				}
 			}
@@ -938,19 +945,19 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 
 	config := V1Config{
 		App: V1AppConfig{
-			Name:        a.Cfg().App.Name,
-			Description: a.Cfg().App.Description,
+			Name:        s.Cfg.App.Name,
+			Description: s.Cfg.App.Description,
 		},
-		Styles:     a.State().StyleMap,
+		Styles:     s.StyleMap,
 		Forms:      forms,
-		Lists:      a.Cfg().Lists,
-		Views:      a.Cfg().Views,
-		Kanbans:    a.Cfg().Kanbans,
-		Dashboard:  a.Cfg().Dashboard,
-		Actions:    a.Cfg().Actions,
-		Navigation: a.Cfg().Navigation,
-		Documents:  a.Cfg().Documents,
-		Palette:    a.State().Palette,
+		Lists:      s.Cfg.Lists,
+		Views:      s.Cfg.Views,
+		Kanbans:    s.Cfg.Kanbans,
+		Dashboard:  s.Cfg.Dashboard,
+		Actions:    s.Cfg.Actions,
+		Navigation: s.Cfg.Navigation,
+		Documents:  s.Cfg.Documents,
+		Palette:    s.Palette,
 	}
 
 	writeV1JSON(w, http.StatusOK, config)
@@ -981,9 +988,10 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		entities = filtered
 	}
 
+	meta := a.State().Meta
 	data := make([]V1Entity, 0, len(entities))
 	for _, e := range entities {
-		entityDef := a.Meta().Entities[e.Type]
+		entityDef := meta.Entities[e.Type]
 		plural := entityDef.GetDirPlural(e.Type)
 		data = append(data, a.entityToV1(e, plural, false, false))
 	}
@@ -1034,10 +1042,11 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 // --- Helper Functions ---
 
 func (a *App) entityToV1(e *model.Entity, plural string, includeRelations, includeActions bool) V1Entity {
+	s := a.State()
 	v1 := V1Entity{
 		ID:         e.ID,
 		Type:       e.Type,
-		Title:      a.entityDisplayTitle(e),
+		Title:      s.Meta.DisplayTitle(e),
 		Properties: make(map[string]interface{}),
 		Content:    e.Content,
 		Self:       fmt.Sprintf("/api/v1/%s/%s", plural, e.ID),
@@ -1049,19 +1058,19 @@ func (a *App) entityToV1(e *model.Entity, plural string, includeRelations, inclu
 
 	if includeRelations {
 		v1.Relations = make(map[string][]string)
-		for _, edge := range a.Graph().OutgoingEdges(e.ID) {
+		for _, edge := range s.Graph.OutgoingEdges(e.ID) {
 			v1.Relations[edge.Type] = append(v1.Relations[edge.Type], edge.To)
 		}
 	}
 
 	if includeActions {
-		v1.Actions = a.computeEntityActions(e)
+		v1.Actions = a.computeEntityActions(s, e)
 	}
 
 	return v1
 }
 
-func (a *App) computeEntityActions(e *model.Entity) *V1Actions {
+func (a *App) computeEntityActions(s *AppState, e *model.Entity) *V1Actions {
 	actions := &V1Actions{}
 
 	// Delete is always allowed; cascade removes associated relations.
@@ -1069,9 +1078,9 @@ func (a *App) computeEntityActions(e *model.Entity) *V1Actions {
 
 	// Get valid status transitions
 	if status, ok := e.Properties["status"].(string); ok {
-		entityDef := a.Meta().Entities[e.Type]
+		entityDef := s.Meta.Entities[e.Type]
 		if statusProp, ok := entityDef.Properties["status"]; ok {
-			if ct, ok := a.Meta().Types[statusProp.Type]; ok {
+			if ct, ok := s.Meta.Types[statusProp.Type]; ok {
 				actions.Transitions = ct.Values
 			} else if len(statusProp.Values) > 0 {
 				actions.Transitions = statusProp.Values
@@ -1091,27 +1100,28 @@ func (a *App) computeEntityActions(e *model.Entity) *V1Actions {
 }
 
 func (a *App) resolveV1Includes(entity *model.Entity, includes string) map[string]V1Entity {
+	s := a.State()
 	included := make(map[string]V1Entity)
 
 	// Support include=* to include all related entities
 	if includes == "*" {
 		// Include all outgoing relations
-		for _, edge := range a.Graph().OutgoingEdges(entity.ID) {
-			target, found := a.Graph().GetNode(edge.To)
+		for _, edge := range s.Graph.OutgoingEdges(entity.ID) {
+			target, found := s.Graph.GetNode(edge.To)
 			if !found {
 				continue
 			}
-			entityDef := a.Meta().Entities[target.Type]
+			entityDef := s.Meta.Entities[target.Type]
 			plural := entityDef.GetDirPlural(target.Type)
 			included[target.ID] = a.entityToV1(target, plural, false, false)
 		}
 		// Include all incoming relations
-		for _, edge := range a.Graph().IncomingEdges(entity.ID) {
-			source, found := a.Graph().GetNode(edge.From)
+		for _, edge := range s.Graph.IncomingEdges(entity.ID) {
+			source, found := s.Graph.GetNode(edge.From)
 			if !found {
 				continue
 			}
-			entityDef := a.Meta().Entities[source.Type]
+			entityDef := s.Meta.Entities[source.Type]
 			plural := entityDef.GetDirPlural(source.Type)
 			included[source.ID] = a.entityToV1(source, plural, false, false)
 		}
@@ -1129,15 +1139,15 @@ func (a *App) resolveV1Includes(entity *model.Entity, includes string) map[strin
 		relParts := strings.SplitN(part, ".", 2)
 		relType := relParts[0]
 
-		for _, edge := range a.Graph().OutgoingEdges(entity.ID) {
+		for _, edge := range s.Graph.OutgoingEdges(entity.ID) {
 			if edge.Type != relType {
 				continue
 			}
-			target, found := a.Graph().GetNode(edge.To)
+			target, found := s.Graph.GetNode(edge.To)
 			if !found {
 				continue
 			}
-			entityDef := a.Meta().Entities[target.Type]
+			entityDef := s.Meta.Entities[target.Type]
 			plural := entityDef.GetDirPlural(target.Type)
 			included[target.ID] = a.entityToV1(target, plural, false, false)
 
@@ -1466,7 +1476,8 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 
 	formID := parts[0]
 	entityID := parts[1] // Get form config
-	form, ok := a.Cfg().Forms[formID]
+	s := a.State()
+	form, ok := s.Cfg.Forms[formID]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "form_not_found", "Form not found", "")
 		return
@@ -1479,7 +1490,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the entry entity
-	entry, found := a.Graph().GetNode(entityID)
+	entry, found := s.Graph.GetNode(entityID)
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
 		return
@@ -1587,16 +1598,18 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
-	} // Build entity type counts
+	}
+	s := a.State()
+	// Build entity type counts
 	counts := make(map[string]int)
-	for _, entityType := range a.Meta().EntityTypes() {
-		counts[entityType] = len(a.Graph().NodesByType(entityType))
+	for _, entityType := range s.Meta.EntityTypes() {
+		counts[entityType] = len(s.Graph.NodesByType(entityType))
 	}
 
 	// Build navigation with counts
 	navigation := make([]V1SidebarGroup, 0)
 
-	for _, entry := range a.Cfg().Navigation {
+	for _, entry := range s.Cfg.Navigation {
 		if entry.IsGroup() {
 			group := V1SidebarGroup{
 				Group:     entry.Group,
@@ -1619,8 +1632,8 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 
 	resp := V1SidebarResponse{
 		App: V1AppConfig{
-			Name:        a.Cfg().App.Name,
-			Description: a.Cfg().App.Description,
+			Name:        s.Cfg.App.Name,
+			Description: s.Cfg.App.Description,
 		},
 		Navigation: navigation,
 	}
@@ -1630,6 +1643,7 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 
 // navEntryToSidebarItem converts a navigation entry to a sidebar item with count.
 func (a *App) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, counts map[string]int) V1SidebarItem {
+	s := a.State()
 	item := V1SidebarItem{
 		Label: entry.Label,
 	}
@@ -1639,7 +1653,7 @@ func (a *App) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, count
 		item.Href = "/list/" + entry.List
 		item.Icon = "list"
 		// Look up entity type from list config
-		if list, ok := a.Cfg().Lists[entry.List]; ok {
+		if list, ok := s.Cfg.Lists[entry.List]; ok {
 			if count, ok := counts[list.EntityType]; ok {
 				item.Count = &count
 			}
@@ -1648,7 +1662,7 @@ func (a *App) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, count
 		item.Href = "/kanban/" + entry.Kanban
 		item.Icon = "kanban"
 		// Look up entity type from kanban config
-		if kanban, ok := a.Cfg().Kanbans[entry.Kanban]; ok {
+		if kanban, ok := s.Cfg.Kanbans[entry.Kanban]; ok {
 			if count, ok := counts[kanban.EntityType]; ok {
 				item.Count = &count
 			}
@@ -1770,7 +1784,7 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 	ctx := a.ws.Paths()
 	absPath := filepath.Join(ctx.Root, path)
 
-	cf, err := conflict.ParseConflictedFile(absPath, a.Meta())
+	cf, err := conflict.ParseConflictedFile(absPath, a.State().Meta)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "parse_failed", "Failed to parse conflict", err.Error())
 		return
@@ -1817,7 +1831,7 @@ func (a *App) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
 	ctx := a.ws.Paths()
 	absPath := filepath.Join(ctx.Root, req.Path)
 
-	cf, err := conflict.ParseConflictedFile(absPath, a.Meta())
+	cf, err := conflict.ParseConflictedFile(absPath, a.State().Meta)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "parse_failed", "Failed to parse conflict", err.Error())
 		return
@@ -1846,7 +1860,7 @@ func (a *App) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
 		resolution.ContentChoice = conflict.SideOurs
 	}
 
-	if err := conflict.ResolveAndWrite(cf, resolution, a.Meta()); err != nil {
+	if err := conflict.ResolveAndWrite(cf, resolution, a.State().Meta); err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
 		return
 	}
@@ -1891,7 +1905,7 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
 		return
 	} // Get document config
-	docCfg, ok := a.Cfg().Documents[docName]
+	docCfg, ok := a.State().Cfg.Documents[docName]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
 		return
@@ -2008,7 +2022,7 @@ func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if entity type exists
-	if _, ok := a.Meta().Entities[entityType]; !ok {
+	if _, ok := a.State().Meta.Entities[entityType]; !ok {
 		writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found",
 			fmt.Sprintf("Entity type '%s' not found", entityType), "")
 		return
@@ -2168,7 +2182,8 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	}
 
 	viewID, entityID := parts[0], parts[1] // Get view config
-	viewCfg, ok := a.Cfg().Views[viewID]
+	s := a.State()
+	viewCfg, ok := s.Cfg.Views[viewID]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "view_not_found", "View not found", "")
 		return
@@ -2188,7 +2203,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	a.resolveSectionButtonsWithTraverse(viewCfg, sections, result.Entry)
 
 	// Build response
-	entityDef := a.Meta().Entities[result.Entry.Type]
+	entityDef := s.Meta.Entities[result.Entry.Type]
 	plural := entityDef.GetDirPlural(result.Entry.Type)
 
 	resp := V1ViewResponse{

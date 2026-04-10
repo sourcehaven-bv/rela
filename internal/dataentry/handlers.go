@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // PropertyHelp holds documentation for a single property.
@@ -48,7 +50,7 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	live, ok := a.Graph().GetNode(entityID)
+	live, ok := a.State().Graph.GetNode(entityID)
 	if !ok {
 		http.Error(w, "Entity not found", http.StatusNotFound)
 		return
@@ -83,7 +85,8 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entDef, ok := a.Meta().GetEntityDef(entityType)
+	s := a.State()
+	entDef, ok := s.Meta.GetEntityDef(entityType)
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -106,8 +109,8 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(props, func(i, j int) bool { return props[i].Name < props[j].Name })
 
 	// Gather outgoing and incoming relations
-	outgoingRels := a.gatherRelations(entityType, true)
-	incomingRels := a.gatherRelations(entityType, false)
+	outgoingRels := a.gatherRelations(s.Meta, entityType, true)
+	incomingRels := a.gatherRelations(s.Meta, entityType, false)
 
 	// Render entity description
 	var entityDesc htmltemplate.HTML
@@ -183,9 +186,9 @@ func (a *App) renderHelpContent(w http.ResponseWriter, entityDesc htmltemplate.H
 // gatherRelations collects relation documentation for an entity type.
 // If outgoing is true, gathers relations where entityType is in "from";
 // otherwise gathers relations where entityType is in "to".
-func (a *App) gatherRelations(entityType string, outgoing bool) []RelationHelp {
-	rels := make([]RelationHelp, 0, len(a.Meta().Relations))
-	for name, rel := range a.Meta().Relations {
+func (a *App) gatherRelations(meta *metamodel.Metamodel, entityType string, outgoing bool) []RelationHelp {
+	rels := make([]RelationHelp, 0, len(meta.Relations))
+	for name, rel := range meta.Relations {
 		var matchTypes, targetTypes []string
 		var minCard, maxCard *int
 		if outgoing {

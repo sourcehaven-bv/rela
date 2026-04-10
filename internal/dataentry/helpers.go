@@ -261,15 +261,16 @@ func (a *App) sortEntitiesMulti(entities []*model.Entity, specs []model.SortSpec
 	if len(specs) == 0 {
 		return
 	}
+	s := a.State()
 	entityDefs := make(map[string]*metamodel.EntityDef)
 	for _, e := range entities {
 		if _, ok := entityDefs[e.Type]; !ok {
-			if def, ok := a.Meta().GetEntityDef(e.Type); ok {
+			if def, ok := s.Meta.GetEntityDef(e.Type); ok {
 				entityDefs[e.Type] = def
 			}
 		}
 	}
-	filter.SortMulti(entities, specs, entityDefs, a.Meta())
+	filter.SortMulti(entities, specs, entityDefs, s.Meta)
 }
 
 // resolvePropertyValues returns allowed values for a property from its definition or custom type.
@@ -506,13 +507,14 @@ func (a *App) executeQuery(query string) []*model.Entity {
 		}
 	} else {
 		// No free text - get candidates from graph and filter
+		g := a.State().Graph
 		var candidates []*model.Entity
 		if len(sq.EntityTypes) > 0 {
 			for _, t := range sq.EntityTypes {
-				candidates = append(candidates, a.Graph().NodesByType(t)...)
+				candidates = append(candidates, g.NodesByType(t)...)
 			}
 		} else {
-			candidates = a.Graph().AllNodes()
+			candidates = g.AllNodes()
 		}
 
 		for _, e := range candidates {
@@ -540,11 +542,12 @@ func (a *App) executeQuery(query string) []*model.Entity {
 // relation type from an entity. Direction controls whether to follow edges pointing
 // to the entity (incoming) or from the entity (outgoing, the default).
 func (a *App) resolveRelationColumnValues(entityID, relationType string, direction dataentryconfig.Direction) []string {
+	s := a.State()
 	var edges []*model.Relation
 	if direction.IsIncoming() {
-		edges = a.Graph().IncomingEdges(entityID)
+		edges = s.Graph.IncomingEdges(entityID)
 	} else {
-		edges = a.Graph().OutgoingEdges(entityID)
+		edges = s.Graph.OutgoingEdges(entityID)
 	}
 	titles := make([]string, 0, len(edges))
 	for _, edge := range edges {
@@ -557,11 +560,11 @@ func (a *App) resolveRelationColumnValues(entityID, relationType string, directi
 		} else {
 			targetID = edge.To
 		}
-		target, ok := a.Graph().GetNode(targetID)
+		target, ok := s.Graph.GetNode(targetID)
 		if !ok {
 			continue
 		}
-		titles = append(titles, a.entityDisplayTitle(target))
+		titles = append(titles, s.Meta.DisplayTitle(target))
 	}
 	return titles
 }
@@ -569,17 +572,18 @@ func (a *App) resolveRelationColumnValues(entityID, relationType string, directi
 // filterByRelation filters entities to those that have an outgoing edge of the given
 // relation type pointing to a target whose display title matches value.
 func (a *App) filterByRelation(entities []*model.Entity, relationType, value string) []*model.Entity {
+	s := a.State()
 	var result []*model.Entity
 	for _, e := range entities {
-		for _, edge := range a.Graph().OutgoingEdges(e.ID) {
+		for _, edge := range s.Graph.OutgoingEdges(e.ID) {
 			if edge.Type != relationType {
 				continue
 			}
-			target, ok := a.Graph().GetNode(edge.To)
+			target, ok := s.Graph.GetNode(edge.To)
 			if !ok {
 				continue
 			}
-			if a.entityDisplayTitle(target) == value {
+			if s.Meta.DisplayTitle(target) == value {
 				result = append(result, e)
 				break
 			}
@@ -591,18 +595,19 @@ func (a *App) filterByRelation(entities []*model.Entity, relationType, value str
 // resolveRelationFilterValues returns sorted, unique display titles of all entities
 // reachable via the given relation type from any of the provided entities.
 func (a *App) resolveRelationFilterValues(entities []*model.Entity, relationType string) []string {
+	s := a.State()
 	seen := make(map[string]bool)
 	var vals []string
 	for _, e := range entities {
-		for _, edge := range a.Graph().OutgoingEdges(e.ID) {
+		for _, edge := range s.Graph.OutgoingEdges(e.ID) {
 			if edge.Type != relationType {
 				continue
 			}
-			target, ok := a.Graph().GetNode(edge.To)
+			target, ok := s.Graph.GetNode(edge.To)
 			if !ok {
 				continue
 			}
-			title := a.entityDisplayTitle(target)
+			title := s.Meta.DisplayTitle(target)
 			if !seen[title] {
 				seen[title] = true
 				vals = append(vals, title)
@@ -631,6 +636,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 		return nil
 	}
 
+	s := a.State()
 	var ids []string
 	var label string
 	var backURL string
@@ -638,11 +644,11 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 	switch {
 	case strings.HasPrefix(scope, "list:"):
 		listID := strings.TrimPrefix(scope, "list:")
-		list, ok := a.Cfg().Lists[listID]
+		list, ok := s.Cfg.Lists[listID]
 		if !ok {
 			return nil
 		}
-		entities := a.Graph().NodesByType(list.EntityType)
+		entities := s.Graph.NodesByType(list.EntityType)
 		entities = applyFilters(entities, list.Filters)
 
 		// Apply dynamic filter params (same as handleList)
@@ -746,11 +752,12 @@ func (a *App) matchesPropertyFilters(e *model.Entity, filters []*filter.Filter) 
 	if len(filters) == 0 {
 		return true
 	}
-	entDef, ok := a.Meta().GetEntityDef(e.Type)
+	s := a.State()
+	entDef, ok := s.Meta.GetEntityDef(e.Type)
 	if !ok {
 		return false
 	}
-	matched, err := filter.MatchAll(e, filters, entDef, a.Meta())
+	matched, err := filter.MatchAll(e, filters, entDef, s.Meta)
 	return err == nil && matched
 }
 
@@ -762,14 +769,15 @@ func (a *App) isRelationLinked(formRel, linkRel string) bool {
 	if formRel == linkRel {
 		return true
 	}
+	s := a.State()
 	// Check if linkRel has an inverse that equals formRel.
-	if def, ok := a.Meta().GetRelationDef(linkRel); ok && def.Inverse != nil {
+	if def, ok := s.Meta.GetRelationDef(linkRel); ok && def.Inverse != nil {
 		if def.Inverse.GetID() == formRel {
 			return true
 		}
 	}
 	// Check if formRel has an inverse that equals linkRel.
-	if def, ok := a.Meta().GetRelationDef(formRel); ok && def.Inverse != nil {
+	if def, ok := s.Meta.GetRelationDef(formRel); ok && def.Inverse != nil {
 		if def.Inverse.GetID() == linkRel {
 			return true
 		}

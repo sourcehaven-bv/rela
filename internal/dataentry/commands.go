@@ -37,20 +37,21 @@ type ResolvedCommand struct {
 // qualifier is the specific list ID or view ID.
 // entityType is the entity type shown on the page (empty for dashboard).
 func (a *App) resolveCommands(pageType, qualifier, entityType string) []ResolvedCommand {
-	if len(a.Cfg().Commands) == 0 {
+	s := a.State()
+	if len(s.Cfg.Commands) == 0 {
 		return nil
 	}
 
 	// Sort command IDs for deterministic order.
-	ids := make([]string, 0, len(a.Cfg().Commands))
-	for id := range a.Cfg().Commands {
+	ids := make([]string, 0, len(s.Cfg.Commands))
+	for id := range s.Cfg.Commands {
 		ids = append(ids, id)
 	}
 	natsort.Strings(ids)
 
 	var result []ResolvedCommand
 	for _, id := range ids {
-		cmd := a.Cfg().Commands[id]
+		cmd := s.Cfg.Commands[id]
 		if matchesPage(cmd, pageType, qualifier, entityType) {
 			result = append(result, ResolvedCommand{
 				ID:       id,
@@ -144,9 +145,10 @@ type commandProjectInfo struct {
 }
 
 func (a *App) buildEntityInput(entity *model.Entity) *commandInput {
+	s := a.State()
 	// Collect all relations involving this entity.
-	outgoing := a.Graph().OutgoingEdges(entity.ID)
-	incoming := a.Graph().IncomingEdges(entity.ID)
+	outgoing := s.Graph.OutgoingEdges(entity.ID)
+	incoming := s.Graph.IncomingEdges(entity.ID)
 	rels := make([]*model.Relation, 0, len(outgoing)+len(incoming))
 	rels = append(rels, outgoing...)
 	rels = append(rels, incoming...)
@@ -177,9 +179,10 @@ func (a *App) buildViewInput(viewID string, vr *viewResult) *commandInput {
 	}
 
 	// Gather relations between entities in the result set.
+	g := a.State().Graph
 	var rels []*model.Relation
 	for id := range idSet {
-		for _, e := range a.Graph().OutgoingEdges(id) {
+		for _, e := range g.OutgoingEdges(id) {
 			if idSet[e.To] {
 				rels = append(rels, e)
 			}
@@ -263,7 +266,8 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	commandID := strings.TrimPrefix(r.URL.Path, "/api/command/")
-	cmd, ok := a.Cfg().Commands[commandID]
+	s := a.State()
+	cmd, ok := s.Cfg.Commands[commandID]
 	if !ok {
 		http.Error(w, "Unknown command: "+commandID, http.StatusNotFound)
 		return
@@ -279,7 +283,7 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	switch cmd.Context {
 	case "entity":
 		entityID := r.URL.Query().Get("entity_id")
-		entity, found := a.Graph().GetNode(entityID)
+		entity, found := s.Graph.GetNode(entityID)
 		if !found {
 			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
 			return
@@ -287,18 +291,18 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 		input = a.buildEntityInput(entity)
 	case "list":
 		listID := r.URL.Query().Get("list_id")
-		listCfg, found := a.Cfg().Lists[listID]
+		listCfg, found := s.Cfg.Lists[listID]
 		if !found {
 			http.Error(w, "List not found: "+listID, http.StatusNotFound)
 			return
 		}
-		entities := a.Graph().NodesByType(listCfg.EntityType)
+		entities := s.Graph.NodesByType(listCfg.EntityType)
 		entities = applyFilters(entities, listCfg.Filters)
 		input = a.buildListInput(listID, entities)
 	case "view":
 		viewID := r.URL.Query().Get("view_id")
 		entityID := r.URL.Query().Get("entity_id")
-		viewCfg, found := a.Cfg().Views[viewID]
+		viewCfg, found := s.Cfg.Views[viewID]
 		if !found {
 			http.Error(w, "View not found: "+viewID, http.StatusNotFound)
 			return

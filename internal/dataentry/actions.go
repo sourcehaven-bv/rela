@@ -66,7 +66,8 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	action, ok := a.Cfg().Actions[id]
+	s := a.State()
+	action, ok := s.Cfg.Actions[id]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "action_not_found", "Action not found", "")
 		return
@@ -92,14 +93,14 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	// Resolve entity if provided in the request.
 	var entity *model.Entity
 	if req.EntityID != "" {
-		if e, ok := a.Graph().GetNode(req.EntityID); ok {
+		if e, ok := s.Graph.GetNode(req.EntityID); ok {
 			entity = e
 		}
 	}
 
 	ctx := &actionScriptContext{
 		ws:          a.ws,
-		meta:        a.Meta(),
+		meta:        s.Meta,
 		projectRoot: a.ws.Paths().Root,
 		entity:      entity,
 	}
