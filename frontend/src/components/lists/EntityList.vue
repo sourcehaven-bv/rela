@@ -1061,6 +1061,19 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
+  .list-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-color);
+    padding: 8px 0;
+    margin-bottom: 12px;
+  }
+
+  .list-header h1 {
+    font-size: 18px;
+  }
+
   .mobile-card .delete-btn {
     width: 44px;
     height: 44px;

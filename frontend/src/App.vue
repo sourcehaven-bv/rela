@@ -276,9 +276,10 @@ body {
     gap: 8px;
   }
 
-  /* Hide keyboard shortcut hints on mobile */
+  /* Hide keyboard shortcut hints on mobile — !important needed to
+     override scoped component styles that set display: inline-flex */
   kbd {
-    display: none;
+    display: none !important;
   }
 
   /* EasyMDE toolbar responsive */

@@ -825,9 +825,22 @@ onBeforeRouteLeave((_to, _from, next) => {
   }
 
   .form-actions {
-    flex-wrap: wrap;
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    background: var(--bg-color);
+    margin: 0 -12px -12px -12px;
+    padding: 12px;
+    border-top: 1px solid var(--border-color);
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
+    display: flex;
     gap: 8px;
-    padding-top: 12px;
+  }
+
+  .form-actions .btn {
+    flex: 1;
+    justify-content: center;
+    min-height: 44px;
   }
 
   .template-selector {

@@ -657,23 +657,57 @@ onMounted(() => loadEntity())
 }
 
 @media (max-width: 768px) {
-  .detail-header {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .header-actions {
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
   .scope-nav {
-    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-color);
+    margin: -16px -16px 12px -16px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
     gap: 6px;
+    flex-wrap: nowrap;
   }
 
   .scope-nav-label {
     display: none;
+  }
+
+  .scope-nav-progress {
+    font-size: 12px;
+  }
+
+  .scope-nav-btn {
+    padding: 6px 10px;
+    font-size: 12px;
+    min-height: 36px;
+  }
+
+  .detail-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .header-actions .btn {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .header-info h1 {
+    font-size: 22px;
+  }
+
+  .detail-section {
+    padding: 16px;
+    margin-bottom: 16px;
   }
 }
 </style>
