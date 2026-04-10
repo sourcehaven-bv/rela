@@ -199,6 +199,18 @@ forms:
       - property: name
         label: "Label Name"
         placeholder: "e.g., bug, enhancement, urgent"
+actions:
+  resolve-ticket:
+    label: "Resolve"
+    key: "r"
+    set:
+      status: resolved
+  close-ticket:
+    label: "Close"
+    key: "c"
+    confirm: true
+    set:
+      status: closed
 lists:
   all_tickets:
     entity_type: ticket
@@ -233,6 +245,7 @@ lists:
     edit_form: edit_ticket
     detail_view: ticket_report
     page_size: 25
+    actions: [resolve-ticket, close-ticket]
   open_tickets:
     entity_type: ticket
     title: "Open Tickets"
@@ -257,6 +270,7 @@ lists:
     create_form: create_ticket
     edit_form: edit_ticket
     page_size: 25
+    actions: [resolve-ticket]
   my_tickets:
     entity_type: ticket
     title: "My Tickets"

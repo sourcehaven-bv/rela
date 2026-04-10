@@ -117,7 +117,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateKanbans(cfg, meta)...)
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
-	errs = append(errs, validateActions(cfg)...)
+	errs = append(errs, validateActions(cfg, meta)...)
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
@@ -821,9 +821,20 @@ func validateDashboard(cfg *Config, _ *metamodel.Metamodel) []string {
 // Lowercase letters, digits, hyphens, underscores, 1-64 characters.
 var actionIDRegex = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
-// validateActions checks action definitions: ID format, script path safety,
-// and that referenced scripts exist on disk.
-func validateActions(cfg *Config) []string {
+// reservedListKeys are single-character keys already used by useListKeyboard.ts.
+// Action key bindings must not conflict with these.
+var reservedListKeys = map[string]bool{
+	"j": true, "k": true, // navigation
+	"o": true, "e": true, "n": true, // open, edit, new
+	"h": true, "l": true, // pagination
+}
+
+// actionKeyRegex allows a single lowercase letter or digit as a shortcut key.
+var actionKeyRegex = regexp.MustCompile(`^[a-z0-9]$`)
+
+// validateActions checks action definitions: ID format, set/script exclusivity,
+// script path safety, and key shortcut validity.
+func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
 	for id, action := range cfg.Actions {
@@ -833,20 +844,83 @@ func validateActions(cfg *Config) []string {
 			continue
 		}
 
-		if action.Script == "" {
-			errs = append(errs, fmt.Sprintf("actions: %q has empty script field", id))
+		hasScript := action.Script != ""
+		hasSet := len(action.Set) > 0
+
+		if hasScript && hasSet {
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q has both script and set (must have one, not both)", id))
+			continue
+		}
+		if !hasScript && !hasSet {
+			errs = append(errs, fmt.Sprintf(
+				"actions: %q has neither script nor set (must have one)", id))
 			continue
 		}
 
-		if !strings.HasSuffix(action.Script, ".lua") {
-			errs = append(errs, fmt.Sprintf(
-				"actions: %q script %q must have .lua extension", id, action.Script))
+		// Script validation
+		if hasScript {
+			if !strings.HasSuffix(action.Script, ".lua") {
+				errs = append(errs, fmt.Sprintf(
+					"actions: %q script %q must have .lua extension", id, action.Script))
+			}
+			if !filepath.IsLocal(action.Script) {
+				errs = append(errs, fmt.Sprintf(
+					"actions: %q script %q must be a local path (no '..' or absolute paths)",
+					id, action.Script))
+			}
 		}
 
-		if !filepath.IsLocal(action.Script) {
-			errs = append(errs, fmt.Sprintf(
-				"actions: %q script %q must be a local path (no '..' or absolute paths)",
-				id, action.Script))
+		// Key validation (optional — only required when referenced by a list)
+		if action.Key != "" {
+			if !actionKeyRegex.MatchString(action.Key) {
+				errs = append(errs, fmt.Sprintf(
+					"actions: %q key %q must be a single lowercase letter or digit", id, action.Key))
+			} else if reservedListKeys[action.Key] {
+				errs = append(errs, fmt.Sprintf(
+					"actions: %q key %q conflicts with reserved list shortcut", id, action.Key))
+			}
+		}
+	}
+
+	// Validate list action references
+	for listID, list := range cfg.Lists {
+		seenKeys := map[string]string{} // key → action ID
+		entDef, hasEntDef := meta.GetEntityDef(list.EntityType)
+
+		for _, actionID := range list.Actions {
+			action, ok := cfg.Actions[actionID]
+			if !ok {
+				errs = append(errs, fmt.Sprintf(
+					"list %q: references unknown action %q", listID, actionID))
+				continue
+			}
+
+			// Actions referenced by lists must have label and key
+			if action.Label == "" {
+				errs = append(errs, fmt.Sprintf(
+					"list %q: action %q must have a label when used in a list", listID, actionID))
+			}
+			if action.Key == "" {
+				errs = append(errs, fmt.Sprintf(
+					"list %q: action %q must have a key when used in a list", listID, actionID))
+			} else if prev, dup := seenKeys[action.Key]; dup {
+				errs = append(errs, fmt.Sprintf(
+					"list %q: actions %q and %q have duplicate key %q", listID, prev, actionID, action.Key))
+			} else {
+				seenKeys[action.Key] = actionID
+			}
+
+			// Validate set properties against the list's entity type
+			if len(action.Set) > 0 && hasEntDef {
+				for prop := range action.Set {
+					if _, ok := entDef.Properties[prop]; !ok {
+						errs = append(errs, fmt.Sprintf(
+							"list %q: action %q sets unknown property %q for entity type %q",
+							listID, actionID, prop, list.EntityType))
+					}
+				}
+			}
 		}
 	}
 

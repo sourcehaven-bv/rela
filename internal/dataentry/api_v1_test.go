@@ -63,6 +63,63 @@ func TestV1ConfigEndpoint(t *testing.T) {
 	}
 }
 
+func TestV1ConfigEndpoint_IncludesActions(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Label: "Ticket",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":  {Type: "string", Required: true},
+					"status": {Type: "string"},
+				},
+			},
+		},
+	}
+	cfg := &dataentryconfig.Config{
+		App:        dataentryconfig.AppConfig{Name: "Test App"},
+		Forms:      make(map[string]dataentryconfig.Form),
+		Lists:      make(map[string]dataentryconfig.List),
+		Views:      make(map[string]dataentryconfig.ViewConfig),
+		Kanbans:    make(map[string]dataentryconfig.Kanban),
+		Navigation: []dataentryconfig.NavigationEntry{},
+		Actions: map[string]dataentryconfig.Action{
+			"mark-done": {
+				Label: "Done",
+				Key:   "d",
+				Set:   map[string]string{"status": "closed"},
+			},
+		},
+	}
+	app := newAppFromParts(cfg, meta, graph.New())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Config(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var config V1Config
+	if err := json.NewDecoder(rec.Body).Decode(&config); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	action, ok := config.Actions["mark-done"]
+	if !ok {
+		t.Fatal("expected 'mark-done' action in config response")
+	}
+	if action.Label != "Done" {
+		t.Errorf("expected label 'Done', got %q", action.Label)
+	}
+	if action.Key != "d" {
+		t.Errorf("expected key 'd', got %q", action.Key)
+	}
+	if action.Set["status"] != "closed" {
+		t.Errorf("expected set status 'closed', got %q", action.Set["status"])
+	}
+}
+
 func TestV1ListEntities(t *testing.T) {
 	app := newTestAppV1(t)
 
@@ -1312,12 +1369,12 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	// Should not allow delete because FEA-001 has incoming relations
+	// Delete should be allowed even with incoming relations (cascade handles cleanup)
 	if entity.Actions == nil || entity.Actions.Delete == nil {
 		t.Fatal("expected delete action")
 	}
-	if entity.Actions.Delete.Allowed {
-		t.Error("expected delete to be disallowed due to incoming relations")
+	if !entity.Actions.Delete.Allowed {
+		t.Error("expected delete to be allowed (cascade removes relations)")
 	}
 }
 

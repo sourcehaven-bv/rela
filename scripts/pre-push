@@ -34,7 +34,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 
     if [ -n "$CODE_CHANGED" ]; then
         # Code changed - verify a ticket/bug/feature entity was added
-        ADDED_ENTITIES=$(git diff --name-only --diff-filter=A "$BASE_REF"..."$local_sha" -- \
+        ADDED_ENTITIES=$(git diff --name-only --diff-filter=AM "$BASE_REF"..."$local_sha" -- \
             'tickets/entities/bugs/*.md' \
             'tickets/entities/features/*.md' \
             'tickets/entities/tickets/*.md' 2>/dev/null || true)

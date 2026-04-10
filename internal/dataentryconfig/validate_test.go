@@ -1069,7 +1069,7 @@ func TestValidateConfig_KanbanFilterControlUnknownRelation(t *testing.T) {
 	}
 }
 
-func TestValidateActions_ValidConfig(t *testing.T) {
+func TestValidateActions_ValidScript(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{
 		Actions: map[string]Action{
@@ -1077,6 +1077,30 @@ func TestValidateActions_ValidConfig(t *testing.T) {
 			"find_or_create": {
 				Script: "find-or-create.lua",
 				Params: map[string]string{"entity_type": "ticket"},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateActions_ValidSet(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{
+			"mark-done": {
+				Label: "Done",
+				Key:   "d",
+				Set:   map[string]string{"status": "closed"},
+			},
+		},
+		Lists: map[string]List{
+			"tickets": {
+				EntityType: "ticket",
+				Columns:    []ListColumn{{Property: "title"}},
+				Actions:    []string{"mark-done"},
 			},
 		},
 	}
@@ -1102,14 +1126,27 @@ func TestValidateActions_InvalidID(t *testing.T) {
 	}
 }
 
-func TestValidateActions_EmptyScript(t *testing.T) {
+func TestValidateActions_NeitherSetNorScript(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{
-		Actions: map[string]Action{"foo": {Script: ""}},
+		Actions: map[string]Action{"foo": {}},
 	}
 	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
-	if err == nil || !strings.Contains(err.Error(), "empty script") {
-		t.Errorf("expected empty script error, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "neither script nor set") {
+		t.Errorf("expected neither error, got: %v", err)
+	}
+}
+
+func TestValidateActions_BothSetAndScript(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{
+			"foo": {Script: "x.lua", Set: map[string]string{"status": "closed"}},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), "both script and set") {
+		t.Errorf("expected both error, got: %v", err)
 	}
 }
 
@@ -1132,6 +1169,152 @@ func TestValidateActions_WrongExtension(t *testing.T) {
 	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
 	if err == nil || !strings.Contains(err.Error(), ".lua") {
 		t.Errorf("expected extension error, got: %v", err)
+	}
+}
+
+func TestValidateActions_ReservedKey(t *testing.T) {
+	meta := testMetamodel()
+	for _, key := range []string{"j", "k", "o", "e", "n", "h", "l"} {
+		t.Run(key, func(t *testing.T) {
+			cfg := &Config{
+				Actions: map[string]Action{
+					"act": {Label: "Act", Key: key, Set: map[string]string{"status": "closed"}},
+				},
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if err == nil || !strings.Contains(err.Error(), "reserved") {
+				t.Errorf("expected reserved key error for %q, got: %v", key, err)
+			}
+		})
+	}
+}
+
+func TestValidateActions_InvalidKeyFormat(t *testing.T) {
+	meta := testMetamodel()
+	for _, key := range []string{"dd", "D", "!", " ", "Enter"} {
+		t.Run(key, func(t *testing.T) {
+			cfg := &Config{
+				Actions: map[string]Action{
+					"act": {Label: "Act", Key: key, Set: map[string]string{"status": "closed"}},
+				},
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if err == nil || !strings.Contains(err.Error(), "single lowercase") {
+				t.Errorf("expected key format error for %q, got: %v", key, err)
+			}
+		})
+	}
+}
+
+func TestValidateActions_DuplicateKeysInList(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{
+			"act1": {Label: "One", Key: "d", Set: map[string]string{"status": "closed"}},
+			"act2": {Label: "Two", Key: "d", Set: map[string]string{"status": "open"}},
+		},
+		Lists: map[string]List{
+			"tickets": {
+				EntityType: "ticket",
+				Columns:    []ListColumn{{Property: "title"}},
+				Actions:    []string{"act1", "act2"},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), "duplicate key") {
+		t.Errorf("expected duplicate key error, got: %v", err)
+	}
+}
+
+func TestValidateActions_UnknownActionRef(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Lists: map[string]List{
+			"tickets": {
+				EntityType: "ticket",
+				Columns:    []ListColumn{{Property: "title"}},
+				Actions:    []string{"nonexistent"},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), "unknown action") {
+		t.Errorf("expected unknown action error, got: %v", err)
+	}
+}
+
+func TestValidateActions_MissingLabelInList(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{
+			"act": {Key: "d", Set: map[string]string{"status": "closed"}},
+		},
+		Lists: map[string]List{
+			"tickets": {
+				EntityType: "ticket",
+				Columns:    []ListColumn{{Property: "title"}},
+				Actions:    []string{"act"},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), "must have a label") {
+		t.Errorf("expected missing label error, got: %v", err)
+	}
+}
+
+func TestValidateActions_MissingKeyInList(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{
+			"act": {Label: "Done", Set: map[string]string{"status": "closed"}},
+		},
+		Lists: map[string]List{
+			"tickets": {
+				EntityType: "ticket",
+				Columns:    []ListColumn{{Property: "title"}},
+				Actions:    []string{"act"},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), "must have a key") {
+		t.Errorf("expected missing key error, got: %v", err)
+	}
+}
+
+func TestValidateActions_UnknownPropertyInSet(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{
+			"act": {Label: "Done", Key: "d", Set: map[string]string{"nonexistent": "val"}},
+		},
+		Lists: map[string]List{
+			"tickets": {
+				EntityType: "ticket",
+				Columns:    []ListColumn{{Property: "title"}},
+				Actions:    []string{"act"},
+			},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), "unknown property") {
+		t.Errorf("expected unknown property error, got: %v", err)
+	}
+}
+
+func TestValidateActions_ScriptActionWithoutKeyLabel(t *testing.T) {
+	// Script-only actions (sidebar) don't need key/label when not referenced by a list
+	meta := testMetamodel()
+	cfg := &Config{
+		Actions: map[string]Action{
+			"sidebar-action": {Script: "do-stuff.lua"},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 

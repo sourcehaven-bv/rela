@@ -13,6 +13,7 @@ import type {
   NavigationEntry,
   AppConfig,
   DocumentConfig,
+  ActionConfig,
 } from '@/types'
 
 export const useSchemaStore = defineStore('schema', () => {
@@ -25,6 +26,7 @@ export const useSchemaStore = defineStore('schema', () => {
   const views = ref<Map<string, ViewConfig>>(new Map())
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
   const documents = ref<Map<string, DocumentConfig>>(new Map())
+  const actions = ref<Map<string, ActionConfig>>(new Map())
   const dashboard = ref<DashboardConfig | undefined>(undefined)
   const navigation = ref<NavigationEntry[]>([])
   const app = ref<AppConfig>({ name: 'rela' })
@@ -51,6 +53,7 @@ export const useSchemaStore = defineStore('schema', () => {
   })
   const getView = computed(() => (id: string) => views.value.get(id))
   const getKanban = computed(() => (id: string) => kanbans.value.get(id))
+  const getAction = computed(() => (id: string) => actions.value.get(id))
 
   const entityTypeList = computed(() => Array.from(entityTypes.value.entries()))
   const relationTypeList = computed(() => Array.from(relationTypes.value.entries()))
@@ -78,6 +81,7 @@ export const useSchemaStore = defineStore('schema', () => {
       views.value = new Map(Object.entries(configData.views || {}))
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
       documents.value = new Map(Object.entries(configData.documents || {}))
+      actions.value = new Map(Object.entries(configData.actions || {}))
       dashboard.value = configData.dashboard
       navigation.value = configData.navigation || []
 
@@ -116,6 +120,7 @@ export const useSchemaStore = defineStore('schema', () => {
     views,
     kanbans,
     documents,
+    actions,
     dashboard,
     navigation,
     app,
@@ -135,6 +140,7 @@ export const useSchemaStore = defineStore('schema', () => {
     findListIdForEntityType,
     getView,
     getKanban,
+    getAction,
     entityTypeList,
     relationTypeList,
 
