@@ -79,6 +79,7 @@ relations/*.md → Relation ↗      ↓
 | `internal/filter`    | Entity filtering by properties                          |
 | `internal/mcp`       | MCP server: tools, resources, prompts, file watcher     |
 | `internal/migration` | Schema migration system for project files               |
+| `internal/scheduler` | Sequential Lua script scheduler with missed-run detection |
 
 ### Key Types
 
@@ -111,6 +112,56 @@ sync) independently from the standard CLI state setup in `PersistentPreRunE`.
 3. Initialize graph (from cache or by syncing markdown files)
 
 All commands share `projectCtx`, `meta`, `g` (graph), and `out` (output writer).
+
+Commands that manage their own initialization (or don't need a project) annotate themselves
+with `skipProjectDiscovery: "true"` in their Cobra `Annotations` map. This includes:
+`init`, `version`, `completion`, `migrate`, `mcp`, `validate`, `flow`, `scheduler`.
+
+### Scheduled Tasks
+
+The `rela scheduler` command starts a long-running process that executes Lua scripts on
+recurring schedules defined in `schedules.yaml`. Like `rela mcp`, it handles its own
+workspace initialization independently from `PersistentPreRunE`.
+
+**Configuration** (`schedules.yaml` in project root):
+
+```yaml
+tasks:
+  - name: daily-report
+    script: reports/daily.lua
+    every: day
+  - name: weekly-review
+    script: checks/weekly.lua
+    every: week
+  - name: quick-check
+    script: checks/orphans.lua
+    every: 30m
+```
+
+**Schedule values:**
+
+| Value        | Meaning                                         |
+| ------------ | ----------------------------------------------- |
+| `day`        | Once per day (after midnight local time)         |
+| `week`       | Once per week (after Monday midnight, ISO weeks) |
+| `30m`, `2h`  | Fixed interval (any Go duration)                 |
+| `15`         | Bare number interpreted as minutes               |
+
+**Architecture:**
+
+- Single-threaded sequential loop — tasks execute one at a time in config order
+- Workspace is synced before each task execution for fresh graph state
+- Scripts have the same capabilities as `rela script` (entity CRUD, graph queries, AI)
+- State persisted in `.rela/scheduler-state.json` (last-run timestamps per task)
+- On startup, tasks that missed their window execute immediately
+- Graceful shutdown on SIGINT/SIGTERM
+
+**Key types** (`internal/scheduler/`):
+
+- `Config` / `TaskConfig`: YAML config with name, script path, schedule
+- `Schedule`: Parsed schedule (day/week/interval) with `IsDue(lastRun, now)` method
+- `Scheduler`: Main loop — `Run(ctx)` blocks until context cancellation
+- `State`: JSON-serialized last-run timestamps
 
 ## AI Integration
 
@@ -312,12 +363,14 @@ The project uses golangci-lint with extensive rules. Key exclusions:
 
 ```text
 metamodel.yaml              # Entity/relation schema
+schedules.yaml              # Optional: scheduled task definitions for `rela scheduler`
 entities/<type>/            # Markdown entity files by type
 relations/                  # Markdown relation files (FROM--type--TO.md)
 templates/entities/<type>.md  # Optional: entity templates for defaults
 templates/relations/<type>.md # Optional: relation templates for defaults
 .rela/cache.json            # Graph cache (gitignored)
 .rela/user-defaults.yaml    # User-specific default values (gitignored)
+.rela/scheduler-state.json  # Scheduler last-run timestamps (gitignored)
 ```
 
 ### User Defaults
