@@ -60,7 +60,10 @@ type Store interface {
 
 	// --- Metamodel ---
 
-	LoadMetamodel() (*metamodel.Metamodel, error)
+	// LoadMetamodel loads and parses the metamodel from the project's metamodel file.
+	// The returned []string contains the absolute paths of all files that were read
+	// (metamodel.yaml plus any include files).
+	LoadMetamodel() (*metamodel.Metamodel, []string, error)
 
 	// --- Views ---
 
@@ -379,13 +382,15 @@ func (r *Repository) CacheExists() bool {
 
 // LoadMetamodel loads and parses the metamodel from the project's metamodel file.
 // Returns a migration.Error if the file contains deprecated syntax that needs migration.
-func (r *Repository) LoadMetamodel() (*metamodel.Metamodel, error) {
+// The returned []string contains the absolute paths of all files that were read
+// (metamodel.yaml plus any include files).
+func (r *Repository) LoadMetamodel() (*metamodel.Metamodel, []string, error) {
 	detections, err := migration.Detect(r.paths.MetamodelPath, migration.FileTypeMetamodel, r.fs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(detections) > 0 {
-		return nil, &migration.Error{
+		return nil, nil, &migration.Error{
 			FilePath:   r.paths.MetamodelPath,
 			Detections: detections,
 		}
@@ -526,6 +531,11 @@ type WatchHandle struct {
 // Stop stops the file watcher and releases resources.
 func (h *WatchHandle) Stop() {
 	h.watcher.Stop()
+}
+
+// AddFile adds an individual file to the watch list at runtime.
+func (h *WatchHandle) AddFile(path string) error {
+	return h.watcher.AddFile(path)
 }
 
 // Pause temporarily stops processing file change events.

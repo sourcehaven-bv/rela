@@ -46,7 +46,7 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 	result := &ValidateResult{}
 
 	// Validate metamodel
-	mm, err := metamodel.Load(ctx.MetamodelPath, fs)
+	mm, _, err := metamodel.Load(ctx.MetamodelPath, fs)
 	if err != nil {
 		result.MetamodelError = err
 	} else {

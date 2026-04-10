@@ -36,14 +36,17 @@ type includeState struct {
 // loadWithIncludes loads a metamodel and recursively resolves all includes.
 // rootDir is the project root directory (where the root metamodel.yaml lives).
 // All include paths are resolved relative to rootDir.
-func loadWithIncludes(root *Metamodel, rootPath, rootDir string, fs storage.FS) error {
+//
+// Returns the absolute paths of all include files that were read (not including
+// the root metamodel path itself).
+func loadWithIncludes(root *Metamodel, rootPath, rootDir string, fs storage.FS) ([]string, error) {
 	if len(root.Includes) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	absRoot, err := filepath.Abs(rootPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	state := &includeState{
@@ -56,20 +59,26 @@ func loadWithIncludes(root *Metamodel, rootPath, rootDir string, fs storage.FS) 
 	for _, inc := range root.Includes {
 		collected, err := resolveIncludes(rootDir, inc, rootPath, state, []string{rootPath}, fs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		partials = append(partials, collected...)
 	}
 
 	// Merge all partials into the root metamodel
 	if err := mergeIncludes(root, rootPath, partials); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Rebuild the alias map to include entities from all files
 	root.rebuildAliasMap()
 
-	return nil
+	// Collect resolved include paths from the processed set (excludes root)
+	includePaths := make([]string, 0, len(state.processed))
+	for absPath := range state.processed {
+		includePaths = append(includePaths, absPath)
+	}
+
+	return includePaths, nil
 }
 
 // resolveIncludes recursively resolves an include file and all its nested includes.

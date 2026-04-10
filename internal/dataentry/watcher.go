@@ -93,7 +93,7 @@ func (a *App) StartWatching() error {
 	return a.ws.StartWatching(workspace.WatchOptions{
 		ExtraFiles: []string{configPath},
 		ExtraDirs:  []string{metamodelDir},
-		OnReload: func(events []workspace.ChangeEvent) {
+		OnChange: func(events []workspace.ChangeEvent) {
 			for _, e := range events {
 				slog.Debug("file changed", "path", e.Path, "op", e.Op)
 			}

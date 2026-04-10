@@ -53,7 +53,7 @@ func DetectMigrationsWithFS(startDir string, fs storage.FS) ([]MigrateDetection,
 	}
 
 	// Load metamodel for context-aware migrations (ignore errors - may need migration itself)
-	mm, _ := metamodel.LoadWithoutMigrationCheck(ctx.MetamodelPath, fs)
+	mm, _, _ := metamodel.LoadWithoutMigrationCheck(ctx.MetamodelPath, fs)
 
 	files := getMigrateFiles(ctx)
 	var detections []MigrateDetection
@@ -95,7 +95,7 @@ func MigrateWithFS(startDir string, fs storage.FS) (*MigrateResult, error) {
 	}
 
 	// Load metamodel for context-aware migrations (ignore errors - may need migration itself)
-	mm, _ := metamodel.LoadWithoutMigrationCheck(ctx.MetamodelPath, fs)
+	mm, _, _ := metamodel.LoadWithoutMigrationCheck(ctx.MetamodelPath, fs)
 
 	files := getMigrateFiles(ctx)
 	result := &MigrateResult{}

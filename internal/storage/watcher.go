@@ -131,6 +131,11 @@ func (w *Watcher) Stop() {
 	_ = w.fsWatcher.Close()
 }
 
+// AddFile adds an individual file to the watch list at runtime.
+func (w *Watcher) AddFile(path string) error {
+	return w.fsWatcher.Add(path)
+}
+
 // WatchList returns the list of currently watched paths.
 // Useful for testing.
 func (w *Watcher) WatchList() []string {

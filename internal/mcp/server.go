@@ -54,7 +54,7 @@ func (s *Server) Serve() error {
 
 	// Start file watcher via workspace
 	if err := s.ws.StartWatching(workspace.WatchOptions{
-		OnReload: func(_ []workspace.ChangeEvent) {
+		OnChange: func(_ []workspace.ChangeEvent) {
 			s.logger.Info("graph re-synced from file changes")
 			if s.mcp != nil {
 				s.mcp.SendNotificationToAllClients(

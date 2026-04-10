@@ -444,7 +444,7 @@ func TestRepository_CacheSaveAndLoad(t *testing.T) {
 func TestRepository_LoadMetamodel(t *testing.T) {
 	repo, _, _ := setupTestRepo(t)
 
-	meta, err := repo.LoadMetamodel()
+	meta, _, err := repo.LoadMetamodel()
 	if err != nil {
 		t.Fatalf("LoadMetamodel() error = %v", err)
 	}

@@ -100,7 +100,7 @@ status: open
 
 	repo := repository.New(fs, ctx)
 
-	meta, err := repo.LoadMetamodel()
+	meta, _, err := repo.LoadMetamodel()
 	if err != nil {
 		t.Fatalf("failed to load metamodel: %v", err)
 	}
