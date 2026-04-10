@@ -886,6 +886,7 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 	// Validate list action references
 	for listID, list := range cfg.Lists {
 		seenKeys := map[string]string{} // key → action ID
+		entDef, hasEntDef := meta.GetEntityDef(list.EntityType)
 
 		for _, actionID := range list.Actions {
 			action, ok := cfg.Actions[actionID]
@@ -911,15 +912,12 @@ func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 
 			// Validate set properties against the list's entity type
-			if len(action.Set) > 0 {
-				entDef, ok := meta.GetEntityDef(list.EntityType)
-				if ok {
-					for prop := range action.Set {
-						if _, ok := entDef.Properties[prop]; !ok {
-							errs = append(errs, fmt.Sprintf(
-								"list %q: action %q sets unknown property %q for entity type %q",
-								listID, actionID, prop, list.EntityType))
-						}
+			if len(action.Set) > 0 && hasEntDef {
+				for prop := range action.Set {
+					if _, ok := entDef.Properties[prop]; !ok {
+						errs = append(errs, fmt.Sprintf(
+							"list %q: action %q sets unknown property %q for entity type %q",
+							listID, actionID, prop, list.EntityType))
 					}
 				}
 			}

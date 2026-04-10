@@ -38,8 +38,6 @@ const hasSelection = computed(() => selectedIds.value.size > 0)
 const pendingAction = ref<{ id: string; config: ActionConfig } | null>(null)
 
 const listIdRef = computed(() => props.listId)
-// Forwarded to useListActions — scheduleFetch is defined below.
-let reloadList: () => void = () => {}
 
 const { resolvedActions, processing: actionProcessing, executeAction, triggerAction } = useListActions({
   listId: listIdRef,
@@ -49,10 +47,7 @@ const { resolvedActions, processing: actionProcessing, executeAction, triggerAct
   onRequestConfirm: (action, actionId) => {
     pendingAction.value = { id: actionId, config: action }
   },
-  onComplete: () => reloadList(),
-  onRemoveEntities: (ids) => {
-    entities.value = entities.value.filter(e => !ids.includes(e.id))
-  },
+  onComplete: () => scheduleFetch(),
 })
 
 // Static (config-pinned) filter properties — used by useUrlFilterSync to
@@ -215,9 +210,6 @@ function scheduleFetch() {
     loadEntities()
   })
 }
-
-// Wire up the forward reference for useListActions
-reloadList = scheduleFetch
 
 // Methods
 async function loadEntities() {
