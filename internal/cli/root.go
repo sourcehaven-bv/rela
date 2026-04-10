@@ -70,7 +70,7 @@ and maintain semantic relationships between them.`,
 		cmdName := cmd.Name()
 		parent := cmd.Parent()
 		isRootChild := parent == nil || parent.Name() == "rela"
-		if isRootChild && (cmdName == "init" || cmdName == "version" || cmdName == "help" || cmdName == "completion" || cmdName == "tui" || cmdName == "migrate" || cmdName == "mcp" || cmdName == "validate" || cmdName == "flow") {
+		if isRootChild && (cmdName == "init" || cmdName == "version" || cmdName == "help" || cmdName == "completion" || cmdName == "tui" || cmdName == "migrate" || cmdName == "mcp" || cmdName == "validate" || cmdName == "flow" || cmdName == "scheduler") {
 			out = output.New(output.Format(outputFormat))
 			return nil
 		}
