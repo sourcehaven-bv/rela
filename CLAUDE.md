@@ -125,6 +125,7 @@ User config lives in `.rela/ai.yaml` (gitignored, per-user):
 ```yaml
 base_url: http://127.0.0.1:11434/v1   # required, must include scheme
 model: gemma3:12b                      # required, default model
+embedding_model: nomic-embed-text      # optional; falls back to model
 api_key_env: OPENAI_API_KEY            # optional; absent = no auth header
 timeout_seconds: 60                    # optional, default 30
 ```
@@ -150,10 +151,19 @@ local result, err = ai.chat({
 
 -- Convenience: single user message, returns just the content string
 local text, err = ai.complete("Summarize: " .. content)
+
+-- Embeddings: single text or batch
+local vecs, err = ai.embed("hello world")          -- returns {{0.1, 0.2, ...}}
+local vecs, err = ai.embed({"first", "second"})    -- returns {{...}, {...}}
+local vecs, err = ai.embed("text", {model = "nomic-embed-text"})  -- model override
 ```
 
-On success: `result` is a table `{content, model, finish_reason, usage}` with
+**ai.chat** returns a table `{content, model, finish_reason, usage}` with
 flat fields. `usage` is a sub-table `{prompt_tokens, completion_tokens, total_tokens}`.
+
+**ai.embed** always returns an array of arrays (one vector per input), even for
+a single string input. Vectors are float64. Batch input is limited to 2048 texts.
+Empty strings and empty tables raise a programming error.
 
 On failure: `err` is a typed table `{kind, status, message, retry_after}` with
 stable `kind` values:
@@ -170,12 +180,12 @@ stable `kind` values:
 | `bad_response` | Non-JSON, malformed JSON, missing choices, unrecognized content shape |
 | `streaming_unsupported` | Provider returned SSE despite `stream: false` |
 
-**Convention deviation**: `ai.chat` and `ai.complete` are the *only* rela Lua
-bindings that return `(nil, err_table)` for runtime failures. All other rela
-bindings raise via `RaiseError`. The deviation is deliberate — AI calls are
-network-bound, failure is expected, and scripts should handle it inline rather
-than wrap every call in `pcall`. Programming errors (wrong arg type, empty
-messages list) still raise. See `internal/lua/ai.go` top-of-file comment for
+**Convention deviation**: `ai.chat`, `ai.complete`, and `ai.embed` are the
+*only* rela Lua bindings that return `(nil, err_table)` for runtime failures.
+All other rela bindings raise via `RaiseError`. The deviation is deliberate —
+AI calls are network-bound, failure is expected, and scripts should handle it
+inline rather than wrap every call in `pcall`. Programming errors (wrong arg
+type, empty input) still raise. See `internal/lua/ai.go` top-of-file comment for
 the full rationale.
 
 ### Security: New threat surface
@@ -202,11 +212,13 @@ Lua scripts you don't trust.
 
 ### Operational logging
 
-Every AI request emits structured log lines via the stdlib `log` package:
+Every AI request emits structured log lines via `slog`:
 
-- `ai: request start base_url=... model=... messages=N` (debug-equivalent)
-- `ai: request ok status=200 model=... latency_ms=... prompt_tokens=... completion_tokens=... total_tokens=...`
-- `ai: request failed kind=... status=... latency_ms=... message=...`
+- `ai request start base_url=... model=... messages=N` (debug)
+- `ai request ok status=200 model=... latency_ms=... prompt_tokens=... completion_tokens=... total_tokens=...` (info)
+- `ai embed start base_url=... model=... inputs=N` (debug)
+- `ai embed ok status=200 model=... latency_ms=... vectors=N prompt_tokens=... total_tokens=...` (info)
+- `ai request failed kind=... status=... latency_ms=... message=...` (warn)
 
 No headers, no API keys, no message content are ever logged.
 
@@ -214,17 +226,17 @@ No headers, no API keys, no message content are ever logged.
 
 ```text
 internal/ai/
-  config.go     Config struct, LoadConfig (ErrConfigNotFound on missing file)
-  errors.go     ErrKind enum, *Error type, classify(), redaction
-  provider.go   Provider interface, ChatRequest, ChatResponse
-  openai.go     OpenAICompatProvider implementation (HTTP, no SDK)
-  loader.go     LoadProvider helper for entry-point wiring
-  redact.go     redactKey(s, key) helper
+  config.go        Config struct, LoadConfig (ErrConfigNotFound on missing file)
+  errors.go        ErrKind enum, *Error type, classify(), redaction
+  provider.go      Provider interface, Chat/Embed requests and responses
+  openai.go        Chat HTTP implementation, shared request/response infrastructure
+  openai_embed.go  Embed HTTP implementation (wire types, response parsing)
+  loader.go        LoadProvider helper for entry-point wiring
+  redact.go        redactKey(s, key) helper
 ```
 
-The `Provider` interface is intentionally an aggregate (currently only `Chat`,
-will gain `Embed` in a future ticket). The Lua runtime takes a single
-`ai.Provider` via `lua.WithAIProvider(p)`, so embeddings will not require
+The `Provider` interface aggregates `Chat` and `Embed`. The Lua runtime takes a
+single `ai.Provider` via `lua.WithAIProvider(p)`, so adding capabilities does not require
 parallel wiring paths.
 
 Four entry points wire AI into the Lua runtime: `internal/cli/script.go`,

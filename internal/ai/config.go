@@ -44,6 +44,7 @@ type Config struct {
 	Provider       string `yaml:"provider"`
 	BaseURL        string `yaml:"base_url"`
 	Model          string `yaml:"model"`
+	EmbeddingModel string `yaml:"embedding_model"`
 	APIKeyEnv      string `yaml:"api_key_env"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
@@ -128,4 +129,15 @@ func (c *Config) Timeout() int {
 		return DefaultTimeoutSeconds
 	}
 	return c.TimeoutSeconds
+}
+
+// EmbeddingModelOrDefault returns EmbeddingModel if set, otherwise
+// falls back to Model. This supports providers that use different
+// models for chat and embeddings (e.g. OpenAI: gpt-4o-mini for chat,
+// text-embedding-3-small for embeddings).
+func (c *Config) EmbeddingModelOrDefault() string {
+	if c.EmbeddingModel != "" {
+		return c.EmbeddingModel
+	}
+	return c.Model
 }

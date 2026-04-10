@@ -401,6 +401,123 @@ rela.rrule_next("FREQ=MONTHLY;INTERVAL=3;BYDAY=1SA;DTSTART=20250101T000000Z", "2
 rela.rrule_next("FREQ=DAILY")  -- tomorrow's date
 ```
 
+### AI Functions
+
+The `ai` module provides access to LLM providers (OpenAI, ollama, etc.) configured
+via `.rela/ai.yaml`. These functions are available when AI is configured; otherwise
+they return a `not_configured` error.
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `ai.chat(opts)` | Chat completion | (result_table, nil) or (nil, err_table) |
+| `ai.complete(prompt)` | Single-message chat (convenience) | (string, nil) or (nil, err_table) |
+| `ai.embed(input, opts?)` | Compute vector embeddings | (array_of_arrays, nil) or (nil, err_table) |
+
+#### Configuration
+
+Create `.rela/ai.yaml` (gitignored, per-user):
+
+```yaml
+base_url: http://127.0.0.1:11434/v1   # required
+model: gemma3:12b                      # required, default chat model
+embedding_model: nomic-embed-text      # optional, falls back to model
+api_key_env: OPENAI_API_KEY            # optional, absent = no auth
+timeout_seconds: 60                    # optional, default 30
+```
+
+#### ai.chat
+
+Send a chat completion request with full control over messages, model, and parameters.
+
+```lua
+local result, err = ai.chat({
+  messages = {
+    {role = "system", content = "You are concise."},
+    {role = "user",   content = "What is 2+2?"},
+  },
+  model = "gemma3:12b",   -- optional, falls back to config
+  temperature = 0,        -- optional; 0 is distinct from unset
+  max_tokens = 50,        -- optional
+})
+if err then
+  print("Error: " .. err.kind .. ": " .. err.message)
+else
+  print(result.content)
+  -- result also has: model, finish_reason, usage (sub-table)
+end
+```
+
+#### ai.complete
+
+Convenience wrapper: sends a single user message and returns just the content string.
+
+```lua
+local text, err = ai.complete("Summarize: " .. entity.content)
+```
+
+#### ai.embed
+
+Compute vector embeddings for one or more texts. Always returns an array of arrays
+(one vector per input), even for a single string input.
+
+```lua
+-- Single text
+local vecs, err = ai.embed("hello world")
+-- vecs[1] is the embedding vector (array of numbers)
+
+-- Batch (one HTTP call for many texts, more efficient)
+local vecs, err = ai.embed({"first", "second", "third"})
+-- vecs[1], vecs[2], vecs[3] are the embedding vectors
+
+-- Model override
+local vecs, err = ai.embed("text", {model = "nomic-embed-text"})
+```
+
+**Limits:** Batch input is capped at 2048 texts. Empty strings and empty tables
+raise a programming error.
+
+#### Error Handling
+
+AI functions return `(nil, err_table)` for expected runtime failures (network errors,
+rate limits, missing config) instead of raising. This is a **deliberate deviation** from
+other rela bindings — AI calls are network-bound and scripts should handle failure inline.
+
+Programming errors (wrong argument types, empty messages) still raise via `error()`.
+
+The error table has stable fields for branching:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `kind` | string | Error category (see below) |
+| `status` | number | HTTP status code (0 for non-HTTP errors) |
+| `message` | string | Human-readable description |
+| `retry_after` | number | Seconds to wait (for rate limits) |
+| `details` | string | Underlying transport error (if any) |
+
+| `err.kind` | When |
+|---|---|
+| `not_configured` | No `.rela/ai.yaml` or it failed to load |
+| `auth` | API key missing/invalid; HTTP 401/403 |
+| `bad_request` | HTTP 400/4xx; unknown model |
+| `rate_limited` | HTTP 429; check `err.retry_after` |
+| `server_error` | HTTP 5xx |
+| `timeout` | Request exceeded deadline |
+| `network` | DNS, connection refused, TLS |
+| `bad_response` | Non-JSON, malformed response |
+
+```lua
+local result, err = ai.chat({messages = {{role="user", content="hi"}}})
+if err then
+  if err.kind == "rate_limited" then
+    print("Rate limited, retry after " .. err.retry_after .. "s")
+  elseif err.kind == "not_configured" then
+    print("AI not configured — create .rela/ai.yaml")
+  else
+    print("AI error: " .. err.message)
+  end
+end
+```
+
 ### Context
 
 | Variable | Description |
@@ -728,6 +845,15 @@ The Lua runtime is sandboxed for security:
 - `debug` - No runtime introspection
 - `load`, `loadfile`, `dofile`, `loadstring` - No dynamic code loading
 - `rawget`, `rawset`, `getmetatable`, `setmetatable` - No metatable manipulation
+
+### AI / Network Access
+
+When `.rela/ai.yaml` is configured, scripts can make HTTP requests to the configured
+AI provider via `ai.chat`, `ai.complete`, and `ai.embed`. This means scripts can send
+entity content to an external service. **Treat Lua scripts as trusted code** — don't
+run scripts from untrusted sources.
+
+API keys are never logged or included in error messages.
 
 ### File Writing
 

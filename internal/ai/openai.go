@@ -150,24 +150,41 @@ func (p *openAICompatProvider) Chat(ctx context.Context, req ChatRequest) (*Chat
 		model = p.cfg.Model
 	}
 
-	httpReq, err := p.buildHTTPRequest(ctx, model, req, apiKey)
+	httpReq, err := p.buildChatHTTPRequest(ctx, model, req, apiKey)
 	if err != nil {
 		return nil, err
 	}
 
 	p.logRequestStart(p.cfg.BaseURL, model, len(req.Messages))
+
+	resp, respBody, start, execErr := p.executeRequest(httpReq, apiKey)
+	if execErr != nil {
+		return nil, execErr
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	return p.parseChatResponse(resp, respBody, apiKey, start)
+}
+
+// executeRequest sends an HTTP request, reads the response body with
+// the size limit, and handles transport-level errors. On success it
+// returns the response (caller must close Body), the body bytes, and
+// the request start time. On failure it returns a typed *Error.
+func (p *openAICompatProvider) executeRequest(
+	httpReq *http.Request, apiKey string,
+) (*http.Response, []byte, time.Time, error) {
 	start := time.Now()
 
 	resp, doErr := p.httpClient.Do(httpReq)
 	if doErr != nil {
 		netErr := wrapNetworkError(doErr, apiKey)
 		p.logRequestFailure(string(netErr.Kind), 0, time.Since(start), netErr.Message)
-		return nil, netErr
+		return nil, nil, start, netErr
 	}
-	defer func() { _ = resp.Body.Close() }()
 
 	respBody, readErr := readLimitedBody(resp.Body)
 	if readErr != nil {
+		_ = resp.Body.Close()
 		var aiErr *Error
 		if errors.Is(readErr, errBodyTooLarge) {
 			aiErr = &Error{
@@ -180,15 +197,15 @@ func (p *openAICompatProvider) Chat(ctx context.Context, req ChatRequest) (*Chat
 			aiErr = wrapNetworkError(readErr, apiKey)
 		}
 		p.logRequestFailure(string(aiErr.Kind), resp.StatusCode, time.Since(start), aiErr.Message)
-		return nil, aiErr
+		return nil, nil, start, aiErr
 	}
 
-	return p.parseResponse(resp, respBody, apiKey, start)
+	return resp, respBody, start, nil
 }
 
-// buildHTTPRequest constructs the *http.Request including headers and
-// JSON body. Returns a typed *Error on any failure.
-func (p *openAICompatProvider) buildHTTPRequest(
+// buildChatHTTPRequest constructs the *http.Request for Chat including
+// headers and JSON body. Returns a typed *Error on any failure.
+func (p *openAICompatProvider) buildChatHTTPRequest(
 	ctx context.Context, model string, req ChatRequest, apiKey string,
 ) (*http.Request, error) {
 	wire := chatRequestWire{
@@ -198,13 +215,20 @@ func (p *openAICompatProvider) buildHTTPRequest(
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
 	}
-	body, err := json.Marshal(wire)
+	return p.buildJSONRequest(ctx, "/chat/completions", wire, apiKey)
+}
+
+// buildJSONRequest marshals body to JSON, constructs an HTTP POST to
+// the given path under the base URL, and attaches standard headers.
+func (p *openAICompatProvider) buildJSONRequest(
+	ctx context.Context, path string, wireBody any, apiKey string,
+) (*http.Request, error) {
+	body, err := json.Marshal(wireBody)
 	if err != nil {
-		// Unreachable in practice; chatRequestWire has no fields that fail to marshal.
 		return nil, &Error{Kind: ErrBadRequest, Message: "marshal request: " + redactKey(err.Error(), apiKey), cause: err}
 	}
 
-	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + "/chat/completions"
+	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + path
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, &Error{Kind: ErrNetwork, Message: redactKey(err.Error(), apiKey), cause: err}
@@ -217,14 +241,13 @@ func (p *openAICompatProvider) buildHTTPRequest(
 	return httpReq, nil
 }
 
-// parseResponse handles all post-HTTP response processing: Content-Type
-// validation, status classification, error envelope detection, JSON
-// decoding, and content shape handling. Returns a typed *Error on any
-// failure path.
-func (p *openAICompatProvider) parseResponse(
+// validateResponse performs common HTTP response validation shared by
+// Chat and Embed: Content-Type checks, status classification, and error
+// envelope detection. Returns nil on success (2xx JSON with no error
+// envelope), or a typed *Error on any failure.
+func (p *openAICompatProvider) validateResponse(
 	resp *http.Response, respBody []byte, apiKey string, start time.Time,
-) (*ChatResponse, error) {
-	// Validate Content-Type before doing anything with the body.
+) *Error {
 	contentType := resp.Header.Get("Content-Type")
 	if isStreamContentType(contentType) {
 		streamErr := &Error{
@@ -233,7 +256,7 @@ func (p *openAICompatProvider) parseResponse(
 			Message: fmt.Sprintf("upstream returned streaming response (Content-Type %q) but stream=false was requested", contentType),
 		}
 		p.logRequestFailure(string(streamErr.Kind), resp.StatusCode, time.Since(start), streamErr.Message)
-		return nil, streamErr
+		return streamErr
 	}
 	if !isJSONContentType(contentType) {
 		badResp := &Error{
@@ -242,17 +265,15 @@ func (p *openAICompatProvider) parseResponse(
 			Message: fmt.Sprintf("upstream returned non-JSON response (Content-Type %q, status %d): %s", contentType, resp.StatusCode, redactKey(snippet(respBody), apiKey)),
 		}
 		p.logRequestFailure(string(badResp.Kind), resp.StatusCode, time.Since(start), badResp.Message)
-		return nil, badResp
+		return badResp
 	}
 
-	// Non-2xx → classify and return.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		classified := classify(resp.StatusCode, resp.Header, respBody, apiKey)
 		p.logRequestFailure(string(classified.Kind), resp.StatusCode, time.Since(start), classified.Message)
-		return nil, classified
+		return classified
 	}
 
-	// 2xx with JSON body — error envelope masquerading as success?
 	if envType, envMessage := parseErrorEnvelope(respBody); envType != "" || envMessage != "" {
 		classified := classify(resp.StatusCode, resp.Header, respBody, apiKey)
 		if envType != "" {
@@ -264,7 +285,19 @@ func (p *openAICompatProvider) parseResponse(
 			classified.Message = redactKey(envMessage, apiKey)
 		}
 		p.logRequestFailure(string(classified.Kind), resp.StatusCode, time.Since(start), classified.Message)
-		return nil, classified
+		return classified
+	}
+
+	return nil
+}
+
+// parseChatResponse handles Chat-specific post-validation processing:
+// JSON decoding of the chat completion response.
+func (p *openAICompatProvider) parseChatResponse(
+	resp *http.Response, respBody []byte, apiKey string, start time.Time,
+) (*ChatResponse, error) {
+	if validErr := p.validateResponse(resp, respBody, apiKey, start); validErr != nil {
+		return nil, validErr
 	}
 
 	out, parseErr := decodeChatResponse(respBody, apiKey)
