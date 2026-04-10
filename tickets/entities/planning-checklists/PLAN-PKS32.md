@@ -2,7 +2,7 @@
 id: PLAN-PKS32
 type: planning-checklist
 title: 'Planning: Introduce workspace.Snapshot as the consumer read API'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
