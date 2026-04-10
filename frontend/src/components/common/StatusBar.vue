@@ -192,32 +192,7 @@ async function handleSync() {
 }
 
 @media (max-width: 768px) {
-  .git-branch {
-    max-width: 80px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .git-status-text {
-    display: none;
-  }
-
-  .shortcuts-text {
-    display: none;
-  }
-
-  .status-bar kbd {
-    display: none;
-  }
-}
-
-@media (max-width: 480px) {
-  .git-branch {
-    max-width: 60px;
-  }
-
-  .shortcuts-btn {
+  .status-bar {
     display: none;
   }
 }

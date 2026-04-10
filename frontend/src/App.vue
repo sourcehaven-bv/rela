@@ -254,7 +254,7 @@ body {
     margin-left: 0;
     padding: 16px;
     padding-top: 60px; /* Space for hamburger button */
-    padding-bottom: 40px;
+    padding-bottom: 16px; /* No status bar on mobile */
   }
 
   .main-content.sidebar-collapsed {
@@ -293,7 +293,7 @@ body {
   .main-content {
     padding: 12px;
     padding-top: 56px;
-    padding-bottom: 36px;
+    padding-bottom: 12px;
   }
 
   .modal {

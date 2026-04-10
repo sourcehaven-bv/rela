@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { useSchemaStore, useUIStore } from '@/stores'
+import { useSchemaStore, useUIStore, useGitStore } from '@/stores'
 import { getSidebar, runAction } from '@/api'
 import type { SidebarGroup, SidebarItem } from '@/types'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const gitStore = useGitStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -194,6 +195,26 @@ async function handleAction(item: SidebarItem) {
       </template>
     </nav>
 
+    <!-- Mobile-only footer: git status, settings, theme toggle -->
+    <div class="sidebar-mobile-footer">
+      <div v-if="gitStore.isAvailable" class="mobile-git-status" :class="gitStore.statusClass">
+        <span class="mobile-git-dot"/>
+        <span class="nav-label">{{ gitStore.branch }} · {{ gitStore.statusText }}</span>
+      </div>
+      <RouterLink to="/settings" class="nav-item" :class="{ active: route.path === '/settings' }">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Settings</span>
+      </RouterLink>
+      <button
+        v-if="!schemaStore.darkDisabled"
+        class="nav-item nav-action"
+        @click="uiStore.toggleDarkMode()"
+      >
+        <span class="nav-icon">{{ uiStore.isDark ? '☀️' : '🌙' }}</span>
+        <span class="nav-label">{{ uiStore.isDark ? 'Light Mode' : 'Dark Mode' }}</span>
+      </button>
+    </div>
+
       <Teleport to="body">
         <div
           v-if="uiStore.sidebarMobileOpen"
@@ -341,6 +362,40 @@ async function handleAction(item: SidebarItem) {
   cursor: wait;
 }
 
+/* Mobile footer — hidden on desktop */
+.sidebar-mobile-footer {
+  display: none;
+}
+
+.mobile-git-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.mobile-git-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.mobile-git-status.synced .mobile-git-dot {
+  background: #10b981;
+}
+
+.mobile-git-status.changes .mobile-git-dot {
+  background: #f59e0b;
+}
+
+.mobile-git-status.conflict .mobile-git-dot {
+  background: #ef4444;
+}
+
 /* Mobile overlay */
 @media (max-width: 768px) {
   .sidebar {
@@ -374,6 +429,13 @@ async function handleAction(item: SidebarItem) {
   .nav-item {
     padding: 12px 16px;
     min-height: 44px;
+  }
+
+  .sidebar-mobile-footer {
+    display: block;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 8px 0;
+    margin-top: auto;
   }
 }
 </style>
