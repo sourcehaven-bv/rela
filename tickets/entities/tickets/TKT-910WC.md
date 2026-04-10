@@ -6,6 +6,7 @@ kind: refactor
 priority: high
 effort: l
 status: done
+tags: phase3-cli-done
 ---
 
 ## Problem
