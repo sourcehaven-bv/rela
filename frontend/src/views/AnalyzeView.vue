@@ -166,7 +166,8 @@ onMounted(() => {
           </div>
 
           <template v-else>
-            <table v-if="shouldShowIssues(checkType.key) && getFilteredIssuesForCheck(checkType.key).length > 0" class="issues-table">
+            <div v-if="shouldShowIssues(checkType.key) && getFilteredIssuesForCheck(checkType.key).length > 0" class="issues-table-wrapper">
+            <table class="issues-table">
               <thead>
                 <tr>
                   <th>Entity</th>
@@ -198,6 +199,7 @@ onMounted(() => {
                 </tr>
               </tbody>
             </table>
+            </div>
           </template>
         </div>
       </div>
@@ -446,5 +448,18 @@ onMounted(() => {
 .severity-badge.warning {
   background: color-mix(in srgb, var(--warning-color) 15%, transparent);
   color: var(--warning-color);
+}
+
+.issues-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 768px) {
+  .issues-table th,
+  .issues-table td {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
 }
 </style>

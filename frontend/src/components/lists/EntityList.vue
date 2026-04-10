@@ -478,7 +478,8 @@ onMounted(() => {
         </router-link>
       </div>
 
-      <table v-else class="entity-table">
+      <div v-else class="table-scroll-wrapper">
+      <table class="entity-table">
         <thead>
           <tr v-if="hasSelection" class="action-header-row">
             <th class="select-column">
@@ -574,6 +575,7 @@ onMounted(() => {
           </tr>
         </TransitionGroup>
       </table>
+      </div>
 
       <Pagination
         v-if="meta.total > meta.per_page"
@@ -924,5 +926,32 @@ onMounted(() => {
 .delete-btn:hover {
   background: color-mix(in srgb, var(--error-color) 15%, transparent);
   color: var(--error-color);
+}
+
+.table-scroll-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 768px) {
+  .entity-table th {
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+
+  .entity-table td {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .delete-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .actions-column,
+  .actions-cell {
+    width: 48px;
+  }
 }
 </style>

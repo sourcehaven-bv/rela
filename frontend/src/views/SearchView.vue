@@ -1064,4 +1064,16 @@ watch(
   font-size: 15px;
   color: var(--text-color);
 }
+
+@media (max-width: 768px) {
+  .search-input-row {
+    flex-wrap: wrap;
+  }
+
+  .filter-menu {
+    min-width: 0;
+    width: calc(100vw - 32px);
+    max-width: 320px;
+  }
+}
 </style>

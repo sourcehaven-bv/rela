@@ -655,4 +655,25 @@ onMounted(() => loadEntity())
   font-size: 13px;
   color: var(--muted-text);
 }
+
+@media (max-width: 768px) {
+  .detail-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .scope-nav {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .scope-nav-label {
+    display: none;
+  }
+}
 </style>

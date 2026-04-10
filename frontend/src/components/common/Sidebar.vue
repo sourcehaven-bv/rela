@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { getSidebar, runAction } from '@/api'
@@ -38,13 +38,34 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+// Close mobile sidebar on route change
+watch(() => route.path, () => {
+  if (uiStore.sidebarMobileOpen) {
+    uiStore.closeMobileSidebar()
+  }
+})
+
+// Lock body scroll when mobile sidebar is open
+watch(() => uiStore.sidebarMobileOpen, (open) => {
+  document.body.style.overflow = open ? 'hidden' : ''
+})
+
+// Close mobile sidebar on Escape
+function handleEscape(e: KeyboardEvent) {
+  if (e.key === 'Escape' && uiStore.sidebarMobileOpen) {
+    uiStore.closeMobileSidebar()
+  }
+}
+
 onMounted(() => {
   document.addEventListener('keydown', handleKeydown)
+  document.addEventListener('keydown', handleEscape)
   loadSidebar()
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('keydown', handleEscape)
 })
 
 function isActive(href: string): boolean {
@@ -91,6 +112,7 @@ async function handleAction(item: SidebarItem) {
 
 <template>
   <aside
+    id="main-sidebar"
     class="sidebar"
     :class="{ collapsed: uiStore.sidebarCollapsed, 'mobile-open': uiStore.sidebarMobileOpen }"
   >
@@ -172,6 +194,13 @@ async function handleAction(item: SidebarItem) {
       </template>
     </nav>
 
+      <Teleport to="body">
+        <div
+          v-if="uiStore.sidebarMobileOpen"
+          class="sidebar-backdrop"
+          @click="uiStore.closeMobileSidebar()"
+        />
+      </Teleport>
     </aside>
 </template>
 
@@ -316,10 +345,52 @@ async function handleAction(item: SidebarItem) {
 @media (max-width: 768px) {
   .sidebar {
     transform: translateX(-100%);
+    height: 100vh;
+    transition: transform 0.25s ease;
   }
 
   .sidebar.mobile-open {
     transform: translateX(0);
+  }
+
+  .sidebar.collapsed {
+    width: 240px;
+  }
+
+  .sidebar.collapsed .nav-label,
+  .sidebar.collapsed .nav-section-title,
+  .sidebar.collapsed .logo {
+    display: unset;
+  }
+
+  .sidebar.collapsed .nav-icon {
+    margin-right: 12px;
+  }
+
+  .collapse-btn {
+    display: none;
+  }
+
+  .nav-item {
+    padding: 12px 16px;
+    min-height: 44px;
+  }
+}
+</style>
+
+<style>
+/* Backdrop must be unscoped to work with Teleport */
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 99;
   }
 }
 </style>

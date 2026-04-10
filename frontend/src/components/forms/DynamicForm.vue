@@ -793,4 +793,46 @@ onBeforeRouteLeave((_to, _from, next) => {
   border-color: var(--accent-color, #6366f1);
   color: white;
 }
+
+@media (max-width: 768px) {
+  .form-layout {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .dynamic-form {
+    min-width: 0;
+    max-width: none;
+  }
+
+  .form-section {
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+
+  .content-field {
+    padding: 12px;
+    margin-top: 8px;
+    margin-bottom: 12px;
+  }
+
+  .form-header {
+    margin-bottom: 12px;
+  }
+
+  .form-header h1 {
+    font-size: 20px;
+  }
+
+  .form-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 12px;
+  }
+
+  .template-selector {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
 </style>
