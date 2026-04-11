@@ -51,22 +51,21 @@ watch(() => uiStore.sidebarMobileOpen, (open) => {
   document.body.style.overflow = open ? 'hidden' : ''
 })
 
-// Close mobile sidebar on Escape
-function handleEscape(e: KeyboardEvent) {
+function handleKeydownAll(e: KeyboardEvent) {
+  handleKeydown(e)
   if (e.key === 'Escape' && uiStore.sidebarMobileOpen) {
     uiStore.closeMobileSidebar()
   }
 }
 
 onMounted(() => {
-  document.addEventListener('keydown', handleKeydown)
-  document.addEventListener('keydown', handleEscape)
+  document.addEventListener('keydown', handleKeydownAll)
   loadSidebar()
 })
 
 onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeydown)
-  document.removeEventListener('keydown', handleEscape)
+  document.removeEventListener('keydown', handleKeydownAll)
+  document.body.style.overflow = ''
 })
 
 function isActive(href: string): boolean {
@@ -215,14 +214,14 @@ async function handleAction(item: SidebarItem) {
       </button>
     </div>
 
-      <Teleport to="body">
-        <div
-          v-if="uiStore.sidebarMobileOpen"
-          class="sidebar-backdrop"
-          @click="uiStore.closeMobileSidebar()"
-        />
-      </Teleport>
-    </aside>
+    <Teleport to="body">
+      <div
+        v-if="uiStore.sidebarMobileOpen"
+        class="sidebar-backdrop"
+        @click="uiStore.closeMobileSidebar()"
+      />
+    </Teleport>
+  </aside>
 </template>
 
 <style scoped>
@@ -385,15 +384,15 @@ async function handleAction(item: SidebarItem) {
 }
 
 .mobile-git-status.synced .mobile-git-dot {
-  background: #10b981;
+  background: var(--success-color);
 }
 
 .mobile-git-status.changes .mobile-git-dot {
-  background: #f59e0b;
+  background: var(--warning-color);
 }
 
 .mobile-git-status.conflict .mobile-git-dot {
-  background: #ef4444;
+  background: var(--error-color);
 }
 
 /* Mobile overlay */

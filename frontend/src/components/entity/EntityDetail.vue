@@ -82,9 +82,11 @@ const deleting = ref(false)
 const showDeleteConfirm = ref(false)
 const showOverflowMenu = ref(false)
 
-// Close overflow menu on outside click
 function closeOverflow() { showOverflowMenu.value = false }
-onMounted(() => document.addEventListener('click', closeOverflow))
+watch(showOverflowMenu, (open) => {
+  if (open) document.addEventListener('click', closeOverflow)
+  else document.removeEventListener('click', closeOverflow)
+})
 onUnmounted(() => document.removeEventListener('click', closeOverflow))
 
 // Commands state

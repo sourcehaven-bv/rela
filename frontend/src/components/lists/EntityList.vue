@@ -986,9 +986,6 @@ onMounted(() => {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Mobile card layout */
-.mobile-card-list {}
-
 .mobile-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
