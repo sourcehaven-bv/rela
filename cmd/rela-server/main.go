@@ -14,10 +14,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -89,11 +87,6 @@ func main() {
 		slog.Info("file watcher started for live-reload")
 	}
 
-	// Start background scheduler if schedules.yaml exists.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	scheduler.StartBackground(ctx, ws, ws, slog.Default())
-
 	addr := net.JoinHostPort(*bind, *port)
 	if err := app.SetSecurityConfig(dataentry.SecurityConfig{
 		BindAddress:    addr,
@@ -125,6 +118,10 @@ func main() {
 		slog.Warn("rela-server bound beyond loopback; see docs/security.md for threat model",
 			"bind", *bind)
 	}
+	// Start background scheduler if schedules.yaml exists.
+	// The goroutine is cleaned up on process exit.
+	scheduler.StartBackground(context.Background(), ws, ws, slog.Default())
+
 	slog.Info("starting server", "name", app.Cfg().App.Name, "addr", "http://"+addr)
 	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("server stopped", "error", err)
