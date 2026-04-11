@@ -2310,3 +2310,56 @@ func TestWithContext_NoTimeoutStillCancels(t *testing.T) {
 		t.Fatalf("busy loop ran for %v; expected parent cancel to interrupt", elapsed)
 	}
 }
+
+func TestWithSecrets(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	sec := map[string]string{
+		"api_key":  "sk-secret",
+		"base_url": "https://example.com",
+	}
+	r := New(ws, ws.Meta(), "/tmp", &buf, WithSecrets(sec))
+	defer r.Close()
+
+	script := `rela.output({k = rela.secrets.api_key, u = rela.secrets.base_url})`
+	if err := r.RunString(script); err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]string
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if result["k"] != "sk-secret" || result["u"] != "https://example.com" {
+		t.Errorf("expected sk-secret/https://example.com, got %v", result)
+	}
+}
+
+func TestWithSecrets_Empty(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	r := New(ws, ws.Meta(), "/tmp", &buf)
+	defer r.Close()
+
+	// rela.secrets should exist as an empty table
+	script := `
+		local count = 0
+		for _ in pairs(rela.secrets) do count = count + 1 end
+		rela.output({count = count})
+	`
+	if err := r.RunString(script); err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]float64
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to parse output: %v", err)
+	}
+
+	if result["count"] != 0 {
+		t.Errorf("Expected empty secrets, got count=%v", result["count"])
+	}
+}

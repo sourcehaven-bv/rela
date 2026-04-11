@@ -12,6 +12,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // actionsDir is the directory where action scripts must be located.
@@ -58,11 +60,24 @@ func (e *Engine) ExecuteAction(
 	}
 
 	var output bytes.Buffer
-	runtime := lua.New(
-		ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output,
+	luaOpts := []lua.Option{
 		lua.WithParams(params),
 		lua.WithActionMode(),
 		lua.WithTimeout(timeout),
+	}
+
+	relaDir := filepath.Join(ctx.GetProjectRoot(), project.CacheDir)
+	sec, secErr := secrets.Load(relaDir, scriptPath)
+	if secErr != nil && !errors.Is(secErr, secrets.ErrNotFound) {
+		return nil, fmt.Errorf("secrets: %w", secErr)
+	}
+	if len(sec) > 0 {
+		luaOpts = append(luaOpts, lua.WithSecrets(sec))
+	}
+
+	runtime := lua.New(
+		ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output,
+		luaOpts...,
 	)
 	defer runtime.Close()
 

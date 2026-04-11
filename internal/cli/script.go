@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 var scriptOutputDir string
@@ -80,6 +81,14 @@ Example:
 			return fmt.Errorf("ai: %w", err)
 		default:
 			opts = append(opts, lua.WithAIProvider(provider))
+		}
+
+		sec, secErr := secrets.Load(projectCtx.CacheDir, scriptPath)
+		if secErr != nil && !errors.Is(secErr, secrets.ErrNotFound) {
+			return fmt.Errorf("secrets: %w", secErr)
+		}
+		if len(sec) > 0 {
+			opts = append(opts, lua.WithSecrets(sec))
 		}
 
 		runtime := lua.New(ws, meta, projectCtx.Root, os.Stdout, opts...)

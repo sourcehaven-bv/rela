@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -84,6 +85,14 @@ Example:
 			return fmt.Errorf("ai: %w", providerErr)
 		default:
 			opts = append(opts, lua.WithAIProvider(provider))
+		}
+
+		sec, secErr := secrets.Load(flowWs.Paths().CacheDir, scriptPath)
+		if secErr != nil && !errors.Is(secErr, secrets.ErrNotFound) {
+			return fmt.Errorf("secrets: %w", secErr)
+		}
+		if len(sec) > 0 {
+			opts = append(opts, lua.WithSecrets(sec))
 		}
 
 		runtime := lua.New(flowWs, flowWs.Snapshot().Meta(), flowWs.Paths().Root, os.Stdout, opts...)

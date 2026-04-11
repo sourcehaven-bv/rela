@@ -16,6 +16,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // scriptsDir is the directory where Lua scripts must be located for lua_run.
@@ -155,6 +156,12 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 		slog.Warn("ai: failed to load config; AI bindings disabled", "error", providerErr)
 	} else if provider != nil {
 		opts = append(opts, lua.WithAIProvider(provider))
+	}
+	sec, secErr := secrets.Load(s.ws.Paths().CacheDir, path)
+	if secErr != nil && !errors.Is(secErr, secrets.ErrNotFound) {
+		slog.Warn("secrets: failed to load", "error", secErr)
+	} else if len(sec) > 0 {
+		opts = append(opts, lua.WithSecrets(sec))
 	}
 	runtime := lua.New(s.ws, s.ws.Snapshot().Meta(), projectRoot, &output, opts...)
 	defer runtime.Close()
