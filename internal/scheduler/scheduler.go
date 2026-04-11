@@ -62,10 +62,10 @@ func StartBackground(
 
 // Scheduler runs Lua scripts sequentially on simple recurring schedules.
 type Scheduler struct {
-	config  *Config
-	engine  *script.Engine
-	ws      WorkspaceProvider
-	metaFn  func() *metamodel.Metamodel
+	config *Config
+	engine *script.Engine
+	ws     WorkspaceProvider
+	metaFn func() *metamodel.Metamodel
 	// wsRaw is the workspace as interface{} for passing to ScriptContext.
 	// It must satisfy lua.WorkspaceInterface.
 	wsRaw  interface{}
