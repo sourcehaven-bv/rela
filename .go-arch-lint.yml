@@ -112,6 +112,7 @@ deps:
   cmdServer:
     mayDependOn:
       - dataentry
+      - metamodel
       - project
       - repository
       - scheduler

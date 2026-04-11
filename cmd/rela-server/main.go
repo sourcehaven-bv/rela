@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
@@ -120,7 +121,8 @@ func main() {
 	}
 	// Start background scheduler if schedules.yaml exists.
 	// The goroutine is cleaned up on process exit.
-	scheduler.StartBackground(context.Background(), ws, ws, slog.Default())
+	metaFn := func() *metamodel.Metamodel { return ws.Snapshot().Meta() }
+	scheduler.StartBackground(context.Background(), ws, ws, metaFn, slog.Default())
 
 	slog.Info("starting server", "name", app.Cfg().App.Name, "addr", "http://"+addr)
 	if err := srv.ListenAndServe(); err != nil {

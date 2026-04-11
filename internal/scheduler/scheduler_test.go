@@ -39,8 +39,7 @@ func (m *mockWorkspace) Sync() (*model.SyncResult, error) {
 	return &model.SyncResult{}, nil
 }
 
-func (m *mockWorkspace) Meta() *metamodel.Metamodel { return m.meta }
-func (m *mockWorkspace) Paths() *project.Context    { return m.paths }
+func (m *mockWorkspace) Paths() *project.Context { return m.paths }
 
 func (m *mockWorkspace) ReadProjectFile(name string) ([]byte, error) {
 	m.mu.Lock()
@@ -108,6 +107,7 @@ func newTestScheduler(
 		config: cfg,
 		ws:     ws,
 		wsRaw:  ws,
+		metaFn: func() *metamodel.Metamodel { return ws.meta },
 		state:  newState(),
 		logger: discardLogger(),
 		now:    func() time.Time { return now },
@@ -319,6 +319,7 @@ func TestScheduler_Run_emptyConfig(t *testing.T) {
 		config: &Config{Tasks: nil},
 		ws:     ws,
 		wsRaw:  ws,
+		metaFn: func() *metamodel.Metamodel { return ws.meta },
 		logger: discardLogger(),
 		now:    time.Now,
 	}
@@ -360,6 +361,7 @@ func TestScheduler_doExecuteTask_skipsOnCancelledContext(t *testing.T) {
 	s := &Scheduler{
 		ws:     ws,
 		wsRaw:  ws,
+		metaFn: func() *metamodel.Metamodel { return ws.meta },
 		state:  newState(),
 		logger: discardLogger(),
 		now:    time.Now,

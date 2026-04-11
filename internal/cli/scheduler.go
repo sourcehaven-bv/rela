@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -78,7 +79,8 @@ func runScheduler(cmd *cobra.Command) error {
 		Level: slog.LevelInfo,
 	}))
 
-	s := scheduler.New(cfg, engine, schedWs, schedWs, logger)
+	metaFn := func() *metamodel.Metamodel { return schedWs.Snapshot().Meta() }
+	s := scheduler.New(cfg, engine, schedWs, schedWs, metaFn, logger)
 	return s.Run(cmd.Context())
 }
 
