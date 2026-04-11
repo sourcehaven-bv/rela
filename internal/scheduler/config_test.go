@@ -149,8 +149,36 @@ func TestParseSchedule_week(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.kind != weekKind {
-		t.Errorf("kind = %v, want weekKind", s.kind)
+	if s.kind != weekdayKind || s.weekday != time.Monday {
+		t.Errorf("kind = %v weekday = %v, want weekdayKind Monday", s.kind, s.weekday)
+	}
+}
+
+func TestParseSchedule_weekdayNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		weekday time.Weekday
+	}{
+		{"monday", time.Monday},
+		{"tuesday", time.Tuesday},
+		{"wednesday", time.Wednesday},
+		{"thursday", time.Thursday},
+		{"friday", time.Friday},
+		{"saturday", time.Saturday},
+		{"sunday", time.Sunday},
+	}
+	for _, tt := range tests {
+		s, err := parseSchedule(tt.input)
+		if err != nil {
+			t.Errorf("parseSchedule(%q): %v", tt.input, err)
+			continue
+		}
+		if s.kind != weekdayKind || s.weekday != tt.weekday {
+			t.Errorf("parseSchedule(%q): got %v %v, want weekdayKind %v",
+				tt.input, s.kind, s.weekday, tt.weekday)
+		}
 	}
 }
 
@@ -207,19 +235,40 @@ func TestScheduleIsDue_day(t *testing.T) {
 	}
 }
 
-func TestScheduleIsDue_week(t *testing.T) {
+func TestScheduleIsDue_weekday_monday(t *testing.T) {
 	t.Parallel()
 
-	s := Schedule{kind: weekKind, set: true}
-	// Sunday April 5 2026 is in week 14, Monday April 6 is week 15.
-	lastWeek := time.Date(2026, 4, 5, 12, 0, 0, 0, time.Local)
-	thisWeek := time.Date(2026, 4, 6, 0, 5, 0, 0, time.Local)
+	s := Schedule{kind: weekdayKind, weekday: time.Monday, set: true}
+	// Sunday April 5 2026 → last ran. Monday April 6 → Monday has occurred.
+	lastRun := time.Date(2026, 4, 5, 12, 0, 0, 0, time.Local)
+	monday := time.Date(2026, 4, 6, 0, 5, 0, 0, time.Local)
 
-	if !s.IsDue(lastWeek, thisWeek) {
-		t.Error("expected due: different week")
+	if !s.IsDue(lastRun, monday) {
+		t.Error("expected due: Monday occurred after lastRun")
 	}
-	if s.IsDue(thisWeek, thisWeek.Add(24*time.Hour)) {
-		t.Error("expected not due: same week")
+	// Same Monday, later in the day — should not be due again.
+	if s.IsDue(monday, monday.Add(12*time.Hour)) {
+		t.Error("expected not due: already ran this Monday")
+	}
+}
+
+func TestScheduleIsDue_weekday_friday(t *testing.T) {
+	t.Parallel()
+
+	s := Schedule{kind: weekdayKind, weekday: time.Friday, set: true}
+	// Last ran Thursday April 9 2026. Now is Friday April 10.
+	lastRun := time.Date(2026, 4, 9, 18, 0, 0, 0, time.Local)
+	friday := time.Date(2026, 4, 10, 8, 0, 0, 0, time.Local)
+
+	if !s.IsDue(lastRun, friday) {
+		t.Error("expected due: Friday occurred after lastRun")
+	}
+	// Wednesday April 8 → not yet Friday.
+	wednesday := time.Date(2026, 4, 8, 12, 0, 0, 0, time.Local)
+	lastRunMon := time.Date(2026, 4, 6, 9, 0, 0, 0, time.Local)
+	// Most recent Friday before Wednesday is April 3, which is before lastRunMon (April 6).
+	if s.IsDue(lastRunMon, wednesday) {
+		t.Error("expected not due: most recent Friday is before lastRun")
 	}
 }
 

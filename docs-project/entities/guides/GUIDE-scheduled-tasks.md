@@ -62,7 +62,7 @@ tasks:
 
   - name: weekly-review
     script: checks/weekly.lua
-    every: week
+    every: friday
 
   - name: quick-check
     script: checks/orphans.lua
@@ -74,16 +74,21 @@ tasks:
 | Value        | Meaning                                                    |
 | ------------ | ---------------------------------------------------------- |
 | `day`        | Once per day — runs after local midnight                   |
-| `week`       | Once per week — runs after Monday midnight (ISO weeks)     |
+| `monday`     | Once per week on Mondays (after midnight local time)       |
+| `friday`     | Once per week on Fridays                                   |
+| `week`       | Alias for `monday`                                         |
 | `30m`        | Every 30 minutes                                           |
 | `2h`         | Every 2 hours                                              |
 | `1h30m`      | Every 90 minutes (any valid Go duration)                   |
 | `15`         | Every 15 minutes (bare number = minutes)                   |
 
-**Day and week schedules** check whether the calendar boundary has been crossed since
+All seven weekday names are supported: `monday`, `tuesday`, `wednesday`, `thursday`,
+`friday`, `saturday`, `sunday`.
+
+**Day and weekday schedules** check whether the calendar boundary has been crossed since
 the last run. They don't fire at a specific clock time — they fire on the first scheduler
-tick after midnight (or Monday midnight). This means "every day" works correctly regardless
-of when you start the scheduler.
+tick after the target day begins. This means "every friday" runs as soon as possible after
+Friday midnight, regardless of when you start the scheduler.
 
 **Interval schedules** fire when enough time has elapsed since the last run. A `30m` task
 that last ran at 9:05 will next run at or after 9:35.

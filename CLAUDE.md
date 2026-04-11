@@ -140,12 +140,14 @@ tasks:
 
 **Schedule values:**
 
-| Value        | Meaning                                         |
-| ------------ | ----------------------------------------------- |
-| `day`        | Once per day (after midnight local time)         |
-| `week`       | Once per week (after Monday midnight, ISO weeks) |
-| `30m`, `2h`  | Fixed interval (any Go duration)                 |
-| `15`         | Bare number interpreted as minutes               |
+| Value        | Meaning                                              |
+| ------------ | ---------------------------------------------------- |
+| `day`        | Once per day (after midnight local time)              |
+| `monday`     | Once per week on Mondays (any weekday name works)     |
+| `friday`     | Once per week on Fridays                              |
+| `week`       | Alias for `monday`                                    |
+| `30m`, `2h`  | Fixed interval (any Go duration)                      |
+| `15`         | Bare number interpreted as minutes                    |
 
 **Architecture:**
 

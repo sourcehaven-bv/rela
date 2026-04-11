@@ -28,9 +28,11 @@ type TaskConfig struct {
 }
 
 // Schedule represents a recurring schedule interval.
-// Supported values: "day", "week", or a duration like "30m", "2h", "1h30m".
+// Supported values: "day", a weekday name ("monday".."sunday"), "week" (alias
+// for "monday"), or a duration like "30m", "2h", "1h30m".
 type Schedule struct {
 	kind     scheduleKind
+	weekday  time.Weekday  // only for weekdayKind
 	interval time.Duration // only for intervalKind
 	set      bool          // true after successful parse
 }
@@ -39,25 +41,35 @@ type scheduleKind int
 
 const (
 	dayKind scheduleKind = iota
-	weekKind
+	weekdayKind
 	intervalKind
 )
 
 // IsDue returns true if enough time has passed since lastRun for the next
-// execution. For day/week schedules, it checks whether the calendar boundary
-// (midnight local time / Monday midnight) has been crossed.
+// execution. For day schedules, it checks whether the day changed. For weekday
+// schedules, it checks whether the target weekday has occurred since lastRun.
 func (s Schedule) IsDue(lastRun, now time.Time) bool {
 	switch s.kind {
 	case dayKind:
-		// Due if now is on a different day than lastRun (local time).
 		return truncateToDay(now) != truncateToDay(lastRun)
-	case weekKind:
-		// Due if now is in a different ISO week than lastRun.
-		return truncateToWeek(now) != truncateToWeek(lastRun)
+	case weekdayKind:
+		// Due if the target weekday has occurred between lastRun and now.
+		// Find the most recent occurrence of the target weekday at midnight.
+		target := mostRecentWeekday(now, s.weekday)
+		return target.After(lastRun)
 	case intervalKind:
 		return now.Sub(lastRun) >= s.interval
 	}
 	return false
+}
+
+// mostRecentWeekday returns midnight (local time) of the most recent
+// occurrence of the given weekday, on or before the given time.
+func mostRecentWeekday(t time.Time, wd time.Weekday) time.Time {
+	y, m, d := t.Date()
+	today := time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+	daysBack := (int(today.Weekday()) - int(wd) + 7) % 7
+	return today.AddDate(0, 0, -daysBack)
 }
 
 func truncateToDay(t time.Time) int {
@@ -65,9 +77,15 @@ func truncateToDay(t time.Time) int {
 	return y*10000 + int(m)*100 + d
 }
 
-func truncateToWeek(t time.Time) int {
-	y, w := t.ISOWeek()
-	return y*100 + w
+// weekdayNames maps lowercase day names to time.Weekday.
+var weekdayNames = map[string]time.Weekday{
+	"monday":    time.Monday,
+	"tuesday":   time.Tuesday,
+	"wednesday": time.Wednesday,
+	"thursday":  time.Thursday,
+	"friday":    time.Friday,
+	"saturday":  time.Saturday,
+	"sunday":    time.Sunday,
 }
 
 // String returns a human-readable representation of the schedule.
@@ -75,8 +93,8 @@ func (s Schedule) String() string {
 	switch s.kind {
 	case dayKind:
 		return "day"
-	case weekKind:
-		return "week"
+	case weekdayKind:
+		return s.weekday.String()
 	case intervalKind:
 		return s.interval.String()
 	}
@@ -105,11 +123,18 @@ func (s Schedule) MarshalYAML() (interface{}, error) {
 }
 
 func parseSchedule(raw string) (Schedule, error) {
-	switch raw {
-	case "day":
+	if raw == "day" {
 		return Schedule{kind: dayKind, set: true}, nil
-	case "week":
-		return Schedule{kind: weekKind, set: true}, nil
+	}
+
+	// "week" is an alias for "monday".
+	if raw == "week" {
+		return Schedule{kind: weekdayKind, weekday: time.Monday, set: true}, nil
+	}
+
+	// Check for weekday names (monday, tuesday, ..., sunday).
+	if wd, ok := weekdayNames[raw]; ok {
+		return Schedule{kind: weekdayKind, weekday: wd, set: true}, nil
 	}
 
 	// Try Go duration (e.g. "30m", "2h", "1h30m")
@@ -133,7 +158,7 @@ func parseSchedule(raw string) (Schedule, error) {
 	}
 
 	return Schedule{}, fmt.Errorf(
-		"invalid schedule %q: use \"day\", \"week\", or a duration like \"30m\", \"2h\"",
+		"invalid schedule %q: use \"day\", a weekday name, or a duration like \"30m\", \"2h\"",
 		raw,
 	)
 }

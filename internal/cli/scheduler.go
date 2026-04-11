@@ -33,9 +33,11 @@ Schedules are defined in schedules.yaml in the project root:
       every: 30m
 
 Schedule values:
-  day       Run once per day (after midnight local time)
-  week      Run once per week (after Monday midnight)
-  30m, 2h   Run at a fixed interval
+  day          Run once per day (after midnight local time)
+  monday       Run once per week on Mondays (any weekday name works)
+  friday       Run once per week on Fridays
+  week         Alias for monday
+  30m, 2h      Run at a fixed interval
 
 Tasks execute sequentially in config order. Each task references a Lua script
 in the scripts/ directory with the same capabilities as 'rela script'.
