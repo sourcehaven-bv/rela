@@ -68,15 +68,20 @@ local function find_existing_markers()
 end
 
 -- Map GitHub labels to rela ticket kind.
+local LABEL_TO_KIND = {
+    bug = "bug",
+    enhancement = "enhancement",
+    documentation = "docs",
+    docs = "docs",
+    refactor = "refactor",
+}
+
 local function classify_kind(labels)
     for _, label in ipairs(labels) do
-        local name = (label.name or ""):lower()
-        if name == "bug" then return "bug" end
-        if name == "enhancement" then return "enhancement" end
-        if name == "documentation" or name == "docs" then return "docs" end
-        if name == "refactor" then return "refactor" end
+        local kind = LABEL_TO_KIND[(label.name or ""):lower()]
+        if kind then return kind end
     end
-    return "enhancement" -- default
+    return "enhancement"
 end
 
 -- Build markdown content from a GitHub issue.
