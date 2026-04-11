@@ -107,6 +107,16 @@ watch(
 </template>
 
 <style>
+/*
+ * Responsive breakpoints (grep "BREAKPOINT" to find all usages):
+ *
+ *   ≤768px   — BREAKPOINT:mobile  — card layouts, stacked UI
+ *   ≤1024px  — BREAKPOINT:tablet  — sidebar hidden, hamburger menu, compact nav bars
+ *   >1024px  — BREAKPOINT:desktop — sidebar visible, full layout
+ *
+ * CSS custom properties can't be used in @media queries.
+ * When changing a breakpoint value, search for the pixel value across all .vue files.
+ */
 :root {
   --sidebar-bg: #1a1a2e;
   --sidebar-text: #e8e8e8;
@@ -180,6 +190,7 @@ body {
   padding: 24px;
   padding-bottom: 48px; /* Account for status bar */
   transition: margin-left 0.2s ease;
+  min-width: 0; /* Allow flex child to shrink below content size */
 }
 
 .main-content.sidebar-collapsed {
@@ -243,18 +254,23 @@ body {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .mobile-menu-btn {
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
+  /* Hide floating hamburger when a page provides its own nav bar */
+  .app-layout:has(.list-header-menu, .scope-nav) .mobile-menu-btn {
+    display: none;
+  }
+
   .main-content {
     margin-left: 0;
     padding: 16px;
     padding-top: 60px; /* Space for hamburger button */
-    padding-bottom: 16px; /* No status bar on mobile */
+    padding-bottom: 16px; /* No status bar on tablet/mobile */
   }
 
   .main-content.sidebar-collapsed {
@@ -289,7 +305,7 @@ body {
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 768px) { /* BREAKPOINT:mobile */
   .main-content {
     padding: 12px;
     padding-top: 56px;

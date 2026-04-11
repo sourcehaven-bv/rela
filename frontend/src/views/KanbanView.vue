@@ -726,7 +726,7 @@ watch(() => entitiesStore.cacheVersion, () => {
   opacity: 0.5;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) { /* BREAKPOINT:tablet */
   .kanban-board {
     gap: 12px;
     min-height: 300px;

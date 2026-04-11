@@ -359,27 +359,40 @@ onMounted(() => loadEntity())
     <template v-else-if="entity">
       <!-- Scope Navigation Bar -->
       <div v-if="scopeNav" class="scope-nav">
-        <router-link :to="scopeNav.backUrl" class="scope-nav-btn">
-          Back <kbd>Esc</kbd>
+        <router-link :to="scopeNav.backUrl" class="scope-nav-btn scope-nav-back">
+          <svg class="scope-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <span class="scope-nav-back-label">Back <kbd>Esc</kbd></span>
         </router-link>
-        <button
-          v-if="scopeNav.prevId"
-          class="scope-nav-btn"
-          @click="navigateScope('prev')"
-        >
-          ← Prev <kbd>P</kbd>
-        </button>
-        <span v-else class="scope-nav-btn disabled">← Prev</span>
         <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
         <span class="scope-nav-label">{{ scopeNav.label }}</span>
-        <button
-          v-if="scopeNav.nextId"
-          class="scope-nav-btn"
-          @click="navigateScope('next')"
-        >
-          Next → <kbd>N</kbd>
-        </button>
-        <span v-else class="scope-nav-btn disabled">Next →</span>
+        <div class="scope-nav-arrows">
+          <button
+            v-if="scopeNav.prevId"
+            class="scope-nav-btn scope-nav-arrow"
+            @click="navigateScope('prev')"
+          >
+            <svg class="scope-nav-icon scope-nav-arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+            <span class="scope-nav-arrow-text">← Prev</span>
+            <kbd>P</kbd>
+          </button>
+          <span v-else class="scope-nav-btn scope-nav-arrow disabled">
+            <svg class="scope-nav-icon scope-nav-arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+            <span class="scope-nav-arrow-text">← Prev</span>
+          </span>
+          <button
+            v-if="scopeNav.nextId"
+            class="scope-nav-btn scope-nav-arrow"
+            @click="navigateScope('next')"
+          >
+            <span class="scope-nav-arrow-text">Next →</span>
+            <svg class="scope-nav-icon scope-nav-arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            <kbd>N</kbd>
+          </button>
+          <span v-else class="scope-nav-btn scope-nav-arrow disabled">
+            <span class="scope-nav-arrow-text">Next →</span>
+            <svg class="scope-nav-icon scope-nav-arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </span>
+        </div>
       </div>
 
       <header class="detail-header">
@@ -724,6 +737,22 @@ onMounted(() => loadEntity())
   font-family: monospace;
 }
 
+.scope-nav-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* On desktop: hide chevron icons on prev/next, show text labels */
+.scope-nav-arrow-icon {
+  display: none;
+}
+
+.scope-nav-arrows {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .scope-nav-label {
   flex: 1;
   font-size: 13px;
@@ -784,19 +813,22 @@ onMounted(() => loadEntity())
   border-top: 1px solid var(--border-color);
 }
 
-@media (max-width: 768px) {
-  /* Native-style mobile nav bar — sits in the hamburger area */
+/* Tablet + mobile: iOS Mail-style nav bar and compact header */
+@media (max-width: 1024px) {
   .scope-nav {
     position: sticky;
-    top: -60px; /* pull up into main-content padding-top (60px) */
-    z-index: 102; /* above hamburger (101) */
-    background: var(--bg-color);
+    top: 0;
+    z-index: 102;
+    background: var(--sidebar-bg, #1a1a2e);
+    color: var(--sidebar-text, #e8e8e8);
     margin: -60px -16px 12px -16px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border-color);
+    padding: 6px 8px;
+    border-bottom: none;
     gap: 0;
     flex-wrap: nowrap;
     justify-content: space-between;
+    align-items: center;
+    min-height: 44px;
   }
 
   .scope-nav-label {
@@ -805,18 +837,23 @@ onMounted(() => loadEntity())
 
   .scope-nav-progress {
     font-size: 13px;
-    color: var(--muted-text);
+    color: var(--sidebar-text, #e8e8e8);
+    opacity: 0.6;
     flex: 1;
     text-align: center;
   }
 
+  .scope-nav-back-label {
+    display: none;
+  }
+
   .scope-nav-btn {
-    padding: 8px 12px;
+    padding: 0;
     font-size: 14px;
     min-height: 36px;
     background: none;
     border: none;
-    color: var(--accent-color);
+    color: var(--sidebar-text, #e8e8e8);
     font-weight: 500;
   }
 
@@ -827,8 +864,39 @@ onMounted(() => loadEntity())
   }
 
   .scope-nav-btn.disabled {
-    color: var(--border-color);
-    opacity: 0.4;
+    color: var(--sidebar-text, #e8e8e8);
+    opacity: 0.25;
+  }
+
+  .scope-nav-back {
+    padding: 8px;
+  }
+
+  .scope-nav-icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .scope-nav-arrows {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+
+  .scope-nav-arrow {
+    padding: 8px 10px;
+  }
+
+  .scope-nav-arrow-icon {
+    display: block;
+  }
+
+  .scope-nav-arrow-text {
+    display: none;
+  }
+
+  .scope-nav-arrow kbd {
+    display: none;
   }
 
   .detail-header {
@@ -857,7 +925,10 @@ onMounted(() => loadEntity())
   .header-info h1 {
     font-size: 22px;
   }
+}
 
+/* Mobile: simplified card-style sections */
+@media (max-width: 768px) { /* BREAKPOINT:mobile */
   .detail-section {
     background: none;
     border: none;

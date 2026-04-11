@@ -1653,7 +1653,7 @@ h1 {
 
 /* Uses global .btn, .btn-primary, .btn-secondary, .btn-sm, .loading-state, .spinner, .error-state from App.vue */
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .settings-row {
     flex-wrap: wrap;
   }

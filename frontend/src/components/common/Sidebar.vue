@@ -400,7 +400,7 @@ async function handleAction(item: SidebarItem) {
 }
 
 /* Mobile overlay */
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .sidebar {
     transform: translateX(-100%);
     height: 100vh;
@@ -449,7 +449,7 @@ async function handleAction(item: SidebarItem) {
   display: none;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .sidebar-backdrop {
     display: block;
     position: fixed;

@@ -457,7 +457,7 @@ onMounted(() => {
   text-decoration: underline;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) { /* BREAKPOINT:tablet */
   .dashboard-grid {
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 12px;
@@ -485,7 +485,7 @@ onMounted(() => {
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 768px) { /* BREAKPOINT:mobile */
   .dashboard-grid {
     grid-template-columns: 1fr;
   }

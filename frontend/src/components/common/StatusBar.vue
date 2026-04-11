@@ -191,7 +191,7 @@ async function handleSync() {
   line-height: 1;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .status-bar {
     display: none;
   }

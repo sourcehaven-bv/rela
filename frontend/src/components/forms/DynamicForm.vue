@@ -799,7 +799,7 @@ onBeforeRouteLeave((_to, _from, next) => {
   color: white;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) { /* BREAKPOINT:tablet */
   .form-layout {
     flex-direction: column;
     gap: 12px;

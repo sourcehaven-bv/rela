@@ -351,10 +351,10 @@ onBeforeUnmount(() => {
   border-color: var(--accent-color);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .filter-bar {
     border: none;
-    padding: 0 0 12px 0;
+    padding: 8px 12px 12px 12px;
     margin-bottom: 4px;
   }
 

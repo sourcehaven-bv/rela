@@ -455,7 +455,7 @@ onMounted(() => {
   -webkit-overflow-scrolling: touch;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .issues-table th,
   .issues-table td {
     padding: 8px 10px;

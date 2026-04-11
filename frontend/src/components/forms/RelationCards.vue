@@ -950,7 +950,7 @@ function entryStatus(id: string): 'added' | 'updated' | null {
   font-size: 14px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .card-properties {
     flex-direction: column;
     align-items: stretch;

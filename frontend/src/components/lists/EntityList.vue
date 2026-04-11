@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
@@ -25,12 +25,6 @@ const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
 
-// Responsive: detect mobile for card vs table layout
-const mobileQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 768px)') : null
-const isMobile = ref(mobileQuery?.matches ?? false)
-function onMediaChange(e: MediaQueryListEvent) { isMobile.value = e.matches }
-onMounted(() => { mobileQuery?.addEventListener('change', onMediaChange) })
-onUnmounted(() => { mobileQuery?.removeEventListener('change', onMediaChange) })
 
 // State
 const entities = ref<Entity[]>([])
@@ -372,6 +366,13 @@ function isEnumColumn(column: { property?: string }): boolean {
   return isEnumPropertyDef(entityType.value.properties[column.property])
 }
 
+function columnClass(column: { property?: string; relation?: string }): string {
+  if (column.relation) return 'col-relation'
+  if (!column.property || !entityType.value) return 'col-string'
+  const def = entityType.value.properties[column.property]
+  return def ? `col-${def.type}` : 'col-string'
+}
+
 function getFormattedCellValue(entity: Entity, column: { property?: string; relation?: string }): string {
   // For relation columns, resolve IDs to titles using included entities
   if (column.relation) {
@@ -386,6 +387,21 @@ function getFormattedCellValue(entity: Entity, column: { property?: string; rela
   const value = getCellValue(entity, column)
   return formatCellValue(value, column.property, entityType.value)
 }
+
+const gridTemplateColumns = computed(() => {
+  const cols: string[] = []
+  if (hasActions.value) cols.push('32px') // select checkbox
+  for (const column of listConfig.value?.columns || []) {
+    const cls = columnClass(column)
+    if (cls === 'col-string' || cls === 'col-relation') {
+      cols.push('minmax(100px, 1fr)')
+    } else {
+      cols.push('max-content')
+    }
+  }
+  cols.push('56px') // actions/delete column
+  return cols.join(' ')
+})
 
 function handleDelete(entity: Entity, event: Event) {
   event.stopPropagation()
@@ -450,6 +466,13 @@ onMounted(() => {
 <template>
   <div v-if="listConfig" class="entity-list">
     <header class="list-header">
+      <button
+        class="list-header-menu"
+        aria-label="Toggle navigation"
+        @click="uiStore.sidebarMobileOpen ? uiStore.closeMobileSidebar() : uiStore.openMobileSidebar()"
+      >
+        ☰
+      </button>
       <h1>{{ listConfig.title || listConfig.entity }}</h1>
       <router-link
         v-if="listConfig.create_form"
@@ -491,8 +514,8 @@ onMounted(() => {
       </div>
 
       <template v-else>
-      <!-- Mobile card layout -->
-      <div v-if="isMobile" class="mobile-card-list">
+      <!-- Mobile card layout (visible ≤768px via CSS) -->
+      <div class="mobile-card-list">
         <div
           v-for="(entity, index) in entities"
           :key="'card-' + entity.id"
@@ -534,9 +557,9 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Desktop table layout -->
-      <div v-else class="table-scroll-wrapper">
-      <table class="entity-table">
+      <!-- Desktop/tablet table layout (visible >768px via CSS) -->
+      <div class="table-scroll-wrapper">
+      <table class="entity-table" :style="{ '--grid-cols': gridTemplateColumns }">
         <thead>
           <tr v-if="hasSelection" class="action-header-row">
             <th class="select-column">
@@ -572,11 +595,11 @@ onMounted(() => {
             <th
               v-for="column in listConfig.columns"
               :key="column.property || column.relation"
-              :class="{
+              :class="[columnClass(column), {
                 sortable: column.sortable !== false && column.property,
                 sorted: getSortInfo(column.property || '').index >= 0,
                 'sorted-desc': getSortInfo(column.property || '').direction === 'desc',
-              }"
+              }]"
               @click="column.sortable !== false && column.property && handleSort(column.property, $event)"
             >
               {{ column.label || column.property || column.relation }}
@@ -606,6 +629,7 @@ onMounted(() => {
             <td
               v-for="column in listConfig.columns"
               :key="column.property || column.relation"
+              :class="columnClass(column)"
             >
               <Badge
                 v-if="isEnumColumn(column)"
@@ -676,6 +700,7 @@ onMounted(() => {
 <style scoped>
 .entity-list {
   max-width: 1200px;
+  min-width: 0;
 }
 
 .list-header {
@@ -687,6 +712,11 @@ onMounted(() => {
 
 .list-header h1 {
   margin: 0;
+  flex: 1;
+}
+
+.list-header-menu {
+  display: none;
 }
 
 .btn {
@@ -744,7 +774,7 @@ onMounted(() => {
   background: var(--card-bg);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  overflow: hidden;
+  overflow: clip; /* Clips border-radius bleed without blocking scroll in children */
 }
 
 .loading-state,
@@ -775,18 +805,23 @@ onMounted(() => {
 
 .entity-table {
   width: 100%;
-  border-collapse: collapse;
+  display: grid;
+  grid-template-columns: var(--grid-cols);
 }
 
-.entity-table thead {
+.entity-table thead,
+.entity-table tbody,
+.entity-table tr {
+  display: contents;
+}
+
+/* Sticky header: applied to th cells since thead has display:contents */
+.entity-table th {
   position: sticky;
   top: 0;
   z-index: 5;
-}
-
-.entity-table th {
   text-align: left;
-  padding: 12px 16px;
+  padding: 12px 12px;
   background: var(--hover-bg);
   border-bottom: 1px solid var(--border-color);
   font-size: 12px;
@@ -794,6 +829,7 @@ onMounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--muted-text);
+  white-space: nowrap;
 }
 
 .action-header-row th {
@@ -803,6 +839,7 @@ onMounted(() => {
 .action-header-cell {
   text-transform: none;
   letter-spacing: normal;
+  grid-column: 2 / -1; /* Span from 2nd column to end in grid layout */
 }
 
 .action-header-count {
@@ -875,10 +912,27 @@ onMounted(() => {
   margin-right: 2px;
 }
 
+
 .entity-table td {
-  padding: 12px 16px;
+  padding: 12px 12px;
   border-bottom: 1px solid var(--border-color);
   font-size: 14px;
+}
+
+/* Column types: compact types don't wrap, text types truncate with ellipsis */
+.col-enum,
+.col-date,
+.col-boolean,
+.col-integer {
+  white-space: nowrap;
+}
+
+.col-string,
+.col-relation {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0; /* Allow grid child to shrink below content */
 }
 
 .entity-row {
@@ -937,7 +991,6 @@ onMounted(() => {
 
 .select-column,
 .select-cell {
-  width: 32px;
   text-align: center;
 }
 
@@ -958,12 +1011,13 @@ onMounted(() => {
 }
 
 .actions-column {
-  width: 40px;
+  overflow: visible;
 }
 
 .actions-cell {
-  width: 40px;
+  overflow: visible;
   white-space: nowrap;
+  padding-right: 12px;
 }
 
 .delete-btn {
@@ -984,6 +1038,11 @@ onMounted(() => {
 .delete-btn:hover {
   background: color-mix(in srgb, var(--error-color) 15%, transparent);
   color: var(--error-color);
+}
+
+/* Card/table layout toggle — CSS-only responsive */
+.mobile-card-list {
+  display: none;
 }
 
 .table-scroll-wrapper {
@@ -1062,18 +1121,63 @@ onMounted(() => {
   color: var(--text-color);
 }
 
-@media (max-width: 768px) {
+/* Tablet + mobile: hamburger bar header */
+@media (max-width: 1024px) {
   .list-header {
     position: sticky;
     top: 0;
-    z-index: 10;
-    background: var(--bg-color);
-    padding: 8px 0;
-    margin-bottom: 12px;
+    z-index: 102;
+    background: var(--sidebar-bg, #1a1a2e);
+    color: var(--sidebar-text, #e8e8e8);
+    margin: -60px -16px 12px -16px;
+    padding: 6px 12px;
+    min-height: 44px;
+    gap: 12px;
   }
 
   .list-header h1 {
-    font-size: 18px;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--sidebar-text, #e8e8e8);
+  }
+
+  .list-header .btn-primary {
+    padding: 6px 14px;
+    font-size: 14px;
+  }
+
+  .list-header .btn-primary kbd {
+    display: none;
+  }
+
+  .list-header-menu {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: none;
+    border: none;
+    color: var(--sidebar-text, #e8e8e8);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0;
+    border-radius: 6px;
+  }
+
+  .list-header-menu:active {
+    opacity: 0.6;
+  }
+}
+
+/* Mobile: card layout */
+@media (max-width: 768px) { /* BREAKPOINT:mobile */
+  .mobile-card-list {
+    display: block;
+  }
+
+  .table-scroll-wrapper {
+    display: none;
   }
 
   .list-content {
