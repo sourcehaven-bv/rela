@@ -171,8 +171,9 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
 	}
 
-	meta := ws.Meta()
-	g := ws.Graph()
+	snap := ws.Snapshot()
+	meta := snap.Meta()
+	g := snap.Graph()
 
 	// Validate config against metamodel
 	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {

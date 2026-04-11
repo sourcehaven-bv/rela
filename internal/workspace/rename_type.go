@@ -12,7 +12,7 @@ import (
 // Returns the number of entity files updated.
 func (w *Workspace) RenameEntityType(oldType, newType, newPlural string) (int, error) {
 	fs := w.FS()
-	meta := w.Meta()
+	meta := w.meta()
 	paths := w.Paths()
 
 	oldDef, ok := meta.GetEntityDef(oldType)

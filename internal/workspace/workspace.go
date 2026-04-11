@@ -332,26 +332,18 @@ func (w *Workspace) Snapshot() *Snapshot {
 	return &Snapshot{s: s}
 }
 
-// Graph returns the in-memory graph from the current workspace state
-// snapshot. The returned pointer reflects the state at the time of the
-// call; a concurrent Reload that publishes a new state will not affect
-// the returned graph (the old graph is never mutated by Reload).
-//
-// Operations that perform multiple reads or that mix graph reads with
-// other state reads should call w.state.Load() once and use the snapshot
-// fields directly, to guarantee a coherent view across the operation.
-func (w *Workspace) Graph() *graph.Graph {
+// graph returns the in-memory graph from the current workspace state.
+// Internal to workspace; external consumers must use Snapshot().
+func (w *Workspace) graph() *graph.Graph {
 	if s := w.state.Load(); s != nil {
 		return s.graph
 	}
 	return nil
 }
 
-// Meta returns the current metamodel. The returned pointer is a snapshot:
-// callers should not hold it across operations that could trigger a reload
-// (file watcher, explicit Reload call), because a newer metamodel may have
-// been published in the meantime.
-func (w *Workspace) Meta() *metamodel.Metamodel {
+// meta returns the current metamodel.
+// Internal to workspace; external consumers must use Snapshot().
+func (w *Workspace) meta() *metamodel.Metamodel {
 	if s := w.state.Load(); s != nil {
 		return s.meta
 	}
@@ -421,12 +413,12 @@ func (w *Workspace) DiscoverEntityTemplates(entityType string) ([]*model.EntityT
 
 // GenerateEntityTemplate generates a template file for the given entity type.
 func (w *Workspace) GenerateEntityTemplate(entityType, variant string, force bool) (bool, error) {
-	return w.repo.GenerateEntityTemplate(w.Meta(), entityType, variant, force)
+	return w.repo.GenerateEntityTemplate(w.meta(), entityType, variant, force)
 }
 
 // GenerateRelationTemplate generates a template file for the given relation type.
 func (w *Workspace) GenerateRelationTemplate(relationType string, force bool) (bool, error) {
-	return w.repo.GenerateRelationTemplate(w.Meta(), relationType, force)
+	return w.repo.GenerateRelationTemplate(w.meta(), relationType, force)
 }
 
 // FindOrphanedTempFiles returns paths of leftover .new temp files.
@@ -751,14 +743,14 @@ func (w *Workspace) removeFromIndex(id string) {
 
 // SaveCache persists the current graph to the cache file.
 func (w *Workspace) SaveCache() error {
-	if g := w.Graph(); g != nil {
+	if g := w.graph(); g != nil {
 		return w.repo.SaveCache(g)
 	}
 	return nil
 }
 
 func (w *Workspace) saveCacheQuietly() {
-	if g := w.Graph(); g != nil {
+	if g := w.graph(); g != nil {
 		w.saveCacheQuietlyFor(g)
 	}
 }
@@ -778,7 +770,7 @@ func (w *Workspace) saveCacheQuietlyFor(g *graph.Graph) {
 // ResolveEntityType resolves a type name (alias, plural) to its canonical
 // name and definition.
 func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
-	meta := w.Meta()
+	meta := w.meta()
 
 	// Exact match or alias.
 	resolved := meta.ResolveAlias(strings.TrimSpace(typeName))
@@ -1094,7 +1086,7 @@ type createEntityCoreOpts struct {
 // createEntityCore creates an entity without running automations.
 // This is the shared creation logic used by CreateEntity and automation processing.
 func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpts) (*model.Entity, error) {
-	meta := w.Meta()
+	meta := w.meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
 		return nil, fmt.Errorf("unknown entity type: %s", entityType)
@@ -1153,7 +1145,7 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 	if err := w.repo.WriteEntity(entity, meta); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
-	w.Graph().AddNode(entity)
+	w.graph().AddNode(entity)
 
 	return entity, nil
 }
@@ -1170,9 +1162,9 @@ type automationSideEffects struct {
 // the target of a relation from the source entity with the given relation type.
 // Returns nil if no such entity exists.
 func (w *Workspace) findExistingRelationTarget(sourceID, relationType, targetType string) *model.Entity {
-	for _, rel := range w.Graph().OutgoingEdges(sourceID) {
+	for _, rel := range w.graph().OutgoingEdges(sourceID) {
 		if rel.Type == relationType {
-			if target, ok := w.Graph().GetNode(rel.To); ok && target.Type == targetType {
+			if target, ok := w.graph().GetNode(rel.To); ok && target.Type == targetType {
 				return target
 			}
 		}
@@ -1237,7 +1229,7 @@ func (w *Workspace) processEntityCreations(
 	effects *automationSideEffects,
 ) []automationQueueItem {
 	var newItems []automationQueueItem
-	meta := w.Meta()
+	meta := w.meta()
 
 	for _, toCreate := range toCreateList {
 		if skip := w.handleIfExists(trigger, toCreate, effects); skip {
@@ -1317,12 +1309,12 @@ func (w *Workspace) applyRelationCreations(
 	relations []*model.Relation,
 	effects *automationSideEffects,
 ) {
-	meta := w.Meta()
+	meta := w.meta()
 
 	for _, rel := range relations {
 		rel.From = triggerEntity.ID
 
-		targetEntity, ok := w.Graph().GetNode(rel.To)
+		targetEntity, ok := w.graph().GetNode(rel.To)
 		if !ok {
 			effects.Errors = append(effects.Errors,
 				fmt.Sprintf("automation relation target not found: %s", rel.To))
@@ -1357,7 +1349,7 @@ func (w *Workspace) executeLuaActions(
 	// Build script context once for all actions
 	ctx := &scriptContextImpl{
 		workspace:   w,
-		meta:        w.Meta(),
+		meta:        w.meta(),
 		projectRoot: w.repo.Paths().Root,
 		entity:      entity,
 		oldEntity:   oldEntity,
@@ -1432,7 +1424,7 @@ func (w *Workspace) createTriggerRelation(
 	relationType string,
 	effects *automationSideEffects,
 ) {
-	meta := w.Meta()
+	meta := w.meta()
 
 	if err := meta.ValidateRelation(relationType, triggerEntity.Type, created.Type); err != nil {
 		effects.Errors = append(effects.Errors,
@@ -1457,7 +1449,7 @@ func (w *Workspace) writeRelationCore(rel *model.Relation) error {
 	if err := w.repo.WriteRelation(rel); err != nil {
 		return fmt.Errorf("write relation: %w", err)
 	}
-	w.Graph().AddEdge(rel)
+	w.graph().AddEdge(rel)
 	return nil
 }
 
@@ -1528,7 +1520,7 @@ func (w *Workspace) CreateRelation(from, relType, to string, opts ...CreateRelat
 
 // UpdateRelation updates properties on an existing relation.
 func (w *Workspace) UpdateRelation(from, relType, to string, opts CreateRelationOptions) (*model.Relation, error) {
-	rel, exists := w.Graph().GetEdge(from, relType, to)
+	rel, exists := w.graph().GetEdge(from, relType, to)
 	if !exists {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", from, relType, to)
 	}
@@ -1557,7 +1549,7 @@ func (w *Workspace) DeleteRelation(from, relType, to string) error {
 	if err := w.repo.DeleteRelation(from, relType, to); err != nil {
 		return fmt.Errorf("delete relation: %w", err)
 	}
-	w.Graph().RemoveEdge(from, relType, to)
+	w.graph().RemoveEdge(from, relType, to)
 	w.saveCacheQuietly()
 	return nil
 }
@@ -1569,7 +1561,7 @@ func (w *Workspace) DeleteRelation(from, relType, to string) error {
 // FormatEntity checks if an entity file needs formatting and optionally writes
 // the formatted version. Returns true if the file was (or would be) modified.
 func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error) {
-	meta := w.Meta()
+	meta := w.meta()
 	// Get property order from metamodel
 	var propertyOrder []string
 	if entityDef, ok := meta.GetEntityDef(entity.Type); ok {
@@ -1795,7 +1787,7 @@ func (w *Workspace) ExecuteView(viewName, entryID string) (*views.ViewResult, er
 		return nil, fmt.Errorf("view %q not found in views.yaml", viewName)
 	}
 
-	engine := views.NewEngine(w.Graph(), w.Meta())
+	engine := views.NewEngine(w.graph(), w.meta())
 	return engine.Execute(viewDef, entryID)
 }
 

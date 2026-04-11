@@ -149,7 +149,7 @@ func (w *Workspace) computeDocumentHash(entryID, viewName string) ([]*model.Enti
 		}
 	} else {
 		// No view specified, just use the entry entity
-		entity, ok := w.Graph().GetNode(entryID)
+		entity, ok := w.graph().GetNode(entryID)
 		if !ok {
 			return nil, "", fmt.Errorf("entity %q not found", entryID)
 		}

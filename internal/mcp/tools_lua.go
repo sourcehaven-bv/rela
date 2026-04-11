@@ -81,7 +81,7 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	default:
 		opts = append(opts, lua.WithAIProvider(provider))
 	}
-	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, opts...)
+	runtime := lua.New(s.ws, s.ws.Snapshot().Meta(), projectRoot, &output, opts...)
 	defer runtime.Close()
 
 	if err := runtime.RunString(code); err != nil {
@@ -156,7 +156,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	} else if provider != nil {
 		opts = append(opts, lua.WithAIProvider(provider))
 	}
-	runtime := lua.New(s.ws, s.ws.Meta(), projectRoot, &output, opts...)
+	runtime := lua.New(s.ws, s.ws.Snapshot().Meta(), projectRoot, &output, opts...)
 	defer runtime.Close()
 
 	// Set script args before execution
