@@ -725,4 +725,33 @@ watch(() => entitiesStore.cacheVersion, () => {
   padding: 8px;
   opacity: 0.5;
 }
+
+@media (max-width: 768px) {
+  .kanban-board {
+    gap: 12px;
+    min-height: 300px;
+  }
+
+  .kanban-column {
+    min-width: 220px;
+    max-width: 300px;
+  }
+
+  .column-header {
+    padding: 10px 12px;
+  }
+
+  .column-cards {
+    padding: 8px;
+  }
+
+  .kanban-card {
+    padding: 10px;
+  }
+
+  .swimlane-label-cell {
+    min-width: 100px;
+    max-width: 140px;
+  }
+}
 </style>

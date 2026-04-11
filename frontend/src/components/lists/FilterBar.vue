@@ -350,4 +350,22 @@ onBeforeUnmount(() => {
 .filter-item select[multiple].has-selection {
   border-color: var(--accent-color);
 }
+
+@media (max-width: 768px) {
+  .filter-bar {
+    border: none;
+    padding: 0 0 12px 0;
+    margin-bottom: 4px;
+  }
+
+  .filter-item select,
+  .filter-item input {
+    min-width: 100px;
+  }
+
+  .filter-item select[multiple] {
+    min-height: 60px;
+    max-height: 80px;
+  }
+}
 </style>

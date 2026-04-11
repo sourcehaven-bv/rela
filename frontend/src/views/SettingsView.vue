@@ -1652,4 +1652,35 @@ h1 {
 }
 
 /* Uses global .btn, .btn-primary, .btn-secondary, .btn-sm, .loading-state, .spinner, .error-state from App.vue */
+
+@media (max-width: 768px) {
+  .settings-row {
+    flex-wrap: wrap;
+  }
+
+  .row-label {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+
+  .override-header {
+    flex-wrap: wrap;
+  }
+
+  .palette-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .palette-grid--split {
+    grid-template-columns: 1fr;
+  }
+
+  .palette-preview--split {
+    flex-direction: column;
+  }
+
+  .color-text {
+    width: 70px;
+  }
+}
 </style>

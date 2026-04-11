@@ -737,10 +737,6 @@ onBeforeRouteLeave((_to, _from, next) => {
 }
 
 .content-field {
-  background: var(--card-bg);
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  padding: 24px;
   margin-top: 16px;
   margin-bottom: 24px;
 }
@@ -792,5 +788,63 @@ onBeforeRouteLeave((_to, _from, next) => {
   background: var(--accent-color, #6366f1);
   border-color: var(--accent-color, #6366f1);
   color: white;
+}
+
+@media (max-width: 768px) {
+  .form-layout {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .dynamic-form {
+    min-width: 0;
+    max-width: none;
+  }
+
+  .form-section {
+    padding: 0;
+    margin-bottom: 16px;
+    border: none;
+    box-shadow: none;
+    background: none;
+  }
+
+  .content-field {
+    padding: 0;
+    margin-top: 8px;
+    margin-bottom: 12px;
+  }
+
+  .form-header {
+    margin-bottom: 12px;
+  }
+
+  .form-header h1 {
+    font-size: 20px;
+  }
+
+  .form-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    background: var(--bg-color);
+    margin: 0 -12px -12px -12px;
+    padding: 12px;
+    border-top: 1px solid var(--border-color);
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
+    display: flex;
+    gap: 8px;
+  }
+
+  .form-actions .btn {
+    flex: 1;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .template-selector {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
 }
 </style>

@@ -949,6 +949,32 @@ function entryStatus(id: string): 'added' | 'updated' | null {
   color: var(--error-color, #ef4444);
   font-size: 14px;
 }
+
+@media (max-width: 768px) {
+  .card-properties {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .card-property {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .prop-label {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .inline-edit,
+  .inline-select {
+    width: 100%;
+    min-width: 0;
+  }
+}
 </style>
 
 <style>

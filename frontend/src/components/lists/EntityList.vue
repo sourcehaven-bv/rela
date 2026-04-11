@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
@@ -23,6 +23,13 @@ const router = useRouter()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
+
+// Responsive: detect mobile for card vs table layout
+const mobileQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 768px)') : null
+const isMobile = ref(mobileQuery?.matches ?? false)
+function onMediaChange(e: MediaQueryListEvent) { isMobile.value = e.matches }
+onMounted(() => { mobileQuery?.addEventListener('change', onMediaChange) })
+onUnmounted(() => { mobileQuery?.removeEventListener('change', onMediaChange) })
 
 // State
 const entities = ref<Entity[]>([])
@@ -478,7 +485,53 @@ onMounted(() => {
         </router-link>
       </div>
 
-      <table v-else class="entity-table">
+      <template v-else>
+      <!-- Mobile card layout -->
+      <div v-if="isMobile" class="mobile-card-list">
+        <div
+          v-for="(entity, index) in entities"
+          :key="'card-' + entity.id"
+          class="mobile-card"
+          :class="{ selected: index === selectedIndex, 'action-selected': isSelected(entity.id) }"
+          @click="navigateToEntity(entity)"
+        >
+          <div class="mobile-card-header">
+            <span class="mobile-card-title">
+              {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
+            </span>
+            <button
+              class="delete-btn"
+              title="Delete"
+              @click="handleDelete(entity, $event)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+              </svg>
+            </button>
+          </div>
+          <div v-if="listConfig.columns.length > 1" class="mobile-card-fields">
+            <div
+              v-for="column in listConfig.columns.slice(1)"
+              :key="column.property || column.relation"
+              class="mobile-card-field"
+            >
+              <span class="mobile-card-label">{{ column.label || column.property || column.relation }}</span>
+              <Badge
+                v-if="isEnumColumn(column)"
+                :value="String(getCellValue(entity, column) || '')"
+                :property="column.property"
+                :entity-type="entityType"
+              />
+              <span v-else class="mobile-card-value">{{ getFormattedCellValue(entity, column) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Desktop table layout -->
+      <div v-else class="table-scroll-wrapper">
+      <table class="entity-table">
         <thead>
           <tr v-if="hasSelection" class="action-header-row">
             <th class="select-column">
@@ -574,6 +627,8 @@ onMounted(() => {
           </tr>
         </TransitionGroup>
       </table>
+      </div>
+      </template>
 
       <Pagination
         v-if="meta.total > meta.per_page"
@@ -924,5 +979,108 @@ onMounted(() => {
 .delete-btn:hover {
   background: color-mix(in srgb, var(--error-color) 15%, transparent);
   color: var(--error-color);
+}
+
+.table-scroll-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mobile-card + .mobile-card {
+  margin-top: 8px;
+}
+
+.mobile-card:hover {
+  border-color: var(--accent-color, #6366f1);
+}
+
+.mobile-card.selected {
+  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+.mobile-card.action-selected {
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+.mobile-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.mobile-card-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-color);
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.mobile-card-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+.mobile-card-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.mobile-card-label {
+  color: var(--muted-text);
+}
+
+.mobile-card-label::after {
+  content: ':';
+}
+
+.mobile-card-value {
+  color: var(--text-color);
+}
+
+@media (max-width: 768px) {
+  .list-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-color);
+    padding: 8px 0;
+    margin-bottom: 12px;
+  }
+
+  .list-header h1 {
+    font-size: 18px;
+  }
+
+  .list-content {
+    background: none;
+    box-shadow: none;
+    border-radius: 0;
+    overflow: visible;
+  }
+
+  .mobile-card .delete-btn {
+    width: 44px;
+    height: 44px;
+  }
 }
 </style>

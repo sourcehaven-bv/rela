@@ -85,6 +85,15 @@ watch(
 
   <div v-else class="app-layout">
     <Sidebar />
+    <button
+      class="mobile-menu-btn"
+      :aria-expanded="uiStore.sidebarMobileOpen"
+      aria-label="Toggle navigation"
+      aria-controls="main-sidebar"
+      @click="uiStore.sidebarMobileOpen ? uiStore.closeMobileSidebar() : uiStore.openMobileSidebar()"
+    >
+      ☰
+    </button>
     <main class="main-content" :class="{ 'sidebar-collapsed': uiStore.sidebarCollapsed }">
       <RouterView />
     </main>
@@ -215,9 +224,81 @@ body {
   cursor: pointer;
 }
 
+/* Mobile hamburger button — visible only on small screens */
+.mobile-menu-btn {
+  display: none;
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 101;
+  width: 44px;
+  height: 44px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-color);
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
 @media (max-width: 768px) {
+  .mobile-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .main-content {
     margin-left: 0;
+    padding: 16px;
+    padding-top: 60px; /* Space for hamburger button */
+    padding-bottom: 16px; /* No status bar on mobile */
+  }
+
+  .main-content.sidebar-collapsed {
+    margin-left: 0;
+  }
+
+  .page-header {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .page-header h1 {
+    font-size: 20px;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Hide keyboard shortcut hints on mobile — !important needed to
+     override scoped component styles that set display: inline-flex */
+  kbd {
+    display: none !important;
+  }
+
+  /* EasyMDE toolbar responsive */
+  .EasyMDEContainer .editor-toolbar {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .main-content {
+    padding: 12px;
+    padding-top: 56px;
+    padding-bottom: 12px;
+  }
+
+  .modal {
+    padding: 16px;
+    width: 95%;
   }
 }
 

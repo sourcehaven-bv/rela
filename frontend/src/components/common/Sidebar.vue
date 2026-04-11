@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { useSchemaStore, useUIStore } from '@/stores'
+import { useSchemaStore, useUIStore, useGitStore } from '@/stores'
 import { getSidebar, runAction } from '@/api'
 import type { SidebarGroup, SidebarItem } from '@/types'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const gitStore = useGitStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -38,13 +39,33 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+// Close mobile sidebar on route change
+watch(() => route.path, () => {
+  if (uiStore.sidebarMobileOpen) {
+    uiStore.closeMobileSidebar()
+  }
+})
+
+// Lock body scroll when mobile sidebar is open
+watch(() => uiStore.sidebarMobileOpen, (open) => {
+  document.body.style.overflow = open ? 'hidden' : ''
+})
+
+function handleKeydownAll(e: KeyboardEvent) {
+  handleKeydown(e)
+  if (e.key === 'Escape' && uiStore.sidebarMobileOpen) {
+    uiStore.closeMobileSidebar()
+  }
+}
+
 onMounted(() => {
-  document.addEventListener('keydown', handleKeydown)
+  document.addEventListener('keydown', handleKeydownAll)
   loadSidebar()
 })
 
 onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('keydown', handleKeydownAll)
+  document.body.style.overflow = ''
 })
 
 function isActive(href: string): boolean {
@@ -91,6 +112,7 @@ async function handleAction(item: SidebarItem) {
 
 <template>
   <aside
+    id="main-sidebar"
     class="sidebar"
     :class="{ collapsed: uiStore.sidebarCollapsed, 'mobile-open': uiStore.sidebarMobileOpen }"
   >
@@ -172,7 +194,34 @@ async function handleAction(item: SidebarItem) {
       </template>
     </nav>
 
-    </aside>
+    <!-- Mobile-only footer: git status, settings, theme toggle -->
+    <div class="sidebar-mobile-footer">
+      <div v-if="gitStore.isAvailable" class="mobile-git-status" :class="gitStore.statusClass">
+        <span class="mobile-git-dot"/>
+        <span class="nav-label">{{ gitStore.branch }} · {{ gitStore.statusText }}</span>
+      </div>
+      <RouterLink to="/settings" class="nav-item" :class="{ active: route.path === '/settings' }">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Settings</span>
+      </RouterLink>
+      <button
+        v-if="!schemaStore.darkDisabled"
+        class="nav-item nav-action"
+        @click="uiStore.toggleDarkMode()"
+      >
+        <span class="nav-icon">{{ uiStore.isDark ? '☀️' : '🌙' }}</span>
+        <span class="nav-label">{{ uiStore.isDark ? 'Light Mode' : 'Dark Mode' }}</span>
+      </button>
+    </div>
+
+    <Teleport to="body">
+      <div
+        v-if="uiStore.sidebarMobileOpen"
+        class="sidebar-backdrop"
+        @click="uiStore.closeMobileSidebar()"
+      />
+    </Teleport>
+  </aside>
 </template>
 
 <style scoped>
@@ -312,14 +361,97 @@ async function handleAction(item: SidebarItem) {
   cursor: wait;
 }
 
+/* Mobile footer — hidden on desktop */
+.sidebar-mobile-footer {
+  display: none;
+}
+
+.mobile-git-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.mobile-git-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.mobile-git-status.synced .mobile-git-dot {
+  background: var(--success-color);
+}
+
+.mobile-git-status.changes .mobile-git-dot {
+  background: var(--warning-color);
+}
+
+.mobile-git-status.conflict .mobile-git-dot {
+  background: var(--error-color);
+}
+
 /* Mobile overlay */
 @media (max-width: 768px) {
   .sidebar {
     transform: translateX(-100%);
+    height: 100vh;
+    transition: transform 0.25s ease;
   }
 
   .sidebar.mobile-open {
     transform: translateX(0);
+  }
+
+  .sidebar.collapsed {
+    width: 240px;
+  }
+
+  .sidebar.collapsed .nav-label,
+  .sidebar.collapsed .nav-section-title,
+  .sidebar.collapsed .logo {
+    display: unset;
+  }
+
+  .sidebar.collapsed .nav-icon {
+    margin-right: 12px;
+  }
+
+  .collapse-btn {
+    display: none;
+  }
+
+  .nav-item {
+    padding: 12px 16px;
+    min-height: 44px;
+  }
+
+  .sidebar-mobile-footer {
+    display: block;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 8px 0;
+    margin-top: auto;
+  }
+}
+</style>
+
+<style>
+/* Backdrop must be unscoped to work with Teleport */
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 99;
   }
 }
 </style>

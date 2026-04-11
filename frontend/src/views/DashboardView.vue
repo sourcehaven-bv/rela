@@ -456,4 +456,38 @@ onMounted(() => {
 .view-details:hover {
   text-decoration: underline;
 }
+
+@media (max-width: 768px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+  }
+
+  .dashboard-card {
+    padding: 12px;
+  }
+
+  .card-header {
+    margin-bottom: 12px;
+  }
+
+  .count-number {
+    font-size: 36px;
+  }
+
+  .breakdown-label {
+    min-width: 60px;
+    font-size: 12px;
+  }
+
+  .breakdown-row {
+    gap: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

@@ -74,11 +74,11 @@ async function handleSync() {
         Settings
       </RouterLink>
       <button
-        class="status-item"
+        class="status-item shortcuts-btn"
         title="Keyboard shortcuts"
         @click="shortcutsModalOpen = true"
       >
-        <kbd>?</kbd> Shortcuts
+        <kbd>?</kbd> <span class="shortcuts-text">Shortcuts</span>
       </button>
     </div>
   </footer>
@@ -189,5 +189,11 @@ async function handleSync() {
 .theme-icon {
   font-size: 14px;
   line-height: 1;
+}
+
+@media (max-width: 768px) {
+  .status-bar {
+    display: none;
+  }
 }
 </style>
