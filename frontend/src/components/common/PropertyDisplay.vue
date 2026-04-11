@@ -97,4 +97,15 @@ function isLong(prop: PropertyItem): boolean {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+@media (max-width: 1024px) { /* BREAKPOINT:tablet */
+  .properties-list {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .property-item {
+    min-width: 0;
+  }
+}
 </style>

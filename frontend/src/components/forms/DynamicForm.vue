@@ -501,6 +501,14 @@ onBeforeRouteLeave((_to, _from, next) => {
   <div v-if="formConfig" class="form-layout" :class="{ 'with-sidepanel': isEdit }">
     <div class="dynamic-form">
       <header class="form-header">
+        <button
+          type="button"
+          class="form-header-cancel"
+          :disabled="saving"
+          @click="handleCancel"
+        >
+          Cancel
+        </button>
         <h1>{{ title }}</h1>
         <button
           type="button"
@@ -509,6 +517,14 @@ onBeforeRouteLeave((_to, _from, next) => {
           @click="helpModalOpen = true"
         >
           ?
+        </button>
+        <button
+          type="button"
+          class="form-header-save"
+          :disabled="saving"
+          @click="handleSubmit"
+        >
+          {{ saving ? 'Saving...' : 'Save' }}
         </button>
       </header>
 
@@ -682,6 +698,12 @@ onBeforeRouteLeave((_to, _from, next) => {
 
 .form-header h1 {
   margin: 0;
+  flex: 1;
+}
+
+.form-header-cancel,
+.form-header-save {
+  display: none;
 }
 
 .help-btn {
@@ -825,30 +847,62 @@ onBeforeRouteLeave((_to, _from, next) => {
   }
 
   .form-header {
-    margin-bottom: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 102;
+    background: var(--sidebar-bg, #1a1a2e);
+    color: var(--sidebar-text, #e8e8e8);
+    margin: -60px -16px 12px -16px;
+    padding: 6px 12px;
+    min-height: 44px;
+    align-items: center;
   }
 
   .form-header h1 {
-    font-size: 20px;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--sidebar-text, #e8e8e8);
+    line-height: 1;
+  }
+
+  .form-header .help-btn {
+    color: var(--sidebar-text, #e8e8e8);
+    background: none;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .form-header-cancel {
+    display: flex;
+    align-items: center;
+    align-self: center;
+    background: none;
+    border: none;
+    color: var(--sidebar-text, #e8e8e8);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .form-header-save {
+    display: block;
+    background: var(--accent-color, #6366f1);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 6px 14px;
+    cursor: pointer;
+  }
+
+  .form-header-save:disabled,
+  .form-header-cancel:disabled {
+    opacity: 0.5;
   }
 
   .form-actions {
-    position: sticky;
-    bottom: 0;
-    z-index: 10;
-    background: var(--bg-color);
-    margin: 0 -12px -12px -12px;
-    padding: 12px;
-    border-top: 1px solid var(--border-color);
-    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
-    display: flex;
-    gap: 8px;
-  }
-
-  .form-actions .btn {
-    flex: 1;
-    justify-content: center;
-    min-height: 44px;
+    display: none;
   }
 
   .template-selector {

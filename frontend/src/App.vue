@@ -262,7 +262,7 @@ body {
   }
 
   /* Hide floating hamburger when a page provides its own nav bar */
-  .app-layout:has(.list-header-menu, .scope-nav, .search-header-menu, .detail-bar-menu) .mobile-menu-btn {
+  .app-layout:has(.list-header-menu, .scope-nav, .search-header-menu, .detail-bar-menu, .form-header-cancel) .mobile-menu-btn {
     display: none;
   }
 
