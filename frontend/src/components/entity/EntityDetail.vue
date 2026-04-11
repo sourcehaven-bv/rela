@@ -357,6 +357,18 @@ onMounted(() => loadEntity())
     </div>
 
     <template v-else-if="entity">
+      <!-- Standalone detail bar (no scope navigation) -->
+      <div v-if="!scopeNav" class="detail-bar">
+        <button
+          class="detail-bar-menu"
+          aria-label="Toggle navigation"
+          @click="uiStore.sidebarMobileOpen ? uiStore.closeMobileSidebar() : uiStore.openMobileSidebar()"
+        >
+          ☰
+        </button>
+        <span class="entity-type-badge detail-bar-badge">{{ typeDef?.label || entityType }}</span>
+        <span class="detail-bar-title">{{ entity.properties.title || entity.id }}</span>
+      </div>
       <!-- Scope Navigation Bar -->
       <div v-if="scopeNav" class="scope-nav">
         <router-link :to="scopeNav.backUrl" class="scope-nav-btn scope-nav-back">
@@ -759,6 +771,15 @@ onMounted(() => loadEntity())
   color: var(--muted-text);
 }
 
+/* Standalone detail bar — hidden on desktop, visible at tablet/mobile */
+.detail-bar {
+  display: none;
+}
+
+.detail-bar-menu {
+  display: none;
+}
+
 /* Mobile actions — hidden on desktop */
 .mobile-actions {
   display: none;
@@ -815,6 +836,53 @@ onMounted(() => loadEntity())
 
 /* Tablet + mobile: iOS Mail-style nav bar and compact header */
 @media (max-width: 1024px) {
+  .detail-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: sticky;
+    top: 0;
+    z-index: 102;
+    background: var(--sidebar-bg, #1a1a2e);
+    color: var(--sidebar-text, #e8e8e8);
+    margin: -60px -16px 12px -16px;
+    padding: 6px 12px;
+    min-height: 44px;
+  }
+
+  .detail-bar-menu {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: none;
+    border: none;
+    color: var(--sidebar-text, #e8e8e8);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0;
+    border-radius: 6px;
+  }
+
+  .detail-bar-menu:active {
+    opacity: 0.6;
+  }
+
+  .detail-bar-badge {
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .detail-bar-title {
+    flex: 1;
+    font-size: 15px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .scope-nav {
     position: sticky;
     top: 0;

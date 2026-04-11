@@ -2,13 +2,14 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchEntities } from '@/api'
-import { useSchemaStore } from '@/stores'
+import { useSchemaStore, useUIStore } from '@/stores'
 import { parseFilterQueryParams } from '@/utils/filters'
 import type { Entity, PropertyDef } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
 const schemaStore = useSchemaStore()
+const uiStore = useUIStore()
 
 // Types
 interface ActiveFilter {
@@ -456,6 +457,13 @@ watch(
 <template>
   <div class="search-view">
     <header class="search-header">
+      <button
+        class="search-header-menu"
+        aria-label="Toggle navigation"
+        @click="uiStore.sidebarMobileOpen ? uiStore.closeMobileSidebar() : uiStore.openMobileSidebar()"
+      >
+        ☰
+      </button>
       <h1>Search</h1>
       <button
         type="button"
@@ -661,6 +669,11 @@ watch(
 
 .search-header h1 {
   margin: 0;
+  flex: 1;
+}
+
+.search-header-menu {
+  display: none;
 }
 
 .help-btn {
@@ -1066,6 +1079,48 @@ watch(
 }
 
 @media (max-width: 1024px) { /* BREAKPOINT:tablet */
+  .search-header {
+    position: sticky;
+    top: 0;
+    z-index: 102;
+    background: var(--sidebar-bg, #1a1a2e);
+    color: var(--sidebar-text, #e8e8e8);
+    margin: -60px -16px 12px -16px;
+    padding: 6px 12px;
+    min-height: 44px;
+  }
+
+  .search-header h1 {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--sidebar-text, #e8e8e8);
+  }
+
+  .search-header-menu {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: none;
+    border: none;
+    color: var(--sidebar-text, #e8e8e8);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0;
+    border-radius: 6px;
+  }
+
+  .search-header-menu:active {
+    opacity: 0.6;
+  }
+
+  .help-btn {
+    color: var(--sidebar-text, #e8e8e8);
+    background: none;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
   .search-input-row {
     flex-wrap: wrap;
   }
