@@ -8,6 +8,8 @@ export interface ScopeNav {
   backUrl: string
   prevId: string | null
   nextId: string | null
+  prevType?: string
+  nextType?: string
   current: number
   total: number
   label: string
@@ -29,6 +31,12 @@ export function useScopeNavigation(entityType: () => string, entityId: () => str
     const fromListId = route.query.from as string | undefined
     if (!fromListId) {
       scopeNav.value = null
+      return
+    }
+
+    // Search results scope: read stored result set from sessionStorage
+    if (fromListId === 'search') {
+      loadSearchScope()
       return
     }
 
@@ -94,15 +102,49 @@ export function useScopeNavigation(entityType: () => string, entityId: () => str
     }
   }
 
+  function loadSearchScope() {
+    try {
+      const raw = sessionStorage.getItem('search-scope')
+      if (!raw) { scopeNav.value = null; return }
+      const data = JSON.parse(raw) as {
+        ids: { type: string; id: string }[]
+        backUrl: string
+        label: string
+      }
+      const currentIndex = data.ids.findIndex(e => e.id === entityId() && e.type === entityType())
+      if (currentIndex === -1) { scopeNav.value = null; return }
+
+      const prev = currentIndex > 0 ? data.ids[currentIndex - 1] : null
+      const next = currentIndex < data.ids.length - 1 ? data.ids[currentIndex + 1] : null
+      scopeNav.value = {
+        backUrl: data.backUrl,
+        prevId: prev?.id ?? null,
+        nextId: next?.id ?? null,
+        prevType: prev?.type,
+        nextType: next?.type,
+        current: currentIndex + 1,
+        total: data.ids.length,
+        label: data.label,
+      }
+    } catch {
+      scopeNav.value = null
+    }
+  }
+
   function navigateScope(direction: 'prev' | 'next') {
     if (!scopeNav.value) return
 
     const targetId = direction === 'prev' ? scopeNav.value.prevId : scopeNav.value.nextId
     if (!targetId) return
 
+    // Use type from scope if available (search results can mix entity types)
+    const targetType = direction === 'prev'
+      ? scopeNav.value.prevType ?? entityType()
+      : scopeNav.value.nextType ?? entityType()
+
     // Preserve all query params for consistent navigation
     router.push({
-      path: `/entity/${entityType()}/${targetId}`,
+      path: `/entity/${targetType}/${targetId}`,
       query: route.query,
     })
   }

@@ -377,7 +377,14 @@ function focusInput() {
 function navigateToResult(index: number) {
   const entity = results.value[index]
   if (entity) {
-    router.push(`/entity/${entity.type}/${entity.id}`)
+    // Store search results for scope navigation in the detail view
+    const resultIds = results.value.map(e => ({ type: e.type, id: e.id }))
+    sessionStorage.setItem('search-scope', JSON.stringify({
+      ids: resultIds,
+      backUrl: route.fullPath,
+      label: query.value || 'Search Results',
+    }))
+    router.push({ path: `/entity/${entity.type}/${entity.id}`, query: { from: 'search' } })
   }
 }
 
