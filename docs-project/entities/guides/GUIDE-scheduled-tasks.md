@@ -21,11 +21,16 @@ Create a Lua script in your project's `scripts/` directory:
 ```lua
 -- scripts/daily-check.lua
 local orphans = rela.list_entities("*", "status=draft")
-if #orphans > 0 then
-    rela.output("Found " .. #orphans .. " draft entities")
-    for _, e in ipairs(orphans) do
-        rela.output("  - " .. e.id .. ": " .. (e.properties.title or "(no title)"))
-    end
+local lines = {}
+for _, e in ipairs(orphans) do
+    table.insert(lines, "- " .. e.type .. "/" .. e.id .. ": " .. (e.properties.title or "(no title)"))
+end
+if #lines > 0 then
+    local body = "## Draft Entities\n\n" .. table.concat(lines, "\n")
+    rela.update_entity("REPORT-daily-check", {
+        title = "Daily check: " .. #orphans .. " draft entities",
+        status = "open",
+    }, body)
 end
 ```
 
@@ -250,19 +255,25 @@ tasks:
 ```lua
 -- scripts/checks/orphans.lua
 local entities = rela.list_entities()
-local orphans = {}
+local lines = {}
 for _, e in ipairs(entities) do
     local rels = rela.get_relations(e.id)
     if #rels == 0 then
-        table.insert(orphans, e)
+        table.insert(lines, "- **" .. e.id .. "**: " .. (e.properties.title or "(no title)"))
     end
 end
-if #orphans > 0 then
-    rela.output("Orphaned entities: " .. #orphans)
-    for _, e in ipairs(orphans) do
-        rela.output("  " .. e.type .. "/" .. e.id .. ": " .. (e.properties.title or ""))
-    end
+
+local body = "## Orphan Report\n\n"
+if #lines > 0 then
+    body = body .. "Found " .. #lines .. " unlinked entities:\n\n" .. table.concat(lines, "\n")
+else
+    body = body .. "No orphaned entities found."
 end
+
+rela.update_entity("REPORT-orphans", {
+    title = "Orphan report: " .. #lines .. " unlinked",
+    status = #lines > 0 and "open" or "closed",
+}, body)
 ```
 
 ### Periodic Status Summary
@@ -277,12 +288,16 @@ tasks:
 ```lua
 -- scripts/reports/status.lua
 local types = {"requirement", "decision", "ticket"}
-local summary = {}
+local lines = {}
 for _, t in ipairs(types) do
     local all = rela.list_entities(t)
-    summary[t] = #all
+    table.insert(lines, "- **" .. t .. "**: " .. #all .. " entities")
 end
-rela.output(summary)
+
+rela.update_entity("REPORT-status", {
+    title = "Status summary",
+    date = os.date("%Y-%m-%d"),
+}, "## Status Summary\n\n" .. table.concat(lines, "\n"))
 ```
 
 ### Weekly Traceability Check
@@ -297,15 +312,23 @@ tasks:
 ```lua
 -- scripts/checks/traceability.lua
 local reqs = rela.list_entities("requirement")
-local unlinked = 0
+local gaps = {}
 for _, req in ipairs(reqs) do
     local traces = rela.trace_from(req.id, "implements")
     if #traces == 0 then
-        rela.output("WARNING: " .. req.id .. " has no implementations")
-        unlinked = unlinked + 1
+        table.insert(gaps, "- **" .. req.id .. "**: " .. (req.properties.title or ""))
     end
 end
-if unlinked > 0 then
-    rela.output(unlinked .. " requirements without implementations")
+
+local body = "## Traceability Gaps\n\n"
+if #gaps > 0 then
+    body = body .. #gaps .. " requirements without implementations:\n\n" .. table.concat(gaps, "\n")
+else
+    body = body .. "All requirements have implementations."
 end
+
+rela.update_entity("REPORT-traceability", {
+    title = "Traceability: " .. #gaps .. " gaps",
+    status = #gaps > 0 and "open" or "closed",
+}, body)
 ```
