@@ -17,7 +17,6 @@ const tickInterval = 60 * time.Second
 // WorkspaceProvider is the subset of workspace.Workspace the scheduler needs.
 type WorkspaceProvider interface {
 	Sync() (*model.SyncResult, error)
-	Meta() *metamodel.Metamodel
 	Paths() *project.Context
 	ReadProjectFile(name string) ([]byte, error)
 	ReadCacheFile(name string) ([]byte, error)
@@ -27,7 +26,7 @@ type WorkspaceProvider interface {
 // StartBackground starts the scheduler in a background goroutine if
 // schedules.yaml exists. It is a no-op if the file is missing. The scheduler
 // runs until ctx is cancelled. Errors are logged, not returned.
-func StartBackground(ctx context.Context, ws WorkspaceProvider, wsRaw interface{}, logger *slog.Logger) {
+func StartBackground(ctx context.Context, ws WorkspaceProvider, wsRaw interface{}, metaFn func() *metamodel.Metamodel, logger *slog.Logger) {
 	data, err := ws.ReadProjectFile(ConfigFile)
 	if err != nil {
 		// No schedules.yaml — nothing to do.
@@ -45,7 +44,7 @@ func StartBackground(ctx context.Context, ws WorkspaceProvider, wsRaw interface{
 	}
 
 	engine := script.NewEngine()
-	s := New(cfg, engine, ws, wsRaw, logger)
+	s := New(cfg, engine, ws, wsRaw, metaFn, logger)
 
 	go func() {
 		logger.Info("background scheduler starting", "tasks", len(cfg.Tasks))
@@ -63,6 +62,7 @@ type Scheduler struct {
 	// wsRaw is the workspace as interface{} for passing to ScriptContext.
 	// It must satisfy lua.WorkspaceInterface.
 	wsRaw  interface{}
+	metaFn func() *metamodel.Metamodel
 	state  *State
 	logger *slog.Logger
 	now    func() time.Time // for testing
@@ -72,12 +72,14 @@ type Scheduler struct {
 	executeTaskFunc func(ctx context.Context, task TaskConfig)
 }
 
-// New creates a Scheduler.
+// New creates a Scheduler. The metaFn returns the current metamodel; callers
+// typically pass ws.Snapshot().Meta from a workspace.Workspace.
 func New(
 	cfg *Config,
 	engine *script.Engine,
 	ws WorkspaceProvider,
 	wsRaw interface{},
+	metaFn func() *metamodel.Metamodel,
 	logger *slog.Logger,
 ) *Scheduler {
 	return &Scheduler{
@@ -85,6 +87,7 @@ func New(
 		engine: engine,
 		ws:     ws,
 		wsRaw:  wsRaw,
+		metaFn: metaFn,
 		logger: logger,
 		now:    time.Now,
 	}
@@ -173,7 +176,7 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 
 	sctx := &schedulerScriptContext{
 		ws:          s.wsRaw,
-		meta:        s.ws.Meta(),
+		meta:        s.metaFn(),
 		projectRoot: s.ws.Paths().Root,
 	}
 
