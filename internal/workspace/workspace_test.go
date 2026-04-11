@@ -99,10 +99,10 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if ws.Graph() == nil {
+	if ws.Snapshot().Graph() == nil {
 		t.Error("expected graph to be initialized")
 	}
-	if ws.Meta() == nil {
+	if ws.Snapshot().Meta() == nil {
 		t.Error("expected meta to be initialized")
 	}
 	if ws.Repo() == nil {
@@ -112,10 +112,10 @@ func TestNew(t *testing.T) {
 
 func TestNewWithGraph(t *testing.T) {
 	ws := setupTestWorkspace(t)
-	if ws.Graph() == nil {
+	if ws.Snapshot().Graph() == nil {
 		t.Error("expected graph")
 	}
-	if ws.Meta() == nil {
+	if ws.Snapshot().Meta() == nil {
 		t.Error("expected meta")
 	}
 }
@@ -185,7 +185,7 @@ func TestGenerateID_Sequential(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	// Add an existing entity so the next ID is REQ-002.
-	ws.Graph().AddNode(testutil.EntityFor(ws.Meta(), "requirement").ID("REQ-001").Build())
+	ws.Snapshot().Graph().AddNode(testutil.EntityFor(ws.Snapshot().Meta(), "requirement").ID("REQ-001").Build())
 
 	id, err := ws.GenerateID("requirement", "")
 	if err != nil {
@@ -309,7 +309,7 @@ func TestCreateEntity(t *testing.T) {
 	}
 
 	// Verify entity is in graph.
-	if _, ok := ws.Graph().GetNode("REQ-001"); !ok {
+	if _, ok := ws.Snapshot().Graph().GetNode("REQ-001"); !ok {
 		t.Error("entity not found in graph after create")
 	}
 }
@@ -416,7 +416,7 @@ func TestUpdateEntity(t *testing.T) {
 	}
 
 	// Verify update in graph.
-	updated, ok := ws.Graph().GetNode(entity.ID)
+	updated, ok := ws.Snapshot().Graph().GetNode(entity.ID)
 	if !ok {
 		t.Fatal("entity not found in graph")
 	}
@@ -444,7 +444,7 @@ func TestDeleteEntity_NoCascade_NoRelations(t *testing.T) {
 	if result.RelationsDeleted != 0 {
 		t.Errorf("relations deleted = %d, want 0", result.RelationsDeleted)
 	}
-	if _, ok := ws.Graph().GetNode("REQ-001"); ok {
+	if _, ok := ws.Snapshot().Graph().GetNode("REQ-001"); ok {
 		t.Error("entity still in graph after delete")
 	}
 }
@@ -516,7 +516,7 @@ func TestCreateRelation(t *testing.T) {
 	}
 
 	// Verify in graph.
-	if _, ok := ws.Graph().GetEdge("DEC-001", "addresses", "REQ-001"); !ok {
+	if _, ok := ws.Snapshot().Graph().GetEdge("DEC-001", "addresses", "REQ-001"); !ok {
 		t.Error("relation not found in graph")
 	}
 }
@@ -569,7 +569,7 @@ func TestDeleteRelation(t *testing.T) {
 		t.Fatalf("DeleteRelation() error = %v", err)
 	}
 
-	if _, ok := ws.Graph().GetEdge("DEC-001", "addresses", "REQ-001"); ok {
+	if _, ok := ws.Snapshot().Graph().GetEdge("DEC-001", "addresses", "REQ-001"); ok {
 		t.Error("relation still in graph after delete")
 	}
 }
@@ -669,7 +669,7 @@ func TestConcurrentReloadStateSnapshot(t *testing.T) {
 					return
 				default:
 				}
-				m := ws.Meta()
+				m := ws.Snapshot().Meta()
 				if m == nil {
 					t.Errorf("Meta() returned nil during concurrent reload")
 					return
@@ -682,7 +682,7 @@ func TestConcurrentReloadStateSnapshot(t *testing.T) {
 				// and walks its nodes. If repo.Sync were still mutating
 				// a shared graph in place, this would see transiently
 				// empty results during a reload.
-				g := ws.Graph()
+				g := ws.Snapshot().Graph()
 				if g == nil {
 					t.Errorf("Graph() returned nil during concurrent reload")
 					return
@@ -926,7 +926,7 @@ func TestCreateEntity_AutomationWithIfExistsReplace(t *testing.T) {
 	}
 
 	// Old checklist should be gone from graph.
-	if _, ok := ws.Graph().GetNode(checklist1.ID); ok {
+	if _, ok := ws.Snapshot().Graph().GetNode(checklist1.ID); ok {
 		t.Errorf("old checklist %s should be deleted from graph", checklist1.ID)
 	}
 }
@@ -1262,7 +1262,7 @@ automations:
             title: "Chain from chain"
 `
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
-	g := ws.Graph()
+	g := ws.Snapshot().Graph()
 
 	// Create starter entity - this should trigger a chain of automations.
 	_, result, err := ws.CreateEntity("starter", CreateOptions{
@@ -1367,7 +1367,7 @@ automations:
             title: "Gamma from Beta"
 `
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
-	g := ws.Graph()
+	g := ws.Snapshot().Graph()
 
 	// Create alpha - should trigger beta creation, which triggers gamma creation.
 	_, result, err := ws.CreateEntity("alpha", CreateOptions{
@@ -1431,7 +1431,7 @@ func TestLuaAutomation_InlineCode(t *testing.T) {
 
 	// Lua automation updates the entity via rela.update_entity.
 	// Check the graph for the updated state.
-	updated, _ := ws.Graph().GetNode(entity.ID)
+	updated, _ := ws.Snapshot().Graph().GetNode(entity.ID)
 	if updated.GetString("status") != "processed" {
 		t.Errorf("expected status 'processed' from Lua, got %q", updated.GetString("status"))
 	}
@@ -1480,7 +1480,7 @@ automations:
 	}
 
 	// Verify lua_result was set by Lua code using entity global.
-	updated, _ := ws.Graph().GetNode(entity.ID)
+	updated, _ := ws.Snapshot().Graph().GetNode(entity.ID)
 	expectedResult := "entity_id:" + entity.ID
 	if updated.GetString("lua_result") != expectedResult {
 		t.Errorf("expected lua_result %q, got %q", expectedResult, updated.GetString("lua_result"))
@@ -1527,7 +1527,7 @@ automations:
 	entityID := entity.ID
 
 	// Get fresh entity from graph (may have been modified by creation automations).
-	entity, _ = ws.Graph().GetNode(entityID)
+	entity, _ = ws.Snapshot().Graph().GetNode(entityID)
 
 	// Update to trigger automation.
 	oldEntity := entity.Clone()
@@ -1544,7 +1544,7 @@ automations:
 	}
 
 	// Verify old_status was captured from old_entity.
-	finalEntity, _ := ws.Graph().GetNode(entityID)
+	finalEntity, _ := ws.Snapshot().Graph().GetNode(entityID)
 	oldStatusVal := finalEntity.GetString("old_status")
 	switch oldStatusVal {
 	case "":

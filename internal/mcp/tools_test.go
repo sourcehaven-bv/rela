@@ -351,7 +351,7 @@ func TestHandleListRelations_NoMatch(t *testing.T) {
 func TestHandleListRelations_Pagination(t *testing.T) {
 	s := makeTestServer(t)
 	// Add another relation for pagination testing
-	s.ws.Graph().AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-002").Build())
+	s.ws.Snapshot().Graph().AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-002").Build())
 
 	req := makeToolRequest(map[string]interface{}{"limit": float64(1)})
 	result, err := s.handleListRelations(context.Background(), req)
@@ -507,7 +507,7 @@ func TestHandleAnalyzeCardinality_WithViolation(t *testing.T) {
 	s := makeTestServer(t)
 	// Set a minimum cardinality that won't be met
 	minVal := 5
-	meta := s.ws.Meta()
+	meta := s.ws.Snapshot().Meta()
 	meta.Relations["addresses"] = metamodel.RelationDef{
 		From:        []string{"decision"},
 		To:          []string{"requirement"},
@@ -726,7 +726,7 @@ func TestResolveEntityType_Unknown(t *testing.T) {
 
 func TestValidateEntity(t *testing.T) {
 	s := makeTestServer(t)
-	entity := testutil.EntityFor(s.ws.Meta(), "requirement").ID("REQ-001").Build()
+	entity := testutil.EntityFor(s.ws.Snapshot().Meta(), "requirement").ID("REQ-001").Build()
 	result := s.validateEntity(entity)
 	if result != nil {
 		t.Error("expected no validation error for valid entity")

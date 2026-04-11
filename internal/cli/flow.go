@@ -85,7 +85,7 @@ Example:
 			opts = append(opts, lua.WithAIProvider(provider))
 		}
 
-		runtime := lua.New(flowWs, flowWs.Meta(), flowWs.Paths().Root, os.Stdout, opts...)
+		runtime := lua.New(flowWs, flowWs.Snapshot().Meta(), flowWs.Paths().Root, os.Stdout, opts...)
 		defer runtime.Close()
 
 		transport := &TerminalTransport{}

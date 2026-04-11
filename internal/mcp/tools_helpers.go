@@ -15,7 +15,7 @@ import (
 
 func (s *Server) resolveType(typeName string) string {
 	typeName = strings.TrimSpace(typeName)
-	meta := s.ws.Meta()
+	meta := s.ws.Snapshot().Meta()
 	resolved := meta.ResolveAlias(typeName)
 	if _, ok := meta.GetEntityDef(resolved); ok {
 		return resolved
@@ -41,7 +41,7 @@ func trimID(id string) string {
 
 func (s *Server) resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
 	resolved := s.resolveType(typeName)
-	def, ok := s.ws.Meta().GetEntityDef(resolved)
+	def, ok := s.ws.Snapshot().Meta().GetEntityDef(resolved)
 	if !ok {
 		return "", nil, fmt.Errorf("unknown entity type: %s", typeName)
 	}
