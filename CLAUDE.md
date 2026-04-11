@@ -233,13 +233,12 @@ stable `kind` values:
 | `bad_response` | Non-JSON, malformed JSON, missing choices, unrecognized content shape |
 | `streaming_unsupported` | Provider returned SSE despite `stream: false` |
 
-**Convention deviation**: `ai.chat`, `ai.complete`, and `ai.embed` are the
-*only* rela Lua bindings that return `(nil, err_table)` for runtime failures.
-All other rela bindings raise via `RaiseError`. The deviation is deliberate —
-AI calls are network-bound, failure is expected, and scripts should handle it
-inline rather than wrap every call in `pcall`. Programming errors (wrong arg
-type, empty input) still raise. See `internal/lua/ai.go` top-of-file comment for
-the full rationale.
+**Convention deviation**: `ai.chat`, `ai.complete`, `ai.embed`, and the `http.*`
+module return `(nil, err_table)` for runtime failures. All other rela bindings
+raise via `RaiseError`. The deviation is deliberate — network-bound calls have
+expected failure modes, and scripts should handle them inline rather than wrap
+every call in `pcall`. Programming errors (wrong arg type, empty input) still
+raise. See `internal/lua/ai.go` top-of-file comment for the full rationale.
 
 ### Security: New threat surface
 
@@ -259,9 +258,57 @@ filesystem write — it uses the user's own working setup.
 - Config rejects URLs with embedded credentials (`https://user:pass@host`)
 - Response body is capped at 10 MiB to prevent OOM
 
-**Treat Lua scripts as trusted code.** The `rela.write_file` and `ai.chat`
-capabilities together mean a malicious script can do real damage. Don't run
-Lua scripts you don't trust.
+**Treat Lua scripts as trusted code.** The `rela.write_file`, `ai.chat`, and
+`http.*` capabilities together mean a malicious script can do real damage.
+Don't run Lua scripts you don't trust.
+
+### HTTP API
+
+The `http` module provides HTTP client capabilities for Lua scripts to call
+external APIs. No configuration is needed — unlike `ai.*`, the HTTP module
+works out of the box.
+
+```lua
+-- Full form
+local resp, err = http.request({
+  url     = "https://api.example.com/data",
+  method  = "POST",                          -- optional, default GET
+  headers = {["Content-Type"] = "application/json"},
+  body    = http.json_encode({key = "value"}),
+  timeout = 10,                              -- optional, seconds
+})
+
+-- Convenience methods
+local resp, err = http.get(url, opts?)
+local resp, err = http.post(url, body, opts?)
+local resp, err = http.put(url, body, opts?)
+local resp, err = http.patch(url, body, opts?)
+local resp, err = http.delete(url, opts?)
+
+-- JSON helpers
+local str = http.json_encode(value)             -- Lua value → JSON string
+local val, err = http.json_decode(json_string)  -- JSON string → Lua value
+```
+
+On success: `resp` is a table `{status_code, status, headers, body}`.
+`headers` is a flat table with lowercase keys (first value wins for
+multi-value headers).
+
+On failure: `err` is a typed table `{kind, status, message, details}`:
+
+| `err.kind` | When |
+|---|---|
+| `timeout` | Request exceeded deadline (per-request or 30s default) |
+| `canceled` | Request was canceled (e.g., runtime shutting down) |
+| `network` | DNS, connection refused, TLS, etc. |
+| `bad_response` | Response body exceeded 10 MiB limit |
+
+Redirects are NOT followed — the 3xx response is returned directly so scripts
+can handle redirects explicitly.
+
+`http.json_decode` returns `(nil, err_table)` for invalid JSON (expected
+runtime failure from external data). Wrong argument types raise via
+`RaiseError` (programming error).
 
 ### Operational logging
 

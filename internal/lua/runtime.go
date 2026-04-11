@@ -408,6 +408,9 @@ func (r *Runtime) registerBindings() {
 	// Top-level ai.* module (always registered; functions return a
 	// typed not_configured error when no provider is wired).
 	r.registerAIModule()
+
+	// Top-level http.* module (always registered; no configuration needed).
+	r.registerHTTPModule()
 }
 
 // luaGetEntity implements rela.get_entity(id) -> table|nil
