@@ -97,3 +97,4 @@ CLI is trivial — 7 call sites.
 - Phase 3 (CLI): PR #372, merged
 - Phase 2 (dataentry): PR #378 — enforce State() snapshot discipline (151+ calls migrated)
 - Phase 4 (seal boundary): PR #382 — remove Workspace.Graph()/Meta(), all consumers through Snapshot()
+- Phase 5 (hide graph.Graph): PR #385 — consumer packages use GraphReader/GraphStore interfaces instead of *graph.Graph
