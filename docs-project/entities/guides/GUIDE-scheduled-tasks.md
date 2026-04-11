@@ -219,7 +219,7 @@ The scheduler responds to SIGINT (Ctrl+C) and SIGTERM. On receiving a signal, it
 
 All task activity is logged to stderr with structured fields:
 
-```
+```text
 level=INFO msg="scheduled task" name=daily-check every=day script=daily-check.lua
 level=INFO msg="first run, executing immediately" name=daily-check
 level=INFO msg="task started" name=daily-check script=daily-check.lua
