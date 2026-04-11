@@ -42,7 +42,6 @@ func (s *Server) registerResources() {
 		),
 		s.handleReadRelation,
 	)
-
 }
 
 func (s *Server) handleReadMetamodel(

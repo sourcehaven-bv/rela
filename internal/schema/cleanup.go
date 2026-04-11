@@ -298,4 +298,3 @@ func applyDataEntryChanges(path string, changes []Change, dryRun bool) error {
 
 	return os.WriteFile(path, out, 0o644)
 }
-

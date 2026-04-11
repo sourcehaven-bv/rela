@@ -258,4 +258,3 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 		})
 	}
 }
-

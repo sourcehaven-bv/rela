@@ -941,7 +941,6 @@ func TestValidateConfig_DocumentValid(t *testing.T) {
 	}
 }
 
-
 func TestConfigValidationError_SingleError(t *testing.T) {
 	err := &ConfigValidationError{Errors: []string{"single error"}}
 	if err.Error() != "single error" {

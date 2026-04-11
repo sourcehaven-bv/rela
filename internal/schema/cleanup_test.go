@@ -151,7 +151,6 @@ func TestPlanCleanup_CascadeMultipleReferences(t *testing.T) {
 	if !foundList {
 		t.Error("expected list to be cascade-removed")
 	}
-
 }
 
 func TestPlanCleanup_PreservesTypesWithInstances(t *testing.T) {

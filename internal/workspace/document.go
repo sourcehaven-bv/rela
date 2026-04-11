@@ -52,7 +52,7 @@ var docRenderGroup singleflight.Group
 
 // GetCachedDocument returns a cached document if available and still valid.
 // Returns nil if the cache is missing, stale, or on any error.
-func (w *Workspace) GetCachedDocument(entryID string, cfg DocumentConfig) *DocumentResult {
+func (w *Workspace) GetCachedDocument(entryID string, _ DocumentConfig) *DocumentResult {
 	entities, contentHash, err := w.computeDocumentHash(entryID)
 	if err != nil {
 		return nil

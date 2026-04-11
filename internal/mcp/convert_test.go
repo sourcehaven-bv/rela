@@ -806,4 +806,3 @@ func TestExtractProperties_UnsupportedType(t *testing.T) {
 		t.Error("expected nil properties for unsupported type")
 	}
 }
-
