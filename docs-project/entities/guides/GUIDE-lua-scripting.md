@@ -518,6 +518,105 @@ if err then
 end
 ```
 
+### HTTP Functions
+
+The `http` module provides HTTP client capabilities for calling external APIs. No configuration
+is needed — it works out of the box.
+
+#### http.request
+
+Make an HTTP request with full control over method, headers, body, and timeout.
+
+```lua
+local resp, err = http.request({
+    url     = "https://api.example.com/data",
+    method  = "POST",                           -- optional, default "GET"
+    headers = {["Content-Type"] = "application/json"},
+    body    = http.json_encode({key = "value"}),
+    timeout = 10,                               -- optional, seconds (default 30)
+})
+if err then
+    print("Error: " .. err.kind .. ": " .. err.message)
+    return
+end
+print(resp.status_code)  -- 200
+print(resp.body)         -- response body as string
+```
+
+**Response table fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status_code` | number | HTTP status code (200, 404, etc.) |
+| `status` | string | Status line ("200 OK") |
+| `headers` | table | Response headers (lowercase keys, first value for duplicates) |
+| `body` | string | Response body (capped at 10 MiB) |
+
+Non-2xx responses are returned normally (not as errors). Check `resp.status_code` to handle them.
+
+#### Convenience Methods
+
+```lua
+local resp, err = http.get(url, opts?)
+local resp, err = http.post(url, body, opts?)
+local resp, err = http.put(url, body, opts?)
+local resp, err = http.patch(url, body, opts?)
+local resp, err = http.delete(url, opts?)
+```
+
+The optional `opts` table accepts `headers` and `timeout` (same as `http.request`).
+
+```lua
+-- GET with auth header
+local resp, err = http.get("https://api.example.com/items", {
+    headers = {Authorization = "Bearer " .. token},
+    timeout = 5,
+})
+
+-- POST JSON
+local resp, err = http.post("https://api.example.com/items",
+    http.json_encode({name = "new item"}),
+    {headers = {["Content-Type"] = "application/json"}}
+)
+```
+
+#### JSON Helpers
+
+```lua
+-- Encode Lua value to JSON string
+local json_str = http.json_encode({name = "test", items = {1, 2, 3}})
+-- '{"items":[1,2,3],"name":"test"}'
+
+-- Decode JSON string to Lua value
+local data, err = http.json_decode('{"name":"test","count":42}')
+if err then print(err.message) end
+print(data.name)   -- "test"
+print(data.count)  -- 42
+```
+
+**Array vs object encoding:** Tables with only consecutive integer keys starting at 1 encode as
+JSON arrays. Tables with any string keys encode as JSON objects.
+
+#### Error Handling
+
+HTTP functions follow the same `(nil, err_table)` convention as `ai.chat`:
+
+| `err.kind` | When |
+|---|---|
+| `timeout` | Request exceeded deadline |
+| `canceled` | Request was canceled (runtime shutting down) |
+| `network` | DNS failure, connection refused, TLS error |
+| `bad_response` | Response body exceeded 10 MiB limit |
+
+`http.json_decode` returns `(nil, err_table)` with `kind = "bad_response"` for invalid JSON.
+
+Programming errors (missing URL, wrong argument types) raise Lua errors.
+
+#### Redirects
+
+HTTP redirects are **not** followed automatically. The 3xx response is returned directly so
+scripts can inspect the `Location` header and follow redirects explicitly if needed.
+
 ### Context
 
 | Variable | Description |
