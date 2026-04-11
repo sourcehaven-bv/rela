@@ -23,8 +23,9 @@ import (
 var flowOutputDir string
 
 var flowCmd = &cobra.Command{
-	Use:   "flow <script.lua> [args...]",
-	Short: "Run an interactive Lua flow",
+	Use:         "flow <script.lua> [args...]",
+	Short:       "Run an interactive Lua flow",
+	Annotations: map[string]string{skipProjectDiscovery: "true"},
 	Long: `Run a Lua script that can present interactive forms to the user.
 
 Flow scripts use rela.flow.emit() to present forms and receive user input.

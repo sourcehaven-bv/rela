@@ -79,6 +79,7 @@ go build -o rela ./cmd/rela
 | [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |
 | [Data Entry Web App](docs/data-entry.md) | Config-driven web UI for entity management |
 | [Lua Scripting](docs/lua-scripting.md) | Programmable automation with embedded Lua |
+| [Scheduled Tasks](docs/scheduled-tasks.md) | Run Lua scripts on recurring schedules |
 
 ### Tutorials
 

@@ -33,6 +33,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -60,6 +61,7 @@ type Desktop struct {
 	lastCloneDir     string           // tracks the most recent clone for project selection
 	pendingSetupDir  string           // project dir awaiting data-entry.yaml setup
 	pendingSetupRepo repository.Store // repo for pending setup
+	stopScheduler    context.CancelFunc
 }
 
 // cloneAuthState tracks an in-progress OAuth device flow.
@@ -142,12 +144,22 @@ func (d *Desktop) LoadProject(dir string) string {
 		return err.Error()
 	}
 	d.mu.Lock()
+	// Stop previous scheduler if running.
+	if d.stopScheduler != nil {
+		d.stopScheduler()
+	}
 	d.app = app
 	d.handler = app.NewRouter()
 	d.loadErr = ""
 	d.pendingSetupDir = ""
 	d.pendingSetupRepo = nil
+
+	// Start background scheduler for the new project.
+	schedCtx, schedCancel := context.WithCancel(context.Background())
+	d.stopScheduler = schedCancel
 	d.mu.Unlock()
+
+	scheduler.StartBackground(schedCtx, ws, ws, slog.Default())
 
 	if d.ctx != nil {
 		runtime.WindowSetTitle(d.ctx, app.ProjectName())

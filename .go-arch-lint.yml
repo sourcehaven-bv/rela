@@ -47,6 +47,7 @@ components:
   # Core domain
   graph:            { in: internal/graph }
   lua:              { in: internal/lua }
+  scheduler:        { in: internal/scheduler }
   script:           { in: internal/script }
   metamodel:        { in: internal/metamodel }
   migration:        { in: internal/migration }
@@ -113,6 +114,7 @@ deps:
       - dataentry
       - project
       - repository
+      - scheduler
       - script
       - storage
       - workspace
@@ -124,6 +126,7 @@ deps:
       - metamodel
       - project
       - repository
+      - scheduler
       - script
       - storage
       - workspace
@@ -142,6 +145,7 @@ deps:
       - output
       - project
       - rename
+      - scheduler
       - schema
       - script
       - views
@@ -309,6 +313,11 @@ deps:
       - gopherlua
       - runewidth
       - rrulego
+  scheduler:
+    mayDependOn:
+      - metamodel
+      - project
+      - script
   script:
     mayDependOn:
       - ai

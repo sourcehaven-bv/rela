@@ -9,9 +9,10 @@ import (
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Initialize a new rela project",
-	Long:  `Creates a new rela project in the current directory with a default metamodel.`,
+	Use:         "init",
+	Short:       "Initialize a new rela project",
+	Long:        `Creates a new rela project in the current directory with a default metamodel.`,
+	Annotations: map[string]string{skipProjectDiscovery: "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Determine target directory: flag > env var > cwd
 		targetDir := projectPath

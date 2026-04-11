@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -116,6 +118,10 @@ func main() {
 		slog.Warn("rela-server bound beyond loopback; see docs/security.md for threat model",
 			"bind", *bind)
 	}
+	// Start background scheduler if schedules.yaml exists.
+	// The goroutine is cleaned up on process exit.
+	scheduler.StartBackground(context.Background(), ws, ws, slog.Default())
+
 	slog.Info("starting server", "name", app.Cfg().App.Name, "addr", "http://"+addr)
 	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("server stopped", "error", err)

@@ -1,0 +1,287 @@
+package scheduler
+
+import (
+	"testing"
+	"time"
+)
+
+func TestParseConfig_valid(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`
+tasks:
+  - name: daily-report
+    script: reports/daily.lua
+    every: day
+  - name: hourly-check
+    script: checks/orphans.lua
+    every: 30m
+`)
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(cfg.Tasks))
+	}
+
+	if cfg.Tasks[0].Name != "daily-report" {
+		t.Errorf("name = %q, want %q", cfg.Tasks[0].Name, "daily-report")
+	}
+	if cfg.Tasks[0].Every.String() != "day" {
+		t.Errorf("every = %q, want %q", cfg.Tasks[0].Every, "day")
+	}
+	if cfg.Tasks[1].Every.String() != "30m0s" {
+		t.Errorf("every = %q, want %q", cfg.Tasks[1].Every, "30m0s")
+	}
+}
+
+func TestParseConfig_empty(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseConfig([]byte("tasks: []\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Tasks) != 0 {
+		t.Fatalf("expected 0 tasks, got %d", len(cfg.Tasks))
+	}
+}
+
+func TestParseConfig_duplicateName(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`
+tasks:
+  - name: foo
+    script: a.lua
+    every: day
+  - name: foo
+    script: b.lua
+    every: day
+`)
+	_, err := ParseConfig(data)
+	if err == nil {
+		t.Fatal("expected error for duplicate name")
+	}
+}
+
+func TestParseConfig_missingName(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`
+tasks:
+  - script: a.lua
+    every: day
+`)
+	_, err := ParseConfig(data)
+	if err == nil {
+		t.Fatal("expected error for missing name")
+	}
+}
+
+func TestParseConfig_missingScript(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`
+tasks:
+  - name: foo
+    every: day
+`)
+	_, err := ParseConfig(data)
+	if err == nil {
+		t.Fatal("expected error for missing script")
+	}
+}
+
+func TestParseConfig_missingEvery(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`
+tasks:
+  - name: foo
+    script: a.lua
+`)
+	_, err := ParseConfig(data)
+	if err == nil {
+		t.Fatal("expected error for missing every")
+	}
+}
+
+func TestParseConfig_invalidSchedule(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`
+tasks:
+  - name: foo
+    script: a.lua
+    every: "not-valid"
+`)
+	_, err := ParseConfig(data)
+	if err == nil {
+		t.Fatal("expected error for invalid schedule")
+	}
+}
+
+func TestParseConfig_invalidYAML(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseConfig([]byte("{{{{not yaml"))
+	if err == nil {
+		t.Fatal("expected error for invalid YAML")
+	}
+}
+
+func TestParseSchedule_day(t *testing.T) {
+	t.Parallel()
+	s, err := parseSchedule("day")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.kind != dayKind {
+		t.Errorf("kind = %v, want dayKind", s.kind)
+	}
+}
+
+func TestParseSchedule_week(t *testing.T) {
+	t.Parallel()
+	s, err := parseSchedule("week")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.kind != weekdayKind || s.weekday != time.Monday {
+		t.Errorf("kind = %v weekday = %v, want weekdayKind Monday", s.kind, s.weekday)
+	}
+}
+
+func TestParseSchedule_weekdayNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		weekday time.Weekday
+	}{
+		{"monday", time.Monday},
+		{"tuesday", time.Tuesday},
+		{"wednesday", time.Wednesday},
+		{"thursday", time.Thursday},
+		{"friday", time.Friday},
+		{"saturday", time.Saturday},
+		{"sunday", time.Sunday},
+	}
+	for _, tt := range tests {
+		s, err := parseSchedule(tt.input)
+		if err != nil {
+			t.Errorf("parseSchedule(%q): %v", tt.input, err)
+			continue
+		}
+		if s.kind != weekdayKind || s.weekday != tt.weekday {
+			t.Errorf("parseSchedule(%q): got %v %v, want weekdayKind %v",
+				tt.input, s.kind, s.weekday, tt.weekday)
+		}
+	}
+}
+
+func TestParseSchedule_duration(t *testing.T) {
+	t.Parallel()
+	s, err := parseSchedule("2h30m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.kind != intervalKind || s.interval != 2*time.Hour+30*time.Minute {
+		t.Errorf("got %v, want 2h30m interval", s)
+	}
+}
+
+func TestParseSchedule_bareMinutes(t *testing.T) {
+	t.Parallel()
+	s, err := parseSchedule("15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.interval != 15*time.Minute {
+		t.Errorf("got %v, want 15m", s.interval)
+	}
+}
+
+func TestParseSchedule_negativeInterval(t *testing.T) {
+	t.Parallel()
+	_, err := parseSchedule("-5m")
+	if err == nil {
+		t.Fatal("expected error for negative interval")
+	}
+}
+
+func TestParseSchedule_zeroInterval(t *testing.T) {
+	t.Parallel()
+	_, err := parseSchedule("0")
+	if err == nil {
+		t.Fatal("expected error for zero interval")
+	}
+}
+
+func TestScheduleIsDue_day(t *testing.T) {
+	t.Parallel()
+
+	s := Schedule{kind: dayKind, set: true}
+	yesterday := time.Date(2026, 4, 9, 23, 0, 0, 0, time.Local)
+	today := time.Date(2026, 4, 10, 0, 5, 0, 0, time.Local)
+
+	if !s.IsDue(yesterday, today) {
+		t.Error("expected due: different day")
+	}
+	if s.IsDue(today, today.Add(30*time.Minute)) {
+		t.Error("expected not due: same day")
+	}
+}
+
+func TestScheduleIsDue_weekday_monday(t *testing.T) {
+	t.Parallel()
+
+	s := Schedule{kind: weekdayKind, weekday: time.Monday, set: true}
+	// Sunday April 5 2026 → last ran. Monday April 6 → Monday has occurred.
+	lastRun := time.Date(2026, 4, 5, 12, 0, 0, 0, time.Local)
+	monday := time.Date(2026, 4, 6, 0, 5, 0, 0, time.Local)
+
+	if !s.IsDue(lastRun, monday) {
+		t.Error("expected due: Monday occurred after lastRun")
+	}
+	// Same Monday, later in the day — should not be due again.
+	if s.IsDue(monday, monday.Add(12*time.Hour)) {
+		t.Error("expected not due: already ran this Monday")
+	}
+}
+
+func TestScheduleIsDue_weekday_friday(t *testing.T) {
+	t.Parallel()
+
+	s := Schedule{kind: weekdayKind, weekday: time.Friday, set: true}
+	// Last ran Thursday April 9 2026. Now is Friday April 10.
+	lastRun := time.Date(2026, 4, 9, 18, 0, 0, 0, time.Local)
+	friday := time.Date(2026, 4, 10, 8, 0, 0, 0, time.Local)
+
+	if !s.IsDue(lastRun, friday) {
+		t.Error("expected due: Friday occurred after lastRun")
+	}
+	// Wednesday April 8 → not yet Friday.
+	wednesday := time.Date(2026, 4, 8, 12, 0, 0, 0, time.Local)
+	lastRunMon := time.Date(2026, 4, 6, 9, 0, 0, 0, time.Local)
+	// Most recent Friday before Wednesday is April 3, which is before lastRunMon (April 6).
+	if s.IsDue(lastRunMon, wednesday) {
+		t.Error("expected not due: most recent Friday is before lastRun")
+	}
+}
+
+func TestScheduleIsDue_interval(t *testing.T) {
+	t.Parallel()
+
+	s := Schedule{kind: intervalKind, interval: 30 * time.Minute, set: true}
+	lastRun := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+
+	if s.IsDue(lastRun, lastRun.Add(29*time.Minute)) {
+		t.Error("expected not due: only 29m elapsed")
+	}
+	if !s.IsDue(lastRun, lastRun.Add(30*time.Minute)) {
+		t.Error("expected due: 30m elapsed")
+	}
+}

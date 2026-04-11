@@ -26,8 +26,9 @@ const (
 )
 
 var validateCmd = &cobra.Command{
-	Use:   "validate",
-	Short: "Validate project configuration files",
+	Use:         "validate",
+	Short:       "Validate project configuration files",
+	Annotations: map[string]string{skipProjectDiscovery: "true"},
 	Long: `Validate metamodel.yaml and data-entry.yaml configuration files.
 
 By default, checks for:
