@@ -275,7 +275,6 @@ export interface SidebarData {
 export interface DocumentConfig {
   title?: string
   entity_type?: string // Entity type this document applies to (for frontend filtering)
-  view?: string // View name from views.yaml for cache hashing (optional)
   command: string
   timeout?: number
 }

@@ -26,7 +26,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
-	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 // ChangeEvent is re-exported from repository so consumers don't need to
@@ -1765,30 +1764,6 @@ func (w *Workspace) ResumeWatching() {
 	if w.watchHandle != nil {
 		w.watchHandle.Resume()
 	}
-}
-
-// --- Views ---
-
-// LoadViews loads and parses the views.yaml file from the project root.
-func (w *Workspace) LoadViews() (*views.File, error) {
-	return w.repo.LoadViews()
-}
-
-// ExecuteView executes a named view and returns the result.
-// Returns an error if views.yaml cannot be loaded or the view doesn't exist.
-func (w *Workspace) ExecuteView(viewName, entryID string) (*views.ViewResult, error) {
-	viewsFile, err := w.LoadViews()
-	if err != nil {
-		return nil, fmt.Errorf("loading views.yaml: %w", err)
-	}
-
-	viewDef, ok := viewsFile.Views[viewName]
-	if !ok {
-		return nil, fmt.Errorf("view %q not found in views.yaml", viewName)
-	}
-
-	engine := views.NewEngine(w.graph(), w.meta())
-	return engine.Execute(viewDef, entryID)
 }
 
 // --- Filesystem access ---

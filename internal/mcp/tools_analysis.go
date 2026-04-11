@@ -268,11 +268,10 @@ func (s *Server) handleAnalyzeSchema(
 
 	// Load optional config files
 	dataEntry := s.loadDataEntryConfig()
-	viewsFile, _ := s.loadViews()
 
 	// Run analysis
 	snap := s.ws.Snapshot()
-	analysis := schema.Analyze(snap.Meta(), snap.Graph(), dataEntry, viewsFile, threshold)
+	analysis := schema.Analyze(snap.Meta(), snap.Graph(), dataEntry, threshold)
 
 	if !analysis.HasIssues() {
 		return mcp.NewToolResultText("All schema types are in use"), nil

@@ -895,7 +895,7 @@ func TestValidateConfig_DocumentMissingCommand(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{
 		Documents: map[string]DocumentConfig{
-			"spec": {View: "spec-view"},
+			"spec": {},
 		},
 	}
 
@@ -941,19 +941,6 @@ func TestValidateConfig_DocumentValid(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_DocumentValidWithView(t *testing.T) {
-	meta := testMetamodel()
-	cfg := &Config{
-		Documents: map[string]DocumentConfig{
-			"spec": {Command: "render.sh", EntityType: "requirement", View: "spec-view"},
-		},
-	}
-
-	err := ValidateConfig(nil, cfg, meta)
-	if err != nil {
-		t.Errorf("expected valid document config with view to pass, got: %v", err)
-	}
-}
 
 func TestConfigValidationError_SingleError(t *testing.T) {
 	err := &ConfigValidationError{Errors: []string{"single error"}}

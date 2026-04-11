@@ -13,7 +13,6 @@ func (a *App) toWorkspaceDocConfig(cfg *DocumentConfig) workspace.DocumentConfig
 		timeout = 30 * time.Second
 	}
 	return workspace.DocumentConfig{
-		View:    cfg.View,
 		Command: cfg.Command,
 		Timeout: timeout,
 	}

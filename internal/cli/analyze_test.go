@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -88,9 +87,6 @@ func runJSONTest(t *testing.T, name string, setup func(), run func() error, want
 	t.Helper()
 	setup()
 	buf := setupJSONTestOutput()
-
-	// Reset cached options for each test
-	resetAnalyzeOptsCache()
 
 	if err := run(); err != nil {
 		t.Fatalf("%s error = %v", name, err)
@@ -263,60 +259,3 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 	}
 }
 
-func TestResolveAnalyzeOptsErrors(t *testing.T) {
-	// Save and restore original flag values
-	origView := analyzeViewName
-	origEntry := analyzeEntryID
-	defer func() {
-		analyzeViewName = origView
-		analyzeEntryID = origEntry
-		resetAnalyzeOptsCache()
-	}()
-
-	tests := []struct {
-		name      string
-		view      string
-		entry     string
-		wantErr   bool
-		errSubstr string
-	}{
-		{
-			name:    "no view returns empty options",
-			view:    "",
-			entry:   "",
-			wantErr: false,
-		},
-		{
-			name:      "view without entry returns error",
-			view:      "some-view",
-			entry:     "",
-			wantErr:   true,
-			errSubstr: "--entry is required",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resetAnalyzeOptsCache()
-			analyzeViewName = tt.view
-			analyzeEntryID = tt.entry
-
-			opts, err := resolveAnalyzeOpts()
-
-			if tt.wantErr {
-				if err == nil {
-					t.Error("resolveAnalyzeOpts() expected error, got nil")
-				} else if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
-					t.Errorf("resolveAnalyzeOpts() error = %q, want substring %q", err.Error(), tt.errSubstr)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("resolveAnalyzeOpts() unexpected error: %v", err)
-				}
-				if tt.view == "" && opts.Scope != nil {
-					t.Error("resolveAnalyzeOpts() expected nil scope when no view specified")
-				}
-			}
-		})
-	}
-}

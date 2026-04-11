@@ -7,7 +7,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 func newTestMetamodel() *metamodel.Metamodel {
@@ -90,7 +89,7 @@ func TestAnalyze_UnusedEntityTypes(t *testing.T) {
 	meta := newTestMetamodel()
 	g := newTestGraph()
 
-	result := Analyze(meta, g, nil, nil, 0)
+	result := Analyze(meta, g, nil, 0)
 
 	// unused-type has no instances
 	if len(result.UnusedEntityTypes) != 1 {
@@ -108,7 +107,7 @@ func TestAnalyze_UnusedRelationTypes(t *testing.T) {
 	meta := newTestMetamodel()
 	g := newTestGraph()
 
-	result := Analyze(meta, g, nil, nil, 0)
+	result := Analyze(meta, g, nil, 0)
 
 	// unused-relation has no instances
 	if len(result.UnusedRelationTypes) != 1 {
@@ -123,7 +122,7 @@ func TestAnalyze_UnusedCustomTypes(t *testing.T) {
 	meta := newTestMetamodel()
 	g := newTestGraph()
 
-	result := Analyze(meta, g, nil, nil, 0)
+	result := Analyze(meta, g, nil, 0)
 
 	// unused-enum is not referenced by any property
 	if len(result.UnusedCustomTypes) != 1 {
@@ -139,7 +138,7 @@ func TestAnalyze_LowUsageThreshold(t *testing.T) {
 	g := newTestGraph()
 
 	// With threshold=1, decision (1 instance) should be in low usage
-	result := Analyze(meta, g, nil, nil, 1)
+	result := Analyze(meta, g, nil, 1)
 
 	var found bool
 	for _, usage := range result.LowUsageEntityTypes {
@@ -179,7 +178,7 @@ func TestAnalyze_WithDataEntryConfig(t *testing.T) {
 		},
 	}
 
-	result := Analyze(meta, g, dataEntry, nil, 0)
+	result := Analyze(meta, g, dataEntry, 0)
 
 	// requirement should have references in data-entry.yaml
 	var reqUsage *TypeUsage
@@ -213,76 +212,6 @@ func TestAnalyze_WithDataEntryConfig(t *testing.T) {
 	}
 }
 
-func TestAnalyze_WithViews(t *testing.T) {
-	meta := newTestMetamodel()
-	g := graph.New() // Empty graph
-
-	viewsFile := &views.File{
-		Views: map[string]views.ViewDef{
-			"req-context": {
-				Entry: views.EntryDef{
-					Type: "requirement",
-				},
-				Traverse: []views.TraverseRule{
-					{Follow: "implements"},
-				},
-			},
-		},
-	}
-
-	result := Analyze(meta, g, nil, viewsFile, 0)
-
-	// requirement should have view reference
-	var reqUsage *TypeUsage
-	for i := range result.UnusedEntityTypes {
-		if result.UnusedEntityTypes[i].Name == "requirement" {
-			reqUsage = &result.UnusedEntityTypes[i]
-			break
-		}
-	}
-
-	if reqUsage == nil {
-		t.Fatal("expected requirement to be in unused entity types")
-	}
-
-	var hasViewRef bool
-	for _, ref := range reqUsage.References {
-		if ref.Kind == "view" && ref.File == "views.yaml" {
-			hasViewRef = true
-			break
-		}
-	}
-
-	if !hasViewRef {
-		t.Error("expected view reference in views.yaml")
-	}
-
-	// implements relation should have view reference
-	var implUsage *TypeUsage
-	for i := range result.UnusedRelationTypes {
-		if result.UnusedRelationTypes[i].Name == "implements" {
-			implUsage = &result.UnusedRelationTypes[i]
-			break
-		}
-	}
-
-	if implUsage == nil {
-		t.Fatal("expected implements to be in unused relation types")
-	}
-
-	var hasRelViewRef bool
-	for _, ref := range implUsage.References {
-		if ref.Kind == "view" && ref.File == "views.yaml" {
-			hasRelViewRef = true
-			break
-		}
-	}
-
-	if !hasRelViewRef {
-		t.Error("expected implements to have view reference")
-	}
-}
-
 func TestAnalyze_MetamodelValidationReferences(t *testing.T) {
 	meta := newTestMetamodel()
 	meta.Validations = []metamodel.ValidationRule{
@@ -293,7 +222,7 @@ func TestAnalyze_MetamodelValidationReferences(t *testing.T) {
 	}
 	g := graph.New()
 
-	result := Analyze(meta, g, nil, nil, 0)
+	result := Analyze(meta, g, nil, 0)
 
 	// requirement should have validation reference
 	var reqUsage *TypeUsage
@@ -333,7 +262,7 @@ func TestAnalyze_MetamodelAutomationReferences(t *testing.T) {
 	}
 	g := graph.New()
 
-	result := Analyze(meta, g, nil, nil, 0)
+	result := Analyze(meta, g, nil, 0)
 
 	// requirement should have automation reference
 	var reqUsage *TypeUsage
@@ -433,7 +362,7 @@ func TestAnalyze_SortsResults(t *testing.T) {
 	}
 	g := graph.New()
 
-	result := Analyze(meta, g, nil, nil, 0)
+	result := Analyze(meta, g, nil, 0)
 
 	// Check alphabetical order
 	expected := []string{"apple", "banana", "mango", "zebra"}

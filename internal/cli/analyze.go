@@ -13,19 +13,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
-	"github.com/Sourcehaven-BV/rela/internal/views"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var (
-	analyzeViewName string
-	analyzeEntryID  string
-
-	// cachedOpts holds the resolved scope to avoid re-executing the view multiple times.
-	// Set by the first call to resolveAnalyzeOpts() in a command invocation.
-	cachedOpts     *workspace.AnalyzeOptions
-	cachedOptsOnce bool
-
 	// Schema analysis flags
 	schemaThreshold int
 	schemaCleanup   bool
@@ -584,7 +575,7 @@ Shows:
   - Types with few instances (when --threshold is set)
 
 Use --cleanup to remove unused types from metamodel.yaml and update
-data-entry.yaml and views.yaml accordingly.
+data-entry.yaml accordingly.
 
 Examples:
   rela analyze schema              # Show unused types
@@ -598,10 +589,9 @@ Examples:
 
 		// Load optional config files
 		dataEntry := loadDataEntryConfig()
-		viewsFile := loadViewsFile()
 
 		// Run analysis
-		analysis := schema.Analyze(meta, ws.Snapshot().Graph(), dataEntry, viewsFile, schemaThreshold)
+		analysis := schema.Analyze(meta, ws.Snapshot().Graph(), dataEntry, schemaThreshold)
 
 		// Handle cleanup mode
 		if schemaCleanup {
@@ -624,15 +614,6 @@ func loadDataEntryConfig() *dataentryconfig.Config {
 		return nil // Invalid YAML
 	}
 	return &cfg
-}
-
-// loadViewsFile loads views.yaml if it exists.
-func loadViewsFile() *views.File {
-	viewsFile, err := ws.LoadViews()
-	if err != nil {
-		return nil
-	}
-	return viewsFile
 }
 
 // runSchemaCleanup executes the cleanup plan.
@@ -678,9 +659,6 @@ func runSchemaCleanup(analysis *schema.Analysis) error {
 		out.WriteMessage("  %s: %s %s", change.File, change.Action, change.Target)
 	}
 	for _, change := range plan.DataEntryChanges {
-		out.WriteMessage("  %s: %s %s", change.File, change.Action, change.Target)
-	}
-	for _, change := range plan.ViewsChanges {
 		out.WriteMessage("  %s: %s %s", change.File, change.Action, change.Target)
 	}
 
@@ -797,12 +775,6 @@ func outputLowUsageTypes(header string, usages []schema.TypeUsage) {
 }
 
 func init() {
-	// Scope flags (inherited by all subcommands)
-	analyzeCmd.PersistentFlags().StringVar(&analyzeViewName, "view", "",
-		"Scope analysis to entities in a view")
-	analyzeCmd.PersistentFlags().StringVar(&analyzeEntryID, "entry", "",
-		"Entry entity ID for the view (required with --view)")
-
 	// Schema subcommand flags
 	analyzeSchemaCmd.Flags().IntVar(&schemaThreshold, "threshold", 0,
 		"Show types with instance count <= threshold (0 = only unused)")
@@ -823,45 +795,7 @@ func init() {
 	rootCmd.AddCommand(analyzeCmd)
 }
 
-// resolveAnalyzeOpts resolves the --view and --entry flags to AnalyzeOptions.
-// Returns cached result to avoid re-executing the view when called from multiple subcommands.
+// resolveAnalyzeOpts returns the analysis options.
 func resolveAnalyzeOpts() (*workspace.AnalyzeOptions, error) {
-	// Return cached result if already resolved
-	if cachedOptsOnce {
-		return cachedOpts, nil
-	}
-
-	opts, err := doResolveAnalyzeOpts()
-	if err != nil {
-		return nil, err
-	}
-
-	// Cache the result
-	cachedOpts = opts
-	cachedOptsOnce = true
-	return opts, nil
-}
-
-// doResolveAnalyzeOpts performs the actual scope resolution.
-func doResolveAnalyzeOpts() (*workspace.AnalyzeOptions, error) {
-	if analyzeViewName == "" {
-		return &workspace.AnalyzeOptions{}, nil
-	}
-
-	if analyzeEntryID == "" {
-		return nil, fmt.Errorf("--entry is required when using --view")
-	}
-
-	scope, err := ws.ResolveViewScope(analyzeViewName, analyzeEntryID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &workspace.AnalyzeOptions{Scope: scope}, nil
-}
-
-// resetAnalyzeOptsCache clears the cached options. Called at the start of analyze commands.
-func resetAnalyzeOptsCache() {
-	cachedOpts = nil
-	cachedOptsOnce = false
+	return &workspace.AnalyzeOptions{}, nil
 }

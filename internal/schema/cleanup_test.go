@@ -115,7 +115,6 @@ func TestPlanCleanup_CascadeMultipleReferences(t *testing.T) {
 				References: []Reference{
 					{File: "data-entry.yaml", Section: "forms.type-form", Kind: "form"},
 					{File: "data-entry.yaml", Section: "lists.type-list", Kind: "list"},
-					{File: "views.yaml", Section: "views.type-view", Kind: "view"},
 					{File: "metamodel.yaml", Section: "relations.some-rel.from", Kind: "relation_from"},
 				},
 			},
@@ -153,17 +152,6 @@ func TestPlanCleanup_CascadeMultipleReferences(t *testing.T) {
 		t.Error("expected list to be cascade-removed")
 	}
 
-	// View should be cascade-removed from views.yaml
-	var foundView bool
-	for _, change := range plan.ViewsChanges {
-		if change.Action == "remove_view" && change.Target == "type-view" {
-			foundView = true
-			break
-		}
-	}
-	if !foundView {
-		t.Error("expected view to be cascade-removed")
-	}
 }
 
 func TestPlanCleanup_PreservesTypesWithInstances(t *testing.T) {
@@ -187,11 +175,10 @@ func TestCleanupPlan_TotalChanges(t *testing.T) {
 	plan := &CleanupPlan{
 		MetamodelChanges: []Change{{}, {}},
 		DataEntryChanges: []Change{{}},
-		ViewsChanges:     []Change{{}, {}, {}},
 	}
 
-	if plan.TotalChanges() != 6 {
-		t.Errorf("expected TotalChanges=6, got %d", plan.TotalChanges())
+	if plan.TotalChanges() != 3 {
+		t.Errorf("expected TotalChanges=3, got %d", plan.TotalChanges())
 	}
 }
 
@@ -443,58 +430,6 @@ lists:
 	}
 }
 
-func TestExecuteCleanup_CascadeViews(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create metamodel.yaml
-	metamodelContent := `entities:
-  requirement:
-    properties:
-      title:
-        type: string
-`
-	metamodelPath := filepath.Join(tmpDir, "metamodel.yaml")
-	if err := os.WriteFile(metamodelPath, []byte(metamodelContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create views.yaml
-	viewsContent := `views:
-  req-context:
-    entry:
-      type: requirement
-  to-remove-view:
-    entry:
-      type: to-remove
-`
-	viewsPath := filepath.Join(tmpDir, "views.yaml")
-	if err := os.WriteFile(viewsPath, []byte(viewsContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	plan := &CleanupPlan{
-		ViewsChanges: []Change{
-			{File: "views.yaml", Action: "remove_view", Target: "to-remove-view"},
-		},
-	}
-
-	if err := ExecuteCleanup(plan, tmpDir, false); err != nil {
-		t.Fatalf("ExecuteCleanup failed: %v", err)
-	}
-
-	viewsData, err := os.ReadFile(viewsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	viewsStr := string(viewsData)
-	if strings.Contains(viewsStr, "to-remove-view:") {
-		t.Error("view 'to-remove-view' should have been removed")
-	}
-	if !strings.Contains(viewsStr, "req-context:") {
-		t.Error("view 'req-context' should be preserved")
-	}
-}
-
 func TestExtractName(t *testing.T) {
 	tests := []struct {
 		section string
@@ -503,7 +438,6 @@ func TestExtractName(t *testing.T) {
 	}{
 		{"forms.my-form", "forms.", "my-form"},
 		{"lists.my-list", "lists.", "my-list"},
-		{"views.my-view", "views.", "my-view"},
 		{"forms.my-form.relations", "forms.", "my-form"},
 		{"validations.my-val", "validations.", "my-val"},
 		{"unknown", "forms.", "unknown"},

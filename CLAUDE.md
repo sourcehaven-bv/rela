@@ -95,7 +95,7 @@ relations/*.md → Relation ↗      ↓
 The `rela mcp` command starts a Model Context Protocol server over stdio, exposing rela's
 capabilities to AI assistants (Claude Code, Cursor, etc.):
 
-- **23 tools**: Entity/relation CRUD, graph tracing, analysis, schema introspection, export
+- **21 tools**: Entity/relation CRUD, graph tracing, analysis, schema introspection, export
 - **3 resources**: `rela://metamodel`, `rela://entity/{type}/{id}`, `rela://relation/{from}/{type}/{to}`
 - **4 prompts**: `analyze-traceability`, `review-orphans`, `summarize-project`, `review-entity`
 - **File watcher**: Watches entities/, relations/, and metamodel.yaml with 200ms debounce
