@@ -127,8 +127,7 @@ func (s *Server) handleReviewOrphansPrompt(
 	entityType := request.Params.Arguments["type"]
 
 	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	orphans := g.FindOrphans()
+	orphans := snap.FindOrphans()
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
 		var filtered []*model.Entity
@@ -195,13 +194,12 @@ func (s *Server) handleSummarizeProjectPrompt(
 	// Entity counts by type
 	snap := s.ws.Snapshot()
 	meta := snap.Meta()
-	g := snap.Graph()
 	entityTypes := meta.EntityTypes()
 	natsort.Strings(entityTypes)
 	var entityCounts strings.Builder
 	totalEntities := 0
 	for _, t := range entityTypes {
-		count := len(g.NodesByType(t))
+		count := len(snap.EntitiesByType(t))
 		totalEntities += count
 		def, _ := meta.GetEntityDef(t)
 		label := t
@@ -217,13 +215,13 @@ func (s *Server) handleSummarizeProjectPrompt(
 	var relCounts strings.Builder
 	totalRelations := 0
 	for _, t := range relTypes {
-		count := len(g.RelationsOfType(t))
+		count := len(snap.RelationsOfType(t))
 		totalRelations += count
 		fmt.Fprintf(&relCounts, "- %s: %d\n", t, count)
 	}
 
 	// Analysis summary
-	orphanCount := len(g.FindOrphans())
+	orphanCount := len(snap.FindOrphans())
 
 	content := fmt.Sprintf(`Generate a comprehensive project summary based on the following data.
 

@@ -124,7 +124,7 @@ func (s *Server) handleReadRelation(
 	fromID, relType, toID := segments[0], segments[1], segments[2]
 
 	snap := s.ws.Snapshot()
-	relation, ok := snap.Graph().GetEdge(fromID, relType, toID)
+	relation, ok := snap.GetRelation(fromID, relType, toID)
 	if !ok {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", fromID, relType, toID)
 	}

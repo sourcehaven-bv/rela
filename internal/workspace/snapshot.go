@@ -62,6 +62,86 @@ func (snap *Snapshot) OutgoingRelations(id string) []*model.Relation {
 	return snap.s.graph.OutgoingEdges(id)
 }
 
+// --- Graph-vocabulary aliases ---
+// These mirror graph.Graph method names so that *Snapshot can satisfy
+// consumer-defined GraphReader interfaces without renaming.
+
+// GetNode returns an entity by ID, or (nil, false) if not found.
+// Alias for GetEntity.
+func (snap *Snapshot) GetNode(id string) (*model.Entity, bool) {
+	return snap.s.graph.GetNode(id)
+}
+
+// AllNodes returns all entities in the graph. Alias for AllEntities.
+func (snap *Snapshot) AllNodes() []*model.Entity {
+	return snap.s.graph.AllNodes()
+}
+
+// AllEdges returns all relations in the graph. Alias for AllRelations.
+func (snap *Snapshot) AllEdges() []*model.Relation {
+	return snap.s.graph.AllEdges()
+}
+
+// GetEdge returns a relation by from/type/to, or (nil, false).
+// Alias for GetRelation.
+func (snap *Snapshot) GetEdge(from, relType, to string) (*model.Relation, bool) {
+	return snap.s.graph.GetEdge(from, relType, to)
+}
+
+// OutgoingEdges returns all relations from the given entity.
+// Alias for OutgoingRelations.
+func (snap *Snapshot) OutgoingEdges(id string) []*model.Relation {
+	return snap.s.graph.OutgoingEdges(id)
+}
+
+// IncomingEdges returns all relations pointing to the given entity.
+// Alias for IncomingRelations.
+func (snap *Snapshot) IncomingEdges(id string) []*model.Relation {
+	return snap.s.graph.IncomingEdges(id)
+}
+
+// --- Additional query methods ---
+
+// NodesByType returns all entities of the given type.
+func (snap *Snapshot) NodesByType(entityType string) []*model.Entity {
+	return snap.s.graph.NodesByType(entityType)
+}
+
+// RelationsOfType returns all relations of the given type.
+func (snap *Snapshot) RelationsOfType(relationType string) []*model.Relation {
+	return snap.s.graph.RelationsOfType(relationType)
+}
+
+// TraceFrom traces all dependencies from a node.
+func (snap *Snapshot) TraceFrom(id string, maxDepth int) *model.TraceResult {
+	return snap.s.graph.TraceFrom(id, maxDepth)
+}
+
+// TraceTo traces all upstream dependencies to a node.
+func (snap *Snapshot) TraceTo(id string, maxDepth int) *model.TraceResult {
+	return snap.s.graph.TraceTo(id, maxDepth)
+}
+
+// FindPath finds a path between two nodes.
+func (snap *Snapshot) FindPath(fromID, toID string) []model.PathStep {
+	return snap.s.graph.FindPath(fromID, toID)
+}
+
+// FindOrphans returns entities with no relations.
+func (snap *Snapshot) FindOrphans() []*model.Entity {
+	return snap.s.graph.FindOrphans()
+}
+
+// NodeCount returns the number of entities in the graph.
+func (snap *Snapshot) NodeCount() int {
+	return snap.s.graph.NodeCount()
+}
+
+// EdgeCount returns the number of relations in the graph.
+func (snap *Snapshot) EdgeCount() int {
+	return snap.s.graph.EdgeCount()
+}
+
 // Search performs a full-text search and returns matching entities with scores.
 func (snap *Snapshot) Search(words, phrases []string, limit int) ([]*model.Entity, []float64, error) {
 	if snap.s.searchIdx == nil {

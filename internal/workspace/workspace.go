@@ -340,9 +340,10 @@ func (w *Workspace) graph() *graph.Graph {
 	return nil
 }
 
-// meta returns the current metamodel.
-// Internal to workspace; external consumers must use Snapshot().
-func (w *Workspace) meta() *metamodel.Metamodel {
+// Meta returns the current metamodel from the latest workspace state.
+// Prefer Snapshot().Meta() when you need a coherent view of graph + metamodel;
+// this method is for callers that only need the metamodel (e.g. scheduler).
+func (w *Workspace) Meta() *metamodel.Metamodel {
 	if s := w.state.Load(); s != nil {
 		return s.meta
 	}
@@ -412,12 +413,12 @@ func (w *Workspace) DiscoverEntityTemplates(entityType string) ([]*model.EntityT
 
 // GenerateEntityTemplate generates a template file for the given entity type.
 func (w *Workspace) GenerateEntityTemplate(entityType, variant string, force bool) (bool, error) {
-	return w.repo.GenerateEntityTemplate(w.meta(), entityType, variant, force)
+	return w.repo.GenerateEntityTemplate(w.Meta(), entityType, variant, force)
 }
 
 // GenerateRelationTemplate generates a template file for the given relation type.
 func (w *Workspace) GenerateRelationTemplate(relationType string, force bool) (bool, error) {
-	return w.repo.GenerateRelationTemplate(w.meta(), relationType, force)
+	return w.repo.GenerateRelationTemplate(w.Meta(), relationType, force)
 }
 
 // FindOrphanedTempFiles returns paths of leftover .new temp files.
@@ -769,7 +770,7 @@ func (w *Workspace) saveCacheQuietlyFor(g *graph.Graph) {
 // ResolveEntityType resolves a type name (alias, plural) to its canonical
 // name and definition.
 func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
-	meta := w.meta()
+	meta := w.Meta()
 
 	// Exact match or alias.
 	resolved := meta.ResolveAlias(strings.TrimSpace(typeName))
@@ -1085,7 +1086,7 @@ type createEntityCoreOpts struct {
 // createEntityCore creates an entity without running automations.
 // This is the shared creation logic used by CreateEntity and automation processing.
 func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpts) (*model.Entity, error) {
-	meta := w.meta()
+	meta := w.Meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
 		return nil, fmt.Errorf("unknown entity type: %s", entityType)
@@ -1228,7 +1229,7 @@ func (w *Workspace) processEntityCreations(
 	effects *automationSideEffects,
 ) []automationQueueItem {
 	var newItems []automationQueueItem
-	meta := w.meta()
+	meta := w.Meta()
 
 	for _, toCreate := range toCreateList {
 		if skip := w.handleIfExists(trigger, toCreate, effects); skip {
@@ -1308,7 +1309,7 @@ func (w *Workspace) applyRelationCreations(
 	relations []*model.Relation,
 	effects *automationSideEffects,
 ) {
-	meta := w.meta()
+	meta := w.Meta()
 
 	for _, rel := range relations {
 		rel.From = triggerEntity.ID
@@ -1348,7 +1349,7 @@ func (w *Workspace) executeLuaActions(
 	// Build script context once for all actions
 	ctx := &scriptContextImpl{
 		workspace:   w,
-		meta:        w.meta(),
+		meta:        w.Meta(),
 		projectRoot: w.repo.Paths().Root,
 		entity:      entity,
 		oldEntity:   oldEntity,
@@ -1423,7 +1424,7 @@ func (w *Workspace) createTriggerRelation(
 	relationType string,
 	effects *automationSideEffects,
 ) {
-	meta := w.meta()
+	meta := w.Meta()
 
 	if err := meta.ValidateRelation(relationType, triggerEntity.Type, created.Type); err != nil {
 		effects.Errors = append(effects.Errors,
@@ -1560,7 +1561,7 @@ func (w *Workspace) DeleteRelation(from, relType, to string) error {
 // FormatEntity checks if an entity file needs formatting and optionally writes
 // the formatted version. Returns true if the file was (or would be) modified.
 func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error) {
-	meta := w.meta()
+	meta := w.Meta()
 	// Get property order from metamodel
 	var propertyOrder []string
 	if entityDef, ok := meta.GetEntityDef(entity.Type); ok {

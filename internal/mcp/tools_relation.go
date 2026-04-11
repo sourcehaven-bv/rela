@@ -22,7 +22,7 @@ func (s *Server) handleListRelations(
 	offset := request.GetInt("offset", 0)
 
 	snap := s.ws.Snapshot()
-	edges := snap.Graph().AllEdges()
+	edges := snap.AllRelations()
 
 	filtered := make([]*model.Relation, 0, len(edges))
 	for _, e := range edges {
@@ -114,7 +114,7 @@ func (s *Server) handleDeleteRelation(
 	toID = trimID(toID)
 
 	snap := s.ws.Snapshot()
-	_, exists := snap.Graph().GetEdge(fromID, relType, toID)
+	_, exists := snap.GetRelation(fromID, relType, toID)
 	if !exists {
 		return mcp.NewToolResultError(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil

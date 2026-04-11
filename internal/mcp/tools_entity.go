@@ -22,13 +22,12 @@ func (s *Server) handleListEntities(
 	offset := request.GetInt("offset", 0)
 
 	snap := s.ws.Snapshot()
-	g := snap.Graph()
 	var entities []*model.Entity
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
-		entities = g.NodesByType(resolved)
+		entities = snap.EntitiesByType(resolved)
 	} else {
-		entities = g.AllNodes()
+		entities = snap.AllEntities()
 	}
 
 	// Apply filter
@@ -222,15 +221,14 @@ func (s *Server) handleDeleteEntity(
 	cascade := request.GetBool("cascade", false)
 
 	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	entity, ok := g.GetNode(id)
+	entity, ok := snap.GetEntity(id)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
 	// Check for relations (for better error message)
-	incoming := g.IncomingEdges(id)
-	outgoing := g.OutgoingEdges(id)
+	incoming := snap.IncomingRelations(id)
+	outgoing := snap.OutgoingRelations(id)
 	totalRelations := len(incoming) + len(outgoing)
 
 	if totalRelations > 0 && !cascade {
@@ -269,7 +267,7 @@ func (s *Server) handleRenameEntity(
 
 	// Get entity to find type
 	snap := s.ws.Snapshot()
-	entity, ok := snap.Graph().GetNode(oldID)
+	entity, ok := snap.GetEntity(oldID)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", oldID)), nil
 	}

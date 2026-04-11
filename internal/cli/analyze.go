@@ -591,7 +591,7 @@ Examples:
 		dataEntry := loadDataEntryConfig()
 
 		// Run analysis
-		analysis := schema.Analyze(meta, ws.Snapshot().Graph(), dataEntry, schemaThreshold)
+		analysis := schema.Analyze(meta, ws.Snapshot(), dataEntry, schemaThreshold)
 
 		// Handle cleanup mode
 		if schemaCleanup {

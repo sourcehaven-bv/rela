@@ -142,12 +142,11 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 
 func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
 	snap := s.ws.Snapshot()
-	g := snap.Graph()
 	var entities []*model.Entity
 	if rule.EntityType != "" {
-		entities = g.NodesByType(rule.EntityType)
+		entities = snap.EntitiesByType(rule.EntityType)
 	} else {
-		entities = g.AllNodes()
+		entities = snap.AllEntities()
 	}
 	return workspace.CheckValidationRule(snap.Meta(), rule, entities)
 }

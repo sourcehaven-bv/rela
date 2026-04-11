@@ -15,7 +15,7 @@ func (s *Server) handleTraceFrom(
 	_ context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	return s.handleTrace(request, func(snap *workspace.Snapshot, id string, depth int) *model.TraceResult {
-		return snap.Graph().TraceFrom(id, depth)
+		return snap.TraceFrom(id, depth)
 	}, "No dependencies found")
 }
 
@@ -23,7 +23,7 @@ func (s *Server) handleTraceTo(
 	_ context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	return s.handleTrace(request, func(snap *workspace.Snapshot, id string, depth int) *model.TraceResult {
-		return snap.Graph().TraceTo(id, depth)
+		return snap.TraceTo(id, depth)
 	}, "No upstream dependencies found")
 }
 
@@ -71,15 +71,14 @@ func (s *Server) handleFindPath(
 	to = trimID(to)
 
 	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	if _, ok := g.GetNode(from); !ok {
+	if _, ok := snap.GetEntity(from); !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("source entity not found: %s", from)), nil
 	}
-	if _, ok := g.GetNode(to); !ok {
+	if _, ok := snap.GetEntity(to); !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("target entity not found: %s", to)), nil
 	}
 
-	path := g.FindPath(from, to)
+	path := snap.FindPath(from, to)
 	if path == nil {
 		return mcp.NewToolResultText(
 			fmt.Sprintf("No path found between %s and %s", from, to)), nil

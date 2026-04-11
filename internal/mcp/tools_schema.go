@@ -47,7 +47,6 @@ func (s *Server) handleListEntityTypes(
 
 	snap := s.ws.Snapshot()
 	meta := snap.Meta()
-	g := snap.Graph()
 	types := meta.EntityTypes()
 	natsort.Strings(types)
 
@@ -63,7 +62,7 @@ func (s *Server) handleListEntityTypes(
 			IDType:     def.GetIDType(),
 			IDPrefixes: def.GetIDPrefixes(),
 			Properties: def.Properties,
-			Count:      len(g.NodesByType(name)),
+			Count:      len(snap.EntitiesByType(name)),
 		})
 	}
 
@@ -89,7 +88,6 @@ func (s *Server) handleListRelationTypes(
 
 	snap := s.ws.Snapshot()
 	meta := snap.Meta()
-	g := snap.Graph()
 	types := meta.RelationTypes()
 	natsort.Strings(types)
 
@@ -105,7 +103,7 @@ func (s *Server) handleListRelationTypes(
 			From:        def.GetFrom(),
 			To:          def.GetTo(),
 			Description: def.GetDescription(),
-			Count:       len(g.RelationsOfType(name)),
+			Count:       len(snap.RelationsOfType(name)),
 		}
 		if def.Inverse != nil {
 			info.Inverse = def.Inverse.GetID()

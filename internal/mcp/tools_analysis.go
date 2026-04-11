@@ -20,8 +20,7 @@ func (s *Server) handleAnalyzeOrphans(
 	entityType := request.GetString("type", "")
 
 	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	orphans := g.FindOrphans()
+	orphans := snap.FindOrphans()
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
 		var filtered []*model.Entity
@@ -96,14 +95,13 @@ func (s *Server) checkCardinalityBound(
 	var violations []cardinalityViolation
 
 	snap := s.ws.Snapshot()
-	g := snap.Graph()
 	for _, entityType := range entityTypes {
-		for _, e := range g.NodesByType(entityType) {
+		for _, e := range snap.EntitiesByType(entityType) {
 			var edges []*model.Relation
 			if outgoing {
-				edges = g.OutgoingEdges(e.ID)
+				edges = snap.OutgoingRelations(e.ID)
 			} else {
-				edges = g.IncomingEdges(e.ID)
+				edges = snap.IncomingRelations(e.ID)
 			}
 			count := countEdgesByType(edges, relName)
 
@@ -152,7 +150,7 @@ func (s *Server) handleAnalyzeProperties(
 	var allEntityErrors []entityErrors
 
 	// Validate entity properties
-	for _, entity := range snap.Graph().AllNodes() {
+	for _, entity := range snap.AllEntities() {
 		errs := meta.ValidateEntity(entity)
 		if len(errs) > 0 {
 			errStrings := make([]string, len(errs))
@@ -271,7 +269,7 @@ func (s *Server) handleAnalyzeSchema(
 
 	// Run analysis
 	snap := s.ws.Snapshot()
-	analysis := schema.Analyze(snap.Meta(), snap.Graph(), dataEntry, threshold)
+	analysis := schema.Analyze(snap.Meta(), snap, dataEntry, threshold)
 
 	if !analysis.HasIssues() {
 		return mcp.NewToolResultText("All schema types are in use"), nil

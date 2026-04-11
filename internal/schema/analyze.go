@@ -7,9 +7,16 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/model"
 )
+
+// GraphReader is the read-only graph interface used by schema analysis.
+// Satisfied by *graph.Graph and *workspace.Snapshot.
+type GraphReader interface {
+	NodesByType(entityType string) []*model.Entity
+	RelationsOfType(relationType string) []*model.Relation
+}
 
 // Analysis contains the results of analyzing metamodel schema usage.
 type Analysis struct {
@@ -44,7 +51,7 @@ type Reference struct {
 // are reported in LowUsage* fields. Use threshold=0 to only report unused types.
 func Analyze(
 	meta *metamodel.Metamodel,
-	g *graph.Graph,
+	g GraphReader,
 	dataEntry *dataentryconfig.Config,
 	threshold int,
 ) *Analysis {

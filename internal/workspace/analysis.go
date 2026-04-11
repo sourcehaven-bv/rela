@@ -83,7 +83,7 @@ type GapResult struct {
 // FindGaps returns gaps in ID sequences, filtered by scope.
 // Excludes entity types with manual (string) IDs.
 func (w *Workspace) FindGaps(opts AnalyzeOptions) []GapResult {
-	meta := w.meta()
+	meta := w.Meta()
 	// Build a set of prefixes that belong to manual ID types (should be skipped)
 	stringIDPrefixes := make(map[string]bool)
 	for _, entityDef := range meta.Entities {
@@ -156,7 +156,7 @@ type CardinalityViolation struct {
 func (w *Workspace) CheckCardinality(opts AnalyzeOptions) []CardinalityViolation {
 	var violations []CardinalityViolation
 
-	for relName, relDef := range w.meta().Relations {
+	for relName, relDef := range w.Meta().Relations {
 		violations = append(violations, w.checkMinOutgoing(relName, relDef, opts.Scope)...)
 		violations = append(violations, w.checkMaxOutgoing(relName, relDef, opts.Scope)...)
 		violations = append(violations, w.checkMinIncoming(relName, relDef, opts.Scope)...)
@@ -303,7 +303,7 @@ type PropertyError struct {
 
 // ValidateProperties validates entity properties against the metamodel, filtered by scope.
 func (w *Workspace) ValidateProperties(opts AnalyzeOptions) []PropertyError {
-	meta := w.meta()
+	meta := w.Meta()
 	entities := filterByScope(w.graph().AllNodes(), opts.Scope)
 
 	var allErrors []PropertyError
@@ -330,7 +330,7 @@ type RelationPropertyError struct {
 
 // ValidateRelationProperties validates relation properties against the metamodel.
 func (w *Workspace) ValidateRelationProperties() []RelationPropertyError {
-	meta := w.meta()
+	meta := w.Meta()
 	var allErrors []RelationPropertyError
 	for _, rel := range w.graph().AllEdges() {
 		errs := meta.ValidateRelationProperties(rel)
@@ -358,7 +358,7 @@ func (w *Workspace) newValidationService() *validation.Service {
 	if w.repo != nil {
 		opts = append(opts, validation.WithProjectRoot(w.repo.Paths().Root))
 	}
-	return validation.New(w.meta(), opts...)
+	return validation.New(w.Meta(), opts...)
 }
 
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.

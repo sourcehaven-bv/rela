@@ -12,12 +12,22 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
+
+// GraphStore is the read+write graph interface used by the importer.
+// Satisfied by *graph.Graph.
+type GraphStore interface {
+	GetNode(id string) (*model.Entity, bool)
+	AllIDs() []string
+	GetEdge(from, relationType, to string) (*model.Relation, bool)
+	AddNode(entity *model.Entity)
+	UpdateNode(entity *model.Entity) bool
+	AddEdge(relation *model.Relation)
+}
 
 // Format represents an import file format
 type Format string
@@ -110,14 +120,14 @@ func (s *ImportSource) Open(path string) (io.ReadCloser, error) {
 type Importer struct {
 	repo   repository.Store
 	meta   *metamodel.Metamodel
-	g      *graph.Graph
+	g      GraphStore
 	opts   Options
 	source *ImportSource
 }
 
 // New creates a new Importer that reads input files from the given source.
 func New(
-	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, opts Options, source *ImportSource,
+	repo repository.Store, meta *metamodel.Metamodel, g GraphStore, opts Options, source *ImportSource,
 ) *Importer {
 	return &Importer{
 		repo:   repo,

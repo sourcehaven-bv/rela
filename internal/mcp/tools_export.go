@@ -40,17 +40,16 @@ func (s *Server) handleExport(
 	entityType := request.GetString("type", "")
 
 	snap := s.ws.Snapshot()
-	g := snap.Graph()
 	var entities []*model.Entity
 	if entityType != "" {
 		resolved := s.resolveType(entityType)
-		entities = g.NodesByType(resolved)
+		entities = snap.EntitiesByType(resolved)
 	} else {
-		entities = g.AllNodes()
+		entities = snap.AllEntities()
 	}
 	sortEntitiesByID(entities)
 
-	edges := g.AllEdges()
+	edges := snap.AllRelations()
 	sortRelations(edges)
 
 	switch format {
