@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -58,9 +57,7 @@ func runScheduler(cmd *cobra.Command) error {
 		startDir = os.Getenv("RELA_PROJECT")
 	}
 
-	engine := script.NewEngine()
-
-	schedWs, err := workspace.Discover(startDir, engine)
+	schedWs, err := workspace.Discover(startDir, script.NewEngine())
 	if err != nil {
 		return fmt.Errorf("no project found: run 'rela init' to create one")
 	}
@@ -79,8 +76,7 @@ func runScheduler(cmd *cobra.Command) error {
 		Level: slog.LevelInfo,
 	}))
 
-	metaFn := func() *metamodel.Metamodel { return schedWs.Snapshot().Meta() }
-	s := scheduler.New(cfg, engine, schedWs, schedWs, metaFn, logger)
+	s := scheduler.New(cfg, schedWs, logger)
 	return s.Run(cmd.Context())
 }
 

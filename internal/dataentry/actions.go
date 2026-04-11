@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -154,3 +155,6 @@ func (c *actionScriptContext) GetMeta() *metamodel.Metamodel { return c.meta }
 func (c *actionScriptContext) GetProjectRoot() string        { return c.projectRoot }
 func (c *actionScriptContext) GetEntity() *model.Entity      { return c.entity }
 func (c *actionScriptContext) GetOldEntity() *model.Entity   { return nil }
+func (c *actionScriptContext) GetStdout() io.Writer          { return nil }
+func (c *actionScriptContext) GetArgs() []string             { return nil }
+func (c *actionScriptContext) GetOutputDir() string          { return "" }

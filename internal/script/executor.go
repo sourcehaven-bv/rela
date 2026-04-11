@@ -9,7 +9,6 @@
 package script
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -63,7 +62,12 @@ func (e *Engine) execute(code string, ctx metamodel.ScriptContext) error {
 		return fmt.Errorf("workspace does not implement lua.WorkspaceInterface")
 	}
 
-	var output bytes.Buffer
+	// Use caller-provided stdout, or a discard buffer.
+	stdout := ctx.GetStdout()
+	if stdout == nil {
+		stdout = io.Discard
+	}
+
 	var opts []lua.Option
 	// Soft-fail on misconfigured ai.yaml: an automation script firing
 	// on every entity write must not crash the host because the user
@@ -78,8 +82,16 @@ func (e *Engine) execute(code string, ctx metamodel.ScriptContext) error {
 	default:
 		opts = append(opts, lua.WithAIProvider(provider))
 	}
-	runtime := lua.New(ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output, opts...)
+	if dir := ctx.GetOutputDir(); dir != "" {
+		opts = append(opts, lua.WithOutputDir(dir))
+	}
+	runtime := lua.New(ws, ctx.GetMeta(), ctx.GetProjectRoot(), stdout, opts...)
 	defer runtime.Close()
+
+	// Set script arguments if provided
+	if args := ctx.GetArgs(); len(args) > 0 {
+		runtime.SetArgs(args)
+	}
 
 	// Set entity context as Lua globals
 	ls := runtime.LState()

@@ -4,18 +4,14 @@ package mcp
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/ai"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // scriptsDir is the directory where Lua scripts must be located for lua_run.
@@ -56,35 +52,14 @@ func toolLuaList() mcp.Tool {
 	)
 }
 
-func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleLuaEval(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	code, err := req.RequireString("code")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	projectRoot := s.ws.Paths().Root
-
-	// Capture output
 	var output bytes.Buffer
-
-	opts := []lua.Option{lua.WithContext(ctx)}
-	// Soft-fail on misconfigured ai.yaml: log + continue without AI
-	// rather than crashing every Lua tool call. The MCP client will
-	// see the not_configured error if their script tries to call ai.*.
-	// ErrConfigNotFound is the normal "no AI" state and is silent.
-	provider, providerErr := ai.LoadProvider(s.ws.Paths().CacheDir)
-	switch {
-	case errors.Is(providerErr, ai.ErrConfigNotFound):
-		// no AI configured
-	case providerErr != nil:
-		slog.Warn("ai: failed to load config; AI bindings disabled", "error", providerErr)
-	default:
-		opts = append(opts, lua.WithAIProvider(provider))
-	}
-	runtime := lua.New(s.ws, s.ws.Snapshot().Meta(), projectRoot, &output, opts...)
-	defer runtime.Close()
-
-	if err := runtime.RunString(code); err != nil {
+	if err := s.ws.RunScript(code, workspace.ScriptOptions{Stdout: &output}); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Lua error: %s", err.Error())), nil
 	}
 
@@ -96,74 +71,20 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	return mcp.NewToolResultText(result), nil
 }
 
-func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleLuaRun(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	path, err := req.RequireString("path")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	// Security: Validate path is local (no "..", no absolute paths)
-	if !filepath.IsLocal(path) {
-		return mcp.NewToolResultError("script path must be a local path (no '..' or absolute paths allowed)"), nil
-	}
-
-	// Security: Must have .lua extension
-	if !strings.HasSuffix(path, ".lua") {
-		return mcp.NewToolResultError("script must have .lua extension"), nil
-	}
-
 	// Parse args if provided
 	args := req.GetStringSlice("args", nil)
 
-	projectRoot := s.ws.Paths().Root
-
-	// Security: Scripts must be in the scripts/ directory
-	// Use os.Root for traversal-resistant path access
-	root, err := os.OpenRoot(projectRoot)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("cannot open project root: %s", err.Error())), nil
-	}
-	defer root.Close()
-
-	// Verify script exists using traversal-resistant API
-	scriptsRoot, err := root.OpenRoot(scriptsDir)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("scripts directory not found: %s", err.Error())), nil
-	}
-	defer scriptsRoot.Close()
-
-	// Read script content using traversal-resistant API to prevent symlink escapes
-	scriptFile, err := scriptsRoot.Open(path)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("script not found: %s (scripts must be in the scripts/ directory)", path)), nil
-	}
-	defer scriptFile.Close()
-
-	// Read script content
-	scriptContent, err := io.ReadAll(scriptFile)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("cannot read script: %s", err.Error())), nil
-	}
-
-	// Capture output
 	var output bytes.Buffer
-
-	opts := []lua.Option{lua.WithContext(ctx)}
-	// Soft-fail on misconfigured ai.yaml: log + continue without AI
-	// rather than crashing every Lua tool call.
-	if provider, providerErr := ai.LoadProvider(s.ws.Paths().CacheDir); providerErr != nil {
-		slog.Warn("ai: failed to load config; AI bindings disabled", "error", providerErr)
-	} else if provider != nil {
-		opts = append(opts, lua.WithAIProvider(provider))
-	}
-	runtime := lua.New(s.ws, s.ws.Snapshot().Meta(), projectRoot, &output, opts...)
-	defer runtime.Close()
-
-	// Set script args before execution
-	runtime.SetArgs(args)
-
-	// Execute script content directly (bypasses symlink escapes since we read via os.Root)
-	if err := runtime.RunString(string(scriptContent)); err != nil {
+	if err := s.ws.RunScript(path, workspace.ScriptOptions{
+		Stdout: &output,
+		Args:   args,
+	}); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Lua error in %s: %s", path, err.Error())), nil
 	}
 

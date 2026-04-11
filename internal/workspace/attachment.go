@@ -34,7 +34,7 @@ func (w *Workspace) AttachFile(entityID, filePath, property string) (*AttachResu
 		return nil, fmt.Errorf("entity not found: %s", entityID)
 	}
 
-	meta := w.Meta()
+	meta := w.meta()
 
 	// Get entity definition
 	entityDef, ok := meta.GetEntityDef(entity.Type)
@@ -101,7 +101,7 @@ func (w *Workspace) ListAttachments(entityID string) ([]AttachmentInfo, error) {
 		return nil, fmt.Errorf("entity not found: %s", entityID)
 	}
 
-	meta := w.Meta()
+	meta := w.meta()
 
 	// Get entity definition
 	entityDef, ok := meta.GetEntityDef(entity.Type)
@@ -218,7 +218,7 @@ func (w *Workspace) GCAttachments(dryRun bool) (*GCAttachmentsResult, error) {
 // collectReferencedAttachmentPaths returns all attachment paths referenced by entities.
 func (w *Workspace) collectReferencedAttachmentPaths() []string {
 	var paths []string
-	meta := w.Meta()
+	meta := w.meta()
 
 	for _, entity := range w.graph().AllNodes() {
 		entityDef, ok := meta.GetEntityDef(entity.Type)

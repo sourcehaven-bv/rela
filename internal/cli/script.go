@@ -1,14 +1,11 @@
 package cli
 
 import (
-	"errors"
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/ai"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var scriptOutputDir string
@@ -62,30 +59,11 @@ Example:
 		scriptPath := args[0]
 		scriptArgs := args[1:]
 
-		opts := []lua.Option{lua.WithContext(cmd.Context())}
-		if scriptOutputDir != "" {
-			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
-		}
-		// AI is often the whole point of running a script, so a
-		// misconfigured ai.yaml should surface immediately rather
-		// than silently disable AI and let the script blow up later
-		// with a not_configured error. ErrConfigNotFound is the
-		// normal "no AI" state and is not propagated.
-		provider, err := ai.LoadProvider(projectCtx.CacheDir)
-		switch {
-		case errors.Is(err, ai.ErrConfigNotFound):
-			// no AI configured; the Lua bindings will return
-			// not_configured if the script tries to call ai.*
-		case err != nil:
-			return fmt.Errorf("ai: %w", err)
-		default:
-			opts = append(opts, lua.WithAIProvider(provider))
-		}
-
-		runtime := lua.New(ws, meta, projectCtx.Root, os.Stdout, opts...)
-		defer runtime.Close()
-
-		return runtime.RunFile(scriptPath, scriptArgs)
+		return ws.RunScript(scriptPath, workspace.ScriptOptions{
+			Stdout:    os.Stdout,
+			Args:      scriptArgs,
+			OutputDir: scriptOutputDir,
+		})
 	},
 }
 

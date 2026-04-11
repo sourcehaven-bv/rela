@@ -10,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // --- test helpers ---
@@ -21,16 +20,13 @@ type mockWorkspace struct {
 	mu         sync.Mutex
 	cacheFiles map[string][]byte
 	syncCount  atomic.Int32
-	paths      *project.Context
-	meta       *metamodel.Metamodel
+	scripts    []string // records RunScript calls
 }
 
 func newMockWorkspace(t *testing.T) *mockWorkspace {
 	t.Helper()
 	return &mockWorkspace{
 		cacheFiles: make(map[string][]byte),
-		paths:      &project.Context{Root: t.TempDir()},
-		meta:       &metamodel.Metamodel{},
 	}
 }
 
@@ -39,7 +35,12 @@ func (m *mockWorkspace) Sync() (*model.SyncResult, error) {
 	return &model.SyncResult{}, nil
 }
 
-func (m *mockWorkspace) Paths() *project.Context { return m.paths }
+func (m *mockWorkspace) RunScript(script string, _ workspace.ScriptOptions) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.scripts = append(m.scripts, script)
+	return nil
+}
 
 func (m *mockWorkspace) ReadProjectFile(name string) ([]byte, error) {
 	m.mu.Lock()
@@ -106,8 +107,6 @@ func newTestScheduler(
 	s := &Scheduler{
 		config: cfg,
 		ws:     ws,
-		metaFn: func() *metamodel.Metamodel { return ws.meta },
-		wsRaw:  ws,
 		state:  newState(),
 		logger: discardLogger(),
 		now:    func() time.Time { return now },
@@ -265,7 +264,7 @@ func TestScheduler_loadState_noFile(t *testing.T) {
 	t.Parallel()
 
 	ws := newMockWorkspace(t)
-	s := &Scheduler{ws: ws, metaFn: func() *metamodel.Metamodel { return ws.meta }, logger: discardLogger()}
+	s := &Scheduler{ws: ws, logger: discardLogger()}
 	s.loadState()
 
 	if s.state == nil || s.state.Tasks == nil {
@@ -281,7 +280,7 @@ func TestScheduler_loadState_existing(t *testing.T) {
 	stateData, _ := json.Marshal(State{Tasks: map[string]time.Time{"daily": ts}})
 	ws.cacheFiles[stateFile] = stateData
 
-	s := &Scheduler{ws: ws, metaFn: func() *metamodel.Metamodel { return ws.meta }, logger: discardLogger()}
+	s := &Scheduler{ws: ws, logger: discardLogger()}
 	s.loadState()
 
 	if got := s.state.Tasks["daily"]; !got.Equal(ts) {
@@ -318,8 +317,6 @@ func TestScheduler_Run_emptyConfig(t *testing.T) {
 	s := &Scheduler{
 		config: &Config{Tasks: nil},
 		ws:     ws,
-		metaFn: func() *metamodel.Metamodel { return ws.meta },
-		wsRaw:  ws,
 		logger: discardLogger(),
 		now:    time.Now,
 	}
@@ -360,8 +357,6 @@ func TestScheduler_doExecuteTask_skipsOnCancelledContext(t *testing.T) {
 	ws := newMockWorkspace(t)
 	s := &Scheduler{
 		ws:     ws,
-		metaFn: func() *metamodel.Metamodel { return ws.meta },
-		wsRaw:  ws,
 		state:  newState(),
 		logger: discardLogger(),
 		now:    time.Now,

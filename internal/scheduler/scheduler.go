@@ -5,10 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // tickInterval is how often the scheduler wakes to check for due tasks.
@@ -17,7 +15,7 @@ const tickInterval = 60 * time.Second
 // WorkspaceProvider is the subset of workspace.Workspace the scheduler needs.
 type WorkspaceProvider interface {
 	Sync() (*model.SyncResult, error)
-	Paths() *project.Context
+	RunScript(script string, opts workspace.ScriptOptions) error
 	ReadProjectFile(name string) ([]byte, error)
 	ReadCacheFile(name string) ([]byte, error)
 	WriteCacheFile(name string, data []byte) error
@@ -26,13 +24,7 @@ type WorkspaceProvider interface {
 // StartBackground starts the scheduler in a background goroutine if
 // schedules.yaml exists. It is a no-op if the file is missing. The scheduler
 // runs until ctx is cancelled. Errors are logged, not returned.
-func StartBackground(
-	ctx context.Context,
-	ws WorkspaceProvider,
-	wsRaw interface{},
-	metaFn func() *metamodel.Metamodel,
-	logger *slog.Logger,
-) {
+func StartBackground(ctx context.Context, ws WorkspaceProvider, logger *slog.Logger) {
 	data, err := ws.ReadProjectFile(ConfigFile)
 	if err != nil {
 		// No schedules.yaml — nothing to do.
@@ -49,8 +41,7 @@ func StartBackground(
 		return
 	}
 
-	engine := script.NewEngine()
-	s := New(cfg, engine, ws, wsRaw, metaFn, logger)
+	s := New(cfg, ws, logger)
 
 	go func() {
 		logger.Info("background scheduler starting", "tasks", len(cfg.Tasks))
@@ -63,12 +54,7 @@ func StartBackground(
 // Scheduler runs Lua scripts sequentially on simple recurring schedules.
 type Scheduler struct {
 	config *Config
-	engine *script.Engine
 	ws     WorkspaceProvider
-	metaFn func() *metamodel.Metamodel
-	// wsRaw is the workspace as interface{} for passing to ScriptContext.
-	// It must satisfy lua.WorkspaceInterface.
-	wsRaw  interface{}
 	state  *State
 	logger *slog.Logger
 	now    func() time.Time // for testing
@@ -78,22 +64,15 @@ type Scheduler struct {
 	executeTaskFunc func(ctx context.Context, task TaskConfig)
 }
 
-// New creates a Scheduler. The metaFn returns the current metamodel; callers
-// typically pass ws.Snapshot().Meta from a workspace.Workspace.
+// New creates a Scheduler.
 func New(
 	cfg *Config,
-	engine *script.Engine,
 	ws WorkspaceProvider,
-	wsRaw interface{},
-	metaFn func() *metamodel.Metamodel,
 	logger *slog.Logger,
 ) *Scheduler {
 	return &Scheduler{
 		config: cfg,
-		engine: engine,
 		ws:     ws,
-		metaFn: metaFn,
-		wsRaw:  wsRaw,
 		logger: logger,
 		now:    time.Now,
 	}
@@ -180,13 +159,7 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 			"name", task.Name, "error", err)
 	}
 
-	sctx := &schedulerScriptContext{
-		ws:          s.wsRaw,
-		meta:        s.metaFn(),
-		projectRoot: s.ws.Paths().Root,
-	}
-
-	err := s.engine.ExecuteFile(task.Script, sctx)
+	err := s.ws.RunScript(task.Script, workspace.ScriptOptions{})
 	elapsed := s.now().Sub(start)
 
 	if err != nil {
@@ -221,15 +194,3 @@ func (s *Scheduler) saveState() {
 	}
 }
 
-// schedulerScriptContext implements metamodel.ScriptContext for scheduled tasks.
-type schedulerScriptContext struct {
-	ws          interface{}
-	meta        *metamodel.Metamodel
-	projectRoot string
-}
-
-func (c *schedulerScriptContext) GetWorkspace() interface{}     { return c.ws }
-func (c *schedulerScriptContext) GetMeta() *metamodel.Metamodel { return c.meta }
-func (c *schedulerScriptContext) GetProjectRoot() string        { return c.projectRoot }
-func (c *schedulerScriptContext) GetEntity() *model.Entity      { return nil }
-func (c *schedulerScriptContext) GetOldEntity() *model.Entity   { return nil }

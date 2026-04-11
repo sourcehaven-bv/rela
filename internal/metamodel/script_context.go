@@ -1,6 +1,10 @@
 package metamodel
 
-import "github.com/Sourcehaven-BV/rela/internal/model"
+import (
+	"io"
+
+	"github.com/Sourcehaven-BV/rela/internal/model"
+)
 
 // ScriptContext provides everything a script executor needs to execute.
 // This interface is defined here (instead of the script package) to allow
@@ -21,4 +25,10 @@ type ScriptContext interface {
 	GetEntity() *model.Entity
 	// GetOldEntity returns the previous entity state (may be nil).
 	GetOldEntity() *model.Entity
+	// GetStdout returns the writer for script output (nil = default).
+	GetStdout() io.Writer
+	// GetArgs returns script arguments (nil = none).
+	GetArgs() []string
+	// GetOutputDir returns the output directory (empty = default).
+	GetOutputDir() string
 }

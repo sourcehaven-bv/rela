@@ -1,6 +1,7 @@
 package script
 
 import (
+	"io"
 	"strings"
 	"testing"
 
@@ -44,6 +45,9 @@ func (c *testContext) GetMeta() *metamodel.Metamodel { return nil }
 func (c *testContext) GetProjectRoot() string        { return c.projectRoot }
 func (c *testContext) GetEntity() *model.Entity      { return nil }
 func (c *testContext) GetOldEntity() *model.Entity   { return nil }
+func (c *testContext) GetStdout() io.Writer          { return nil }
+func (c *testContext) GetArgs() []string             { return nil }
+func (c *testContext) GetOutputDir() string          { return "" }
 
 func TestEngine_ExecuteFile_PathTraversal(t *testing.T) {
 	// Test that path traversal attempts are blocked.

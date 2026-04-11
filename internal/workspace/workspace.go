@@ -8,6 +8,7 @@ package workspace
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"sort"
@@ -61,6 +62,9 @@ type scriptContextImpl struct {
 	projectRoot string
 	entity      *model.Entity
 	oldEntity   *model.Entity
+	stdout      io.Writer
+	args        []string
+	outputDir   string
 }
 
 func (c *scriptContextImpl) GetWorkspace() interface{}     { return c.workspace }
@@ -68,6 +72,40 @@ func (c *scriptContextImpl) GetMeta() *metamodel.Metamodel { return c.meta }
 func (c *scriptContextImpl) GetProjectRoot() string        { return c.projectRoot }
 func (c *scriptContextImpl) GetEntity() *model.Entity      { return c.entity }
 func (c *scriptContextImpl) GetOldEntity() *model.Entity   { return c.oldEntity }
+func (c *scriptContextImpl) GetStdout() io.Writer          { return c.stdout }
+func (c *scriptContextImpl) GetArgs() []string             { return c.args }
+func (c *scriptContextImpl) GetOutputDir() string          { return c.outputDir }
+
+// ScriptOptions configures a script execution.
+type ScriptOptions struct {
+	Entity    *model.Entity // triggering entity (automation context)
+	OldEntity *model.Entity // pre-mutation state (automation context)
+	Args      []string      // script arguments
+	Stdout    io.Writer     // output writer (default: io.Discard)
+	OutputDir string        // output directory for rela.write_file
+}
+
+// RunScript executes a Lua script. If script ends with ".lua", it's loaded
+// from scripts/; otherwise it's treated as inline code.
+func (w *Workspace) RunScript(script string, opts ScriptOptions) error {
+	if w.scriptExec == nil {
+		return errors.New("script executor not configured")
+	}
+	ctx := &scriptContextImpl{
+		workspace:   w,
+		meta:        w.meta(),
+		projectRoot: w.repo.Paths().Root,
+		entity:      opts.Entity,
+		oldEntity:   opts.OldEntity,
+		stdout:      opts.Stdout,
+		args:        opts.Args,
+		outputDir:   opts.OutputDir,
+	}
+	if strings.HasSuffix(script, ".lua") {
+		return w.scriptExec.ExecuteFile(script, ctx)
+	}
+	return w.scriptExec.ExecuteCode(script, ctx)
+}
 
 // NopScriptExecutor is a no-op implementation of ScriptExecutor for tests
 // that don't trigger Lua automations. It panics if actually called, making
@@ -340,10 +378,8 @@ func (w *Workspace) graph() *graph.Graph {
 	return nil
 }
 
-// Meta returns the current metamodel from the latest workspace state.
-// Prefer Snapshot().Meta() when you need a coherent view of graph + metamodel;
-// this method is for callers that only need the metamodel (e.g. scheduler).
-func (w *Workspace) Meta() *metamodel.Metamodel {
+// meta returns the current metamodel.
+func (w *Workspace) meta() *metamodel.Metamodel {
 	if s := w.state.Load(); s != nil {
 		return s.meta
 	}
@@ -413,12 +449,12 @@ func (w *Workspace) DiscoverEntityTemplates(entityType string) ([]*model.EntityT
 
 // GenerateEntityTemplate generates a template file for the given entity type.
 func (w *Workspace) GenerateEntityTemplate(entityType, variant string, force bool) (bool, error) {
-	return w.repo.GenerateEntityTemplate(w.Meta(), entityType, variant, force)
+	return w.repo.GenerateEntityTemplate(w.meta(), entityType, variant, force)
 }
 
 // GenerateRelationTemplate generates a template file for the given relation type.
 func (w *Workspace) GenerateRelationTemplate(relationType string, force bool) (bool, error) {
-	return w.repo.GenerateRelationTemplate(w.Meta(), relationType, force)
+	return w.repo.GenerateRelationTemplate(w.meta(), relationType, force)
 }
 
 // FindOrphanedTempFiles returns paths of leftover .new temp files.
@@ -770,7 +806,7 @@ func (w *Workspace) saveCacheQuietlyFor(g *graph.Graph) {
 // ResolveEntityType resolves a type name (alias, plural) to its canonical
 // name and definition.
 func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
-	meta := w.Meta()
+	meta := w.meta()
 
 	// Exact match or alias.
 	resolved := meta.ResolveAlias(strings.TrimSpace(typeName))
@@ -1086,7 +1122,7 @@ type createEntityCoreOpts struct {
 // createEntityCore creates an entity without running automations.
 // This is the shared creation logic used by CreateEntity and automation processing.
 func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpts) (*model.Entity, error) {
-	meta := w.Meta()
+	meta := w.meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
 		return nil, fmt.Errorf("unknown entity type: %s", entityType)
@@ -1229,7 +1265,7 @@ func (w *Workspace) processEntityCreations(
 	effects *automationSideEffects,
 ) []automationQueueItem {
 	var newItems []automationQueueItem
-	meta := w.Meta()
+	meta := w.meta()
 
 	for _, toCreate := range toCreateList {
 		if skip := w.handleIfExists(trigger, toCreate, effects); skip {
@@ -1309,7 +1345,7 @@ func (w *Workspace) applyRelationCreations(
 	relations []*model.Relation,
 	effects *automationSideEffects,
 ) {
-	meta := w.Meta()
+	meta := w.meta()
 
 	for _, rel := range relations {
 		rel.From = triggerEntity.ID
@@ -1346,10 +1382,9 @@ func (w *Workspace) executeLuaActions(
 		return
 	}
 
-	// Build script context once for all actions
 	ctx := &scriptContextImpl{
 		workspace:   w,
-		meta:        w.Meta(),
+		meta:        w.meta(),
 		projectRoot: w.repo.Paths().Root,
 		entity:      entity,
 		oldEntity:   oldEntity,
@@ -1357,19 +1392,14 @@ func (w *Workspace) executeLuaActions(
 
 	for _, action := range luaActions {
 		var err error
-
 		switch {
 		case action.Code != "":
-			// Inline script code
 			err = w.scriptExec.ExecuteCode(action.Code, ctx)
 		case action.FilePath != "":
-			// Script file from scripts/ directory
 			err = w.scriptExec.ExecuteFile(action.FilePath, ctx)
 		default:
-			// Empty action - skip
 			continue
 		}
-
 		if err != nil {
 			effects.Errors = append(effects.Errors,
 				fmt.Sprintf("script execution error: %s", err.Error()))
@@ -1424,7 +1454,7 @@ func (w *Workspace) createTriggerRelation(
 	relationType string,
 	effects *automationSideEffects,
 ) {
-	meta := w.Meta()
+	meta := w.meta()
 
 	if err := meta.ValidateRelation(relationType, triggerEntity.Type, created.Type); err != nil {
 		effects.Errors = append(effects.Errors,
@@ -1561,7 +1591,7 @@ func (w *Workspace) DeleteRelation(from, relType, to string) error {
 // FormatEntity checks if an entity file needs formatting and optionally writes
 // the formatted version. Returns true if the file was (or would be) modified.
 func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error) {
-	meta := w.Meta()
+	meta := w.meta()
 	// Get property order from metamodel
 	var propertyOrder []string
 	if entityDef, ok := meta.GetEntityDef(entity.Type); ok {
