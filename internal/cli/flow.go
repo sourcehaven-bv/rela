@@ -14,10 +14,8 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/secrets"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -73,27 +71,11 @@ Example:
 		if flowOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(flowOutputDir))
 		}
-		// AI is often the whole point of running a flow script, so a
-		// misconfigured ai.yaml should surface immediately rather
-		// than silently disable AI. ErrConfigNotFound is the normal
-		// "no AI" state and is not propagated.
-		provider, providerErr := ai.LoadProvider(flowWs.Paths().CacheDir)
-		switch {
-		case errors.Is(providerErr, ai.ErrConfigNotFound):
-			// no AI configured
-		case providerErr != nil:
-			return fmt.Errorf("ai: %w", providerErr)
-		default:
-			opts = append(opts, lua.WithAIProvider(provider))
+		scriptOpts, optErr := loadScriptOptions(flowWs.Paths().CacheDir, scriptPath)
+		if optErr != nil {
+			return optErr
 		}
-
-		sec, secErr := secrets.Load(flowWs.Paths().CacheDir, scriptPath)
-		if secErr != nil && !errors.Is(secErr, secrets.ErrNotFound) {
-			return fmt.Errorf("secrets: %w", secErr)
-		}
-		if len(sec) > 0 {
-			opts = append(opts, lua.WithSecrets(sec))
-		}
+		opts = append(opts, scriptOpts...)
 
 		runtime := lua.New(flowWs, flowWs.Snapshot().Meta(), flowWs.Paths().Root, os.Stdout, opts...)
 		defer runtime.Close()

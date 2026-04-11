@@ -67,29 +67,11 @@ Example:
 		if scriptOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
 		}
-		// AI is often the whole point of running a script, so a
-		// misconfigured ai.yaml should surface immediately rather
-		// than silently disable AI and let the script blow up later
-		// with a not_configured error. ErrConfigNotFound is the
-		// normal "no AI" state and is not propagated.
-		provider, err := ai.LoadProvider(projectCtx.CacheDir)
-		switch {
-		case errors.Is(err, ai.ErrConfigNotFound):
-			// no AI configured; the Lua bindings will return
-			// not_configured if the script tries to call ai.*
-		case err != nil:
-			return fmt.Errorf("ai: %w", err)
-		default:
-			opts = append(opts, lua.WithAIProvider(provider))
+		scriptOpts, err := loadScriptOptions(projectCtx.CacheDir, scriptPath)
+		if err != nil {
+			return err
 		}
-
-		sec, secErr := secrets.Load(projectCtx.CacheDir, scriptPath)
-		if secErr != nil && !errors.Is(secErr, secrets.ErrNotFound) {
-			return fmt.Errorf("secrets: %w", secErr)
-		}
-		if len(sec) > 0 {
-			opts = append(opts, lua.WithSecrets(sec))
-		}
+		opts = append(opts, scriptOpts...)
 
 		runtime := lua.New(ws, meta, projectCtx.Root, os.Stdout, opts...)
 		defer runtime.Close()
@@ -102,4 +84,30 @@ func init() {
 	scriptCmd.Flags().StringVar(&scriptOutputDir, "output-dir", "",
 		"Directory for write_file output (default: {project}/output)")
 	rootCmd.AddCommand(scriptCmd)
+}
+
+// loadScriptOptions returns lua.Options for AI and secrets, loaded from the
+// given .rela directory. Used by both script and flow commands.
+func loadScriptOptions(cacheDir, scriptPath string) ([]lua.Option, error) {
+	var opts []lua.Option
+
+	provider, err := ai.LoadProvider(cacheDir)
+	switch {
+	case errors.Is(err, ai.ErrConfigNotFound):
+		// no AI configured
+	case err != nil:
+		return nil, fmt.Errorf("ai: %w", err)
+	default:
+		opts = append(opts, lua.WithAIProvider(provider))
+	}
+
+	sec, secErr := secrets.Load(cacheDir, scriptPath)
+	if secErr != nil && !errors.Is(secErr, secrets.ErrNotFound) {
+		return nil, fmt.Errorf("secrets: %w", secErr)
+	}
+	if len(sec) > 0 {
+		opts = append(opts, lua.WithSecrets(sec))
+	}
+
+	return opts, nil
 }
