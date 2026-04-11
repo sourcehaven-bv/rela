@@ -57,6 +57,7 @@ components:
 
   # Infrastructure
   ai:               { in: internal/ai }
+  secrets:          { in: internal/secrets }
   attachment:       { in: internal/attachment }
   git:              { in: internal/git }
   output:           { in: internal/output }
@@ -153,7 +154,7 @@ deps:
       - scheduler
       - schema
       - script
-
+      - secrets
       - workspace
     canUse:
       - cobra
@@ -201,7 +202,7 @@ deps:
       - schema
       - script
       - search
-
+      - secrets
       - workspace
     canUse:
       - mcpgo
@@ -322,6 +323,7 @@ deps:
       - lua
       - metamodel
       - project
+      - secrets
   search:
     mayDependOn:
       - filter
