@@ -4,6 +4,7 @@ type: ticket
 title: Secrets/settings system for Lua scripts
 kind: enhancement
 priority: medium
+effort: s
 status: ready
 ---
 
