@@ -25,6 +25,7 @@ A `data-entry.yaml` file defines:
 - **Dashboard** - An overview page with query-driven cards showing counts, breakdowns, and tables
 - **Kanbans** - Visual board views with drag-and-drop cards grouped by columns and optional swimlanes
 - **Navigation** - Sidebar menu entries with optional grouping
+- **Actions** - Quick operations (property mutations or Lua scripts) triggered from lists or the sidebar
 - **Commands** - User-defined scripts triggered from the UI with streamed results
 - **User Defaults** - Per-user default values for properties and relations, configurable via Settings page
 
@@ -487,6 +488,7 @@ lists:
 | `edit_form`       | string | Form name for the row edit action                           |
 | `detail_view`     | string | View name for the row detail action                         |
 | `page_size`       | int    | Rows per page (default: 25)                                 |
+| `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
 
 ### Column Options
 
@@ -1159,6 +1161,7 @@ navigation:
 | `kanban`    | string | Kanban board name to navigate to                               |
 | `dashboard` | bool   | Link to the dashboard page                                     |
 | `graph`     | bool   | Link to the graph explorer                                     |
+| `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
 
 ### Groups
 
@@ -1182,6 +1185,129 @@ List entries show an entity count badge next to the label (based on the list's f
 and graph entries do not show a count.
 
 Direct items and groups can be freely mixed in any order.
+
+## Actions
+
+Actions define quick operations that can be triggered from list views or the sidebar. An action
+either mutates entity properties declaratively (`set`) or runs a Lua script (`script`).
+
+### Defining Actions
+
+Actions are defined at the top level of `data-entry.yaml`:
+
+```yaml
+actions:
+  resolve-ticket:
+    label: "Resolve"
+    key: "r"
+    set:
+      status: resolved
+
+  close-ticket:
+    label: "Close"
+    key: "c"
+    confirm: true
+    set:
+      status: closed
+
+  run-checks:
+    label: "Validate"
+    key: "v"
+    script: validate-ticket.lua
+    params:
+      strict: "true"
+```
+
+### Action Fields
+
+| Field         | Type   | Description                                                     |
+| ------------- | ------ | --------------------------------------------------------------- |
+| `label`       | string | Display text (required when referenced by a list)               |
+| `key`         | string | Keyboard shortcut — single lowercase letter or digit (required when referenced by a list) |
+| `description` | string | Optional description                                            |
+| `set`         | map    | Property key-value pairs to set on the entity (mutually exclusive with `script`) |
+| `script`      | string | Lua script path, relative to the `actions/` directory (mutually exclusive with `set`) |
+| `params`      | map    | Key-value parameters passed to the script                       |
+| `confirm`     | bool   | Show a confirmation dialog before executing (default: `false`)  |
+
+Each action must have either `set` or `script`, not both.
+
+### Using Actions in Lists
+
+Reference action IDs in a list's `actions` field to make them available as keyboard shortcuts
+on selected rows:
+
+```yaml
+lists:
+  all_tickets:
+    entity_type: ticket
+    title: "All Tickets"
+    columns:
+      - property: title
+        link: true
+      - property: status
+    actions: [resolve-ticket, close-ticket]
+```
+
+When a list has actions, the configured keyboard shortcuts appear in the list's toolbar.
+Select one or more rows, then press the shortcut key to apply the action to all selected entities.
+
+### Using Actions in Navigation
+
+Reference an action ID in a navigation entry to render it as a sidebar button:
+
+```yaml
+navigation:
+  - label: "Run Checks"
+    action: run-checks
+```
+
+When clicked, the action executes. If the action script returns a `redirect`, the UI navigates
+to that path. If it returns a `message`, a toast notification is shown.
+
+### Lua Action Scripts
+
+Action scripts live in the `actions/` directory at the project root. They have full access
+to the rela Lua API (entity CRUD, graph queries, AI). A script can optionally return a table
+to control the UI response:
+
+```lua
+-- actions/validate-ticket.lua
+local entity_id = rela.params["entity_id"]
+local entity_type = rela.params["entity_type"]
+
+-- ... perform validation ...
+
+return {
+    message = "Validation passed",
+    message_type = "success",      -- "success", "info", "warning", or "error"
+    redirect = "/list/all_tickets" -- optional: navigate after completion
+}
+```
+
+Scripts have a 5-second execution timeout. Returning nothing (or `nil`) produces a silent
+success response.
+
+### Reserved Keyboard Shortcuts
+
+The following keys are reserved for built-in list navigation and cannot be used as action keys:
+
+| Key | Built-in Function |
+| --- | ----------------- |
+| `j` | Move selection down |
+| `k` | Move selection up |
+| `o` | Open selected entity |
+| `e` | Edit selected entity |
+| `n` | Create new entity |
+| `h` | Previous page |
+| `l` | Next page |
+
+### Validation Rules
+
+- Action IDs must match `^[a-z0-9_-]{1,64}$`
+- `set` properties must exist in the entity type's metamodel
+- `script` paths must end in `.lua` and be local paths (no `..` or absolute paths)
+- Keys must be unique within a list (no two actions on the same list can share a key)
 
 ## Commands
 
@@ -1461,6 +1587,19 @@ forms:
         label: "Name"
         required: true
 
+actions:
+  resolve-ticket:
+    label: "Resolve"
+    key: "r"
+    set:
+      status: resolved
+  close-ticket:
+    label: "Close"
+    key: "c"
+    confirm: true
+    set:
+      status: closed
+
 lists:
   all_tickets:
     entity_type: ticket
@@ -1492,6 +1631,7 @@ lists:
     create_form: create_ticket
     edit_form: edit_ticket
     detail_view: ticket_detail
+    actions: [resolve-ticket, close-ticket]
     page_size: 25
 
   open_tickets:
