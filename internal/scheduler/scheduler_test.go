@@ -42,6 +42,16 @@ func (m *mockWorkspace) Sync() (*model.SyncResult, error) {
 func (m *mockWorkspace) Meta() *metamodel.Metamodel { return m.meta }
 func (m *mockWorkspace) Paths() *project.Context    { return m.paths }
 
+func (m *mockWorkspace) ReadProjectFile(name string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, ok := m.cacheFiles["project:"+name]
+	if !ok {
+		return nil, &notFoundError{name}
+	}
+	return data, nil
+}
+
 func (m *mockWorkspace) ReadCacheFile(name string) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

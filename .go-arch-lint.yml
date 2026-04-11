@@ -114,6 +114,7 @@ deps:
       - dataentry
       - project
       - repository
+      - scheduler
       - script
       - storage
       - workspace
@@ -125,6 +126,7 @@ deps:
       - metamodel
       - project
       - repository
+      - scheduler
       - script
       - storage
       - workspace

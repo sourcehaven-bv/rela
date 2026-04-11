@@ -19,8 +19,40 @@ type WorkspaceProvider interface {
 	Sync() (*model.SyncResult, error)
 	Meta() *metamodel.Metamodel
 	Paths() *project.Context
+	ReadProjectFile(name string) ([]byte, error)
 	ReadCacheFile(name string) ([]byte, error)
 	WriteCacheFile(name string, data []byte) error
+}
+
+// StartBackground starts the scheduler in a background goroutine if
+// schedules.yaml exists. It is a no-op if the file is missing. The scheduler
+// runs until ctx is cancelled. Errors are logged, not returned.
+func StartBackground(ctx context.Context, ws WorkspaceProvider, wsRaw interface{}, logger *slog.Logger) {
+	data, err := ws.ReadProjectFile(ConfigFile)
+	if err != nil {
+		// No schedules.yaml — nothing to do.
+		return
+	}
+
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		logger.Error("invalid schedules.yaml, scheduler not started", "error", err)
+		return
+	}
+
+	if len(cfg.Tasks) == 0 {
+		return
+	}
+
+	engine := script.NewEngine()
+	s := New(cfg, engine, ws, wsRaw, logger)
+
+	go func() {
+		logger.Info("background scheduler starting", "tasks", len(cfg.Tasks))
+		if runErr := s.Run(ctx); runErr != nil {
+			logger.Error("scheduler stopped with error", "error", runErr)
+		}
+	}()
 }
 
 // Scheduler runs Lua scripts sequentially on simple recurring schedules.
