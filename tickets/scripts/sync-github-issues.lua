@@ -5,14 +5,15 @@
 -- in its content. Re-running the script skips issues that already have a matching ticket.
 --
 -- Usage:
---   rela lua scripts/sync-github-issues.lua
+--   rela script scripts/sync-github-issues.lua
 --
 -- The GitHub API is public (no auth needed for public repos), but rate-limited
 -- to 60 requests/hour for unauthenticated requests.
 
 local REPO = "sourcehaven-bv/rela"
 local API = "https://api.github.com/repos/" .. REPO .. "/issues"
-local MARKER_PREFIX = "<!-- github-issue:"
+local MARKER_PATTERN = "<!%-%- github%-issue:(%d+)"
+local MARKER_FMT     = "<!-- github-issue:%d -->"
 
 -- Fetch open issues from GitHub (excludes PRs).
 local function fetch_issues()
@@ -58,8 +59,7 @@ local function find_existing_markers()
     local tickets = rela.list_entities("ticket")
     for _, t in ipairs(tickets) do
         local content = t.content or ""
-        -- Pattern-escape: < and - are special in Lua patterns.
-        local num = content:match("<!%-%- github%-issue:(%d+)")
+        local num = content:match(MARKER_PATTERN)
         if num then
             existing[tonumber(num)] = t.id
         end
@@ -87,7 +87,7 @@ end
 -- Build markdown content from a GitHub issue.
 local function build_content(issue)
     local parts = {}
-    table.insert(parts, MARKER_PREFIX .. issue.number .. " -->")
+    table.insert(parts, string.format(MARKER_FMT, issue.number))
     table.insert(parts, "")
     table.insert(parts, "Imported from [#" .. issue.number .. "](" .. issue.html_url .. ")")
     table.insert(parts, "")
