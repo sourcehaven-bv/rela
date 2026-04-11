@@ -65,10 +65,10 @@ type Scheduler struct {
 	config *Config
 	engine *script.Engine
 	ws     WorkspaceProvider
+	metaFn func() *metamodel.Metamodel
 	// wsRaw is the workspace as interface{} for passing to ScriptContext.
 	// It must satisfy lua.WorkspaceInterface.
 	wsRaw  interface{}
-	metaFn func() *metamodel.Metamodel
 	state  *State
 	logger *slog.Logger
 	now    func() time.Time // for testing
@@ -92,8 +92,8 @@ func New(
 		config: cfg,
 		engine: engine,
 		ws:     ws,
-		wsRaw:  wsRaw,
 		metaFn: metaFn,
+		wsRaw:  wsRaw,
 		logger: logger,
 		now:    time.Now,
 	}

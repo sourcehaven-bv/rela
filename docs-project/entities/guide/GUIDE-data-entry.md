@@ -645,9 +645,8 @@ The search bar also supports `sort:` clauses (see [Query Syntax](#query-syntax) 
 
 ## Views
 
-Views define read-only detail pages that traverse the entity graph to display related data.
-They are the data-entry equivalent of the CLI's views.yaml concept, adapted for
-rendering as HTML sections.
+Views define read-only detail pages that traverse the entity graph to display related data,
+adapted for rendering as HTML sections.
 
 ### Basic View
 
@@ -699,7 +698,7 @@ views:
 | ---------- | ------ | ---------------------------------------------- |
 | `title`    | string | Page heading                                   |
 | `entry`    | object | Entry entity type                              |
-| `traverse` | list   | Graph traversal rules (same as views.yaml)     |
+| `traverse` | list   | Graph traversal rules                          |
 | `sections` | list   | Display sections                               |
 
 ### Entry
@@ -715,8 +714,7 @@ specific ticket entity.
 
 ### Traverse Rules
 
-Traverse rules collect related entities into named collections. They work identically to
-views.yaml traverse rules:
+Traverse rules collect related entities into named collections:
 
 ```yaml
 traverse:
@@ -1639,22 +1637,6 @@ navigation:
       - label: "Ticket Board"
         kanban: ticket_board
 ```
-
-## Relationship to views.yaml
-
-The `views` section in `data-entry.yaml` uses the same traversal engine as the CLI's
-views.yaml, but adapted for HTML rendering:
-
-| Feature                | views.yaml (CLI)                     | data-entry.yaml views                |
-| ---------------------- | ------------------------------------ | ------------------------------------ |
-| Traversal rules        | Same `from`/`follow`/`collect_as`    | Same `from`/`follow`/`collect_as`    |
-| Output                 | YAML/JSON data                       | HTML sections                        |
-| Display control        | N/A (raw data)                       | `sections` with display modes        |
-| Filters/derived        | `filters`, `derived`                 | Not yet supported                    |
-| Relation exports       | `relation_exports`                   | Not yet supported                    |
-
-If you already have a `views.yaml`, you can reuse the same traverse rules in your data-entry
-views and add `sections` for HTML rendering.
 
 ## Analysis
 

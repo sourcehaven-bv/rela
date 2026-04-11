@@ -42,8 +42,6 @@ components:
   repository:       { in: internal/repository }
   schema:           { in: internal/schema }
   validation:       { in: internal/validation }
-  views:            { in: internal/views }
-
   # Core domain
   graph:            { in: internal/graph }
   lua:              { in: internal/lua }
@@ -93,6 +91,10 @@ vendors:
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
   singleflight: { in: golang.org/x/sync/singleflight }
+  http2:
+    in:
+      - golang.org/x/net/http2
+      - golang.org/x/net/http2/**
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
@@ -119,6 +121,8 @@ deps:
       - script
       - storage
       - workspace
+    canUse:
+      - http2
   cmdDesktop:
     mayDependOn:
       - dataentry
@@ -149,7 +153,7 @@ deps:
       - scheduler
       - schema
       - script
-      - views
+
       - workspace
     canUse:
       - cobra
@@ -197,7 +201,7 @@ deps:
       - schema
       - script
       - search
-      - views
+
       - workspace
     canUse:
       - mcpgo
@@ -223,7 +227,7 @@ deps:
       - search
       - storage
       - validation
-      - views
+
     canUse:
       - goldmark
       - singleflight
@@ -259,7 +263,7 @@ deps:
       - migration
       - project
       - storage
-      - views
+
     canUse:
       - gogit
   schema:
@@ -268,7 +272,7 @@ deps:
       - graph
       - metamodel
       - migration
-      - views
+
   validation:
     mayDependOn:
       - filter
@@ -277,13 +281,6 @@ deps:
       - metamodel
     canUse:
       - gopherlua
-  views:
-    mayDependOn:
-      - filter
-      - graph
-      - metamodel
-      - storage
-
   # Core domain
   metamodel:
     mayDependOn:

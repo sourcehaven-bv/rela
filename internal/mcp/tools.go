@@ -36,10 +36,6 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolListEntityTypes(), s.handleListEntityTypes)
 	s.mcp.AddTool(toolListRelationTypes(), s.handleListRelationTypes)
 
-	// View tools
-	s.mcp.AddTool(toolListViews(), s.handleListViews)
-	s.mcp.AddTool(toolExecuteView(), s.handleExecuteView)
-
 	// Utility tools
 	s.mcp.AddTool(toolRefresh(), s.handleRefresh)
 	s.mcp.AddTool(toolExport(), s.handleExport)
@@ -217,25 +213,6 @@ func toolListEntityTypes() mcp.Tool {
 func toolListRelationTypes() mcp.Tool {
 	return mcp.NewTool("list_relation_types",
 		mcp.WithDescription("List available relation types with their constraints"),
-	)
-}
-
-func toolListViews() mcp.Tool {
-	return mcp.NewTool("list_views",
-		mcp.WithDescription("List available view definitions from views.yaml"),
-	)
-}
-
-func toolExecuteView() mcp.Tool {
-	return mcp.NewTool("execute_view",
-		mcp.WithDescription(
-			"Execute a view definition to generate complete context for an entity. "+
-				"Views are declarative graph traversals defined in views.yaml that efficiently "+
-				"gather all related entities and their relationships around a starting entity."),
-		mcp.WithString("name", mcp.Required(), mcp.Description("View name (as defined in views.yaml)")),
-		mcp.WithString("id", mcp.Required(), mcp.Description("Entry entity ID")),
-		mcp.WithString("format", mcp.Description("Output format: json (default) or yaml"),
-			mcp.Enum("json", "yaml")),
 	)
 }
 

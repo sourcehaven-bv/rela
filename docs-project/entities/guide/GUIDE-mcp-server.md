@@ -116,17 +116,6 @@ status=draft,proposed
 | `list_entity_types` | List entity types with property schemas | (none) |
 | `list_relation_types` | List relation types with constraints | (none) |
 
-### View Tools
-
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `list_views` | List available view definitions | (none) |
-| `execute_view` | Execute a view for an entity | `name`, `id`, `format?` |
-
-Views are declarative graph traversals defined in `views.yaml`. They efficiently gather all
-related entities and relationships around a starting entity. Use `list_views` to discover
-available views and `execute_view` to run one.
-
 ### Utility Tools
 
 | Tool | Description | Parameters |
@@ -143,7 +132,6 @@ Resources expose rela data as readable URIs.
 | `rela://metamodel` | Full metamodel schema (JSON) |
 | `rela://entity/{type}/{id}` | Single entity with properties and relations |
 | `rela://relation/{from}/{type}/{to}` | Single relation |
-| `rela://view/{name}/{id}` | Execute a view for an entity (JSON) |
 
 ## Prompts
 

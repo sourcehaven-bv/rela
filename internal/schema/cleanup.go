@@ -21,12 +21,11 @@ type Change struct {
 type CleanupPlan struct {
 	MetamodelChanges []Change `json:"metamodel_changes"`
 	DataEntryChanges []Change `json:"data_entry_changes"`
-	ViewsChanges     []Change `json:"views_changes"`
 }
 
 // TotalChanges returns the total number of planned changes.
 func (p *CleanupPlan) TotalChanges() int {
-	return len(p.MetamodelChanges) + len(p.DataEntryChanges) + len(p.ViewsChanges)
+	return len(p.MetamodelChanges) + len(p.DataEntryChanges)
 }
 
 // IsEmpty returns true if there are no planned changes.
@@ -101,19 +100,11 @@ func planEntityTypeCascade(plan *CleanupPlan, usage TypeUsage) {
 				Target: extractName(ref.Section, "kanbans."),
 			})
 		case "view":
-			if ref.File == "views.yaml" {
-				plan.ViewsChanges = append(plan.ViewsChanges, Change{
-					File:   ref.File,
-					Action: "remove_view",
-					Target: extractName(ref.Section, "views."),
-				})
-			} else {
-				plan.DataEntryChanges = append(plan.DataEntryChanges, Change{
-					File:   ref.File,
-					Action: "remove_data_entry_view",
-					Target: extractName(ref.Section, "views."),
-				})
-			}
+			plan.DataEntryChanges = append(plan.DataEntryChanges, Change{
+				File:   ref.File,
+				Action: "remove_data_entry_view",
+				Target: extractName(ref.Section, "views."),
+			})
 		case "validation":
 			plan.MetamodelChanges = append(plan.MetamodelChanges, Change{
 				File:   ref.File,
@@ -134,7 +125,7 @@ func planEntityTypeCascade(plan *CleanupPlan, usage TypeUsage) {
 }
 
 // planRelationTypeCascade adds cascade changes for a relation type's references.
-// Currently a no-op: relation type references in forms/views/automations require
+// Currently a no-op: relation type references in forms/automations require
 // surgical removal (just the relation field, not the whole config) which is complex.
 // TODO: Implement surgical removal of relation references.
 func planRelationTypeCascade(_ *CleanupPlan, _ TypeUsage) {
@@ -163,7 +154,7 @@ func extractName(section, prefix string) string {
 
 // canSafelyRemove returns true if a type can be safely removed.
 // A type can be safely removed if it has no instances. References in config
-// files (forms, lists, views, etc.) will be cascade-removed along with the type.
+// files (forms, lists, etc.) will be cascade-removed along with the type.
 func canSafelyRemove(usage TypeUsage) bool {
 	return usage.Count == 0
 }
@@ -178,7 +169,6 @@ func ExecuteCleanup(plan *CleanupPlan, projectRoot string, dryRun bool) error {
 
 	metamodelPath := filepath.Join(projectRoot, "metamodel.yaml")
 	dataEntryPath := filepath.Join(projectRoot, "data-entry.yaml")
-	viewsPath := filepath.Join(projectRoot, "views.yaml")
 
 	// Apply metamodel changes
 	if len(plan.MetamodelChanges) > 0 {
@@ -191,13 +181,6 @@ func ExecuteCleanup(plan *CleanupPlan, projectRoot string, dryRun bool) error {
 	if len(plan.DataEntryChanges) > 0 {
 		if err := applyDataEntryChanges(dataEntryPath, plan.DataEntryChanges, dryRun); err != nil {
 			return fmt.Errorf("failed to update data-entry.yaml: %w", err)
-		}
-	}
-
-	// Apply views.yaml changes
-	if len(plan.ViewsChanges) > 0 {
-		if err := applyViewsChanges(viewsPath, plan.ViewsChanges, dryRun); err != nil {
-			return fmt.Errorf("failed to update views.yaml: %w", err)
 		}
 	}
 
@@ -297,49 +280,6 @@ func applyDataEntryChanges(path string, changes []Change, dryRun bool) error {
 				migration.DeleteMapKey(kanbans, change.Target)
 			}
 		case "remove_data_entry_view":
-			views := migration.GetMapValue(root, "views")
-			if views != nil {
-				migration.DeleteMapKey(views, change.Target)
-			}
-		}
-	}
-
-	if dryRun {
-		return nil
-	}
-
-	out, err := yaml.Marshal(&doc)
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(path, out, 0o644)
-}
-
-// applyViewsChanges applies changes to views.yaml using AST manipulation.
-func applyViewsChanges(path string, changes []Change, dryRun bool) error {
-	// Check if file exists
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil // No views.yaml, nothing to clean
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	var doc yaml.Node
-	if unmarshalErr := yaml.Unmarshal(data, &doc); unmarshalErr != nil {
-		return unmarshalErr
-	}
-
-	root := migration.GetDocumentRoot(&doc)
-	if root == nil {
-		return fmt.Errorf("failed to get document root")
-	}
-
-	for _, change := range changes {
-		if change.Action == "remove_view" {
 			views := migration.GetMapValue(root, "views")
 			if views != nil {
 				migration.DeleteMapKey(views, change.Target)

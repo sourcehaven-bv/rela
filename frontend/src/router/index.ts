@@ -1,5 +1,12 @@
 /* v8 ignore start - router configuration, tested via e2e */
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import {
+  createRouter,
+  createWebHistory,
+  isNavigationFailure,
+  NavigationFailureType,
+  type RouteRecordRaw,
+} from 'vue-router'
+import { isCancelledFetch } from '@/composables/usePageData'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -83,6 +90,85 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
+})
+
+// Global navigation error handler.
+//
+// Without this, vue-router's internal `triggerError` falls back to
+// `console.error(error)` for any error thrown during navigation. The
+// classes of error we silence are all expected, transient, or impossible
+// to act on:
+//
+//   1. NavigationFailure (aborted / cancelled / duplicated): normal
+//      return values from router.push, treated as "errors" only when
+//      they're explicitly thrown.
+//   2. Cancelled axios fetches that reach the router via a lifecycle
+//      hook in a destination component (the BUG-6C3V Firefox race).
+//   3. Vite chunk-loader rejections during rapid navigation in Firefox.
+//      The dynamic `import('@/views/X.vue')` in routes returns a fetch
+//      that Firefox can abort mid-flight when the user navigates away,
+//      and Vite's loader sometimes rejects with `undefined` instead of
+//      a real Error in that race. We can't fix Vite from here, and the
+//      navigation is going to be superseded by the next one anyway, so
+//      silencing it is the correct user-facing behaviour.
+//
+// Anything else is a real navigation error and gets logged with context.
+//
+// See https://router.vuejs.org/api/#onerror-2 and
+// https://router.vuejs.org/guide/advanced/navigation-failures.html.
+router.onError((err, to, from) => {
+  if (
+    isNavigationFailure(err, NavigationFailureType.cancelled) ||
+    isNavigationFailure(err, NavigationFailureType.aborted) ||
+    isNavigationFailure(err, NavigationFailureType.duplicated)
+  ) {
+    return
+  }
+  if (isCancelledFetch(err)) return
+  if (err === undefined || err === null) return
+  const msg = (err as Error)?.message ?? ''
+  // Hard recovery: a chunk loaded but its module state is broken
+  // (default export missing, partial module). This happens when a
+  // dynamic import races with navigation or a deployment swap. The
+  // only recovery is a full reload to refetch the current assets.
+  // Rate-limited to once per 10s via sessionStorage — without this
+  // a persistently-broken chunk would trigger an infinite reload
+  // loop. See https://vite.dev/guide/build.html#load-error-handling.
+  if (
+    msg.includes("Couldn't resolve component") ||
+    msg.includes('Failed to fetch dynamically imported module') ||
+    msg.includes('Unable to preload CSS')
+  ) {
+    try {
+      const last = Number(sessionStorage.getItem('rela:lastChunkReload') ?? '0')
+      const now = Date.now()
+      if (now - last < 10_000) {
+        console.warn(
+          '[router-error] chunk-load failure, already reloaded recently — skipping:',
+          msg,
+        )
+        return
+      }
+      sessionStorage.setItem('rela:lastChunkReload', String(now))
+    } catch {
+      /* sessionStorage unavailable — fall through */
+    }
+    console.warn('[router-error] chunk-load failure, reloading:', msg)
+    window.location.reload()
+    return
+  }
+  // Silent-swallow: known transient races that don't need a reload.
+  if (
+    msg.includes('Importing a module script failed') ||
+    msg.includes('error loading dynamically imported module') ||
+    msg === '' // preloadError sometimes surfaces as bare Error with empty message
+  ) {
+    return
+  }
+  console.error(
+    `[router-error] navigating to=${to.fullPath} from=${from.fullPath}:`,
+    err,
+  )
 })
 
 export default router

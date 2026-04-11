@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch, nextTick
 import { useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
+import { isCancelledFetch } from '@/composables/usePageData'
 import type { Entity, Command } from '@/types'
 import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
@@ -73,6 +74,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)
+  // Cancel any in-flight loadCommands fetch so its resolution doesn't
+  // race with this component being torn down. Firefox surfaces the
+  // cancelled fetch as a console error if we let it complete after
+  // unmount; AbortController + isCancel suppression silences that.
+  commandsAbort?.abort()
 })
 
 // State
@@ -195,6 +201,9 @@ async function loadEntity() {
     entity.value = await entitiesStore.fetchEntity(props.entityType, props.entityId, true)
     await Promise.all([loadCommands(), loadScopeNav()])
   } catch (err) {
+    // Suppress cancellation errors from rapid navigation in Firefox
+    // (see BUG-6C3V and src/composables/usePageData.ts).
+    if (isCancelledFetch(err)) return
     uiStore.error(`Failed to load ${props.entityType}`)
     console.error(err)
   } finally {
@@ -242,13 +251,37 @@ function backTargetAfterDelete(): string {
 }
 
 // Commands
+//
+// In-flight AbortController for the loadCommands fetch. Aborted in
+// onBeforeUnmount and at the start of any new loadCommands call so a
+// rapid navigation between entity-detail pages cannot leave a stale
+// fetch resolving against an unmounted component. axios.isCancel
+// recognises both AbortController-driven aborts and the legacy
+// CancelToken API. See BUG-6C3V.
+let commandsAbort: AbortController | null = null
+
 async function loadCommands() {
+  commandsAbort?.abort()
+  commandsAbort = new AbortController()
+  // Snapshot the controller into the local closure so the catch block
+  // checks the signal from THIS call, not whatever a later loadCommands
+  // call replaced it with.
+  const localAbort = commandsAbort
   try {
-    commands.value = await getCommands({
-      pageType: 'entity',
-      entityType: props.entityType,
-    })
+    commands.value = await getCommands(
+      {
+        pageType: 'entity',
+        entityType: props.entityType,
+      },
+      localAbort.signal,
+    )
   } catch (err) {
+    // Suppress both kinds of cancellation:
+    //   - we aborted via commandsAbort.abort() in onBeforeUnmount
+    //   - Firefox aborted the underlying fetch on navigation
+    // See BUG-6C3V and src/composables/usePageData.ts.
+    if (localAbort.signal.aborted) return
+    if (isCancelledFetch(err)) return
     console.error('Failed to load commands:', err)
     commands.value = []
   }

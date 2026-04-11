@@ -23,11 +23,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 // Store defines the domain-level persistence contract for entities,
-// relations, cache, metamodel, views, and templates. Implementations may
+// relations, cache, metamodel, and templates. Implementations may
 // be backed by markdown files on disk, an SQLite database, a remote API,
 // or any other storage mechanism.
 type Store interface {
@@ -64,10 +63,6 @@ type Store interface {
 	// The returned []string contains the absolute paths of all files that were read
 	// (metamodel.yaml plus any include files).
 	LoadMetamodel() (*metamodel.Metamodel, []string, error)
-
-	// --- Views ---
-
-	LoadViews() (*views.File, error)
 
 	// --- Project Files ---
 
@@ -398,15 +393,6 @@ func (r *Repository) LoadMetamodel() (*metamodel.Metamodel, []string, error) {
 	return metamodel.Load(r.paths.MetamodelPath, r.fs)
 }
 
-// --- Views ---
-
-// LoadViews loads and parses the views file from the project root.
-// Returns an empty views file if views.yaml doesn't exist (views are optional).
-func (r *Repository) LoadViews() (*views.File, error) {
-	viewsPath := filepath.Join(r.paths.Root, "views.yaml")
-	return views.Load(viewsPath, r.fs)
-}
-
 // --- Project Files ---
 
 // ReadProjectFile reads a file relative to the project root.
@@ -549,8 +535,8 @@ func (h *WatchHandle) Resume() {
 	h.watcher.Resume()
 }
 
-// Watch starts watching for changes to entities, relations, metamodel, and
-// views files. The onChange callback is called with batched change events.
+// Watch starts watching for changes to entities, relations, and metamodel
+// files. The onChange callback is called with batched change events.
 // Returns a stop function to shut down the watcher.
 func (r *Repository) Watch(
 	opts WatchOptions, onChange func(events []ChangeEvent),
@@ -567,8 +553,7 @@ func (r *Repository) Watch(
 func (r *Repository) WatchWithHandle(
 	opts WatchOptions, onChange func(events []ChangeEvent),
 ) (*WatchHandle, error) {
-	viewsPath := filepath.Join(r.paths.Root, "views.yaml")
-	files := []string{r.paths.MetamodelPath, viewsPath}
+	files := []string{r.paths.MetamodelPath}
 	files = append(files, opts.ExtraFiles...)
 
 	dirs := []string{r.paths.EntitiesDir, r.paths.RelationsDir}

@@ -1,6 +1,6 @@
 // Package schema provides analysis and cleanup utilities for metamodel schemas.
 // It can identify unused entity types, relation types, and custom types,
-// and clean them up from metamodel.yaml, data-entry.yaml, and views.yaml.
+// and clean them up from metamodel.yaml and data-entry.yaml.
 package schema
 
 import (
@@ -9,7 +9,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 // Analysis contains the results of analyzing metamodel schema usage.
@@ -35,7 +34,7 @@ type TypeUsage struct {
 
 // Reference describes where a type is referenced.
 type Reference struct {
-	File    string `json:"file"`    // "metamodel.yaml", "data-entry.yaml", "views.yaml"
+	File    string `json:"file"`    // "metamodel.yaml", "data-entry.yaml"
 	Section string `json:"section"` // e.g., "forms.ticket", "entities.ticket.properties.status"
 	Kind    string `json:"kind"`    // "form", "list", "view", "kanban", "validation", "automation", "property", "relation_from", "relation_to"
 }
@@ -47,7 +46,6 @@ func Analyze(
 	meta *metamodel.Metamodel,
 	g *graph.Graph,
 	dataEntry *dataentryconfig.Config,
-	viewsFile *views.File,
 	threshold int,
 ) *Analysis {
 	result := &Analysis{}
@@ -55,7 +53,7 @@ func Analyze(
 	// Analyze entity types
 	for _, entityType := range meta.EntityTypes() {
 		count := len(g.NodesByType(entityType))
-		refs := findEntityTypeReferences(entityType, meta, dataEntry, viewsFile)
+		refs := findEntityTypeReferences(entityType, meta, dataEntry)
 
 		usage := TypeUsage{
 			Name:       entityType,
@@ -73,7 +71,7 @@ func Analyze(
 	// Analyze relation types
 	for _, relationType := range meta.RelationTypes() {
 		count := len(g.RelationsOfType(relationType))
-		refs := findRelationTypeReferences(relationType, meta, dataEntry, viewsFile)
+		refs := findRelationTypeReferences(relationType, meta, dataEntry)
 
 		usage := TypeUsage{
 			Name:       relationType,
@@ -133,7 +131,6 @@ func findEntityTypeReferences(
 	entityType string,
 	meta *metamodel.Metamodel,
 	dataEntry *dataentryconfig.Config,
-	viewsFile *views.File,
 ) []Reference {
 	var refs []Reference
 
@@ -191,11 +188,6 @@ func findEntityTypeReferences(
 		refs = append(refs, findEntityTypeInDataEntry(entityType, dataEntry)...)
 	}
 
-	// Check views.yaml
-	if viewsFile != nil {
-		refs = append(refs, findEntityTypeInViews(entityType, viewsFile)...)
-	}
-
 	return refs
 }
 
@@ -250,29 +242,11 @@ func findEntityTypeInDataEntry(entityType string, cfg *dataentryconfig.Config) [
 	return refs
 }
 
-// findEntityTypeInViews finds references to an entity type in views.yaml.
-func findEntityTypeInViews(entityType string, viewsFile *views.File) []Reference {
-	var refs []Reference
-
-	for name, view := range viewsFile.Views {
-		if view.Entry.Type == entityType {
-			refs = append(refs, Reference{
-				File:    "views.yaml",
-				Section: "views." + name,
-				Kind:    "view",
-			})
-		}
-	}
-
-	return refs
-}
-
 // findRelationTypeReferences finds all references to a relation type.
 func findRelationTypeReferences(
 	relationType string,
 	meta *metamodel.Metamodel,
 	dataEntry *dataentryconfig.Config,
-	viewsFile *views.File,
 ) []Reference {
 	var refs []Reference
 
@@ -300,11 +274,6 @@ func findRelationTypeReferences(
 	// Check data-entry.yaml
 	if dataEntry != nil {
 		refs = append(refs, findRelationTypeInDataEntry(relationType, dataEntry)...)
-	}
-
-	// Check views.yaml
-	if viewsFile != nil {
-		refs = append(refs, findRelationTypeInViews(relationType, viewsFile)...)
 	}
 
 	return refs
@@ -387,52 +356,6 @@ func findRelationInDataEntryViews(relationType string, cfgViews map[string]datae
 			}
 		}
 	}
-	return refs
-}
-
-// findRelationTypeInViews finds references to a relation type in views.yaml.
-func findRelationTypeInViews(relationType string, viewsFile *views.File) []Reference {
-	var refs []Reference
-
-	for viewName, view := range viewsFile.Views {
-		// Traverse rules
-		for _, t := range view.Traverse {
-			if t.Follow == relationType || t.FollowIncoming == relationType {
-				refs = append(refs, Reference{
-					File:    "views.yaml",
-					Section: "views." + viewName + ".traverse",
-					Kind:    "view",
-				})
-			}
-		}
-
-		// Derived embeds
-		for derivedName, derived := range view.Derived {
-			for _, embed := range derived.Embed {
-				if embed.Relation == relationType {
-					refs = append(refs, Reference{
-						File:    "views.yaml",
-						Section: "views." + viewName + ".derived." + derivedName + ".embed",
-						Kind:    "view",
-					})
-				}
-			}
-		}
-
-		// Relation exports
-		for _, export := range view.RelationExports {
-			for _, t := range export.Types {
-				if t == relationType {
-					refs = append(refs, Reference{
-						File:    "views.yaml",
-						Section: "views." + viewName + ".relation_exports",
-						Kind:    "view",
-					})
-				}
-			}
-		}
-	}
-
 	return refs
 }
 

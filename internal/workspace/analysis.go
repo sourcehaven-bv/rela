@@ -8,7 +8,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
-	"github.com/Sourcehaven-BV/rela/internal/views"
 )
 
 // MetamodelAccessor provides read-only access to metamodel for validation.
@@ -28,21 +27,6 @@ type ValidationFilter struct {
 type AnalyzeOptions struct {
 	// Scope limits analysis to specific entity IDs. If nil, all entities are analyzed.
 	Scope map[string]bool
-}
-
-// ResolveViewScope resolves a view and entry ID to a set of entity IDs.
-// Returns nil if viewName is empty (no filtering).
-func (w *Workspace) ResolveViewScope(viewName, entryID string) (map[string]bool, error) {
-	if viewName == "" {
-		return nil, nil //nolint:nilnil // nil scope means no filtering
-	}
-
-	result, err := w.ExecuteView(viewName, entryID)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.EntityIDs(), nil
 }
 
 // --- Orphan Analysis ---
@@ -455,13 +439,6 @@ func (w *Workspace) AnalyzeAll(opts AnalyzeOptions) *AnalysisSummary {
 	summary.ValidationErrors, summary.ValidationWarnings = validation.CountBySeverity(violations)
 
 	return summary
-}
-
-// --- Scope helpers (re-exported from views for convenience) ---
-
-// EntityIDsFromViewResult extracts entity IDs from a view result.
-func EntityIDsFromViewResult(result *views.ViewResult) map[string]bool {
-	return result.EntityIDs()
 }
 
 // filterByScope filters entities to only those in the scope.

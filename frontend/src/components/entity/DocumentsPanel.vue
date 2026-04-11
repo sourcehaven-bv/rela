@@ -29,8 +29,7 @@ const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
 const availableDocuments = computed(() => {
   const docs: Array<{ name: string; config: DocumentConfig }> = []
   for (const [name, config] of schemaStore.documents) {
-    // Use entity_type for filtering if available, fallback to view for backward compatibility
-    const targetType = config.entity_type || config.view
+    const targetType = config.entity_type
     if (targetType === props.entityType) {
       docs.push({ name, config })
     }

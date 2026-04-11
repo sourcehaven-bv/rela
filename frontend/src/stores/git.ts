@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getGitStatus, syncGit, type GitStatus, type GitSyncResponse } from '@/api'
+import { isCancelledFetch } from '@/composables/usePageData'
 
 export const useGitStore = defineStore('git', () => {
   // State
@@ -40,6 +41,9 @@ export const useGitStore = defineStore('git', () => {
     try {
       status.value = await getGitStatus()
     } catch (err) {
+      // Suppress cancellation errors from rapid navigation in Firefox
+      // (see BUG-6C3V and src/composables/usePageData.ts).
+      if (isCancelledFetch(err)) return
       console.error('Failed to fetch git status:', err)
       lastError.value = err instanceof Error ? err.message : 'Failed to fetch status'
     } finally {

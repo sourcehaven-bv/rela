@@ -29,8 +29,6 @@ const docCacheDir = "documents"
 
 // DocumentConfig defines how to render a document from an entry entity.
 type DocumentConfig struct {
-	// View is the view name from views.yaml used to gather entities.
-	View string
 	// Command is the external render command. Placeholders:
 	//   {id}       - entry ID
 	//   {id_lower} - lowercase entry ID
@@ -54,8 +52,8 @@ var docRenderGroup singleflight.Group
 
 // GetCachedDocument returns a cached document if available and still valid.
 // Returns nil if the cache is missing, stale, or on any error.
-func (w *Workspace) GetCachedDocument(entryID string, cfg DocumentConfig) *DocumentResult {
-	entities, contentHash, err := w.computeDocumentHash(entryID, cfg.View)
+func (w *Workspace) GetCachedDocument(entryID string, _ DocumentConfig) *DocumentResult {
+	entities, contentHash, err := w.computeDocumentHash(entryID)
 	if err != nil {
 		return nil
 	}
@@ -76,7 +74,7 @@ func (w *Workspace) GetCachedDocument(entryID string, cfg DocumentConfig) *Docum
 // RenderDocument renders a document by executing the configured command.
 // Uses singleflight to dedupe concurrent requests. Caches the result to disk.
 func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*DocumentResult, error) {
-	entities, contentHash, err := w.computeDocumentHash(entryID, cfg.View)
+	entities, contentHash, err := w.computeDocumentHash(entryID)
 	if err != nil {
 		return nil, fmt.Errorf("computing document hash: %w", err)
 	}
@@ -129,33 +127,13 @@ func (w *Workspace) doRenderDocument(
 }
 
 // computeDocumentHash computes a content hash for cache validation.
-// If viewName is provided, it executes the view to get all involved entities.
-// If viewName is empty, it just uses the entry entity for hashing.
-// Returns the entities and their hash.
-func (w *Workspace) computeDocumentHash(entryID, viewName string) ([]*model.Entity, string, error) {
-	var entities []*model.Entity
-
-	if viewName != "" {
-		// Execute the view to get all involved entities
-		result, err := w.ExecuteView(viewName, entryID)
-		if err != nil {
-			return nil, "", err
-		}
-		if result.Entry != nil {
-			entities = append(entities, result.Entry)
-		}
-		for _, collection := range result.Collections {
-			entities = append(entities, collection...)
-		}
-	} else {
-		// No view specified, just use the entry entity
-		entity, ok := w.graph().GetNode(entryID)
-		if !ok {
-			return nil, "", fmt.Errorf("entity %q not found", entryID)
-		}
-		entities = []*model.Entity{entity}
+// Uses the entry entity for hashing. Returns the entities and their hash.
+func (w *Workspace) computeDocumentHash(entryID string) ([]*model.Entity, string, error) {
+	entity, ok := w.graph().GetNode(entryID)
+	if !ok {
+		return nil, "", fmt.Errorf("entity %q not found", entryID)
 	}
-
+	entities := []*model.Entity{entity}
 	return entities, hashEntities(entities), nil
 }
 

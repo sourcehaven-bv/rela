@@ -441,9 +441,6 @@ type DocumentConfig struct {
 	// EntityType specifies which entity types this document applies to.
 	// Used by the frontend to filter which documents to show for a given entity.
 	EntityType string `yaml:"entity_type,omitempty" json:"entity_type,omitempty"`
-	// View is the view name from views.yaml used to gather entities for content hashing.
-	// If empty, only the entry entity is used for cache validation.
-	View string `yaml:"view,omitempty" json:"view,omitempty"`
 	// Command is the external render command. Placeholders:
 	//   {id}       - entry ID
 	//   {id_lower} - lowercase entry ID
