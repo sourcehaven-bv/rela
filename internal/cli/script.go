@@ -1,15 +1,11 @@
 package cli
 
 import (
-	"errors"
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 var scriptOutputDir string
@@ -67,11 +63,11 @@ Example:
 		if scriptOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
 		}
-		scriptOpts, err := loadScriptOptions(projectCtx.CacheDir, scriptPath)
+		ctxOpts, err := lua.LoadContextOptions(projectCtx.CacheDir, scriptPath)
 		if err != nil {
 			return err
 		}
-		opts = append(opts, scriptOpts...)
+		opts = append(opts, ctxOpts...)
 
 		runtime := lua.New(ws, meta, projectCtx.Root, os.Stdout, opts...)
 		defer runtime.Close()
@@ -86,28 +82,3 @@ func init() {
 	rootCmd.AddCommand(scriptCmd)
 }
 
-// loadScriptOptions returns lua.Options for AI and secrets, loaded from the
-// given .rela directory. Used by both script and flow commands.
-func loadScriptOptions(cacheDir, scriptPath string) ([]lua.Option, error) {
-	var opts []lua.Option
-
-	provider, err := ai.LoadProvider(cacheDir)
-	switch {
-	case errors.Is(err, ai.ErrConfigNotFound):
-		// no AI configured
-	case err != nil:
-		return nil, fmt.Errorf("ai: %w", err)
-	default:
-		opts = append(opts, lua.WithAIProvider(provider))
-	}
-
-	sec, secErr := secrets.Load(cacheDir, scriptPath)
-	if secErr != nil && !errors.Is(secErr, secrets.ErrNotFound) {
-		return nil, fmt.Errorf("secrets: %w", secErr)
-	}
-	if len(sec) > 0 {
-		opts = append(opts, lua.WithSecrets(sec))
-	}
-
-	return opts, nil
-}

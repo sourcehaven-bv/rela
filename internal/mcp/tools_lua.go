@@ -4,19 +4,15 @@ package mcp
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // scriptsDir is the directory where Lua scripts must be located for lua_run.
@@ -69,19 +65,11 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	var output bytes.Buffer
 
 	opts := []lua.Option{lua.WithContext(ctx)}
-	// Soft-fail on misconfigured ai.yaml: log + continue without AI
-	// rather than crashing every Lua tool call. The MCP client will
-	// see the not_configured error if their script tries to call ai.*.
-	// ErrConfigNotFound is the normal "no AI" state and is silent.
-	provider, providerErr := ai.LoadProvider(s.ws.Paths().CacheDir)
-	switch {
-	case errors.Is(providerErr, ai.ErrConfigNotFound):
-		// no AI configured
-	case providerErr != nil:
-		slog.Warn("ai: failed to load config; AI bindings disabled", "error", providerErr)
-	default:
-		opts = append(opts, lua.WithAIProvider(provider))
+	ctxOpts, ctxErr := lua.LoadContextOptions(s.ws.Paths().CacheDir, "")
+	if ctxErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("config error: %s", ctxErr.Error())), nil
 	}
+	opts = append(opts, ctxOpts...)
 	runtime := lua.New(s.ws, s.ws.Snapshot().Meta(), projectRoot, &output, opts...)
 	defer runtime.Close()
 
@@ -150,19 +138,11 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	var output bytes.Buffer
 
 	opts := []lua.Option{lua.WithContext(ctx)}
-	// Soft-fail on misconfigured ai.yaml: log + continue without AI
-	// rather than crashing every Lua tool call.
-	if provider, providerErr := ai.LoadProvider(s.ws.Paths().CacheDir); providerErr != nil {
-		slog.Warn("ai: failed to load config; AI bindings disabled", "error", providerErr)
-	} else if provider != nil {
-		opts = append(opts, lua.WithAIProvider(provider))
+	ctxOpts, ctxErr := lua.LoadContextOptions(s.ws.Paths().CacheDir, path)
+	if ctxErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("config error: %s", ctxErr.Error())), nil
 	}
-	sec, secErr := secrets.Load(s.ws.Paths().CacheDir, path)
-	if secErr != nil && !errors.Is(secErr, secrets.ErrNotFound) {
-		slog.Warn("secrets: failed to load", "error", secErr)
-	} else if len(sec) > 0 {
-		opts = append(opts, lua.WithSecrets(sec))
-	}
+	opts = append(opts, ctxOpts...)
 	runtime := lua.New(s.ws, s.ws.Snapshot().Meta(), projectRoot, &output, opts...)
 	defer runtime.Close()
 

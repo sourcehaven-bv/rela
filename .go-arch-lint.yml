@@ -154,7 +154,7 @@ deps:
       - scheduler
       - schema
       - script
-      - secrets
+
       - workspace
     canUse:
       - cobra
@@ -202,7 +202,7 @@ deps:
       - schema
       - script
       - search
-      - secrets
+
       - workspace
     canUse:
       - mcpgo
@@ -306,6 +306,7 @@ deps:
       - ai
       - filter
       - metamodel
+      - secrets
       - workspace
     canUse:
       - goldmark
@@ -323,7 +324,6 @@ deps:
       - lua
       - metamodel
       - project
-      - secrets
   search:
     mayDependOn:
       - filter

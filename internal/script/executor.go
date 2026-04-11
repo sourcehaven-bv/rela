@@ -13,16 +13,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // scriptsDir is the directory where script files must be located.
@@ -66,28 +63,10 @@ func (e *Engine) execute(code string, ctx metamodel.ScriptContext, scriptPath st
 	}
 
 	var output bytes.Buffer
-	var opts []lua.Option
-	// Soft-fail on misconfigured ai.yaml: an automation script firing
-	// on every entity write must not crash the host because the user
-	// has a typo in their AI config. Log it so the user notices.
-	// ErrConfigNotFound is the normal "no AI" state and is silent.
-	provider, providerErr := ai.LoadProvider(filepath.Join(ctx.GetProjectRoot(), project.CacheDir))
-	switch {
-	case errors.Is(providerErr, ai.ErrConfigNotFound):
-		// no AI configured; nothing to log
-	case providerErr != nil:
-		slog.Warn("ai: failed to load config; AI bindings disabled for this run", "error", providerErr)
-	default:
-		opts = append(opts, lua.WithAIProvider(provider))
-	}
-	if scriptPath != "" {
-		relaDir := filepath.Join(ctx.GetProjectRoot(), project.CacheDir)
-		sec, secErr := secrets.Load(relaDir, scriptPath)
-		if secErr != nil && !errors.Is(secErr, secrets.ErrNotFound) {
-			slog.Warn("secrets: failed to load", "error", secErr)
-		} else if len(sec) > 0 {
-			opts = append(opts, lua.WithSecrets(sec))
-		}
+	relaDir := filepath.Join(ctx.GetProjectRoot(), project.CacheDir)
+	opts, optErr := lua.LoadContextOptions(relaDir, scriptPath)
+	if optErr != nil {
+		return fmt.Errorf("lua context: %w", optErr)
 	}
 	runtime := lua.New(ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output, opts...)
 	defer runtime.Close()

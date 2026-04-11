@@ -71,11 +71,11 @@ Example:
 		if flowOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(flowOutputDir))
 		}
-		scriptOpts, optErr := loadScriptOptions(flowWs.Paths().CacheDir, scriptPath)
+		ctxOpts, optErr := lua.LoadContextOptions(flowWs.Paths().CacheDir, scriptPath)
 		if optErr != nil {
 			return optErr
 		}
-		opts = append(opts, scriptOpts...)
+		opts = append(opts, ctxOpts...)
 
 		runtime := lua.New(flowWs, flowWs.Snapshot().Meta(), flowWs.Paths().Root, os.Stdout, opts...)
 		defer runtime.Close()
