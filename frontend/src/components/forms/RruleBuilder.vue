@@ -34,6 +34,34 @@ const freq = ref(RRule.WEEKLY)
 const interval = ref(1)
 const selectedDays = ref<Weekday[]>([])
 const dtstart = ref('')
+const selectedMonth = ref<number | null>(null)
+const selectedDay = ref<number | null>(null)
+
+const months = [
+  { value: 1, label: 'January' },
+  { value: 2, label: 'February' },
+  { value: 3, label: 'March' },
+  { value: 4, label: 'April' },
+  { value: 5, label: 'May' },
+  { value: 6, label: 'June' },
+  { value: 7, label: 'July' },
+  { value: 8, label: 'August' },
+  { value: 9, label: 'September' },
+  { value: 10, label: 'October' },
+  { value: 11, label: 'November' },
+  { value: 12, label: 'December' },
+]
+
+const maxDay = computed(() => {
+  if (!selectedMonth.value) return 31
+  return new Date(2023, selectedMonth.value, 0).getDate()
+})
+
+watch(selectedMonth, () => {
+  if (selectedDay.value && selectedDay.value > maxDay.value) {
+    selectedDay.value = maxDay.value
+  }
+})
 
 // Parse existing RRULE string on mount
 function parseRrule(value: string) {
@@ -53,6 +81,14 @@ function parseRrule(value: string) {
       selectedDays.value = (Array.isArray(opts.byweekday) ? opts.byweekday : [opts.byweekday]).map(
         (d) => (d instanceof Weekday ? d : new Weekday(d as number)),
       )
+    }
+    if (opts.bymonth) {
+      const m = Array.isArray(opts.bymonth) ? opts.bymonth[0] : opts.bymonth
+      if (m) selectedMonth.value = m
+    }
+    if (opts.bymonthday) {
+      const d = Array.isArray(opts.bymonthday) ? opts.bymonthday[0] : opts.bymonthday
+      if (d) selectedDay.value = d
     }
     if (opts.dtstart) {
       const d = opts.dtstart
@@ -89,6 +125,11 @@ const rruleString = computed(() => {
 
   if (freq.value === RRule.WEEKLY && selectedDays.value.length > 0) {
     opts.byweekday = selectedDays.value
+  }
+
+  if (freq.value === RRule.YEARLY && selectedMonth.value && selectedDay.value) {
+    opts.bymonth = [selectedMonth.value]
+    opts.bymonthday = [selectedDay.value]
   }
 
   const rule = new RRule(opts)
@@ -166,6 +207,33 @@ function isDaySelected(day: Weekday): boolean {
       >
         {{ day.label }}
       </button>
+    </div>
+
+    <div v-if="freq === RRule.YEARLY" class="rrule-builder__yearly">
+      <div class="rrule-builder__row">
+        <label class="rrule-builder__field-label">On</label>
+        <select
+          :value="selectedMonth ?? ''"
+          class="rrule-builder__month"
+          :disabled="readonly"
+          @change="selectedMonth = ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null"
+        >
+          <option value="">Month...</option>
+          <option v-for="m in months" :key="m.value" :value="m.value">
+            {{ m.label }}
+          </option>
+        </select>
+        <input
+          :value="selectedDay ?? ''"
+          type="number"
+          min="1"
+          :max="maxDay"
+          placeholder="Day"
+          class="rrule-builder__day-input"
+          :disabled="readonly"
+          @input="selectedDay = (() => { const v = Number(($event.target as HTMLInputElement).value); return Number.isFinite(v) && v >= 1 ? Math.min(v, maxDay) : null })()"
+        />
+      </div>
     </div>
 
     <div v-if="interval > 1" class="rrule-builder__dtstart">
@@ -283,6 +351,38 @@ function isDaySelected(day: Weekday): boolean {
 
 .rrule-builder__day--selected:hover {
   opacity: 0.9;
+}
+
+.rrule-builder__yearly {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rrule-builder__month {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.rrule-builder__day-input {
+  width: 5rem;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.rrule-builder__month:focus,
+.rrule-builder__day-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
 }
 
 .rrule-builder__dtstart {
