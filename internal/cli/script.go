@@ -81,4 +81,3 @@ func init() {
 		"Directory for write_file output (default: {project}/output)")
 	rootCmd.AddCommand(scriptCmd)
 }
-
