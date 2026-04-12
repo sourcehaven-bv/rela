@@ -57,6 +57,7 @@ components:
 
   # Infrastructure
   ai:               { in: internal/ai }
+  secrets:          { in: internal/secrets }
   attachment:       { in: internal/attachment }
   git:              { in: internal/git }
   output:           { in: internal/output }
@@ -305,6 +306,7 @@ deps:
       - ai
       - filter
       - metamodel
+      - secrets
       - workspace
     canUse:
       - goldmark

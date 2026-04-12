@@ -66,6 +66,7 @@ type Runtime struct {
 	parentCtx     context.Context // Parent context for cancellation propagation (nil = Background)
 	cancelTimeout context.CancelFunc
 	params        map[string]string // rela.params values (used by action scripts)
+	secrets       map[string]string // rela.secrets values (from .rela/secrets.yaml)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
 	aiProvider    ai.Provider       // nil means AI is not configured
 }
@@ -121,6 +122,14 @@ func WithParams(params map[string]string) Option {
 func WithActionMode() Option {
 	return func(r *Runtime) {
 		r.isAction = true
+	}
+}
+
+// WithSecrets sets the rela.secrets table contents.
+// Secrets are loaded from .rela/secrets.yaml by the caller.
+func WithSecrets(secrets map[string]string) Option {
+	return func(r *Runtime) {
+		r.secrets = secrets
 	}
 }
 
@@ -396,6 +405,13 @@ func (r *Runtime) registerBindings() {
 		r.L.SetField(paramsTable, k, lua.LString(v))
 	}
 	r.L.SetField(rela, "params", paramsTable)
+
+	// Secrets table (populated from WithSecrets option, loaded from .rela/secrets.yaml)
+	secretsTable := r.L.NewTable()
+	for k, v := range r.secrets {
+		r.L.SetField(secretsTable, k, lua.LString(v))
+	}
+	r.L.SetField(rela, "secrets", secretsTable)
 
 	// Date and RRULE utility functions
 	registerDateHelpers(r.L, rela)

@@ -519,6 +519,63 @@ end
 | `rela.project_root` | Absolute path to project root |
 | `rela.args` | Script arguments (table) |
 | `rela.today` | Current date as "YYYY-MM-DD" |
+| `rela.params` | Action script parameters (table, from data-entry config) |
+| `rela.secrets` | Per-script secrets (table, from `.rela/secrets.yaml`) |
+
+### Secrets
+
+Scripts can access secrets (API keys, tokens, passwords) via the `rela.secrets` table.
+Secrets are loaded from `.rela/secrets.yaml`, which lives inside the gitignored `.rela/`
+directory.
+
+#### Configuration
+
+Create `.rela/secrets.yaml` in your project:
+
+```yaml
+# Global secrets — available to all scripts
+jira_api_key: sk-abc123
+deploy_endpoint: https://deploy.example.com
+
+# Per-script overrides (merged on top of global)
+overrides:
+  reports/sync.lua:
+    jira_api_key: sk-different-key
+    extra_token: tok-xyz
+```
+
+- Top-level keys are **global** and available to every script
+- Keys under `overrides.<script-path>` apply only to that script and override globals
+- All values are plain strings
+
+#### Usage in Lua
+
+```lua
+-- Access a secret
+local key = rela.secrets.api_key
+
+-- Check if a secret is configured
+if rela.secrets.api_key then
+    -- use it
+else
+    error("api_key not configured in .rela/secrets.yaml")
+end
+```
+
+#### Resolution order
+
+When a script runs, its `rela.secrets` table is built by:
+
+1. Starting with all global (top-level) values
+2. Merging any per-script overrides on top
+
+If `.rela/secrets.yaml` does not exist, `rela.secrets` is an empty table (no error).
+
+#### Security notes
+
+- `.rela/` is gitignored by convention — secrets are not committed to version control
+- Treat Lua scripts as trusted code: any script can read all secrets available to it
+- For shared projects, each contributor maintains their own `.rela/secrets.yaml`
 
 ### Markdown AST: Task Lists
 

@@ -13,12 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -41,7 +39,7 @@ func NewEngine() *Engine {
 
 // ExecuteCode runs inline script code with the given context.
 func (e *Engine) ExecuteCode(code string, ctx metamodel.ScriptContext) error {
-	return e.execute(code, ctx)
+	return e.execute(code, ctx, "")
 }
 
 // ExecuteFile loads and runs a script file from the scripts/ directory.
@@ -51,12 +49,13 @@ func (e *Engine) ExecuteFile(path string, ctx metamodel.ScriptContext) error {
 	if err != nil {
 		return err
 	}
-	return e.execute(scriptCode, ctx)
+	return e.execute(scriptCode, ctx, path)
 }
 
-// execute runs Lua code with entity context.
+// execute runs Lua code with entity context. scriptPath is used to resolve
+// per-script secrets; pass "" for inline code (no secrets loaded).
 // Timeout is handled by lua.Runtime (default 30s).
-func (e *Engine) execute(code string, ctx metamodel.ScriptContext) error {
+func (e *Engine) execute(code string, ctx metamodel.ScriptContext, scriptPath string) error {
 	// Type assert workspace to lua.WorkspaceInterface
 	ws, ok := ctx.GetWorkspace().(lua.WorkspaceInterface)
 	if !ok {
@@ -64,19 +63,10 @@ func (e *Engine) execute(code string, ctx metamodel.ScriptContext) error {
 	}
 
 	var output bytes.Buffer
-	var opts []lua.Option
-	// Soft-fail on misconfigured ai.yaml: an automation script firing
-	// on every entity write must not crash the host because the user
-	// has a typo in their AI config. Log it so the user notices.
-	// ErrConfigNotFound is the normal "no AI" state and is silent.
-	provider, providerErr := ai.LoadProvider(filepath.Join(ctx.GetProjectRoot(), project.CacheDir))
-	switch {
-	case errors.Is(providerErr, ai.ErrConfigNotFound):
-		// no AI configured; nothing to log
-	case providerErr != nil:
-		slog.Warn("ai: failed to load config; AI bindings disabled for this run", "error", providerErr)
-	default:
-		opts = append(opts, lua.WithAIProvider(provider))
+	relaDir := filepath.Join(ctx.GetProjectRoot(), project.CacheDir)
+	opts, optErr := lua.LoadContextOptions(relaDir, scriptPath)
+	if optErr != nil {
+		return fmt.Errorf("lua context: %w", optErr)
 	}
 	runtime := lua.New(ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output, opts...)
 	defer runtime.Close()
