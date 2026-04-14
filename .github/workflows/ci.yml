@@ -104,18 +104,17 @@ jobs:
               continue
             fi
 
-            # Compare covered lines: PR must not have fewer covered lines
-            # unless the file's total lines also decreased (legitimate refactor)
-            if [[ "$covered" -lt "$base_covered" ]]; then
-              # Check if the source file was removed from the codebase
-              # (file still in baseline but gone from repo is handled by go-test-coverage)
-              base_pct=$(awk "BEGIN {printf \"%.1f\", ($base_covered/$base_total)*100}")
-              if [[ "$total" -eq 0 ]]; then
-                pr_pct="0.0"
-              else
-                pr_pct=$(awk "BEGIN {printf \"%.1f\", ($covered/$total)*100}")
-              fi
-              VIOLATIONS="${VIOLATIONS}\n  ${file}: ${base_covered}/${base_total} (${base_pct}%) -> ${covered}/${total} (${pr_pct}%)"
+            # Compare coverage percentage: PR must not have lower coverage %
+            base_pct=$(awk "BEGIN {printf \"%.4f\", ($base_covered/$base_total)*100}")
+            if [[ "$total" -eq 0 ]]; then
+              pr_pct="0.0000"
+            else
+              pr_pct=$(awk "BEGIN {printf \"%.4f\", ($covered/$total)*100}")
+            fi
+            if awk "BEGIN {exit !($pr_pct < $base_pct)}"; then
+              base_pct_display=$(awk "BEGIN {printf \"%.1f\", ($base_covered/$base_total)*100}")
+              pr_pct_display=$(awk "BEGIN {printf \"%.1f\", ($covered/$total)*100}")
+              VIOLATIONS="${VIOLATIONS}\n  ${file}: ${base_covered}/${base_total} (${base_pct_display}%) -> ${covered}/${total} (${pr_pct_display}%)"
               VIOLATION_COUNT=$((VIOLATION_COUNT + 1))
             fi
           done < "$PR_BASELINE"
@@ -208,15 +207,17 @@ jobs:
               continue
             fi
 
-            # Compare covered lines: PR must not have fewer covered lines
-            if [[ "$covered" -lt "$base_covered" ]]; then
-              base_pct=$(awk "BEGIN {printf \"%.1f\", ($base_covered/$base_total)*100}")
-              if [[ "$total" -eq 0 ]]; then
-                pr_pct="0.0"
-              else
-                pr_pct=$(awk "BEGIN {printf \"%.1f\", ($covered/$total)*100}")
-              fi
-              VIOLATIONS="${VIOLATIONS}\n  ${file}: ${base_covered}/${base_total} (${base_pct}%) -> ${covered}/${total} (${pr_pct}%)"
+            # Compare coverage percentage: PR must not have lower coverage %
+            base_pct=$(awk "BEGIN {printf \"%.4f\", ($base_covered/$base_total)*100}")
+            if [[ "$total" -eq 0 ]]; then
+              pr_pct="0.0000"
+            else
+              pr_pct=$(awk "BEGIN {printf \"%.4f\", ($covered/$total)*100}")
+            fi
+            if awk "BEGIN {exit !($pr_pct < $base_pct)}"; then
+              base_pct_display=$(awk "BEGIN {printf \"%.1f\", ($base_covered/$base_total)*100}")
+              pr_pct_display=$(awk "BEGIN {printf \"%.1f\", ($covered/$total)*100}")
+              VIOLATIONS="${VIOLATIONS}\n  ${file}: ${base_covered}/${base_total} (${base_pct_display}%) -> ${covered}/${total} (${pr_pct_display}%)"
               VIOLATION_COUNT=$((VIOLATION_COUNT + 1))
             fi
           done < "$PR_BASELINE"

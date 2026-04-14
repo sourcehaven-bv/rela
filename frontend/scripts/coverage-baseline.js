@@ -83,12 +83,12 @@ function checkBaseline() {
     const base = baseline.get(file)
     if (!base) continue // New file, OK
 
-    // Coverage must not decrease (covered lines must not go down)
-    if (covered < base.covered) {
-      const basePct = ((base.covered / base.total) * 100).toFixed(1)
-      const currPct = ((covered / total) * 100).toFixed(1)
+    // Coverage percentage must not decrease
+    const basePct = (base.covered / base.total) * 100
+    const currPct = total > 0 ? (covered / total) * 100 : 0
+    if (currPct < basePct - 0.001) {
       violations.push(
-        `  ${file}: ${base.covered}/${base.total} (${basePct}%) -> ${covered}/${total} (${currPct}%)`
+        `  ${file}: ${base.covered}/${base.total} (${basePct.toFixed(1)}%) -> ${covered}/${total} (${currPct.toFixed(1)}%)`
       )
     }
   }
