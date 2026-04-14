@@ -1,5 +1,5 @@
 src/composables/useEvents.ts;146;146
-src/composables/useKeyboardShortcuts.ts;123;123
+src/composables/useKeyboardShortcuts.ts;127;127
 src/composables/useListKeyboard.ts;129;129
 src/composables/useScopeNavigation.ts;120;120
 src/stores/entities.ts;204;204
