@@ -241,7 +241,6 @@ export interface NavigationEntry {
   label?: string
   list?: string
   dashboard?: boolean
-  graph?: boolean
   kanban?: string
   action?: string
   icon?: string

@@ -24,7 +24,6 @@
   },
   "dependencies": {
     "axios": "^1.6.7",
-    "cytoscape": "^3.33.1",
     "dompurify": "^3.3.3",
     "easymde": "^2.20.0",
     "marked": "^17.0.4",
@@ -40,7 +39,6 @@
     "@pinia/testing": "^0.1.6",
     "@playwright/test": "^1.58.2",
     "@testing-library/vue": "^8.0.3",
-    "@types/cytoscape": "^3.21.9",
     "@types/dompurify": "^3.0.5",
     "@types/node": "^25.5.0",
     "@vitejs/plugin-vue": "^5.0.4",

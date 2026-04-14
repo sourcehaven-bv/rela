@@ -268,14 +268,13 @@ type KanbanCard struct {
 }
 
 // NavigationEntry defines a sidebar navigation item or a group of items.
-// It is a union type: either a direct item (Label + List/Dashboard/Graph/Kanban)
+// It is a union type: either a direct item (Label + List/Dashboard/Kanban)
 // or a group (Group + Items). Nested groups are not supported.
 type NavigationEntry struct {
 	// Direct item fields
 	Label     string `yaml:"label,omitempty" json:"label,omitempty"`
 	List      string `yaml:"list,omitempty" json:"list,omitempty"`
 	Dashboard bool   `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
-	Graph     bool   `yaml:"graph,omitempty" json:"graph,omitempty"`
 	Kanban    string `yaml:"kanban,omitempty" json:"kanban,omitempty"`
 	Search    bool   `yaml:"search,omitempty" json:"search,omitempty"`
 	Settings  bool   `yaml:"settings,omitempty" json:"settings,omitempty"`

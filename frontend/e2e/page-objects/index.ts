@@ -18,7 +18,6 @@ export { FormPage, CreateTicketFormPage, EditTicketFormPage, createFormPage } fr
 export { ListPage, createListPage } from './ListPage'
 export { KanbanPage, createKanbanPage } from './KanbanPage'
 export { DashboardPage } from './DashboardPage'
-export { GraphPage } from './GraphPage'
 
 // Re-export Page type for convenience
 export type { Page, Locator } from '@playwright/test'

@@ -569,5 +569,3 @@ navigation:
     items:
       - label: "Categories"
         list: categories
-  - label: "Graph Explorer"
-    graph: true

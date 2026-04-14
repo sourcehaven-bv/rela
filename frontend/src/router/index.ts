@@ -70,11 +70,6 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/SettingsView.vue'),
   },
   {
-    path: '/graph',
-    name: 'graph',
-    component: () => import('@/views/GraphView.vue'),
-  },
-  {
     path: '/conflicts',
     name: 'conflicts',
     component: () => import('@/views/ConflictsView.vue'),
