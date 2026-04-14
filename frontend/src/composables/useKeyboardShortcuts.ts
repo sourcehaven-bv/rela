@@ -78,10 +78,6 @@ export function useKeyboardShortcuts() {
         router.push('/dashboard')
         return
       }
-      if (e.key === 'g') {
-        router.push('/graph')
-        return
-      }
       if (e.key === 's') {
         router.push('/search')
         return

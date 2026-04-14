@@ -81,7 +81,6 @@ function getIconEmoji(icon?: string): string {
     case 'list': return '📋'
     case 'kanban': return '📊'
     case 'dashboard': return '🏠'
-    case 'graph': return '🕸️'
     default: return '📄'
   }
 }

@@ -56,7 +56,6 @@ func (a *App) NewRouter() http.Handler {
 	// APIs used by Vue SPA
 	inner.HandleFunc("/api/toggle-checkbox", a.handleToggleCheckbox)
 	inner.HandleFunc("/api/help/", a.handleEntityHelp)
-	inner.HandleFunc("/api/graph-data", a.handleGraphData)
 	inner.HandleFunc("/api/command/", a.handleCommandExec)
 	inner.HandleFunc("/api/command-cancel/", a.handleCommandCancel)
 	inner.HandleFunc("/api/open-file", a.handleOpenFile)

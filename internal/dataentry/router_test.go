@@ -19,7 +19,6 @@ func TestNewRouterRegistersAPIRoutes(t *testing.T) {
 	}{
 		{"/api/v1/_schema", http.StatusOK},
 		{"/api/v1/_config", http.StatusOK},
-		{"/api/graph-data", http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -71,7 +70,7 @@ func TestNewRouterAPIHasNoCacheHeader(t *testing.T) {
 	handler := app.NewRouter()
 
 	// API routes should have no-cache header
-	r := httptest.NewRequest(http.MethodGet, "/api/graph-data", http.NoBody)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 

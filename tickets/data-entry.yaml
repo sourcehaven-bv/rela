@@ -1458,5 +1458,3 @@ navigation:
         list: all_concepts
       - label: "Decisions"
         list: all_decisions
-  - label: "Graph"
-    graph: true

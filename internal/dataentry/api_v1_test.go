@@ -1610,7 +1610,6 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 				{Label: "Tickets", List: "tickets"},
 				{Label: "Kanban", Kanban: "board"},
 				{Label: "Dashboard", Dashboard: true},
-				{Label: "Graph", Graph: true},
 				{Label: "Search", Search: true},
 				{Label: "Settings", Settings: true},
 			},

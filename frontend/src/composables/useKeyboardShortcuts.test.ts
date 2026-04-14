@@ -32,7 +32,6 @@ describe('useKeyboardShortcuts', () => {
         { path: '/', name: 'home', component: { template: '<div/>' } },
         { path: '/dashboard', name: 'dashboard', component: { template: '<div/>' } },
         { path: '/search', name: 'search', component: { template: '<div/>' } },
-        { path: '/graph', name: 'graph', component: { template: '<div/>' } },
         { path: '/analyze', name: 'analyze', component: { template: '<div/>' } },
         { path: '/form/create/:id', name: 'form-create', component: { template: '<div/>' } },
         { path: '/form/edit/:id/:entityId', name: 'form-edit', component: { template: '<div/>' } },
@@ -82,16 +81,6 @@ describe('useKeyboardShortcuts', () => {
       document.dispatchEvent(createKeyEvent('d'))
 
       expect(pushSpy).toHaveBeenCalledWith('/dashboard')
-    })
-
-    it('navigates to graph with g+g', async () => {
-      await mountWithRouter()
-      const pushSpy = vi.spyOn(router, 'push')
-
-      document.dispatchEvent(createKeyEvent('g'))
-      document.dispatchEvent(createKeyEvent('g'))
-
-      expect(pushSpy).toHaveBeenCalledWith('/graph')
     })
 
     it('navigates to search with g+s', async () => {
