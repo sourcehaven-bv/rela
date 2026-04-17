@@ -3,12 +3,12 @@ package workspace
 import (
 	"context"
 	"iter"
-	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
@@ -41,49 +41,9 @@ func (w *Workspace) luaServices() lua.Services {
 	return w.LuaServices()
 }
 
-// graphTracer adapts *graph.Graph to the tracer.Tracer interface.
-type graphTracer struct {
-	w *Workspace
-}
-
-var _ tracer.Tracer = (*graphTracer)(nil)
-
-func (t *graphTracer) TraceFrom(_ context.Context, id string, maxDepth int) *tracer.TraceResult {
-	return convertTraceResult(t.w.Graph().TraceFrom(id, maxDepth))
-}
-
-func (t *graphTracer) TraceTo(_ context.Context, id string, maxDepth int) *tracer.TraceResult {
-	return convertTraceResult(t.w.Graph().TraceTo(id, maxDepth))
-}
-
-func (t *graphTracer) FindPath(_ context.Context, from, to string) []tracer.PathStep {
-	steps := t.w.Graph().FindPath(from, to)
-	if steps == nil {
-		return nil
-	}
-	out := make([]tracer.PathStep, len(steps))
-	for i, s := range steps {
-		out[i] = tracer.PathStep{ID: s.ID, Type: s.Type, Title: s.Title, Relation: s.Relation}
-	}
-	return out
-}
-
-func (t *graphTracer) FindOrphans(_ context.Context) ([]string, error) {
-	orphans := t.w.Graph().FindOrphans()
-	ids := make([]string, len(orphans))
-	for i, e := range orphans {
-		ids[i] = e.ID
-	}
-	return ids, nil
-}
-
-func (t *graphTracer) HasCycle(_ context.Context, startID string) bool {
-	return t.w.Graph().HasCycle(startID)
-}
-
-// Tracer returns the graph traversal service.
+// Tracer returns the store-backed graph traversal service.
 func (w *Workspace) Tracer() tracer.Tracer {
-	return &graphTracer{w: w}
+	return tracer.New(w.Store())
 }
 
 // wsSearcher adapts the workspace's Bleve-backed Search to search.Searcher.
@@ -124,7 +84,8 @@ func (s *wsSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[searc
 			return
 		}
 
-		entities, _, err := s.w.Search(strings.Fields(q.Text), nil, q.Limit)
+		words, phrases := searchparser.SplitFreeText(q.Text)
+		entities, _, err := s.w.search(words, phrases, q.Limit)
 		if err != nil {
 			yield(search.Hit{}, err)
 			return
@@ -241,23 +202,3 @@ func (t *repoTemplater) EntityTemplate(ctx context.Context, entityType, variant 
 	return nil, nil
 }
 
-// convertTraceResult converts model.TraceResult → tracer.TraceResult.
-func convertTraceResult(r *TraceResult) *tracer.TraceResult {
-	if r == nil {
-		return nil
-	}
-	out := &tracer.TraceResult{
-		ID:       r.ID,
-		Type:     r.Type,
-		Title:    r.Title,
-		Depth:    r.Depth,
-		Relation: r.Relation,
-		Incoming: r.Incoming,
-	}
-	for _, c := range r.Children {
-		if child := convertTraceResult(c); child != nil {
-			out.Children = append(out.Children, child)
-		}
-	}
-	return out
-}

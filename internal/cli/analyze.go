@@ -71,7 +71,7 @@ var analyzeOrphansCmd = &cobra.Command{
 		}
 
 		orphans := ws.FindOrphansWithScope(*opts)
-		filter.SortByID(orphans, modelEntityRecord, false)
+		filter.SortByID(orphans, storeEntityRecord, false)
 
 		if writeAnalysisJSON(len(orphans), orphans,
 			"No orphan entities found", "Found %d orphan entities") {
@@ -83,7 +83,7 @@ var analyzeOrphansCmd = &cobra.Command{
 			return nil
 		}
 		out.WriteWarning("Found %d orphan entities:", len(orphans))
-		return out.WriteEntities(modelToEntitySlice(orphans))
+		return out.WriteEntities(orphans)
 	},
 }
 
@@ -108,7 +108,7 @@ var analyzeDuplicatesCmd = &cobra.Command{
 			for _, group := range duplicates {
 				details = append(details, duplicateGroup{
 					Title:    group.Title,
-					Entities: modelToEntitySlice(group.Entities),
+					Entities: group.Entities,
 				})
 			}
 			writeAnalysisJSON(len(duplicates), details,

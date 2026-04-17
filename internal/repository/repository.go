@@ -9,8 +9,6 @@
 package repository
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -50,12 +48,6 @@ type Store interface {
 	// --- Sync ---
 
 	Sync(meta *metamodel.Metamodel) (*graph.Graph, *model.SyncResult, error)
-
-	// --- Cache ---
-
-	SaveCache(g *graph.Graph) error
-	LoadCache(g *graph.Graph) error
-	CacheExists() bool
 
 	// --- Metamodel ---
 
@@ -299,78 +291,6 @@ func (r *Repository) Sync(meta *metamodel.Metamodel) (*graph.Graph, *model.SyncR
 	}
 
 	return g, result, nil
-}
-
-// --- Cache ---
-
-// cacheEnvelope is the on-disk JSON format for the graph cache.
-type cacheEnvelope struct {
-	Version   string            `json:"version"`
-	Timestamp time.Time         `json:"timestamp"`
-	Nodes     []*model.Entity   `json:"nodes"`
-	Edges     []*model.Relation `json:"edges"`
-}
-
-// cacheVersion should be incremented when the cache format changes.
-// v1.0 - initial format
-const cacheVersion = "1.0"
-
-// SaveCache writes the graph cache to the project's cache file as JSON.
-func (r *Repository) SaveCache(g *graph.Graph) error {
-	snap := g.Snapshot()
-
-	env := cacheEnvelope{
-		Version:   cacheVersion,
-		Timestamp: time.Now(),
-		Nodes:     snap.Nodes,
-		Edges:     snap.Edges,
-	}
-
-	data, err := json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	dir := filepath.Dir(r.paths.CachePath)
-	if err := r.fs.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	return r.fs.WriteFile(r.paths.CachePath, data, 0644)
-}
-
-// ErrCacheVersionMismatch is returned when the cache version doesn't match the current version.
-var ErrCacheVersionMismatch = errors.New("cache version mismatch")
-
-// LoadCache reads the graph cache from the project's cache file.
-// Returns ErrCacheVersionMismatch if the cache was created with a different version.
-func (r *Repository) LoadCache(g *graph.Graph) error {
-	data, err := r.fs.ReadFile(r.paths.CachePath)
-	if err != nil {
-		return err
-	}
-
-	var env cacheEnvelope
-	if err := json.Unmarshal(data, &env); err != nil {
-		return err
-	}
-
-	if env.Version != cacheVersion {
-		return fmt.Errorf("%w: cache is v%s, need v%s", ErrCacheVersionMismatch, env.Version, cacheVersion)
-	}
-
-	g.Restore(&graph.CacheData{
-		Nodes: env.Nodes,
-		Edges: env.Edges,
-	})
-
-	return nil
-}
-
-// CacheExists returns true if the graph cache file exists.
-func (r *Repository) CacheExists() bool {
-	_, err := r.fs.Stat(r.paths.CachePath)
-	return err == nil
 }
 
 // --- Metamodel ---

@@ -27,7 +27,6 @@ func testContext() *project.Context {
 		Root:                 "/project",
 		MetamodelPath:        "/project/metamodel.yaml",
 		CacheDir:             "/project/.rela",
-		CachePath:            "/project/.rela/cache.json",
 		EntitiesDir:          "/project/entities",
 		RelationsDir:         "/project/relations",
 		TemplatesDir:         "/project/templates",
@@ -692,8 +691,8 @@ func TestConcurrentReloadStateSnapshot(t *testing.T) {
 					t.Errorf("graph snapshot was empty during concurrent reload")
 					return
 				}
-				// Search snapshots state.searchIdx; any result is fine.
-				_, _, _ = ws.Search([]string{"seed"}, nil, 10)
+				// search snapshots state.searchIdx; any result is fine.
+				_, _, _ = ws.search([]string{"seed"}, nil, 10)
 			}
 		}()
 	}

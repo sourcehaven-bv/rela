@@ -57,7 +57,6 @@ func newE2ETestApp(t *testing.T) (*App, string, func()) {
 		EntitiesDir:   filepath.Join(projectDir, "entities"),
 		RelationsDir:  filepath.Join(projectDir, "relations"),
 		CacheDir:      filepath.Join(projectDir, ".rela"),
-		CachePath:     filepath.Join(projectDir, ".rela", "cache.json"),
 	}
 	_ = os.MkdirAll(ctx.CacheDir, 0o755)
 

@@ -24,7 +24,6 @@ func setupListTestEnv() {
 		EntitiesDir:   "/tmp/test-project/entities",
 		RelationsDir:  "/tmp/test-project/relations",
 		CacheDir:      "/tmp/test-project/.rela",
-		CachePath:     "/tmp/test-project/.rela/cache.json",
 		MetamodelPath: "/tmp/test-project/metamodel.yaml",
 	}
 }
@@ -36,7 +35,7 @@ func setupWorkspaceFromMeta(t *testing.T, m *metamodel.Metamodel) {
 	fs := storage.NewMemFS()
 	ctx := &project.Context{
 		Root: "/tmp/test-project", MetamodelPath: "/tmp/test-project/metamodel.yaml",
-		CacheDir: "/tmp/test-project/.rela", CachePath: "/tmp/test-project/.rela/cache.json",
+		CacheDir:    "/tmp/test-project/.rela",
 		EntitiesDir: "/tmp/test-project/entities", RelationsDir: "/tmp/test-project/relations",
 	}
 	_ = fs.MkdirAll(ctx.EntitiesDir, 0o755)

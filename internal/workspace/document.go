@@ -20,8 +20,8 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // docCacheDir is the subdirectory under .rela/ for document cache files.
@@ -44,7 +44,7 @@ type DocumentResult struct {
 	// ContentHash is the hash of source entities used for cache validation.
 	ContentHash string
 	// Entities contains all entities involved in the document (for dependency tracking).
-	Entities []*model.Entity
+	Entities []*entity.Entity
 }
 
 // docRenderGroup dedupes concurrent render requests for the same entry.
@@ -95,7 +95,7 @@ func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*Documen
 
 // doRenderDocument performs the actual rendering work.
 func (w *Workspace) doRenderDocument(
-	entryID string, cfg DocumentConfig, entities []*model.Entity, contentHash, cacheFile string,
+	entryID string, cfg DocumentConfig, entities []*entity.Entity, contentHash, cacheFile string,
 ) (*DocumentResult, error) {
 	command := cfg.Command
 	command = strings.ReplaceAll(command, "{id}", entryID)
@@ -128,22 +128,22 @@ func (w *Workspace) doRenderDocument(
 
 // computeDocumentHash computes a content hash for cache validation.
 // Uses the entry entity for hashing. Returns the entities and their hash.
-func (w *Workspace) computeDocumentHash(entryID string) ([]*model.Entity, string, error) {
-	entity, ok := w.Graph().GetNode(entryID)
-	if !ok {
+func (w *Workspace) computeDocumentHash(entryID string) ([]*entity.Entity, string, error) {
+	e, err := w.Store().GetEntity(context.Background(), entryID)
+	if err != nil {
 		return nil, "", fmt.Errorf("entity %q not found", entryID)
 	}
-	entities := []*model.Entity{entity}
+	entities := []*entity.Entity{e}
 	return entities, hashEntities(entities), nil
 }
 
 // hashEntities computes a FNV-64a hash of the given entities' content.
 // FNV is a fast non-cryptographic hash suitable for cache keys.
-func hashEntities(entities []*model.Entity) string {
+func hashEntities(entities []*entity.Entity) string {
 	h := fnv.New64a()
 
 	// Sort entities by ID for deterministic hashing
-	sorted := make([]*model.Entity, len(entities))
+	sorted := make([]*entity.Entity, len(entities))
 	copy(sorted, entities)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].ID < sorted[j].ID

@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 func TestHashEntities(t *testing.T) {
-	e1 := &model.Entity{
+	e1 := &entity.Entity{
 		ID:   "REQ-001",
 		Type: "requirement",
 		Properties: map[string]interface{}{
@@ -18,7 +18,7 @@ func TestHashEntities(t *testing.T) {
 		},
 		Content: "Some content",
 	}
-	e2 := &model.Entity{
+	e2 := &entity.Entity{
 		ID:   "REQ-002",
 		Type: "requirement",
 		Properties: map[string]interface{}{
@@ -29,37 +29,37 @@ func TestHashEntities(t *testing.T) {
 	}
 
 	t.Run("deterministic", func(t *testing.T) {
-		hash1 := hashEntities([]*model.Entity{e1, e2})
-		hash2 := hashEntities([]*model.Entity{e1, e2})
+		hash1 := hashEntities([]*entity.Entity{e1, e2})
+		hash2 := hashEntities([]*entity.Entity{e1, e2})
 		if hash1 != hash2 {
 			t.Errorf("hash should be deterministic, got %s and %s", hash1, hash2)
 		}
 	})
 
 	t.Run("order independent", func(t *testing.T) {
-		hash1 := hashEntities([]*model.Entity{e1, e2})
-		hash2 := hashEntities([]*model.Entity{e2, e1})
+		hash1 := hashEntities([]*entity.Entity{e1, e2})
+		hash2 := hashEntities([]*entity.Entity{e2, e1})
 		if hash1 != hash2 {
 			t.Errorf("hash should be order independent, got %s and %s", hash1, hash2)
 		}
 	})
 
 	t.Run("content change affects hash", func(t *testing.T) {
-		e1Modified := &model.Entity{
+		e1Modified := &entity.Entity{
 			ID:         e1.ID,
 			Type:       e1.Type,
 			Properties: e1.Properties,
 			Content:    "Modified content",
 		}
-		hash1 := hashEntities([]*model.Entity{e1})
-		hash2 := hashEntities([]*model.Entity{e1Modified})
+		hash1 := hashEntities([]*entity.Entity{e1})
+		hash2 := hashEntities([]*entity.Entity{e1Modified})
 		if hash1 == hash2 {
 			t.Errorf("hash should change when content changes")
 		}
 	})
 
 	t.Run("property change affects hash", func(t *testing.T) {
-		e1Modified := &model.Entity{
+		e1Modified := &entity.Entity{
 			ID:   e1.ID,
 			Type: e1.Type,
 			Properties: map[string]interface{}{
@@ -68,15 +68,15 @@ func TestHashEntities(t *testing.T) {
 			},
 			Content: e1.Content,
 		}
-		hash1 := hashEntities([]*model.Entity{e1})
-		hash2 := hashEntities([]*model.Entity{e1Modified})
+		hash1 := hashEntities([]*entity.Entity{e1})
+		hash2 := hashEntities([]*entity.Entity{e1Modified})
 		if hash1 == hash2 {
 			t.Errorf("hash should change when properties change")
 		}
 	})
 
 	t.Run("empty entities", func(t *testing.T) {
-		hash := hashEntities([]*model.Entity{})
+		hash := hashEntities([]*entity.Entity{})
 		if hash == "" {
 			t.Errorf("hash should not be empty for empty slice")
 		}

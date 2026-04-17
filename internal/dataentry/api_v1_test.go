@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -2254,7 +2255,7 @@ func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 }
 
 func TestExtractEntityIDs(t *testing.T) {
-	entities := []*model.Entity{
+	entities := []*entityPkg.Entity{
 		{ID: "REQ-001"},
 		{ID: "REQ-002"},
 		{ID: "DEC-001"},

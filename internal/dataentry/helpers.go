@@ -25,6 +25,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -476,14 +477,9 @@ func (a *App) executeQuery(query string) []*model.Entity {
 	svc := a.Services()
 	var candidates []*model.Entity
 	if sq.HasFreeText() {
-		// Bleve path returns entities in relevance order. Scores are
-		// intentionally dropped — executeQuery never sorted by them and
-		// tracking them only to discard would be noise.
-		entities, _, err := svc.Search(sq.FreeTextWords, sq.FreeTextPhrases, maxSearchResults)
-		if err != nil {
-			return nil
-		}
-		candidates = filterByEntityTypes(entities, sq.EntityTypes)
+		// Searcher returns entities in relevance order. Scores are dropped
+		// because executeQuery never sorted by them.
+		candidates = runFreeTextSearch(svc, sq, maxSearchResults)
 	} else {
 		candidates = listFromStoreByTypes(svc, sq.EntityTypes)
 	}
@@ -504,21 +500,32 @@ func (a *App) executeQuery(query string) []*model.Entity {
 	return results
 }
 
-// filterByEntityTypes narrows entities to those whose Type is in types.
-// An empty types slice returns entities unchanged.
-func filterByEntityTypes(entities []*model.Entity, types []string) []*model.Entity {
-	if len(types) == 0 {
-		return entities
+// runFreeTextSearch issues a Searcher query from a parsed SearchQuery and
+// loads the full entity bodies from the store. Phrases are re-quoted so the
+// searcher's text layer can rebuild the same fuzzy-words + exact-phrases
+// compound query the dataentry UI used to build upstream.
+func runFreeTextSearch(svc Services, sq *searchparser.SearchQuery, limit int) []*model.Entity {
+	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
+	parts = append(parts, sq.FreeTextWords...)
+	for _, p := range sq.FreeTextPhrases {
+		parts = append(parts, `"`+p+`"`)
 	}
-	typeSet := make(map[string]bool, len(types))
-	for _, t := range types {
-		typeSet[t] = true
+	q := search.Query{
+		Text:  strings.Join(parts, " "),
+		Types: sq.EntityTypes,
+		Limit: limit,
 	}
-	out := make([]*model.Entity, 0, len(entities))
-	for _, e := range entities {
-		if typeSet[e.Type] {
-			out = append(out, e)
+	ctx := context.Background()
+	var out []*model.Entity
+	for hit, err := range svc.Searcher.Search(ctx, q) {
+		if err != nil {
+			return nil
 		}
+		e, getErr := svc.Store.GetEntity(ctx, hit.ID)
+		if getErr != nil {
+			continue
+		}
+		out = append(out, model.EntityFromDomain(e))
 	}
 	return out
 }

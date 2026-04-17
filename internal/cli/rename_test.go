@@ -28,7 +28,6 @@ func setupRenameTestEnv(t *testing.T) string {
 		EntitiesDir:          filepath.Join(dir, "entities"),
 		RelationsDir:         filepath.Join(dir, "relations"),
 		CacheDir:             filepath.Join(dir, ".rela"),
-		CachePath:            filepath.Join(dir, ".rela", "cache.json"),
 		MetamodelPath:        filepath.Join(dir, "metamodel.yaml"),
 		TemplatesDir:         filepath.Join(dir, "templates"),
 		EntityTemplatesDir:   filepath.Join(dir, "templates", "entities"),
@@ -162,10 +161,6 @@ func TestRenameEntityCommand(t *testing.T) {
 			t.Errorf("entity file should keep original ID, got:\n%s", content)
 		}
 
-		// Check cache was removed
-		if _, err := os.Stat(projectCtx.CachePath); !os.IsNotExist(err) {
-			t.Error("cache should be removed")
-		}
 	})
 
 	t.Run("error when old type not found", func(t *testing.T) {

@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
@@ -125,29 +126,35 @@ func TestGraphAnalysis(t *testing.T) {
 	// Add relation between req and dec
 	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-001").Build())
 
+	ctx := context.Background()
+	tr := ws.Tracer()
+
 	// Test FindOrphans
-	orphans := ws.FindOrphans()
+	orphans, err := tr.FindOrphans(ctx)
+	if err != nil {
+		t.Fatalf("FindOrphans: %v", err)
+	}
 	if len(orphans) != 1 {
 		t.Errorf("got %d orphans, want 1", len(orphans))
 	}
-	if orphans[0].ID != "ORPHAN-001" {
-		t.Errorf("got orphan %q, want ORPHAN-001", orphans[0].ID)
+	if orphans[0] != "ORPHAN-001" {
+		t.Errorf("got orphan %q, want ORPHAN-001", orphans[0])
 	}
 
 	// Test TraceFrom
-	trace := ws.TraceFrom("DEC-001", 0)
+	trace := tr.TraceFrom(ctx, "DEC-001", 0)
 	if trace == nil {
 		t.Error("expected trace result, got nil")
 	}
 
 	// Test TraceTo
-	trace = ws.TraceTo("REQ-001", 0)
+	trace = tr.TraceTo(ctx, "REQ-001", 0)
 	if trace == nil {
 		t.Error("expected trace result, got nil")
 	}
 
 	// Test FindPath
-	path := ws.FindPath("DEC-001", "REQ-001")
+	path := tr.FindPath(ctx, "DEC-001", "REQ-001")
 	if len(path) == 0 {
 		t.Error("expected path, got empty")
 	}

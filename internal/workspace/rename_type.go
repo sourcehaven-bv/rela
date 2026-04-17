@@ -54,8 +54,5 @@ func (w *Workspace) RenameEntityType(oldType, newType, newPlural string) (int, e
 		_ = fs.Rename(oldTemplatePath, newTemplatePath)
 	}
 
-	// 5. Remove cache (stale after rename)
-	_ = fs.Remove(paths.CachePath)
-
 	return count, nil
 }

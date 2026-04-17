@@ -121,11 +121,6 @@ CSV format (relations):
 			if result.RelationsSkipped > 0 {
 				out.WriteWarning("Skipped %d relations (errors or duplicates)", result.RelationsSkipped)
 			}
-
-			// Save cache
-			if err := saveCache(); err != nil {
-				out.WriteWarning("Failed to save cache: %v", err)
-			}
 		}
 
 		// Report any errors

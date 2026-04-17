@@ -32,11 +32,6 @@ Examples:
 			out.WriteWarning("%v", syncErr)
 		}
 
-		// Save cache
-		if err := saveCache(); err != nil {
-			out.WriteWarning("Failed to save cache: %v", err)
-		}
-
 		out.WriteSuccess("Synced %d entities and %d relations", result.EntitiesLoaded, result.RelationsLoaded)
 
 		if len(result.Errors) > 0 {

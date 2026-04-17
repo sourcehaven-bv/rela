@@ -229,13 +229,6 @@ func runRenameID(oldID, newID string) error {
 		verb = "Dry run — would rename"
 	}
 	out.WriteMessage("%s: %s → %s (%d relations updated)", verb, result.OldID, result.NewID, result.RelationsUpdated)
-
-	if !renameIDDryRun {
-		if saveErr := ws.SaveCache(); saveErr != nil {
-			out.WriteWarning("Failed to save cache: %v", saveErr)
-		}
-	}
-
 	return nil
 }
 

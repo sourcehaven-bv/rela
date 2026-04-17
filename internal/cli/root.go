@@ -157,14 +157,6 @@ func wrapDiscoverError(err error) error {
 	return err
 }
 
-// saveCache saves the graph to the cache file.
-func saveCache() error {
-	if ws != nil {
-		return ws.SaveCache()
-	}
-	return nil
-}
-
 // resolveEntityType delegates to workspace.
 func resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
 	return ws.ResolveEntityType(typeName)

@@ -70,7 +70,6 @@ func setupReloadTestApp(t *testing.T) (*App, *storage.MemFS) {
 		Root:                 root,
 		MetamodelPath:        root + "/metamodel.yaml",
 		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
 		EntitiesDir:          root + "/entities",
 		RelationsDir:         root + "/relations",
 		TemplatesDir:         root + "/templates",

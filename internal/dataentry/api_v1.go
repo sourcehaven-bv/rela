@@ -1956,7 +1956,7 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 }
 
 // extractEntityIDs extracts IDs from a slice of entities.
-func extractEntityIDs(entities []*model.Entity) []string {
+func extractEntityIDs(entities []*entityPkg.Entity) []string {
 	ids := make([]string, len(entities))
 	for i, e := range entities {
 		ids[i] = e.ID

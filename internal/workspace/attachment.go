@@ -1,11 +1,13 @@
 package workspace
 
 import (
+	"bytes"
+	"context"
 	"fmt"
-	"os/user"
 
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // AttachmentInfo contains information about an attachment on an entity.
@@ -24,123 +26,108 @@ type AttachResult struct {
 	Deduplicated bool // true if file already existed in store
 }
 
+// Attachments returns the top-level attachment manager backing this workspace.
+// Callers that only need pure byte storage (e.g. upload endpoints) use it
+// directly; the workspace itself composes it with entity-property updates
+// in AttachFile/ListAttachments below.
+func (w *Workspace) Attachments() attachment.Manager {
+	return w.attachmentStore()
+}
+
+// attachmentStore returns the concrete content-addressable backend. Used by
+// workspace internals that need backend-specific operations (GC) beyond the
+// Manager interface.
+func (w *Workspace) attachmentStore() *attachment.Store {
+	return attachment.NewStore(w.FS(), w.Paths().Root)
+}
+
 // AttachFile attaches a file to an entity's file property.
 // If property is empty, it uses the first file-type property defined for the entity type.
-// The file is stored in the content-addressable attachment store and the entity is updated.
+// The file is stored via the attachment manager and the entity is updated.
 func (w *Workspace) AttachFile(entityID, filePath, property string) (*AttachResult, error) {
-	// Get entity from graph
-	entity, ok := w.Graph().GetNode(entityID)
-	if !ok {
+	ctx := context.Background()
+
+	e, err := w.Store().GetEntity(ctx, entityID)
+	if err != nil {
 		return nil, fmt.Errorf("entity not found: %s", entityID)
 	}
 
 	meta := w.Meta()
-
-	// Get entity definition
-	entityDef, ok := meta.GetEntityDef(entity.Type)
+	entityDef, ok := meta.GetEntityDef(e.Type)
 	if !ok {
-		return nil, fmt.Errorf("unknown entity type: %s", entity.Type)
+		return nil, fmt.Errorf("unknown entity type: %s", e.Type)
 	}
 
-	// Determine which property to use
 	propName := property
 	if propName == "" {
 		propName = findFileProperty(entityDef)
 		if propName == "" {
-			return nil, fmt.Errorf("no file property defined for entity type %s; specify property explicitly", entity.Type)
+			return nil, fmt.Errorf("no file property defined for entity type %s; specify property explicitly", e.Type)
 		}
 	}
 
-	// Validate property exists and is file type
 	propDef, ok := entityDef.Properties[propName]
 	if !ok {
-		return nil, fmt.Errorf("property %q not defined for entity type %s", propName, entity.Type)
+		return nil, fmt.Errorf("property %q not defined for entity type %s", propName, e.Type)
 	}
 	if propDef.Type != metamodel.PropertyTypeFile {
 		return nil, fmt.Errorf("property %q is not a file type (is %s)", propName, propDef.Type)
 	}
 
-	// Get current user for metadata
-	addedBy := ""
-	if u, err := user.Current(); err == nil {
-		addedBy = u.Username
+	data, err := w.FS().ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("read source file: %w", err)
 	}
 
-	// Create attachment store and add file
-	store := attachment.NewStore(w.FS(), w.Paths().Root)
-	att, err := store.Add(filePath, addedBy)
+	info, err := w.Attachments().AttachFile(ctx, entityID, propName, filePath, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to store attachment: %w", err)
 	}
 
-	// Clone before mutation so we can diff old vs new
-	oldEntity := entity.Clone()
-
-	// Update entity property with the attachment path
-	entity.SetString(propName, att.Path)
-
-	// Write through workspace (validates, persists, updates graph+cache)
-	if _, err := w.updateEntity(entity, oldEntity); err != nil {
+	e.SetString(propName, info.Key)
+	if _, err := w.EntityManager().UpdateEntity(ctx, e); err != nil {
 		return nil, fmt.Errorf("failed to update entity: %w", err)
 	}
 
-	result := &AttachResult{
-		Path:         att.Path,
-		OriginalName: att.Metadata.OriginalName,
+	return &AttachResult{
+		Path:         info.Key,
+		OriginalName: info.OriginalName,
 		Deduplicated: false, // TODO: detect if file was deduplicated
-	}
-
-	return result, nil
+	}, nil
 }
 
 // ListAttachments returns all attachments for an entity.
 func (w *Workspace) ListAttachments(entityID string) ([]AttachmentInfo, error) {
-	// Get entity from graph
-	entity, ok := w.Graph().GetNode(entityID)
-	if !ok {
+	ctx := context.Background()
+
+	e, err := w.Store().GetEntity(ctx, entityID)
+	if err != nil {
 		return nil, fmt.Errorf("entity not found: %s", entityID)
 	}
 
 	meta := w.Meta()
-
-	// Get entity definition
-	entityDef, ok := meta.GetEntityDef(entity.Type)
+	entityDef, ok := meta.GetEntityDef(e.Type)
 	if !ok {
-		return nil, fmt.Errorf("unknown entity type: %s", entity.Type)
+		return nil, fmt.Errorf("unknown entity type: %s", e.Type)
 	}
 
-	// Create attachment store for metadata lookup
-	store := attachment.NewStore(w.FS(), w.Paths().Root)
-
+	mgr := w.Attachments()
 	var infos []AttachmentInfo
-
-	// Iterate over all file-type properties
 	for propName, propDef := range entityDef.Properties {
 		if propDef.Type != metamodel.PropertyTypeFile {
 			continue
 		}
-
-		val, ok := entity.Properties[propName]
+		val, ok := e.Properties[propName]
 		if !ok || val == nil {
 			continue
 		}
-
-		// Extract paths from property value
-		paths := extractPaths(val)
-
-		for _, path := range paths {
-			info := AttachmentInfo{
-				Property: propName,
-				Path:     path,
-			}
-
-			// Try to get metadata
-			if meta, err := store.GetMetadata(path); err == nil {
+		for _, path := range extractPaths(val) {
+			info := AttachmentInfo{Property: propName, Path: path}
+			if meta, err := mgr.InfoFor(ctx, path); err == nil {
 				info.OriginalName = meta.OriginalName
 				info.ContentType = meta.ContentType
 				info.Size = meta.Size
 			}
-
 			infos = append(infos, info)
 		}
 	}
@@ -190,13 +177,14 @@ type GCAttachmentsResult struct {
 	Reclaimed int64    // Bytes reclaimed (or that would be reclaimed)
 }
 
-// GCAttachments removes unreferenced attachment files from the store.
-// If dryRun is true, it returns what would be removed without actually removing.
+// GCAttachments removes unreferenced attachment files from the content-
+// addressable backend. If dryRun is true, it returns what would be removed
+// without actually removing.
 func (w *Workspace) GCAttachments(dryRun bool) (*GCAttachmentsResult, error) {
 	referencedPaths := w.collectReferencedAttachmentPaths()
-	store := attachment.NewStore(w.FS(), w.Paths().Root)
+	cas := w.attachmentStore()
 
-	gcResult, err := store.GC(referencedPaths)
+	gcResult, err := cas.GC(referencedPaths)
 	if err != nil {
 		return nil, fmt.Errorf("gc failed: %w", err)
 	}
@@ -207,7 +195,7 @@ func (w *Workspace) GCAttachments(dryRun bool) (*GCAttachmentsResult, error) {
 	}
 
 	if !dryRun && len(gcResult.Removed) > 0 {
-		if err := store.RemoveUnreferenced(gcResult); err != nil {
+		if err := cas.RemoveUnreferenced(gcResult); err != nil {
 			return nil, fmt.Errorf("failed to remove files: %w", err)
 		}
 	}
@@ -217,23 +205,19 @@ func (w *Workspace) GCAttachments(dryRun bool) (*GCAttachmentsResult, error) {
 
 // collectReferencedAttachmentPaths returns all attachment paths referenced by entities.
 func (w *Workspace) collectReferencedAttachmentPaths() []string {
-	var paths []string
 	meta := w.Meta()
-
-	for _, entity := range w.Graph().AllNodes() {
-		entityDef, ok := meta.GetEntityDef(entity.Type)
+	var paths []string
+	for _, e := range collectEntities(w.Store(), store.EntityQuery{}) {
+		entityDef, ok := meta.GetEntityDef(e.Type)
 		if !ok {
 			continue
 		}
-
 		for propName, propDef := range entityDef.Properties {
 			if propDef.Type != metamodel.PropertyTypeFile {
 				continue
 			}
-
-			paths = append(paths, extractPaths(entity.Properties[propName])...)
+			paths = append(paths, extractPaths(e.Properties[propName])...)
 		}
 	}
-
 	return paths
 }

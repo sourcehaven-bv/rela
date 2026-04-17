@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -75,39 +74,6 @@ func (w *Workspace) OutgoingRelations(entityID string) []*entity.Relation {
 		EntityID:  entityID,
 		Direction: store.DirectionOutgoing,
 	})
-}
-
-// --- Graph analysis ---
-
-// FindOrphans returns entities with no incoming or outgoing relations.
-func (w *Workspace) FindOrphans() []*entity.Entity {
-	nodes := w.Graph().FindOrphans()
-	out := make([]*entity.Entity, len(nodes))
-	for i, n := range nodes {
-		out[i] = model.EntityToDomain(n)
-	}
-	return out
-}
-
-// TraceResult is re-exported from model for consumers.
-type TraceResult = model.TraceResult
-
-// TraceFrom traces all paths from the given entity (outgoing direction).
-func (w *Workspace) TraceFrom(entityID string, maxDepth int) *TraceResult {
-	return w.Graph().TraceFrom(entityID, maxDepth)
-}
-
-// TraceTo traces all paths to the given entity (incoming direction).
-func (w *Workspace) TraceTo(entityID string, maxDepth int) *TraceResult {
-	return w.Graph().TraceTo(entityID, maxDepth)
-}
-
-// PathStep is re-exported from model for consumers.
-type PathStep = model.PathStep
-
-// FindPath finds the shortest path between two entities.
-func (w *Workspace) FindPath(from, to string) []PathStep {
-	return w.Graph().FindPath(from, to)
 }
 
 func collectEntities(s store.Store, q store.EntityQuery) []*entity.Entity {

@@ -51,7 +51,6 @@ func InitializeWithFS(targetDir string, fs storage.FS) (*InitResult, error) {
 		Root:                 targetDir,
 		MetamodelPath:        metamodelPath,
 		CacheDir:             filepath.Join(targetDir, project.CacheDir),
-		CachePath:            filepath.Join(targetDir, project.CacheDir, project.CacheFile),
 		EntitiesDir:          filepath.Join(targetDir, project.EntitiesDir),
 		RelationsDir:         filepath.Join(targetDir, project.RelationsDir),
 		TemplatesDir:         filepath.Join(targetDir, project.TemplatesDir),

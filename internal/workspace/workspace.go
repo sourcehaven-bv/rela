@@ -6,7 +6,6 @@
 package workspace
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -198,28 +197,9 @@ func New(repo repository.Store, scriptExec ScriptExecutor, opts ...Option) (*Wor
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	// Try cache first, fall back to full sync.
-	var g *graph.Graph
-	useCache := repo.CacheExists()
-	if useCache {
-		g = graph.New()
-		if cacheErr := repo.LoadCache(g); cacheErr != nil {
-			if errors.Is(cacheErr, repository.ErrCacheVersionMismatch) {
-				slog.Warn("cache outdated, rebuilding", "error", cacheErr)
-			}
-			useCache = false
-		}
-	}
-	if !useCache {
-		syncedGraph, _, syncErr := repo.Sync(meta)
-		if syncErr != nil {
-			return nil, fmt.Errorf("sync: %w", syncErr)
-		}
-		g = syncedGraph
-		// Save the new cache after sync
-		if saveErr := repo.SaveCache(g); saveErr != nil {
-			slog.Warn("failed to save cache", "error", saveErr)
-		}
+	g, _, syncErr := repo.Sync(meta)
+	if syncErr != nil {
+		return nil, fmt.Errorf("sync: %w", syncErr)
 	}
 
 	ws := newWorkspace(repo, meta, g, exec, opts...)
@@ -455,13 +435,11 @@ func (w *Workspace) Formatter() store.Formatter {
 	return &legacyFormatter{w: w}
 }
 
-// Search performs a full-text search and returns matching entities with scores.
-// words are OR'd together with fuzzy matching; phrases must all match exactly.
-//
-// The state snapshot is captured once so that the search index, the graph
-// it was built from, and the entities returned by GetNode all come from
-// the same workspace epoch.
-func (w *Workspace) Search(words, phrases []string, limit int) ([]*entity.Entity, []float64, error) {
+// search runs the legacy word/phrase Bleve query against a single workspace
+// state snapshot so the index, the graph it was built from, and the returned
+// entities all come from the same epoch. External callers use Searcher()
+// instead; this method backs that adapter.
+func (w *Workspace) search(words, phrases []string, limit int) ([]*entity.Entity, []float64, error) {
 	s := w.state.Load()
 	if s == nil || s.searchIdx == nil {
 		return nil, nil, fmt.Errorf("search index not available")
@@ -479,12 +457,6 @@ func (w *Workspace) Search(words, phrases []string, limit int) ([]*entity.Entity
 		}
 	}
 	return entities, scores, nil
-}
-
-// SearchSimple performs a simple text search (convenience method).
-func (w *Workspace) SearchSimple(query string, limit int) ([]*entity.Entity, error) {
-	entities, _, err := w.Search(strings.Fields(query), nil, limit)
-	return entities, err
 }
 
 // --- Project accessors ---
@@ -610,7 +582,6 @@ func (w *Workspace) WithTx(fn func(tx *Tx) error) error {
 	// Repo transaction committed successfully — apply the staged graph
 	// mutations to the live graph and persist the cache.
 	tx.applyGraphMutations()
-	w.saveCacheQuietlyFor(base.graph)
 	return nil
 }
 
@@ -646,7 +617,6 @@ func (w *Workspace) Sync() (*model.SyncResult, error) {
 	// automation engine carry over unchanged from the previous state.
 	newIdx := w.buildReloadSearchIndex(newGraph, oldState.meta, oldState)
 
-	w.saveCacheQuietlyFor(newGraph)
 	w.state.Store(&workspaceState{
 		graph:      newGraph,
 		store:      buildMemStore(newGraph),
@@ -715,7 +685,6 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 	// indexing fails — never drop a working index in favor of a broken one.
 	newIdx := w.buildReloadSearchIndex(newGraph, newMeta, oldState)
 
-	w.saveCacheQuietlyFor(newGraph)
 
 	// Publish the new state atomically. Readers that call state.Load()
 	// after this point see a fully coherent {newGraph, newMeta, newAuto,
@@ -767,7 +736,6 @@ func (w *Workspace) reloadKeepingOldMetamodel(
 	// index built from the previous graph — a torn snapshot.
 	newIdx := w.buildReloadSearchIndex(newGraph, oldState.meta, oldState)
 
-	w.saveCacheQuietlyFor(newGraph)
 	w.state.Store(&workspaceState{
 		graph:      newGraph,
 		store:      buildMemStore(newGraph),
@@ -838,30 +806,6 @@ func (w *Workspace) removeFromIndex(id string) {
 	}
 	if err := s.searchIdx.Remove(id); err != nil {
 		slog.Warn("failed to remove entity from index", "id", id, "error", err)
-	}
-}
-
-// SaveCache persists the current graph to the cache file.
-func (w *Workspace) SaveCache() error {
-	if g := w.Graph(); g != nil {
-		return w.repo.SaveCache(g)
-	}
-	return nil
-}
-
-func (w *Workspace) saveCacheQuietly() {
-	if g := w.Graph(); g != nil {
-		w.saveCacheQuietlyFor(g)
-	}
-}
-
-// saveCacheQuietlyFor persists a specific graph snapshot to the cache
-// file. Used by Reload and Sync to persist a freshly-built graph BEFORE
-// publishing it via state.Store, so the on-disk cache never advances
-// past what readers can see.
-func (w *Workspace) saveCacheQuietlyFor(g *graph.Graph) {
-	if err := w.repo.SaveCache(g); err != nil {
-		slog.Warn("failed to save cache", "error", err)
 	}
 }
 
@@ -1005,7 +949,6 @@ func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*model.
 		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
 	}
 
-	w.saveCacheQuietly()
 	return entity, result, nil
 }
 
@@ -1071,7 +1014,6 @@ func (w *Workspace) updateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
 	}
 
-	w.saveCacheQuietly()
 	return result, nil
 }
 
@@ -1132,7 +1074,6 @@ func (w *Workspace) deleteEntity(entityType, id string, cascade bool) (*DeleteRe
 	g.RemoveNode(id)
 	mirrorEntityDelete(s.store, id)
 
-	w.saveCacheQuietly()
 	return result, nil
 }
 
@@ -1586,7 +1527,6 @@ func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelat
 		return nil, err
 	}
 
-	w.saveCacheQuietly()
 	return rel, nil
 }
 
@@ -1612,7 +1552,6 @@ func (w *Workspace) updateRelation(from, relType, to string, opts CreateRelation
 		return nil, err
 	}
 
-	w.saveCacheQuietly()
 	return rel, nil
 }
 
@@ -1625,7 +1564,6 @@ func (w *Workspace) deleteRelation(from, relType, to string) error {
 	if s := w.state.Load(); s != nil {
 		mirrorRelationDelete(s.store, from, relType, to)
 	}
-	w.saveCacheQuietly()
 	return nil
 }
 

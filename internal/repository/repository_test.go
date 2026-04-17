@@ -3,7 +3,6 @@ package repository
 import (
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -22,7 +21,6 @@ func setupTestRepo(t *testing.T) (*Repository, *metamodel.Metamodel, storage.FS)
 		Root:                 root,
 		MetamodelPath:        root + "/metamodel.yaml",
 		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
 		EntitiesDir:          root + "/entities",
 		RelationsDir:         root + "/relations",
 		TemplatesDir:         root + "/templates",
@@ -398,45 +396,6 @@ func TestRepository_Sync_ReturnsFreshGraph(t *testing.T) {
 	if _, ok := first.GetNode("AFTER-001"); ok {
 		t.Error("mutation to second graph leaked into first; Sync must return independent graphs")
 	}
-}
-
-// --- Cache ---
-
-func TestRepository_CacheSaveAndLoad(t *testing.T) {
-	repo, meta, _ := setupTestRepo(t)
-
-	// Build a graph with entities
-	g := graph.New()
-	e1 := testutil.NewEntity("REQ-001", "requirement").With("title", "Cached Req").Build()
-	g.AddNode(e1)
-
-	// Initially no cache
-	if repo.CacheExists() {
-		t.Error("CacheExists() should be false before save")
-	}
-
-	if err := repo.SaveCache(g); err != nil {
-		t.Fatalf("SaveCache() error = %v", err)
-	}
-
-	if !repo.CacheExists() {
-		t.Error("CacheExists() should be true after save")
-	}
-
-	// Load into a fresh graph
-	g2 := graph.New()
-	if err := repo.LoadCache(g2); err != nil {
-		t.Fatalf("LoadCache() error = %v", err)
-	}
-
-	node, ok := g2.GetNode("REQ-001")
-	if !ok {
-		t.Fatal("loaded graph should contain REQ-001")
-	}
-	if node.GetString("title") != "Cached Req" {
-		t.Errorf("loaded entity title = %q, want %q", node.GetString("title"), "Cached Req")
-	}
-	_ = meta // used by setupTestRepo
 }
 
 // --- Metamodel ---

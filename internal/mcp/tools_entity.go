@@ -302,12 +302,6 @@ func (s *Server) handleRenameEntity(
 		return mcp.NewToolResultError(renameErr.Error()), nil
 	}
 
-	if !dryRun {
-		if cacheErr := s.ws.SaveCache(); cacheErr != nil {
-			s.logger.Warn("failed to save cache", "error", cacheErr)
-		}
-	}
-
 	verb := "Renamed"
 	if dryRun {
 		verb = "Dry run — would rename"

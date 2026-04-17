@@ -5,6 +5,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
@@ -25,40 +26,22 @@ type Services struct {
 	// Tracer walks relations for trace/path/orphan queries.
 	Tracer tracer.Tracer
 
-	// Search runs a free-text query against the Bleve index. The
-	// words/phrases split mirrors the existing workspace.Search signature
-	// — unifying it with search.Searcher is a separate piece of work.
-	Search SearchFunc
+	// Searcher runs free-text queries against the search index.
+	Searcher search.Searcher
 
 	// Meta is the current metamodel snapshot.
 	Meta *metamodel.Metamodel
 }
-
-// SearchFunc executes a free-text search against the workspace's search
-// index. words match loosely; phrases match as contiguous token sequences.
-// limit <= 0 means no limit. Returns entities in relevance order, paired
-// with their relevance scores.
-type SearchFunc func(words, phrases []string, limit int) ([]*model.Entity, []float64, error)
 
 // Services returns the services bundle the current App state is wired to.
 // Services are read from the workspace at call time, so reloads that
 // swap the backing store surface here immediately.
 func (a *App) Services() Services {
 	return Services{
-		Store:  a.ws.Store(),
-		Tracer: a.ws.Tracer(),
-		Search: func(words, phrases []string, limit int) ([]*model.Entity, []float64, error) {
-			entities, scores, err := a.ws.Search(words, phrases, limit)
-			if err != nil {
-				return nil, nil, err
-			}
-			out := make([]*model.Entity, len(entities))
-			for i, e := range entities {
-				out[i] = model.EntityFromDomain(e)
-			}
-			return out, scores, nil
-		},
-		Meta: a.State().Meta,
+		Store:    a.ws.Store(),
+		Tracer:   a.ws.Tracer(),
+		Searcher: a.ws.Searcher(),
+		Meta:     a.State().Meta,
 	}
 }
 

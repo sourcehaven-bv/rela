@@ -38,7 +38,6 @@ func TestWatcherStop(t *testing.T) {
 		RelationsDir:  relationsDir,
 		MetamodelPath: metamodelPath,
 		CacheDir:      cacheDir,
-		CachePath:     filepath.Join(cacheDir, "cache.json"),
 	}
 	repo := repository.New(storage.NewOsFS(), ctx)
 	ws, err := workspace.New(repo, workspace.NopScriptExecutor)
@@ -80,7 +79,6 @@ func TestWatcherFileChange(t *testing.T) {
 		RelationsDir:  relationsDir,
 		MetamodelPath: metamodelPath,
 		CacheDir:      cacheDir,
-		CachePath:     filepath.Join(cacheDir, "cache.json"),
 	}
 	repo := repository.New(storage.NewOsFS(), ctx)
 	ws, err := workspace.New(repo, workspace.NopScriptExecutor)

@@ -18,7 +18,6 @@ func setupUpdateTestEnv() {
 		Root:          "/tmp/test-project",
 		EntitiesDir:   "/tmp/test-project/entities",
 		RelationsDir:  "/tmp/test-project/relations",
-		CachePath:     "/tmp/test-project/.rela/cache.json",
 		MetamodelPath: "/tmp/test-project/metamodel.yaml",
 	}
 	meta = &metamodel.Metamodel{

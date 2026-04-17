@@ -3,6 +3,7 @@ package workspace
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -225,7 +226,7 @@ func TestAnalyzeAll(t *testing.T) {
 }
 
 func TestFilterByScope(t *testing.T) {
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "A"},
 		{ID: "B"},
 		{ID: "C"},

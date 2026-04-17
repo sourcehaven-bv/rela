@@ -10,7 +10,6 @@ import (
 const (
 	MetamodelFile        = "metamodel.yaml"
 	CacheDir             = ".rela"
-	CacheFile            = "cache.json"
 	EntitiesDir          = "entities"
 	RelationsDir         = "relations"
 	TemplatesDir         = "templates"
@@ -23,7 +22,6 @@ type Context struct {
 	Root                 string // Project root directory
 	MetamodelPath        string // Path to metamodel.yaml
 	CacheDir             string // Path to .rela directory
-	CachePath            string // Path to .rela/cache.json
 	EntitiesDir          string // Path to entities directory
 	RelationsDir         string // Path to relations directory
 	TemplatesDir         string // Path to templates directory
@@ -79,7 +77,6 @@ func newContext(root string) *Context {
 		Root:                 root,
 		MetamodelPath:        filepath.Join(root, MetamodelFile),
 		CacheDir:             filepath.Join(root, CacheDir),
-		CachePath:            filepath.Join(root, CacheDir, CacheFile),
 		EntitiesDir:          filepath.Join(root, EntitiesDir),
 		RelationsDir:         filepath.Join(root, RelationsDir),
 		TemplatesDir:         templatesDir,
