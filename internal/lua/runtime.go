@@ -23,6 +23,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/ai"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -440,7 +441,7 @@ func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 		return 1
 	}
 
-	ls.Push(EntityToTable(ls, entity))
+	ls.Push(EntityToTable(ls, model.EntityToDomain(entity)))
 	return 1
 }
 
@@ -486,7 +487,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 
 	result := ls.NewTable()
 	for i, e := range entities {
-		result.RawSetInt(i+1, EntityToTable(ls, e))
+		result.RawSetInt(i+1, EntityToTable(ls, model.EntityToDomain(e)))
 	}
 	ls.Push(result)
 	return 1
@@ -662,18 +663,18 @@ func (r *Runtime) luaWriteFile(ls *lua.LState) int {
 	return 0
 }
 
-// EntityToTable converts a model.Entity to a Lua table.
+// EntityToTable converts an entity.Entity to a Lua table.
 // The returned table has a prop(name, default) method.
 // Exported for use by workspace automation execution.
-func EntityToTable(ls *lua.LState, e *model.Entity) *lua.LTable {
+func EntityToTable(ls *lua.LState, e *entity.Entity) *lua.LTable {
 	t := ls.NewTable()
 	t.RawSetString("id", lua.LString(e.ID))
 	t.RawSetString("type", lua.LString(e.Type))
 	t.RawSetString("content", lua.LString(e.Content))
 
 	// Add modification time as ISO 8601 string (empty if zero)
-	if !e.ModTime.IsZero() {
-		t.RawSetString("mod_time", lua.LString(e.ModTime.Format(time.RFC3339)))
+	if !e.UpdatedAt.IsZero() {
+		t.RawSetString("mod_time", lua.LString(e.UpdatedAt.Format(time.RFC3339)))
 	} else {
 		t.RawSetString("mod_time", lua.LString(""))
 	}
@@ -923,7 +924,7 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 
 	result := ls.NewTable()
 	for i, e := range entities {
-		result.RawSetInt(i+1, EntityToTable(ls, e))
+		result.RawSetInt(i+1, EntityToTable(ls, model.EntityToDomain(e)))
 	}
 	ls.Push(result)
 	return 1
@@ -949,7 +950,7 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	ls.Push(EntityToTable(ls, entity))
+	ls.Push(EntityToTable(ls, model.EntityToDomain(entity)))
 	return 1
 }
 
@@ -1011,7 +1012,7 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		ls.RaiseError("entity disappeared after update: %s", id)
 		return 0
 	}
-	ls.Push(EntityToTable(ls, updatedEntity))
+	ls.Push(EntityToTable(ls, model.EntityToDomain(updatedEntity)))
 	return 1
 }
 

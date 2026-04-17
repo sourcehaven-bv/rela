@@ -3,8 +3,11 @@ package workspace
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetemplate"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
+	"github.com/Sourcehaven-BV/rela/internal/store/storevalidate"
 )
 
 // graphTracer adapts *graph.Graph to the storetrace.Tracer interface.
@@ -75,6 +78,71 @@ func (f *legacyFormatter) FormatRelation(_ context.Context, from, relType, to st
 		return false, nil
 	}
 	return f.w.FormatRelation(r, dryRun)
+}
+
+// Validator returns a Validator service backed by the workspace's store and
+// metamodel. The service uses workspace as the Lua execution context.
+func (w *Workspace) Validator() storevalidate.Validator {
+	return storevalidate.New(w.Store(), w.meta())
+}
+
+// Templater returns the entity template service backed by the workspace's
+// repository.
+func (w *Workspace) Templater() storetemplate.Templater {
+	return &repoTemplater{w: w}
+}
+
+// repoTemplater adapts the legacy repo.DiscoverEntityTemplates to the
+// storetemplate.Templater interface.
+type repoTemplater struct {
+	w *Workspace
+}
+
+var _ storetemplate.Templater = (*repoTemplater)(nil)
+
+func (t *repoTemplater) EntityTemplates(_ context.Context, entityType string) ([]*storetemplate.Template, error) {
+	if t.w.repo == nil {
+		return nil, nil
+	}
+	models, err := t.w.repo.DiscoverEntityTemplates(entityType)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*storetemplate.Template, 0, len(models))
+	for _, m := range models {
+		out = append(out, modelTemplateToService(m))
+	}
+	return out, nil
+}
+
+func modelTemplateToService(m *model.EntityTemplate) *storetemplate.Template {
+	if m == nil {
+		return nil
+	}
+	rels := make([]storetemplate.Relation, len(m.Relations))
+	for i, r := range m.Relations {
+		rels[i] = storetemplate.Relation{Type: r.Relation, Target: r.Target}
+	}
+	return &storetemplate.Template{
+		Name:       m.Name,
+		EntityType: m.EntityType,
+		Properties: m.Properties,
+		Content:    m.Content,
+		Relations:  rels,
+	}
+}
+
+func (t *repoTemplater) EntityTemplate(ctx context.Context, entityType, variant string) (*storetemplate.Template, error) {
+	all, err := t.EntityTemplates(ctx, entityType)
+	if err != nil {
+		return nil, err
+	}
+	for _, tpl := range all {
+		if tpl.Name == variant {
+			return tpl, nil
+		}
+	}
+	return nil, nil
 }
 
 // convertTraceResult converts model.TraceResult → storetrace.TraceResult.

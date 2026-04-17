@@ -106,7 +106,7 @@ func (e *luaExecutor) validate(
 
 	// Inject entity as global
 	ls := runtime.LState()
-	ls.SetGlobal("entity", lua.EntityToTable(ls, entity))
+	ls.SetGlobal("entity", lua.EntityToTable(ls, model.EntityToDomain(entity)))
 
 	// Compile the code into a function
 	fn, err := ls.LoadString(code)

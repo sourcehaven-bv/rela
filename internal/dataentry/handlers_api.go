@@ -633,7 +633,7 @@ func (a *App) edgeToAPIRelation(edge *model.Relation, relatedEntity *model.Entit
 		To:          edge.To,
 		Direction:   direction,
 		TargetID:    targetID,
-		TargetTitle: a.entityDisplayTitle(relatedEntity),
+		TargetTitle: a.State().Meta.DisplayTitle(relatedEntity.ID, relatedEntity.Type, relatedEntity.Properties),
 		TargetType:  relatedEntity.Type,
 	}
 	if edge.Properties != nil {

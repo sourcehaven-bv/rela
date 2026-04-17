@@ -372,7 +372,7 @@ func TestEntityDisplayTitle(t *testing.T) {
 	app, entities := testAppInstance()
 
 	t.Run("returns primary property value", func(t *testing.T) {
-		got := app.entityDisplayTitle(entities.ticket1)
+		got := app.Meta().DisplayTitle(entities.ticket1.ID, entities.ticket1.Type, entities.ticket1.Properties)
 		if got != "First Ticket" {
 			t.Errorf("expected 'First Ticket', got %q", got)
 		}
@@ -380,7 +380,7 @@ func TestEntityDisplayTitle(t *testing.T) {
 
 	t.Run("falls back to ID for unknown type", func(t *testing.T) {
 		e := testutil.Entity("unknown").ID("UNK-001").Build()
-		got := app.entityDisplayTitle(e)
+		got := app.Meta().DisplayTitle(e.ID, e.Type, e.Properties)
 		if got != "UNK-001" {
 			t.Errorf("expected 'UNK-001', got %q", got)
 		}
@@ -388,7 +388,7 @@ func TestEntityDisplayTitle(t *testing.T) {
 
 	t.Run("falls back to ID when primary property is empty", func(t *testing.T) {
 		e := testutil.Entity("ticket").ID("TKT-099").With("title", "").Build()
-		got := app.entityDisplayTitle(e)
+		got := app.Meta().DisplayTitle(e.ID, e.Type, e.Properties)
 		if got != "TKT-099" {
 			t.Errorf("expected 'TKT-099', got %q", got)
 		}

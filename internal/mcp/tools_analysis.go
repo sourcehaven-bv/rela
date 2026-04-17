@@ -236,7 +236,7 @@ func (s *Server) handleAnalyzeProperties(
 }
 
 func (s *Server) handleAnalyzeValidations(
-	_ context.Context, _ mcp.CallToolRequest,
+	ctx context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	snap := s.ws.Snapshot()
 	rules := snap.Meta().Validations
@@ -250,14 +250,14 @@ func (s *Server) handleAnalyzeValidations(
 		Violations []string `json:"violations"`
 	}
 
+	validator := s.ws.Validator()
 	var results []ruleResult
 	for _, rule := range rules {
-		violations := s.checkValidationRule(rule)
-		if len(violations) > 0 {
-			ids := make([]string, len(violations))
-			for i, v := range violations {
-				ids[i] = v.ID
-			}
+		ids, err := validator.CheckRule(ctx, rule)
+		if err != nil {
+			continue
+		}
+		if len(ids) > 0 {
 			results = append(results, ruleResult{
 				Rule:       rule.Description,
 				Severity:   rule.GetSeverity(),

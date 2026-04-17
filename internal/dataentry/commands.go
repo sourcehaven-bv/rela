@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
@@ -189,14 +190,28 @@ func (a *App) buildViewInput(viewID string, vr *viewResult) *commandInput {
 		}
 	}
 
+	collections := make(map[string][]*model.Entity, len(vr.Collections))
+	for k, es := range vr.Collections {
+		collections[k] = entitySliceToModel(es)
+	}
+
 	return &commandInput{
 		Context:     "view",
 		ViewID:      viewID,
-		Entity:      vr.Entry,
-		Collections: vr.Collections,
+		Entity:      model.EntityFromDomain(vr.Entry),
+		Collections: collections,
 		Relations:   rels,
 		Project:     a.projectInfo(),
 	}
+}
+
+// entitySliceToModel converts []*entity.Entity → []*model.Entity.
+func entitySliceToModel(es []*entity.Entity) []*model.Entity {
+	out := make([]*model.Entity, len(es))
+	for i, e := range es {
+		out[i] = model.EntityFromDomain(e)
+	}
+	return out
 }
 
 func (a *App) buildGlobalInput() *commandInput {

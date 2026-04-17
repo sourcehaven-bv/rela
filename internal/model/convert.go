@@ -4,7 +4,11 @@ import "github.com/Sourcehaven-BV/rela/internal/entity"
 
 // EntityFromDomain converts an entity.Entity (store domain type) to a
 // model.Entity (legacy type). FilePath is left empty.
+// Returns nil for nil input.
 func EntityFromDomain(e *entity.Entity) *Entity {
+	if e == nil {
+		return nil
+	}
 	props := make(map[string]interface{}, len(e.Properties))
 	for k, v := range e.Properties {
 		props[k] = v
@@ -20,7 +24,11 @@ func EntityFromDomain(e *entity.Entity) *Entity {
 
 // EntityToDomain converts a model.Entity (legacy type) to an
 // entity.Entity (store domain type). FilePath is dropped.
+// Returns nil for nil input.
 func EntityToDomain(e *Entity) *entity.Entity {
+	if e == nil {
+		return nil
+	}
 	props := make(map[string]interface{}, len(e.Properties))
 	for k, v := range e.Properties {
 		props[k] = v

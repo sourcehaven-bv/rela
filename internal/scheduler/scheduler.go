@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -231,5 +232,5 @@ type schedulerScriptContext struct {
 func (c *schedulerScriptContext) GetWorkspace() interface{}     { return c.ws }
 func (c *schedulerScriptContext) GetMeta() *metamodel.Metamodel { return c.meta }
 func (c *schedulerScriptContext) GetProjectRoot() string        { return c.projectRoot }
-func (c *schedulerScriptContext) GetEntity() *model.Entity      { return nil }
-func (c *schedulerScriptContext) GetOldEntity() *model.Entity   { return nil }
+func (c *schedulerScriptContext) GetEntity() *entity.Entity     { return nil }
+func (c *schedulerScriptContext) GetOldEntity() *entity.Entity  { return nil }

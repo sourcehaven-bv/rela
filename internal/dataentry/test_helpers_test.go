@@ -29,6 +29,9 @@ func graphForTest(app *App) *graph.Graph {
 // less-common fields don't nil-deref in tests that didn't ask for them.
 func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, g *graph.Graph) *App {
 	app := &App{}
+	if meta != nil && g != nil {
+		app.ws = workspace.NewWithGraph(nil, meta, g)
+	}
 	if cfg == nil {
 		cfg = &Config{}
 	}

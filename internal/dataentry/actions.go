@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -10,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -91,10 +92,10 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	defer a.writeMu.Unlock()
 
 	// Resolve entity if provided in the request.
-	var entity *model.Entity
+	var ent *entity.Entity
 	if req.EntityID != "" {
-		if e, ok := s.Graph.GetNode(req.EntityID); ok {
-			entity = e
+		if e, err := a.ws.Store().GetEntity(context.Background(), req.EntityID); err == nil {
+			ent = e
 		}
 	}
 
@@ -102,7 +103,7 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		ws:          a.ws,
 		meta:        s.Meta,
 		projectRoot: a.ws.Paths().Root,
-		entity:      entity,
+		entity:      ent,
 	}
 
 	engine := script.NewEngine()
@@ -146,11 +147,11 @@ type actionScriptContext struct {
 	ws          *workspace.Workspace
 	meta        *metamodel.Metamodel
 	projectRoot string
-	entity      *model.Entity
+	entity      *entity.Entity
 }
 
 func (c *actionScriptContext) GetWorkspace() interface{}     { return c.ws }
 func (c *actionScriptContext) GetMeta() *metamodel.Metamodel { return c.meta }
 func (c *actionScriptContext) GetProjectRoot() string        { return c.projectRoot }
-func (c *actionScriptContext) GetEntity() *model.Entity      { return c.entity }
-func (c *actionScriptContext) GetOldEntity() *model.Entity   { return nil }
+func (c *actionScriptContext) GetEntity() *entity.Entity     { return c.entity }
+func (c *actionScriptContext) GetOldEntity() *entity.Entity  { return nil }

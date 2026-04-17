@@ -1,6 +1,6 @@
 package metamodel
 
-import "github.com/Sourcehaven-BV/rela/internal/model"
+import "github.com/Sourcehaven-BV/rela/internal/entity"
 
 // ScriptContext provides everything a script executor needs to execute.
 // This interface is defined here (instead of the script package) to allow
@@ -18,7 +18,7 @@ type ScriptContext interface {
 	// GetProjectRoot returns the absolute project path.
 	GetProjectRoot() string
 	// GetEntity returns the triggering entity (may be nil).
-	GetEntity() *model.Entity
+	GetEntity() *entity.Entity
 	// GetOldEntity returns the previous entity state (may be nil).
-	GetOldEntity() *model.Entity
+	GetOldEntity() *entity.Entity
 }

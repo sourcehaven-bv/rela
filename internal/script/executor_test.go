@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
@@ -42,8 +43,8 @@ type testContext struct {
 func (c *testContext) GetWorkspace() interface{}     { return c.workspace }
 func (c *testContext) GetMeta() *metamodel.Metamodel { return nil }
 func (c *testContext) GetProjectRoot() string        { return c.projectRoot }
-func (c *testContext) GetEntity() *model.Entity      { return nil }
-func (c *testContext) GetOldEntity() *model.Entity   { return nil }
+func (c *testContext) GetEntity() *entity.Entity     { return nil }
+func (c *testContext) GetOldEntity() *entity.Entity  { return nil }
 
 func TestEngine_ExecuteFile_PathTraversal(t *testing.T) {
 	// Test that path traversal attempts are blocked.

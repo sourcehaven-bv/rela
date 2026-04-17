@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/automation"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
@@ -29,7 +30,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/validation"
 )
 
 // ChangeEvent is re-exported from repository so consumers don't need to
@@ -63,15 +63,15 @@ type scriptContextImpl struct {
 	workspace   *Workspace
 	meta        *metamodel.Metamodel
 	projectRoot string
-	entity      *model.Entity
-	oldEntity   *model.Entity
+	entity      *entity.Entity
+	oldEntity   *entity.Entity
 }
 
 func (c *scriptContextImpl) GetWorkspace() interface{}     { return c.workspace }
 func (c *scriptContextImpl) GetMeta() *metamodel.Metamodel { return c.meta }
 func (c *scriptContextImpl) GetProjectRoot() string        { return c.projectRoot }
-func (c *scriptContextImpl) GetEntity() *model.Entity      { return c.entity }
-func (c *scriptContextImpl) GetOldEntity() *model.Entity   { return c.oldEntity }
+func (c *scriptContextImpl) GetEntity() *entity.Entity     { return c.entity }
+func (c *scriptContextImpl) GetOldEntity() *entity.Entity  { return c.oldEntity }
 
 // NopScriptExecutor is a no-op implementation of ScriptExecutor for tests
 // that don't trigger Lua automations. It panics if actually called, making
@@ -461,6 +461,9 @@ func (w *Workspace) ReadProjectFile(name string) ([]byte, error) {
 
 // ReadCacheFile reads a file from the .rela cache directory.
 func (w *Workspace) ReadCacheFile(name string) ([]byte, error) {
+	if w.repo == nil {
+		return nil, fmt.Errorf("no repository configured")
+	}
 	return w.repo.ReadCacheFile(name)
 }
 
@@ -1414,8 +1417,8 @@ func (w *Workspace) executeLuaActions(
 		workspace:   w,
 		meta:        w.meta(),
 		projectRoot: w.repo.Paths().Root,
-		entity:      entity,
-		oldEntity:   oldEntity,
+		entity:      model.EntityToDomain(entity),
+		oldEntity:   model.EntityToDomain(oldEntity),
 	}
 
 	for _, action := range luaActions {
@@ -1885,34 +1888,6 @@ func (w *Workspace) FS() storage.FS {
 // level is ## (h2). Returns the normalized content.
 func (w *Workspace) NormalizeContent(content string) string {
 	return markdown.NormalizeHeaders(content)
-}
-
-// CheckValidationRule checks a single validation rule against the given entities.
-// Returns the entities that violate the rule. This is a package-level function
-// so callers without a full Workspace (e.g. test fixtures) can use it.
-func CheckValidationRule(
-	meta *metamodel.Metamodel, rule metamodel.ValidationRule, entities []*model.Entity,
-) []*model.Entity {
-	svc := validation.New(meta)
-	violations := svc.CheckRule(rule, entities, nil)
-
-	byID := make(map[string]*model.Entity, len(entities))
-	for _, e := range entities {
-		byID[e.ID] = e
-	}
-
-	seen := make(map[string]bool, len(violations))
-	var result []*model.Entity
-	for _, v := range violations {
-		if seen[v.EntityID] {
-			continue
-		}
-		seen[v.EntityID] = true
-		if entity, ok := byID[v.EntityID]; ok {
-			result = append(result, entity)
-		}
-	}
-	return result
 }
 
 // --- Search document conversion ---

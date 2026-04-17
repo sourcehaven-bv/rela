@@ -983,7 +983,7 @@ func TestFilterByRelation(t *testing.T) {
 
 	t.Run("filters by relation target title", func(t *testing.T) {
 		got := app.filterByRelation(allTickets, "belongs_to", "Frontend")
-		gotIDs := collectIDs(got)
+		gotIDs := collectModelIDs(got)
 		if len(got) != 2 {
 			t.Fatalf("expected 2 results, got %d: %v", len(got), gotIDs)
 		}
@@ -994,7 +994,7 @@ func TestFilterByRelation(t *testing.T) {
 
 	t.Run("filters by different relation target", func(t *testing.T) {
 		got := app.filterByRelation(allTickets, "belongs_to", "Backend")
-		gotIDs := collectIDs(got)
+		gotIDs := collectModelIDs(got)
 		if len(got) != 1 {
 			t.Fatalf("expected 1 result, got %d: %v", len(got), gotIDs)
 		}

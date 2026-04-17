@@ -3,29 +3,31 @@ package dataentry
 import (
 	"fmt"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // viewResult holds the entry entity and collected entities after traversal.
 type viewResult struct {
-	Entry       *model.Entity
-	Collections map[string][]*model.Entity
+	Entry       *entity.Entity
+	Collections map[string][]*entity.Entity
 }
 
 // executeView runs a view's traversal rules and returns the result.
 func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) {
-	entry, ok := a.State().Graph.GetNode(entryID)
+	mEntry, ok := a.State().Graph.GetNode(entryID)
 	if !ok {
 		return nil, fmt.Errorf("entry entity not found: %s", entryID)
 	}
-	if entry.Type != view.Entry.Type {
-		return nil, fmt.Errorf("entry entity %s is type %s, expected %s", entryID, entry.Type, view.Entry.Type)
+	if mEntry.Type != view.Entry.Type {
+		return nil, fmt.Errorf("entry entity %s is type %s, expected %s", entryID, mEntry.Type, view.Entry.Type)
 	}
 
+	entry := model.EntityToDomain(mEntry)
 	result := &viewResult{
 		Entry:       entry,
-		Collections: map[string][]*model.Entity{"entry": {entry}},
+		Collections: map[string][]*entity.Entity{"entry": {entry}},
 	}
 
 	// Multi-pass traversal (up to 10 passes until stable)
@@ -48,7 +50,7 @@ func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) 
 
 func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 	// Gather source entities
-	var sources []*model.Entity
+	var sources []*entity.Entity
 	if rule.From == "*" {
 		seen := map[string]bool{}
 		for _, entities := range result.Collections {
@@ -65,7 +67,7 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 
 	// Traverse from each source
 	maxRecursionDepth := 10
-	var found []*model.Entity
+	var found []*entity.Entity
 	for _, src := range sources {
 		if rule.Recursive {
 			maxD := rule.MaxDepth
@@ -89,7 +91,7 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 
 	// Deduplicate into collection
 	if result.Collections[rule.CollectAs] == nil {
-		result.Collections[rule.CollectAs] = []*model.Entity{}
+		result.Collections[rule.CollectAs] = []*entity.Entity{}
 	}
 	existing := map[string]bool{}
 	for _, e := range result.Collections[rule.CollectAs] {
@@ -103,14 +105,14 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 	}
 }
 
-func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*model.Entity {
+func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*entity.Entity {
 	g := a.State().Graph
-	var out []*model.Entity
+	var out []*entity.Entity
 	if rule.Follow != "" {
 		for _, edge := range g.OutgoingEdges(sourceID) {
 			if edge.Type == rule.Follow {
 				if target, ok := g.GetNode(edge.To); ok {
-					out = append(out, target)
+					out = append(out, model.EntityToDomain(target))
 				}
 			}
 		}
@@ -118,7 +120,7 @@ func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*model.Enti
 		for _, edge := range g.IncomingEdges(sourceID) {
 			if edge.Type == rule.FollowIncoming {
 				if src, ok := g.GetNode(edge.From); ok {
-					out = append(out, src)
+					out = append(out, model.EntityToDomain(src))
 				}
 			}
 		}
@@ -126,13 +128,13 @@ func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*model.Enti
 	return out
 }
 
-func (a *App) traverseViewRecursive(sourceID string, rule ViewTraverse, depth, maxDepth int, visited map[string]bool) []*model.Entity {
+func (a *App) traverseViewRecursive(sourceID string, rule ViewTraverse, depth, maxDepth int, visited map[string]bool) []*entity.Entity {
 	if depth >= maxDepth || visited[sourceID] {
 		return nil
 	}
 	visited[sourceID] = true
 	immediate := a.traverseViewOnce(sourceID, rule)
-	var all []*model.Entity
+	var all []*entity.Entity
 	all = append(all, immediate...)
 	for _, e := range immediate {
 		all = append(all, a.traverseViewRecursive(e.ID, rule, depth+1, maxDepth, visited)...)
@@ -140,7 +142,7 @@ func (a *App) traverseViewRecursive(sourceID string, rule ViewTraverse, depth, m
 	return all
 }
 
-func countViewEntities(collections map[string][]*model.Entity) int {
+func countViewEntities(collections map[string][]*entity.Entity) int {
 	seen := map[string]bool{}
 	for _, entities := range collections {
 		for _, e := range entities {
@@ -152,25 +154,25 @@ func countViewEntities(collections map[string][]*model.Entity) int {
 
 // filterEntities filters entities based on a where expression.
 // Supports the "type" pseudo-property to filter by entity type.
-func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*model.Entity, error) {
+func (a *App) filterEntities(entities []*entity.Entity, whereExpr string) ([]*entity.Entity, error) {
 	f, err := filter.Parse(whereExpr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid where expression: %w", err)
 	}
 
 	s := a.State()
-	var result []*model.Entity
-	for _, entity := range entities {
+	var result []*entity.Entity
+	for _, e := range entities {
 		// Special handling for "type" pseudo-property
 		if f.Property == "type" {
-			if filter.MatchValue(entity.Type, f) {
-				result = append(result, entity)
+			if filter.MatchValue(e.Type, f) {
+				result = append(result, e)
 			}
 			continue
 		}
 
 		// Regular property - use metamodel-aware matching
-		entityDef, ok := s.Meta.GetEntityDef(entity.Type)
+		entityDef, ok := s.Meta.GetEntityDef(e.Type)
 		if !ok {
 			continue
 		}
@@ -178,12 +180,13 @@ func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*mod
 		if !ok {
 			continue
 		}
-		matches, err := filter.Match(entityRecord(entity), f, &propDef, s.Meta)
+		rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties, ModifiedAt: e.UpdatedAt}
+		matches, err := filter.Match(rec, f, &propDef, s.Meta)
 		if err != nil {
 			continue
 		}
 		if matches {
-			result = append(result, entity)
+			result = append(result, e)
 		}
 	}
 	return result, nil

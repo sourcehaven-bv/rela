@@ -18,7 +18,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -480,10 +479,6 @@ func (a *App) createFormForType(entityType string) string {
 	return fallback
 }
 
-// entityDisplayTitle returns the display title for an entity.
-func (a *App) entityDisplayTitle(e *model.Entity) string {
-	return a.State().Meta.DisplayTitle(e.ID, e.Type, e.Properties)
-}
 
 // resolveLinkTarget resolves a link configuration value to a URL.
 // Supported values:
@@ -621,11 +616,3 @@ func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]
 	return sm, st
 }
 
-// templatesForType returns all entity templates for a type, or nil on error.
-func (a *App) templatesForType(entityType string) []*model.EntityTemplate {
-	templates, err := a.ws.DiscoverEntityTemplates(entityType)
-	if err != nil {
-		return nil
-	}
-	return templates
-}

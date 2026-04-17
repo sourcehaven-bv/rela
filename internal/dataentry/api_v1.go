@@ -1510,7 +1510,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 		Traverse: form.SidePanel.Traverse,
 		Sections: form.SidePanel.Sections,
 	}
-	a.resolveSectionButtonsWithTraverse(viewConfig, sections, entry)
+	a.resolveSectionButtonsWithTraverse(viewConfig, sections, model.EntityToDomain(entry))
 
 	// Convert to API response format
 	result := make([]V1SidePanelSection, 0, len(sections))
@@ -2026,14 +2026,14 @@ func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	templates := a.templatesForType(entityType)
+	templates, _ := a.ws.Templater().EntityTemplates(r.Context(), entityType)
 	result := make([]V1Template, 0, len(templates))
 
 	for _, t := range templates {
 		relations := make([]V1TemplateRelation, 0, len(t.Relations))
 		for _, rel := range t.Relations {
 			relations = append(relations, V1TemplateRelation{
-				Relation: rel.Relation,
+				Relation: rel.Type,
 				Target:   rel.Target,
 			})
 		}
@@ -2205,7 +2205,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	plural := entityDef.GetDirPlural(result.Entry.Type)
 
 	resp := V1ViewResponse{
-		Entry:    a.entityToV1(result.Entry, plural, true, false),
+		Entry:    a.entityToV1(model.EntityFromDomain(result.Entry), plural, true, false),
 		Sections: make([]V1ViewSection, 0, len(sections)),
 	}
 
