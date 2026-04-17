@@ -71,17 +71,17 @@ test.describe('Data Entry App - Navigation', () => {
     await expect(appPage.locator('h1').filter({ hasText: 'Features' })).toBeVisible();
 
     // Wait for the entity to appear in the list
-    await expect(appPage.getByText('Navigation Test Feature').first()).toBeVisible({ timeout: 10000 });
+    await expect(appPage.getByText('Navigation Test Feature').first()).toBeVisible({ timeout: 3000 });
 
     // Click on the row to navigate to entity detail
     const featureRow = appPage.locator('tr.entity-row').filter({ hasText: 'Navigation Test Feature' });
     await featureRow.click();
 
     // Wait for navigation - should go to /entity/feature/FEAT-xxx
-    await expect(appPage).toHaveURL(/\/entity\/feature\//, { timeout: 10000 });
+    await expect(appPage).toHaveURL(/\/entity\/feature\//, { timeout: 3000 });
 
     // Should show entity detail (either the title or the entity ID)
-    await expect(appPage.locator('h1, h2, .entity-title').filter({ hasText: /Navigation Test Feature|FEAT-/ }).first()).toBeVisible({ timeout: 10000 });
+    await expect(appPage.locator('h1, h2, .entity-title').filter({ hasText: /Navigation Test Feature|FEAT-/ }).first()).toBeVisible({ timeout: 3000 });
   });
 });
 
@@ -111,7 +111,7 @@ test.describe('Data Entry App - Basic CRUD', () => {
     await expect(appPage.locator('h1').filter({ hasText: 'Features' })).toBeVisible();
 
     // Verify the feature appears in the list
-    await expect(appPage.getByText('Test Feature from E2E').first()).toBeVisible({ timeout: 10000 });
+    await expect(appPage.getByText('Test Feature from E2E').first()).toBeVisible({ timeout: 3000 });
   });
 
   test('can create a new bug via API and see it in list', async ({ appPage, serverUrl }) => {
@@ -133,6 +133,6 @@ test.describe('Data Entry App - Basic CRUD', () => {
     await expect(appPage.locator('h1').filter({ hasText: 'Bugs' })).toBeVisible();
 
     // Verify the bug appears in the list
-    await expect(appPage.getByText('Test Bug from E2E').first()).toBeVisible({ timeout: 10000 });
+    await expect(appPage.getByText('Test Bug from E2E').first()).toBeVisible({ timeout: 3000 });
   });
 });

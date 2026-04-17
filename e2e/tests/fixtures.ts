@@ -364,7 +364,7 @@ export const test = base.extend<DesktopFixtures>({
     // Wait for server to start
     const serverUrl = `http://localhost:${serverPort}`;
     let ready = false;
-    const maxAttempts = 50;
+    const maxAttempts = 100;
 
     for (let i = 0; i < maxAttempts && !ready; i++) {
       try {
@@ -373,7 +373,7 @@ export const test = base.extend<DesktopFixtures>({
           ready = true;
         }
       } catch {
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
 
@@ -382,9 +382,6 @@ export const test = base.extend<DesktopFixtures>({
       console.error('Server stderr:', stderr);
       throw new Error(`Server failed to start on ${serverUrl}`);
     }
-
-    // Give server a moment to fully initialize
-    await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Create a new page and navigate to the SPA. Provide an Origin header so
     // that direct API calls via page.request pass the same-origin CSRF check.

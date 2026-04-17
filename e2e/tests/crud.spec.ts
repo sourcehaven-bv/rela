@@ -129,16 +129,16 @@ test.describe('Entity CRUD Operations', () => {
 
       // Navigate to the task entity page
       await appPage.goto(`${serverUrl}/entity/task/${task.id}`);
-      await expect(appPage.locator('h1').filter({ hasText: 'Relation Navigation Test Task' })).toBeVisible({ timeout: 10000 });
+      await expect(appPage.locator('h1').filter({ hasText: 'Relation Navigation Test Task' })).toBeVisible({ timeout: 3000 });
 
       // Find and click the relation link to the feature
       const relationLink = appPage.locator('button.relation-link').filter({ hasText: feature.id });
-      await expect(relationLink).toBeVisible({ timeout: 5000 });
+      await expect(relationLink).toBeVisible({ timeout: 3000 });
       await relationLink.click();
 
       // Should navigate to the feature entity page
-      await expect(appPage).toHaveURL(new RegExp(`/entity/feature/${feature.id}`), { timeout: 10000 });
-      await expect(appPage.locator('.entity-type-badge, [class*="badge"]').filter({ hasText: /feature/i })).toBeVisible({ timeout: 5000 });
+      await expect(appPage).toHaveURL(new RegExp(`/entity/feature/${feature.id}`), { timeout: 3000 });
+      await expect(appPage.locator('.entity-type-badge, [class*="badge"]').filter({ hasText: /feature/i })).toBeVisible({ timeout: 3000 });
       await expect(appPage.locator('h1').filter({ hasText: 'RelationTestFeature' })).toBeVisible();
     });
   });

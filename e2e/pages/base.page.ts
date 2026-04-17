@@ -27,9 +27,9 @@ export class BasePage {
 
   async waitForToast(message?: string) {
     if (message) {
-      await expect(this.page.getByText(message)).toBeVisible({ timeout: 5000 });
+      await expect(this.page.getByText(message)).toBeVisible({ timeout: 3000 });
     } else {
-      await expect(this.toastContainer.first()).toBeVisible({ timeout: 5000 });
+      await expect(this.toastContainer.first()).toBeVisible({ timeout: 3000 });
     }
   }
 
@@ -48,7 +48,7 @@ export class BasePage {
   async waitForSpinnerToDisappear() {
     const spinner = this.page.locator('.spinner, .loading-state');
     if (await spinner.isVisible({ timeout: 100 }).catch(() => false)) {
-      await expect(spinner).not.toBeVisible({ timeout: 10000 });
+      await expect(spinner).not.toBeVisible({ timeout: 3000 });
     }
   }
 
