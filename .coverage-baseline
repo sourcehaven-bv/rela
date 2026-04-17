@@ -76,7 +76,7 @@ internal/git/git.go;189;61
 internal/git/oauth.go;68;0
 internal/graph/cache.go;23;20
 internal/graph/graph.go;172;161
-internal/graph/query.go;138;127
+internal/graph/query.go;138;126
 internal/htmlutil/mermaid.go;1;1
 internal/importer/importer.go;257;174
 internal/lua/ai.go;150;130
