@@ -188,9 +188,14 @@ test.describe('Search', () => {
 
       await searchPage.searchAndEnter('Authentication');
 
+      // Wait for results to render before keyboard navigation
+      await expect(searchPage.resultItems.first()).toBeVisible();
+
       // Focus the input then ArrowDown enters results mode
       await searchPage.searchInput.focus();
       await appPage.keyboard.press('ArrowDown');
+      // First result is now selected
+      await expect(searchPage.resultItems.first()).toHaveClass(/selected/);
 
       // Press Enter to open
       await appPage.keyboard.press('Enter');
