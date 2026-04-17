@@ -373,6 +373,64 @@ func TestHandleListRelations_Pagination(t *testing.T) {
 	}
 }
 
+func TestHandleCreateRelation_MissingFields(t *testing.T) {
+	s := makeTestServer(t)
+	// Missing "type".
+	req := makeToolRequest(map[string]interface{}{
+		"from": "DEC-001",
+		"to":   "REQ-001",
+	})
+	result, err := s.handleCreateRelation(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error for missing type")
+	}
+
+	// Missing "from".
+	req = makeToolRequest(map[string]interface{}{
+		"type": "addresses",
+		"to":   "REQ-001",
+	})
+	result, err = s.handleCreateRelation(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error for missing from")
+	}
+
+	// Missing "to".
+	req = makeToolRequest(map[string]interface{}{
+		"from": "DEC-001",
+		"type": "addresses",
+	})
+	result, err = s.handleCreateRelation(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error for missing to")
+	}
+}
+
+func TestHandleDeleteRelation_MissingFields(t *testing.T) {
+	s := makeTestServer(t)
+	// Missing "type".
+	req := makeToolRequest(map[string]interface{}{
+		"from": "DEC-001",
+		"to":   "REQ-001",
+	})
+	result, err := s.handleDeleteRelation(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error for missing type")
+	}
+}
+
 func TestHandleDeleteRelation_NotFound(t *testing.T) {
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{

@@ -503,3 +503,66 @@ More content here.
 	testutil.AssertStringContains(t, doc2.Content, "# Description")
 	testutil.AssertStringContains(t, doc2.Content, "More content here")
 }
+
+func TestFormatDocumentOrdered(t *testing.T) {
+	frontmatter := map[string]interface{}{
+		"id":       "REQ-001",
+		"type":     "requirement",
+		"title":    "Some title",
+		"status":   "draft",
+		"priority": "high",
+	}
+	keyOrder := []string{"id", "type", "title"}
+
+	output, err := FormatDocumentOrdered(frontmatter, "body text", keyOrder)
+	if err != nil {
+		t.Fatalf("FormatDocumentOrdered error: %v", err)
+	}
+
+	// Ordered keys come first in sequence.
+	idPos := strings.Index(output, "id:")
+	typePos := strings.Index(output, "type:")
+	titlePos := strings.Index(output, "title:")
+	priorityPos := strings.Index(output, "priority:")
+	statusPos := strings.Index(output, "status:")
+	if !(idPos < typePos && typePos < titlePos) {
+		t.Errorf("expected id < type < title, got positions %d %d %d", idPos, typePos, titlePos)
+	}
+	// Remaining keys appear alphabetically after the ordered ones.
+	if !(titlePos < priorityPos && priorityPos < statusPos) {
+		t.Errorf("expected title < priority < status (alphabetical after ordered), got %d %d %d",
+			titlePos, priorityPos, statusPos)
+	}
+
+	// Body content is preserved.
+	if !strings.Contains(output, "body text") {
+		t.Errorf("body missing in output:\n%s", output)
+	}
+}
+
+func TestFormatDocumentOrdered_EmptyKeyOrder(t *testing.T) {
+	// No keyOrder should fall back to default yaml.Marshal.
+	fm := map[string]interface{}{"a": "1", "b": "2"}
+	output, err := FormatDocumentOrdered(fm, "body", nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if !strings.Contains(output, "a: ") || !strings.Contains(output, "b: ") {
+		t.Errorf("expected both keys, got:\n%s", output)
+	}
+}
+
+func TestFormatDocumentOrdered_KeyNotInData(t *testing.T) {
+	// Ordered keys that don't exist in data should be silently skipped.
+	fm := map[string]interface{}{"a": "1"}
+	output, err := FormatDocumentOrdered(fm, "", []string{"missing", "a"})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if !strings.Contains(output, "a:") {
+		t.Errorf("missing 'a' in output:\n%s", output)
+	}
+	if strings.Contains(output, "missing") {
+		t.Errorf("'missing' key should not appear in output:\n%s", output)
+	}
+}

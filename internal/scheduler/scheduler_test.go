@@ -358,3 +358,84 @@ func TestRunDueTasks_sequential(t *testing.T) {
 		t.Errorf("expected [a.lua b.lua c.lua], got %v", calls)
 	}
 }
+
+func TestStartBackground_NoConfig(t *testing.T) {
+	// When schedules.yaml is missing, StartBackground should silently
+	// no-op without starting a goroutine.
+	ws := newMockWorkspace(t)
+	metaFn := func() *metamodel.Metamodel { return ws.meta }
+
+	// ws.Config().Load returns notFoundError for missing file.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Should not panic, should not log errors.
+	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+}
+
+func TestStartBackground_InvalidConfig(t *testing.T) {
+	ws := newMockWorkspace(t)
+	ws.cacheFiles["project:"+ConfigFile] = []byte("not: valid: yaml: at all:")
+	metaFn := func() *metamodel.Metamodel { return ws.meta }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Should log error and return without starting a goroutine.
+	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+}
+
+func TestStartBackground_EmptyTasks(t *testing.T) {
+	ws := newMockWorkspace(t)
+	ws.cacheFiles["project:"+ConfigFile] = []byte("tasks: []\n")
+	metaFn := func() *metamodel.Metamodel { return ws.meta }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+}
+
+func TestNew(t *testing.T) {
+	cfg := &Config{Tasks: []TaskConfig{{Name: "t", Script: "t.lua"}}}
+	ws := newMockWorkspace(t)
+	metaFn := func() *metamodel.Metamodel { return ws.meta }
+
+	s := New(cfg, nil, ws, ws, metaFn, discardLogger())
+	if s == nil {
+		t.Fatal("New returned nil")
+	}
+	if s.config != cfg {
+		t.Error("config not wired")
+	}
+	if s.ws != ws {
+		t.Error("ws not wired")
+	}
+	if s.metaFn == nil {
+		t.Error("metaFn not wired")
+	}
+}
+
+func TestSchedulerScriptContext(t *testing.T) {
+	meta := &metamodel.Metamodel{}
+	c := &schedulerScriptContext{
+		ws:          "workspace",
+		meta:        meta,
+		projectRoot: "/project",
+	}
+	if c.GetWorkspace() != "workspace" {
+		t.Error("GetWorkspace")
+	}
+	if c.GetMeta() != meta {
+		t.Error("GetMeta")
+	}
+	if c.GetProjectRoot() != "/project" {
+		t.Error("GetProjectRoot")
+	}
+	if c.GetEntity() != nil {
+		t.Error("GetEntity should be nil")
+	}
+	if c.GetOldEntity() != nil {
+		t.Error("GetOldEntity should be nil")
+	}
+}
