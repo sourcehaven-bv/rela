@@ -201,10 +201,6 @@ func FuzzConcurrentOps(f *testing.F, factory FuzzFactory) {
 					for _, err := range s.ListRelations(bg, store.RelationQuery{}) {
 						_ = err
 					}
-				case 10: // Search
-					for _, err := range s.Search(bg, store.SearchQuery{Text: "E-1"}) {
-						_ = err
-					}
 				}
 			}()
 		}
@@ -314,16 +310,7 @@ func FuzzPropertyValuesTypeZoo(f *testing.F, factory FuzzFactory) {
 		require.NoError(t, err)
 		_ = vals
 
-		for _, op := range []store.FilterOp{
-			store.FilterEq, store.FilterNe, store.FilterContains,
-			store.FilterGt, store.FilterLt, store.FilterGte, store.FilterLte,
-			store.FilterIn, store.FilterExists, store.FilterNotExists,
-		} {
-			for _, err := range s.Search(bg, store.SearchQuery{
-				Filters: []store.PropertyFilter{{Property: propName, Value: raw, Op: op}},
-			}) {
-				require.NoError(t, err)
-			}
-		}
+		// Property filter fuzz testing is covered in search conformance tests.
+		_ = store.FilterEq
 	})
 }

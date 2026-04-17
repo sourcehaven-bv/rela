@@ -179,7 +179,7 @@ func (s *FSStore) rebuildIndexes(buildPropCache, buildSearchIndex bool) error {
 			addEntityToCache(s.propCache, e)
 		}
 		if buildSearchIndex {
-			_ = s.searchIndex.Index(e)
+			_ = s.searchIndex.EntityPut(e)
 		}
 	}
 	return nil

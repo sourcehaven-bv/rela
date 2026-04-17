@@ -1,5 +1,5 @@
 // Package bleveindex provides a bleve-backed implementation of
-// fsstore.SearchIndex for full-text entity search.
+// store.SearchIndex for full-text entity search.
 package bleveindex
 
 import (
@@ -14,11 +14,11 @@ import (
 	"github.com/blevesearch/bleve/v2/search/query"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // compile-time interface check.
-var _ fsstore.SearchIndex = (*Index)(nil)
+var _ store.SearchIndex = (*Index)(nil)
 
 // Field boost weights for search ranking.
 const (
@@ -55,7 +55,7 @@ func NewMem() (*Index, error) {
 // New creates a persistent on-disk bleve index at the given path.
 // If an index already exists at that path, it is opened instead.
 // If the existing index is corrupted, it is removed and recreated.
-// The caller (fsstore) repopulates the index via populateSearchIndex.
+// The caller repopulates the index after opening.
 func New(path string) (*Index, error) {
 	idx, err := bleve.Open(path)
 	if err == nil {
@@ -100,12 +100,12 @@ func buildMapping() *mapping.IndexMappingImpl {
 }
 
 // Index adds or updates an entity in the search index.
-func (idx *Index) Index(e *entity.Entity) error {
+func (idx *Index) EntityPut(e *entity.Entity) error {
 	return idx.index.Index(e.ID, entityToDoc(e))
 }
 
-// Remove deletes an entity from the search index.
-func (idx *Index) Remove(id string) error {
+// EntityDelete removes an entity from the search index.
+func (idx *Index) EntityDelete(id string) error {
 	return idx.index.Delete(id)
 }
 

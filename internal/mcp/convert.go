@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
 )
 
 // relationQuerier provides relation lookup methods for entity conversion.
@@ -109,13 +110,13 @@ func convertRelation(r *model.Relation) (string, error) {
 	return marshalJSON(rj)
 }
 
-// convertTraceResult converts a model.TraceResult to JSON string.
-func convertTraceResult(tr *model.TraceResult) (string, error) {
+// convertTraceResult converts a storetrace.TraceResult to JSON string.
+func convertTraceResult(tr *storetrace.TraceResult) (string, error) {
 	node := convertTraceNode(tr)
 	return marshalJSON(node)
 }
 
-func convertTraceNode(tr *model.TraceResult) *traceNodeJSON {
+func convertTraceNode(tr *storetrace.TraceResult) *traceNodeJSON {
 	if tr == nil {
 		return nil
 	}
@@ -133,8 +134,8 @@ func convertTraceNode(tr *model.TraceResult) *traceNodeJSON {
 	return node
 }
 
-// convertPathSteps converts model.PathStep slice to JSON string.
-func convertPathSteps(steps []model.PathStep) (string, error) {
+// convertPathSteps converts storetrace.PathStep slice to JSON string.
+func convertPathSteps(steps []storetrace.PathStep) (string, error) {
 	result := make([]pathStepJSON, len(steps))
 	for i, s := range steps {
 		result[i] = pathStepJSON{

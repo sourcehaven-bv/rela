@@ -1,7 +1,11 @@
 // Package store provides the storage abstraction for rela workspaces.
 //
-// Consumers (workspace, dataentry, MCP, CLI) interact through the Store
-// interface only — they never hold a *graph.Graph or mutate files directly.
+// The Store interface is limited to CRUD and write events. Query capabilities
+// (search, trace, analytics) are separate services with their own interfaces.
+// They build their state by subscribing to store events. Simple backends use
+// generic implementations; smart backends (e.g. Postgres) provide native
+// implementations sharing the same connection. This keeps the store contract
+// small — new backends only implement data access, not every query algorithm.
 package store
 
 import (
@@ -34,7 +38,6 @@ type Store interface {
 	RelationReader
 	RelationWriter
 	AttachmentManager
-	Searcher
 	Watcher
 	Lifecycle
 }
@@ -170,9 +173,56 @@ type AttachmentManager interface {
 	ListAttachments(ctx context.Context, entityID string) ([]AttachmentInfo, error)
 }
 
+// SearchHit is a minimal result from a search operation.
+type SearchHit struct {
+	ID    string
+	Type  string
+	Title string
+}
+
 // Searcher provides search and filtering over entities.
+// This is NOT part of the Store interface — it is a separate query service
+// that builds its state by subscribing to store events or by wrapping a
+// SearchIndex. Smart backends (e.g. Postgres) can provide native
+// implementations; simple backends use the generic implementation from
+// the storesearch package.
 type Searcher interface {
-	Search(ctx context.Context, q SearchQuery) iter.Seq2[*entity.Entity, error]
+	Search(ctx context.Context, q SearchQuery) iter.Seq2[SearchHit, error]
+}
+
+// EntityObserver receives notifications when entities are created, updated,
+// or deleted. Stores call observers synchronously after each write.
+// Implementations must be safe for concurrent use.
+//
+// This is the hook mechanism for building derived state (search indexes,
+// caches, projections) from store writes. Multiple observers can be
+// registered on a single store.
+type EntityObserver interface {
+	// EntityPut is called when an entity is created or updated.
+	EntityPut(e *entity.Entity) error
+
+	// EntityDelete is called when an entity is removed.
+	EntityDelete(id string) error
+}
+
+// SearchIndex is a pluggable full-text search index. It implements
+// EntityObserver (the store calls EntityPut/EntityDelete on writes) and
+// provides a Search method for querying. Implementations must be safe
+// for concurrent use.
+type SearchIndex interface {
+	EntityObserver
+
+	// Search returns entity IDs matching the query text, ordered by relevance.
+	// limit ≤ 0 means no limit.
+	Search(text string, limit int) ([]string, error)
+
+	// Persistent returns true if the index survives process restarts.
+	// When true, the index is only rebuilt when entity files have changed.
+	// When false, all entities are re-indexed on every startup.
+	Persistent() bool
+
+	// Close releases any resources held by the index.
+	Close() error
 }
 
 // SearchQuery describes a search request.

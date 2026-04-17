@@ -25,12 +25,12 @@ func TestIndex_BasicSearch(t *testing.T) {
 	e1 := entity.New("REQ-1", "requirement")
 	e1.SetString("title", "User authentication")
 	e1.Content = "Users must be able to log in with email and password."
-	require.NoError(t, idx.Index(e1))
+	require.NoError(t, idx.EntityPut(e1))
 
 	e2 := entity.New("REQ-2", "requirement")
 	e2.SetString("title", "Data export")
 	e2.Content = "Users can export their data as CSV."
-	require.NoError(t, idx.Index(e2))
+	require.NoError(t, idx.EntityPut(e2))
 
 	// Search for "authentication" — should find REQ-1.
 	ids, err := idx.Search("authentication", 10)
@@ -49,7 +49,7 @@ func TestIndex_FuzzyMatch(t *testing.T) {
 
 	e := entity.New("REQ-1", "requirement")
 	e.SetString("title", "Authentication")
-	require.NoError(t, idx.Index(e))
+	require.NoError(t, idx.EntityPut(e))
 
 	// Typo: "authentcation" should still match via fuzziness.
 	ids, err := idx.Search("authentcation", 10)
@@ -62,7 +62,7 @@ func TestIndex_SearchByID(t *testing.T) {
 
 	e := entity.New("FEAT-42", "feature")
 	e.SetString("title", "Something")
-	require.NoError(t, idx.Index(e))
+	require.NoError(t, idx.EntityPut(e))
 
 	ids, err := idx.Search("FEAT-42", 10)
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestIndex_SearchByProperty(t *testing.T) {
 
 	e := entity.New("T-1", "ticket")
 	e.SetString("status", "critical")
-	require.NoError(t, idx.Index(e))
+	require.NoError(t, idx.EntityPut(e))
 
 	ids, err := idx.Search("critical", 10)
 	require.NoError(t, err)
@@ -86,9 +86,9 @@ func TestIndex_Remove(t *testing.T) {
 
 	e := entity.New("REQ-1", "requirement")
 	e.SetString("title", "Removable")
-	require.NoError(t, idx.Index(e))
+	require.NoError(t, idx.EntityPut(e))
 
-	require.NoError(t, idx.Remove("REQ-1"))
+	require.NoError(t, idx.EntityDelete("REQ-1"))
 
 	ids, err := idx.Search("Removable", 10)
 	require.NoError(t, err)
@@ -100,10 +100,10 @@ func TestIndex_UpdateOverwrites(t *testing.T) {
 
 	e := entity.New("REQ-1", "requirement")
 	e.SetString("title", "Old title")
-	require.NoError(t, idx.Index(e))
+	require.NoError(t, idx.EntityPut(e))
 
 	e.SetString("title", "New title")
-	require.NoError(t, idx.Index(e))
+	require.NoError(t, idx.EntityPut(e))
 
 	// Old content should not match.
 	ids, err := idx.Search("Old", 10)
@@ -122,7 +122,7 @@ func TestIndex_Limit(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		e := entity.New("T-"+string(rune('A'+i)), "ticket")
 		e.SetString("title", "Common keyword")
-		require.NoError(t, idx.Index(e))
+		require.NoError(t, idx.EntityPut(e))
 	}
 
 	ids, err := idx.Search("common", 3)
@@ -147,11 +147,11 @@ func TestIndex_WildcardSearch(t *testing.T) {
 
 	e1 := entity.New("REQ-1", "requirement")
 	e1.SetString("title", "Authentication flow")
-	require.NoError(t, idx.Index(e1))
+	require.NoError(t, idx.EntityPut(e1))
 
 	e2 := entity.New("REQ-2", "requirement")
 	e2.SetString("title", "Authorization rules")
-	require.NoError(t, idx.Index(e2))
+	require.NoError(t, idx.EntityPut(e2))
 
 	ids, err := idx.Search("auth*", 10)
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestNew_PersistentIndex(t *testing.T) {
 
 	e := entity.New("REQ-1", "requirement")
 	e.SetString("title", "Persistent search")
-	require.NoError(t, idx.Index(e))
+	require.NoError(t, idx.EntityPut(e))
 	require.NoError(t, idx.Close())
 
 	// Reopen — data should survive.
@@ -192,7 +192,7 @@ func TestNew_CorruptedIndexRecovery(t *testing.T) {
 
 	e := entity.New("REQ-1", "requirement")
 	e.SetString("title", "Will be lost")
-	require.NoError(t, idx.Index(e))
+	require.NoError(t, idx.EntityPut(e))
 	require.NoError(t, idx.Close())
 
 	// Corrupt the index by overwriting a key file with garbage.
@@ -217,7 +217,7 @@ func TestNew_CorruptedIndexRecovery(t *testing.T) {
 	// Can index new data.
 	e2 := entity.New("REQ-2", "requirement")
 	e2.SetString("title", "Fresh start")
-	require.NoError(t, idx2.Index(e2))
+	require.NoError(t, idx2.EntityPut(e2))
 
 	ids, err = idx2.Search("fresh", 10)
 	require.NoError(t, err)

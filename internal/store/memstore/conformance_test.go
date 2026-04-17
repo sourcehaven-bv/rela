@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storesearch"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
@@ -13,12 +15,19 @@ func factory(t *testing.T) store.Store {
 	return memstore.New()
 }
 
+func searchFactory(t *testing.T) (store.Store, store.Searcher) {
+	t.Helper()
+	idx := fsstore.NewLinearSearch()
+	s := memstore.New(memstore.WithObserver(idx))
+	return s, storesearch.New(s, idx)
+}
+
 func fuzzFactory() store.Store {
 	return memstore.New()
 }
 
 func TestConformance(t *testing.T) {
-	storetest.RunAll(t, factory)
+	storetest.RunAll(t, factory, searchFactory)
 }
 
 func FuzzRelationKeyCollision(f *testing.F) {

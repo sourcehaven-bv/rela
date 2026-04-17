@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -78,7 +79,10 @@ type FSStore struct {
 	attachments   map[string]attachMeta // "entityID/property" → meta
 	propCache     map[string]map[string]int // property → value → count
 
-	// search
+	// observers notified synchronously on entity writes
+	observers []store.EntityObserver
+
+	// search index (also an observer, but kept separately for startup/lifecycle)
 	searchIndex SearchIndex
 
 	// watcher
@@ -97,7 +101,7 @@ func New(cfg Config) (*FSStore, error) {
 		cfg.Schemas = make(map[string]store.EntityTypeSchema)
 	}
 	if cfg.SearchIndex == nil {
-		cfg.SearchIndex = newLinearSearch()
+		cfg.SearchIndex = NewLinearSearch()
 	}
 
 	s := &FSStore{
@@ -108,6 +112,7 @@ func New(cfg Config) (*FSStore, error) {
 		cacheDir:     cfg.CacheDir,
 		schemas:      cfg.Schemas,
 		searchIndex:  cfg.SearchIndex,
+		observers:    []store.EntityObserver{cfg.SearchIndex},
 		entities:     make(map[string]entityMeta),
 		relations:    make(map[string]relationMeta),
 		attachments:  make(map[string]attachMeta),
@@ -181,6 +186,20 @@ func (s *FSStore) loadAttachmentsIndex() error {
 		}
 	}
 	return nil
+}
+
+// notifyPut notifies all observers that an entity was created or updated.
+func (s *FSStore) notifyPut(e *entity.Entity) {
+	for _, o := range s.observers {
+		_ = o.EntityPut(e)
+	}
+}
+
+// notifyDelete notifies all observers that an entity was removed.
+func (s *FSStore) notifyDelete(id string) {
+	for _, o := range s.observers {
+		_ = o.EntityDelete(id)
+	}
 }
 
 // entityFilePath returns the path for an entity file: entities/<plural>/<id>.md

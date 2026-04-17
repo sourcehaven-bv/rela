@@ -7,29 +7,29 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
 )
 
 func (s *Server) handleTraceFrom(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	return s.handleTrace(request, func(snap *workspace.Snapshot, id string, depth int) *model.TraceResult {
-		return snap.Graph().TraceFrom(id, depth)
+	return s.handleTrace(ctx, request, func(t storetrace.Tracer, id string, depth int) *storetrace.TraceResult {
+		return t.TraceFrom(ctx, id, depth)
 	}, "No dependencies found")
 }
 
 func (s *Server) handleTraceTo(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	return s.handleTrace(request, func(snap *workspace.Snapshot, id string, depth int) *model.TraceResult {
-		return snap.Graph().TraceTo(id, depth)
+	return s.handleTrace(ctx, request, func(t storetrace.Tracer, id string, depth int) *storetrace.TraceResult {
+		return t.TraceTo(ctx, id, depth)
 	}, "No upstream dependencies found")
 }
 
 func (s *Server) handleTrace(
+	ctx context.Context,
 	request mcp.CallToolRequest,
-	traceFn func(*workspace.Snapshot, string, int) *model.TraceResult,
+	traceFn func(storetrace.Tracer, string, int) *storetrace.TraceResult,
 	emptyMsg string,
 ) (*mcp.CallToolResult, error) {
 	id, err := request.RequireString("id")
@@ -44,7 +44,7 @@ func (s *Server) handleTrace(
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
-	result := traceFn(snap, id, maxDepth)
+	result := traceFn(s.ws.Tracer(), id, maxDepth)
 	if result == nil {
 		return mcp.NewToolResultText(emptyMsg), nil
 	}
@@ -57,7 +57,7 @@ func (s *Server) handleTrace(
 }
 
 func (s *Server) handleFindPath(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	from, err := request.RequireString("from")
 	if err != nil {
@@ -71,15 +71,14 @@ func (s *Server) handleFindPath(
 	to = trimID(to)
 
 	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	if _, ok := g.GetNode(from); !ok {
+	if _, ok := snap.GetEntity(from); !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("source entity not found: %s", from)), nil
 	}
-	if _, ok := g.GetNode(to); !ok {
+	if _, ok := snap.GetEntity(to); !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("target entity not found: %s", to)), nil
 	}
 
-	path := g.FindPath(from, to)
+	path := s.ws.Tracer().FindPath(ctx, from, to)
 	if path == nil {
 		return mcp.NewToolResultText(
 			fmt.Sprintf("No path found between %s and %s", from, to)), nil

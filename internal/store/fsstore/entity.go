@@ -169,7 +169,7 @@ func (s *FSStore) CreateEntity(_ context.Context, e *entity.Entity) error {
 	s.entities[e.ID] = entityMeta{ID: e.ID, Type: e.Type}
 	s.entityOrder = storeutil.SortedInsert(s.entityOrder, e.ID)
 	addEntityToCache(s.propCache, stored)
-	_ = s.searchIndex.Index(stored)
+	s.notifyPut(stored)
 
 	s.emit(store.Event{
 		Op:         store.EventEntityCreated,
@@ -205,7 +205,7 @@ func (s *FSStore) UpdateEntity(_ context.Context, e *entity.Entity) error {
 	s.entities[e.ID] = entityMeta{ID: e.ID, Type: e.Type}
 	removeEntityFromCache(s.propCache, old)
 	addEntityToCache(s.propCache, stored)
-	_ = s.searchIndex.Index(stored)
+	s.notifyPut(stored)
 
 	s.emit(store.Event{
 		Op:         store.EventEntityUpdated,
@@ -266,7 +266,7 @@ func (s *FSStore) DeleteEntity(_ context.Context, id string, cascade bool) (*sto
 	delete(s.entities, id)
 	s.entityOrder = storeutil.SortedRemove(s.entityOrder, id)
 	removeEntityFromCache(s.propCache, e)
-	_ = s.searchIndex.Remove(id)
+	s.notifyDelete(id)
 
 	for _, rm := range related {
 		key := rm.From + "--" + rm.Type + "--" + rm.To
@@ -370,8 +370,8 @@ func (s *FSStore) RenameEntity(_ context.Context, oldID, newID string) (*store.R
 	s.entityOrder = storeutil.SortedRemove(s.entityOrder, oldID)
 	s.entities[newID] = entityMeta{ID: newID, Type: meta.Type}
 	s.entityOrder = storeutil.SortedInsert(s.entityOrder, newID)
-	_ = s.searchIndex.Remove(oldID)
-	_ = s.searchIndex.Index(renamed)
+	s.notifyDelete(oldID)
+	s.notifyPut(renamed)
 
 	// Update relation index.
 	for _, rm := range toUpdate {

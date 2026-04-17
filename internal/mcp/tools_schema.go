@@ -63,7 +63,7 @@ func (s *Server) handleListEntityTypes(
 			IDType:     def.GetIDType(),
 			IDPrefixes: def.GetIDPrefixes(),
 			Properties: def.Properties,
-			Count:      len(g.NodesByType(name)),
+			Count:      g.CountByEntityType(name),
 		})
 	}
 
@@ -105,7 +105,7 @@ func (s *Server) handleListRelationTypes(
 			From:        def.GetFrom(),
 			To:          def.GetTo(),
 			Description: def.GetDescription(),
-			Count:       len(g.RelationsOfType(name)),
+			Count:       g.CountByRelationType(name),
 		}
 		if def.Inverse != nil {
 			info.Inverse = def.Inverse.GetID()

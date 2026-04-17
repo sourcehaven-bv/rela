@@ -44,6 +44,7 @@ type MemStore struct {
 	attachments   map[string]*attachment      // "entityID/property" -> data
 	subscribers   map[int]chan store.Event
 	nextSubID     int
+	observers []store.EntityObserver // notified synchronously on entity writes
 }
 
 type attachment struct {
@@ -55,12 +56,36 @@ type attachment struct {
 }
 
 // New creates a new in-memory store.
-func New() *MemStore {
-	return &MemStore{
+// Option configures a MemStore.
+type Option func(*MemStore)
+
+// WithObserver adds an entity observer that is notified on writes.
+func WithObserver(o store.EntityObserver) Option {
+	return func(m *MemStore) { m.observers = append(m.observers, o) }
+}
+
+func New(opts ...Option) *MemStore {
+	m := &MemStore{
 		entities:    make(map[string]*entity.Entity),
 		relations:   make(map[string]*entity.Relation),
 		attachments: make(map[string]*attachment),
 		subscribers: make(map[int]chan store.Event),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+func (m *MemStore) notifyPut(e *entity.Entity) {
+	for _, o := range m.observers {
+		_ = o.EntityPut(e)
+	}
+}
+
+func (m *MemStore) notifyDelete(id string) {
+	for _, o := range m.observers {
+		_ = o.EntityDelete(id)
 	}
 }
 
@@ -212,6 +237,7 @@ func (m *MemStore) CreateEntity(_ context.Context, e *entity.Entity) error {
 	stored.UpdatedAt = time.Now()
 	m.entities[e.ID] = stored
 	m.entityOrder = sortedInsert(m.entityOrder, e.ID)
+	m.notifyPut(stored)
 
 	m.emit(store.Event{
 		Op:         store.EventEntityCreated,
@@ -232,6 +258,7 @@ func (m *MemStore) UpdateEntity(_ context.Context, e *entity.Entity) error {
 	stored := e.Clone()
 	stored.UpdatedAt = time.Now()
 	m.entities[e.ID] = stored
+	m.notifyPut(stored)
 
 	m.emit(store.Event{
 		Op:         store.EventEntityUpdated,
@@ -268,6 +295,7 @@ func (m *MemStore) DeleteEntity(_ context.Context, id string, cascade bool) (*st
 
 	delete(m.entities, id)
 	m.entityOrder = sortedRemove(m.entityOrder, id)
+	m.notifyDelete(id)
 
 	for _, r := range related {
 		result.DeletedRelations = append(result.DeletedRelations, r.Clone())
@@ -317,6 +345,8 @@ func (m *MemStore) RenameEntity(_ context.Context, oldID, newID string) (*store.
 	delete(m.entities, oldID)
 	m.entityOrder = sortedRemove(m.entityOrder, oldID)
 	m.entityOrder = sortedInsert(m.entityOrder, newID)
+	m.notifyDelete(oldID)
+	m.notifyPut(renamed)
 
 	// Update relations — clone each affected relation
 	relationsUpdated := 0
@@ -505,49 +535,6 @@ func (m *MemStore) DeleteRelation(_ context.Context, from, relType, to string) e
 	})
 	return nil
 }
-
-// --- Search ---
-
-func (m *MemStore) Search(_ context.Context, q store.SearchQuery) iter.Seq2[*entity.Entity, error] {
-	m.mu.RLock()
-	typeSet := make(map[string]bool, len(q.Types))
-	for _, t := range q.Types {
-		typeSet[t] = true
-	}
-
-	snapshot := make([]*entity.Entity, 0)
-	for _, id := range m.entityOrder {
-		e := m.entities[id]
-		if len(typeSet) > 0 && !typeSet[e.Type] {
-			continue
-		}
-		if !matchFilters(e, q.Filters) {
-			continue
-		}
-		if q.Text != "" && !matchText(e, q.Text) {
-			continue
-		}
-		snapshot = append(snapshot, e.Clone())
-	}
-	m.mu.RUnlock()
-
-	if q.Limit > 0 && len(snapshot) > q.Limit {
-		snapshot = snapshot[:q.Limit]
-	}
-
-	return func(yield func(*entity.Entity, error) bool) {
-		for _, e := range snapshot {
-			if !yield(e, nil) {
-				return
-			}
-		}
-	}
-}
-
-var (
-	matchFilters = storeutil.MatchFilters
-	matchText    = storeutil.MatchText
-)
 
 // --- Attachments ---
 

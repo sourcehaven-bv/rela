@@ -186,19 +186,7 @@ func FuzzDifferential(f *testing.F) {
 					assert.Equal(t, vals1, vals2, "PropertyValues mismatch")
 				}
 
-			case 10: // Search
-				ents1, err1 := collectEntities(mem.Search(bg, store.SearchQuery{
-					Filters: []store.PropertyFilter{{Property: "status", Value: "open", Op: store.FilterEq}},
-				}))
-				ents2, err2 := collectEntities(fss.Search(bg, store.SearchQuery{
-					Filters: []store.PropertyFilter{{Property: "status", Value: "open", Op: store.FilterEq}},
-				}))
-				assertSameError(t, err1, err2, "Search status=open")
-				if err1 == nil {
-					assertSameEntityList(t, ents1, ents2, "Search")
-				}
-
-			case 11: // AttachFile + ReadAttachment
+			case 10: // AttachFile + ReadAttachment
 				data := "attachment-content"
 				err1 := mem.AttachFile(bg, "E-1", "diagram", "pic.png", strings.NewReader(data))
 				err2 := fss.AttachFile(bg, "E-1", "diagram", "pic.png", strings.NewReader(data))

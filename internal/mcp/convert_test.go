@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -231,12 +232,12 @@ func TestConvertRelation(t *testing.T) {
 }
 
 func TestConvertTraceResult(t *testing.T) {
-	tr := &model.TraceResult{
+	tr := &storetrace.TraceResult{
 		ID:    "REQ-001",
 		Type:  "requirement",
 		Title: "Root Req",
 		Depth: 0,
-		Children: []*model.TraceResult{
+		Children: []*storetrace.TraceResult{
 			{
 				ID:       "SOL-001",
 				Type:     "solution",
@@ -287,7 +288,7 @@ func TestConvertTraceResult_Nil(t *testing.T) {
 }
 
 func TestConvertPathSteps(t *testing.T) {
-	steps := []model.PathStep{
+	steps := []storetrace.PathStep{
 		{ID: "REQ-001", Type: "requirement", Title: "Start"},
 		{ID: "SOL-001", Type: "solution", Title: "Middle", Relation: "addresses"},
 		{ID: "CMP-001", Type: "component", Title: "End", Relation: "implements"},
@@ -318,7 +319,7 @@ func TestConvertPathSteps(t *testing.T) {
 }
 
 func TestConvertPathSteps_Empty(t *testing.T) {
-	result, err := convertPathSteps([]model.PathStep{})
+	result, err := convertPathSteps([]storetrace.PathStep{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -633,19 +634,19 @@ func TestConvertRelation_NoProperties(t *testing.T) {
 }
 
 func TestConvertTraceResult_DeepNesting(t *testing.T) {
-	tr := &model.TraceResult{
+	tr := &storetrace.TraceResult{
 		ID:    "REQ-001",
 		Type:  "requirement",
 		Title: "Root",
 		Depth: 0,
-		Children: []*model.TraceResult{
+		Children: []*storetrace.TraceResult{
 			{
 				ID:       "SOL-001",
 				Type:     "solution",
 				Title:    "Level 1",
 				Depth:    1,
 				Relation: "addresses",
-				Children: []*model.TraceResult{
+				Children: []*storetrace.TraceResult{
 					{
 						ID:       "CMP-001",
 						Type:     "component",

@@ -77,8 +77,10 @@ func (s *Server) handleAnalyzeTraceabilityPrompt(
 	}
 
 	// Get trace trees
-	traceFrom := s.ws.TraceFrom(id, 0)
-	traceTo := s.ws.TraceTo(id, 0)
+	ctx := context.Background()
+	tracer := s.ws.Tracer()
+	traceFrom := tracer.TraceFrom(ctx, id, 0)
+	traceTo := tracer.TraceTo(ctx, id, 0)
 
 	var traceFromText, traceToText string
 	if traceFrom != nil {
@@ -201,7 +203,7 @@ func (s *Server) handleSummarizeProjectPrompt(
 	var entityCounts strings.Builder
 	totalEntities := 0
 	for _, t := range entityTypes {
-		count := len(g.NodesByType(t))
+		count := g.CountByEntityType(t)
 		totalEntities += count
 		def, _ := meta.GetEntityDef(t)
 		label := t
@@ -217,7 +219,7 @@ func (s *Server) handleSummarizeProjectPrompt(
 	var relCounts strings.Builder
 	totalRelations := 0
 	for _, t := range relTypes {
-		count := len(g.RelationsOfType(t))
+		count := g.CountByRelationType(t)
 		totalRelations += count
 		fmt.Fprintf(&relCounts, "- %s: %d\n", t, count)
 	}

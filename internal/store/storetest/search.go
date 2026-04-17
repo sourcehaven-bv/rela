@@ -10,46 +10,46 @@ import (
 )
 
 // RunSearchTests runs search and filter conformance tests.
-func RunSearchTests(t *testing.T, f Factory) {
+func RunSearchTests(t *testing.T, sf SearchFactory) {
 	t.Run("TextMatchTitle", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{Text: "login"}))
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Text: "login"}))
 		assert.Len(t, results, 2) // FEAT-001 title + REQ-001 content
 	})
 
 	t.Run("TextMatchContent", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{Text: "accessing the system"}))
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Text: "accessing the system"}))
 		assert.Len(t, results, 1)
 		assert.Equal(t, "REQ-001", results[0].ID)
 	})
 
 	t.Run("TextMatchID", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{Text: "FEAT-002"}))
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Text: "FEAT-002"}))
 		assert.Len(t, results, 1)
 		assert.Equal(t, "FEAT-002", results[0].ID)
 	})
 
 	t.Run("FilterByType", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{Types: []string{"feature"}}))
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Types: []string{"feature"}}))
 		assert.Len(t, results, 2)
 	})
 
 	t.Run("FilterEq", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Filters: []store.PropertyFilter{
 				{Property: "status", Value: "open", Op: store.FilterEq},
 			},
@@ -58,10 +58,10 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("FilterNe", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Filters: []store.PropertyFilter{
 				{Property: "status", Value: "open", Op: store.FilterNe},
 			},
@@ -71,10 +71,10 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("FilterContains", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Filters: []store.PropertyFilter{
 				{Property: "title", Value: "user", Op: store.FilterContains},
 			},
@@ -83,10 +83,10 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("FilterIn", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Filters: []store.PropertyFilter{
 				{Property: "priority", Value: "high,critical", Op: store.FilterIn},
 			},
@@ -96,10 +96,10 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("FilterExists", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Filters: []store.PropertyFilter{
 				{Property: "priority", Op: store.FilterExists},
 			},
@@ -108,10 +108,10 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("FilterNotExists", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Filters: []store.PropertyFilter{
 				{Property: "priority", Op: store.FilterNotExists},
 			},
@@ -121,10 +121,10 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("CombinedTextAndFilter", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Text: "login",
 			Filters: []store.PropertyFilter{
 				{Property: "status", Value: "open", Op: store.FilterEq},
@@ -134,10 +134,10 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("CombinedTextAndFilterNarrows", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Text:  "login",
 			Types: []string{"feature"},
 		}))
@@ -146,37 +146,37 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("Limit", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{Limit: 1}))
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Limit: 1}))
 		assert.Len(t, results, 1)
 	})
 
 	t.Run("LimitExactMatch", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{Limit: 3}))
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Limit: 3}))
 		assert.Len(t, results, 3)
 	})
 
 	t.Run("EmptyQueryReturnsAll", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{}))
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{}))
 		assert.Len(t, results, 3)
 	})
 
 	t.Run("EarlyBreak", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
 		var ids []string
-		for e, err := range s.Search(ctx(), store.SearchQuery{}) {
+		for h, err := range searcher.Search(ctx(), store.SearchQuery{}) {
 			require.NoError(t, err)
-			ids = append(ids, e.ID)
+			ids = append(ids, h.ID)
 			if len(ids) == 1 {
 				break
 			}
@@ -185,18 +185,18 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("NoMatch", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{Text: "zzzznotfound"}))
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Text: "zzzznotfound"}))
 		assert.Empty(t, results)
 	})
 
 	t.Run("FilterGt", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Filters: []store.PropertyFilter{
 				{Property: "priority", Value: "high", Op: store.FilterGt},
 			},
@@ -207,10 +207,10 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("FilterGte", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Filters: []store.PropertyFilter{
 				{Property: "priority", Value: "high", Op: store.FilterGte},
 			},
@@ -219,7 +219,7 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("FilterLtExcludesEqual", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		e1 := entity.New("A", "t")
 		e1.SetString("score", "5")
 		e2 := entity.New("B", "t")
@@ -230,7 +230,7 @@ func RunSearchTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), e2))
 		require.NoError(t, s.CreateEntity(ctx(), e3))
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Filters: []store.PropertyFilter{
 				{Property: "score", Value: "5", Op: store.FilterLt},
 			},
@@ -240,7 +240,7 @@ func RunSearchTests(t *testing.T, f Factory) {
 	})
 
 	t.Run("FilterLteIncludesEqual", func(t *testing.T) {
-		s := f(t)
+		s, searcher := sf(t)
 		e1 := entity.New("A", "t")
 		e1.SetString("score", "5")
 		e2 := entity.New("B", "t")
@@ -251,7 +251,7 @@ func RunSearchTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), e2))
 		require.NoError(t, s.CreateEntity(ctx(), e3))
 
-		results := collectIter(t, s.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
 			Filters: []store.PropertyFilter{
 				{Property: "score", Value: "5", Op: store.FilterLte},
 			},

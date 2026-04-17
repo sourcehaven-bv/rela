@@ -5,6 +5,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storesearch"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/stretchr/testify/require"
@@ -39,8 +40,24 @@ func fuzzFactory() store.Store {
 	return s
 }
 
+func searchFactory(t *testing.T) (store.Store, store.Searcher) {
+	t.Helper()
+	fs := storage.NewMemFS()
+	idx := fsstore.NewLinearSearch()
+	s, err := fsstore.New(fsstore.Config{
+		FS:             fs,
+		EntitiesDir:    "/entities",
+		RelationsDir:   "/relations",
+		AttachmentsDir: "/attachments",
+		CacheDir:       "/.rela",
+		SearchIndex:    idx,
+	})
+	require.NoError(t, err)
+	return s, storesearch.New(s, idx)
+}
+
 func TestConformance(t *testing.T) {
-	storetest.RunAll(t, factory)
+	storetest.RunAll(t, factory, searchFactory)
 }
 
 func FuzzRelationKeyCollision(f *testing.F) {

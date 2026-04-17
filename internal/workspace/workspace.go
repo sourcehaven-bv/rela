@@ -17,6 +17,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
@@ -129,6 +130,7 @@ type workspaceState struct {
 // that arrives mid-mutation cannot interleave on the wrong graph.
 type Workspace struct {
 	repo       repository.Store
+	store      store.Store // optional; nil when not wired
 	state      atomic.Pointer[workspaceState]
 	config     *project.Config
 	scriptExec ScriptExecutor
@@ -180,7 +182,7 @@ func Discover(startDir string, scriptExec ScriptExecutor) (*Workspace, error) {
 //
 // For production use, pass script.NewEngine() for Lua support.
 // For tests, pass NopScriptExecutor.
-func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
+func New(repo repository.Store, scriptExec ScriptExecutor, opts ...Option) (*Workspace, error) {
 	exec := scriptExec
 	if exec == nil {
 		exec = NopScriptExecutor
@@ -215,7 +217,7 @@ func New(repo repository.Store, scriptExec ScriptExecutor) (*Workspace, error) {
 		}
 	}
 
-	ws := newWorkspace(repo, meta, g, exec)
+	ws := newWorkspace(repo, meta, g, exec, opts...)
 	ws.schemaFiles = schemaFiles
 	return ws, nil
 }
@@ -262,8 +264,17 @@ func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
 	return ws
 }
 
+// Option configures a Workspace.
+type Option func(*Workspace)
+
+// WithStore sets the store backing this workspace.
+func WithStore(s store.Store) Option {
+	return func(w *Workspace) { w.store = s }
+}
+
 func newWorkspace(
 	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor,
+	opts ...Option,
 ) *Workspace {
 	var autoEngine *automation.Engine
 	if len(meta.Automations) > 0 {
@@ -307,6 +318,9 @@ func newWorkspace(
 		repo:       repo,
 		config:     cfg,
 		scriptExec: scriptExec,
+	}
+	for _, opt := range opts {
+		opt(ws)
 	}
 	ws.state.Store(&workspaceState{
 		graph:      g,
@@ -352,6 +366,9 @@ func (w *Workspace) meta() *metamodel.Metamodel {
 // Repo returns the underlying repository for low-level operations not
 // wrapped by Workspace (e.g., FS access, Watch).
 func (w *Workspace) Repo() repository.Store { return w.repo }
+
+// Store returns the store backing this workspace, or nil if not wired.
+func (w *Workspace) Store() store.Store { return w.store }
 
 // Search performs a full-text search and returns matching entities with scores.
 // words are OR'd together with fuzzy matching; phrases must all match exactly.
