@@ -25,10 +25,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
@@ -169,7 +169,10 @@ type Workspace struct {
 // depth. Beyond this limit, entities are still created but automations are
 // skipped with a warning. This prevents infinite loops from misconfigured
 // automations while allowing useful chaining (e.g., ticket → checklist → items).
-const maxAutomationDepth = 50
+const (
+	maxAutomationDepth   = 50
+	storeEventBufferSize = 32
+)
 
 // Discover discovers a project from the given start directory and creates
 // a workspace with the given script executor. If startDir is empty, it uses
@@ -470,7 +473,8 @@ func (w *Workspace) deleteEntityStore(id string) error {
 		return nil
 	}
 	if w.syncStore != nil {
-		if _, err := w.syncStore.DeleteEntity(context.Background(), id, false); err != nil && !errors.Is(err, store.ErrNotFound) {
+		_, err := w.syncStore.DeleteEntity(context.Background(), id, false)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
 	}
@@ -497,7 +501,8 @@ func (w *Workspace) writeRelation(r *entity.Relation) error {
 // deleteRelationStore removes a relation from every store.
 func (w *Workspace) deleteRelationStore(from, relType, to string) error {
 	if w.syncStore != nil {
-		if err := w.syncStore.DeleteRelation(context.Background(), from, relType, to); err != nil && !errors.Is(err, store.ErrNotFound) {
+		err := w.syncStore.DeleteRelation(context.Background(), from, relType, to)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
 	}
@@ -695,7 +700,6 @@ func findTempFilesInDir(fs storage.FS, dir string) []string {
 	return result
 }
 
-
 // --- Lifecycle ---
 
 // Reload reloads the metamodel and re-syncs the graph from disk. This is
@@ -854,30 +858,6 @@ func (w *Workspace) buildReloadSearchIndex(
 	return candidate
 }
 
-// indexEntity adds or updates an entity in the search index. Uses a single
-// state snapshot so the index and metamodel come from the same reload epoch.
-func (w *Workspace) indexEntity(entity *entity.Entity) {
-	s := w.state.Load()
-	if s == nil || s.searchIdx == nil {
-		return
-	}
-	doc := entityToSearchDocument(entity, s.meta)
-	if err := s.searchIdx.Index(doc); err != nil {
-		slog.Warn("failed to index entity", "id", entity.ID, "error", err)
-	}
-}
-
-// removeFromIndex removes an entity from the search index.
-func (w *Workspace) removeFromIndex(id string) {
-	s := w.state.Load()
-	if s == nil || s.searchIdx == nil {
-		return
-	}
-	if err := s.searchIdx.Remove(id); err != nil {
-		slog.Warn("failed to remove entity from index", "id", id, "error", err)
-	}
-}
-
 // --- Type resolution ---
 
 // ResolveEntityType resolves a type name (alias, plural) to its canonical
@@ -942,7 +922,7 @@ func (w *Workspace) GenerateID(entityType, prefix string) (string, error) {
 // store. Used for ID generation where we need the full existing set.
 func (w *Workspace) collectAllIDs() []string {
 	ctx := context.Background()
-	var ids []string
+	ids := make([]string, 0)
 	for e, err := range w.Store().ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			return ids
@@ -1108,7 +1088,7 @@ type DeleteResult struct {
 var ErrHasRelations = fmt.Errorf("entity has relations; set cascade=true to delete")
 
 // DeleteEntity removes an entity and optionally cascades to its relations.
-func (w *Workspace) deleteEntity(entityType, id string, cascade bool) (*DeleteResult, error) {
+func (w *Workspace) deleteEntity(_, id string, cascade bool) (*DeleteResult, error) {
 	s := w.state.Load()
 	if s == nil {
 		return nil, fmt.Errorf("workspace not initialized")
@@ -1151,7 +1131,6 @@ func (w *Workspace) deleteEntity(entityType, id string, cascade bool) (*DeleteRe
 
 	return result, nil
 }
-
 
 // createEntityCoreOpts configures core entity creation.
 type createEntityCoreOpts struct {
@@ -1356,7 +1335,7 @@ func (w *Workspace) processEntityCreations(
 // runCreatedEntityAutomation runs automation on a newly created entity and returns a queue item if needed.
 func (w *Workspace) runCreatedEntityAutomation(
 	created *entity.Entity,
-	meta *metamodel.Metamodel,
+	_ *metamodel.Metamodel,
 	effects *automationSideEffects,
 ) *automationQueueItem {
 	s := w.state.Load()
@@ -1567,12 +1546,12 @@ func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelat
 	}
 
 	// Validate relation type.
-	if err := s.meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); err != nil {
-		return nil, fmt.Errorf("invalid relation: %w", err)
+	if vErr := s.meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
+		return nil, fmt.Errorf("invalid relation: %w", vErr)
 	}
 
 	// Check for duplicates.
-	if _, err := st.GetRelation(ctx, from, relType, to); err == nil {
+	if _, gErr := st.GetRelation(ctx, from, relType, to); gErr == nil {
 		return nil, fmt.Errorf("relation already exists: %s --%s--> %s", from, relType, to)
 	}
 
@@ -1702,7 +1681,7 @@ func (w *Workspace) StartWatching(opts WatchOptions) error {
 	// Forward store events as workspace ChangeEvents so consumers that
 	// wired up OnChange for the legacy fs watcher keep working.
 	if opts.OnChange != nil && w.syncStore != nil {
-		ch, cancel := w.syncStore.Subscribe(32)
+		ch, cancel := w.syncStore.Subscribe(storeEventBufferSize)
 		w.stopStoreEvents = cancel
 		go forwardStoreEvents(ch, opts.OnChange)
 	}
@@ -1885,7 +1864,7 @@ func storeSearchDocuments(st store.Store, meta *metamodel.Metamodel) []search.Do
 	if st == nil {
 		return nil
 	}
-	var docs []search.Document
+	docs := make([]search.Document, 0)
 	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{}) {
 		if err != nil {
 			continue

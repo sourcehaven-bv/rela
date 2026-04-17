@@ -340,9 +340,8 @@ jobs:
       - name: Run fuzz tests
         run: |
           go test -run='^$' -fuzz='^FuzzParseDocument$' -fuzztime=10s ./internal/markdown/
-          go test -run='^$' -fuzz='^FuzzParseEntityID$' -fuzztime=10s ./internal/model/
-          go test -run='^$' -fuzz='^FuzzValidateID$' -fuzztime=10s ./internal/model/
-          go test -run='^$' -fuzz='^FuzzParseRelationFilename$' -fuzztime=10s ./internal/markdown/
+          go test -run='^$' -fuzz='^FuzzParseEntityID$' -fuzztime=10s ./internal/entity/
+          go test -run='^$' -fuzz='^FuzzValidateID$' -fuzztime=10s ./internal/entity/
 
   build:
     name: Build

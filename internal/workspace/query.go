@@ -48,7 +48,7 @@ func (w *Workspace) OutgoingRelations(entityID string) []*entity.Relation {
 }
 
 func collectEntities(s store.Store, q store.EntityQuery) []*entity.Entity {
-	var out []*entity.Entity
+	out := make([]*entity.Entity, 0)
 	for e, err := range s.ListEntities(context.Background(), q) {
 		if err != nil {
 			return out
@@ -59,7 +59,7 @@ func collectEntities(s store.Store, q store.EntityQuery) []*entity.Entity {
 }
 
 func collectRelations(s store.Store, q store.RelationQuery) []*entity.Relation {
-	var out []*entity.Relation
+	out := make([]*entity.Relation, 0)
 	for r, err := range s.ListRelations(context.Background(), q) {
 		if err != nil {
 			return out

@@ -229,13 +229,13 @@ func TestDocumentDiskCache(t *testing.T) {
 		content := "<p>Test HTML</p>"
 
 		// Write to cache
-		err := ws.State().Put(context.Background(),cacheFile, []byte(content))
+		err := ws.State().Put(context.Background(), cacheFile, []byte(content))
 		if err != nil {
 			t.Fatalf("failed to write cache file: %v", err)
 		}
 
 		// Read back
-		data, err := ws.State().Get(context.Background(),cacheFile)
+		data, err := ws.State().Get(context.Background(), cacheFile)
 		if err != nil {
 			t.Fatalf("failed to read cache file: %v", err)
 		}
@@ -252,12 +252,12 @@ func TestDocumentDiskCache(t *testing.T) {
 		cacheFile2 := docCacheDir + "/" + entryID + "-" + hash2 + ".html"
 
 		// Write both
-		_ = ws.State().Put(context.Background(),cacheFile1, []byte("content1"))
-		_ = ws.State().Put(context.Background(),cacheFile2, []byte("content2"))
+		_ = ws.State().Put(context.Background(), cacheFile1, []byte("content1"))
+		_ = ws.State().Put(context.Background(), cacheFile2, []byte("content2"))
 
 		// Read and verify they're independent
-		data1, _ := ws.State().Get(context.Background(),cacheFile1)
-		data2, _ := ws.State().Get(context.Background(),cacheFile2)
+		data1, _ := ws.State().Get(context.Background(), cacheFile1)
+		data2, _ := ws.State().Get(context.Background(), cacheFile2)
 
 		if string(data1) != "content1" || string(data2) != "content2" {
 			t.Error("cache files should be independent")

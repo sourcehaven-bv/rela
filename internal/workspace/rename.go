@@ -85,12 +85,12 @@ func (w *Workspace) rename(entityType, oldID, newID string, opts rename.Options)
 // collection needed by the rename flow, all against a single store.
 func loadAndValidateRename(
 	st store.Store, entityType, oldID, newID string,
-) (*entity.Entity, []*entity.Relation, []*entity.Relation, error) {
-	if err := validateRename(st, oldID, newID); err != nil {
+) (ent *entity.Entity, incoming, outgoing []*entity.Relation, err error) {
+	if err = validateRename(st, oldID, newID); err != nil {
 		return nil, nil, nil, err
 	}
 	ctx := context.Background()
-	ent, err := st.GetEntity(ctx, oldID)
+	ent, err = st.GetEntity(ctx, oldID)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("entity not found: %s", oldID)
 	}
@@ -98,8 +98,8 @@ func loadAndValidateRename(
 		return nil, nil, nil, fmt.Errorf("entity %s has type %s, not %s", oldID, ent.Type, entityType)
 	}
 
-	incoming := relationsForRename(st, oldID, store.DirectionIncoming)
-	outgoing := relationsForRename(st, oldID, store.DirectionOutgoing)
+	incoming = relationsForRename(st, oldID, store.DirectionIncoming)
+	outgoing = relationsForRename(st, oldID, store.DirectionOutgoing)
 	return ent, incoming, outgoing, nil
 }
 
@@ -107,7 +107,7 @@ func loadAndValidateRename(
 // Errors from the store iterator are swallowed: a partial result is
 // preferable to failing the rename outright.
 func relationsForRename(st store.Store, id string, dir store.Direction) []*entity.Relation {
-	var out []*entity.Relation
+	out := make([]*entity.Relation, 0)
 	for r, err := range st.ListRelations(context.Background(), store.RelationQuery{
 		EntityID:  id,
 		Direction: dir,

@@ -2,11 +2,15 @@ package workspace
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/rename"
 )
+
+// ErrNilEntity is returned when a nil entity is passed to a mutating method.
+var ErrNilEntity = errors.New("entity is nil")
 
 // wsEntityManager adapts the workspace's legacy write API to the
 // entitymanager.EntityManager interface. It converts entity.Entity at the
@@ -21,7 +25,7 @@ func (m *wsEntityManager) CreateEntity(
 	_ context.Context, e *entity.Entity, opts entitymanager.CreateOptions,
 ) (*entitymanager.CreateResult, error) {
 	if e == nil {
-		return nil, nil
+		return nil, ErrNilEntity
 	}
 
 	createOpts := CreateOptions{
@@ -49,7 +53,7 @@ func (m *wsEntityManager) UpdateEntity(
 	_ context.Context, e *entity.Entity,
 ) (*entitymanager.UpdateResult, error) {
 	if e == nil {
-		return nil, nil
+		return nil, ErrNilEntity
 	}
 
 	// Find current state for oldEntity.
@@ -160,4 +164,3 @@ type entityNotFoundError struct {
 }
 
 func (e *entityNotFoundError) Error() string { return "entity not found: " + e.ID }
-

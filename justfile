@@ -111,17 +111,15 @@ coverage-html: test-coverage
 fuzz:
     @echo "Running fuzz tests..."
     go test -run='^$$' -fuzz='^FuzzParseDocument$$' -fuzztime=30s ./internal/markdown/
-    go test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=30s ./internal/model/
-    go test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=30s ./internal/model/
-    go test -run='^$$' -fuzz='^FuzzParseRelationFilename$$' -fuzztime=30s ./internal/markdown/
+    go test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=30s ./internal/entity/
+    go test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=30s ./internal/entity/
 
 # Run quick fuzz tests (5 seconds each)
 fuzz-short:
     @echo "Running quick fuzz tests..."
     go test -run='^$$' -fuzz='^FuzzParseDocument$$' -fuzztime=5s ./internal/markdown/
-    go test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=5s ./internal/model/
-    go test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=5s ./internal/model/
-    go test -run='^$$' -fuzz='^FuzzParseRelationFilename$$' -fuzztime=5s ./internal/markdown/
+    go test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=5s ./internal/entity/
+    go test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=5s ./internal/entity/
 
 # ── Lint & Format ──
 

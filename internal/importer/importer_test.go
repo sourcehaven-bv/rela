@@ -515,3 +515,121 @@ func TestImportDefaultStatus(t *testing.T) {
 		t.Errorf("Status = %q, want %q", status, "draft")
 	}
 }
+
+func TestImportFile_JSON(t *testing.T) {
+	fs := storage.NewMemFS()
+	jsonData := `{
+		"entities": [
+			{"id": "REQ-001", "type": "requirement", "properties": {"title": "From JSON file"}}
+		]
+	}`
+	if err := fs.WriteFile("/data.json", []byte(jsonData), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	st := newTestStore()
+	imp := New(st, testMetamodel(), Options{}, NewImportSource(fs))
+	result, err := imp.ImportFile("/data.json")
+	if err != nil {
+		t.Fatalf("ImportFile error = %v", err)
+	}
+	if result.EntitiesCreated != 1 {
+		t.Errorf("EntitiesCreated = %d, want 1", result.EntitiesCreated)
+	}
+	e, err := st.GetEntity(ctx(), "REQ-001")
+	if err != nil {
+		t.Fatalf("entity not created: %v", err)
+	}
+	if e.GetString("title") != "From JSON file" {
+		t.Errorf("title = %q, want %q", e.GetString("title"), "From JSON file")
+	}
+}
+
+func TestImportFile_YAML(t *testing.T) {
+	fs := storage.NewMemFS()
+	yamlData := `entities:
+  - id: REQ-001
+    type: requirement
+    properties:
+      title: From YAML file
+`
+	if err := fs.WriteFile("/data.yaml", []byte(yamlData), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	st := newTestStore()
+	imp := New(st, testMetamodel(), Options{}, NewImportSource(fs))
+	result, err := imp.ImportFile("/data.yaml")
+	if err != nil {
+		t.Fatalf("ImportFile error = %v", err)
+	}
+	if result.EntitiesCreated != 1 {
+		t.Errorf("EntitiesCreated = %d, want 1", result.EntitiesCreated)
+	}
+}
+
+func TestImportFile_CSVWithRelations(t *testing.T) {
+	fs := storage.NewMemFS()
+	entitiesCSV := "id,type,title\nREQ-001,requirement,Alpha\nDEC-001,decision,Bravo\n"
+	relationsCSV := "from,relation,to\nDEC-001,addresses,REQ-001\n"
+	if err := fs.WriteFile("/ents.csv", []byte(entitiesCSV), 0o644); err != nil {
+		t.Fatalf("write entities: %v", err)
+	}
+	if err := fs.WriteFile("/rels.csv", []byte(relationsCSV), 0o644); err != nil {
+		t.Fatalf("write relations: %v", err)
+	}
+
+	st := newTestStore()
+	imp := New(st, testMetamodel(), Options{RelationsFile: "/rels.csv"}, NewImportSource(fs))
+	result, err := imp.ImportFile("/ents.csv")
+	if err != nil {
+		t.Fatalf("ImportFile error = %v", err)
+	}
+	if result.EntitiesCreated != 2 || result.RelationsCreated != 1 {
+		t.Errorf("EntitiesCreated = %d (want 2), RelationsCreated = %d (want 1)",
+			result.EntitiesCreated, result.RelationsCreated)
+	}
+	if _, err := st.GetRelation(ctx(), "DEC-001", "addresses", "REQ-001"); err != nil {
+		t.Errorf("relation not created: %v", err)
+	}
+}
+
+func TestImportFile_MissingFile(t *testing.T) {
+	imp := New(newTestStore(), testMetamodel(), Options{}, newTestSource())
+	_, err := imp.ImportFile("/nonexistent.json")
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+func TestImportFile_UnknownFormat(t *testing.T) {
+	fs := storage.NewMemFS()
+	if err := fs.WriteFile("/data.xyz", []byte("foo"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	imp := New(newTestStore(), testMetamodel(), Options{}, NewImportSource(fs))
+	_, err := imp.ImportFile("/data.xyz")
+	if err == nil {
+		t.Error("expected error for unknown format")
+	}
+}
+
+func TestParseRelationsCSV(t *testing.T) {
+	fs := storage.NewMemFS()
+	csvData := "from,relation,to\nDEC-001,addresses,REQ-001\nDEC-002,addresses,REQ-002\n"
+	if err := fs.WriteFile("/rels.csv", []byte(csvData), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	imp := New(newTestStore(), testMetamodel(), Options{}, NewImportSource(fs))
+	rels, err := imp.parseRelationsCSV("/rels.csv")
+	if err != nil {
+		t.Fatalf("parseRelationsCSV error = %v", err)
+	}
+	if len(rels) != 2 {
+		t.Fatalf("relations = %d, want 2", len(rels))
+	}
+	if rels[0].From != "DEC-001" || rels[0].Relation != "addresses" || rels[0].To != "REQ-001" {
+		t.Errorf("rel[0] = %+v", rels[0])
+	}
+}

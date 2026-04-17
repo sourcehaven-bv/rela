@@ -41,7 +41,7 @@ func (w *Workspace) FindOrphansWithScope(opts AnalyzeOptions) []*entity.Entity {
 		return nil
 	}
 	st := w.Store()
-	var out []*entity.Entity
+	out := make([]*entity.Entity, 0, len(ids))
 	for _, id := range ids {
 		if !inScope(id, opts.Scope) {
 			continue

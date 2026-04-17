@@ -51,51 +51,77 @@ var _ search.Searcher = (*wsSearcher)(nil)
 
 func (s *wsSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[search.Hit, error] {
 	return func(yield func(search.Hit, error) bool) {
-		typeSet := make(map[string]bool, len(q.Types))
-		for _, t := range q.Types {
-			typeSet[t] = true
-		}
-
-		emit := func(e *entity.Entity) bool {
-			if len(typeSet) > 0 && !typeSet[e.Type] {
-				return true
-			}
-			if !search.MatchFilters(e, q.Filters) {
-				return true
-			}
-			return yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, nil)
-		}
+		typeSet := typeSetFromQuery(q)
+		emit := makeHitEmitter(typeSet, q.Filters, yield)
 
 		if q.Text == "" {
-			// No text: iterate all via the store, applying filters.
-			for e, err := range s.w.Store().ListEntities(ctx, store.EntityQuery{}) {
-				if err != nil {
-					yield(search.Hit{}, err)
-					return
-				}
-				if !emit(e) {
-					return
-				}
-			}
+			s.streamAll(ctx, emit, yield)
 			return
 		}
+		s.streamText(q, emit, yield)
+	}
+}
 
-		words, phrases := searchparser.SplitFreeText(q.Text)
-		entities, _, err := s.w.search(words, phrases, q.Limit)
+func typeSetFromQuery(q search.Query) map[string]bool {
+	typeSet := make(map[string]bool, len(q.Types))
+	for _, t := range q.Types {
+		typeSet[t] = true
+	}
+	return typeSet
+}
+
+func makeHitEmitter(
+	typeSet map[string]bool,
+	filters []search.PropertyFilter,
+	yield func(search.Hit, error) bool,
+) func(*entity.Entity) bool {
+	return func(e *entity.Entity) bool {
+		if len(typeSet) > 0 && !typeSet[e.Type] {
+			return true
+		}
+		if !search.MatchFilters(e, filters) {
+			return true
+		}
+		return yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, nil)
+	}
+}
+
+func (s *wsSearcher) streamAll(
+	ctx context.Context,
+	emit func(*entity.Entity) bool,
+	yield func(search.Hit, error) bool,
+) {
+	for e, err := range s.w.Store().ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			yield(search.Hit{}, err)
 			return
 		}
-		emitted := 0
-		for _, e := range entities {
-			if q.Limit > 0 && emitted >= q.Limit {
-				return
-			}
-			if !emit(e) {
-				return
-			}
-			emitted++
+		if !emit(e) {
+			return
 		}
+	}
+}
+
+func (s *wsSearcher) streamText(
+	q search.Query,
+	emit func(*entity.Entity) bool,
+	yield func(search.Hit, error) bool,
+) {
+	words, phrases := searchparser.SplitFreeText(q.Text)
+	entities, _, err := s.w.search(words, phrases, q.Limit)
+	if err != nil {
+		yield(search.Hit{}, err)
+		return
+	}
+	emitted := 0
+	for _, e := range entities {
+		if q.Limit > 0 && emitted >= q.Limit {
+			return
+		}
+		if !emit(e) {
+			return
+		}
+		emitted++
 	}
 }
 
@@ -124,5 +150,3 @@ func (w *Workspace) Validator() validator.Validator {
 func (w *Workspace) Templater() templating.Templater {
 	return templating.NewFSTemplater(w.FS(), w.Paths())
 }
-
-

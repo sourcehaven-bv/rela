@@ -46,8 +46,8 @@ func (e renameTestEnv) entityExists(plural, id string) bool {
 }
 
 // relationExists reports whether a relation file exists on disk.
-func (e renameTestEnv) relationExists(from, relType, to string) bool {
-	path := e.ctx.RelationsDir + "/" + from + "--" + relType + "--" + to + ".md"
+func (e renameTestEnv) relationExists(from, to string) bool {
+	path := e.ctx.RelationsDir + "/" + from + "--addresses--" + to + ".md"
 	_, err := e.fs.Stat(path)
 	return err == nil
 }
@@ -162,10 +162,10 @@ func TestRename_OutgoingRelations(t *testing.T) {
 		t.Errorf("outgoing edge = %s -> %s, want %s -> %s", outgoing[0].From, outgoing[0].To, newDecID, req.ID)
 	}
 
-	if !env.relationExists(newDecID, "addresses", req.ID) {
+	if !env.relationExists(newDecID, req.ID) {
 		t.Errorf("new relation file should exist: %v", err)
 	}
-	if env.relationExists(oldDecID, "addresses", req.ID) {
+	if env.relationExists(oldDecID, req.ID) {
 		t.Error("old relation file should not exist")
 	}
 }
@@ -202,10 +202,10 @@ func TestRename_IncomingRelations(t *testing.T) {
 		t.Errorf("incoming edge = %s -> %s, want %s -> %s", incoming[0].From, incoming[0].To, dec.ID, newReqID)
 	}
 
-	if !env.relationExists(dec.ID, "addresses", newReqID) {
+	if !env.relationExists(dec.ID, newReqID) {
 		t.Error("new relation file should exist")
 	}
-	if env.relationExists(dec.ID, "addresses", oldReqID) {
+	if env.relationExists(dec.ID, oldReqID) {
 		t.Error("old relation file should not exist")
 	}
 }

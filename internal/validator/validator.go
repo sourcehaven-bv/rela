@@ -100,7 +100,7 @@ func (v *GenericValidator) loadCandidates(ctx context.Context, entityType string
 		q.Type = entityType
 	}
 
-	var out []*entity.Entity
+	out := make([]*entity.Entity, 0)
 	for e, err := range v.r.ListEntities(ctx, q) {
 		if err != nil {
 			return nil, err

@@ -68,7 +68,7 @@ func TestFactoryInitialLoad(t *testing.T) {
 	require.NoError(t, err)
 	defer ws.Close()
 
-	var ids []string
+	ids := make([]string, 0, 2)
 	for e, err := range ws.Store().ListEntities(ctx, store.EntityQuery{}) {
 		require.NoError(t, err)
 		ids = append(ids, e.ID)
