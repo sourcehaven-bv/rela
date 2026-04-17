@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"context"
+
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -25,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
 )
@@ -130,7 +133,8 @@ type workspaceState struct {
 // that arrives mid-mutation cannot interleave on the wrong graph.
 type Workspace struct {
 	repo       repository.Store
-	store      store.Store // optional; nil when not wired
+	store      store.Store     // optional; nil when not wired
+	formatter  store.Formatter // optional; nil when not wired
 	state      atomic.Pointer[workspaceState]
 	config     *project.Config
 	scriptExec ScriptExecutor
@@ -278,6 +282,11 @@ func WithStore(s store.Store) Option {
 	return func(w *Workspace) { w.store = s }
 }
 
+// WithFormatter sets the formatter service for this workspace.
+func WithFormatter(f store.Formatter) Option {
+	return func(w *Workspace) { w.formatter = f }
+}
+
 func newWorkspace(
 	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor,
 	opts ...Option,
@@ -328,6 +337,7 @@ func newWorkspace(
 	for _, opt := range opts {
 		opt(ws)
 	}
+
 	ws.state.Store(&workspaceState{
 		graph:      g,
 		meta:       meta,
@@ -335,6 +345,19 @@ func newWorkspace(
 		searchIdx:  searchIdx,
 	})
 	return ws
+}
+
+// buildMemStore creates a memstore seeded from an existing graph.
+func buildMemStore(g *graph.Graph) store.Store {
+	s := memstore.New()
+	ctx := context.Background()
+	for _, e := range g.AllNodes() {
+		_ = s.CreateEntity(ctx, model.EntityToDomain(e))
+	}
+	for _, r := range g.AllEdges() {
+		_, _ = s.CreateRelation(ctx, r.From, r.Type, r.To, nil)
+	}
+	return s
 }
 
 // --- Accessors ---
@@ -373,8 +396,26 @@ func (w *Workspace) meta() *metamodel.Metamodel {
 // wrapped by Workspace (e.g., FS access, Watch).
 func (w *Workspace) Repo() repository.Store { return w.repo }
 
-// Store returns the store backing this workspace, or nil if not wired.
-func (w *Workspace) Store() store.Store { return w.store }
+// Store returns the store backing this workspace.
+// If no store was provided via WithStore, a memstore is built from
+// the current graph state on each call. Production code should always
+// wire a real store via WithStore.
+func (w *Workspace) Store() store.Store {
+	if w.store != nil {
+		return w.store
+	}
+	return buildMemStore(w.graph())
+}
+
+// Formatter returns the formatter service.
+// If none was wired via WithFormatter, a legacy formatter backed by the
+// workspace's FormatEntity/FormatRelation methods is returned.
+func (w *Workspace) Formatter() store.Formatter {
+	if w.formatter != nil {
+		return w.formatter
+	}
+	return &legacyFormatter{w: w}
+}
 
 // Search performs a full-text search and returns matching entities with scores.
 // words are OR'd together with fuzzy matching; phrases must all match exactly.
@@ -958,7 +999,7 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 	meta := s.meta
 
 	// Validate.
-	if errs := meta.ValidateEntity(entity); len(errs) > 0 {
+	if errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
 		return nil, newValidationError(errs)
 	}
 
@@ -1159,7 +1200,7 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 	}
 
 	// Validate.
-	if errs := meta.ValidateEntity(entity); len(errs) > 0 {
+	if errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
 		return nil, newValidationError(errs)
 	}
 
@@ -1881,7 +1922,7 @@ func entityToSearchDocument(e *model.Entity, meta *metamodel.Metamodel) search.D
 	return search.Document{
 		ID:          e.ID,
 		Type:        e.Type,
-		Primary:     meta.DisplayTitle(e),
+		Primary:     meta.DisplayTitle(e.ID, e.Type, e.Properties),
 		Description: e.Description(),
 		Content:     e.Content,
 		Properties:  flattenProperties(e.Properties),

@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/errors"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 var (
@@ -32,65 +35,79 @@ Examples:
   rela fmt --check        # Check if files need formatting (for CI)`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// For --check mode, use dry-run behavior internally
+		f := ws.Formatter()
+		if f == nil {
+			return fmt.Errorf("formatter service not available")
+		}
+
 		dryRun := fmtDryRun || fmtCheck
+		ctx := context.Background()
+		st := ws.Store()
 
 		modifiedEntities := 0
 		modifiedRelations := 0
 
-		// Format entities
-		var entities []*model.Entity
+		// Collect entity IDs from store
+		q := store.EntityQuery{}
 		if len(args) > 0 {
-			typeName := args[0]
-			resolvedType, _, err := resolveEntityType(typeName)
+			resolvedType, _, err := resolveEntityType(args[0])
 			if err != nil {
 				return err
 			}
-			entities = ws.EntitiesByType(resolvedType)
-		} else {
-			entities = ws.AllEntities()
+			q.Type = resolvedType
 		}
 
-		for _, entity := range entities {
-			changed, err := ws.FormatEntity(entity, dryRun)
+		var entityIDs []string
+		for e, err := range st.ListEntities(ctx, q) {
 			if err != nil {
-				out.WriteWarning("Failed to format %s: %v", entity.ID, err)
+				return err
+			}
+			entityIDs = append(entityIDs, e.ID)
+		}
+
+		for _, id := range entityIDs {
+			changed, err := f.FormatEntity(ctx, id, dryRun)
+			if err != nil {
+				out.WriteWarning("Failed to format %s: %v", id, err)
 				continue
 			}
-
 			if !changed {
 				continue
 			}
-
 			modifiedEntities++
 
 			if fmtCheck {
-				out.WriteMessage("Needs formatting: %s", entity.ID)
+				out.WriteMessage("Needs formatting: %s", id)
 			} else if fmtDryRun {
-				out.WriteMessage("Would format: %s", entity.ID)
+				out.WriteMessage("Would format: %s", id)
 			} else if verbose {
-				out.WriteMessage("Formatted: %s", entity.ID)
+				out.WriteMessage("Formatted: %s", id)
 			}
 		}
 
 		// Format relations (only when no specific type is specified)
 		if len(args) == 0 {
-			relations := ws.AllRelations()
-			for _, relation := range relations {
-				changed, err := ws.FormatRelation(relation, dryRun)
+			type relKey struct{ from, typ, to string }
+			var relKeys []relKey
+			for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
 				if err != nil {
-					out.WriteWarning("Failed to format relation %s--%s--%s: %v",
-						relation.From, relation.Type, relation.To, err)
+					return err
+				}
+				relKeys = append(relKeys, relKey{r.From, r.Type, r.To})
+			}
+
+			for _, k := range relKeys {
+				changed, err := f.FormatRelation(ctx, k.from, k.typ, k.to, dryRun)
+				if err != nil {
+					out.WriteWarning("Failed to format relation %s--%s--%s: %v", k.from, k.typ, k.to, err)
 					continue
 				}
-
 				if !changed {
 					continue
 				}
-
 				modifiedRelations++
 
-				relationID := relation.From + "--" + relation.Type + "--" + relation.To
+				relationID := k.from + "--" + k.typ + "--" + k.to
 				if fmtCheck {
 					out.WriteMessage("Needs formatting: %s", relationID)
 				} else if fmtDryRun {

@@ -9,8 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -71,7 +71,7 @@ var analyzeOrphansCmd = &cobra.Command{
 		}
 
 		orphans := ws.FindOrphansWithScope(*opts)
-		filter.SortByID(orphans, entityAccess, false)
+		filter.SortByID(orphans, modelEntityRecord, false)
 
 		if writeAnalysisJSON(len(orphans), orphans,
 			"No orphan entities found", "Found %d orphan entities") {
@@ -83,7 +83,7 @@ var analyzeOrphansCmd = &cobra.Command{
 			return nil
 		}
 		out.WriteWarning("Found %d orphan entities:", len(orphans))
-		return out.WriteEntities(orphans)
+		return out.WriteEntities(modelToEntitySlice(orphans))
 	},
 }
 
@@ -101,14 +101,14 @@ var analyzeDuplicatesCmd = &cobra.Command{
 		// Handle JSON output format
 		if out.Format == "json" {
 			type duplicateGroup struct {
-				Title    string          `json:"title"`
-				Entities []*model.Entity `json:"entities"`
+				Title    string           `json:"title"`
+				Entities []*entity.Entity `json:"entities"`
 			}
 			var details []duplicateGroup
 			for _, group := range duplicates {
 				details = append(details, duplicateGroup{
 					Title:    group.Title,
-					Entities: group.Entities,
+					Entities: modelToEntitySlice(group.Entities),
 				})
 			}
 			writeAnalysisJSON(len(duplicates), details,
@@ -591,7 +591,7 @@ Examples:
 		dataEntry := loadDataEntryConfig()
 
 		// Run analysis
-		analysis := schema.Analyze(meta, ws.Snapshot().Graph(), dataEntry, schemaThreshold)
+		analysis := schema.Analyze(meta, &schema.StoreCounter{Store: ws.Store()}, dataEntry, schemaThreshold)
 
 		// Handle cleanup mode
 		if schemaCleanup {

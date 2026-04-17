@@ -1,7 +1,12 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 var showCmd = &cobra.Command{
@@ -15,16 +20,29 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
+		ctx := context.Background()
+		st := ws.Store()
 
-		entity, ok := ws.GetEntity(entityID)
-		if !ok {
+		e, err := st.GetEntity(ctx, entityID)
+		if err != nil {
 			return &entityNotFoundError{ID: entityID}
 		}
 
-		incoming := ws.IncomingRelations(entityID)
-		outgoing := ws.OutgoingRelations(entityID)
+		var incoming, outgoing []*entity.Relation
+		for r, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}) {
+			if err != nil {
+				break
+			}
+			incoming = append(incoming, r)
+		}
+		for r, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}) {
+			if err != nil {
+				break
+			}
+			outgoing = append(outgoing, r)
+		}
 
-		return out.WriteEntity(entity, incoming, outgoing)
+		return out.WriteEntity(e, incoming, outgoing)
 	},
 }
 

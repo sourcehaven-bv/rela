@@ -102,7 +102,7 @@ func (a *App) analyzeOrphans() AnalysisSection {
 		section.Issues = append(section.Issues, AnalysisIssue{
 			EntityID:   e.ID,
 			EntityType: e.Type,
-			Title:      s.Meta.DisplayTitle(e),
+			Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 			Message:    "No relations",
 			Severity:   "warning",
 		})
@@ -122,7 +122,7 @@ func (a *App) analyzeDuplicates() AnalysisSection {
 	entities := s.Graph.AllNodes()
 	titleGroups := make(map[string][]*model.Entity)
 	for _, e := range entities {
-		title := normalizeTitle(s.Meta.DisplayTitle(e))
+		title := normalizeTitle(s.Meta.DisplayTitle(e.ID, e.Type, e.Properties))
 		if title != "" {
 			titleGroups[title] = append(titleGroups[title], e)
 		}
@@ -148,7 +148,7 @@ func (a *App) analyzeDuplicates() AnalysisSection {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      s.Meta.DisplayTitle(e),
+				Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 				Message:    fmt.Sprintf("Duplicate title (shared by %s)", strings.Join(ids, ", ")),
 				Severity:   "warning",
 			})
@@ -248,7 +248,7 @@ func (a *App) analyzeCardinality() AnalysisSection {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      s.Meta.DisplayTitle(e),
+							Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -268,7 +268,7 @@ func (a *App) analyzeCardinality() AnalysisSection {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      s.Meta.DisplayTitle(e),
+							Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -292,7 +292,7 @@ func (a *App) analyzeCardinality() AnalysisSection {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      s.Meta.DisplayTitle(e),
+							Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -316,7 +316,7 @@ func (a *App) analyzeCardinality() AnalysisSection {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      s.Meta.DisplayTitle(e),
+							Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -341,12 +341,12 @@ func (a *App) analyzeProperties() AnalysisSection {
 	sortEntitiesByID(entities)
 
 	for _, entity := range entities {
-		errs := s.Meta.ValidateEntity(entity)
+		errs := s.Meta.ValidateEntity(entity.ID, entity.Type, entity.Properties)
 		for _, err := range errs {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   entity.ID,
 				EntityType: entity.Type,
-				Title:      s.Meta.DisplayTitle(entity),
+				Title:      s.Meta.DisplayTitle(entity.ID, entity.Type, entity.Properties),
 				Message:    err.Error(),
 				Severity:   "error",
 			})
@@ -371,7 +371,7 @@ func (a *App) analyzeValidations() AnalysisSection {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      s.Meta.DisplayTitle(e),
+				Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 				Message:    rule.Description,
 				Severity:   severity,
 			})

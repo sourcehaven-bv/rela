@@ -261,7 +261,7 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 				To:          edge.To,
 				Direction:   DirectionOutgoing,
 				TargetID:    edge.To,
-				TargetTitle: s.Meta.DisplayTitle(target),
+				TargetTitle: s.Meta.DisplayTitle(target.ID, target.Type, target.Properties),
 				TargetType:  target.Type,
 			}
 			if edge.Properties != nil {
@@ -285,7 +285,7 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 				To:          edge.To,
 				Direction:   DirectionIncoming,
 				TargetID:    edge.From,
-				TargetTitle: s.Meta.DisplayTitle(source),
+				TargetTitle: s.Meta.DisplayTitle(source.ID, source.Type, source.Properties),
 				TargetType:  source.Type,
 			}
 			if edge.Properties != nil {
@@ -790,7 +790,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 				for _, e := range s.Graph.NodesByType(targetType) {
 					rd.Targets = append(rd.Targets, APIRelationTarget{
 						ID:    e.ID,
-						Title: s.Meta.DisplayTitle(e),
+						Title: s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 					})
 				}
 			}

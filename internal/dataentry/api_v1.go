@@ -1047,7 +1047,7 @@ func (a *App) entityToV1(e *model.Entity, plural string, includeRelations, inclu
 	v1 := V1Entity{
 		ID:         e.ID,
 		Type:       e.Type,
-		Title:      s.Meta.DisplayTitle(e),
+		Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 		Properties: make(map[string]interface{}),
 		Content:    e.Content,
 		Self:       fmt.Sprintf("/api/v1/%s/%s", plural, e.ID),

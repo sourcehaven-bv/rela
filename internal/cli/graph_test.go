@@ -60,10 +60,7 @@ func setupGraphTestGraph() {
 func TestGenerateDOT_BasicOutput(t *testing.T) {
 	setupGraphTestGraph()
 
-	entities := g.AllNodes()
-	edges := g.AllEdges()
-
-	dot := generateDOT(entities, edges)
+	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
 
 	// Should start with digraph
 	if !strings.HasPrefix(dot, "digraph architecture {") {
@@ -89,10 +86,7 @@ func TestGenerateDOT_BasicOutput(t *testing.T) {
 func TestGenerateDOT_ContainsEntities(t *testing.T) {
 	setupGraphTestGraph()
 
-	entities := g.AllNodes()
-	edges := g.AllEdges()
-
-	dot := generateDOT(entities, edges)
+	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
 
 	// Should contain entity IDs
 	if !strings.Contains(dot, `"REQ-001"`) {
@@ -114,10 +108,7 @@ func TestGenerateDOT_ContainsEntities(t *testing.T) {
 func TestGenerateDOT_ContainsEdges(t *testing.T) {
 	setupGraphTestGraph()
 
-	entities := g.AllNodes()
-	edges := g.AllEdges()
-
-	dot := generateDOT(entities, edges)
+	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
 
 	// Should contain edge definition
 	if !strings.Contains(dot, `"DEC-001" -> "REQ-001"`) {
@@ -133,10 +124,7 @@ func TestGenerateDOT_ContainsEdges(t *testing.T) {
 func TestGenerateDOT_GroupsByType(t *testing.T) {
 	setupGraphTestGraph()
 
-	entities := g.AllNodes()
-	edges := g.AllEdges()
-
-	dot := generateDOT(entities, edges)
+	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
 
 	// Should contain subgraph clusters
 	if !strings.Contains(dot, "subgraph cluster_requirement") {
@@ -150,10 +138,7 @@ func TestGenerateDOT_GroupsByType(t *testing.T) {
 func TestGenerateDOT_AppliesColors(t *testing.T) {
 	setupGraphTestGraph()
 
-	entities := g.AllNodes()
-	edges := g.AllEdges()
-
-	dot := generateDOT(entities, edges)
+	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
 
 	// Should contain colors from metamodel
 	if !strings.Contains(dot, `fillcolor="#E3F2FD"`) {
@@ -171,10 +156,7 @@ func TestGenerateDOT_DirectionLR(t *testing.T) {
 	graphDirection = "lr"
 	defer func() { graphDirection = "" }()
 
-	entities := g.AllNodes()
-	edges := g.AllEdges()
-
-	dot := generateDOT(entities, edges)
+	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
 
 	if !strings.Contains(dot, "rankdir=LR") {
 		t.Error("DOT should contain 'rankdir=LR' when direction is lr")
@@ -188,10 +170,7 @@ func TestGenerateDOT_EmptyGraph(t *testing.T) {
 	}
 	ws = workspace.NewForTest(g, meta)
 
-	entities := g.AllNodes()
-	edges := g.AllEdges()
-
-	dot := generateDOT(entities, edges)
+	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
 
 	// Should still be valid DOT
 	if !strings.HasPrefix(dot, "digraph architecture {") {
@@ -217,10 +196,7 @@ func TestGenerateDOT_EntityWithoutTitle(t *testing.T) {
 	// Add entity without title
 	g.AddNode(testutil.Entity("component").ID("CMP-001").Build())
 
-	entities := g.AllNodes()
-	edges := g.AllEdges()
-
-	dot := generateDOT(entities, edges)
+	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
 
 	// Should use ID as label when no title
 	if !strings.Contains(dot, `label="CMP-001"`) {

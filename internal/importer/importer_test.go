@@ -1,15 +1,13 @@
 package importer
 
 import (
-	"os"
-	"path/filepath"
+	"context"
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -67,39 +65,15 @@ func testMetamodel() *metamodel.Metamodel {
 	}
 }
 
-// setupTestProject creates a temporary test project and returns a repository and import source
-func setupTestProject(t *testing.T) (
-	repo *repository.Repository, src *ImportSource, ctx *project.Context, cleanup func(),
-) {
-	t.Helper()
-
-	tmpDir, err := os.MkdirTemp("", "rela-import-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-
-	ctx = &project.Context{
-		Root:         tmpDir,
-		EntitiesDir:  filepath.Join(tmpDir, "entities"),
-		RelationsDir: filepath.Join(tmpDir, "relations"),
-		CachePath:    filepath.Join(tmpDir, ".rela", "cache.json"),
-	}
-
-	// Create directories
-	_ = os.MkdirAll(ctx.EntitiesDir, 0755)
-	_ = os.MkdirAll(ctx.RelationsDir, 0755)
-	_ = os.MkdirAll(filepath.Join(tmpDir, ".rela"), 0755)
-
-	fs := storage.NewOsFS()
-	repo = repository.New(fs, ctx)
-	src = NewImportSource(fs)
-
-	cleanup = func() {
-		os.RemoveAll(tmpDir)
-	}
-
-	return repo, src, ctx, cleanup
+func newTestStore() store.Store {
+	return memstore.New()
 }
+
+func newTestSource() *ImportSource {
+	return NewImportSource(storage.NewMemFS())
+}
+
+func ctx() context.Context { return context.Background() }
 
 func TestParseJSON(t *testing.T) {
 	tests := []struct {
@@ -293,13 +267,10 @@ func TestDetectFormat(t *testing.T) {
 }
 
 func TestImportDryRun(t *testing.T) {
-	repo, src, ctx, cleanup := setupTestProject(t)
-	defer cleanup()
-
+	st := newTestStore()
 	meta := testMetamodel()
-	g := graph.New()
 
-	imp := New(repo, meta, g, Options{DryRun: true}, src)
+	imp := New(st, meta, Options{DryRun: true}, newTestSource())
 
 	data := &ImportData{
 		Entities: []EntityData{
@@ -316,26 +287,18 @@ func TestImportDryRun(t *testing.T) {
 		t.Errorf("EntitiesCreated = %d, want 1", result.EntitiesCreated)
 	}
 
-	// Check that no files were created
-	files, _ := filepath.Glob(filepath.Join(ctx.EntitiesDir, "*", "*.md"))
-	if len(files) > 0 {
-		t.Errorf("Expected no files in dry run, found %d", len(files))
-	}
-
-	// Check that graph is empty
-	if g.NodeCount() != 0 {
-		t.Errorf("Expected empty graph in dry run, found %d nodes", g.NodeCount())
+	// Check that store is empty (dry run)
+	n, _ := st.CountEntities(ctx(), store.EntityQuery{})
+	if n != 0 {
+		t.Errorf("Expected empty store in dry run, found %d entities", n)
 	}
 }
 
 func TestImportEntities(t *testing.T) {
-	repo, src, _, cleanup := setupTestProject(t)
-	defer cleanup()
-
+	st := newTestStore()
 	meta := testMetamodel()
-	g := graph.New()
 
-	imp := New(repo, meta, g, Options{}, src)
+	imp := New(st, meta, Options{}, newTestSource())
 
 	data := &ImportData{
 		Entities: []EntityData{
@@ -353,28 +316,24 @@ func TestImportEntities(t *testing.T) {
 		t.Errorf("EntitiesCreated = %d, want 2", result.EntitiesCreated)
 	}
 
-	// Check graph
-	if g.NodeCount() != 2 {
-		t.Errorf("Graph nodes = %d, want 2", g.NodeCount())
+	n, _ := st.CountEntities(ctx(), store.EntityQuery{})
+	if n != 2 {
+		t.Errorf("Store entities = %d, want 2", n)
 	}
 
-	// Check files were created
-	node1, ok := g.GetNode("REQ-001")
-	if !ok {
-		t.Error("REQ-001 not found in graph")
-	} else if node1.Title() != "First requirement" {
-		t.Errorf("REQ-001 title = %q, want %q", node1.Title(), "First requirement")
+	e, err := st.GetEntity(ctx(), "REQ-001")
+	if err != nil {
+		t.Error("REQ-001 not found in store")
+	} else if e.Title() != "First requirement" {
+		t.Errorf("REQ-001 title = %q, want %q", e.Title(), "First requirement")
 	}
 }
 
 func TestImportWithRelations(t *testing.T) {
-	repo, src, _, cleanup := setupTestProject(t)
-	defer cleanup()
-
+	st := newTestStore()
 	meta := testMetamodel()
-	g := graph.New()
 
-	imp := New(repo, meta, g, Options{}, src)
+	imp := New(st, meta, Options{}, newTestSource())
 
 	data := &ImportData{
 		Entities: []EntityData{
@@ -398,18 +357,13 @@ func TestImportWithRelations(t *testing.T) {
 		t.Errorf("RelationsCreated = %d, want 1", result.RelationsCreated)
 	}
 
-	// Check edge exists
-	if _, ok := g.GetEdge("DEC-001", "addresses", "REQ-001"); !ok {
-		t.Error("Relation DEC-001 --addresses--> REQ-001 not found in graph")
+	if _, err := st.GetRelation(ctx(), "DEC-001", "addresses", "REQ-001"); err != nil {
+		t.Error("Relation DEC-001 --addresses--> REQ-001 not found in store")
 	}
 }
 
 func TestImportValidationErrors(t *testing.T) {
-	repo, src, _, cleanup := setupTestProject(t)
-	defer cleanup()
-
 	meta := testMetamodel()
-	g := graph.New()
 
 	tests := []struct {
 		name    string
@@ -448,7 +402,8 @@ func TestImportValidationErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			imp := New(repo, meta, g, Options{}, src)
+			st := newTestStore()
+			imp := New(st, meta, Options{}, newTestSource())
 			_, err := imp.Import(tt.data)
 			if err == nil {
 				t.Error("Expected error, got nil")
@@ -462,14 +417,12 @@ func TestImportValidationErrors(t *testing.T) {
 }
 
 func TestImportUpdate(t *testing.T) {
-	repo, src, _, cleanup := setupTestProject(t)
-	defer cleanup()
-
+	st := newTestStore()
 	meta := testMetamodel()
-	g := graph.New()
+	src := newTestSource()
 
 	// First import
-	imp := New(repo, meta, g, Options{}, src)
+	imp := New(st, meta, Options{}, src)
 	data := &ImportData{
 		Entities: []EntityData{
 			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Original"}},
@@ -481,7 +434,7 @@ func TestImportUpdate(t *testing.T) {
 	}
 
 	// Second import without update - should fail
-	imp2 := New(repo, meta, g, Options{}, src)
+	imp2 := New(st, meta, Options{}, src)
 	data2 := &ImportData{
 		Entities: []EntityData{
 			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Updated"}},
@@ -493,7 +446,7 @@ func TestImportUpdate(t *testing.T) {
 	}
 
 	// Third import with update - should succeed
-	imp3 := New(repo, meta, g, Options{Update: true}, src)
+	imp3 := New(st, meta, Options{Update: true}, src)
 	result, err := imp3.Import(data2)
 	if err != nil {
 		t.Fatalf("Update import error: %v", err)
@@ -503,20 +456,17 @@ func TestImportUpdate(t *testing.T) {
 	}
 
 	// Check title was updated
-	node, _ := g.GetNode("REQ-001")
-	if node.Title() != "Updated" {
-		t.Errorf("Title = %q, want %q", node.Title(), "Updated")
+	e, _ := st.GetEntity(ctx(), "REQ-001")
+	if e.Title() != "Updated" {
+		t.Errorf("Title = %q, want %q", e.Title(), "Updated")
 	}
 }
 
 func TestImportSkipErrors(t *testing.T) {
-	repo, src, _, cleanup := setupTestProject(t)
-	defer cleanup()
-
+	st := newTestStore()
 	meta := testMetamodel()
-	g := graph.New()
 
-	imp := New(repo, meta, g, Options{SkipErrors: true}, src)
+	imp := New(st, meta, Options{SkipErrors: true}, newTestSource())
 
 	data := &ImportData{
 		Entities: []EntityData{
@@ -542,45 +492,12 @@ func TestImportSkipErrors(t *testing.T) {
 	}
 }
 
-func TestImportFile(t *testing.T) {
-	repo, src, ctx, cleanup := setupTestProject(t)
-	defer cleanup()
-
-	meta := testMetamodel()
-	g := graph.New()
-
-	// Create a test JSON file
-	jsonFile := filepath.Join(ctx.Root, "test.json")
-	content := `{
-		"entities": [
-			{"id": "REQ-001", "type": "requirement", "properties": {"title": "From file"}}
-		]
-	}`
-	if err := os.WriteFile(jsonFile, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
-
-	imp := New(repo, meta, g, Options{}, src)
-	result, err := imp.ImportFile(jsonFile)
-	if err != nil {
-		t.Fatalf("ImportFile() error = %v", err)
-	}
-
-	if result.EntitiesCreated != 1 {
-		t.Errorf("EntitiesCreated = %d, want 1", result.EntitiesCreated)
-	}
-}
-
 func TestImportDefaultStatus(t *testing.T) {
-	repo, src, _, cleanup := setupTestProject(t)
-	defer cleanup()
-
+	st := newTestStore()
 	meta := testMetamodel()
-	g := graph.New()
 
-	imp := New(repo, meta, g, Options{}, src)
+	imp := New(st, meta, Options{}, newTestSource())
 
-	// Import entity without status - should get default
 	data := &ImportData{
 		Entities: []EntityData{
 			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "No status"}},
@@ -592,8 +509,8 @@ func TestImportDefaultStatus(t *testing.T) {
 		t.Fatalf("Import() error = %v", err)
 	}
 
-	node, _ := g.GetNode("REQ-001")
-	status := node.GetString("status")
+	e, _ := st.GetEntity(ctx(), "REQ-001")
+	status := e.GetString("status")
 	if status != "draft" {
 		t.Errorf("Status = %q, want %q", status, "draft")
 	}

@@ -308,7 +308,7 @@ func (w *Workspace) ValidateProperties(opts AnalyzeOptions) []PropertyError {
 
 	var allErrors []PropertyError
 	for _, entity := range entities {
-		errs := meta.ValidateEntity(entity)
+		errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties)
 		if len(errs) > 0 {
 			allErrors = append(allErrors, PropertyError{
 				EntityID:   entity.ID,
@@ -333,7 +333,7 @@ func (w *Workspace) ValidateRelationProperties() []RelationPropertyError {
 	meta := w.meta()
 	var allErrors []RelationPropertyError
 	for _, rel := range w.graph().AllEdges() {
-		errs := meta.ValidateRelationProperties(rel)
+		errs := meta.ValidateRelationProperties(rel.Type, rel.Properties)
 		if len(errs) > 0 {
 			allErrors = append(allErrors, RelationPropertyError{
 				RelationKey:  rel.From + "--" + rel.Type + "--" + rel.To,

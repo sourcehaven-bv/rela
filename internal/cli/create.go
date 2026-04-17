@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -8,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -108,7 +109,9 @@ Examples:
 
 		out.WriteSuccess("Created %s %s", resolvedType, entity.ID)
 		if outputFormat == "json" {
-			_ = out.WriteEntities([]*model.Entity{entity})
+			if e, err := ws.Store().GetEntity(context.Background(), entity.ID); err == nil {
+				_ = out.WriteEntities([]*entitypkg.Entity{e})
+			}
 		}
 
 		return nil

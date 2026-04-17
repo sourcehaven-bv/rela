@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -11,8 +12,9 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 var (
@@ -108,7 +110,15 @@ Examples:
 }
 
 func exportEntities(entityType string) error {
-	entities := ws.EntitiesByType(entityType)
+	ctx := context.Background()
+	st := ws.Store()
+	var entities []*entity.Entity
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
+		if err != nil {
+			return err
+		}
+		entities = append(entities, e)
+	}
 
 	// Sort by ID for consistent output
 	sort.Slice(entities, func(i, j int) bool {
@@ -142,8 +152,24 @@ func exportEntities(entityType string) error {
 }
 
 func exportAllData() error {
-	allEntities := ws.AllEntities()
-	allEdges := ws.AllRelations()
+	ctx := context.Background()
+	st := ws.Store()
+
+	var allEntities []*entity.Entity
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+		if err != nil {
+			return err
+		}
+		allEntities = append(allEntities, e)
+	}
+
+	var allEdges []*entity.Relation
+	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
+		if err != nil {
+			return err
+		}
+		allEdges = append(allEdges, r)
+	}
 
 	// Sort entities by type, then ID
 	sort.Slice(allEntities, func(i, j int) bool {
@@ -200,7 +226,7 @@ func exportAllData() error {
 	}
 }
 
-func entityToExport(e *model.Entity) ExportEntity {
+func entityToExport(e *entity.Entity) ExportEntity {
 	// Create a copy of properties to include in export
 	props := make(map[string]interface{})
 	for k, v := range e.Properties {
@@ -215,46 +241,50 @@ func entityToExport(e *model.Entity) ExportEntity {
 }
 
 func getEntityRelations(entityID string) *ExportRelations {
-	outgoing := ws.OutgoingRelations(entityID)
-	incoming := ws.IncomingRelations(entityID)
-
-	if len(outgoing) == 0 && len(incoming) == 0 {
-		return nil
-	}
+	ctx := context.Background()
+	st := ws.Store()
 
 	relations := &ExportRelations{
 		Outgoing: make(map[string][]RelationTarget),
 		Incoming: make(map[string][]RelationTarget),
 	}
 
-	for _, rel := range outgoing {
+	for rel, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}) {
+		if err != nil {
+			break
+		}
 		target := RelationTarget{ID: rel.To}
-		if node, ok := ws.GetEntity(rel.To); ok {
+		if node, err := st.GetEntity(ctx, rel.To); err == nil {
 			target.Title = node.Title()
 		}
 		relations.Outgoing[rel.Type] = append(relations.Outgoing[rel.Type], target)
 	}
 
-	for _, rel := range incoming {
+	for rel, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}) {
+		if err != nil {
+			break
+		}
 		source := RelationTarget{ID: rel.From}
-		if node, ok := ws.GetEntity(rel.From); ok {
+		if node, err := st.GetEntity(ctx, rel.From); err == nil {
 			source.Title = node.Title()
 		}
 		relations.Incoming[rel.Type] = append(relations.Incoming[rel.Type], source)
 	}
 
-	// Remove empty maps
 	if len(relations.Outgoing) == 0 {
 		relations.Outgoing = nil
 	}
 	if len(relations.Incoming) == 0 {
 		relations.Incoming = nil
 	}
+	if relations.Outgoing == nil && relations.Incoming == nil {
+		return nil
+	}
 
 	return relations
 }
 
-func writeExport(data []ExportEntity, entities []*model.Entity) error {
+func writeExport(data []ExportEntity, entities []*entity.Entity) error {
 	switch exportFormat {
 	case "json":
 		return writeJSON(data)
@@ -279,7 +309,7 @@ func writeYAML(data interface{}) error {
 	return encoder.Encode(data)
 }
 
-func writeCSV(data []ExportEntity, entities []*model.Entity) error {
+func writeCSV(data []ExportEntity, entities []*entity.Entity) error {
 	if len(data) == 0 {
 		return nil
 	}
@@ -335,7 +365,7 @@ func writeCSV(data []ExportEntity, entities []*model.Entity) error {
 	return nil
 }
 
-func collectPropertyKeys(entities []*model.Entity) []string {
+func collectPropertyKeys(entities []*entity.Entity) []string {
 	keySet := make(map[string]bool)
 	for _, e := range entities {
 		for k := range e.Properties {

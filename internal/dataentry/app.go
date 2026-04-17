@@ -482,7 +482,7 @@ func (a *App) createFormForType(entityType string) string {
 
 // entityDisplayTitle returns the display title for an entity.
 func (a *App) entityDisplayTitle(e *model.Entity) string {
-	return a.State().Meta.DisplayTitle(e)
+	return a.State().Meta.DisplayTitle(e.ID, e.Type, e.Properties)
 }
 
 // resolveLinkTarget resolves a link configuration value to a URL.

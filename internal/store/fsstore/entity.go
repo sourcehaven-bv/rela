@@ -194,7 +194,6 @@ func (s *FSStore) UpdateEntity(_ context.Context, e *entity.Entity) error {
 		return err
 	}
 
-	// Write to disk
 	stored := e.Clone()
 	stored.UpdatedAt = time.Now()
 	if err := s.writeEntity(stored); err != nil {

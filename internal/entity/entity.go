@@ -13,11 +13,11 @@ import (
 
 // Entity represents any architecture entity (requirement, decision, etc.).
 type Entity struct {
-	ID         string
-	Type       string
-	Properties map[string]interface{}
-	Content    string
-	UpdatedAt  time.Time
+	ID         string                 `json:"id"`
+	Type       string                 `json:"type"`
+	Properties map[string]interface{} `json:"properties,omitempty"`
+	Content    string                 `json:"content,omitempty"`
+	UpdatedAt  time.Time              `json:"updated_at,omitempty"`
 }
 
 // New creates a new entity with the given ID and type.
@@ -150,12 +150,12 @@ func CloneValue(v interface{}) interface{} {
 
 // Relation represents a directed relationship between two entities.
 type Relation struct {
-	From       string
-	Type       string
-	To         string
-	Properties map[string]interface{}
-	Content    string
-	UpdatedAt  time.Time
+	From       string                 `json:"from"`
+	Type       string                 `json:"relation"`
+	To         string                 `json:"to"`
+	Properties map[string]interface{} `json:"properties,omitempty"`
+	Content    string                 `json:"content,omitempty"`
+	UpdatedAt  time.Time              `json:"updated_at,omitempty"`
 }
 
 // NewRelation creates a new relation.

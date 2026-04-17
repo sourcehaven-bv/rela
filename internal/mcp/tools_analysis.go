@@ -10,7 +10,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -168,13 +167,12 @@ func (s *Server) handleAnalyzeProperties(
 	st := s.ws.Store()
 	var allEntityErrors []entityErrors
 
-	// Validate entity properties — needs *model.Entity for metamodel.ValidateEntity
+	// Validate entity properties
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
-		me := model.EntityFromDomain(e)
-		errs := meta.ValidateEntity(me)
+		errs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
 		if len(errs) > 0 {
 			errStrings := make([]string, len(errs))
 			for i, ve := range errs {

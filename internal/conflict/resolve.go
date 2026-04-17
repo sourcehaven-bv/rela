@@ -146,7 +146,7 @@ func ResolveAndWrite(cf *ConflictedFile, resolution *Resolution, meta *metamodel
 	if entity != nil {
 		// Validate entity before writing
 		if meta != nil {
-			if errs := meta.ValidateEntity(entity); len(errs) > 0 {
+			if errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
 				return fmt.Errorf("validation failed: %w", errs[0])
 			}
 		}

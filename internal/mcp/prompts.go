@@ -289,18 +289,19 @@ func (s *Server) handleReviewEntityPrompt(
 		return nil, fmt.Errorf("id argument is required")
 	}
 
-	snap := s.ws.Snapshot()
-	entity, ok := snap.GetEntity(id)
-	if !ok {
+	st := s.ws.Store()
+	entity, getErr := st.GetEntity(context.Background(), id)
+	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
-	entityText, err := convertEntity(entity, snap, true)
+	entityText, err := convertStoreEntity(entity, st, true)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get entity type schema
+	snap := s.ws.Snapshot()
 	meta := snap.Meta()
 	def, _ := meta.GetEntityDef(entity.Type)
 	var schemaText string
@@ -312,7 +313,7 @@ func (s *Server) handleReviewEntityPrompt(
 	}
 
 	// Run validations for this entity
-	errs := meta.ValidateEntity(entity)
+	errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties)
 	var validationText string
 	if len(errs) == 0 {
 		validationText = "All validations passed"

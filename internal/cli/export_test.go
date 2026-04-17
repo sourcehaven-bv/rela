@@ -10,9 +10,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -198,7 +198,7 @@ func TestExportEntitiesCSV(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	entities := g.NodesByType("control")
+	entities := modelToEntitySlice(g.NodesByType("control"))
 	exportData := make([]ExportEntity, 0, len(entities))
 	for _, e := range entities {
 		exportData = append(exportData, entityToExport(e))
@@ -414,7 +414,7 @@ func TestFormatRelationsMap(t *testing.T) {
 }
 
 func TestCollectPropertyKeys(t *testing.T) {
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{Properties: map[string]interface{}{"title": "A", "foo": "bar"}},
 		{Properties: map[string]interface{}{"title": "B", "status": "draft", "baz": "qux"}},
 	}

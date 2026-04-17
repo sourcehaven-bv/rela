@@ -564,7 +564,7 @@ func (a *App) resolveRelationColumnValues(entityID, relationType string, directi
 		if !ok {
 			continue
 		}
-		titles = append(titles, s.Meta.DisplayTitle(target))
+		titles = append(titles, s.Meta.DisplayTitle(target.ID, target.Type, target.Properties))
 	}
 	return titles
 }
@@ -583,7 +583,7 @@ func (a *App) filterByRelation(entities []*model.Entity, relationType, value str
 			if !ok {
 				continue
 			}
-			if s.Meta.DisplayTitle(target) == value {
+			if s.Meta.DisplayTitle(target.ID, target.Type, target.Properties) == value {
 				result = append(result, e)
 				break
 			}
@@ -607,7 +607,7 @@ func (a *App) resolveRelationFilterValues(entities []*model.Entity, relationType
 			if !ok {
 				continue
 			}
-			title := s.Meta.DisplayTitle(target)
+			title := s.Meta.DisplayTitle(target.ID, target.Type, target.Properties)
 			if !seen[title] {
 				seen[title] = true
 				vals = append(vals, title)

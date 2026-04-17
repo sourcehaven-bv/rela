@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,7 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 var (
@@ -30,8 +32,24 @@ Examples:
   rela graph --types requirement,decision`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Get entities and edges
-		entities := ws.AllEntities()
-		edges := ws.AllRelations()
+		ctx := context.Background()
+		st := ws.Store()
+
+		var entities []*entity.Entity
+		for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+			if err != nil {
+				return err
+			}
+			entities = append(entities, e)
+		}
+
+		var edges []*entity.Relation
+		for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
+			if err != nil {
+				return err
+			}
+			edges = append(edges, r)
+		}
 
 		// Filter by types if specified
 		if len(graphTypes) > 0 {
@@ -43,7 +61,7 @@ Examples:
 				typeSet[resolved] = true
 			}
 
-			filtered := make([]*model.Entity, 0)
+			filtered := make([]*entity.Entity, 0)
 			for _, e := range entities {
 				if typeSet[e.Type] {
 					filtered = append(filtered, e)
@@ -57,7 +75,7 @@ Examples:
 				entityIDs[e.ID] = true
 			}
 
-			filteredEdges := make([]*model.Relation, 0)
+			filteredEdges := make([]*entity.Relation, 0)
 			for _, edge := range edges {
 				if entityIDs[edge.From] && entityIDs[edge.To] {
 					filteredEdges = append(filteredEdges, edge)
@@ -87,7 +105,7 @@ Examples:
 	},
 }
 
-func generateDOT(entities []*model.Entity, edges []*model.Relation) string {
+func generateDOT(entities []*entity.Entity, edges []*entity.Relation) string {
 	var sb strings.Builder
 
 	direction := "TB"
@@ -101,7 +119,7 @@ func generateDOT(entities []*model.Entity, edges []*model.Relation) string {
 	sb.WriteString("\n")
 
 	// Group nodes by type
-	typeGroups := make(map[string][]*model.Entity)
+	typeGroups := make(map[string][]*entity.Entity)
 	for _, e := range entities {
 		typeGroups[e.Type] = append(typeGroups[e.Type], e)
 	}

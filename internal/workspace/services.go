@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
 )
 
@@ -49,6 +50,31 @@ func (t *graphTracer) HasCycle(_ context.Context, startID string) bool {
 // Tracer returns the graph traversal service.
 func (w *Workspace) Tracer() storetrace.Tracer {
 	return &graphTracer{w: w}
+}
+
+// legacyFormatter adapts the workspace's FormatEntity/FormatRelation methods
+// to the store.Formatter interface. Used when no backend-specific formatter
+// is wired via WithFormatter.
+type legacyFormatter struct {
+	w *Workspace
+}
+
+var _ store.Formatter = (*legacyFormatter)(nil)
+
+func (f *legacyFormatter) FormatEntity(_ context.Context, id string, dryRun bool) (bool, error) {
+	e, ok := f.w.GetEntity(id)
+	if !ok {
+		return false, nil
+	}
+	return f.w.FormatEntity(e, dryRun)
+}
+
+func (f *legacyFormatter) FormatRelation(_ context.Context, from, relType, to string, dryRun bool) (bool, error) {
+	r, ok := f.w.GetRelation(from, relType, to)
+	if !ok {
+		return false, nil
+	}
+	return f.w.FormatRelation(r, dryRun)
 }
 
 // convertTraceResult converts model.TraceResult → storetrace.TraceResult.

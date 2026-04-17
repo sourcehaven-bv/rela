@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 var (
@@ -37,17 +40,24 @@ Examples:
   rela normalize --dry-run      # Preview changes without writing`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var entities []*model.Entity
+		ctx := context.Background()
+		st := ws.Store()
 
+		q := store.EntityQuery{}
 		if len(args) > 0 {
-			typeName := args[0]
-			resolvedType, _, err := resolveEntityType(typeName)
+			resolvedType, _, err := resolveEntityType(args[0])
 			if err != nil {
 				return err
 			}
-			entities = ws.EntitiesByType(resolvedType)
-		} else {
-			entities = ws.AllEntities()
+			q.Type = resolvedType
+		}
+
+		var entities []*entity.Entity
+		for e, err := range st.ListEntities(ctx, q) {
+			if err != nil {
+				return err
+			}
+			entities = append(entities, e)
 		}
 
 		if len(entities) == 0 {
@@ -56,30 +66,28 @@ Examples:
 		}
 
 		modified := 0
-		for _, entity := range entities {
-			normalized := ws.NormalizeContent(entity.Content)
-			if normalized == entity.Content {
+		for _, e := range entities {
+			normalized := ws.NormalizeContent(e.Content)
+			if normalized == e.Content {
 				continue
 			}
 
 			if normalizeDryRun {
-				out.WriteMessage("Would normalize: %s", entity.ID)
+				out.WriteMessage("Would normalize: %s", e.ID)
 				modified++
 				continue
 			}
 
-			oldEntity := entity.Clone()
-			entity.Content = normalized
-
-			if _, err := ws.UpdateEntity(entity, oldEntity); err != nil {
-				out.WriteWarning("Failed to write %s: %v", entity.ID, err)
+			e.Content = normalized
+			if err := st.UpdateEntity(ctx, e); err != nil {
+				out.WriteWarning("Failed to write %s: %v", e.ID, err)
 				continue
 			}
 
 			modified++
 
 			if verbose {
-				out.WriteMessage("Normalized: %s", entity.ID)
+				out.WriteMessage("Normalized: %s", e.ID)
 			}
 		}
 

@@ -98,7 +98,7 @@ func filterNilAndEmpty(props map[string]interface{}) map[string]interface{} {
 
 func (s *Server) validateEntity(entity *model.Entity) *mcp.CallToolResult {
 	snap := s.ws.Snapshot()
-	errs := snap.Meta().ValidateEntity(entity)
+	errs := snap.Meta().ValidateEntity(entity.ID, entity.Type, entity.Properties)
 	if len(errs) == 0 {
 		return nil
 	}

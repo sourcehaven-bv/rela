@@ -10,7 +10,8 @@ import (
 	"github.com/fatih/color"
 	"github.com/olekukonko/tablewriter"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
 )
 
 // Format represents the output format
@@ -62,7 +63,7 @@ func NewWithWriter(w io.Writer, format Format) *Writer {
 }
 
 // WriteEntities outputs a list of entities
-func (w *Writer) WriteEntities(entities []*model.Entity) error {
+func (w *Writer) WriteEntities(entities []*entity.Entity) error {
 	if w.Format == FormatJSON {
 		return w.writeJSON(entities)
 	}
@@ -70,14 +71,14 @@ func (w *Writer) WriteEntities(entities []*model.Entity) error {
 }
 
 // WriteEntitiesWithSummary outputs a list of entities with a footer summary
-func (w *Writer) WriteEntitiesWithSummary(entities []*model.Entity) error {
+func (w *Writer) WriteEntitiesWithSummary(entities []*entity.Entity) error {
 	if w.Format == FormatJSON {
 		return w.writeJSON(entities)
 	}
 	return w.writeEntitiesTable(entities, true)
 }
 
-func (w *Writer) writeEntitiesTable(entities []*model.Entity, showSummary bool) error {
+func (w *Writer) writeEntitiesTable(entities []*entity.Entity, showSummary bool) error {
 	table := tablewriter.NewWriter(w.Out)
 	table.SetHeader([]string{"ID", "Type", "Title", "Status"})
 	table.SetBorder(false)
@@ -146,7 +147,7 @@ func (w *Writer) buildEntitySummary(total int, statusCounts map[string]int) stri
 }
 
 // WriteEntity outputs a single entity with details
-func (w *Writer) WriteEntity(entity *model.Entity, incoming, outgoing []*model.Relation) error {
+func (w *Writer) WriteEntity(entity *entity.Entity, incoming, outgoing []*entity.Relation) error {
 	if w.Format == FormatJSON {
 		data := map[string]interface{}{
 			"entity":   entity,
@@ -212,7 +213,7 @@ func (w *Writer) WriteEntity(entity *model.Entity, incoming, outgoing []*model.R
 }
 
 // WriteRelations outputs a list of relations
-func (w *Writer) WriteRelations(relations []*model.Relation) error {
+func (w *Writer) WriteRelations(relations []*entity.Relation) error {
 	if w.Format == FormatJSON {
 		return w.writeJSON(relations)
 	}
@@ -233,7 +234,7 @@ func (w *Writer) WriteRelations(relations []*model.Relation) error {
 }
 
 // WriteTrace outputs a trace result as a tree
-func (w *Writer) WriteTrace(result *model.TraceResult) error {
+func (w *Writer) WriteTrace(result *storetrace.TraceResult) error {
 	if w.Format == FormatJSON {
 		return w.writeJSON(result)
 	}
@@ -242,7 +243,7 @@ func (w *Writer) WriteTrace(result *model.TraceResult) error {
 	return nil
 }
 
-func (w *Writer) writeTraceNode(node *model.TraceResult, prefix string, isLast bool) {
+func (w *Writer) writeTraceNode(node *storetrace.TraceResult, prefix string, isLast bool) {
 	if node == nil {
 		return
 	}
@@ -285,7 +286,7 @@ func (w *Writer) writeTraceNode(node *model.TraceResult, prefix string, isLast b
 }
 
 // WritePath outputs a path between nodes
-func (w *Writer) WritePath(path []model.PathStep) error {
+func (w *Writer) WritePath(path []storetrace.PathStep) error {
 	if w.Format == FormatJSON {
 		return w.writeJSON(path)
 	}

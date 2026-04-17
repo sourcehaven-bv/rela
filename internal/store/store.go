@@ -180,6 +180,22 @@ type SearchHit struct {
 	Title string
 }
 
+// Formatter checks whether an entity/relation's persisted representation
+// is up to date with its canonical format. Optionally applies the format.
+//
+// This is NOT part of the Store interface — formatting is a persistence-layer
+// concern specific to each backend. Stores that have a canonical serialized
+// format (markdown files, YAML, etc.) provide their own Formatter.
+type Formatter interface {
+	// FormatEntity checks whether the entity's persisted form differs from its
+	// canonical formatted form. If dryRun is false and it differs, the entity
+	// is rewritten. Returns changed=true if a rewrite was (or would be) needed.
+	FormatEntity(ctx context.Context, id string, dryRun bool) (changed bool, err error)
+
+	// FormatRelation behaves like FormatEntity but for relations.
+	FormatRelation(ctx context.Context, from, relType, to string, dryRun bool) (changed bool, err error)
+}
+
 // Searcher provides search and filtering over entities.
 // This is NOT part of the Store interface — it is a separate query service
 // that builds its state by subscribing to store events or by wrapping a

@@ -4,8 +4,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 func TestValidateEntity_EmptyRequiredProperty(t *testing.T) {
@@ -35,16 +33,10 @@ func TestValidateEntity_EmptyRequiredProperty(t *testing.T) {
 		},
 	}
 
-	entity := &model.Entity{
-		ID:   "REQ-001",
-		Type: "requirement",
-		Properties: map[string]interface{}{
-			"title":  "", // Empty string - should only trigger ONE error
-			"status": "draft",
-		},
-	}
-
-	errs := meta.ValidateEntity(entity)
+	errs := meta.ValidateEntity("REQ-001", "requirement", map[string]interface{}{
+		"title":  "", // Empty string - should only trigger ONE error
+		"status": "draft",
+	})
 
 	// Should have exactly 1 error for missing required property
 	// Bug was: it showed "missing required property" AND "invalid [type] value: "
@@ -128,16 +120,10 @@ func TestValidateEntity_DateValidation_RFC3339(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
-				ID:   "TASK-001",
-				Type: "task",
-				Properties: map[string]interface{}{
-					"title":    "Test Task",
-					"due_date": tt.dateValue,
-				},
-			}
-
-			errs := meta.ValidateEntity(entity)
+			errs := meta.ValidateEntity("TASK-001", "task", map[string]interface{}{
+				"title":    "Test Task",
+				"due_date": tt.dateValue,
+			})
 
 			if tt.wantErr && len(errs) == 0 {
 				t.Errorf("expected validation error for date %q, got none", tt.dateValue)
@@ -214,15 +200,9 @@ func TestValidateEntity_IDPatternValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
-				ID:   tt.id,
-				Type: "requirement",
-				Properties: map[string]interface{}{
-					"title": "Test Requirement",
-				},
-			}
-
-			errs := meta.ValidateEntity(entity)
+			errs := meta.ValidateEntity(tt.id, "requirement", map[string]interface{}{
+				"title": "Test Requirement",
+			})
 
 			hasIDError := false
 			for _, err := range errs {
@@ -251,17 +231,13 @@ func TestValidateRelationEntities(t *testing.T) {
 		},
 	}
 
-	from := &model.Entity{ID: "DEC-001", Type: "decision"}
-	to := &model.Entity{ID: "REQ-001", Type: "requirement"}
-
-	err := meta.ValidateRelationEntities("addresses", from, to)
+	err := meta.ValidateRelation("addresses", "decision", "requirement")
 	if err != nil {
-		t.Errorf("ValidateRelationEntities failed: %v", err)
+		t.Errorf("ValidateRelation failed: %v", err)
 	}
 
 	// Invalid from type
-	invalidFrom := &model.Entity{ID: "REQ-001", Type: "requirement"}
-	err = meta.ValidateRelationEntities("addresses", invalidFrom, to)
+	err = meta.ValidateRelation("addresses", "requirement", "requirement")
 	if err == nil {
 		t.Error("expected error for invalid from type")
 	}

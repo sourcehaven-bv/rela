@@ -151,7 +151,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
 					sed := SectionEntityData{
 						ID:         e.ID,
-						Title:      s.Meta.DisplayTitle(e),
+						Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 						Type:       e.Type,
 						EditFormID: a.editFormForType(e.Type),
 					}
@@ -240,7 +240,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
 					sed := SectionEntityData{
 						ID:         e.ID,
-						Title:      s.Meta.DisplayTitle(e),
+						Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 						Type:       e.Type,
 						EditFormID: a.editFormForType(e.Type),
 						Content:    e.Content,

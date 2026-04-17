@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 var (
@@ -42,28 +44,31 @@ Examples:
   rela list evidence --sort valid_until --desc # Sort descending`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var entities []*model.Entity
+		ctx := context.Background()
+		st := ws.Store()
+
+		q := store.EntityQuery{}
 		var entityTypeName string
 
 		if len(args) > 0 {
-			// Filter by type (resolveEntityType handles aliases and plural forms)
-			typeName := args[0]
-
-			resolvedType, _, err := resolveEntityType(typeName)
+			resolvedType, _, err := resolveEntityType(args[0])
 			if err != nil {
 				return err
 			}
-
 			entityTypeName = resolvedType
-			entities = ws.EntitiesByType(resolvedType)
-		} else {
-			// All entities
-			entities = ws.AllEntities()
+			q.Type = resolvedType
+		}
+
+		var entities []*entity.Entity
+		for e, err := range st.ListEntities(ctx, q) {
+			if err != nil {
+				return err
+			}
+			entities = append(entities, e)
 		}
 
 		// Parse and apply filters
 		if len(listWhere) > 0 {
-			// Filters require a specific entity type
 			if entityTypeName == "" {
 				return fmt.Errorf("--where filters require specifying an entity type")
 			}
@@ -73,23 +78,20 @@ Examples:
 				return fmt.Errorf("unknown entity type: %s", entityTypeName)
 			}
 
-			// Parse all filter expressions
 			filters, err := filter.ParseAll(listWhere)
 			if err != nil {
 				return fmt.Errorf("invalid filter: %w", err)
 			}
 
-			// Validate all filters reference valid properties
 			for _, f := range filters {
 				if _, ok := entityDef.Properties[f.Property]; !ok {
 					return fmt.Errorf("unknown property %q for entity type %q", f.Property, entityTypeName)
 				}
 			}
 
-			// Apply filters
-			filtered := make([]*model.Entity, 0)
+			var filtered []*entity.Entity
 			for _, e := range entities {
-				matches, err := filter.MatchAll(entityRecord(e), filters, entityDef, meta)
+				matches, err := filter.MatchAll(storeEntityRecord(e), filters, entityDef, meta)
 				if err != nil {
 					return fmt.Errorf("filter error: %w", err)
 				}
@@ -102,7 +104,6 @@ Examples:
 
 		// Apply sorting
 		if listSort != "" {
-			// Sort requires a specific entity type
 			if entityTypeName == "" {
 				return fmt.Errorf("--sort requires specifying an entity type")
 			}
@@ -112,20 +113,17 @@ Examples:
 				return fmt.Errorf("unknown entity type: %s", entityTypeName)
 			}
 
-			// Special case: sort by "id"
 			if listSort == "id" {
-				filter.SortByID(entities, entityAccess, listDesc)
+				filter.SortByID(entities, storeEntityRecord, listDesc)
 			} else {
 				propDef, ok := entityDef.Properties[listSort]
 				if !ok {
 					return fmt.Errorf("unknown property %q for entity type %q", listSort, entityTypeName)
 				}
-
-				filter.Sort(entities, entityAccess, listSort, &propDef, meta, listDesc)
+				filter.Sort(entities, storeEntityRecord, listSort, &propDef, meta, listDesc)
 			}
 		} else {
-			// Default sort by ID
-			filter.SortByID(entities, entityAccess, listDesc)
+			filter.SortByID(entities, storeEntityRecord, listDesc)
 		}
 
 		if len(entities) == 0 {
