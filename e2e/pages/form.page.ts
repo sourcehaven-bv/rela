@@ -73,12 +73,12 @@ export class FormPage extends BasePage {
 
   async submit() {
     await this.submitButton.click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async cancel() {
     await this.cancelButton.click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async expectValidationError(message: string) {

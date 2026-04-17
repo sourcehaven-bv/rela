@@ -248,13 +248,13 @@ navigation:
 `);
 
   // Create entity directories
-  fs.mkdirSync(path.join(tmpDir, 'entities', 'feature'), { recursive: true });
-  fs.mkdirSync(path.join(tmpDir, 'entities', 'bug'), { recursive: true });
-  fs.mkdirSync(path.join(tmpDir, 'entities', 'task'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'entities', 'features'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'entities', 'bugs'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'entities', 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'relations'), { recursive: true });
 
   // Create some test entities
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'feature', 'FEAT-001.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-001.md'), `---
 title: User Authentication
 status: approved
 priority: high
@@ -263,7 +263,7 @@ priority: high
 Implement user authentication system.
 `);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'feature', 'FEAT-002.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-002.md'), `---
 title: Dashboard Analytics
 status: draft
 priority: medium
@@ -272,7 +272,7 @@ priority: medium
 Add analytics dashboard.
 `);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'feature', 'FEAT-003.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-003.md'), `---
 title: Export Data
 status: in_progress
 priority: low
@@ -281,7 +281,7 @@ priority: low
 Export data to CSV.
 `);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'bug', 'BUG-001.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'bugs', 'BUG-001.md'), `---
 title: Login form validation
 severity: high
 status: draft
@@ -291,7 +291,7 @@ priority: high
 Form validation is not working.
 `);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'bug', 'BUG-002.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'bugs', 'BUG-002.md'), `---
 title: Memory leak in list view
 severity: critical
 status: in_progress
@@ -301,7 +301,7 @@ priority: high
 Memory leak detected.
 `);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'task', 'TASK-001.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'tasks', 'TASK-001.md'), `---
 title: Write unit tests
 status: draft
 assignee: Alice
@@ -386,8 +386,11 @@ export const test = base.extend<DesktopFixtures>({
     // Give server a moment to fully initialize
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    // Create a new page and navigate to the SPA.
-    const context = await browser.newContext();
+    // Create a new page and navigate to the SPA. Provide an Origin header so
+    // that direct API calls via page.request pass the same-origin CSRF check.
+    const context = await browser.newContext({
+      extraHTTPHeaders: { Origin: serverUrl },
+    });
     const page = await context.newPage();
     await page.goto(`${serverUrl}/`);
 

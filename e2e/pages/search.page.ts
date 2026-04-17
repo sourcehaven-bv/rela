@@ -75,12 +75,12 @@ export class SearchPage extends BasePage {
 
   async clickResult(index: number) {
     await this.resultItems.nth(index).click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async clickResultById(id: string) {
     await this.resultItems.filter({ hasText: id }).click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async getResultCount(): Promise<number> {
@@ -118,6 +118,6 @@ export class SearchPage extends BasePage {
 
   async openSelectedResult() {
     await this.page.keyboard.press('Enter');
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 }

@@ -41,12 +41,12 @@ export class KanbanPage extends BasePage {
 
   async clickCard(cardTitle: string) {
     await this.cards.filter({ hasText: cardTitle }).click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async clickCardById(cardId: string) {
     await this.cards.filter({ hasText: cardId }).click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async dragCardToColumn(cardTitle: string, targetColumnName: string) {
@@ -78,7 +78,7 @@ export class KanbanPage extends BasePage {
 
   async clickCreate() {
     await this.createButton.click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async expectColumnCount(count: number) {

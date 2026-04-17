@@ -17,12 +17,12 @@ export class BasePage {
     const baseUrl = new URL(currentUrl).origin;
     const fullPath = path.startsWith('/') ? path : `/${path}`;
     await this.page.goto(`${baseUrl}${fullPath}`);
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async clickNavLink(name: string) {
     await this.page.getByRole('link', { name }).click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async waitForToast(message?: string) {

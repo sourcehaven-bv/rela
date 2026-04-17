@@ -38,7 +38,7 @@ export class ListPage extends BasePage {
 
   async clickCreateButton() {
     await this.createButton.click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async deleteRow(index: number) {
