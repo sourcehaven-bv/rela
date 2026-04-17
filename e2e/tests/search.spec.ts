@@ -173,12 +173,8 @@ test.describe('Search', () => {
 
       await searchPage.searchAndEnter('User');
 
-      // Focus the input then press ArrowDown to enter results mode
-      await searchPage.searchInput.focus();
-      await appPage.keyboard.press('ArrowDown');
-
-      // First result should be selected
-      await expect(searchPage.resultItems.first()).toHaveClass(/selected/);
+      // Enters results mode and selects the first result
+      await searchPage.focusFirstResult();
     });
 
     test('can open result with Enter', async ({ appPage }) => {
@@ -188,14 +184,8 @@ test.describe('Search', () => {
 
       await searchPage.searchAndEnter('Authentication');
 
-      // Wait for results to render before keyboard navigation
-      await expect(searchPage.resultItems.first()).toBeVisible();
-
-      // Focus the input then ArrowDown enters results mode
-      await searchPage.searchInput.focus();
-      await appPage.keyboard.press('ArrowDown');
-      // First result is now selected
-      await expect(searchPage.resultItems.first()).toHaveClass(/selected/);
+      // Enters results mode and selects the first result
+      await searchPage.focusFirstResult();
 
       // Press Enter to open
       await appPage.keyboard.press('Enter');

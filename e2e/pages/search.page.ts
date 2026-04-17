@@ -42,6 +42,16 @@ export class SearchPage extends BasePage {
     await this.waitForSpinnerToDisappear();
   }
 
+  /** Wait for the first result to render, then enter keyboard-results mode by
+   *  focusing the input and pressing ArrowDown. The first result will be
+   *  selected when this returns. */
+  async focusFirstResult() {
+    await expect(this.resultItems.first()).toBeVisible();
+    await this.searchInput.focus();
+    await this.page.keyboard.press('ArrowDown');
+    await expect(this.resultItems.first()).toHaveClass(/selected/);
+  }
+
   async openFilterMenu() {
     await this.filterButton.click();
     await expect(this.filterMenu).toBeVisible();
