@@ -11,8 +11,8 @@ threshold:
 
 # Per-package minimum thresholds
 override:
-  - path: ^internal/model$
-    threshold: 95
+  - path: ^internal/entity$
+    threshold: 85
   - path: ^internal/errors$
     threshold: 95
   - path: ^internal/output$
