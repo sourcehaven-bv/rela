@@ -33,7 +33,7 @@ export class ListPage extends BasePage {
   }
 
   async clickRowById(id: string) {
-    await this.page.locator(`.entity-row:has-text("${id}"), tr:has-text("${id}")`).click();
+    await this.page.locator(`.entity-row[data-entity-id="${id}"]`).click();
   }
 
   async clickCreateButton() {
@@ -50,10 +50,11 @@ export class ListPage extends BasePage {
   }
 
   async deleteRowById(id: string) {
-    const row = this.page.locator(`.entity-row:has-text("${id}"), tr:has-text("${id}")`);
+    const row = this.page.locator(`.entity-row[data-entity-id="${id}"]`);
     const deleteBtn = row.locator('.delete-btn, button[title="Delete"]');
-    await this.confirmDialog();
     await deleteBtn.click();
+    // Confirm deletion in the modal
+    await this.page.locator('.modal button').filter({ hasText: /^Delete$/ }).click();
   }
 
   async sortByColumn(columnName: string) {
@@ -101,7 +102,9 @@ export class ListPage extends BasePage {
   }
 
   async expectRowContains(text: string) {
-    await expect(this.page.locator('.entity-row, tbody tr').filter({ hasText: text })).toBeVisible();
+    const rowById = this.page.locator(`.entity-row[data-entity-id="${text}"]`);
+    const rowByText = this.page.locator('.entity-row, tbody tr').filter({ hasText: text });
+    await expect(rowById.or(rowByText).first()).toBeVisible();
   }
 
   async expectEmpty() {

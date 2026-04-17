@@ -13,7 +13,7 @@ export class FormPage extends BasePage {
     this.form = page.locator('form');
     this.submitButton = page.locator('button[type="submit"], button:has-text("Save"), button:has-text("Create")');
     this.cancelButton = page.locator('button:has-text("Cancel")');
-    this.titleInput = page.locator('input[name="title"], input#title, input[id*="title"]');
+    this.titleInput = page.locator('#field-title');
     this.markdownEditor = page.locator('.EasyMDEContainer, .markdown-editor, textarea[name="content"]');
   }
 
@@ -28,12 +28,12 @@ export class FormPage extends BasePage {
   }
 
   async fillField(name: string, value: string) {
-    const field = this.page.locator(`input[name="${name}"], input#${name}, textarea[name="${name}"]`);
+    const field = this.page.locator(`#field-${name}`);
     await field.fill(value);
   }
 
   async selectField(name: string, value: string) {
-    const field = this.page.locator(`select[name="${name}"], select#${name}`);
+    const field = this.page.locator(`#field-${name}`);
     await field.selectOption(value);
   }
 
@@ -86,7 +86,7 @@ export class FormPage extends BasePage {
   }
 
   async expectFieldValue(name: string, value: string) {
-    const field = this.page.locator(`input[name="${name}"], input#${name}, select[name="${name}"]`);
+    const field = this.page.locator(`#field-${name}`);
     await expect(field).toHaveValue(value);
   }
 
@@ -95,7 +95,7 @@ export class FormPage extends BasePage {
   }
 
   async getFieldValue(name: string): Promise<string> {
-    const field = this.page.locator(`input[name="${name}"], input#${name}`);
+    const field = this.page.locator(`#field-${name}`);
     return field.inputValue();
   }
 }

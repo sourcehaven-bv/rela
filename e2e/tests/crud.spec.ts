@@ -77,7 +77,7 @@ test.describe('Entity CRUD Operations', () => {
       await expect(appPage).toHaveURL(/\/entity\/feature\/FEAT-001|\/form\/feature\/FEAT-001/);
 
       // Should show entity details
-      await expect(appPage.getByText('User Authentication')).toBeVisible();
+      await expect(appPage.getByText('User Authentication').first()).toBeVisible();
     });
 
     test('existing entities are displayed in list', async ({ appPage }) => {
@@ -185,7 +185,7 @@ test.describe('Entity CRUD Operations', () => {
 
       // Verify status changed
       await listPage.navigateToList('features');
-      await expect(appPage.locator('tr:has-text("FEAT-001")').locator('text=done')).toBeVisible();
+      await expect(appPage.locator('.entity-row[data-entity-id="FEAT-001"]').locator('text=done')).toBeVisible();
     });
   });
 
@@ -205,11 +205,9 @@ test.describe('Entity CRUD Operations', () => {
       await listPage.navigateToList('features');
       await listPage.expectRowContains('Feature to Delete');
 
-      // Get the ID of the newly created feature
-      const row = appPage.locator('.entity-row, tbody tr').filter({ hasText: 'Feature to Delete' });
-      const rowText = await row.textContent();
-      const idMatch = rowText?.match(/FEAT-\d+/);
-      const featureId = idMatch ? idMatch[0] : 'Feature to Delete';
+      // Get the ID of the newly created feature from the row's data attribute
+      const row = appPage.locator('.entity-row').filter({ hasText: 'Feature to Delete' });
+      const featureId = (await row.getAttribute('data-entity-id')) ?? '';
 
       // Delete it
       await listPage.deleteRowById(featureId);

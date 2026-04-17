@@ -593,6 +593,7 @@ onMounted(() => {
             v-for="(entity, index) in entities"
             :key="entity.id"
             class="entity-row"
+            :data-entity-id="entity.id"
             :class="{ selected: index === selectedIndex, 'action-selected': isSelected(entity.id) }"
             @click="navigateToEntity(entity)"
           >

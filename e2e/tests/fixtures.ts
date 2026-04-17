@@ -255,6 +255,8 @@ navigation:
 
   // Create some test entities
   fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-001.md'), `---
+id: FEAT-001
+type: feature
 title: User Authentication
 status: approved
 priority: high
@@ -264,6 +266,8 @@ Implement user authentication system.
 `);
 
   fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-002.md'), `---
+id: FEAT-002
+type: feature
 title: Dashboard Analytics
 status: draft
 priority: medium
@@ -273,6 +277,8 @@ Add analytics dashboard.
 `);
 
   fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-003.md'), `---
+id: FEAT-003
+type: feature
 title: Export Data
 status: in_progress
 priority: low
@@ -282,6 +288,8 @@ Export data to CSV.
 `);
 
   fs.writeFileSync(path.join(tmpDir, 'entities', 'bugs', 'BUG-001.md'), `---
+id: BUG-001
+type: bug
 title: Login form validation
 severity: high
 status: draft
@@ -292,6 +300,8 @@ Form validation is not working.
 `);
 
   fs.writeFileSync(path.join(tmpDir, 'entities', 'bugs', 'BUG-002.md'), `---
+id: BUG-002
+type: bug
 title: Memory leak in list view
 severity: critical
 status: in_progress
@@ -302,6 +312,8 @@ Memory leak detected.
 `);
 
   fs.writeFileSync(path.join(tmpDir, 'entities', 'tasks', 'TASK-001.md'), `---
+id: TASK-001
+type: task
 title: Write unit tests
 status: draft
 assignee: Alice
