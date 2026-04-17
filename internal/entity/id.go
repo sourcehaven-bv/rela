@@ -17,32 +17,81 @@ type EntityID struct {
 	Raw    string // Original string
 }
 
-// Common ID pattern: PREFIX-NUMBER (e.g., REQ-001, DEC-42, ISO-CA-001)
-var idPattern = regexp.MustCompile(`^([A-Za-z]+(?:-[A-Za-z]+)*-?)(\d+)$`)
-
-// ParseEntityID parses an entity ID string into its components
+// ParseEntityID parses an entity ID string into its components.
+// Expected shape: PREFIX-NUMBER (e.g., REQ-001, DEC-42, ISO-CA-001).
+// A hand-rolled parser is used instead of a regex because the earlier
+// regex `^([A-Za-z]+(?:-[A-Za-z]+)*-?)(\d+)$` exhibited catastrophic
+// backtracking on adversarial inputs.
 func ParseEntityID(s string) (EntityID, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return EntityID{}, fmt.Errorf("empty entity ID")
 	}
 
-	matches := idPattern.FindStringSubmatch(s)
-	if matches == nil {
-		// Not a standard PREFIX-NUMBER format, treat as opaque ID
+	// Walk from the end to find the trailing digit run.
+	numStart := len(s)
+	for numStart > 0 && s[numStart-1] >= '0' && s[numStart-1] <= '9' {
+		numStart--
+	}
+	// No trailing digits, or all digits with no prefix — treat as opaque.
+	if numStart == len(s) || numStart == 0 {
 		return EntityID{Raw: s}, nil
 	}
 
-	num, err := strconv.Atoi(matches[2])
+	prefix := s[:numStart]
+	// Prefix must be letters with optional dash-separated letter groups,
+	// optionally followed by a final dash directly before the digits.
+	if !isValidIDPrefix(prefix) {
+		return EntityID{Raw: s}, nil
+	}
+
+	num, err := strconv.Atoi(s[numStart:])
 	if err != nil {
 		return EntityID{}, fmt.Errorf("invalid number in ID: %s", s)
 	}
 
 	return EntityID{
-		Prefix: matches[1],
+		Prefix: prefix,
 		Number: num,
 		Raw:    s,
 	}, nil
+}
+
+// isValidIDPrefix reports whether p matches [A-Za-z]+(-[A-Za-z]+)*-?
+// without any regex backtracking.
+func isValidIDPrefix(p string) bool {
+	if p == "" {
+		return false
+	}
+	// Scan char-by-char: expect a run of letters, then optionally '-' and
+	// another run of letters, repeating. A single trailing '-' is allowed.
+	i := 0
+	for i < len(p) {
+		// Letter run (must have at least one).
+		start := i
+		for i < len(p) && isASCIILetter(p[i]) {
+			i++
+		}
+		if i == start {
+			return false
+		}
+		if i == len(p) {
+			return true
+		}
+		if p[i] != '-' {
+			return false
+		}
+		i++ // consume the dash
+		// Trailing dash is allowed only if it's the last character.
+		if i == len(p) {
+			return true
+		}
+	}
+	return true
+}
+
+func isASCIILetter(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
 }
 
 // String returns the canonical string representation
