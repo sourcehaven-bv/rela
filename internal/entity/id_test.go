@@ -1,189 +1,16 @@
-package model
+package entity
 
 import (
-	"reflect"
 	"testing"
 )
 
-// TestNewEntity tests entity creation
-func TestNewEntity(t *testing.T) {
-	e := NewEntity("REQ-001", "requirement")
-	assertEqual(t, e.ID, "REQ-001")
-	assertEqual(t, e.Type, "requirement")
-	if e.Properties == nil {
-		t.Error("expected Properties to be initialized")
-	}
-}
-
-// Test helpers to avoid import cycle
-func assertEqual(t *testing.T, got, want interface{}) {
+// assertEqualID is a local helper (entity_test.go uses testify but this
+// internal test file uses the in-package t.Helper style like the original model tests).
+func assertEqualID(t *testing.T, got, want interface{}) {
 	t.Helper()
 	if got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-}
-
-// TestEntityGetString tests retrieving string properties
-func TestEntityGetString(t *testing.T) {
-	e := NewEntity("REQ-001", "requirement")
-
-	// Test missing property
-	assertEqual(t, e.GetString("missing"), "")
-
-	// Test existing property
-	e.Properties["title"] = "Test Title"
-	assertEqual(t, e.GetString("title"), "Test Title")
-
-	// Test non-string property
-	e.Properties["number"] = 42
-	assertEqual(t, e.GetString("number"), "")
-}
-
-// TestEntitySetString tests setting string properties
-func TestEntitySetString(t *testing.T) {
-	e := NewEntity("REQ-001", "requirement")
-
-	e.SetString("title", "Test Title")
-	assertEqual(t, e.GetString("title"), "Test Title")
-
-	// Test setting on nil Properties
-	e2 := &Entity{}
-	e2.SetString("title", "Test")
-	if e2.Properties == nil {
-		t.Error("expected Properties to be initialized")
-	}
-	assertEqual(t, e2.GetString("title"), "Test")
-}
-
-// TestEntityTitle tests the Title helper method
-func TestEntityTitle(t *testing.T) {
-	e := NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "My Title"
-
-	assertEqual(t, e.Title(), "My Title")
-}
-
-// TestEntityStatus tests the Status helper method
-func TestEntityStatus(t *testing.T) {
-	e := NewEntity("REQ-001", "requirement")
-	e.Properties["status"] = "accepted"
-
-	assertEqual(t, e.Status(), StatusAccepted)
-
-	// Test empty status
-	e2 := NewEntity("REQ-002", "requirement")
-	assertEqual(t, e2.Status(), Status(""))
-}
-
-// TestEntityDescription tests the Description helper method
-func TestEntityDescription(t *testing.T) {
-	e := NewEntity("REQ-001", "requirement")
-	e.Properties["description"] = "My Description"
-
-	assertEqual(t, e.Description(), "My Description")
-}
-
-// TestEntityGetAttribute tests the GetAttribute method for uniform field/property access
-func TestEntityGetAttribute(t *testing.T) {
-	e := NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Test Title"
-	e.Properties["priority"] = "high"
-	e.Properties["count"] = 42
-
-	tests := []struct {
-		name     string
-		attrName string
-		expected interface{}
-	}{
-		{"id field", "id", "REQ-001"},
-		{"type field", "type", "requirement"},
-		{"title property", "title", "Test Title"},
-		{"priority property", "priority", "high"},
-		{"count property (int)", "count", 42},
-		{"missing property", "missing", nil},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := e.GetAttribute(tt.attrName)
-			if got != tt.expected {
-				t.Errorf("GetAttribute(%q) = %v, want %v", tt.attrName, got, tt.expected)
-			}
-		})
-	}
-}
-
-// TestEntityGetAttributeString tests the GetAttributeString method
-func TestEntityGetAttributeString(t *testing.T) {
-	e := NewEntity("REQ-001", "requirement")
-	e.Properties["title"] = "Test Title"
-	e.Properties["count"] = 42
-	e.Properties["active"] = true
-
-	tests := []struct {
-		name     string
-		attrName string
-		expected string
-	}{
-		{"id field", "id", "REQ-001"},
-		{"type field", "type", "requirement"},
-		{"title property", "title", "Test Title"},
-		{"count property (int to string)", "count", "42"},
-		{"bool property", "active", "true"},
-		{"missing property", "missing", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := e.GetAttributeString(tt.attrName)
-			if got != tt.expected {
-				t.Errorf("GetAttributeString(%q) = %q, want %q", tt.attrName, got, tt.expected)
-			}
-		})
-	}
-}
-
-// TestEntityGetAttributeStrings tests the GetAttributeStrings method
-func TestEntityGetAttributeStrings(t *testing.T) {
-	e := NewEntity("REQ-001", "requirement")
-	e.Properties["tags"] = []string{"a", "b"}
-	e.Properties["mixed"] = []interface{}{"x", "y", 42}
-	e.Properties["title"] = "scalar"
-
-	tests := []struct {
-		name     string
-		attr     string
-		expected []string
-	}{
-		{"[]string property", "tags", []string{"a", "b"}},
-		{"[]interface{} property", "mixed", []string{"x", "y"}},
-		{"scalar property returns nil", "title", nil},
-		{"missing property returns nil", "nope", nil},
-		{"id field returns nil", "id", nil},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := e.GetAttributeStrings(tt.attr)
-			if !reflect.DeepEqual(got, tt.expected) {
-				t.Errorf("GetAttributeStrings(%q) = %v, want %v", tt.attr, got, tt.expected)
-			}
-		})
-	}
-}
-
-// TestNewRelation tests relation creation
-func TestNewRelation(t *testing.T) {
-	r := NewRelation("REQ-001", "implements", "DEC-001")
-	assertEqual(t, r.From, "REQ-001")
-	assertEqual(t, r.Type, "implements")
-	assertEqual(t, r.To, "DEC-001")
-}
-
-// TestRelationKey tests relation key generation
-func TestRelationKey(t *testing.T) {
-	r := NewRelation("REQ-001", "implements", "DEC-001")
-	assertEqual(t, r.Key(), "REQ-001--implements--DEC-001")
 }
 
 // TestEntityIDString tests String method with various scenarios
@@ -337,9 +164,9 @@ func TestParseEntityID_MultiSegmentPrefix(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			assertEqual(t, id.Prefix, tt.wantPrefix)
-			assertEqual(t, id.Number, tt.wantNumber)
-			assertEqual(t, id.Raw, tt.wantRaw)
+			assertEqualID(t, id.Prefix, tt.wantPrefix)
+			assertEqualID(t, id.Number, tt.wantNumber)
+			assertEqualID(t, id.Raw, tt.wantRaw)
 		})
 	}
 }
@@ -387,7 +214,7 @@ func TestExtractHighestNumber_MultiSegmentPrefix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ExtractHighestNumber(tt.ids, tt.prefix)
-			assertEqual(t, got, tt.want)
+			assertEqualID(t, got, tt.want)
 		})
 	}
 }
@@ -429,7 +256,7 @@ func TestGenerateNextID_MultiSegmentPrefix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := GenerateNextID(tt.ids, tt.prefix)
-			assertEqual(t, got, tt.want)
+			assertEqualID(t, got, tt.want)
 		})
 	}
 }
@@ -472,119 +299,6 @@ func TestEntityIDMatchesPattern_MultiSegment(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.id.MatchesPattern(tt.pattern); got != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, got)
-			}
-		})
-	}
-}
-
-// TestStatusIsValid tests Status validation
-func TestStatusIsValid(t *testing.T) {
-	tests := []struct {
-		status Status
-		valid  bool
-	}{
-		{StatusDraft, true},
-		{StatusProposed, true},
-		{StatusAccepted, true},
-		{StatusDeprecated, true},
-		{StatusRejected, true},
-		{StatusRetired, true},
-		{Status("invalid"), false},
-		{Status(""), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.status), func(t *testing.T) {
-			if got := tt.status.IsValid(); got != tt.valid {
-				t.Errorf("expected %v, got %v", tt.valid, got)
-			}
-		})
-	}
-}
-
-// TestAllStatuses tests that all statuses are returned
-func TestAllStatuses(t *testing.T) {
-	statuses := AllStatuses()
-	if len(statuses) != 6 {
-		t.Errorf("expected 6 statuses, got %d", len(statuses))
-	}
-
-	// Verify all are valid
-	for _, s := range statuses {
-		if !s.IsValid() {
-			t.Errorf("AllStatuses returned invalid status: %s", s)
-		}
-	}
-}
-
-// TestPriorityIsValid tests Priority validation
-func TestPriorityIsValid(t *testing.T) {
-	tests := []struct {
-		priority Priority
-		valid    bool
-	}{
-		{PriorityCritical, true},
-		{PriorityHigh, true},
-		{PriorityMedium, true},
-		{PriorityLow, true},
-		{Priority("invalid"), false},
-		{Priority(""), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.priority), func(t *testing.T) {
-			if got := tt.priority.IsValid(); got != tt.valid {
-				t.Errorf("expected %v, got %v", tt.valid, got)
-			}
-		})
-	}
-}
-
-// TestAllPriorities tests that all priorities are returned
-func TestAllPriorities(t *testing.T) {
-	priorities := AllPriorities()
-	if len(priorities) != 4 {
-		t.Errorf("expected 4 priorities, got %d", len(priorities))
-	}
-
-	// Verify all are valid
-	for _, p := range priorities {
-		if !p.IsValid() {
-			t.Errorf("AllPriorities returned invalid priority: %s", p)
-		}
-	}
-}
-
-// TestSyncErrorError tests the Error method for SyncError
-func TestSyncErrorError(t *testing.T) {
-	err := &SyncError{
-		File:    "entities/req/REQ-001.md",
-		Message: "invalid YAML frontmatter",
-	}
-	want := "entities/req/REQ-001.md: invalid YAML frontmatter"
-	if got := err.Error(); got != want {
-		t.Errorf("SyncError.Error() = %q, want %q", got, want)
-	}
-}
-
-// TestSortSpecIsDescending tests the IsDescending method for SortSpec
-func TestSortSpecIsDescending(t *testing.T) {
-	tests := []struct {
-		name      string
-		direction string
-		want      bool
-	}{
-		{"empty direction", "", false},
-		{"asc direction", "asc", false},
-		{"desc direction", "desc", true},
-		{"other value", "ascending", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := SortSpec{Property: "title", Direction: tt.direction}
-			if got := s.IsDescending(); got != tt.want {
-				t.Errorf("SortSpec.IsDescending() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -747,34 +461,6 @@ func TestGenerateShortID_CollisionAvoidance(t *testing.T) {
 		}
 		existingIDs = append(existingIDs, id)
 	}
-}
-
-// TestEntityClone tests the Clone method
-func TestEntityClone(t *testing.T) {
-	original := NewEntity("REQ-001", "requirement")
-	original.SetString("title", "Original Title")
-	original.SetString("status", "accepted")
-	original.Content = "Original content"
-	original.FilePath = "/path/to/file.md"
-
-	clone := original.Clone()
-
-	// Verify clone has same values
-	assertEqual(t, clone.ID, original.ID)
-	assertEqual(t, clone.Type, original.Type)
-	assertEqual(t, clone.Content, original.Content)
-	assertEqual(t, clone.FilePath, original.FilePath)
-	assertEqual(t, clone.GetString("title"), "Original Title")
-	assertEqual(t, clone.GetString("status"), "accepted")
-
-	// Verify clone has independent properties map
-	clone.SetString("title", "Modified Title")
-	assertEqual(t, original.GetString("title"), "Original Title")
-	assertEqual(t, clone.GetString("title"), "Modified Title")
-
-	// Verify modifying original doesn't affect clone
-	original.SetString("status", "rejected")
-	assertEqual(t, clone.GetString("status"), "accepted")
 }
 
 // TestCalculateIDLength tests the ID length calculation

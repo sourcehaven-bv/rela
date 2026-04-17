@@ -7,7 +7,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// --- Entity queries ---
+// Thin wrappers over w.Store() kept for callers that still want the
+// convenience signatures. Bulk iteration helpers (AllEntities,
+// EntitiesByType, EntityCount, EntityIDs, AllRelations) used to live
+// here but were removed — no non-test code called them, and direct
+// store queries are clearer at call sites.
 
 // GetEntity returns an entity by ID.
 func (w *Workspace) GetEntity(id string) (*entity.Entity, bool) {
@@ -18,34 +22,6 @@ func (w *Workspace) GetEntity(id string) (*entity.Entity, bool) {
 	return e, true
 }
 
-// AllEntities returns all entities in the workspace.
-func (w *Workspace) AllEntities() []*entity.Entity {
-	return collectEntities(w.Store(), store.EntityQuery{})
-}
-
-// EntitiesByType returns all entities of the given type.
-func (w *Workspace) EntitiesByType(entityType string) []*entity.Entity {
-	return collectEntities(w.Store(), store.EntityQuery{Type: entityType})
-}
-
-// EntityCount returns the total number of entities.
-func (w *Workspace) EntityCount() int {
-	n, _ := w.Store().CountEntities(context.Background(), store.EntityQuery{})
-	return n
-}
-
-// EntityIDs returns all entity IDs.
-func (w *Workspace) EntityIDs() []string {
-	entities := collectEntities(w.Store(), store.EntityQuery{})
-	ids := make([]string, len(entities))
-	for i, e := range entities {
-		ids[i] = e.ID
-	}
-	return ids
-}
-
-// --- Relation queries ---
-
 // GetRelation returns a relation by its endpoints and type.
 func (w *Workspace) GetRelation(from, relType, to string) (*entity.Relation, bool) {
 	r, err := w.Store().GetRelation(context.Background(), from, relType, to)
@@ -53,11 +29,6 @@ func (w *Workspace) GetRelation(from, relType, to string) (*entity.Relation, boo
 		return nil, false
 	}
 	return r, true
-}
-
-// AllRelations returns all relations in the workspace.
-func (w *Workspace) AllRelations() []*entity.Relation {
-	return collectRelations(w.Store(), store.RelationQuery{})
 }
 
 // IncomingRelations returns all relations pointing to the given entity.

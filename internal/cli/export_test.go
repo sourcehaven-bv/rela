@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"os"
@@ -11,15 +12,14 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func setupTestGraph() {
-	g = graph.New()
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"control": {
@@ -46,40 +46,44 @@ func setupTestGraph() {
 			},
 		},
 	}
-	ws = workspace.NewForTest(g, meta)
-	out = output.New(output.FormatTable)
 
-	// Add test entities
-	g.AddNode(testutil.EntityFor(meta, "control").
+	s := memstore.New()
+	ctx := context.Background()
+	seedE := func(b *testutil.EntityBuilder) {
+		_ = s.CreateEntity(ctx, b.Build())
+	}
+	seedR := func(from, relType, to string) {
+		_, _ = s.CreateRelation(ctx, from, relType, to, nil)
+	}
+
+	seedE(testutil.EntityFor(meta, "control").
 		ID("CTRL-001").
 		With("title", "Access Control Policy").
 		With("status", "implemented").
-		With("iso27001", "A.5.15").
-		Build())
+		With("iso27001", "A.5.15"))
 
-	g.AddNode(testutil.EntityFor(meta, "control").
+	seedE(testutil.EntityFor(meta, "control").
 		ID("CTRL-002").
 		With("title", "Password Policy").
 		With("status", "draft").
-		With("iso27001", "A.9.4.3").
-		Build())
+		With("iso27001", "A.9.4.3"))
 
-	g.AddNode(testutil.EntityFor(meta, "risk").
+	seedE(testutil.EntityFor(meta, "risk").
 		ID("RISK-001").
 		With("title", "Unauthorized Access").
-		With("severity", "high").
-		Build())
+		With("severity", "high"))
 
-	g.AddNode(testutil.EntityFor(meta, "evidence").
+	seedE(testutil.EntityFor(meta, "evidence").
 		ID("EV-001").
 		With("title", "Access Control Audit Report").
-		With("valid_until", "2025-12-31").
-		Build())
+		With("valid_until", "2025-12-31"))
 
-	// Add test relations
-	g.AddEdge(testutil.NewRelation("CTRL-001", "mitigates", "RISK-001").Build())
-	g.AddEdge(testutil.NewRelation("CTRL-002", "mitigates", "RISK-001").Build())
-	g.AddEdge(testutil.NewRelation("CTRL-001", "evidencedBy", "EV-001").Build())
+	seedR("CTRL-001", "mitigates", "RISK-001")
+	seedR("CTRL-002", "mitigates", "RISK-001")
+	seedR("CTRL-001", "evidencedBy", "EV-001")
+
+	ws = workspace.NewForTestWithStore(s, meta)
+	out = output.New(output.FormatTable)
 }
 
 func TestExportEntitiesJSON(t *testing.T) {
@@ -198,7 +202,7 @@ func TestExportEntitiesCSV(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	entities := modelToEntitySlice(g.NodesByType("control"))
+	entities := fixtureEntities("control")
 	exportData := make([]ExportEntity, 0, len(entities))
 	for _, e := range entities {
 		exportData = append(exportData, entityToExport(e))

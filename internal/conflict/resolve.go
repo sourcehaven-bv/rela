@@ -7,8 +7,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // Resolve applies a resolution to a conflicted file and returns the resolved entity or relation.
@@ -140,8 +138,6 @@ func ResolveAndWrite(cf *ConflictedFile, resolution *Resolution, meta *metamodel
 		return err
 	}
 
-	fio := markdown.NewFileIO(storage.NewOsFS())
-
 	if e != nil {
 		// Validate entity before writing
 		if meta != nil {
@@ -149,11 +145,11 @@ func ResolveAndWrite(cf *ConflictedFile, resolution *Resolution, meta *metamodel
 				return fmt.Errorf("validation failed: %w", errs[0])
 			}
 		}
-		return fio.WriteEntity(model.EntityFromDomain(e), cf.Path)
+		return writeEntityFile(cf.Path, e)
 	}
 
 	if relation != nil {
-		return fio.WriteRelation(model.RelationFromDomain(relation), cf.Path)
+		return writeRelationFile(cf.Path, relation)
 	}
 
 	return fmt.Errorf("nothing to write")
@@ -207,15 +203,47 @@ func AcceptTheirs(cf *ConflictedFile) *Resolution {
 
 // WriteResolved writes a resolved entity or relation to disk.
 func WriteResolved(path string, e *entity.Entity, relation *entity.Relation) error {
-	fio := markdown.NewFileIO(storage.NewOsFS())
-
 	if e != nil {
-		return fio.WriteEntity(model.EntityFromDomain(e), path)
+		return writeEntityFile(path, e)
 	}
 	if relation != nil {
-		return fio.WriteRelation(model.RelationFromDomain(relation), path)
+		return writeRelationFile(path, relation)
 	}
 	return fmt.Errorf("nothing to write")
+}
+
+// writeEntityFile formats and writes an entity to disk.
+func writeEntityFile(path string, e *entity.Entity) error {
+	fm := map[string]interface{}{"id": e.ID, "type": e.Type}
+	for k, v := range e.Properties {
+		fm[k] = v
+	}
+	content := e.Content
+	if content != "" {
+		content = markdown.FormatMarkdown(content)
+	}
+	formatted, err := markdown.FormatDocumentOrdered(fm, content, []string{"id", "type"})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(formatted), 0644)
+}
+
+// writeRelationFile formats and writes a relation to disk.
+func writeRelationFile(path string, r *entity.Relation) error {
+	fm := map[string]interface{}{"from": r.From, "relation": r.Type, "to": r.To}
+	for k, v := range r.Properties {
+		fm[k] = v
+	}
+	content := r.Content
+	if content != "" {
+		content = markdown.FormatMarkdown(content)
+	}
+	formatted, err := markdown.FormatDocumentOrdered(fm, content, []string{"from", "relation", "to"})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(formatted), 0644)
 }
 
 // RemoveConflictMarkers removes all conflict markers from a file, keeping the "ours" content.

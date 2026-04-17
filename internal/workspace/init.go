@@ -7,7 +7,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -98,6 +97,5 @@ func NewAfterInit(targetDir string) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo := repository.New(fs, ctx)
-	return New(repo, NopScriptExecutor)
+	return New(fs, ctx, NopScriptExecutor)
 }

@@ -62,16 +62,9 @@ func makeToolRequest(args map[string]interface{}) mcp.CallToolRequest {
 	}
 }
 
-// buildEntity returns a built entity as *entity.Entity (test helper bridging testutil's *model.Entity output).
+// buildEntity returns a built entity as *entity.Entity.
 func buildEntity(b *testutil.EntityBuilder) *entity.Entity {
-	m := b.Build()
-	return &entity.Entity{
-		ID:         m.ID,
-		Type:       m.Type,
-		Properties: m.Properties,
-		Content:    m.Content,
-		UpdatedAt:  m.ModTime,
-	}
+	return b.Build()
 }
 
 // seedEntity creates an entity in the store.

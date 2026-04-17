@@ -15,9 +15,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -51,11 +49,10 @@ func testMeta() *metamodel.Metamodel {
 	}
 }
 
-// mockWorkspace is a test helper that bundles a memstore-backed lua.Services
-// with a mirrored graph for test assertions. The graph and store are kept in
-// sync so existing graph-based test helpers keep working.
+// mockWorkspace is a test helper that exposes a memstore-backed lua.Services
+// bundle. Tests seed fixtures via seedEntity / seedRelation and assert state
+// through GetEntity / store iteration.
 type mockWorkspace struct {
-	graph *graph.Graph
 	meta  *metamodel.Metamodel
 	store *memstore.MemStore
 }
@@ -64,8 +61,8 @@ type mockWorkspace struct {
 func newMockWorkspace(t *testing.T) *mockWorkspace {
 	t.Helper()
 
-	g := graph.New()
-	g.AddNode(&model.Entity{
+	m := newMockWorkspaceWith(testMeta())
+	m.seedEntity(&entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -74,7 +71,7 @@ func newMockWorkspace(t *testing.T) *mockWorkspace {
 		},
 		Content: "Test content",
 	})
-	g.AddNode(&model.Entity{
+	m.seedEntity(&entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -82,35 +79,30 @@ func newMockWorkspace(t *testing.T) *mockWorkspace {
 			"status": "done",
 		},
 	})
-	g.AddNode(&model.Entity{
+	m.seedEntity(&entity.Entity{
 		ID:   "FEAT-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	g.AddEdge(&model.Relation{
-		From: "TKT-001",
-		Type: "implements",
-		To:   "FEAT-001",
-	})
-
-	return newMockWorkspaceWith(g, testMeta())
+	m.seedRelation(&entity.Relation{From: "TKT-001", Type: "implements", To: "FEAT-001"})
+	return m
 }
 
-// newMockWorkspaceWith creates a mock workspace with a custom graph and metamodel.
-// The graph contents are copied into a memstore so the lua runtime can query them
-// through the Services interface.
-func newMockWorkspaceWith(g *graph.Graph, meta *metamodel.Metamodel) *mockWorkspace {
-	st := memstore.New()
-	ctx := context.Background()
-	for _, e := range g.AllNodes() {
-		_ = st.CreateEntity(ctx, model.EntityToDomain(e))
-	}
-	for _, r := range g.AllEdges() {
-		_, _ = st.CreateRelation(ctx, r.From, r.Type, r.To, nil)
-	}
-	return &mockWorkspace{graph: g, meta: meta, store: st}
+// newMockWorkspaceWith creates an empty mock workspace with the given metamodel.
+func newMockWorkspaceWith(meta *metamodel.Metamodel) *mockWorkspace {
+	return &mockWorkspace{meta: meta, store: memstore.New()}
+}
+
+// seedEntity adds an entity to the mock's memstore.
+func (m *mockWorkspace) seedEntity(e *entity.Entity) {
+	_ = m.store.CreateEntity(context.Background(), e)
+}
+
+// seedRelation adds a relation to the mock's memstore.
+func (m *mockWorkspace) seedRelation(r *entity.Relation) {
+	_, _ = m.store.CreateRelation(context.Background(), r.From, r.Type, r.To, nil)
 }
 
 // services returns a lua.Services bound to the mock's store, with projectRoot set.
@@ -122,13 +114,16 @@ func (m *mockWorkspace) services(projectRoot string) Services {
 		Searcher:    &mockSearcher{ws: m},
 		Meta:        m.meta,
 		ProjectRoot: projectRoot,
-		Sync:        func() error { return nil },
 	}
 }
 
 // GetEntity returns an entity from the underlying store (test helper).
-func (m *mockWorkspace) GetEntity(id string) (*model.Entity, bool) {
-	return m.graph.GetNode(id)
+func (m *mockWorkspace) GetEntity(id string) (*entity.Entity, bool) {
+	e, err := m.store.GetEntity(context.Background(), id)
+	if err != nil {
+		return nil, false
+	}
+	return e, true
 }
 
 // Meta returns the metamodel for the mock workspace.
@@ -136,9 +131,16 @@ func (m *mockWorkspace) Meta() *metamodel.Metamodel {
 	return m.meta
 }
 
-// Graph returns the graph for the mock workspace.
-func (m *mockWorkspace) Graph() *graph.Graph {
-	return m.graph
+// entityCount returns the number of entities currently in the mock's store.
+func (m *mockWorkspace) entityCount() int {
+	n := 0
+	for _, err := range m.store.ListEntities(context.Background(), store.EntityQuery{}) {
+		if err != nil {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // testWorkspace is an alias for newMockWorkspace for tests that use the older naming.
@@ -147,9 +149,8 @@ func testWorkspace(t *testing.T) *mockWorkspace {
 	return newMockWorkspace(t)
 }
 
-// mockManager is a minimal entitymanager.EntityManager for tests. It delegates
-// to the underlying memstore and mirrors writes into the graph so test
-// assertions using graph queries continue to work.
+// mockManager is a minimal entitymanager.EntityManager for tests. It
+// delegates to the underlying memstore.
 type mockManager struct {
 	ws *mockWorkspace
 }
@@ -164,7 +165,7 @@ func (m *mockManager) CreateEntity(
 	}
 	id := opts.ID
 	if id == "" {
-		id = fmt.Sprintf("%s-%03d", strings.ToUpper(e.Type[:3]), m.ws.graph.NodeCount()+1)
+		id = fmt.Sprintf("%s-%03d", strings.ToUpper(e.Type[:3]), m.ws.entityCount()+1)
 	}
 	newE := &entity.Entity{
 		ID:         id,
@@ -175,8 +176,6 @@ func (m *mockManager) CreateEntity(
 	if err := m.ws.store.CreateEntity(ctx, newE); err != nil {
 		return nil, err
 	}
-	mdl := model.EntityFromDomain(newE)
-	m.ws.graph.AddNode(mdl)
 	return &entitymanager.CreateResult{Entity: newE}, nil
 }
 
@@ -186,23 +185,21 @@ func (m *mockManager) UpdateEntity(
 	if err := m.ws.store.UpdateEntity(ctx, e); err != nil {
 		return nil, err
 	}
-	m.ws.graph.AddNode(model.EntityFromDomain(e))
 	return &entitymanager.UpdateResult{Entity: e}, nil
 }
 
 func (m *mockManager) DeleteEntity(
 	ctx context.Context, id string, cascade bool,
 ) (*entitymanager.DeleteResult, error) {
-	current, ok := m.ws.graph.GetNode(id)
-	if !ok {
+	current, err := m.ws.store.GetEntity(ctx, id)
+	if err != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 	if _, err := m.ws.store.DeleteEntity(ctx, id, cascade); err != nil {
 		return nil, err
 	}
-	m.ws.graph.RemoveNode(id)
 	return &entitymanager.DeleteResult{
-		DeletedEntities: []*entity.Entity{model.EntityToDomain(current)},
+		DeletedEntities: []*entity.Entity{current},
 	}, nil
 }
 
@@ -219,32 +216,19 @@ func (m *mockManager) CreateRelation(
 	if len(opts.Properties) > 0 || opts.Content != "" {
 		data = &store.RelationData{Properties: opts.Properties, Content: opts.Content}
 	}
-	r, err := m.ws.store.CreateRelation(ctx, from, relType, to, data)
-	if err != nil {
-		return nil, err
-	}
-	m.ws.graph.AddEdge(model.RelationFromDomain(r))
-	return r, nil
+	return m.ws.store.CreateRelation(ctx, from, relType, to, data)
 }
 
 func (m *mockManager) UpdateRelation(
 	ctx context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
-	r, err := m.ws.store.UpdateRelation(ctx, from, relType, to, store.RelationData{
+	return m.ws.store.UpdateRelation(ctx, from, relType, to, store.RelationData{
 		Properties: opts.Properties, Content: opts.Content,
 	})
-	if err != nil {
-		return nil, err
-	}
-	return r, nil
 }
 
 func (m *mockManager) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	if err := m.ws.store.DeleteRelation(ctx, from, relType, to); err != nil {
-		return err
-	}
-	m.ws.graph.RemoveEdge(from, relType, to)
-	return nil
+	return m.ws.store.DeleteRelation(ctx, from, relType, to)
 }
 
 // mockSearcher is a naive title-substring searcher used by lua tests.
@@ -254,11 +238,14 @@ type mockSearcher struct {
 
 var _ search.Searcher = (*mockSearcher)(nil)
 
-func (s *mockSearcher) Search(_ context.Context, q search.Query) iter.Seq2[search.Hit, error] {
+func (s *mockSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[search.Hit, error] {
 	return func(yield func(search.Hit, error) bool) {
 		query := strings.ToLower(q.Text)
 		count := 0
-		for _, e := range s.ws.graph.AllNodes() {
+		for e, err := range s.ws.store.ListEntities(ctx, store.EntityQuery{}) {
+			if err != nil {
+				continue
+			}
 			title := strings.ToLower(e.GetString("title"))
 			if strings.Contains(title, query) {
 				if !yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.GetString("title")}, nil) {
@@ -474,11 +461,17 @@ func TestGetRelations(t *testing.T) {
 	var buf bytes.Buffer
 
 	// Get reference relation for assertions
-	rels := ws.graph.RelationsOfType("implements")
-	if len(rels) == 0 {
+	var testRel *entity.Relation
+	for r, err := range ws.store.ListRelations(context.Background(), store.RelationQuery{Type: "implements"}) {
+		if err != nil {
+			continue
+		}
+		testRel = r
+		break
+	}
+	if testRel == nil {
 		t.Fatal("Expected at least one implements relation in test workspace")
 	}
-	testRel := rels[0]
 
 	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
@@ -1172,36 +1165,6 @@ func TestFindPath_MissingArgs(t *testing.T) {
 	}
 }
 
-func TestRefresh(t *testing.T) {
-	ws, root := newMockWorkspace(t), t.TempDir()
-	var buf bytes.Buffer
-
-	r := New(ws.services(root), &buf)
-	defer r.Close()
-
-	script := `
-local success = rela.refresh()
-rela.output({success = success})
-`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["success"] != true {
-		t.Errorf("Expected success=true, got %v", result["success"])
-	}
-}
-
 func TestTraceFrom(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
@@ -1467,40 +1430,6 @@ rela.output(result)
 
 func TestSortEntities_ByNumericProperty(t *testing.T) {
 	// Create workspace with entities that have numeric-like order property
-	g := graph.New()
-	g.AddNode(&model.Entity{
-		ID:   "DOC-001",
-		Type: "doc",
-		Properties: map[string]interface{}{
-			"title": "Third",
-			"order": "3",
-		},
-	})
-	g.AddNode(&model.Entity{
-		ID:   "DOC-002",
-		Type: "doc",
-		Properties: map[string]interface{}{
-			"title": "First",
-			"order": "1",
-		},
-	})
-	g.AddNode(&model.Entity{
-		ID:   "DOC-003",
-		Type: "doc",
-		Properties: map[string]interface{}{
-			"title": "Second",
-			"order": "2",
-		},
-	})
-	g.AddNode(&model.Entity{
-		ID:   "DOC-010",
-		Type: "doc",
-		Properties: map[string]interface{}{
-			"title": "Tenth",
-			"order": "10",
-		},
-	})
-
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"doc": {
@@ -1512,7 +1441,11 @@ func TestSortEntities_ByNumericProperty(t *testing.T) {
 			},
 		},
 	}
-	ws := newMockWorkspaceWith(g, meta)
+	ws := newMockWorkspaceWith(meta)
+	ws.seedEntity(&entity.Entity{ID: "DOC-001", Type: "doc", Properties: map[string]interface{}{"title": "Third", "order": "3"}})
+	ws.seedEntity(&entity.Entity{ID: "DOC-002", Type: "doc", Properties: map[string]interface{}{"title": "First", "order": "1"}})
+	ws.seedEntity(&entity.Entity{ID: "DOC-003", Type: "doc", Properties: map[string]interface{}{"title": "Second", "order": "2"}})
+	ws.seedEntity(&entity.Entity{ID: "DOC-010", Type: "doc", Properties: map[string]interface{}{"title": "Tenth", "order": "10"}})
 
 	var buf bytes.Buffer
 	r := New(ws.services("/tmp"), &buf)
@@ -1636,16 +1569,6 @@ rela.output({
 
 func TestEntityProp_EmptyStringUsesDefault(t *testing.T) {
 	// Create entity with empty string property
-	g := graph.New()
-	g.AddNode(&model.Entity{
-		ID:   "TEST-001",
-		Type: "test",
-		Properties: map[string]interface{}{
-			"title":   "Has Title",
-			"summary": "", // empty string
-		},
-	})
-
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"test": {
@@ -1657,7 +1580,15 @@ func TestEntityProp_EmptyStringUsesDefault(t *testing.T) {
 			},
 		},
 	}
-	ws := newMockWorkspaceWith(g, meta)
+	ws := newMockWorkspaceWith(meta)
+	ws.seedEntity(&entity.Entity{
+		ID:   "TEST-001",
+		Type: "test",
+		Properties: map[string]interface{}{
+			"title":   "Has Title",
+			"summary": "", // empty string
+		},
+	})
 
 	var buf bytes.Buffer
 	r := New(ws.services("/tmp"), &buf)
@@ -1791,19 +1722,17 @@ rela.output({slug = e:strip_prefix()})
 
 func TestEntityStripPrefix_NoHyphen(t *testing.T) {
 	// Create entity with ID that has no hyphen
-	g := graph.New()
-	g.AddNode(&model.Entity{
-		ID:         "NOHYPHEN",
-		Type:       "test",
-		Properties: map[string]interface{}{},
-	})
-
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"test": {IDPrefix: "TEST"},
 		},
 	}
-	ws := newMockWorkspaceWith(g, meta)
+	ws := newMockWorkspaceWith(meta)
+	ws.seedEntity(&entity.Entity{
+		ID:         "NOHYPHEN",
+		Type:       "test",
+		Properties: map[string]interface{}{},
+	})
 
 	var buf bytes.Buffer
 	r := New(ws.services("/tmp"), &buf)
@@ -1984,16 +1913,6 @@ rela.output({table = tbl})
 
 func TestMdEntityTable_DefaultValue(t *testing.T) {
 	// Create entity with missing property
-	g := graph.New()
-	g.AddNode(&model.Entity{
-		ID:   "TEST-001",
-		Type: "test",
-		Properties: map[string]interface{}{
-			"title": "Has Title",
-			// no "status" property
-		},
-	})
-
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"test": {
@@ -2005,7 +1924,15 @@ func TestMdEntityTable_DefaultValue(t *testing.T) {
 			},
 		},
 	}
-	ws := newMockWorkspaceWith(g, meta)
+	ws := newMockWorkspaceWith(meta)
+	ws.seedEntity(&entity.Entity{
+		ID:   "TEST-001",
+		Type: "test",
+		Properties: map[string]interface{}{
+			"title": "Has Title",
+			// no "status" property
+		},
+	})
 
 	var buf bytes.Buffer
 	r := New(ws.services("/tmp"), &buf)

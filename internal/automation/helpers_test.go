@@ -2,18 +2,15 @@ package automation
 
 import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
-// buildEntity converts a testutil EntityBuilder output to *entity.Entity.
-// Bridges testutil (which still returns *model.Entity) to automation's
-// *entity.Entity API.
+// buildEntity returns the built entity from a testutil EntityBuilder.
 func buildEntity(b *testutil.EntityBuilder) *entity.Entity {
-	return model.EntityToDomain(b.Build())
+	return b.Build()
 }
 
-// buildRelation converts a testutil RelationBuilder output to *entity.Relation.
+// buildRelation returns the built relation from a testutil RelationBuilder.
 func buildRelation(b *testutil.RelationBuilder) *entity.Relation {
-	return model.RelationToDomain(b.Build())
+	return b.Build()
 }

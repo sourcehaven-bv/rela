@@ -3,6 +3,8 @@ package fsstore
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -395,7 +397,11 @@ func (s *FSStore) writeEntityFile(e *entity.Entity) error {
 	if err := s.fs.WriteFile(tempPath, []byte(content), 0644); err != nil {
 		return err
 	}
-	return s.fs.Rename(tempPath, path)
+	if err := s.fs.Rename(tempPath, path); err != nil {
+		return err
+	}
+	s.recordHash(path, []byte(content))
+	return nil
 }
 
 // --- relation I/O ---
@@ -474,6 +480,28 @@ func (s *FSStore) writeRelationFile(r *entity.Relation) error {
 	if err := s.fs.WriteFile(tempPath, []byte(content), 0644); err != nil {
 		return err
 	}
-	return s.fs.Rename(tempPath, path)
+	if err := s.fs.Rename(tempPath, path); err != nil {
+		return err
+	}
+	s.recordHash(path, []byte(content))
+	return nil
+}
+
+// hashContent returns the hex-encoded SHA256 of content. Used by the
+// external-change watcher to suppress self-echoes from fsnotify.
+func hashContent(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
+}
+
+// recordHash stores the hash of content written to path. The LRU is
+// self-synchronised so no store lock is required.
+func (s *FSStore) recordHash(path string, content []byte) {
+	s.recentHashes.Put(path, hashContent(content))
+}
+
+// forgetHash removes any recorded hash for path (e.g. after delete).
+func (s *FSStore) forgetHash(path string) {
+	s.recentHashes.Delete(path)
 }
 

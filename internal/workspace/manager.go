@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
@@ -38,9 +37,9 @@ func (m *wsEntityManager) CreateEntity(
 	}
 
 	return &entitymanager.CreateResult{
-		Entity:             model.EntityToDomain(created),
-		RelationsCreated:   relationsToDomain(result.RelationsCreated),
-		EntitiesCreated:    entitiesToDomain(result.EntitiesCreated),
+		Entity:             created,
+		RelationsCreated:   result.RelationsCreated,
+		EntitiesCreated:    result.EntitiesCreated,
 		AutomationWarnings: result.AutomationWarnings,
 		AutomationErrors:   result.AutomationErrors,
 	}, nil
@@ -67,15 +66,15 @@ func (m *wsEntityManager) UpdateEntity(
 	}
 	updated.Content = e.Content
 
-	result, err := m.w.updateEntity(model.EntityFromDomain(updated), model.EntityFromDomain(current))
+	result, err := m.w.updateEntity(updated, current)
 	if err != nil {
 		return nil, err
 	}
 
 	return &entitymanager.UpdateResult{
 		Entity:             updated,
-		RelationsCreated:   relationsToDomain(result.RelationsCreated),
-		EntitiesCreated:    entitiesToDomain(result.EntitiesCreated),
+		RelationsCreated:   result.RelationsCreated,
+		EntitiesCreated:    result.EntitiesCreated,
 		AutomationWarnings: result.AutomationWarnings,
 		AutomationErrors:   result.AutomationErrors,
 	}, nil
@@ -131,27 +130,19 @@ func (m *wsEntityManager) RenameEntity(
 func (m *wsEntityManager) CreateRelation(
 	_ context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
-	r, err := m.w.createRelation(from, relType, to, CreateRelationOptions{
+	return m.w.createRelation(from, relType, to, CreateRelationOptions{
 		Properties: opts.Properties,
 		Content:    opts.Content,
 	})
-	if err != nil {
-		return nil, err
-	}
-	return model.RelationToDomain(r), nil
 }
 
 func (m *wsEntityManager) UpdateRelation(
 	_ context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
-	r, err := m.w.updateRelation(from, relType, to, CreateRelationOptions{
+	return m.w.updateRelation(from, relType, to, CreateRelationOptions{
 		Properties: opts.Properties,
 		Content:    opts.Content,
 	})
-	if err != nil {
-		return nil, err
-	}
-	return model.RelationToDomain(r), nil
 }
 
 func (m *wsEntityManager) DeleteRelation(_ context.Context, from, relType, to string) error {
@@ -170,26 +161,3 @@ type entityNotFoundError struct {
 
 func (e *entityNotFoundError) Error() string { return "entity not found: " + e.ID }
 
-// entitiesToDomain converts []*model.Entity → []*entity.Entity.
-func entitiesToDomain(models []*model.Entity) []*entity.Entity {
-	if models == nil {
-		return nil
-	}
-	out := make([]*entity.Entity, len(models))
-	for i, m := range models {
-		out[i] = model.EntityToDomain(m)
-	}
-	return out
-}
-
-// relationsToDomain converts []*model.Relation → []*entity.Relation.
-func relationsToDomain(models []*model.Relation) []*entity.Relation {
-	if models == nil {
-		return nil
-	}
-	out := make([]*entity.Relation, len(models))
-	for i, m := range models {
-		out[i] = model.RelationToDomain(m)
-	}
-	return out
-}

@@ -22,10 +22,10 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
+	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -61,13 +61,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	repo, err := createRepo(*projectDir)
+	fs, projCtx, err := discoverProject(*projectDir)
 	if err != nil {
-		slog.Error("failed to initialize repository", "error", err)
+		slog.Error("failed to discover project", "error", err)
 		os.Exit(1)
 	}
+	factory := &app.FSFactory{FS: fs, Paths: projCtx}
 
-	ws, err := workspace.New(repo, script.NewEngine())
+	ws, err := workspace.New(fs, projCtx, script.NewEngine(),
+		workspace.WithStoreFactory(factory))
 	if err != nil {
 		slog.Error("failed to initialize workspace", "error", err)
 		os.Exit(1)
@@ -231,16 +233,18 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-// createRepo discovers the project and creates a repository.
-func createRepo(projectDir string) (repository.Store, error) {
+// discoverProject locates the rela project rooted at projectDir and
+// returns the filesystem handle and paths. The caller constructs the
+// repository and any downstream services (workspace, app bundle).
+func discoverProject(projectDir string) (storage.FS, *project.Context, error) {
 	absDir, err := filepath.Abs(projectDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	projCtx, err := project.Discover(absDir, fs)
 	if err != nil {
-		return nil, fmt.Errorf("discovering project: %w", err)
+		return nil, nil, fmt.Errorf("discovering project: %w", err)
 	}
-	return repository.New(fs, projCtx), nil
+	return fs, projCtx, nil
 }

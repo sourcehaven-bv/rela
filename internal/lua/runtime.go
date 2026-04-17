@@ -385,9 +385,6 @@ func (r *Runtime) registerBindings() {
 	r.L.SetField(rela, "output", r.L.NewFunction(r.luaOutput))
 	r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
 
-	// Utility functions
-	r.L.SetField(rela, "refresh", r.L.NewFunction(r.luaRefresh))
-
 	// Schema introspection
 	r.L.SetField(rela, "get_entity_types", r.L.NewFunction(r.luaGetEntityTypes))
 	r.L.SetField(rela, "get_relation_types", r.L.NewFunction(r.luaGetRelationTypes))
@@ -750,7 +747,7 @@ func luaEntityStripPrefix(ls *lua.LState) int {
 	return 1
 }
 
-// relationToTable converts a model.Relation to a Lua table.
+// relationToTable converts an entity.Relation to a Lua table.
 func relationToTable(ls *lua.LState, rel *entity.Relation) *lua.LTable {
 	t := ls.NewTable()
 	t.RawSetString("from", lua.LString(rel.From))
@@ -1121,22 +1118,6 @@ func (r *Runtime) luaFindPath(ls *lua.LState) int {
 		result.RawSetInt(i+1, stepTable)
 	}
 	ls.Push(result)
-	return 1
-}
-
-// luaRefresh implements rela.refresh() -> boolean
-// Re-syncs the graph from disk (reloads all entities and relations).
-func (r *Runtime) luaRefresh(ls *lua.LState) int {
-	var err error
-	if r.svc.Sync != nil {
-		err = r.svc.Sync()
-	}
-	if err != nil {
-		ls.RaiseError("refresh error: %s", err.Error())
-		return 0
-	}
-
-	ls.Push(lua.LTrue)
 	return 1
 }
 

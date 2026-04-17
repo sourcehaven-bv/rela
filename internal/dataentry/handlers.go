@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // PropertyHelp holds documentation for a single property.
@@ -51,7 +50,7 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	live, ok := a.getEntityAsModel(entityID)
+	live, ok := a.getEntity(entityID)
 	if !ok {
 		http.Error(w, "Entity not found", http.StatusNotFound)
 		return
@@ -67,7 +66,7 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 	// (which take no lock) may be iterating it.
 	updated := live.Clone()
 	updated.Content = newContent
-	if _, err := a.ws.EntityManager().UpdateEntity(r.Context(), model.EntityToDomain(updated)); err != nil {
+	if _, err := a.ws.EntityManager().UpdateEntity(r.Context(), updated); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}

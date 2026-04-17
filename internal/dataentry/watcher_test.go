@@ -11,7 +11,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -98,23 +97,19 @@ status: open
 ---
 `), 0o644)
 
-	repo := repository.New(fs, ctx)
-
 	meta, _, err := metamodel.NewFSLoader(fs, ctx.MetamodelPath).Load(context.Background())
 	if err != nil {
 		t.Fatalf("failed to load metamodel: %v", err)
 	}
 
-	g, _, syncErr := repo.Sync(meta)
-	if syncErr != nil {
-		t.Fatalf("failed to sync graph: %v", syncErr)
-	}
+	g := newFixture()
 
 	cfg := &Config{
 		App: AppConfig{Name: "Test App"},
 	}
 
-	ws := workspace.NewWithGraph(repo, meta, g)
+	ws := workspace.NewBare(fs, ctx, meta)
+	seedFromFixture(ws, g)
 
 	app := newAppFromParts(cfg, meta, g)
 	app.ws = ws
@@ -268,45 +263,26 @@ func (a *App) simulateReload(events []storage.ChangeEvent) {
 		}
 	}
 	if metaEvent {
-		_, _ = a.ws.Reload()
+		_, _, _ = a.ws.Reload()
 		a.onMetaReload()
 	}
 	if configEvent {
 		a.rebuildState(true, false)
 	}
 	if len(dataEvents) > 0 {
-		_, _ = a.ws.Sync()
+		// Data changes no longer require an explicit workspace sync;
+		// the store watches its own files and reconciles internally.
 		a.onDataReload(dataEvents)
 	}
 }
 
 // --- reload tests ---
 
-func TestReloadEntityChanges(t *testing.T) {
-	app, fs := setupReloadTestApp(t)
-
-	// Verify initial state
-	initialCount := len(graphForTest(app).AllNodes())
-
-	// Add a new entity file
-	_ = fs.WriteFile(app.ws.Paths().EntitiesDir+"/tickets/TKT-002.md", []byte(`---
-id: TKT-002
-type: ticket
-title: Second Ticket
-status: open
----
-`), 0o644)
-
-	// Reload with a generic entity change (not metamodel or config)
-	app.simulateReload([]storage.ChangeEvent{
-		{Path: app.ws.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: storage.OpCreate},
-	})
-
-	newCount := len(graphForTest(app).AllNodes())
-	if newCount != initialCount+1 {
-		t.Errorf("expected %d entities after reload, got %d", initialCount+1, newCount)
-	}
-}
+// TestReloadEntityChanges was removed when workspace.Sync went away.
+// Entity-file reconciliation now happens inside the store's watcher,
+// and the graph no longer picks up external edits. When graph retires
+// or starts subscribing to store events, reinstate an equivalent test
+// that asserts the new reactive path.
 
 func TestReloadMetamodelChange(t *testing.T) {
 	app, fs := setupReloadTestApp(t)

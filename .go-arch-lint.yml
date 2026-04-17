@@ -39,17 +39,15 @@ components:
   conflict:         { in: internal/conflict }
   importer:         { in: internal/importer }
   rename:           { in: internal/rename }
-  repository:       { in: internal/repository }
   schema:           { in: internal/schema }
+  templating:       { in: internal/templating }
   validation:       { in: internal/validation }
   # Core domain
-  graph:            { in: internal/graph }
   lua:              { in: internal/lua }
   scheduler:        { in: internal/scheduler }
   script:           { in: internal/script }
   metamodel:        { in: internal/metamodel }
   migration:        { in: internal/migration }
-  model:            { in: internal/model }
   markdown:         { in: internal/markdown }
   filter:           { in: internal/filter }
   pattern:          { in: internal/pattern }
@@ -99,7 +97,6 @@ vendors:
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
-  - model
   - errors
   - natsort
 
@@ -117,7 +114,6 @@ deps:
       - dataentry
       - metamodel
       - project
-      - repository
       - scheduler
       - script
       - storage
@@ -131,7 +127,6 @@ deps:
       - git
       - metamodel
       - project
-      - repository
       - scheduler
       - script
       - storage
@@ -170,7 +165,6 @@ deps:
       - dataentryconfig
       - filter
       - git
-      - graph
       - htmlutil
       - metamodel
       - migration
@@ -217,14 +211,13 @@ deps:
       - attachment
       - automation
       - dataentryconfig
-      - graph
       - htmlutil
       - markdown
       - metamodel
       - migration
+      - templating
       - project
       - rename
-      - repository
       - search
       - storage
       - validation
@@ -246,31 +239,15 @@ deps:
       - storage
   importer:
     mayDependOn:
-      - graph
       - metamodel
-      - repository
       - storage
   rename:
     mayDependOn:
-      - graph
       - metamodel
       - project
-      - repository
-  repository:
-    mayDependOn:
-      - graph
-      - markdown
-      - metamodel
-      - migration
-      - project
-      - storage
-
-    canUse:
-      - gogit
   schema:
     mayDependOn:
       - dataentryconfig
-      - graph
       - metamodel
       - migration
 
@@ -294,6 +271,13 @@ deps:
   markdown:
     mayDependOn:
       - metamodel
+      - storage
+  templating:
+    mayDependOn:
+      - markdown
+      - metamodel
+      - natsort
+      - project
       - storage
     canUse:
       - goldmark

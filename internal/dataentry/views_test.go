@@ -4,9 +4,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -44,7 +42,7 @@ func testViewApp() *App {
 		App: AppConfig{Name: "Test"},
 	}
 
-	g := graph.New()
+	g := newFixture()
 	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-001").With("title", "First").With("status", "open").Build())
 	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-002").With("title", "Second").With("status", "closed").Build())
 	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-003").With("title", "Third").Build())
@@ -250,7 +248,7 @@ func TestExecuteView(t *testing.T) {
 	})
 }
 
-func collectModelIDs(entities []*model.Entity) []string {
+func collectModelIDs(entities []*entity.Entity) []string {
 	ids := make([]string, len(entities))
 	for i, e := range entities {
 		ids[i] = e.ID
@@ -318,7 +316,7 @@ func testViewAppWithMixedTypes() *App {
 		App: AppConfig{Name: "Test"},
 	}
 
-	g := graph.New()
+	g := newFixture()
 
 	// Bouwblok
 	g.AddNode(testutil.EntityFor(meta, "bouwblok").ID("BOUWBLOK-001").With("title", "Main Bouwblok").Build())
@@ -517,10 +515,10 @@ func TestFilterEntities(t *testing.T) {
 	app := testViewAppWithMixedTypes()
 
 	entities := []*entity.Entity{
-		model.EntityToDomain(testutil.EntityFor(app.Meta(), "function").ID("FUNC-001").With("status", "active").Build()),
-		model.EntityToDomain(testutil.EntityFor(app.Meta(), "function").ID("FUNC-002").With("status", "draft").Build()),
-		model.EntityToDomain(testutil.EntityFor(app.Meta(), "usecase").ID("UC-001").With("status", "active").Build()),
-		model.EntityToDomain(testutil.EntityFor(app.Meta(), "scenario").ID("SCEN-001").Build()),
+		testutil.EntityFor(app.Meta(), "function").ID("FUNC-001").With("status", "active").Build(),
+		testutil.EntityFor(app.Meta(), "function").ID("FUNC-002").With("status", "draft").Build(),
+		testutil.EntityFor(app.Meta(), "usecase").ID("UC-001").With("status", "active").Build(),
+		testutil.EntityFor(app.Meta(), "scenario").ID("SCEN-001").Build(),
 	}
 
 	t.Run("filter by type", func(t *testing.T) {

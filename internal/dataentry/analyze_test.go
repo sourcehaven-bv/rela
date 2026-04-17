@@ -3,18 +3,17 @@ package dataentry
 import (
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-// newTestApp creates a minimal App with the given graph and metamodel for testing.
-func newTestApp(g *graph.Graph, meta *metamodel.Metamodel) *App {
-	return newAppFromParts(&Config{}, meta, g)
+// newTestApp creates a minimal App with the given fixture and metamodel for testing.
+func newTestApp(f *fixture, meta *metamodel.Metamodel) *App {
+	return newAppFromParts(&Config{}, meta, f)
 }
 
 func TestAnalyzeOrphans(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Properties: map[string]metamodel.PropertyDef{
@@ -23,10 +22,10 @@ func TestAnalyzeOrphans(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Orphan"}})
-	g.AddNode(&model.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Connected A"}})
-	g.AddNode(&model.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"title": "Connected B"}})
-	g.AddEdge(&model.Relation{From: "T-002", Type: "blocks", To: "T-003"})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Orphan"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Connected A"}})
+	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"title": "Connected B"}})
+	g.AddEdge(&entity.Relation{From: "T-002", Type: "blocks", To: "T-003"})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeOrphans()
@@ -46,16 +45,16 @@ func TestAnalyzeOrphans(t *testing.T) {
 }
 
 func TestAnalyzeOrphans_NoOrphans(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
 		},
 	}
 
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
-	g.AddNode(&model.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{}})
-	g.AddEdge(&model.Relation{From: "T-001", Type: "blocks", To: "T-002"})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddEdge(&entity.Relation{From: "T-001", Type: "blocks", To: "T-002"})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeOrphans()
@@ -66,7 +65,7 @@ func TestAnalyzeOrphans_NoOrphans(t *testing.T) {
 }
 
 func TestAnalyzeDuplicates(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Properties: map[string]metamodel.PropertyDef{
@@ -75,9 +74,9 @@ func TestAnalyzeDuplicates(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Setup CI"}})
-	g.AddNode(&model.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "setup ci"}})
-	g.AddNode(&model.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"title": "Unique"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Setup CI"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "setup ci"}})
+	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"title": "Unique"}})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeDuplicates()
@@ -93,7 +92,7 @@ func TestAnalyzeDuplicates(t *testing.T) {
 }
 
 func TestAnalyzeDuplicates_NoDuplicates(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Properties: map[string]metamodel.PropertyDef{
@@ -102,8 +101,8 @@ func TestAnalyzeDuplicates_NoDuplicates(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Alpha"}})
-	g.AddNode(&model.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Beta"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Alpha"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Beta"}})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeDuplicates()
@@ -114,16 +113,16 @@ func TestAnalyzeDuplicates_NoDuplicates(t *testing.T) {
 }
 
 func TestAnalyzeGaps(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {IDPrefix: "T-", Properties: map[string]metamodel.PropertyDef{}},
 		},
 	}
 
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
 	// T-002 missing
-	g.AddNode(&model.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{}})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeGaps()
@@ -137,15 +136,15 @@ func TestAnalyzeGaps(t *testing.T) {
 }
 
 func TestAnalyzeGaps_ManualIDsSkipped(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"component": {IDType: "manual", IDPrefix: "C-", Properties: map[string]metamodel.PropertyDef{}},
 		},
 	}
 
-	g.AddNode(&model.Entity{ID: "C-001", Type: "component", Properties: map[string]interface{}{}})
-	g.AddNode(&model.Entity{ID: "C-005", Type: "component", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "C-005", Type: "component", Properties: map[string]interface{}{}})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeGaps()
@@ -156,7 +155,7 @@ func TestAnalyzeGaps_ManualIDsSkipped(t *testing.T) {
 }
 
 func TestAnalyzeCardinality(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	min1 := 1
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -176,11 +175,11 @@ func TestAnalyzeCardinality(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
-	g.AddNode(&model.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "B"}})
-	g.AddNode(&model.Entity{ID: "C-001", Type: "component", Properties: map[string]interface{}{"name": "Auth"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "B"}})
+	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]interface{}{"name": "Auth"}})
 	// Only T-001 implements C-001; T-002 has no implements relation
-	g.AddEdge(&model.Relation{From: "T-001", Type: "implements", To: "C-001"})
+	g.AddEdge(&entity.Relation{From: "T-001", Type: "implements", To: "C-001"})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeCardinality()
@@ -197,7 +196,7 @@ func TestAnalyzeCardinality(t *testing.T) {
 }
 
 func TestAnalyzeCardinality_AllSatisfied(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	min1 := 1
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -213,9 +212,9 @@ func TestAnalyzeCardinality_AllSatisfied(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
-	g.AddNode(&model.Entity{ID: "C-001", Type: "component", Properties: map[string]interface{}{}})
-	g.AddEdge(&model.Relation{From: "T-001", Type: "implements", To: "C-001"})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]interface{}{}})
+	g.AddEdge(&entity.Relation{From: "T-001", Type: "implements", To: "C-001"})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeCardinality()
@@ -226,7 +225,7 @@ func TestAnalyzeCardinality_AllSatisfied(t *testing.T) {
 }
 
 func TestAnalyzeProperties(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -240,9 +239,9 @@ func TestAnalyzeProperties(t *testing.T) {
 	}
 
 	// Missing required title, invalid enum value
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"status": "invalid"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"status": "invalid"}})
 	// Valid entity
-	g.AddNode(&model.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Good", "status": "open"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Good", "status": "open"}})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeProperties()
@@ -262,7 +261,7 @@ func TestAnalyzeProperties(t *testing.T) {
 }
 
 func TestAnalyzeProperties_AllValid(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -274,7 +273,7 @@ func TestAnalyzeProperties_AllValid(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Valid"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Valid"}})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeProperties()
@@ -285,7 +284,7 @@ func TestAnalyzeProperties_AllValid(t *testing.T) {
 }
 
 func TestAnalyzeValidations(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Properties: map[string]metamodel.PropertyDef{
@@ -306,11 +305,11 @@ func TestAnalyzeValidations(t *testing.T) {
 	}
 
 	// Accepted without priority — violation
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"status": "accepted"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"status": "accepted"}})
 	// Accepted with priority — OK
-	g.AddNode(&model.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"status": "accepted", "priority": "high"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"status": "accepted", "priority": "high"}})
 	// Draft — rule doesn't apply
-	g.AddNode(&model.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"status": "draft"}})
+	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"status": "draft"}})
 
 	app := newTestApp(g, meta)
 	section := app.analyzeValidations()
@@ -327,7 +326,7 @@ func TestAnalyzeValidations(t *testing.T) {
 }
 
 func TestAnalyzeValidations_NoRules(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
@@ -343,7 +342,7 @@ func TestAnalyzeValidations_NoRules(t *testing.T) {
 }
 
 func TestRunAnalysis(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -356,7 +355,7 @@ func TestRunAnalysis(t *testing.T) {
 	}
 
 	// Orphan with missing required property
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
 
 	app := newTestApp(g, meta)
 	result := app.runAnalysis()
@@ -374,7 +373,7 @@ func TestRunAnalysis(t *testing.T) {
 }
 
 func TestRunAnalysis_EmptyGraph(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{},
 	}
@@ -410,7 +409,7 @@ func TestAnalysisSectionCounts(t *testing.T) {
 }
 
 func TestAnalysisIssueCounts(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -423,7 +422,7 @@ func TestAnalysisIssueCounts(t *testing.T) {
 	}
 
 	// Orphan (warning) + missing required title (error)
-	g.AddNode(&model.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
 
 	app := newTestApp(g, meta)
 	errors, warnings := app.analysisIssueCounts()
@@ -455,7 +454,7 @@ func TestNormalizeTitle(t *testing.T) {
 }
 
 func TestAnalyzeValidationsWithContentRules(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"decision": {Properties: map[string]metamodel.PropertyDef{
@@ -480,21 +479,21 @@ func TestAnalyzeValidationsWithContentRules(t *testing.T) {
 	}
 
 	// Accepted without Context section — violation
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "DEC-001",
 		Type:       "decision",
 		Properties: map[string]interface{}{"title": "Auth", "status": "accepted"},
 		Content:    "# Decision\nSome text without context section",
 	})
 	// Accepted with Context section — OK
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "DEC-002",
 		Type:       "decision",
 		Properties: map[string]interface{}{"title": "Database", "status": "accepted"},
 		Content:    "# Decision\n## Context\nWe need to decide...",
 	})
 	// Draft — rule doesn't apply
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "DEC-003",
 		Type:       "decision",
 		Properties: map[string]interface{}{"title": "Draft", "status": "draft"},
@@ -516,7 +515,7 @@ func TestAnalyzeValidationsWithContentRules(t *testing.T) {
 }
 
 func TestAnalyzeValidationsWithCombinedRules(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"decision": {Properties: map[string]metamodel.PropertyDef{
@@ -543,21 +542,21 @@ func TestAnalyzeValidationsWithCombinedRules(t *testing.T) {
 	}
 
 	// Missing owner — then fails
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "DEC-001",
 		Type:       "decision",
 		Properties: map[string]interface{}{"title": "No owner", "status": "accepted"},
 		Content:    "# Decision\n## Context\nHas context",
 	})
 	// Has owner but missing Context — content fails
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "DEC-002",
 		Type:       "decision",
 		Properties: map[string]interface{}{"title": "No context", "status": "accepted", "owner": "Alice"},
 		Content:    "# Decision\nNo context section",
 	})
 	// Has both — OK
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "DEC-003",
 		Type:       "decision",
 		Properties: map[string]interface{}{"title": "Complete", "status": "accepted", "owner": "Bob"},
@@ -585,7 +584,7 @@ func TestAnalyzeValidationsWithCombinedRules(t *testing.T) {
 }
 
 func TestAnalyzeValidationsWithChecklistRule(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"checklist": {Properties: map[string]metamodel.PropertyDef{
@@ -610,21 +609,21 @@ func TestAnalyzeValidationsWithChecklistRule(t *testing.T) {
 	}
 
 	// Done with unchecked items — violation
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "CHK-001",
 		Type:       "checklist",
 		Properties: map[string]interface{}{"title": "Incomplete", "status": "done"},
 		Content:    "- [x] Done item\n- [ ] Not done item",
 	})
 	// Done with all checked — OK
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "CHK-002",
 		Type:       "checklist",
 		Properties: map[string]interface{}{"title": "Complete", "status": "done"},
 		Content:    "- [x] Done 1\n- [x] Done 2",
 	})
 	// In-progress — rule doesn't apply
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "CHK-003",
 		Type:       "checklist",
 		Properties: map[string]interface{}{"title": "WIP", "status": "in-progress"},
@@ -646,7 +645,7 @@ func TestAnalyzeValidationsWithChecklistRule(t *testing.T) {
 }
 
 func TestAnalyzeValidationsWithChecklistAllowSkipped(t *testing.T) {
-	g := graph.New()
+	g := newFixture()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"checklist": {Properties: map[string]metamodel.PropertyDef{
@@ -672,14 +671,14 @@ func TestAnalyzeValidationsWithChecklistAllowSkipped(t *testing.T) {
 	}
 
 	// Done with skipped item — OK
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "CHK-001",
 		Type:       "checklist",
 		Properties: map[string]interface{}{"title": "Skipped", "status": "done"},
 		Content:    "- [x] Done item\n- [x] ~~Skipped item~~ (N/A: reason)",
 	})
 	// Done with unchecked non-skipped — violation
-	g.AddNode(&model.Entity{
+	g.AddNode(&entity.Entity{
 		ID:         "CHK-002",
 		Type:       "checklist",
 		Properties: map[string]interface{}{"title": "Incomplete", "status": "done"},

@@ -8,7 +8,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -19,7 +18,6 @@ const tickInterval = 60 * time.Second
 
 // WorkspaceProvider is the subset of workspace.Workspace the scheduler needs.
 type WorkspaceProvider interface {
-	Sync() (*model.SyncResult, error)
 	Paths() *project.Context
 	Config() config.Loader
 	State() state.KV
@@ -175,12 +173,6 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
-
-	// Sync workspace to get fresh graph state.
-	if _, err := s.ws.Sync(); err != nil {
-		s.logger.Warn("workspace sync failed, executing with stale data",
-			"name", task.Name, "error", err)
-	}
 
 	sctx := &schedulerScriptContext{
 		ws:          s.wsRaw,

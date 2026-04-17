@@ -10,19 +10,17 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-// makeTestServer creates a Server with a populated graph for handler testing.
+// makeTestServer creates a Server with a populated store for handler testing.
 func makeTestServer(t *testing.T) *Server {
 	t.Helper()
 
-	g := graph.New()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
@@ -51,27 +49,23 @@ func makeTestServer(t *testing.T) *Server {
 		},
 	}
 
-	// Add some entities
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("status", "accepted").Build())
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-002").With("status", "draft").Build())
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-003").With("status", "accepted").Build())
-	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").With("status", "accepted").Build())
-
-	// Add a relation
-	g.AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build())
-
-	// Create a memstore with the same data for store-based handlers.
 	st := memstore.New()
 	ctx := context.Background()
-	for _, e := range g.AllNodes() {
-		st.CreateEntity(ctx, model.EntityToDomain(e))
+	for _, e := range []*entity.Entity{
+		testutil.EntityFor(meta, "requirement").ID("REQ-001").With("status", "accepted").Build(),
+		testutil.EntityFor(meta, "requirement").ID("REQ-002").With("status", "draft").Build(),
+		testutil.EntityFor(meta, "requirement").ID("REQ-003").With("status", "accepted").Build(),
+		testutil.EntityFor(meta, "decision").ID("DEC-001").With("status", "accepted").Build(),
+	} {
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatalf("seed entity %s: %v", e.ID, err)
+		}
 	}
-	for _, r := range g.AllEdges() {
-		st.CreateRelation(ctx, r.From, r.Type, r.To, nil)
+	if _, err := st.CreateRelation(ctx, "DEC-001", "addresses", "REQ-001", nil); err != nil {
+		t.Fatalf("seed relation: %v", err)
 	}
 
-	// Create workspace with pre-populated graph and store
-	ws := workspace.NewWithGraph(nil, meta, g, workspace.WithStore(st))
+	ws := workspace.NewForTestWithStore(st, meta)
 
 	return &Server{
 		ws:     ws,
@@ -362,7 +356,7 @@ func TestHandleListRelations_NoMatch(t *testing.T) {
 func TestHandleListRelations_Pagination(t *testing.T) {
 	s := makeTestServer(t)
 	// Add another relation for pagination testing
-	s.ws.Graph().AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-002").Build())
+	s.ws.SeedRelationForTest(testutil.NewRelation("DEC-001", "addresses", "REQ-002").Build())
 
 	req := makeToolRequest(map[string]interface{}{"limit": float64(1)})
 	result, err := s.handleListRelations(context.Background(), req)

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -132,14 +131,14 @@ func contains(slice []string, val string) bool {
 
 // commandInput is the JSON structure passed to a command script on stdin.
 type commandInput struct {
-	Context     string                     `json:"context"`
-	Entity      *model.Entity              `json:"entity,omitempty"`
-	Entities    []*model.Entity            `json:"entities,omitempty"`
-	Collections map[string][]*model.Entity `json:"collections,omitempty"`
-	Relations   []*model.Relation          `json:"relations,omitempty"`
-	ListID      string                     `json:"list_id,omitempty"`
-	ViewID      string                     `json:"view_id,omitempty"`
-	Project     commandProjectInfo         `json:"project"`
+	Context     string                      `json:"context"`
+	Entity      *entity.Entity              `json:"entity,omitempty"`
+	Entities    []*entity.Entity            `json:"entities,omitempty"`
+	Collections map[string][]*entity.Entity `json:"collections,omitempty"`
+	Relations   []*entity.Relation          `json:"relations,omitempty"`
+	ListID      string                      `json:"list_id,omitempty"`
+	ViewID      string                      `json:"view_id,omitempty"`
+	Project     commandProjectInfo          `json:"project"`
 }
 
 type commandProjectInfo struct {
@@ -147,32 +146,30 @@ type commandProjectInfo struct {
 	Metamodel string `json:"metamodel"`
 }
 
-func (a *App) buildEntityInput(entity *model.Entity) *commandInput {
+func (a *App) buildEntityInput(e *entity.Entity) *commandInput {
 	return &commandInput{
 		Context:   "entity",
-		Entity:    entity,
-		Relations: relationsForEntity(a.Services(), entity.ID),
+		Entity:    e,
+		Relations: relationsForEntity(a.Services(), e.ID),
 		Project:   a.projectInfo(),
 	}
 }
 
 // relationsForEntity loads every relation where id is either endpoint
-// and returns them as []*model.Relation for the command-input payload.
-// Temporary conversion — the payload shape itself needs to flip with
-// the entity.Entity migration.
-func relationsForEntity(svc Services, id string) []*model.Relation {
-	var rels []*model.Relation
+// and returns them as []*entity.Relation for the command-input payload.
+func relationsForEntity(svc Services, id string) []*entity.Relation {
+	var rels []*entity.Relation
 	q := store.RelationQuery{EntityID: id, Direction: store.DirectionBoth}
 	for r, err := range svc.Store.ListRelations(context.Background(), q) {
 		if err != nil {
 			return rels
 		}
-		rels = append(rels, model.RelationFromDomain(r))
+		rels = append(rels, r)
 	}
 	return rels
 }
 
-func (a *App) buildListInput(listID string, entities []*model.Entity) *commandInput {
+func (a *App) buildListInput(listID string, entities []*entity.Entity) *commandInput {
 	return &commandInput{
 		Context:  "list",
 		ListID:   listID,
@@ -192,7 +189,7 @@ func (a *App) buildViewInput(viewID string, vr *viewResult) *commandInput {
 
 	// Gather relations between entities in the result set.
 	svc := a.Services()
-	var rels []*model.Relation
+	var rels []*entity.Relation
 	for id := range idSet {
 		q := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
 		for r, err := range svc.Store.ListRelations(context.Background(), q) {
@@ -200,33 +197,24 @@ func (a *App) buildViewInput(viewID string, vr *viewResult) *commandInput {
 				break
 			}
 			if idSet[r.To] {
-				rels = append(rels, model.RelationFromDomain(r))
+				rels = append(rels, r)
 			}
 		}
 	}
 
-	collections := make(map[string][]*model.Entity, len(vr.Collections))
+	collections := make(map[string][]*entity.Entity, len(vr.Collections))
 	for k, es := range vr.Collections {
-		collections[k] = entitySliceToModel(es)
+		collections[k] = es
 	}
 
 	return &commandInput{
 		Context:     "view",
 		ViewID:      viewID,
-		Entity:      model.EntityFromDomain(vr.Entry),
+		Entity:      vr.Entry,
 		Collections: collections,
 		Relations:   rels,
 		Project:     a.projectInfo(),
 	}
-}
-
-// entitySliceToModel converts []*entity.Entity → []*model.Entity.
-func entitySliceToModel(es []*entity.Entity) []*model.Entity {
-	out := make([]*model.Entity, len(es))
-	for i, e := range es {
-		out[i] = model.EntityFromDomain(e)
-	}
-	return out
 }
 
 func (a *App) buildGlobalInput() *commandInput {
@@ -319,7 +307,7 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
 			return
 		}
-		input = a.buildEntityInput(model.EntityFromDomain(entityDomain))
+		input = a.buildEntityInput(entityDomain)
 	case "list":
 		listID := r.URL.Query().Get("list_id")
 		listCfg, found := s.Cfg.Lists[listID]

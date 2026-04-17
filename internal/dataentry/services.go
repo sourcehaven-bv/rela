@@ -3,8 +3,8 @@ package dataentry
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
@@ -45,43 +45,38 @@ func (a *App) Services() Services {
 	}
 }
 
-// getEntityAsModel looks up an entity by ID via the store and converts it
-// to *model.Entity. Drop-in replacement for the old s.Graph.GetNode shape,
-// so the migration can proceed without simultaneously flipping every
-// handler to *entity.Entity. Remove once the flip is complete.
-func (a *App) getEntityAsModel(id string) (*model.Entity, bool) {
+// getEntity looks up an entity by ID via the store.
+func (a *App) getEntity(id string) (*entity.Entity, bool) {
 	e, err := a.ws.Store().GetEntity(context.Background(), id)
 	if err != nil {
 		return nil, false
 	}
-	return model.EntityFromDomain(e), true
+	return e, true
 }
 
-// outgoingRelationsAsModel returns all outgoing relations for id as
-// []*model.Relation — the pre-migration shape. See getEntityAsModel.
-func (a *App) outgoingRelationsAsModel(id string) []*model.Relation {
-	return listRelationsAsModel(a.ws.Store(), store.RelationQuery{
+// outgoingRelations returns all outgoing relations for id.
+func (a *App) outgoingRelations(id string) []*entity.Relation {
+	return listRelations(a.ws.Store(), store.RelationQuery{
 		EntityID:  id,
 		Direction: store.DirectionOutgoing,
 	})
 }
 
-// incomingRelationsAsModel returns all incoming relations for id as
-// []*model.Relation.
-func (a *App) incomingRelationsAsModel(id string) []*model.Relation {
-	return listRelationsAsModel(a.ws.Store(), store.RelationQuery{
+// incomingRelations returns all incoming relations for id.
+func (a *App) incomingRelations(id string) []*entity.Relation {
+	return listRelations(a.ws.Store(), store.RelationQuery{
 		EntityID:  id,
 		Direction: store.DirectionIncoming,
 	})
 }
 
-func listRelationsAsModel(s store.Store, q store.RelationQuery) []*model.Relation {
-	var out []*model.Relation
+func listRelations(s store.Store, q store.RelationQuery) []*entity.Relation {
+	var out []*entity.Relation
 	for r, err := range s.ListRelations(context.Background(), q) {
 		if err != nil {
 			return out
 		}
-		out = append(out, model.RelationFromDomain(r))
+		out = append(out, r)
 	}
 	return out
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // ParseConflictedFile reads and parses both sides of a conflicted file.
@@ -39,15 +38,12 @@ func ParseConflictedContent(path, content string, meta *metamodel.Metamodel) (*C
 		Theirs:  &ParsedSide{Raw: theirsContent},
 	}
 
-	// Try to parse both sides
-	fio := markdown.NewFileIO(storage.NewOsFS())
-
 	// Parse ours side
 	if doc, err := markdown.ParseDocument(oursContent); err == nil {
 		if isRelationFile(path) {
 			cf.Ours.Relation = docToRelation(doc, path)
 		} else {
-			cf.Ours.Entity = docToEntity(doc, path, meta, fio)
+			cf.Ours.Entity = docToEntity(doc, path, meta)
 			if cf.Ours.Entity != nil {
 				cf.EntityID = cf.Ours.Entity.ID
 				cf.EntityType = cf.Ours.Entity.Type
@@ -60,7 +56,7 @@ func ParseConflictedContent(path, content string, meta *metamodel.Metamodel) (*C
 		if isRelationFile(path) {
 			cf.Theirs.Relation = docToRelation(doc, path)
 		} else {
-			cf.Theirs.Entity = docToEntity(doc, path, meta, fio)
+			cf.Theirs.Entity = docToEntity(doc, path, meta)
 			if cf.Theirs.Entity != nil && cf.EntityID == "" {
 				cf.EntityID = cf.Theirs.Entity.ID
 				cf.EntityType = cf.Theirs.Entity.Type
@@ -199,7 +195,7 @@ func isRelationFile(path string) bool {
 }
 
 // docToEntity converts a parsed document to an entity.
-func docToEntity(doc *markdown.Document, _ string, meta *metamodel.Metamodel, _ *markdown.FileIO) *entity.Entity {
+func docToEntity(doc *markdown.Document, _ string, meta *metamodel.Metamodel) *entity.Entity {
 	id := doc.GetString("id")
 	entityType := doc.GetString("type")
 

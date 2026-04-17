@@ -1,12 +1,13 @@
-package markdown
+package templating
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 type testPaths struct {
@@ -40,10 +41,12 @@ func (p testPaths) relationTemplatePath(relationType string) string {
 	return filepath.Join(p.relationTemplatesDir, relationType+".md")
 }
 
+func testFS() storage.FS { return storage.NewOsFS() }
+
 func TestLoadEntityTemplate_NotFound(t *testing.T) {
 	paths := setupTestPaths(t)
 
-	doc, err := testIO.LoadEntityTemplate(paths.entityTemplatePath("requirement"))
+	doc, err := loadEntityTemplateDoc(testFS(), paths.entityTemplatePath("requirement"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,7 +58,6 @@ func TestLoadEntityTemplate_NotFound(t *testing.T) {
 func TestLoadEntityTemplate_Success(t *testing.T) {
 	paths := setupTestPaths(t)
 
-	// Create template directory and file
 	if err := os.MkdirAll(paths.entityTemplatesDir, 0755); err != nil {
 		t.Fatalf("failed to create template dir: %v", err)
 	}
@@ -75,7 +77,7 @@ This is a template description.
 		t.Fatalf("failed to write template: %v", err)
 	}
 
-	doc, err := testIO.LoadEntityTemplate(templatePath)
+	doc, err := loadEntityTemplateDoc(testFS(), templatePath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +85,6 @@ This is a template description.
 		t.Fatal("expected document, got nil")
 	}
 
-	// Check frontmatter
 	if doc.GetString("title") != "Default Title" {
 		t.Errorf("title = %q, want %q", doc.GetString("title"), "Default Title")
 	}
@@ -93,8 +94,6 @@ This is a template description.
 	if doc.GetString("priority") != "high" {
 		t.Errorf("priority = %q, want %q", doc.GetString("priority"), "high")
 	}
-
-	// Check content
 	if doc.Content == "" {
 		t.Error("expected content, got empty string")
 	}
@@ -103,114 +102,12 @@ This is a template description.
 func TestLoadRelationTemplate_NotFound(t *testing.T) {
 	paths := setupTestPaths(t)
 
-	doc, err := testIO.LoadRelationTemplate(paths.relationTemplatePath("addresses"))
+	doc, err := loadRelationTemplateDoc(testFS(), paths.relationTemplatePath("addresses"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if doc != nil {
 		t.Errorf("expected nil document for non-existent template, got %+v", doc)
-	}
-}
-
-func TestApplyEntityTemplate(t *testing.T) {
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.SetString("title", "My Title") // Already set
-
-	template := &Document{
-		Frontmatter: map[string]interface{}{
-			"title":    "Template Title", // Should NOT override
-			"status":   "proposed",       // Should be applied
-			"priority": "high",           // Should be applied
-			"id":       "IGNORED",        // Should be skipped
-			"type":     "also-ignored",   // Should be skipped
-		},
-		Content: "Template content here",
-	}
-
-	ApplyEntityTemplate(entity, template)
-
-	// Check that CLI value was preserved
-	if entity.GetString("title") != "My Title" {
-		t.Errorf("title = %q, want %q (should not be overridden)", entity.GetString("title"), "My Title")
-	}
-
-	// Check that template defaults were applied
-	if entity.GetString("status") != "proposed" {
-		t.Errorf("status = %q, want %q", entity.GetString("status"), "proposed")
-	}
-	if entity.GetString("priority") != "high" {
-		t.Errorf("priority = %q, want %q", entity.GetString("priority"), "high")
-	}
-
-	// Check that id and type were NOT applied
-	if entity.GetString("id") != "" {
-		t.Errorf("id should not be set from template, got %q", entity.GetString("id"))
-	}
-
-	// Check content was applied
-	if entity.Content != "Template content here" {
-		t.Errorf("content = %q, want %q", entity.Content, "Template content here")
-	}
-}
-
-func TestApplyEntityTemplate_Nil(t *testing.T) {
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.SetString("title", "My Title")
-
-	// Should not panic
-	ApplyEntityTemplate(entity, nil)
-
-	// Entity should be unchanged
-	if entity.GetString("title") != "My Title" {
-		t.Errorf("title = %q, want %q", entity.GetString("title"), "My Title")
-	}
-}
-
-func TestApplyEntityTemplate_ExistingContent(t *testing.T) {
-	entity := model.NewEntity("REQ-001", "requirement")
-	entity.Content = "Existing content"
-
-	template := &Document{
-		Frontmatter: map[string]interface{}{},
-		Content:     "Template content",
-	}
-
-	ApplyEntityTemplate(entity, template)
-
-	// Existing content should be preserved
-	if entity.Content != "Existing content" {
-		t.Errorf("content = %q, want %q (should not be overridden)", entity.Content, "Existing content")
-	}
-}
-
-func TestApplyRelationTemplate(t *testing.T) {
-	relation := model.NewRelation("DEC-001", "addresses", "REQ-001")
-
-	template := &Document{
-		Frontmatter: map[string]interface{}{
-			"from":      "IGNORED",
-			"relation":  "IGNORED",
-			"to":        "IGNORED",
-			"rationale": "Because it makes sense",
-		},
-	}
-
-	ApplyRelationTemplate(relation, template)
-
-	// Check that core fields were NOT modified
-	if relation.From != "DEC-001" {
-		t.Errorf("from = %q, want %q", relation.From, "DEC-001")
-	}
-	if relation.Type != "addresses" {
-		t.Errorf("type = %q, want %q", relation.Type, "addresses")
-	}
-	if relation.To != "REQ-001" {
-		t.Errorf("to = %q, want %q", relation.To, "REQ-001")
-	}
-
-	// Check that template properties were applied
-	if relation.Properties["rationale"] != "Because it makes sense" {
-		t.Errorf("rationale = %v, want %q", relation.Properties["rationale"], "Because it makes sense")
 	}
 }
 
@@ -241,9 +138,8 @@ func TestGenerateEntityTemplate(t *testing.T) {
 		},
 	}
 
-	// Generate template
 	templatePath := paths.entityTemplatePath("requirement")
-	created, err := testIO.GenerateEntityTemplate(templatePath, meta, "requirement", false)
+	created, err := generateEntityTemplate(testFS(), templatePath, meta, "requirement", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -251,32 +147,25 @@ func TestGenerateEntityTemplate(t *testing.T) {
 		t.Error("expected template to be created")
 	}
 
-	// Verify file exists and has correct content
 	content, err := os.ReadFile(templatePath)
 	if err != nil {
 		t.Fatalf("failed to read template: %v", err)
 	}
-
-	contentStr := string(content)
-	if contentStr == "" {
+	if string(content) == "" {
 		t.Error("template content is empty")
 	}
 
-	// Parse and verify
-	doc, err := ParseDocument(contentStr)
+	doc, err := markdown.ParseDocument(string(content))
 	if err != nil {
 		t.Fatalf("failed to parse generated template: %v", err)
 	}
 
-	// Check that properties have default values
 	if doc.GetString("status") != "draft" {
 		t.Errorf("status = %q, want %q", doc.GetString("status"), "draft")
 	}
 	if doc.GetString("priority") != "medium" {
 		t.Errorf("priority = %q, want %q", doc.GetString("priority"), "medium")
 	}
-
-	// Check content
 	if doc.Content == "" {
 		t.Error("expected placeholder content")
 	}
@@ -294,7 +183,6 @@ func TestGenerateEntityTemplate_NoOverwrite(t *testing.T) {
 		},
 	}
 
-	// Create existing template
 	if err := os.MkdirAll(paths.entityTemplatesDir, 0755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
@@ -304,8 +192,7 @@ func TestGenerateEntityTemplate_NoOverwrite(t *testing.T) {
 		t.Fatalf("failed to write existing template: %v", err)
 	}
 
-	// Try to generate without force
-	created, err := testIO.GenerateEntityTemplate(templatePath, meta, "requirement", false)
+	created, err := generateEntityTemplate(testFS(), templatePath, meta, "requirement", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -313,7 +200,6 @@ func TestGenerateEntityTemplate_NoOverwrite(t *testing.T) {
 		t.Error("expected template NOT to be created (file exists)")
 	}
 
-	// Verify content unchanged
 	content, _ := os.ReadFile(templatePath)
 	if string(content) != existingContent {
 		t.Errorf("content = %q, want %q (should not be overwritten)", string(content), existingContent)
@@ -332,7 +218,6 @@ func TestGenerateEntityTemplate_ForceOverwrite(t *testing.T) {
 		},
 	}
 
-	// Create existing template
 	if err := os.MkdirAll(paths.entityTemplatesDir, 0755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
@@ -341,8 +226,7 @@ func TestGenerateEntityTemplate_ForceOverwrite(t *testing.T) {
 		t.Fatalf("failed to write existing template: %v", err)
 	}
 
-	// Generate with force
-	created, err := testIO.GenerateEntityTemplate(templatePath, meta, "requirement", true)
+	created, err := generateEntityTemplate(testFS(), templatePath, meta, "requirement", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -350,7 +234,6 @@ func TestGenerateEntityTemplate_ForceOverwrite(t *testing.T) {
 		t.Error("expected template to be created with force flag")
 	}
 
-	// Verify content changed
 	content, _ := os.ReadFile(templatePath)
 	if string(content) == "old" {
 		t.Error("content should have been overwritten")
@@ -364,7 +247,7 @@ func TestGenerateEntityTemplate_UnknownType(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{},
 	}
 
-	_, err := testIO.GenerateEntityTemplate(paths.entityTemplatePath("unknown"), meta, "unknown", false)
+	_, err := generateEntityTemplate(testFS(), paths.entityTemplatePath("unknown"), meta, "unknown", false)
 	if err == nil {
 		t.Error("expected error for unknown entity type")
 	}
@@ -390,9 +273,8 @@ func TestGenerateEntityTemplate_Variant(t *testing.T) {
 		},
 	}
 
-	// Generate variant template
 	variantPath := paths.entityTemplateVariantPath("requirement", "epic")
-	created, err := testIO.GenerateEntityTemplate(variantPath, meta, "requirement", false)
+	created, err := generateEntityTemplate(testFS(), variantPath, meta, "requirement", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -400,18 +282,15 @@ func TestGenerateEntityTemplate_Variant(t *testing.T) {
 		t.Error("expected variant template to be created")
 	}
 
-	// Verify file exists at correct path (requirement--epic.md)
 	if _, statErr := os.Stat(variantPath); os.IsNotExist(statErr) {
 		t.Error("variant template file should exist")
 	}
 
-	// Default template should NOT exist
 	defaultPath := paths.entityTemplatePath("requirement")
 	if _, statErr := os.Stat(defaultPath); !os.IsNotExist(statErr) {
 		t.Error("default template should not be created when generating variant")
 	}
 
-	// Verify content
 	content, err := os.ReadFile(variantPath)
 	if err != nil {
 		t.Fatalf("failed to read variant template: %v", err)
@@ -435,7 +314,7 @@ func TestGenerateRelationTemplate(t *testing.T) {
 	}
 
 	templatePath := paths.relationTemplatePath("addresses")
-	created, err := testIO.GenerateRelationTemplate(templatePath, meta, "addresses", false)
+	created, err := generateRelationTemplate(testFS(), templatePath, meta, "addresses", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -443,7 +322,6 @@ func TestGenerateRelationTemplate(t *testing.T) {
 		t.Error("expected template to be created")
 	}
 
-	// Verify file exists
 	if _, err := os.Stat(templatePath); os.IsNotExist(err) {
 		t.Error("template file should exist")
 	}
@@ -456,7 +334,7 @@ func TestGenerateRelationTemplate_UnknownType(t *testing.T) {
 		Relations: map[string]metamodel.RelationDef{},
 	}
 
-	_, err := testIO.GenerateRelationTemplate(paths.relationTemplatePath("unknown"), meta, "unknown", false)
+	_, err := generateRelationTemplate(testFS(), paths.relationTemplatePath("unknown"), meta, "unknown", false)
 	if err == nil {
 		t.Error("expected error for unknown relation type")
 	}
@@ -465,7 +343,7 @@ func TestGenerateRelationTemplate_UnknownType(t *testing.T) {
 func TestDiscoverEntityTemplates_NoTemplatesDir(t *testing.T) {
 	paths := setupTestPaths(t)
 
-	templates, err := testIO.DiscoverEntityTemplates(paths.entityTemplatesDir, "requirement")
+	templates, err := discoverEntityTemplates(testFS(), paths.entityTemplatesDir, "requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -477,7 +355,6 @@ func TestDiscoverEntityTemplates_NoTemplatesDir(t *testing.T) {
 func TestDiscoverEntityTemplates_DefaultOnly(t *testing.T) {
 	paths := setupTestPaths(t)
 
-	// Create templates directory and default template
 	if err := os.MkdirAll(paths.entityTemplatesDir, 0755); err != nil {
 		t.Fatalf("failed to create dir: %v", err)
 	}
@@ -492,7 +369,7 @@ priority: high
 		t.Fatalf("failed to write template: %v", err)
 	}
 
-	templates, err := testIO.DiscoverEntityTemplates(paths.entityTemplatesDir, "requirement")
+	templates, err := discoverEntityTemplates(testFS(), paths.entityTemplatesDir, "requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -519,7 +396,6 @@ func TestDiscoverEntityTemplates_WithVariants(t *testing.T) {
 		t.Fatalf("failed to create dir: %v", err)
 	}
 
-	// Default template
 	defaultContent := `---
 status: draft
 ---
@@ -529,7 +405,6 @@ status: draft
 		t.Fatalf("failed to write default template: %v", err)
 	}
 
-	// Epic variant
 	epicContent := `---
 status: proposed
 priority: high
@@ -540,7 +415,6 @@ priority: high
 		t.Fatalf("failed to write epic template: %v", err)
 	}
 
-	// Checklist variant
 	checklistContent := `---
 status: draft
 ---
@@ -556,7 +430,7 @@ status: draft
 		t.Fatalf("failed to write unrelated template: %v", err)
 	}
 
-	templates, err := testIO.DiscoverEntityTemplates(paths.entityTemplatesDir, "requirement")
+	templates, err := discoverEntityTemplates(testFS(), paths.entityTemplatesDir, "requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -564,7 +438,6 @@ status: draft
 		t.Fatalf("expected 3 templates, got %d", len(templates))
 	}
 
-	// Check order: default first, then alphabetically
 	if templates[0].Name != "" {
 		t.Errorf("first template should be default (empty name), got %q", templates[0].Name)
 	}
@@ -575,7 +448,6 @@ status: draft
 		t.Errorf("third template should be 'epic', got %q", templates[2].Name)
 	}
 
-	// Verify epic template properties
 	epic := templates[2]
 	if epic.Properties["priority"] != "high" {
 		t.Errorf("epic priority = %v, want %q", epic.Properties["priority"], "high")
@@ -603,7 +475,7 @@ _template_relations:
 		t.Fatalf("failed to write template: %v", err)
 	}
 
-	templates, err := testIO.DiscoverEntityTemplates(paths.entityTemplatesDir, "requirement")
+	templates, err := discoverEntityTemplates(testFS(), paths.entityTemplatesDir, "requirement")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -613,24 +485,22 @@ _template_relations:
 
 	tmpl := templates[0]
 
-	// _template_relations should be extracted and removed from Properties
 	if _, exists := tmpl.Properties["_template_relations"]; exists {
 		t.Error("_template_relations should not be in Properties")
 	}
 
-	// Check relations were parsed
 	if len(tmpl.Relations) != 2 {
 		t.Fatalf("expected 2 relations, got %d", len(tmpl.Relations))
 	}
 
 	rel1 := tmpl.Relations[0]
-	if rel1.Relation != "addresses" || rel1.Target != "COMP-001" {
-		t.Errorf("relation 1 = {%q, %q}, want {addresses, COMP-001}", rel1.Relation, rel1.Target)
+	if rel1.Type != "addresses" || rel1.Target != "COMP-001" {
+		t.Errorf("relation 1 = {%q, %q}, want {addresses, COMP-001}", rel1.Type, rel1.Target)
 	}
 
 	rel2 := tmpl.Relations[1]
-	if rel2.Relation != "assigned-to" || rel2.Target != "USER-042" {
-		t.Errorf("relation 2 = {%q, %q}, want {assigned-to, USER-042}", rel2.Relation, rel2.Target)
+	if rel2.Type != "assigned-to" || rel2.Target != "USER-042" {
+		t.Errorf("relation 2 = {%q, %q}, want {assigned-to, USER-042}", rel2.Type, rel2.Target)
 	}
 }
 
@@ -646,7 +516,6 @@ func TestExtractTemplateRelations_Empty(t *testing.T) {
 }
 
 func TestExtractTemplateRelations_InvalidFormat(t *testing.T) {
-	// _template_relations is not a list
 	frontmatter := map[string]interface{}{
 		"_template_relations": "invalid",
 	}
@@ -658,7 +527,6 @@ func TestExtractTemplateRelations_InvalidFormat(t *testing.T) {
 }
 
 func TestExtractTemplateRelations_PartialData(t *testing.T) {
-	// Some entries missing required fields
 	frontmatter := map[string]interface{}{
 		"_template_relations": []interface{}{
 			map[string]interface{}{"relation": "addresses"},                       // missing target
@@ -671,7 +539,7 @@ func TestExtractTemplateRelations_PartialData(t *testing.T) {
 	if len(relations) != 1 {
 		t.Fatalf("expected 1 valid relation, got %d", len(relations))
 	}
-	if relations[0].Relation != "implements" || relations[0].Target != "REQ-001" {
-		t.Errorf("relation = {%q, %q}, want {implements, REQ-001}", relations[0].Relation, relations[0].Target)
+	if relations[0].Type != "implements" || relations[0].Target != "REQ-001" {
+		t.Errorf("relation = {%q, %q}, want {implements, REQ-001}", relations[0].Type, relations[0].Target)
 	}
 }

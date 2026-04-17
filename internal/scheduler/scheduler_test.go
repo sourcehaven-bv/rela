@@ -6,13 +6,11 @@ import (
 	"io"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 )
@@ -22,7 +20,6 @@ import (
 type mockWorkspace struct {
 	mu         sync.Mutex
 	cacheFiles map[string][]byte
-	syncCount  atomic.Int32
 	paths      *project.Context
 	meta       *metamodel.Metamodel
 }
@@ -34,11 +31,6 @@ func newMockWorkspace(t *testing.T) *mockWorkspace {
 		paths:      &project.Context{Root: t.TempDir()},
 		meta:       &metamodel.Metamodel{},
 	}
-}
-
-func (m *mockWorkspace) Sync() (*model.SyncResult, error) {
-	m.syncCount.Add(1)
-	return &model.SyncResult{}, nil
 }
 
 func (m *mockWorkspace) Paths() *project.Context { return m.paths }
@@ -299,28 +291,6 @@ func TestScheduler_loadState_existing(t *testing.T) {
 	}
 }
 
-func TestScheduler_syncCalledBeforeExecution(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "test", Script: "test.lua", Every: dailySchedule()},
-		},
-	}
-	now := time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
-	s, ws, _ := newTestScheduler(t, cfg, now)
-
-	s.executeTaskFunc = func(ctx context.Context, task TaskConfig) {
-		s.doExecuteTask(ctx, task)
-	}
-
-	s.runDueTasks(context.Background())
-
-	if ws.syncCount.Load() < 1 {
-		t.Error("expected Sync() to be called before task execution")
-	}
-}
-
 func TestScheduler_Run_emptyConfig(t *testing.T) {
 	t.Parallel()
 
@@ -361,30 +331,6 @@ func TestRunDueTasks_cancelledContext(t *testing.T) {
 
 	if calls := tracker.getCalls(); len(calls) != 0 {
 		t.Errorf("expected no calls with cancelled context, got %v", calls)
-	}
-}
-
-func TestScheduler_doExecuteTask_skipsOnCancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ws := newMockWorkspace(t)
-	s := &Scheduler{
-		ws:     ws,
-		metaFn: func() *metamodel.Metamodel { return ws.meta },
-		wsRaw:  ws,
-		state:  newState(),
-		logger: discardLogger(),
-		now:    time.Now,
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	task := TaskConfig{Name: "test", Script: "test.lua", Every: dailySchedule()}
-	s.doExecuteTask(ctx, task)
-
-	if ws.syncCount.Load() != 0 {
-		t.Error("expected Sync not to be called with cancelled context")
 	}
 }
 

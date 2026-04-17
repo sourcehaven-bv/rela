@@ -25,10 +25,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/cache"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
+
+// recentHashCapacity bounds how many recently-written file hashes are
+// kept in memory for self-echo filtering. Large enough to cover a full
+// bulk import of a sizable project; still small enough to stay cheap.
+const recentHashCapacity = 4096
 
 // Config holds the configuration for creating a new FSStore.
 type Config struct {
@@ -88,9 +94,20 @@ type FSStore struct {
 	// observers notified synchronously on entity writes
 	observers []store.EntityObserver
 
-	// watcher
+	// event subscribers
 	subscribers map[int]chan store.Event
 	nextSubID   int
+
+	// fs watcher (external-change detection). nil when not started.
+	extWatcher *storage.Watcher
+
+	// recentHashes records the SHA256 of the last content written by this
+	// store for each entity/relation file path. The external-change watcher
+	// uses these to distinguish its own writes (self-echoes) from genuine
+	// external edits: if the on-disk file hashes to the recorded value, the
+	// event is a self-echo and gets dropped. Bounded-LRU so memory stays
+	// bounded under large-project bulk writes.
+	recentHashes *cache.LRU[string, string]
 }
 
 // compile-time interface check
@@ -117,6 +134,7 @@ func New(cfg Config) (*FSStore, error) {
 		attachments:  make(map[string]attachMeta),
 		propCache:    make(map[string]map[string]int),
 		subscribers:  make(map[int]chan store.Event),
+		recentHashes: cache.NewLRU[string, string](recentHashCapacity),
 	}
 
 	s.cleanupTempFiles()

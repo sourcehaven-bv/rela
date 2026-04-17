@@ -1,6 +1,10 @@
 package filter
 
-import "time"
+import (
+	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+)
 
 // Record is a lightweight property bag used for filtering and sorting.
 // Callers construct Records from whatever entity type they have.
@@ -18,13 +22,6 @@ type Record struct {
 // without requiring callers to convert their slices.
 type Accessor[T any] func(T) Record
 
-// SortSpec describes a single sort criterion.
-type SortSpec struct {
-	Property  string `yaml:"property" json:"property"`
-	Direction string `yaml:"direction,omitempty" json:"direction,omitempty"` // "asc" (default) or "desc"
-}
-
-// IsDescending returns true if direction is "desc".
-func (s SortSpec) IsDescending() bool {
-	return s.Direction == "desc"
-}
+// SortSpec is an alias for metamodel.SortSpec so filter and metamodel share
+// a single authoritative sort-criterion type.
+type SortSpec = metamodel.SortSpec

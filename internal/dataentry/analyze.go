@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -196,7 +195,7 @@ func (a *App) analyzeGaps() AnalysisSection {
 		if err != nil {
 			break
 		}
-		parsed, err := model.ParseEntityID(e.ID)
+		parsed, err := entity.ParseEntityID(e.ID)
 		if err != nil || parsed.Prefix == "" {
 			continue
 		}

@@ -25,7 +25,6 @@ import (
 	"github.com/chromedp/chromedp"
 
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -61,8 +60,7 @@ func newE2ETestApp(t *testing.T) (*App, string, func()) {
 	_ = os.MkdirAll(ctx.CacheDir, 0o755)
 
 	fs := storage.NewSafeFS(storage.NewOsFS())
-	repo := repository.New(fs, ctx)
-	ws, err := workspace.New(repo, workspace.NopScriptExecutor)
+	ws, err := workspace.New(fs, ctx, workspace.NopScriptExecutor)
 	if err != nil {
 		t.Fatalf("creating workspace: %v", err)
 	}

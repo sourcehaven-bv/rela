@@ -8,7 +8,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
 )
@@ -120,7 +119,7 @@ func (w *Workspace) FindGaps(opts AnalyzeOptions) []GapResult {
 		if !inScope(e.ID, opts.Scope) {
 			continue
 		}
-		parsed, err := model.ParseEntityID(e.ID)
+		parsed, err := entity.ParseEntityID(e.ID)
 		if err != nil || parsed.Prefix == "" {
 			continue
 		}
@@ -370,8 +369,8 @@ type ValidationViolation = validation.Violation
 // newValidationService creates a validation service with workspace and project root configured.
 func (w *Workspace) newValidationService() *validation.Service {
 	var root string
-	if w.repo != nil {
-		root = w.repo.Paths().Root
+	if w.paths != nil {
+		root = w.paths.Root
 	}
 	return validation.New(w.Meta(), w.luaServices(), root)
 }

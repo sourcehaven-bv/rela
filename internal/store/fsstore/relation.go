@@ -223,6 +223,7 @@ func (s *FSStore) DeleteRelation(_ context.Context, from, relType, to string) er
 	if err := s.fs.Remove(path); err != nil {
 		return err
 	}
+	s.forgetHash(path)
 
 	// Update index.
 	delete(s.relations, key)

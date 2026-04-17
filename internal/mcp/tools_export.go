@@ -18,16 +18,12 @@ import (
 func (s *Server) handleRefresh(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	syncResult, err := s.ws.Reload()
+	entities, relations, err := s.ws.Reload()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
 	}
 
-	msg := fmt.Sprintf("Refreshed: %d entities, %d relations loaded",
-		syncResult.EntitiesLoaded, syncResult.RelationsLoaded)
-	if len(syncResult.Errors) > 0 {
-		msg += fmt.Sprintf(" (%d errors)", len(syncResult.Errors))
-	}
+	msg := fmt.Sprintf("Refreshed: %d entities, %d relations loaded", entities, relations)
 	return mcp.NewToolResultText(msg), nil
 }
 

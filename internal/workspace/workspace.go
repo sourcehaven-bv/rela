@@ -6,9 +6,9 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -20,14 +20,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -97,14 +95,11 @@ func (nopScriptExecutor) ExecuteFile(string, metamodel.ScriptContext) error {
 // that graph, meta, automation, and searchIdx are always observed as a
 // coherent tuple from the same reload epoch.
 //
-// The graph is held by pointer; mutations through CreateEntity/UpdateEntity/
-// DeleteEntity/CreateRelation/DeleteRelation modify the graph in place under
-// the caller's writeMu discipline. A Reload publishes a NEW graph (returned
-// by repo.Sync) so readers holding a pre-reload state continue to see a
-// fully-populated, never-mutated-by-Reload world.
+// Reload publishes a fresh workspaceState — readers holding a pre-reload
+// snapshot continue to see a fully-populated, never-mutated-by-Reload
+// world.
 type workspaceState struct {
-	graph      *graph.Graph
-	store      store.Store // mirror of graph; in Phase 1, graph is still source of truth
+	store      store.Store
 	meta       *metamodel.Metamodel
 	automation *automation.Engine // may be nil if the metamodel has no automations
 	searchIdx  *search.Index      // may be nil if index construction failed
@@ -136,14 +131,14 @@ type workspaceState struct {
 // at entry and uses that snapshot consistently throughout, so a Reload
 // that arrives mid-mutation cannot interleave on the wrong graph.
 type Workspace struct {
-	repo       repository.Store
-	store      store.Store     // optional; nil when not wired
-	formatter  store.Formatter // optional; nil when not wired
+	fs         storage.FS
+	paths      *project.Context
+	store      store.Store // optional; nil when not wired
 	state      atomic.Pointer[workspaceState]
 	config     *project.Config
 	scriptExec ScriptExecutor
 
-	// reloadMu serializes Reload/Sync/WithTx/Close against each other.
+	// reloadMu serializes Reload/Sync/Close against each other.
 	// Readers never acquire it — they snapshot state via state.Load().
 	reloadMu sync.Mutex
 
@@ -152,8 +147,16 @@ type Workspace struct {
 	closed atomic.Bool
 
 	// Watcher state (nil when not watching).
-	watcher    *storage.Watcher
-	stopSchema func() // stops the metamodel loader subscription
+	watcher         *storage.Watcher
+	stopSchema      func() // stops the metamodel loader subscription
+	stopStoreEvents func() // cancels the store event subscription
+
+	// storeFactory, when non-nil, is consulted by Sync/Reload to
+	// (re)build the graph from a store.Store instead of from repo.Sync.
+	// This is the bridge used during the migration away from the
+	// repository + graph duo toward store.Store-based reads.
+	storeFactory store.Factory
+	syncStore    store.Store // lazily opened on first Sync/Reload
 
 	// schemaFiles holds the absolute paths of all files that make up the
 	// current metamodel (metamodel.yaml + includes). Updated after each
@@ -180,44 +183,68 @@ func Discover(startDir string, scriptExec ScriptExecutor) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo := repository.New(fs, ctx)
-	return New(repo, scriptExec)
+	return New(fs, ctx, scriptExec)
 }
 
-// New creates a workspace from a repository with a script executor.
-// It loads the metamodel, initializes the graph (from cache or by syncing
-// from disk), and sets up the automation engine.
+// New creates a workspace over the given filesystem + project paths.
+// It loads the metamodel, opens an fsstore, and sets up the automation
+// engine and search index.
 //
 // For production use, pass script.NewEngine() for Lua support.
 // For tests, pass NopScriptExecutor.
-func New(repo repository.Store, scriptExec ScriptExecutor, opts ...Option) (*Workspace, error) {
+func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts ...Option) (*Workspace, error) {
 	exec := scriptExec
 	if exec == nil {
 		exec = NopScriptExecutor
 	}
 
-	meta, schemaFiles, err := metamodel.NewFSLoader(repo.FS(), repo.Paths().MetamodelPath).Load(context.Background())
+	meta, schemaFiles, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	g, _, syncErr := repo.Sync(meta)
-	if syncErr != nil {
-		return nil, fmt.Errorf("sync: %w", syncErr)
+	// Pre-scan opts for a caller-supplied factory; fall back to the
+	// default fsstore factory rooted at the given fs/paths.
+	var factory store.Factory
+	for _, opt := range opts {
+		tmp := &Workspace{}
+		opt(tmp)
+		if tmp.storeFactory != nil {
+			factory = tmp.storeFactory
+		}
+	}
+	if factory == nil {
+		factory = &defaultStoreFactory{fs: fs, paths: paths}
 	}
 
-	ws := newWorkspace(repo, meta, g, exec, opts...)
+	s, openErr := factory.OpenStore(meta)
+	if openErr != nil {
+		return nil, fmt.Errorf("open store: %w", openErr)
+	}
+	ws := newWorkspace(fs, paths, meta, exec, opts...)
+	ws.syncStore = s
+	ws.storeFactory = factory
 	ws.schemaFiles = schemaFiles
+
+	// Index entities from the store into the newly-created search index.
+	if current := ws.state.Load(); current != nil && current.searchIdx != nil {
+		if err := indexStoreEntities(current.searchIdx, s, meta); err != nil {
+			slog.Warn("failed to index entities", "error", err)
+		}
+	}
 	return ws, nil
 }
 
-// NewWithGraph creates a workspace with a pre-populated graph. Use this
-// when the caller has already loaded the metamodel and synced the graph.
+// NewBare creates a workspace from a repo + metamodel without loading
+// anything from disk. Use this in tests that want to seed fixtures
+// through the workspace API (SeedEntityForTest / SeedRelationForTest)
+// and in production paths that have already loaded the metamodel.
 //
-// The optional scriptExec parameter enables Lua automation actions. If not provided,
-// defaults to NopScriptExecutor (suitable for tests). Pass a script.Engine for production.
-func NewWithGraph(
-	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, opts ...interface{},
+// Optional scriptExec (script.Engine) and Option values can be mixed
+// in the variadic arguments; pass a script.Engine for Lua automation,
+// otherwise NopScriptExecutor is used.
+func NewBare(
+	fs storage.FS, paths *project.Context, meta *metamodel.Metamodel, opts ...interface{},
 ) *Workspace {
 	exec := NopScriptExecutor
 	var wsOpts []Option
@@ -229,35 +256,82 @@ func NewWithGraph(
 			wsOpts = append(wsOpts, v)
 		}
 	}
-	return newWorkspace(repo, meta, g, exec, wsOpts...)
+	return newWorkspace(fs, paths, meta, exec, wsOpts...)
 }
 
-// NewForTest creates a minimal workspace for testing. It has no repository,
-// so write operations will panic. Use this for unit tests that only need
-// to query the graph. It initializes a search index with all entities.
+// NewForTestWithStore creates a minimal workspace for testing backed by
+// a caller-supplied store.Store. Write operations panic — there is no
+// repository.
 //
-// This helper fails fast (panics) if the search index cannot be created,
-// because a silently-nil index leads to confusing downstream test failures.
-func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
+// Use this when the test naturally expresses its fixture as
+// store.CreateEntity/CreateRelation calls.
+func NewForTestWithStore(s store.Store, meta *metamodel.Metamodel) *Workspace {
 	idx, err := search.NewIndex()
 	if err != nil {
-		panic(fmt.Sprintf("NewForTest: create search index: %v", err))
+		panic(fmt.Sprintf("NewForTestWithStore: create search index: %v", err))
 	}
-	docs := entitiesToSearchDocuments(g.AllNodes(), meta)
-	if indexErr := idx.IndexBatch(docs); indexErr != nil {
-		panic(fmt.Sprintf("NewForTest: index entities: %v", indexErr))
+	if indexErr := indexStoreEntities(idx, s, meta); indexErr != nil {
+		panic(fmt.Sprintf("NewForTestWithStore: index entities: %v", indexErr))
 	}
 
 	ws := &Workspace{
 		config: project.DefaultConfig(),
+		store:  s,
 	}
 	ws.state.Store(&workspaceState{
-		graph:     g,
-		store:     buildMemStore(g),
+		store:     s,
 		meta:      meta,
 		searchIdx: idx,
 	})
 	return ws
+}
+
+// SeedEntityForTest writes an entity directly into every store this
+// workspace tracks (the state-level mirror and the long-lived syncStore,
+// if any). Intended for tests to set up fixtures without going through
+// the validation/automation stack of the public CRUD methods.
+func (w *Workspace) SeedEntityForTest(e *entity.Entity) {
+	_ = w.writeEntity(e)
+}
+
+// SeedRelationForTest is the relation counterpart to SeedEntityForTest.
+func (w *Workspace) SeedRelationForTest(r *entity.Relation) {
+	_ = w.writeRelation(r)
+}
+
+// storeWatcher is an optional capability a store.Store implementation
+// may provide to react to external (out-of-process) edits. fsstore
+// implements it; in-memory backends don't.
+type storeWatcher interface {
+	StartWatching() error
+	StopWatching()
+}
+
+// defaultStoreFactory builds an fsstore rooted at the given filesystem
+// and project paths. Used by workspace.New when the caller does not
+// inject their own factory via WithStoreFactory.
+type defaultStoreFactory struct {
+	fs    storage.FS
+	paths *project.Context
+}
+
+func (f *defaultStoreFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
+	schemas := make(map[string]store.EntityTypeSchema)
+	if meta != nil {
+		for name, et := range meta.Entities {
+			schemas[name] = store.EntityTypeSchema{
+				Plural:        et.Plural,
+				PropertyOrder: et.PropertyOrder,
+			}
+		}
+	}
+	return fsstore.New(fsstore.Config{
+		FS:           f.fs,
+		EntitiesDir:  f.paths.EntitiesDir,
+		RelationsDir: f.paths.RelationsDir,
+		CacheDir:     f.paths.CacheDir,
+		Schemas:      schemas,
+	})
 }
 
 // Option configures a Workspace.
@@ -268,13 +342,15 @@ func WithStore(s store.Store) Option {
 	return func(w *Workspace) { w.store = s }
 }
 
-// WithFormatter sets the formatter service for this workspace.
-func WithFormatter(f store.Formatter) Option {
-	return func(w *Workspace) { w.formatter = f }
+// WithStoreFactory injects a store.Factory used by Sync/Reload to
+// (re)build the workspace graph from a store instead of repo.Sync.
+// When nil or not supplied, workspace falls back to repo.Sync.
+func WithStoreFactory(f store.Factory) Option {
+	return func(w *Workspace) { w.storeFactory = f }
 }
 
 func newWorkspace(
-	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ScriptExecutor,
+	fs storage.FS, paths *project.Context, meta *metamodel.Metamodel, scriptExec ScriptExecutor,
 	opts ...Option,
 ) *Workspace {
 	var autoEngine *automation.Engine
@@ -282,31 +358,22 @@ func newWorkspace(
 		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
 	}
 
-	// Create search index and index all entities. Failures degrade search
-	// but don't block workspace construction — Search() will surface the
-	// nil index as an explicit error.
+	// Create an empty search index — the workspace has no entities yet
+	// at construction time. Reload (or the syncStore's initial sync)
+	// will populate it. Failures degrade search but don't block
+	// construction; Search() surfaces the nil index as an explicit error.
 	var searchIdx *search.Index
-	idx, err := search.NewIndex()
-	if err != nil {
-		slog.Warn("failed to create search index", "error", err)
+	if idx, err := search.NewIndex(); err == nil {
+		searchIdx = idx
 	} else {
-		docs := entitiesToSearchDocuments(g.AllNodes(), meta)
-		if err := idx.IndexBatch(docs); err != nil {
-			slog.Warn("failed to index entities", "error", err)
-			// Don't publish a partial index.
-			if closeErr := idx.Close(); closeErr != nil {
-				slog.Warn("failed to close partial search index", "error", closeErr)
-			}
-		} else {
-			searchIdx = idx
-		}
+		slog.Warn("failed to create search index", "error", err)
 	}
 
-	// Load project config (use defaults if not found or repo is nil).
+	// Load project config (use defaults if not found or paths is nil).
 	var cfg *project.Config
-	if repo != nil {
+	if paths != nil {
 		var err error
-		cfg, err = project.LoadConfig(repo.Paths())
+		cfg, err = project.LoadConfig(paths)
 		if err != nil {
 			slog.Warn("failed to load config", "error", err)
 			cfg = project.DefaultConfig()
@@ -316,7 +383,8 @@ func newWorkspace(
 	}
 
 	ws := &Workspace{
-		repo:       repo,
+		fs:         fs,
+		paths:      paths,
 		config:     cfg,
 		scriptExec: scriptExec,
 	}
@@ -325,8 +393,7 @@ func newWorkspace(
 	}
 
 	ws.state.Store(&workspaceState{
-		graph:      g,
-		store:      buildMemStore(g),
+		store:      memstore.New(),
 		meta:       meta,
 		automation: autoEngine,
 		searchIdx:  searchIdx,
@@ -334,72 +401,157 @@ func newWorkspace(
 	return ws
 }
 
-// buildMemStore creates a memstore seeded from an existing graph.
-func buildMemStore(g *graph.Graph) store.Store {
-	s := memstore.New()
-	ctx := context.Background()
-	for _, e := range g.AllNodes() {
-		_ = s.CreateEntity(ctx, model.EntityToDomain(e))
+// indexStoreEntities (re)indexes every entity in the store into the
+// given search index. Errors from the store iterator are surfaced;
+// index errors are returned so the caller can decide whether to
+// publish a partial index.
+func indexStoreEntities(idx *search.Index, s store.Store, meta *metamodel.Metamodel) error {
+	if idx == nil || s == nil {
+		return nil
 	}
-	for _, r := range g.AllEdges() {
-		_, _ = s.CreateRelation(ctx, r.From, r.Type, r.To, nil)
-	}
-	return s
+	docs := storeSearchDocuments(s, meta)
+	return idx.IndexBatch(docs)
 }
 
-// mirrorEntityUpsert mirrors an entity write into the workspace store.
-// Called after every graph.AddNode/UpdateNode so the store stays in sync
-// with the graph. Best-effort: errors are swallowed since the graph is
-// still the source of truth in Phase 1.
-func mirrorEntityUpsert(st store.Store, e *model.Entity) {
-	if st == nil || e == nil {
-		return
+// syncCountsFromStore reports how many entities and relations the
+// workspace currently observes in the given store. Relations with a
+// missing endpoint are silently skipped.
+func syncCountsFromStore(s store.Store) (entities, relations int) {
+	if s == nil {
+		return 0, 0
 	}
 	ctx := context.Background()
-	domain := model.EntityToDomain(e)
-	if _, err := st.GetEntity(ctx, e.ID); err == nil {
-		_ = st.UpdateEntity(ctx, domain)
-		return
+	ids := make(map[string]struct{})
+	for e, err := range s.ListEntities(ctx, store.EntityQuery{}) {
+		if err != nil {
+			continue
+		}
+		ids[e.ID] = struct{}{}
+		entities++
 	}
-	_ = st.CreateEntity(ctx, domain)
+	for r, err := range s.ListRelations(ctx, store.RelationQuery{}) {
+		if err != nil {
+			continue
+		}
+		if _, ok := ids[r.From]; !ok {
+			continue
+		}
+		if _, ok := ids[r.To]; !ok {
+			continue
+		}
+		relations++
+	}
+	return entities, relations
 }
 
-// mirrorEntityDelete removes an entity from the store after graph.RemoveNode.
-// Cascade is true because graph.RemoveNode also removes incident edges.
-func mirrorEntityDelete(st store.Store, id string) {
-	if st == nil || id == "" {
-		return
+// writeEntity is the single write-through path for entity upserts. It
+// calls CreateEntity (falling back to UpdateEntity on ErrConflict) on
+// every store this workspace tracks — the long-lived syncStore and the
+// state-level in-memory mirror. The syncStore's fsstore implementation
+// handles on-disk persistence; no separate repo write is needed.
+func (w *Workspace) writeEntity(e *entity.Entity) error {
+	if e == nil {
+		return nil
 	}
-	_, _ = st.DeleteEntity(context.Background(), id, true)
-}
-
-// mirrorRelationCreate mirrors a relation write into the store after
-// graph.AddEdge.
-func mirrorRelationCreate(st store.Store, r *model.Relation) {
-	if st == nil || r == nil {
-		return
+	if err := storeUpsertEntity(w.syncStore, e); err != nil {
+		return err
 	}
-	_, _ = st.CreateRelation(context.Background(), r.From, r.Type, r.To, nil)
-}
-
-// mirrorRelationDelete mirrors a relation removal into the store after
-// graph.RemoveEdge.
-func mirrorRelationDelete(st store.Store, from, relType, to string) {
-	if st == nil {
-		return
-	}
-	_ = st.DeleteRelation(context.Background(), from, relType, to)
-}
-
-// --- Accessors ---
-
-// Graph returns the in-memory graph from the current workspace state.
-func (w *Workspace) Graph() *graph.Graph {
-	if s := w.state.Load(); s != nil {
-		return s.graph
+	if s := w.state.Load(); s != nil && s.store != nil && s.store != w.syncStore {
+		_ = storeUpsertEntity(s.store, e)
 	}
 	return nil
 }
+
+// deleteEntityStore is the write-through delete path. Cascade is false
+// because the workspace's CRUD already deletes incident relations
+// explicitly before calling this.
+func (w *Workspace) deleteEntityStore(id string) error {
+	if id == "" {
+		return nil
+	}
+	if w.syncStore != nil {
+		if _, err := w.syncStore.DeleteEntity(context.Background(), id, false); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	if s := w.state.Load(); s != nil && s.store != nil && s.store != w.syncStore {
+		_, _ = s.store.DeleteEntity(context.Background(), id, false)
+	}
+	return nil
+}
+
+// writeRelation upserts a relation into every store.
+func (w *Workspace) writeRelation(r *entity.Relation) error {
+	if r == nil {
+		return nil
+	}
+	if err := storeUpsertRelation(w.syncStore, r); err != nil {
+		return err
+	}
+	if s := w.state.Load(); s != nil && s.store != nil && s.store != w.syncStore {
+		_ = storeUpsertRelation(s.store, r)
+	}
+	return nil
+}
+
+// deleteRelationStore removes a relation from every store.
+func (w *Workspace) deleteRelationStore(from, relType, to string) error {
+	if w.syncStore != nil {
+		if err := w.syncStore.DeleteRelation(context.Background(), from, relType, to); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	if s := w.state.Load(); s != nil && s.store != nil && s.store != w.syncStore {
+		_ = s.store.DeleteRelation(context.Background(), from, relType, to)
+	}
+	return nil
+}
+
+// storeUpsertEntity tries CreateEntity first and falls back to
+// UpdateEntity when the entity already exists. Skips nil stores.
+func storeUpsertEntity(st store.Store, e *entity.Entity) error {
+	if st == nil {
+		return nil
+	}
+	ctx := context.Background()
+	err := st.CreateEntity(ctx, e)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, store.ErrConflict) {
+		return st.UpdateEntity(ctx, e)
+	}
+	return err
+}
+
+// storeUpsertRelation tries CreateRelation first and falls back to
+// UpdateRelation with the relation's properties/content when the
+// relation already exists.
+func storeUpsertRelation(st store.Store, r *entity.Relation) error {
+	if st == nil {
+		return nil
+	}
+	ctx := context.Background()
+	var data *store.RelationData
+	if len(r.Properties) > 0 || r.Content != "" {
+		data = &store.RelationData{Properties: r.Properties, Content: r.Content}
+	}
+	_, err := st.CreateRelation(ctx, r.From, r.Type, r.To, data)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, store.ErrConflict) {
+		update := store.RelationData{}
+		if data != nil {
+			update = *data
+		}
+		_, err = st.UpdateRelation(ctx, r.From, r.Type, r.To, update)
+		return err
+	}
+	return err
+}
+
+// --- Accessors ---
 
 // Meta returns the current metamodel.
 func (w *Workspace) Meta() *metamodel.Metamodel {
@@ -409,34 +561,23 @@ func (w *Workspace) Meta() *metamodel.Metamodel {
 	return nil
 }
 
-// Repo returns the underlying repository for low-level operations not
-// wrapped by Workspace (e.g., FS access, Watch).
-func (w *Workspace) Repo() repository.Store { return w.repo }
-
-// Store returns the store backing this workspace. In production, the
-// store is a mirror of the graph maintained alongside every mutation.
-// In legacy test paths that seed the graph directly after construction,
-// the store is rebuilt from the graph per call so reads see the latest
-// state.
+// Store returns the store backing this workspace. Precedence:
+//  1. An external store injected via WithStore (used by the CLI/data-entry
+//     wiring that owns the fsstore lifecycle).
+//  2. The long-lived syncStore opened by workspace.New (fsstore).
+//  3. The state-level in-memory mirror (s.store) — kept in sync via
+//     mirrorEntityUpsert/Delete on every CRUD call.
 func (w *Workspace) Store() store.Store {
-	// External store override takes precedence (WithStore).
 	if w.store != nil {
 		return w.store
 	}
-	// Legacy fallback: rebuild from graph each call so tests that seed
-	// the graph after construction still see their seeded data.
-	// TODO: Phase 3 — delete this once tests seed through workspace.
-	return buildMemStore(w.Graph())
-}
-
-// Formatter returns the formatter service.
-// If none was wired via WithFormatter, a legacy formatter backed by the
-// workspace's FormatEntity/FormatRelation methods is returned.
-func (w *Workspace) Formatter() store.Formatter {
-	if w.formatter != nil {
-		return w.formatter
+	if w.syncStore != nil {
+		return w.syncStore
 	}
-	return &legacyFormatter{w: w}
+	if s := w.state.Load(); s != nil {
+		return s.store
+	}
+	return nil
 }
 
 // search runs the legacy word/phrase Bleve query against a single workspace
@@ -452,13 +593,17 @@ func (w *Workspace) search(words, phrases []string, limit int) ([]*entity.Entity
 	if err != nil {
 		return nil, nil, err
 	}
+	ctx := context.Background()
+	st := w.Store()
 	entities := make([]*entity.Entity, 0, len(results))
 	scores := make([]float64, 0, len(results))
 	for _, r := range results {
-		if e, ok := s.graph.GetNode(r.ID); ok {
-			entities = append(entities, model.EntityToDomain(e))
-			scores = append(scores, r.Score)
+		e, err := st.GetEntity(ctx, r.ID)
+		if err != nil {
+			continue
 		}
+		entities = append(entities, e)
+		scores = append(scores, r.Score)
 	}
 	return entities, scores, nil
 }
@@ -466,25 +611,25 @@ func (w *Workspace) search(words, phrases []string, limit int) ([]*entity.Entity
 // --- Project accessors ---
 
 // Paths returns the project directory layout.
-func (w *Workspace) Paths() *project.Context { return w.repo.Paths() }
+func (w *Workspace) Paths() *project.Context { return w.paths }
 
 // Config returns the project-config loader (data-entry.yaml, schedules.yaml, ...).
-// Returns a no-op loader when the workspace has no repository configured
+// Returns a no-op loader when the workspace has no filesystem configured
 // (rare; happens only in tests that stub the workspace).
 func (w *Workspace) Config() config.Loader {
-	if w.repo == nil {
+	if w.fs == nil || w.paths == nil {
 		return nopConfig{}
 	}
-	return config.NewFSLoader(w.FS(), w.Paths().Root)
+	return config.NewFSLoader(w.fs, w.paths.Root)
 }
 
 // State returns the per-user state KV (UI state, render caches, scheduler state).
-// Returns a no-op KV when the workspace has no repository configured.
+// Returns a no-op KV when the workspace has no filesystem configured.
 func (w *Workspace) State() state.KV {
-	if w.repo == nil {
+	if w.fs == nil || w.paths == nil {
 		return nopState{}
 	}
-	return state.NewFSKV(w.FS(), w.Paths().CacheDir)
+	return state.NewFSKV(w.fs, w.paths.CacheDir)
 }
 
 type nopConfig struct{}
@@ -503,142 +648,55 @@ func (nopState) Put(context.Context, string, []byte) error {
 	return fmt.Errorf("workspace: no repository configured")
 }
 
-// FindOrphanedTempFiles returns paths of leftover .new temp files.
+// FindOrphanedTempFiles returns paths of leftover .new temp files in
+// the entities/ and relations/ directories. These can arise from
+// interrupted writes.
 func (w *Workspace) FindOrphanedTempFiles() ([]string, error) {
-	return w.repo.FindOrphanedTempFiles()
+	if w.fs == nil || w.paths == nil {
+		return nil, nil
+	}
+	var orphaned []string
+	orphaned = append(orphaned, findTempFilesInDir(w.fs, w.paths.EntitiesDir)...)
+	orphaned = append(orphaned, findTempFilesInDir(w.fs, w.paths.RelationsDir)...)
+	return orphaned, nil
 }
 
-// CleanupOrphanedTempFiles removes leftover .new temp files.
+// CleanupOrphanedTempFiles removes every orphaned .new temp file.
+// Returns the number of files cleaned up.
 func (w *Workspace) CleanupOrphanedTempFiles() (int, error) {
-	return w.repo.CleanupOrphanedTempFiles()
-}
-
-// --- Transactions ---
-
-// WithTx runs fn inside a workspace transaction. The transaction provides:
-//
-//   - Atomic file persistence via repository.Transaction. Disk writes
-//     are staged to .new files; on closure success they atomically
-//     rename, on closure error they roll back.
-//   - Deferred graph mutation: fn's calls to tx.WriteEntity /
-//     WriteRelation / DeleteEntity / DeleteRelation accumulate graph
-//     operations that are applied to the live workspace graph (and
-//     the search index) only after the disk transaction commits. On
-//     rollback, the graph is never touched, so a failed transaction
-//     leaves the workspace state byte-identical to its pre-transaction
-//     state.
-//
-// WithTx acquires reloadMu for the duration of the transaction, so it
-// excludes concurrent Reload, Sync, Close, and other WithTx calls. The
-// dataentry App's writeMu stacks on top to additionally serialize HTTP
-// mutation handlers — both layers are required for the full safety
-// story.
-//
-// # Caveats
-//
-//  1. **No nested WithTx.** Calling WithTx from inside another WithTx
-//     callback on the same workspace deadlocks on reloadMu. Same for
-//     calling Reload, Sync, or Close from inside fn. Detection of this
-//     case (with a clear error instead of a hang) is tracked as a
-//     follow-up — for now, callers must not nest.
-//  2. **No read-your-own-writes.** Tx read methods (GetEntity, etc.)
-//     return the workspace's current committed state. They do NOT see
-//     the tx's own pending writes. Migrating this restriction away is
-//     tracked separately.
-//  3. **Pre-existing repository commit hazards.** repository.Transaction
-//     silently swallows phase-2 delete failures and the rollback path
-//     for partial renames is destructive (see C2 in PR review). These
-//     are upstream issues this primitive inherits; they will be
-//     addressed in their own ticket before any high-traffic caller
-//     relies on rollback safety.
-//
-// WithTx is the canonical mutation primitive going forward. No callers
-// have been migrated yet — this PR ships the primitive only. Follow-up
-// tickets migrate rename.Rename, then the workspace's own
-// CreateEntity/UpdateEntity/etc. methods.
-func (w *Workspace) WithTx(fn func(tx *Tx) error) error {
-	w.reloadMu.Lock()
-	defer w.reloadMu.Unlock()
-
-	if w.closed.Load() {
-		return fmt.Errorf("workspace is closed")
-	}
-	base := w.state.Load()
-	if base == nil {
-		return fmt.Errorf("workspace not initialized")
-	}
-
-	var tx *Tx
-	err := w.repo.Transaction(func(repoTx repository.Tx) error {
-		tx = &Tx{ws: w, repoTx: repoTx, base: base}
-		return fn(tx)
-	})
-	// Defang the Tx so a leaked reference cannot operate on a closed
-	// repository transaction. Method calls after this point will hit a
-	// nil deref instead of silently corrupting state.
-	defer func() {
-		if tx != nil {
-			tx.repoTx = nil
-		}
-	}()
+	orphaned, err := w.FindOrphanedTempFiles()
 	if err != nil {
-		return err
+		return 0, err
 	}
-
-	// Repo transaction committed successfully — apply the staged graph
-	// mutations to the live graph and persist the cache.
-	tx.applyGraphMutations()
-	return nil
+	for _, path := range orphaned {
+		if removeErr := w.fs.Remove(path); removeErr != nil {
+			return 0, fmt.Errorf("remove %s: %w", path, removeErr)
+		}
+	}
+	return len(orphaned), nil
 }
+
+// findTempFilesInDir walks a directory (recursively) for .new temp files.
+func findTempFilesInDir(fs storage.FS, dir string) []string {
+	var result []string
+	entries, err := fs.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		path := dir + "/" + name
+		if entry.IsDir() {
+			result = append(result, findTempFilesInDir(fs, path)...)
+		} else if strings.HasSuffix(name, ".new") {
+			result = append(result, path)
+		}
+	}
+	return result
+}
+
 
 // --- Lifecycle ---
-
-// Sync rebuilds the in-memory graph from all entity and relation files
-// on disk and publishes a new workspace state atomically. The metamodel,
-// automation engine, and search index are also rebuilt so that all four
-// fields stay coherent — Sync is a "graph reload using the current
-// metamodel" operation, equivalent to Reload minus the metamodel reload.
-//
-// Serialized against Reload and Close via reloadMu. On failure, the
-// previously-loaded state remains live — readers holding a pre-sync
-// snapshot are never yanked.
-func (w *Workspace) Sync() (*model.SyncResult, error) {
-	w.reloadMu.Lock()
-	defer w.reloadMu.Unlock()
-	if w.closed.Load() {
-		return nil, fmt.Errorf("workspace is closed")
-	}
-	oldState := w.state.Load()
-	if oldState == nil {
-		return nil, fmt.Errorf("workspace not initialized")
-	}
-
-	newGraph, result, err := w.repo.Sync(oldState.meta)
-	if err != nil {
-		return nil, err
-	}
-
-	// Rebuild the search index against the new graph so it stays
-	// consistent with what Search will return. The metamodel and
-	// automation engine carry over unchanged from the previous state.
-	newIdx := w.buildReloadSearchIndex(newGraph, oldState.meta, oldState)
-
-	w.state.Store(&workspaceState{
-		graph:      newGraph,
-		store:      buildMemStore(newGraph),
-		meta:       oldState.meta,
-		automation: oldState.automation,
-		searchIdx:  newIdx,
-	})
-
-	if oldState.searchIdx != nil && oldState.searchIdx != newIdx {
-		if closeErr := oldState.searchIdx.Close(); closeErr != nil {
-			slog.Warn("failed to close old search index", "error", closeErr)
-		}
-	}
-
-	return result, nil
-}
 
 // Reload reloads the metamodel and re-syncs the graph from disk. This is
 // called automatically by the file watcher but is also available for
@@ -653,14 +711,14 @@ func (w *Workspace) Sync() (*model.SyncResult, error) {
 // new metamodel, a new automation engine, and a new search index. On
 // failure, nothing is published — the previous state remains live and
 // concurrent readers never observe a broken or partial workspace.
-func (w *Workspace) Reload() (*model.SyncResult, error) {
+func (w *Workspace) Reload() (entities, relations int, err error) {
 	w.reloadMu.Lock()
 	defer w.reloadMu.Unlock()
 
 	// Skip reloads after Close: they would resurrect the workspace with
 	// fresh resources that no one would close.
 	if w.closed.Load() {
-		return nil, fmt.Errorf("workspace is closed")
+		return 0, 0, fmt.Errorf("workspace is closed")
 	}
 
 	oldState := w.state.Load()
@@ -670,15 +728,22 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 		if migration.IsMigrationError(err) {
 			return w.reloadKeepingOldMetamodel(oldState)
 		}
-		return nil, fmt.Errorf("reload metamodel: %w", err)
+		return 0, 0, fmt.Errorf("reload metamodel: %w", err)
 	}
 
-	// Sync the graph with the new metamodel. repo.Sync returns a fresh
-	// graph; the old graph is never mutated.
-	newGraph, result, err := w.repo.Sync(newMeta)
-	if err != nil {
-		return nil, fmt.Errorf("sync: %w", err)
+	// Pick the store that backs the reloaded state. In production the
+	// syncStore is authoritative and reflects every on-disk change.
+	// For store-less test workspaces we carry the current mirror forward
+	// unchanged — only the metamodel-derived state (automation, search
+	// index) gets refreshed.
+	newStore := w.syncStore
+	if newStore == nil && oldState != nil {
+		newStore = oldState.store
 	}
+	if newStore == nil {
+		newStore = memstore.New()
+	}
+	entitiesLoaded, relationsLoaded := syncCountsFromStore(newStore)
 
 	// Build a new automation engine from the new metamodel.
 	var newAuto *automation.Engine
@@ -687,17 +752,15 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 	}
 
 	// Build the new search index against the new metamodel and the
-	// freshly synced graph. Keep the previous index if construction or
+	// freshly-synced store. Keep the previous index if construction or
 	// indexing fails — never drop a working index in favor of a broken one.
-	newIdx := w.buildReloadSearchIndex(newGraph, newMeta, oldState)
-
+	newIdx := w.buildReloadSearchIndex(newStore, newMeta, oldState)
 
 	// Publish the new state atomically. Readers that call state.Load()
-	// after this point see a fully coherent {newGraph, newMeta, newAuto,
+	// after this point see a fully coherent {newStore, newMeta, newAuto,
 	// newIdx} tuple — no torn reads, no out-of-order publication.
 	w.state.Store(&workspaceState{
-		graph:      newGraph,
-		store:      buildMemStore(newGraph),
+		store:      newStore,
 		meta:       newMeta,
 		automation: newAuto,
 		searchIdx:  newIdx,
@@ -713,7 +776,7 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 		}
 	}
 
-	return result, nil
+	return entitiesLoaded, relationsLoaded, nil
 }
 
 // reloadKeepingOldMetamodel handles the migration-error path of Reload:
@@ -725,26 +788,26 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 // Caller must hold reloadMu.
 func (w *Workspace) reloadKeepingOldMetamodel(
 	oldState *workspaceState,
-) (*model.SyncResult, error) {
+) (entities, relations int, err error) {
 	slog.Warn("metamodel needs migration, skipping metamodel reload: run 'rela migrate'")
 	if oldState == nil {
-		return nil, fmt.Errorf("reload: no current metamodel and new one needs migration")
+		return 0, 0, fmt.Errorf("reload: no current metamodel and new one needs migration")
 	}
 
-	newGraph, result, syncErr := w.repo.Sync(oldState.meta)
-	if syncErr != nil {
-		return nil, syncErr
+	newStore := w.syncStore
+	if newStore == nil {
+		newStore = oldState.store
 	}
+	entitiesLoaded, relationsLoaded := syncCountsFromStore(newStore)
 
-	// Rebuild the search index against the freshly-synced graph (with
+	// Rebuild the search index against the freshly-synced store (with
 	// the OLD metamodel) so Search returns consistent results. Without
-	// this, the published state would have a new graph paired with an
-	// index built from the previous graph — a torn snapshot.
-	newIdx := w.buildReloadSearchIndex(newGraph, oldState.meta, oldState)
+	// this, the published state would have a new store paired with an
+	// index built from the previous state — a torn snapshot.
+	newIdx := w.buildReloadSearchIndex(newStore, oldState.meta, oldState)
 
 	w.state.Store(&workspaceState{
-		graph:      newGraph,
-		store:      buildMemStore(newGraph),
+		store:      newStore,
 		meta:       oldState.meta,
 		automation: oldState.automation,
 		searchIdx:  newIdx,
@@ -756,15 +819,15 @@ func (w *Workspace) reloadKeepingOldMetamodel(
 		}
 	}
 
-	return result, nil
+	return entitiesLoaded, relationsLoaded, nil
 }
 
-// buildReloadSearchIndex creates a fresh search index for a reload built
-// against the given newGraph. On any failure (creating the index,
+// buildReloadSearchIndex creates a fresh search index for a reload, built
+// from entities in the given store. On any failure (creating the index,
 // batch-indexing the documents), it returns the old index from oldState
 // instead of dropping indexing entirely. Caller must hold reloadMu.
 func (w *Workspace) buildReloadSearchIndex(
-	newGraph *graph.Graph, newMeta *metamodel.Metamodel, oldState *workspaceState,
+	st store.Store, newMeta *metamodel.Metamodel, oldState *workspaceState,
 ) *search.Index {
 	carryOver := func() *search.Index {
 		if oldState == nil {
@@ -779,7 +842,7 @@ func (w *Workspace) buildReloadSearchIndex(
 		return carryOver()
 	}
 
-	docs := entitiesToSearchDocuments(newGraph.AllNodes(), newMeta)
+	docs := storeSearchDocuments(st, newMeta)
 	if err := candidate.IndexBatch(docs); err != nil {
 		slog.Warn("failed to index entities during reload; keeping previous index", "error", err)
 		if closeErr := candidate.Close(); closeErr != nil {
@@ -793,7 +856,7 @@ func (w *Workspace) buildReloadSearchIndex(
 
 // indexEntity adds or updates an entity in the search index. Uses a single
 // state snapshot so the index and metamodel come from the same reload epoch.
-func (w *Workspace) indexEntity(entity *model.Entity) {
+func (w *Workspace) indexEntity(entity *entity.Entity) {
 	s := w.state.Load()
 	if s == nil || s.searchIdx == nil {
 		return
@@ -868,11 +931,25 @@ func (w *Workspace) GenerateID(entityType, prefix string) (string, error) {
 		prefix = prefixes[0]
 	}
 
-	existingIDs := s.graph.AllIDs()
+	existingIDs := w.collectAllIDs()
 	if entityDef.IsShortID() {
-		return model.GenerateShortID(existingIDs, prefix, s.graph.NodeCount(), entityDef.GetIDCaps()), nil
+		return entity.GenerateShortID(existingIDs, prefix, len(existingIDs), entityDef.GetIDCaps()), nil
 	}
-	return model.GenerateNextID(existingIDs, prefix), nil
+	return entity.GenerateNextID(existingIDs, prefix), nil
+}
+
+// collectAllIDs returns every entity ID currently in the workspace's
+// store. Used for ID generation where we need the full existing set.
+func (w *Workspace) collectAllIDs() []string {
+	ctx := context.Background()
+	var ids []string
+	for e, err := range w.Store().ListEntities(ctx, store.EntityQuery{}) {
+		if err != nil {
+			return ids
+		}
+		ids = append(ids, e.ID)
+	}
+	return ids
 }
 
 // --- Entity operations ---
@@ -889,8 +966,8 @@ type CreateOptions struct {
 type CreateResult struct {
 	AutomationWarnings []string
 	AutomationErrors   []string
-	RelationsCreated   []*model.Relation
-	EntitiesCreated    []*model.Entity
+	RelationsCreated   []*entity.Relation
+	EntitiesCreated    []*entity.Entity
 }
 
 // CreateEntity generates an ID (unless provided), applies templates and
@@ -900,7 +977,7 @@ type CreateResult struct {
 // Captures a single workspace state snapshot at entry. Callers must
 // serialize CreateEntity against concurrent Reload via an external mutex
 // (App.writeMu in the data-entry server).
-func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*model.Entity, *CreateResult, error) {
+func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entity.Entity, *CreateResult, error) {
 	s := w.state.Load()
 	if s == nil {
 		return nil, nil, fmt.Errorf("workspace not initialized")
@@ -908,7 +985,7 @@ func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*model.
 
 	// Check for duplicates if custom ID provided.
 	if opts.ID != "" {
-		if _, exists := s.graph.GetNode(opts.ID); exists {
+		if _, err := w.Store().GetEntity(context.Background(), opts.ID); err == nil {
 			return nil, nil, fmt.Errorf("entity with ID %s already exists", opts.ID)
 		}
 	}
@@ -930,7 +1007,7 @@ func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*model.
 	if s.automation != nil {
 		autoResult = s.automation.Process(automation.Event{
 			Type:   automation.EventEntityCreated,
-			Entity: model.EntityToDomain(entity),
+			Entity: entity,
 		})
 		// Apply property changes.
 		if len(autoResult.PropertiesSet) > 0 {
@@ -938,7 +1015,7 @@ func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*model.
 				entity.SetString(prop, val)
 			}
 			// Re-write entity with automation-set properties.
-			if err := w.repo.WriteEntity(entity, s.meta); err != nil {
+			if err := w.writeEntity(entity); err != nil {
 				return nil, nil, fmt.Errorf("write entity after automation: %w", err)
 			}
 		}
@@ -962,19 +1039,19 @@ func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*model.
 type UpdateResult struct {
 	AutomationWarnings []string
 	AutomationErrors   []string
-	RelationsCreated   []*model.Relation
-	EntitiesCreated    []*model.Entity
+	RelationsCreated   []*entity.Relation
+	EntitiesCreated    []*entity.Entity
 }
 
 // UpdateEntity validates and writes an existing entity, runs automation,
-// and updates the graph.
+// and mirrors to the in-memory store(s).
 //
 // Captures a single workspace state snapshot at entry; all reads of meta,
 // automation, and graph during this call use that snapshot. Callers must
 // serialize UpdateEntity against concurrent Reload via an external mutex
 // (App.writeMu in the data-entry server) so the snapshot the method
 // holds matches the workspace's current state until the method returns.
-func (w *Workspace) updateEntity(entity, oldEntity *model.Entity) (*UpdateResult, error) {
+func (w *Workspace) updateEntity(entity, oldEntity *entity.Entity) (*UpdateResult, error) {
 	s := w.state.Load()
 	if s == nil {
 		return nil, fmt.Errorf("workspace not initialized")
@@ -993,8 +1070,8 @@ func (w *Workspace) updateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 	if s.automation != nil && oldEntity != nil {
 		autoResult = s.automation.Process(automation.Event{
 			Type:      automation.EventEntityUpdated,
-			Entity:    model.EntityToDomain(entity),
-			OldEntity: model.EntityToDomain(oldEntity),
+			Entity:    entity,
+			OldEntity: oldEntity,
 		})
 		for prop, val := range autoResult.PropertiesSet {
 			entity.SetString(prop, val)
@@ -1003,13 +1080,11 @@ func (w *Workspace) updateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		result.AutomationErrors = autoResult.Errors
 	}
 
-	// Write to disk + update graph + search index BEFORE side effects.
-	// This ensures Lua scripts can modify entities without being overwritten.
-	if err := w.repo.WriteEntity(entity, meta); err != nil {
+	// Write to disk + mirror BEFORE side effects. This ensures Lua scripts
+	// can modify entities without being overwritten.
+	if err := w.writeEntity(entity); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
-	s.graph.AddNode(entity)
-	mirrorEntityUpsert(s.store, entity)
 
 	// Apply automation side effects (relations, entities, Lua) AFTER entity is written.
 	if autoResult != nil {
@@ -1038,14 +1113,15 @@ func (w *Workspace) deleteEntity(entityType, id string, cascade bool) (*DeleteRe
 	if s == nil {
 		return nil, fmt.Errorf("workspace not initialized")
 	}
-	g := s.graph
 
-	if _, ok := g.GetNode(id); !ok {
+	ctx := context.Background()
+	st := w.Store()
+	if _, err := st.GetEntity(ctx, id); err != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
-	incoming := g.IncomingEdges(id)
-	outgoing := g.OutgoingEdges(id)
+	incoming := collectRelations(st, store.RelationQuery{EntityID: id, Direction: store.DirectionIncoming})
+	outgoing := collectRelations(st, store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing})
 	totalRelations := len(incoming) + len(outgoing)
 
 	if totalRelations > 0 && !cascade {
@@ -1053,35 +1129,29 @@ func (w *Workspace) deleteEntity(entityType, id string, cascade bool) (*DeleteRe
 	}
 
 	result := &DeleteResult{}
-	meta := s.meta
 
 	// Delete relations first.
 	for _, rel := range incoming {
-		if err := w.repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil {
+		if err := w.deleteRelationStore(rel.From, rel.Type, rel.To); err != nil {
 			slog.Warn("failed to delete relation", "from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
 		}
-		g.RemoveEdge(rel.From, rel.Type, rel.To)
-		mirrorRelationDelete(s.store, rel.From, rel.Type, rel.To)
 		result.RelationsDeleted++
 	}
 	for _, rel := range outgoing {
-		if err := w.repo.DeleteRelation(rel.From, rel.Type, rel.To); err != nil {
+		if err := w.deleteRelationStore(rel.From, rel.Type, rel.To); err != nil {
 			slog.Warn("failed to delete relation", "from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
 		}
-		g.RemoveEdge(rel.From, rel.Type, rel.To)
-		mirrorRelationDelete(s.store, rel.From, rel.Type, rel.To)
 		result.RelationsDeleted++
 	}
 
 	// Delete entity.
-	if err := w.repo.DeleteEntity(entityType, id, meta); err != nil {
+	if err := w.deleteEntityStore(id); err != nil {
 		return nil, fmt.Errorf("delete entity: %w", err)
 	}
-	g.RemoveNode(id)
-	mirrorEntityDelete(s.store, id)
 
 	return result, nil
 }
+
 
 // createEntityCoreOpts configures core entity creation.
 type createEntityCoreOpts struct {
@@ -1094,7 +1164,7 @@ type createEntityCoreOpts struct {
 
 // createEntityCore creates an entity without running automations.
 // This is the shared creation logic used by CreateEntity and automation processing.
-func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpts) (*model.Entity, error) {
+func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpts) (*entity.Entity, error) {
 	meta := w.Meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
@@ -1110,12 +1180,12 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 		}
 		entityID = id
 	} else {
-		if err := model.ValidateID(entityID); err != nil {
+		if err := entity.ValidateID(entityID); err != nil {
 			return nil, err
 		}
 	}
 
-	entity := model.NewEntity(entityID, entityType)
+	e := entity.New(entityID, entityType)
 
 	// Apply template defaults (use variant if specified).
 	tmpl, err := w.Templater().EntityTemplate(context.Background(), entityType, opts.TemplateVariant)
@@ -1127,45 +1197,41 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 		return nil, fmt.Errorf("template variant %q not found for entity type %s", opts.TemplateVariant, entityType)
 	}
 	if tmpl != nil {
-		entity.Properties, entity.Content = templating.ApplyEntity(entity.Properties, entity.Content, tmpl)
+		e.Properties, e.Content = templating.ApplyEntity(e.Properties, e.Content, tmpl)
 	}
 
 	// Apply provided properties (override template defaults).
 	for k, v := range opts.Properties {
-		entity.Properties[k] = v
+		e.Properties[k] = v
 	}
 
 	// Set body content.
 	if opts.Content != "" {
-		entity.Content = opts.Content
+		e.Content = opts.Content
 	}
 
 	// Set default status if not set.
-	if entity.GetString("status") == "" {
-		entity.SetString("status", entityDef.GetDefaultStatus(meta))
+	if e.GetString("status") == "" {
+		e.SetString("status", entityDef.GetDefaultStatus(meta))
 	}
 
 	// Validate.
-	if errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
+	if errs := meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
 		return nil, newValidationError(errs)
 	}
 
-	// Write to disk + update graph.
-	if err := w.repo.WriteEntity(entity, meta); err != nil {
+	// Persist to every store (mirror + syncStore + disk via fsstore).
+	if err := w.writeEntity(e); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
-	w.Graph().AddNode(entity)
-	if s := w.state.Load(); s != nil {
-		mirrorEntityUpsert(s.store, entity)
-	}
 
-	return entity, nil
+	return e, nil
 }
 
 // automationSideEffects holds entities and relations created by automation.
 type automationSideEffects struct {
-	RelationsCreated []*model.Relation
-	EntitiesCreated  []*model.Entity
+	RelationsCreated []*entity.Relation
+	EntitiesCreated  []*entity.Entity
 	Errors           []string
 	Warnings         []string
 }
@@ -1173,12 +1239,23 @@ type automationSideEffects struct {
 // findExistingRelationTarget finds an existing entity of the given type that is
 // the target of a relation from the source entity with the given relation type.
 // Returns nil if no such entity exists.
-func (w *Workspace) findExistingRelationTarget(sourceID, relationType, targetType string) *model.Entity {
-	for _, rel := range w.Graph().OutgoingEdges(sourceID) {
-		if rel.Type == relationType {
-			if target, ok := w.Graph().GetNode(rel.To); ok && target.Type == targetType {
-				return target
-			}
+func (w *Workspace) findExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity {
+	ctx := context.Background()
+	st := w.Store()
+	for rel, err := range st.ListRelations(ctx, store.RelationQuery{
+		EntityID:  sourceID,
+		Direction: store.DirectionOutgoing,
+		Type:      relationType,
+	}) {
+		if err != nil {
+			continue
+		}
+		target, err := st.GetEntity(ctx, rel.To)
+		if err != nil {
+			continue
+		}
+		if target.Type == targetType {
+			return target
 		}
 	}
 	return nil
@@ -1186,15 +1263,15 @@ func (w *Workspace) findExistingRelationTarget(sourceID, relationType, targetTyp
 
 // automationQueueItem represents a pending automation result to process.
 type automationQueueItem struct {
-	trigger    *model.Entity
+	trigger    *entity.Entity
 	autoResult *automation.Result
 }
 
 // applyAutomationSideEffects processes automation results iteratively using a BFS queue.
 // This avoids deep recursion and provides clear iteration limits.
 func (w *Workspace) applyAutomationSideEffects(
-	triggerEntity *model.Entity,
-	oldEntity *model.Entity,
+	triggerEntity *entity.Entity,
+	oldEntity *entity.Entity,
 	autoResult *automation.Result,
 ) *automationSideEffects {
 	effects := &automationSideEffects{}
@@ -1213,11 +1290,7 @@ func (w *Workspace) applyAutomationSideEffects(
 		w.executeLuaActions(item.trigger, oldEntity, item.autoResult.LuaToExecute, effects)
 
 		// Process relations for this trigger.
-		legacyRels := make([]*model.Relation, len(item.autoResult.RelationsToCreate))
-		for i, r := range item.autoResult.RelationsToCreate {
-			legacyRels[i] = model.RelationFromDomain(r)
-		}
-		w.applyRelationCreations(item.trigger, legacyRels, effects)
+		w.applyRelationCreations(item.trigger, item.autoResult.RelationsToCreate, effects)
 
 		// Collect warnings/errors from this automation result.
 		effects.Warnings = append(effects.Warnings, item.autoResult.Warnings...)
@@ -1240,7 +1313,7 @@ func (w *Workspace) applyAutomationSideEffects(
 
 // processEntityCreations handles entity creation from automation and returns new queue items.
 func (w *Workspace) processEntityCreations(
-	trigger *model.Entity,
+	trigger *entity.Entity,
 	toCreateList []automation.EntityToCreate,
 	effects *automationSideEffects,
 ) []automationQueueItem {
@@ -1282,7 +1355,7 @@ func (w *Workspace) processEntityCreations(
 
 // runCreatedEntityAutomation runs automation on a newly created entity and returns a queue item if needed.
 func (w *Workspace) runCreatedEntityAutomation(
-	created *model.Entity,
+	created *entity.Entity,
 	meta *metamodel.Metamodel,
 	effects *automationSideEffects,
 ) *automationQueueItem {
@@ -1293,7 +1366,7 @@ func (w *Workspace) runCreatedEntityAutomation(
 
 	newAutoResult := s.automation.Process(automation.Event{
 		Type:   automation.EventEntityCreated,
-		Entity: model.EntityToDomain(created),
+		Entity: created,
 	})
 
 	// Apply property changes from automation.
@@ -1302,7 +1375,7 @@ func (w *Workspace) runCreatedEntityAutomation(
 			created.SetString(prop, val)
 		}
 		// Re-write entity with updated properties.
-		if err := w.repo.WriteEntity(created, meta); err != nil {
+		if err := w.writeEntity(created); err != nil {
 			effects.Errors = append(effects.Errors,
 				fmt.Sprintf("failed to update automation entity %s: %v", created.ID, err))
 		}
@@ -1321,8 +1394,8 @@ func (w *Workspace) runCreatedEntityAutomation(
 
 // applyRelationCreations creates relations from automation results.
 func (w *Workspace) applyRelationCreations(
-	triggerEntity *model.Entity,
-	relations []*model.Relation,
+	triggerEntity *entity.Entity,
+	relations []*entity.Relation,
 	effects *automationSideEffects,
 ) {
 	meta := w.Meta()
@@ -1330,8 +1403,8 @@ func (w *Workspace) applyRelationCreations(
 	for _, rel := range relations {
 		rel.From = triggerEntity.ID
 
-		targetEntity, ok := w.Graph().GetNode(rel.To)
-		if !ok {
+		targetEntity, err := w.Store().GetEntity(context.Background(), rel.To)
+		if err != nil {
 			effects.Errors = append(effects.Errors,
 				fmt.Sprintf("automation relation target not found: %s", rel.To))
 			continue
@@ -1353,8 +1426,8 @@ func (w *Workspace) applyRelationCreations(
 
 // executeLuaActions executes Lua scripts from automation results.
 func (w *Workspace) executeLuaActions(
-	entity *model.Entity,
-	oldEntity *model.Entity,
+	entity *entity.Entity,
+	oldEntity *entity.Entity,
 	luaActions []automation.LuaToExecute,
 	effects *automationSideEffects,
 ) {
@@ -1366,9 +1439,9 @@ func (w *Workspace) executeLuaActions(
 	ctx := &scriptContextImpl{
 		workspace:   w,
 		meta:        w.Meta(),
-		projectRoot: w.repo.Paths().Root,
-		entity:      model.EntityToDomain(entity),
-		oldEntity:   model.EntityToDomain(oldEntity),
+		projectRoot: w.paths.Root,
+		entity:      entity,
+		oldEntity:   oldEntity,
 	}
 
 	for _, action := range luaActions {
@@ -1396,7 +1469,7 @@ func (w *Workspace) executeLuaActions(
 // handleIfExists checks if_exists behavior for entity creation.
 // Returns true if the entity creation should be skipped.
 func (w *Workspace) handleIfExists(
-	triggerEntity *model.Entity,
+	triggerEntity *entity.Entity,
 	toCreate automation.EntityToCreate,
 	effects *automationSideEffects,
 ) bool {
@@ -1436,7 +1509,7 @@ func (w *Workspace) handleIfExists(
 
 // createTriggerRelation creates a relation from the trigger entity to a newly created entity.
 func (w *Workspace) createTriggerRelation(
-	triggerEntity, created *model.Entity,
+	triggerEntity, created *entity.Entity,
 	relationType string,
 	effects *automationSideEffects,
 ) {
@@ -1448,7 +1521,7 @@ func (w *Workspace) createTriggerRelation(
 		return
 	}
 
-	rel := model.NewRelation(triggerEntity.ID, relationType, created.ID)
+	rel := entity.NewRelation(triggerEntity.ID, relationType, created.ID)
 	if err := w.writeRelationCore(rel); err != nil {
 		effects.Errors = append(effects.Errors,
 			fmt.Sprintf("failed to create automation relation: %v", err))
@@ -1459,15 +1532,11 @@ func (w *Workspace) createTriggerRelation(
 
 // --- Relation operations ---
 
-// writeRelationCore writes a relation to disk and updates the graph.
-// This is the shared write logic used by CreateRelation and automation processing.
-func (w *Workspace) writeRelationCore(rel *model.Relation) error {
-	if err := w.repo.WriteRelation(rel); err != nil {
+// writeRelationCore persists a relation to every store. Shared by
+// CreateRelation and automation processing.
+func (w *Workspace) writeRelationCore(rel *entity.Relation) error {
+	if err := w.writeRelation(rel); err != nil {
 		return fmt.Errorf("write relation: %w", err)
-	}
-	w.Graph().AddEdge(rel)
-	if s := w.state.Load(); s != nil {
-		mirrorRelationCreate(s.store, rel)
 	}
 	return nil
 }
@@ -1479,19 +1548,21 @@ type CreateRelationOptions struct {
 }
 
 // CreateRelation validates both endpoints exist, checks for duplicates,
-// validates against the metamodel, writes to disk, and updates the graph.
-func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelationOptions) (*model.Relation, error) {
+// validates against the metamodel, writes to disk, and mirrors to the store.
+func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelationOptions) (*entity.Relation, error) {
 	s := w.state.Load()
 	if s == nil {
 		return nil, fmt.Errorf("workspace not initialized")
 	}
 
-	fromEntity, ok := s.graph.GetNode(from)
-	if !ok {
+	ctx := context.Background()
+	st := w.Store()
+	fromEntity, err := st.GetEntity(ctx, from)
+	if err != nil {
 		return nil, fmt.Errorf("source entity not found: %s", from)
 	}
-	toEntity, ok := s.graph.GetNode(to)
-	if !ok {
+	toEntity, err := st.GetEntity(ctx, to)
+	if err != nil {
 		return nil, fmt.Errorf("target entity not found: %s", to)
 	}
 
@@ -1501,11 +1572,11 @@ func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelat
 	}
 
 	// Check for duplicates.
-	if _, exists := s.graph.GetEdge(from, relType, to); exists {
+	if _, err := st.GetRelation(ctx, from, relType, to); err == nil {
 		return nil, fmt.Errorf("relation already exists: %s --%s--> %s", from, relType, to)
 	}
 
-	rel := model.NewRelation(from, relType, to)
+	rel := entity.NewRelation(from, relType, to)
 
 	// Apply template if available.
 	tmpl, err := w.Templater().RelationTemplate(context.Background(), relType)
@@ -1537,9 +1608,9 @@ func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelat
 }
 
 // UpdateRelation updates properties on an existing relation.
-func (w *Workspace) updateRelation(from, relType, to string, opts CreateRelationOptions) (*model.Relation, error) {
-	rel, exists := w.Graph().GetEdge(from, relType, to)
-	if !exists {
+func (w *Workspace) updateRelation(from, relType, to string, opts CreateRelationOptions) (*entity.Relation, error) {
+	rel, err := w.Store().GetRelation(context.Background(), from, relType, to)
+	if err != nil {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", from, relType, to)
 	}
 
@@ -1561,131 +1632,15 @@ func (w *Workspace) updateRelation(from, relType, to string, opts CreateRelation
 	return rel, nil
 }
 
-// DeleteRelation removes a relation from disk and the graph.
+// DeleteRelation removes a relation from disk and the in-memory store(s).
 func (w *Workspace) deleteRelation(from, relType, to string) error {
-	if err := w.repo.DeleteRelation(from, relType, to); err != nil {
+	if err := w.deleteRelationStore(from, relType, to); err != nil {
 		return fmt.Errorf("delete relation: %w", err)
-	}
-	w.Graph().RemoveEdge(from, relType, to)
-	if s := w.state.Load(); s != nil {
-		mirrorRelationDelete(s.store, from, relType, to)
 	}
 	return nil
 }
 
 // --- Rename ---
-
-// --- Formatting ---
-
-// FormatEntity checks if an entity file needs formatting and optionally writes
-// the formatted version. Returns true if the file was (or would be) modified.
-func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error) {
-	meta := w.Meta()
-	// Get property order from metamodel
-	var propertyOrder []string
-	if entityDef, ok := meta.GetEntityDef(entity.Type); ok {
-		propertyOrder = entityDef.GetPropertyOrder()
-	}
-
-	// Generate formatted content with configured line width
-	formatted, err := formatEntityMarkdown(entity, propertyOrder, w.config.Formatting.LineWidth)
-	if err != nil {
-		return false, fmt.Errorf("format entity: %w", err)
-	}
-
-	// Read current file content
-	current, err := w.repo.FS().ReadFile(entity.FilePath)
-	if err != nil {
-		return false, fmt.Errorf("read entity file: %w", err)
-	}
-
-	// Compare
-	if formatted == string(current) {
-		return false, nil
-	}
-
-	// Write if not dry-run
-	if !dryRun {
-		if err := w.repo.WriteEntity(entity, meta); err != nil {
-			return false, fmt.Errorf("write entity: %w", err)
-		}
-	}
-
-	return true, nil
-}
-
-// FormatRelation checks if a relation file needs formatting and optionally writes
-// the formatted version. Returns true if the file was (or would be) modified.
-func (w *Workspace) FormatRelation(relation *model.Relation, dryRun bool) (bool, error) {
-	// Generate formatted content with configured line width
-	formatted, err := formatRelationMarkdown(relation, w.config.Formatting.LineWidth)
-	if err != nil {
-		return false, fmt.Errorf("format relation: %w", err)
-	}
-
-	// Read current file content
-	current, err := w.repo.FS().ReadFile(relation.FilePath)
-	if err != nil {
-		return false, fmt.Errorf("read relation file: %w", err)
-	}
-
-	// Compare
-	if formatted == string(current) {
-		return false, nil
-	}
-
-	// Write if not dry-run
-	if !dryRun {
-		if err := w.repo.WriteRelation(relation); err != nil {
-			return false, fmt.Errorf("write relation: %w", err)
-		}
-	}
-
-	return true, nil
-}
-
-// formatEntityMarkdown formats a model.Entity as markdown with YAML frontmatter.
-func formatEntityMarkdown(entity *model.Entity, propertyOrder []string, lineWidth int) (string, error) {
-	fm := make(map[string]interface{})
-	fm["id"] = entity.ID
-	fm["type"] = entity.Type
-	for k, v := range entity.Properties {
-		fm[k] = v
-	}
-
-	keyOrder := []string{"id", "type"}
-	if len(propertyOrder) > 0 {
-		keyOrder = append(keyOrder, propertyOrder...)
-	}
-
-	content := entity.Content
-	if content != "" {
-		content = markdown.FormatMarkdownWithWidth(content, lineWidth)
-	}
-
-	return markdown.FormatDocumentOrdered(fm, content, keyOrder)
-}
-
-// formatRelationMarkdown formats a model.Relation as markdown with YAML frontmatter.
-func formatRelationMarkdown(relation *model.Relation, lineWidth int) (string, error) {
-	fm := map[string]interface{}{
-		"from":     relation.From,
-		"relation": relation.Type,
-		"to":       relation.To,
-	}
-	for k, v := range relation.Properties {
-		fm[k] = v
-	}
-
-	keyOrder := []string{"from", "relation", "to"}
-
-	content := relation.Content
-	if content != "" {
-		content = markdown.FormatMarkdownWithWidth(content, lineWidth)
-	}
-
-	return markdown.FormatDocumentOrdered(fm, content, keyOrder)
-}
 
 // --- File watching ---
 
@@ -1706,16 +1661,20 @@ type WatchOptions struct {
 	OnMetaReload func()
 }
 
-// StartWatching begins watching for file changes. Schema changes flow
-// through the metamodel loader's Subscribe; entity/relation/views/extras
-// come from a storage.Watcher rooted at the project directories.
+// StartWatching begins watching for file changes.
+//
+//   - Metamodel changes flow through the metamodel loader's Subscribe
+//     and fire opts.OnMetaReload.
+//   - Entity/relation changes come from the store's own event stream
+//     (started by Workspace.New when a store factory is configured) and
+//     fire opts.OnChange.
+//   - Extra files/dirs (views.yaml, etc.) are watched via a separate
+//     storage.Watcher.
 func (w *Workspace) StartWatching(opts WatchOptions) error {
-	paths := w.Paths()
-
 	// Subscribe to metamodel changes via the loader.
 	if sub, ok := w.MetaLoader().(metamodel.Subscriber); ok {
 		stop, err := sub.Subscribe(context.Background(), func() {
-			if _, reloadErr := w.Reload(); reloadErr != nil {
+			if _, _, reloadErr := w.Reload(); reloadErr != nil {
 				slog.Error("reload error", "error", reloadErr)
 			}
 			if opts.OnMetaReload != nil {
@@ -1728,42 +1687,81 @@ func (w *Workspace) StartWatching(opts WatchOptions) error {
 		w.stopSchema = stop
 	}
 
-	// Always-watched dirs: entities + relations + caller extras.
-	dirs := make([]string, 0, 2+len(opts.ExtraDirs))
-	dirs = append(dirs, paths.EntitiesDir, paths.RelationsDir)
-	dirs = append(dirs, opts.ExtraDirs...)
-
-	viewsPath := filepath.Join(paths.Root, "views.yaml")
-
-	watcher, err := storage.NewWatcher(storage.WatchConfig{
-		Dirs:       dirs,
-		Files:      opts.ExtraFiles,
-		Extensions: []string{".md", ".yaml", ".yml"},
-		Debounce:   200 * time.Millisecond,
-		SkipHidden: true,
-		OnChange: func(events []storage.ChangeEvent) {
-			action := classifyDataEvents(events, viewsPath, paths.EntitiesDir, paths.RelationsDir)
-			if action == actionSync {
-				if _, syncErr := w.Sync(); syncErr != nil {
-					slog.Error("sync error", "error", syncErr)
-				}
+	// Ask the store to start watching its own data files. The interface
+	// doesn't mandate this capability, so we feature-test via type
+	// assertion — fsstore supports it; memstore and other in-memory
+	// backends don't need to.
+	if w.syncStore != nil {
+		if sw, ok := w.syncStore.(storeWatcher); ok {
+			if err := sw.StartWatching(); err != nil {
+				slog.Warn("store watcher not started", "error", err)
 			}
-			if opts.OnChange != nil {
-				opts.OnChange(events)
-			}
-		},
-	})
-	if err != nil {
-		if w.stopSchema != nil {
-			w.stopSchema()
-			w.stopSchema = nil
 		}
-		return err
 	}
 
-	go watcher.Start()
-	w.watcher = watcher
+	// Forward store events as workspace ChangeEvents so consumers that
+	// wired up OnChange for the legacy fs watcher keep working.
+	if opts.OnChange != nil && w.syncStore != nil {
+		ch, cancel := w.syncStore.Subscribe(32)
+		w.stopStoreEvents = cancel
+		go forwardStoreEvents(ch, opts.OnChange)
+	}
+
+	// Optional extra watcher for non-store files (views.yaml, etc.).
+	if len(opts.ExtraDirs) > 0 || len(opts.ExtraFiles) > 0 {
+		watcher, err := storage.NewWatcher(storage.WatchConfig{
+			Dirs:       opts.ExtraDirs,
+			Files:      opts.ExtraFiles,
+			Extensions: []string{".yaml", ".yml"},
+			Debounce:   200 * time.Millisecond,
+			SkipHidden: true,
+			OnChange: func(events []storage.ChangeEvent) {
+				if opts.OnChange != nil {
+					opts.OnChange(events)
+				}
+			},
+		})
+		if err != nil {
+			if w.stopSchema != nil {
+				w.stopSchema()
+				w.stopSchema = nil
+			}
+			return err
+		}
+		go watcher.Start()
+		w.watcher = watcher
+	}
 	return nil
+}
+
+// forwardStoreEvents drains a store.Event channel and fires onChange
+// once per event, shaped as a single-event workspace.ChangeEvent slice.
+// The store already debounces writes, so we don't re-batch here.
+func forwardStoreEvents(ch <-chan store.Event, onChange func([]ChangeEvent)) {
+	for ev := range ch {
+		onChange([]ChangeEvent{{
+			Path: storeEventPath(ev),
+			Op:   storeEventOp(ev),
+		}})
+	}
+}
+
+func storeEventPath(ev store.Event) string {
+	if ev.EntityID != "" {
+		return ev.EntityType + "/" + ev.EntityID
+	}
+	return ev.From + "--" + ev.RelationType + "--" + ev.To
+}
+
+func storeEventOp(ev store.Event) storage.ChangeOp {
+	switch ev.Op {
+	case store.EventEntityCreated, store.EventRelationCreated:
+		return storage.OpCreate
+	case store.EventEntityDeleted, store.EventRelationDeleted:
+		return storage.OpDelete
+	default:
+		return storage.OpModify
+	}
 }
 
 // updateSchemaFiles records the latest set of metamodel source files.
@@ -1791,6 +1789,10 @@ func (w *Workspace) stopWatchingLocked() {
 	if w.stopSchema != nil {
 		w.stopSchema()
 		w.stopSchema = nil
+	}
+	if w.stopStoreEvents != nil {
+		w.stopStoreEvents()
+		w.stopStoreEvents = nil
 	}
 }
 
@@ -1822,6 +1824,15 @@ func (w *Workspace) Close() error {
 			searchIdx:  nil,
 		})
 	}
+	if w.syncStore != nil {
+		if sw, ok := w.syncStore.(storeWatcher); ok {
+			sw.StopWatching()
+		}
+		if err := w.syncStore.Close(); err != nil {
+			slog.Warn("failed to close sync store", "error", err)
+		}
+		w.syncStore = nil
+	}
 	return nil
 }
 
@@ -1844,7 +1855,7 @@ func (w *Workspace) ResumeWatching() {
 // FS returns the underlying filesystem for operations that need direct
 // file access (e.g., attachment store, writing output files).
 func (w *Workspace) FS() storage.FS {
-	return w.repo.FS()
+	return w.fs
 }
 
 // NormalizeContent normalizes markdown headers in content so the minimum
@@ -1856,7 +1867,7 @@ func (w *Workspace) NormalizeContent(content string) string {
 // --- Search document conversion ---
 
 // entityToSearchDocument converts an entity to a search.Document.
-func entityToSearchDocument(e *model.Entity, meta *metamodel.Metamodel) search.Document {
+func entityToSearchDocument(e *entity.Entity, meta *metamodel.Metamodel) search.Document {
 	return search.Document{
 		ID:          e.ID,
 		Type:        e.Type,
@@ -1867,11 +1878,19 @@ func entityToSearchDocument(e *model.Entity, meta *metamodel.Metamodel) search.D
 	}
 }
 
-// entitiesToSearchDocuments converts a slice of entities to search documents.
-func entitiesToSearchDocuments(entities []*model.Entity, meta *metamodel.Metamodel) []search.Document {
-	docs := make([]search.Document, len(entities))
-	for i, e := range entities {
-		docs[i] = entityToSearchDocument(e, meta)
+// storeSearchDocuments iterates a store and produces search documents for
+// every entity. Errors from the store iterator are ignored — partial
+// indexing is preferable to dropping the whole index.
+func storeSearchDocuments(st store.Store, meta *metamodel.Metamodel) []search.Document {
+	if st == nil {
+		return nil
+	}
+	var docs []search.Document
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{}) {
+		if err != nil {
+			continue
+		}
+		docs = append(docs, entityToSearchDocument(e, meta))
 	}
 	return docs
 }

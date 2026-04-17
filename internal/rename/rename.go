@@ -26,7 +26,5 @@ type Result struct {
 	OldID            string
 	NewID            string
 	EntityType       string
-	EntityFile       string        // Path to new entity file
 	RelationsUpdated []RelationRef // Relations that were updated
-	OldFilesDeleted  []string      // Files that were deleted
 }

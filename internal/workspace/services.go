@@ -7,7 +7,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -20,8 +19,8 @@ import (
 // backend services. Consumers use it to run Lua scripts via lua.New.
 func (w *Workspace) LuaServices() lua.Services {
 	var root string
-	if w.repo != nil {
-		root = w.Paths().Root
+	if w.paths != nil {
+		root = w.paths.Root
 	}
 	return lua.Services{
 		Store:       w.Store(),
@@ -30,10 +29,6 @@ func (w *Workspace) LuaServices() lua.Services {
 		Searcher:    w.Searcher(),
 		Meta:        w.Meta(),
 		ProjectRoot: root,
-		Sync: func() error {
-			_, err := w.Sync()
-			return err
-		},
 	}
 }
 
@@ -115,37 +110,12 @@ func (w *Workspace) MetaLoader() metamodel.Loader {
 	return metamodel.NewFSLoader(w.FS(), w.Paths().MetamodelPath)
 }
 
-// legacyFormatter adapts the workspace's FormatEntity/FormatRelation methods
-// to the store.Formatter interface. Used when no backend-specific formatter
-// is wired via WithFormatter.
-type legacyFormatter struct {
-	w *Workspace
-}
-
-var _ store.Formatter = (*legacyFormatter)(nil)
-
-func (f *legacyFormatter) FormatEntity(_ context.Context, id string, dryRun bool) (bool, error) {
-	e, ok := f.w.GetEntity(id)
-	if !ok {
-		return false, nil
-	}
-	return f.w.FormatEntity(model.EntityFromDomain(e), dryRun)
-}
-
-func (f *legacyFormatter) FormatRelation(_ context.Context, from, relType, to string, dryRun bool) (bool, error) {
-	r, ok := f.w.GetRelation(from, relType, to)
-	if !ok {
-		return false, nil
-	}
-	return f.w.FormatRelation(model.RelationFromDomain(r), dryRun)
-}
-
 // Validator returns a Validator service backed by the workspace's store and
 // metamodel. The service uses workspace as the Lua execution context.
 func (w *Workspace) Validator() validator.Validator {
 	var root string
-	if w.repo != nil {
-		root = w.repo.Paths().Root
+	if w.paths != nil {
+		root = w.paths.Root
 	}
 	return validator.New(w.Store(), w.Meta(), w.luaServices(), root)
 }

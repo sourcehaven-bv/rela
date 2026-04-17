@@ -1,4 +1,4 @@
-package model
+package entity
 
 import (
 	"strings"
@@ -7,7 +7,7 @@ import (
 )
 
 // FuzzParseEntityID tests the entity ID parser with arbitrary input
-// Run with: go test -fuzz=FuzzParseEntityID -fuzztime=30s ./internal/model/
+// Run with: go test -fuzz=FuzzParseEntityID -fuzztime=30s ./internal/entity/
 func FuzzParseEntityID(f *testing.F) {
 	// Seed corpus with interesting cases
 	seeds := []string{

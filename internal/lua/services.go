@@ -20,8 +20,4 @@ type Services struct {
 	// rela.write_file to resolve relative output directories. Not exposed
 	// to Lua scripts directly.
 	ProjectRoot string
-
-	// Sync is an optional callback invoked by rela.sync().
-	// If nil, sync() is a no-op.
-	Sync func() error
 }

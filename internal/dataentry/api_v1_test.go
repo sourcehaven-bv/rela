@@ -9,11 +9,8 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func TestV1SchemaEndpoint(t *testing.T) {
@@ -91,7 +88,7 @@ func TestV1ConfigEndpoint_IncludesActions(t *testing.T) {
 			},
 		},
 	}
-	app := newAppFromParts(cfg, meta, graph.New())
+	app := newAppFromParts(cfg, meta, newFixture())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody)
 	rec := httptest.NewRecorder()
@@ -125,7 +122,7 @@ func TestV1ListEntities(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entity
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -168,7 +165,7 @@ func TestV1GetEntity(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entity
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -225,7 +222,7 @@ func TestV1DynamicRouting(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entity
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -260,7 +257,7 @@ func TestV1Filtering(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entities
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -268,7 +265,7 @@ func TestV1Filtering(t *testing.T) {
 			"status": "open",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -302,7 +299,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entities with various statuses
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -310,7 +307,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 			"status": "open",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -318,7 +315,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 			"status": "completed",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -326,7 +323,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 			"status": "superseded",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-004",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -376,14 +373,14 @@ func TestV1Sorting(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entities
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "B Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -414,7 +411,7 @@ func TestV1Pagination(t *testing.T) {
 
 	// Add multiple entities
 	for i := 1; i <= 30; i++ {
-		graphForTest(app).AddNode(&model.Entity{
+		seedEntity(app, &entity.Entity{
 			ID:   "TKT-" + padInt(i),
 			Type: "ticket",
 			Properties: map[string]interface{}{
@@ -536,7 +533,7 @@ func TestV1SearchWithQuery(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add test entity
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -556,14 +553,14 @@ func TestV1SearchWithQuery(t *testing.T) {
 func TestV1SearchWithTypeFilter(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
@@ -647,21 +644,21 @@ func TestV1GetEntityWithIncludesAll(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities with relations
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	graphForTest(app).AddEdge(&model.Relation{
+	seedRelation(app, &entity.Relation{
 		From: "TKT-001",
 		To:   "FEA-001",
 		Type: "implements",
@@ -687,21 +684,21 @@ func TestV1GetEntityWithIncludesAll(t *testing.T) {
 func TestV1GetEntityWithIncludesSpecific(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	graphForTest(app).AddEdge(&model.Relation{
+	seedRelation(app, &entity.Relation{
 		From: "TKT-001",
 		To:   "FEA-001",
 		Type: "implements",
@@ -727,14 +724,14 @@ func TestV1GetEntityWithIncludesSpecific(t *testing.T) {
 func TestV1GetEntityIfNoneMatch(t *testing.T) {
 	app := newTestAppV1(t)
 
-	entity := &model.Entity{
+	entity := &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	}
-	graphForTest(app).AddNode(entity)
+	seedEntity(app, entity)
 
 	// First request to get ETag
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
@@ -767,7 +764,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 		},
 	}
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -800,7 +797,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 func TestV1SingleEntityOptions(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -824,7 +821,7 @@ func TestV1SingleEntityOptions(t *testing.T) {
 func TestV1SingleEntityMethodNotAllowed(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -863,14 +860,14 @@ func TestV1ListEntitiesEmpty(t *testing.T) {
 func TestV1ListEntitiesDescendingSort(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "A Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -899,14 +896,14 @@ func TestV1ListEntitiesDescendingSort(t *testing.T) {
 func TestV1FilteringContains(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Bug Fix Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -934,21 +931,21 @@ func TestV1FilteringContains(t *testing.T) {
 func TestV1FilteringIn(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"status": "open",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"status": "in_progress",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -976,14 +973,14 @@ func TestV1FilteringIn(t *testing.T) {
 func TestV1FilteringPercentEncodedBrackets(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"status": "open",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -998,14 +995,14 @@ func TestV1FilteringPercentEncodedBrackets(t *testing.T) {
 	}
 
 	// Percent-encoded with operator
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"due_date": "2026-01-01",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-004",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1025,21 +1022,21 @@ func TestV1FilteringPercentEncodedBrackets(t *testing.T) {
 func TestV1FilteringMultiValueRepeatedParams(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"status": "open",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"status": "in_progress",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1084,11 +1081,11 @@ func TestV1FilteringLte(t *testing.T) {
 	thresholdID := "TKT-threshold"
 	laterID := "TKT-later"
 
-	graphForTest(app).AddNode(&model.Entity{ID: earlierID, Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: earlierID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": earlier}})
-	graphForTest(app).AddNode(&model.Entity{ID: thresholdID, Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: thresholdID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": threshold}})
-	graphForTest(app).AddNode(&model.Entity{ID: laterID, Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: laterID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": later}})
 
 	got := runListFilter(t, app, "filter[due_date][lte]="+threshold)
@@ -1109,9 +1106,9 @@ func TestV1FilteringGte(t *testing.T) {
 	earlierID := "TKT-earlier"
 	laterID := "TKT-later"
 
-	graphForTest(app).AddNode(&model.Entity{ID: earlierID, Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: earlierID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": earlier}})
-	graphForTest(app).AddNode(&model.Entity{ID: laterID, Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: laterID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": later}})
 
 	got := runListFilter(t, app, "filter[due_date][gte]=2026-01-01")
@@ -1133,11 +1130,11 @@ func TestV1FilteringTodaySubstitution(t *testing.T) {
 	todayID := "TKT-today"
 	futureID := "TKT-future"
 
-	graphForTest(app).AddNode(&model.Entity{ID: overdueID, Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: overdueID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-06"}})
-	graphForTest(app).AddNode(&model.Entity{ID: todayID, Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: todayID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
-	graphForTest(app).AddNode(&model.Entity{ID: futureID, Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: futureID, Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-08"}})
 
 	got := runListFilter(t, app, "filter[due_date][lte]=$today")
@@ -1154,7 +1151,7 @@ func TestV1FilteringTodaySubstitution(t *testing.T) {
 // a non-date filter value excludes the entity rather than silently lying.
 func TestV1FilteringTypeMismatch(t *testing.T) {
 	app := newTestAppV1(t)
-	graphForTest(app).AddNode(&model.Entity{ID: "TKT-1", Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
 
 	// "tomorrow" is not a date and not a known variable; should NOT silently
@@ -1169,9 +1166,9 @@ func TestV1FilteringTypeMismatch(t *testing.T) {
 // the entity doesn't have excludes the entity (no panic, no inclusion).
 func TestV1FilteringMissingProperty(t *testing.T) {
 	app := newTestAppV1(t)
-	graphForTest(app).AddNode(&model.Entity{ID: "TKT-no-due", Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: "TKT-no-due", Type: "ticket",
 		Properties: map[string]interface{}{"title": "no due date"}})
-	graphForTest(app).AddNode(&model.Entity{ID: "TKT-with-due", Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: "TKT-with-due", Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
 
 	got := runListFilter(t, app, "filter[due_date][lte]=2026-12-31")
@@ -1189,11 +1186,11 @@ func TestV1FilteringInWithVariableTokens(t *testing.T) {
 	defer func() { nowFunc = prev }()
 
 	app := newTestAppV1(t)
-	graphForTest(app).AddNode(&model.Entity{ID: "TKT-yesterday", Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: "TKT-yesterday", Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-06"}})
-	graphForTest(app).AddNode(&model.Entity{ID: "TKT-today", Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: "TKT-today", Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
-	graphForTest(app).AddNode(&model.Entity{ID: "TKT-other", Type: "ticket",
+	seedEntity(app, &entity.Entity{ID: "TKT-other", Type: "ticket",
 		Properties: map[string]interface{}{"due_date": "2026-04-09"}})
 
 	got := runListFilter(t, app, "filter[due_date][in]=$yesterday,$today")
@@ -1209,14 +1206,14 @@ func TestV1FilteringInWithVariableTokens(t *testing.T) {
 func TestV1FilteringEmptyValue(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Has Title",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1237,7 +1234,7 @@ func TestV1FilteringEmptyValue(t *testing.T) {
 func TestV1MultipleSort(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1245,7 +1242,7 @@ func TestV1MultipleSort(t *testing.T) {
 			"title":  "B Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1253,7 +1250,7 @@ func TestV1MultipleSort(t *testing.T) {
 			"title":  "A Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1279,28 +1276,28 @@ func TestV1GetEntityWithNestedIncludes(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities with relations
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "FEA-002",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Another Feature",
 		},
 	})
-	graphForTest(app).AddEdge(&model.Relation{
+	seedRelation(app, &entity.Relation{
 		From: "TKT-001",
 		To:   "FEA-001",
 		Type: "implements",
@@ -1311,7 +1308,7 @@ func TestV1GetEntityWithNestedIncludes(t *testing.T) {
 		From:  []string{"feature"},
 		To:    []string{"feature"},
 	}
-	graphForTest(app).AddEdge(&model.Relation{
+	seedRelation(app, &entity.Relation{
 		From: "FEA-001",
 		To:   "FEA-002",
 		Type: "requires",
@@ -1342,21 +1339,21 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities with incoming relation
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	graphForTest(app).AddEdge(&model.Relation{
+	seedRelation(app, &entity.Relation{
 		From: "TKT-001",
 		To:   "FEA-001",
 		Type: "implements",
@@ -1525,7 +1522,7 @@ func TestV1PaginationLinkHeaders(t *testing.T) {
 
 	// Add 30 entities
 	for i := 1; i <= 30; i++ {
-		graphForTest(app).AddNode(&model.Entity{
+		seedEntity(app, &entity.Entity{
 			ID:   "TKT-" + padInt(i),
 			Type: "ticket",
 			Properties: map[string]interface{}{
@@ -1600,8 +1597,8 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities to get counts
-	graphForTest(app).AddNode(&model.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "Test"}})
-	graphForTest(app).AddNode(&model.Entity{ID: "FEA-001", Type: "feature", Properties: map[string]interface{}{"title": "Test Feature"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "Test"}})
+	seedEntity(app, &entity.Entity{ID: "FEA-001", Type: "feature", Properties: map[string]interface{}{"title": "Test Feature"}})
 
 	// Set up navigation with groups using actual struct fields
 	app.Cfg().Navigation = []dataentryconfig.NavigationEntry{
@@ -1656,7 +1653,7 @@ func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
 		},
 	}
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1693,14 +1690,14 @@ func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
 func TestV1FilterUnknownOperator(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1724,12 +1721,12 @@ func TestV1FilterUnknownOperator(t *testing.T) {
 // log warning rather than silently passing every entity.
 func TestV1FilterMalformedKeySkipped(t *testing.T) {
 	app := newTestAppV1(t)
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
 		Properties: map[string]interface{}{"status": "open"},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:         "TKT-002",
 		Type:       "ticket",
 		Properties: map[string]interface{}{"status": "closed"},
@@ -1784,21 +1781,21 @@ func TestV1GetEntityIncludeIncoming(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities with relations
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
 			"title": "Test Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
 		Properties: map[string]interface{}{
 			"title": "Test Feature",
 		},
 	})
-	graphForTest(app).AddEdge(&model.Relation{
+	seedRelation(app, &entity.Relation{
 		From: "TKT-001",
 		To:   "FEA-001",
 		Type: "implements",
@@ -1826,7 +1823,7 @@ func TestV1GetEntityIncludeIncoming(t *testing.T) {
 func TestV1DynamicRoutesMethodNotAllowed(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1848,7 +1845,7 @@ func TestV1PaginationEdgeCases(t *testing.T) {
 
 	// Add some entities
 	for i := 1; i <= 5; i++ {
-		graphForTest(app).AddNode(&model.Entity{
+		seedEntity(app, &entity.Entity{
 			ID:   "TKT-" + padInt(i),
 			Type: "ticket",
 			Properties: map[string]interface{}{
@@ -1879,7 +1876,7 @@ func TestV1AnalyzeWithIssues(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entity without required property
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
 		Properties: map[string]interface{}{
@@ -1908,7 +1905,7 @@ func TestV1AnalyzeWithIssues(t *testing.T) {
 func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1916,7 +1913,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 			"title":  "A Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1924,7 +1921,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 			"title":  "B Ticket",
 		},
 	})
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1944,7 +1941,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 func TestV1ResolveIncludesEmptyPart(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -1997,7 +1994,7 @@ func TestV1SchemaWithRelationCardinality(t *testing.T) {
 func TestV1EntityToV1WithoutRelations(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -2148,8 +2145,6 @@ func newTestAppV1(t *testing.T) *App {
 		},
 	}
 
-	g := graph.New()
-
 	cfg := &dataentryconfig.Config{
 		App: dataentryconfig.AppConfig{
 			Name:        "Test App",
@@ -2162,10 +2157,7 @@ func newTestAppV1(t *testing.T) *App {
 		Navigation: []dataentryconfig.NavigationEntry{},
 	}
 
-	ws := workspace.NewForTest(g, meta)
-
-	app := newAppFromParts(cfg, meta, g)
-	app.ws = ws
+	app := newAppFromParts(cfg, meta, newFixture())
 	return app
 }
 
@@ -2188,7 +2180,7 @@ func TestV1EntityRelationsNotFound(t *testing.T) {
 func TestV1EntityRelationsWrongType(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -2236,7 +2228,7 @@ func TestV1UpdateEntityNotFound(t *testing.T) {
 func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 	app := newTestAppV1(t)
 
-	graphForTest(app).AddNode(&model.Entity{
+	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -2255,7 +2247,7 @@ func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 }
 
 func TestExtractEntityIDs(t *testing.T) {
-	entities := []*entityPkg.Entity{
+	entities := []*entity.Entity{
 		{ID: "REQ-001"},
 		{ID: "REQ-002"},
 		{ID: "DEC-001"},

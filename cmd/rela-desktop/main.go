@@ -32,7 +32,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -52,16 +51,17 @@ const GitHubClientID = "" // Set via build flags or environment
 // and persisting recent projects in user preferences.
 type Desktop struct {
 	ctx              context.Context
-	mu               sync.RWMutex
-	app              *dataentry.App
-	handler          http.Handler
-	loadErr          string
-	prefs            *desktop.Preferences
-	cloneAuth        *cloneAuthState
-	lastCloneDir     string           // tracks the most recent clone for project selection
-	pendingSetupDir  string           // project dir awaiting data-entry.yaml setup
-	pendingSetupRepo repository.Store // repo for pending setup
-	stopScheduler    context.CancelFunc
+	mu                sync.RWMutex
+	app               *dataentry.App
+	handler           http.Handler
+	loadErr           string
+	prefs             *desktop.Preferences
+	cloneAuth         *cloneAuthState
+	lastCloneDir      string           // tracks the most recent clone for project selection
+	pendingSetupDir   string           // project dir awaiting data-entry.yaml setup
+	pendingSetupFS    storage.FS       // fs for pending setup
+	pendingSetupPaths *project.Context // project paths for pending setup
+	stopScheduler     context.CancelFunc
 }
 
 // cloneAuthState tracks an in-progress OAuth device flow.
@@ -108,7 +108,7 @@ func (d *Desktop) OpenRecentProject(path string) string {
 
 // LoadProject loads a rela project from the given directory.
 func (d *Desktop) LoadProject(dir string) string {
-	repo, err := createRepo(dir)
+	fs, projCtx, err := discoverProject(dir)
 	if err != nil {
 		d.mu.Lock()
 		d.loadErr = err.Error()
@@ -122,13 +122,14 @@ func (d *Desktop) LoadProject(dir string) string {
 		// Store pending setup state
 		d.mu.Lock()
 		d.pendingSetupDir = dir
-		d.pendingSetupRepo = repo
+		d.pendingSetupFS = fs
+		d.pendingSetupPaths = projCtx
 		d.loadErr = ""
 		d.mu.Unlock()
 		return "needs_setup"
 	}
 
-	ws, wsErr := workspace.New(repo, script.NewEngine())
+	ws, wsErr := workspace.New(fs, projCtx, script.NewEngine())
 	if wsErr != nil {
 		d.mu.Lock()
 		d.loadErr = wsErr.Error()
@@ -152,7 +153,8 @@ func (d *Desktop) LoadProject(dir string) string {
 	d.handler = app.NewRouter()
 	d.loadErr = ""
 	d.pendingSetupDir = ""
-	d.pendingSetupRepo = nil
+	d.pendingSetupFS = nil
+	d.pendingSetupPaths = nil
 
 	// Start background scheduler for the new project.
 	schedCtx, schedCancel := context.WithCancel(context.Background())
@@ -188,11 +190,11 @@ func (d *Desktop) GetSetupInfo() map[string]interface{} {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	if d.pendingSetupRepo == nil {
+	if d.pendingSetupPaths == nil {
 		return map[string]interface{}{"error": "No project pending setup"}
 	}
 
-	meta, _, err := metamodel.NewFSLoader(d.pendingSetupRepo.FS(), d.pendingSetupRepo.Paths().MetamodelPath).Load(context.Background())
+	meta, _, err := metamodel.NewFSLoader(d.pendingSetupFS, d.pendingSetupPaths.MetamodelPath).Load(context.Background())
 	if err != nil {
 		return map[string]interface{}{"error": fmt.Sprintf("Failed to load metamodel: %v", err)}
 	}
@@ -211,15 +213,16 @@ func (d *Desktop) GetSetupInfo() map[string]interface{} {
 // GenerateDataEntryConfig creates a data-entry.yaml from the metamodel.
 func (d *Desktop) GenerateDataEntryConfig(appName string) string {
 	d.mu.Lock()
-	repo := d.pendingSetupRepo
+	fs := d.pendingSetupFS
+	paths := d.pendingSetupPaths
 	dir := d.pendingSetupDir
 	d.mu.Unlock()
 
-	if repo == nil {
+	if paths == nil {
 		return "No project pending setup"
 	}
 
-	meta, _, err := metamodel.NewFSLoader(repo.FS(), repo.Paths().MetamodelPath).Load(context.Background())
+	meta, _, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
 	if err != nil {
 		return fmt.Sprintf("Failed to load metamodel: %v", err)
 	}
@@ -234,7 +237,8 @@ func (d *Desktop) GenerateDataEntryConfig(appName string) string {
 	// Now load the project
 	d.mu.Lock()
 	d.pendingSetupDir = ""
-	d.pendingSetupRepo = nil
+	d.pendingSetupFS = nil
+	d.pendingSetupPaths = nil
 	d.mu.Unlock()
 
 	return d.LoadProject(dir)
@@ -736,18 +740,19 @@ func isRelaProject(dir string) bool {
 	return err == nil
 }
 
-// createRepo discovers the project and creates a repository.
-func createRepo(projectDir string) (repository.Store, error) {
+// discoverProject returns the filesystem and project context for the
+// project rooted at projectDir.
+func discoverProject(projectDir string) (storage.FS, *project.Context, error) {
 	absDir, err := filepath.Abs(projectDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	projCtx, err := project.Discover(absDir, fs)
 	if err != nil {
-		return nil, fmt.Errorf("discovering project: %w", err)
+		return nil, nil, fmt.Errorf("discovering project: %w", err)
 	}
-	return repository.New(fs, projCtx), nil
+	return fs, projCtx, nil
 }
 
 // generateDataEntryConfig creates a minimal data-entry.yaml from the metamodel.

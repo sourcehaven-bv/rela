@@ -10,10 +10,6 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // callAction is a thin wrapper that invokes handleV1Action directly. It
@@ -41,9 +37,7 @@ func newActionTestApp(t *testing.T, scripts map[string]string) *App {
 	}
 
 	app := newTestAppV1(t)
-	app.ws = workspace.NewWithGraph(
-		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: tmpDir}),
-		app.Meta(), graphForTest(app))
+	bindRepo(app, tmpDir)
 
 	return app
 }

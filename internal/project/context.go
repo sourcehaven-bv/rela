@@ -130,7 +130,7 @@ func (c *Context) EntityFilePathWithPlural(plural, id string) string {
 //
 // Callers are responsible for validating from / relationType / to upstream:
 //
-//   - entity IDs go through model.ValidateID at creation time
+//   - entity IDs go through entity.ValidateID at creation time
 //   - relation types come from the metamodel and are checked by
 //     metamodel.ValidateRelation before any write reaches this code path
 //

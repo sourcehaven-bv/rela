@@ -20,10 +20,10 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
@@ -221,11 +221,11 @@ func propertyIsEmpty(prop interface{}) bool {
 }
 
 // applyFilters filters entities by a set of filter conditions.
-func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Entity {
+func applyFilters(entities []*entity.Entity, filters []FilterConfig) []*entity.Entity {
 	if len(filters) == 0 {
 		return entities
 	}
-	var result []*model.Entity
+	var result []*entity.Entity
 	for _, e := range entities {
 		match := true
 		for _, f := range filters {
@@ -260,7 +260,7 @@ func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Ent
 }
 
 // sortEntitiesMulti sorts entities by multiple sort specs using type-aware comparison.
-func (a *App) sortEntitiesMulti(entities []*model.Entity, specs []filter.SortSpec) {
+func (a *App) sortEntitiesMulti(entities []*entity.Entity, specs []filter.SortSpec) {
 	if len(specs) == 0 {
 		return
 	}
@@ -466,7 +466,7 @@ func checkboxStats(content string) CheckboxStats {
 // It supports the same query syntax as the search page: type:, prop:, status:,
 // and free text. Free-text words use OR logic with fuzzy matching via Bleve;
 // results are ranked by score.
-func (a *App) executeQuery(query string) []*model.Entity {
+func (a *App) executeQuery(query string) []*entity.Entity {
 	sq := searchparser.ParseQuery(query)
 	if sq.IsEmpty() {
 		return nil
@@ -475,7 +475,7 @@ func (a *App) executeQuery(query string) []*model.Entity {
 	const maxSearchResults = 1000
 
 	svc := a.Services()
-	var candidates []*model.Entity
+	var candidates []*entity.Entity
 	if sq.HasFreeText() {
 		// Searcher returns entities in relevance order. Scores are dropped
 		// because executeQuery never sorted by them.
@@ -484,7 +484,7 @@ func (a *App) executeQuery(query string) []*model.Entity {
 		candidates = listFromStoreByTypes(svc, sq.EntityTypes)
 	}
 
-	results := make([]*model.Entity, 0, len(candidates))
+	results := make([]*entity.Entity, 0, len(candidates))
 	for _, e := range candidates {
 		if !a.matchesPropertyFilters(e, sq.PropertyFilters) {
 			continue
@@ -504,7 +504,7 @@ func (a *App) executeQuery(query string) []*model.Entity {
 // loads the full entity bodies from the store. Phrases are re-quoted so the
 // searcher's text layer can rebuild the same fuzzy-words + exact-phrases
 // compound query the dataentry UI used to build upstream.
-func runFreeTextSearch(svc Services, sq *searchparser.SearchQuery, limit int) []*model.Entity {
+func runFreeTextSearch(svc Services, sq *searchparser.SearchQuery, limit int) []*entity.Entity {
 	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
 	parts = append(parts, sq.FreeTextWords...)
 	for _, p := range sq.FreeTextPhrases {
@@ -516,7 +516,7 @@ func runFreeTextSearch(svc Services, sq *searchparser.SearchQuery, limit int) []
 		Limit: limit,
 	}
 	ctx := context.Background()
-	var out []*model.Entity
+	var out []*entity.Entity
 	for hit, err := range svc.Searcher.Search(ctx, q) {
 		if err != nil {
 			return nil
@@ -525,40 +525,37 @@ func runFreeTextSearch(svc Services, sq *searchparser.SearchQuery, limit int) []
 		if getErr != nil {
 			continue
 		}
-		out = append(out, model.EntityFromDomain(e))
+		out = append(out, e)
 	}
 	return out
 }
 
 // listFromStoreByTypes loads all entities matching the given types (or every
-// entity when types is empty) from the store and converts them to
-// *model.Entity for use by the in-package helpers. The conversion is
-// temporary — callers should be flipped to *entity.Entity as a follow-up.
-func listFromStoreByTypes(svc Services, types []string) []*model.Entity {
+// entity when types is empty) from the store.
+func listFromStoreByTypes(svc Services, types []string) []*entity.Entity {
 	if len(types) == 0 {
 		return listAllFromStore(svc)
 	}
-	var out []*model.Entity
+	var out []*entity.Entity
 	for _, t := range types {
 		for e, err := range svc.Store.ListEntities(context.Background(), store.EntityQuery{Type: t}) {
 			if err != nil {
 				return out
 			}
-			out = append(out, model.EntityFromDomain(e))
+			out = append(out, e)
 		}
 	}
 	return out
 }
 
-// listAllFromStore drains every entity from the store, converting to
-// *model.Entity. Temporary during the entity.Entity migration.
-func listAllFromStore(svc Services) []*model.Entity {
-	var out []*model.Entity
+// listAllFromStore drains every entity from the store.
+func listAllFromStore(svc Services) []*entity.Entity {
+	var out []*entity.Entity
 	for e, err := range svc.Store.ListEntities(context.Background(), store.EntityQuery{}) {
 		if err != nil {
 			return out
 		}
-		out = append(out, model.EntityFromDomain(e))
+		out = append(out, e)
 	}
 	return out
 }
@@ -592,9 +589,9 @@ func (a *App) resolveRelationColumnValues(entityID, relationType string, directi
 
 // filterByRelation filters entities to those that have an outgoing edge of the given
 // relation type pointing to a target whose display title matches value.
-func (a *App) filterByRelation(entities []*model.Entity, relationType, value string) []*model.Entity {
+func (a *App) filterByRelation(entities []*entity.Entity, relationType, value string) []*entity.Entity {
 	svc := a.Services()
-	var result []*model.Entity
+	var result []*entity.Entity
 	for _, e := range entities {
 		if hasOutgoingRelationTo(svc, e.ID, relationType, value) {
 			result = append(result, e)
@@ -605,7 +602,7 @@ func (a *App) filterByRelation(entities []*model.Entity, relationType, value str
 
 // resolveRelationFilterValues returns sorted, unique display titles of all entities
 // reachable via the given relation type from any of the provided entities.
-func (a *App) resolveRelationFilterValues(entities []*model.Entity, relationType string) []string {
+func (a *App) resolveRelationFilterValues(entities []*entity.Entity, relationType string) []string {
 	svc := a.Services()
 	seen := make(map[string]bool)
 	var vals []string
@@ -727,7 +724,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 		if sortProp != "" {
 			a.sortEntitiesMulti(entities, []filter.SortSpec{{Property: sortProp, Direction: sortDir}})
 		} else {
-			a.sortEntitiesMulti(entities, toFilterSortSpecs(list.Sort))
+			a.sortEntitiesMulti(entities, list.Sort)
 		}
 
 		ids = make([]string, len(entities))
@@ -801,7 +798,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 
 // matchesPropertyFilters checks whether an entity matches the given property filters.
 // Returns true if no filters are specified or all filters match.
-func (a *App) matchesPropertyFilters(e *model.Entity, filters []*filter.Filter) bool {
+func (a *App) matchesPropertyFilters(e *entity.Entity, filters []*filter.Filter) bool {
 	if len(filters) == 0 {
 		return true
 	}

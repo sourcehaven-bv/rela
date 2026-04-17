@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -35,14 +34,15 @@ Examples:
   rela fmt --check        # Check if files need formatting (for CI)`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		f := ws.Formatter()
-		if f == nil {
-			return fmt.Errorf("formatter service not available")
+		st := ws.Store()
+		f, ok := st.(store.Formatter)
+		if !ok {
+			out.WriteMessage("The active storage backend does not support formatting.")
+			return nil
 		}
 
 		dryRun := fmtDryRun || fmtCheck
 		ctx := context.Background()
-		st := ws.Store()
 
 		modifiedEntities := 0
 		modifiedRelations := 0

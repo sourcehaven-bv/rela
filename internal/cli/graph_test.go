@@ -4,15 +4,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
+// graph_test.go covers DOT generation — the sole CLI formatting
+// responsibility of `rela graph`. Store iteration is provided by the
+// store layer; here we only verify that `generateDOT` renders a
+// well-formed, correctly-populated DOT document.
+
 func setupGraphTestGraph() {
-	g = graph.New()
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
@@ -34,99 +36,60 @@ func setupGraphTestGraph() {
 			},
 		},
 	}
-	ws = workspace.NewForTest(g, meta)
+	seeder := newStoreSeeder(meta)
+	seeder.addEntity(testutil.EntityFor(meta, "requirement").
+		ID("REQ-001").With("title", "First Requirement"))
+	seeder.addEntity(testutil.EntityFor(meta, "requirement").
+		ID("REQ-002").With("title", "Second Requirement"))
+	seeder.addEntity(testutil.EntityFor(meta, "decision").
+		ID("DEC-001").With("title", "Important Decision"))
+	seeder.addRelation("DEC-001", "implements", "REQ-001")
+	applySeeder(seeder)
 	out = output.New(output.FormatTable)
-
-	// Add test entities
-	g.AddNode(testutil.EntityFor(meta, "requirement").
-		ID("REQ-001").
-		With("title", "First Requirement").
-		Build())
-
-	g.AddNode(testutil.EntityFor(meta, "requirement").
-		ID("REQ-002").
-		With("title", "Second Requirement").
-		Build())
-
-	g.AddNode(testutil.EntityFor(meta, "decision").
-		ID("DEC-001").
-		With("title", "Important Decision").
-		Build())
-
-	// Add test relations
-	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-001").Build())
 }
 
-func TestGenerateDOT_BasicOutput(t *testing.T) {
+// TestGenerateDOT is the canonical test for DOT rendering. One fixture,
+// one render, all invariants asserted in a single place.
+func TestGenerateDOT(t *testing.T) {
 	setupGraphTestGraph()
 
-	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
+	dot := generateDOT(fixtureAllEntities(), fixtureAllRelations())
 
-	// Should start with digraph
+	// Structural invariants.
 	if !strings.HasPrefix(dot, "digraph architecture {") {
 		t.Errorf("DOT should start with 'digraph architecture {', got:\n%s", dot)
 	}
-
-	// Should end with closing brace
 	if !strings.HasSuffix(strings.TrimSpace(dot), "}") {
 		t.Errorf("DOT should end with '}', got:\n%s", dot)
 	}
-
-	// Should contain rankdir
 	if !strings.Contains(dot, "rankdir=TB") {
 		t.Error("DOT should contain 'rankdir=TB' by default")
 	}
-
-	// Should contain node style
 	if !strings.Contains(dot, "node [shape=box, style=filled]") {
 		t.Error("DOT should contain node style definition")
 	}
-}
 
-func TestGenerateDOT_ContainsEntities(t *testing.T) {
-	setupGraphTestGraph()
-
-	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
-
-	// Should contain entity IDs
-	if !strings.Contains(dot, `"REQ-001"`) {
-		t.Error("DOT should contain REQ-001")
-	}
-	if !strings.Contains(dot, `"REQ-002"`) {
-		t.Error("DOT should contain REQ-002")
-	}
-	if !strings.Contains(dot, `"DEC-001"`) {
-		t.Error("DOT should contain DEC-001")
+	// Entities + titles + colors.
+	for _, want := range []string{
+		`"REQ-001"`, `"REQ-002"`, `"DEC-001"`,
+		"First Requirement",
+		`fillcolor="#E3F2FD"`, // requirement color
+		`fillcolor="#FFF3E0"`, // decision color
+	} {
+		if !strings.Contains(dot, want) {
+			t.Errorf("DOT missing %q", want)
+		}
 	}
 
-	// Should contain entity titles in labels
-	if !strings.Contains(dot, "First Requirement") {
-		t.Error("DOT should contain 'First Requirement' title")
-	}
-}
-
-func TestGenerateDOT_ContainsEdges(t *testing.T) {
-	setupGraphTestGraph()
-
-	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
-
-	// Should contain edge definition
+	// Edge rendering.
 	if !strings.Contains(dot, `"DEC-001" -> "REQ-001"`) {
 		t.Error("DOT should contain edge from DEC-001 to REQ-001")
 	}
-
-	// Should contain edge label
 	if !strings.Contains(dot, `label="implements"`) {
 		t.Error("DOT should contain 'implements' label on edge")
 	}
-}
 
-func TestGenerateDOT_GroupsByType(t *testing.T) {
-	setupGraphTestGraph()
-
-	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
-
-	// Should contain subgraph clusters
+	// Type-based clustering.
 	if !strings.Contains(dot, "subgraph cluster_requirement") {
 		t.Error("DOT should contain 'subgraph cluster_requirement'")
 	}
@@ -135,28 +98,13 @@ func TestGenerateDOT_GroupsByType(t *testing.T) {
 	}
 }
 
-func TestGenerateDOT_AppliesColors(t *testing.T) {
-	setupGraphTestGraph()
-
-	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
-
-	// Should contain colors from metamodel
-	if !strings.Contains(dot, `fillcolor="#E3F2FD"`) {
-		t.Error("DOT should contain requirement color #E3F2FD")
-	}
-	if !strings.Contains(dot, `fillcolor="#FFF3E0"`) {
-		t.Error("DOT should contain decision color #FFF3E0")
-	}
-}
-
 func TestGenerateDOT_DirectionLR(t *testing.T) {
 	setupGraphTestGraph()
 
-	// Set direction to left-right
 	graphDirection = "lr"
 	defer func() { graphDirection = "" }()
 
-	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
+	dot := generateDOT(fixtureAllEntities(), fixtureAllRelations())
 
 	if !strings.Contains(dot, "rankdir=LR") {
 		t.Error("DOT should contain 'rankdir=LR' when direction is lr")
@@ -164,15 +112,13 @@ func TestGenerateDOT_DirectionLR(t *testing.T) {
 }
 
 func TestGenerateDOT_EmptyGraph(t *testing.T) {
-	g = graph.New()
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{},
 	}
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
-	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
+	dot := generateDOT(fixtureAllEntities(), fixtureAllRelations())
 
-	// Should still be valid DOT
 	if !strings.HasPrefix(dot, "digraph architecture {") {
 		t.Errorf("DOT should start with 'digraph architecture {', got:\n%s", dot)
 	}
@@ -182,59 +128,33 @@ func TestGenerateDOT_EmptyGraph(t *testing.T) {
 }
 
 func TestGenerateDOT_EntityWithoutTitle(t *testing.T) {
-	g = graph.New()
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
-			"component": {
-				Label:    "Component",
-				IDPrefix: "CMP-",
-			},
+			"component": {Label: "Component", IDPrefix: "CMP-"},
 		},
 	}
-	ws = workspace.NewForTest(g, meta)
+	seeder := newStoreSeeder(meta)
+	seeder.addEntity(testutil.Entity("component").ID("CMP-001"))
+	applySeeder(seeder)
 
-	// Add entity without title
-	g.AddNode(testutil.Entity("component").ID("CMP-001").Build())
+	dot := generateDOT(fixtureAllEntities(), fixtureAllRelations())
 
-	dot := generateDOT(modelToEntitySlice(g.AllNodes()), modelToRelationSlice(g.AllEdges()))
-
-	// Should use ID as label when no title
 	if !strings.Contains(dot, `label="CMP-001"`) {
 		t.Error("DOT should use entity ID as label when no title is set")
 	}
 }
 
-func TestEscapeLabel_Basic(t *testing.T) {
+func TestEscapeLabel(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
 		want  string
 	}{
-		{
-			name:  "simple string unchanged",
-			input: "Hello World",
-			want:  "Hello World",
-		},
-		{
-			name:  "escapes quotes",
-			input: `Say "Hello"`,
-			want:  `Say \"Hello\"`,
-		},
-		{
-			name:  "escapes newlines",
-			input: "Line1\nLine2",
-			want:  `Line1\nLine2`,
-		},
-		{
-			name:  "escapes both quotes and newlines",
-			input: "He said:\n\"Hello\"",
-			want:  `He said:\n\"Hello\"`,
-		},
-		{
-			name:  "empty string",
-			input: "",
-			want:  "",
-		},
+		{"simple string unchanged", "Hello World", "Hello World"},
+		{"escapes quotes", `Say "Hello"`, `Say \"Hello\"`},
+		{"escapes newlines", "Line1\nLine2", `Line1\nLine2`},
+		{"escapes both quotes and newlines", "He said:\n\"Hello\"", `He said:\n\"Hello\"`},
+		{"empty string", "", ""},
 	}
 
 	for _, tt := range tests {
@@ -248,29 +168,20 @@ func TestEscapeLabel_Basic(t *testing.T) {
 }
 
 func TestEscapeLabel_Truncation(t *testing.T) {
-	// maxLabelLen is 40
 	longString := "This is a very long label that exceeds the maximum allowed length for graph labels"
 
 	got := escapeLabel(longString)
 
-	// Should be truncated to maxLabelLen
 	if len(got) > maxLabelLen {
 		t.Errorf("escapeLabel should truncate to %d chars, got %d", maxLabelLen, len(got))
 	}
-
-	// Should end with "..."
 	if !strings.HasSuffix(got, "...") {
 		t.Errorf("truncated label should end with '...', got %q", got)
 	}
-}
 
-func TestEscapeLabel_ExactMaxLength(t *testing.T) {
-	// String exactly at maxLabelLen should not be truncated
+	// String exactly at maxLabelLen should not be truncated.
 	exactString := strings.Repeat("a", maxLabelLen)
-
-	got := escapeLabel(exactString)
-
-	if got != exactString {
+	if got := escapeLabel(exactString); got != exactString {
 		t.Errorf("string at exact max length should not be modified, got %q", got)
 	}
 }

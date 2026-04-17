@@ -1,8 +1,9 @@
-package model
+package metamodel
 
-// SortSpec describes a single sort criterion used in queries, metamodel default_sort,
-// and data entry config. Property can be a real entity property name or a virtual
-// property: "id" (entity ID) or "modified" (file modification time).
+// SortSpec describes a single sort criterion used in metamodel default_sort,
+// queries, and data-entry config. Property can be a real entity property name
+// or a virtual property: "id" (entity ID) or "modified" (file modification
+// time).
 type SortSpec struct {
 	Property  string `yaml:"property"  json:"property"`
 	Direction string `yaml:"direction,omitempty" json:"direction,omitempty"` // "asc" (default) or "desc"

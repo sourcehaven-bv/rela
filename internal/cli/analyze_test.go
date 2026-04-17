@@ -5,15 +5,29 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-func setupAnalyzeTestGraph() {
-	g = graph.New()
+// analyze_test.go covers the CLI JSON output shape. The underlying
+// analysis correctness (orphans, duplicates, cardinality, properties,
+// validations) is exercised directly in internal/workspace/analysis_test.go.
+// Keep only:
+//   - one representative JSON-output test (so the CLI wiring is covered)
+//   - the gaps test (not currently covered at the workspace layer)
+
+// setupJSONTestOutput sets up JSON output writer and returns the buffer.
+func setupJSONTestOutput() *bytes.Buffer {
+	var buf bytes.Buffer
+	out = output.NewWithWriter(&buf, output.FormatJSON)
+	return &buf
+}
+
+// TestAnalyzeOrphansJSONOutput is the canonical CLI JSON-shape test:
+// it runs one analysis command through the CLI and verifies the
+// envelope (status, count) is correctly populated.
+func TestAnalyzeOrphansJSONOutput(t *testing.T) {
 	meta = &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
@@ -21,75 +35,16 @@ func setupAnalyzeTestGraph() {
 				IDPrefix:   "REQ-",
 				Properties: map[string]metamodel.PropertyDef{},
 			},
-			"decision": {
-				Label:      "Decision",
-				IDPrefix:   "DEC-",
-				Properties: map[string]metamodel.PropertyDef{},
-			},
-			"component": {
-				Label:      "Component",
-				IDPrefix:   "CMP-",
-				Properties: map[string]metamodel.PropertyDef{},
-			},
-		},
-		Relations: map[string]metamodel.RelationDef{
-			"implements": {
-				Label: "Implements",
-				From:  []string{"decision"},
-				To:    []string{"requirement"},
-			},
-			"uses": {
-				Label: "Uses",
-				From:  []string{"component"},
-				To:    []string{"component"},
-			},
 		},
 	}
-	ws = workspace.NewForTest(g, meta)
-	out = output.New(output.FormatTable)
+	seeder := newStoreSeeder(meta)
+	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-003"))
+	applySeeder(seeder)
 
-	// Add test entities
-	g.AddNode(testutil.EntityFor(meta, "requirement").
-		ID("REQ-001").
-		Build())
-
-	g.AddNode(testutil.EntityFor(meta, "requirement").
-		ID("REQ-002").
-		Build())
-
-	g.AddNode(testutil.EntityFor(meta, "decision").
-		ID("DEC-001").
-		Build())
-
-	g.AddNode(testutil.EntityFor(meta, "component").
-		ID("CMP-001").
-		Build())
-
-	g.AddNode(testutil.EntityFor(meta, "component").
-		ID("CMP-002").
-		Build())
-
-	// Add relations
-	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-001").Build())
-	g.AddEdge(testutil.NewRelation("DEC-001", "implements", "REQ-002").Build())
-	g.AddEdge(testutil.NewRelation("CMP-001", "uses", "CMP-002").Build())
-}
-
-// setupJSONTestOutput sets up JSON output writer and returns the buffer
-func setupJSONTestOutput() *bytes.Buffer {
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatJSON)
-	return &buf
-}
-
-// runJSONTest is a helper that runs an analyze command and verifies the JSON output
-func runJSONTest(t *testing.T, name string, setup func(), run func() error, wantStatus string, wantCount int) {
-	t.Helper()
-	setup()
 	buf := setupJSONTestOutput()
 
-	if err := run(); err != nil {
-		t.Fatalf("%s error = %v", name, err)
+	if err := analyzeOrphansCmd.RunE(nil, nil); err != nil {
+		t.Fatalf("analyze orphans error = %v", err)
 	}
 
 	var result output.AnalysisResult
@@ -97,164 +52,47 @@ func runJSONTest(t *testing.T, name string, setup func(), run func() error, want
 		t.Fatalf("Failed to unmarshal JSON: %v", err)
 	}
 
-	if result.Status != wantStatus {
-		t.Errorf("Expected status %q, got %q", wantStatus, result.Status)
+	if result.Status != "warning" {
+		t.Errorf("Expected status %q, got %q", "warning", result.Status)
 	}
-	if result.Count != wantCount {
-		t.Errorf("Expected count %d, got %d", wantCount, result.Count)
+	if result.Count != 1 {
+		t.Errorf("Expected count %d, got %d", 1, result.Count)
 	}
 }
 
-func TestAnalyzeJSONOutput(t *testing.T) {
-	minThree := 3
-
-	tests := []struct {
-		name       string
-		setup      func()
-		run        func() error
-		wantStatus string
-		wantCount  int
-	}{
-		{
-			name: "orphans with issues",
-			setup: func() {
-				g = graph.New()
-				meta = &metamodel.Metamodel{
-					Entities: map[string]metamodel.EntityDef{
-						"requirement": {
-							Label:      "Requirement",
-							IDPrefix:   "REQ-",
-							Properties: map[string]metamodel.PropertyDef{},
-						},
-					},
-				}
-				ws = workspace.NewForTest(g, meta)
-				g.AddNode(testutil.EntityFor(meta, "requirement").
-					ID("REQ-003").
-					Build())
+// TestAnalyzeGaps covers the gaps analysis, which has no workspace-layer
+// test today. Runs via the CLI so we simultaneously exercise the JSON
+// output envelope.
+func TestAnalyzeGaps(t *testing.T) {
+	meta = &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"requirement": {
+				Label:      "Requirement",
+				IDPrefix:   "REQ-",
+				Properties: map[string]metamodel.PropertyDef{},
 			},
-			run:        func() error { return analyzeOrphansCmd.RunE(nil, nil) },
-			wantStatus: "warning",
-			wantCount:  1,
-		},
-		{
-			name:       "orphans empty",
-			setup:      setupAnalyzeTestGraph,
-			run:        func() error { return analyzeOrphansCmd.RunE(nil, nil) },
-			wantStatus: "success",
-			wantCount:  0,
-		},
-		{
-			name: "duplicates with issues",
-			setup: func() {
-				g = graph.New()
-				meta = &metamodel.Metamodel{
-					Entities: map[string]metamodel.EntityDef{
-						"requirement": {
-							Label:      "Requirement",
-							IDPrefix:   "REQ-",
-							Properties: map[string]metamodel.PropertyDef{},
-						},
-					},
-				}
-				ws = workspace.NewForTest(g, meta)
-				g.AddNode(testutil.EntityFor(meta, "requirement").
-					ID("REQ-001").
-					With("title", "Same Title").
-					Build())
-				g.AddNode(testutil.EntityFor(meta, "requirement").
-					ID("REQ-002").
-					With("title", "Same Title").
-					Build())
-			},
-			run:        func() error { return analyzeDuplicatesCmd.RunE(nil, nil) },
-			wantStatus: "warning",
-			wantCount:  1,
-		},
-		{
-			name: "gaps with issues",
-			setup: func() {
-				g = graph.New()
-				meta = &metamodel.Metamodel{
-					Entities: map[string]metamodel.EntityDef{
-						"requirement": {
-							Label:      "Requirement",
-							IDPrefix:   "REQ-",
-							Properties: map[string]metamodel.PropertyDef{},
-						},
-					},
-				}
-				ws = workspace.NewForTest(g, meta)
-				g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
-				g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-003").Build())
-			},
-			run:        func() error { return analyzeGapsCmd.RunE(nil, nil) },
-			wantStatus: "warning",
-			wantCount:  1,
-		},
-		{
-			name: "cardinality with violations",
-			setup: func() {
-				setupAnalyzeTestGraph()
-				meta.Relations["implements"] = metamodel.RelationDef{
-					Label:       "Implements",
-					From:        []string{"decision"},
-					To:          []string{"requirement"},
-					MinOutgoing: &minThree,
-				}
-			},
-			run:        func() error { return analyzeCardinalityCmd.RunE(nil, nil) },
-			wantStatus: "warning",
-			wantCount:  1,
-		},
-		{
-			name: "validations with errors",
-			setup: func() {
-				g = graph.New()
-				meta = &metamodel.Metamodel{
-					Entities: map[string]metamodel.EntityDef{
-						"requirement": {
-							Label:    "Requirement",
-							IDPrefix: "REQ-",
-							Properties: map[string]metamodel.PropertyDef{
-								"status":   {Type: "string"},
-								"priority": {Type: "string"},
-							},
-						},
-					},
-					Validations: []metamodel.ValidationRule{
-						{
-							Name:        "accepted-needs-priority",
-							Description: "Accepted requirements must have priority",
-							EntityType:  "requirement",
-							When:        []string{"status=accepted"},
-							Then:        []string{"priority!="},
-							Severity:    "error",
-						},
-					},
-				}
-				ws = workspace.NewForTest(g, meta)
-				g.AddNode(testutil.EntityFor(meta, "requirement").
-					ID("REQ-001").
-					With("status", "accepted").
-					Build())
-			},
-			run:        func() error { return runValidations(workspace.AnalyzeOptions{}) },
-			wantStatus: "error",
-			wantCount:  1,
-		},
-		{
-			name:       "all analyses pass",
-			setup:      setupAnalyzeTestGraph,
-			run:        func() error { return analyzeAllCmd.RunE(nil, nil) },
-			wantStatus: "success",
-			wantCount:  0,
 		},
 	}
+	seeder := newStoreSeeder(meta)
+	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
+	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-003"))
+	applySeeder(seeder)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runJSONTest(t, tt.name, tt.setup, tt.run, tt.wantStatus, tt.wantCount)
-		})
+	buf := setupJSONTestOutput()
+
+	if err := analyzeGapsCmd.RunE(nil, nil); err != nil {
+		t.Fatalf("analyze gaps error = %v", err)
+	}
+
+	var result output.AnalysisResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	if result.Status != "warning" {
+		t.Errorf("Expected status %q, got %q", "warning", result.Status)
+	}
+	if result.Count != 1 {
+		t.Errorf("Expected count %d, got %d", 1, result.Count)
 	}
 }

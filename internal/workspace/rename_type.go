@@ -2,9 +2,12 @@ package workspace
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // RenameEntityType renames an entity type across the project:
@@ -36,14 +39,10 @@ func (w *Workspace) RenameEntityType(oldType, newType, newPlural string) (int, e
 		}
 	}
 
-	// 3. Update entity files in the new directory
-	var count int
-	if _, err := fs.Stat(newDir); err == nil {
-		var updateErr error
-		count, updateErr = markdown.NewFileIO(fs).UpdateEntityTypesInDir(newDir, newType, meta)
-		if updateErr != nil {
-			return 0, fmt.Errorf("failed to update entity files: %w", updateErr)
-		}
+	// 3. Rewrite the type field in every entity file under the new directory.
+	count, err := rewriteEntityTypeInDir(fs, newDir, newType)
+	if err != nil {
+		return count, fmt.Errorf("failed to update entity files: %w", err)
 	}
 
 	// 4. Rename template if it exists
@@ -55,4 +54,74 @@ func (w *Workspace) RenameEntityType(oldType, newType, newPlural string) (int, e
 	}
 
 	return count, nil
+}
+
+// rewriteEntityTypeInDir rewrites the YAML `type:` field in every .md
+// file under dir to newType, leaving everything else untouched. Returns
+// the number of files rewritten. Missing dirs are treated as no-ops.
+func rewriteEntityTypeInDir(fs storage.FS, dir, newType string) (int, error) {
+	entries, err := fs.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := rewriteEntityTypeInFile(fs, path, newType); err != nil {
+			return count, fmt.Errorf("update %s: %w", entry.Name(), err)
+		}
+		count++
+	}
+	return count, nil
+}
+
+// rewriteEntityTypeInFile reads a single entity file and replaces its
+// YAML frontmatter `type:` field with newType. The surrounding bytes
+// (other frontmatter keys, body content, blank lines) are preserved
+// verbatim — only the `type:` value changes.
+func rewriteEntityTypeInFile(fs storage.FS, path, newType string) error {
+	content, err := fs.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	updated, ok := replaceYAMLType(string(content), newType)
+	if !ok {
+		// No type: line found — leave the file untouched.
+		return nil
+	}
+	return fs.WriteFile(path, []byte(updated), 0644)
+}
+
+// replaceYAMLType replaces the first occurrence of a top-level
+// `type: <something>` line in the YAML frontmatter block (delimited by
+// leading and trailing `---` lines). Returns the updated content and
+// whether a replacement happened.
+func replaceYAMLType(content, newType string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return content, false
+	}
+	for i := 1; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "---" {
+			// end of frontmatter
+			return content, false
+		}
+		trimmed := strings.TrimLeft(line, " \t")
+		// Only match top-level keys (no indentation).
+		if line != trimmed {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "type:") {
+			lines[i] = "type: " + newType
+			return strings.Join(lines, "\n"), true
+		}
+	}
+	return content, false
 }

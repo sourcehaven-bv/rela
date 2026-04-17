@@ -6,12 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -21,7 +18,6 @@ func setupRenameTestEnv(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	g = graph.New()
 	out = output.New(output.FormatTable)
 	projectCtx = &project.Context{
 		Root:                 dir,
@@ -50,10 +46,12 @@ func setupRenameTestEnv(t *testing.T) string {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
 
-	// Set up workspace for FS access
+	// Set up workspace backed by a real filesystem so the rename
+	// command can modify files on disk. Use NewWithGraph rather than
+	// workspace.New here because SimpleMetamodelYAML deliberately uses
+	// pre-migration syntax, which workspace.New rejects.
 	fs := storage.NewSafeFS(storage.NewOsFS())
-	repo := repository.New(fs, projectCtx)
-	ws = workspace.NewWithGraph(repo, meta, g)
+	ws = workspace.NewBare(fs, projectCtx, meta)
 
 	return dir
 }
@@ -110,10 +108,6 @@ func TestRenameEntityCommand(t *testing.T) {
 		writeEntityFile(t,
 			filepath.Join(dir, "entities", "requirements", "REQ-002.md"),
 			"REQ-002", "requirement", "Second Requirement")
-
-		// Add to graph
-		g.AddNode(&model.Entity{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "First Requirement"}})
-		g.AddNode(&model.Entity{ID: "REQ-002", Type: "requirement", Properties: map[string]interface{}{"title": "Second Requirement"}})
 
 		// Run rename
 		renameForce = true
@@ -208,8 +202,6 @@ func TestRenameEntityCommand(t *testing.T) {
 		writeEntityFile(t,
 			filepath.Join(dir, "entities", "requirements", "REQ-001.md"),
 			"REQ-001", "requirement", "Test")
-
-		g.AddNode(&model.Entity{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Test"}})
 
 		renameForce = true
 		renamePlural = "policies"
