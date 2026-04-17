@@ -170,8 +170,8 @@ func TestFSTemplater_GenerateEntity(t *testing.T) {
 	if !created {
 		t.Error("expected template to be created")
 	}
-	if _, err := os.Stat(filepath.Join(pctx.EntityTemplatesDir, "ticket.md")); err != nil {
-		t.Errorf("template file not created: %v", err)
+	if _, statErr := os.Stat(filepath.Join(pctx.EntityTemplatesDir, "ticket.md")); statErr != nil {
+		t.Errorf("template file not created: %v", statErr)
 	}
 
 	// Second call without force returns created=false.

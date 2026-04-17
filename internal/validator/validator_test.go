@@ -11,7 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-func newTestValidator(t *testing.T) (*validator.GenericValidator, *memstore.MemStore) {
+func newTestValidator(t *testing.T) *validator.GenericValidator {
 	t.Helper()
 	s := memstore.New()
 	ctx := context.Background()
@@ -66,16 +66,16 @@ func newTestValidator(t *testing.T) (*validator.GenericValidator, *memstore.MemS
 	// individual service fields are not exercised here.
 	svc := lua.Services{Meta: meta}
 
-	return validator.New(s, meta, svc, "/tmp"), s
+	return validator.New(s, meta, svc, "/tmp")
 }
 
 func TestGenericValidator_CheckRule(t *testing.T) {
-	v, _ := newTestValidator(t)
+	v := newTestValidator(t)
 	rule := metamodel.ValidationRule{
-		Name:        "approved-requires-owner",
-		EntityType:  "requirement",
-		When:        []string{"status=approved"},
-		Then:        []string{"owner!="},
+		Name:       "approved-requires-owner",
+		EntityType: "requirement",
+		When:       []string{"status=approved"},
+		Then:       []string{"owner!="},
 	}
 
 	ids, err := v.CheckRule(context.Background(), rule)
@@ -88,7 +88,7 @@ func TestGenericValidator_CheckRule(t *testing.T) {
 }
 
 func TestGenericValidator_CheckAll(t *testing.T) {
-	v, _ := newTestValidator(t)
+	v := newTestValidator(t)
 	vios, err := v.CheckAll(context.Background())
 	if err != nil {
 		t.Fatalf("CheckAll error: %v", err)
@@ -109,7 +109,7 @@ func TestGenericValidator_CheckAll(t *testing.T) {
 }
 
 func TestGenericValidator_CheckRule_NoMatches(t *testing.T) {
-	v, _ := newTestValidator(t)
+	v := newTestValidator(t)
 	rule := metamodel.ValidationRule{
 		Name:       "no-match",
 		EntityType: "requirement",
@@ -126,7 +126,7 @@ func TestGenericValidator_CheckRule_NoMatches(t *testing.T) {
 }
 
 func TestGenericValidator_CheckRule_WrongEntityType(t *testing.T) {
-	v, _ := newTestValidator(t)
+	v := newTestValidator(t)
 	// Rule scoped to decision type; only DEC-1 is candidate, has owner=""
 	rule := metamodel.ValidationRule{
 		Name:       "decisions-need-owner",
