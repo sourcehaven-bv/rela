@@ -81,7 +81,8 @@ test.describe('Search', () => {
       // Search for a common term that exists in features
       await searchPage.search('User');
 
-      // Results should all be features
+      // The matching feature should appear in results
+      await searchPage.expectResultContains('User Authentication');
       const resultCount = await searchPage.getResultCount();
       expect(resultCount).toBeGreaterThan(0);
     });
