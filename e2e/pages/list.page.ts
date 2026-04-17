@@ -20,6 +20,10 @@ export class ListPage extends BasePage {
   async navigateToList(listId: string) {
     await this.navigateTo(`/list/${listId}`);
     await this.waitForSpinnerToDisappear();
+    // Wait for the list to render — either rows or the empty-state message.
+    const anyRow = this.page.locator('.entity-row, tbody tr').first();
+    const empty = this.page.locator('.empty-state');
+    await expect(anyRow.or(empty)).toBeVisible();
   }
 
   async getRowCount(): Promise<number> {
