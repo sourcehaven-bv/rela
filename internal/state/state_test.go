@@ -1,28 +1,28 @@
-package repository
+package state
 
 import (
 	"strings"
 	"testing"
 )
 
-func TestValidateCacheFilename_Accepts(t *testing.T) {
+func TestValidateKey_Accepts(t *testing.T) {
 	ok := []string{
 		"cache.json",
 		"user-defaults.yaml",
 		"ui-state.json",
 		"palette.yaml",
-		"documents/render-abc123.html", // legitimate nested cache
+		"documents/render-abc123.html", // legitimate nested key
 	}
 	for _, name := range ok {
 		t.Run(name, func(t *testing.T) {
-			if err := validateCacheFilename(name); err != nil {
+			if err := validateKey(name); err != nil {
 				t.Fatalf("expected ok for %q, got %v", name, err)
 			}
 		})
 	}
 }
 
-func TestValidateCacheFilename_Rejects(t *testing.T) {
+func TestValidateKey_Rejects(t *testing.T) {
 	cases := []struct {
 		name string
 		want string
@@ -41,7 +41,7 @@ func TestValidateCacheFilename_Rejects(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateCacheFilename(tc.name)
+			err := validateKey(tc.name)
 			if err == nil {
 				t.Fatalf("expected error for %q", tc.name)
 			}

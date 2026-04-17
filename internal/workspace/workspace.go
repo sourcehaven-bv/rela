@@ -13,10 +13,12 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/automation"
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
@@ -26,17 +28,19 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
 
-// ChangeEvent is re-exported from repository so consumers don't need to
-// import repository directly for watcher callback signatures.
-type ChangeEvent = repository.ChangeEvent
+// ChangeEvent is re-exported from storage so consumers don't need to
+// import storage directly for watcher callback signatures.
+type ChangeEvent = storage.ChangeEvent
 
-// ChangeOp is re-exported from repository for the same reason as ChangeEvent.
-type ChangeOp = repository.ChangeOp
+// ChangeOp is re-exported from storage for the same reason as ChangeEvent.
+type ChangeOp = storage.ChangeOp
 
 // ScriptExecutor runs scripts with entity context. This follows dependency
 // inversion: workspace defines the interface it needs, script package implements it.
@@ -148,12 +152,12 @@ type Workspace struct {
 	closed atomic.Bool
 
 	// Watcher state (nil when not watching).
-	watchHandle *repository.WatchHandle
+	watcher    *storage.Watcher
+	stopSchema func() // stops the metamodel loader subscription
 
 	// schemaFiles holds the absolute paths of all files that make up the
 	// current metamodel (metamodel.yaml + includes). Updated after each
-	// successful Reload. Used by the watcher to distinguish schema changes
-	// from data changes.
+	// successful Reload.
 	schemaFiles []string
 }
 
@@ -192,7 +196,7 @@ func New(repo repository.Store, scriptExec ScriptExecutor, opts ...Option) (*Wor
 		exec = NopScriptExecutor
 	}
 
-	meta, schemaFiles, err := repo.LoadMetamodel()
+	meta, schemaFiles, err := metamodel.NewFSLoader(repo.FS(), repo.Paths().MetamodelPath).Load(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
@@ -464,37 +468,39 @@ func (w *Workspace) search(words, phrases []string, limit int) ([]*entity.Entity
 // Paths returns the project directory layout.
 func (w *Workspace) Paths() *project.Context { return w.repo.Paths() }
 
-// ReadProjectFile reads a file relative to the project root.
-func (w *Workspace) ReadProjectFile(name string) ([]byte, error) {
-	return w.repo.ReadProjectFile(name)
-}
-
-// ReadCacheFile reads a file from the .rela cache directory.
-func (w *Workspace) ReadCacheFile(name string) ([]byte, error) {
+// Config returns the project-config loader (data-entry.yaml, schedules.yaml, ...).
+// Returns a no-op loader when the workspace has no repository configured
+// (rare; happens only in tests that stub the workspace).
+func (w *Workspace) Config() config.Loader {
 	if w.repo == nil {
-		return nil, fmt.Errorf("no repository configured")
+		return nopConfig{}
 	}
-	return w.repo.ReadCacheFile(name)
+	return config.NewFSLoader(w.FS(), w.Paths().Root)
 }
 
-// WriteCacheFile writes a file to the .rela cache directory.
-func (w *Workspace) WriteCacheFile(name string, data []byte) error {
-	return w.repo.WriteCacheFile(name, data)
+// State returns the per-user state KV (UI state, render caches, scheduler state).
+// Returns a no-op KV when the workspace has no repository configured.
+func (w *Workspace) State() state.KV {
+	if w.repo == nil {
+		return nopState{}
+	}
+	return state.NewFSKV(w.FS(), w.Paths().CacheDir)
 }
 
-// DiscoverEntityTemplates returns all templates (including variants) for an entity type.
-func (w *Workspace) DiscoverEntityTemplates(entityType string) ([]*model.EntityTemplate, error) {
-	return w.repo.DiscoverEntityTemplates(entityType)
+type nopConfig struct{}
+
+func (nopConfig) Load(context.Context, string) ([]byte, error) {
+	return nil, fmt.Errorf("workspace: no repository configured")
 }
 
-// GenerateEntityTemplate generates a template file for the given entity type.
-func (w *Workspace) GenerateEntityTemplate(entityType, variant string, force bool) (bool, error) {
-	return w.repo.GenerateEntityTemplate(w.Meta(), entityType, variant, force)
+type nopState struct{}
+
+func (nopState) Get(context.Context, string) ([]byte, error) {
+	return nil, fmt.Errorf("workspace: no repository configured")
 }
 
-// GenerateRelationTemplate generates a template file for the given relation type.
-func (w *Workspace) GenerateRelationTemplate(relationType string, force bool) (bool, error) {
-	return w.repo.GenerateRelationTemplate(w.Meta(), relationType, force)
+func (nopState) Put(context.Context, string, []byte) error {
+	return fmt.Errorf("workspace: no repository configured")
 }
 
 // FindOrphanedTempFiles returns paths of leftover .new temp files.
@@ -659,7 +665,7 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 
 	oldState := w.state.Load()
 
-	newMeta, newSchemaFiles, err := w.repo.LoadMetamodel()
+	newMeta, newSchemaFiles, err := w.MetaLoader().Load(context.Background())
 	if err != nil {
 		if migration.IsMigrationError(err) {
 			return w.reloadKeepingOldMetamodel(oldState)
@@ -1112,16 +1118,16 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 	entity := model.NewEntity(entityID, entityType)
 
 	// Apply template defaults (use variant if specified).
-	template, err := w.repo.LoadEntityTemplateVariant(entityType, opts.TemplateVariant)
+	tmpl, err := w.Templater().EntityTemplate(context.Background(), entityType, opts.TemplateVariant)
 	if err != nil {
 		return nil, fmt.Errorf("load template: %w", err)
 	}
 	// If a variant was explicitly specified but not found, that's an error.
-	if opts.TemplateVariant != "" && template == nil {
+	if opts.TemplateVariant != "" && tmpl == nil {
 		return nil, fmt.Errorf("template variant %q not found for entity type %s", opts.TemplateVariant, entityType)
 	}
-	if template != nil {
-		markdown.ApplyEntityTemplate(entity, template)
+	if tmpl != nil {
+		entity.Properties, entity.Content = templating.ApplyEntity(entity.Properties, entity.Content, tmpl)
 	}
 
 	// Apply provided properties (override template defaults).
@@ -1502,12 +1508,12 @@ func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelat
 	rel := model.NewRelation(from, relType, to)
 
 	// Apply template if available.
-	template, err := w.repo.LoadRelationTemplate(relType)
+	tmpl, err := w.Templater().RelationTemplate(context.Background(), relType)
 	if err != nil {
 		return nil, fmt.Errorf("load relation template: %w", err)
 	}
-	if template != nil {
-		markdown.ApplyRelationTemplate(rel, template)
+	if tmpl != nil {
+		rel.Properties = templating.ApplyRelation(rel.Properties, tmpl)
 	}
 
 	// Apply caller-provided properties and content (override template defaults).
@@ -1689,77 +1695,82 @@ type WatchOptions struct {
 	ExtraFiles []string
 	// ExtraDirs lists additional directories to watch (e.g., metamodel/).
 	ExtraDirs []string
-	// OnChange is called after the workspace has handled file changes
-	// (reload, sync, or notify-only). Consumers use this for side-effects
-	// (SSE broadcast, MCP notifications, etc.).
+	// OnChange is called after the workspace has handled data-file changes
+	// (entities, relations, extras) via a graph sync or notify-only pass.
+	// Metamodel reloads fire OnMetaReload instead — they don't carry the
+	// file paths that OnChange listeners usually key off of.
 	OnChange func(events []ChangeEvent)
+	// OnMetaReload is called after the workspace has reloaded the metamodel
+	// in response to a schema-file change. Consumers that need to rebuild
+	// derived state (palette, styles, openapi, ...) hook in here.
+	OnMetaReload func()
 }
 
-// StartWatching begins watching for file changes. On each batch of changes
-// the workspace classifies the events and either reloads the metamodel and
-// graph, re-syncs only the graph, or skips reloading (notify-only). Then it
-// calls OnChange with the raw events.
+// StartWatching begins watching for file changes. Schema changes flow
+// through the metamodel loader's Subscribe; entity/relation/views/extras
+// come from a storage.Watcher rooted at the project directories.
 func (w *Workspace) StartWatching(opts WatchOptions) error {
-	// Include schema include files in the initial watch list so changes to
-	// them are detected immediately.
-	extraFiles := make([]string, 0, len(opts.ExtraFiles)+len(w.schemaFiles))
-	extraFiles = append(extraFiles, opts.ExtraFiles...)
-	extraFiles = append(extraFiles, w.schemaFiles...)
-
-	repoOpts := repository.WatchOptions{
-		ExtraFiles: extraFiles,
-		ExtraDirs:  opts.ExtraDirs,
-	}
-
 	paths := w.Paths()
-	viewsPath := filepath.Join(paths.Root, "views.yaml")
 
-	handle, err := w.repo.WatchWithHandle(repoOpts, func(events []repository.ChangeEvent) {
-		action := classifyEvents(events, w.schemaFiles, viewsPath, paths.EntitiesDir, paths.RelationsDir)
-
-		switch action {
-		case actionReload:
+	// Subscribe to metamodel changes via the loader.
+	if sub, ok := w.MetaLoader().(metamodel.Subscriber); ok {
+		stop, err := sub.Subscribe(context.Background(), func() {
 			if _, reloadErr := w.Reload(); reloadErr != nil {
 				slog.Error("reload error", "error", reloadErr)
 			}
-		case actionSync:
-			if _, syncErr := w.Sync(); syncErr != nil {
-				slog.Error("sync error", "error", syncErr)
+			if opts.OnMetaReload != nil {
+				opts.OnMetaReload()
 			}
-		case actionNotify:
-			// No data changes — just notify consumers
+		})
+		if err != nil {
+			return err
 		}
+		w.stopSchema = stop
+	}
 
-		if opts.OnChange != nil {
-			opts.OnChange(events)
-		}
+	// Always-watched dirs: entities + relations + caller extras.
+	dirs := make([]string, 0, 2+len(opts.ExtraDirs))
+	dirs = append(dirs, paths.EntitiesDir, paths.RelationsDir)
+	dirs = append(dirs, opts.ExtraDirs...)
+
+	viewsPath := filepath.Join(paths.Root, "views.yaml")
+
+	watcher, err := storage.NewWatcher(storage.WatchConfig{
+		Dirs:       dirs,
+		Files:      opts.ExtraFiles,
+		Extensions: []string{".md", ".yaml", ".yml"},
+		Debounce:   200 * time.Millisecond,
+		SkipHidden: true,
+		OnChange: func(events []storage.ChangeEvent) {
+			action := classifyDataEvents(events, viewsPath, paths.EntitiesDir, paths.RelationsDir)
+			if action == actionSync {
+				if _, syncErr := w.Sync(); syncErr != nil {
+					slog.Error("sync error", "error", syncErr)
+				}
+			}
+			if opts.OnChange != nil {
+				opts.OnChange(events)
+			}
+		},
 	})
 	if err != nil {
+		if w.stopSchema != nil {
+			w.stopSchema()
+			w.stopSchema = nil
+		}
 		return err
 	}
-	w.watchHandle = handle
+
+	go watcher.Start()
+	w.watcher = watcher
 	return nil
 }
 
-// updateSchemaFiles compares newSchemaFiles against the current w.schemaFiles,
-// adds any newly-seen files to the active watcher, and updates w.schemaFiles.
+// updateSchemaFiles records the latest set of metamodel source files.
+// The metamodel loader's subscription manages its own watch list — this
+// function only tracks what was last loaded, for any code that needs it.
 // Caller must hold reloadMu.
 func (w *Workspace) updateSchemaFiles(newSchemaFiles []string) {
-	oldSet := make(map[string]bool, len(w.schemaFiles))
-	for _, f := range w.schemaFiles {
-		oldSet[filepath.Clean(f)] = true
-	}
-
-	if w.watchHandle != nil {
-		for _, f := range newSchemaFiles {
-			if !oldSet[filepath.Clean(f)] {
-				if addErr := w.watchHandle.AddFile(f); addErr != nil {
-					slog.Warn("failed to watch new schema file", "path", f, "error", addErr)
-				}
-			}
-		}
-	}
-
 	w.schemaFiles = newSchemaFiles
 }
 
@@ -1773,9 +1784,13 @@ func (w *Workspace) StopWatching() {
 
 // stopWatchingLocked stops the watcher. Caller must hold reloadMu.
 func (w *Workspace) stopWatchingLocked() {
-	if w.watchHandle != nil {
-		w.watchHandle.Stop()
-		w.watchHandle = nil
+	if w.watcher != nil {
+		w.watcher.Stop()
+		w.watcher = nil
+	}
+	if w.stopSchema != nil {
+		w.stopSchema()
+		w.stopSchema = nil
 	}
 }
 
@@ -1812,15 +1827,15 @@ func (w *Workspace) Close() error {
 
 // PauseWatching temporarily suppresses file change events.
 func (w *Workspace) PauseWatching() {
-	if w.watchHandle != nil {
-		w.watchHandle.Pause()
+	if w.watcher != nil {
+		w.watcher.Pause()
 	}
 }
 
 // ResumeWatching re-enables file change events after PauseWatching.
 func (w *Workspace) ResumeWatching() {
-	if w.watchHandle != nil {
-		w.watchHandle.Resume()
+	if w.watcher != nil {
+		w.watcher.Resume()
 	}
 }
 

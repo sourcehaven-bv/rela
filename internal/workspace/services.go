@@ -6,6 +6,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
@@ -108,6 +109,12 @@ func (w *Workspace) Searcher() search.Searcher {
 	return &wsSearcher{w: w}
 }
 
+// MetaLoader returns the metamodel loader for this workspace. Callers
+// invoke Load(ctx) to read a fresh metamodel from the configured source.
+func (w *Workspace) MetaLoader() metamodel.Loader {
+	return metamodel.NewFSLoader(w.FS(), w.Paths().MetamodelPath)
+}
+
 // legacyFormatter adapts the workspace's FormatEntity/FormatRelation methods
 // to the store.Formatter interface. Used when no backend-specific formatter
 // is wired via WithFormatter.
@@ -143,62 +150,9 @@ func (w *Workspace) Validator() validator.Validator {
 	return validator.New(w.Store(), w.Meta(), w.luaServices(), root)
 }
 
-// Templater returns the entity template service backed by the workspace's
-// repository.
+// Templater returns the entity-and-relation template service.
 func (w *Workspace) Templater() templating.Templater {
-	return &repoTemplater{w: w}
+	return templating.NewFSTemplater(w.FS(), w.Paths())
 }
 
-// repoTemplater adapts the legacy repo.DiscoverEntityTemplates to the
-// templating.Templater interface.
-type repoTemplater struct {
-	w *Workspace
-}
-
-var _ templating.Templater = (*repoTemplater)(nil)
-
-func (t *repoTemplater) EntityTemplates(_ context.Context, entityType string) ([]*templating.Template, error) {
-	if t.w.repo == nil {
-		return nil, nil
-	}
-	models, err := t.w.repo.DiscoverEntityTemplates(entityType)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*templating.Template, 0, len(models))
-	for _, m := range models {
-		out = append(out, modelTemplateToService(m))
-	}
-	return out, nil
-}
-
-func modelTemplateToService(m *model.EntityTemplate) *templating.Template {
-	if m == nil {
-		return nil
-	}
-	rels := make([]templating.Relation, len(m.Relations))
-	for i, r := range m.Relations {
-		rels[i] = templating.Relation{Type: r.Relation, Target: r.Target}
-	}
-	return &templating.Template{
-		Name:       m.Name,
-		EntityType: m.EntityType,
-		Properties: m.Properties,
-		Content:    m.Content,
-		Relations:  rels,
-	}
-}
-
-func (t *repoTemplater) EntityTemplate(ctx context.Context, entityType, variant string) (*templating.Template, error) {
-	all, err := t.EntityTemplates(ctx, entityType)
-	if err != nil {
-		return nil, err
-	}
-	for _, tpl := range all {
-		if tpl.Name == variant {
-			return tpl, nil
-		}
-	}
-	return nil, nil
-}
 

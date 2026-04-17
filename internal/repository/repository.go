@@ -10,14 +10,10 @@ package repository
 
 import (
 	"fmt"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -49,63 +45,10 @@ type Store interface {
 
 	Sync(meta *metamodel.Metamodel) (*graph.Graph, *model.SyncResult, error)
 
-	// --- Metamodel ---
-
-	// LoadMetamodel loads and parses the metamodel from the project's metamodel file.
-	// The returned []string contains the absolute paths of all files that were read
-	// (metamodel.yaml plus any include files).
-	LoadMetamodel() (*metamodel.Metamodel, []string, error)
-
-	// --- Project Files ---
-
-	// ReadProjectFile reads a file relative to the project root.
-	// This allows consumers to read app-specific config files (e.g. data-entry.yaml)
-	// without needing direct filesystem access.
-	ReadProjectFile(filename string) ([]byte, error)
-
-	// WriteProjectFile writes a file relative to the project root.
-	WriteProjectFile(filename string, data []byte) error
-
-	// ReadCacheFile reads a file relative to the cache directory (.rela/).
-	// This is for app-specific state files (e.g. ui-state.json).
-	ReadCacheFile(filename string) ([]byte, error)
-
-	// WriteCacheFile writes a file relative to the cache directory (.rela/).
-	// Creates the cache directory if it doesn't exist.
-	WriteCacheFile(filename string, data []byte) error
-
-	// --- Templates ---
-
-	// LoadEntityTemplate loads the default template for the given entity type.
-	// Returns nil if no template exists (templates are optional).
-	LoadEntityTemplate(entityType string) (*markdown.Document, error)
-	// LoadEntityTemplateVariant loads a template variant for the given entity type.
-	// If variant is empty, loads the default template (<type>.md).
-	// Otherwise loads <type>--<variant>.md.
-	LoadEntityTemplateVariant(entityType, variant string) (*markdown.Document, error)
-	LoadRelationTemplate(relationType string) (*markdown.Document, error)
-	GenerateEntityTemplate(meta *metamodel.Metamodel, entityType, variant string, force bool) (bool, error)
-	GenerateRelationTemplate(meta *metamodel.Metamodel, relationType string, force bool) (bool, error)
-	// DiscoverEntityTemplates returns all templates (including variants) for an entity type.
-	// Templates are named <type>.md (default) and <type>--<variant>.md (variants).
-	DiscoverEntityTemplates(entityType string) ([]*model.EntityTemplate, error)
-
 	// --- Path Helpers ---
 
 	EntityFilePath(entityType, id string, meta *metamodel.Metamodel) string
 	EntityTypeDir(entityType string, meta *metamodel.Metamodel) string
-
-	// --- Change Notification ---
-
-	// Watch starts watching for changes to stored data. The onChange callback
-	// is called with batched change events after a debounce period. Returns a
-	// stop function to shut down the watcher. Implementations may use
-	// filesystem notifications, database triggers, polling, etc.
-	Watch(opts WatchOptions, onChange func(events []ChangeEvent)) (stop func(), err error)
-
-	// WatchWithHandle is like Watch but returns a WatchHandle that allows
-	// pausing and resuming the watcher in addition to stopping it.
-	WatchWithHandle(opts WatchOptions, onChange func(events []ChangeEvent)) (*WatchHandle, error)
 
 	// --- Filesystem Access ---
 
@@ -126,17 +69,6 @@ type Store interface {
 	// CleanupOrphanedTempFiles removes all orphaned .new temp files.
 	// Returns the number of files cleaned up.
 	CleanupOrphanedTempFiles() (int, error)
-}
-
-// WatchOptions configures optional parameters for Store.Watch.
-type WatchOptions struct {
-	// ExtraFiles lists additional files to watch beyond the standard set
-	// (entities, relations, metamodel, views). This allows consumers to
-	// watch app-specific config files (e.g. data-entry.yaml).
-	ExtraFiles []string
-	// ExtraDirs lists additional directories to watch beyond the standard set
-	// (entities, relations). Useful for watching metamodel include directories.
-	ExtraDirs []string
 }
 
 // Compile-time check: *Repository implements Store.
@@ -294,208 +226,6 @@ func (r *Repository) Sync(meta *metamodel.Metamodel) (*graph.Graph, *model.SyncR
 }
 
 // --- Metamodel ---
-
-// LoadMetamodel loads and parses the metamodel from the project's metamodel file.
-// Returns a migration.Error if the file contains deprecated syntax that needs migration.
-// The returned []string contains the absolute paths of all files that were read
-// (metamodel.yaml plus any include files).
-func (r *Repository) LoadMetamodel() (*metamodel.Metamodel, []string, error) {
-	detections, err := migration.Detect(r.paths.MetamodelPath, migration.FileTypeMetamodel, r.fs)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(detections) > 0 {
-		return nil, nil, &migration.Error{
-			FilePath:   r.paths.MetamodelPath,
-			Detections: detections,
-		}
-	}
-	return metamodel.Load(r.paths.MetamodelPath, r.fs)
-}
-
-// --- Project Files ---
-
-// ReadProjectFile reads a file relative to the project root.
-func (r *Repository) ReadProjectFile(filename string) ([]byte, error) {
-	return r.fs.ReadFile(filepath.Join(r.paths.Root, filename))
-}
-
-// WriteProjectFile writes a file relative to the project root.
-func (r *Repository) WriteProjectFile(filename string, data []byte) error {
-	return r.fs.WriteFile(filepath.Join(r.paths.Root, filename), data, 0o644)
-}
-
-// ReadCacheFile reads a file relative to the cache directory (.rela/).
-func (r *Repository) ReadCacheFile(filename string) ([]byte, error) {
-	return r.fs.ReadFile(filepath.Join(r.paths.CacheDir, filename))
-}
-
-// WriteCacheFile writes a file relative to the cache directory (.rela/).
-// Creates the cache directory if it doesn't exist.
-//
-// The filename must be a single path component — `..`, `/`, `\`, and NUL
-// bytes are rejected. Today all callers pass hardcoded names, so this check
-// is purely defensive against future regressions.
-func (r *Repository) WriteCacheFile(filename string, data []byte) error {
-	if err := validateCacheFilename(filename); err != nil {
-		return err
-	}
-	fullPath := filepath.Join(r.paths.CacheDir, filename)
-	if err := r.fs.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		return err
-	}
-	return r.fs.WriteFile(fullPath, data, 0o644)
-}
-
-// validateCacheFilename ensures name is a relative path that stays inside the
-// cache directory. A subdirectory is allowed (e.g. "documents/x.html") because
-// real callers cache things in nested groups, but absolute paths, `..`
-// segments, backslashes, control characters (including NUL), and Windows
-// drive-letter syntax are rejected.
-func validateCacheFilename(name string) error {
-	if name == "" {
-		return fmt.Errorf("cache filename: must not be empty")
-	}
-	for _, r := range name {
-		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("cache filename: control character (including NUL) not allowed")
-		}
-	}
-	if strings.ContainsRune(name, '\\') {
-		return fmt.Errorf("cache filename: backslash not allowed (use forward slash)")
-	}
-	if strings.HasPrefix(name, "/") {
-		return fmt.Errorf("cache filename: must be relative")
-	}
-	// Reject any `..` or `.` segment regardless of position. Cleaning would
-	// silently collapse them, hiding malicious intent.
-	for _, seg := range strings.Split(name, "/") {
-		if seg == "" || seg == "." || seg == ".." {
-			return fmt.Errorf("cache filename: traversal or empty segment not allowed")
-		}
-	}
-	// Reject Windows drive-letter syntax (e.g. "c:foo.yaml") which would
-	// be misinterpreted on Windows even after passing the other checks.
-	if len(name) >= 2 && name[1] == ':' {
-		return fmt.Errorf("cache filename: drive letter not allowed")
-	}
-	return nil
-}
-
-// --- Templates ---
-
-// LoadEntityTemplate loads the template for the given entity type, or
-// returns nil if no template exists.
-func (r *Repository) LoadEntityTemplate(entityType string) (*markdown.Document, error) {
-	return r.fio.LoadEntityTemplate(r.paths.EntityTemplatePath(entityType))
-}
-
-// LoadEntityTemplateVariant loads a template variant for the given entity type.
-// If variant is empty, loads the default template (<type>.md).
-// Otherwise loads <type>--<variant>.md.
-func (r *Repository) LoadEntityTemplateVariant(entityType, variant string) (*markdown.Document, error) {
-	return r.fio.LoadEntityTemplate(r.paths.EntityTemplateVariantPath(entityType, variant))
-}
-
-// LoadRelationTemplate loads the template for the given relation type, or
-// returns nil if no template exists.
-func (r *Repository) LoadRelationTemplate(relationType string) (*markdown.Document, error) {
-	return r.fio.LoadRelationTemplate(r.paths.RelationTemplatePath(relationType))
-}
-
-// GenerateEntityTemplate generates a template file for the given entity type.
-// If variant is non-empty, creates a variant template (e.g., type--variant.md).
-// Returns true if a new template was created.
-func (r *Repository) GenerateEntityTemplate(
-	meta *metamodel.Metamodel, entityType, variant string, force bool,
-) (bool, error) {
-	path := r.paths.EntityTemplateVariantPath(entityType, variant)
-	return r.fio.GenerateEntityTemplate(path, meta, entityType, force)
-}
-
-// GenerateRelationTemplate generates a template file for the given relation type.
-// Returns true if a new template was created.
-func (r *Repository) GenerateRelationTemplate(
-	meta *metamodel.Metamodel, relationType string, force bool,
-) (bool, error) {
-	path := r.paths.RelationTemplatePath(relationType)
-	return r.fio.GenerateRelationTemplate(path, meta, relationType, force)
-}
-
-// DiscoverEntityTemplates returns all templates (including variants) for an entity type.
-func (r *Repository) DiscoverEntityTemplates(entityType string) ([]*model.EntityTemplate, error) {
-	return r.fio.DiscoverEntityTemplates(r.paths.EntityTemplatesDir, entityType)
-}
-
-// --- Change Notification ---
-
-// WatchHandle provides control over an active file watcher.
-type WatchHandle struct {
-	watcher *storage.Watcher
-}
-
-// Stop stops the file watcher and releases resources.
-func (h *WatchHandle) Stop() {
-	h.watcher.Stop()
-}
-
-// AddFile adds an individual file to the watch list at runtime.
-func (h *WatchHandle) AddFile(path string) error {
-	return h.watcher.AddFile(path)
-}
-
-// Pause temporarily stops processing file change events.
-// Events that occur while paused are discarded.
-func (h *WatchHandle) Pause() {
-	h.watcher.Pause()
-}
-
-// Resume re-enables event processing after a Pause.
-func (h *WatchHandle) Resume() {
-	h.watcher.Resume()
-}
-
-// Watch starts watching for changes to entities, relations, and metamodel
-// files. The onChange callback is called with batched change events.
-// Returns a stop function to shut down the watcher.
-func (r *Repository) Watch(
-	opts WatchOptions, onChange func(events []ChangeEvent),
-) (stop func(), err error) {
-	handle, err := r.WatchWithHandle(opts, onChange)
-	if err != nil {
-		return nil, err
-	}
-	return handle.Stop, nil
-}
-
-// WatchWithHandle is like Watch but returns a WatchHandle that allows
-// pausing and resuming the watcher in addition to stopping it.
-func (r *Repository) WatchWithHandle(
-	opts WatchOptions, onChange func(events []ChangeEvent),
-) (*WatchHandle, error) {
-	files := []string{r.paths.MetamodelPath}
-	files = append(files, opts.ExtraFiles...)
-
-	dirs := []string{r.paths.EntitiesDir, r.paths.RelationsDir}
-	dirs = append(dirs, opts.ExtraDirs...)
-
-	w, err := storage.NewWatcher(storage.WatchConfig{
-		Dirs:       dirs,
-		Files:      files,
-		Extensions: []string{".md", ".yaml", ".yml"},
-		Debounce:   200 * time.Millisecond,
-		SkipHidden: true,
-		OnChange: func(events []storage.ChangeEvent) {
-			onChange(convertEvents(events))
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	go w.Start()
-	return &WatchHandle{watcher: w}, nil
-}
 
 // --- Path Helpers ---
 

@@ -192,7 +192,7 @@ func (d *Desktop) GetSetupInfo() map[string]interface{} {
 		return map[string]interface{}{"error": "No project pending setup"}
 	}
 
-	meta, _, err := d.pendingSetupRepo.LoadMetamodel()
+	meta, _, err := metamodel.NewFSLoader(d.pendingSetupRepo.FS(), d.pendingSetupRepo.Paths().MetamodelPath).Load(context.Background())
 	if err != nil {
 		return map[string]interface{}{"error": fmt.Sprintf("Failed to load metamodel: %v", err)}
 	}
@@ -219,7 +219,7 @@ func (d *Desktop) GenerateDataEntryConfig(appName string) string {
 		return "No project pending setup"
 	}
 
-	meta, _, err := repo.LoadMetamodel()
+	meta, _, err := metamodel.NewFSLoader(repo.FS(), repo.Paths().MetamodelPath).Load(context.Background())
 	if err != nil {
 		return fmt.Sprintf("Failed to load metamodel: %v", err)
 	}

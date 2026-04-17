@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -605,7 +606,7 @@ Examples:
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.
 func loadDataEntryConfig() *dataentryconfig.Config {
-	data, err := ws.ReadProjectFile(dataentryconfig.ConfigFile)
+	data, err := ws.Config().Load(context.Background(), dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil // File doesn't exist or can't be read
 	}

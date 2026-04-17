@@ -311,7 +311,7 @@ func (s *Server) handleAnalyzeSchema(
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.
 func (s *Server) loadDataEntryConfig() *dataentryconfig.Config {
-	data, err := s.ws.ReadProjectFile(dataentryconfig.ConfigFile)
+	data, err := s.ws.Config().Load(context.Background(), dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil
 	}

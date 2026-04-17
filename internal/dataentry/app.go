@@ -98,10 +98,23 @@ type App struct {
 	// broker delivers SSE events to connected browsers for live-reload.
 	broker *eventBroker
 
+	// stopConfigWatch releases the data-entry.yaml subscription. Set by
+	// StartWatching; nil when watching is not active.
+	stopConfigWatch func()
+
 	// security holds the configured Host/Origin allowlists. Set via
 	// SetSecurityConfig before NewRouter; nil disables the middlewares
 	// (only sensible in unit tests where no HTTP layer is exercised).
 	security *security
+}
+
+// StopWatching releases dataentry-specific watchers (config, etc.).
+// Callers should also stop the workspace watcher via a.ws.StopWatching().
+func (a *App) StopWatching() {
+	if a.stopConfigWatch != nil {
+		a.stopConfigWatch()
+		a.stopConfigWatch = nil
+	}
 }
 
 // State returns the current reloadable snapshot. Handlers should call
@@ -148,7 +161,7 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 // NewApp creates and initializes an App using the given workspace.
 func NewApp(ws *workspace.Workspace) (*App, error) {
 	// Load data-entry config from project root
-	cfgData, err := ws.ReadProjectFile(ConfigFile)
+	cfgData, err := ws.Config().Load(context.Background(), ConfigFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
@@ -313,7 +326,7 @@ func (a *App) loadUIState() UIState {
 	if a.ws == nil {
 		return state
 	}
-	data, err := a.ws.ReadCacheFile(uiStateFile)
+	data, err := a.ws.State().Get(context.Background(), uiStateFile)
 	if err != nil {
 		return state
 	}
@@ -335,7 +348,7 @@ func (a *App) saveUIState(state UIState) error {
 	if err != nil {
 		return err
 	}
-	return a.ws.WriteCacheFile(uiStateFile, data)
+	return a.ws.State().Put(context.Background(), uiStateFile, data)
 }
 
 // loadUserDefaults reads .rela/user-defaults.yaml and returns the parsed defaults.
@@ -344,7 +357,7 @@ func (a *App) loadUserDefaults() *UserDefaults {
 	if a.ws == nil {
 		return nil
 	}
-	data, err := a.ws.ReadCacheFile(userDefaultsFile)
+	data, err := a.ws.State().Get(context.Background(), userDefaultsFile)
 	if err != nil {
 		return nil
 	}
@@ -364,7 +377,7 @@ func (a *App) saveUserDefaults(ud *UserDefaults) error {
 	if err != nil {
 		return err
 	}
-	return a.ws.WriteCacheFile(userDefaultsFile, data)
+	return a.ws.State().Put(context.Background(), userDefaultsFile, data)
 }
 
 // coverage-ignore: requires running workspace, tested via e2e
@@ -384,7 +397,7 @@ func (a *App) loadUserPalette() (*PaletteConfig, error) {
 	if a.ws == nil {
 		return nil, nil
 	}
-	data, err := a.ws.ReadCacheFile(userPaletteFile)
+	data, err := a.ws.State().Get(context.Background(), userPaletteFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -407,7 +420,7 @@ func (a *App) saveUserPalette(p *PaletteConfig) error {
 	if err != nil {
 		return err
 	}
-	return a.ws.WriteCacheFile(userPaletteFile, data)
+	return a.ws.State().Put(context.Background(), userPaletteFile, data)
 }
 
 // firstNavTarget returns the first navigable item from the navigation config,

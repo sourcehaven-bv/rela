@@ -10,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
 // --- test helpers ---
@@ -41,30 +43,38 @@ func (m *mockWorkspace) Sync() (*model.SyncResult, error) {
 
 func (m *mockWorkspace) Paths() *project.Context { return m.paths }
 
-func (m *mockWorkspace) ReadProjectFile(name string) ([]byte, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	data, ok := m.cacheFiles["project:"+name]
+func (m *mockWorkspace) Config() config.Loader { return &mockConfig{m: m} }
+
+func (m *mockWorkspace) State() state.KV { return &mockState{m: m} }
+
+type mockConfig struct{ m *mockWorkspace }
+
+func (c *mockConfig) Load(_ context.Context, name string) ([]byte, error) {
+	c.m.mu.Lock()
+	defer c.m.mu.Unlock()
+	data, ok := c.m.cacheFiles["project:"+name]
 	if !ok {
 		return nil, &notFoundError{name}
 	}
 	return data, nil
 }
 
-func (m *mockWorkspace) ReadCacheFile(name string) ([]byte, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	data, ok := m.cacheFiles[name]
+type mockState struct{ m *mockWorkspace }
+
+func (s *mockState) Get(_ context.Context, key string) ([]byte, error) {
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	data, ok := s.m.cacheFiles[key]
 	if !ok {
-		return nil, &notFoundError{name}
+		return nil, &notFoundError{key}
 	}
 	return data, nil
 }
 
-func (m *mockWorkspace) WriteCacheFile(name string, data []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cacheFiles[name] = append([]byte(nil), data...)
+func (s *mockState) Put(_ context.Context, key string, data []byte) error {
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	s.m.cacheFiles[key] = append([]byte(nil), data...)
 	return nil
 }
 
@@ -248,7 +258,7 @@ func TestScheduler_statePersistedAfterRun(t *testing.T) {
 
 	s.runDueTasks(context.Background())
 
-	data, err := ws.ReadCacheFile(stateFile)
+	data, err := ws.State().Get(context.Background(), stateFile)
 	if err != nil {
 		t.Fatalf("state file not written: %v", err)
 	}

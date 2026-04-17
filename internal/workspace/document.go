@@ -59,7 +59,7 @@ func (w *Workspace) GetCachedDocument(entryID string, _ DocumentConfig) *Documen
 	}
 
 	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheDir, entryID, contentHash)
-	cachedHTML, _ := w.ReadCacheFile(cacheFile)
+	cachedHTML, _ := w.State().Get(context.Background(), cacheFile)
 	if cachedHTML == nil {
 		return nil
 	}
@@ -115,7 +115,7 @@ func (w *Workspace) doRenderDocument(
 	// not fatal — but it must be visible: silent cache rejections previously
 	// hid validation regressions where unsafe IDs caused every render to
 	// re-execute the command.
-	if writeErr := w.WriteCacheFile(cacheFile, []byte(htmlContent)); writeErr != nil {
+	if writeErr := w.State().Put(context.Background(), cacheFile, []byte(htmlContent)); writeErr != nil {
 		slog.Warn("document cache write failed", "error", writeErr)
 	}
 

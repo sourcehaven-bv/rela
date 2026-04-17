@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -99,7 +100,7 @@ status: open
 
 	repo := repository.New(fs, ctx)
 
-	meta, _, err := repo.LoadMetamodel()
+	meta, _, err := metamodel.NewFSLoader(fs, ctx.MetamodelPath).Load(context.Background())
 	if err != nil {
 		t.Fatalf("failed to load metamodel: %v", err)
 	}
@@ -246,11 +247,37 @@ func TestEventBrokerConcurrency(t *testing.T) {
 	}
 }
 
-// simulateReload mimics what workspace.StartWatching does: reload the
-// workspace (metamodel + graph), then call the dataentry onReload callback.
-func (a *App) simulateReload(events []repository.ChangeEvent) {
-	_, _ = a.ws.Reload()
-	a.onReload(events)
+// simulateReload mimics what the watcher subscriptions do in production:
+// a metamodel-path event triggers workspace reload + onMetaReload; a
+// config-path event triggers rebuildState(config); other events go to
+// onDataReload. Mixed slices dispatch to all applicable handlers.
+func (a *App) simulateReload(events []storage.ChangeEvent) {
+	metaPath := a.ws.Paths().MetamodelPath
+	configPath := a.ws.Paths().Root + "/" + ConfigFile
+	metaEvent := false
+	configEvent := false
+	var dataEvents []storage.ChangeEvent
+	for _, e := range events {
+		switch e.Path {
+		case metaPath:
+			metaEvent = true
+		case configPath:
+			configEvent = true
+		default:
+			dataEvents = append(dataEvents, e)
+		}
+	}
+	if metaEvent {
+		_, _ = a.ws.Reload()
+		a.onMetaReload()
+	}
+	if configEvent {
+		a.rebuildState(true, false)
+	}
+	if len(dataEvents) > 0 {
+		_, _ = a.ws.Sync()
+		a.onDataReload(dataEvents)
+	}
 }
 
 // --- reload tests ---
@@ -271,8 +298,8 @@ status: open
 `), 0o644)
 
 	// Reload with a generic entity change (not metamodel or config)
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: app.ws.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: repository.OpCreate},
+	app.simulateReload([]storage.ChangeEvent{
+		{Path: app.ws.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: storage.OpCreate},
 	})
 
 	newCount := len(graphForTest(app).AllNodes())
@@ -320,8 +347,8 @@ relations:
 `
 	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
+	app.simulateReload([]storage.ChangeEvent{
+		{Path: app.ws.Paths().MetamodelPath, Op: storage.OpModify},
 	})
 
 	if _, ok := app.Meta().GetEntityDef("component"); !ok {
@@ -345,8 +372,8 @@ navigation: []
 	configPath := app.ws.Paths().Root + "/" + ConfigFile
 	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
 
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: configPath, Op: repository.OpModify},
+	app.simulateReload([]storage.ChangeEvent{
+		{Path: configPath, Op: storage.OpModify},
 	})
 
 	if app.Cfg().App.Name == originalName {
@@ -365,8 +392,8 @@ func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
 	// Write invalid metamodel
 	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
 
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
+	app.simulateReload([]storage.ChangeEvent{
+		{Path: app.ws.Paths().MetamodelPath, Op: storage.OpModify},
 	})
 
 	// Metamodel should be unchanged
@@ -384,8 +411,8 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	// Write invalid YAML config
 	_ = fs.WriteFile(configPath, []byte(`not: valid: yaml: {{{`), 0o644)
 
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: configPath, Op: repository.OpModify},
+	app.simulateReload([]storage.ChangeEvent{
+		{Path: configPath, Op: storage.OpModify},
 	})
 
 	// Config should be unchanged
@@ -431,9 +458,9 @@ relations:
 	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
 
 	// Reload with both config and metamodel changes at once
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: configPath, Op: repository.OpModify},
-		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
+	app.simulateReload([]storage.ChangeEvent{
+		{Path: configPath, Op: storage.OpModify},
+		{Path: app.ws.Paths().MetamodelPath, Op: storage.OpModify},
 	})
 
 	if app.Cfg().App.Name != "Mixed Update" {
@@ -664,7 +691,7 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 				return
 			default:
 			}
-			app.onReload(nil)
+			app.onDataReload(nil)
 		}
 	}()
 

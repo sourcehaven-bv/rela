@@ -1,17 +1,17 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -81,23 +81,34 @@ func (b *eventBroker) broadcastGitStatus() {
 
 // StartWatching begins file watching for live-reload of views when project
 // files change. The workspace handles metamodel + graph reload; this method
-// adds dataentry-specific side-effects (config reload, SSE broadcast).
-// Stop via a.ws.StopWatching().
+// subscribes to the config service for data-entry.yaml changes and adds
+// SSE broadcast side-effects.
+// Stop via a.ws.StopWatching() plus the returned config-stop function.
 //
 // coverage-ignore: requires real filesystem events via fsnotify
 func (a *App) StartWatching() error {
-	paths := a.ws.Paths()
-	configPath := filepath.Join(paths.Root, ConfigFile)
-	metamodelDir := filepath.Join(paths.Root, "metamodel")
+	// Subscribe to data-entry.yaml via the config loader.
+	if sub, ok := a.ws.Config().(config.Subscriber); ok {
+		stop, err := sub.Subscribe(context.Background(), ConfigFile, func() {
+			a.rebuildState(true, false)
+			a.broker.broadcast("refresh")
+		})
+		if err != nil {
+			return err
+		}
+		a.stopConfigWatch = stop
+	}
 
 	return a.ws.StartWatching(workspace.WatchOptions{
-		ExtraFiles: []string{configPath},
-		ExtraDirs:  []string{metamodelDir},
 		OnChange: func(events []workspace.ChangeEvent) {
 			for _, e := range events {
 				slog.Debug("file changed", "path", e.Path, "op", e.Op)
 			}
-			a.onReload(events)
+			a.onDataReload(events)
+			a.broker.broadcast("refresh")
+		},
+		OnMetaReload: func() {
+			a.onMetaReload()
 			a.broker.broadcast("refresh")
 		},
 	})
@@ -142,39 +153,31 @@ func (a *App) StartGitFetch() (stop func()) {
 	}
 }
 
-// onReload handles dataentry-specific side-effects after the workspace
-// has already reloaded the metamodel and re-synced the graph. It re-reads
-// the data-entry config if changed, rebuilds styles and palette if either
-// config or metamodel changed, then publishes a new AppState snapshot
-// atomically. Readers observe either the pre-reload or the post-reload
-// snapshot, never a torn state.
-func (a *App) onReload(events []workspace.ChangeEvent) {
-	paths := a.ws.Paths()
-	configPath := filepath.Join(paths.Root, ConfigFile)
-	metamodelDir := filepath.Join(paths.Root, "metamodel") + string(filepath.Separator)
-	needConfigReload := false
-	needMetamodelReload := false
+// onDataReload handles dataentry-specific side-effects after the workspace
+// has re-synced the graph from entity/relation changes. Today this is a
+// no-op: dataentry's AppState doesn't depend on entity data directly,
+// so there's nothing to rebuild. Kept in place so the test helper has a
+// callable and so future per-entity reactions have an obvious hook.
+func (a *App) onDataReload(_ []workspace.ChangeEvent) {}
 
-	for _, e := range events {
-		switch {
-		case e.Path == configPath:
-			needConfigReload = true
-		case e.Path == paths.MetamodelPath:
-			needMetamodelReload = true
-		case strings.HasPrefix(e.Path, metamodelDir):
-			needMetamodelReload = true
-		}
-	}
+// onMetaReload handles dataentry-specific side-effects after the workspace
+// has reloaded the metamodel.
+func (a *App) onMetaReload() {
+	a.rebuildState(false, true)
+}
 
+// rebuildState re-reads changed inputs and publishes a fresh AppState
+// snapshot atomically. Readers observe either the pre-reload or the
+// post-reload snapshot, never a torn state.
+func (a *App) rebuildState(configChanged, metaChanged bool) {
 	current := a.State()
 	if current == nil {
 		return
 	}
 
-	// Start from the current snapshot and override fields that changed.
 	newCfg := current.Cfg
-	if needConfigReload {
-		cfgData, err := a.ws.ReadProjectFile(ConfigFile)
+	if configChanged {
+		cfgData, err := a.ws.Config().Load(context.Background(), ConfigFile)
 		if err != nil {
 			slog.Warn("config reload error", "error", err)
 		} else {
@@ -196,7 +199,7 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 	newPalette := current.Palette
 	newOpenAPI := current.OpenAPIGen
 
-	if needConfigReload || needMetamodelReload {
+	if configChanged || metaChanged {
 		newStyleMap, newStyledTypes = buildStyleMap(newCfg, newMeta)
 		// On reload, keep the previous palette if the new file is
 		// broken — better to show stale colors than crash or wipe.

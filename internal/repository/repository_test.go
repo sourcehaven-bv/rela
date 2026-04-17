@@ -398,27 +398,6 @@ func TestRepository_Sync_ReturnsFreshGraph(t *testing.T) {
 	}
 }
 
-// --- Metamodel ---
-
-func TestRepository_LoadMetamodel(t *testing.T) {
-	repo, _, _ := setupTestRepo(t)
-
-	meta, _, err := repo.LoadMetamodel()
-	if err != nil {
-		t.Fatalf("LoadMetamodel() error = %v", err)
-	}
-
-	if _, ok := meta.GetEntityDef("requirement"); !ok {
-		t.Error("loaded metamodel should contain 'requirement' entity type")
-	}
-	if _, ok := meta.GetEntityDef("decision"); !ok {
-		t.Error("loaded metamodel should contain 'decision' entity type")
-	}
-	if _, ok := meta.GetRelationDef("addresses"); !ok {
-		t.Error("loaded metamodel should contain 'addresses' relation type")
-	}
-}
-
 // --- Path Helpers ---
 
 func TestRepository_EntityFilePath(t *testing.T) {
@@ -525,40 +504,6 @@ entities:
 	want := "/project/entities/components/COMP-001.md"
 	if got != want {
 		t.Errorf("EntityFilePath() = %q, want %q (default plural)", got, want)
-	}
-}
-
-// --- Templates ---
-
-func TestRepository_LoadEntityTemplate_NotFound(t *testing.T) {
-	repo, _, _ := setupTestRepo(t)
-
-	// No template file exists — should return nil, nil
-	doc, err := repo.LoadEntityTemplate("requirement")
-	if err != nil {
-		t.Fatalf("LoadEntityTemplate() error = %v", err)
-	}
-	if doc != nil {
-		t.Error("LoadEntityTemplate() should return nil when no template exists")
-	}
-}
-
-func TestRepository_LoadEntityTemplate_Exists(t *testing.T) {
-	repo, _, fs := setupTestRepo(t)
-
-	// Write a template file
-	tmplContent := "---\nstatus: draft\n---\n\n# Description\n\nTODO\n"
-	tmplPath := "/project/templates/entities/requirement.md"
-	if err := fs.WriteFile(tmplPath, []byte(tmplContent), 0o644); err != nil {
-		t.Fatalf("failed to write template: %v", err)
-	}
-
-	doc, err := repo.LoadEntityTemplate("requirement")
-	if err != nil {
-		t.Fatalf("LoadEntityTemplate() error = %v", err)
-	}
-	if doc == nil {
-		t.Fatal("LoadEntityTemplate() should return non-nil for existing template")
 	}
 }
 
