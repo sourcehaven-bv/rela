@@ -1605,16 +1605,23 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := a.State()
-	// Build entity type counts
-	counts := make(map[string]int)
 	svc := a.Services()
+
+	// Build entity type counts as a fallback for items without filters.
+	typeCounts := make(map[string]int)
 	for _, entityType := range s.Meta.EntityTypes() {
 		n, err := svc.Store.CountEntities(context.Background(), store.EntityQuery{Type: entityType})
 		if err != nil {
-			counts[entityType] = 0
+			typeCounts[entityType] = 0
 			continue
 		}
-		counts[entityType] = n
+		typeCounts[entityType] = n
+	}
+
+	counts := sidebarCounts{
+		typeCounts:  typeCounts,
+		filterCache: make(map[string]int),
+		app:         a,
 	}
 
 	// Build navigation with counts
@@ -1652,8 +1659,52 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	writeV1JSON(w, http.StatusOK, resp)
 }
 
+// sidebarCounts caches sidebar entity counts, applying list- or kanban-
+// level filters when present. Unfiltered views fall back to the
+// type-level total.
+type sidebarCounts struct {
+	typeCounts  map[string]int
+	filterCache map[string]int // key: "list:<id>" or "kanban:<id>"
+	app         *App
+}
+
+// listCount returns the entity count for the given list, applying any
+// configured filters. Results are cached per call.
+func (c *sidebarCounts) listCount(listID string, list dataentryconfig.List) int {
+	key := "list:" + listID
+	if n, ok := c.filterCache[key]; ok {
+		return n
+	}
+	n := c.countWithFilters(list.EntityType, list.Filters)
+	c.filterCache[key] = n
+	return n
+}
+
+// kanbanCount returns the entity count for the given kanban, applying
+// any configured filters. Results are cached per call.
+func (c *sidebarCounts) kanbanCount(kanbanID string, kanban dataentryconfig.Kanban) int {
+	key := "kanban:" + kanbanID
+	if n, ok := c.filterCache[key]; ok {
+		return n
+	}
+	n := c.countWithFilters(kanban.EntityType, kanban.Filters)
+	c.filterCache[key] = n
+	return n
+}
+
+// countWithFilters returns the count of entities of the given type that
+// pass the supplied filters. When filters is empty, the precomputed
+// type total is returned directly.
+func (c *sidebarCounts) countWithFilters(entityType string, filters []dataentryconfig.FilterConfig) int {
+	if len(filters) == 0 {
+		return c.typeCounts[entityType]
+	}
+	entities := listFromStoreByTypes(c.app.Services(), []string{entityType})
+	return len(applyFilters(entities, filters))
+}
+
 // navEntryToSidebarItem converts a navigation entry to a sidebar item with count.
-func (a *App) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, counts map[string]int) V1SidebarItem {
+func (a *App) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, counts sidebarCounts) V1SidebarItem {
 	s := a.State()
 	item := V1SidebarItem{
 		Label: entry.Label,
@@ -1663,20 +1714,16 @@ func (a *App) navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, count
 	case entry.List != "":
 		item.Href = "/list/" + entry.List
 		item.Icon = "list"
-		// Look up entity type from list config
 		if list, ok := s.Cfg.Lists[entry.List]; ok {
-			if count, ok := counts[list.EntityType]; ok {
-				item.Count = &count
-			}
+			count := counts.listCount(entry.List, list)
+			item.Count = &count
 		}
 	case entry.Kanban != "":
 		item.Href = "/kanban/" + entry.Kanban
 		item.Icon = "kanban"
-		// Look up entity type from kanban config
 		if kanban, ok := s.Cfg.Kanbans[entry.Kanban]; ok {
-			if count, ok := counts[kanban.EntityType]; ok {
-				item.Count = &count
-			}
+			count := counts.kanbanCount(entry.Kanban, kanban)
+			item.Count = &count
 		}
 	case entry.Dashboard:
 		item.Href = "/"
