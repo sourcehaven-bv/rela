@@ -72,13 +72,17 @@ export class FormPage extends BasePage {
   }
 
   async submit() {
+    const startUrl = this.page.url();
     await this.submitButton.click();
-    await this.page.waitForLoadState('domcontentloaded');
+    // Submit is a client-side fetch followed by a router.push on success. Wait
+    // briefly for the URL to change; if validation fails we stay on the form.
+    await this.page.waitForURL((url) => url.toString() !== startUrl, { timeout: 2000 }).catch(() => {});
   }
 
   async cancel() {
+    const startUrl = this.page.url();
     await this.cancelButton.click();
-    await this.page.waitForLoadState('domcontentloaded');
+    await this.page.waitForURL((url) => url.toString() !== startUrl, { timeout: 2000 }).catch(() => {});
   }
 
   async expectValidationError(message: string) {
