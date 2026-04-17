@@ -89,7 +89,7 @@ Examples:
 			// Apply filters
 			filtered := make([]*model.Entity, 0)
 			for _, e := range entities {
-				matches, err := filter.MatchAll(e, filters, entityDef, meta)
+				matches, err := filter.MatchAll(entityRecord(e), filters, entityDef, meta)
 				if err != nil {
 					return fmt.Errorf("filter error: %w", err)
 				}
@@ -114,18 +114,18 @@ Examples:
 
 			// Special case: sort by "id"
 			if listSort == "id" {
-				filter.SortByID(entities, listDesc)
+				filter.SortByID(entities, entityAccess, listDesc)
 			} else {
 				propDef, ok := entityDef.Properties[listSort]
 				if !ok {
 					return fmt.Errorf("unknown property %q for entity type %q", listSort, entityTypeName)
 				}
 
-				filter.Sort(entities, listSort, &propDef, meta, listDesc)
+				filter.Sort(entities, entityAccess, listSort, &propDef, meta, listDesc)
 			}
 		} else {
 			// Default sort by ID
-			filter.SortByID(entities, listDesc)
+			filter.SortByID(entities, entityAccess, listDesc)
 		}
 
 		if len(entities) == 0 {

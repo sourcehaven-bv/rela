@@ -64,6 +64,21 @@ func (s *FSStore) ListRelations(_ context.Context, q store.RelationQuery) iter.S
 	}
 }
 
+func (s *FSStore) CountRelations(_ context.Context, q store.RelationQuery) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for _, key := range s.relationOrder {
+		rm := s.relations[key]
+		r := &entity.Relation{From: rm.From, Type: rm.Type, To: rm.To}
+		if storeutil.MatchRelation(r, q) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // --- RelationWriter ---
 
 func (s *FSStore) CreateRelation(_ context.Context, from, relType, to string, data *store.RelationData) (*entity.Relation, error) {

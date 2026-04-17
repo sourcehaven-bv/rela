@@ -393,6 +393,19 @@ func (m *MemStore) ListRelations(_ context.Context, q store.RelationQuery) iter.
 
 var matchRelation = storeutil.MatchRelation
 
+func (m *MemStore) CountRelations(_ context.Context, q store.RelationQuery) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	count := 0
+	for _, key := range m.relationOrder {
+		if matchRelation(m.relations[key], q) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // --- RelationWriter ---
 
 func (m *MemStore) CreateRelation(_ context.Context, from, relType, to string, data *store.RelationData) (*entity.Relation, error) {

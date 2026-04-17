@@ -4,10 +4,17 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
+
+// mockCounter implements TypeCounter for tests.
+type mockCounter struct {
+	entities  map[string]int
+	relations map[string]int
+}
+
+func (m *mockCounter) CountByEntityType(t string) int  { return m.entities[t] }
+func (m *mockCounter) CountByRelationType(t string) int { return m.relations[t] }
 
 func newTestMetamodel() *metamodel.Metamodel {
 	return &metamodel.Metamodel{
@@ -59,37 +66,24 @@ func newTestMetamodel() *metamodel.Metamodel {
 	}
 }
 
-func newTestGraph() *graph.Graph {
-	g := graph.New()
-
-	// Add requirements
-	r1 := model.NewEntity("REQ-001", "requirement")
-	r1.Properties["title"] = "First Requirement"
-	r1.Properties["status"] = "draft"
-	g.AddNode(r1)
-
-	r2 := model.NewEntity("REQ-002", "requirement")
-	r2.Properties["title"] = "Second Requirement"
-	r2.Properties["status"] = "approved"
-	g.AddNode(r2)
-
-	// Add decisions
-	d1 := model.NewEntity("DEC-001", "decision")
-	d1.Properties["title"] = "First Decision"
-	g.AddNode(d1)
-
-	// Add relations
-	g.AddEdge(model.NewRelation("DEC-001", "implements", "REQ-001"))
-	g.AddEdge(model.NewRelation("REQ-002", "depends-on", "REQ-001"))
-
-	return g
+func newTestCounter() *mockCounter {
+	return &mockCounter{
+		entities: map[string]int{
+			"requirement": 2,
+			"decision":    1,
+		},
+		relations: map[string]int{
+			"implements": 1,
+			"depends-on": 1,
+		},
+	}
 }
 
 func TestAnalyze_UnusedEntityTypes(t *testing.T) {
 	meta := newTestMetamodel()
-	g := newTestGraph()
+	c := newTestCounter()
 
-	result := Analyze(meta, g, nil, 0)
+	result := Analyze(meta, c, nil, 0)
 
 	// unused-type has no instances
 	if len(result.UnusedEntityTypes) != 1 {
@@ -105,9 +99,9 @@ func TestAnalyze_UnusedEntityTypes(t *testing.T) {
 
 func TestAnalyze_UnusedRelationTypes(t *testing.T) {
 	meta := newTestMetamodel()
-	g := newTestGraph()
+	c := newTestCounter()
 
-	result := Analyze(meta, g, nil, 0)
+	result := Analyze(meta, c, nil, 0)
 
 	// unused-relation has no instances
 	if len(result.UnusedRelationTypes) != 1 {
@@ -120,9 +114,9 @@ func TestAnalyze_UnusedRelationTypes(t *testing.T) {
 
 func TestAnalyze_UnusedCustomTypes(t *testing.T) {
 	meta := newTestMetamodel()
-	g := newTestGraph()
+	c := newTestCounter()
 
-	result := Analyze(meta, g, nil, 0)
+	result := Analyze(meta, c, nil, 0)
 
 	// unused-enum is not referenced by any property
 	if len(result.UnusedCustomTypes) != 1 {
@@ -135,10 +129,10 @@ func TestAnalyze_UnusedCustomTypes(t *testing.T) {
 
 func TestAnalyze_LowUsageThreshold(t *testing.T) {
 	meta := newTestMetamodel()
-	g := newTestGraph()
+	c := newTestCounter()
 
 	// With threshold=1, decision (1 instance) should be in low usage
-	result := Analyze(meta, g, nil, 1)
+	result := Analyze(meta, c, nil, 1)
 
 	var found bool
 	for _, usage := range result.LowUsageEntityTypes {
@@ -163,7 +157,7 @@ func TestAnalyze_LowUsageThreshold(t *testing.T) {
 
 func TestAnalyze_WithDataEntryConfig(t *testing.T) {
 	meta := newTestMetamodel()
-	g := graph.New() // Empty graph - all types unused
+	c := &mockCounter{} // Empty counts - all types unused
 
 	dataEntry := &dataentryconfig.Config{
 		Forms: map[string]dataentryconfig.Form{
@@ -178,7 +172,7 @@ func TestAnalyze_WithDataEntryConfig(t *testing.T) {
 		},
 	}
 
-	result := Analyze(meta, g, dataEntry, 0)
+	result := Analyze(meta, c, dataEntry, 0)
 
 	// requirement should have references in data-entry.yaml
 	var reqUsage *TypeUsage
@@ -220,9 +214,9 @@ func TestAnalyze_MetamodelValidationReferences(t *testing.T) {
 			EntityType: "requirement",
 		},
 	}
-	g := graph.New()
+	c := &mockCounter{}
 
-	result := Analyze(meta, g, nil, 0)
+	result := Analyze(meta, c, nil, 0)
 
 	// requirement should have validation reference
 	var reqUsage *TypeUsage
@@ -260,9 +254,9 @@ func TestAnalyze_MetamodelAutomationReferences(t *testing.T) {
 			},
 		},
 	}
-	g := graph.New()
+	c := &mockCounter{}
 
-	result := Analyze(meta, g, nil, 0)
+	result := Analyze(meta, c, nil, 0)
 
 	// requirement should have automation reference
 	var reqUsage *TypeUsage
@@ -360,9 +354,9 @@ func TestAnalyze_SortsResults(t *testing.T) {
 		Relations: map[string]metamodel.RelationDef{},
 		Types:     map[string]metamodel.CustomType{},
 	}
-	g := graph.New()
+	c := &mockCounter{}
 
-	result := Analyze(meta, g, nil, 0)
+	result := Analyze(meta, c, nil, 0)
 
 	// Check alphabetical order
 	expected := []string{"apple", "banana", "mango", "zebra"}

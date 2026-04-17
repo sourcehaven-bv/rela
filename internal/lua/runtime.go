@@ -472,7 +472,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 		filters := []*filter.Filter{f}
 		filtered := make([]*model.Entity, 0)
 		for _, e := range entities {
-			match, err := filter.MatchAll(e, filters, entityDef, r.meta)
+			match, err := filter.MatchAll(filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}, filters, entityDef, r.meta)
 			if err != nil {
 				ls.RaiseError("filter error: %s", err.Error())
 				return 0

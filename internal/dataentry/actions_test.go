@@ -43,7 +43,7 @@ func newActionTestApp(t *testing.T, scripts map[string]string) *App {
 	app := newTestAppV1(t)
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: tmpDir}),
-		app.Meta(), app.Graph())
+		app.Meta(), graphForTest(app))
 
 	return app
 }

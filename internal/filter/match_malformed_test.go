@@ -99,7 +99,7 @@ func TestMatchAll_MalformedEntityData(t *testing.T) {
 				t.Fatalf("ParseAll(%q) error: %v", tt.filterExpr, err)
 			}
 
-			got, err := MatchAll(tt.entity, filters, entityDef, mm)
+			got, err := MatchAll(toRecord(tt.entity), filters, entityDef, mm)
 
 			if tt.wantErr {
 				if err == nil {
@@ -175,7 +175,7 @@ func TestMatchAll_MixedValidAndMalformedEntities(t *testing.T) {
 	var skipped []string
 
 	for _, e := range entities {
-		matches, err := MatchAll(e, filters, entityDef, mm)
+		matches, err := MatchAll(toRecord(e), filters, entityDef, mm)
 		if err != nil {
 			// Entity has malformed data - skip it (this is the expected graceful handling)
 			skipped = append(skipped, e.ID)

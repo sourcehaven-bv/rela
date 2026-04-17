@@ -16,7 +16,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/git"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -39,7 +38,7 @@ import (
 type AppState struct {
 	Cfg          *Config
 	Meta         *metamodel.Metamodel
-	Graph        *graph.Graph
+	Graph        EntityGraph
 	StyleMap     map[string]map[string]string
 	StyledTypes  map[string]bool
 	UserDefaults *UserDefaults
@@ -119,7 +118,7 @@ func (a *App) Cfg() *Config { return a.State().Cfg }
 func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 
 // Graph returns the current in-memory graph (convenience accessor).
-func (a *App) Graph() *graph.Graph { return a.State().Graph }
+func (a *App) Graph() EntityGraph { return a.State().Graph }
 
 // mutateState atomically updates the published AppState. It takes
 // writeMu, builds a shallow copy of the current snapshot, runs the

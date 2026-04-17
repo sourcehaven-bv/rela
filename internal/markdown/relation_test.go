@@ -164,7 +164,7 @@ func TestFormatRelation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			formatted, err := FormatRelation(tt.relation)
+			formatted, err := formatRelation(tt.relation, DefaultLineWidth)
 			if err != nil {
 				t.Fatalf("FormatRelation failed: %v", err)
 			}
@@ -189,7 +189,7 @@ func TestFormatRelation_KeyOrder(t *testing.T) {
 		},
 	}
 
-	formatted, err := FormatRelation(relation)
+	formatted, err := formatRelation(relation, DefaultLineWidth)
 	if err != nil {
 		t.Fatalf("FormatRelation failed: %v", err)
 	}

@@ -8,6 +8,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
+var testAccess = func(e *model.Entity) Record {
+	return Record{ID: e.ID, Type: e.Type, Properties: e.Properties, ModifiedAt: e.ModTime}
+}
+
 func TestSortByID(t *testing.T) {
 	entities := []*model.Entity{
 		{ID: "C-001"},
@@ -15,13 +19,13 @@ func TestSortByID(t *testing.T) {
 		{ID: "B-001"},
 	}
 
-	SortByID(entities, false)
+	SortByID(entities, testAccess, false)
 
 	if entities[0].ID != "A-001" || entities[1].ID != "B-001" || entities[2].ID != "C-001" {
 		t.Errorf("SortByID ascending failed: got %s, %s, %s", entities[0].ID, entities[1].ID, entities[2].ID)
 	}
 
-	SortByID(entities, true)
+	SortByID(entities, testAccess, true)
 
 	if entities[0].ID != "C-001" || entities[1].ID != "B-001" || entities[2].ID != "A-001" {
 		t.Errorf("SortByID descending failed: got %s, %s, %s", entities[0].ID, entities[1].ID, entities[2].ID)
@@ -37,7 +41,7 @@ func TestSortString(t *testing.T) {
 		{ID: "3", Properties: map[string]interface{}{"title": "Bob"}},
 	}
 
-	Sort(entities, "title", propDef, nil, false)
+	Sort(entities, testAccess, "title", propDef, nil, false)
 
 	want := []string{"Alice", "Bob", "Charlie"}
 	for i, e := range entities {
@@ -48,7 +52,7 @@ func TestSortString(t *testing.T) {
 	}
 
 	// Test descending
-	Sort(entities, "title", propDef, nil, true)
+	Sort(entities, testAccess, "title", propDef, nil, true)
 
 	want = []string{"Charlie", "Bob", "Alice"}
 	for i, e := range entities {
@@ -71,7 +75,7 @@ func TestSortDate(t *testing.T) {
 		{ID: "3", Properties: map[string]interface{}{"date": "2025-02-01"}},
 	}
 
-	Sort(entities, "date", propDef, nil, false)
+	Sort(entities, testAccess, "date", propDef, nil, false)
 
 	want := []string{"2025-01-15", "2025-02-01", "2025-03-01"}
 	for i, e := range entities {
@@ -100,7 +104,7 @@ func TestSortDateTimeValues(t *testing.T) {
 		{ID: "3", Properties: map[string]interface{}{"date": d3}},
 	}
 
-	Sort(entities, "date", propDef, nil, false)
+	Sort(entities, testAccess, "date", propDef, nil, false)
 
 	wantIDs := []string{"2", "3", "1"}
 	for i, e := range entities {
@@ -116,7 +120,7 @@ func TestSortDateTimeValues(t *testing.T) {
 		{ID: "3", Properties: map[string]interface{}{"date": d2}},
 	}
 
-	Sort(entities, "date", propDef, nil, false)
+	Sort(entities, testAccess, "date", propDef, nil, false)
 
 	wantIDs = []string{"3", "1", "2"}
 	for i, e := range entities {
@@ -135,7 +139,7 @@ func TestSortInteger(t *testing.T) {
 		{ID: "3", Properties: map[string]interface{}{"score": 15}},
 	}
 
-	Sort(entities, "score", propDef, nil, false)
+	Sort(entities, testAccess, "score", propDef, nil, false)
 
 	want := []int{5, 10, 15}
 	for i, e := range entities {
@@ -152,7 +156,7 @@ func TestSortInteger(t *testing.T) {
 		{ID: "3", Properties: map[string]interface{}{"score": "15"}},
 	}
 
-	Sort(entities, "score", propDef, nil, false)
+	Sort(entities, testAccess, "score", propDef, nil, false)
 
 	for i, e := range entities {
 		got, _ := metamodel.ParseIntegerValue(e.Properties["score"])
@@ -171,7 +175,7 @@ func TestSortBoolean(t *testing.T) {
 		{ID: "3", Properties: map[string]interface{}{"active": true}},
 	}
 
-	Sort(entities, "active", propDef, nil, false)
+	Sort(entities, testAccess, "active", propDef, nil, false)
 
 	// false < true, so false should come first
 	want := []bool{false, true, true}
@@ -192,7 +196,7 @@ func TestSortNilValues(t *testing.T) {
 		{ID: "3", Properties: map[string]interface{}{}}, // missing property
 	}
 
-	Sort(entities, "title", propDef, nil, false)
+	Sort(entities, testAccess, "title", propDef, nil, false)
 
 	// Nil values should go to the end
 	if entities[0].Properties["title"] != "Alice" {
@@ -210,7 +214,7 @@ func TestSortStability(t *testing.T) {
 		{ID: "C", Properties: map[string]interface{}{"title": "Same"}},
 	}
 
-	Sort(entities, "title", propDef, nil, false)
+	Sort(entities, testAccess, "title", propDef, nil, false)
 
 	// Order should be preserved
 	if entities[0].ID != "A" || entities[1].ID != "B" || entities[2].ID != "C" {
@@ -241,7 +245,7 @@ func TestSortCustomEnumType(t *testing.T) {
 		{ID: "4", Properties: map[string]interface{}{"priority": "high"}},
 	}
 
-	Sort(entities, "priority", propDef, meta, false)
+	Sort(entities, testAccess, "priority", propDef, meta, false)
 
 	// Expected order by metamodel definition: critical (0), high (1), medium (2), low (3)
 	want := []string{"critical", "high", "medium", "low"}
@@ -253,7 +257,7 @@ func TestSortCustomEnumType(t *testing.T) {
 	}
 
 	// Test descending order
-	Sort(entities, "priority", propDef, meta, true)
+	Sort(entities, testAccess, "priority", propDef, meta, true)
 
 	want = []string{"low", "medium", "high", "critical"}
 	for i, e := range entities {
@@ -278,7 +282,7 @@ func TestSortInlineEnumType(t *testing.T) {
 		{ID: "4", Properties: map[string]interface{}{"status": "in-progress"}},
 	}
 
-	Sort(entities, "status", propDef, nil, false)
+	Sort(entities, testAccess, "status", propDef, nil, false)
 
 	// Expected order by property definition: open (0), in-progress (1), blocked (2), done (3)
 	want := []string{"open", "in-progress", "blocked", "done"}
@@ -309,7 +313,7 @@ func TestSortEnumWithNilValues(t *testing.T) {
 		{ID: "4", Properties: map[string]interface{}{"priority": "critical"}},
 	}
 
-	Sort(entities, "priority", propDef, meta, false)
+	Sort(entities, testAccess, "priority", propDef, meta, false)
 
 	// Non-nil values should come first in semantic order, nil values at end
 	if entities[0].Properties["priority"] != "critical" {
@@ -338,7 +342,7 @@ func TestSortEnumUnknownValue(t *testing.T) {
 		{ID: "3", Properties: map[string]interface{}{"priority": "also-unknown"}},
 	}
 
-	Sort(entities, "priority", propDef, meta, false)
+	Sort(entities, testAccess, "priority", propDef, meta, false)
 
 	// Known values should come first (in order), unknown values sorted alphabetically at end
 	if entities[0].Properties["priority"] != "critical" {
@@ -361,7 +365,7 @@ func TestSortMulti_SingleSpec(t *testing.T) {
 		{ID: "3", Type: "item", Properties: map[string]interface{}{"title": "Bob"}},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "title"}}, entityDefs, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "title"}}, entityDefs, nil)
 
 	want := []string{"Alice", "Bob", "Charlie"}
 	for i, e := range entities {
@@ -392,7 +396,7 @@ func TestSortMulti_MultipleSpecs(t *testing.T) {
 	}
 
 	// Sort by priority asc, then title asc as tiebreaker
-	SortMulti(entities, []model.SortSpec{
+	SortMulti(entities, testAccess, []SortSpec{
 		{Property: "priority"},
 		{Property: "title"},
 	}, entityDefs, meta)
@@ -413,7 +417,7 @@ func TestSortMulti_IDVirtualProperty(t *testing.T) {
 		{ID: "B-001", Type: "item"},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "id"}}, nil, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "id"}}, nil, nil)
 
 	wantIDs := []string{"A-001", "B-001", "C-001"}
 	for i, e := range entities {
@@ -423,7 +427,7 @@ func TestSortMulti_IDVirtualProperty(t *testing.T) {
 	}
 
 	// Descending
-	SortMulti(entities, []model.SortSpec{{Property: "id", Direction: "desc"}}, nil, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "id", Direction: "desc"}}, nil, nil)
 
 	wantIDs = []string{"C-001", "B-001", "A-001"}
 	for i, e := range entities {
@@ -441,7 +445,7 @@ func TestSortMulti_ModifiedVirtualProperty(t *testing.T) {
 		{ID: "3", Type: "item", ModTime: now.Add(-1 * time.Hour)},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "modified"}}, nil, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "modified"}}, nil, nil)
 
 	// Oldest first
 	wantIDs := []string{"1", "3", "2"}
@@ -452,7 +456,7 @@ func TestSortMulti_ModifiedVirtualProperty(t *testing.T) {
 	}
 
 	// Newest first
-	SortMulti(entities, []model.SortSpec{{Property: "modified", Direction: "desc"}}, nil, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "modified", Direction: "desc"}}, nil, nil)
 
 	wantIDs = []string{"2", "3", "1"}
 	for i, e := range entities {
@@ -470,7 +474,7 @@ func TestSortMulti_ModifiedZeroTimeSortsToEnd(t *testing.T) {
 		{ID: "3", Type: "item"}, // zero time
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "modified"}}, nil, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "modified"}}, nil, nil)
 
 	if entities[0].ID != "2" {
 		t.Errorf("Expected entity with ModTime first, got %s", entities[0].ID)
@@ -493,7 +497,7 @@ func TestSortMulti_MixedEntityTypes(t *testing.T) {
 		{ID: "3", Type: "requirement", Properties: map[string]interface{}{"title": "Mike"}},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "title"}}, entityDefs, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "title"}}, entityDefs, nil)
 
 	wantIDs := []string{"2", "3", "1"}
 	for i, e := range entities {
@@ -516,7 +520,7 @@ func TestSortMulti_NilPropertyOnSomeEntities(t *testing.T) {
 		{ID: "3", Type: "item", Properties: map[string]interface{}{"priority": 1}},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "priority"}}, entityDefs, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "priority"}}, entityDefs, nil)
 
 	// Entities with values first (sorted), nil at end
 	if entities[0].ID != "3" {
@@ -537,12 +541,12 @@ func TestSortMulti_EmptySpecs(t *testing.T) {
 	}
 
 	// Should not panic or change order
-	SortMulti(entities, nil, nil, nil)
+	SortMulti(entities, testAccess, nil, nil, nil)
 	if entities[0].ID != "C-001" {
 		t.Error("SortMulti with nil specs should not change order")
 	}
 
-	SortMulti(entities, []model.SortSpec{}, nil, nil)
+	SortMulti(entities, testAccess, []SortSpec{}, nil, nil)
 	if entities[0].ID != "C-001" {
 		t.Error("SortMulti with empty specs should not change order")
 	}
@@ -550,8 +554,8 @@ func TestSortMulti_EmptySpecs(t *testing.T) {
 
 func TestSortMulti_EmptyEntities(_ *testing.T) {
 	// Should not panic
-	SortMulti(nil, []model.SortSpec{{Property: "id"}}, nil, nil)
-	SortMulti([]*model.Entity{}, []model.SortSpec{{Property: "id"}}, nil, nil)
+	SortMulti(nil, testAccess, []SortSpec{{Property: "id"}}, nil, nil)
+	SortMulti([]*model.Entity{}, testAccess, []SortSpec{{Property: "id"}}, nil, nil)
 }
 
 func TestSortMulti_CrossTypeSamePropertyType(t *testing.T) {
@@ -571,7 +575,7 @@ func TestSortMulti_CrossTypeSamePropertyType(t *testing.T) {
 		{ID: "3", Type: "bug", Properties: map[string]interface{}{"score": 7}},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "score"}}, entityDefs, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "score"}}, entityDefs, nil)
 
 	wantIDs := []string{"2", "3", "1"} // 3, 7, 10
 	for i, e := range entities {
@@ -598,7 +602,7 @@ func TestSortMulti_CrossTypeDifferentPropertyType(t *testing.T) {
 		{ID: "2", Type: "typeB", Properties: map[string]interface{}{"value": 42}},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "value"}}, entityDefs, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "value"}}, entityDefs, nil)
 
 	// Integer rank (1) < String rank (5), so typeB entity should come first
 	if entities[0].ID != "2" {
@@ -625,7 +629,7 @@ func TestSortMulti_CrossTypeDifferentPropertyTypeSameRankFallback(t *testing.T) 
 		{ID: "2", Type: "typeB", Properties: map[string]interface{}{"value": "alpha"}},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "value"}}, entityDefs, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "value"}}, entityDefs, nil)
 
 	if entities[0].ID != "2" {
 		t.Errorf("Expected 'alpha' first, got entity %s", entities[0].ID)
@@ -648,7 +652,7 @@ func TestSortMulti_OnlyOneEntityHasPropertyDef(t *testing.T) {
 		{ID: "2", Type: "typeA", Properties: map[string]interface{}{"priority": "high"}},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "priority"}}, entityDefs, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "priority"}}, entityDefs, nil)
 
 	// Entity with property def comes first
 	if entities[0].ID != "2" {
@@ -668,7 +672,7 @@ func TestSortMulti_NeitherEntityHasPropertyDef(t *testing.T) {
 		{ID: "2", Type: "typeB", Properties: map[string]interface{}{"name": "Alpha"}},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "name"}}, entityDefs, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "name"}}, entityDefs, nil)
 
 	if entities[0].ID != "2" {
 		t.Errorf("Expected 'Alpha' first via string comparison, got entity %s", entities[0].ID)
@@ -682,7 +686,7 @@ func TestSortMulti_NilEntityDefs(t *testing.T) {
 		{ID: "2", Type: "item", Properties: map[string]interface{}{"name": "Alpha"}},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "name"}}, nil, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "name"}}, nil, nil)
 
 	if entities[0].ID != "2" {
 		t.Errorf("Expected 'Alpha' first, got entity %s", entities[0].ID)
@@ -765,7 +769,7 @@ func TestSortMulti_DescendingProperty(t *testing.T) {
 		{ID: "3", Type: "item", Properties: map[string]interface{}{"score": 2}},
 	}
 
-	SortMulti(entities, []model.SortSpec{{Property: "score", Direction: "desc"}}, entityDefs, nil)
+	SortMulti(entities, testAccess, []SortSpec{{Property: "score", Direction: "desc"}}, entityDefs, nil)
 
 	wantIDs := []string{"2", "3", "1"} // 3, 2, 1
 	for i, e := range entities {

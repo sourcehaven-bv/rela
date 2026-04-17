@@ -13,6 +13,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
+// graphForTest returns the concrete *graph.Graph from the app for test setup.
+func graphForTest(app *App) *graph.Graph {
+	return app.Graph().(*graph.Graph)
+}
+
 // newAppFromParts builds an App with a populated AppState snapshot for
 // tests that previously used the struct-literal pattern
 // `&App{Cfg: cfg, meta: meta, g: g}`. The App.state pointer must be

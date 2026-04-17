@@ -109,6 +109,9 @@ type RelationReader interface {
 	// ListRelations returns an iterator over relations matching the query.
 	// If an error is yielded, the iterator terminates.
 	ListRelations(ctx context.Context, q RelationQuery) iter.Seq2[*entity.Relation, error]
+
+	// CountRelations returns the number of relations matching the query.
+	CountRelations(ctx context.Context, q RelationQuery) (int, error)
 }
 
 // RelationQuery filters relation listings.

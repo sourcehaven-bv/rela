@@ -71,7 +71,7 @@ var analyzeOrphansCmd = &cobra.Command{
 		}
 
 		orphans := ws.FindOrphansWithScope(*opts)
-		filter.SortByID(orphans, false)
+		filter.SortByID(orphans, entityAccess, false)
 
 		if writeAnalysisJSON(len(orphans), orphans,
 			"No orphan entities found", "Found %d orphan entities") {

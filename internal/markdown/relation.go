@@ -56,7 +56,7 @@ func (f *FileIO) ReadRelation(path string) (*model.Relation, error) {
 
 // WriteRelation writes a relation to a markdown file.
 func (f *FileIO) WriteRelation(relation *model.Relation, path string) error {
-	content, err := FormatRelation(relation)
+	content, err := formatRelation(relation, DefaultLineWidth)
 	if err != nil {
 		return err
 	}
@@ -70,31 +70,19 @@ func (f *FileIO) WriteRelation(relation *model.Relation, path string) error {
 	return f.FS.WriteFile(path, []byte(content), 0644)
 }
 
-// FormatRelation returns the formatted markdown content for a relation.
-// Frontmatter keys are ordered: from, relation, to, then extras alphabetically.
-// Markdown content is also formatted. Uses default line width (80).
-func FormatRelation(relation *model.Relation) (string, error) {
-	return FormatRelationWithWidth(relation, DefaultLineWidth)
-}
-
-// FormatRelationWithWidth returns the formatted markdown content for a relation
-// with a specific line width for paragraph wrapping.
-func FormatRelationWithWidth(relation *model.Relation, lineWidth int) (string, error) {
+// formatRelation formats a relation as markdown with YAML frontmatter.
+func formatRelation(relation *model.Relation, lineWidth int) (string, error) {
 	frontmatter := map[string]interface{}{
 		"from":     relation.From,
 		"relation": relation.Type,
 		"to":       relation.To,
 	}
-
-	// Add any additional properties
 	for key, value := range relation.Properties {
 		frontmatter[key] = value
 	}
 
-	// Key order: from, relation, to, then extras alphabetically
 	keyOrder := []string{"from", "relation", "to"}
 
-	// Format markdown content
 	content := relation.Content
 	if content != "" {
 		content = FormatMarkdownWithWidth(content, lineWidth)

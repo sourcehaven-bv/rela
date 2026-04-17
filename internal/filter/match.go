@@ -5,12 +5,11 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
-// Match checks if an entity property matches a filter
-func Match(entity *model.Entity, filter *Filter, propDef *metamodel.PropertyDef, m *metamodel.Metamodel) (bool, error) {
-	val := entity.Properties[filter.Property]
+// Match checks if a record's property matches a filter.
+func Match(rec Record, filter *Filter, propDef *metamodel.PropertyDef, m *metamodel.Metamodel) (bool, error) {
+	val := rec.Properties[filter.Property]
 
 	// Handle list types (multi-select) - check if any element matches
 	if list, ok := val.([]string); ok {
@@ -126,17 +125,17 @@ func matchList(list []string, filter *Filter, _ *metamodel.PropertyDef, _ *metam
 	return false, nil
 }
 
-// MatchAll checks if entity matches all filters (AND semantics)
+// MatchAll checks if a record matches all filters (AND semantics).
 func MatchAll(
-	entity *model.Entity, filters []*Filter, entityDef *metamodel.EntityDef, m *metamodel.Metamodel,
+	rec Record, filters []*Filter, entityDef *metamodel.EntityDef, m *metamodel.Metamodel,
 ) (bool, error) {
 	for _, f := range filters {
 		propDef, ok := entityDef.Properties[f.Property]
 		if !ok {
-			return false, fmt.Errorf("unknown property %q for entity type %q", f.Property, entity.Type)
+			return false, fmt.Errorf("unknown property %q for entity type %q", f.Property, rec.Type)
 		}
 
-		matches, err := Match(entity, f, &propDef, m)
+		matches, err := Match(rec, f, &propDef, m)
 		if err != nil {
 			return false, err
 		}

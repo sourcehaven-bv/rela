@@ -7,6 +7,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
+func toRecord(e *model.Entity) Record {
+	return Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
+}
+
 func TestMatchString(t *testing.T) {
 	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
 	mm := &metamodel.Metamodel{}
@@ -41,7 +45,7 @@ func TestMatchString(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -97,7 +101,7 @@ func TestMatchDate(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -151,7 +155,7 @@ func TestMatchInteger(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -200,7 +204,7 @@ func TestMatchBoolean(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -250,7 +254,7 @@ func TestMatchEnum(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -279,7 +283,7 @@ func TestMatchNilValue(t *testing.T) {
 
 	// Test that missing property with empty filter value matches
 	f, _ := Parse("title=")
-	got, err := Match(entity, f, propDef, mm)
+	got, err := Match(toRecord(entity), f, propDef, mm)
 	if err != nil {
 		t.Fatalf("Match error: %v", err)
 	}
@@ -289,7 +293,7 @@ func TestMatchNilValue(t *testing.T) {
 
 	// Test that missing property with non-empty filter value doesn't match
 	f, _ = Parse("title=hello")
-	got, err = Match(entity, f, propDef, mm)
+	got, err = Match(toRecord(entity), f, propDef, mm)
 	if err != nil {
 		t.Fatalf("Match error: %v", err)
 	}
@@ -416,7 +420,7 @@ func TestMatchMissingProperty(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, tt.propDef, mm)
+			got, err := Match(toRecord(entity), f, tt.propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -510,7 +514,7 @@ func TestMatchEmptyStringProperty(t *testing.T) {
 			}
 			entity.Properties[f.Property] = ""
 
-			got, err := Match(entity, f, tt.propDef, mm)
+			got, err := Match(toRecord(entity), f, tt.propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -547,7 +551,7 @@ func TestMatchAllAND(t *testing.T) {
 
 	// Both filters match
 	filters, _ := ParseAll([]string{"status=accepted", "priority=high"})
-	got, err := MatchAll(entity, filters, entityDef, mm)
+	got, err := MatchAll(toRecord(entity), filters, entityDef, mm)
 	if err != nil {
 		t.Fatalf("MatchAll error: %v", err)
 	}
@@ -557,7 +561,7 @@ func TestMatchAllAND(t *testing.T) {
 
 	// One filter doesn't match
 	filters, _ = ParseAll([]string{"status=accepted", "priority=low"})
-	got, err = MatchAll(entity, filters, entityDef, mm)
+	got, err = MatchAll(toRecord(entity), filters, entityDef, mm)
 	if err != nil {
 		t.Fatalf("MatchAll error: %v", err)
 	}
@@ -618,7 +622,7 @@ func TestOperatorValidation(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			_, err = Match(entity, f, tt.propDef, mm)
+			_, err = Match(toRecord(entity), f, tt.propDef, mm)
 			if tt.wantErr && err == nil {
 				t.Error("expected error for invalid operator")
 			}
@@ -668,7 +672,7 @@ func TestMatchEnumLegacy(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -705,7 +709,7 @@ func TestMatchEnumLegacyWithCustomType(t *testing.T) {
 
 	// Should match with custom type value
 	f, _ := Parse("status=open")
-	got, err := Match(entity, f, propDef, mm)
+	got, err := Match(toRecord(entity), f, propDef, mm)
 	if err != nil {
 		t.Fatalf("Match error: %v", err)
 	}
@@ -715,7 +719,7 @@ func TestMatchEnumLegacyWithCustomType(t *testing.T) {
 
 	// Should reject old status values
 	f, _ = Parse("status=draft")
-	_, err = Match(entity, f, propDef, mm)
+	_, err = Match(toRecord(entity), f, propDef, mm)
 	if err == nil {
 		t.Error("Expected error for value not in custom type")
 	}
@@ -758,7 +762,7 @@ func TestMatchStringEdgeCases(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -811,7 +815,7 @@ func TestMatchBooleanEdgeCases(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -869,7 +873,7 @@ func TestMatchEnumEdgeCases(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -906,7 +910,7 @@ func TestMatchCustomType(t *testing.T) {
 
 	// Should match with custom type value
 	f, _ := Parse("risk=high")
-	got, err := Match(entity, f, propDef, mm)
+	got, err := Match(toRecord(entity), f, propDef, mm)
 	if err != nil {
 		t.Fatalf("Match error: %v", err)
 	}
@@ -916,7 +920,7 @@ func TestMatchCustomType(t *testing.T) {
 
 	// Should not match different value
 	f, _ = Parse("risk=low")
-	got, err = Match(entity, f, propDef, mm)
+	got, err = Match(toRecord(entity), f, propDef, mm)
 	if err != nil {
 		t.Fatalf("Match error: %v", err)
 	}
@@ -926,7 +930,7 @@ func TestMatchCustomType(t *testing.T) {
 
 	// Should reject invalid values
 	f, _ = Parse("risk=invalid")
-	_, err = Match(entity, f, propDef, mm)
+	_, err = Match(toRecord(entity), f, propDef, mm)
 	if err == nil {
 		t.Error("Expected error for invalid custom type value")
 	}
@@ -946,7 +950,7 @@ func TestMatchUnknownTypeFallback(t *testing.T) {
 
 	// Should fall back to string matching
 	f, _ := Parse("unknown_prop=some value")
-	got, err := Match(entity, f, propDef, mm)
+	got, err := Match(toRecord(entity), f, propDef, mm)
 	if err != nil {
 		t.Fatalf("Match error: %v", err)
 	}
@@ -956,7 +960,7 @@ func TestMatchUnknownTypeFallback(t *testing.T) {
 
 	// Test with regex
 	f, _ = Parse("unknown_prop=~some.*")
-	got, err = Match(entity, f, propDef, mm)
+	got, err = Match(toRecord(entity), f, propDef, mm)
 	if err != nil {
 		t.Fatalf("Match error: %v", err)
 	}
@@ -984,7 +988,7 @@ func TestMatchAllUnknownProperty(t *testing.T) {
 
 	// Test with unknown property
 	filters, _ := ParseAll([]string{"unknown_prop=value"})
-	_, err := MatchAll(entity, filters, entityDef, mm)
+	_, err := MatchAll(toRecord(entity), filters, entityDef, mm)
 	if err == nil {
 		t.Error("Expected error for unknown property")
 	}
@@ -1031,7 +1035,7 @@ func TestMatchFuzzy(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -1097,7 +1101,7 @@ func TestMatchFuzzyWithWildcard(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			got, err := Match(entity, f, propDef, mm)
+			got, err := Match(toRecord(entity), f, propDef, mm)
 			if err != nil {
 				t.Fatalf("Match error: %v", err)
 			}
@@ -1157,7 +1161,7 @@ func TestMatchFuzzyOperatorValidation(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			_, err = Match(entity, f, tt.propDef, mm)
+			_, err = Match(toRecord(entity), f, tt.propDef, mm)
 			if tt.wantErr && err == nil {
 				t.Error("expected error for fuzzy on non-string type")
 			}
@@ -1291,7 +1295,7 @@ func TestMatchEmptyFilterValueNonStringTypes(t *testing.T) {
 				Properties: map[string]interface{}{f.Property: tt.value},
 			}
 
-			got, err := Match(entity, f, tt.propDef, mm)
+			got, err := Match(toRecord(entity), f, tt.propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")

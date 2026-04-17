@@ -1568,7 +1568,7 @@ func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error
 	}
 
 	// Generate formatted content with configured line width
-	formatted, err := markdown.FormatEntityWithWidth(entity, propertyOrder, w.config.Formatting.LineWidth)
+	formatted, err := formatEntityMarkdown(entity, propertyOrder, w.config.Formatting.LineWidth)
 	if err != nil {
 		return false, fmt.Errorf("format entity: %w", err)
 	}
@@ -1598,7 +1598,7 @@ func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error
 // the formatted version. Returns true if the file was (or would be) modified.
 func (w *Workspace) FormatRelation(relation *model.Relation, dryRun bool) (bool, error) {
 	// Generate formatted content with configured line width
-	formatted, err := markdown.FormatRelationWithWidth(relation, w.config.Formatting.LineWidth)
+	formatted, err := formatRelationMarkdown(relation, w.config.Formatting.LineWidth)
 	if err != nil {
 		return false, fmt.Errorf("format relation: %w", err)
 	}
@@ -1622,6 +1622,49 @@ func (w *Workspace) FormatRelation(relation *model.Relation, dryRun bool) (bool,
 	}
 
 	return true, nil
+}
+
+// formatEntityMarkdown formats a model.Entity as markdown with YAML frontmatter.
+func formatEntityMarkdown(entity *model.Entity, propertyOrder []string, lineWidth int) (string, error) {
+	fm := make(map[string]interface{})
+	fm["id"] = entity.ID
+	fm["type"] = entity.Type
+	for k, v := range entity.Properties {
+		fm[k] = v
+	}
+
+	keyOrder := []string{"id", "type"}
+	if len(propertyOrder) > 0 {
+		keyOrder = append(keyOrder, propertyOrder...)
+	}
+
+	content := entity.Content
+	if content != "" {
+		content = markdown.FormatMarkdownWithWidth(content, lineWidth)
+	}
+
+	return markdown.FormatDocumentOrdered(fm, content, keyOrder)
+}
+
+// formatRelationMarkdown formats a model.Relation as markdown with YAML frontmatter.
+func formatRelationMarkdown(relation *model.Relation, lineWidth int) (string, error) {
+	fm := map[string]interface{}{
+		"from":     relation.From,
+		"relation": relation.Type,
+		"to":       relation.To,
+	}
+	for k, v := range relation.Properties {
+		fm[k] = v
+	}
+
+	keyOrder := []string{"from", "relation", "to"}
+
+	content := relation.Content
+	if content != "" {
+		content = markdown.FormatMarkdownWithWidth(content, lineWidth)
+	}
+
+	return markdown.FormatDocumentOrdered(fm, content, keyOrder)
 }
 
 // --- File watching ---

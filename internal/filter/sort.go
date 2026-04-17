@@ -5,35 +5,34 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
-// Sort sorts entities by a property with type-aware comparison.
+// Sort sorts items by a property with type-aware comparison.
 // The meta parameter is optional but required for proper enum/custom type ordering.
-func Sort(
-	entities []*model.Entity,
+func Sort[T any](
+	items []T,
+	access Accessor[T],
 	propName string,
 	propDef *metamodel.PropertyDef,
 	meta *metamodel.Metamodel,
 	descending bool,
 ) {
-	// Build enum value index map for efficient lookup
 	enumIndex := buildEnumIndex(propDef, meta)
 
-	sort.SliceStable(entities, func(i, j int) bool {
-		valI := entities[i].Properties[propName]
-		valJ := entities[j].Properties[propName]
+	sort.SliceStable(items, func(i, j int) bool {
+		ri, rj := access(items[i]), access(items[j])
+		valI := ri.Properties[propName]
+		valJ := rj.Properties[propName]
 
-		// Handle nil values - sort them to the end
 		if valI == nil && valJ == nil {
 			return false
 		}
 		if valI == nil {
-			return false // nil goes after non-nil
+			return false
 		}
 		if valJ == nil {
-			return true // non-nil goes before nil
+			return true
 		}
 
 		var less bool
@@ -45,14 +44,11 @@ func Sort(
 		case metamodel.PropertyTypeBoolean:
 			less = compareBooleans(valI, valJ)
 		case metamodel.PropertyTypeEnum:
-			// Inline enum with values defined in property
 			less = compareEnums(valI, valJ, enumIndex)
 		default:
-			// Check if this is a custom type (not a built-in type)
 			if enumIndex != nil {
 				less = compareEnums(valI, valJ, enumIndex)
 			} else {
-				// Fall back to string comparison for unknown types
 				less = compareStrings(valI, valJ)
 			}
 		}
@@ -69,11 +65,9 @@ func Sort(
 func buildEnumIndex(propDef *metamodel.PropertyDef, meta *metamodel.Metamodel) map[string]int {
 	var values []string
 
-	// First check for inline enum values in the property definition
 	if len(propDef.Values) > 0 {
 		values = propDef.Values
 	} else if meta != nil && !metamodel.IsBuiltinType(propDef.Type) {
-		// Look up custom type in metamodel
 		if customType, ok := meta.Types[propDef.Type]; ok {
 			values = customType.Values
 		}
@@ -83,7 +77,6 @@ func buildEnumIndex(propDef *metamodel.PropertyDef, meta *metamodel.Metamodel) m
 		return nil
 	}
 
-	// Build index map for O(1) lookup
 	index := make(map[string]int, len(values))
 	for i, v := range values {
 		index[v] = i
@@ -92,7 +85,6 @@ func buildEnumIndex(propDef *metamodel.PropertyDef, meta *metamodel.Metamodel) m
 }
 
 // compareEnums compares two enum values by their index position.
-// Unknown values are sorted after known values, then alphabetically among themselves.
 func compareEnums(valI, valJ interface{}, enumIndex map[string]int) bool {
 	sI, okI := valI.(string)
 	sJ, okJ := valJ.(string)
@@ -103,27 +95,22 @@ func compareEnums(valI, valJ interface{}, enumIndex map[string]int) bool {
 	idxI, knownI := enumIndex[sI]
 	idxJ, knownJ := enumIndex[sJ]
 
-	// Both known: compare by index
 	if knownI && knownJ {
 		return idxI < idxJ
 	}
-
-	// Known values come before unknown values
 	if knownI && !knownJ {
 		return true
 	}
 	if !knownI && knownJ {
 		return false
 	}
-
-	// Both unknown: fall back to string comparison
 	return sI < sJ
 }
 
-// SortByID sorts entities by their ID using natural ordering (default sort)
-func SortByID(entities []*model.Entity, descending bool) {
-	sort.SliceStable(entities, func(i, j int) bool {
-		less := natsort.Less(entities[i].ID, entities[j].ID)
+// SortByID sorts items by ID using natural ordering.
+func SortByID[T any](items []T, access Accessor[T], descending bool) {
+	sort.SliceStable(items, func(i, j int) bool {
+		less := natsort.Less(access(items[i]).ID, access(items[j]).ID)
 		if descending {
 			return !less
 		}
@@ -131,7 +118,7 @@ func SortByID(entities []*model.Entity, descending bool) {
 	})
 }
 
-// compareStrings compares two values as strings using natural ordering
+// compareStrings compares two values as strings using natural ordering.
 func compareStrings(valI, valJ interface{}) bool {
 	sI, okI := valI.(string)
 	sJ, okJ := valJ.(string)
@@ -142,7 +129,6 @@ func compareStrings(valI, valJ interface{}) bool {
 }
 
 // compareDates compares two values as dates.
-// Handles both string values (from JSON cache) and time.Time values (from YAML parsing).
 func compareDates(valI, valJ interface{}, propDef *metamodel.PropertyDef) bool {
 	dateI, okI := toTime(valI, propDef)
 	dateJ, okJ := toTime(valJ, propDef)
@@ -153,7 +139,6 @@ func compareDates(valI, valJ interface{}, propDef *metamodel.PropertyDef) bool {
 }
 
 // toTime converts a property value to time.Time.
-// Supports string values (parsed via metamodel) and native time.Time values.
 func toTime(val interface{}, propDef *metamodel.PropertyDef) (time.Time, bool) {
 	switch v := val.(type) {
 	case time.Time:
@@ -169,67 +154,53 @@ func toTime(val interface{}, propDef *metamodel.PropertyDef) (time.Time, bool) {
 	}
 }
 
-// compareIntegers compares two values as integers
+// compareIntegers compares two values as integers.
 func compareIntegers(valI, valJ interface{}) bool {
 	intI, errI := metamodel.ParseIntegerValue(valI)
 	intJ, errJ := metamodel.ParseIntegerValue(valJ)
 	if errI != nil || errJ != nil {
-		// Fall back to string comparison if parsing fails
 		return compareStrings(valI, valJ)
 	}
-
 	return intI < intJ
 }
 
-// compareBooleans compares two values as booleans (false < true)
+// compareBooleans compares two values as booleans (false < true).
 func compareBooleans(valI, valJ interface{}) bool {
 	boolI, errI := metamodel.ParseBooleanValue(valI)
 	boolJ, errJ := metamodel.ParseBooleanValue(valJ)
 	if errI != nil || errJ != nil {
 		return false
 	}
-
-	// false < true
-	if !boolI && boolJ {
-		return true
-	}
-	return false
+	return !boolI && boolJ
 }
 
-// SortMulti sorts entities by multiple criteria using stable sort.
-// Specs are applied in priority order: first spec is the primary sort key,
-// second spec is the tiebreaker, etc.
+// SortMulti sorts items by multiple criteria using stable sort.
+// Specs are applied in priority order: first spec is the primary sort key.
 //
-// The entityDefs map provides type definitions keyed by entity type name,
-// enabling type-aware comparison for properties across different entity types.
-// Both entityDefs and meta may be nil for basic string-only comparison.
-//
-// Virtual properties "id" and "modified" are supported:
-//   - "id" sorts by Entity.ID
-//   - "modified" sorts by Entity.ModTime
-func SortMulti(
-	entities []*model.Entity,
-	specs []model.SortSpec,
+// Virtual properties "id" and "modified" are supported.
+func SortMulti[T any](
+	items []T,
+	access Accessor[T],
+	specs []SortSpec,
 	entityDefs map[string]*metamodel.EntityDef,
 	meta *metamodel.Metamodel,
 ) {
-	if len(specs) == 0 || len(entities) == 0 {
+	if len(specs) == 0 || len(items) == 0 {
 		return
 	}
 
 	// Apply sorts in reverse order (least significant key first).
-	// Because SliceStable preserves order for equal elements,
-	// the primary (first) key ends up dominant.
 	for idx := len(specs) - 1; idx >= 0; idx-- {
 		spec := specs[idx]
-		sortBySingleSpec(entities, spec, entityDefs, meta)
+		sortBySingleSpec(items, access, spec, entityDefs, meta)
 	}
 }
 
-// sortBySingleSpec sorts entities by a single SortSpec with type-aware comparison.
-func sortBySingleSpec(
-	entities []*model.Entity,
-	spec model.SortSpec,
+// sortBySingleSpec sorts items by a single SortSpec with type-aware comparison.
+func sortBySingleSpec[T any](
+	items []T,
+	access Accessor[T],
+	spec SortSpec,
 	entityDefs map[string]*metamodel.EntityDef,
 	meta *metamodel.Metamodel,
 ) {
@@ -237,21 +208,20 @@ func sortBySingleSpec(
 
 	switch spec.Property {
 	case "id":
-		SortByID(entities, descending)
+		SortByID(items, access, descending)
 	case "modified":
-		sortByModified(entities, descending)
+		sortByModified(items, access, descending)
 	default:
-		sortByProperty(entities, spec.Property, descending, entityDefs, meta)
+		sortByProperty(items, access, spec.Property, descending, entityDefs, meta)
 	}
 }
 
-// sortByModified sorts entities by file modification time.
-func sortByModified(entities []*model.Entity, descending bool) {
-	sort.SliceStable(entities, func(i, j int) bool {
-		ti := entities[i].ModTime
-		tj := entities[j].ModTime
+// sortByModified sorts items by modification time.
+func sortByModified[T any](items []T, access Accessor[T], descending bool) {
+	sort.SliceStable(items, func(i, j int) bool {
+		ti := access(items[i]).ModifiedAt
+		tj := access(items[j]).ModifiedAt
 
-		// Zero times (unset) sort to end
 		zi := ti.IsZero()
 		zj := tj.IsZero()
 		if zi && zj {
@@ -272,16 +242,16 @@ func sortByModified(entities []*model.Entity, descending bool) {
 	})
 }
 
-// propInfo caches the property definition and enum index for a specific
-// entity type, used during cross-type property sorting.
+// propInfo caches the property definition and enum index for a specific entity type.
 type propInfo struct {
 	def       *metamodel.PropertyDef
 	enumIndex map[string]int
 }
 
-// sortByProperty sorts entities by a named property with cross-type awareness.
-func sortByProperty(
-	entities []*model.Entity,
+// sortByProperty sorts items by a named property with cross-type awareness.
+func sortByProperty[T any](
+	items []T,
+	access Accessor[T],
 	propName string,
 	descending bool,
 	entityDefs map[string]*metamodel.EntityDef,
@@ -306,11 +276,11 @@ func sortByProperty(
 		return &pi
 	}
 
-	sort.SliceStable(entities, func(i, j int) bool {
-		valI := entities[i].Properties[propName]
-		valJ := entities[j].Properties[propName]
+	sort.SliceStable(items, func(i, j int) bool {
+		ri, rj := access(items[i]), access(items[j])
+		valI := ri.Properties[propName]
+		valJ := rj.Properties[propName]
 
-		// Handle nil values - sort them to the end
 		if valI == nil && valJ == nil {
 			return false
 		}
@@ -321,8 +291,8 @@ func sortByProperty(
 			return true
 		}
 
-		piI := getPropInfo(entities[i].Type)
-		piJ := getPropInfo(entities[j].Type)
+		piI := getPropInfo(ri.Type)
+		piJ := getPropInfo(rj.Type)
 
 		less := comparePropValues(valI, valJ, piI, piJ, meta)
 
@@ -337,10 +307,8 @@ func sortByProperty(
 func comparePropValues(valI, valJ interface{}, piI, piJ *propInfo, meta *metamodel.Metamodel) bool {
 	switch {
 	case piI.def != nil && piJ.def != nil && piI.def.Type == piJ.def.Type:
-		// Same property type on both entities — use type-aware comparison
 		return compareByPropDef(valI, valJ, piI.def, piI.enumIndex)
 	case piI.def != nil && piJ.def != nil:
-		// Different property types — compare by type rank
 		rankI := typeRank(piI.def, meta)
 		rankJ := typeRank(piJ.def, meta)
 		if rankI != rankJ {
@@ -348,13 +316,10 @@ func comparePropValues(valI, valJ interface{}, piI, piJ *propInfo, meta *metamod
 		}
 		return compareStrings(valI, valJ)
 	case piI.def != nil:
-		// Only I has a property def — I comes first
 		return true
 	case piJ.def != nil:
-		// Only J has a property def — J comes first
 		return false
 	default:
-		// Neither has a property def — string comparison
 		return compareStrings(valI, valJ)
 	}
 }
@@ -378,8 +343,6 @@ func compareByPropDef(valI, valJ interface{}, propDef *metamodel.PropertyDef, en
 	}
 }
 
-// Type rank constants for cross-type property comparison.
-// Lower rank sorts first when property types differ.
 const (
 	typeRankInteger = iota + 1
 	typeRankDate
@@ -388,8 +351,6 @@ const (
 	typeRankString
 )
 
-// typeRank returns a numeric rank for property types, used when comparing
-// values across different property types. Lower rank sorts first.
 func typeRank(propDef *metamodel.PropertyDef, meta *metamodel.Metamodel) int {
 	switch propDef.Type {
 	case metamodel.PropertyTypeInteger:
@@ -403,7 +364,6 @@ func typeRank(propDef *metamodel.PropertyDef, meta *metamodel.Metamodel) int {
 	case metamodel.PropertyTypeString:
 		return typeRankString
 	default:
-		// Custom types (enums) rank with enum
 		if meta != nil {
 			if _, ok := meta.Types[propDef.Type]; ok {
 				return typeRankEnum

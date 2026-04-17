@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -289,7 +290,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("empty specs does nothing", func(t *testing.T) {
 		entities := makeEntities()
-		app.sortEntitiesMulti(entities, []model.SortSpec{})
+		app.sortEntitiesMulti(entities, []filter.SortSpec{})
 		if entities[0].ID != "E-003" {
 			t.Errorf("expected no reorder, got %s first", entities[0].ID)
 		}
@@ -297,7 +298,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("ascending sort", func(t *testing.T) {
 		entities := makeEntities()
-		app.sortEntitiesMulti(entities, []model.SortSpec{{Property: "name", Direction: "asc"}})
+		app.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "asc"}})
 		if entities[0].ID != "E-001" || entities[1].ID != "E-002" || entities[2].ID != "E-003" {
 			t.Errorf("expected Alice, Bob, Charlie; got %s, %s, %s",
 				entities[0].Properties["name"], entities[1].Properties["name"], entities[2].Properties["name"])
@@ -306,7 +307,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("descending sort", func(t *testing.T) {
 		entities := makeEntities()
-		app.sortEntitiesMulti(entities, []model.SortSpec{{Property: "name", Direction: "desc"}})
+		app.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "desc"}})
 		if entities[0].ID != "E-003" || entities[1].ID != "E-002" || entities[2].ID != "E-001" {
 			t.Errorf("expected Charlie, Bob, Alice; got %s, %s, %s",
 				entities[0].Properties["name"], entities[1].Properties["name"], entities[2].Properties["name"])
@@ -320,7 +321,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 			testutil.Entity("item").ID("E-002").Build(),
 			testutil.Entity("item").ID("E-003").With("name", "Alice").Build(),
 		}
-		app.sortEntitiesMulti(entities, []model.SortSpec{{Property: "name", Direction: "asc"}})
+		app.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "asc"}})
 		// With type-aware sorting, nil values sort to end
 		if entities[0].ID != "E-003" {
 			t.Errorf("expected Alice first, got %s", entities[0].ID)

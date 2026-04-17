@@ -257,7 +257,7 @@ func applyFilters(entities []*model.Entity, filters []FilterConfig) []*model.Ent
 }
 
 // sortEntitiesMulti sorts entities by multiple sort specs using type-aware comparison.
-func (a *App) sortEntitiesMulti(entities []*model.Entity, specs []model.SortSpec) {
+func (a *App) sortEntitiesMulti(entities []*model.Entity, specs []filter.SortSpec) {
 	if len(specs) == 0 {
 		return
 	}
@@ -270,7 +270,7 @@ func (a *App) sortEntitiesMulti(entities []*model.Entity, specs []model.SortSpec
 			}
 		}
 	}
-	filter.SortMulti(entities, specs, entityDefs, s.Meta)
+	filter.SortMulti(entities, entityRecord, specs, entityDefs, s.Meta)
 }
 
 // resolvePropertyValues returns allowed values for a property from its definition or custom type.
@@ -672,9 +672,9 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 		sortProp := r.URL.Query().Get("sort")
 		sortDir := r.URL.Query().Get("sort_dir")
 		if sortProp != "" {
-			a.sortEntitiesMulti(entities, []model.SortSpec{{Property: sortProp, Direction: sortDir}})
+			a.sortEntitiesMulti(entities, []filter.SortSpec{{Property: sortProp, Direction: sortDir}})
 		} else {
-			a.sortEntitiesMulti(entities, list.Sort)
+			a.sortEntitiesMulti(entities, toFilterSortSpecs(list.Sort))
 		}
 
 		ids = make([]string, len(entities))
@@ -757,7 +757,7 @@ func (a *App) matchesPropertyFilters(e *model.Entity, filters []*filter.Filter) 
 	if !ok {
 		return false
 	}
-	matched, err := filter.MatchAll(e, filters, entDef, s.Meta)
+	matched, err := filter.MatchAll(entityRecord(e), filters, entDef, s.Meta)
 	return err == nil && matched
 }
 

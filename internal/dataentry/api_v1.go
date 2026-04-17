@@ -14,6 +14,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -1299,13 +1300,13 @@ func (a *App) applyV1Sorting(entities []*model.Entity, query map[string][]string
 	}
 
 	// Parse sort param: "-created,title" means descending created, ascending title
-	sortSpecs := make([]model.SortSpec, 0)
+	sortSpecs := make([]filter.SortSpec, 0)
 	for _, part := range strings.Split(sortParam, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-		spec := model.SortSpec{Direction: "asc"}
+		spec := filter.SortSpec{Direction: "asc"}
 		if strings.HasPrefix(part, "-") {
 			spec.Direction = "desc"
 			part = part[1:]

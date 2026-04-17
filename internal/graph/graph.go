@@ -289,6 +289,32 @@ func (g *Graph) NodesByType(entityType string) []*model.Entity {
 	return nodes
 }
 
+// CountByEntityType returns the number of entities of the given type.
+func (g *Graph) CountByEntityType(entityType string) int {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	count := 0
+	for _, node := range g.nodes {
+		if node.Type == entityType {
+			count++
+		}
+	}
+	return count
+}
+
+// CountByRelationType returns the number of relations of the given type.
+func (g *Graph) CountByRelationType(relationType string) int {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	count := 0
+	for _, edge := range g.edges {
+		if edge.Type == relationType {
+			count++
+		}
+	}
+	return count
+}
+
 // NodeCount returns the number of nodes in the graph
 func (g *Graph) NodeCount() int {
 	g.mu.RLock()

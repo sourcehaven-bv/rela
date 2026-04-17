@@ -12,7 +12,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
@@ -106,18 +105,28 @@ func (s *ImportSource) Open(path string) (io.ReadCloser, error) {
 	return s.fs.Open(path)
 }
 
+// EntityStore defines the graph operations used during import.
+type EntityStore interface {
+	GetNode(id string) (*model.Entity, bool)
+	GetEdge(from, relType, to string) (*model.Relation, bool)
+	AllIDs() []string
+	AddNode(e *model.Entity)
+	UpdateNode(e *model.Entity) bool
+	AddEdge(r *model.Relation)
+}
+
 // Importer handles importing data into a rela project
 type Importer struct {
 	repo   repository.Store
 	meta   *metamodel.Metamodel
-	g      *graph.Graph
+	g      EntityStore
 	opts   Options
 	source *ImportSource
 }
 
 // New creates a new Importer that reads input files from the given source.
 func New(
-	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, opts Options, source *ImportSource,
+	repo repository.Store, meta *metamodel.Metamodel, g EntityStore, opts Options, source *ImportSource,
 ) *Importer {
 	return &Importer{
 		repo:   repo,

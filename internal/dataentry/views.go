@@ -178,7 +178,7 @@ func (a *App) filterEntities(entities []*model.Entity, whereExpr string) ([]*mod
 		if !ok {
 			continue
 		}
-		matches, err := filter.Match(entity, f, &propDef, s.Meta)
+		matches, err := filter.Match(entityRecord(entity), f, &propDef, s.Meta)
 		if err != nil {
 			continue
 		}

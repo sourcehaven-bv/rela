@@ -350,4 +350,43 @@ func RunRelationTests(t *testing.T, f Factory) {
 		}
 		assert.Equal(t, []string{"A--a--B", "B--m--C", "C--z--A"}, keys)
 	})
+
+	t.Run("CountAll", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "req")))
+		s.CreateRelation(ctx(), "A", "requires", "B", nil)
+		s.CreateRelation(ctx(), "A", "blocks", "C", nil)
+		s.CreateRelation(ctx(), "B", "requires", "C", nil)
+
+		n, err := s.CountRelations(ctx(), store.RelationQuery{})
+		require.NoError(t, err)
+		assert.Equal(t, 3, n)
+	})
+
+	t.Run("CountByType", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "req")))
+		s.CreateRelation(ctx(), "A", "requires", "B", nil)
+		s.CreateRelation(ctx(), "A", "blocks", "C", nil)
+		s.CreateRelation(ctx(), "B", "requires", "C", nil)
+
+		n, err := s.CountRelations(ctx(), store.RelationQuery{Type: "requires"})
+		require.NoError(t, err)
+		assert.Equal(t, 2, n)
+
+		n, err = s.CountRelations(ctx(), store.RelationQuery{Type: "nonexistent"})
+		require.NoError(t, err)
+		assert.Equal(t, 0, n)
+	})
+
+	t.Run("CountEmpty", func(t *testing.T) {
+		s := f(t)
+		n, err := s.CountRelations(ctx(), store.RelationQuery{})
+		require.NoError(t, err)
+		assert.Equal(t, 0, n)
+	})
 }

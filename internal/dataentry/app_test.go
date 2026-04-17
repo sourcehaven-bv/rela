@@ -709,7 +709,7 @@ func TestUIStateLoadSave(t *testing.T) {
 	repo := repository.New(fs, ctx)
 
 	app, _ := testAppInstance()
-	app.ws = workspace.NewWithGraph(repo, app.Meta(), app.Graph())
+	app.ws = workspace.NewWithGraph(repo, app.Meta(), graphForTest(app))
 
 	t.Run("load returns defaults when file missing", func(t *testing.T) {
 		state := app.loadUIState()
@@ -731,7 +731,7 @@ func TestUIStateLoadSave(t *testing.T) {
 
 	t.Run("UIState overrides config default", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.ws = workspace.NewWithGraph(repo, app2.Meta(), app2.Graph())
+		app2.ws = workspace.NewWithGraph(repo, app2.Meta(), graphForTest(app2))
 		app2.Cfg().Navigation = []NavigationEntry{
 			{
 				Group:     "Tickets",
@@ -778,7 +778,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 	repo := repository.New(fs, ctx)
 
 	app, _ := testAppInstance()
-	app.ws = workspace.NewWithGraph(repo, app.Meta(), app.Graph())
+	app.ws = workspace.NewWithGraph(repo, app.Meta(), graphForTest(app))
 
 	t.Run("load returns nil when file missing", func(t *testing.T) {
 		ud := app.loadUserDefaults()

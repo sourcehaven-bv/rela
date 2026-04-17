@@ -162,9 +162,11 @@ func (s *Service) checkEntityAgainstRule(
 		return nil
 	}
 
+	rec := filter.Record{ID: entity.ID, Type: entity.Type, Properties: entity.Properties}
+
 	// Check 'when' conditions - if they don't match, rule doesn't apply
 	if len(whenFilters) > 0 {
-		matches, err := filter.MatchAll(entity, whenFilters, entityDef, s.meta)
+		matches, err := filter.MatchAll(rec, whenFilters, entityDef, s.meta)
 		if err != nil || !matches {
 			return nil
 		}
@@ -172,7 +174,7 @@ func (s *Service) checkEntityAgainstRule(
 
 	// Check 'then' conditions - if they don't satisfy, it's a violation
 	if len(thenFilters) > 0 {
-		satisfies, err := filter.MatchAll(entity, thenFilters, entityDef, s.meta)
+		satisfies, err := filter.MatchAll(rec, thenFilters, entityDef, s.meta)
 		if err != nil || !satisfies {
 			return []Violation{{
 				RuleName:    rule.Name,

@@ -6,7 +6,6 @@ import (
 	"unicode"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // SearchQuery represents parsed search query components
@@ -15,7 +14,7 @@ type SearchQuery struct {
 	PropertyFilters []*filter.Filter // Property filters (e.g., status=published)
 	FreeTextWords   []string         // Free text words (OR logic with scoring)
 	FreeTextPhrases []string         // Exact phrase matches (quoted strings)
-	SortClauses     []model.SortSpec // Sort criteria (e.g., sort:priority:desc)
+	SortClauses     []filter.SortSpec // Sort criteria (e.g., sort:priority:desc)
 	ParseErrors     []string         // Any parsing errors encountered
 }
 
@@ -27,7 +26,7 @@ func ParseQuery(query string) *SearchQuery {
 		PropertyFilters: []*filter.Filter{},
 		FreeTextWords:   []string{},
 		FreeTextPhrases: []string{},
-		SortClauses:     []model.SortSpec{},
+		SortClauses:     []filter.SortSpec{},
 		ParseErrors:     []string{},
 	}
 
@@ -111,7 +110,7 @@ func ParseQuery(query string) *SearchQuery {
 					continue
 				}
 			}
-			sq.SortClauses = append(sq.SortClauses, model.SortSpec{
+			sq.SortClauses = append(sq.SortClauses, filter.SortSpec{
 				Property:  property,
 				Direction: direction,
 			})

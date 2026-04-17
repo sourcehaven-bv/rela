@@ -183,7 +183,7 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 	app, entities := testAppInstance()
 
 	// Add a relation to test graph
-	app.Graph().AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
+	graphForTest(app).AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
 	result := app.entityToAPI(entities.ticket1, true)
 

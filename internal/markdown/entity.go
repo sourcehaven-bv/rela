@@ -67,33 +67,20 @@ func (f *FileIO) ReadEntity(path string, meta *metamodel.Metamodel) (*model.Enti
 	return entity, nil
 }
 
-// FormatEntity returns the formatted markdown content for an entity.
-// The optional propertyOrder specifies the order for entity properties (after id and type).
-// Both frontmatter ordering and markdown content formatting are applied.
-// Uses default line width (80) for paragraph wrapping.
-func FormatEntity(entity *model.Entity, propertyOrder []string) (string, error) {
-	return FormatEntityWithWidth(entity, propertyOrder, DefaultLineWidth)
-}
-
-// FormatEntityWithWidth returns the formatted markdown content for an entity
-// with a specific line width for paragraph wrapping.
-func FormatEntityWithWidth(entity *model.Entity, propertyOrder []string, lineWidth int) (string, error) {
+// formatEntity formats an entity as markdown with YAML frontmatter.
+func formatEntity(entity *model.Entity, propertyOrder []string, lineWidth int) (string, error) {
 	frontmatter := make(map[string]interface{})
 	frontmatter["id"] = entity.ID
 	frontmatter["type"] = entity.Type
-
-	// Copy all properties
 	for key, value := range entity.Properties {
 		frontmatter[key] = value
 	}
 
-	// Build key order: id, type, then property order (or alphabetical for remaining)
 	keyOrder := []string{"id", "type"}
 	if len(propertyOrder) > 0 {
 		keyOrder = append(keyOrder, propertyOrder...)
 	}
 
-	// Format markdown content
 	content := entity.Content
 	if content != "" {
 		content = FormatMarkdownWithWidth(content, lineWidth)
@@ -110,7 +97,7 @@ func (f *FileIO) WriteEntity(entity *model.Entity, path string, propertyOrder ..
 		order = propertyOrder[0]
 	}
 
-	content, err := FormatEntity(entity, order)
+	content, err := formatEntity(entity, order, DefaultLineWidth)
 	if err != nil {
 		return err
 	}
