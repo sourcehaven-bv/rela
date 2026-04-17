@@ -25,7 +25,7 @@ func (s *Server) handleListRelations(
 	st := s.ws.Store()
 	q := store.RelationQuery{Type: relType, From: from, To: to}
 
-	var all []*entity.Relation
+	all := make([]*entity.Relation, 0)
 	for r, err := range st.ListRelations(ctx, q) {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil

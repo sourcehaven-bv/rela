@@ -29,13 +29,15 @@ Examples:
 		}
 
 		var incoming, outgoing []*entity.Relation
-		for r, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}) {
+		inQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}
+		for r, err := range st.ListRelations(ctx, inQ) {
 			if err != nil {
 				break
 			}
 			incoming = append(incoming, r)
 		}
-		for r, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}) {
+		outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}
+		for r, err := range st.ListRelations(ctx, outQ) {
 			if err != nil {
 				break
 			}

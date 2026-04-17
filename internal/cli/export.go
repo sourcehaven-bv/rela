@@ -112,7 +112,7 @@ Examples:
 func exportEntities(entityType string) error {
 	ctx := context.Background()
 	st := ws.Store()
-	var entities []*entity.Entity
+	entities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
 		if err != nil {
 			return err
@@ -155,7 +155,7 @@ func exportAllData() error {
 	ctx := context.Background()
 	st := ws.Store()
 
-	var allEntities []*entity.Entity
+	allEntities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			return err
@@ -163,7 +163,7 @@ func exportAllData() error {
 		allEntities = append(allEntities, e)
 	}
 
-	var allEdges []*entity.Relation
+	allEdges := make([]*entity.Relation, 0)
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
 		if err != nil {
 			return err
@@ -249,7 +249,8 @@ func getEntityRelations(entityID string) *ExportRelations {
 		Incoming: make(map[string][]RelationTarget),
 	}
 
-	for rel, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}) {
+	outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}
+	for rel, err := range st.ListRelations(ctx, outQ) {
 		if err != nil {
 			break
 		}
@@ -260,7 +261,8 @@ func getEntityRelations(entityID string) *ExportRelations {
 		relations.Outgoing[rel.Type] = append(relations.Outgoing[rel.Type], target)
 	}
 
-	for rel, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}) {
+	inQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}
+	for rel, err := range st.ListRelations(ctx, inQ) {
 		if err != nil {
 			break
 		}

@@ -370,7 +370,7 @@ func (a *App) analyzeProperties() AnalysisSection {
 	}
 
 	ctx := context.Background()
-	var entities []*entity.Entity
+	entities := make([]*entity.Entity, 0)
 	for e, err := range a.ws.Store().ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break

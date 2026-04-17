@@ -31,7 +31,7 @@ func (s *Server) handleListEntities(
 		q.Type = s.resolveType(entityType)
 	}
 
-	var entities []*entity.Entity
+	entities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, q) {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -112,7 +112,7 @@ func (s *Server) handleSearchEntities(
 	}
 
 	st := s.ws.Store()
-	var summaries []map[string]interface{}
+	summaries := make([]map[string]interface{}, 0)
 	for hit, searchErr := range s.ws.Searcher().Search(ctx, q) {
 		if searchErr != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", searchErr)), nil
@@ -297,7 +297,8 @@ func (s *Server) handleRenameEntity(
 	s.ws.PauseWatching()
 	defer s.ws.ResumeWatching()
 
-	result, renameErr := s.ws.EntityManager().RenameEntity(ctx, oldID, newID, entitymanager.RenameOptions{DryRun: dryRun})
+	result, renameErr := s.ws.EntityManager().RenameEntity(
+		ctx, oldID, newID, entitymanager.RenameOptions{DryRun: dryRun})
 	if renameErr != nil {
 		return mcp.NewToolResultError(renameErr.Error()), nil
 	}

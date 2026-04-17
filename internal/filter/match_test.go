@@ -3,8 +3,8 @@ package filter
 import (
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 func toRecord(e *entity.Entity) Record {

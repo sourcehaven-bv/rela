@@ -33,7 +33,7 @@ func (s *Server) handleAnalyzeOrphans(
 		Title  string `json:"title,omitempty"`
 		Status string `json:"status,omitempty"`
 	}
-	var orphans []orphanInfo
+	orphans := make([]orphanInfo, 0)
 	for _, id := range orphanIDs {
 		e, err := st.GetEntity(ctx, id)
 		if err != nil {
@@ -277,7 +277,7 @@ func (s *Server) handleAnalyzeValidations(
 }
 
 func (s *Server) handleAnalyzeSchema(
-	ctx context.Context, request mcp.CallToolRequest,
+	_ context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	threshold := request.GetInt("threshold", 0)
 

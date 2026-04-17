@@ -10,7 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
-// list_test.go only covers CLI-specific behaviour: entity-type resolution
+// list_test.go only covers CLI-specific behavior: entity-type resolution
 // via aliases/plurals. Pure graph iteration (ListByType / AllNodes /
 // empty-store) is covered by the store conformance suite in
 // internal/store/storetest/query.go and does not need to be duplicated

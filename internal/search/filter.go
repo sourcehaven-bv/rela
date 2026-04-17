@@ -7,6 +7,8 @@ import (
 )
 
 // MatchFilters returns true if an entity matches all property filters.
+//
+//nolint:gocognit // filter evaluation is a dense switch over operator cases; splitting hurts readability
 func MatchFilters(e *entity.Entity, filters []PropertyFilter) bool {
 	for _, f := range filters {
 		val := e.GetAttributeString(f.Property)

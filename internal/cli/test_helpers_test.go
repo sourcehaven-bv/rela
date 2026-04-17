@@ -15,7 +15,7 @@ import (
 // workspace knows about. Use this to gather test inputs for rendering
 // helpers (DOT, CSV, etc.) instead of reaching into the legacy graph.
 func fixtureEntities(entityType string) []*entity.Entity {
-	var out []*entity.Entity
+	out := make([]*entity.Entity, 0)
 	for e, err := range ws.Store().ListEntities(
 		context.Background(),
 		store.EntityQuery{Type: entityType},
@@ -30,7 +30,7 @@ func fixtureEntities(entityType string) []*entity.Entity {
 
 // fixtureAllEntities returns every entity in the active workspace.
 func fixtureAllEntities() []*entity.Entity {
-	var out []*entity.Entity
+	out := make([]*entity.Entity, 0)
 	for e, err := range ws.Store().ListEntities(context.Background(), store.EntityQuery{}) {
 		if err != nil {
 			continue
@@ -42,7 +42,7 @@ func fixtureAllEntities() []*entity.Entity {
 
 // fixtureAllRelations returns every relation in the active workspace.
 func fixtureAllRelations() []*entity.Relation {
-	var out []*entity.Relation
+	out := make([]*entity.Relation, 0)
 	for r, err := range ws.Store().ListRelations(context.Background(), store.RelationQuery{}) {
 		if err != nil {
 			continue
@@ -68,12 +68,6 @@ func newStoreSeeder(meta *metamodel.Metamodel) *storeSeeder {
 
 func (ss *storeSeeder) addEntity(b *testutil.EntityBuilder) {
 	e := b.Build()
-	if err := ss.s.CreateEntity(context.Background(), e); err != nil {
-		panic(err)
-	}
-}
-
-func (ss *storeSeeder) addEntityFromModel(e *entity.Entity) {
 	if err := ss.s.CreateEntity(context.Background(), e); err != nil {
 		panic(err)
 	}

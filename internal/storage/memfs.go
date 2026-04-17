@@ -17,9 +17,9 @@ import (
 // Primarily intended for testing.
 type MemFS struct {
 	mu    sync.RWMutex
-	files map[string]*memFile    // path → file contents
-	dirs  map[string]time.Time   // directory path → mtime
-	cwd   string                 // current working directory for Getwd
+	files map[string]*memFile  // path → file contents
+	dirs  map[string]time.Time // directory path → mtime
+	cwd   string               // current working directory for Getwd
 }
 
 type memFile struct {

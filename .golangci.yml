@@ -339,6 +339,16 @@ issues:
         - funlen        # Query parsing is inherently complex
         - gocognit      # Query parsing has complex control flow
 
+    # MCP tool handlers intentionally encode errors into the tool result
+    # (via NewToolResultError) and return (result, nil) — nilerr flags this
+    # as a bug, but it's the protocol contract. The export helpers have
+    # `error` in their signature to preserve the contract even though they
+    # currently never fail (unparam).
+    - path: internal/mcp/tools_.*\.go
+      linters:
+        - nilerr
+        - unparam
+
     # Data entry web handlers have specific patterns
     - path: internal/dataentry/.*\.go
       linters:

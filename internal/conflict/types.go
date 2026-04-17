@@ -37,7 +37,7 @@ type ConflictedFile struct {
 type ParsedSide struct {
 	Entity   *entity.Entity   // Parsed entity (for entity files)
 	Relation *entity.Relation // Parsed relation (for relation files)
-	Raw      string          // Raw content of this side
+	Raw      string           // Raw content of this side
 }
 
 // PropertyDiff represents the difference in a single property between sides.

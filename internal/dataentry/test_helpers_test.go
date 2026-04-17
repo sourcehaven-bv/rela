@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -73,7 +73,7 @@ func seedRelation(app *App, r *entity.Relation) {
 // by the workspace. Tests use this to collect fixture IDs without
 // reaching into the graph.
 func entitiesByType(app *App, entityType string) []*entity.Entity {
-	var out []*entity.Entity
+	out := make([]*entity.Entity, 0)
 	for e, err := range app.ws.Store().ListEntities(
 		context.Background(),
 		store.EntityQuery{Type: entityType},

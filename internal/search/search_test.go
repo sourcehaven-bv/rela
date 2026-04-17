@@ -4,13 +4,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func openSearcher(t *testing.T) (store.Store, search.Searcher) {
@@ -37,7 +38,7 @@ func TestSearchIndex_TextSearch(t *testing.T) {
 	e2.Content = "Export data as CSV."
 	require.NoError(t, s.CreateEntity(ctx, e2))
 
-	var results []search.Hit
+	results := make([]search.Hit, 0)
 	for hit, err := range searcher.Search(ctx, search.Query{Text: "authentication"}) {
 		require.NoError(t, err)
 		results = append(results, hit)
@@ -59,7 +60,7 @@ func TestSearchIndex_TextWithTypeFilter(t *testing.T) {
 	e2.SetString("title", "Common keyword")
 	require.NoError(t, s.CreateEntity(ctx, e2))
 
-	var results []search.Hit
+	results := make([]search.Hit, 0)
 	for hit, err := range searcher.Search(ctx, search.Query{Text: "common", Types: []string{"ticket"}}) {
 		require.NoError(t, err)
 		results = append(results, hit)
@@ -83,7 +84,7 @@ func TestSearchIndex_TextWithPropertyFilter(t *testing.T) {
 	e2.SetString("status", "closed")
 	require.NoError(t, s.CreateEntity(ctx, e2))
 
-	var results []search.Hit
+	results := make([]search.Hit, 0)
 	for hit, err := range searcher.Search(ctx, search.Query{
 		Text:    "searchable",
 		Filters: []search.PropertyFilter{{Property: "status", Value: "open", Op: search.FilterEq}},
@@ -108,7 +109,7 @@ func TestSearchIndex_UpdateReflectedInSearch(t *testing.T) {
 	require.NoError(t, s.UpdateEntity(ctx, e))
 
 	// Old term should not match.
-	var results []search.Hit
+	results := make([]search.Hit, 0)
 	for hit, err := range searcher.Search(ctx, search.Query{Text: "Original"}) {
 		require.NoError(t, err)
 		results = append(results, hit)
@@ -135,7 +136,7 @@ func TestSearchIndex_DeleteRemovesFromSearch(t *testing.T) {
 	_, err := s.DeleteEntity(ctx, "REQ-1", false)
 	require.NoError(t, err)
 
-	var results []search.Hit
+	results := make([]search.Hit, 0)
 	for hit, err := range searcher.Search(ctx, search.Query{Text: "Deletable"}) {
 		require.NoError(t, err)
 		results = append(results, hit)
@@ -154,7 +155,7 @@ func TestSearchIndex_RenameUpdatesSearch(t *testing.T) {
 	_, err := s.RenameEntity(ctx, "REQ-OLD", "REQ-NEW")
 	require.NoError(t, err)
 
-	var results []search.Hit
+	results := make([]search.Hit, 0)
 	for hit, err := range searcher.Search(ctx, search.Query{Text: "Renameable"}) {
 		require.NoError(t, err)
 		results = append(results, hit)

@@ -8,7 +8,9 @@ import (
 	"strings"
 )
 
-// EntityID represents a parsed entity identifier
+// EntityID represents a parsed entity identifier.
+//
+//nolint:revive // EntityID is the idiomatic name even with package-name repetition; changing to "ID" would conflict with Entity.ID field.
 type EntityID struct {
 	Prefix string // e.g., "REQ-", "DEC-"
 	Number int    // e.g., 1, 42

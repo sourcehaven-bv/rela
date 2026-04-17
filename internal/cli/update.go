@@ -54,9 +54,9 @@ Examples:
 
 		// Parse and apply --property flags first (so explicit flags can override if needed)
 		for _, prop := range updateProperties {
-			key, value, err := parsePropertyFlag(prop)
-			if err != nil {
-				return err
+			key, value, parseErr := parsePropertyFlag(prop)
+			if parseErr != nil {
+				return parseErr
 			}
 			entity.SetString(key, value)
 			changed = true

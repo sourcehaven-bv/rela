@@ -109,7 +109,9 @@ func (m *Metamodel) ValidateEntity(id, entityType string, properties map[string]
 }
 
 // ValidateRelationProperties validates a relation's properties against the metamodel.
-func (m *Metamodel) ValidateRelationProperties(relationType string, properties map[string]interface{}) []*ValidationError {
+func (m *Metamodel) ValidateRelationProperties(
+	relationType string, properties map[string]interface{},
+) []*ValidationError {
 	def, ok := m.Relations[relationType]
 	if !ok {
 		return nil // Unknown type - handled elsewhere

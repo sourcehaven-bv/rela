@@ -516,7 +516,7 @@ func runFreeTextSearch(svc Services, sq *searchparser.SearchQuery, limit int) []
 		Limit: limit,
 	}
 	ctx := context.Background()
-	var out []*entity.Entity
+	out := make([]*entity.Entity, 0)
 	for hit, err := range svc.Searcher.Search(ctx, q) {
 		if err != nil {
 			return nil
@@ -550,7 +550,7 @@ func listFromStoreByTypes(svc Services, types []string) []*entity.Entity {
 
 // listAllFromStore drains every entity from the store.
 func listAllFromStore(svc Services) []*entity.Entity {
-	var out []*entity.Entity
+	out := make([]*entity.Entity, 0)
 	for e, err := range svc.Store.ListEntities(context.Background(), store.EntityQuery{}) {
 		if err != nil {
 			return out

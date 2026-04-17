@@ -42,7 +42,7 @@ func (s *Server) handleExport(
 		q.Type = s.resolveType(entityType)
 	}
 
-	var entities []*entity.Entity
+	entities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, q) {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -51,7 +51,7 @@ func (s *Server) handleExport(
 	}
 	sortStoreEntitiesByID(entities)
 
-	var relations []*entity.Relation
+	relations := make([]*entity.Relation, 0)
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil

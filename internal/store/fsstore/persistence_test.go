@@ -7,12 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
 
 func newConfig(fs storage.FS) fsstore.Config {
@@ -241,7 +242,7 @@ func TestPersistence_ExternalEntityDeleted(t *testing.T) {
 	defer s2.Close()
 
 	_, err := s2.GetEntity(ctx, "DEL-1")
-	assert.ErrorIs(t, err, store.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrNotFound)
 
 	count, err := s2.CountEntities(ctx, store.EntityQuery{})
 	require.NoError(t, err)
@@ -314,7 +315,7 @@ func TestPersistence_DeleteSurvivedReopen(t *testing.T) {
 	defer s2.Close()
 
 	_, err = s2.GetEntity(ctx, "REQ-1")
-	assert.ErrorIs(t, err, store.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrNotFound)
 
 	count, err := s2.CountEntities(ctx, store.EntityQuery{})
 	require.NoError(t, err)
@@ -342,7 +343,7 @@ func TestPersistence_RenameSurvivedReopen(t *testing.T) {
 
 	// Old ID is gone.
 	_, err = s2.GetEntity(ctx, "REQ-OLD")
-	assert.ErrorIs(t, err, store.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrNotFound)
 
 	// New ID exists with same properties.
 	got, err := s2.GetEntity(ctx, "REQ-NEW")

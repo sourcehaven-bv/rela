@@ -10,12 +10,12 @@ import (
 
 // SearchQuery represents parsed search query components
 type SearchQuery struct {
-	EntityTypes     []string         // Entity types to filter (e.g., ["requirement", "decision"])
-	PropertyFilters []*filter.Filter // Property filters (e.g., status=published)
-	FreeTextWords   []string         // Free text words (OR logic with scoring)
-	FreeTextPhrases []string         // Exact phrase matches (quoted strings)
+	EntityTypes     []string          // Entity types to filter (e.g., ["requirement", "decision"])
+	PropertyFilters []*filter.Filter  // Property filters (e.g., status=published)
+	FreeTextWords   []string          // Free text words (OR logic with scoring)
+	FreeTextPhrases []string          // Exact phrase matches (quoted strings)
 	SortClauses     []filter.SortSpec // Sort criteria (e.g., sort:priority:desc)
-	ParseErrors     []string         // Any parsing errors encountered
+	ParseErrors     []string          // Any parsing errors encountered
 }
 
 // ParseQuery parses a search query string into its components

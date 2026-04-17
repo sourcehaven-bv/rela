@@ -71,7 +71,7 @@ func (a *App) incomingRelations(id string) []*entity.Relation {
 }
 
 func listRelations(s store.Store, q store.RelationQuery) []*entity.Relation {
-	var out []*entity.Relation
+	out := make([]*entity.Relation, 0)
 	for r, err := range s.ListRelations(context.Background(), q) {
 		if err != nil {
 			return out

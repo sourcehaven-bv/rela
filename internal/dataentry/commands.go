@@ -158,7 +158,7 @@ func (a *App) buildEntityInput(e *entity.Entity) *commandInput {
 // relationsForEntity loads every relation where id is either endpoint
 // and returns them as []*entity.Relation for the command-input payload.
 func relationsForEntity(svc Services, id string) []*entity.Relation {
-	var rels []*entity.Relation
+	rels := make([]*entity.Relation, 0)
 	q := store.RelationQuery{EntityID: id, Direction: store.DirectionBoth}
 	for r, err := range svc.Store.ListRelations(context.Background(), q) {
 		if err != nil {

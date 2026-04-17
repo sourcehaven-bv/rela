@@ -58,9 +58,9 @@ Examples:
 			fmt.Print("? [y/N] ")
 
 			reader := bufio.NewReader(os.Stdin)
-			response, err := reader.ReadString('\n')
-			if err != nil {
-				return fmt.Errorf("failed to read input: %w", err)
+			response, readErr := reader.ReadString('\n')
+			if readErr != nil {
+				return fmt.Errorf("failed to read input: %w", readErr)
 			}
 			response = strings.TrimSpace(strings.ToLower(response))
 

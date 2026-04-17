@@ -13,7 +13,7 @@ type mockCounter struct {
 	relations map[string]int
 }
 
-func (m *mockCounter) CountByEntityType(t string) int  { return m.entities[t] }
+func (m *mockCounter) CountByEntityType(t string) int   { return m.entities[t] }
 func (m *mockCounter) CountByRelationType(t string) int { return m.relations[t] }
 
 func newTestMetamodel() *metamodel.Metamodel {

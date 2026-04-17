@@ -451,7 +451,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 	}
 	filterExpr := ls.OptString(2, "")
 
-	var entities []*entity.Entity
+	entities := make([]*entity.Entity, 0)
 	for e, err := range r.svc.Store.ListEntities(context.Background(), store.EntityQuery{Type: entityType}) {
 		if err != nil {
 			break
@@ -476,7 +476,8 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 		filters := []*filter.Filter{f}
 		filtered := make([]*entity.Entity, 0)
 		for _, e := range entities {
-			match, err := filter.MatchAll(filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}, filters, entityDef, r.meta)
+			record := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
+			match, err := filter.MatchAll(record, filters, entityDef, r.meta)
 			if err != nil {
 				ls.RaiseError("filter error: %s", err.Error())
 				return 0

@@ -27,8 +27,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/cache"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // recentHashCapacity bounds how many recently-written file hashes are
@@ -88,7 +88,7 @@ type FSStore struct {
 	entityOrder   []string
 	relations     map[string]relationMeta // key (from--type--to) → meta
 	relationOrder []string
-	attachments   map[string]attachMeta // "entityID/property" → meta
+	attachments   map[string]attachMeta     // "entityID/property" → meta
 	propCache     map[string]map[string]int // property → value → count
 
 	// observers notified synchronously on entity writes
@@ -142,27 +142,26 @@ func New(cfg Config) (*FSStore, error) {
 	if err := s.syncIndex(); err != nil {
 		return nil, err
 	}
-	if err := s.loadAttachmentsIndex(); err != nil {
-		return nil, err
-	}
+	s.loadAttachmentsIndex()
 
 	return s, nil
 }
 
 // loadAttachmentsIndex walks the attachments directory and populates metadata.
-func (s *FSStore) loadAttachmentsIndex() error {
+// Missing directory and read errors are swallowed — a partial index is
+// preferable to failing the open.
+func (s *FSStore) loadAttachmentsIndex() {
 	if s.attachDir == "" {
-		return nil
+		return
 	}
 
-	_, err := s.fs.Stat(s.attachDir)
-	if err != nil {
-		return nil // directory doesn't exist yet — no attachments
+	if _, err := s.fs.Stat(s.attachDir); err != nil {
+		return
 	}
 
 	entries, err := s.fs.ReadDir(s.attachDir)
 	if err != nil {
-		return nil // ignore errors reading attachment dir
+		return
 	}
 
 	for _, entityEntry := range entries {
@@ -202,7 +201,6 @@ func (s *FSStore) loadAttachmentsIndex() error {
 			}
 		}
 	}
-	return nil
 }
 
 // LastModified returns the newest mtime across all entity and relation
@@ -271,7 +269,7 @@ func (s *FSStore) cleanupTempFiles() {
 		var toRemove []string
 		_ = s.fs.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
-				return nil
+				return nil //nolint:nilerr // walker continuation on error is intentional
 			}
 			if strings.HasSuffix(path, ".new") {
 				toRemove = append(toRemove, path)

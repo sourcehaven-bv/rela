@@ -3,8 +3,8 @@ package filter
 import (
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // TestMatchAll_MalformedEntityData verifies that filtering handles malformed entity data gracefully.

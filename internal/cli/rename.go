@@ -219,7 +219,8 @@ Examples:
 }
 
 func runRenameID(oldID, newID string) error {
-	result, err := ws.EntityManager().RenameEntity(context.Background(), oldID, newID, entitymanager.RenameOptions{DryRun: renameIDDryRun})
+	result, err := ws.EntityManager().RenameEntity(
+		context.Background(), oldID, newID, entitymanager.RenameOptions{DryRun: renameIDDryRun})
 	if err != nil {
 		return err
 	}

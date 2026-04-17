@@ -3,8 +3,8 @@ package dataentry
 import (
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // newTestApp creates a minimal App with the given fixture and metamodel for testing.

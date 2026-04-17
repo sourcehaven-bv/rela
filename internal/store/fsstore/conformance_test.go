@@ -3,12 +3,13 @@ package fsstore_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/stretchr/testify/require"
 )
 
 func factory(t *testing.T) store.Store {

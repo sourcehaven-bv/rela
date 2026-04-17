@@ -16,6 +16,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
+// Store manages content-addressable attachment storage.
+type Store struct {
+	fs      storage.FS
+	rootDir string // Absolute path to project root
+}
+
+// NewStore creates a new attachment store.
+func NewStore(fs storage.FS, rootDir string) *Store {
+	return &Store{
+		fs:      fs,
+		rootDir: rootDir,
+	}
+}
+
 // compile-time check that Store satisfies the top-level Manager interface.
 var _ Manager = (*Store)(nil)
 
@@ -31,7 +45,7 @@ func (s *Store) AttachFile(
 		return nil, fmt.Errorf("attachment: read data: %w", err)
 	}
 	addedBy := ""
-	if u, err := user.Current(); err == nil {
+	if u, uErr := user.Current(); uErr == nil {
 		addedBy = u.Username
 	}
 	att, err := s.AddBytes(bytesData, fileName, addedBy)
@@ -78,20 +92,6 @@ type Attachment struct {
 	Ext      string // File extension including dot (e.g., ".png")
 	Path     string // Relative path: attachments/ab/ab3f8c2e.png
 	Metadata *Metadata
-}
-
-// Store manages content-addressable attachment storage.
-type Store struct {
-	fs      storage.FS
-	rootDir string // Absolute path to project root
-}
-
-// NewStore creates a new attachment store.
-func NewStore(fs storage.FS, rootDir string) *Store {
-	return &Store{
-		fs:      fs,
-		rootDir: rootDir,
-	}
 }
 
 // Add adds a file to the attachment store.

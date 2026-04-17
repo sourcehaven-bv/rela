@@ -161,7 +161,7 @@ func (m *mockManager) CreateEntity(
 	ctx context.Context, e *entity.Entity, opts entitymanager.CreateOptions,
 ) (*entitymanager.CreateResult, error) {
 	if e == nil {
-		return nil, nil
+		return nil, errors.New("entity is nil")
 	}
 	id := opts.ID
 	if id == "" {

@@ -50,7 +50,7 @@ const GitHubClientID = "" // Set via build flags or environment
 // It manages project lifecycle: opening a directory picker, loading a project,
 // and persisting recent projects in user preferences.
 type Desktop struct {
-	ctx              context.Context
+	ctx               context.Context
 	mu                sync.RWMutex
 	app               *dataentry.App
 	handler           http.Handler
@@ -194,7 +194,8 @@ func (d *Desktop) GetSetupInfo() map[string]interface{} {
 		return map[string]interface{}{"error": "No project pending setup"}
 	}
 
-	meta, _, err := metamodel.NewFSLoader(d.pendingSetupFS, d.pendingSetupPaths.MetamodelPath).Load(context.Background())
+	loader := metamodel.NewFSLoader(d.pendingSetupFS, d.pendingSetupPaths.MetamodelPath)
+	meta, _, err := loader.Load(context.Background())
 	if err != nil {
 		return map[string]interface{}{"error": fmt.Sprintf("Failed to load metamodel: %v", err)}
 	}

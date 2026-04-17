@@ -154,7 +154,6 @@ func TestRenameEntityCommand(t *testing.T) {
 		if !strings.Contains(content, "id: REQ-001") {
 			t.Errorf("entity file should keep original ID, got:\n%s", content)
 		}
-
 	})
 
 	t.Run("error when old type not found", func(t *testing.T) {

@@ -8,12 +8,13 @@ import (
 	"iter"
 	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/analysis/analyzer/keyword"
 	"github.com/blevesearch/bleve/v2/analysis/analyzer/standard"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search/query"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // Document represents a searchable document.

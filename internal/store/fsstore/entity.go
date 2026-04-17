@@ -40,7 +40,7 @@ func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2
 	type idType struct {
 		id, typ string
 	}
-	var matches []idType
+	matches := make([]idType, 0)
 	for _, id := range s.entityOrder {
 		if !matchEntityQuery(s.entities[id], q, idSet) {
 			continue
@@ -295,7 +295,7 @@ func (s *FSStore) DeleteEntity(_ context.Context, id string, cascade bool) (*sto
 	}
 
 	// Load relations for result.
-	var deletedRelations []*entity.Relation
+	deletedRelations := make([]*entity.Relation, 0)
 	for _, rm := range related {
 		r, loadErr := s.loadRelation(rm.From, rm.Type, rm.To)
 		if loadErr != nil {
@@ -350,6 +350,7 @@ func (s *FSStore) DeleteEntity(_ context.Context, id string, cascade bool) (*sto
 	return result, nil
 }
 
+//nolint:funlen // rename is a coherent transaction that's clearer kept together than split
 func (s *FSStore) RenameEntity(_ context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := storeutil.ValidateID(newID); err != nil {
 		return nil, err

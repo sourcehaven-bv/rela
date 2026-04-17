@@ -114,15 +114,16 @@ func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*entity.Ent
 	var relType string
 	var direction store.Direction
 	var useTarget bool // true: collect edge.To; false: collect edge.From
-	if rule.Follow != "" {
+	switch {
+	case rule.Follow != "":
 		relType = rule.Follow
 		direction = store.DirectionOutgoing
 		useTarget = true
-	} else if rule.FollowIncoming != "" {
+	case rule.FollowIncoming != "":
 		relType = rule.FollowIncoming
 		direction = store.DirectionIncoming
 		useTarget = false
-	} else {
+	default:
 		return nil
 	}
 

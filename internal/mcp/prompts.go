@@ -142,7 +142,7 @@ func (s *Server) handleReviewOrphansPrompt(
 		Title  string `json:"title,omitempty"`
 		Status string `json:"status,omitempty"`
 	}
-	var summaries []orphanSummary
+	summaries := make([]orphanSummary, 0)
 	for _, id := range orphanIDs {
 		e, err := st.GetEntity(ctx, id)
 		if err != nil {

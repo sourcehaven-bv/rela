@@ -490,7 +490,6 @@ func (a *App) createFormForType(entityType string) string {
 	return fallback
 }
 
-
 // resolveLinkTarget resolves a link configuration value to a URL.
 // Supported values:
 //   - "" or empty: no link (returns "")
@@ -626,4 +625,3 @@ func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]
 
 	return sm, st
 }
-

@@ -495,7 +495,7 @@ func hashContent(content []byte) string {
 }
 
 // recordHash stores the hash of content written to path. The LRU is
-// self-synchronised so no store lock is required.
+// self-synchronized so no store lock is required.
 func (s *FSStore) recordHash(path string, content []byte) {
 	s.recentHashes.Put(path, hashContent(content))
 }
@@ -504,4 +504,3 @@ func (s *FSStore) recordHash(path string, content []byte) {
 func (s *FSStore) forgetHash(path string) {
 	s.recentHashes.Delete(path)
 }
-

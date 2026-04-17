@@ -18,7 +18,7 @@ type persistedIndex struct {
 	// RelationsDirMtime is the mtime of the relations directory.
 	RelationsDirMtime time.Time `json:"relations_dir_mtime"`
 
-	Entities  map[string]indexedEntity  `json:"entities"`  // id → meta
+	Entities  map[string]indexedEntity   `json:"entities"`  // id → meta
 	Relations map[string]indexedRelation `json:"relations"` // key → meta
 
 	// PropCacheMtime is the newest entity file mtime when the prop cache was built.
@@ -74,7 +74,7 @@ func (s *FSStore) savePersistedIndex() error {
 		idx.Entities[id] = indexedEntity{ID: id, Type: meta.Type}
 	}
 	for key, meta := range s.relations {
-		idx.Relations[key] = indexedRelation{From: meta.From, Type: meta.Type, To: meta.To}
+		idx.Relations[key] = indexedRelation(meta)
 	}
 
 	data, err := json.Marshal(idx)
@@ -120,7 +120,7 @@ func (s *FSStore) syncEntities(cached *persistedIndex) error {
 
 	if cached != nil && cached.Entities != nil && currentMtime.Equal(cached.EntitiesDirMtime) {
 		for id, ie := range cached.Entities {
-			s.entities[id] = entityMeta{ID: ie.ID, Type: ie.Type}
+			s.entities[id] = entityMeta(ie)
 			s.entityOrder = append(s.entityOrder, id)
 		}
 		sortStrings(s.entityOrder)
@@ -138,7 +138,7 @@ func (s *FSStore) syncRelations(cached *persistedIndex) error {
 
 	if cached != nil && cached.Relations != nil && currentMtime.Equal(cached.RelationsDirMtime) {
 		for key, ir := range cached.Relations {
-			s.relations[key] = relationMeta{From: ir.From, Type: ir.Type, To: ir.To}
+			s.relations[key] = relationMeta(ir)
 			s.relationOrder = append(s.relationOrder, key)
 		}
 		sortStrings(s.relationOrder)

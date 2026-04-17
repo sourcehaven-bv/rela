@@ -5,13 +5,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
 
 // --- Orphaned temp file cleanup ---
@@ -37,7 +38,7 @@ func TestRecovery_OrphanedEntityTempFile(t *testing.T) {
 
 	// Original entity still accessible.
 	_, err = s2.GetEntity(ctx, "REQ-1")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestRecovery_OrphanedRelationTempFile(t *testing.T) {
@@ -150,17 +151,17 @@ to: REQ-NEW
 
 	// Both entities should be accessible (the store doesn't know about the rename).
 	_, err = s2.GetEntity(ctx, "REQ-OLD")
-	assert.NoError(t, err, "old entity should still be accessible")
+	require.NoError(t, err, "old entity should still be accessible")
 
 	_, err = s2.GetEntity(ctx, "REQ-NEW")
-	assert.NoError(t, err, "new entity should be accessible")
+	require.NoError(t, err, "new entity should be accessible")
 
 	// Both relation variants accessible.
 	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-OLD")
-	assert.NoError(t, err, "old relation should still exist")
+	require.NoError(t, err, "old relation should still exist")
 
 	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-NEW")
-	assert.NoError(t, err, "new relation should exist")
+	require.NoError(t, err, "new relation should exist")
 }
 
 // --- Crash mid-cascade-delete: some relation files removed ---
@@ -191,7 +192,7 @@ func TestRecovery_PartialCascadeDelete(t *testing.T) {
 	defer s2.Close()
 
 	_, err = s2.GetEntity(ctx, "REQ-1")
-	assert.ErrorIs(t, err, store.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrNotFound)
 
 	// The surviving orphaned relation is still loadable.
 	rel, err := s2.GetRelation(ctx, "SOL-2", "implements", "REQ-1")
@@ -200,7 +201,7 @@ func TestRecovery_PartialCascadeDelete(t *testing.T) {
 
 	// The deleted relation is gone.
 	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
-	assert.ErrorIs(t, err, store.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 // --- Search index is rebuilt on restart ---
@@ -320,7 +321,7 @@ type: requirement
 	// Valid entity untouched.
 	ctx := context.Background()
 	_, err := s2.GetEntity(ctx, "REQ-3")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 // --- Attachment file exists but entity deleted ---
@@ -344,13 +345,13 @@ func TestRecovery_OrphanedAttachmentAfterEntityDelete(t *testing.T) {
 	defer s2.Close()
 
 	_, err := s2.GetEntity(ctx, "DOC-1")
-	assert.ErrorIs(t, err, store.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrNotFound)
 
 	// Attachment is still physically on disk (orphaned) but the store
 	// loads attachment index from walking the directory, so it's indexed.
 	// However, the entity doesn't exist, so operations should handle gracefully.
 	_, err = s2.ListAttachments(ctx, "DOC-1")
-	assert.ErrorIs(t, err, store.ErrNotFound, "attachments for missing entity should return not found")
+	require.ErrorIs(t, err, store.ErrNotFound, "attachments for missing entity should return not found")
 }
 
 // helpers

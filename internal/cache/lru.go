@@ -43,7 +43,8 @@ func (c *LRU[K, V]) Get(key K) (V, bool) {
 
 	if el, ok := c.items[key]; ok {
 		c.order.MoveToFront(el)
-		return el.Value.(*lruEntry[K, V]).value, true
+		entry, _ := el.Value.(*lruEntry[K, V])
+		return entry.value, true
 	}
 	var zero V
 	return zero, false
@@ -57,7 +58,8 @@ func (c *LRU[K, V]) Put(key K, value V) {
 	defer c.mu.Unlock()
 
 	if el, ok := c.items[key]; ok {
-		el.Value.(*lruEntry[K, V]).value = value
+		entry, _ := el.Value.(*lruEntry[K, V])
+		entry.value = value
 		c.order.MoveToFront(el)
 		return
 	}
@@ -69,7 +71,8 @@ func (c *LRU[K, V]) Put(key K, value V) {
 		oldest := c.order.Back()
 		if oldest != nil {
 			c.order.Remove(oldest)
-			delete(c.items, oldest.Value.(*lruEntry[K, V]).key)
+			entry, _ := oldest.Value.(*lruEntry[K, V])
+			delete(c.items, entry.key)
 		}
 	}
 }
