@@ -8,44 +8,65 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"sort"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func (s *Server) handleListEntities(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	entityType := request.GetString("type", "")
 	where := request.GetString("where", "")
 	limit := request.GetInt("limit", 0)
 	offset := request.GetInt("offset", 0)
 
-	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	var entities []*model.Entity
+	st := s.ws.Store()
+	q := store.EntityQuery{}
 	if entityType != "" {
-		resolved := s.resolveType(entityType)
-		entities = g.NodesByType(resolved)
-	} else {
-		entities = g.AllNodes()
+		q.Type = s.resolveType(entityType)
+	}
+
+	var entities []*entity.Entity
+	for e, err := range st.ListEntities(ctx, q) {
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		entities = append(entities, e)
 	}
 
 	// Apply filter
 	if where != "" {
-		filtered, filterErr := filterEntities(entities, where)
+		filtered, filterErr := filterStoreEntities(entities, where)
 		if filterErr != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid filter: %v", filterErr)), nil
 		}
 		entities = filtered
 	}
 
-	sortEntitiesByID(entities)
+	sortStoreEntitiesByID(entities)
 
 	// Apply offset/limit
-	entities = applyPagination(entities, offset, limit)
+	if offset > 0 {
+		if offset >= len(entities) {
+			entities = nil
+		} else {
+			entities = entities[offset:]
+		}
+	}
+	if limit > 0 && limit < len(entities) {
+		entities = entities[:limit]
+	}
 
-	text, err := convertEntitiesList(entities)
+	summaries := make([]map[string]interface{}, len(entities))
+	for i, e := range entities {
+		summaries[i] = convertStoreEntitySummary(e)
+	}
+	text, err := marshalJSON(summaries)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -53,7 +74,7 @@ func (s *Server) handleListEntities(
 }
 
 func (s *Server) handleShowEntity(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	id, err := request.RequireString("id")
 	if err != nil {
@@ -61,13 +82,13 @@ func (s *Server) handleShowEntity(
 	}
 	id = trimID(id)
 
-	snap := s.ws.Snapshot()
-	entity, ok := snap.GetEntity(id)
-	if !ok {
+	st := s.ws.Store()
+	e, getErr := st.GetEntity(ctx, id)
+	if getErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
-	text, err := convertEntity(entity, snap, true)
+	text, err := convertStoreEntity(e, st, true)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -98,23 +119,30 @@ func (s *Server) handleSearchEntities(
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
 
-	// Filter by type if specified.
-	var results []*model.Entity
+	// Filter by type if specified and convert to summaries.
+	resolved := ""
 	if entityType != "" {
-		resolved := s.resolveType(entityType)
-		for _, e := range entities {
-			if e.Type == resolved {
-				results = append(results, e)
-				if len(results) >= limit {
-					break
-				}
-			}
+		resolved = s.resolveType(entityType)
+	}
+	var summaries []map[string]interface{}
+	for _, e := range entities {
+		if resolved != "" && e.Type != resolved {
+			continue
 		}
-	} else {
-		results = entities
+		summary := map[string]interface{}{"id": e.ID, "type": e.Type}
+		if title := e.Title(); title != "" {
+			summary["title"] = title
+		}
+		if status := e.GetString("status"); status != "" {
+			summary["status"] = status
+		}
+		summaries = append(summaries, summary)
+		if limit > 0 && len(summaries) >= limit {
+			break
+		}
 	}
 
-	text, err := convertEntitiesList(results)
+	text, err := marshalJSON(summaries)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -145,7 +173,7 @@ func (s *Server) handleCreateEntity(
 		return errResult, nil
 	}
 
-	entity, _, createErr := s.ws.CreateEntity(resolvedType, workspace.CreateOptions{
+	created, _, createErr := s.ws.CreateEntity(resolvedType, workspace.CreateOptions{
 		ID:         customID,
 		Properties: properties,
 		Content:    content,
@@ -154,12 +182,18 @@ func (s *Server) handleCreateEntity(
 		return mcp.NewToolResultError(createErr.Error()), nil
 	}
 
-	snap := s.ws.Snapshot()
-	text, err := convertEntity(entity, snap, false)
+	st := s.ws.Store()
+	e, _ := st.GetEntity(context.Background(), created.ID)
+	if e == nil {
+		// Fallback: return minimal info
+		return mcp.NewToolResultText(fmt.Sprintf("Created %s %s", resolvedType, created.ID)), nil
+	}
+
+	text, err := convertStoreEntity(e, st, false)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Created %s %s\n\n%s", resolvedType, entity.ID, text)), nil
+	return mcp.NewToolResultText(fmt.Sprintf("Created %s %s\n\n%s", resolvedType, created.ID, text)), nil
 }
 
 func (s *Server) handleUpdateEntity(
@@ -171,7 +205,7 @@ func (s *Server) handleUpdateEntity(
 	}
 	id = trimID(id)
 
-	entity, ok := s.ws.GetEntity(id)
+	e, ok := s.ws.GetEntity(id)
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
@@ -184,27 +218,32 @@ func (s *Server) handleUpdateEntity(
 	}
 
 	// Validate property names early for better error messages
-	if errResult := s.validatePropertyNames(entity.Type, properties); errResult != nil {
+	if errResult := s.validatePropertyNames(e.Type, properties); errResult != nil {
 		return errResult, nil
 	}
 
 	// Clone for automation (old state)
-	oldEntity := entity.Clone()
+	oldEntity := e.Clone()
 
 	// Apply property updates
 	for k, v := range properties {
-		entity.Properties[k] = v
+		e.Properties[k] = v
 	}
 	if content != "" {
-		entity.Content = content
+		e.Content = content
 	}
 
-	if _, updateErr := s.ws.UpdateEntity(entity, oldEntity); updateErr != nil {
+	if _, updateErr := s.ws.UpdateEntity(e, oldEntity); updateErr != nil {
 		return mcp.NewToolResultError(updateErr.Error()), nil
 	}
 
-	snap := s.ws.Snapshot()
-	text, convertErr := convertEntity(entity, snap, true)
+	st := s.ws.Store()
+	updated, _ := st.GetEntity(context.Background(), id)
+	if updated == nil {
+		return mcp.NewToolResultText(fmt.Sprintf("Updated %s", id)), nil
+	}
+
+	text, convertErr := convertStoreEntity(updated, st, true)
 	if convertErr != nil {
 		return mcp.NewToolResultError(convertErr.Error()), nil
 	}
@@ -212,7 +251,7 @@ func (s *Server) handleUpdateEntity(
 }
 
 func (s *Server) handleDeleteEntity(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	id, err := request.RequireString("id")
 	if err != nil {
@@ -221,24 +260,22 @@ func (s *Server) handleDeleteEntity(
 	id = trimID(id)
 	cascade := request.GetBool("cascade", false)
 
-	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	entity, ok := g.GetNode(id)
-	if !ok {
+	st := s.ws.Store()
+	e, getErr := st.GetEntity(ctx, id)
+	if getErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
 	// Check for relations (for better error message)
-	incoming := g.IncomingEdges(id)
-	outgoing := g.OutgoingEdges(id)
-	totalRelations := len(incoming) + len(outgoing)
-
-	if totalRelations > 0 && !cascade {
-		return mcp.NewToolResultError(
-			fmt.Sprintf("entity %s has %d relation(s); set cascade=true to delete them too", id, totalRelations)), nil
+	if !cascade {
+		n, _ := st.CountRelations(ctx, store.RelationQuery{EntityID: id, Direction: store.DirectionBoth})
+		if n > 0 {
+			return mcp.NewToolResultError(
+				fmt.Sprintf("entity %s has %d relation(s); set cascade=true to delete them too", id, n)), nil
+		}
 	}
 
-	result, delErr := s.ws.DeleteEntity(entity.Type, id, cascade)
+	result, delErr := s.ws.DeleteEntity(e.Type, id, cascade)
 	if delErr != nil {
 		return mcp.NewToolResultError(delErr.Error()), nil
 	}
@@ -251,7 +288,7 @@ func (s *Server) handleDeleteEntity(
 }
 
 func (s *Server) handleRenameEntity(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	oldID, err := request.RequireString("id")
 	if err != nil {
@@ -267,10 +304,9 @@ func (s *Server) handleRenameEntity(
 
 	dryRun := request.GetBool("dry_run", false)
 
-	// Get entity to find type
-	snap := s.ws.Snapshot()
-	entity, ok := snap.Graph().GetNode(oldID)
-	if !ok {
+	st := s.ws.Store()
+	e, getErr := st.GetEntity(ctx, oldID)
+	if getErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", oldID)), nil
 	}
 
@@ -278,7 +314,7 @@ func (s *Server) handleRenameEntity(
 	s.ws.PauseWatching()
 	defer s.ws.ResumeWatching()
 
-	result, renameErr := s.ws.Rename(entity.Type, oldID, newID, rename.Options{DryRun: dryRun})
+	result, renameErr := s.ws.Rename(e.Type, oldID, newID, rename.Options{DryRun: dryRun})
 	if renameErr != nil {
 		return mcp.NewToolResultError(renameErr.Error()), nil
 	}
@@ -316,4 +352,27 @@ func formatRenameResult(result *rename.Result, dryRun bool) string {
 	}
 
 	return sb.String()
+}
+
+// filterStoreEntities applies a where clause to entity.Entity slices.
+func filterStoreEntities(entities []*entity.Entity, where string) ([]*entity.Entity, error) {
+	parts := strings.SplitN(where, "=", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("expected property=value, got %q", where)
+	}
+	key, value := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	var filtered []*entity.Entity
+	for _, e := range entities {
+		if e.GetAttributeString(key) == value {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered, nil
+}
+
+// sortStoreEntitiesByID sorts entity.Entity slices by ID using natural ordering.
+func sortStoreEntitiesByID(entities []*entity.Entity) {
+	sort.Slice(entities, func(i, j int) bool {
+		return natsort.Less(entities[i].ID, entities[j].ID)
+	})
 }

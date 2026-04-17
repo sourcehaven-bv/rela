@@ -228,13 +228,19 @@ func New(repo repository.Store, scriptExec ScriptExecutor, opts ...Option) (*Wor
 // The optional scriptExec parameter enables Lua automation actions. If not provided,
 // defaults to NopScriptExecutor (suitable for tests). Pass a script.Engine for production.
 func NewWithGraph(
-	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, scriptExec ...ScriptExecutor,
+	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, opts ...interface{},
 ) *Workspace {
 	exec := NopScriptExecutor
-	if len(scriptExec) > 0 && scriptExec[0] != nil {
-		exec = scriptExec[0]
+	var wsOpts []Option
+	for _, o := range opts {
+		switch v := o.(type) {
+		case ScriptExecutor:
+			exec = v
+		case Option:
+			wsOpts = append(wsOpts, v)
+		}
 	}
-	return newWorkspace(repo, meta, g, exec)
+	return newWorkspace(repo, meta, g, exec, wsOpts...)
 }
 
 // NewForTest creates a minimal workspace for testing. It has no repository,

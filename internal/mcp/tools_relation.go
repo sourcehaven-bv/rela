@@ -8,12 +8,13 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func (s *Server) handleListRelations(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	relType := request.GetString("type", "")
 	from := request.GetString("from", "")
@@ -21,38 +22,32 @@ func (s *Server) handleListRelations(
 	limit := request.GetInt("limit", 0)
 	offset := request.GetInt("offset", 0)
 
-	snap := s.ws.Snapshot()
-	edges := snap.Graph().AllEdges()
+	st := s.ws.Store()
+	q := store.RelationQuery{Type: relType, From: from, To: to}
 
-	filtered := make([]*model.Relation, 0, len(edges))
-	for _, e := range edges {
-		if relType != "" && e.Type != relType {
-			continue
+	var all []*entity.Relation
+	for r, err := range st.ListRelations(ctx, q) {
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if from != "" && e.From != from {
-			continue
-		}
-		if to != "" && e.To != to {
-			continue
-		}
-		filtered = append(filtered, e)
+		all = append(all, r)
 	}
 
-	sortRelations(filtered)
+	sortStoreRelations(all)
 
 	// Apply offset/limit
 	if offset > 0 {
-		if offset >= len(filtered) {
-			filtered = nil
+		if offset >= len(all) {
+			all = nil
 		} else {
-			filtered = filtered[offset:]
+			all = all[offset:]
 		}
 	}
-	if limit > 0 && limit < len(filtered) {
-		filtered = filtered[:limit]
+	if limit > 0 && limit < len(all) {
+		all = all[:limit]
 	}
 
-	text, err := convertRelationsList(filtered)
+	text, err := convertStoreRelationsList(all)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -95,7 +90,7 @@ func (s *Server) handleCreateRelation(
 }
 
 func (s *Server) handleDeleteRelation(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	fromID, err := request.RequireString("from")
 	if err != nil {
@@ -113,9 +108,8 @@ func (s *Server) handleDeleteRelation(
 	}
 	toID = trimID(toID)
 
-	snap := s.ws.Snapshot()
-	_, exists := snap.Graph().GetEdge(fromID, relType, toID)
-	if !exists {
+	st := s.ws.Store()
+	if _, getErr := st.GetRelation(ctx, fromID, relType, toID); getErr != nil {
 		return mcp.NewToolResultError(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil
 	}

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -141,14 +143,22 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 }
 
 func (s *Server) checkValidationRule(rule metamodel.ValidationRule) []*model.Entity {
-	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	var entities []*model.Entity
+	ctx := context.Background()
+	st := s.ws.Store()
+	q := store.EntityQuery{}
 	if rule.EntityType != "" {
-		entities = g.NodesByType(rule.EntityType)
-	} else {
-		entities = g.AllNodes()
+		q.Type = rule.EntityType
 	}
+
+	var entities []*model.Entity
+	for e, err := range st.ListEntities(ctx, q) {
+		if err != nil {
+			break
+		}
+		entities = append(entities, model.EntityFromDomain(e))
+	}
+
+	snap := s.ws.Snapshot()
 	return workspace.CheckValidationRule(snap.Meta(), rule, entities)
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -59,8 +60,18 @@ func makeTestServer(t *testing.T) *Server {
 	// Add a relation
 	g.AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build())
 
-	// Create workspace with pre-populated graph (no repo needed for read-only tests)
-	ws := workspace.NewWithGraph(nil, meta, g)
+	// Create a memstore with the same data for store-based handlers.
+	st := memstore.New()
+	ctx := context.Background()
+	for _, e := range g.AllNodes() {
+		st.CreateEntity(ctx, model.EntityToDomain(e))
+	}
+	for _, r := range g.AllEdges() {
+		st.CreateRelation(ctx, r.From, r.Type, r.To, nil)
+	}
+
+	// Create workspace with pre-populated graph and store
+	ws := workspace.NewWithGraph(nil, meta, g, workspace.WithStore(st))
 
 	return &Server{
 		ws:     ws,

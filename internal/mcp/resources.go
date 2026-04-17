@@ -123,13 +123,13 @@ func (s *Server) handleReadRelation(
 	}
 	fromID, relType, toID := segments[0], segments[1], segments[2]
 
-	snap := s.ws.Snapshot()
-	relation, ok := snap.Graph().GetEdge(fromID, relType, toID)
-	if !ok {
+	st := s.ws.Store()
+	relation, getErr := st.GetRelation(context.Background(), fromID, relType, toID)
+	if getErr != nil {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", fromID, relType, toID)
 	}
 
-	text, err := convertRelation(relation)
+	text, err := convertStoreRelation(relation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert relation: %w", err)
 	}

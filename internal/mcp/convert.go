@@ -1,11 +1,14 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
 )
@@ -100,6 +103,91 @@ func convertEntitySummary(e *model.Entity) map[string]interface{} {
 
 // convertRelation converts a model.Relation to JSON string.
 func convertRelation(r *model.Relation) (string, error) {
+	rj := relationJSON{
+		From:       r.From,
+		Type:       r.Type,
+		To:         r.To,
+		Properties: r.Properties,
+		Content:    r.Content,
+	}
+	return marshalJSON(rj)
+}
+
+// convertStoreEntity converts an entity.Entity to JSON string with optional relations from store.
+func convertStoreEntity(e *entity.Entity, st store.Store, includeRelations bool) (string, error) {
+	ej := entityJSON{
+		ID:         e.ID,
+		Type:       e.Type,
+		Properties: e.Properties,
+		Content:    e.Content,
+	}
+	if includeRelations {
+		ej.Relations = buildStoreRelations(e.ID, st)
+	}
+	return marshalJSON(ej)
+}
+
+// convertStoreEntitySummary returns a brief summary map from an entity.Entity.
+func convertStoreEntitySummary(e *entity.Entity) map[string]interface{} {
+	result := map[string]interface{}{
+		"id":   e.ID,
+		"type": e.Type,
+	}
+	if title := e.Title(); title != "" {
+		result["title"] = title
+	}
+	if status := e.Status(); status != "" {
+		result["status"] = status
+	}
+	return result
+}
+
+// buildStoreRelations builds relation JSON for an entity using the store.
+func buildStoreRelations(entityID string, st store.Store) *relationsJSON {
+	ctx := context.Background()
+	rels := &relationsJSON{
+		Outgoing: make(map[string][]relationTargetJSON),
+		Incoming: make(map[string][]relationTargetJSON),
+	}
+
+	outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}
+	for r, err := range st.ListRelations(ctx, outQ) {
+		if err != nil {
+			break
+		}
+		target := relationTargetJSON{ID: r.To}
+		if e, getErr := st.GetEntity(ctx, r.To); getErr == nil {
+			target.Title = e.Title()
+		}
+		rels.Outgoing[r.Type] = append(rels.Outgoing[r.Type], target)
+	}
+
+	inQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}
+	for r, err := range st.ListRelations(ctx, inQ) {
+		if err != nil {
+			break
+		}
+		source := relationTargetJSON{ID: r.From}
+		if e, getErr := st.GetEntity(ctx, r.From); getErr == nil {
+			source.Title = e.Title()
+		}
+		rels.Incoming[r.Type] = append(rels.Incoming[r.Type], source)
+	}
+
+	if len(rels.Outgoing) == 0 {
+		rels.Outgoing = nil
+	}
+	if len(rels.Incoming) == 0 {
+		rels.Incoming = nil
+	}
+	if rels.Outgoing == nil && rels.Incoming == nil {
+		return nil
+	}
+	return rels
+}
+
+// convertStoreRelation converts an entity.Relation to JSON string.
+func convertStoreRelation(r *entity.Relation) (string, error) {
 	rj := relationJSON{
 		From:       r.From,
 		Type:       r.Type,
@@ -209,6 +297,33 @@ func convertRelationsList(relations []*model.Relation) (string, error) {
 		}
 	}
 	return marshalJSON(result)
+}
+
+// convertStoreRelationsList converts entity.Relation slice to JSON string.
+func convertStoreRelationsList(relations []*entity.Relation) (string, error) {
+	result := make([]relationJSON, len(relations))
+	for i, r := range relations {
+		result[i] = relationJSON{
+			From:       r.From,
+			Type:       r.Type,
+			To:         r.To,
+			Properties: r.Properties,
+		}
+	}
+	return marshalJSON(result)
+}
+
+// sortStoreRelations sorts entity.Relation slice using natural ordering.
+func sortStoreRelations(relations []*entity.Relation) {
+	sort.Slice(relations, func(i, j int) bool {
+		if relations[i].From != relations[j].From {
+			return natsort.Less(relations[i].From, relations[j].From)
+		}
+		if relations[i].Type != relations[j].Type {
+			return natsort.Less(relations[i].Type, relations[j].Type)
+		}
+		return natsort.Less(relations[i].To, relations[j].To)
+	})
 }
 
 // sortEntitiesByID sorts entities by ID using natural ordering for consistent output.

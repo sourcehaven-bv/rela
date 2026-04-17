@@ -8,8 +8,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func (s *Server) registerPrompts() {
@@ -128,28 +128,42 @@ func (s *Server) handleReviewOrphansPrompt(
 ) (*mcp.GetPromptResult, error) {
 	entityType := request.Params.Arguments["type"]
 
-	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	orphans := g.FindOrphans()
+	ctx := context.Background()
+	orphanIDs, _ := s.ws.Tracer().FindOrphans(ctx)
+
+	st := s.ws.Store()
+	var resolved string
 	if entityType != "" {
-		resolved := s.resolveType(entityType)
-		var filtered []*model.Entity
-		for _, o := range orphans {
-			if o.Type == resolved {
-				filtered = append(filtered, o)
-			}
-		}
-		orphans = filtered
+		resolved = s.resolveType(entityType)
 	}
 
-	sortEntitiesByID(orphans)
+	type orphanSummary struct {
+		ID     string `json:"id"`
+		Type   string `json:"type"`
+		Title  string `json:"title,omitempty"`
+		Status string `json:"status,omitempty"`
+	}
+	var summaries []orphanSummary
+	for _, id := range orphanIDs {
+		e, err := st.GetEntity(ctx, id)
+		if err != nil {
+			continue
+		}
+		if resolved != "" && e.Type != resolved {
+			continue
+		}
+		summaries = append(summaries, orphanSummary{
+			ID: e.ID, Type: e.Type, Title: e.Title(), Status: e.Status(),
+		})
+	}
 
-	orphanText, err := convertEntitiesList(orphans)
+	orphanText, err := marshalJSON(summaries)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get available relation types
+	snap := s.ws.Snapshot()
 	meta := snap.Meta()
 	relTypes := meta.RelationTypes()
 	natsort.Strings(relTypes)
@@ -181,7 +195,7 @@ For each orphan entity:
 2. Suggest specific source and target entities for the relations
 3. Explain why this connection makes sense
 4. If an entity truly doesn't need connections, explain why it's acceptable as an orphan`,
-		len(orphans), orphanText, relInfo.String())
+		len(summaries), orphanText, relInfo.String())
 
 	return &mcp.GetPromptResult{
 		Description: "Review orphan entities",
@@ -195,15 +209,16 @@ func (s *Server) handleSummarizeProjectPrompt(
 	_ context.Context, _ mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	// Entity counts by type
+	ctx := context.Background()
 	snap := s.ws.Snapshot()
 	meta := snap.Meta()
-	g := snap.Graph()
+	st := s.ws.Store()
 	entityTypes := meta.EntityTypes()
 	natsort.Strings(entityTypes)
 	var entityCounts strings.Builder
 	totalEntities := 0
 	for _, t := range entityTypes {
-		count := g.CountByEntityType(t)
+		count, _ := st.CountEntities(ctx, store.EntityQuery{Type: t})
 		totalEntities += count
 		def, _ := meta.GetEntityDef(t)
 		label := t
@@ -219,13 +234,14 @@ func (s *Server) handleSummarizeProjectPrompt(
 	var relCounts strings.Builder
 	totalRelations := 0
 	for _, t := range relTypes {
-		count := g.CountByRelationType(t)
+		count, _ := st.CountRelations(ctx, store.RelationQuery{Type: t})
 		totalRelations += count
 		fmt.Fprintf(&relCounts, "- %s: %d\n", t, count)
 	}
 
 	// Analysis summary
-	orphanCount := len(g.FindOrphans())
+	orphanIDs, _ := s.ws.Tracer().FindOrphans(ctx)
+	orphanCount := len(orphanIDs)
 
 	content := fmt.Sprintf(`Generate a comprehensive project summary based on the following data.
 
