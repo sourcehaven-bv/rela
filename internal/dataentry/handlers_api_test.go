@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
@@ -154,7 +155,7 @@ func TestWriteJSONError(t *testing.T) {
 
 func TestEntityToAPI_WithoutRelations(t *testing.T) {
 	app, _ := testAppInstance()
-	e := &model.Entity{
+	e := &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -185,7 +186,7 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 	// Add a relation to test graph
 	graphForTest(app).AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
-	result := app.entityToAPI(entities.ticket1, true)
+	result := app.entityToAPI(model.EntityToDomain(entities.ticket1), true)
 
 	if len(result.Relations) == 0 {
 		t.Fatal("expected relations, got none")
@@ -202,7 +203,7 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 	}
 
 	// Check incoming from perspective of TKT-002
-	result2 := app.entityToAPI(entities.ticket2, true)
+	result2 := app.entityToAPI(model.EntityToDomain(entities.ticket2), true)
 	hasIncoming := false
 	for _, r := range result2.Relations {
 		if r.Direction == DirectionIncoming && r.Type == "depends_on" && r.From == entities.ticket1.ID {

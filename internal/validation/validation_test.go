@@ -3,6 +3,7 @@ package validation
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 )
@@ -61,7 +62,7 @@ func TestCheck(t *testing.T) {
 		},
 	}
 
-	svc := New(meta)
+	svc := New(meta, lua.Services{}, "")
 
 	t.Run("finds violations", func(t *testing.T) {
 		violations := svc.Check(entities, nil)
@@ -121,7 +122,7 @@ func TestCheckWarnings(t *testing.T) {
 		},
 	}
 
-	svc := New(meta)
+	svc := New(meta, lua.Services{}, "")
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 1 {
@@ -157,7 +158,7 @@ func TestRules(t *testing.T) {
 		},
 	}
 
-	svc := New(meta)
+	svc := New(meta, lua.Services{}, "")
 	rules := svc.Rules()
 
 	if len(rules) != 2 {
@@ -168,7 +169,7 @@ func TestRules(t *testing.T) {
 func TestNoRules(t *testing.T) {
 	meta := &metamodel.Metamodel{}
 
-	svc := New(meta)
+	svc := New(meta, lua.Services{}, "")
 	violations := svc.Check([]*model.Entity{{ID: "X", Type: "x"}}, nil)
 
 	if len(violations) != 0 {
@@ -199,7 +200,7 @@ func TestAllEntityTypes(t *testing.T) {
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}}, // missing status
 	}
 
-	svc := New(meta)
+	svc := New(meta, lua.Services{}, "")
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 1 {

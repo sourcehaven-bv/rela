@@ -50,7 +50,7 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	live, ok := a.State().Graph.GetNode(entityID)
+	live, ok := a.getEntityAsModel(entityID)
 	if !ok {
 		http.Error(w, "Entity not found", http.StatusNotFound)
 		return

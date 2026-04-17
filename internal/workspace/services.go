@@ -3,12 +3,38 @@ package workspace
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetemplate"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
 	"github.com/Sourcehaven-BV/rela/internal/store/storevalidate"
 )
+
+// LuaServices builds a lua.Services struct wired to this workspace's
+// backend services. Consumers use it to run Lua scripts via lua.New.
+func (w *Workspace) LuaServices() lua.Services {
+	var root string
+	if w.repo != nil {
+		root = w.Paths().Root
+	}
+	return lua.Services{
+		Store:       w.Store(),
+		Manager:     w.EntityManager(),
+		Tracer:      w.Tracer(),
+		Meta:        w.meta(),
+		ProjectRoot: root,
+		Sync: func() error {
+			_, err := w.Sync()
+			return err
+		},
+	}
+}
+
+// luaServices is the internal alias for LuaServices, used by scriptContextImpl.
+func (w *Workspace) luaServices() lua.Services {
+	return w.LuaServices()
+}
 
 // graphTracer adapts *graph.Graph to the storetrace.Tracer interface.
 type graphTracer struct {
@@ -83,7 +109,11 @@ func (f *legacyFormatter) FormatRelation(_ context.Context, from, relType, to st
 // Validator returns a Validator service backed by the workspace's store and
 // metamodel. The service uses workspace as the Lua execution context.
 func (w *Workspace) Validator() storevalidate.Validator {
-	return storevalidate.New(w.Store(), w.meta())
+	var root string
+	if w.repo != nil {
+		root = w.repo.Paths().Root
+	}
+	return storevalidate.New(w.Store(), w.meta(), w.luaServices(), root)
 }
 
 // Templater returns the entity template service backed by the workspace's

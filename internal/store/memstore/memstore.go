@@ -115,18 +115,12 @@ func (m *MemStore) GetEntity(_ context.Context, id string) (*entity.Entity, erro
 
 func (m *MemStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
 	m.mu.RLock()
-	idSet := make(map[string]bool, len(q.IDs))
-	for _, id := range q.IDs {
-		idSet[id] = true
-	}
+	idSet := entityIDSet(q.IDs)
 
 	snapshot := make([]*entity.Entity, 0)
 	for _, id := range m.entityOrder {
 		e := m.entities[id]
-		if q.Type != "" && e.Type != q.Type {
-			continue
-		}
-		if len(idSet) > 0 && !idSet[e.ID] {
+		if !matchEntityQuery(e, q, idSet) {
 			continue
 		}
 		snapshot = append(snapshot, e.Clone())
@@ -140,6 +134,57 @@ func (m *MemStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq
 			}
 		}
 	}
+}
+
+func (m *MemStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
+	if err != nil {
+		return store.Page[*entity.Entity]{}, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	idSet := entityIDSet(q.IDs)
+	keys := storeutil.PaginateSortedKeys(m.entityOrder, cursorKey, q.Limit, func(id string) bool {
+		return matchEntityQuery(m.entities[id], q, idSet)
+	})
+
+	items := make([]*entity.Entity, 0, len(keys.Keys))
+	for _, id := range keys.Keys {
+		if e, ok := m.entities[id]; ok {
+			items = append(items, e.Clone())
+		}
+	}
+	return store.Page[*entity.Entity]{Items: items, NextCursor: keys.NextCursor}, nil
+}
+
+// entityIDSet builds the ID-lookup set used by ListEntities and its page
+// variant. Returns nil when ids is empty so callers can test with len().
+func entityIDSet(ids []string) map[string]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}
+
+// matchEntityQuery reports whether e satisfies q's Type and IDs filters.
+// idSet must be pre-computed from q.IDs (see entityIDSet).
+func matchEntityQuery(e *entity.Entity, q store.EntityQuery, idSet map[string]bool) bool {
+	if e == nil {
+		return false
+	}
+	if q.Type != "" && e.Type != q.Type {
+		return false
+	}
+	if len(idSet) > 0 && !idSet[e.ID] {
+		return false
+	}
+	return true
 }
 
 func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, error) {
@@ -419,6 +464,28 @@ func (m *MemStore) ListRelations(_ context.Context, q store.RelationQuery) iter.
 			}
 		}
 	}
+}
+
+func (m *MemStore) ListRelationsPage(_ context.Context, q store.RelationQuery) (store.Page[*entity.Relation], error) {
+	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
+	if err != nil {
+		return store.Page[*entity.Relation]{}, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	keys := storeutil.PaginateSortedKeys(m.relationOrder, cursorKey, q.Limit, func(key string) bool {
+		return matchRelation(m.relations[key], q)
+	})
+
+	items := make([]*entity.Relation, 0, len(keys.Keys))
+	for _, key := range keys.Keys {
+		if r, ok := m.relations[key]; ok {
+			items = append(items, r.Clone())
+		}
+	}
+	return store.Page[*entity.Relation]{Items: items, NextCursor: keys.NextCursor}, nil
 }
 
 var matchRelation = storeutil.MatchRelation

@@ -352,13 +352,11 @@ type ValidationViolation = validation.Violation
 
 // newValidationService creates a validation service with workspace and project root configured.
 func (w *Workspace) newValidationService() *validation.Service {
-	opts := []validation.Option{
-		validation.WithWorkspace(w),
-	}
+	var root string
 	if w.repo != nil {
-		opts = append(opts, validation.WithProjectRoot(w.repo.Paths().Root))
+		root = w.repo.Paths().Root
 	}
-	return validation.New(w.meta(), opts...)
+	return validation.New(w.meta(), w.luaServices(), root)
 }
 
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.

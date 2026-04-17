@@ -1,11 +1,12 @@
 package dataentry
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // viewResult holds the entry entity and collected entities after traversal.
@@ -16,15 +17,15 @@ type viewResult struct {
 
 // executeView runs a view's traversal rules and returns the result.
 func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) {
-	mEntry, ok := a.State().Graph.GetNode(entryID)
-	if !ok {
+	ctx := context.Background()
+	entry, err := a.ws.Store().GetEntity(ctx, entryID)
+	if err != nil {
 		return nil, fmt.Errorf("entry entity not found: %s", entryID)
 	}
-	if mEntry.Type != view.Entry.Type {
-		return nil, fmt.Errorf("entry entity %s is type %s, expected %s", entryID, mEntry.Type, view.Entry.Type)
+	if entry.Type != view.Entry.Type {
+		return nil, fmt.Errorf("entry entity %s is type %s, expected %s", entryID, entry.Type, view.Entry.Type)
 	}
 
-	entry := model.EntityToDomain(mEntry)
 	result := &viewResult{
 		Entry:       entry,
 		Collections: map[string][]*entity.Entity{"entry": {entry}},
@@ -106,23 +107,36 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 }
 
 func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*entity.Entity {
-	g := a.State().Graph
+	ctx := context.Background()
+	st := a.ws.Store()
 	var out []*entity.Entity
+
+	var relType string
+	var direction store.Direction
+	var useTarget bool // true: collect edge.To; false: collect edge.From
 	if rule.Follow != "" {
-		for _, edge := range g.OutgoingEdges(sourceID) {
-			if edge.Type == rule.Follow {
-				if target, ok := g.GetNode(edge.To); ok {
-					out = append(out, model.EntityToDomain(target))
-				}
-			}
-		}
+		relType = rule.Follow
+		direction = store.DirectionOutgoing
+		useTarget = true
 	} else if rule.FollowIncoming != "" {
-		for _, edge := range g.IncomingEdges(sourceID) {
-			if edge.Type == rule.FollowIncoming {
-				if src, ok := g.GetNode(edge.From); ok {
-					out = append(out, model.EntityToDomain(src))
-				}
-			}
+		relType = rule.FollowIncoming
+		direction = store.DirectionIncoming
+		useTarget = false
+	} else {
+		return nil
+	}
+
+	q := store.RelationQuery{EntityID: sourceID, Type: relType, Direction: direction}
+	for r, err := range st.ListRelations(ctx, q) {
+		if err != nil {
+			break
+		}
+		targetID := r.To
+		if !useTarget {
+			targetID = r.From
+		}
+		if e, err := st.GetEntity(ctx, targetID); err == nil {
+			out = append(out, e)
 		}
 	}
 	return out

@@ -26,7 +26,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storemanage"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
 )
 
 // Default values for Lua API functions.
@@ -58,7 +60,7 @@ func stripShebang(code string) string {
 // Runtime wraps gopher-lua VM with rela bindings.
 type Runtime struct {
 	L             *lua.LState
-	ws            WorkspaceInterface
+	svc           Services
 	meta          *metamodel.Metamodel
 	stdout        io.Writer
 	projectRoot   string
@@ -146,9 +148,7 @@ func WithAIProvider(p ai.Provider) Option {
 // New creates a Runtime with rela bindings registered.
 // The Lua VM is sandboxed with only safe libraries loaded (no io, os, or debug).
 func New(
-	ws WorkspaceInterface,
-	meta *metamodel.Metamodel,
-	projectRoot string,
+	svc Services,
 	stdout io.Writer,
 	opts ...Option,
 ) *Runtime {
@@ -164,10 +164,10 @@ func New(
 
 	r := &Runtime{
 		L:           L,
-		ws:          ws,
-		meta:        meta,
+		svc:         svc,
+		meta:        svc.Meta,
 		stdout:      stdout,
-		projectRoot: projectRoot,
+		projectRoot: svc.ProjectRoot,
 		outputDir:   defaultOutputDir,
 		timeout:     DefaultTimeout,
 	}
@@ -397,7 +397,6 @@ func (r *Runtime) registerBindings() {
 	r.L.SetField(rela, "today", lua.LString(time.Now().Format("2006-01-02")))
 
 	// Context
-	r.L.SetField(rela, "project_root", lua.LString(r.projectRoot))
 	r.L.SetField(rela, "args", r.L.NewTable()) // Will be set before running script
 
 	// Params table (populated from WithParams option, used by action scripts)
@@ -435,13 +434,13 @@ func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	entity, found := r.ws.GetEntity(id)
-	if !found {
+	e, err := r.svc.Store.GetEntity(context.Background(), id)
+	if err != nil {
 		ls.Push(lua.LNil)
 		return 1
 	}
 
-	ls.Push(EntityToTable(ls, model.EntityToDomain(entity)))
+	ls.Push(EntityToTable(ls, e))
 	return 1
 }
 
@@ -454,7 +453,13 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 	}
 	filterExpr := ls.OptString(2, "")
 
-	entities := r.ws.EntitiesByType(entityType)
+	var entities []*entity.Entity
+	for e, err := range r.svc.Store.ListEntities(context.Background(), store.EntityQuery{Type: entityType}) {
+		if err != nil {
+			break
+		}
+		entities = append(entities, e)
+	}
 
 	// Apply filter if provided
 	if filterExpr != "" {
@@ -471,7 +476,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 		}
 
 		filters := []*filter.Filter{f}
-		filtered := make([]*model.Entity, 0)
+		filtered := make([]*entity.Entity, 0)
 		for _, e := range entities {
 			match, err := filter.MatchAll(filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}, filters, entityDef, r.meta)
 			if err != nil {
@@ -487,7 +492,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 
 	result := ls.NewTable()
 	for i, e := range entities {
-		result.RawSetInt(i+1, EntityToTable(ls, model.EntityToDomain(e)))
+		result.RawSetInt(i+1, EntityToTable(ls, e))
 	}
 	ls.Push(result)
 	return 1
@@ -512,22 +517,13 @@ func (r *Runtime) luaGetRelations(ls *lua.LState) int {
 		}
 	}
 
-	relations := r.ws.AllRelations()
-
+	q := store.RelationQuery{From: fromFilter, Type: typeFilter, To: toFilter}
 	result := ls.NewTable()
 	idx := 1
-	for _, rel := range relations {
-		// Apply filters
-		if fromFilter != "" && rel.From != fromFilter {
-			continue
+	for rel, err := range r.svc.Store.ListRelations(context.Background(), q) {
+		if err != nil {
+			break
 		}
-		if typeFilter != "" && rel.Type != typeFilter {
-			continue
-		}
-		if toFilter != "" && rel.To != toFilter {
-			continue
-		}
-
 		result.RawSetInt(idx, relationToTable(ls, rel))
 		idx++
 	}
@@ -544,7 +540,7 @@ func (r *Runtime) luaTraceFrom(ls *lua.LState) int {
 	}
 	maxDepth := ls.OptInt(2, 0)
 
-	trace := r.ws.TraceFrom(id, maxDepth)
+	trace := r.svc.Tracer.TraceFrom(context.Background(), id, maxDepth)
 	if trace == nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -562,7 +558,7 @@ func (r *Runtime) luaTraceTo(ls *lua.LState) int {
 	}
 	maxDepth := ls.OptInt(2, 0)
 
-	trace := r.ws.TraceTo(id, maxDepth)
+	trace := r.svc.Tracer.TraceTo(context.Background(), id, maxDepth)
 	if trace == nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -754,7 +750,7 @@ func luaEntityStripPrefix(ls *lua.LState) int {
 }
 
 // relationToTable converts a model.Relation to a Lua table.
-func relationToTable(ls *lua.LState, rel *model.Relation) *lua.LTable {
+func relationToTable(ls *lua.LState, rel *entity.Relation) *lua.LTable {
 	t := ls.NewTable()
 	t.RawSetString("from", lua.LString(rel.From))
 	t.RawSetString("type", lua.LString(rel.Type))
@@ -772,7 +768,7 @@ func relationToTable(ls *lua.LState, rel *model.Relation) *lua.LTable {
 }
 
 // traceResultToTable converts a trace result tree to a Lua table.
-func traceResultToTable(ls *lua.LState, trace *model.TraceResult) *lua.LTable {
+func traceResultToTable(ls *lua.LState, trace *storetrace.TraceResult) *lua.LTable {
 	t := ls.NewTable()
 	t.RawSetString("id", lua.LString(trace.ID))
 	t.RawSetString("type", lua.LString(trace.Type))
@@ -916,15 +912,24 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 
 	limit := ls.OptInt(2, defaultSearchLimit)
 
-	entities, err := r.ws.SearchSimple(query, limit)
-	if err != nil {
-		ls.RaiseError("search error: %s", err.Error())
+	if r.svc.Searcher == nil {
+		ls.RaiseError("search not available")
 		return 0
 	}
-
 	result := ls.NewTable()
-	for i, e := range entities {
-		result.RawSetInt(i+1, EntityToTable(ls, model.EntityToDomain(e)))
+	i := 1
+	for hit, err := range r.svc.Searcher.Search(context.Background(), store.SearchQuery{Text: query, Limit: limit}) {
+		if err != nil {
+			ls.RaiseError("search error: %s", err.Error())
+			return 0
+		}
+		// Fetch the full entity for the lua table (search hits are minimal).
+		e, err := r.svc.Store.GetEntity(context.Background(), hit.ID)
+		if err != nil {
+			continue
+		}
+		result.RawSetInt(i, EntityToTable(ls, e))
+		i++
 	}
 	ls.Push(result)
 	return 1
@@ -944,13 +949,23 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 	content := ls.OptString(3, "")
 	customID := ls.OptString(argPosCreateEntityID, "")
 
-	entity, err := r.ws.CreateEntityLua(entityType, customID, props, content)
+	if r.svc.Manager == nil {
+		ls.RaiseError("entity manager not available")
+		return 0
+	}
+	newE := &entity.Entity{
+		ID:         customID,
+		Type:       entityType,
+		Properties: props,
+		Content:    content,
+	}
+	result, err := r.svc.Manager.CreateEntity(context.Background(), newE, storemanage.CreateOptions{ID: customID})
 	if err != nil {
 		ls.RaiseError("create entity error: %s", err.Error())
 		return 0
 	}
 
-	ls.Push(EntityToTable(ls, model.EntityToDomain(entity)))
+	ls.Push(EntityToTable(ls, result.Entity))
 	return 1
 }
 
@@ -962,31 +977,25 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	entity, found := r.ws.GetEntity(id)
-	if !found {
+	if r.svc.Manager == nil {
+		ls.RaiseError("entity manager not available")
+		return 0
+	}
+
+	ctx := context.Background()
+	existing, err := r.svc.Store.GetEntity(ctx, id)
+	if err != nil {
 		ls.RaiseError("entity not found: %s", id)
 		return 0
 	}
 
-	// Clone entity for update - must deep copy the Properties map
-	oldEntity := *entity
-	updated := *entity
+	// Clone for update
+	updated := existing.Clone()
 
-	// Deep copy the properties map to avoid mutating oldEntity
-	if entity.Properties != nil {
-		oldEntity.Properties = make(map[string]interface{}, len(entity.Properties))
-		updated.Properties = make(map[string]interface{}, len(entity.Properties))
-		for k, v := range entity.Properties {
-			oldEntity.Properties[k] = v
-			updated.Properties[k] = v
-		}
-	}
-
-	// Update properties if provided
+	// Merge properties if provided
 	if ls.GetTop() >= 2 && ls.Get(2).Type() == lua.LTTable {
 		propsTable := ls.CheckTable(2)
 		newProps := luaTableToGoMap(propsTable)
-		// Merge properties
 		if updated.Properties == nil {
 			updated.Properties = make(map[string]interface{})
 		}
@@ -1000,19 +1009,13 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		updated.Content = ls.CheckString(3)
 	}
 
-	err := r.ws.UpdateEntityLua(&updated, &oldEntity)
+	result, err := r.svc.Manager.UpdateEntity(ctx, updated)
 	if err != nil {
 		ls.RaiseError("update entity error: %s", err.Error())
 		return 0
 	}
 
-	// Get fresh entity after update
-	updatedEntity, found := r.ws.GetEntity(id)
-	if !found {
-		ls.RaiseError("entity disappeared after update: %s", id)
-		return 0
-	}
-	ls.Push(EntityToTable(ls, model.EntityToDomain(updatedEntity)))
+	ls.Push(EntityToTable(ls, result.Entity))
 	return 1
 }
 
@@ -1026,14 +1029,12 @@ func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 
 	cascade := ls.OptBool(2, false)
 
-	entity, found := r.ws.GetEntity(id)
-	if !found {
-		ls.RaiseError("entity not found: %s", id)
+	if r.svc.Manager == nil {
+		ls.RaiseError("entity manager not available")
 		return 0
 	}
 
-	err := r.ws.DeleteEntityLua(entity.Type, id, cascade)
-	if err != nil {
+	if _, err := r.svc.Manager.DeleteEntity(context.Background(), id, cascade); err != nil {
 		ls.RaiseError("delete entity error: %s", err.Error())
 		return 0
 	}
@@ -1053,7 +1054,12 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	rel, err := r.ws.CreateRelationLua(from, relType, to)
+	if r.svc.Manager == nil {
+		ls.RaiseError("entity manager not available")
+		return 0
+	}
+
+	rel, err := r.svc.Manager.CreateRelation(context.Background(), from, relType, to, storemanage.RelationOptions{})
 	if err != nil {
 		ls.RaiseError("create relation error: %s", err.Error())
 		return 0
@@ -1074,8 +1080,12 @@ func (r *Runtime) luaDeleteRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	err := r.ws.DeleteRelation(from, relType, to)
-	if err != nil {
+	if r.svc.Manager == nil {
+		ls.RaiseError("entity manager not available")
+		return 0
+	}
+
+	if err := r.svc.Manager.DeleteRelation(context.Background(), from, relType, to); err != nil {
 		ls.RaiseError("delete relation error: %s", err.Error())
 		return 0
 	}
@@ -1094,7 +1104,7 @@ func (r *Runtime) luaFindPath(ls *lua.LState) int {
 		return 0
 	}
 
-	path := r.ws.FindPath(from, to)
+	path := r.svc.Tracer.FindPath(context.Background(), from, to)
 	if path == nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -1116,7 +1126,10 @@ func (r *Runtime) luaFindPath(ls *lua.LState) int {
 // luaRefresh implements rela.refresh() -> boolean
 // Re-syncs the graph from disk (reloads all entities and relations).
 func (r *Runtime) luaRefresh(ls *lua.LState) int {
-	err := r.ws.SyncLua()
+	var err error
+	if r.svc.Sync != nil {
+		err = r.svc.Sync()
+	}
 	if err != nil {
 		ls.RaiseError("refresh error: %s", err.Error())
 		return 0

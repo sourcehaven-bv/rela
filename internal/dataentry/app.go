@@ -269,7 +269,7 @@ func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
 	s := a.State()
 	if list, ok := s.Cfg.Lists[nav.List]; ok {
 		item.EntityType = list.EntityType
-		entities := s.Graph.NodesByType(list.EntityType)
+		entities := listFromStoreByTypes(a.Services(), []string{list.EntityType})
 		entities = applyFilters(entities, list.Filters)
 		item.Count = len(entities)
 	}

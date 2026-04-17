@@ -14,6 +14,7 @@ package storevalidate
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -49,13 +50,13 @@ type GenericValidator struct {
 var _ Validator = (*GenericValidator)(nil)
 
 // New creates a Validator backed by an EntityReader and a metamodel.
-// Optional validation.Options (e.g. WithWorkspace, WithProjectRoot) are
-// passed through to the underlying validation service.
-func New(r store.EntityReader, meta *metamodel.Metamodel, opts ...validation.Option) *GenericValidator {
+// svc provides Lua access for validation rules that use Lua scripts.
+// projectRoot is used to resolve lua_file paths from validations/.
+func New(r store.EntityReader, meta *metamodel.Metamodel, svc lua.Services, projectRoot string) *GenericValidator {
 	return &GenericValidator{
 		r:    r,
 		meta: meta,
-		svc:  validation.New(meta, opts...),
+		svc:  validation.New(meta, svc, projectRoot),
 	}
 }
 

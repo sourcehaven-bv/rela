@@ -436,24 +436,6 @@ func TestAnalysisIssueCounts(t *testing.T) {
 	}
 }
 
-func TestCountEdgesByType(t *testing.T) {
-	edges := []*model.Relation{
-		{From: "A", Type: "blocks", To: "B"},
-		{From: "A", Type: "implements", To: "C"},
-		{From: "A", Type: "blocks", To: "D"},
-	}
-
-	if got := countEdgesByType(edges, "blocks"); got != 2 {
-		t.Errorf("expected 2 'blocks' edges, got %d", got)
-	}
-	if got := countEdgesByType(edges, "implements"); got != 1 {
-		t.Errorf("expected 1 'implements' edge, got %d", got)
-	}
-	if got := countEdgesByType(edges, "unknown"); got != 0 {
-		t.Errorf("expected 0 'unknown' edges, got %d", got)
-	}
-}
-
 func TestNormalizeTitle(t *testing.T) {
 	tests := []struct {
 		input string

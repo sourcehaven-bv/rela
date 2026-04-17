@@ -33,18 +33,20 @@ type LuaViolation struct {
 
 // luaExecutor handles Lua validation execution.
 type luaExecutor struct {
-	ws          lua.WorkspaceInterface
-	meta        *metamodel.Metamodel
-	projectRoot string
+	svc lua.Services
 }
 
 // newLuaExecutor creates a new Lua executor for validation.
-func newLuaExecutor(ws lua.WorkspaceInterface, meta *metamodel.Metamodel, projectRoot string) *luaExecutor {
-	return &luaExecutor{
-		ws:          newReadOnlyWorkspace(ws),
-		meta:        meta,
-		projectRoot: projectRoot,
+// The services are wrapped to be read-only — Manager is nil so writes fail.
+func newLuaExecutor(svc lua.Services, meta *metamodel.Metamodel, projectRoot string) *luaExecutor {
+	svc.Manager = nil // read-only: disable writes
+	if svc.Meta == nil {
+		svc.Meta = meta
 	}
+	if svc.ProjectRoot == "" {
+		svc.ProjectRoot = projectRoot
+	}
+	return &luaExecutor{svc: svc}
 }
 
 // validate runs Lua validation for an entity and returns any violations.
@@ -96,7 +98,7 @@ func (e *luaExecutor) validate(
 	// also silently clip slow calls. AI-in-validations is tracked as a
 	// follow-up that needs its own design (cost guardrails, opt-in
 	// per rule, longer per-rule budget).
-	runtime := lua.New(e.ws, e.meta, e.projectRoot, io.Discard)
+	runtime := lua.New(e.svc, io.Discard)
 	defer runtime.Close()
 
 	// Set arguments if provided
@@ -225,7 +227,7 @@ func (e *luaExecutor) loadScript(scriptPath string) (string, error) {
 
 	// Use os.OpenRoot for traversal-resistant access.
 	// Error messages intentionally omit system paths to prevent information leakage.
-	root, err := os.OpenRoot(e.projectRoot)
+	root, err := os.OpenRoot(e.svc.ProjectRoot)
 	if err != nil {
 		return "", errors.New("cannot access project directory")
 	}

@@ -124,6 +124,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory) {
 	t.Run("Entity", func(t *testing.T) { RunEntityTests(t, f) })
 	t.Run("Relation", func(t *testing.T) { RunRelationTests(t, f) })
 	t.Run("Query", func(t *testing.T) { RunQueryTests(t, f) })
+	t.Run("Pagination", func(t *testing.T) { RunPaginationTests(t, f) })
 	if sf != nil {
 		t.Run("Search", func(t *testing.T) { RunSearchTests(t, sf) })
 	}

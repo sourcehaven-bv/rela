@@ -59,8 +59,6 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	projectRoot := s.ws.Paths().Root
-
 	// Capture output
 	var output bytes.Buffer
 
@@ -70,7 +68,7 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError(fmt.Sprintf("config error: %s", ctxErr.Error())), nil
 	}
 	opts = append(opts, ctxOpts...)
-	runtime := lua.New(s.ws, s.ws.Snapshot().Meta(), projectRoot, &output, opts...)
+	runtime := lua.New(s.ws.LuaServices(), &output, opts...)
 	defer runtime.Close()
 
 	if err := runtime.RunString(code); err != nil {
@@ -143,7 +141,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError(fmt.Sprintf("config error: %s", ctxErr.Error())), nil
 	}
 	opts = append(opts, ctxOpts...)
-	runtime := lua.New(s.ws, s.ws.Snapshot().Meta(), projectRoot, &output, opts...)
+	runtime := lua.New(s.ws.LuaServices(), &output, opts...)
 	defer runtime.Close()
 
 	// Set script args before execution

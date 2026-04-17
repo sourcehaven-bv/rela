@@ -77,7 +77,7 @@ Example:
 		}
 		opts = append(opts, ctxOpts...)
 
-		runtime := lua.New(flowWs, flowWs.Snapshot().Meta(), flowWs.Paths().Root, os.Stdout, opts...)
+		runtime := lua.New(flowWs.LuaServices(), os.Stdout, opts...)
 		defer runtime.Close()
 
 		transport := &TerminalTransport{}

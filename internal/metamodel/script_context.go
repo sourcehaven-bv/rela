@@ -6,12 +6,12 @@ import "github.com/Sourcehaven-BV/rela/internal/entity"
 // This interface is defined here (instead of the script package) to allow
 // workspace to implement it without importing script, avoiding import cycles.
 //
-// The GetWorkspace() method returns an interface{} which must satisfy
-// lua.WorkspaceInterface. This avoids workspace needing to import lua
-// just to declare the return type.
+// The GetWorkspace() method returns an interface{} that script consumers
+// type-assert to lua.Services. Returning interface{} avoids a workspace→lua
+// import and lets non-lua callers implement ScriptContext too.
 type ScriptContext interface {
-	// GetWorkspace returns the workspace for Lua callbacks.
-	// The returned value must satisfy lua.WorkspaceInterface.
+	// GetWorkspace returns the services bundle for Lua callbacks.
+	// The returned value must be a lua.Services value.
 	GetWorkspace() interface{}
 	// GetMeta returns the current metamodel.
 	GetMeta() *Metamodel

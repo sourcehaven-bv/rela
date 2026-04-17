@@ -68,7 +68,7 @@ type Scheduler struct {
 	ws     WorkspaceProvider
 	metaFn func() *metamodel.Metamodel
 	// wsRaw is the workspace as interface{} for passing to ScriptContext.
-	// It must satisfy lua.WorkspaceInterface.
+	// ScriptContext.GetWorkspace() consumers type-assert to lua.Services.
 	wsRaw  interface{}
 	state  *State
 	logger *slog.Logger

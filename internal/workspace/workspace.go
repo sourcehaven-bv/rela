@@ -57,8 +57,8 @@ type ScriptExecutor interface {
 }
 
 // scriptContextImpl implements metamodel.ScriptContext for passing to ScriptExecutor.
-// The workspace field satisfies lua.WorkspaceInterface (verified at runtime
-// by the script package).
+// GetWorkspace() returns a lua.Services (via Workspace.LuaServices); the
+// script package type-asserts to that before running.
 type scriptContextImpl struct {
 	workspace   *Workspace
 	meta        *metamodel.Metamodel
@@ -67,7 +67,7 @@ type scriptContextImpl struct {
 	oldEntity   *entity.Entity
 }
 
-func (c *scriptContextImpl) GetWorkspace() interface{}     { return c.workspace }
+func (c *scriptContextImpl) GetWorkspace() interface{}     { return c.workspace.luaServices() }
 func (c *scriptContextImpl) GetMeta() *metamodel.Metamodel { return c.meta }
 func (c *scriptContextImpl) GetProjectRoot() string        { return c.projectRoot }
 func (c *scriptContextImpl) GetEntity() *entity.Entity     { return c.entity }
@@ -625,13 +625,6 @@ func (w *Workspace) Sync() (*model.SyncResult, error) {
 	return result, nil
 }
 
-// SyncLua is a Lua-friendly wrapper for Sync that doesn't return the result.
-// This satisfies lua.WorkspaceInterface without importing result types.
-func (w *Workspace) SyncLua() error {
-	_, err := w.Sync()
-	return err
-}
-
 // Reload reloads the metamodel and re-syncs the graph from disk. This is
 // called automatically by the file watcher but is also available for
 // programmatic use (after migration, in tests, etc.).
@@ -1101,43 +1094,6 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 
 	w.saveCacheQuietly()
 	return result, nil
-}
-
-// --- Lua-specific interface methods ---
-// These methods satisfy lua.WorkspaceInterface without importing result types,
-// breaking the circular dependency between lua and workspace packages.
-
-// CreateEntityLua creates an entity and returns it without the result struct.
-// This satisfies lua.WorkspaceInterface using primitive types to avoid import cycles.
-func (w *Workspace) CreateEntityLua(
-	entityType, id string, props map[string]interface{}, content string,
-) (*model.Entity, error) {
-	entity, _, err := w.CreateEntity(entityType, CreateOptions{
-		ID:         id,
-		Properties: props,
-		Content:    content,
-	})
-	return entity, err
-}
-
-// UpdateEntityLua updates an entity without returning the result struct.
-// This satisfies lua.WorkspaceInterface.
-func (w *Workspace) UpdateEntityLua(entity, oldEntity *model.Entity) error {
-	_, err := w.UpdateEntity(entity, oldEntity)
-	return err
-}
-
-// DeleteEntityLua deletes an entity without returning the result struct.
-// This satisfies lua.WorkspaceInterface.
-func (w *Workspace) DeleteEntityLua(entityType, id string, cascade bool) error {
-	_, err := w.DeleteEntity(entityType, id, cascade)
-	return err
-}
-
-// CreateRelationLua creates a relation without options.
-// This satisfies lua.WorkspaceInterface.
-func (w *Workspace) CreateRelationLua(from, relType, to string) (*model.Relation, error) {
-	return w.CreateRelation(from, relType, to)
 }
 
 // createEntityCoreOpts configures core entity creation.

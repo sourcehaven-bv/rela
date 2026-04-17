@@ -6,15 +6,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storemanage"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
 )
 
 // testMeta returns the metamodel used for testing.
@@ -44,11 +50,13 @@ func testMeta() *metamodel.Metamodel {
 	}
 }
 
-// mockWorkspace implements WorkspaceInterface for testing.
-// This avoids importing the workspace package which would cause an import cycle.
+// mockWorkspace is a test helper that bundles a memstore-backed lua.Services
+// with a mirrored graph for test assertions. The graph and store are kept in
+// sync so existing graph-based test helpers keep working.
 type mockWorkspace struct {
 	graph *graph.Graph
 	meta  *metamodel.Metamodel
+	store *memstore.MemStore
 }
 
 // newMockWorkspace creates a mock workspace with test entities.
@@ -86,105 +94,50 @@ func newMockWorkspace(t *testing.T) *mockWorkspace {
 		To:   "FEAT-001",
 	})
 
-	return &mockWorkspace{
-		graph: g,
-		meta:  testMeta(),
+	return newMockWorkspaceWith(g, testMeta())
+}
+
+// newMockWorkspaceWith creates a mock workspace with a custom graph and metamodel.
+// The graph contents are copied into a memstore so the lua runtime can query them
+// through the Services interface.
+func newMockWorkspaceWith(g *graph.Graph, meta *metamodel.Metamodel) *mockWorkspace {
+	st := memstore.New()
+	ctx := context.Background()
+	for _, e := range g.AllNodes() {
+		_ = st.CreateEntity(ctx, model.EntityToDomain(e))
+	}
+	for _, r := range g.AllEdges() {
+		_, _ = st.CreateRelation(ctx, r.From, r.Type, r.To, nil)
+	}
+	return &mockWorkspace{graph: g, meta: meta, store: st}
+}
+
+// services returns a lua.Services bound to the mock's store, with projectRoot set.
+func (m *mockWorkspace) services(projectRoot string) Services {
+	return Services{
+		Store:       m.store,
+		Manager:     &mockManager{ws: m},
+		Tracer:      storetrace.New(m.store),
+		Searcher:    &mockSearcher{ws: m},
+		Meta:        m.meta,
+		ProjectRoot: projectRoot,
+		Sync:        func() error { return nil },
 	}
 }
 
-// Entity queries
+// GetEntity returns an entity from the underlying store (test helper).
 func (m *mockWorkspace) GetEntity(id string) (*model.Entity, bool) {
 	return m.graph.GetNode(id)
-}
-
-func (m *mockWorkspace) EntitiesByType(entityType string) []*model.Entity {
-	return m.graph.NodesByType(entityType)
-}
-
-// Entity mutations
-func (m *mockWorkspace) CreateEntityLua(entityType, id string, props map[string]interface{}, content string) (*model.Entity, error) {
-	// Generate a simple ID
-	if id == "" {
-		id = fmt.Sprintf("%s-%03d", strings.ToUpper(entityType[:3]), m.graph.NodeCount()+1)
-	}
-	entity := &model.Entity{
-		ID:         id,
-		Type:       entityType,
-		Properties: props,
-		Content:    content,
-	}
-	m.graph.AddNode(entity)
-	return entity, nil
-}
-
-func (m *mockWorkspace) UpdateEntityLua(entity, _ *model.Entity) error {
-	m.graph.AddNode(entity)
-	return nil
-}
-
-func (m *mockWorkspace) DeleteEntityLua(_, id string, _ bool) error {
-	if _, ok := m.graph.GetNode(id); !ok {
-		return fmt.Errorf("entity not found: %s", id)
-	}
-	m.graph.RemoveNode(id)
-	return nil
-}
-
-// Relation queries
-func (m *mockWorkspace) AllRelations() []*model.Relation {
-	return m.graph.AllEdges()
-}
-
-// Relation mutations
-func (m *mockWorkspace) CreateRelationLua(from, relType, to string) (*model.Relation, error) {
-	rel := model.NewRelation(from, relType, to)
-	m.graph.AddEdge(rel)
-	return rel, nil
-}
-
-func (m *mockWorkspace) DeleteRelation(from, relType, to string) error {
-	m.graph.RemoveEdge(from, relType, to)
-	return nil
-}
-
-// Graph operations
-func (m *mockWorkspace) TraceFrom(id string, maxDepth int) *model.TraceResult {
-	return m.graph.TraceFrom(id, maxDepth)
-}
-
-func (m *mockWorkspace) TraceTo(id string, maxDepth int) *model.TraceResult {
-	return m.graph.TraceTo(id, maxDepth)
-}
-
-func (m *mockWorkspace) FindPath(from, to string) []model.PathStep {
-	return m.graph.FindPath(from, to)
-}
-
-// Search
-func (m *mockWorkspace) SearchSimple(query string, limit int) ([]*model.Entity, error) {
-	// Simple search: return all entities that have the query in title
-	var results []*model.Entity
-	query = strings.ToLower(query)
-	for _, e := range m.graph.AllNodes() {
-		title := strings.ToLower(e.GetString("title"))
-		if strings.Contains(title, query) {
-			results = append(results, e)
-			if len(results) >= limit {
-				break
-			}
-		}
-	}
-	return results, nil
-}
-
-// Sync
-func (m *mockWorkspace) SyncLua() error {
-	return nil
 }
 
 // Meta returns the metamodel for the mock workspace.
 func (m *mockWorkspace) Meta() *metamodel.Metamodel {
 	return m.meta
+}
+
+// Graph returns the graph for the mock workspace.
+func (m *mockWorkspace) Graph() *graph.Graph {
+	return m.graph
 }
 
 // testWorkspace is an alias for newMockWorkspace for tests that use the older naming.
@@ -193,24 +146,137 @@ func testWorkspace(t *testing.T) *mockWorkspace {
 	return newMockWorkspace(t)
 }
 
-// newMockWorkspaceWith creates a mock workspace with a custom graph and metamodel.
-func newMockWorkspaceWith(g *graph.Graph, meta *metamodel.Metamodel) *mockWorkspace {
-	return &mockWorkspace{
-		graph: g,
-		meta:  meta,
-	}
+// mockManager is a minimal storemanage.EntityManager for tests. It delegates
+// to the underlying memstore and mirrors writes into the graph so test
+// assertions using graph queries continue to work.
+type mockManager struct {
+	ws *mockWorkspace
 }
 
-// Graph returns the graph for the mock workspace.
-func (m *mockWorkspace) Graph() *graph.Graph {
-	return m.graph
+var _ storemanage.EntityManager = (*mockManager)(nil)
+
+func (m *mockManager) CreateEntity(
+	ctx context.Context, e *entity.Entity, opts storemanage.CreateOptions,
+) (*storemanage.CreateResult, error) {
+	if e == nil {
+		return nil, nil
+	}
+	id := opts.ID
+	if id == "" {
+		id = fmt.Sprintf("%s-%03d", strings.ToUpper(e.Type[:3]), m.ws.graph.NodeCount()+1)
+	}
+	newE := &entity.Entity{
+		ID:         id,
+		Type:       e.Type,
+		Properties: e.Properties,
+		Content:    e.Content,
+	}
+	if err := m.ws.store.CreateEntity(ctx, newE); err != nil {
+		return nil, err
+	}
+	mdl := model.EntityFromDomain(newE)
+	m.ws.graph.AddNode(mdl)
+	return &storemanage.CreateResult{Entity: newE}, nil
+}
+
+func (m *mockManager) UpdateEntity(
+	ctx context.Context, e *entity.Entity,
+) (*storemanage.UpdateResult, error) {
+	if err := m.ws.store.UpdateEntity(ctx, e); err != nil {
+		return nil, err
+	}
+	m.ws.graph.AddNode(model.EntityFromDomain(e))
+	return &storemanage.UpdateResult{Entity: e}, nil
+}
+
+func (m *mockManager) DeleteEntity(
+	ctx context.Context, id string, cascade bool,
+) (*storemanage.DeleteResult, error) {
+	current, ok := m.ws.graph.GetNode(id)
+	if !ok {
+		return nil, fmt.Errorf("entity not found: %s", id)
+	}
+	if _, err := m.ws.store.DeleteEntity(ctx, id, cascade); err != nil {
+		return nil, err
+	}
+	m.ws.graph.RemoveNode(id)
+	return &storemanage.DeleteResult{
+		DeletedEntities: []*entity.Entity{model.EntityToDomain(current)},
+	}, nil
+}
+
+func (m *mockManager) RenameEntity(
+	_ context.Context, _, _ string, _ storemanage.RenameOptions,
+) (*storemanage.RenameResult, error) {
+	return nil, fmt.Errorf("rename not supported by mockManager")
+}
+
+func (m *mockManager) CreateRelation(
+	ctx context.Context, from, relType, to string, opts storemanage.RelationOptions,
+) (*entity.Relation, error) {
+	var data *store.RelationData
+	if len(opts.Properties) > 0 || opts.Content != "" {
+		data = &store.RelationData{Properties: opts.Properties, Content: opts.Content}
+	}
+	r, err := m.ws.store.CreateRelation(ctx, from, relType, to, data)
+	if err != nil {
+		return nil, err
+	}
+	m.ws.graph.AddEdge(model.RelationFromDomain(r))
+	return r, nil
+}
+
+func (m *mockManager) UpdateRelation(
+	ctx context.Context, from, relType, to string, opts storemanage.RelationOptions,
+) (*entity.Relation, error) {
+	r, err := m.ws.store.UpdateRelation(ctx, from, relType, to, store.RelationData{
+		Properties: opts.Properties, Content: opts.Content,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (m *mockManager) DeleteRelation(ctx context.Context, from, relType, to string) error {
+	if err := m.ws.store.DeleteRelation(ctx, from, relType, to); err != nil {
+		return err
+	}
+	m.ws.graph.RemoveEdge(from, relType, to)
+	return nil
+}
+
+// mockSearcher is a naive title-substring searcher used by lua tests.
+type mockSearcher struct {
+	ws *mockWorkspace
+}
+
+var _ store.Searcher = (*mockSearcher)(nil)
+
+func (s *mockSearcher) Search(_ context.Context, q store.SearchQuery) iter.Seq2[store.SearchHit, error] {
+	return func(yield func(store.SearchHit, error) bool) {
+		query := strings.ToLower(q.Text)
+		count := 0
+		for _, e := range s.ws.graph.AllNodes() {
+			title := strings.ToLower(e.GetString("title"))
+			if strings.Contains(title, query) {
+				if !yield(store.SearchHit{ID: e.ID, Type: e.Type, Title: e.GetString("title")}, nil) {
+					return
+				}
+				count++
+				if q.Limit > 0 && count >= q.Limit {
+					return
+				}
+			}
+		}
+	}
 }
 
 func TestRunFile_BasicOutput(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	// Create a temp script
@@ -238,7 +304,7 @@ func TestRunFile_Args(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.output(rela.args)`
@@ -268,7 +334,7 @@ func TestGetEntity(t *testing.T) {
 	// Get reference entity for assertions
 	entity, _ := ws.GetEntity("TKT-001")
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -312,7 +378,7 @@ func TestGetEntity_NotFound(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -346,7 +412,7 @@ func TestListEntities(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -376,7 +442,7 @@ func TestListEntities_WithFilter(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -413,7 +479,7 @@ func TestGetRelations(t *testing.T) {
 	}
 	testRel := rels[0]
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -458,7 +524,7 @@ func TestWriteFile(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := New(ws, ws.meta, projectRoot, &buf)
+	r := New(ws.services(projectRoot), &buf)
 	defer r.Close()
 
 	// Files are written to output/ directory
@@ -484,7 +550,7 @@ func TestScriptError_Syntax(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `print(`
@@ -503,7 +569,7 @@ func TestScriptError_Runtime(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `error("boom")`
@@ -518,39 +584,12 @@ func TestScriptError_Runtime(t *testing.T) {
 	}
 }
 
-func TestProjectRoot(t *testing.T) {
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-
-	r := New(ws, ws.meta, "/my/project", &buf)
-	defer r.Close()
-
-	script := `rela.output({root = rela.project_root})`
-	tmpFile := filepath.Join(t.TempDir(), "test.lua")
-	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunFile(tmpFile, nil); err != nil {
-		t.Fatalf("RunFile failed: %v", err)
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("Failed to parse output: %v", err)
-	}
-
-	if result["root"] != "/my/project" {
-		t.Errorf("Expected root=/my/project, got %v", result["root"])
-	}
-}
-
 func TestWriteFile_PathTraversal(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := New(ws, ws.meta, projectRoot, &buf)
+	r := New(ws.services(projectRoot), &buf)
 	defer r.Close()
 
 	// Try to escape output/ using path traversal
@@ -576,7 +615,7 @@ func TestWriteFile_AbsolutePathOutside(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := New(ws, ws.meta, projectRoot, &buf)
+	r := New(ws.services(projectRoot), &buf)
 	defer r.Close()
 
 	// Try to write to absolute path (should be rejected)
@@ -592,7 +631,7 @@ func TestWriteFile_InOutputDir(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := New(ws, ws.meta, projectRoot, &buf)
+	r := New(ws.services(projectRoot), &buf)
 	defer r.Close()
 
 	// Write to output directory
@@ -618,7 +657,7 @@ func TestListEntities_EmptyType(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.list_entities("")`
@@ -637,7 +676,7 @@ func TestListEntities_InvalidFilter(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.list_entities("ticket", "invalid[filter")`
@@ -656,7 +695,7 @@ func TestGetRelations_NoFilters(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -687,7 +726,7 @@ func TestTraceFrom_NonExistent(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -722,7 +761,7 @@ func TestSearch(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -754,7 +793,7 @@ func TestSearch_EmptyQuery(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.search("")`
@@ -773,7 +812,7 @@ func TestCreateEntity(t *testing.T) {
 	ws, root := newMockWorkspace(t), t.TempDir()
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, root, &buf)
+	r := New(ws.services(root), &buf)
 	defer r.Close()
 
 	script := `
@@ -814,7 +853,7 @@ func TestCreateEntity_EmptyType(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.create_entity("", {title = "Test"})`
@@ -837,7 +876,7 @@ func TestUpdateEntity(t *testing.T) {
 	entity, _ := ws.GetEntity("TKT-001")
 	entityID := entity.ID
 
-	r := New(ws, ws.meta, root, &buf)
+	r := New(ws.services(root), &buf)
 	defer r.Close()
 
 	script := `
@@ -873,7 +912,7 @@ func TestUpdateEntity_NotFound(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.update_entity("NONEXISTENT", {status = "closed"})`
@@ -895,7 +934,7 @@ func TestDeleteEntity(t *testing.T) {
 	ws, root := newMockWorkspace(t), t.TempDir()
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, root, &buf)
+	r := New(ws.services(root), &buf)
 	defer r.Close()
 
 	script := `
@@ -931,7 +970,7 @@ func TestDeleteEntity_NotFound(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.delete_entity("NONEXISTENT")`
@@ -955,7 +994,7 @@ func TestCreateRelation(t *testing.T) {
 	toEntity, _ := ws.GetEntity("FEAT-001")
 	relType := "implements"
 
-	r := New(ws, ws.meta, root, &buf)
+	r := New(ws.services(root), &buf)
 	defer r.Close()
 
 	// TKT-002 doesn't have a relation to FEAT-001 yet
@@ -996,7 +1035,7 @@ func TestCreateRelation_MissingArgs(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.create_relation("", "implements", "FEAT-001")`
@@ -1015,7 +1054,7 @@ func TestDeleteRelation(t *testing.T) {
 	ws, root := newMockWorkspace(t), t.TempDir()
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, root, &buf)
+	r := New(ws.services(root), &buf)
 	defer r.Close()
 
 	script := `
@@ -1045,7 +1084,7 @@ func TestFindPath(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1083,7 +1122,7 @@ func TestFindPath_NoPath(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1117,7 +1156,7 @@ func TestFindPath_MissingArgs(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.find_path("", "FEAT-001")`
@@ -1136,7 +1175,7 @@ func TestRefresh(t *testing.T) {
 	ws, root := newMockWorkspace(t), t.TempDir()
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, root, &buf)
+	r := New(ws.services(root), &buf)
 	defer r.Close()
 
 	script := `
@@ -1169,7 +1208,7 @@ func TestTraceFrom(t *testing.T) {
 	// Get reference entity for assertions
 	entity, _ := ws.GetEntity("TKT-001")
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1208,7 +1247,7 @@ func TestTraceTo(t *testing.T) {
 	// Get reference entity for assertions
 	entity, _ := ws.GetEntity("FEAT-001")
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1257,7 +1296,7 @@ func TestSandbox_DangerousLibrariesUnavailable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			r := New(ws, ws.meta, "/tmp", &buf)
+			r := New(ws.services("/tmp"), &buf)
 			defer r.Close()
 
 			// Should succeed because the libraries are not available
@@ -1290,7 +1329,7 @@ func TestSandbox_DangerousFunctionsRemoved(t *testing.T) {
 	for _, fn := range dangerousFuncs {
 		t.Run(fn, func(t *testing.T) {
 			var buf bytes.Buffer
-			r := New(ws, ws.meta, "/tmp", &buf)
+			r := New(ws.services("/tmp"), &buf)
 			defer r.Close()
 
 			script := `if ` + fn + ` ~= nil then error("` + fn + ` should be nil") end`
@@ -1327,7 +1366,7 @@ func TestSandbox_SafeLibrariesAvailable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			r := New(ws, ws.meta, "/tmp", &buf)
+			r := New(ws.services("/tmp"), &buf)
 			defer r.Close()
 
 			err := r.RunString(tt.script)
@@ -1344,7 +1383,7 @@ func TestWriteFile_NestedDirectories(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := New(ws, ws.meta, projectRoot, &buf)
+	r := New(ws.services(projectRoot), &buf)
 	defer r.Close()
 
 	// Write to a deeply nested path within output/
@@ -1371,7 +1410,7 @@ func TestSetArgs(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	r.SetArgs([]string{"arg1", "arg2", "arg3"})
@@ -1396,7 +1435,7 @@ func TestSortEntities_ByStringProperty(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	// Tickets have statuses "open" and "done" - sort by status
@@ -1475,7 +1514,7 @@ func TestSortEntities_ByNumericProperty(t *testing.T) {
 	ws := newMockWorkspaceWith(g, meta)
 
 	var buf bytes.Buffer
-	r := New(ws, meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1513,7 +1552,7 @@ func TestSortEntities_Descending(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1545,7 +1584,7 @@ func TestSortEntities_EmptyProperty(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.sort_entities({}, "")`
@@ -1562,7 +1601,7 @@ func TestEntityProp(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1620,7 +1659,7 @@ func TestEntityProp_EmptyStringUsesDefault(t *testing.T) {
 	ws := newMockWorkspaceWith(g, meta)
 
 	var buf bytes.Buffer
-	r := New(ws, meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1650,7 +1689,7 @@ func TestWriteFile_EnsureNewline(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := New(ws, ws.meta, projectRoot, &buf)
+	r := New(ws.services(projectRoot), &buf)
 	defer r.Close()
 
 	// Write without trailing newline, but with ensure_newline option
@@ -1676,7 +1715,7 @@ func TestWriteFile_EnsureNewline_AlreadyHasNewline(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := New(ws, ws.meta, projectRoot, &buf)
+	r := New(ws.services(projectRoot), &buf)
 	defer r.Close()
 
 	// Write with trailing newline and ensure_newline option - should not double
@@ -1702,7 +1741,7 @@ func TestWriteFile_EnsureNewline_EmptyContent(t *testing.T) {
 	var buf bytes.Buffer
 
 	projectRoot := t.TempDir()
-	r := New(ws, ws.meta, projectRoot, &buf)
+	r := New(ws.services(projectRoot), &buf)
 	defer r.Close()
 
 	// Empty content should stay empty even with ensure_newline
@@ -1727,7 +1766,7 @@ func TestEntityStripPrefix(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1766,7 +1805,7 @@ func TestEntityStripPrefix_NoHyphen(t *testing.T) {
 	ws := newMockWorkspaceWith(g, meta)
 
 	var buf bytes.Buffer
-	r := New(ws, meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1793,7 +1832,7 @@ func TestMdLink(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.output({link = rela.md.link("Guide", "docs/guide.md")})`
@@ -1817,7 +1856,7 @@ func TestMdRef(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `rela.output({ref = rela.md.ref("GUIDE-001", "the guide")})`
@@ -1841,7 +1880,7 @@ func TestMdTable(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1874,7 +1913,7 @@ func TestMdEntityTable_PropertyColumns(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1913,7 +1952,7 @@ func TestMdEntityTable_FunctionColumn(t *testing.T) {
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -1968,7 +2007,7 @@ func TestMdEntityTable_DefaultValue(t *testing.T) {
 	ws := newMockWorkspaceWith(g, meta)
 
 	var buf bytes.Buffer
-	r := New(ws, meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	script := `
@@ -2030,7 +2069,7 @@ func TestShebangExecution(t *testing.T) {
 	t.Run("RunString", func(t *testing.T) {
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
-		r := New(ws, ws.meta, "/tmp", &buf)
+		r := New(ws.services("/tmp"), &buf)
 		defer r.Close()
 
 		if err := r.RunString(script); err != nil {
@@ -2049,7 +2088,7 @@ func TestShebangExecution(t *testing.T) {
 	t.Run("RunFile", func(t *testing.T) {
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
-		r := New(ws, ws.meta, "/tmp", &buf)
+		r := New(ws.services("/tmp"), &buf)
 		defer r.Close()
 
 		tmpFile := filepath.Join(t.TempDir(), "test.lua")
@@ -2075,7 +2114,7 @@ func TestRunFile_Errors(t *testing.T) {
 	t.Run("line numbers preserved with shebang", func(t *testing.T) {
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
-		r := New(ws, ws.meta, "/tmp", &buf)
+		r := New(ws.services("/tmp"), &buf)
 		defer r.Close()
 
 		tmpFile := filepath.Join(t.TempDir(), "test.lua")
@@ -2097,7 +2136,7 @@ func TestRunFile_Errors(t *testing.T) {
 	t.Run("includes filename", func(t *testing.T) {
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
-		r := New(ws, ws.meta, "/tmp", &buf)
+		r := New(ws.services("/tmp"), &buf)
 		defer r.Close()
 
 		tmpFile := filepath.Join(t.TempDir(), "mytest.lua")
@@ -2124,7 +2163,7 @@ func TestWithParams(t *testing.T) {
 		"entity_type":  "ticket",
 		"key_property": "date",
 	}
-	r := New(ws, ws.meta, "/tmp", &buf, WithParams(params))
+	r := New(ws.services("/tmp"), &buf, WithParams(params))
 	defer r.Close()
 
 	script := `rela.output({et = rela.params.entity_type, kp = rela.params.key_property})`
@@ -2146,7 +2185,7 @@ func TestWithParams_Empty(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	// rela.params should exist as an empty table
@@ -2173,7 +2212,7 @@ func TestRunActionString_ReturnTable(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf, WithActionMode())
+	r := New(ws.services("/tmp"), &buf, WithActionMode())
 	defer r.Close()
 
 	script := `return {redirect = "/foo", message = "hi"}`
@@ -2198,7 +2237,7 @@ func TestRunActionString_NoReturn(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf, WithActionMode())
+	r := New(ws.services("/tmp"), &buf, WithActionMode())
 	defer r.Close()
 
 	script := `local x = 1` // no return statement
@@ -2212,7 +2251,7 @@ func TestRunActionString_Error(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf, WithActionMode())
+	r := New(ws.services("/tmp"), &buf, WithActionMode())
 	defer r.Close()
 
 	script := `error("boom")`
@@ -2229,7 +2268,7 @@ func TestActionMode_OutputIsWarning(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.meta, "/tmp", &buf, WithActionMode())
+	r := New(ws.services("/tmp"), &buf, WithActionMode())
 	defer r.Close()
 
 	// rela.output in action mode should not write JSON, just a warning
@@ -2260,7 +2299,7 @@ func TestWithContext_CancellationInterruptsBusyLoop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	r := New(ws, ws.meta, "/tmp", &buf, WithContext(ctx))
+	r := New(ws.services("/tmp"), &buf, WithContext(ctx))
 	defer r.Close()
 
 	start := time.Now()
@@ -2290,7 +2329,7 @@ func TestWithContext_NoTimeoutStillCancels(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	r := New(ws, ws.meta, "/tmp", &buf, WithContext(ctx), WithTimeout(0))
+	r := New(ws.services("/tmp"), &buf, WithContext(ctx), WithTimeout(0))
 	defer r.Close()
 
 	// Cancel shortly after starting.
@@ -2319,7 +2358,7 @@ func TestWithSecrets(t *testing.T) {
 		"api_key":  "sk-secret",
 		"base_url": "https://example.com",
 	}
-	r := New(ws, ws.Meta(), "/tmp", &buf, WithSecrets(sec))
+	r := New(ws.services("/tmp"), &buf, WithSecrets(sec))
 	defer r.Close()
 
 	script := `rela.output({k = rela.secrets.api_key, u = rela.secrets.base_url})`
@@ -2341,7 +2380,7 @@ func TestWithSecrets_Empty(t *testing.T) {
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
-	r := New(ws, ws.Meta(), "/tmp", &buf)
+	r := New(ws.services("/tmp"), &buf)
 	defer r.Close()
 
 	// rela.secrets should exist as an empty table

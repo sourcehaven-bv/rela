@@ -43,14 +43,32 @@ type Store interface {
 }
 
 // EntityReader provides read access to entities.
+//
+// List operations return results in stable, implementation-defined order:
+// implementations MUST return the same order across calls when the
+// underlying data has not changed, so cursors remain valid between pages.
+// The default order is ascending by ID.
 type EntityReader interface {
 	// GetEntity returns a single entity by ID.
 	// Returns ErrNotFound if the entity does not exist.
 	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
 
 	// ListEntities returns an iterator over entities matching the query.
-	// If an error is yielded, the iterator terminates.
+	// If an error is yielded, the iterator terminates. Cursor and Limit
+	// on the query are ignored — use ListEntitiesPage for pagination.
 	ListEntities(ctx context.Context, q EntityQuery) iter.Seq2[*entity.Entity, error]
+
+	// ListEntitiesPage returns a page of entities matching the query.
+	// When q.Limit == 0, the full result set is returned in one page
+	// (NextCursor is always empty). When q.Limit > 0, at most Limit
+	// entities are returned; NextCursor is non-empty iff more results
+	// exist. Callers resume by setting q.Cursor to the returned
+	// NextCursor on the next call, keeping other query fields identical.
+	//
+	// Cursors are opaque — callers MUST NOT parse or construct them.
+	// A cursor is only valid for the same query on the same store;
+	// behavior with a mismatched cursor is implementation-defined.
+	ListEntitiesPage(ctx context.Context, q EntityQuery) (Page[*entity.Entity], error)
 
 	// CountEntities returns the number of entities matching the query.
 	CountEntities(ctx context.Context, q EntityQuery) (int, error)
@@ -67,8 +85,17 @@ type EntityReader interface {
 
 // EntityQuery filters entity listings.
 type EntityQuery struct {
-	Type string   // filter by entity type (empty = all)
-	IDs  []string // filter to specific IDs (empty = all)
+	Type   string   // filter by entity type (empty = all)
+	IDs    []string // filter to specific IDs (empty = all)
+	Cursor string   // pagination cursor from a previous page (empty = start); ignored by ListEntities
+	Limit  int      // max entities per page (0 = no limit); ignored by ListEntities
+}
+
+// Page holds a single page of results from a paginated list call.
+// NextCursor is empty when no further pages exist.
+type Page[T any] struct {
+	Items      []T
+	NextCursor string
 }
 
 // EntityWriter provides write access to entities.
@@ -104,14 +131,22 @@ type RenameResult struct {
 }
 
 // RelationReader provides read access to relations.
+//
+// List operations return results in stable, implementation-defined order;
+// see EntityReader for the full contract.
 type RelationReader interface {
 	// GetRelation returns a single relation by its three-part key.
 	// Returns ErrNotFound if the relation does not exist.
 	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
 
 	// ListRelations returns an iterator over relations matching the query.
-	// If an error is yielded, the iterator terminates.
+	// If an error is yielded, the iterator terminates. Cursor and Limit
+	// on the query are ignored — use ListRelationsPage for pagination.
 	ListRelations(ctx context.Context, q RelationQuery) iter.Seq2[*entity.Relation, error]
+
+	// ListRelationsPage returns a page of relations matching the query.
+	// See ListEntitiesPage for the cursor/limit contract.
+	ListRelationsPage(ctx context.Context, q RelationQuery) (Page[*entity.Relation], error)
 
 	// CountRelations returns the number of relations matching the query.
 	CountRelations(ctx context.Context, q RelationQuery) (int, error)
@@ -124,6 +159,8 @@ type RelationQuery struct {
 	Type      string    // filter by relation type
 	EntityID  string    // filter by either endpoint (From OR To)
 	Direction Direction // outgoing, incoming, or both
+	Cursor    string    // pagination cursor from a previous page (empty = start); ignored by ListRelations
+	Limit     int       // max relations per page (0 = no limit); ignored by ListRelations
 }
 
 // Direction constrains relation queries to a specific direction.

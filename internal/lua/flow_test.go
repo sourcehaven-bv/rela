@@ -33,7 +33,7 @@ func (m *mockTransport) Present(screen Screen) (Event, error) {
 func newTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	var buf bytes.Buffer
-	r := New(nil, nil, "/tmp", &buf)
+	r := New(Services{ProjectRoot: "/tmp"}, &buf)
 	return r
 }
 

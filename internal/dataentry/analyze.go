@@ -432,24 +432,6 @@ func (a *App) analyzeValidations() AnalysisSection {
 	return section
 }
 
-// countEdgesByType counts relations of a specific type in a slice.
-func countEdgesByType(edges []*model.Relation, relType string) int {
-	n := 0
-	for _, e := range edges {
-		if e.Type == relType {
-			n++
-		}
-	}
-	return n
-}
-
-// sortEntitiesByID sorts entities by their ID using natural ordering for deterministic output.
-func sortEntitiesByID(entities []*model.Entity) {
-	sort.Slice(entities, func(i, j int) bool {
-		return natsort.Less(entities[i].ID, entities[j].ID)
-	})
-}
-
 func sortStoreEntitiesByID(entities []*entity.Entity) {
 	sort.Slice(entities, func(i, j int) bool {
 		return natsort.Less(entities[i].ID, entities[j].ID)

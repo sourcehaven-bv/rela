@@ -34,10 +34,7 @@ func (s *FSStore) GetEntity(_ context.Context, id string) (*entity.Entity, error
 
 func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
 	s.mu.RLock()
-	idSet := make(map[string]bool, len(q.IDs))
-	for _, id := range q.IDs {
-		idSet[id] = true
-	}
+	idSet := entityIDSet(q.IDs)
 
 	// Collect matching IDs + types from index.
 	type idType struct {
@@ -45,13 +42,10 @@ func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2
 	}
 	var matches []idType
 	for _, id := range s.entityOrder {
+		if !matchEntityQuery(s.entities[id], q, idSet) {
+			continue
+		}
 		meta := s.entities[id]
-		if q.Type != "" && meta.Type != q.Type {
-			continue
-		}
-		if len(idSet) > 0 && !idSet[meta.ID] {
-			continue
-		}
 		matches = append(matches, idType{meta.ID, meta.Type})
 	}
 	s.mu.RUnlock()
@@ -70,6 +64,65 @@ func (s *FSStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq2
 			}
 		}
 	}
+}
+
+func (s *FSStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (store.Page[*entity.Entity], error) {
+	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
+	if err != nil {
+		return store.Page[*entity.Entity]{}, err
+	}
+
+	s.mu.RLock()
+	idSet := entityIDSet(q.IDs)
+	keys := storeutil.PaginateSortedKeys(s.entityOrder, cursorKey, q.Limit, func(id string) bool {
+		return matchEntityQuery(s.entities[id], q, idSet)
+	})
+
+	// Capture (id, type) pairs while still holding the lock — loadEntity
+	// needs the type and we must not call it under the lock.
+	type idType struct{ id, typ string }
+	pairs := make([]idType, 0, len(keys.Keys))
+	for _, id := range keys.Keys {
+		if meta, ok := s.entities[id]; ok {
+			pairs = append(pairs, idType{meta.ID, meta.Type})
+		}
+	}
+	s.mu.RUnlock()
+
+	items := make([]*entity.Entity, 0, len(pairs))
+	for _, p := range pairs {
+		e, err := s.loadEntity(p.id, p.typ)
+		if err != nil {
+			return store.Page[*entity.Entity]{}, err
+		}
+		items = append(items, e)
+	}
+	return store.Page[*entity.Entity]{Items: items, NextCursor: keys.NextCursor}, nil
+}
+
+// entityIDSet builds the ID-lookup set used by ListEntities and its page
+// variant. Returns nil when ids is empty so callers can test with len().
+func entityIDSet(ids []string) map[string]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set
+}
+
+// matchEntityQuery reports whether an indexed entity satisfies q's Type
+// and IDs filters. idSet must be pre-computed from q.IDs.
+func matchEntityQuery(m entityMeta, q store.EntityQuery, idSet map[string]bool) bool {
+	if q.Type != "" && m.Type != q.Type {
+		return false
+	}
+	if len(idSet) > 0 && !idSet[m.ID] {
+		return false
+	}
+	return true
 }
 
 func (s *FSStore) CountEntities(_ context.Context, q store.EntityQuery) (int, error) {

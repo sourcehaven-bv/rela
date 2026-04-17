@@ -53,9 +53,15 @@ func (e *Engine) ExecuteAction(
 		return nil, err
 	}
 
-	ws, ok := ctx.GetWorkspace().(lua.WorkspaceInterface)
+	svc, ok := ctx.GetWorkspace().(lua.Services)
 	if !ok {
-		return nil, fmt.Errorf("workspace does not implement lua.WorkspaceInterface")
+		return nil, fmt.Errorf("workspace does not provide lua.Services")
+	}
+	if svc.Meta == nil {
+		svc.Meta = ctx.GetMeta()
+	}
+	if svc.ProjectRoot == "" {
+		svc.ProjectRoot = ctx.GetProjectRoot()
 	}
 
 	var output bytes.Buffer
@@ -70,10 +76,7 @@ func (e *Engine) ExecuteAction(
 		lua.WithTimeout(timeout),
 	}, ctxOpts...)
 
-	runtime := lua.New(
-		ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output,
-		luaOpts...,
-	)
+	runtime := lua.New(svc, &output, luaOpts...)
 	defer runtime.Close()
 
 	ret, err := runtime.RunActionString(scriptCode, scriptPath)

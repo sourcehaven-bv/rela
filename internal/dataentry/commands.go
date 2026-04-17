@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // Protocol prefix for structured command output messages.
@@ -146,19 +148,28 @@ type commandProjectInfo struct {
 }
 
 func (a *App) buildEntityInput(entity *model.Entity) *commandInput {
-	s := a.State()
-	// Collect all relations involving this entity.
-	outgoing := s.Graph.OutgoingEdges(entity.ID)
-	incoming := s.Graph.IncomingEdges(entity.ID)
-	rels := make([]*model.Relation, 0, len(outgoing)+len(incoming))
-	rels = append(rels, outgoing...)
-	rels = append(rels, incoming...)
 	return &commandInput{
 		Context:   "entity",
 		Entity:    entity,
-		Relations: rels,
+		Relations: relationsForEntity(a.Services(), entity.ID),
 		Project:   a.projectInfo(),
 	}
+}
+
+// relationsForEntity loads every relation where id is either endpoint
+// and returns them as []*model.Relation for the command-input payload.
+// Temporary conversion — the payload shape itself needs to flip with
+// the entity.Entity migration.
+func relationsForEntity(svc Services, id string) []*model.Relation {
+	var rels []*model.Relation
+	q := store.RelationQuery{EntityID: id, Direction: store.DirectionBoth}
+	for r, err := range svc.Store.ListRelations(context.Background(), q) {
+		if err != nil {
+			return rels
+		}
+		rels = append(rels, model.RelationFromDomain(r))
+	}
+	return rels
 }
 
 func (a *App) buildListInput(listID string, entities []*model.Entity) *commandInput {
@@ -180,12 +191,16 @@ func (a *App) buildViewInput(viewID string, vr *viewResult) *commandInput {
 	}
 
 	// Gather relations between entities in the result set.
-	g := a.State().Graph
+	svc := a.Services()
 	var rels []*model.Relation
 	for id := range idSet {
-		for _, e := range g.OutgoingEdges(id) {
-			if idSet[e.To] {
-				rels = append(rels, e)
+		q := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
+		for r, err := range svc.Store.ListRelations(context.Background(), q) {
+			if err != nil {
+				break
+			}
+			if idSet[r.To] {
+				rels = append(rels, model.RelationFromDomain(r))
 			}
 		}
 	}
@@ -298,12 +313,13 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	switch cmd.Context {
 	case "entity":
 		entityID := r.URL.Query().Get("entity_id")
-		entity, found := s.Graph.GetNode(entityID)
-		if !found {
+		svc := a.Services()
+		entityDomain, err := svc.Store.GetEntity(context.Background(), entityID)
+		if err != nil {
 			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
 			return
 		}
-		input = a.buildEntityInput(entity)
+		input = a.buildEntityInput(model.EntityFromDomain(entityDomain))
 	case "list":
 		listID := r.URL.Query().Get("list_id")
 		listCfg, found := s.Cfg.Lists[listID]
@@ -311,7 +327,7 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "List not found: "+listID, http.StatusNotFound)
 			return
 		}
-		entities := s.Graph.NodesByType(listCfg.EntityType)
+		entities := listFromStoreByTypes(a.Services(), []string{listCfg.EntityType})
 		entities = applyFilters(entities, listCfg.Filters)
 		input = a.buildListInput(listID, entities)
 	case "view":

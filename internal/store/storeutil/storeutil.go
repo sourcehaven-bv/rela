@@ -5,6 +5,7 @@
 package storeutil
 
 import (
+	"encoding/base64"
 	"fmt"
 	"slices"
 	"strings"
@@ -41,6 +42,78 @@ func ValidateProperty(prop string) error {
 func SortedInsert(s []string, key string) []string {
 	i, _ := slices.BinarySearch(s, key)
 	return slices.Insert(s, i, key)
+}
+
+// EncodeCursor turns a sort key into an opaque pagination cursor.
+// Callers MUST NOT parse cursors — round-trip only via DecodeCursor.
+func EncodeCursor(key string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(key))
+}
+
+// DecodeCursor recovers the sort key from a cursor produced by EncodeCursor.
+// Returns an error for malformed input; an empty cursor decodes to "".
+func DecodeCursor(cursor string) (string, error) {
+	if cursor == "" {
+		return "", nil
+	}
+	b, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", fmt.Errorf("store: invalid cursor: %w", err)
+	}
+	return string(b), nil
+}
+
+// PageKeys holds the result of a paginated key scan: the sort keys that
+// landed on this page (in order) and a cursor pointing past the last
+// emitted key when more results exist.
+type PageKeys struct {
+	Keys       []string
+	NextCursor string
+}
+
+// PaginateSortedKeys walks a pre-sorted slice of keys, selecting the
+// next page of keys that satisfy match. It starts strictly after
+// cursorKey — the key returned as the previous NextCursor is not
+// re-emitted. When limit <= 0, every matching key is returned and
+// NextCursor is "".
+//
+// NextCursor is set iff a matching key exists after the last emitted
+// key, so an empty NextCursor is a reliable "no more results" signal.
+// This costs one extra match call past the cut-off on the final page.
+//
+// Callers load the concrete items from the returned keys — keeping
+// loads out of this helper lets each backend handle load errors in
+// its own idiom (skip missing for in-memory, propagate I/O errors
+// for fsstore).
+func PaginateSortedKeys(
+	sortedKeys []string,
+	cursorKey string,
+	limit int,
+	match func(key string) bool,
+) PageKeys {
+	start := 0
+	if cursorKey != "" {
+		i, found := slices.BinarySearch(sortedKeys, cursorKey)
+		start = i
+		if found {
+			start = i + 1
+		}
+	}
+
+	page := PageKeys{}
+	for i := start; i < len(sortedKeys); i++ {
+		key := sortedKeys[i]
+		if !match(key) {
+			continue
+		}
+		if limit > 0 && len(page.Keys) == limit {
+			// Already full and found another match — more results exist.
+			page.NextCursor = EncodeCursor(page.Keys[len(page.Keys)-1])
+			return page
+		}
+		page.Keys = append(page.Keys, key)
+	}
+	return page
 }
 
 // SortedRemove removes key from a sorted slice.

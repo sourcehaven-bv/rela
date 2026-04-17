@@ -12,7 +12,7 @@ import (
 func newDateTestRuntime(t *testing.T) (*Runtime, *strings.Builder) {
 	t.Helper()
 	var sb strings.Builder
-	rt := New(nil, nil, "", &sb)
+	rt := New(Services{}, &sb)
 	return rt, &sb
 }
 

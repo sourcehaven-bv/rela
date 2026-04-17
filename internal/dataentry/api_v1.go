@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -287,7 +289,7 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 }
 
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
-	entities := a.State().Graph.NodesByType(typeName)
+	entities := listFromStoreByTypes(a.Services(), []string{typeName})
 
 	// Apply filters
 	query := r.URL.Query()
@@ -421,7 +423,7 @@ func (a *App) handleV1SingleEntity(w http.ResponseWriter, r *http.Request, typeN
 }
 
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
-	entity, found := a.State().Graph.GetNode(entityID)
+	entity, found := a.getEntityAsModel(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -456,7 +458,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.State().Graph.GetNode(entityID)
+	entity, found := a.getEntityAsModel(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -515,7 +517,7 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.State().Graph.GetNode(entityID)
+	entity, found := a.getEntityAsModel(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -536,14 +538,14 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 
 func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
 	s := a.State()
-	entity, found := s.Graph.GetNode(entityID)
+	entity, found := a.getEntityAsModel(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
 
-	outgoing := s.Graph.OutgoingEdges(entityID)
-	incoming := s.Graph.IncomingEdges(entityID)
+	outgoing := a.outgoingRelationsAsModel(entityID)
+	incoming := a.incomingRelationsAsModel(entityID)
 
 	relations := make(map[string][]map[string]interface{})
 
@@ -601,8 +603,7 @@ func resolveRelationEndpoints(entityID, peerID, direction string) (from, to stri
 }
 
 func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
-	s := a.State()
-	entity, found := s.Graph.GetNode(entityID)
+	entity, found := a.getEntityAsModel(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -612,9 +613,9 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 
 	var edges []*model.Relation
 	if incoming {
-		edges = s.Graph.IncomingEdges(entityID)
+		edges = a.incomingRelationsAsModel(entityID)
 	} else {
-		edges = s.Graph.OutgoingEdges(entityID)
+		edges = a.outgoingRelationsAsModel(entityID)
 	}
 
 	relations := make([]map[string]interface{}, 0, len(edges))
@@ -644,7 +645,7 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.State().Graph.GetNode(entityID)
+	entity, found := a.getEntityAsModel(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -698,7 +699,7 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.State().Graph.GetNode(entityID)
+	entity, found := a.getEntityAsModel(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -740,7 +741,7 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.State().Graph.GetNode(entityID)
+	entity, found := a.getEntityAsModel(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -778,7 +779,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 	defer a.writeMu.Unlock()
 
 	s := a.State()
-	entity, found := s.Graph.GetNode(entityID)
+	entity, found := a.getEntityAsModel(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1059,7 +1060,7 @@ func (a *App) entityToV1(e *model.Entity, plural string, includeRelations, inclu
 
 	if includeRelations {
 		v1.Relations = make(map[string][]string)
-		for _, edge := range s.Graph.OutgoingEdges(e.ID) {
+		for _, edge := range a.outgoingRelationsAsModel(e.ID) {
 			v1.Relations[edge.Type] = append(v1.Relations[edge.Type], edge.To)
 		}
 	}
@@ -1107,8 +1108,8 @@ func (a *App) resolveV1Includes(entity *model.Entity, includes string) map[strin
 	// Support include=* to include all related entities
 	if includes == "*" {
 		// Include all outgoing relations
-		for _, edge := range s.Graph.OutgoingEdges(entity.ID) {
-			target, found := s.Graph.GetNode(edge.To)
+		for _, edge := range a.outgoingRelationsAsModel(entity.ID) {
+			target, found := a.getEntityAsModel(edge.To)
 			if !found {
 				continue
 			}
@@ -1117,8 +1118,8 @@ func (a *App) resolveV1Includes(entity *model.Entity, includes string) map[strin
 			included[target.ID] = a.entityToV1(target, plural, false, false)
 		}
 		// Include all incoming relations
-		for _, edge := range s.Graph.IncomingEdges(entity.ID) {
-			source, found := s.Graph.GetNode(edge.From)
+		for _, edge := range a.incomingRelationsAsModel(entity.ID) {
+			source, found := a.getEntityAsModel(edge.From)
 			if !found {
 				continue
 			}
@@ -1140,11 +1141,11 @@ func (a *App) resolveV1Includes(entity *model.Entity, includes string) map[strin
 		relParts := strings.SplitN(part, ".", 2)
 		relType := relParts[0]
 
-		for _, edge := range s.Graph.OutgoingEdges(entity.ID) {
+		for _, edge := range a.outgoingRelationsAsModel(entity.ID) {
 			if edge.Type != relType {
 				continue
 			}
-			target, found := s.Graph.GetNode(edge.To)
+			target, found := a.getEntityAsModel(edge.To)
 			if !found {
 				continue
 			}
@@ -1491,7 +1492,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the entry entity
-	entry, found := s.Graph.GetNode(entityID)
+	entry, found := a.getEntityAsModel(entityID)
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
 		return
@@ -1603,8 +1604,14 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	s := a.State()
 	// Build entity type counts
 	counts := make(map[string]int)
+	svc := a.Services()
 	for _, entityType := range s.Meta.EntityTypes() {
-		counts[entityType] = len(s.Graph.NodesByType(entityType))
+		n, err := svc.Store.CountEntities(context.Background(), store.EntityQuery{Type: entityType})
+		if err != nil {
+			counts[entityType] = 0
+			continue
+		}
+		counts[entityType] = n
 	}
 
 	// Build navigation with counts

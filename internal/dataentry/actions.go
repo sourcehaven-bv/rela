@@ -150,7 +150,7 @@ type actionScriptContext struct {
 	entity      *entity.Entity
 }
 
-func (c *actionScriptContext) GetWorkspace() interface{}     { return c.ws }
+func (c *actionScriptContext) GetWorkspace() interface{}     { return c.ws.LuaServices() }
 func (c *actionScriptContext) GetMeta() *metamodel.Metamodel { return c.meta }
 func (c *actionScriptContext) GetProjectRoot() string        { return c.projectRoot }
 func (c *actionScriptContext) GetEntity() *entity.Entity     { return c.entity }
