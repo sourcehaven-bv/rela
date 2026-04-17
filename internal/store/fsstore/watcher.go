@@ -16,7 +16,7 @@ import (
 // Subscribe registers a new event subscriber with the given buffer size.
 // Events are delivered on a best-effort basis: if the subscriber's channel
 // is full, events are dropped silently.
-func (s *FSStore) Subscribe(bufSize int) (<-chan store.Event, func()) {
+func (s *FSStore) Subscribe(bufSize int) (events <-chan store.Event, cancel func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -25,7 +25,7 @@ func (s *FSStore) Subscribe(bufSize int) (<-chan store.Event, func()) {
 	s.nextSubID++
 	s.subscribers[id] = ch
 
-	cancel := func() {
+	cancel = func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if _, ok := s.subscribers[id]; ok {

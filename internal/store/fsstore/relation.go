@@ -37,7 +37,7 @@ func (s *FSStore) ListRelations(_ context.Context, q store.RelationQuery) iter.S
 	type relKey struct {
 		from, typ, to string
 	}
-	var matches []relKey
+	matches := make([]relKey, 0)
 	for _, key := range s.relationOrder {
 		if !matchRelationKey(s, key, q) {
 			continue
@@ -118,7 +118,9 @@ func (s *FSStore) CountRelations(_ context.Context, q store.RelationQuery) (int,
 
 // --- RelationWriter ---
 
-func (s *FSStore) CreateRelation(_ context.Context, from, relType, to string, data *store.RelationData) (*entity.Relation, error) {
+func (s *FSStore) CreateRelation(
+	_ context.Context, from, relType, to string, data *store.RelationData,
+) (*entity.Relation, error) {
 	for _, id := range []string{from, to} {
 		if err := storeutil.ValidateID(id); err != nil {
 			return nil, err
@@ -169,7 +171,9 @@ func (s *FSStore) CreateRelation(_ context.Context, from, relType, to string, da
 	return r.Clone(), nil
 }
 
-func (s *FSStore) UpdateRelation(_ context.Context, from, relType, to string, data store.RelationData) (*entity.Relation, error) {
+func (s *FSStore) UpdateRelation(
+	_ context.Context, from, relType, to string, data store.RelationData,
+) (*entity.Relation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

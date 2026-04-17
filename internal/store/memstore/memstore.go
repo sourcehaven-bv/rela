@@ -44,15 +44,14 @@ type MemStore struct {
 	attachments   map[string]*attachment      // "entityID/property" -> data
 	subscribers   map[int]chan store.Event
 	nextSubID     int
-	observers []store.EntityObserver // notified synchronously on entity writes
+	observers     []store.EntityObserver // notified synchronously on entity writes
 }
 
 type attachment struct {
-	entityID    string
-	property    string
-	fileName    string
-	contentType string
-	data        []byte
+	entityID string
+	property string
+	fileName string
+	data     []byte
 }
 
 // New creates a new in-memory store.
@@ -414,8 +413,8 @@ func (m *MemStore) RenameEntity(_ context.Context, oldID, newID string) (*store.
 
 	// Update relations — clone each affected relation
 	relationsUpdated := 0
-	var toRemove []string
-	var toAdd []*entity.Relation
+	toRemove := make([]string, 0)
+	toAdd := make([]*entity.Relation, 0)
 	for key, r := range m.relations {
 		if r.From != oldID && r.To != oldID {
 			continue
@@ -524,7 +523,9 @@ func (m *MemStore) CountRelations(_ context.Context, q store.RelationQuery) (int
 
 // --- RelationWriter ---
 
-func (m *MemStore) CreateRelation(_ context.Context, from, relType, to string, data *store.RelationData) (*entity.Relation, error) {
+func (m *MemStore) CreateRelation(
+	_ context.Context, from, relType, to string, data *store.RelationData,
+) (*entity.Relation, error) {
 	for _, id := range []string{from, to} {
 		if err := validateID(id); err != nil {
 			return nil, err
@@ -570,7 +571,9 @@ func (m *MemStore) CreateRelation(_ context.Context, from, relType, to string, d
 	return r.Clone(), nil
 }
 
-func (m *MemStore) UpdateRelation(_ context.Context, from, relType, to string, data store.RelationData) (*entity.Relation, error) {
+func (m *MemStore) UpdateRelation(
+	_ context.Context, from, relType, to string, data store.RelationData,
+) (*entity.Relation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -699,7 +702,7 @@ func (m *MemStore) ListAttachments(_ context.Context, entityID string) ([]store.
 
 // --- Watcher ---
 
-func (m *MemStore) Subscribe(bufSize int) (<-chan store.Event, func()) {
+func (m *MemStore) Subscribe(bufSize int) (events <-chan store.Event, cancel func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -708,7 +711,7 @@ func (m *MemStore) Subscribe(bufSize int) (<-chan store.Event, func()) {
 	m.nextSubID++
 	m.subscribers[id] = ch
 
-	cancel := func() {
+	cancel = func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if _, ok := m.subscribers[id]; ok {

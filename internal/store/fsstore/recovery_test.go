@@ -358,7 +358,7 @@ func TestRecovery_OrphanedAttachmentAfterEntityDelete(t *testing.T) {
 func collectSearch(t *testing.T, searcher search.Searcher, q search.Query) []search.Hit {
 	t.Helper()
 	ctx := context.Background()
-	var results []search.Hit
+	results := make([]search.Hit, 0)
 	for hit, err := range searcher.Search(ctx, q) {
 		require.NoError(t, err)
 		results = append(results, hit)

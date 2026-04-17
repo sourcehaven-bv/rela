@@ -20,9 +20,9 @@ import (
 
 // Sentinel errors returned by store operations.
 var (
-	ErrNotFound      = errors.New("store: not found")
-	ErrConflict      = errors.New("store: already exists")
-	ErrHasRelations  = errors.New("store: entity has relations")
+	ErrNotFound     = errors.New("store: not found")
+	ErrConflict     = errors.New("store: already exists")
+	ErrHasRelations = errors.New("store: entity has relations")
 )
 
 // Store is the primary storage abstraction. All mutations are atomic:
