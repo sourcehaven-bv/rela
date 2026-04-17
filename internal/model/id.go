@@ -89,6 +89,11 @@ func ValidateID(s string) error {
 		return fmt.Errorf("invalid characters in entity ID: %s", s)
 	}
 
+	// Reject consecutive dashes — "--" is used as the relation key separator
+	if strings.Contains(s, "--") {
+		return fmt.Errorf("consecutive dashes not allowed in entity ID: %s", s)
+	}
+
 	// Allow alphanumeric, dash, underscore
 	valid := regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 	if !valid.MatchString(s) {
