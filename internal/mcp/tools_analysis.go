@@ -68,10 +68,9 @@ type cardinalityViolation struct {
 func (s *Server) handleAnalyzeCardinality(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	snap := s.ws.Snapshot()
 	var violations []cardinalityViolation
 
-	for relName, relDef := range snap.Meta().Relations {
+	for relName, relDef := range s.ws.Meta().Relations {
 		violations = append(violations, s.checkCardinalityForRelation(relName, relDef)...)
 	}
 
@@ -162,8 +161,7 @@ func (s *Server) handleAnalyzeProperties(
 		Errors       []string `json:"errors"`
 	}
 
-	snap := s.ws.Snapshot()
-	meta := snap.Meta()
+	meta := s.ws.Meta()
 	st := s.ws.Store()
 	var allEntityErrors []entityErrors
 
@@ -238,8 +236,7 @@ func (s *Server) handleAnalyzeProperties(
 func (s *Server) handleAnalyzeValidations(
 	ctx context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	snap := s.ws.Snapshot()
-	rules := snap.Meta().Validations
+	rules := s.ws.Meta().Validations
 	if len(rules) == 0 {
 		return mcp.NewToolResultText("No custom validation rules defined in metamodel"), nil
 	}
@@ -286,9 +283,8 @@ func (s *Server) handleAnalyzeSchema(
 
 	dataEntry := s.loadDataEntryConfig()
 
-	snap := s.ws.Snapshot()
 	counter := &schema.StoreCounter{Store: s.ws.Store()}
-	analysis := schema.Analyze(snap.Meta(), counter, dataEntry, threshold)
+	analysis := schema.Analyze(s.ws.Meta(), counter, dataEntry, threshold)
 
 	if !analysis.HasIssues() {
 		return mcp.NewToolResultText("All schema types are in use"), nil

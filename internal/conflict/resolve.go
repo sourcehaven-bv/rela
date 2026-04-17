@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -11,15 +12,15 @@ import (
 )
 
 // Resolve applies a resolution to a conflicted file and returns the resolved entity or relation.
-func Resolve(cf *ConflictedFile, resolution *Resolution) (*model.Entity, *model.Relation, error) {
+func Resolve(cf *ConflictedFile, resolution *Resolution) (*entity.Entity, *entity.Relation, error) {
 	if cf.Ours == nil || cf.Theirs == nil {
 		return nil, nil, fmt.Errorf("cannot resolve: both sides must be parsed")
 	}
 
 	// Handle entity files
 	if cf.Ours.Entity != nil && cf.Theirs.Entity != nil {
-		entity := resolveEntity(cf, resolution)
-		return entity, nil, nil
+		e := resolveEntity(cf, resolution)
+		return e, nil, nil
 	}
 
 	// Handle relation files
@@ -32,16 +33,15 @@ func Resolve(cf *ConflictedFile, resolution *Resolution) (*model.Entity, *model.
 }
 
 // resolveEntity merges two entity versions based on the resolution.
-func resolveEntity(cf *ConflictedFile, resolution *Resolution) *model.Entity {
+func resolveEntity(cf *ConflictedFile, resolution *Resolution) *entity.Entity {
 	ours := cf.Ours.Entity
 	theirs := cf.Theirs.Entity
 
 	// Start with a copy of one side as the base
-	resolved := &model.Entity{
+	resolved := &entity.Entity{
 		ID:         ours.ID,
 		Type:       ours.Type,
 		Properties: make(map[string]interface{}),
-		FilePath:   cf.Path,
 	}
 
 	// If IDs differ, prefer theirs if explicitly chosen
@@ -82,16 +82,15 @@ func resolveEntity(cf *ConflictedFile, resolution *Resolution) *model.Entity {
 }
 
 // resolveRelation merges two relation versions based on the resolution.
-func resolveRelation(cf *ConflictedFile, resolution *Resolution) *model.Relation {
+func resolveRelation(cf *ConflictedFile, resolution *Resolution) *entity.Relation {
 	ours := cf.Ours.Relation
 	theirs := cf.Theirs.Relation
 
-	resolved := &model.Relation{
+	resolved := &entity.Relation{
 		From:       ours.From,
 		Type:       ours.Type,
 		To:         ours.To,
 		Properties: make(map[string]interface{}),
-		FilePath:   cf.Path,
 	}
 
 	// Handle from/to/type differences
@@ -136,25 +135,25 @@ func resolveRelation(cf *ConflictedFile, resolution *Resolution) *model.Relation
 
 // ResolveAndWrite resolves a conflict and writes the result to disk.
 func ResolveAndWrite(cf *ConflictedFile, resolution *Resolution, meta *metamodel.Metamodel) error {
-	entity, relation, err := Resolve(cf, resolution)
+	e, relation, err := Resolve(cf, resolution)
 	if err != nil {
 		return err
 	}
 
 	fio := markdown.NewFileIO(storage.NewOsFS())
 
-	if entity != nil {
+	if e != nil {
 		// Validate entity before writing
 		if meta != nil {
-			if errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
+			if errs := meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
 				return fmt.Errorf("validation failed: %w", errs[0])
 			}
 		}
-		return fio.WriteEntity(entity, cf.Path)
+		return fio.WriteEntity(model.EntityFromDomain(e), cf.Path)
 	}
 
 	if relation != nil {
-		return fio.WriteRelation(relation, cf.Path)
+		return fio.WriteRelation(model.RelationFromDomain(relation), cf.Path)
 	}
 
 	return fmt.Errorf("nothing to write")
@@ -207,14 +206,14 @@ func AcceptTheirs(cf *ConflictedFile) *Resolution {
 }
 
 // WriteResolved writes a resolved entity or relation to disk.
-func WriteResolved(path string, entity *model.Entity, relation *model.Relation) error {
+func WriteResolved(path string, e *entity.Entity, relation *entity.Relation) error {
 	fio := markdown.NewFileIO(storage.NewOsFS())
 
-	if entity != nil {
-		return fio.WriteEntity(entity, path)
+	if e != nil {
+		return fio.WriteEntity(model.EntityFromDomain(e), path)
 	}
 	if relation != nil {
-		return fio.WriteRelation(relation, path)
+		return fio.WriteRelation(model.RelationFromDomain(relation), path)
 	}
 	return fmt.Errorf("nothing to write")
 }

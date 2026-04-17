@@ -34,7 +34,7 @@ type AnalyzeOptions struct {
 
 // FindOrphansWithScope returns entities with no relations, filtered by scope.
 func (w *Workspace) FindOrphansWithScope(opts AnalyzeOptions) []*model.Entity {
-	orphans := w.graph().FindOrphans()
+	orphans := w.Graph().FindOrphans()
 	return filterByScope(orphans, opts.Scope)
 }
 
@@ -48,7 +48,7 @@ type DuplicateGroup struct {
 
 // FindDuplicates returns groups of entities with similar titles, filtered by scope.
 func (w *Workspace) FindDuplicates(opts AnalyzeOptions) []DuplicateGroup {
-	entities := filterByScope(w.graph().AllNodes(), opts.Scope)
+	entities := filterByScope(w.Graph().AllNodes(), opts.Scope)
 
 	// Group by normalized title
 	titleGroups := make(map[string][]*model.Entity)
@@ -84,7 +84,7 @@ type GapResult struct {
 // FindGaps returns gaps in ID sequences, filtered by scope.
 // Excludes entity types with manual (string) IDs.
 func (w *Workspace) FindGaps(opts AnalyzeOptions) []GapResult {
-	meta := w.meta()
+	meta := w.Meta()
 	// Build a set of prefixes that belong to manual ID types (should be skipped)
 	stringIDPrefixes := make(map[string]bool)
 	for _, entityDef := range meta.Entities {
@@ -98,7 +98,7 @@ func (w *Workspace) FindGaps(opts AnalyzeOptions) []GapResult {
 
 	// Group IDs by prefix (only for sequential ID types)
 	prefixGroups := make(map[string][]int)
-	for _, id := range w.graph().AllIDs() {
+	for _, id := range w.Graph().AllIDs() {
 		if !inScope(id, opts.Scope) {
 			continue
 		}
@@ -157,7 +157,7 @@ type CardinalityViolation struct {
 func (w *Workspace) CheckCardinality(opts AnalyzeOptions) []CardinalityViolation {
 	var violations []CardinalityViolation
 
-	for relName, relDef := range w.meta().Relations {
+	for relName, relDef := range w.Meta().Relations {
 		violations = append(violations, w.checkMinOutgoing(relName, relDef, opts.Scope)...)
 		violations = append(violations, w.checkMaxOutgoing(relName, relDef, opts.Scope)...)
 		violations = append(violations, w.checkMinIncoming(relName, relDef, opts.Scope)...)
@@ -175,7 +175,7 @@ func (w *Workspace) checkMinOutgoing(
 	}
 	var violations []CardinalityViolation
 	for _, sourceType := range relDef.From {
-		for _, e := range filterByScope(w.graph().NodesByType(sourceType), scope) {
+		for _, e := range filterByScope(w.Graph().NodesByType(sourceType), scope) {
 			count := w.countOutgoingByType(e.ID, relName)
 			if count < *relDef.MinOutgoing {
 				violations = append(violations, CardinalityViolation{
@@ -199,7 +199,7 @@ func (w *Workspace) checkMaxOutgoing(
 	}
 	var violations []CardinalityViolation
 	for _, sourceType := range relDef.From {
-		for _, e := range filterByScope(w.graph().NodesByType(sourceType), scope) {
+		for _, e := range filterByScope(w.Graph().NodesByType(sourceType), scope) {
 			count := w.countOutgoingByType(e.ID, relName)
 			if count > *relDef.MaxOutgoing {
 				violations = append(violations, CardinalityViolation{
@@ -223,7 +223,7 @@ func (w *Workspace) checkMinIncoming(
 	}
 	var violations []CardinalityViolation
 	for _, targetType := range relDef.To {
-		for _, e := range filterByScope(w.graph().NodesByType(targetType), scope) {
+		for _, e := range filterByScope(w.Graph().NodesByType(targetType), scope) {
 			count := w.countIncomingByType(e.ID, relName)
 			if count < *relDef.MinIncoming {
 				// Use inverse relation name for the message if available
@@ -252,7 +252,7 @@ func (w *Workspace) checkMaxIncoming(
 	}
 	var violations []CardinalityViolation
 	for _, targetType := range relDef.To {
-		for _, e := range filterByScope(w.graph().NodesByType(targetType), scope) {
+		for _, e := range filterByScope(w.Graph().NodesByType(targetType), scope) {
 			count := w.countIncomingByType(e.ID, relName)
 			if count > *relDef.MaxIncoming {
 				// Use inverse relation name for the message if available
@@ -275,7 +275,7 @@ func (w *Workspace) checkMaxIncoming(
 
 func (w *Workspace) countOutgoingByType(entityID, relName string) int {
 	count := 0
-	for _, edge := range w.graph().OutgoingEdges(entityID) {
+	for _, edge := range w.Graph().OutgoingEdges(entityID) {
 		if edge.Type == relName {
 			count++
 		}
@@ -285,7 +285,7 @@ func (w *Workspace) countOutgoingByType(entityID, relName string) int {
 
 func (w *Workspace) countIncomingByType(entityID, relName string) int {
 	count := 0
-	for _, edge := range w.graph().IncomingEdges(entityID) {
+	for _, edge := range w.Graph().IncomingEdges(entityID) {
 		if edge.Type == relName {
 			count++
 		}
@@ -304,8 +304,8 @@ type PropertyError struct {
 
 // ValidateProperties validates entity properties against the metamodel, filtered by scope.
 func (w *Workspace) ValidateProperties(opts AnalyzeOptions) []PropertyError {
-	meta := w.meta()
-	entities := filterByScope(w.graph().AllNodes(), opts.Scope)
+	meta := w.Meta()
+	entities := filterByScope(w.Graph().AllNodes(), opts.Scope)
 
 	var allErrors []PropertyError
 	for _, entity := range entities {
@@ -331,9 +331,9 @@ type RelationPropertyError struct {
 
 // ValidateRelationProperties validates relation properties against the metamodel.
 func (w *Workspace) ValidateRelationProperties() []RelationPropertyError {
-	meta := w.meta()
+	meta := w.Meta()
 	var allErrors []RelationPropertyError
-	for _, rel := range w.graph().AllEdges() {
+	for _, rel := range w.Graph().AllEdges() {
 		errs := meta.ValidateRelationProperties(rel.Type, rel.Properties)
 		if len(errs) > 0 {
 			allErrors = append(allErrors, RelationPropertyError{
@@ -357,12 +357,12 @@ func (w *Workspace) newValidationService() *validation.Service {
 	if w.repo != nil {
 		root = w.repo.Paths().Root
 	}
-	return validation.New(w.meta(), w.luaServices(), root)
+	return validation.New(w.Meta(), w.luaServices(), root)
 }
 
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.
 func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
-	return w.newValidationService().Check(nodesToDomain(w.graph().AllNodes()), opts.Scope)
+	return w.newValidationService().Check(nodesToDomain(w.Graph().AllNodes()), opts.Scope)
 }
 
 // RunValidationsFiltered executes custom validation rules matching the given filters.
@@ -382,7 +382,7 @@ func (w *Workspace) RunValidationsFiltered(opts AnalyzeOptions, filters []Valida
 	}
 
 	// Run only matching rules
-	return svc.CheckRules(nodesToDomain(w.graph().AllNodes()), opts.Scope, ruleNames)
+	return svc.CheckRules(nodesToDomain(w.Graph().AllNodes()), opts.Scope, ruleNames)
 }
 
 // nodesToDomain converts a slice of legacy model.Entity to entity.Entity for

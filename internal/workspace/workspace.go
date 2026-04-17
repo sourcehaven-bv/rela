@@ -101,6 +101,7 @@ func (nopScriptExecutor) ExecuteFile(string, metamodel.ScriptContext) error {
 // fully-populated, never-mutated-by-Reload world.
 type workspaceState struct {
 	graph      *graph.Graph
+	store      store.Store // mirror of graph; in Phase 1, graph is still source of truth
 	meta       *metamodel.Metamodel
 	automation *automation.Engine // may be nil if the metamodel has no automations
 	searchIdx  *search.Index      // may be nil if index construction failed
@@ -268,6 +269,7 @@ func NewForTest(g *graph.Graph, meta *metamodel.Metamodel) *Workspace {
 	}
 	ws.state.Store(&workspaceState{
 		graph:     g,
+		store:     buildMemStore(g),
 		meta:      meta,
 		searchIdx: idx,
 	})
@@ -340,6 +342,7 @@ func newWorkspace(
 
 	ws.state.Store(&workspaceState{
 		graph:      g,
+		store:      buildMemStore(g),
 		meta:       meta,
 		automation: autoEngine,
 		searchIdx:  searchIdx,
@@ -360,32 +363,62 @@ func buildMemStore(g *graph.Graph) store.Store {
 	return s
 }
 
-// --- Accessors ---
-
-// Snapshot returns a point-in-time, read-only view of the workspace.
-// All reads from the returned Snapshot are guaranteed to come from the
-// same reload epoch. Consumers should call Snapshot() once at the top
-// of an operation and use it for all reads within that scope.
-func (w *Workspace) Snapshot() *Snapshot {
-	s := w.state.Load()
-	if s == nil {
-		return nil
+// mirrorEntityUpsert mirrors an entity write into the workspace store.
+// Called after every graph.AddNode/UpdateNode so the store stays in sync
+// with the graph. Best-effort: errors are swallowed since the graph is
+// still the source of truth in Phase 1.
+func mirrorEntityUpsert(st store.Store, e *model.Entity) {
+	if st == nil || e == nil {
+		return
 	}
-	return &Snapshot{s: s}
+	ctx := context.Background()
+	domain := model.EntityToDomain(e)
+	if _, err := st.GetEntity(ctx, e.ID); err == nil {
+		_ = st.UpdateEntity(ctx, domain)
+		return
+	}
+	_ = st.CreateEntity(ctx, domain)
 }
 
-// graph returns the in-memory graph from the current workspace state.
-// Internal to workspace; external consumers must use Snapshot().
-func (w *Workspace) graph() *graph.Graph {
+// mirrorEntityDelete removes an entity from the store after graph.RemoveNode.
+// Cascade is true because graph.RemoveNode also removes incident edges.
+func mirrorEntityDelete(st store.Store, id string) {
+	if st == nil || id == "" {
+		return
+	}
+	_, _ = st.DeleteEntity(context.Background(), id, true)
+}
+
+// mirrorRelationCreate mirrors a relation write into the store after
+// graph.AddEdge.
+func mirrorRelationCreate(st store.Store, r *model.Relation) {
+	if st == nil || r == nil {
+		return
+	}
+	_, _ = st.CreateRelation(context.Background(), r.From, r.Type, r.To, nil)
+}
+
+// mirrorRelationDelete mirrors a relation removal into the store after
+// graph.RemoveEdge.
+func mirrorRelationDelete(st store.Store, from, relType, to string) {
+	if st == nil {
+		return
+	}
+	_ = st.DeleteRelation(context.Background(), from, relType, to)
+}
+
+// --- Accessors ---
+
+// Graph returns the in-memory graph from the current workspace state.
+func (w *Workspace) Graph() *graph.Graph {
 	if s := w.state.Load(); s != nil {
 		return s.graph
 	}
 	return nil
 }
 
-// meta returns the current metamodel.
-// Internal to workspace; external consumers must use Snapshot().
-func (w *Workspace) meta() *metamodel.Metamodel {
+// Meta returns the current metamodel.
+func (w *Workspace) Meta() *metamodel.Metamodel {
 	if s := w.state.Load(); s != nil {
 		return s.meta
 	}
@@ -396,15 +429,20 @@ func (w *Workspace) meta() *metamodel.Metamodel {
 // wrapped by Workspace (e.g., FS access, Watch).
 func (w *Workspace) Repo() repository.Store { return w.repo }
 
-// Store returns the store backing this workspace.
-// If no store was provided via WithStore, a memstore is built from
-// the current graph state on each call. Production code should always
-// wire a real store via WithStore.
+// Store returns the store backing this workspace. In production, the
+// store is a mirror of the graph maintained alongside every mutation.
+// In legacy test paths that seed the graph directly after construction,
+// the store is rebuilt from the graph per call so reads see the latest
+// state.
 func (w *Workspace) Store() store.Store {
+	// External store override takes precedence (WithStore).
 	if w.store != nil {
 		return w.store
 	}
-	return buildMemStore(w.graph())
+	// Legacy fallback: rebuild from graph each call so tests that seed
+	// the graph after construction still see their seeded data.
+	// TODO: Phase 3 — delete this once tests seed through workspace.
+	return buildMemStore(w.Graph())
 }
 
 // Formatter returns the formatter service.
@@ -479,12 +517,12 @@ func (w *Workspace) DiscoverEntityTemplates(entityType string) ([]*model.EntityT
 
 // GenerateEntityTemplate generates a template file for the given entity type.
 func (w *Workspace) GenerateEntityTemplate(entityType, variant string, force bool) (bool, error) {
-	return w.repo.GenerateEntityTemplate(w.meta(), entityType, variant, force)
+	return w.repo.GenerateEntityTemplate(w.Meta(), entityType, variant, force)
 }
 
 // GenerateRelationTemplate generates a template file for the given relation type.
 func (w *Workspace) GenerateRelationTemplate(relationType string, force bool) (bool, error) {
-	return w.repo.GenerateRelationTemplate(w.meta(), relationType, force)
+	return w.repo.GenerateRelationTemplate(w.Meta(), relationType, force)
 }
 
 // FindOrphanedTempFiles returns paths of leftover .new temp files.
@@ -611,6 +649,7 @@ func (w *Workspace) Sync() (*model.SyncResult, error) {
 	w.saveCacheQuietlyFor(newGraph)
 	w.state.Store(&workspaceState{
 		graph:      newGraph,
+		store:      buildMemStore(newGraph),
 		meta:       oldState.meta,
 		automation: oldState.automation,
 		searchIdx:  newIdx,
@@ -683,6 +722,7 @@ func (w *Workspace) Reload() (*model.SyncResult, error) {
 	// newIdx} tuple — no torn reads, no out-of-order publication.
 	w.state.Store(&workspaceState{
 		graph:      newGraph,
+		store:      buildMemStore(newGraph),
 		meta:       newMeta,
 		automation: newAuto,
 		searchIdx:  newIdx,
@@ -730,6 +770,7 @@ func (w *Workspace) reloadKeepingOldMetamodel(
 	w.saveCacheQuietlyFor(newGraph)
 	w.state.Store(&workspaceState{
 		graph:      newGraph,
+		store:      buildMemStore(newGraph),
 		meta:       oldState.meta,
 		automation: oldState.automation,
 		searchIdx:  newIdx,
@@ -802,14 +843,14 @@ func (w *Workspace) removeFromIndex(id string) {
 
 // SaveCache persists the current graph to the cache file.
 func (w *Workspace) SaveCache() error {
-	if g := w.graph(); g != nil {
+	if g := w.Graph(); g != nil {
 		return w.repo.SaveCache(g)
 	}
 	return nil
 }
 
 func (w *Workspace) saveCacheQuietly() {
-	if g := w.graph(); g != nil {
+	if g := w.Graph(); g != nil {
 		w.saveCacheQuietlyFor(g)
 	}
 }
@@ -829,7 +870,7 @@ func (w *Workspace) saveCacheQuietlyFor(g *graph.Graph) {
 // ResolveEntityType resolves a type name (alias, plural) to its canonical
 // name and definition.
 func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
-	meta := w.meta()
+	meta := w.Meta()
 
 	// Exact match or alias.
 	resolved := meta.ResolveAlias(strings.TrimSpace(typeName))
@@ -939,7 +980,7 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 	if s.automation != nil {
 		autoResult = s.automation.Process(automation.Event{
 			Type:   automation.EventEntityCreated,
-			Entity: entity,
+			Entity: model.EntityToDomain(entity),
 		})
 		// Apply property changes.
 		if len(autoResult.PropertiesSet) > 0 {
@@ -1003,8 +1044,8 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 	if s.automation != nil && oldEntity != nil {
 		autoResult = s.automation.Process(automation.Event{
 			Type:      automation.EventEntityUpdated,
-			Entity:    entity,
-			OldEntity: oldEntity,
+			Entity:    model.EntityToDomain(entity),
+			OldEntity: model.EntityToDomain(oldEntity),
 		})
 		for prop, val := range autoResult.PropertiesSet {
 			entity.SetString(prop, val)
@@ -1019,6 +1060,7 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 	s.graph.AddNode(entity)
+	mirrorEntityUpsert(s.store, entity)
 
 	// Apply automation side effects (relations, entities, Lua) AFTER entity is written.
 	if autoResult != nil {
@@ -1071,6 +1113,7 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 			slog.Warn("failed to delete relation", "from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
 		}
 		g.RemoveEdge(rel.From, rel.Type, rel.To)
+		mirrorRelationDelete(s.store, rel.From, rel.Type, rel.To)
 		result.RelationsDeleted++
 	}
 	for _, rel := range outgoing {
@@ -1078,6 +1121,7 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 			slog.Warn("failed to delete relation", "from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
 		}
 		g.RemoveEdge(rel.From, rel.Type, rel.To)
+		mirrorRelationDelete(s.store, rel.From, rel.Type, rel.To)
 		result.RelationsDeleted++
 	}
 
@@ -1086,6 +1130,7 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 		return nil, fmt.Errorf("delete entity: %w", err)
 	}
 	g.RemoveNode(id)
+	mirrorEntityDelete(s.store, id)
 
 	w.saveCacheQuietly()
 	return result, nil
@@ -1103,7 +1148,7 @@ type createEntityCoreOpts struct {
 // createEntityCore creates an entity without running automations.
 // This is the shared creation logic used by CreateEntity and automation processing.
 func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpts) (*model.Entity, error) {
-	meta := w.meta()
+	meta := w.Meta()
 	entityDef, ok := meta.GetEntityDef(entityType)
 	if !ok {
 		return nil, fmt.Errorf("unknown entity type: %s", entityType)
@@ -1162,7 +1207,10 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 	if err := w.repo.WriteEntity(entity, meta); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
-	w.graph().AddNode(entity)
+	w.Graph().AddNode(entity)
+	if s := w.state.Load(); s != nil {
+		mirrorEntityUpsert(s.store, entity)
+	}
 
 	return entity, nil
 }
@@ -1179,9 +1227,9 @@ type automationSideEffects struct {
 // the target of a relation from the source entity with the given relation type.
 // Returns nil if no such entity exists.
 func (w *Workspace) findExistingRelationTarget(sourceID, relationType, targetType string) *model.Entity {
-	for _, rel := range w.graph().OutgoingEdges(sourceID) {
+	for _, rel := range w.Graph().OutgoingEdges(sourceID) {
 		if rel.Type == relationType {
-			if target, ok := w.graph().GetNode(rel.To); ok && target.Type == targetType {
+			if target, ok := w.Graph().GetNode(rel.To); ok && target.Type == targetType {
 				return target
 			}
 		}
@@ -1218,7 +1266,11 @@ func (w *Workspace) applyAutomationSideEffects(
 		w.executeLuaActions(item.trigger, oldEntity, item.autoResult.LuaToExecute, effects)
 
 		// Process relations for this trigger.
-		w.applyRelationCreations(item.trigger, item.autoResult.RelationsToCreate, effects)
+		legacyRels := make([]*model.Relation, len(item.autoResult.RelationsToCreate))
+		for i, r := range item.autoResult.RelationsToCreate {
+			legacyRels[i] = model.RelationFromDomain(r)
+		}
+		w.applyRelationCreations(item.trigger, legacyRels, effects)
 
 		// Collect warnings/errors from this automation result.
 		effects.Warnings = append(effects.Warnings, item.autoResult.Warnings...)
@@ -1246,7 +1298,7 @@ func (w *Workspace) processEntityCreations(
 	effects *automationSideEffects,
 ) []automationQueueItem {
 	var newItems []automationQueueItem
-	meta := w.meta()
+	meta := w.Meta()
 
 	for _, toCreate := range toCreateList {
 		if skip := w.handleIfExists(trigger, toCreate, effects); skip {
@@ -1294,7 +1346,7 @@ func (w *Workspace) runCreatedEntityAutomation(
 
 	newAutoResult := s.automation.Process(automation.Event{
 		Type:   automation.EventEntityCreated,
-		Entity: created,
+		Entity: model.EntityToDomain(created),
 	})
 
 	// Apply property changes from automation.
@@ -1326,12 +1378,12 @@ func (w *Workspace) applyRelationCreations(
 	relations []*model.Relation,
 	effects *automationSideEffects,
 ) {
-	meta := w.meta()
+	meta := w.Meta()
 
 	for _, rel := range relations {
 		rel.From = triggerEntity.ID
 
-		targetEntity, ok := w.graph().GetNode(rel.To)
+		targetEntity, ok := w.Graph().GetNode(rel.To)
 		if !ok {
 			effects.Errors = append(effects.Errors,
 				fmt.Sprintf("automation relation target not found: %s", rel.To))
@@ -1366,7 +1418,7 @@ func (w *Workspace) executeLuaActions(
 	// Build script context once for all actions
 	ctx := &scriptContextImpl{
 		workspace:   w,
-		meta:        w.meta(),
+		meta:        w.Meta(),
 		projectRoot: w.repo.Paths().Root,
 		entity:      model.EntityToDomain(entity),
 		oldEntity:   model.EntityToDomain(oldEntity),
@@ -1441,7 +1493,7 @@ func (w *Workspace) createTriggerRelation(
 	relationType string,
 	effects *automationSideEffects,
 ) {
-	meta := w.meta()
+	meta := w.Meta()
 
 	if err := meta.ValidateRelation(relationType, triggerEntity.Type, created.Type); err != nil {
 		effects.Errors = append(effects.Errors,
@@ -1466,7 +1518,10 @@ func (w *Workspace) writeRelationCore(rel *model.Relation) error {
 	if err := w.repo.WriteRelation(rel); err != nil {
 		return fmt.Errorf("write relation: %w", err)
 	}
-	w.graph().AddEdge(rel)
+	w.Graph().AddEdge(rel)
+	if s := w.state.Load(); s != nil {
+		mirrorRelationCreate(s.store, rel)
+	}
 	return nil
 }
 
@@ -1537,7 +1592,7 @@ func (w *Workspace) CreateRelation(from, relType, to string, opts ...CreateRelat
 
 // UpdateRelation updates properties on an existing relation.
 func (w *Workspace) UpdateRelation(from, relType, to string, opts CreateRelationOptions) (*model.Relation, error) {
-	rel, exists := w.graph().GetEdge(from, relType, to)
+	rel, exists := w.Graph().GetEdge(from, relType, to)
 	if !exists {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", from, relType, to)
 	}
@@ -1566,7 +1621,10 @@ func (w *Workspace) DeleteRelation(from, relType, to string) error {
 	if err := w.repo.DeleteRelation(from, relType, to); err != nil {
 		return fmt.Errorf("delete relation: %w", err)
 	}
-	w.graph().RemoveEdge(from, relType, to)
+	w.Graph().RemoveEdge(from, relType, to)
+	if s := w.state.Load(); s != nil {
+		mirrorRelationDelete(s.store, from, relType, to)
+	}
 	w.saveCacheQuietly()
 	return nil
 }
@@ -1578,7 +1636,7 @@ func (w *Workspace) DeleteRelation(from, relType, to string) error {
 // FormatEntity checks if an entity file needs formatting and optionally writes
 // the formatted version. Returns true if the file was (or would be) modified.
 func (w *Workspace) FormatEntity(entity *model.Entity, dryRun bool) (bool, error) {
-	meta := w.meta()
+	meta := w.Meta()
 	// Get property order from metamodel
 	var propertyOrder []string
 	if entityDef, ok := meta.GetEntityDef(entity.Type); ok {
@@ -1805,6 +1863,7 @@ func (w *Workspace) Close() error {
 	// touching the closed index.
 	if s != nil {
 		w.state.Store(&workspaceState{
+			store:      s.store,
 			meta:       s.meta,
 			automation: s.automation,
 			searchIdx:  nil,

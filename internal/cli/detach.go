@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 var detachCmd = &cobra.Command{
@@ -127,7 +128,7 @@ Examples:
 		}
 
 		// Write through workspace (validates, persists, updates graph+cache).
-		if _, err := ws.UpdateEntity(entity, oldEntity); err != nil {
+		if _, err := ws.UpdateEntity(model.EntityFromDomain(entity), model.EntityFromDomain(oldEntity)); err != nil {
 			return fmt.Errorf("failed to update entity: %w", err)
 		}
 

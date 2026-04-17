@@ -4,10 +4,10 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-func toRecord(e *model.Entity) Record {
+func toRecord(e *entity.Entity) Record {
 	return Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
 }
 
@@ -34,7 +34,7 @@ func TestMatchString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"title": tt.value},
@@ -90,7 +90,7 @@ func TestMatchDate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"valid_until": tt.value},
@@ -144,7 +144,7 @@ func TestMatchInteger(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"score": tt.value},
@@ -193,7 +193,7 @@ func TestMatchBoolean(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"archived": tt.value},
@@ -243,7 +243,7 @@ func TestMatchEnum(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"status": tt.value},
@@ -275,7 +275,7 @@ func TestMatchNilValue(t *testing.T) {
 	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}
 	mm := &metamodel.Metamodel{}
 
-	entity := &model.Entity{
+	entity := &entity.Entity{
 		ID:         "TEST-001",
 		Type:       "test",
 		Properties: map[string]interface{}{},
@@ -409,7 +409,7 @@ func TestMatchMissingProperty(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Entity with no properties set (missing property)
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{},
@@ -500,7 +500,7 @@ func TestMatchEmptyStringProperty(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Entity with empty string property value
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:   "TEST-001",
 				Type: "test",
 				Properties: map[string]interface{}{
@@ -540,7 +540,7 @@ func TestMatchAllAND(t *testing.T) {
 		},
 	}
 
-	entity := &model.Entity{
+	entity := &entity.Entity{
 		ID:   "TEST-001",
 		Type: "test",
 		Properties: map[string]interface{}{
@@ -611,7 +611,7 @@ func TestOperatorValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"title": "test", "date": "2025-01-01", "flag": true, "status": "a"},
@@ -659,7 +659,7 @@ func TestMatchEnumLegacy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{tt.propType: tt.value},
@@ -699,7 +699,7 @@ func TestMatchEnumLegacyWithCustomType(t *testing.T) {
 		},
 	}
 
-	entity := &model.Entity{
+	entity := &entity.Entity{
 		ID:         "TEST-001",
 		Type:       "test",
 		Properties: map[string]interface{}{"status": "open"},
@@ -751,7 +751,7 @@ func TestMatchStringEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"title": tt.value},
@@ -804,7 +804,7 @@ func TestMatchBooleanEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"archived": tt.value},
@@ -862,7 +862,7 @@ func TestMatchEnumEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"status": tt.value},
@@ -900,7 +900,7 @@ func TestMatchCustomType(t *testing.T) {
 		},
 	}
 
-	entity := &model.Entity{
+	entity := &entity.Entity{
 		ID:         "TEST-001",
 		Type:       "test",
 		Properties: map[string]interface{}{"risk": "high"},
@@ -940,7 +940,7 @@ func TestMatchCustomType(t *testing.T) {
 func TestMatchUnknownTypeFallback(t *testing.T) {
 	mm := &metamodel.Metamodel{}
 
-	entity := &model.Entity{
+	entity := &entity.Entity{
 		ID:         "TEST-001",
 		Type:       "test",
 		Properties: map[string]interface{}{"unknown_prop": "some value"},
@@ -978,7 +978,7 @@ func TestMatchAllUnknownProperty(t *testing.T) {
 		},
 	}
 
-	entity := &model.Entity{
+	entity := &entity.Entity{
 		ID:   "TEST-001",
 		Type: "test",
 		Properties: map[string]interface{}{
@@ -1024,7 +1024,7 @@ func TestMatchFuzzy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"id": tt.value},
@@ -1090,7 +1090,7 @@ func TestMatchFuzzyWithWildcard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"id": tt.value},
@@ -1150,7 +1150,7 @@ func TestMatchFuzzyOperatorValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{"score": 5, "date": "2025-01-01", "flag": true, "status": "a"},
@@ -1289,7 +1289,7 @@ func TestMatchEmptyFilterValueNonStringTypes(t *testing.T) {
 				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
 			}
 
-			entity := &model.Entity{
+			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
 				Properties: map[string]interface{}{f.Property: tt.value},

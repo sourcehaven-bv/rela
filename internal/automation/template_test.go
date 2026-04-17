@@ -40,10 +40,9 @@ func TestInterpolate_EntityVariables(t *testing.T) {
 	vars := DefaultTemplateVars()
 	vars.Now = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
 
-	entity := testutil.NewEntity("T-123", "ticket").
+	entity := buildEntity(testutil.NewEntity("T-123", "ticket").
 		With("status", "in-progress").
-		With("owner", "alice").
-		Build()
+		With("owner", "alice"))
 
 	tests := []struct {
 		template string
@@ -68,15 +67,13 @@ func TestInterpolate_OldEntityVariables(t *testing.T) {
 	vars := DefaultTemplateVars()
 	vars.Now = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
 
-	oldEntity := testutil.NewEntity("T-123", "ticket").
+	oldEntity := buildEntity(testutil.NewEntity("T-123", "ticket").
 		With("status", "backlog").
-		With("owner", "bob").
-		Build()
+		With("owner", "bob"))
 
-	newEntity := testutil.NewEntity("T-123", "ticket").
+	newEntity := buildEntity(testutil.NewEntity("T-123", "ticket").
 		With("status", "in-progress").
-		With("owner", "alice").
-		Build()
+		With("owner", "alice"))
 
 	tests := []struct {
 		template string
@@ -115,7 +112,7 @@ func TestInterpolate_MixedTemplate(t *testing.T) {
 		},
 	}
 
-	entity := testutil.NewEntity("T-001", "ticket").With("title", "Fix bug").Build()
+	entity := buildEntity(testutil.NewEntity("T-001", "ticket").With("title", "Fix bug"))
 
 	template := "{{entity.id}}: {{new.title}} - assigned to {{user.name}} on {{today}}"
 	expected := "T-001: Fix bug - assigned to Alice on 2025-01-15"

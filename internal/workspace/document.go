@@ -129,7 +129,7 @@ func (w *Workspace) doRenderDocument(
 // computeDocumentHash computes a content hash for cache validation.
 // Uses the entry entity for hashing. Returns the entities and their hash.
 func (w *Workspace) computeDocumentHash(entryID string) ([]*model.Entity, string, error) {
-	entity, ok := w.graph().GetNode(entryID)
+	entity, ok := w.Graph().GetNode(entryID)
 	if !ok {
 		return nil, "", fmt.Errorf("entity %q not found", entryID)
 	}

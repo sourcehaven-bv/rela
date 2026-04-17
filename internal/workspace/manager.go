@@ -59,7 +59,7 @@ func (m *wsEntityManager) UpdateEntity(
 		return nil, &entityNotFoundError{ID: e.ID}
 	}
 
-	// Build updated model.Entity by applying entity.Entity's fields over current.
+	// Build updated entity by applying e's fields over current.
 	updated := current.Clone()
 	updated.Properties = make(map[string]interface{}, len(e.Properties))
 	for k, v := range e.Properties {
@@ -67,13 +67,13 @@ func (m *wsEntityManager) UpdateEntity(
 	}
 	updated.Content = e.Content
 
-	result, err := m.w.UpdateEntity(updated, current)
+	result, err := m.w.UpdateEntity(model.EntityFromDomain(updated), model.EntityFromDomain(current))
 	if err != nil {
 		return nil, err
 	}
 
 	return &entitymanager.UpdateResult{
-		Entity:             model.EntityToDomain(updated),
+		Entity:             updated,
 		RelationsCreated:   relationsToDomain(result.RelationsCreated),
 		EntitiesCreated:    entitiesToDomain(result.EntitiesCreated),
 		AutomationWarnings: result.AutomationWarnings,
@@ -98,7 +98,7 @@ func (m *wsEntityManager) DeleteEntity(
 	// Workspace.DeleteEntity returns only a count, not the deleted relations.
 	// We return just the deleted entity.
 	return &entitymanager.DeleteResult{
-		DeletedEntities:  []*entity.Entity{model.EntityToDomain(current)},
+		DeletedEntities:  []*entity.Entity{current},
 		DeletedRelations: nil,
 	}, nil
 }

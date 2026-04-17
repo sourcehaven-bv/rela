@@ -39,8 +39,7 @@ func (s *Server) handleTrace(
 	id = trimID(id)
 	maxDepth := request.GetInt("max_depth", 0)
 
-	snap := s.ws.Snapshot()
-	if _, ok := snap.GetEntity(id); !ok {
+	if _, err := s.ws.Store().GetEntity(ctx, id); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
@@ -70,11 +69,11 @@ func (s *Server) handleFindPath(
 	}
 	to = trimID(to)
 
-	snap := s.ws.Snapshot()
-	if _, ok := snap.GetEntity(from); !ok {
+	st := s.ws.Store()
+	if _, err := st.GetEntity(ctx, from); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("source entity not found: %s", from)), nil
 	}
-	if _, ok := snap.GetEntity(to); !ok {
+	if _, err := st.GetEntity(ctx, to); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("target entity not found: %s", to)), nil
 	}
 

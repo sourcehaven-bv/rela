@@ -80,7 +80,7 @@ type Scheduler struct {
 }
 
 // New creates a Scheduler. The metaFn returns the current metamodel; callers
-// typically pass ws.Snapshot().Meta from a workspace.Workspace.
+// typically pass ws.Meta from a workspace.Workspace.
 func New(
 	cfg *Config,
 	engine *script.Engine,

@@ -15,7 +15,7 @@ func TestWithTxCommit(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	wantTitle := "tx commit test"
-	entity := testutil.EntityFor(ws.Snapshot().Meta(), "requirement").
+	entity := testutil.EntityFor(ws.Meta(), "requirement").
 		ID("REQ-001").
 		With("title", wantTitle).
 		Build()
@@ -28,7 +28,7 @@ func TestWithTxCommit(t *testing.T) {
 	}
 
 	// Graph mutation applied.
-	got, ok := ws.Snapshot().Graph().GetNode("REQ-001")
+	got, ok := ws.Graph().GetNode("REQ-001")
 	if !ok {
 		t.Fatal("entity not in graph after successful tx")
 	}
@@ -37,7 +37,7 @@ func TestWithTxCommit(t *testing.T) {
 	}
 
 	// On-disk file present (verified by re-reading via the repo).
-	read, err := ws.Repo().ReadEntity("requirement", "REQ-001", ws.Snapshot().Meta())
+	read, err := ws.Repo().ReadEntity("requirement", "REQ-001", ws.Meta())
 	if err != nil {
 		t.Fatalf("ReadEntity failed: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestWithTxCommit(t *testing.T) {
 func TestWithTxRollback(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	entity := testutil.EntityFor(ws.Snapshot().Meta(), "requirement").
+	entity := testutil.EntityFor(ws.Meta(), "requirement").
 		ID("REQ-002").
 		With("title", "rollback test").
 		Build()
@@ -69,13 +69,13 @@ func TestWithTxRollback(t *testing.T) {
 	}
 
 	// Graph must NOT contain the entity.
-	if _, ok := ws.Snapshot().Graph().GetNode("REQ-002"); ok {
+	if _, ok := ws.Graph().GetNode("REQ-002"); ok {
 		t.Error("entity present in graph after rolled-back tx")
 	}
 
 	// On-disk file must NOT exist. ReadEntity returns an error or nil
 	// when the entity doesn't exist; either is acceptable here.
-	read, err := ws.Repo().ReadEntity("requirement", "REQ-002", ws.Snapshot().Meta())
+	read, err := ws.Repo().ReadEntity("requirement", "REQ-002", ws.Meta())
 	if err == nil && read != nil {
 		t.Error("entity present on disk after rolled-back tx")
 	}
@@ -110,7 +110,7 @@ func TestWithTxMixedOps(t *testing.T) {
 	// delete REQ-A (which has an outgoing edge to REQ-B).
 	// Expected: REQ-A gone, REQ-A's edge gone, REQ-B and REQ-C present,
 	// REQ-C --depends-on--> REQ-B present.
-	thirdEntity := testutil.EntityFor(ws.Snapshot().Meta(), "requirement").
+	thirdEntity := testutil.EntityFor(ws.Meta(), "requirement").
 		ID("REQ-C").
 		With("title", "third").
 		Build()
@@ -132,7 +132,7 @@ func TestWithTxMixedOps(t *testing.T) {
 		t.Fatalf("WithTx returned error: %v", err)
 	}
 
-	g := ws.Snapshot().Graph()
+	g := ws.Graph()
 	if _, ok := g.GetNode("REQ-A"); ok {
 		t.Error("REQ-A should be deleted")
 	}
@@ -166,8 +166,8 @@ func TestWithTxRollbackMultiOp(t *testing.T) {
 
 	// In one tx: write two new entities and a relation, then return
 	// an error. Expected: nothing committed, REQ-A unchanged.
-	e1 := testutil.EntityFor(ws.Snapshot().Meta(), "requirement").ID("REQ-X").With("title", "x").Build()
-	e2 := testutil.EntityFor(ws.Snapshot().Meta(), "requirement").ID("REQ-Y").With("title", "y").Build()
+	e1 := testutil.EntityFor(ws.Meta(), "requirement").ID("REQ-X").With("title", "x").Build()
+	e2 := testutil.EntityFor(ws.Meta(), "requirement").ID("REQ-Y").With("title", "y").Build()
 	rel := model.NewRelation("REQ-X", "depends-on", "REQ-Y")
 
 	wantErr := errors.New("forced rollback in multi-op tx")
@@ -187,7 +187,7 @@ func TestWithTxRollbackMultiOp(t *testing.T) {
 		t.Fatalf("WithTx returned %v, want %v", err, wantErr)
 	}
 
-	g := ws.Snapshot().Graph()
+	g := ws.Graph()
 	if _, ok := g.GetNode("REQ-X"); ok {
 		t.Error("REQ-X must not be in graph after rolled-back tx")
 	}

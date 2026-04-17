@@ -18,7 +18,7 @@ import (
 // Production handlers never reach into the graph like this; they go
 // through App.Services().
 func graphForTest(app *App) *graph.Graph {
-	return app.ws.Snapshot().Graph()
+	return app.ws.Graph()
 }
 
 // newAppFromParts builds an App with a populated AppState snapshot for

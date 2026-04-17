@@ -1,15 +1,17 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
@@ -51,23 +53,6 @@ func testMeta() *metamodel.Metamodel {
 		Build()
 }
 
-// graphAdapter wraps *graph.Graph to implement relationQuerier for tests.
-type graphAdapter struct {
-	g *graph.Graph
-}
-
-func (a *graphAdapter) GetEntity(id string) (*model.Entity, bool) {
-	return a.g.GetNode(id)
-}
-
-func (a *graphAdapter) OutgoingRelations(entityID string) []*model.Relation {
-	return a.g.OutgoingEdges(entityID)
-}
-
-func (a *graphAdapter) IncomingRelations(entityID string) []*model.Relation {
-	return a.g.IncomingEdges(entityID)
-}
-
 // makeToolRequest creates a CallToolRequest with the given arguments.
 func makeToolRequest(args map[string]interface{}) mcp.CallToolRequest {
 	return mcp.CallToolRequest{
@@ -77,13 +62,41 @@ func makeToolRequest(args map[string]interface{}) mcp.CallToolRequest {
 	}
 }
 
-func TestConvertEntity_WithoutRelations(t *testing.T) {
-	meta := testMeta()
-	g := graph.New()
-	e := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Test requirement").WithContent("Some content").Build()
-	g.AddNode(e)
+// buildEntity returns a built entity as *entity.Entity (test helper bridging testutil's *model.Entity output).
+func buildEntity(b *testutil.EntityBuilder) *entity.Entity {
+	m := b.Build()
+	return &entity.Entity{
+		ID:         m.ID,
+		Type:       m.Type,
+		Properties: m.Properties,
+		Content:    m.Content,
+		UpdatedAt:  m.ModTime,
+	}
+}
 
-	result, err := convertEntity(e, &graphAdapter{g}, false)
+// seedEntity creates an entity in the store.
+func seedEntity(t *testing.T, st store.Store, e *entity.Entity) {
+	t.Helper()
+	if err := st.CreateEntity(context.Background(), e); err != nil {
+		t.Fatalf("CreateEntity(%s): %v", e.ID, err)
+	}
+}
+
+// seedRelation creates a relation in the store.
+func seedRelation(t *testing.T, st store.Store, from, relType, to string) {
+	t.Helper()
+	if _, err := st.CreateRelation(context.Background(), from, relType, to, nil); err != nil {
+		t.Fatalf("CreateRelation(%s--%s--%s): %v", from, relType, to, err)
+	}
+}
+
+func TestConvertStoreEntity_WithoutRelations(t *testing.T) {
+	meta := testMeta()
+	st := memstore.New()
+	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Test requirement").WithContent("Some content"))
+	seedEntity(t, st, e)
+
+	result, err := convertStoreEntity(e, st, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -110,17 +123,16 @@ func TestConvertEntity_WithoutRelations(t *testing.T) {
 	}
 }
 
-func TestConvertEntity_WithRelations(t *testing.T) {
+func TestConvertStoreEntity_WithRelations(t *testing.T) {
 	meta := testMeta()
-	g := graph.New()
-	e1 := testutil.EntityFor(meta, "requirement").ID("REQ-001").Build()
-	e2 := testutil.EntityFor(meta, "solution").ID("SOL-001").Build()
-	g.AddNode(e1)
-	g.AddNode(e2)
+	st := memstore.New()
+	e1 := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
+	e2 := buildEntity(testutil.EntityFor(meta, "solution").ID("SOL-001"))
+	seedEntity(t, st, e1)
+	seedEntity(t, st, e2)
+	seedRelation(t, st, e2.ID, "addresses", e1.ID)
 
-	g.AddEdge(testutil.NewRelation(e2.ID, "addresses", e1.ID).Build())
-
-	result, err := convertEntity(e1, &graphAdapter{g}, true)
+	result, err := convertStoreEntity(e1, st, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,18 +155,17 @@ func TestConvertEntity_WithRelations(t *testing.T) {
 	}
 }
 
-func TestConvertEntity_NoRelationsPresent(t *testing.T) {
+func TestConvertStoreEntity_NoRelationsPresent(t *testing.T) {
 	meta := testMeta()
-	g := graph.New()
-	e := testutil.EntityFor(meta, "requirement").ID("REQ-001").Build()
-	g.AddNode(e)
+	st := memstore.New()
+	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
+	seedEntity(t, st, e)
 
-	result, err := convertEntity(e, &graphAdapter{g}, true)
+	result, err := convertStoreEntity(e, st, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Even with includeRelations=true, if there are no relations, it should be nil
 	var parsed entityJSON
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
@@ -164,11 +175,11 @@ func TestConvertEntity_NoRelationsPresent(t *testing.T) {
 	}
 }
 
-func TestConvertEntitySummary(t *testing.T) {
+func TestConvertStoreEntitySummary(t *testing.T) {
 	meta := testMeta()
-	e := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "My Title").With("status", "accepted").Build()
+	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "My Title").With("status", "accepted"))
 
-	result := convertEntitySummary(e)
+	result := convertStoreEntitySummary(e)
 
 	if result["id"] != e.ID {
 		t.Errorf("expected id %s, got %v", e.ID, result["id"])
@@ -184,11 +195,11 @@ func TestConvertEntitySummary(t *testing.T) {
 	}
 }
 
-func TestConvertEntitySummary_NoTitleNoStatus(t *testing.T) {
+func TestConvertStoreEntitySummary_NoTitleNoStatus(t *testing.T) {
 	meta := testMeta()
-	e := testutil.EntityFor(meta, "requirement").ID("REQ-002").Without("title").Without("status").Build()
+	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-002").Without("title").Without("status"))
 
-	result := convertEntitySummary(e)
+	result := convertStoreEntitySummary(e)
 
 	if result["id"] != e.ID {
 		t.Errorf("expected id %s, got %v", e.ID, result["id"])
@@ -201,10 +212,16 @@ func TestConvertEntitySummary_NoTitleNoStatus(t *testing.T) {
 	}
 }
 
-func TestConvertRelation(t *testing.T) {
-	r := testutil.NewRelation("SOL-001", "addresses", "REQ-001").WithProperty("rationale", "because").WithContent("Relation content").Build()
+func TestConvertStoreRelation(t *testing.T) {
+	r := &entity.Relation{
+		From:       "SOL-001",
+		Type:       "addresses",
+		To:         "REQ-001",
+		Properties: map[string]interface{}{"rationale": "because"},
+		Content:    "Relation content",
+	}
 
-	result, err := convertRelation(r)
+	result, err := convertStoreRelation(r)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -228,6 +245,27 @@ func TestConvertRelation(t *testing.T) {
 	}
 	if parsed.Properties["rationale"] != r.Properties["rationale"] {
 		t.Errorf("expected property rationale=%v, got %v", r.Properties["rationale"], parsed.Properties["rationale"])
+	}
+}
+
+func TestConvertStoreRelation_NoProperties(t *testing.T) {
+	r := &entity.Relation{From: "SOL-001", Type: "addresses", To: "REQ-001"}
+
+	result, err := convertStoreRelation(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var parsed relationJSON
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+
+	if parsed.From != r.From {
+		t.Errorf("expected from %s, got %s", r.From, parsed.From)
+	}
+	if parsed.Content != "" {
+		t.Errorf("expected empty content, got %s", parsed.Content)
 	}
 }
 
@@ -328,28 +366,28 @@ func TestConvertPathSteps_Empty(t *testing.T) {
 	}
 }
 
-func TestBuildRelations_NoEdges(t *testing.T) {
+func TestBuildStoreRelations_NoEdges(t *testing.T) {
 	meta := testMeta()
-	g := graph.New()
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
+	st := memstore.New()
+	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
+	seedEntity(t, st, e)
 
-	rels := buildRelations("REQ-001", &graphAdapter{g})
+	rels := buildStoreRelations(e.ID, st)
 	if rels != nil {
 		t.Error("expected nil relations for entity with no edges")
 	}
 }
 
-func TestBuildRelations_OutgoingOnly(t *testing.T) {
+func TestBuildStoreRelations_OutgoingOnly(t *testing.T) {
 	meta := testMeta()
-	g := graph.New()
-	sol := testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Solution").Build()
-	req := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Requirement").Build()
-	g.AddNode(sol)
-	g.AddNode(req)
+	st := memstore.New()
+	sol := buildEntity(testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Solution"))
+	req := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Requirement"))
+	seedEntity(t, st, sol)
+	seedEntity(t, st, req)
+	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	g.AddEdge(testutil.NewRelation(sol.ID, "addresses", req.ID).Build())
-
-	rels := buildRelations(sol.ID, &graphAdapter{g})
+	rels := buildStoreRelations(sol.ID, st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -367,17 +405,16 @@ func TestBuildRelations_OutgoingOnly(t *testing.T) {
 	}
 }
 
-func TestBuildRelations_IncomingOnly(t *testing.T) {
+func TestBuildStoreRelations_IncomingOnly(t *testing.T) {
 	meta := testMeta()
-	g := graph.New()
-	req := testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Requirement").Build()
-	sol := testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Solution").Build()
-	g.AddNode(req)
-	g.AddNode(sol)
+	st := memstore.New()
+	req := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Requirement"))
+	sol := buildEntity(testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Solution"))
+	seedEntity(t, st, req)
+	seedEntity(t, st, sol)
+	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	g.AddEdge(testutil.NewRelation(sol.ID, "addresses", req.ID).Build())
-
-	rels := buildRelations(req.ID, &graphAdapter{g})
+	rels := buildStoreRelations(req.ID, st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -392,17 +429,16 @@ func TestBuildRelations_IncomingOnly(t *testing.T) {
 	}
 }
 
-func TestBuildRelations_BothDirections(t *testing.T) {
+func TestBuildStoreRelations_BothDirections(t *testing.T) {
 	meta := testMeta()
-	g := graph.New()
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Req").Build())
-	g.AddNode(testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Sol").Build())
-	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Dec").Build())
+	st := memstore.New()
+	seedEntity(t, st, buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Req")))
+	seedEntity(t, st, buildEntity(testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Sol")))
+	seedEntity(t, st, buildEntity(testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Dec")))
+	seedRelation(t, st, "SOL-001", "addresses", "REQ-001")
+	seedRelation(t, st, "REQ-001", "motivates", "DEC-001")
 
-	g.AddEdge(testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build())
-	g.AddEdge(testutil.NewRelation("REQ-001", "motivates", "DEC-001").Build())
-
-	rels := buildRelations("REQ-001", &graphAdapter{g})
+	rels := buildStoreRelations("REQ-001", st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -420,51 +456,13 @@ func TestBuildRelations_BothDirections(t *testing.T) {
 	}
 }
 
-func TestConvertEntitiesList(t *testing.T) {
-	meta := testMeta()
-	entities := []*model.Entity{
-		testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "First").With("status", "draft").Build(),
-		testutil.EntityFor(meta, "requirement").ID("REQ-002").With("title", "Second").Build(),
+func TestConvertStoreRelationsList(t *testing.T) {
+	relations := []*entity.Relation{
+		{From: "SOL-001", Type: "addresses", To: "REQ-001", Properties: map[string]interface{}{"weight": "high"}},
+		{From: "CMP-001", Type: "implements", To: "SOL-001"},
 	}
 
-	result, err := convertEntitiesList(entities)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	var parsed []map[string]interface{}
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		t.Fatalf("failed to parse JSON: %v", err)
-	}
-
-	if len(parsed) != 2 {
-		t.Fatalf("expected 2 entities, got %d", len(parsed))
-	}
-	if parsed[0]["id"] != "REQ-001" {
-		t.Errorf("expected first entity ID REQ-001, got %v", parsed[0]["id"])
-	}
-	if parsed[1]["id"] != "REQ-002" {
-		t.Errorf("expected second entity ID REQ-002, got %v", parsed[1]["id"])
-	}
-}
-
-func TestConvertEntitiesList_Empty(t *testing.T) {
-	result, err := convertEntitiesList([]*model.Entity{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "[]") {
-		t.Errorf("expected empty array, got %s", result)
-	}
-}
-
-func TestConvertRelationsList(t *testing.T) {
-	relations := []*model.Relation{
-		testutil.NewRelation("SOL-001", "addresses", "REQ-001").WithProperty("weight", "high").Build(),
-		testutil.NewRelation("CMP-001", "implements", "SOL-001").Build(),
-	}
-
-	result, err := convertRelationsList(relations)
+	result, err := convertStoreRelationsList(relations)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -488,8 +486,8 @@ func TestConvertRelationsList(t *testing.T) {
 	}
 }
 
-func TestConvertRelationsList_Empty(t *testing.T) {
-	result, err := convertRelationsList([]*model.Relation{})
+func TestConvertStoreRelationsList_Empty(t *testing.T) {
+	result, err := convertStoreRelationsList([]*entity.Relation{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -498,41 +496,18 @@ func TestConvertRelationsList_Empty(t *testing.T) {
 	}
 }
 
-func TestSortEntitiesByID(t *testing.T) {
-	meta := testMeta()
-	entities := []*model.Entity{
-		testutil.EntityFor(meta, "requirement").ID("REQ-003").Build(),
-		testutil.EntityFor(meta, "requirement").ID("REQ-001").Build(),
-		testutil.EntityFor(meta, "requirement").ID("REQ-002").Build(),
+func TestSortStoreRelations(t *testing.T) {
+	relations := []*entity.Relation{
+		{From: "SOL-001", Type: "implements", To: "REQ-001"},
+		{From: "SOL-001", Type: "addresses", To: "REQ-001"},
+		{From: "CMP-001", Type: "implements", To: "SOL-001"},
 	}
 
-	sortEntitiesByID(entities)
+	sortStoreRelations(relations)
 
-	if entities[0].ID != "REQ-001" {
-		t.Errorf("expected first REQ-001, got %s", entities[0].ID)
-	}
-	if entities[1].ID != "REQ-002" {
-		t.Errorf("expected second REQ-002, got %s", entities[1].ID)
-	}
-	if entities[2].ID != "REQ-003" {
-		t.Errorf("expected third REQ-003, got %s", entities[2].ID)
-	}
-}
-
-func TestSortRelations(t *testing.T) {
-	relations := []*model.Relation{
-		testutil.NewRelation("SOL-001", "implements", "REQ-001").Build(),
-		testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build(),
-		testutil.NewRelation("CMP-001", "implements", "SOL-001").Build(),
-	}
-
-	sortRelations(relations)
-
-	// CMP-001 < SOL-001 by From
 	if relations[0].From != "CMP-001" {
 		t.Errorf("expected first from CMP-001, got %s", relations[0].From)
 	}
-	// SOL-001/addresses < SOL-001/implements by Type
 	if relations[1].Type != "addresses" {
 		t.Errorf("expected second type addresses, got %s", relations[1].Type)
 	}
@@ -541,13 +516,13 @@ func TestSortRelations(t *testing.T) {
 	}
 }
 
-func TestSortRelations_ByTo(t *testing.T) {
-	relations := []*model.Relation{
-		testutil.NewRelation("SOL-001", "addresses", "REQ-002").Build(),
-		testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build(),
+func TestSortStoreRelations_ByTo(t *testing.T) {
+	relations := []*entity.Relation{
+		{From: "SOL-001", Type: "addresses", To: "REQ-002"},
+		{From: "SOL-001", Type: "addresses", To: "REQ-001"},
 	}
 
-	sortRelations(relations)
+	sortStoreRelations(relations)
 
 	if relations[0].To != "REQ-001" {
 		t.Errorf("expected first to REQ-001, got %s", relations[0].To)
@@ -555,6 +530,11 @@ func TestSortRelations_ByTo(t *testing.T) {
 	if relations[1].To != "REQ-002" {
 		t.Errorf("expected second to REQ-002, got %s", relations[1].To)
 	}
+}
+
+func TestSortStoreRelations_Empty(_ *testing.T) {
+	var relations []*entity.Relation
+	sortStoreRelations(relations)
 }
 
 func TestMarshalJSON(t *testing.T) {
@@ -576,60 +556,8 @@ func TestMarshalJSON_Indented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should be indented with 2 spaces
 	if !strings.Contains(result, "  ") {
 		t.Errorf("expected indented JSON, got %s", result)
-	}
-}
-
-func TestCountEdgesByType(t *testing.T) {
-	edges := []*model.Relation{
-		testutil.NewRelation("A", "addresses", "B").Build(),
-		testutil.NewRelation("A", "implements", "C").Build(),
-		testutil.NewRelation("A", "addresses", "D").Build(),
-	}
-
-	count := countEdgesByType(edges, "addresses")
-	if count != 2 {
-		t.Errorf("expected 2 addresses edges, got %d", count)
-	}
-
-	count = countEdgesByType(edges, "implements")
-	if count != 1 {
-		t.Errorf("expected 1 implements edge, got %d", count)
-	}
-
-	count = countEdgesByType(edges, "nonexistent")
-	if count != 0 {
-		t.Errorf("expected 0 nonexistent edges, got %d", count)
-	}
-}
-
-func TestCountEdgesByType_Empty(t *testing.T) {
-	count := countEdgesByType(nil, "addresses")
-	if count != 0 {
-		t.Errorf("expected 0 for nil edges, got %d", count)
-	}
-}
-
-func TestConvertRelation_NoProperties(t *testing.T) {
-	r := testutil.NewRelation("SOL-001", "addresses", "REQ-001").Build()
-
-	result, err := convertRelation(r)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	var parsed relationJSON
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		t.Fatalf("failed to parse JSON: %v", err)
-	}
-
-	if parsed.From != r.From {
-		t.Errorf("expected from %s, got %s", r.From, parsed.From)
-	}
-	if parsed.Content != "" {
-		t.Errorf("expected empty content, got %s", parsed.Content)
 	}
 }
 
@@ -684,13 +612,13 @@ func TestConvertTraceResult_DeepNesting(t *testing.T) {
 	}
 }
 
-func TestConvertEntity_WithProperties(t *testing.T) {
+func TestConvertStoreEntity_WithProperties(t *testing.T) {
 	meta := testMeta()
-	g := graph.New()
-	e := testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high").Build()
-	g.AddNode(e)
+	st := memstore.New()
+	e := buildEntity(testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high"))
+	seedEntity(t, st, e)
 
-	result, err := convertEntity(e, &graphAdapter{g}, false)
+	result, err := convertStoreEntity(e, st, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -704,36 +632,6 @@ func TestConvertEntity_WithProperties(t *testing.T) {
 	if !strings.Contains(result, `"Use Go"`) {
 		t.Error("expected JSON to contain title")
 	}
-}
-
-func TestSortEntitiesByID_AlreadySorted(t *testing.T) {
-	meta := testMeta()
-	entities := []*model.Entity{
-		testutil.EntityFor(meta, "test").ID("A-001").Build(),
-		testutil.EntityFor(meta, "test").ID("B-001").Build(),
-		testutil.EntityFor(meta, "test").ID("C-001").Build(),
-	}
-
-	sortEntitiesByID(entities)
-
-	if entities[0].ID != "A-001" {
-		t.Errorf("expected first A-001, got %s", entities[0].ID)
-	}
-	if entities[2].ID != "C-001" {
-		t.Errorf("expected last C-001, got %s", entities[2].ID)
-	}
-}
-
-func TestSortEntitiesByID_Empty(_ *testing.T) {
-	var entities []*model.Entity
-	// Should not panic
-	sortEntitiesByID(entities)
-}
-
-func TestSortRelations_Empty(_ *testing.T) {
-	var relations []*model.Relation
-	// Should not panic
-	sortRelations(relations)
 }
 
 func TestExtractProperties_MapArgument(t *testing.T) {

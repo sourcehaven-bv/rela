@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // TestMatchAll_MalformedEntityData verifies that filtering handles malformed entity data gracefully.
@@ -22,7 +22,7 @@ func TestMatchAll_MalformedEntityData(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		entity      *model.Entity
+		entity      *entity.Entity
 		filterExpr  string
 		wantMatch   bool
 		wantErr     bool
@@ -30,7 +30,7 @@ func TestMatchAll_MalformedEntityData(t *testing.T) {
 	}{
 		{
 			name: "valid entity matches filter",
-			entity: &model.Entity{
+			entity: &entity.Entity{
 				ID:   "CTRL-001",
 				Type: "control",
 				Properties: map[string]interface{}{
@@ -45,7 +45,7 @@ func TestMatchAll_MalformedEntityData(t *testing.T) {
 		},
 		{
 			name: "valid entity does not match filter",
-			entity: &model.Entity{
+			entity: &entity.Entity{
 				ID:   "CTRL-002",
 				Type: "control",
 				Properties: map[string]interface{}{
@@ -60,7 +60,7 @@ func TestMatchAll_MalformedEntityData(t *testing.T) {
 		},
 		{
 			name: "malformed integer - string where int expected",
-			entity: &model.Entity{
+			entity: &entity.Entity{
 				ID:   "CTRL-BAD",
 				Type: "control",
 				Properties: map[string]interface{}{
@@ -76,7 +76,7 @@ func TestMatchAll_MalformedEntityData(t *testing.T) {
 		},
 		{
 			name: "malformed integer - array where int expected",
-			entity: &model.Entity{
+			entity: &entity.Entity{
 				ID:   "CTRL-BAD2",
 				Type: "control",
 				Properties: map[string]interface{}{
@@ -135,7 +135,7 @@ func TestMatchAll_MixedValidAndMalformedEntities(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{
 			ID:   "CTRL-001",
 			Type: "control",
@@ -171,7 +171,7 @@ func TestMatchAll_MixedValidAndMalformedEntities(t *testing.T) {
 	}
 
 	// Simulate what the list command should do: filter entities, skipping malformed ones
-	var filtered []*model.Entity
+	var filtered []*entity.Entity
 	var skipped []string
 
 	for _, e := range entities {

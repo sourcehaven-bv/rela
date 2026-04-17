@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -199,7 +199,7 @@ func isRelationFile(path string) bool {
 }
 
 // docToEntity converts a parsed document to an entity.
-func docToEntity(doc *markdown.Document, path string, meta *metamodel.Metamodel, _ *markdown.FileIO) *model.Entity {
+func docToEntity(doc *markdown.Document, _ string, meta *metamodel.Metamodel, _ *markdown.FileIO) *entity.Entity {
 	id := doc.GetString("id")
 	entityType := doc.GetString("type")
 
@@ -211,31 +211,29 @@ func docToEntity(doc *markdown.Document, path string, meta *metamodel.Metamodel,
 		entityType = meta.ResolveAlias(entityType)
 	}
 
-	entity := &model.Entity{
+	e := &entity.Entity{
 		ID:         id,
 		Type:       entityType,
 		Properties: make(map[string]interface{}),
 		Content:    doc.Content,
-		FilePath:   path,
 	}
 
 	for key, value := range doc.Frontmatter {
 		if key != "id" && key != "type" {
-			entity.Properties[key] = value
+			e.Properties[key] = value
 		}
 	}
 
-	return entity
+	return e
 }
 
 // docToRelation converts a parsed document to a relation.
-func docToRelation(doc *markdown.Document, path string) *model.Relation {
-	relation := &model.Relation{
+func docToRelation(doc *markdown.Document, _ string) *entity.Relation {
+	relation := &entity.Relation{
 		From:       doc.GetString("from"),
 		Type:       doc.GetString("relation"),
 		To:         doc.GetString("to"),
 		Content:    doc.Content,
-		FilePath:   path,
 		Properties: make(map[string]interface{}),
 	}
 

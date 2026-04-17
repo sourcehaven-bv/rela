@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 var (
@@ -97,7 +99,7 @@ Examples:
 			return fmt.Errorf("no updates specified")
 		}
 
-		result, err := ws.UpdateEntity(entity, oldEntity)
+		result, err := ws.UpdateEntity(model.EntityFromDomain(entity), model.EntityFromDomain(oldEntity))
 		if err != nil {
 			return err
 		}

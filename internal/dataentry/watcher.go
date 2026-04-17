@@ -188,8 +188,7 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 		}
 	}
 
-	snap := a.ws.Snapshot()
-	newMeta := snap.Meta()
+	newMeta := a.ws.Meta()
 
 	newStyleMap := current.StyleMap
 	newStyledTypes := current.StyledTypes

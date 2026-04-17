@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -108,13 +109,12 @@ func (s *Server) handleSearchEntities(
 
 	// Search via Bleve index (returns results sorted by relevance).
 	// Fetch extra when type filtering is needed since some results may be discarded.
-	snap := s.ws.Snapshot()
 	words := strings.Fields(query)
 	fetchLimit := limit
 	if entityType != "" {
 		fetchLimit = limit * 2
 	}
-	entities, _, err := snap.Search(words, nil, fetchLimit)
+	entities, _, err := s.ws.Search(words, nil, fetchLimit)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
@@ -233,7 +233,7 @@ func (s *Server) handleUpdateEntity(
 		e.Content = content
 	}
 
-	if _, updateErr := s.ws.UpdateEntity(e, oldEntity); updateErr != nil {
+	if _, updateErr := s.ws.UpdateEntity(model.EntityFromDomain(e), model.EntityFromDomain(oldEntity)); updateErr != nil {
 		return mcp.NewToolResultError(updateErr.Error()), nil
 	}
 

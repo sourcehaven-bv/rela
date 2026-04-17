@@ -362,7 +362,7 @@ func TestHandleListRelations_NoMatch(t *testing.T) {
 func TestHandleListRelations_Pagination(t *testing.T) {
 	s := makeTestServer(t)
 	// Add another relation for pagination testing
-	s.ws.Snapshot().Graph().AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-002").Build())
+	s.ws.Graph().AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-002").Build())
 
 	req := makeToolRequest(map[string]interface{}{"limit": float64(1)})
 	result, err := s.handleListRelations(context.Background(), req)
@@ -518,7 +518,7 @@ func TestHandleAnalyzeCardinality_WithViolation(t *testing.T) {
 	s := makeTestServer(t)
 	// Set a minimum cardinality that won't be met
 	minVal := 5
-	meta := s.ws.Snapshot().Meta()
+	meta := s.ws.Meta()
 	meta.Relations["addresses"] = metamodel.RelationDef{
 		From:        []string{"decision"},
 		To:          []string{"requirement"},
@@ -732,51 +732,6 @@ func TestResolveEntityType_Unknown(t *testing.T) {
 	_, _, err := s.resolveEntityType("nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown type")
-	}
-}
-
-func TestValidateEntity(t *testing.T) {
-	s := makeTestServer(t)
-	entity := testutil.EntityFor(s.ws.Snapshot().Meta(), "requirement").ID("REQ-001").Build()
-	result := s.validateEntity(entity)
-	if result != nil {
-		t.Error("expected no validation error for valid entity")
-	}
-}
-
-func TestFilterEntities(t *testing.T) {
-	// Create metamodel for entity creation
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"requirement": {
-				Label:    "Requirement",
-				IDPrefix: "REQ",
-				Properties: map[string]metamodel.PropertyDef{
-					"title":  {Type: "string", Required: true},
-					"status": {Type: "string"},
-				},
-			},
-		},
-	}
-
-	entities := []*model.Entity{
-		testutil.EntityFor(meta, "requirement").ID("REQ-001").With("status", "accepted").Build(),
-		testutil.EntityFor(meta, "requirement").ID("REQ-002").With("status", "draft").Build(),
-	}
-
-	filtered, err := filterEntities(entities, "status=accepted")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(filtered) != 1 {
-		t.Errorf("expected 1 filtered entity, got %d", len(filtered))
-	}
-}
-
-func TestFilterEntities_InvalidExpression(t *testing.T) {
-	_, err := filterEntities(nil, "invalid")
-	if err == nil {
-		t.Error("expected error for invalid filter expression")
 	}
 }
 

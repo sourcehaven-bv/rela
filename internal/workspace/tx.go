@@ -145,13 +145,16 @@ func (tx *Tx) DeleteRelation(from, relType, to string) error {
 // can't bail out).
 func (tx *Tx) applyGraphMutations() {
 	g := tx.base.graph
+	st := tx.base.store
 
 	// Remove edges first, then nodes.
 	for _, e := range tx.removeEdges {
 		g.RemoveEdge(e.from, e.relType, e.to)
+		mirrorRelationDelete(st, e.from, e.relType, e.to)
 	}
 	for _, id := range tx.removeNodes {
 		g.RemoveNode(id)
+		mirrorEntityDelete(st, id)
 		// Keep the search index in sync with the graph.
 		tx.ws.removeFromIndex(id)
 	}
@@ -159,10 +162,12 @@ func (tx *Tx) applyGraphMutations() {
 	// Add nodes, then edges.
 	for _, n := range tx.addNodes {
 		g.AddNode(n)
+		mirrorEntityUpsert(st, n)
 		// Keep the search index in sync with the graph.
 		tx.ws.indexEntity(n)
 	}
 	for _, r := range tx.addEdges {
 		g.AddEdge(r)
+		mirrorRelationCreate(st, r)
 	}
 }

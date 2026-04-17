@@ -29,12 +29,12 @@ type AttachResult struct {
 // The file is stored in the content-addressable attachment store and the entity is updated.
 func (w *Workspace) AttachFile(entityID, filePath, property string) (*AttachResult, error) {
 	// Get entity from graph
-	entity, ok := w.graph().GetNode(entityID)
+	entity, ok := w.Graph().GetNode(entityID)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", entityID)
 	}
 
-	meta := w.meta()
+	meta := w.Meta()
 
 	// Get entity definition
 	entityDef, ok := meta.GetEntityDef(entity.Type)
@@ -96,12 +96,12 @@ func (w *Workspace) AttachFile(entityID, filePath, property string) (*AttachResu
 // ListAttachments returns all attachments for an entity.
 func (w *Workspace) ListAttachments(entityID string) ([]AttachmentInfo, error) {
 	// Get entity from graph
-	entity, ok := w.graph().GetNode(entityID)
+	entity, ok := w.Graph().GetNode(entityID)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", entityID)
 	}
 
-	meta := w.meta()
+	meta := w.Meta()
 
 	// Get entity definition
 	entityDef, ok := meta.GetEntityDef(entity.Type)
@@ -218,9 +218,9 @@ func (w *Workspace) GCAttachments(dryRun bool) (*GCAttachmentsResult, error) {
 // collectReferencedAttachmentPaths returns all attachment paths referenced by entities.
 func (w *Workspace) collectReferencedAttachmentPaths() []string {
 	var paths []string
-	meta := w.meta()
+	meta := w.Meta()
 
-	for _, entity := range w.graph().AllNodes() {
+	for _, entity := range w.Graph().AllNodes() {
 		entityDef, ok := meta.GetEntityDef(entity.Type)
 		if !ok {
 			continue

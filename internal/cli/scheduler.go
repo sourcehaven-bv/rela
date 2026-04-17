@@ -79,7 +79,7 @@ func runScheduler(cmd *cobra.Command) error {
 		Level: slog.LevelInfo,
 	}))
 
-	metaFn := func() *metamodel.Metamodel { return schedWs.Snapshot().Meta() }
+	metaFn := func() *metamodel.Metamodel { return schedWs.Meta() }
 	s := scheduler.New(cfg, engine, schedWs, schedWs.LuaServices(), metaFn, logger)
 	return s.Run(cmd.Context())
 }

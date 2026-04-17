@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -165,8 +167,7 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
 	}
 
-	snap := ws.Snapshot()
-	meta := snap.Meta()
+	meta := ws.Meta()
 
 	// Validate config against metamodel
 	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
@@ -184,8 +185,10 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		}
 	}
 
-	g := snap.Graph()
-	slog.Info("loaded project graph", "entities", g.NodeCount(), "relations", g.EdgeCount())
+	st := ws.Store()
+	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{})
+	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})
+	slog.Info("loaded project", "entities", entCount, "relations", relCount)
 
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(&cfg, meta)

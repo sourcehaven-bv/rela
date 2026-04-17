@@ -22,7 +22,7 @@ func (w *Workspace) LuaServices() lua.Services {
 		Store:       w.Store(),
 		Manager:     w.EntityManager(),
 		Tracer:      w.Tracer(),
-		Meta:        w.meta(),
+		Meta:        w.Meta(),
 		ProjectRoot: root,
 		Sync: func() error {
 			_, err := w.Sync()
@@ -44,15 +44,15 @@ type graphTracer struct {
 var _ tracer.Tracer = (*graphTracer)(nil)
 
 func (t *graphTracer) TraceFrom(_ context.Context, id string, maxDepth int) *tracer.TraceResult {
-	return convertTraceResult(t.w.graph().TraceFrom(id, maxDepth))
+	return convertTraceResult(t.w.Graph().TraceFrom(id, maxDepth))
 }
 
 func (t *graphTracer) TraceTo(_ context.Context, id string, maxDepth int) *tracer.TraceResult {
-	return convertTraceResult(t.w.graph().TraceTo(id, maxDepth))
+	return convertTraceResult(t.w.Graph().TraceTo(id, maxDepth))
 }
 
 func (t *graphTracer) FindPath(_ context.Context, from, to string) []tracer.PathStep {
-	steps := t.w.graph().FindPath(from, to)
+	steps := t.w.Graph().FindPath(from, to)
 	if steps == nil {
 		return nil
 	}
@@ -64,7 +64,7 @@ func (t *graphTracer) FindPath(_ context.Context, from, to string) []tracer.Path
 }
 
 func (t *graphTracer) FindOrphans(_ context.Context) ([]string, error) {
-	orphans := t.w.graph().FindOrphans()
+	orphans := t.w.Graph().FindOrphans()
 	ids := make([]string, len(orphans))
 	for i, e := range orphans {
 		ids[i] = e.ID
@@ -73,7 +73,7 @@ func (t *graphTracer) FindOrphans(_ context.Context) ([]string, error) {
 }
 
 func (t *graphTracer) HasCycle(_ context.Context, startID string) bool {
-	return t.w.graph().HasCycle(startID)
+	return t.w.Graph().HasCycle(startID)
 }
 
 // Tracer returns the graph traversal service.
@@ -95,7 +95,7 @@ func (f *legacyFormatter) FormatEntity(_ context.Context, id string, dryRun bool
 	if !ok {
 		return false, nil
 	}
-	return f.w.FormatEntity(e, dryRun)
+	return f.w.FormatEntity(model.EntityFromDomain(e), dryRun)
 }
 
 func (f *legacyFormatter) FormatRelation(_ context.Context, from, relType, to string, dryRun bool) (bool, error) {
@@ -103,7 +103,7 @@ func (f *legacyFormatter) FormatRelation(_ context.Context, from, relType, to st
 	if !ok {
 		return false, nil
 	}
-	return f.w.FormatRelation(r, dryRun)
+	return f.w.FormatRelation(model.RelationFromDomain(r), dryRun)
 }
 
 // Validator returns a Validator service backed by the workspace's store and
@@ -113,7 +113,7 @@ func (w *Workspace) Validator() validator.Validator {
 	if w.repo != nil {
 		root = w.repo.Paths().Root
 	}
-	return validator.New(w.Store(), w.meta(), w.luaServices(), root)
+	return validator.New(w.Store(), w.Meta(), w.luaServices(), root)
 }
 
 // Templater returns the entity template service backed by the workspace's

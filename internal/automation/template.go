@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // TemplateVars holds variables available for template interpolation.
@@ -63,7 +63,7 @@ func GetGitUser() UserVars {
 //   - {{entity.type}} - Current entity type
 //   - {{old.<prop>}}  - Previous value of a property
 //   - {{new.<prop>}}  - New value of a property
-func Interpolate(template string, vars TemplateVars, entity, oldEntity *model.Entity) string {
+func Interpolate(template string, vars TemplateVars, entity, oldEntity *entity.Entity) string {
 	if !strings.Contains(template, "{{") {
 		return template
 	}
@@ -139,7 +139,7 @@ func InterpolateSafeOnly(template string, vars TemplateVars) string {
 }
 
 // interpolatePropertyRefs handles {{prefix.property}} patterns.
-func interpolatePropertyRefs(s, prefix string, entity *model.Entity) string {
+func interpolatePropertyRefs(s, prefix string, entity *entity.Entity) string {
 	marker := "{{" + prefix
 	if !strings.Contains(s, marker) {
 		return s
