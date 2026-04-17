@@ -467,7 +467,6 @@ func (b *MetamodelBuilder) Build() *metamodel.Metamodel {
 	return b.meta
 }
 
-
 // SimpleMetamodel returns a simple metamodel for testing with requirement and decision types.
 func SimpleMetamodel() *metamodel.Metamodel {
 	return NewMetamodel().

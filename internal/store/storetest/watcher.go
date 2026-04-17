@@ -13,8 +13,6 @@ import (
 const eventTimeout = 50 * time.Millisecond
 
 // RunWatcherTests runs event subscription conformance tests.
-//
-//nolint:funlen // subtests-as-table make this naturally long but readable
 
 func RunWatcherTests(t *testing.T, f Factory) {
 	t.Run("ReceivesEntityCreated", func(t *testing.T) {

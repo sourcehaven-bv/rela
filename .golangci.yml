@@ -294,6 +294,25 @@ issues:
         - gosec
         - errcheck
 
+    # internal/store/storetest contains reusable conformance test suites
+    # that are imported from the _test.go files of store backends. They
+    # aren't named *_test.go themselves, but they ARE test code — apply
+    # the same test-like lint relaxations.
+    - path: internal/store/storetest/
+      linters:
+        - dupl
+        - funlen
+        - gocognit
+        - gocyclo
+        - mnd
+        - lll
+        - goconst
+        - gosec
+        - errcheck
+        - thelper
+        - testifylint
+        - prealloc
+
     # Exclude lll for lines with long strings (URLs, etc.)
     - linters:
         - lll

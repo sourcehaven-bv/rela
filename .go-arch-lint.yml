@@ -6,6 +6,7 @@ allow:
 
 exclude:
   - internal/testutil
+  - internal/store/storetest
   - frontend
   - .claude
 
@@ -57,8 +58,13 @@ components:
   markdown:         { in: internal/markdown }
   filter:           { in: internal/filter }
   pattern:          { in: internal/pattern }
-  search:           { in: internal/search/** }
-  store:            { in: internal/store/** }
+  search:           { in: internal/search }
+  bleveindex:       { in: internal/search/bleveindex }
+  searchparser:     { in: internal/search/searchparser }
+  store:            { in: internal/store }
+  fsstore:          { in: internal/store/fsstore }
+  memstore:         { in: internal/store/memstore }
+  storeutil:        { in: internal/store/storeutil }
 
   # Infrastructure
   ai:               { in: internal/ai }
@@ -189,6 +195,7 @@ deps:
       - project
       - script
       - search
+      - searchparser
       - store
       - tracer
       - workspace
@@ -229,6 +236,7 @@ deps:
   # Application services
   app:
     mayDependOn:
+      - fsstore
       - metamodel
       - project
       - storage
@@ -240,14 +248,17 @@ deps:
       - config
       - dataentryconfig
       - entitymanager
+      - fsstore
       - htmlutil
       - lua
       - markdown
+      - memstore
       - metamodel
       - migration
       - project
       - rename
       - search
+      - searchparser
       - state
       - storage
       - store
@@ -275,6 +286,7 @@ deps:
       - metamodel
       - storage
       - store
+      - storeutil
   # rename: stateless helpers, no internal deps
   schema:
     mayDependOn:
@@ -359,16 +371,33 @@ deps:
     mayDependOn:
       - filter
       - store
+  bleveindex:
+    mayDependOn:
+      - search
+      - store
     canUse:
       - bleve
+  searchparser:
+    mayDependOn:
+      - filter
   store:
     mayDependOn:
-      - cache
       - metamodel
-      - search
+  fsstore:
+    mayDependOn:
+      - cache
       - storage
+      - store
+      - storeutil
     canUse:
-      - fsnotify
+      - goldmark
+  memstore:
+    mayDependOn:
+      - store
+      - storeutil
+  storeutil:
+    mayDependOn:
+      - store
 
   # Infrastructure
   # ai: pure leaf — only stdlib (net/http, log/slog, encoding/json) plus

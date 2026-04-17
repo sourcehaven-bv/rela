@@ -235,7 +235,7 @@ func (t *GenericTracer) initPathQueue(ctx context.Context, fromID string) []path
 }
 
 func (t *GenericTracer) collectNeighbors(ctx context.Context, id string) []pathNeighbor {
-	var out []pathNeighbor
+	out := make([]pathNeighbor, 0)
 	for r, err := range t.r.ListRelations(ctx, store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}) {
 		if err != nil {
 			break
