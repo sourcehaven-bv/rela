@@ -40,7 +40,7 @@ func fuzzFactory() store.Store {
 	return s
 }
 
-func searchFactory(t *testing.T) (store.Store, store.Searcher) {
+func searchFactory(t *testing.T) (store.Store, search.Searcher) {
 	t.Helper()
 	fs := storage.NewMemFS()
 	idx := search.NewLinearSearch()

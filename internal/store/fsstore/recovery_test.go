@@ -242,11 +242,11 @@ func TestRecovery_SearchIndexRebuilt(t *testing.T) {
 
 	searcher := search.New(s2, idx)
 
-	results := collectSearch(t, searcher, store.SearchQuery{Text: "authentication"})
+	results := collectSearch(t, searcher, search.Query{Text: "authentication"})
 	require.Len(t, results, 1)
 	assert.Equal(t, "REQ-1", results[0].ID)
 
-	results = collectSearch(t, searcher, store.SearchQuery{Text: "migration"})
+	results = collectSearch(t, searcher, search.Query{Text: "migration"})
 	require.Len(t, results, 1)
 	assert.Equal(t, "REQ-2", results[0].ID)
 }
@@ -355,10 +355,10 @@ func TestRecovery_OrphanedAttachmentAfterEntityDelete(t *testing.T) {
 
 // helpers
 
-func collectSearch(t *testing.T, searcher store.Searcher, q store.SearchQuery) []store.SearchHit {
+func collectSearch(t *testing.T, searcher search.Searcher, q search.Query) []search.Hit {
 	t.Helper()
 	ctx := context.Background()
-	var results []store.SearchHit
+	var results []search.Hit
 	for hit, err := range searcher.Search(ctx, q) {
 		require.NoError(t, err)
 		results = append(results, hit)

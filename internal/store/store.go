@@ -222,13 +222,6 @@ type AttachmentManager interface {
 	ListAttachments(ctx context.Context, entityID string) ([]AttachmentInfo, error)
 }
 
-// SearchHit is a minimal result from a search operation.
-type SearchHit struct {
-	ID    string
-	Type  string
-	Title string
-}
-
 // Formatter checks whether an entity/relation's persisted representation
 // is up to date with its canonical format. Optionally applies the format.
 //
@@ -245,16 +238,6 @@ type Formatter interface {
 	FormatRelation(ctx context.Context, from, relType, to string, dryRun bool) (changed bool, err error)
 }
 
-// Searcher provides search and filtering over entities.
-// This is NOT part of the Store interface — it is a separate query service
-// that builds its state by subscribing to store events or by wrapping a
-// SearchIndex. Smart backends (e.g. Postgres) can provide native
-// implementations; simple backends use the generic implementation from
-// the storesearch package.
-type Searcher interface {
-	Search(ctx context.Context, q SearchQuery) iter.Seq2[SearchHit, error]
-}
-
 // EntityObserver receives notifications when entities are created, updated,
 // or deleted. Stores call observers synchronously after each write.
 // Implementations must be safe for concurrent use.
@@ -269,65 +252,6 @@ type EntityObserver interface {
 	// EntityDelete is called when an entity is removed.
 	EntityDelete(id string) error
 }
-
-// SearchIndex is a pluggable full-text search index. It implements
-// EntityObserver so it can be attached to a store as a write observer,
-// and provides a Search method for querying. Implementations must be safe
-// for concurrent use. Lifecycle (construction, population on startup,
-// close) is the consumer's responsibility — the store does not manage it.
-type SearchIndex interface {
-	EntityObserver
-
-	// Search returns entity IDs matching the query text, ordered by relevance.
-	// limit ≤ 0 means no limit.
-	Search(text string, limit int) ([]string, error)
-}
-
-// SearchQuery describes a search request.
-type SearchQuery struct {
-	Text    string           // free-text search (ranked by relevance when set)
-	Types   []string         // filter by entity types
-	Filters []PropertyFilter // property-level filters
-	Sort    []SortClause     // ordering (ignored when Text is set)
-	Limit   int              // max results (0 = no limit)
-}
-
-// PropertyFilter matches entities by property value.
-type PropertyFilter struct {
-	Property string
-	Value    string
-	Op       FilterOp
-}
-
-// FilterOp defines how a property filter matches.
-type FilterOp int
-
-const (
-	FilterEq       FilterOp = iota // exact match (default)
-	FilterNe                       // not equal
-	FilterContains                 // substring match
-	FilterGt                       // greater than
-	FilterLt                       // less than
-	FilterGte                      // greater than or equal
-	FilterLte                      // less than or equal
-	FilterIn                       // value is one of a comma-separated set
-	FilterExists                   // property is set (Value ignored)
-	FilterNotExists                // property is not set (Value ignored)
-)
-
-// SortClause defines a single sort dimension.
-type SortClause struct {
-	Field     string
-	Direction SortDirection
-}
-
-// SortDirection is ascending or descending.
-type SortDirection int
-
-const (
-	SortAsc  SortDirection = iota
-	SortDesc
-)
 
 // Event represents a change that occurred in the store.
 type Event struct {

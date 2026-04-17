@@ -14,7 +14,7 @@ func factory(t *testing.T) store.Store {
 	return memstore.New()
 }
 
-func searchFactory(t *testing.T) (store.Store, store.Searcher) {
+func searchFactory(t *testing.T) (store.Store, search.Searcher) {
 	t.Helper()
 	idx := search.NewLinearSearch()
 	s := memstore.New(memstore.WithObserver(idx))

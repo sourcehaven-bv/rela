@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -8,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 var detachCmd = &cobra.Command{
@@ -36,8 +36,9 @@ Examples:
 		}
 
 		// Get entity
-		entity, ok := ws.GetEntity(entityID)
-		if !ok {
+		ctx := context.Background()
+		entity, err := ws.Store().GetEntity(ctx, entityID)
+		if err != nil {
 			return fmt.Errorf("entity not found: %s", entityID)
 		}
 
@@ -115,9 +116,6 @@ Examples:
 			return fmt.Errorf("no attachments to remove")
 		}
 
-		// Clone before mutation so workspace can diff old vs new.
-		oldEntity := entity.Clone()
-
 		// Update entity property
 		if len(remaining) == 0 {
 			delete(entity.Properties, propName)
@@ -128,7 +126,7 @@ Examples:
 		}
 
 		// Write through workspace (validates, persists, updates graph+cache).
-		if _, err := ws.UpdateEntity(model.EntityFromDomain(entity), model.EntityFromDomain(oldEntity)); err != nil {
+		if _, err := ws.EntityManager().UpdateEntity(ctx, entity); err != nil {
 			return fmt.Errorf("failed to update entity: %w", err)
 		}
 

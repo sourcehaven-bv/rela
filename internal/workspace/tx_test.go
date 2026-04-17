@@ -90,19 +90,19 @@ func TestWithTxMixedOps(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	// Seed: REQ-A and REQ-B with an edge REQ-A --depends-on--> REQ-B.
-	if _, _, err := ws.CreateEntity("requirement", CreateOptions{
+	if _, _, err := ws.createEntity("requirement", CreateOptions{
 		ID:         "REQ-A",
 		Properties: map[string]any{"title": "to be deleted"},
 	}); err != nil {
 		t.Fatalf("seed REQ-A: %v", err)
 	}
-	if _, _, err := ws.CreateEntity("requirement", CreateOptions{
+	if _, _, err := ws.createEntity("requirement", CreateOptions{
 		ID:         "REQ-B",
 		Properties: map[string]any{"title": "survivor"},
 	}); err != nil {
 		t.Fatalf("seed REQ-B: %v", err)
 	}
-	if _, err := ws.CreateRelation("REQ-A", "depends-on", "REQ-B"); err != nil {
+	if _, err := ws.createRelation("REQ-A", "depends-on", "REQ-B"); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
@@ -157,7 +157,7 @@ func TestWithTxRollbackMultiOp(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	// Seed: REQ-A exists.
-	if _, _, err := ws.CreateEntity("requirement", CreateOptions{
+	if _, _, err := ws.createEntity("requirement", CreateOptions{
 		ID:         "REQ-A",
 		Properties: map[string]any{"title": "pre-existing"},
 	}); err != nil {

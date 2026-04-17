@@ -27,7 +27,7 @@ type Services struct {
 
 	// Search runs a free-text query against the Bleve index. The
 	// words/phrases split mirrors the existing workspace.Search signature
-	// — unifying it with store.Searcher is a separate piece of work.
+	// — unifying it with search.Searcher is a separate piece of work.
 	Search SearchFunc
 
 	// Meta is the current metamodel snapshot.
@@ -47,8 +47,18 @@ func (a *App) Services() Services {
 	return Services{
 		Store:  a.ws.Store(),
 		Tracer: a.ws.Tracer(),
-		Search: a.ws.Search,
-		Meta:   a.State().Meta,
+		Search: func(words, phrases []string, limit int) ([]*model.Entity, []float64, error) {
+			entities, scores, err := a.ws.Search(words, phrases, limit)
+			if err != nil {
+				return nil, nil, err
+			}
+			out := make([]*model.Entity, len(entities))
+			for i, e := range entities {
+				out[i] = model.EntityFromDomain(e)
+			}
+			return out, scores, nil
+		},
+		Meta: a.State().Meta,
 	}
 }
 

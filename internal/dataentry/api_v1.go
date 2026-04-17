@@ -15,6 +15,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -383,23 +385,27 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	entity, _, err := a.ws.CreateEntity(typeName, workspace.CreateOptions{
-		ID:         req.ID,
-		Properties: req.Properties,
-		Content:    req.Content,
-	})
+	createResult, err := a.ws.EntityManager().CreateEntity(r.Context(),
+		&entityPkg.Entity{
+			Type:       typeName,
+			Properties: req.Properties,
+			Content:    req.Content,
+		},
+		entitymanager.CreateOptions{ID: req.ID},
+	)
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 		return
 	}
+	created := createResult.Entity
 
-	result := a.entityToV1(entity, plural, false, false)
+	result := a.entityToV1(model.EntityFromDomain(created), plural, false, false)
 
 	// Set Location header
-	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, entity.ID))
+	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, created.ID))
 
 	// Broadcast entity creation event
-	a.broker.broadcastEntityEvent("created", typeName, entity.ID)
+	a.broker.broadcastEntityEvent("created", typeName, created.ID)
 
 	writeV1JSON(w, http.StatusCreated, result)
 }
@@ -485,8 +491,6 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	oldEntity := entity.Clone()
-
 	if req.Properties != nil {
 		for k, v := range req.Properties {
 			entity.Properties[k] = v
@@ -497,7 +501,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		entity.Content = *req.Content
 	}
 
-	if _, err := a.ws.UpdateEntity(entity, oldEntity); err != nil {
+	if _, err := a.ws.EntityManager().UpdateEntity(r.Context(), model.EntityToDomain(entity)); err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 		return
 	}
@@ -523,7 +527,7 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	if _, err := a.ws.DeleteEntity(typeName, entityID, true); err != nil {
+	if _, err := a.ws.EntityManager().DeleteEntity(r.Context(), entityID, true); err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "delete_failed", "Failed to delete entity", err.Error())
 		return
 	}
@@ -667,14 +671,9 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	var opts []workspace.CreateRelationOptions
-	if len(req.Meta) > 0 {
-		opts = append(opts, workspace.CreateRelationOptions{Properties: req.Meta})
-	}
-
 	from, to := resolveRelationEndpoints(entity.ID, req.ID, req.Direction)
 
-	_, err := a.ws.CreateRelation(from, relType, to, opts...)
+	_, err := a.ws.EntityManager().CreateRelation(r.Context(), from, relType, to, entitymanager.RelationOptions{Properties: req.Meta})
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())
 		return
@@ -716,7 +715,7 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 
 	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
 
-	rel, err := a.ws.UpdateRelation(from, relType, to, workspace.CreateRelationOptions{
+	rel, err := a.ws.EntityManager().UpdateRelation(r.Context(), from, relType, to, entitymanager.RelationOptions{
 		Properties: req.Meta,
 	})
 	if err != nil {
@@ -749,7 +748,7 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 
 	from, to := resolveRelationEndpoints(entity.ID, targetID, r.URL.Query().Get("direction"))
 
-	if err := a.ws.DeleteRelation(from, relType, to); err != nil {
+	if err := a.ws.EntityManager().DeleteRelation(r.Context(), from, relType, to); err != nil {
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
 		return
 	}
@@ -791,18 +790,23 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 		props[k] = v
 	}
 
-	newEntity, _, err := a.ws.CreateEntity(typeName, workspace.CreateOptions{
-		Properties: props,
-		Content:    entity.Content,
-	})
+	cloneResult, err := a.ws.EntityManager().CreateEntity(r.Context(),
+		&entityPkg.Entity{
+			Type:       typeName,
+			Properties: props,
+			Content:    entity.Content,
+		},
+		entitymanager.CreateOptions{},
+	)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "clone_failed", "Failed to clone entity", err.Error())
 		return
 	}
+	newEntity := cloneResult.Entity
 
 	entityDef := s.Meta.Entities[typeName]
 	plural := entityDef.GetDirPlural(typeName)
-	result := a.entityToV1(newEntity, plural, false, false)
+	result := a.entityToV1(model.EntityFromDomain(newEntity), plural, false, false)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, newEntity.ID))
 	writeV1JSON(w, http.StatusCreated, result)

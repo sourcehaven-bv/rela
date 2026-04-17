@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -311,6 +312,6 @@ func FuzzPropertyValuesTypeZoo(f *testing.F, factory FuzzFactory) {
 		_ = vals
 
 		// Property filter fuzz testing is covered in search conformance tests.
-		_ = store.FilterEq
+		_ = search.FilterEq
 	})
 }

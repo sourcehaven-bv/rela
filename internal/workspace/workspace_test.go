@@ -82,7 +82,7 @@ func setupTestWorkspace(t *testing.T) *Workspace {
 // mustCreate is a test helper that creates an entity, fatally failing on error.
 func mustCreate(t *testing.T, ws *Workspace, entityType string, opts CreateOptions) {
 	t.Helper()
-	if _, _, err := ws.CreateEntity(entityType, opts); err != nil {
+	if _, _, err := ws.createEntity(entityType, opts); err != nil {
 		t.Fatalf("mustCreate(%s): %v", entityType, err)
 	}
 }
@@ -285,7 +285,7 @@ func hasPrefix(s, prefix string) bool {
 func TestCreateEntity(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	entity, result, err := ws.CreateEntity("requirement", CreateOptions{
+	entity, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "My Requirement"},
 	})
 	if err != nil {
@@ -317,7 +317,7 @@ func TestCreateEntity(t *testing.T) {
 func TestCreateEntity_WithCustomID(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	entity, _, err := ws.CreateEntity("requirement", CreateOptions{
+	entity, _, err := ws.createEntity("requirement", CreateOptions{
 		ID:         "REQ-042",
 		Properties: map[string]interface{}{"title": "Custom ID"},
 	})
@@ -332,7 +332,7 @@ func TestCreateEntity_WithCustomID(t *testing.T) {
 func TestCreateEntity_DuplicateID(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, _, err := ws.CreateEntity("requirement", CreateOptions{
+	_, _, err := ws.createEntity("requirement", CreateOptions{
 		ID:         "REQ-001",
 		Properties: map[string]interface{}{"title": "First"},
 	})
@@ -340,7 +340,7 @@ func TestCreateEntity_DuplicateID(t *testing.T) {
 		t.Fatalf("first create error = %v", err)
 	}
 
-	_, _, err = ws.CreateEntity("requirement", CreateOptions{
+	_, _, err = ws.createEntity("requirement", CreateOptions{
 		ID:         "REQ-001",
 		Properties: map[string]interface{}{"title": "Duplicate"},
 	})
@@ -353,7 +353,7 @@ func TestCreateEntity_ValidationError(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	// title is required but not provided
-	_, _, err := ws.CreateEntity("requirement", CreateOptions{})
+	_, _, err := ws.createEntity("requirement", CreateOptions{})
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
@@ -365,7 +365,7 @@ func TestCreateEntity_ValidationError(t *testing.T) {
 func TestCreateEntity_UnknownType(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, _, err := ws.CreateEntity("nonexistent", CreateOptions{})
+	_, _, err := ws.createEntity("nonexistent", CreateOptions{})
 	if err == nil {
 		t.Error("expected error for unknown entity type")
 	}
@@ -374,7 +374,7 @@ func TestCreateEntity_UnknownType(t *testing.T) {
 func TestCreateEntity_WithContent(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	entity, _, err := ws.CreateEntity("requirement", CreateOptions{
+	entity, _, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "With Body"},
 		Content:    "# Description\n\nSome content.",
 	})
@@ -391,7 +391,7 @@ func TestCreateEntity_WithContent(t *testing.T) {
 func TestUpdateEntity(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	entity, _, err := ws.CreateEntity("requirement", CreateOptions{
+	entity, _, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Original"},
 	})
 	if err != nil {
@@ -407,7 +407,7 @@ func TestUpdateEntity(t *testing.T) {
 
 	entity.SetString("title", "Updated")
 
-	result, err := ws.UpdateEntity(entity, oldEntity)
+	result, err := ws.updateEntity(entity, oldEntity)
 	if err != nil {
 		t.Fatalf("UpdateEntity() error = %v", err)
 	}
@@ -430,14 +430,14 @@ func TestUpdateEntity(t *testing.T) {
 func TestDeleteEntity_NoCascade_NoRelations(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, _, err := ws.CreateEntity("requirement", CreateOptions{
+	_, _, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "To Delete"},
 	})
 	if err != nil {
 		t.Fatalf("create error = %v", err)
 	}
 
-	result, err := ws.DeleteEntity("requirement", "REQ-001", false)
+	result, err := ws.deleteEntity("requirement", "REQ-001", false)
 	if err != nil {
 		t.Fatalf("DeleteEntity() error = %v", err)
 	}
@@ -461,19 +461,19 @@ func TestDeleteEntity_CascadeRelations(t *testing.T) {
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
 
-	_, err := ws.CreateRelation("DEC-001", "addresses", "REQ-001")
+	_, err := ws.createRelation("DEC-001", "addresses", "REQ-001")
 	if err != nil {
 		t.Fatalf("CreateRelation error = %v", err)
 	}
 
 	// Delete without cascade should fail.
-	_, err = ws.DeleteEntity("requirement", "REQ-001", false)
+	_, err = ws.deleteEntity("requirement", "REQ-001", false)
 	if !errors.Is(err, ErrHasRelations) {
 		t.Errorf("expected ErrHasRelations, got %v", err)
 	}
 
 	// Delete with cascade should work.
-	result, err := ws.DeleteEntity("requirement", "REQ-001", true)
+	result, err := ws.deleteEntity("requirement", "REQ-001", true)
 	if err != nil {
 		t.Fatalf("cascade delete error = %v", err)
 	}
@@ -485,7 +485,7 @@ func TestDeleteEntity_CascadeRelations(t *testing.T) {
 func TestDeleteEntity_NotFound(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, err := ws.DeleteEntity("requirement", "NONEXISTENT", false)
+	_, err := ws.deleteEntity("requirement", "NONEXISTENT", false)
 	if err == nil {
 		t.Error("expected error for missing entity")
 	}
@@ -507,7 +507,7 @@ func TestCreateRelation(t *testing.T) {
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
 
-	rel, err := ws.CreateRelation(decID, "addresses", reqID)
+	rel, err := ws.createRelation(decID, "addresses", reqID)
 	if err != nil {
 		t.Fatalf("CreateRelation() error = %v", err)
 	}
@@ -533,8 +533,8 @@ func TestCreateRelation_Duplicate(t *testing.T) {
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
 
-	_, _ = ws.CreateRelation("DEC-001", "addresses", "REQ-001")
-	_, err := ws.CreateRelation("DEC-001", "addresses", "REQ-001")
+	_, _ = ws.createRelation("DEC-001", "addresses", "REQ-001")
+	_, err := ws.createRelation("DEC-001", "addresses", "REQ-001")
 	if err == nil {
 		t.Error("expected error for duplicate relation")
 	}
@@ -543,7 +543,7 @@ func TestCreateRelation_Duplicate(t *testing.T) {
 func TestCreateRelation_MissingEndpoint(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, err := ws.CreateRelation("MISSING", "addresses", "ALSO-MISSING")
+	_, err := ws.createRelation("MISSING", "addresses", "ALSO-MISSING")
 	if err == nil {
 		t.Error("expected error for missing endpoints")
 	}
@@ -562,9 +562,9 @@ func TestDeleteRelation(t *testing.T) {
 		ID:         "DEC-001",
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
-	_, _ = ws.CreateRelation("DEC-001", "addresses", "REQ-001")
+	_, _ = ws.createRelation("DEC-001", "addresses", "REQ-001")
 
-	err := ws.DeleteRelation("DEC-001", "addresses", "REQ-001")
+	err := ws.deleteRelation("DEC-001", "addresses", "REQ-001")
 	if err != nil {
 		t.Fatalf("DeleteRelation() error = %v", err)
 	}
@@ -711,7 +711,7 @@ func TestConcurrentReloadStateSnapshot(t *testing.T) {
 			default:
 			}
 			writeMu.Lock()
-			_, _, err := ws.CreateEntity("requirement", CreateOptions{
+			_, _, err := ws.createEntity("requirement", CreateOptions{
 				Properties: map[string]any{"title": "writer entity"},
 			})
 			writeMu.Unlock()
@@ -767,7 +767,7 @@ func TestCreateEntity_AutomationWithIfExistsSkip(t *testing.T) {
 	ws := setupTestWorkspaceWithCreateEntityAutomation(t, "skip")
 
 	// Create a requirement - this triggers automation to create checklist.
-	req, result, err := ws.CreateEntity("requirement", CreateOptions{
+	req, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -796,7 +796,7 @@ func TestCreateEntity_AutomationWithIfExistsSkip(t *testing.T) {
 
 	// Now update the requirement to trigger automation again.
 	req.SetString("status", "approved")
-	updateResult, err := ws.UpdateEntity(req, oldReq)
+	updateResult, err := ws.updateEntity(req, oldReq)
 	if err != nil {
 		t.Fatalf("UpdateEntity error = %v", err)
 	}
@@ -820,7 +820,7 @@ func TestCreateEntity_AutomationWithIfExistsError(t *testing.T) {
 	ws := setupTestWorkspaceWithCreateEntityAutomation(t, "error")
 
 	// Create a requirement - this triggers automation to create checklist.
-	req, result, err := ws.CreateEntity("requirement", CreateOptions{
+	req, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -845,7 +845,7 @@ func TestCreateEntity_AutomationWithIfExistsError(t *testing.T) {
 	// Update the same requirement to trigger automation again.
 	// With if_exists:error, this should produce an error.
 	req.SetString("status", "approved")
-	updateResult, err := ws.UpdateEntity(req, oldReq)
+	updateResult, err := ws.updateEntity(req, oldReq)
 	if err != nil {
 		t.Fatalf("UpdateEntity error = %v", err)
 	}
@@ -879,7 +879,7 @@ func TestCreateEntity_AutomationWithIfExistsReplace(t *testing.T) {
 	ws := setupTestWorkspaceWithCreateEntityAutomation(t, "replace")
 
 	// Create a requirement - this triggers automation to create checklist.
-	req, result, err := ws.CreateEntity("requirement", CreateOptions{
+	req, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -900,7 +900,7 @@ func TestCreateEntity_AutomationWithIfExistsReplace(t *testing.T) {
 
 	// Now update the requirement to trigger automation again.
 	req.SetString("status", "approved")
-	updateResult, err := ws.UpdateEntity(req, oldReq)
+	updateResult, err := ws.updateEntity(req, oldReq)
 	if err != nil {
 		t.Fatalf("UpdateEntity error = %v", err)
 	}
@@ -936,7 +936,7 @@ func TestCreateEntity_AutomationWithIfExistsUnknown(t *testing.T) {
 	ws := setupTestWorkspaceWithCreateEntityAutomation(t, "invalid_value")
 
 	// Create a requirement - this triggers automation to create checklist.
-	req, result, err := ws.CreateEntity("requirement", CreateOptions{
+	req, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -957,7 +957,7 @@ func TestCreateEntity_AutomationWithIfExistsUnknown(t *testing.T) {
 	// Update the same requirement to trigger automation again.
 	// With unknown if_exists value, this should produce an error.
 	req.SetString("status", "approved")
-	updateResult, err := ws.UpdateEntity(req, oldReq)
+	updateResult, err := ws.updateEntity(req, oldReq)
 	if err != nil {
 		t.Fatalf("UpdateEntity error = %v", err)
 	}
@@ -1061,7 +1061,7 @@ status: pending
 		[]byte(enhancementTemplate), 0o644)
 
 	// Create a requirement with kind=enhancement - triggers automation with template.
-	_, result, err := ws.CreateEntity("requirement", CreateOptions{
+	_, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{
 			"title": "Test Req",
 			"kind":  "enhancement",
@@ -1093,7 +1093,7 @@ func TestCreateEntity_AutomationWithMissingTemplate(t *testing.T) {
 	ws, _, _ := setupTestWorkspaceWithTemplateAutomation(t)
 
 	// Create a requirement with kind=nonexistent - template doesn't exist.
-	_, result, err := ws.CreateEntity("requirement", CreateOptions{
+	_, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{
 			"title": "Test Req",
 			"kind":  "nonexistent",
@@ -1128,7 +1128,7 @@ status: open
 		[]byte(defaultTemplate), 0o644)
 
 	// Create a requirement with empty kind - should use default template.
-	_, result, err := ws.CreateEntity("requirement", CreateOptions{
+	_, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{
 			"title": "Test Req",
 			// kind not set - empty string
@@ -1265,7 +1265,7 @@ automations:
 	g := ws.Graph()
 
 	// Create starter entity - this should trigger a chain of automations.
-	_, result, err := ws.CreateEntity("starter", CreateOptions{
+	_, result, err := ws.createEntity("starter", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Starter"},
 	})
 	if err != nil {
@@ -1370,7 +1370,7 @@ automations:
 	g := ws.Graph()
 
 	// Create alpha - should trigger beta creation, which triggers gamma creation.
-	_, result, err := ws.CreateEntity("alpha", CreateOptions{
+	_, result, err := ws.createEntity("alpha", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Alpha"},
 	})
 	if err != nil {
@@ -1417,7 +1417,7 @@ func TestLuaAutomation_InlineCode(t *testing.T) {
 	ws := setupTestWorkspaceWithLuaAutomation(t)
 
 	// Create entity to trigger Lua automation.
-	entity, result, err := ws.CreateEntity("requirement", CreateOptions{
+	entity, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -1468,7 +1468,7 @@ automations:
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
 
 	// Create entity - automation triggers on created.
-	entity, result, err := ws.CreateEntity("item", CreateOptions{
+	entity, result, err := ws.createEntity("item", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Item"},
 	})
 	if err != nil {
@@ -1517,7 +1517,7 @@ automations:
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
 
 	// Create entity with initial status.
-	entity, _, err := ws.CreateEntity("item", CreateOptions{
+	entity, _, err := ws.createEntity("item", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Item", "status": "draft"},
 	})
 	if err != nil {
@@ -1534,7 +1534,7 @@ automations:
 	updated := entity.Clone()
 	updated.SetString("status", "active")
 
-	result, err := ws.UpdateEntity(updated, oldEntity)
+	result, err := ws.updateEntity(updated, oldEntity)
 	if err != nil {
 		t.Fatalf("UpdateEntity error = %v", err)
 	}
@@ -1585,7 +1585,7 @@ automations:
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
 
 	// Create entity - should trigger automation with path traversal attempt.
-	_, result, err := ws.CreateEntity("item", CreateOptions{
+	_, result, err := ws.createEntity("item", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Item"},
 	})
 	if err != nil {
@@ -1634,7 +1634,7 @@ automations:
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
 
 	// Create entity - should trigger automation with wrong extension.
-	_, result, err := ws.CreateEntity("item", CreateOptions{
+	_, result, err := ws.createEntity("item", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Item"},
 	})
 	if err != nil {
@@ -1685,7 +1685,7 @@ automations:
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
 
 	// Create entity - should trigger automation with Lua error.
-	_, result, err := ws.CreateEntity("item", CreateOptions{
+	_, result, err := ws.createEntity("item", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Item"},
 	})
 	if err != nil {

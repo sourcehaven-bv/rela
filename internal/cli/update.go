@@ -1,14 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 var (
@@ -43,14 +42,12 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
+		ctx := context.Background()
 
-		entity, ok := ws.GetEntity(entityID)
-		if !ok {
+		entity, err := ws.Store().GetEntity(ctx, entityID)
+		if err != nil {
 			return &entityNotFoundError{ID: entityID}
 		}
-
-		// Capture old state for automation property change detection
-		oldEntity := entity.Clone()
 
 		// Track if anything changed
 		changed := false
@@ -99,7 +96,7 @@ Examples:
 			return fmt.Errorf("no updates specified")
 		}
 
-		result, err := ws.UpdateEntity(model.EntityFromDomain(entity), model.EntityFromDomain(oldEntity))
+		result, err := ws.EntityManager().UpdateEntity(ctx, entity)
 		if err != nil {
 			return err
 		}

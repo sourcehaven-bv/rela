@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +19,7 @@ type Factory func(t *testing.T) store.Store
 
 // SearchFactory returns a fresh store and its associated searcher for each test.
 // The store is used for seeding data; the searcher is used for queries.
-type SearchFactory func(t *testing.T) (store.Store, store.Searcher)
+type SearchFactory func(t *testing.T) (store.Store, search.Searcher)
 
 func ctx() context.Context { return context.Background() }
 
@@ -97,9 +98,9 @@ func collectIter(t *testing.T, it iter.Seq2[*entity.Entity, error]) []*entity.En
 }
 
 // collectHits drains a search hit iterator into a slice.
-func collectHits(t *testing.T, it iter.Seq2[store.SearchHit, error]) []store.SearchHit {
+func collectHits(t *testing.T, it iter.Seq2[search.Hit, error]) []search.Hit {
 	t.Helper()
-	var results []store.SearchHit
+	var results []search.Hit
 	for h, err := range it {
 		require.NoError(t, err)
 		results = append(results, h)

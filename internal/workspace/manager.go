@@ -32,7 +32,7 @@ func (m *wsEntityManager) CreateEntity(
 	}
 	_ = opts.Variant // Variant not yet plumbed through workspace.CreateEntity
 
-	created, result, err := m.w.CreateEntity(e.Type, createOpts)
+	created, result, err := m.w.createEntity(e.Type, createOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func (m *wsEntityManager) UpdateEntity(
 	}
 	updated.Content = e.Content
 
-	result, err := m.w.UpdateEntity(model.EntityFromDomain(updated), model.EntityFromDomain(current))
+	result, err := m.w.updateEntity(model.EntityFromDomain(updated), model.EntityFromDomain(current))
 	if err != nil {
 		return nil, err
 	}
@@ -90,16 +90,21 @@ func (m *wsEntityManager) DeleteEntity(
 		return nil, &entityNotFoundError{ID: id}
 	}
 
-	_, err := m.w.DeleteEntity(current.Type, id, cascade)
+	// Capture relations before delete so we can report what got cascaded.
+	var deletedRels []*entity.Relation
+	if cascade {
+		deletedRels = append(deletedRels, m.w.IncomingRelations(id)...)
+		deletedRels = append(deletedRels, m.w.OutgoingRelations(id)...)
+	}
+
+	_, err := m.w.deleteEntity(current.Type, id, cascade)
 	if err != nil {
 		return nil, err
 	}
 
-	// Workspace.DeleteEntity returns only a count, not the deleted relations.
-	// We return just the deleted entity.
 	return &entitymanager.DeleteResult{
 		DeletedEntities:  []*entity.Entity{current},
-		DeletedRelations: nil,
+		DeletedRelations: deletedRels,
 	}, nil
 }
 
@@ -111,7 +116,7 @@ func (m *wsEntityManager) RenameEntity(
 		return nil, &entityNotFoundError{ID: oldID}
 	}
 
-	result, err := m.w.Rename(current.Type, oldID, newID, rename.Options{DryRun: opts.DryRun})
+	result, err := m.w.rename(current.Type, oldID, newID, rename.Options{DryRun: opts.DryRun})
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +131,7 @@ func (m *wsEntityManager) RenameEntity(
 func (m *wsEntityManager) CreateRelation(
 	_ context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
-	r, err := m.w.CreateRelation(from, relType, to, CreateRelationOptions{
+	r, err := m.w.createRelation(from, relType, to, CreateRelationOptions{
 		Properties: opts.Properties,
 		Content:    opts.Content,
 	})
@@ -139,7 +144,7 @@ func (m *wsEntityManager) CreateRelation(
 func (m *wsEntityManager) UpdateRelation(
 	_ context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
-	r, err := m.w.UpdateRelation(from, relType, to, CreateRelationOptions{
+	r, err := m.w.updateRelation(from, relType, to, CreateRelationOptions{
 		Properties: opts.Properties,
 		Content:    opts.Content,
 	})
@@ -150,7 +155,7 @@ func (m *wsEntityManager) UpdateRelation(
 }
 
 func (m *wsEntityManager) DeleteRelation(_ context.Context, from, relType, to string) error {
-	return m.w.DeleteRelation(from, relType, to)
+	return m.w.deleteRelation(from, relType, to)
 }
 
 // EntityManager returns the entity management service.

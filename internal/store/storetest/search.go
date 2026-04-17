@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,7 +15,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Text: "login"}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "login"}))
 		assert.Len(t, results, 2) // FEAT-001 title + REQ-001 content
 	})
 
@@ -23,7 +23,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Text: "accessing the system"}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "accessing the system"}))
 		assert.Len(t, results, 1)
 		assert.Equal(t, "REQ-001", results[0].ID)
 	})
@@ -32,7 +32,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Text: "FEAT-002"}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "FEAT-002"}))
 		assert.Len(t, results, 1)
 		assert.Equal(t, "FEAT-002", results[0].ID)
 	})
@@ -41,7 +41,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Types: []string{"feature"}}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Types: []string{"feature"}}))
 		assert.Len(t, results, 2)
 	})
 
@@ -49,9 +49,9 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
-			Filters: []store.PropertyFilter{
-				{Property: "status", Value: "open", Op: store.FilterEq},
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
+			Filters: []search.PropertyFilter{
+				{Property: "status", Value: "open", Op: search.FilterEq},
 			},
 		}))
 		assert.Len(t, results, 2)
@@ -61,9 +61,9 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
-			Filters: []store.PropertyFilter{
-				{Property: "status", Value: "open", Op: store.FilterNe},
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
+			Filters: []search.PropertyFilter{
+				{Property: "status", Value: "open", Op: search.FilterNe},
 			},
 		}))
 		assert.Len(t, results, 1)
@@ -74,9 +74,9 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
-			Filters: []store.PropertyFilter{
-				{Property: "title", Value: "user", Op: store.FilterContains},
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
+			Filters: []search.PropertyFilter{
+				{Property: "title", Value: "user", Op: search.FilterContains},
 			},
 		}))
 		assert.Len(t, results, 2)
@@ -86,9 +86,9 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
-			Filters: []store.PropertyFilter{
-				{Property: "priority", Value: "high,critical", Op: store.FilterIn},
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
+			Filters: []search.PropertyFilter{
+				{Property: "priority", Value: "high,critical", Op: search.FilterIn},
 			},
 		}))
 		assert.Len(t, results, 1)
@@ -99,9 +99,9 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
-			Filters: []store.PropertyFilter{
-				{Property: "priority", Op: store.FilterExists},
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
+			Filters: []search.PropertyFilter{
+				{Property: "priority", Op: search.FilterExists},
 			},
 		}))
 		assert.Len(t, results, 2)
@@ -111,9 +111,9 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
-			Filters: []store.PropertyFilter{
-				{Property: "priority", Op: store.FilterNotExists},
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
+			Filters: []search.PropertyFilter{
+				{Property: "priority", Op: search.FilterNotExists},
 			},
 		}))
 		assert.Len(t, results, 1)
@@ -124,10 +124,10 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
 			Text: "login",
-			Filters: []store.PropertyFilter{
-				{Property: "status", Value: "open", Op: store.FilterEq},
+			Filters: []search.PropertyFilter{
+				{Property: "status", Value: "open", Op: search.FilterEq},
 			},
 		}))
 		assert.Len(t, results, 2)
@@ -137,7 +137,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
 			Text:  "login",
 			Types: []string{"feature"},
 		}))
@@ -149,7 +149,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Limit: 1}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Limit: 1}))
 		assert.Len(t, results, 1)
 	})
 
@@ -157,7 +157,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Limit: 3}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Limit: 3}))
 		assert.Len(t, results, 3)
 	})
 
@@ -165,7 +165,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{}))
 		assert.Len(t, results, 3)
 	})
 
@@ -174,7 +174,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		seedSearchData(t, s)
 
 		var ids []string
-		for h, err := range searcher.Search(ctx(), store.SearchQuery{}) {
+		for h, err := range searcher.Search(ctx(), search.Query{}) {
 			require.NoError(t, err)
 			ids = append(ids, h.ID)
 			if len(ids) == 1 {
@@ -188,7 +188,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{Text: "zzzznotfound"}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "zzzznotfound"}))
 		assert.Empty(t, results)
 	})
 
@@ -196,9 +196,9 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
-			Filters: []store.PropertyFilter{
-				{Property: "priority", Value: "high", Op: store.FilterGt},
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
+			Filters: []search.PropertyFilter{
+				{Property: "priority", Value: "high", Op: search.FilterGt},
 			},
 		}))
 		// "low" > "high" lexicographically
@@ -210,9 +210,9 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
-			Filters: []store.PropertyFilter{
-				{Property: "priority", Value: "high", Op: store.FilterGte},
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
+			Filters: []search.PropertyFilter{
+				{Property: "priority", Value: "high", Op: search.FilterGte},
 			},
 		}))
 		assert.Len(t, results, 2)
@@ -230,9 +230,9 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		require.NoError(t, s.CreateEntity(ctx(), e2))
 		require.NoError(t, s.CreateEntity(ctx(), e3))
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
-			Filters: []store.PropertyFilter{
-				{Property: "score", Value: "5", Op: store.FilterLt},
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
+			Filters: []search.PropertyFilter{
+				{Property: "score", Value: "5", Op: search.FilterLt},
 			},
 		}))
 		assert.Len(t, results, 1)
@@ -251,9 +251,9 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		require.NoError(t, s.CreateEntity(ctx(), e2))
 		require.NoError(t, s.CreateEntity(ctx(), e3))
 
-		results := collectHits(t, searcher.Search(ctx(), store.SearchQuery{
-			Filters: []store.PropertyFilter{
-				{Property: "score", Value: "5", Op: store.FilterLte},
+		results := collectHits(t, searcher.Search(ctx(), search.Query{
+			Filters: []search.PropertyFilter{
+				{Property: "score", Value: "5", Op: search.FilterLte},
 			},
 		}))
 		assert.Len(t, results, 2)

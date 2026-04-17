@@ -3,6 +3,7 @@ package lua
 import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
@@ -12,7 +13,7 @@ type Services struct {
 	Store    store.Store
 	Manager  entitymanager.EntityManager
 	Tracer   tracer.Tracer
-	Searcher store.Searcher
+	Searcher search.Searcher
 	Meta     *metamodel.Metamodel
 
 	// ProjectRoot is the absolute project path. Used internally by

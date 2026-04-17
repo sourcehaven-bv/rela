@@ -80,7 +80,7 @@ func (w *Workspace) AttachFile(entityID, filePath, property string) (*AttachResu
 	entity.SetString(propName, att.Path)
 
 	// Write through workspace (validates, persists, updates graph+cache)
-	if _, err := w.UpdateEntity(entity, oldEntity); err != nil {
+	if _, err := w.updateEntity(entity, oldEntity); err != nil {
 		return nil, fmt.Errorf("failed to update entity: %w", err)
 	}
 

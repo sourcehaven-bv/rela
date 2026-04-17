@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // LinearSearch is a SearchIndex that performs brute-force substring matching.
@@ -62,7 +61,7 @@ func (l *LinearSearch) Search(text string, limit int) ([]string, error) {
 
 	var ids []string
 	for _, e := range l.entities {
-		if storeutil.MatchText(e, text) {
+		if MatchText(e, text) {
 			ids = append(ids, e.ID)
 			if limit > 0 && len(ids) >= limit {
 				break

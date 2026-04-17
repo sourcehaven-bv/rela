@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
@@ -918,7 +919,7 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 	}
 	result := ls.NewTable()
 	i := 1
-	for hit, err := range r.svc.Searcher.Search(context.Background(), store.SearchQuery{Text: query, Limit: limit}) {
+	for hit, err := range r.svc.Searcher.Search(context.Background(), search.Query{Text: query, Limit: limit}) {
 		if err != nil {
 			ls.RaiseError("search error: %s", err.Error())
 			return 0

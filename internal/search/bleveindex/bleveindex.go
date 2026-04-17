@@ -1,5 +1,5 @@
 // Package bleveindex provides a bleve-backed implementation of
-// store.SearchIndex for full-text entity search.
+// search.Backend for full-text entity search.
 package bleveindex
 
 import (
@@ -15,7 +15,7 @@ import (
 	"github.com/blevesearch/bleve/v2/search/query"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 )
 
 // lastModifiedKey is the bleve internal-storage key under which we persist
@@ -23,7 +23,7 @@ import (
 var lastModifiedKey = []byte("rela:last_modified")
 
 // compile-time interface check.
-var _ store.SearchIndex = (*Index)(nil)
+var _ search.Backend = (*Index)(nil)
 
 // Field boost weights for search ranking.
 const (

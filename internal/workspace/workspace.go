@@ -461,7 +461,7 @@ func (w *Workspace) Formatter() store.Formatter {
 // The state snapshot is captured once so that the search index, the graph
 // it was built from, and the entities returned by GetNode all come from
 // the same workspace epoch.
-func (w *Workspace) Search(words, phrases []string, limit int) ([]*model.Entity, []float64, error) {
+func (w *Workspace) Search(words, phrases []string, limit int) ([]*entity.Entity, []float64, error) {
 	s := w.state.Load()
 	if s == nil || s.searchIdx == nil {
 		return nil, nil, fmt.Errorf("search index not available")
@@ -470,11 +470,11 @@ func (w *Workspace) Search(words, phrases []string, limit int) ([]*model.Entity,
 	if err != nil {
 		return nil, nil, err
 	}
-	entities := make([]*model.Entity, 0, len(results))
+	entities := make([]*entity.Entity, 0, len(results))
 	scores := make([]float64, 0, len(results))
 	for _, r := range results {
 		if e, ok := s.graph.GetNode(r.ID); ok {
-			entities = append(entities, e)
+			entities = append(entities, model.EntityToDomain(e))
 			scores = append(scores, r.Score)
 		}
 	}
@@ -482,7 +482,7 @@ func (w *Workspace) Search(words, phrases []string, limit int) ([]*model.Entity,
 }
 
 // SearchSimple performs a simple text search (convenience method).
-func (w *Workspace) SearchSimple(query string, limit int) ([]*model.Entity, error) {
+func (w *Workspace) SearchSimple(query string, limit int) ([]*entity.Entity, error) {
 	entities, _, err := w.Search(strings.Fields(query), nil, limit)
 	return entities, err
 }
@@ -950,7 +950,7 @@ type CreateResult struct {
 // Captures a single workspace state snapshot at entry. Callers must
 // serialize CreateEntity against concurrent Reload via an external mutex
 // (App.writeMu in the data-entry server).
-func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.Entity, *CreateResult, error) {
+func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*model.Entity, *CreateResult, error) {
 	s := w.state.Load()
 	if s == nil {
 		return nil, nil, fmt.Errorf("workspace not initialized")
@@ -1025,7 +1025,7 @@ type UpdateResult struct {
 // serialize UpdateEntity against concurrent Reload via an external mutex
 // (App.writeMu in the data-entry server) so the snapshot the method
 // holds matches the workspace's current state until the method returns.
-func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult, error) {
+func (w *Workspace) updateEntity(entity, oldEntity *model.Entity) (*UpdateResult, error) {
 	s := w.state.Load()
 	if s == nil {
 		return nil, fmt.Errorf("workspace not initialized")
@@ -1085,7 +1085,7 @@ type DeleteResult struct {
 var ErrHasRelations = fmt.Errorf("entity has relations; set cascade=true to delete")
 
 // DeleteEntity removes an entity and optionally cascades to its relations.
-func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteResult, error) {
+func (w *Workspace) deleteEntity(entityType, id string, cascade bool) (*DeleteResult, error) {
 	s := w.state.Load()
 	if s == nil {
 		return nil, fmt.Errorf("workspace not initialized")
@@ -1474,7 +1474,7 @@ func (w *Workspace) handleIfExists(
 				toCreate.RelationFromTrigger, existingTarget.ID))
 		return true
 	case automation.IfExistsReplace:
-		if _, err := w.DeleteEntity(existingTarget.Type, existingTarget.ID, true); err != nil {
+		if _, err := w.deleteEntity(existingTarget.Type, existingTarget.ID, true); err != nil {
 			effects.Errors = append(effects.Errors,
 				fmt.Sprintf("failed to delete existing entity for replace: %v", err))
 			return true
@@ -1533,7 +1533,7 @@ type CreateRelationOptions struct {
 
 // CreateRelation validates both endpoints exist, checks for duplicates,
 // validates against the metamodel, writes to disk, and updates the graph.
-func (w *Workspace) CreateRelation(from, relType, to string, opts ...CreateRelationOptions) (*model.Relation, error) {
+func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelationOptions) (*model.Relation, error) {
 	s := w.state.Load()
 	if s == nil {
 		return nil, fmt.Errorf("workspace not initialized")
@@ -1591,7 +1591,7 @@ func (w *Workspace) CreateRelation(from, relType, to string, opts ...CreateRelat
 }
 
 // UpdateRelation updates properties on an existing relation.
-func (w *Workspace) UpdateRelation(from, relType, to string, opts CreateRelationOptions) (*model.Relation, error) {
+func (w *Workspace) updateRelation(from, relType, to string, opts CreateRelationOptions) (*model.Relation, error) {
 	rel, exists := w.Graph().GetEdge(from, relType, to)
 	if !exists {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", from, relType, to)
@@ -1617,7 +1617,7 @@ func (w *Workspace) UpdateRelation(from, relType, to string, opts CreateRelation
 }
 
 // DeleteRelation removes a relation from disk and the graph.
-func (w *Workspace) DeleteRelation(from, relType, to string) error {
+func (w *Workspace) deleteRelation(from, relType, to string) error {
 	if err := w.repo.DeleteRelation(from, relType, to); err != nil {
 		return fmt.Errorf("delete relation: %w", err)
 	}

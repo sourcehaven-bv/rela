@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
 
 var (
@@ -87,14 +87,18 @@ Examples:
 			return err
 		}
 
-		entity, result, err := ws.CreateEntity(resolvedType, workspace.CreateOptions{
-			ID:         createID,
-			Properties: props,
-			Content:    bodyContent,
-		})
+		result, err := ws.EntityManager().CreateEntity(context.Background(),
+			&entitypkg.Entity{
+				Type:       resolvedType,
+				Properties: props,
+				Content:    bodyContent,
+			},
+			entitymanager.CreateOptions{ID: createID},
+		)
 		if err != nil {
 			return err
 		}
+		entity := result.Entity
 
 		// Show automation feedback
 		for _, warning := range result.AutomationWarnings {

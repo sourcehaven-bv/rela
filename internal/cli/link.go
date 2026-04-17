@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
+
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
 
 var linkCmd = &cobra.Command{
@@ -19,7 +23,7 @@ Examples:
 		relationType := args[1]
 		toID := args[2]
 
-		_, err := ws.CreateRelation(fromID, relationType, toID)
+		_, err := ws.EntityManager().CreateRelation(context.Background(), fromID, relationType, toID, entitymanager.RelationOptions{})
 		if err != nil {
 			return err
 		}

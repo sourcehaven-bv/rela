@@ -14,10 +14,11 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
@@ -251,16 +252,16 @@ type mockSearcher struct {
 	ws *mockWorkspace
 }
 
-var _ store.Searcher = (*mockSearcher)(nil)
+var _ search.Searcher = (*mockSearcher)(nil)
 
-func (s *mockSearcher) Search(_ context.Context, q store.SearchQuery) iter.Seq2[store.SearchHit, error] {
-	return func(yield func(store.SearchHit, error) bool) {
+func (s *mockSearcher) Search(_ context.Context, q search.Query) iter.Seq2[search.Hit, error] {
+	return func(yield func(search.Hit, error) bool) {
 		query := strings.ToLower(q.Text)
 		count := 0
 		for _, e := range s.ws.graph.AllNodes() {
 			title := strings.ToLower(e.GetString("title"))
 			if strings.Contains(title, query) {
-				if !yield(store.SearchHit{ID: e.ID, Type: e.Type, Title: e.GetString("title")}, nil) {
+				if !yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.GetString("title")}, nil) {
 					return
 				}
 				count++

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // PropertyHelp holds documentation for a single property.
@@ -64,10 +65,9 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 
 	// Clone to avoid mutating the live graph node while other readers
 	// (which take no lock) may be iterating it.
-	oldEntity := live.Clone()
 	updated := live.Clone()
 	updated.Content = newContent
-	if _, err := a.ws.UpdateEntity(updated, oldEntity); err != nil {
+	if _, err := a.ws.EntityManager().UpdateEntity(r.Context(), model.EntityToDomain(updated)); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}

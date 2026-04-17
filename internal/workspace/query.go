@@ -1,90 +1,80 @@
 package workspace
 
 import (
+	"context"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // --- Entity queries ---
 
 // GetEntity returns an entity by ID.
 func (w *Workspace) GetEntity(id string) (*entity.Entity, bool) {
-	n, ok := w.Graph().GetNode(id)
-	if !ok {
+	e, err := w.Store().GetEntity(context.Background(), id)
+	if err != nil {
 		return nil, false
 	}
-	return model.EntityToDomain(n), true
+	return e, true
 }
 
 // AllEntities returns all entities in the workspace.
 func (w *Workspace) AllEntities() []*entity.Entity {
-	nodes := w.Graph().AllNodes()
-	out := make([]*entity.Entity, len(nodes))
-	for i, n := range nodes {
-		out[i] = model.EntityToDomain(n)
-	}
-	return out
+	return collectEntities(w.Store(), store.EntityQuery{})
 }
 
 // EntitiesByType returns all entities of the given type.
 func (w *Workspace) EntitiesByType(entityType string) []*entity.Entity {
-	nodes := w.Graph().NodesByType(entityType)
-	out := make([]*entity.Entity, len(nodes))
-	for i, n := range nodes {
-		out[i] = model.EntityToDomain(n)
-	}
-	return out
+	return collectEntities(w.Store(), store.EntityQuery{Type: entityType})
 }
 
 // EntityCount returns the total number of entities.
 func (w *Workspace) EntityCount() int {
-	return w.Graph().NodeCount()
+	n, _ := w.Store().CountEntities(context.Background(), store.EntityQuery{})
+	return n
 }
 
 // EntityIDs returns all entity IDs.
 func (w *Workspace) EntityIDs() []string {
-	return w.Graph().AllIDs()
+	entities := collectEntities(w.Store(), store.EntityQuery{})
+	ids := make([]string, len(entities))
+	for i, e := range entities {
+		ids[i] = e.ID
+	}
+	return ids
 }
 
 // --- Relation queries ---
 
 // GetRelation returns a relation by its endpoints and type.
 func (w *Workspace) GetRelation(from, relType, to string) (*entity.Relation, bool) {
-	r, ok := w.Graph().GetEdge(from, relType, to)
-	if !ok {
+	r, err := w.Store().GetRelation(context.Background(), from, relType, to)
+	if err != nil {
 		return nil, false
 	}
-	return model.RelationToDomain(r), true
+	return r, true
 }
 
 // AllRelations returns all relations in the workspace.
 func (w *Workspace) AllRelations() []*entity.Relation {
-	edges := w.Graph().AllEdges()
-	out := make([]*entity.Relation, len(edges))
-	for i, r := range edges {
-		out[i] = model.RelationToDomain(r)
-	}
-	return out
+	return collectRelations(w.Store(), store.RelationQuery{})
 }
 
 // IncomingRelations returns all relations pointing to the given entity.
 func (w *Workspace) IncomingRelations(entityID string) []*entity.Relation {
-	edges := w.Graph().IncomingEdges(entityID)
-	out := make([]*entity.Relation, len(edges))
-	for i, r := range edges {
-		out[i] = model.RelationToDomain(r)
-	}
-	return out
+	return collectRelations(w.Store(), store.RelationQuery{
+		EntityID:  entityID,
+		Direction: store.DirectionIncoming,
+	})
 }
 
 // OutgoingRelations returns all relations originating from the given entity.
 func (w *Workspace) OutgoingRelations(entityID string) []*entity.Relation {
-	edges := w.Graph().OutgoingEdges(entityID)
-	out := make([]*entity.Relation, len(edges))
-	for i, r := range edges {
-		out[i] = model.RelationToDomain(r)
-	}
-	return out
+	return collectRelations(w.Store(), store.RelationQuery{
+		EntityID:  entityID,
+		Direction: store.DirectionOutgoing,
+	})
 }
 
 // --- Graph analysis ---
@@ -120,3 +110,24 @@ func (w *Workspace) FindPath(from, to string) []PathStep {
 	return w.Graph().FindPath(from, to)
 }
 
+func collectEntities(s store.Store, q store.EntityQuery) []*entity.Entity {
+	var out []*entity.Entity
+	for e, err := range s.ListEntities(context.Background(), q) {
+		if err != nil {
+			return out
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+func collectRelations(s store.Store, q store.RelationQuery) []*entity.Relation {
+	var out []*entity.Relation
+	for r, err := range s.ListRelations(context.Background(), q) {
+		if err != nil {
+			return out
+		}
+		out = append(out, r)
+	}
+	return out
+}

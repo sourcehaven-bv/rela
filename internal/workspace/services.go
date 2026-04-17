@@ -2,13 +2,17 @@ package workspace
 
 import (
 	"context"
+	"iter"
+	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
 // LuaServices builds a lua.Services struct wired to this workspace's
@@ -22,6 +26,7 @@ func (w *Workspace) LuaServices() lua.Services {
 		Store:       w.Store(),
 		Manager:     w.EntityManager(),
 		Tracer:      w.Tracer(),
+		Searcher:    w.Searcher(),
 		Meta:        w.Meta(),
 		ProjectRoot: root,
 		Sync: func() error {
@@ -79,6 +84,67 @@ func (t *graphTracer) HasCycle(_ context.Context, startID string) bool {
 // Tracer returns the graph traversal service.
 func (w *Workspace) Tracer() tracer.Tracer {
 	return &graphTracer{w: w}
+}
+
+// wsSearcher adapts the workspace's Bleve-backed Search to search.Searcher.
+type wsSearcher struct {
+	w *Workspace
+}
+
+var _ search.Searcher = (*wsSearcher)(nil)
+
+func (s *wsSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[search.Hit, error] {
+	return func(yield func(search.Hit, error) bool) {
+		typeSet := make(map[string]bool, len(q.Types))
+		for _, t := range q.Types {
+			typeSet[t] = true
+		}
+
+		emit := func(e *entity.Entity) bool {
+			if len(typeSet) > 0 && !typeSet[e.Type] {
+				return true
+			}
+			if !search.MatchFilters(e, q.Filters) {
+				return true
+			}
+			return yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, nil)
+		}
+
+		if q.Text == "" {
+			// No text: iterate all via the store, applying filters.
+			for e, err := range s.w.Store().ListEntities(ctx, store.EntityQuery{}) {
+				if err != nil {
+					yield(search.Hit{}, err)
+					return
+				}
+				if !emit(e) {
+					return
+				}
+			}
+			return
+		}
+
+		entities, _, err := s.w.Search(strings.Fields(q.Text), nil, q.Limit)
+		if err != nil {
+			yield(search.Hit{}, err)
+			return
+		}
+		emitted := 0
+		for _, e := range entities {
+			if q.Limit > 0 && emitted >= q.Limit {
+				return
+			}
+			if !emit(e) {
+				return
+			}
+			emitted++
+		}
+	}
+}
+
+// Searcher returns a search.Searcher backed by the workspace's search index.
+func (w *Workspace) Searcher() search.Searcher {
+	return &wsSearcher{w: w}
 }
 
 // legacyFormatter adapts the workspace's FormatEntity/FormatRelation methods

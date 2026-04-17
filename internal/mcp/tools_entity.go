@@ -11,11 +11,10 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
-	"github.com/Sourcehaven-BV/rela/internal/rename"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func (s *Server) handleListEntities(
@@ -97,7 +96,7 @@ func (s *Server) handleShowEntity(
 }
 
 func (s *Server) handleSearchEntities(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	query, err := request.RequireString("query")
 	if err != nil {
@@ -107,39 +106,27 @@ func (s *Server) handleSearchEntities(
 	const defaultSearchLimit = 20
 	limit := request.GetInt("limit", defaultSearchLimit)
 
-	// Search via Bleve index (returns results sorted by relevance).
-	// Fetch extra when type filtering is needed since some results may be discarded.
-	words := strings.Fields(query)
-	fetchLimit := limit
+	q := search.Query{Text: query, Limit: limit}
 	if entityType != "" {
-		fetchLimit = limit * 2
-	}
-	entities, _, err := s.ws.Search(words, nil, fetchLimit)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+		q.Types = []string{s.resolveType(entityType)}
 	}
 
-	// Filter by type if specified and convert to summaries.
-	resolved := ""
-	if entityType != "" {
-		resolved = s.resolveType(entityType)
-	}
+	st := s.ws.Store()
 	var summaries []map[string]interface{}
-	for _, e := range entities {
-		if resolved != "" && e.Type != resolved {
-			continue
+	for hit, searchErr := range s.ws.Searcher().Search(ctx, q) {
+		if searchErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", searchErr)), nil
 		}
-		summary := map[string]interface{}{"id": e.ID, "type": e.Type}
-		if title := e.Title(); title != "" {
-			summary["title"] = title
+		summary := map[string]interface{}{"id": hit.ID, "type": hit.Type}
+		if hit.Title != "" {
+			summary["title"] = hit.Title
 		}
-		if status := e.GetString("status"); status != "" {
-			summary["status"] = status
+		if e, getErr := st.GetEntity(ctx, hit.ID); getErr == nil {
+			if status := e.GetString("status"); status != "" {
+				summary["status"] = status
+			}
 		}
 		summaries = append(summaries, summary)
-		if limit > 0 && len(summaries) >= limit {
-			break
-		}
 	}
 
 	text, err := marshalJSON(summaries)
@@ -150,7 +137,7 @@ func (s *Server) handleSearchEntities(
 }
 
 func (s *Server) handleCreateEntity(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	typeName, err := request.RequireString("type")
 	if err != nil {
@@ -173,17 +160,21 @@ func (s *Server) handleCreateEntity(
 		return errResult, nil
 	}
 
-	created, _, createErr := s.ws.CreateEntity(resolvedType, workspace.CreateOptions{
-		ID:         customID,
-		Properties: properties,
-		Content:    content,
-	})
+	result, createErr := s.ws.EntityManager().CreateEntity(ctx,
+		&entity.Entity{
+			Type:       resolvedType,
+			Properties: properties,
+			Content:    content,
+		},
+		entitymanager.CreateOptions{ID: customID},
+	)
 	if createErr != nil {
 		return mcp.NewToolResultError(createErr.Error()), nil
 	}
+	created := result.Entity
 
 	st := s.ws.Store()
-	e, _ := st.GetEntity(context.Background(), created.ID)
+	e, _ := st.GetEntity(ctx, created.ID)
 	if e == nil {
 		// Fallback: return minimal info
 		return mcp.NewToolResultText(fmt.Sprintf("Created %s %s", resolvedType, created.ID)), nil
@@ -197,7 +188,7 @@ func (s *Server) handleCreateEntity(
 }
 
 func (s *Server) handleUpdateEntity(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	id, err := request.RequireString("id")
 	if err != nil {
@@ -205,8 +196,9 @@ func (s *Server) handleUpdateEntity(
 	}
 	id = trimID(id)
 
-	e, ok := s.ws.GetEntity(id)
-	if !ok {
+	st := s.ws.Store()
+	e, getErr := st.GetEntity(ctx, id)
+	if getErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
 	}
 
@@ -222,9 +214,6 @@ func (s *Server) handleUpdateEntity(
 		return errResult, nil
 	}
 
-	// Clone for automation (old state)
-	oldEntity := e.Clone()
-
 	// Apply property updates
 	for k, v := range properties {
 		e.Properties[k] = v
@@ -233,12 +222,11 @@ func (s *Server) handleUpdateEntity(
 		e.Content = content
 	}
 
-	if _, updateErr := s.ws.UpdateEntity(model.EntityFromDomain(e), model.EntityFromDomain(oldEntity)); updateErr != nil {
+	if _, updateErr := s.ws.EntityManager().UpdateEntity(ctx, e); updateErr != nil {
 		return mcp.NewToolResultError(updateErr.Error()), nil
 	}
 
-	st := s.ws.Store()
-	updated, _ := st.GetEntity(context.Background(), id)
+	updated, _ := st.GetEntity(ctx, id)
 	if updated == nil {
 		return mcp.NewToolResultText(fmt.Sprintf("Updated %s", id)), nil
 	}
@@ -275,14 +263,15 @@ func (s *Server) handleDeleteEntity(
 		}
 	}
 
-	result, delErr := s.ws.DeleteEntity(e.Type, id, cascade)
+	result, delErr := s.ws.EntityManager().DeleteEntity(ctx, id, cascade)
 	if delErr != nil {
 		return mcp.NewToolResultError(delErr.Error()), nil
 	}
+	_ = e // kept for the cascade relation-count check above
 
 	msg := fmt.Sprintf("Deleted %s", id)
-	if cascade && result.RelationsDeleted > 0 {
-		msg += fmt.Sprintf(" and %d relation(s)", result.RelationsDeleted)
+	if cascade && len(result.DeletedRelations) > 0 {
+		msg += fmt.Sprintf(" and %d relation(s)", len(result.DeletedRelations))
 	}
 	return mcp.NewToolResultText(msg), nil
 }
@@ -304,17 +293,11 @@ func (s *Server) handleRenameEntity(
 
 	dryRun := request.GetBool("dry_run", false)
 
-	st := s.ws.Store()
-	e, getErr := st.GetEntity(ctx, oldID)
-	if getErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", oldID)), nil
-	}
-
 	// Pause watcher during rename
 	s.ws.PauseWatching()
 	defer s.ws.ResumeWatching()
 
-	result, renameErr := s.ws.Rename(e.Type, oldID, newID, rename.Options{DryRun: dryRun})
+	result, renameErr := s.ws.EntityManager().RenameEntity(ctx, oldID, newID, entitymanager.RenameOptions{DryRun: dryRun})
 	if renameErr != nil {
 		return mcp.NewToolResultError(renameErr.Error()), nil
 	}
@@ -325,33 +308,12 @@ func (s *Server) handleRenameEntity(
 		}
 	}
 
-	return mcp.NewToolResultText(formatRenameResult(result, dryRun)), nil
-}
-
-func formatRenameResult(result *rename.Result, dryRun bool) string {
-	var sb strings.Builder
-
+	verb := "Renamed"
 	if dryRun {
-		sb.WriteString("Dry run - no changes made\n\n")
+		verb = "Dry run — would rename"
 	}
-
-	sb.WriteString(fmt.Sprintf("Rename: %s → %s\n", result.OldID, result.NewID))
-	sb.WriteString(fmt.Sprintf("Entity file: %s\n", result.EntityFile))
-
-	if len(result.RelationsUpdated) > 0 {
-		sb.WriteString(fmt.Sprintf("\nRelations updated (%d):\n", len(result.RelationsUpdated)))
-		for _, rel := range result.RelationsUpdated {
-			sb.WriteString(fmt.Sprintf("  %s --%s--> %s\n", rel.From, rel.Type, rel.To))
-		}
-	} else {
-		sb.WriteString("\nNo relations updated\n")
-	}
-
-	if !dryRun && len(result.OldFilesDeleted) > 0 {
-		sb.WriteString(fmt.Sprintf("\nOld files deleted (%d)\n", len(result.OldFilesDeleted)))
-	}
-
-	return sb.String()
+	return mcp.NewToolResultText(
+		fmt.Sprintf("%s: %s → %s (%d relations updated)", verb, result.OldID, result.NewID, result.RelationsUpdated)), nil
 }
 
 // filterStoreEntities applies a where clause to entity.Entity slices.

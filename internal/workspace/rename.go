@@ -26,7 +26,7 @@ import (
 // function. The orchestration was moved into the workspace package so it
 // could use ws.WithTx; the rename package now contains only the public
 // types (Options, Result, RelationRef).
-func (w *Workspace) Rename(entityType, oldID, newID string, opts rename.Options) (*rename.Result, error) {
+func (w *Workspace) rename(entityType, oldID, newID string, opts rename.Options) (*rename.Result, error) {
 	if opts.DryRun {
 		return w.renameDryRun(entityType, oldID, newID)
 	}

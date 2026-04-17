@@ -77,7 +77,7 @@ func TestRename_NoRelations(t *testing.T) {
 	}
 	g.AddNode(entity)
 
-	result, err := ws.Rename("requirement", oldID, newID, rename.Options{})
+	result, err := ws.rename("requirement", oldID, newID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -131,7 +131,7 @@ func TestRename_OutgoingRelations(t *testing.T) {
 	}
 	g.AddEdge(rel)
 
-	result, err := ws.Rename("decision", oldDecID, newDecID, rename.Options{})
+	result, err := ws.rename("decision", oldDecID, newDecID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -180,7 +180,7 @@ func TestRename_IncomingRelations(t *testing.T) {
 	}
 	g.AddEdge(rel)
 
-	result, err := ws.Rename("requirement", oldReqID, newReqID, rename.Options{})
+	result, err := ws.rename("requirement", oldReqID, newReqID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -234,7 +234,7 @@ func TestRename_BothIncomingAndOutgoing(t *testing.T) {
 	}
 	g.AddEdge(rel2)
 
-	result, err := ws.Rename("requirement", oldID, newID, rename.Options{})
+	result, err := ws.rename("requirement", oldID, newID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -272,7 +272,7 @@ func TestRename_SelfReferential(t *testing.T) {
 	}
 	g.AddEdge(rel)
 
-	result, err := ws.Rename("requirement", oldID, newID, rename.Options{})
+	result, err := ws.rename("requirement", oldID, newID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -314,7 +314,7 @@ func TestRename_DryRun(t *testing.T) {
 	}
 	g.AddEdge(rel)
 
-	result, err := ws.Rename("requirement", oldReqID, newReqID, rename.Options{DryRun: true})
+	result, err := ws.rename("requirement", oldReqID, newReqID, rename.Options{DryRun: true})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -354,7 +354,7 @@ func TestRename_ErrorNewIDExists(t *testing.T) {
 	g.AddNode(req1)
 	g.AddNode(req2)
 
-	_, err := ws.Rename("requirement", req1.ID, req2.ID, rename.Options{})
+	_, err := ws.rename("requirement", req1.ID, req2.ID, rename.Options{})
 	if err == nil {
 		t.Fatal("Rename() should fail when new ID already exists")
 	}
@@ -367,7 +367,7 @@ func TestRename_ErrorNewIDExists(t *testing.T) {
 func TestRename_ErrorOldIDNotFound(t *testing.T) {
 	ws := setupRenameTestEnv(t).ws
 
-	_, err := ws.Rename("requirement", "REQ-999", "REQ-100", rename.Options{})
+	_, err := ws.rename("requirement", "REQ-999", "REQ-100", rename.Options{})
 	if err == nil {
 		t.Fatal("Rename() should fail when old ID doesn't exist")
 	}
@@ -383,7 +383,7 @@ func TestRename_ErrorInvalidNewID(t *testing.T) {
 	}
 	g.AddNode(req)
 
-	_, err := ws.Rename("requirement", "REQ-001", "../evil", rename.Options{})
+	_, err := ws.rename("requirement", "REQ-001", "../evil", rename.Options{})
 	if err == nil {
 		t.Fatal("Rename() should fail for invalid new ID")
 	}
@@ -399,7 +399,7 @@ func TestRename_ErrorTypeMismatch(t *testing.T) {
 	}
 	g.AddNode(req)
 
-	_, err := ws.Rename("decision", "REQ-001", "REQ-100", rename.Options{})
+	_, err := ws.rename("decision", "REQ-001", "REQ-100", rename.Options{})
 	if err == nil {
 		t.Fatal("Rename() should fail when entity type doesn't match")
 	}
@@ -423,7 +423,7 @@ func TestRename_PreservesContent(t *testing.T) {
 	}
 	g.AddNode(req)
 
-	_, err := ws.Rename("requirement", oldID, newID, rename.Options{})
+	_, err := ws.rename("requirement", oldID, newID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -456,7 +456,7 @@ func TestRename_NoTempFilesLeft(t *testing.T) {
 	}
 	g.AddNode(req)
 
-	_, err := ws.Rename("requirement", oldID, newID, rename.Options{})
+	_, err := ws.rename("requirement", oldID, newID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}

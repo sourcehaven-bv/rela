@@ -9,8 +9,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 func (s *Server) handleListRelations(
@@ -55,7 +55,7 @@ func (s *Server) handleListRelations(
 }
 
 func (s *Server) handleCreateRelation(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	fromID, err := request.RequireString("from")
 	if err != nil {
@@ -73,15 +73,12 @@ func (s *Server) handleCreateRelation(
 	}
 	toID = trimID(toID)
 
-	content := request.GetString("content", "")
-	properties := s.extractProperties(request)
-
-	opts := workspace.CreateRelationOptions{
-		Properties: properties,
-		Content:    content,
+	opts := entitymanager.RelationOptions{
+		Properties: s.extractProperties(request),
+		Content:    request.GetString("content", ""),
 	}
 
-	if _, createErr := s.ws.CreateRelation(fromID, relType, toID, opts); createErr != nil {
+	if _, createErr := s.ws.EntityManager().CreateRelation(ctx, fromID, relType, toID, opts); createErr != nil {
 		return mcp.NewToolResultError(createErr.Error()), nil
 	}
 
@@ -114,7 +111,7 @@ func (s *Server) handleDeleteRelation(
 			fmt.Sprintf("relation not found: %s --%s--> %s", fromID, relType, toID)), nil
 	}
 
-	if delErr := s.ws.DeleteRelation(fromID, relType, toID); delErr != nil {
+	if delErr := s.ws.EntityManager().DeleteRelation(ctx, fromID, relType, toID); delErr != nil {
 		return mcp.NewToolResultError(delErr.Error()), nil
 	}
 
