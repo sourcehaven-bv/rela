@@ -6,12 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 // mockWorkspace is a test helper that produces a lua.Services backed by
@@ -23,37 +22,6 @@ type mockWorkspace struct {
 }
 
 func newMockWorkspace() *mockWorkspace {
-	g := graph.New()
-	g.AddNode(&model.Entity{
-		ID:   "TKT-001",
-		Type: "ticket",
-		Properties: map[string]interface{}{
-			"title":  "Valid ticket",
-			"status": "ready",
-		},
-	})
-	g.AddNode(&model.Entity{
-		ID:   "TKT-002",
-		Type: "ticket",
-		Properties: map[string]interface{}{
-			"title":  "Invalid ticket",
-			"status": "draft",
-		},
-	})
-	g.AddNode(&model.Entity{
-		ID:   "PARENT-001",
-		Type: "ticket",
-		Properties: map[string]interface{}{
-			"title":  "Parent ticket",
-			"status": "approved",
-		},
-	})
-	g.AddEdge(&model.Relation{
-		From: "TKT-001",
-		Type: "child-of",
-		To:   "PARENT-001",
-	})
-
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -67,12 +35,36 @@ func newMockWorkspace() *mockWorkspace {
 
 	st := memstore.New()
 	ctx := context.Background()
-	for _, e := range g.AllNodes() {
-		_ = st.CreateEntity(ctx, model.EntityToDomain(e))
+	entities := []*entity.Entity{
+		{
+			ID:   "TKT-001",
+			Type: "ticket",
+			Properties: map[string]interface{}{
+				"title":  "Valid ticket",
+				"status": "ready",
+			},
+		},
+		{
+			ID:   "TKT-002",
+			Type: "ticket",
+			Properties: map[string]interface{}{
+				"title":  "Invalid ticket",
+				"status": "draft",
+			},
+		},
+		{
+			ID:   "PARENT-001",
+			Type: "ticket",
+			Properties: map[string]interface{}{
+				"title":  "Parent ticket",
+				"status": "approved",
+			},
+		},
 	}
-	for _, r := range g.AllEdges() {
-		_, _ = st.CreateRelation(ctx, r.From, r.Type, r.To, nil)
+	for _, e := range entities {
+		_ = st.CreateEntity(ctx, e)
 	}
+	_, _ = st.CreateRelation(ctx, "TKT-001", "child-of", "PARENT-001", nil)
 
 	return &mockWorkspace{meta: meta, store: st}
 }
@@ -81,7 +73,7 @@ func newMockWorkspace() *mockWorkspace {
 func (m *mockWorkspace) services(projectRoot string) lua.Services {
 	return lua.Services{
 		Store:       m.store,
-		Tracer:      storetrace.New(m.store),
+		Tracer:      tracer.New(m.store),
 		Meta:        m.meta,
 		ProjectRoot: projectRoot,
 	}
@@ -114,7 +106,7 @@ func TestLuaValidation_SingleViolation(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{
 			ID:         "TKT-001",
 			Type:       "ticket",
@@ -175,7 +167,7 @@ func TestLuaValidation_MultipleViolations(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{
 			ID:         "TKT-001",
 			Type:       "ticket",
@@ -224,7 +216,7 @@ func TestLuaValidation_SeverityOverride(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
@@ -255,7 +247,7 @@ func TestLuaValidation_SeverityDefault(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
@@ -330,7 +322,7 @@ func TestLuaValidation_ReturnValues(t *testing.T) {
 				},
 			}
 
-			entities := []*model.Entity{
+			entities := []*entity.Entity{
 				{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 			}
 
@@ -385,7 +377,7 @@ func TestLuaValidation_EntityContext(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{
 			ID:   "TKT-001",
 			Type: "ticket",
@@ -429,7 +421,7 @@ func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
@@ -465,7 +457,7 @@ func TestLuaValidation_MutationsBlocked(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
@@ -504,7 +496,7 @@ func TestLuaValidation_CombinedWithWhenThen(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		// Passes both when/then and Lua
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"status": "ready", "priority": "high"}},
 		// Fails when/then (no priority)
@@ -550,7 +542,7 @@ func TestLuaValidation_SyntaxError(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
@@ -578,7 +570,7 @@ func TestLuaValidation_RuntimeError(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
@@ -629,7 +621,7 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"status": "valid"}},
 		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"status": "invalid"}},
 	}
@@ -671,7 +663,7 @@ func TestLuaValidation_ScriptFileNotFound(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
@@ -722,7 +714,7 @@ func TestLuaValidation_CrossEntityValidation(t *testing.T) {
 
 	// TKT-001 has a parent (PARENT-001) which is approved - should pass
 	// TKT-002 has no parent - should pass
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"status": "ready"}},
 		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"status": "draft"}},
 	}
@@ -751,7 +743,7 @@ func TestLuaValidation_Timeout(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
@@ -831,7 +823,7 @@ func TestLuaValidation_PathTraversal(t *testing.T) {
 				},
 			}
 
-			entities := []*model.Entity{
+			entities := []*entity.Entity{
 				{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 			}
 

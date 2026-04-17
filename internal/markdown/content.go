@@ -11,7 +11,6 @@ import (
 	"github.com/yuin/goldmark/text"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // ExtractHeaders extracts all markdown headers from content using goldmark's AST parser.
@@ -78,12 +77,12 @@ func MatchHeader(headers []string, check metamodel.HeaderCheck) bool {
 }
 
 // CheckContentRule validates markdown content against content rules.
-func CheckContentRule(entity *model.Entity, rule *metamodel.ContentRule) bool {
+func CheckContentRule(content string, rule *metamodel.ContentRule) bool {
 	if rule == nil {
 		return true
 	}
 
-	headers := ExtractHeaders(entity.Content)
+	headers := ExtractHeaders(content)
 
 	for _, headerCheck := range rule.RequiredHeaders {
 		if !MatchHeader(headers, headerCheck) {
@@ -93,7 +92,7 @@ func CheckContentRule(entity *model.Entity, rule *metamodel.ContentRule) bool {
 
 	// Check checklist rules
 	if rule.Checklist != nil {
-		items := ExtractChecklistItems(entity.Content)
+		items := ExtractChecklistItems(content)
 		if !CheckChecklistRule(items, rule.Checklist) {
 			return false
 		}

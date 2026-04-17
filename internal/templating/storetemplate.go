@@ -1,10 +1,10 @@
-// Package storetemplate provides a Templater service for entity templates.
+// Package templating provides a Templater service for entity templates.
 //
 // Templates are read-only defaults used during entity creation. They live
 // outside the store (typically as files in a templates/ directory). This
 // package defines the service interface and a Template type that doesn't
 // depend on the model package.
-package storetemplate
+package templating
 
 import "context"
 
@@ -24,10 +24,6 @@ type Template struct {
 }
 
 // Templater provides read-only access to entity templates.
-//
-// This is NOT part of the Store interface — templates are typically a
-// filesystem concern (templates/ directory). Each backend can supply its
-// own implementation.
 type Templater interface {
 	// EntityTemplates returns all templates (default + variants) for a type.
 	EntityTemplates(ctx context.Context, entityType string) ([]*Template, error)

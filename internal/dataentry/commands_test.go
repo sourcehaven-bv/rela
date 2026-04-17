@@ -294,7 +294,7 @@ func TestBuildListInput(t *testing.T) {
 	app.ws = workspace.NewWithGraph(
 		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: "/test/project"}),
 		app.Meta(), graphForTest(app))
-	entities := app.Graph().NodesByType("ticket")
+	entities := graphForTest(app).NodesByType("ticket")
 
 	input := app.buildListInput("tickets", entities)
 

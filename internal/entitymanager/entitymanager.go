@@ -1,4 +1,4 @@
-// Package storemanage defines the EntityManager service — the "human intent"
+// Package entitymanager defines the EntityManager service — the "human intent"
 // write path that runs automations, validation, and any policy concerns
 // (future: ACL, audit logging, rate limiting).
 //
@@ -8,7 +8,7 @@
 //
 // Not all consumers need a manager. Importers, bulk sync, and formatters
 // bypass automations and talk to the store directly.
-package storemanage
+package entitymanager
 
 import (
 	"context"

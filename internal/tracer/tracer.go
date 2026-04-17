@@ -1,11 +1,11 @@
-// Package storetrace provides graph traversal operations (trace, path,
+// Package tracer provides graph traversal operations (trace, path,
 // orphan detection, cycle detection, clustering) as a service separate
 // from the store.
 //
 // The generic Tracer reads from a store.EntityReader + store.RelationReader.
 // Smart backends (e.g. Postgres) can provide native implementations using
 // recursive CTEs without going through the store abstraction.
-package storetrace
+package tracer
 
 import (
 	"context"

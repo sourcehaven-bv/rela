@@ -4,11 +4,11 @@
 package validation
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // Violation represents a custom validation rule violation.
@@ -46,14 +46,14 @@ func (s *Service) Rules() []metamodel.ValidationRule {
 
 // Check runs all validation rules against the given entities.
 // If scope is non-nil, only entities in scope are checked.
-func (s *Service) Check(entities []*model.Entity, scope map[string]bool) []Violation {
+func (s *Service) Check(entities []*entity.Entity, scope map[string]bool) []Violation {
 	return s.CheckRules(entities, scope, nil)
 }
 
 // CheckRules runs validation rules against the given entities.
 // If ruleNames is nil, all rules are run. Otherwise, only rules in the set are run.
 // If scope is non-nil, only entities in scope are checked.
-func (s *Service) CheckRules(entities []*model.Entity, scope, ruleNames map[string]bool) []Violation {
+func (s *Service) CheckRules(entities []*entity.Entity, scope, ruleNames map[string]bool) []Violation {
 	var violations []Violation
 
 	for _, rule := range s.meta.Validations {
@@ -84,7 +84,7 @@ func CountBySeverity(violations []Violation) (errors, warnings int) {
 // CheckRule checks a single rule against entities.
 func (s *Service) CheckRule(
 	rule metamodel.ValidationRule,
-	entities []*model.Entity,
+	entities []*entity.Entity,
 	scope map[string]bool,
 ) []Violation {
 	// Parse filters
@@ -102,8 +102,8 @@ func (s *Service) CheckRule(
 
 	// Check each candidate
 	var violations []Violation
-	for _, entity := range candidates {
-		entityViolations := s.checkEntityAgainstRule(entity, rule, whenFilters, thenFilters)
+	for _, e := range candidates {
+		entityViolations := s.checkEntityAgainstRule(e, rule, whenFilters, thenFilters)
 		violations = append(violations, entityViolations...)
 	}
 	return violations
@@ -111,11 +111,11 @@ func (s *Service) CheckRule(
 
 // filterCandidates filters entities by scope and entity type.
 func (s *Service) filterCandidates(
-	entities []*model.Entity,
+	entities []*entity.Entity,
 	scope map[string]bool,
 	entityType string,
-) []*model.Entity {
-	var candidates []*model.Entity
+) []*entity.Entity {
+	var candidates []*entity.Entity
 	for _, e := range entities {
 		if scope != nil {
 			if _, ok := scope[e.ID]; !ok {
@@ -132,16 +132,16 @@ func (s *Service) filterCandidates(
 // checkEntityAgainstRule checks if an entity violates the given rule.
 // Returns violations found, or empty slice if entity passes.
 func (s *Service) checkEntityAgainstRule(
-	entity *model.Entity,
+	e *entity.Entity,
 	rule metamodel.ValidationRule,
 	whenFilters, thenFilters []*filter.Filter,
 ) []Violation {
-	entityDef, ok := s.meta.GetEntityDef(entity.Type)
+	entityDef, ok := s.meta.GetEntityDef(e.Type)
 	if !ok {
 		return nil
 	}
 
-	rec := filter.Record{ID: entity.ID, Type: entity.Type, Properties: entity.Properties}
+	rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
 
 	// Check 'when' conditions - if they don't match, rule doesn't apply
 	if len(whenFilters) > 0 {
@@ -159,28 +159,28 @@ func (s *Service) checkEntityAgainstRule(
 				RuleName:    rule.Name,
 				Description: rule.Description,
 				Severity:    rule.GetSeverity(),
-				EntityID:    entity.ID,
-				EntityTitle: entity.Title(),
+				EntityID:    e.ID,
+				EntityTitle: e.Title(),
 			}}
 		}
 	}
 
 	// Check Lua validation rules
 	if rule.Lua != "" || rule.LuaFile != "" {
-		luaViolations := s.runLuaValidation(entity, rule)
+		luaViolations := s.runLuaValidation(e, rule)
 		if len(luaViolations) > 0 {
 			return luaViolations
 		}
 	}
 
 	// Check content rules
-	if rule.Content != nil && !markdown.CheckContentRule(entity, rule.Content) {
+	if rule.Content != nil && !markdown.CheckContentRule(e.Content, rule.Content) {
 		return []Violation{{
 			RuleName:    rule.Name,
 			Description: rule.Description,
 			Severity:    rule.GetSeverity(),
-			EntityID:    entity.ID,
-			EntityTitle: entity.Title(),
+			EntityID:    e.ID,
+			EntityTitle: e.Title(),
 		}}
 	}
 
@@ -189,13 +189,13 @@ func (s *Service) checkEntityAgainstRule(
 
 // runLuaValidation runs Lua validation and returns violations.
 // Returns empty slice if validation passes or Lua is not configured.
-func (s *Service) runLuaValidation(entity *model.Entity, rule metamodel.ValidationRule) []Violation {
+func (s *Service) runLuaValidation(e *entity.Entity, rule metamodel.ValidationRule) []Violation {
 	// Lazy-initialize the Lua executor
 	if s.luaExec == nil {
 		s.luaExec = newLuaExecutor(s.svc, s.meta, s.projectRoot)
 	}
 
-	luaViolations := s.luaExec.validate(entity, rule)
+	luaViolations := s.luaExec.validate(e, rule)
 	if len(luaViolations) == 0 {
 		return nil
 	}
@@ -207,8 +207,8 @@ func (s *Service) runLuaValidation(entity *model.Entity, rule metamodel.Validati
 			RuleName:    rule.Name,
 			Description: lv.Message, // Use Lua's custom message
 			Severity:    lv.Severity,
-			EntityID:    entity.ID,
-			EntityTitle: entity.Title(),
+			EntityID:    e.ID,
+			EntityTitle: e.Title(),
 		}
 	}
 	return violations

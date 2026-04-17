@@ -13,6 +13,7 @@ import (
 	"errors"
 	"io"
 	"iter"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -40,6 +41,17 @@ type Store interface {
 	AttachmentManager
 	Watcher
 	Lifecycle
+	Freshness
+}
+
+// Freshness exposes the store's overall "last modified" timestamp, covering
+// entity and relation writes. Consumers maintaining derived state (search
+// indexes, graph caches, projections) compare this against their own
+// "last synced" timestamp to decide whether to rebuild.
+type Freshness interface {
+	// LastModified returns the latest mutation time across all entities and
+	// relations in the store. Returns a zero time if the store is empty.
+	LastModified(ctx context.Context) (time.Time, error)
 }
 
 // EntityReader provides read access to entities.
@@ -259,23 +271,16 @@ type EntityObserver interface {
 }
 
 // SearchIndex is a pluggable full-text search index. It implements
-// EntityObserver (the store calls EntityPut/EntityDelete on writes) and
-// provides a Search method for querying. Implementations must be safe
-// for concurrent use.
+// EntityObserver so it can be attached to a store as a write observer,
+// and provides a Search method for querying. Implementations must be safe
+// for concurrent use. Lifecycle (construction, population on startup,
+// close) is the consumer's responsibility — the store does not manage it.
 type SearchIndex interface {
 	EntityObserver
 
 	// Search returns entity IDs matching the query text, ordered by relevance.
 	// limit ≤ 0 means no limit.
 	Search(text string, limit int) ([]string, error)
-
-	// Persistent returns true if the index survives process restarts.
-	// When true, the index is only rebuilt when entity files have changed.
-	// When false, all entities are re-indexed on every startup.
-	Persistent() bool
-
-	// Close releases any resources held by the index.
-	Close() error
 }
 
 // SearchQuery describes a search request.

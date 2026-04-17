@@ -6,21 +6,21 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
-	"github.com/Sourcehaven-BV/rela/internal/store/storemanage"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
 
 // wsEntityManager adapts the workspace's legacy write API to the
-// storemanage.EntityManager interface. It converts entity.Entity at the
+// entitymanager.EntityManager interface. It converts entity.Entity at the
 // boundary and delegates to the workspace's automation-aware methods.
 type wsEntityManager struct {
 	w *Workspace
 }
 
-var _ storemanage.EntityManager = (*wsEntityManager)(nil)
+var _ entitymanager.EntityManager = (*wsEntityManager)(nil)
 
 func (m *wsEntityManager) CreateEntity(
-	_ context.Context, e *entity.Entity, opts storemanage.CreateOptions,
-) (*storemanage.CreateResult, error) {
+	_ context.Context, e *entity.Entity, opts entitymanager.CreateOptions,
+) (*entitymanager.CreateResult, error) {
 	if e == nil {
 		return nil, nil
 	}
@@ -37,7 +37,7 @@ func (m *wsEntityManager) CreateEntity(
 		return nil, err
 	}
 
-	return &storemanage.CreateResult{
+	return &entitymanager.CreateResult{
 		Entity:             model.EntityToDomain(created),
 		RelationsCreated:   relationsToDomain(result.RelationsCreated),
 		EntitiesCreated:    entitiesToDomain(result.EntitiesCreated),
@@ -48,7 +48,7 @@ func (m *wsEntityManager) CreateEntity(
 
 func (m *wsEntityManager) UpdateEntity(
 	_ context.Context, e *entity.Entity,
-) (*storemanage.UpdateResult, error) {
+) (*entitymanager.UpdateResult, error) {
 	if e == nil {
 		return nil, nil
 	}
@@ -72,7 +72,7 @@ func (m *wsEntityManager) UpdateEntity(
 		return nil, err
 	}
 
-	return &storemanage.UpdateResult{
+	return &entitymanager.UpdateResult{
 		Entity:             model.EntityToDomain(updated),
 		RelationsCreated:   relationsToDomain(result.RelationsCreated),
 		EntitiesCreated:    entitiesToDomain(result.EntitiesCreated),
@@ -83,7 +83,7 @@ func (m *wsEntityManager) UpdateEntity(
 
 func (m *wsEntityManager) DeleteEntity(
 	_ context.Context, id string, cascade bool,
-) (*storemanage.DeleteResult, error) {
+) (*entitymanager.DeleteResult, error) {
 	// Workspace.DeleteEntity needs entity type; look it up.
 	current, ok := m.w.GetEntity(id)
 	if !ok {
@@ -97,15 +97,15 @@ func (m *wsEntityManager) DeleteEntity(
 
 	// Workspace.DeleteEntity returns only a count, not the deleted relations.
 	// We return just the deleted entity.
-	return &storemanage.DeleteResult{
+	return &entitymanager.DeleteResult{
 		DeletedEntities:  []*entity.Entity{model.EntityToDomain(current)},
 		DeletedRelations: nil,
 	}, nil
 }
 
 func (m *wsEntityManager) RenameEntity(
-	_ context.Context, oldID, newID string, opts storemanage.RenameOptions,
-) (*storemanage.RenameResult, error) {
+	_ context.Context, oldID, newID string, opts entitymanager.RenameOptions,
+) (*entitymanager.RenameResult, error) {
 	current, ok := m.w.GetEntity(oldID)
 	if !ok {
 		return nil, &entityNotFoundError{ID: oldID}
@@ -116,7 +116,7 @@ func (m *wsEntityManager) RenameEntity(
 		return nil, err
 	}
 
-	return &storemanage.RenameResult{
+	return &entitymanager.RenameResult{
 		OldID:            result.OldID,
 		NewID:            result.NewID,
 		RelationsUpdated: len(result.RelationsUpdated),
@@ -124,7 +124,7 @@ func (m *wsEntityManager) RenameEntity(
 }
 
 func (m *wsEntityManager) CreateRelation(
-	_ context.Context, from, relType, to string, opts storemanage.RelationOptions,
+	_ context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
 	r, err := m.w.CreateRelation(from, relType, to, CreateRelationOptions{
 		Properties: opts.Properties,
@@ -137,7 +137,7 @@ func (m *wsEntityManager) CreateRelation(
 }
 
 func (m *wsEntityManager) UpdateRelation(
-	_ context.Context, from, relType, to string, opts storemanage.RelationOptions,
+	_ context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
 	r, err := m.w.UpdateRelation(from, relType, to, CreateRelationOptions{
 		Properties: opts.Properties,
@@ -154,7 +154,7 @@ func (m *wsEntityManager) DeleteRelation(_ context.Context, from, relType, to st
 }
 
 // EntityManager returns the entity management service.
-func (w *Workspace) EntityManager() storemanage.EntityManager {
+func (w *Workspace) EntityManager() entitymanager.EntityManager {
 	return &wsEntityManager{w: w}
 }
 

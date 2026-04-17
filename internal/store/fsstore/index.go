@@ -22,11 +22,8 @@ type persistedIndex struct {
 	Relations map[string]indexedRelation `json:"relations"` // key → meta
 
 	// PropCacheMtime is the newest entity file mtime when the prop cache was built.
-	PropCacheMtime time.Time             `json:"prop_cache_mtime"`
+	PropCacheMtime time.Time                 `json:"prop_cache_mtime"`
 	PropCache      map[string]map[string]int `json:"prop_cache"` // property → value → count
-
-	// SearchIndexMtime is the newest entity file mtime when the search index was built.
-	SearchIndexMtime time.Time `json:"search_index_mtime"`
 }
 
 type indexedEntity struct {
@@ -71,7 +68,6 @@ func (s *FSStore) savePersistedIndex() error {
 		Relations:         make(map[string]indexedRelation, len(s.relations)),
 		PropCacheMtime:    newestFile,
 		PropCache:         s.propCache,
-		SearchIndexMtime:  newestFile,
 	}
 
 	for id, meta := range s.entities {
@@ -97,7 +93,6 @@ func (s *FSStore) savePersistedIndex() error {
 //  2. Relation index: dir mtime check → restore from cache or rescan dirs
 //  3. Scan all entity files for newest mtime (stat only, no reads)
 //  4. Prop cache: compare newest mtime → restore from cache or rebuild
-//  5. Search index: compare newest mtime → skip or rebuild
 func (s *FSStore) syncIndex() error {
 	cached := s.loadPersistedIndex()
 
@@ -110,21 +105,11 @@ func (s *FSStore) syncIndex() error {
 
 	newestFile := s.newestEntityFileMtime()
 
-	needPropCache := true
 	if cached != nil && cached.PropCache != nil && !newestFile.After(cached.PropCacheMtime) {
 		s.propCache = cached.PropCache
-		needPropCache = false
+		return nil
 	}
-
-	needSearchIndex := true
-	if s.searchIndex.Persistent() && cached != nil && !newestFile.After(cached.SearchIndexMtime) {
-		needSearchIndex = false
-	}
-
-	if needPropCache || needSearchIndex {
-		return s.rebuildIndexes(needPropCache, needSearchIndex)
-	}
-	return nil
+	return s.rebuildPropCache()
 }
 
 // syncEntities builds the entity index from directory structure.
@@ -163,24 +148,16 @@ func (s *FSStore) syncRelations(cached *persistedIndex) error {
 	return s.scanRelationDir()
 }
 
-// rebuildIndexes reads entity files to build the prop cache and/or
-// populate the search index. Only called when at least one is stale.
-func (s *FSStore) rebuildIndexes(buildPropCache, buildSearchIndex bool) error {
-	if buildPropCache {
-		s.propCache = make(map[string]map[string]int)
-	}
-
+// rebuildPropCache reads every entity file to repopulate the property cache.
+// Called when the cached cache is stale (newer entity files exist on disk).
+func (s *FSStore) rebuildPropCache() error {
+	s.propCache = make(map[string]map[string]int)
 	for _, meta := range s.entities {
 		e, err := s.loadEntity(meta.ID, meta.Type)
 		if err != nil {
 			continue
 		}
-		if buildPropCache {
-			addEntityToCache(s.propCache, e)
-		}
-		if buildSearchIndex {
-			_ = s.searchIndex.EntityPut(e)
-		}
+		addEntityToCache(s.propCache, e)
 	}
 	return nil
 }
@@ -319,6 +296,21 @@ func (s *FSStore) newestEntityFileMtime() time.Time {
 	var newest time.Time
 	for _, meta := range s.entities {
 		path := s.entityFilePath(meta.Type, meta.ID)
+		if info, err := s.fs.Stat(path); err == nil {
+			if info.ModTime().After(newest) {
+				newest = info.ModTime()
+			}
+		}
+	}
+	return newest
+}
+
+// newestRelationFileMtime returns the newest mtime across all relation files.
+// Uses stat only — no file reads.
+func (s *FSStore) newestRelationFileMtime() time.Time {
+	var newest time.Time
+	for _, meta := range s.relations {
+		path := s.relationFilePath(meta.From, meta.Type, meta.To)
 		if info, err := s.fs.Stat(path); err == nil {
 			if info.ModTime().After(newest) {
 				newest = info.ModTime()

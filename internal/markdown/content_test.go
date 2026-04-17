@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 func TestExtractHeaders(t *testing.T) {
@@ -129,26 +128,26 @@ func TestMatchHeader(t *testing.T) {
 
 func TestCheckContentRule(t *testing.T) {
 	tests := []struct {
-		name   string
-		entity *model.Entity
-		rule   *metamodel.ContentRule
-		want   bool
+		name    string
+		content string
+		rule    *metamodel.ContentRule
+		want    bool
 	}{
 		{
-			name:   "nil rule passes",
-			entity: &model.Entity{Content: "# Title"},
-			rule:   nil,
-			want:   true,
+			name:    "nil rule passes",
+			content: "# Title",
+			rule:    nil,
+			want:    true,
 		},
 		{
-			name:   "empty rule passes",
-			entity: &model.Entity{Content: "# Title"},
-			rule:   &metamodel.ContentRule{},
-			want:   true,
+			name:    "empty rule passes",
+			content: "# Title",
+			rule:    &metamodel.ContentRule{},
+			want:    true,
 		},
 		{
-			name:   "required header present",
-			entity: &model.Entity{Content: "# Title\n## Context\nSome text"},
+			name:    "required header present",
+			content: "# Title\n## Context\nSome text",
 			rule: &metamodel.ContentRule{
 				RequiredHeaders: []metamodel.HeaderCheck{
 					{Header: "## Context"},
@@ -157,8 +156,8 @@ func TestCheckContentRule(t *testing.T) {
 			want: true,
 		},
 		{
-			name:   "required header missing",
-			entity: &model.Entity{Content: "# Title\nSome text"},
+			name:    "required header missing",
+			content: "# Title\nSome text",
 			rule: &metamodel.ContentRule{
 				RequiredHeaders: []metamodel.HeaderCheck{
 					{Header: "## Context"},
@@ -167,8 +166,8 @@ func TestCheckContentRule(t *testing.T) {
 			want: false,
 		},
 		{
-			name:   "multiple required headers all present",
-			entity: &model.Entity{Content: "# Title\n## Context\n## Decision\n## Alternatives"},
+			name:    "multiple required headers all present",
+			content: "# Title\n## Context\n## Decision\n## Alternatives",
 			rule: &metamodel.ContentRule{
 				RequiredHeaders: []metamodel.HeaderCheck{
 					{Header: "## Context"},
@@ -178,8 +177,8 @@ func TestCheckContentRule(t *testing.T) {
 			want: true,
 		},
 		{
-			name:   "multiple required headers one missing",
-			entity: &model.Entity{Content: "# Title\n## Context"},
+			name:    "multiple required headers one missing",
+			content: "# Title\n## Context",
 			rule: &metamodel.ContentRule{
 				RequiredHeaders: []metamodel.HeaderCheck{
 					{Header: "## Context"},
@@ -189,8 +188,8 @@ func TestCheckContentRule(t *testing.T) {
 			want: false,
 		},
 		{
-			name:   "pattern header present",
-			entity: &model.Entity{Content: "# Title\n## Alternatives"},
+			name:    "pattern header present",
+			content: "# Title\n## Alternatives",
 			rule: &metamodel.ContentRule{
 				RequiredHeaders: []metamodel.HeaderCheck{
 					{Pattern: "## (Alternative|Alternatives)"},
@@ -202,7 +201,7 @@ func TestCheckContentRule(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := CheckContentRule(tt.entity, tt.rule)
+			got := CheckContentRule(tt.content, tt.rule)
 			if got != tt.want {
 				t.Errorf("CheckContentRule() = %v, want %v", got, tt.want)
 			}
@@ -407,38 +406,38 @@ func TestCheckChecklistRule(t *testing.T) {
 
 func TestCheckContentRuleWithChecklist(t *testing.T) {
 	tests := []struct {
-		name   string
-		entity *model.Entity
-		rule   *metamodel.ContentRule
-		want   bool
+		name    string
+		content string
+		rule    *metamodel.ContentRule
+		want    bool
 	}{
 		{
-			name:   "all checked passes",
-			entity: &model.Entity{Content: "- [x] Task 1\n- [x] Task 2"},
+			name:    "all checked passes",
+			content: "- [x] Task 1\n- [x] Task 2",
 			rule: &metamodel.ContentRule{
 				Checklist: &metamodel.ChecklistRule{AllChecked: true},
 			},
 			want: true,
 		},
 		{
-			name:   "unchecked item fails",
-			entity: &model.Entity{Content: "- [x] Task 1\n- [ ] Task 2"},
+			name:    "unchecked item fails",
+			content: "- [x] Task 1\n- [ ] Task 2",
 			rule: &metamodel.ContentRule{
 				Checklist: &metamodel.ChecklistRule{AllChecked: true},
 			},
 			want: false,
 		},
 		{
-			name:   "skipped item passes with allow-skipped",
-			entity: &model.Entity{Content: "- [x] Task 1\n- [x] ~~Task 2~~ (N/A)"},
+			name:    "skipped item passes with allow-skipped",
+			content: "- [x] Task 1\n- [x] ~~Task 2~~ (N/A)",
 			rule: &metamodel.ContentRule{
 				Checklist: &metamodel.ChecklistRule{AllChecked: true, AllowSkipped: true},
 			},
 			want: true,
 		},
 		{
-			name:   "combined headers and checklist both pass",
-			entity: &model.Entity{Content: "## Summary\n- [x] Done\n## Details"},
+			name:    "combined headers and checklist both pass",
+			content: "## Summary\n- [x] Done\n## Details",
 			rule: &metamodel.ContentRule{
 				RequiredHeaders: []metamodel.HeaderCheck{{Header: "## Summary"}},
 				Checklist:       &metamodel.ChecklistRule{AllChecked: true},
@@ -446,8 +445,8 @@ func TestCheckContentRuleWithChecklist(t *testing.T) {
 			want: true,
 		},
 		{
-			name:   "combined headers pass checklist fails",
-			entity: &model.Entity{Content: "## Summary\n- [ ] Not done"},
+			name:    "combined headers pass checklist fails",
+			content: "## Summary\n- [ ] Not done",
 			rule: &metamodel.ContentRule{
 				RequiredHeaders: []metamodel.HeaderCheck{{Header: "## Summary"}},
 				Checklist:       &metamodel.ChecklistRule{AllChecked: true},
@@ -455,8 +454,8 @@ func TestCheckContentRuleWithChecklist(t *testing.T) {
 			want: false,
 		},
 		{
-			name:   "combined headers fail checklist passes",
-			entity: &model.Entity{Content: "## Other\n- [x] Done"},
+			name:    "combined headers fail checklist passes",
+			content: "## Other\n- [x] Done",
 			rule: &metamodel.ContentRule{
 				RequiredHeaders: []metamodel.HeaderCheck{{Header: "## Summary"}},
 				Checklist:       &metamodel.ChecklistRule{AllChecked: true},
@@ -467,7 +466,7 @@ func TestCheckContentRuleWithChecklist(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := CheckContentRule(tt.entity, tt.rule)
+			got := CheckContentRule(tt.content, tt.rule)
 			if got != tt.want {
 				t.Errorf("CheckContentRule() = %v, want %v", got, tt.want)
 			}

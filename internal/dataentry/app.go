@@ -37,7 +37,6 @@ import (
 type AppState struct {
 	Cfg          *Config
 	Meta         *metamodel.Metamodel
-	Graph        EntityGraph
 	StyleMap     map[string]map[string]string
 	StyledTypes  map[string]bool
 	UserDefaults *UserDefaults
@@ -116,9 +115,6 @@ func (a *App) Cfg() *Config { return a.State().Cfg }
 // Meta returns the current metamodel (convenience accessor).
 func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 
-// Graph returns the current in-memory graph (convenience accessor).
-func (a *App) Graph() EntityGraph { return a.State().Graph }
-
 // mutateState atomically updates the published AppState. It takes
 // writeMu, builds a shallow copy of the current snapshot, runs the
 // caller's mutator on the copy, and publishes the copy via state.Store.
@@ -171,7 +167,6 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 
 	snap := ws.Snapshot()
 	meta := snap.Meta()
-	g := snap.Graph()
 
 	// Validate config against metamodel
 	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
@@ -189,6 +184,7 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		}
 	}
 
+	g := snap.Graph()
 	slog.Info("loaded project graph", "entities", g.NodeCount(), "relations", g.EdgeCount())
 
 	// Build style map from config styles
@@ -214,7 +210,6 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 	app.state.Store(&AppState{
 		Cfg:          &cfg,
 		Meta:         meta,
-		Graph:        g,
 		StyleMap:     styleMap,
 		StyledTypes:  styledTypes,
 		UserDefaults: userDefaults,

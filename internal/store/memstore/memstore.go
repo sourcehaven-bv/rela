@@ -77,6 +77,25 @@ func New(opts ...Option) *MemStore {
 	return m
 }
 
+// LastModified scans stored entities and relations for the newest UpdatedAt.
+func (m *MemStore) LastModified(_ context.Context) (time.Time, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var newest time.Time
+	for _, e := range m.entities {
+		if e.UpdatedAt.After(newest) {
+			newest = e.UpdatedAt
+		}
+	}
+	for _, r := range m.relations {
+		if r.UpdatedAt.After(newest) {
+			newest = r.UpdatedAt
+		}
+	}
+	return newest, nil
+}
+
 func (m *MemStore) notifyPut(e *entity.Entity) {
 	for _, o := range m.observers {
 		_ = o.EntityPut(e)

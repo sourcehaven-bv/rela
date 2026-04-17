@@ -24,11 +24,11 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/store/storemanage"
-	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 // Default values for Lua API functions.
@@ -768,7 +768,7 @@ func relationToTable(ls *lua.LState, rel *entity.Relation) *lua.LTable {
 }
 
 // traceResultToTable converts a trace result tree to a Lua table.
-func traceResultToTable(ls *lua.LState, trace *storetrace.TraceResult) *lua.LTable {
+func traceResultToTable(ls *lua.LState, trace *tracer.TraceResult) *lua.LTable {
 	t := ls.NewTable()
 	t.RawSetString("id", lua.LString(trace.ID))
 	t.RawSetString("type", lua.LString(trace.Type))
@@ -959,7 +959,7 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 		Properties: props,
 		Content:    content,
 	}
-	result, err := r.svc.Manager.CreateEntity(context.Background(), newE, storemanage.CreateOptions{ID: customID})
+	result, err := r.svc.Manager.CreateEntity(context.Background(), newE, entitymanager.CreateOptions{ID: customID})
 	if err != nil {
 		ls.RaiseError("create entity error: %s", err.Error())
 		return 0
@@ -1059,7 +1059,7 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	rel, err := r.svc.Manager.CreateRelation(context.Background(), from, relType, to, storemanage.RelationOptions{})
+	rel, err := r.svc.Manager.CreateRelation(context.Background(), from, relType, to, entitymanager.RelationOptions{})
 	if err != nil {
 		ls.RaiseError("create relation error: %s", err.Error())
 		return 0

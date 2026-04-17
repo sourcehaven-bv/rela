@@ -13,9 +13,9 @@ import (
 
 	golua "github.com/yuin/gopher-lua"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // validationsDir is the directory where validation script files must be located.
@@ -73,7 +73,7 @@ func newLuaExecutor(svc lua.Services, meta *metamodel.Metamodel, projectRoot str
 // Errors are logged but do not propagate - validation fails open to avoid
 // blocking the entire validation run due to a single broken rule.
 func (e *luaExecutor) validate(
-	entity *model.Entity,
+	ent *entity.Entity,
 	rule metamodel.ValidationRule,
 ) []LuaViolation {
 	code := rule.Lua
@@ -108,7 +108,7 @@ func (e *luaExecutor) validate(
 
 	// Inject entity as global
 	ls := runtime.LState()
-	ls.SetGlobal("entity", lua.EntityToTable(ls, model.EntityToDomain(entity)))
+	ls.SetGlobal("entity", lua.EntityToTable(ls, ent))
 
 	// Compile the code into a function
 	fn, err := ls.LoadString(code)

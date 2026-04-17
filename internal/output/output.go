@@ -11,7 +11,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 // Format represents the output format
@@ -234,7 +234,7 @@ func (w *Writer) WriteRelations(relations []*entity.Relation) error {
 }
 
 // WriteTrace outputs a trace result as a tree
-func (w *Writer) WriteTrace(result *storetrace.TraceResult) error {
+func (w *Writer) WriteTrace(result *tracer.TraceResult) error {
 	if w.Format == FormatJSON {
 		return w.writeJSON(result)
 	}
@@ -243,7 +243,7 @@ func (w *Writer) WriteTrace(result *storetrace.TraceResult) error {
 	return nil
 }
 
-func (w *Writer) writeTraceNode(node *storetrace.TraceResult, prefix string, isLast bool) {
+func (w *Writer) writeTraceNode(node *tracer.TraceResult, prefix string, isLast bool) {
 	if node == nil {
 		return
 	}
@@ -286,7 +286,7 @@ func (w *Writer) writeTraceNode(node *storetrace.TraceResult, prefix string, isL
 }
 
 // WritePath outputs a path between nodes
-func (w *Writer) WritePath(path []storetrace.PathStep) error {
+func (w *Writer) WritePath(path []tracer.PathStep) error {
 	if w.Format == FormatJSON {
 		return w.writeJSON(path)
 	}

@@ -6,7 +6,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 // Services bundles the backend services the data-entry handlers read
@@ -16,14 +16,14 @@ import (
 // The bundle carries only what HTTP handlers actually need: read-side
 // access to the store and tracer, free-text search, and the metamodel.
 // Writes continue to flow through workspace methods (which go through
-// storemanage.EntityManager so automations and validations fire).
+// entitymanager.EntityManager so automations and validations fire).
 type Services struct {
 	// Store provides entity/relation CRUD. Handlers use it for read
 	// operations; writes go through the workspace's EntityManager.
 	Store store.Store
 
 	// Tracer walks relations for trace/path/orphan queries.
-	Tracer storetrace.Tracer
+	Tracer tracer.Tracer
 
 	// Search runs a free-text query against the Bleve index. The
 	// words/phrases split mirrors the existing workspace.Search signature

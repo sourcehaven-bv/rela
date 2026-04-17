@@ -9,8 +9,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/store/storemanage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -383,7 +383,7 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 		Properties: req.Properties,
 		Content:    req.Content,
 	}
-	result, err := a.ws.EntityManager().CreateEntity(r.Context(), newEntity, storemanage.CreateOptions{ID: req.ID})
+	result, err := a.ws.EntityManager().CreateEntity(r.Context(), newEntity, entitymanager.CreateOptions{ID: req.ID})
 	if err != nil {
 		var valErr *workspace.ValidationError
 		if errors.As(err, &valErr) {
@@ -500,7 +500,7 @@ func (a *App) handleAPICreateRelation(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	relation, err := a.ws.EntityManager().CreateRelation(r.Context(), req.From, req.Type, req.To, storemanage.RelationOptions{
+	relation, err := a.ws.EntityManager().CreateRelation(r.Context(), req.From, req.Type, req.To, entitymanager.RelationOptions{
 		Properties: req.Properties,
 	})
 	if err != nil {

@@ -3,10 +3,9 @@ package memstore_test
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/store/storesearch"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 )
 
@@ -17,9 +16,9 @@ func factory(t *testing.T) store.Store {
 
 func searchFactory(t *testing.T) (store.Store, store.Searcher) {
 	t.Helper()
-	idx := fsstore.NewLinearSearch()
+	idx := search.NewLinearSearch()
 	s := memstore.New(memstore.WithObserver(idx))
-	return s, storesearch.New(s, idx)
+	return s, search.New(s, idx)
 }
 
 func fuzzFactory() store.Store {

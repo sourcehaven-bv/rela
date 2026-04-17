@@ -1,38 +1,30 @@
-package fsstore_test
+package search_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/store/bleveindex"
-	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func openSearchStore(t *testing.T) *fsstore.FSStore {
+func openSearcher(t *testing.T) (store.Store, store.Searcher) {
 	t.Helper()
 	idx, err := bleveindex.NewMem()
 	require.NoError(t, err)
+	t.Cleanup(func() { idx.Close() })
 
-	s, err := fsstore.New(fsstore.Config{
-		FS:             storage.NewMemFS(),
-		EntitiesDir:    "/entities",
-		RelationsDir:   "/relations",
-		AttachmentsDir: "/attachments",
-		CacheDir:       "/.rela",
-		SearchIndex:    idx,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { s.Close() })
-	return s
+	s := memstore.New(memstore.WithObserver(idx))
+	return s, search.New(s, idx)
 }
 
 func TestSearchIndex_TextSearch(t *testing.T) {
-	s := openSearchStore(t)
+	s, searcher := openSearcher(t)
 	ctx := context.Background()
 
 	e1 := entity.New("REQ-1", "requirement")
@@ -45,10 +37,10 @@ func TestSearchIndex_TextSearch(t *testing.T) {
 	e2.Content = "Export data as CSV."
 	require.NoError(t, s.CreateEntity(ctx, e2))
 
-	var results []*entity.Entity
-	for e, err := range s.Search(ctx, store.SearchQuery{Text: "authentication"}) {
+	var results []store.SearchHit
+	for hit, err := range searcher.Search(ctx, store.SearchQuery{Text: "authentication"}) {
 		require.NoError(t, err)
-		results = append(results, e)
+		results = append(results, hit)
 	}
 
 	assert.Len(t, results, 1)
@@ -56,7 +48,7 @@ func TestSearchIndex_TextSearch(t *testing.T) {
 }
 
 func TestSearchIndex_TextWithTypeFilter(t *testing.T) {
-	s := openSearchStore(t)
+	s, searcher := openSearcher(t)
 	ctx := context.Background()
 
 	e1 := entity.New("REQ-1", "requirement")
@@ -67,10 +59,10 @@ func TestSearchIndex_TextWithTypeFilter(t *testing.T) {
 	e2.SetString("title", "Common keyword")
 	require.NoError(t, s.CreateEntity(ctx, e2))
 
-	var results []*entity.Entity
-	for e, err := range s.Search(ctx, store.SearchQuery{Text: "common", Types: []string{"ticket"}}) {
+	var results []store.SearchHit
+	for hit, err := range searcher.Search(ctx, store.SearchQuery{Text: "common", Types: []string{"ticket"}}) {
 		require.NoError(t, err)
-		results = append(results, e)
+		results = append(results, hit)
 	}
 
 	assert.Len(t, results, 1)
@@ -78,7 +70,7 @@ func TestSearchIndex_TextWithTypeFilter(t *testing.T) {
 }
 
 func TestSearchIndex_TextWithPropertyFilter(t *testing.T) {
-	s := openSearchStore(t)
+	s, searcher := openSearcher(t)
 	ctx := context.Background()
 
 	e1 := entity.New("REQ-1", "requirement")
@@ -91,13 +83,13 @@ func TestSearchIndex_TextWithPropertyFilter(t *testing.T) {
 	e2.SetString("status", "closed")
 	require.NoError(t, s.CreateEntity(ctx, e2))
 
-	var results []*entity.Entity
-	for e, err := range s.Search(ctx, store.SearchQuery{
+	var results []store.SearchHit
+	for hit, err := range searcher.Search(ctx, store.SearchQuery{
 		Text:    "searchable",
 		Filters: []store.PropertyFilter{{Property: "status", Value: "open", Op: store.FilterEq}},
 	}) {
 		require.NoError(t, err)
-		results = append(results, e)
+		results = append(results, hit)
 	}
 
 	assert.Len(t, results, 1)
@@ -105,7 +97,7 @@ func TestSearchIndex_TextWithPropertyFilter(t *testing.T) {
 }
 
 func TestSearchIndex_UpdateReflectedInSearch(t *testing.T) {
-	s := openSearchStore(t)
+	s, searcher := openSearcher(t)
 	ctx := context.Background()
 
 	e := entity.New("REQ-1", "requirement")
@@ -116,24 +108,24 @@ func TestSearchIndex_UpdateReflectedInSearch(t *testing.T) {
 	require.NoError(t, s.UpdateEntity(ctx, e))
 
 	// Old term should not match.
-	var results []*entity.Entity
-	for ent, err := range s.Search(ctx, store.SearchQuery{Text: "Original"}) {
+	var results []store.SearchHit
+	for hit, err := range searcher.Search(ctx, store.SearchQuery{Text: "Original"}) {
 		require.NoError(t, err)
-		results = append(results, ent)
+		results = append(results, hit)
 	}
 	assert.Empty(t, results)
 
 	// New term should match.
 	results = nil
-	for ent, err := range s.Search(ctx, store.SearchQuery{Text: "Replaced"}) {
+	for hit, err := range searcher.Search(ctx, store.SearchQuery{Text: "Replaced"}) {
 		require.NoError(t, err)
-		results = append(results, ent)
+		results = append(results, hit)
 	}
 	assert.Len(t, results, 1)
 }
 
 func TestSearchIndex_DeleteRemovesFromSearch(t *testing.T) {
-	s := openSearchStore(t)
+	s, searcher := openSearcher(t)
 	ctx := context.Background()
 
 	e := entity.New("REQ-1", "requirement")
@@ -143,16 +135,16 @@ func TestSearchIndex_DeleteRemovesFromSearch(t *testing.T) {
 	_, err := s.DeleteEntity(ctx, "REQ-1", false)
 	require.NoError(t, err)
 
-	var results []*entity.Entity
-	for ent, err := range s.Search(ctx, store.SearchQuery{Text: "Deletable"}) {
+	var results []store.SearchHit
+	for hit, err := range searcher.Search(ctx, store.SearchQuery{Text: "Deletable"}) {
 		require.NoError(t, err)
-		results = append(results, ent)
+		results = append(results, hit)
 	}
 	assert.Empty(t, results)
 }
 
 func TestSearchIndex_RenameUpdatesSearch(t *testing.T) {
-	s := openSearchStore(t)
+	s, searcher := openSearcher(t)
 	ctx := context.Background()
 
 	e := entity.New("REQ-OLD", "requirement")
@@ -162,38 +154,11 @@ func TestSearchIndex_RenameUpdatesSearch(t *testing.T) {
 	_, err := s.RenameEntity(ctx, "REQ-OLD", "REQ-NEW")
 	require.NoError(t, err)
 
-	var results []*entity.Entity
-	for ent, err := range s.Search(ctx, store.SearchQuery{Text: "Renameable"}) {
+	var results []store.SearchHit
+	for hit, err := range searcher.Search(ctx, store.SearchQuery{Text: "Renameable"}) {
 		require.NoError(t, err)
-		results = append(results, ent)
+		results = append(results, hit)
 	}
 	require.Len(t, results, 1)
 	assert.Equal(t, "REQ-NEW", results[0].ID)
-}
-
-func TestSearchIndex_FallbackWithoutIndex(t *testing.T) {
-	// Without a SearchIndex, text search falls back to linear scan.
-	s, err := fsstore.New(fsstore.Config{
-		FS:             storage.NewMemFS(),
-		EntitiesDir:    "/entities",
-		RelationsDir:   "/relations",
-		AttachmentsDir: "/attachments",
-		CacheDir:       "/.rela",
-	})
-	require.NoError(t, err)
-	defer s.Close()
-
-	ctx := context.Background()
-
-	e := entity.New("REQ-1", "requirement")
-	e.SetString("title", "Findable item")
-	require.NoError(t, s.CreateEntity(ctx, e))
-
-	var results []*entity.Entity
-	for ent, err := range s.Search(ctx, store.SearchQuery{Text: "Findable"}) {
-		require.NoError(t, err)
-		results = append(results, ent)
-	}
-	assert.Len(t, results, 1)
-	assert.Equal(t, "REQ-1", results[0].ID)
 }

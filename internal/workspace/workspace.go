@@ -20,7 +20,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
@@ -28,8 +27,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
 // ChangeEvent is re-exported from repository so consumers don't need to
@@ -955,9 +955,6 @@ func (w *Workspace) CreateEntity(entityType string, opts CreateOptions) (*model.
 		result.AutomationErrors = autoResult.Errors
 	}
 
-	// Index the entity for search.
-	w.indexEntity(entity)
-
 	// Apply automation side effects (relations, entities, Lua) after entity is written.
 	if autoResult != nil {
 		effects := w.applyAutomationSideEffects(entity, nil, autoResult)
@@ -1022,7 +1019,6 @@ func (w *Workspace) UpdateEntity(entity, oldEntity *model.Entity) (*UpdateResult
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 	s.graph.AddNode(entity)
-	w.indexEntity(entity)
 
 	// Apply automation side effects (relations, entities, Lua) AFTER entity is written.
 	if autoResult != nil {
@@ -1090,7 +1086,6 @@ func (w *Workspace) DeleteEntity(entityType, id string, cascade bool) (*DeleteRe
 		return nil, fmt.Errorf("delete entity: %w", err)
 	}
 	g.RemoveNode(id)
-	w.removeFromIndex(id)
 
 	w.saveCacheQuietly()
 	return result, nil

@@ -1,17 +1,17 @@
 package lua
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/store/storemanage"
-	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 // Services bundles the backend services a Lua runtime needs.
 type Services struct {
 	Store    store.Store
-	Manager  storemanage.EntityManager
-	Tracer   storetrace.Tracer
+	Manager  entitymanager.EntityManager
+	Tracer   tracer.Tracer
 	Searcher store.Searcher
 	Meta     *metamodel.Metamodel
 

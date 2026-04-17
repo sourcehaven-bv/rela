@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
@@ -361,7 +362,7 @@ func (w *Workspace) newValidationService() *validation.Service {
 
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.
 func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
-	return w.newValidationService().Check(w.graph().AllNodes(), opts.Scope)
+	return w.newValidationService().Check(nodesToDomain(w.graph().AllNodes()), opts.Scope)
 }
 
 // RunValidationsFiltered executes custom validation rules matching the given filters.
@@ -381,7 +382,18 @@ func (w *Workspace) RunValidationsFiltered(opts AnalyzeOptions, filters []Valida
 	}
 
 	// Run only matching rules
-	return svc.CheckRules(w.graph().AllNodes(), opts.Scope, ruleNames)
+	return svc.CheckRules(nodesToDomain(w.graph().AllNodes()), opts.Scope, ruleNames)
+}
+
+// nodesToDomain converts a slice of legacy model.Entity to entity.Entity for
+// consumers that have already moved to the domain type. This conversion will
+// go away when the graph itself flips to *entity.Entity.
+func nodesToDomain(nodes []*model.Entity) []*entity.Entity {
+	out := make([]*entity.Entity, len(nodes))
+	for i, n := range nodes {
+		out[i] = model.EntityToDomain(n)
+	}
+	return out
 }
 
 // matchesFilter returns true if the rule matches the filter criteria.

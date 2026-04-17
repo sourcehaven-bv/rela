@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/analysis/analyzer/keyword"
@@ -16,6 +17,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
+
+// lastModifiedKey is the bleve internal-storage key under which we persist
+// the most recent entity mtime observed by this index.
+var lastModifiedKey = []byte("rela:last_modified")
 
 // compile-time interface check.
 var _ store.SearchIndex = (*Index)(nil)
@@ -101,12 +106,49 @@ func buildMapping() *mapping.IndexMappingImpl {
 
 // Index adds or updates an entity in the search index.
 func (idx *Index) EntityPut(e *entity.Entity) error {
-	return idx.index.Index(e.ID, entityToDoc(e))
+	if err := idx.index.Index(e.ID, entityToDoc(e)); err != nil {
+		return err
+	}
+	return idx.bumpLastModified(e.UpdatedAt)
 }
 
 // EntityDelete removes an entity from the search index.
 func (idx *Index) EntityDelete(id string) error {
-	return idx.index.Delete(id)
+	if err := idx.index.Delete(id); err != nil {
+		return err
+	}
+	// A delete carries no mtime from the entity; use wall clock so the
+	// timestamp still advances and consumers can observe the change.
+	return idx.bumpLastModified(time.Now())
+}
+
+// LastModified returns the latest mtime observed by this index. Persistent
+// indexes restore this across restarts so consumers can skip reindexing
+// when the store's LastModified hasn't advanced.
+func (idx *Index) LastModified() time.Time {
+	data, err := idx.index.GetInternal(lastModifiedKey)
+	if err != nil || len(data) == 0 {
+		return time.Time{}
+	}
+	var t time.Time
+	if err := t.UnmarshalBinary(data); err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// bumpLastModified advances the persisted timestamp if t is newer than the
+// current value. Concurrent writers race harmlessly — the monotonic MAX
+// semantics ensure the timestamp only moves forward.
+func (idx *Index) bumpLastModified(t time.Time) error {
+	if !t.After(idx.LastModified()) {
+		return nil
+	}
+	data, err := t.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	return idx.index.SetInternal(lastModifiedKey, data)
 }
 
 // boostedFields defines the fields to search with their boost weights.
@@ -160,9 +202,6 @@ func (idx *Index) Search(text string, limit int) ([]string, error) {
 	}
 	return ids, nil
 }
-
-// Persistent returns true — bleve indexes are stored on disk.
-func (idx *Index) Persistent() bool { return true }
 
 // Close releases resources held by the index.
 func (idx *Index) Close() error {

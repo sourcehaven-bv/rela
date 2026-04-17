@@ -15,12 +15,12 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/store/storemanage"
-	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 // testMeta returns the metamodel used for testing.
@@ -117,7 +117,7 @@ func (m *mockWorkspace) services(projectRoot string) Services {
 	return Services{
 		Store:       m.store,
 		Manager:     &mockManager{ws: m},
-		Tracer:      storetrace.New(m.store),
+		Tracer:      tracer.New(m.store),
 		Searcher:    &mockSearcher{ws: m},
 		Meta:        m.meta,
 		ProjectRoot: projectRoot,
@@ -146,18 +146,18 @@ func testWorkspace(t *testing.T) *mockWorkspace {
 	return newMockWorkspace(t)
 }
 
-// mockManager is a minimal storemanage.EntityManager for tests. It delegates
+// mockManager is a minimal entitymanager.EntityManager for tests. It delegates
 // to the underlying memstore and mirrors writes into the graph so test
 // assertions using graph queries continue to work.
 type mockManager struct {
 	ws *mockWorkspace
 }
 
-var _ storemanage.EntityManager = (*mockManager)(nil)
+var _ entitymanager.EntityManager = (*mockManager)(nil)
 
 func (m *mockManager) CreateEntity(
-	ctx context.Context, e *entity.Entity, opts storemanage.CreateOptions,
-) (*storemanage.CreateResult, error) {
+	ctx context.Context, e *entity.Entity, opts entitymanager.CreateOptions,
+) (*entitymanager.CreateResult, error) {
 	if e == nil {
 		return nil, nil
 	}
@@ -176,22 +176,22 @@ func (m *mockManager) CreateEntity(
 	}
 	mdl := model.EntityFromDomain(newE)
 	m.ws.graph.AddNode(mdl)
-	return &storemanage.CreateResult{Entity: newE}, nil
+	return &entitymanager.CreateResult{Entity: newE}, nil
 }
 
 func (m *mockManager) UpdateEntity(
 	ctx context.Context, e *entity.Entity,
-) (*storemanage.UpdateResult, error) {
+) (*entitymanager.UpdateResult, error) {
 	if err := m.ws.store.UpdateEntity(ctx, e); err != nil {
 		return nil, err
 	}
 	m.ws.graph.AddNode(model.EntityFromDomain(e))
-	return &storemanage.UpdateResult{Entity: e}, nil
+	return &entitymanager.UpdateResult{Entity: e}, nil
 }
 
 func (m *mockManager) DeleteEntity(
 	ctx context.Context, id string, cascade bool,
-) (*storemanage.DeleteResult, error) {
+) (*entitymanager.DeleteResult, error) {
 	current, ok := m.ws.graph.GetNode(id)
 	if !ok {
 		return nil, fmt.Errorf("entity not found: %s", id)
@@ -200,19 +200,19 @@ func (m *mockManager) DeleteEntity(
 		return nil, err
 	}
 	m.ws.graph.RemoveNode(id)
-	return &storemanage.DeleteResult{
+	return &entitymanager.DeleteResult{
 		DeletedEntities: []*entity.Entity{model.EntityToDomain(current)},
 	}, nil
 }
 
 func (m *mockManager) RenameEntity(
-	_ context.Context, _, _ string, _ storemanage.RenameOptions,
-) (*storemanage.RenameResult, error) {
+	_ context.Context, _, _ string, _ entitymanager.RenameOptions,
+) (*entitymanager.RenameResult, error) {
 	return nil, fmt.Errorf("rename not supported by mockManager")
 }
 
 func (m *mockManager) CreateRelation(
-	ctx context.Context, from, relType, to string, opts storemanage.RelationOptions,
+	ctx context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
 	var data *store.RelationData
 	if len(opts.Properties) > 0 || opts.Content != "" {
@@ -227,7 +227,7 @@ func (m *mockManager) CreateRelation(
 }
 
 func (m *mockManager) UpdateRelation(
-	ctx context.Context, from, relType, to string, opts storemanage.RelationOptions,
+	ctx context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
 	r, err := m.ws.store.UpdateRelation(ctx, from, relType, to, store.RelationData{
 		Properties: opts.Properties, Content: opts.Content,

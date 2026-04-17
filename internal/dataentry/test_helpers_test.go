@@ -13,9 +13,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-// graphForTest returns the concrete *graph.Graph from the app for test setup.
+// graphForTest returns the concrete *graph.Graph backing the app's
+// workspace — exposed to tests so they can seed nodes/edges directly.
+// Production handlers never reach into the graph like this; they go
+// through App.Services().
 func graphForTest(app *App) *graph.Graph {
-	return app.Graph().(*graph.Graph)
+	return app.ws.Snapshot().Graph()
 }
 
 // newAppFromParts builds an App with a populated AppState snapshot for
@@ -47,7 +50,6 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, g *graph.Graph) *Ap
 	app.state.Store(&AppState{
 		Cfg:          cfg,
 		Meta:         meta,
-		Graph:        g,
 		StyleMap:     styleMap,
 		StyledTypes:  styledTypes,
 		UserDefaults: &UserDefaults{},
@@ -107,7 +109,6 @@ func newHandlerTestApp(t *testing.T) *App {
 	app.state.Store(&AppState{
 		Cfg:         cfg,
 		Meta:        meta,
-		Graph:       g,
 		StyleMap:    styleMap,
 		StyledTypes: styledTypes,
 	})

@@ -8,7 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 // testContext implements script.Context for testing.
@@ -20,7 +20,7 @@ func (c *testContext) GetWorkspace() interface{} {
 	st := memstore.New()
 	return lua.Services{
 		Store:       st,
-		Tracer:      storetrace.New(st),
+		Tracer:      tracer.New(st),
 		ProjectRoot: c.projectRoot,
 	}
 }

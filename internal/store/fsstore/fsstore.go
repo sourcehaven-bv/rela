@@ -18,10 +18,12 @@
 package fsstore
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -34,9 +36,13 @@ type Config struct {
 	EntitiesDir    string
 	RelationsDir   string
 	AttachmentsDir string
-	CacheDir       string                           // for property-cache.json
+	CacheDir       string                            // for property-cache.json
 	Schemas        map[string]store.EntityTypeSchema // type → plural + property order
-	SearchIndex    SearchIndex                       // optional; defaults to linear substring scan
+	// Observers are notified synchronously on entity writes (create, update,
+	// delete, rename). They are NOT populated from existing entity files on
+	// startup — callers that need that behavior can iterate ListEntities
+	// after New returns and feed their observer directly.
+	Observers []store.EntityObserver
 }
 
 // entityMeta is the lightweight in-memory representation of an entity.
@@ -82,9 +88,6 @@ type FSStore struct {
 	// observers notified synchronously on entity writes
 	observers []store.EntityObserver
 
-	// search index (also an observer, but kept separately for startup/lifecycle)
-	searchIndex SearchIndex
-
 	// watcher
 	subscribers map[int]chan store.Event
 	nextSubID   int
@@ -100,9 +103,6 @@ func New(cfg Config) (*FSStore, error) {
 	if cfg.Schemas == nil {
 		cfg.Schemas = make(map[string]store.EntityTypeSchema)
 	}
-	if cfg.SearchIndex == nil {
-		cfg.SearchIndex = NewLinearSearch()
-	}
 
 	s := &FSStore{
 		fs:           cfg.FS,
@@ -111,8 +111,7 @@ func New(cfg Config) (*FSStore, error) {
 		attachDir:    cfg.AttachmentsDir,
 		cacheDir:     cfg.CacheDir,
 		schemas:      cfg.Schemas,
-		searchIndex:  cfg.SearchIndex,
-		observers:    []store.EntityObserver{cfg.SearchIndex},
+		observers:    cfg.Observers,
 		entities:     make(map[string]entityMeta),
 		relations:    make(map[string]relationMeta),
 		attachments:  make(map[string]attachMeta),
@@ -186,6 +185,27 @@ func (s *FSStore) loadAttachmentsIndex() error {
 		}
 	}
 	return nil
+}
+
+// LastModified returns the newest mtime across all entity and relation
+// files, also folding in the entities/ and relations/ directory mtimes so
+// that deletions (which remove files without touching other files) are
+// still observable.
+func (s *FSStore) LastModified(_ context.Context) (time.Time, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	newest := s.newestEntityFileMtime()
+	for _, t := range []time.Time{
+		s.newestRelationFileMtime(),
+		s.entitiesDirMtime(),
+		s.relationsDirMtime(),
+	} {
+		if t.After(newest) {
+			newest = t
+		}
+	}
+	return newest, nil
 }
 
 // notifyPut notifies all observers that an entity was created or updated.

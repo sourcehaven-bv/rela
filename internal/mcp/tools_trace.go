@@ -7,13 +7,13 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 func (s *Server) handleTraceFrom(
 	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	return s.handleTrace(ctx, request, func(t storetrace.Tracer, id string, depth int) *storetrace.TraceResult {
+	return s.handleTrace(ctx, request, func(t tracer.Tracer, id string, depth int) *tracer.TraceResult {
 		return t.TraceFrom(ctx, id, depth)
 	}, "No dependencies found")
 }
@@ -21,7 +21,7 @@ func (s *Server) handleTraceFrom(
 func (s *Server) handleTraceTo(
 	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	return s.handleTrace(ctx, request, func(t storetrace.Tracer, id string, depth int) *storetrace.TraceResult {
+	return s.handleTrace(ctx, request, func(t tracer.Tracer, id string, depth int) *tracer.TraceResult {
 		return t.TraceTo(ctx, id, depth)
 	}, "No upstream dependencies found")
 }
@@ -29,7 +29,7 @@ func (s *Server) handleTraceTo(
 func (s *Server) handleTrace(
 	ctx context.Context,
 	request mcp.CallToolRequest,
-	traceFn func(storetrace.Tracer, string, int) *storetrace.TraceResult,
+	traceFn func(tracer.Tracer, string, int) *tracer.TraceResult,
 	emptyMsg string,
 ) (*mcp.CallToolResult, error) {
 	id, err := request.RequireString("id")

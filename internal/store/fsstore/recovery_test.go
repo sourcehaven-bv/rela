@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -219,15 +220,33 @@ func TestRecovery_SearchIndexRebuilt(t *testing.T) {
 	require.NoError(t, s1.CreateEntity(ctx, e2))
 	require.NoError(t, s1.Close())
 
-	// Reopen with a fresh store (search index is in-memory, so it's rebuilt).
-	s2 := openStore(t, fs)
+	// Reopen with a fresh store. Since observers are no longer populated
+	// from disk by fsstore itself, feed the search index manually by
+	// iterating the store's current entities.
+	idx := search.NewLinearSearch()
+	s2, err := fsstore.New(fsstore.Config{
+		FS:             fs,
+		EntitiesDir:    "/entities",
+		RelationsDir:   "/relations",
+		AttachmentsDir: "/attachments",
+		CacheDir:       "/.rela",
+		Observers:      []store.EntityObserver{idx},
+	})
+	require.NoError(t, err)
 	defer s2.Close()
 
-	results := collectSearch(t, s2, store.SearchQuery{Text: "authentication"})
+	for e, err := range s2.ListEntities(ctx, store.EntityQuery{}) {
+		require.NoError(t, err)
+		require.NoError(t, idx.EntityPut(e))
+	}
+
+	searcher := search.New(s2, idx)
+
+	results := collectSearch(t, searcher, store.SearchQuery{Text: "authentication"})
 	require.Len(t, results, 1)
 	assert.Equal(t, "REQ-1", results[0].ID)
 
-	results = collectSearch(t, s2, store.SearchQuery{Text: "migration"})
+	results = collectSearch(t, searcher, store.SearchQuery{Text: "migration"})
 	require.Len(t, results, 1)
 	assert.Equal(t, "REQ-2", results[0].ID)
 }
@@ -336,13 +355,13 @@ func TestRecovery_OrphanedAttachmentAfterEntityDelete(t *testing.T) {
 
 // helpers
 
-func collectSearch(t *testing.T, s *fsstore.FSStore, q store.SearchQuery) []*entity.Entity {
+func collectSearch(t *testing.T, searcher store.Searcher, q store.SearchQuery) []store.SearchHit {
 	t.Helper()
 	ctx := context.Background()
-	var results []*entity.Entity
-	for e, err := range s.Search(ctx, q) {
+	var results []store.SearchHit
+	for hit, err := range searcher.Search(ctx, q) {
 		require.NoError(t, err)
-		results = append(results, e)
+		results = append(results, hit)
 	}
 	return results
 }

@@ -190,7 +190,6 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 
 	snap := a.ws.Snapshot()
 	newMeta := snap.Meta()
-	newGraph := snap.Graph()
 
 	newStyleMap := current.StyleMap
 	newStyledTypes := current.StyledTypes
@@ -219,7 +218,6 @@ func (a *App) onReload(events []workspace.ChangeEvent) {
 	a.state.Store(&AppState{
 		Cfg:          newCfg,
 		Meta:         newMeta,
-		Graph:        newGraph,
 		StyleMap:     newStyleMap,
 		StyledTypes:  newStyledTypes,
 		UserDefaults: current.UserDefaults,

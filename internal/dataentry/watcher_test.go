@@ -260,7 +260,7 @@ func TestReloadEntityChanges(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
 	// Verify initial state
-	initialCount := len(app.Graph().AllNodes())
+	initialCount := len(graphForTest(app).AllNodes())
 
 	// Add a new entity file
 	_ = fs.WriteFile(app.ws.Paths().EntitiesDir+"/tickets/TKT-002.md", []byte(`---
@@ -276,7 +276,7 @@ status: open
 		{Path: app.ws.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: repository.OpCreate},
 	})
 
-	newCount := len(app.Graph().AllNodes())
+	newCount := len(graphForTest(app).AllNodes())
 	if newCount != initialCount+1 {
 		t.Errorf("expected %d entities after reload, got %d", initialCount+1, newCount)
 	}
@@ -638,9 +638,9 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 					t.Errorf("state.Load() returned nil")
 					return
 				}
-				if s.Cfg == nil || s.Meta == nil || s.Graph == nil {
-					t.Errorf("state.Load() returned incomplete snapshot: cfg=%v meta=%v graph=%v",
-						s.Cfg != nil, s.Meta != nil, s.Graph != nil)
+				if s.Cfg == nil || s.Meta == nil {
+					t.Errorf("state.Load() returned incomplete snapshot: cfg=%v meta=%v",
+						s.Cfg != nil, s.Meta != nil)
 					return
 				}
 				// Cross-field invariant: a published AppState always

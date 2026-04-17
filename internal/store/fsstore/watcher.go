@@ -48,5 +48,5 @@ func (s *FSStore) Close() error {
 		close(ch)
 		delete(s.subscribers, id)
 	}
-	return s.searchIndex.Close()
+	return nil
 }

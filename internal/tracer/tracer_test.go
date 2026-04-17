@@ -1,4 +1,4 @@
-package storetrace_test
+package tracer_test
 
 import (
 	"context"
@@ -6,14 +6,14 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/store/storetrace"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func ctx() context.Context { return context.Background() }
 
-func seedGraph(t *testing.T) (*memstore.MemStore, *storetrace.GenericTracer) {
+func seedGraph(t *testing.T) (*memstore.MemStore, *tracer.GenericTracer) {
 	t.Helper()
 	s := memstore.New()
 
@@ -30,7 +30,7 @@ func seedGraph(t *testing.T) (*memstore.MemStore, *storetrace.GenericTracer) {
 	s.CreateRelation(ctx(), "A", "implements", "B", nil)
 	s.CreateRelation(ctx(), "B", "requires", "C", nil)
 
-	return s, storetrace.New(s)
+	return s, tracer.New(s)
 }
 
 func TestTraceFrom(t *testing.T) {
@@ -158,6 +158,6 @@ func TestHasCycle_WithCycle(t *testing.T) {
 	s.CreateRelation(ctx(), "X", "dep", "Y", nil)
 	s.CreateRelation(ctx(), "Y", "dep", "X", nil)
 
-	tr := storetrace.New(s)
+	tr := tracer.New(s)
 	assert.True(t, tr.HasCycle(ctx(), "X"))
 }
