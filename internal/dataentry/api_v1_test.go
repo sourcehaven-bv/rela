@@ -1635,6 +1635,127 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 	}
 }
 
+// TestV1SidebarAppliesListFilters verifies that sidebar counts for a list
+// respect the list's configured filters, not just the entity-type total.
+// Regression guard for the bug where "Open Tickets" (filter status=open)
+// showed the same count as "All Tickets".
+func TestV1SidebarAppliesListFilters(t *testing.T) {
+	app := newTestAppV1(t)
+
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]interface{}{"title": "Open A", "status": "open"},
+	})
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-002", Type: "ticket",
+		Properties: map[string]interface{}{"title": "Open B", "status": "open"},
+	})
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-003", Type: "ticket",
+		Properties: map[string]interface{}{"title": "Closed", "status": "closed"},
+	})
+
+	app.Cfg().Lists = map[string]dataentryconfig.List{
+		"all_tickets": {
+			EntityType: "ticket",
+			Title:      "All Tickets",
+		},
+		"open_tickets": {
+			EntityType: "ticket",
+			Title:      "Open Tickets",
+			Filters: []dataentryconfig.FilterConfig{
+				{Property: "status", Operator: "=", Value: "open"},
+			},
+		},
+	}
+	app.Cfg().Navigation = []dataentryconfig.NavigationEntry{
+		{Label: "All Tickets", List: "all_tickets"},
+		{Label: "Open Tickets", List: "open_tickets"},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Sidebar(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	var resp V1SidebarResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	counts := map[string]int{}
+	for _, group := range resp.Navigation {
+		for _, item := range group.Items {
+			if item.Count != nil {
+				counts[item.Label] = *item.Count
+			}
+		}
+	}
+
+	if counts["All Tickets"] != 3 {
+		t.Errorf("All Tickets count = %d, want 3", counts["All Tickets"])
+	}
+	if counts["Open Tickets"] != 2 {
+		t.Errorf("Open Tickets count = %d, want 2 (status=open); filter not applied",
+			counts["Open Tickets"])
+	}
+}
+
+// TestV1SidebarAppliesKanbanFilters is the kanban counterpart to
+// TestV1SidebarAppliesListFilters.
+func TestV1SidebarAppliesKanbanFilters(t *testing.T) {
+	app := newTestAppV1(t)
+
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]interface{}{"title": "P0 open", "status": "open", "priority": "high"},
+	})
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-002", Type: "ticket",
+		Properties: map[string]interface{}{"title": "P0 closed", "status": "closed", "priority": "high"},
+	})
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-003", Type: "ticket",
+		Properties: map[string]interface{}{"title": "P1 open", "status": "open", "priority": "low"},
+	})
+
+	app.Cfg().Kanbans = map[string]dataentryconfig.Kanban{
+		"open_board": {
+			EntityType: "ticket",
+			Filters: []dataentryconfig.FilterConfig{
+				{Property: "status", Operator: "=", Value: "open"},
+			},
+		},
+	}
+	app.Cfg().Navigation = []dataentryconfig.NavigationEntry{
+		{Label: "Open Board", Kanban: "open_board"},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Sidebar(rec, req)
+
+	var resp V1SidebarResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var openCount int
+	for _, group := range resp.Navigation {
+		for _, item := range group.Items {
+			if item.Label == "Open Board" && item.Count != nil {
+				openCount = *item.Count
+			}
+		}
+	}
+	if openCount != 2 {
+		t.Errorf("Open Board count = %d, want 2 (filter not applied)", openCount)
+	}
+}
+
 func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
 	app := newTestAppV1(t)
 

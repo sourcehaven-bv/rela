@@ -855,3 +855,74 @@ func TestValidatePropertyValue_Rrule(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRelationProperties(t *testing.T) {
+	m := &Metamodel{
+		Relations: map[string]RelationDef{
+			"blocks": {
+				Properties: map[string]PropertyDef{
+					"reason":   {Type: "string", Required: true},
+					"severity": {Type: "string"},
+				},
+			},
+			"plain": {
+				Properties: nil, // no property schema — anything goes
+			},
+		},
+	}
+
+	t.Run("unknown relation returns nil", func(t *testing.T) {
+		errs := m.ValidateRelationProperties("nope", map[string]interface{}{"x": "y"})
+		if errs != nil {
+			t.Errorf("expected nil, got %v", errs)
+		}
+	})
+
+	t.Run("relation without property schema returns nil", func(t *testing.T) {
+		errs := m.ValidateRelationProperties("plain", map[string]interface{}{"anything": "goes"})
+		if errs != nil {
+			t.Errorf("expected nil, got %v", errs)
+		}
+	})
+
+	t.Run("missing required property is reported", func(t *testing.T) {
+		errs := m.ValidateRelationProperties("blocks", map[string]interface{}{
+			"severity": "high",
+		})
+		if len(errs) != 1 {
+			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		}
+		if errs[0].Type != ValidationErrorRequired || errs[0].Property != "reason" {
+			t.Errorf("wrong error: %+v", errs[0])
+		}
+	})
+
+	t.Run("valid properties pass", func(t *testing.T) {
+		errs := m.ValidateRelationProperties("blocks", map[string]interface{}{
+			"reason":   "cascading dep",
+			"severity": "high",
+		})
+		if len(errs) != 0 {
+			t.Errorf("expected no errors, got %v", errs)
+		}
+	})
+
+	t.Run("wrong type is reported", func(t *testing.T) {
+		errs := m.ValidateRelationProperties("blocks", map[string]interface{}{
+			"reason":   123, // should be string
+			"severity": "high",
+		})
+		if len(errs) == 0 {
+			t.Fatal("expected type error")
+		}
+		found := false
+		for _, e := range errs {
+			if e.Property == "reason" && e.Type == ValidationErrorInvalidType {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected reason type error, got %v", errs)
+		}
+	})
+}
