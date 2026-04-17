@@ -1,11 +1,8 @@
 package testutil
 
 import (
-	"strconv"
-	"strings"
-
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // EntityBuilder provides a fluent interface for building test entities.
@@ -470,37 +467,6 @@ func (b *MetamodelBuilder) Build() *metamodel.Metamodel {
 	return b.meta
 }
 
-// toString converts a value to a string representation for YAML.
-func toString(value interface{}) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	case int:
-		return strconv.Itoa(v)
-	case bool:
-		if v {
-			return "true"
-		}
-		return "false"
-	case []string:
-		// Format as YAML list
-		if len(v) == 0 {
-			return "[]"
-		}
-		var sb strings.Builder
-		sb.WriteString("[")
-		for i, s := range v {
-			if i > 0 {
-				sb.WriteString(", ")
-			}
-			sb.WriteString(s)
-		}
-		sb.WriteString("]")
-		return sb.String()
-	default:
-		return ""
-	}
-}
 
 // SimpleMetamodel returns a simple metamodel for testing with requirement and decision types.
 func SimpleMetamodel() *metamodel.Metamodel {

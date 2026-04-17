@@ -13,7 +13,7 @@ import (
 
 func ctx() context.Context { return context.Background() }
 
-func seedGraph(t *testing.T) (*memstore.MemStore, *tracer.GenericTracer) {
+func seedGraph(t *testing.T) *tracer.GenericTracer {
 	t.Helper()
 	s := memstore.New()
 
@@ -30,11 +30,11 @@ func seedGraph(t *testing.T) (*memstore.MemStore, *tracer.GenericTracer) {
 	s.CreateRelation(ctx(), "A", "implements", "B", nil)
 	s.CreateRelation(ctx(), "B", "requires", "C", nil)
 
-	return s, tracer.New(s)
+	return tracer.New(s)
 }
 
 func TestTraceFrom(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 
 	result := tr.TraceFrom(ctx(), "A", 0)
 	require.NotNil(t, result)
@@ -57,7 +57,7 @@ func TestTraceFrom(t *testing.T) {
 }
 
 func TestTraceFrom_MaxDepth(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 
 	result := tr.TraceFrom(ctx(), "A", 1)
 	require.NotNil(t, result)
@@ -68,12 +68,12 @@ func TestTraceFrom_MaxDepth(t *testing.T) {
 }
 
 func TestTraceFrom_NotFound(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 	assert.Nil(t, tr.TraceFrom(ctx(), "NOPE", 0))
 }
 
 func TestTraceTo(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 
 	result := tr.TraceTo(ctx(), "C", 0)
 	require.NotNil(t, result)
@@ -89,7 +89,7 @@ func TestTraceTo(t *testing.T) {
 }
 
 func TestTraceTo_NoUpstream(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 
 	result := tr.TraceTo(ctx(), "A", 0)
 	require.NotNil(t, result)
@@ -97,7 +97,7 @@ func TestTraceTo_NoUpstream(t *testing.T) {
 }
 
 func TestFindPath(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 
 	path := tr.FindPath(ctx(), "A", "C")
 	require.Len(t, path, 3)
@@ -107,7 +107,7 @@ func TestFindPath(t *testing.T) {
 }
 
 func TestFindPath_SameNode(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 
 	path := tr.FindPath(ctx(), "A", "A")
 	require.Len(t, path, 1)
@@ -115,7 +115,7 @@ func TestFindPath_SameNode(t *testing.T) {
 }
 
 func TestFindPath_Reverse(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 
 	// BFS treats graph as undirected — path C->A should work
 	path := tr.FindPath(ctx(), "C", "A")
@@ -125,7 +125,7 @@ func TestFindPath_Reverse(t *testing.T) {
 }
 
 func TestFindPath_NoPath(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 
 	// D is an orphan, no path to A
 	path := tr.FindPath(ctx(), "A", "D")
@@ -133,12 +133,12 @@ func TestFindPath_NoPath(t *testing.T) {
 }
 
 func TestFindPath_NotFound(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 	assert.Nil(t, tr.FindPath(ctx(), "A", "NOPE"))
 }
 
 func TestFindOrphans(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 
 	orphans, err := tr.FindOrphans(ctx())
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestFindOrphans(t *testing.T) {
 }
 
 func TestHasCycle_NoCycle(t *testing.T) {
-	_, tr := seedGraph(t)
+	tr := seedGraph(t)
 	assert.False(t, tr.HasCycle(ctx(), "A"))
 }
 

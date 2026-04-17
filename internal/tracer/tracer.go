@@ -174,6 +174,15 @@ func (t *GenericTracer) traceTo(
 	return result
 }
 
+type pathNeighbor struct {
+	id, relation string
+}
+
+type pathQueueItem struct {
+	id   string
+	path []PathStep
+}
+
 func (t *GenericTracer) FindPath(ctx context.Context, fromID, toID string) []PathStep {
 	if fromID == toID {
 		e, err := t.r.GetEntity(ctx, fromID)
@@ -183,20 +192,8 @@ func (t *GenericTracer) FindPath(ctx context.Context, fromID, toID string) []Pat
 		return []PathStep{{ID: fromID, Type: e.Type, Title: e.Title()}}
 	}
 
-	type queueItem struct {
-		id   string
-		path []PathStep
-	}
-
+	queue := t.initPathQueue(ctx, fromID)
 	visited := make(map[string]bool)
-	var queue []queueItem
-
-	if e, err := t.r.GetEntity(ctx, fromID); err == nil {
-		queue = append(queue, queueItem{
-			id:   fromID,
-			path: []PathStep{{ID: fromID, Type: e.Type, Title: e.Title()}},
-		})
-	}
 
 	for len(queue) > 0 {
 		current := queue[0]
@@ -207,51 +204,65 @@ func (t *GenericTracer) FindPath(ctx context.Context, fromID, toID string) []Pat
 		}
 		visited[current.id] = true
 
-		type neighbor struct {
-			id, relation string
-		}
-		var neighbors []neighbor
-
-		q := store.RelationQuery{EntityID: current.id, Direction: store.DirectionOutgoing}
-		for r, err := range t.r.ListRelations(ctx, q) {
-			if err != nil {
-				break
-			}
-			neighbors = append(neighbors, neighbor{r.To, r.Type})
-		}
-		q = store.RelationQuery{EntityID: current.id, Direction: store.DirectionIncoming}
-		for r, err := range t.r.ListRelations(ctx, q) {
-			if err != nil {
-				break
-			}
-			neighbors = append(neighbors, neighbor{r.From, r.Type})
-		}
-
-		for _, nb := range neighbors {
+		for _, nb := range t.collectNeighbors(ctx, current.id) {
 			if nb.id == toID {
-				if e, err := t.r.GetEntity(ctx, toID); err == nil {
-					finalPath := make([]PathStep, len(current.path), len(current.path)+1)
-					copy(finalPath, current.path)
-					return append(finalPath, PathStep{
-						ID: toID, Type: e.Type, Title: e.Title(), Relation: nb.relation,
-					})
+				if step, ok := t.step(ctx, toID, nb.relation); ok {
+					return append(clonePath(current.path), step)
 				}
 			}
-
-			if !visited[nb.id] {
-				if e, err := t.r.GetEntity(ctx, nb.id); err == nil {
-					newPath := make([]PathStep, len(current.path), len(current.path)+1)
-					copy(newPath, current.path)
-					newPath = append(newPath, PathStep{
-						ID: nb.id, Type: e.Type, Title: e.Title(), Relation: nb.relation,
-					})
-					queue = append(queue, queueItem{id: nb.id, path: newPath})
-				}
+			if visited[nb.id] {
+				continue
+			}
+			if step, ok := t.step(ctx, nb.id, nb.relation); ok {
+				newPath := append(clonePath(current.path), step)
+				queue = append(queue, pathQueueItem{id: nb.id, path: newPath})
 			}
 		}
 	}
 
 	return nil
+}
+
+func (t *GenericTracer) initPathQueue(ctx context.Context, fromID string) []pathQueueItem {
+	e, err := t.r.GetEntity(ctx, fromID)
+	if err != nil {
+		return nil
+	}
+	return []pathQueueItem{{
+		id:   fromID,
+		path: []PathStep{{ID: fromID, Type: e.Type, Title: e.Title()}},
+	}}
+}
+
+func (t *GenericTracer) collectNeighbors(ctx context.Context, id string) []pathNeighbor {
+	var out []pathNeighbor
+	for r, err := range t.r.ListRelations(ctx, store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}) {
+		if err != nil {
+			break
+		}
+		out = append(out, pathNeighbor{r.To, r.Type})
+	}
+	for r, err := range t.r.ListRelations(ctx, store.RelationQuery{EntityID: id, Direction: store.DirectionIncoming}) {
+		if err != nil {
+			break
+		}
+		out = append(out, pathNeighbor{r.From, r.Type})
+	}
+	return out
+}
+
+func (t *GenericTracer) step(ctx context.Context, id, relation string) (PathStep, bool) {
+	e, err := t.r.GetEntity(ctx, id)
+	if err != nil {
+		return PathStep{}, false
+	}
+	return PathStep{ID: id, Type: e.Type, Title: e.Title(), Relation: relation}, true
+}
+
+func clonePath(p []PathStep) []PathStep {
+	out := make([]PathStep, len(p), len(p)+1)
+	copy(out, p)
+	return out
 }
 
 func (t *GenericTracer) FindOrphans(ctx context.Context) ([]string, error) {

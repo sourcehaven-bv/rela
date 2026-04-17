@@ -86,8 +86,8 @@ func (w *Workspace) rename(entityType, oldID, newID string, opts rename.Options)
 func loadAndValidateRename(
 	st store.Store, entityType, oldID, newID string,
 ) (ent *entity.Entity, incoming, outgoing []*entity.Relation, err error) {
-	if err = validateRename(st, oldID, newID); err != nil {
-		return nil, nil, nil, err
+	if vErr := validateRename(st, oldID, newID); vErr != nil {
+		return nil, nil, nil, vErr
 	}
 	ctx := context.Background()
 	ent, err = st.GetEntity(ctx, oldID)

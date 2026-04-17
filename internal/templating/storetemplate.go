@@ -62,7 +62,9 @@ type Templater interface {
 //
 // Returns the (possibly updated) properties map and content. The caller
 // should write both back onto its entity.
-func ApplyEntity(properties map[string]interface{}, content string, t *Template) (map[string]interface{}, string) {
+func ApplyEntity(
+	properties map[string]interface{}, content string, t *Template,
+) (mergedProperties map[string]interface{}, mergedContent string) {
 	if t == nil {
 		return properties, content
 	}

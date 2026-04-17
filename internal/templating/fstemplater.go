@@ -125,4 +125,3 @@ func docTemplateRelations(frontmatter map[string]interface{}) []Relation {
 	}
 	return out
 }
-

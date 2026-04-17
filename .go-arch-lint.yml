@@ -269,15 +269,13 @@ deps:
       - markdown
       - metamodel
       - project
-  entitymanager:
-    mayDependOn: []
+  # entitymanager: pure domain interfaces, no internal deps (entity is in commonComponents)
   importer:
     mayDependOn:
       - metamodel
       - storage
       - store
-  rename:
-    mayDependOn: []
+  # rename: stateless helpers, no internal deps
   schema:
     mayDependOn:
       - dataentryconfig
@@ -380,8 +378,7 @@ deps:
   attachment:
     mayDependOn:
       - storage
-  cache:
-    mayDependOn: []
+  # cache: pure in-memory utility, no internal deps
   config:
     mayDependOn:
       - storage

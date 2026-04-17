@@ -155,4 +155,3 @@ func MatchRelation(r *entity.Relation, q store.RelationQuery) bool {
 	}
 	return true
 }
-

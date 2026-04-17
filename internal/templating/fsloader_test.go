@@ -151,7 +151,7 @@ func TestGenerateEntityTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read template: %v", err)
 	}
-	if string(content) == "" {
+	if len(content) == 0 {
 		t.Error("template content is empty")
 	}
 

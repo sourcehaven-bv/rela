@@ -10,7 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const eventTimeout = 50 * time.Millisecond
+
 // RunWatcherTests runs event subscription conformance tests.
+//
+//nolint:funlen // subtests-as-table make this naturally long but readable
+
 func RunWatcherTests(t *testing.T, f Factory) {
 	t.Run("ReceivesEntityCreated", func(t *testing.T) {
 		s := f(t)
@@ -106,7 +111,7 @@ func RunWatcherTests(t *testing.T, f Factory) {
 			select {
 			case <-events:
 				received++
-			case <-time.After(50 * time.Millisecond):
+			case <-time.After(eventTimeout):
 				goto done
 			}
 		}
@@ -197,7 +202,7 @@ func RunWatcherTests(t *testing.T, f Factory) {
 			select {
 			case ev := <-events:
 				ops = append(ops, ev.Op)
-			case <-time.After(50 * time.Millisecond):
+			case <-time.After(eventTimeout):
 				goto done
 			}
 		}
