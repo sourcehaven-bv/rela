@@ -13,7 +13,7 @@ export class SettingsPage extends BasePage {
   constructor(page: Page) {
     super(page);
     this.form = page.locator('.settings-form, form');
-    this.saveButton = page.locator('button[type="submit"], button:has-text("Save")');
+    this.saveButton = page.locator('.form-actions button[type="submit"]');
     this.resetButton = page.locator('.form-actions button:has-text("Reset")');
     this.propertyDefaultsCard = page.locator('.settings-card').filter({ hasText: 'Property Defaults' });
     this.relationDefaultsCard = page.locator('.settings-card').filter({ hasText: 'Relation Defaults' });

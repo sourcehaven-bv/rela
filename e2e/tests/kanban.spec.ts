@@ -20,10 +20,10 @@ test.describe('Kanban Board', () => {
       await kanbanPage.navigateToKanban('feature-board');
 
       // Check column headers
-      await expect(appPage.locator('.column-title, .column-header').filter({ hasText: 'Draft' })).toBeVisible();
-      await expect(appPage.locator('.column-title, .column-header').filter({ hasText: 'Approved' })).toBeVisible();
-      await expect(appPage.locator('.column-title, .column-header').filter({ hasText: 'In Progress' })).toBeVisible();
-      await expect(appPage.locator('.column-title, .column-header').filter({ hasText: 'Done' })).toBeVisible();
+      await expect(appPage.locator('.column-title').filter({ hasText: 'Draft' })).toBeVisible();
+      await expect(appPage.locator('.column-title').filter({ hasText: 'Approved' })).toBeVisible();
+      await expect(appPage.locator('.column-title').filter({ hasText: 'In Progress' })).toBeVisible();
+      await expect(appPage.locator('.column-title').filter({ hasText: 'Done' })).toBeVisible();
     });
 
     test('displays cards with correct content', async ({ appPage }) => {
@@ -185,9 +185,9 @@ test.describe('Kanban Board', () => {
       await kanbanPage.expectColumnCount(3);
 
       // Check column labels
-      await expect(appPage.locator('.column-title, .column-header').filter({ hasText: 'New' })).toBeVisible();
-      await expect(appPage.locator('.column-title, .column-header').filter({ hasText: 'In Progress' })).toBeVisible();
-      await expect(appPage.locator('.column-title, .column-header').filter({ hasText: 'Fixed' })).toBeVisible();
+      await expect(appPage.locator('.column-title').filter({ hasText: 'New' })).toBeVisible();
+      await expect(appPage.locator('.column-title').filter({ hasText: 'In Progress' })).toBeVisible();
+      await expect(appPage.locator('.column-title').filter({ hasText: 'Fixed' })).toBeVisible();
     });
 
     test('bug cards show severity badge', async ({ appPage }) => {
@@ -197,7 +197,7 @@ test.describe('Kanban Board', () => {
 
       // Cards should show severity
       const card = kanbanPage.cards.first();
-      await expect(card.locator('text=high, text=critical, text=medium, text=low')).toBeVisible();
+      await expect(card.getByText(/high|critical|medium|low/)).toBeVisible();
     });
   });
 });

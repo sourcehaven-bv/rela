@@ -50,7 +50,7 @@ test.describe('Search', () => {
 
       await searchPage.navigateToSearch();
 
-      await searchPage.search('feature');
+      await searchPage.search('User');
 
       await expect(searchPage.resultsCount).toBeVisible();
     });
@@ -78,8 +78,8 @@ test.describe('Search', () => {
       // Should show filter chip
       await searchPage.expectFilterActive('Entity Type');
 
-      // Search
-      await searchPage.search('');
+      // Search for a common term that exists in features
+      await searchPage.search('User');
 
       // Results should all be features
       const resultCount = await searchPage.getResultCount();
@@ -170,12 +170,10 @@ test.describe('Search', () => {
 
       await searchPage.navigateToSearch();
 
-      await searchPage.search('feature');
+      await searchPage.searchAndEnter('User');
 
-      // Tab into results
-      await appPage.keyboard.press('Tab');
-
-      // Navigate down
+      // Focus the input then press ArrowDown to enter results mode
+      await searchPage.searchInput.focus();
       await appPage.keyboard.press('ArrowDown');
 
       // First result should be selected
@@ -187,10 +185,10 @@ test.describe('Search', () => {
 
       await searchPage.navigateToSearch();
 
-      await searchPage.search('Authentication');
+      await searchPage.searchAndEnter('Authentication');
 
-      // Tab into results and select first
-      await appPage.keyboard.press('Tab');
+      // Focus the input then ArrowDown enters results mode
+      await searchPage.searchInput.focus();
       await appPage.keyboard.press('ArrowDown');
 
       // Press Enter to open
@@ -224,9 +222,9 @@ test.describe('Search', () => {
       await expect(appPage).toHaveURL(/q=dashboard/);
     });
 
-    test('can initialize from URL query', async ({ appPage }) => {
+    test('can initialize from URL query', async ({ appPage, serverUrl }) => {
       // Navigate directly with query param
-      await appPage.goto(appPage.url().replace(/\/search.*/, '/search?q=Authentication'));
+      await appPage.goto(`${serverUrl}/search?q=Authentication`);
 
       const searchPage = new SearchPage(appPage);
 

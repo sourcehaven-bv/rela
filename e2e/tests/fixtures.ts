@@ -331,10 +331,16 @@ let serverPort: number | null = null;
 
 export const test = base.extend<DesktopFixtures>({
   testProject: async ({}, use) => {
-    if (!testProjectDir) {
-      testProjectDir = createTestProject();
+    // Create a fresh project directory per test so that mutations (create,
+    // update, delete) don't leak into the next test's pre-seeded state.
+    const dir = createTestProject();
+    testProjectDir = dir;
+    await use(dir);
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
     }
-    await use(testProjectDir);
   },
 
   serverUrl: async ({}, use) => {
