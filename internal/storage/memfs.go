@@ -17,9 +17,9 @@ import (
 // Primarily intended for testing.
 type MemFS struct {
 	mu    sync.RWMutex
-	files map[string]*memFile // path → file contents
-	dirs  map[string]bool     // set of directory paths
-	cwd   string              // current working directory for Getwd
+	files map[string]*memFile    // path → file contents
+	dirs  map[string]time.Time   // directory path → mtime
+	cwd   string                 // current working directory for Getwd
 }
 
 type memFile struct {
@@ -32,7 +32,7 @@ type memFile struct {
 func NewMemFS() *MemFS {
 	return &MemFS{
 		files: make(map[string]*memFile),
-		dirs:  map[string]bool{"/": true},
+		dirs:  map[string]time.Time{"/": time.Now()},
 		cwd:   "/",
 	}
 }
@@ -67,7 +67,7 @@ func (m *MemFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 
 	// Check that parent directory exists.
 	dir := filepath.Dir(path)
-	if !m.dirs[dir] {
+	if _, ok := m.dirs[dir]; !ok {
 		return &os.PathError{Op: "open", Path: path, Err: os.ErrNotExist}
 	}
 
@@ -75,10 +75,15 @@ func (m *MemFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 	stored := make([]byte, len(data))
 	copy(stored, data)
 
+	now := time.Now()
+	_, existed := m.files[path]
 	m.files[path] = &memFile{
 		data:    stored,
 		perm:    perm,
-		modTime: time.Now(),
+		modTime: now,
+	}
+	if !existed {
+		m.touchDir(dir, now)
 	}
 	return nil
 }
@@ -88,20 +93,23 @@ func (m *MemFS) Remove(path string) error {
 	defer m.mu.Unlock()
 
 	path = cleanPath(path)
+	now := time.Now()
 
 	// Check if it's a file.
 	if _, ok := m.files[path]; ok {
 		delete(m.files, path)
+		m.touchDir(filepath.Dir(path), now)
 		return nil
 	}
 
 	// Check if it's a directory.
-	if m.dirs[path] {
+	if _, ok := m.dirs[path]; ok {
 		// Check if directory is empty.
 		if m.hasChildren(path) {
 			return &os.PathError{Op: "remove", Path: path, Err: os.ErrExist}
 		}
 		delete(m.dirs, path)
+		m.touchDir(filepath.Dir(path), now)
 		return nil
 	}
 
@@ -117,19 +125,25 @@ func (m *MemFS) Rename(oldpath, newpath string) error {
 
 	// Check that new parent exists.
 	newDir := filepath.Dir(newpath)
-	if !m.dirs[newDir] {
+	if _, ok := m.dirs[newDir]; !ok {
 		return &os.PathError{Op: "rename", Path: newpath, Err: os.ErrNotExist}
 	}
+
+	now := time.Now()
 
 	// Handle file rename.
 	if f, ok := m.files[oldpath]; ok {
 		m.files[newpath] = f
 		delete(m.files, oldpath)
+		m.touchDir(filepath.Dir(oldpath), now)
+		if filepath.Dir(oldpath) != newDir {
+			m.touchDir(newDir, now)
+		}
 		return nil
 	}
 
 	// Handle directory rename: move all children.
-	if m.dirs[oldpath] {
+	if _, ok := m.dirs[oldpath]; ok {
 		// Collect all paths under oldpath.
 		var filesToMove []string
 		var dirsToMove []string
@@ -155,8 +169,13 @@ func (m *MemFS) Rename(oldpath, newpath string) error {
 		// Move directories.
 		for _, p := range dirsToMove {
 			suffix := strings.TrimPrefix(p, oldpath)
-			m.dirs[newpath+suffix] = true
+			m.dirs[newpath+suffix] = m.dirs[p]
 			delete(m.dirs, p)
+		}
+
+		m.touchDir(filepath.Dir(oldpath), now)
+		if filepath.Dir(oldpath) != newDir {
+			m.touchDir(newDir, now)
 		}
 
 		return nil
@@ -181,12 +200,12 @@ func (m *MemFS) Stat(path string) (os.FileInfo, error) {
 		}, nil
 	}
 
-	if m.dirs[path] {
+	if mtime, ok := m.dirs[path]; ok {
 		return &memFileInfo{
 			name:    filepath.Base(path),
 			size:    0,
 			mode:    os.ModeDir | 0755,
-			modTime: time.Time{},
+			modTime: mtime,
 			isDir:   true,
 		}, nil
 	}
@@ -199,6 +218,7 @@ func (m *MemFS) MkdirAll(path string, _ os.FileMode) error {
 	defer m.mu.Unlock()
 
 	path = cleanPath(path)
+	now := time.Now()
 
 	// Create all path components.
 	parts := strings.Split(path, "/")
@@ -213,7 +233,11 @@ func (m *MemFS) MkdirAll(path string, _ os.FileMode) error {
 		} else {
 			current = current + "/" + part
 		}
-		m.dirs[current] = true
+		if _, exists := m.dirs[current]; !exists {
+			m.dirs[current] = now
+			// Touch parent when creating a new subdir.
+			m.touchDir(filepath.Dir(current), now)
+		}
 	}
 	return nil
 }
@@ -224,7 +248,7 @@ func (m *MemFS) ReadDir(path string) ([]os.DirEntry, error) {
 
 	path = cleanPath(path)
 
-	if !m.dirs[path] {
+	if _, ok := m.dirs[path]; !ok {
 		return nil, &os.PathError{Op: "open", Path: path, Err: os.ErrNotExist}
 	}
 
@@ -266,7 +290,7 @@ func (m *MemFS) ReadDir(path string) ([]os.DirEntry, error) {
 	}
 
 	// Find direct child directories.
-	for p := range m.dirs {
+	for p, dirMtime := range m.dirs {
 		if !strings.HasPrefix(p, prefix) {
 			continue
 		}
@@ -285,9 +309,10 @@ func (m *MemFS) ReadDir(path string) ([]os.DirEntry, error) {
 			name:  rest,
 			isDir: true,
 			info: &memFileInfo{
-				name:  rest,
-				mode:  os.ModeDir | 0755,
-				isDir: true,
+				name:    rest,
+				mode:    os.ModeDir | 0755,
+				modTime: dirMtime,
+				isDir:   true,
 			},
 		})
 	}
@@ -371,6 +396,13 @@ func (m *MemFS) hasChildren(dir string) bool {
 	return false
 }
 
+// touchDir updates a directory's mtime. Must be called with m.mu held.
+func (m *MemFS) touchDir(dir string, t time.Time) {
+	if _, ok := m.dirs[dir]; ok {
+		m.dirs[dir] = t
+	}
+}
+
 // collectPaths returns all file and directory paths at or under root, in no particular order.
 // Must be called with m.mu held (at least RLock).
 func (m *MemFS) collectPaths(root string) []string {
@@ -382,7 +414,7 @@ func (m *MemFS) collectPaths(root string) []string {
 	}
 
 	// Add root itself if it exists.
-	if m.dirs[root] {
+	if _, ok := m.dirs[root]; ok {
 		paths = append(paths, root)
 	} else if _, ok := m.files[root]; ok {
 		// Root is a file, just return that.
@@ -420,11 +452,12 @@ func (m *MemFS) statLocked(path string) (os.FileInfo, error) {
 			isDir:   false,
 		}, nil
 	}
-	if m.dirs[path] {
+	if mtime, ok := m.dirs[path]; ok {
 		return &memFileInfo{
-			name:  filepath.Base(path),
-			mode:  os.ModeDir | 0755,
-			isDir: true,
+			name:    filepath.Base(path),
+			mode:    os.ModeDir | 0755,
+			modTime: mtime,
+			isDir:   true,
 		}, nil
 	}
 	return nil, &os.PathError{Op: "stat", Path: path, Err: os.ErrNotExist}

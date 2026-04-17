@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -32,6 +31,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // MemStore is an in-memory store implementation.
@@ -67,43 +67,13 @@ func New() *MemStore {
 // compile-time interface check
 var _ store.Store = (*MemStore)(nil)
 
-// validateID rejects IDs that would cause key collisions.
-func validateID(id string) error {
-	if id == "" {
-		return fmt.Errorf("store: empty ID")
-	}
-	if strings.Contains(id, "--") {
-		return fmt.Errorf("store: ID %q contains consecutive dashes", id)
-	}
-	return nil
-}
-
-// validateProperty rejects property names that would cause attachment key collisions.
-func validateProperty(prop string) error {
-	if prop == "" {
-		return fmt.Errorf("store: empty property name")
-	}
-	if strings.Contains(prop, "/") {
-		return fmt.Errorf("store: property name %q contains slash", prop)
-	}
-	return nil
-}
-
-// sortedInsert adds key to a sorted slice, maintaining sort order.
-func sortedInsert(s []string, key string) []string {
-	i, _ := slices.BinarySearch(s, key)
-	return slices.Insert(s, i, key)
-}
-
-// sortedRemove removes key from a sorted slice.
-// The key must exist — this is only called after a map lookup confirms presence.
-func sortedRemove(s []string, key string) []string {
-	i, found := slices.BinarySearch(s, key)
-	if !found {
-		panic("memstore: sortedRemove called with missing key: " + key)
-	}
-	return slices.Delete(s, i, i+1)
-}
+// Delegate validation and sorted-slice helpers to storeutil.
+var (
+	validateID       = storeutil.ValidateID
+	validateProperty = storeutil.ValidateProperty
+	sortedInsert     = storeutil.SortedInsert
+	sortedRemove     = storeutil.SortedRemove
+)
 
 // --- EntityReader ---
 
@@ -421,34 +391,7 @@ func (m *MemStore) ListRelations(_ context.Context, q store.RelationQuery) iter.
 	}
 }
 
-func matchRelation(r *entity.Relation, q store.RelationQuery) bool {
-	if q.Type != "" && r.Type != q.Type {
-		return false
-	}
-	if q.From != "" && r.From != q.From {
-		return false
-	}
-	if q.To != "" && r.To != q.To {
-		return false
-	}
-	if q.EntityID != "" {
-		switch q.Direction {
-		case store.DirectionOutgoing:
-			if r.From != q.EntityID {
-				return false
-			}
-		case store.DirectionIncoming:
-			if r.To != q.EntityID {
-				return false
-			}
-		default: // DirectionBoth
-			if r.From != q.EntityID && r.To != q.EntityID {
-				return false
-			}
-		}
-	}
-	return true
-}
+var matchRelation = storeutil.MatchRelation
 
 // --- RelationWriter ---
 
@@ -588,77 +531,10 @@ func (m *MemStore) Search(_ context.Context, q store.SearchQuery) iter.Seq2[*ent
 	}
 }
 
-func matchFilters(e *entity.Entity, filters []store.PropertyFilter) bool {
-	for _, f := range filters {
-		val := e.GetAttributeString(f.Property)
-		switch f.Op {
-		case store.FilterEq:
-			if val != f.Value {
-				return false
-			}
-		case store.FilterNe:
-			if val == f.Value {
-				return false
-			}
-		case store.FilterContains:
-			if !strings.Contains(strings.ToLower(val), strings.ToLower(f.Value)) {
-				return false
-			}
-		case store.FilterGt:
-			if val <= f.Value {
-				return false
-			}
-		case store.FilterLt:
-			if val >= f.Value {
-				return false
-			}
-		case store.FilterGte:
-			if val < f.Value {
-				return false
-			}
-		case store.FilterLte:
-			if val > f.Value {
-				return false
-			}
-		case store.FilterIn:
-			found := false
-			for _, v := range strings.Split(f.Value, ",") {
-				if val == strings.TrimSpace(v) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return false
-			}
-		case store.FilterExists:
-			if e.GetAttribute(f.Property) == nil {
-				return false
-			}
-		case store.FilterNotExists:
-			if e.GetAttribute(f.Property) != nil {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func matchText(e *entity.Entity, text string) bool {
-	lower := strings.ToLower(text)
-	if strings.Contains(strings.ToLower(e.ID), lower) {
-		return true
-	}
-	if strings.Contains(strings.ToLower(e.Content), lower) {
-		return true
-	}
-	for _, v := range e.Properties {
-		if s, ok := v.(string); ok && strings.Contains(strings.ToLower(s), lower) {
-			return true
-		}
-	}
-	return false
-}
+var (
+	matchFilters = storeutil.MatchFilters
+	matchText    = storeutil.MatchText
+)
 
 // --- Attachments ---
 
