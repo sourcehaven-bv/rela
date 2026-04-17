@@ -8,10 +8,11 @@ import (
 	"iter"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/stretchr/testify/require"
 )
 
 // Factory returns a fresh, empty store for each test.

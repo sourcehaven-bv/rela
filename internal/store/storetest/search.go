@@ -3,10 +3,11 @@ package storetest
 import (
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 )
 
 // RunSearchTests runs search and filter conformance tests.

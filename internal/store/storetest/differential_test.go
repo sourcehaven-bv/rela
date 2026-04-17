@@ -9,13 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func newStores() (store.Store, store.Store) {
@@ -68,10 +69,10 @@ func collectRelations(it func(func(*entity.Relation, error) bool)) ([]*entity.Re
 // and fsstore, asserting that all observable state matches after each operation.
 func FuzzDifferential(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11})
-	f.Add([]byte{0, 0, 0, 5, 5, 5, 8, 8, 8})       // heavy create/delete
-	f.Add([]byte{0, 3, 7, 0, 3, 7})                  // create/update/rename cycles
-	f.Add([]byte{0, 1, 4, 6, 9, 10, 11})             // relation + search paths
-	f.Add([]byte{0, 1, 2, 0, 1, 2, 5, 5, 8, 8})     // create many, delete many
+	f.Add([]byte{0, 0, 0, 5, 5, 5, 8, 8, 8})    // heavy create/delete
+	f.Add([]byte{0, 3, 7, 0, 3, 7})             // create/update/rename cycles
+	f.Add([]byte{0, 1, 4, 6, 9, 10, 11})        // relation + search paths
+	f.Add([]byte{0, 1, 2, 0, 1, 2, 5, 5, 8, 8}) // create many, delete many
 
 	f.Fuzz(func(t *testing.T, ops []byte) {
 		if len(ops) < 2 || len(ops) > 50 {

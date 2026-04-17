@@ -6,11 +6,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // FuzzFactory returns a fresh store without needing *testing.T (for use inside f.Fuzz).
@@ -145,9 +146,9 @@ func FuzzRenameKeyCollapse(f *testing.F, factory FuzzFactory) {
 // FuzzConcurrentOps verifies the store is safe under concurrent access.
 func FuzzConcurrentOps(f *testing.F, factory FuzzFactory) {
 	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3})
-	f.Add([]byte{0, 0, 0, 3, 3, 3, 5, 5, 5})       // heavy create/delete
-	f.Add([]byte{0, 6, 7, 6, 7, 6, 7})              // subscribe/cancel churn
-	f.Add([]byte{8, 9, 10, 8, 9, 10, 0, 3, 8, 9})   // relation ops
+	f.Add([]byte{0, 0, 0, 3, 3, 3, 5, 5, 5})      // heavy create/delete
+	f.Add([]byte{0, 6, 7, 6, 7, 6, 7})            // subscribe/cancel churn
+	f.Add([]byte{8, 9, 10, 8, 9, 10, 0, 3, 8, 9}) // relation ops
 
 	f.Fuzz(func(t *testing.T, ops []byte) {
 		if len(ops) < 2 || len(ops) > 100 {

@@ -312,6 +312,9 @@ issues:
         - thelper
         - testifylint
         - prealloc
+        - gocritic
+        - revive
+        - unused
 
     # Exclude lll for lines with long strings (URLs, etc.)
     - linters:

@@ -4,16 +4,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 const eventTimeout = 50 * time.Millisecond
 
 // RunWatcherTests runs event subscription conformance tests.
-
 func RunWatcherTests(t *testing.T, f Factory) {
 	t.Run("ReceivesEntityCreated", func(t *testing.T) {
 		s := f(t)
