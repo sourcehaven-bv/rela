@@ -35,7 +35,7 @@ func ValidateID(id string) error {
 	if strings.ContainsAny(id, "/\\") {
 		return fmt.Errorf("store: ID %q contains path separator", id)
 	}
-	for i := 0; i < len(id); i++ {
+	for i := range len(id) {
 		if id[i] < 0x20 || id[i] == 0x7f {
 			return fmt.Errorf("store: ID %q contains control character", id)
 		}

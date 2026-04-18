@@ -1,7 +1,6 @@
 package storeutil_test
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -122,7 +121,7 @@ func TestCursorRoundTrip(t *testing.T) {
 	t.Run("empty cursor decodes to empty", func(t *testing.T) {
 		got, err := storeutil.DecodeCursor("")
 		require.NoError(t, err)
-		assert.Equal(t, "", got)
+		assert.Empty(t, got)
 	})
 
 	t.Run("invalid cursor errors", func(t *testing.T) {
@@ -168,7 +167,7 @@ func TestPaginateSortedKeys(t *testing.T) {
 	})
 
 	t.Run("filters via match", func(t *testing.T) {
-		vowels := func(k string) bool { return strings.Contains("aeiou", k) }
+		vowels := func(k string) bool { return strings.Contains(k, "a") || strings.Contains(k, "e") }
 		page := storeutil.PaginateSortedKeys(keys, "", 0, vowels)
 		assert.Equal(t, []string{"a", "e"}, page.Keys)
 	})
@@ -216,6 +215,6 @@ func TestMatchRelation(t *testing.T) {
 func TestValidateIDErrorShape(t *testing.T) {
 	err := storeutil.ValidateID("")
 	require.Error(t, err)
-	assert.False(t, errors.Is(err, store.ErrNotFound),
+	assert.NotErrorIs(t, err, store.ErrNotFound,
 		"ValidateID errors must not collide with store sentinels")
 }
