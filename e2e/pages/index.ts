@@ -4,3 +4,5 @@ export { FormPage } from './form.page';
 export { KanbanPage } from './kanban.page';
 export { SearchPage } from './search.page';
 export { SettingsPage } from './settings.page';
+export { ApiClient } from './api.client';
+export { EntityPage } from './entity.page';

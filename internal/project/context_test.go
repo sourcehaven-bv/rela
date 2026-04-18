@@ -100,7 +100,6 @@ func TestNewContext(t *testing.T) {
 		{"Root", ctx.Root, root},
 		{"MetamodelPath", ctx.MetamodelPath, filepath.Join(root, MetamodelFile)},
 		{"CacheDir", ctx.CacheDir, filepath.Join(root, CacheDir)},
-		{"CachePath", ctx.CachePath, filepath.Join(root, CacheDir, CacheFile)},
 		{"EntitiesDir", ctx.EntitiesDir, filepath.Join(root, EntitiesDir)},
 		{"RelationsDir", ctx.RelationsDir, filepath.Join(root, RelationsDir)},
 		{"TemplatesDir", ctx.TemplatesDir, filepath.Join(root, TemplatesDir)},

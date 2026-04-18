@@ -7,7 +7,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -51,7 +50,6 @@ func InitializeWithFS(targetDir string, fs storage.FS) (*InitResult, error) {
 		Root:                 targetDir,
 		MetamodelPath:        metamodelPath,
 		CacheDir:             filepath.Join(targetDir, project.CacheDir),
-		CachePath:            filepath.Join(targetDir, project.CacheDir, project.CacheFile),
 		EntitiesDir:          filepath.Join(targetDir, project.EntitiesDir),
 		RelationsDir:         filepath.Join(targetDir, project.RelationsDir),
 		TemplatesDir:         filepath.Join(targetDir, project.TemplatesDir),
@@ -99,6 +97,5 @@ func NewAfterInit(targetDir string) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo := repository.New(fs, ctx)
-	return New(repo, NopScriptExecutor)
+	return New(fs, ctx, NopScriptExecutor)
 }

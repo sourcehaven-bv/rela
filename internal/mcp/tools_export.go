@@ -10,28 +10,13 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-func (s *Server) handleRefresh(
-	_ context.Context, _ mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	syncResult, err := s.ws.Reload()
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
-	}
-
-	msg := fmt.Sprintf("Refreshed: %d entities, %d relations loaded",
-		syncResult.EntitiesLoaded, syncResult.RelationsLoaded)
-	if len(syncResult.Errors) > 0 {
-		msg += fmt.Sprintf(" (%d errors)", len(syncResult.Errors))
-	}
-	return mcp.NewToolResultText(msg), nil
-}
-
 func (s *Server) handleExport(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	format, err := request.RequireString("format")
 	if err != nil {
@@ -39,25 +24,35 @@ func (s *Server) handleExport(
 	}
 	entityType := request.GetString("type", "")
 
-	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	var entities []*model.Entity
+	st := s.ws.Store()
+	q := store.EntityQuery{}
 	if entityType != "" {
-		resolved := s.resolveType(entityType)
-		entities = g.NodesByType(resolved)
-	} else {
-		entities = g.AllNodes()
+		q.Type = s.resolveType(entityType)
 	}
-	sortEntitiesByID(entities)
 
-	edges := g.AllEdges()
-	sortRelations(edges)
+	entities := make([]*entity.Entity, 0)
+	for e, err := range st.ListEntities(ctx, q) {
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		entities = append(entities, e)
+	}
+	sortStoreEntitiesByID(entities)
+
+	relations := make([]*entity.Relation, 0)
+	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		relations = append(relations, r)
+	}
+	sortStoreRelations(relations)
 
 	switch format {
 	case "json":
-		return s.exportJSON(entities, edges, entityType)
+		return s.exportJSON(entities, relations, entityType)
 	case "yaml":
-		return s.exportYAML(entities, edges, entityType)
+		return s.exportYAML(entities, relations, entityType)
 	case "csv":
 		return s.exportCSV(entities)
 	default:
@@ -66,10 +61,9 @@ func (s *Server) handleExport(
 }
 
 func (s *Server) exportJSON(
-	entities []*model.Entity, edges []*model.Relation, entityType string,
+	entities []*entity.Entity, relations []*entity.Relation, entityType string,
 ) (*mcp.CallToolResult, error) {
 	if entityType != "" {
-		// Single type: just entities
 		summaries := make([]map[string]interface{}, len(entities))
 		for i, e := range entities {
 			summaries[i] = map[string]interface{}{
@@ -85,7 +79,6 @@ func (s *Server) exportJSON(
 		return mcp.NewToolResultText(text), nil
 	}
 
-	// Full export
 	exportEntities := make([]map[string]interface{}, len(entities))
 	for i, e := range entities {
 		exportEntities[i] = map[string]interface{}{
@@ -94,8 +87,8 @@ func (s *Server) exportJSON(
 			"properties": e.Properties,
 		}
 	}
-	exportRelations := make([]map[string]interface{}, len(edges))
-	for i, r := range edges {
+	exportRelations := make([]map[string]interface{}, len(relations))
+	for i, r := range relations {
 		exportRelations[i] = map[string]interface{}{
 			"from":     r.From,
 			"relation": r.Type,
@@ -114,7 +107,7 @@ func (s *Server) exportJSON(
 }
 
 func (s *Server) exportYAML(
-	entities []*model.Entity, edges []*model.Relation, entityType string,
+	entities []*entity.Entity, relations []*entity.Relation, entityType string,
 ) (*mcp.CallToolResult, error) {
 	var data interface{}
 	if entityType != "" {
@@ -128,8 +121,8 @@ func (s *Server) exportYAML(
 		}
 		data = summaries
 	} else {
-		exportRelations := make([]map[string]interface{}, len(edges))
-		for i, r := range edges {
+		exportRelations := make([]map[string]interface{}, len(relations))
+		for i, r := range relations {
 			exportRelations[i] = map[string]interface{}{
 				"from":     r.From,
 				"relation": r.Type,
@@ -157,12 +150,11 @@ func (s *Server) exportYAML(
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func (s *Server) exportCSV(entities []*model.Entity) (*mcp.CallToolResult, error) {
+func (s *Server) exportCSV(entities []*entity.Entity) (*mcp.CallToolResult, error) {
 	if len(entities) == 0 {
 		return mcp.NewToolResultText(""), nil
 	}
 
-	// Collect all property keys
 	keySet := make(map[string]bool)
 	for _, e := range entities {
 		for k := range e.Properties {
@@ -175,7 +167,6 @@ func (s *Server) exportCSV(entities []*model.Entity) (*mcp.CallToolResult, error
 	}
 	natsort.Strings(keys)
 
-	// Build CSV
 	var buf strings.Builder
 	writer := csv.NewWriter(&buf)
 

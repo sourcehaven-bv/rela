@@ -24,11 +24,8 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -61,19 +58,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	repo, err := createRepo(*projectDir)
+	absDir, err := filepath.Abs(*projectDir)
 	if err != nil {
-		slog.Error("failed to initialize repository", "error", err)
+		slog.Error("invalid project dir", "error", err)
 		os.Exit(1)
 	}
-
-	ws, err := workspace.New(repo, script.NewEngine())
+	ws, err := workspace.Discover(absDir, script.NewEngine())
 	if err != nil {
 		slog.Error("failed to initialize workspace", "error", err)
 		os.Exit(1)
 	}
 
-	app, err := dataentry.NewApp(ws)
+	app, err := dataentry.NewApp(
+		ws.FS(), ws.Paths(), ws.Meta(), ws.Store(),
+		ws.EntityManager(), ws.Searcher(),
+		ws.StartWatching,
+	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError
 		if errors.As(err, &configErr) {
@@ -112,7 +112,7 @@ func main() {
 	}
 	// Start background scheduler if schedules.yaml exists.
 	// The goroutine is cleaned up on process exit.
-	metaFn := func() *metamodel.Metamodel { return ws.Snapshot().Meta() }
+	metaFn := func() *metamodel.Metamodel { return ws.Meta() }
 	scheduler.StartBackground(context.Background(), ws, ws, metaFn, slog.Default())
 
 	if err := startPprofIfRequested(*debugPprof); err != nil {
@@ -229,18 +229,4 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
-}
-
-// createRepo discovers the project and creates a repository.
-func createRepo(projectDir string) (repository.Store, error) {
-	absDir, err := filepath.Abs(projectDir)
-	if err != nil {
-		return nil, err
-	}
-	fs := storage.NewSafeFS(storage.NewOsFS())
-	projCtx, err := project.Discover(absDir, fs)
-	if err != nil {
-		return nil, fmt.Errorf("discovering project: %w", err)
-	}
-	return repository.New(fs, projCtx), nil
 }

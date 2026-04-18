@@ -6,7 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 // TestNew tests creating a new writer
@@ -40,7 +41,7 @@ func TestWriteEntities(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{
 			ID:   "REQ-001",
 			Type: "requirement",
@@ -78,7 +79,7 @@ func TestWriteEntitiesJSON(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatJSON)
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{
 			ID:   "REQ-001",
 			Type: "requirement",
@@ -94,7 +95,7 @@ func TestWriteEntitiesJSON(t *testing.T) {
 	}
 
 	// Parse JSON to verify it's valid
-	var result []*model.Entity
+	var result []*entity.Entity
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestWriteEntitiesWithSummary(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{
 			ID:   "REQ-001",
 			Type: "requirement",
@@ -152,7 +153,7 @@ func TestWriteEntitiesWithSummary(t *testing.T) {
 	// Test with empty entities
 	bufEmpty := &bytes.Buffer{}
 	wEmpty := NewWithWriter(bufEmpty, FormatTable)
-	err = wEmpty.WriteEntitiesWithSummary([]*model.Entity{})
+	err = wEmpty.WriteEntitiesWithSummary([]*entity.Entity{})
 	if err != nil {
 		t.Fatalf("WriteEntitiesWithSummary empty failed: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestWriteEntity(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
 
-	entity := &model.Entity{
+	e := &entity.Entity{
 		ID:   "REQ-001",
 		Type: "requirement",
 		Properties: map[string]interface{}{
@@ -222,15 +223,15 @@ func TestWriteEntity(t *testing.T) {
 		Content: "Some content here",
 	}
 
-	incoming := []*model.Relation{
+	incoming := []*entity.Relation{
 		{From: "DEC-001", Type: "implements", To: "REQ-001"},
 	}
 
-	outgoing := []*model.Relation{
+	outgoing := []*entity.Relation{
 		{From: "REQ-001", Type: "depends_on", To: "REQ-002"},
 	}
 
-	err := w.WriteEntity(entity, incoming, outgoing)
+	err := w.WriteEntity(e, incoming, outgoing)
 	if err != nil {
 		t.Fatalf("WriteEntity failed: %v", err)
 	}
@@ -258,7 +259,7 @@ func TestWriteEntity(t *testing.T) {
 	// Test entity with minimal fields
 	buf2 := &bytes.Buffer{}
 	w2 := NewWithWriter(buf2, FormatTable)
-	entity2 := &model.Entity{
+	entity2 := &entity.Entity{
 		ID:         "REQ-002",
 		Type:       "requirement",
 		Properties: map[string]interface{}{},
@@ -278,12 +279,12 @@ func TestWriteEntityJSON(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatJSON)
 
-	entity := &model.Entity{
+	e := &entity.Entity{
 		ID:   "REQ-001",
 		Type: "requirement",
 	}
 
-	err := w.WriteEntity(entity, nil, nil)
+	err := w.WriteEntity(e, nil, nil)
 	if err != nil {
 		t.Fatalf("WriteEntity failed: %v", err)
 	}
@@ -303,7 +304,7 @@ func TestWriteRelations(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
 
-	relations := []*model.Relation{
+	relations := []*entity.Relation{
 		{From: "REQ-001", Type: "implements", To: "DEC-001"},
 		{From: "REQ-002", Type: "depends_on", To: "REQ-001"},
 	}
@@ -327,7 +328,7 @@ func TestWriteRelationsJSON(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatJSON)
 
-	relations := []*model.Relation{
+	relations := []*entity.Relation{
 		{From: "REQ-001", Type: "implements", To: "DEC-001"},
 	}
 
@@ -336,7 +337,7 @@ func TestWriteRelationsJSON(t *testing.T) {
 		t.Fatalf("WriteRelations failed: %v", err)
 	}
 
-	var result []*model.Relation
+	var result []*entity.Relation
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -350,15 +351,15 @@ func TestWriteTrace(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
 
-	trace := &model.TraceResult{
+	trace := &tracer.TraceResult{
 		ID:    "REQ-001",
 		Title: "Root",
-		Children: []*model.TraceResult{
+		Children: []*tracer.TraceResult{
 			{
 				ID:       "REQ-002",
 				Title:    "Child 1",
 				Relation: "depends_on",
-				Children: []*model.TraceResult{
+				Children: []*tracer.TraceResult{
 					{
 						ID:       "REQ-004",
 						Title:    "Grandchild",
@@ -397,7 +398,7 @@ func TestWriteTrace(t *testing.T) {
 	// Test trace without relation info
 	buf2 := &bytes.Buffer{}
 	w2 := NewWithWriter(buf2, FormatTable)
-	trace2 := &model.TraceResult{
+	trace2 := &tracer.TraceResult{
 		ID:    "REQ-005",
 		Title: "No relations",
 	}
@@ -416,7 +417,7 @@ func TestWriteTraceJSON(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatJSON)
 
-	trace := &model.TraceResult{
+	trace := &tracer.TraceResult{
 		ID:    "REQ-001",
 		Title: "Root",
 	}
@@ -426,7 +427,7 @@ func TestWriteTraceJSON(t *testing.T) {
 		t.Fatalf("WriteTrace failed: %v", err)
 	}
 
-	var result model.TraceResult
+	var result tracer.TraceResult
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -440,7 +441,7 @@ func TestWritePath(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
 
-	path := []model.PathStep{
+	path := []tracer.PathStep{
 		{ID: "REQ-001", Type: "requirement"},
 		{ID: "REQ-002", Type: "requirement", Relation: "depends_on"},
 		{ID: "DEC-001", Type: "decision", Relation: "implements"},
@@ -477,7 +478,7 @@ func TestWritePath(t *testing.T) {
 	}
 
 	// Test with single hop
-	path1 := []model.PathStep{
+	path1 := []tracer.PathStep{
 		{ID: "REQ-001", Type: "requirement"},
 		{ID: "REQ-002", Type: "requirement", Relation: "depends_on"},
 	}
@@ -498,7 +499,7 @@ func TestWritePathEmpty(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatTable)
 
-	err := w.WritePath([]model.PathStep{})
+	err := w.WritePath([]tracer.PathStep{})
 	if err != nil {
 		t.Fatalf("WritePath failed: %v", err)
 	}
@@ -514,7 +515,7 @@ func TestWritePathJSON(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := NewWithWriter(buf, FormatJSON)
 
-	path := []model.PathStep{
+	path := []tracer.PathStep{
 		{ID: "REQ-001", Type: "requirement"},
 	}
 
@@ -523,7 +524,7 @@ func TestWritePathJSON(t *testing.T) {
 		t.Fatalf("WritePath failed: %v", err)
 	}
 
-	var result []model.PathStep
+	var result []tracer.PathStep
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}

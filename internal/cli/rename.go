@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"regexp"
@@ -9,7 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/rename"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 var (
@@ -108,6 +110,8 @@ func resolveRenameEntity(oldType, newType string) (*renameEntityInfo, error) {
 	oldTemplatePath := projectCtx.EntityTemplatePath(resolvedOld)
 	_, statErr := ws.FS().Stat(oldTemplatePath)
 
+	entityCount, _ := ws.Store().CountEntities(context.Background(), store.EntityQuery{Type: resolvedOld})
+
 	return &renameEntityInfo{
 		resolvedOld:     resolvedOld,
 		newType:         newType,
@@ -115,7 +119,7 @@ func resolveRenameEntity(oldType, newType string) (*renameEntityInfo, error) {
 		newPlural:       newPlural,
 		oldDir:          projectCtx.EntityTypeDirWithPlural(oldPlural),
 		newDir:          projectCtx.EntityTypeDirWithPlural(newPlural),
-		entityCount:     len(ws.EntitiesByType(resolvedOld)),
+		entityCount:     entityCount,
 		relCount:        countAffectedRelations(resolvedOld),
 		oldTemplatePath: oldTemplatePath,
 		hasTemplate:     statErr == nil,
@@ -215,43 +219,17 @@ Examples:
 }
 
 func runRenameID(oldID, newID string) error {
-	// Get entity to find type
-	entity, ok := ws.GetEntity(oldID)
-	if !ok {
-		return fmt.Errorf("entity not found: %s", oldID)
-	}
-
-	result, err := ws.Rename(entity.Type, oldID, newID, rename.Options{DryRun: renameIDDryRun})
+	result, err := ws.EntityManager().RenameEntity(
+		context.Background(), oldID, newID, entitymanager.RenameOptions{DryRun: renameIDDryRun})
 	if err != nil {
 		return err
 	}
 
+	verb := "Renamed"
 	if renameIDDryRun {
-		out.WriteMessage("Dry run - no changes made")
-		out.WriteMessage("")
+		verb = "Dry run — would rename"
 	}
-
-	out.WriteMessage("Rename: %s → %s", result.OldID, result.NewID)
-	out.WriteMessage("Entity file: %s", result.EntityFile)
-
-	if len(result.RelationsUpdated) > 0 {
-		out.WriteMessage("\nRelations updated (%d):", len(result.RelationsUpdated))
-		for _, rel := range result.RelationsUpdated {
-			out.WriteMessage("  %s --%s--> %s", rel.From, rel.Type, rel.To)
-		}
-	} else {
-		out.WriteMessage("\nNo relations updated")
-	}
-
-	if !renameIDDryRun {
-		if saveErr := ws.SaveCache(); saveErr != nil {
-			out.WriteWarning("Failed to save cache: %v", saveErr)
-		}
-		if len(result.OldFilesDeleted) > 0 {
-			out.WriteMessage("\nOld files deleted (%d)", len(result.OldFilesDeleted))
-		}
-	}
-
+	out.WriteMessage("%s: %s → %s (%d relations updated)", verb, result.OldID, result.NewID, result.RelationsUpdated)
 	return nil
 }
 

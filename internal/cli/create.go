@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -8,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
+	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
 
 var (
@@ -86,14 +87,18 @@ Examples:
 			return err
 		}
 
-		entity, result, err := ws.CreateEntity(resolvedType, workspace.CreateOptions{
-			ID:         createID,
-			Properties: props,
-			Content:    bodyContent,
-		})
+		result, err := ws.EntityManager().CreateEntity(context.Background(),
+			&entitypkg.Entity{
+				Type:       resolvedType,
+				Properties: props,
+				Content:    bodyContent,
+			},
+			entitymanager.CreateOptions{ID: createID},
+		)
 		if err != nil {
 			return err
 		}
+		entity := result.Entity
 
 		// Show automation feedback
 		for _, warning := range result.AutomationWarnings {
@@ -108,7 +113,9 @@ Examples:
 
 		out.WriteSuccess("Created %s %s", resolvedType, entity.ID)
 		if outputFormat == "json" {
-			_ = out.WriteEntities([]*model.Entity{entity})
+			if e, err := ws.Store().GetEntity(context.Background(), entity.ID); err == nil {
+				_ = out.WriteEntities([]*entitypkg.Entity{e})
+			}
 		}
 
 		return nil

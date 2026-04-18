@@ -6,6 +6,7 @@ allow:
 
 exclude:
   - internal/testutil
+  - internal/store/storetest
   - frontend
   - .claude
 
@@ -32,36 +33,49 @@ components:
   openapi:          { in: internal/openapi }
 
   # Application services
+  app:              { in: internal/app }
   workspace:        { in: internal/workspace }
 
   # Domain services
   automation:       { in: internal/automation }
   conflict:         { in: internal/conflict }
+  entitymanager:    { in: internal/entitymanager }
   importer:         { in: internal/importer }
   rename:           { in: internal/rename }
-  repository:       { in: internal/repository }
   schema:           { in: internal/schema }
+  templating:       { in: internal/templating }
+  tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
+  validator:        { in: internal/validator }
+
   # Core domain
-  graph:            { in: internal/graph }
+  entity:           { in: internal/entity }
   lua:              { in: internal/lua }
   scheduler:        { in: internal/scheduler }
   script:           { in: internal/script }
   metamodel:        { in: internal/metamodel }
   migration:        { in: internal/migration }
-  model:            { in: internal/model }
   markdown:         { in: internal/markdown }
   filter:           { in: internal/filter }
   pattern:          { in: internal/pattern }
-  search:           { in: internal/search/** }
+  search:           { in: internal/search }
+  bleveindex:       { in: internal/search/bleveindex }
+  searchparser:     { in: internal/search/searchparser }
+  store:            { in: internal/store }
+  fsstore:          { in: internal/store/fsstore }
+  memstore:         { in: internal/store/memstore }
+  storeutil:        { in: internal/store/storeutil }
 
   # Infrastructure
   ai:               { in: internal/ai }
   secrets:          { in: internal/secrets }
   attachment:       { in: internal/attachment }
+  cache:            { in: internal/cache }
+  config:           { in: internal/config }
   git:              { in: internal/git }
   output:           { in: internal/output }
   project:          { in: internal/project }
+  state:            { in: internal/state }
   storage:          { in: internal/storage }
 
   # Shared utilities
@@ -99,7 +113,7 @@ vendors:
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
-  - model
+  - entity
   - errors
   - natsort
 
@@ -114,10 +128,10 @@ deps:
       - cli
   cmdServer:
     mayDependOn:
+      - app
       - dataentry
       - metamodel
       - project
-      - repository
       - scheduler
       - script
       - storage
@@ -126,26 +140,29 @@ deps:
       - http2
   cmdDesktop:
     mayDependOn:
+      - app
       - dataentry
       - desktop
       - git
       - metamodel
       - project
-      - repository
       - scheduler
       - script
       - storage
       - workspace
     canUse:
       - wails
+
   # CLI layer — orchestrates everything
   cli:
     mayDependOn:
       - ai
       - dataentryconfig
+      - entitymanager
       - filter
       - importer
       - lua
+      - markdown
       - mcp
       - metamodel
       - output
@@ -154,7 +171,7 @@ deps:
       - scheduler
       - schema
       - script
-
+      - store
       - workspace
     canUse:
       - cobra
@@ -166,22 +183,32 @@ deps:
   # Web / UI layer
   dataentry:
     mayDependOn:
+      - config
       - conflict
       - dataentryconfig
+      - entitymanager
       - filter
       - git
-      - graph
       - htmlutil
+      - lua
       - metamodel
       - migration
       - openapi
       - project
       - script
       - search
+      - searchparser
+      - state
+      - storage
+      - store
+      - templating
+      - tracer
+      - validator
       - workspace
     canUse:
       - goldmark
       - gogit
+      - singleflight
   dataentryconfig:
     mayDependOn:
       - git
@@ -194,15 +221,20 @@ deps:
   mcp:
     mayDependOn:
       - ai
+      - config
       - dataentryconfig
+      - entitymanager
       - filter
       - lua
       - metamodel
+      - project
       - rename
       - schema
       - script
       - search
-
+      - store
+      - tracer
+      - validator
       - workspace
     canUse:
       - mcpgo
@@ -212,26 +244,37 @@ deps:
       - metamodel
 
   # Application services
+  app:
+    mayDependOn:
+      - fsstore
+      - metamodel
+      - project
+      - storage
+      - store
   workspace:
     mayDependOn:
+      - app
       - attachment
       - automation
+      - config
       - dataentryconfig
-      - graph
-      - htmlutil
-      - markdown
+      - entitymanager
+      - lua
+      - memstore
       - metamodel
       - migration
       - project
       - rename
-      - repository
+      - schema
       - search
+      - searchparser
+      - state
       - storage
+      - store
+      - templating
+      - tracer
       - validation
-
-    canUse:
-      - goldmark
-      - singleflight
+      - validator
 
   # Domain services
   automation:
@@ -243,37 +286,31 @@ deps:
       - markdown
       - metamodel
       - project
-      - storage
+  # entitymanager: pure domain interfaces, no internal deps (entity is in commonComponents)
   importer:
     mayDependOn:
-      - graph
       - metamodel
-      - repository
       - storage
-  rename:
-    mayDependOn:
-      - graph
-      - metamodel
-      - project
-      - repository
-  repository:
-    mayDependOn:
-      - graph
-      - markdown
-      - metamodel
-      - migration
-      - project
-      - storage
-
-    canUse:
-      - gogit
+      - store
+      - storeutil
+  # rename: stateless helpers, no internal deps
   schema:
     mayDependOn:
       - dataentryconfig
-      - graph
       - metamodel
       - migration
-
+      - store
+  templating:
+    mayDependOn:
+      - markdown
+      - metamodel
+      - project
+      - storage
+    canUse:
+      - goldmark
+  tracer:
+    mayDependOn:
+      - store
   validation:
     mayDependOn:
       - filter
@@ -282,9 +319,17 @@ deps:
       - metamodel
     canUse:
       - gopherlua
+  validator:
+    mayDependOn:
+      - lua
+      - metamodel
+      - store
+      - validation
+
   # Core domain
   metamodel:
     mayDependOn:
+      - migration
       - storage
     canUse:
       - rrulego
@@ -292,9 +337,6 @@ deps:
     mayDependOn:
       - storage
   markdown:
-    mayDependOn:
-      - metamodel
-      - storage
     canUse:
       - goldmark
   filter:
@@ -304,10 +346,13 @@ deps:
   lua:
     mayDependOn:
       - ai
+      - entitymanager
       - filter
       - metamodel
+      - search
       - secrets
-      - workspace
+      - store
+      - tracer
     canUse:
       - goldmark
       - gopherlua
@@ -315,9 +360,11 @@ deps:
       - rrulego
   scheduler:
     mayDependOn:
+      - config
       - metamodel
       - project
       - script
+      - state
   script:
     mayDependOn:
       - ai
@@ -327,8 +374,36 @@ deps:
   search:
     mayDependOn:
       - filter
+      - store
     canUse:
       - bleve
+  bleveindex:
+    mayDependOn:
+      - search
+      - store
+    canUse:
+      - bleve
+  searchparser:
+    mayDependOn:
+      - filter
+  store:
+    mayDependOn:
+      - metamodel
+  fsstore:
+    mayDependOn:
+      - cache
+      - storage
+      - store
+      - storeutil
+    canUse:
+      - goldmark
+  memstore:
+    mayDependOn:
+      - store
+      - storeutil
+  storeutil:
+    mayDependOn:
+      - store
 
   # Infrastructure
   # ai: pure leaf — only stdlib (net/http, log/slog, encoding/json) plus
@@ -338,14 +413,23 @@ deps:
   attachment:
     mayDependOn:
       - storage
+  # cache: pure in-memory utility, no internal deps
+  config:
+    mayDependOn:
+      - storage
   git:
     canUse:
       - gogit
   output:
+    mayDependOn:
+      - tracer
     canUse:
       - color
       - tablewriter
   project:
+    mayDependOn:
+      - storage
+  state:
     mayDependOn:
       - storage
   storage:

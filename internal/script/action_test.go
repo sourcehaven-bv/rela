@@ -121,7 +121,7 @@ func TestValidateRedirect(t *testing.T) {
 
 func TestExecuteAction_PathTraversal(t *testing.T) {
 	engine := NewEngine()
-	ctx := &testContext{workspace: &mockWorkspace{}, projectRoot: "/project"}
+	ctx := &testContext{projectRoot: "/project"}
 
 	_, err := engine.ExecuteAction("../etc/passwd", ctx, nil, time.Second)
 	if err == nil {
@@ -131,7 +131,7 @@ func TestExecuteAction_PathTraversal(t *testing.T) {
 
 func TestExecuteAction_WrongExtension(t *testing.T) {
 	engine := NewEngine()
-	ctx := &testContext{workspace: &mockWorkspace{}, projectRoot: "/project"}
+	ctx := &testContext{projectRoot: "/project"}
 
 	_, err := engine.ExecuteAction("script.txt", ctx, nil, time.Second)
 	if err == nil {
@@ -160,7 +160,7 @@ func TestExecuteAction_RealFile(t *testing.T) {
 	}
 
 	engine := NewEngine()
-	ctx := &testContext{workspace: &mockWorkspace{}, projectRoot: tmpDir}
+	ctx := &testContext{projectRoot: tmpDir}
 
 	resp, err := engine.ExecuteAction("test.lua", ctx, nil, 5*time.Second)
 	if err != nil {
@@ -185,7 +185,7 @@ func TestExecuteAction_WithParams(t *testing.T) {
 	}
 
 	engine := NewEngine()
-	ctx := &testContext{workspace: &mockWorkspace{}, projectRoot: tmpDir}
+	ctx := &testContext{projectRoot: tmpDir}
 	params := map[string]string{"greeting": "hello"}
 
 	resp, err := engine.ExecuteAction("params.lua", ctx, params, 5*time.Second)
@@ -211,7 +211,7 @@ func TestExecuteAction_ScriptError(t *testing.T) {
 	}
 
 	engine := NewEngine()
-	ctx := &testContext{workspace: &mockWorkspace{}, projectRoot: tmpDir}
+	ctx := &testContext{projectRoot: tmpDir}
 
 	_, err := engine.ExecuteAction("boom.lua", ctx, nil, 5*time.Second)
 	if err == nil {

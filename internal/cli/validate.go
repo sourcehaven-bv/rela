@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -212,7 +213,16 @@ func runPropertiesCheck(checkWs *workspace.Workspace, checkOut *output.Writer, o
 	if !quiet {
 		fmt.Println("\nValidating entity properties...")
 	}
-	propErrors := checkWs.ValidateProperties(opts)
+	propErrors := schema.ValidateEntityProperties(checkWs.Store(), checkWs.Meta())
+	if opts.Scope != nil {
+		filtered := propErrors[:0]
+		for _, pe := range propErrors {
+			if opts.Scope[pe.EntityID] {
+				filtered = append(filtered, pe)
+			}
+		}
+		propErrors = filtered
+	}
 	errorCount := 0
 	for _, pe := range propErrors {
 		errorCount += len(pe.Errors)

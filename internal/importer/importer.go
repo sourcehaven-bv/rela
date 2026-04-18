@@ -3,6 +3,7 @@
 package importer
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -12,11 +13,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // Format represents an import file format
@@ -108,21 +109,19 @@ func (s *ImportSource) Open(path string) (io.ReadCloser, error) {
 
 // Importer handles importing data into a rela project
 type Importer struct {
-	repo   repository.Store
+	store  store.Store
 	meta   *metamodel.Metamodel
-	g      *graph.Graph
 	opts   Options
 	source *ImportSource
 }
 
 // New creates a new Importer that reads input files from the given source.
 func New(
-	repo repository.Store, meta *metamodel.Metamodel, g *graph.Graph, opts Options, source *ImportSource,
+	s store.Store, meta *metamodel.Metamodel, opts Options, source *ImportSource,
 ) *Importer {
 	return &Importer{
-		repo:   repo,
+		store:  s,
 		meta:   meta,
-		g:      g,
 		opts:   opts,
 		source: source,
 	}
@@ -230,12 +229,16 @@ func (imp *Importer) validateRelations(
 	relations []RelationData, validEntities []EntityData, result *Result,
 ) ([]RelationData, error) {
 	// Build set of known entity IDs
+	ctx := context.Background()
 	entityIDs := make(map[string]bool)
 	for _, ed := range validEntities {
 		entityIDs[ed.ID] = true
 	}
-	for _, id := range imp.g.AllIDs() {
-		entityIDs[id] = true
+	for e, err := range imp.store.ListEntities(ctx, store.EntityQuery{}) {
+		if err != nil {
+			break
+		}
+		entityIDs[e.ID] = true
 	}
 
 	valid := make([]RelationData, 0, len(relations))
@@ -304,7 +307,7 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 	if ed.ID == "" {
 		return fmt.Errorf("missing required field: id")
 	}
-	if err := model.ValidateID(ed.ID); err != nil {
+	if err := storeutil.ValidateID(ed.ID); err != nil {
 		return err
 	}
 
@@ -323,28 +326,28 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 	}
 
 	// Check if entity already exists
-	if _, exists := imp.g.GetNode(ed.ID); exists {
+	if _, err := imp.store.GetEntity(context.Background(), ed.ID); err == nil {
 		if !imp.opts.Update {
 			return fmt.Errorf("entity already exists (use --update to overwrite)")
 		}
 	}
 
 	// Build entity for validation
-	entity := model.NewEntity(ed.ID, ed.Type)
+	e := entity.New(ed.ID, ed.Type)
 	for k, v := range ed.Properties {
-		entity.Properties[k] = v
+		e.Properties[k] = v
 	}
 
 	// Apply default status if not provided
-	if _, hasStatus := entity.Properties["status"]; !hasStatus {
+	if _, hasStatus := e.Properties["status"]; !hasStatus {
 		defaultStatus := entityDef.GetDefaultStatus(imp.meta)
 		if defaultStatus != "" {
-			entity.Properties["status"] = defaultStatus
+			e.Properties["status"] = defaultStatus
 		}
 	}
 
 	// Validate against metamodel
-	errs := imp.meta.ValidateEntity(entity)
+	errs := imp.meta.ValidateEntity(e.ID, e.Type, e.Properties)
 	if len(errs) > 0 {
 		msgs := make([]string, len(errs))
 		for i, e := range errs {
@@ -377,16 +380,17 @@ func (imp *Importer) validateRelationData(rd *RelationData, knownIDs map[string]
 	}
 
 	// Get entity types for relation validation
+	ctx := context.Background()
 	var fromType, toType string
-	if node, ok := imp.g.GetNode(rd.From); ok {
-		fromType = node.Type
+	if e, err := imp.store.GetEntity(ctx, rd.From); err == nil {
+		fromType = e.Type
 	} else {
 		// Must be in the import batch - we'll validate after entities are created
 		// For now, skip metamodel validation
 		return nil
 	}
-	if node, ok := imp.g.GetNode(rd.To); ok {
-		toType = node.Type
+	if e, err := imp.store.GetEntity(ctx, rd.To); err == nil {
+		toType = e.Type
 	} else {
 		return nil
 	}
@@ -398,34 +402,33 @@ func (imp *Importer) validateRelationData(rd *RelationData, knownIDs map[string]
 // importEntity creates or updates an entity
 func (imp *Importer) importEntity(ed *EntityData) (created bool, err error) {
 	entityDef, _ := imp.meta.GetEntityDef(ed.Type)
+	ctx := context.Background()
 
-	entity := model.NewEntity(ed.ID, ed.Type)
+	e := entity.New(ed.ID, ed.Type)
 	for k, v := range ed.Properties {
-		entity.Properties[k] = v
+		e.Properties[k] = v
 	}
 
 	// Apply default status if not provided
-	if _, hasStatus := entity.Properties["status"]; !hasStatus {
+	if _, hasStatus := e.Properties["status"]; !hasStatus {
 		defaultStatus := entityDef.GetDefaultStatus(imp.meta)
 		if defaultStatus != "" {
-			entity.Properties["status"] = defaultStatus
+			e.Properties["status"] = defaultStatus
 		}
 	}
 
 	// Check if updating
-	_, exists := imp.g.GetNode(ed.ID)
+	_, getErr := imp.store.GetEntity(ctx, ed.ID)
+	exists := getErr == nil
 
-	// Write to file (repo computes canonical path and sets entity.FilePath)
-	if err := imp.repo.WriteEntity(entity, imp.meta); err != nil {
-		return false, fmt.Errorf("failed to write entity: %w", err)
-	}
-
-	// Add/update in graph
 	if exists {
-		// Use UpdateNode to preserve relations
-		imp.g.UpdateNode(entity)
+		if err := imp.store.UpdateEntity(ctx, e); err != nil {
+			return false, fmt.Errorf("failed to update entity: %w", err)
+		}
 	} else {
-		imp.g.AddNode(entity)
+		if err := imp.store.CreateEntity(ctx, e); err != nil {
+			return false, fmt.Errorf("failed to create entity: %w", err)
+		}
 	}
 
 	return !exists, nil
@@ -433,22 +436,21 @@ func (imp *Importer) importEntity(ed *EntityData) (created bool, err error) {
 
 // importRelation creates a relation
 func (imp *Importer) importRelation(rd *RelationData) (created bool, err error) {
+	ctx := context.Background()
+
 	// Check if relation already exists
-	if _, exists := imp.g.GetEdge(rd.From, rd.Relation, rd.To); exists {
+	if _, err := imp.store.GetRelation(ctx, rd.From, rd.Relation, rd.To); err == nil {
 		return false, nil
 	}
 
-	// Create relation
-	relation := model.NewRelation(rd.From, rd.Relation, rd.To)
-	relation.Properties = rd.Properties
-
-	// Write to file (repo computes canonical path and sets relation.FilePath)
-	if err := imp.repo.WriteRelation(relation); err != nil {
-		return false, fmt.Errorf("failed to write relation: %w", err)
+	var data *store.RelationData
+	if len(rd.Properties) > 0 {
+		data = &store.RelationData{Properties: rd.Properties}
 	}
 
-	// Add to graph
-	imp.g.AddEdge(relation)
+	if _, err := imp.store.CreateRelation(ctx, rd.From, rd.Relation, rd.To, data); err != nil {
+		return false, fmt.Errorf("failed to create relation: %w", err)
+	}
 
 	return true, nil
 }

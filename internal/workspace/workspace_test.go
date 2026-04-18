@@ -2,19 +2,15 @@ package workspace
 
 import (
 	"errors"
-	"runtime"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -27,7 +23,6 @@ func testContext() *project.Context {
 		Root:                 "/project",
 		MetamodelPath:        "/project/metamodel.yaml",
 		CacheDir:             "/project/.rela",
-		CachePath:            "/project/.rela/cache.json",
 		EntitiesDir:          "/project/entities",
 		RelationsDir:         "/project/relations",
 		TemplatesDir:         "/project/templates",
@@ -61,8 +56,7 @@ func setupWorkspaceWithMetamodel(t *testing.T, metamodelYAML string) *Workspace 
 
 	ctx := testContext()
 	fs := setupWorkspaceFS(ctx, meta, metamodelYAML)
-	repo := repository.New(fs, ctx)
-	return NewWithGraph(repo, meta, graph.New(), script.NewEngine())
+	return NewForTest(meta, WithFS(fs, ctx), WithScript(script.NewEngine()))
 }
 
 // setupTestWorkspace creates a workspace with the standard test metamodel.
@@ -75,14 +69,13 @@ func setupTestWorkspace(t *testing.T) *Workspace {
 
 	ctx := testContext()
 	fs := setupWorkspaceFS(ctx, meta, testMetamodelYAML)
-	repo := repository.New(fs, ctx)
-	return NewWithGraph(repo, meta, graph.New())
+	return NewForTest(meta, WithFS(fs, ctx))
 }
 
 // mustCreate is a test helper that creates an entity, fatally failing on error.
 func mustCreate(t *testing.T, ws *Workspace, entityType string, opts CreateOptions) {
 	t.Helper()
-	if _, _, err := ws.CreateEntity(entityType, opts); err != nil {
+	if _, _, err := ws.createEntity(entityType, opts); err != nil {
 		t.Fatalf("mustCreate(%s): %v", entityType, err)
 	}
 }
@@ -93,29 +86,31 @@ func TestNew(t *testing.T) {
 	meta, _ := metamodel.Parse([]byte(testMetamodelYAML))
 	ctx := testContext()
 	fs := setupWorkspaceFS(ctx, meta, testMetamodelYAML)
-	repo := repository.New(fs, ctx)
 
-	ws, err := New(repo, NopScriptExecutor)
+	ws, err := New(fs, ctx, NopScriptExecutor)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if ws.Snapshot().Graph() == nil {
-		t.Error("expected graph to be initialized")
+	if ws.Store() == nil {
+		t.Error("expected store to be initialized")
 	}
-	if ws.Snapshot().Meta() == nil {
+	if ws.Meta() == nil {
 		t.Error("expected meta to be initialized")
 	}
-	if ws.Repo() == nil {
-		t.Error("expected repo to be initialized")
+	if ws.FS() == nil {
+		t.Error("expected fs to be initialized")
+	}
+	if ws.Paths() == nil {
+		t.Error("expected paths to be initialized")
 	}
 }
 
 func TestNewWithGraph(t *testing.T) {
 	ws := setupTestWorkspace(t)
-	if ws.Snapshot().Graph() == nil {
-		t.Error("expected graph")
+	if ws.Store() == nil {
+		t.Error("expected store")
 	}
-	if ws.Snapshot().Meta() == nil {
+	if ws.Meta() == nil {
 		t.Error("expected meta")
 	}
 }
@@ -184,8 +179,11 @@ func TestGenerateID_UnknownType(t *testing.T) {
 func TestGenerateID_Sequential(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	// Add an existing entity so the next ID is REQ-002.
-	ws.Snapshot().Graph().AddNode(testutil.EntityFor(ws.Snapshot().Meta(), "requirement").ID("REQ-001").Build())
+	// Create an existing entity so the next ID is REQ-002.
+	mustCreate(t, ws, "requirement", CreateOptions{
+		ID:         "REQ-001",
+		Properties: map[string]interface{}{"title": "Existing"},
+	})
 
 	id, err := ws.GenerateID("requirement", "")
 	if err != nil {
@@ -285,7 +283,7 @@ func hasPrefix(s, prefix string) bool {
 func TestCreateEntity(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	entity, result, err := ws.CreateEntity("requirement", CreateOptions{
+	entity, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "My Requirement"},
 	})
 	if err != nil {
@@ -308,16 +306,15 @@ func TestCreateEntity(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	// Verify entity is in graph.
-	if _, ok := ws.Snapshot().Graph().GetNode("REQ-001"); !ok {
-		t.Error("entity not found in graph after create")
+	if _, ok := ws.GetEntity("REQ-001"); !ok {
+		t.Error("entity not found after create")
 	}
 }
 
 func TestCreateEntity_WithCustomID(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	entity, _, err := ws.CreateEntity("requirement", CreateOptions{
+	entity, _, err := ws.createEntity("requirement", CreateOptions{
 		ID:         "REQ-042",
 		Properties: map[string]interface{}{"title": "Custom ID"},
 	})
@@ -332,7 +329,7 @@ func TestCreateEntity_WithCustomID(t *testing.T) {
 func TestCreateEntity_DuplicateID(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, _, err := ws.CreateEntity("requirement", CreateOptions{
+	_, _, err := ws.createEntity("requirement", CreateOptions{
 		ID:         "REQ-001",
 		Properties: map[string]interface{}{"title": "First"},
 	})
@@ -340,7 +337,7 @@ func TestCreateEntity_DuplicateID(t *testing.T) {
 		t.Fatalf("first create error = %v", err)
 	}
 
-	_, _, err = ws.CreateEntity("requirement", CreateOptions{
+	_, _, err = ws.createEntity("requirement", CreateOptions{
 		ID:         "REQ-001",
 		Properties: map[string]interface{}{"title": "Duplicate"},
 	})
@@ -353,7 +350,7 @@ func TestCreateEntity_ValidationError(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
 	// title is required but not provided
-	_, _, err := ws.CreateEntity("requirement", CreateOptions{})
+	_, _, err := ws.createEntity("requirement", CreateOptions{})
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
@@ -365,7 +362,7 @@ func TestCreateEntity_ValidationError(t *testing.T) {
 func TestCreateEntity_UnknownType(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, _, err := ws.CreateEntity("nonexistent", CreateOptions{})
+	_, _, err := ws.createEntity("nonexistent", CreateOptions{})
 	if err == nil {
 		t.Error("expected error for unknown entity type")
 	}
@@ -374,7 +371,7 @@ func TestCreateEntity_UnknownType(t *testing.T) {
 func TestCreateEntity_WithContent(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	entity, _, err := ws.CreateEntity("requirement", CreateOptions{
+	entity, _, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "With Body"},
 		Content:    "# Description\n\nSome content.",
 	})
@@ -391,7 +388,7 @@ func TestCreateEntity_WithContent(t *testing.T) {
 func TestUpdateEntity(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	entity, _, err := ws.CreateEntity("requirement", CreateOptions{
+	entity, _, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Original"},
 	})
 	if err != nil {
@@ -399,7 +396,7 @@ func TestUpdateEntity(t *testing.T) {
 	}
 
 	// Clone for old entity.
-	oldEntity := &model.Entity{
+	oldEntity := &entitypkg.Entity{
 		ID:         entity.ID,
 		Type:       entity.Type,
 		Properties: map[string]interface{}{"title": "Original", "status": entity.GetString("status")},
@@ -407,7 +404,7 @@ func TestUpdateEntity(t *testing.T) {
 
 	entity.SetString("title", "Updated")
 
-	result, err := ws.UpdateEntity(entity, oldEntity)
+	result, err := ws.updateEntity(entity, oldEntity)
 	if err != nil {
 		t.Fatalf("UpdateEntity() error = %v", err)
 	}
@@ -415,10 +412,9 @@ func TestUpdateEntity(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	// Verify update in graph.
-	updated, ok := ws.Snapshot().Graph().GetNode(entity.ID)
+	updated, ok := ws.GetEntity(entity.ID)
 	if !ok {
-		t.Fatal("entity not found in graph")
+		t.Fatal("entity not found after update")
 	}
 	if updated.GetString("title") != "Updated" {
 		t.Errorf("title = %q, want Updated", updated.GetString("title"))
@@ -430,22 +426,22 @@ func TestUpdateEntity(t *testing.T) {
 func TestDeleteEntity_NoCascade_NoRelations(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, _, err := ws.CreateEntity("requirement", CreateOptions{
+	_, _, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "To Delete"},
 	})
 	if err != nil {
 		t.Fatalf("create error = %v", err)
 	}
 
-	result, err := ws.DeleteEntity("requirement", "REQ-001", false)
+	result, err := ws.deleteEntity("requirement", "REQ-001", false)
 	if err != nil {
 		t.Fatalf("DeleteEntity() error = %v", err)
 	}
 	if result.RelationsDeleted != 0 {
 		t.Errorf("relations deleted = %d, want 0", result.RelationsDeleted)
 	}
-	if _, ok := ws.Snapshot().Graph().GetNode("REQ-001"); ok {
-		t.Error("entity still in graph after delete")
+	if _, ok := ws.GetEntity("REQ-001"); ok {
+		t.Error("entity still present after delete")
 	}
 }
 
@@ -461,19 +457,19 @@ func TestDeleteEntity_CascadeRelations(t *testing.T) {
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
 
-	_, err := ws.CreateRelation("DEC-001", "addresses", "REQ-001")
+	_, err := ws.createRelation("DEC-001", "addresses", "REQ-001")
 	if err != nil {
 		t.Fatalf("CreateRelation error = %v", err)
 	}
 
 	// Delete without cascade should fail.
-	_, err = ws.DeleteEntity("requirement", "REQ-001", false)
+	_, err = ws.deleteEntity("requirement", "REQ-001", false)
 	if !errors.Is(err, ErrHasRelations) {
 		t.Errorf("expected ErrHasRelations, got %v", err)
 	}
 
 	// Delete with cascade should work.
-	result, err := ws.DeleteEntity("requirement", "REQ-001", true)
+	result, err := ws.deleteEntity("requirement", "REQ-001", true)
 	if err != nil {
 		t.Fatalf("cascade delete error = %v", err)
 	}
@@ -485,7 +481,7 @@ func TestDeleteEntity_CascadeRelations(t *testing.T) {
 func TestDeleteEntity_NotFound(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, err := ws.DeleteEntity("requirement", "NONEXISTENT", false)
+	_, err := ws.deleteEntity("requirement", "NONEXISTENT", false)
 	if err == nil {
 		t.Error("expected error for missing entity")
 	}
@@ -507,7 +503,7 @@ func TestCreateRelation(t *testing.T) {
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
 
-	rel, err := ws.CreateRelation(decID, "addresses", reqID)
+	rel, err := ws.createRelation(decID, "addresses", reqID)
 	if err != nil {
 		t.Fatalf("CreateRelation() error = %v", err)
 	}
@@ -515,9 +511,8 @@ func TestCreateRelation(t *testing.T) {
 		t.Errorf("unexpected relation: %+v", rel)
 	}
 
-	// Verify in graph.
-	if _, ok := ws.Snapshot().Graph().GetEdge("DEC-001", "addresses", "REQ-001"); !ok {
-		t.Error("relation not found in graph")
+	if _, ok := ws.GetRelation("DEC-001", "addresses", "REQ-001"); !ok {
+		t.Error("relation not found after create")
 	}
 }
 
@@ -533,8 +528,8 @@ func TestCreateRelation_Duplicate(t *testing.T) {
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
 
-	_, _ = ws.CreateRelation("DEC-001", "addresses", "REQ-001")
-	_, err := ws.CreateRelation("DEC-001", "addresses", "REQ-001")
+	_, _ = ws.createRelation("DEC-001", "addresses", "REQ-001")
+	_, err := ws.createRelation("DEC-001", "addresses", "REQ-001")
 	if err == nil {
 		t.Error("expected error for duplicate relation")
 	}
@@ -543,7 +538,7 @@ func TestCreateRelation_Duplicate(t *testing.T) {
 func TestCreateRelation_MissingEndpoint(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, err := ws.CreateRelation("MISSING", "addresses", "ALSO-MISSING")
+	_, err := ws.createRelation("MISSING", "addresses", "ALSO-MISSING")
 	if err == nil {
 		t.Error("expected error for missing endpoints")
 	}
@@ -562,191 +557,16 @@ func TestDeleteRelation(t *testing.T) {
 		ID:         "DEC-001",
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
-	_, _ = ws.CreateRelation("DEC-001", "addresses", "REQ-001")
+	_, _ = ws.createRelation("DEC-001", "addresses", "REQ-001")
 
-	err := ws.DeleteRelation("DEC-001", "addresses", "REQ-001")
+	err := ws.deleteRelation("DEC-001", "addresses", "REQ-001")
 	if err != nil {
 		t.Fatalf("DeleteRelation() error = %v", err)
 	}
 
-	if _, ok := ws.Snapshot().Graph().GetEdge("DEC-001", "addresses", "REQ-001"); ok {
-		t.Error("relation still in graph after delete")
+	if _, ok := ws.GetRelation("DEC-001", "addresses", "REQ-001"); ok {
+		t.Error("relation still present after delete")
 	}
-}
-
-// --- Sync / Reload ---
-
-func TestSync(t *testing.T) {
-	ws := setupTestWorkspace(t)
-
-	// Create an entity via workspace.
-	mustCreate(t, ws, "requirement", CreateOptions{
-		Properties: map[string]interface{}{"title": "Synced"},
-	})
-
-	// Sync should reload from disk.
-	result, err := ws.Sync()
-	if err != nil {
-		t.Fatalf("Sync() error = %v", err)
-	}
-	if result.EntitiesLoaded != 1 {
-		t.Errorf("entities loaded = %d, want 1", result.EntitiesLoaded)
-	}
-}
-
-func TestReload(t *testing.T) {
-	ws := setupTestWorkspace(t)
-
-	mustCreate(t, ws, "requirement", CreateOptions{
-		Properties: map[string]interface{}{"title": "Before Reload"},
-	})
-
-	result, err := ws.Reload()
-	if err != nil {
-		t.Fatalf("Reload() error = %v", err)
-	}
-	if result.EntitiesLoaded != 1 {
-		t.Errorf("entities loaded = %d, want 1", result.EntitiesLoaded)
-	}
-}
-
-// --- Concurrency ---
-
-// TestConcurrentReloadStateSnapshot exercises concurrent Reload() vs
-// readers vs a writer goroutine.
-//
-// This test targets both the atomic.Pointer-based workspaceState
-// publication (meta/automation/searchIdx) AND the atomic.Pointer-based
-// graph publication. It would catch a regression that leaves any of
-// these fields torn across a reload.
-//
-// With repo.Sync now returning a fresh *graph.Graph and Reload publishing
-// it via atomic.Pointer, readers can iterate the graph during a reload
-// and never see a transiently empty state: they either observe the
-// pre-reload graph (fully populated) or the post-reload graph (fully
-// populated), never an in-flight mutation.
-//
-// Writers and the reloader still share an external mutex (mimicking
-// App.writeMu in the data-entry server). Without that, the concurrent
-// writer's entity-property map mutations would race against Reload's
-// entityToSearchDocument reads — a separate, pre-existing entity-level
-// data race that is not part of this ticket's scope.
-func TestConcurrentReloadStateSnapshot(t *testing.T) {
-	ws := setupTestWorkspace(t)
-
-	// Seed the workspace with entities so graph iteration has work.
-	for i := 0; i < 5; i++ {
-		mustCreate(t, ws, "requirement", CreateOptions{
-			Properties: map[string]any{"title": "seed"},
-		})
-	}
-
-	readerCount := 2 * runtime.GOMAXPROCS(0)
-	if readerCount < 4 {
-		readerCount = 4
-	}
-	const duration = 300 * time.Millisecond
-
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-
-	// writeMu mimics the App.writeMu serialization discipline used by
-	// the data-entry server. Writers and reloaders both take it; readers
-	// never do.
-	var writeMu sync.Mutex
-
-	// Reader goroutines: exercise both the workspaceState snapshot AND
-	// the graph. A reader that captures w.Graph() into a local variable
-	// holds a frozen view for the duration of the iteration, regardless
-	// of concurrent reloads.
-	for i := 0; i < readerCount; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-				m := ws.Snapshot().Meta()
-				if m == nil {
-					t.Errorf("Meta() returned nil during concurrent reload")
-					return
-				}
-				if _, ok := m.GetEntityDef("requirement"); !ok {
-					t.Errorf("Meta().GetEntityDef(requirement) returned !ok")
-					return
-				}
-				// Iterate the graph: captures the current graph snapshot
-				// and walks its nodes. If repo.Sync were still mutating
-				// a shared graph in place, this would see transiently
-				// empty results during a reload.
-				g := ws.Snapshot().Graph()
-				if g == nil {
-					t.Errorf("Graph() returned nil during concurrent reload")
-					return
-				}
-				nodes := g.AllNodes()
-				if len(nodes) == 0 {
-					t.Errorf("graph snapshot was empty during concurrent reload")
-					return
-				}
-				// Search snapshots state.searchIdx; any result is fine.
-				_, _, _ = ws.Search([]string{"seed"}, nil, 10)
-			}
-		}()
-	}
-
-	// Writer goroutine: takes writeMu around each CreateEntity so that
-	// Reload (which also takes writeMu) never observes an entity in the
-	// middle of being constructed.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; ; i++ {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			writeMu.Lock()
-			_, _, err := ws.CreateEntity("requirement", CreateOptions{
-				Properties: map[string]any{"title": "writer entity"},
-			})
-			writeMu.Unlock()
-			if err != nil {
-				t.Errorf("CreateEntity failed: %v", err)
-				return
-			}
-		}
-	}()
-
-	// Reloader goroutine: takes the same writeMu so reload's graph
-	// iteration sees a consistent set of entities. Also exercises the
-	// internal reloadMu.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			writeMu.Lock()
-			_, err := ws.Reload()
-			writeMu.Unlock()
-			if err != nil {
-				t.Errorf("Reload() failed: %v", err)
-				return
-			}
-		}
-	}()
-
-	time.Sleep(duration)
-	close(stop)
-	wg.Wait()
 }
 
 // --- Errors ---
@@ -767,7 +587,7 @@ func TestCreateEntity_AutomationWithIfExistsSkip(t *testing.T) {
 	ws := setupTestWorkspaceWithCreateEntityAutomation(t, "skip")
 
 	// Create a requirement - this triggers automation to create checklist.
-	req, result, err := ws.CreateEntity("requirement", CreateOptions{
+	req, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -789,14 +609,14 @@ func TestCreateEntity_AutomationWithIfExistsSkip(t *testing.T) {
 	}
 
 	// Make a copy of the old state for property change detection.
-	oldReq := model.NewEntity(req.ID, req.Type)
+	oldReq := entitypkg.New(req.ID, req.Type)
 	for k, v := range req.Properties {
 		oldReq.Properties[k] = v
 	}
 
 	// Now update the requirement to trigger automation again.
 	req.SetString("status", "approved")
-	updateResult, err := ws.UpdateEntity(req, oldReq)
+	updateResult, err := ws.updateEntity(req, oldReq)
 	if err != nil {
 		t.Fatalf("UpdateEntity error = %v", err)
 	}
@@ -820,7 +640,7 @@ func TestCreateEntity_AutomationWithIfExistsError(t *testing.T) {
 	ws := setupTestWorkspaceWithCreateEntityAutomation(t, "error")
 
 	// Create a requirement - this triggers automation to create checklist.
-	req, result, err := ws.CreateEntity("requirement", CreateOptions{
+	req, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -837,7 +657,7 @@ func TestCreateEntity_AutomationWithIfExistsError(t *testing.T) {
 	}
 
 	// Make a copy of the old state for property change detection.
-	oldReq := model.NewEntity(req.ID, req.Type)
+	oldReq := entitypkg.New(req.ID, req.Type)
 	for k, v := range req.Properties {
 		oldReq.Properties[k] = v
 	}
@@ -845,7 +665,7 @@ func TestCreateEntity_AutomationWithIfExistsError(t *testing.T) {
 	// Update the same requirement to trigger automation again.
 	// With if_exists:error, this should produce an error.
 	req.SetString("status", "approved")
-	updateResult, err := ws.UpdateEntity(req, oldReq)
+	updateResult, err := ws.updateEntity(req, oldReq)
 	if err != nil {
 		t.Fatalf("UpdateEntity error = %v", err)
 	}
@@ -879,7 +699,7 @@ func TestCreateEntity_AutomationWithIfExistsReplace(t *testing.T) {
 	ws := setupTestWorkspaceWithCreateEntityAutomation(t, "replace")
 
 	// Create a requirement - this triggers automation to create checklist.
-	req, result, err := ws.CreateEntity("requirement", CreateOptions{
+	req, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -893,14 +713,14 @@ func TestCreateEntity_AutomationWithIfExistsReplace(t *testing.T) {
 	checklist1 := result.EntitiesCreated[0]
 
 	// Make a copy of the old state for property change detection.
-	oldReq := model.NewEntity(req.ID, req.Type)
+	oldReq := entitypkg.New(req.ID, req.Type)
 	for k, v := range req.Properties {
 		oldReq.Properties[k] = v
 	}
 
 	// Now update the requirement to trigger automation again.
 	req.SetString("status", "approved")
-	updateResult, err := ws.UpdateEntity(req, oldReq)
+	updateResult, err := ws.updateEntity(req, oldReq)
 	if err != nil {
 		t.Fatalf("UpdateEntity error = %v", err)
 	}
@@ -925,9 +745,8 @@ func TestCreateEntity_AutomationWithIfExistsReplace(t *testing.T) {
 		t.Errorf("expected different checklist ID after replace, got same: %s", checklist2.ID)
 	}
 
-	// Old checklist should be gone from graph.
-	if _, ok := ws.Snapshot().Graph().GetNode(checklist1.ID); ok {
-		t.Errorf("old checklist %s should be deleted from graph", checklist1.ID)
+	if _, ok := ws.GetEntity(checklist1.ID); ok {
+		t.Errorf("old checklist %s should be deleted", checklist1.ID)
 	}
 }
 
@@ -936,7 +755,7 @@ func TestCreateEntity_AutomationWithIfExistsUnknown(t *testing.T) {
 	ws := setupTestWorkspaceWithCreateEntityAutomation(t, "invalid_value")
 
 	// Create a requirement - this triggers automation to create checklist.
-	req, result, err := ws.CreateEntity("requirement", CreateOptions{
+	req, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -949,7 +768,7 @@ func TestCreateEntity_AutomationWithIfExistsUnknown(t *testing.T) {
 	}
 
 	// Make a copy of the old state for property change detection.
-	oldReq := model.NewEntity(req.ID, req.Type)
+	oldReq := entitypkg.New(req.ID, req.Type)
 	for k, v := range req.Properties {
 		oldReq.Properties[k] = v
 	}
@@ -957,7 +776,7 @@ func TestCreateEntity_AutomationWithIfExistsUnknown(t *testing.T) {
 	// Update the same requirement to trigger automation again.
 	// With unknown if_exists value, this should produce an error.
 	req.SetString("status", "approved")
-	updateResult, err := ws.UpdateEntity(req, oldReq)
+	updateResult, err := ws.updateEntity(req, oldReq)
 	if err != nil {
 		t.Fatalf("UpdateEntity error = %v", err)
 	}
@@ -1061,7 +880,7 @@ status: pending
 		[]byte(enhancementTemplate), 0o644)
 
 	// Create a requirement with kind=enhancement - triggers automation with template.
-	_, result, err := ws.CreateEntity("requirement", CreateOptions{
+	_, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{
 			"title": "Test Req",
 			"kind":  "enhancement",
@@ -1093,7 +912,7 @@ func TestCreateEntity_AutomationWithMissingTemplate(t *testing.T) {
 	ws, _, _ := setupTestWorkspaceWithTemplateAutomation(t)
 
 	// Create a requirement with kind=nonexistent - template doesn't exist.
-	_, result, err := ws.CreateEntity("requirement", CreateOptions{
+	_, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{
 			"title": "Test Req",
 			"kind":  "nonexistent",
@@ -1128,7 +947,7 @@ status: open
 		[]byte(defaultTemplate), 0o644)
 
 	// Create a requirement with empty kind - should use default template.
-	_, result, err := ws.CreateEntity("requirement", CreateOptions{
+	_, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{
 			"title": "Test Req",
 			// kind not set - empty string
@@ -1202,8 +1021,7 @@ automations:
 
 	ctx := testContext()
 	fs := setupWorkspaceFS(ctx, meta, metamodelYAML)
-	repo := repository.New(fs, ctx)
-	ws := NewWithGraph(repo, meta, graph.New())
+	ws := NewForTest(meta, WithFS(fs, ctx))
 
 	return ws, fs, ctx
 }
@@ -1262,10 +1080,9 @@ automations:
             title: "Chain from chain"
 `
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
-	g := ws.Snapshot().Graph()
 
 	// Create starter entity - this should trigger a chain of automations.
-	_, result, err := ws.CreateEntity("starter", CreateOptions{
+	_, result, err := ws.createEntity("starter", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Starter"},
 	})
 	if err != nil {
@@ -1302,12 +1119,12 @@ automations:
 		t.Errorf("expected warning about iteration limit, got warnings: %v", result.AutomationWarnings)
 	}
 
-	// Verify graph is consistent - all entities should be in the graph.
-	allNodes := g.AllNodes()
+	// Verify store is consistent - all entities should be present.
+	allNodes := collectEntities(ws.Store(), store.EntityQuery{})
 	// 1 starter + maxAutomationDepth chains
 	expectedTotal := 1 + maxAutomationDepth
 	if len(allNodes) != expectedTotal {
-		t.Errorf("expected %d total nodes in graph, got %d", expectedTotal, len(allNodes))
+		t.Errorf("expected %d total entities, got %d", expectedTotal, len(allNodes))
 	}
 }
 
@@ -1367,10 +1184,9 @@ automations:
             title: "Gamma from Beta"
 `
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
-	g := ws.Snapshot().Graph()
 
 	// Create alpha - should trigger beta creation, which triggers gamma creation.
-	_, result, err := ws.CreateEntity("alpha", CreateOptions{
+	_, result, err := ws.createEntity("alpha", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Alpha"},
 	})
 	if err != nil {
@@ -1402,9 +1218,9 @@ automations:
 	}
 
 	// Verify relations: alpha → beta → gamma.
-	allNodes := g.AllNodes()
+	allNodes := collectEntities(ws.Store(), store.EntityQuery{})
 	if len(allNodes) != 3 {
-		t.Errorf("expected 3 nodes in graph, got %d", len(allNodes))
+		t.Errorf("expected 3 entities, got %d", len(allNodes))
 	}
 }
 
@@ -1417,7 +1233,7 @@ func TestLuaAutomation_InlineCode(t *testing.T) {
 	ws := setupTestWorkspaceWithLuaAutomation(t)
 
 	// Create entity to trigger Lua automation.
-	entity, result, err := ws.CreateEntity("requirement", CreateOptions{
+	entity, result, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Req"},
 	})
 	if err != nil {
@@ -1430,8 +1246,7 @@ func TestLuaAutomation_InlineCode(t *testing.T) {
 	}
 
 	// Lua automation updates the entity via rela.update_entity.
-	// Check the graph for the updated state.
-	updated, _ := ws.Snapshot().Graph().GetNode(entity.ID)
+	updated, _ := ws.GetEntity(entity.ID)
 	if updated.GetString("status") != "processed" {
 		t.Errorf("expected status 'processed' from Lua, got %q", updated.GetString("status"))
 	}
@@ -1468,7 +1283,7 @@ automations:
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
 
 	// Create entity - automation triggers on created.
-	entity, result, err := ws.CreateEntity("item", CreateOptions{
+	entity, result, err := ws.createEntity("item", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Item"},
 	})
 	if err != nil {
@@ -1480,7 +1295,7 @@ automations:
 	}
 
 	// Verify lua_result was set by Lua code using entity global.
-	updated, _ := ws.Snapshot().Graph().GetNode(entity.ID)
+	updated, _ := ws.GetEntity(entity.ID)
 	expectedResult := "entity_id:" + entity.ID
 	if updated.GetString("lua_result") != expectedResult {
 		t.Errorf("expected lua_result %q, got %q", expectedResult, updated.GetString("lua_result"))
@@ -1517,7 +1332,7 @@ automations:
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
 
 	// Create entity with initial status.
-	entity, _, err := ws.CreateEntity("item", CreateOptions{
+	entity, _, err := ws.createEntity("item", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Item", "status": "draft"},
 	})
 	if err != nil {
@@ -1526,15 +1341,16 @@ automations:
 
 	entityID := entity.ID
 
-	// Get fresh entity from graph (may have been modified by creation automations).
-	entity, _ = ws.Snapshot().Graph().GetNode(entityID)
+	// Get fresh entity from the store (may have been modified by creation automations).
+	fresh, _ := ws.GetEntity(entityID)
+	entity = fresh
 
 	// Update to trigger automation.
 	oldEntity := entity.Clone()
 	updated := entity.Clone()
 	updated.SetString("status", "active")
 
-	result, err := ws.UpdateEntity(updated, oldEntity)
+	result, err := ws.updateEntity(updated, oldEntity)
 	if err != nil {
 		t.Fatalf("UpdateEntity error = %v", err)
 	}
@@ -1544,7 +1360,7 @@ automations:
 	}
 
 	// Verify old_status was captured from old_entity.
-	finalEntity, _ := ws.Snapshot().Graph().GetNode(entityID)
+	finalEntity, _ := ws.GetEntity(entityID)
 	oldStatusVal := finalEntity.GetString("old_status")
 	switch oldStatusVal {
 	case "":
@@ -1585,7 +1401,7 @@ automations:
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
 
 	// Create entity - should trigger automation with path traversal attempt.
-	_, result, err := ws.CreateEntity("item", CreateOptions{
+	_, result, err := ws.createEntity("item", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Item"},
 	})
 	if err != nil {
@@ -1634,7 +1450,7 @@ automations:
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
 
 	// Create entity - should trigger automation with wrong extension.
-	_, result, err := ws.CreateEntity("item", CreateOptions{
+	_, result, err := ws.createEntity("item", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Item"},
 	})
 	if err != nil {
@@ -1685,7 +1501,7 @@ automations:
 	ws := setupWorkspaceWithMetamodel(t, metamodelYAML)
 
 	// Create entity - should trigger automation with Lua error.
-	_, result, err := ws.CreateEntity("item", CreateOptions{
+	_, result, err := ws.createEntity("item", CreateOptions{
 		Properties: map[string]interface{}{"title": "Test Item"},
 	})
 	if err != nil {

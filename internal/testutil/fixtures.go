@@ -1,20 +1,14 @@
 package testutil
 
 import (
-	"path/filepath"
-	"strconv"
-	"strings"
-	"testing"
-
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // EntityBuilder provides a fluent interface for building test entities.
 // Builders should not be reused after Build() - each call creates a fresh builder.
 type EntityBuilder struct {
-	entity     *model.Entity
+	entity     *entity.Entity
 	meta       *metamodel.Metamodel
 	skip       map[string]bool // properties to skip during auto-fill
 	hasID      bool            // whether ID was explicitly set
@@ -24,7 +18,7 @@ type EntityBuilder struct {
 // NewEntity creates a new entity builder with the given ID and type.
 func NewEntity(id, entityType string) *EntityBuilder {
 	return &EntityBuilder{
-		entity:     model.NewEntity(id, entityType),
+		entity:     entity.New(id, entityType),
 		skip:       make(map[string]bool),
 		hasID:      true,
 		entityType: entityType,
@@ -35,7 +29,7 @@ func NewEntity(id, entityType string) *EntityBuilder {
 // The entity will have a random ID unless set explicitly with ID().
 func Entity(entityType string) *EntityBuilder {
 	return &EntityBuilder{
-		entity:     model.NewEntity("", entityType),
+		entity:     entity.New("", entityType),
 		skip:       make(map[string]bool),
 		hasID:      false,
 		entityType: entityType,
@@ -52,7 +46,7 @@ func EntityFor(meta *metamodel.Metamodel, entityType string) *EntityBuilder {
 		panic("EntityFor: unknown entity type: " + entityType)
 	}
 	return &EntityBuilder{
-		entity:     model.NewEntity("", entityType),
+		entity:     entity.New("", entityType),
 		meta:       meta,
 		skip:       make(map[string]bool),
 		hasID:      false,
@@ -95,19 +89,9 @@ func (b *EntityBuilder) WithTitle(title string) *EntityBuilder {
 	return b.WithProperty("title", title)
 }
 
-// WithStatus adds a status property to the entity.
-func (b *EntityBuilder) WithStatus(status model.Status) *EntityBuilder {
-	return b.WithProperty("status", string(status))
-}
-
 // WithDescription adds a description property to the entity.
 func (b *EntityBuilder) WithDescription(desc string) *EntityBuilder {
 	return b.WithProperty("description", desc)
-}
-
-// WithPriority adds a priority property to the entity.
-func (b *EntityBuilder) WithPriority(priority model.Priority) *EntityBuilder {
-	return b.WithProperty("priority", string(priority))
 }
 
 // WithContent sets the content of the entity.
@@ -117,7 +101,7 @@ func (b *EntityBuilder) WithContent(content string) *EntityBuilder {
 }
 
 // Build returns the built entity.
-func (b *EntityBuilder) Build() *model.Entity {
+func (b *EntityBuilder) Build() *entity.Entity {
 	// Generate ID if not set
 	if !b.hasID {
 		b.entity.ID = b.generateID()
@@ -213,13 +197,13 @@ func (b *EntityBuilder) generatePropertyValue(_ string, prop metamodel.PropertyD
 // RelationBuilder provides a fluent interface for building test relations.
 // Builders should not be reused after Build() - each call creates a fresh builder.
 type RelationBuilder struct {
-	relation *model.Relation
+	relation *entity.Relation
 }
 
 // NewRelation creates a new relation builder with from, type, and to already set.
 func NewRelation(from, relationType, to string) *RelationBuilder {
 	return &RelationBuilder{
-		relation: model.NewRelation(from, relationType, to),
+		relation: entity.NewRelation(from, relationType, to),
 	}
 }
 
@@ -227,7 +211,7 @@ func NewRelation(from, relationType, to string) *RelationBuilder {
 // Use From() and To() to set the source and target entity IDs.
 func Relation(relationType string) *RelationBuilder {
 	return &RelationBuilder{
-		relation: model.NewRelation("", relationType, ""),
+		relation: entity.NewRelation("", relationType, ""),
 	}
 }
 
@@ -260,7 +244,7 @@ func (b *RelationBuilder) WithContent(content string) *RelationBuilder {
 
 // Build returns the built relation.
 // Panics if From or To are not set.
-func (b *RelationBuilder) Build() *model.Relation {
+func (b *RelationBuilder) Build() *entity.Relation {
 	if b.relation.From == "" {
 		panic("RelationBuilder.Build: From is required")
 	}
@@ -481,195 +465,6 @@ func (b *MetamodelBuilder) WithSetOnCreate(entityTypes []string, propName, value
 func (b *MetamodelBuilder) Build() *metamodel.Metamodel {
 	b.meta.InitAliases()
 	return b.meta
-}
-
-// ProjectContext holds project context paths for testing.
-type ProjectContext struct {
-	Root         string
-	EntitiesDir  string
-	RelationsDir string
-	CacheDir     string
-}
-
-// ProjectBuilder provides a fluent interface for building test projects.
-type ProjectBuilder struct {
-	t       *testing.T
-	tmpDir  string
-	ctx     *ProjectContext
-	meta    *metamodel.Metamodel
-	graph   *graph.Graph
-	hasInit bool
-}
-
-// NewProject creates a new project builder.
-func NewProject(t *testing.T) *ProjectBuilder {
-	t.Helper()
-
-	tmpDir := TempDirWithCleanup(t)
-
-	return &ProjectBuilder{
-		t:      t,
-		tmpDir: tmpDir,
-		ctx: &ProjectContext{
-			Root:         tmpDir,
-			EntitiesDir:  filepath.Join(tmpDir, "entities"),
-			RelationsDir: filepath.Join(tmpDir, "relations"),
-			CacheDir:     filepath.Join(tmpDir, ".rela"),
-		},
-		meta:  NewMetamodel().Build(),
-		graph: graph.New(),
-	}
-}
-
-// WithMetamodel sets the metamodel for the project.
-func (b *ProjectBuilder) WithMetamodel(meta *metamodel.Metamodel) *ProjectBuilder {
-	b.meta = meta
-	return b
-}
-
-// WithMetamodelYAML writes a metamodel.yaml file to the project.
-func (b *ProjectBuilder) WithMetamodelYAML(yaml string) *ProjectBuilder {
-	b.t.Helper()
-
-	metamodelPath := filepath.Join(b.tmpDir, "metamodel.yaml")
-	CreateFile(b.t, metamodelPath, yaml)
-
-	// Parse the metamodel
-	meta, err := metamodel.Parse([]byte(yaml))
-	if err != nil {
-		b.t.Fatalf("failed to parse metamodel: %v", err)
-	}
-
-	b.meta = meta
-	return b
-}
-
-// Init initializes project directories.
-func (b *ProjectBuilder) Init() *ProjectBuilder {
-	b.t.Helper()
-
-	if b.hasInit {
-		return b
-	}
-
-	CreateDir(b.t, b.ctx.EntitiesDir)
-	CreateDir(b.t, b.ctx.RelationsDir)
-	CreateDir(b.t, b.ctx.CacheDir)
-
-	b.hasInit = true
-	return b
-}
-
-// WithEntity adds an entity file to the project.
-func (b *ProjectBuilder) WithEntity(entity *model.Entity) *ProjectBuilder {
-	b.t.Helper()
-
-	b.Init()
-
-	// Create type directory
-	typeDir := filepath.Join(b.ctx.EntitiesDir, entity.Type)
-	CreateDir(b.t, typeDir)
-
-	// Create entity file
-	entityPath := filepath.Join(typeDir, entity.ID+".md")
-
-	// Build content
-	content := "---\n"
-	content += "id: " + entity.ID + "\n"
-	content += "type: " + entity.Type + "\n"
-
-	// Add properties
-	for key, value := range entity.Properties {
-		content += key + ": " + toString(value) + "\n"
-	}
-
-	content += "---\n"
-
-	if entity.Content != "" {
-		content += "\n" + entity.Content + "\n"
-	}
-
-	CreateFile(b.t, entityPath, content)
-
-	return b
-}
-
-// WithRelation adds a relation file to the project.
-func (b *ProjectBuilder) WithRelation(relation *model.Relation) *ProjectBuilder {
-	b.t.Helper()
-
-	b.Init()
-
-	// Create relation file
-	filename := relation.From + "--" + relation.Type + "--" + relation.To + ".md"
-	relationPath := filepath.Join(b.ctx.RelationsDir, filename)
-
-	// Build content
-	content := "---\n"
-	content += "from: " + relation.From + "\n"
-	content += "relation: " + relation.Type + "\n"
-	content += "to: " + relation.To + "\n"
-
-	// Add properties
-	for key, value := range relation.Properties {
-		content += key + ": " + toString(value) + "\n"
-	}
-
-	content += "---\n"
-
-	CreateFile(b.t, relationPath, content)
-
-	return b
-}
-
-// Build returns the project context, metamodel, and graph.
-func (b *ProjectBuilder) Build() (*ProjectContext, *metamodel.Metamodel, *graph.Graph) {
-	b.t.Helper()
-
-	b.Init()
-
-	return b.ctx, b.meta, b.graph
-}
-
-// BuildContext returns just the project context.
-func (b *ProjectBuilder) BuildContext() *ProjectContext {
-	b.t.Helper()
-
-	b.Init()
-
-	return b.ctx
-}
-
-// toString converts a value to a string representation for YAML.
-func toString(value interface{}) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	case int:
-		return strconv.Itoa(v)
-	case bool:
-		if v {
-			return "true"
-		}
-		return "false"
-	case []string:
-		// Format as YAML list
-		if len(v) == 0 {
-			return "[]"
-		}
-		var sb strings.Builder
-		sb.WriteString("[")
-		for i, s := range v {
-			if i > 0 {
-				sb.WriteString(", ")
-			}
-			sb.WriteString(s)
-		}
-		sb.WriteString("]")
-		return sb.String()
-	default:
-		return ""
-	}
 }
 
 // SimpleMetamodel returns a simple metamodel for testing with requirement and decision types.

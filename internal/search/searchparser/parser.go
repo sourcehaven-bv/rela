@@ -6,17 +6,16 @@ import (
 	"unicode"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // SearchQuery represents parsed search query components
 type SearchQuery struct {
-	EntityTypes     []string         // Entity types to filter (e.g., ["requirement", "decision"])
-	PropertyFilters []*filter.Filter // Property filters (e.g., status=published)
-	FreeTextWords   []string         // Free text words (OR logic with scoring)
-	FreeTextPhrases []string         // Exact phrase matches (quoted strings)
-	SortClauses     []model.SortSpec // Sort criteria (e.g., sort:priority:desc)
-	ParseErrors     []string         // Any parsing errors encountered
+	EntityTypes     []string          // Entity types to filter (e.g., ["requirement", "decision"])
+	PropertyFilters []*filter.Filter  // Property filters (e.g., status=published)
+	FreeTextWords   []string          // Free text words (OR logic with scoring)
+	FreeTextPhrases []string          // Exact phrase matches (quoted strings)
+	SortClauses     []filter.SortSpec // Sort criteria (e.g., sort:priority:desc)
+	ParseErrors     []string          // Any parsing errors encountered
 }
 
 // ParseQuery parses a search query string into its components
@@ -27,7 +26,7 @@ func ParseQuery(query string) *SearchQuery {
 		PropertyFilters: []*filter.Filter{},
 		FreeTextWords:   []string{},
 		FreeTextPhrases: []string{},
-		SortClauses:     []model.SortSpec{},
+		SortClauses:     []filter.SortSpec{},
 		ParseErrors:     []string{},
 	}
 
@@ -111,7 +110,7 @@ func ParseQuery(query string) *SearchQuery {
 					continue
 				}
 			}
-			sq.SortClauses = append(sq.SortClauses, model.SortSpec{
+			sq.SortClauses = append(sq.SortClauses, filter.SortSpec{
 				Property:  property,
 				Direction: direction,
 			})
@@ -134,6 +133,25 @@ func ParseQuery(query string) *SearchQuery {
 	}
 
 	return sq
+}
+
+// SplitFreeText splits a free-text query into fuzzy words and exact phrases.
+// Quoted substrings become phrases; everything else becomes a word.
+// Used by search backends that need the words/phrases distinction when they
+// receive a single Query.Text string.
+func SplitFreeText(text string) (words, phrases []string) {
+	for _, token := range tokenize(text) {
+		if strings.HasPrefix(token, "\"") && strings.HasSuffix(token, "\"") {
+			if phrase := strings.Trim(token, "\""); phrase != "" {
+				phrases = append(phrases, phrase)
+			}
+			continue
+		}
+		if token != "" {
+			words = append(words, token)
+		}
+	}
+	return words, phrases
 }
 
 // tokenize splits a query string into tokens, preserving quoted strings

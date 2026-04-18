@@ -2,8 +2,6 @@ package metamodel
 
 import (
 	"regexp"
-
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // Metamodel represents the full metamodel configuration
@@ -123,7 +121,7 @@ type EntityDef struct {
 	RDFType       string                 `yaml:"rdf_type,omitempty"`
 	Properties    map[string]PropertyDef `yaml:"properties"`
 	PropertyOrder []string               `yaml:"-"`                      // Order of properties as defined in YAML (computed at load)
-	DefaultSort   []model.SortSpec       `yaml:"default_sort,omitempty"` // Default sort order for this entity type
+	DefaultSort   []SortSpec             `yaml:"default_sort,omitempty"` // Default sort order for this entity type
 	Color         string                 `yaml:"color,omitempty"`
 	BorderColor   string                 `yaml:"border_color,omitempty"`
 }

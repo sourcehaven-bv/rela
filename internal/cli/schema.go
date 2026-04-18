@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 var (
@@ -130,8 +132,9 @@ func runSchemaOverview() error {
 	entityCounts := make(map[string]int)
 	maxCount := 0
 	if ws != nil {
+		st := ws.Store()
 		for _, name := range entityNames {
-			count := len(ws.EntitiesByType(name))
+			count, _ := st.CountEntities(context.Background(), store.EntityQuery{Type: name})
 			entityCounts[name] = count
 			if count > maxCount {
 				maxCount = count

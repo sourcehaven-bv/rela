@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -65,7 +66,7 @@ func runScheduler(cmd *cobra.Command) error {
 		return fmt.Errorf("no project found: run 'rela init' to create one")
 	}
 
-	data, err := schedWs.ReadProjectFile(scheduler.ConfigFile)
+	data, err := schedWs.Config().Load(context.Background(), scheduler.ConfigFile)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", scheduler.ConfigFile, err)
 	}
@@ -79,8 +80,8 @@ func runScheduler(cmd *cobra.Command) error {
 		Level: slog.LevelInfo,
 	}))
 
-	metaFn := func() *metamodel.Metamodel { return schedWs.Snapshot().Meta() }
-	s := scheduler.New(cfg, engine, schedWs, schedWs, metaFn, logger)
+	metaFn := func() *metamodel.Metamodel { return schedWs.Meta() }
+	s := scheduler.New(cfg, engine, schedWs, schedWs.LuaServices(), metaFn, logger)
 	return s.Run(cmd.Context())
 }
 

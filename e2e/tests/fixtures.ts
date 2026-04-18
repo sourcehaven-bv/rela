@@ -248,13 +248,15 @@ navigation:
 `);
 
   // Create entity directories
-  fs.mkdirSync(path.join(tmpDir, 'entities', 'feature'), { recursive: true });
-  fs.mkdirSync(path.join(tmpDir, 'entities', 'bug'), { recursive: true });
-  fs.mkdirSync(path.join(tmpDir, 'entities', 'task'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'entities', 'features'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'entities', 'bugs'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'entities', 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'relations'), { recursive: true });
 
   // Create some test entities
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'feature', 'FEAT-001.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-001.md'), `---
+id: FEAT-001
+type: feature
 title: User Authentication
 status: approved
 priority: high
@@ -263,7 +265,9 @@ priority: high
 Implement user authentication system.
 `);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'feature', 'FEAT-002.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-002.md'), `---
+id: FEAT-002
+type: feature
 title: Dashboard Analytics
 status: draft
 priority: medium
@@ -272,7 +276,9 @@ priority: medium
 Add analytics dashboard.
 `);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'feature', 'FEAT-003.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-003.md'), `---
+id: FEAT-003
+type: feature
 title: Export Data
 status: in_progress
 priority: low
@@ -281,7 +287,9 @@ priority: low
 Export data to CSV.
 `);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'bug', 'BUG-001.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'bugs', 'BUG-001.md'), `---
+id: BUG-001
+type: bug
 title: Login form validation
 severity: high
 status: draft
@@ -291,7 +299,9 @@ priority: high
 Form validation is not working.
 `);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'bug', 'BUG-002.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'bugs', 'BUG-002.md'), `---
+id: BUG-002
+type: bug
 title: Memory leak in list view
 severity: critical
 status: in_progress
@@ -301,7 +311,9 @@ priority: high
 Memory leak detected.
 `);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'task', 'TASK-001.md'), `---
+  fs.writeFileSync(path.join(tmpDir, 'entities', 'tasks', 'TASK-001.md'), `---
+id: TASK-001
+type: task
 title: Write unit tests
 status: draft
 assignee: Alice
@@ -319,10 +331,16 @@ let serverPort: number | null = null;
 
 export const test = base.extend<DesktopFixtures>({
   testProject: async ({}, use) => {
-    if (!testProjectDir) {
-      testProjectDir = createTestProject();
+    // Create a fresh project directory per test so that mutations (create,
+    // update, delete) don't leak into the next test's pre-seeded state.
+    const dir = createTestProject();
+    testProjectDir = dir;
+    await use(dir);
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
     }
-    await use(testProjectDir);
   },
 
   serverUrl: async ({}, use) => {
@@ -364,7 +382,7 @@ export const test = base.extend<DesktopFixtures>({
     // Wait for server to start
     const serverUrl = `http://localhost:${serverPort}`;
     let ready = false;
-    const maxAttempts = 50;
+    const maxAttempts = 100;
 
     for (let i = 0; i < maxAttempts && !ready; i++) {
       try {
@@ -373,7 +391,7 @@ export const test = base.extend<DesktopFixtures>({
           ready = true;
         }
       } catch {
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
 
@@ -383,11 +401,11 @@ export const test = base.extend<DesktopFixtures>({
       throw new Error(`Server failed to start on ${serverUrl}`);
     }
 
-    // Give server a moment to fully initialize
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    // Create a new page and navigate to the SPA.
-    const context = await browser.newContext();
+    // Create a new page and navigate to the SPA. Provide an Origin header so
+    // that direct API calls via page.request pass the same-origin CSRF check.
+    const context = await browser.newContext({
+      extraHTTPHeaders: { Origin: serverUrl },
+    });
     const page = await context.newPage();
     await page.goto(`${serverUrl}/`);
 

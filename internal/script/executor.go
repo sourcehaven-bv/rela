@@ -56,10 +56,17 @@ func (e *Engine) ExecuteFile(path string, ctx metamodel.ScriptContext) error {
 // per-script secrets; pass "" for inline code (no secrets loaded).
 // Timeout is handled by lua.Runtime (default 30s).
 func (e *Engine) execute(code string, ctx metamodel.ScriptContext, scriptPath string) error {
-	// Type assert workspace to lua.WorkspaceInterface
-	ws, ok := ctx.GetWorkspace().(lua.WorkspaceInterface)
+	// Type assert workspace to lua.Services
+	svc, ok := ctx.GetWorkspace().(lua.Services)
 	if !ok {
-		return fmt.Errorf("workspace does not implement lua.WorkspaceInterface")
+		return fmt.Errorf("workspace does not provide lua.Services")
+	}
+	// Ensure Meta and ProjectRoot are populated if not already.
+	if svc.Meta == nil {
+		svc.Meta = ctx.GetMeta()
+	}
+	if svc.ProjectRoot == "" {
+		svc.ProjectRoot = ctx.GetProjectRoot()
 	}
 
 	var output bytes.Buffer
@@ -68,7 +75,7 @@ func (e *Engine) execute(code string, ctx metamodel.ScriptContext, scriptPath st
 	if optErr != nil {
 		return fmt.Errorf("lua context: %w", optErr)
 	}
-	runtime := lua.New(ws, ctx.GetMeta(), ctx.GetProjectRoot(), &output, opts...)
+	runtime := lua.New(svc, &output, opts...)
 	defer runtime.Close()
 
 	// Set entity context as Lua globals

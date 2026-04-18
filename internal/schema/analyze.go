@@ -7,9 +7,14 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
+
+// TypeCounter provides instance counts for schema analysis.
+type TypeCounter interface {
+	CountByEntityType(entityType string) int
+	CountByRelationType(relationType string) int
+}
 
 // Analysis contains the results of analyzing metamodel schema usage.
 type Analysis struct {
@@ -44,7 +49,7 @@ type Reference struct {
 // are reported in LowUsage* fields. Use threshold=0 to only report unused types.
 func Analyze(
 	meta *metamodel.Metamodel,
-	g *graph.Graph,
+	g TypeCounter,
 	dataEntry *dataentryconfig.Config,
 	threshold int,
 ) *Analysis {
@@ -52,7 +57,7 @@ func Analyze(
 
 	// Analyze entity types
 	for _, entityType := range meta.EntityTypes() {
-		count := len(g.NodesByType(entityType))
+		count := g.CountByEntityType(entityType)
 		refs := findEntityTypeReferences(entityType, meta, dataEntry)
 
 		usage := TypeUsage{
@@ -70,7 +75,7 @@ func Analyze(
 
 	// Analyze relation types
 	for _, relationType := range meta.RelationTypes() {
-		count := len(g.RelationsOfType(relationType))
+		count := g.CountByRelationType(relationType)
 		refs := findRelationTypeReferences(relationType, meta, dataEntry)
 
 		usage := TypeUsage{

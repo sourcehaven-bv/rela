@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/git"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -189,7 +189,7 @@ type ListColumn struct {
 // SortSpec defines a single sort criterion for a list or dashboard card.
 // This is the data-entry-specific alias matching the YAML config format.
 // The migration system converts the legacy single-object format to a list.
-type SortSpec = model.SortSpec
+type SortSpec = metamodel.SortSpec
 
 // FilterConfig defines a static filter applied to a list.
 type FilterConfig struct {

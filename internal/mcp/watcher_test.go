@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -38,10 +37,8 @@ func TestWatcherStop(t *testing.T) {
 		RelationsDir:  relationsDir,
 		MetamodelPath: metamodelPath,
 		CacheDir:      cacheDir,
-		CachePath:     filepath.Join(cacheDir, "cache.json"),
 	}
-	repo := repository.New(storage.NewOsFS(), ctx)
-	ws, err := workspace.New(repo, workspace.NopScriptExecutor)
+	ws, err := workspace.New(storage.NewOsFS(), ctx, workspace.NopScriptExecutor)
 	if err != nil {
 		t.Fatalf("workspace.New failed: %v", err)
 	}
@@ -80,10 +77,8 @@ func TestWatcherFileChange(t *testing.T) {
 		RelationsDir:  relationsDir,
 		MetamodelPath: metamodelPath,
 		CacheDir:      cacheDir,
-		CachePath:     filepath.Join(cacheDir, "cache.json"),
 	}
-	repo := repository.New(storage.NewOsFS(), ctx)
-	ws, err := workspace.New(repo, workspace.NopScriptExecutor)
+	ws, err := workspace.New(storage.NewOsFS(), ctx, workspace.NopScriptExecutor)
 	if err != nil {
 		t.Fatalf("workspace.New failed: %v", err)
 	}

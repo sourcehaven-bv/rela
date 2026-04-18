@@ -10,10 +10,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // callAction is a thin wrapper that invokes handleV1Action directly. It
@@ -41,9 +39,7 @@ func newActionTestApp(t *testing.T, scripts map[string]string) *App {
 	}
 
 	app := newTestAppV1(t)
-	app.ws = workspace.NewWithGraph(
-		repository.New(storage.NewSafeFS(storage.NewOsFS()), &project.Context{Root: tmpDir}),
-		app.Meta(), app.Graph())
+	bindRepo(app, tmpDir)
 
 	return app
 }
@@ -258,5 +254,27 @@ func TestNewCorrelationID(t *testing.T) {
 	}
 	if id1 == "" {
 		t.Error("correlation ID is empty")
+	}
+}
+
+func TestActionScriptContext(t *testing.T) {
+	meta := &metamodel.Metamodel{}
+	ent := &entity.Entity{ID: "T-1", Type: "ticket"}
+	c := &actionScriptContext{
+		meta:        meta,
+		projectRoot: "/project",
+		entity:      ent,
+	}
+	if c.GetMeta() != meta {
+		t.Error("GetMeta")
+	}
+	if c.GetProjectRoot() != "/project" {
+		t.Errorf("GetProjectRoot = %q", c.GetProjectRoot())
+	}
+	if c.GetEntity() != ent {
+		t.Error("GetEntity")
+	}
+	if c.GetOldEntity() != nil {
+		t.Error("GetOldEntity should be nil for actions")
 	}
 }

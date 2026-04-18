@@ -2,30 +2,19 @@ package attachment
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
-
-// AttachmentsDir is the directory name for storing attachments.
-const AttachmentsDir = "attachments"
-
-// minHashLength is the minimum length for a valid hash.
-const minHashLength = 8
-
-// Attachment represents a stored file with its metadata.
-type Attachment struct {
-	Hash     string // SHA-256 hash (hex)
-	Ext      string // File extension including dot (e.g., ".png")
-	Path     string // Relative path: attachments/ab/ab3f8c2e.png
-	Metadata *Metadata
-}
 
 // Store manages content-addressable attachment storage.
 type Store struct {
@@ -39,6 +28,70 @@ func NewStore(fs storage.FS, rootDir string) *Store {
 		fs:      fs,
 		rootDir: rootDir,
 	}
+}
+
+// compile-time check that Store satisfies the top-level Manager interface.
+var _ Manager = (*Store)(nil)
+
+// AttachFile implements Manager. It drains data, dedupes by content hash, and
+// records (entityID, property) on the returned Info alongside the backend key.
+// The current-user lookup matches the legacy workspace path — attachments are
+// intrinsically user actions, so the caller doesn't need to plumb it through.
+func (s *Store) AttachFile(
+	_ context.Context, entityID, property, fileName string, data io.Reader,
+) (*Info, error) {
+	bytesData, err := io.ReadAll(data)
+	if err != nil {
+		return nil, fmt.Errorf("attachment: read data: %w", err)
+	}
+	addedBy := ""
+	if u, uErr := user.Current(); uErr == nil {
+		addedBy = u.Username
+	}
+	att, err := s.AddBytes(bytesData, fileName, addedBy)
+	if err != nil {
+		return nil, err
+	}
+	info := &Info{
+		Key:      att.Path,
+		EntityID: entityID,
+		Property: property,
+	}
+	if att.Metadata != nil {
+		info.OriginalName = att.Metadata.OriginalName
+		info.ContentType = att.Metadata.ContentType
+		info.Size = att.Metadata.Size
+	}
+	return info, nil
+}
+
+// InfoFor implements Manager. Returns the metadata for a previously stored
+// key, or an error if no attachment or metadata is present at that key.
+func (s *Store) InfoFor(_ context.Context, key string) (*Info, error) {
+	if !s.Exists(key) {
+		return nil, fmt.Errorf("attachment: no attachment at %s", key)
+	}
+	info := &Info{Key: key}
+	if meta, err := s.GetMetadata(key); err == nil && meta != nil {
+		info.OriginalName = meta.OriginalName
+		info.ContentType = meta.ContentType
+		info.Size = meta.Size
+	}
+	return info, nil
+}
+
+// AttachmentsDir is the directory name for storing attachments.
+const AttachmentsDir = "attachments"
+
+// minHashLength is the minimum length for a valid hash.
+const minHashLength = 8
+
+// Attachment represents a stored file with its metadata.
+type Attachment struct {
+	Hash     string // SHA-256 hash (hex)
+	Ext      string // File extension including dot (e.g., ".png")
+	Path     string // Relative path: attachments/ab/ab3f8c2e.png
+	Metadata *Metadata
 }
 
 // Add adds a file to the attachment store.

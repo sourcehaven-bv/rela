@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,8 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // Protocol prefix for structured command output messages.
@@ -129,14 +131,14 @@ func contains(slice []string, val string) bool {
 
 // commandInput is the JSON structure passed to a command script on stdin.
 type commandInput struct {
-	Context     string                     `json:"context"`
-	Entity      *model.Entity              `json:"entity,omitempty"`
-	Entities    []*model.Entity            `json:"entities,omitempty"`
-	Collections map[string][]*model.Entity `json:"collections,omitempty"`
-	Relations   []*model.Relation          `json:"relations,omitempty"`
-	ListID      string                     `json:"list_id,omitempty"`
-	ViewID      string                     `json:"view_id,omitempty"`
-	Project     commandProjectInfo         `json:"project"`
+	Context     string                      `json:"context"`
+	Entity      *entity.Entity              `json:"entity,omitempty"`
+	Entities    []*entity.Entity            `json:"entities,omitempty"`
+	Collections map[string][]*entity.Entity `json:"collections,omitempty"`
+	Relations   []*entity.Relation          `json:"relations,omitempty"`
+	ListID      string                      `json:"list_id,omitempty"`
+	ViewID      string                      `json:"view_id,omitempty"`
+	Project     commandProjectInfo          `json:"project"`
 }
 
 type commandProjectInfo struct {
@@ -144,23 +146,30 @@ type commandProjectInfo struct {
 	Metamodel string `json:"metamodel"`
 }
 
-func (a *App) buildEntityInput(entity *model.Entity) *commandInput {
-	s := a.State()
-	// Collect all relations involving this entity.
-	outgoing := s.Graph.OutgoingEdges(entity.ID)
-	incoming := s.Graph.IncomingEdges(entity.ID)
-	rels := make([]*model.Relation, 0, len(outgoing)+len(incoming))
-	rels = append(rels, outgoing...)
-	rels = append(rels, incoming...)
+func (a *App) buildEntityInput(e *entity.Entity) *commandInput {
 	return &commandInput{
 		Context:   "entity",
-		Entity:    entity,
-		Relations: rels,
+		Entity:    e,
+		Relations: relationsForEntity(a.Services(), e.ID),
 		Project:   a.projectInfo(),
 	}
 }
 
-func (a *App) buildListInput(listID string, entities []*model.Entity) *commandInput {
+// relationsForEntity loads every relation where id is either endpoint
+// and returns them as []*entity.Relation for the command-input payload.
+func relationsForEntity(svc Services, id string) []*entity.Relation {
+	rels := make([]*entity.Relation, 0)
+	q := store.RelationQuery{EntityID: id, Direction: store.DirectionBoth}
+	for r, err := range svc.Store.ListRelations(context.Background(), q) {
+		if err != nil {
+			return rels
+		}
+		rels = append(rels, r)
+	}
+	return rels
+}
+
+func (a *App) buildListInput(listID string, entities []*entity.Entity) *commandInput {
 	return &commandInput{
 		Context:  "list",
 		ListID:   listID,
@@ -179,21 +188,30 @@ func (a *App) buildViewInput(viewID string, vr *viewResult) *commandInput {
 	}
 
 	// Gather relations between entities in the result set.
-	g := a.State().Graph
-	var rels []*model.Relation
+	svc := a.Services()
+	var rels []*entity.Relation
 	for id := range idSet {
-		for _, e := range g.OutgoingEdges(id) {
-			if idSet[e.To] {
-				rels = append(rels, e)
+		q := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
+		for r, err := range svc.Store.ListRelations(context.Background(), q) {
+			if err != nil {
+				break
+			}
+			if idSet[r.To] {
+				rels = append(rels, r)
 			}
 		}
+	}
+
+	collections := make(map[string][]*entity.Entity, len(vr.Collections))
+	for k, es := range vr.Collections {
+		collections[k] = es
 	}
 
 	return &commandInput{
 		Context:     "view",
 		ViewID:      viewID,
 		Entity:      vr.Entry,
-		Collections: vr.Collections,
+		Collections: collections,
 		Relations:   rels,
 		Project:     a.projectInfo(),
 	}
@@ -283,12 +301,13 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	switch cmd.Context {
 	case "entity":
 		entityID := r.URL.Query().Get("entity_id")
-		entity, found := s.Graph.GetNode(entityID)
-		if !found {
+		svc := a.Services()
+		entityDomain, err := svc.Store.GetEntity(context.Background(), entityID)
+		if err != nil {
 			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
 			return
 		}
-		input = a.buildEntityInput(entity)
+		input = a.buildEntityInput(entityDomain)
 	case "list":
 		listID := r.URL.Query().Get("list_id")
 		listCfg, found := s.Cfg.Lists[listID]
@@ -296,7 +315,7 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "List not found: "+listID, http.StatusNotFound)
 			return
 		}
-		entities := s.Graph.NodesByType(listCfg.EntityType)
+		entities := listFromStoreByTypes(a.Services(), []string{listCfg.EntityType})
 		entities = applyFilters(entities, listCfg.Filters)
 		input = a.buildListInput(listID, entities)
 	case "view":

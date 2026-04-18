@@ -3,9 +3,8 @@ package dataentry
 import (
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -43,7 +42,7 @@ func testViewApp() *App {
 		App: AppConfig{Name: "Test"},
 	}
 
-	g := graph.New()
+	g := newFixture()
 	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-001").With("title", "First").With("status", "open").Build())
 	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-002").With("title", "Second").With("status", "closed").Build())
 	g.AddNode(testutil.EntityFor(meta, "ticket").ID("TKT-003").With("title", "Third").Build())
@@ -58,16 +57,16 @@ func testViewApp() *App {
 
 func TestCountViewEntities(t *testing.T) {
 	t.Run("empty collections", func(t *testing.T) {
-		got := countViewEntities(map[string][]*model.Entity{})
+		got := countViewEntities(map[string][]*entity.Entity{})
 		if got != 0 {
 			t.Errorf("expected 0, got %d", got)
 		}
 	})
 
 	t.Run("counts unique entities", func(t *testing.T) {
-		e1 := &model.Entity{ID: "A"}
-		e2 := &model.Entity{ID: "B"}
-		collections := map[string][]*model.Entity{
+		e1 := &entity.Entity{ID: "A"}
+		e2 := &entity.Entity{ID: "B"}
+		collections := map[string][]*entity.Entity{
 			"col1": {e1, e2},
 			"col2": {e1}, // duplicate
 		}
@@ -249,7 +248,15 @@ func TestExecuteView(t *testing.T) {
 	})
 }
 
-func collectIDs(entities []*model.Entity) []string {
+func collectModelIDs(entities []*entity.Entity) []string {
+	ids := make([]string, len(entities))
+	for i, e := range entities {
+		ids[i] = e.ID
+	}
+	return ids
+}
+
+func collectIDs(entities []*entity.Entity) []string {
 	ids := make([]string, len(entities))
 	for i, e := range entities {
 		ids[i] = e.ID
@@ -309,7 +316,7 @@ func testViewAppWithMixedTypes() *App {
 		App: AppConfig{Name: "Test"},
 	}
 
-	g := graph.New()
+	g := newFixture()
 
 	// Bouwblok
 	g.AddNode(testutil.EntityFor(meta, "bouwblok").ID("BOUWBLOK-001").With("title", "Main Bouwblok").Build())
@@ -507,7 +514,7 @@ func TestExecuteViewWithWhere(t *testing.T) {
 func TestFilterEntities(t *testing.T) {
 	app := testViewAppWithMixedTypes()
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		testutil.EntityFor(app.Meta(), "function").ID("FUNC-001").With("status", "active").Build(),
 		testutil.EntityFor(app.Meta(), "function").ID("FUNC-002").With("status", "draft").Build(),
 		testutil.EntityFor(app.Meta(), "usecase").ID("UC-001").With("status", "active").Build(),

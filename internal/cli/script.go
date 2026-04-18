@@ -45,7 +45,6 @@ Output functions:
 
 Context:
   rela.args                        Script arguments (table)
-  rela.project_root                Project root path
 
 Scripts can include a shebang line (#!/usr/bin/env -S rela script) for direct
 execution. The shebang is automatically stripped before running.
@@ -69,7 +68,7 @@ Example:
 		}
 		opts = append(opts, ctxOpts...)
 
-		runtime := lua.New(ws, meta, projectCtx.Root, os.Stdout, opts...)
+		runtime := lua.New(ws.LuaServices(), os.Stdout, opts...)
 		defer runtime.Close()
 
 		return runtime.RunFile(scriptPath, scriptArgs)

@@ -1,9 +1,9 @@
 package automation
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // Engine evaluates automations against entity events.
@@ -107,7 +107,7 @@ func (e *Engine) SetTemplateVars(vars TemplateVars) {
 func (e *Engine) Process(event Event) *Result {
 	result := &Result{
 		PropertiesSet:     make(map[string]string),
-		RelationsToCreate: make([]*model.Relation, 0),
+		RelationsToCreate: make([]*entity.Relation, 0),
 		EntitiesToCreate:  make([]EntityToCreate, 0),
 		LuaToExecute:      make([]LuaToExecute, 0),
 		Warnings:          make([]string, 0),
@@ -212,7 +212,7 @@ func (e *Engine) matchesPropertyChange(trigger Trigger, event Event) bool {
 
 // matchesWhenConditions checks if all when conditions are satisfied.
 // Returns true if no conditions are specified (backward compatible).
-func (e *Engine) matchesWhenConditions(trigger Trigger, entity *model.Entity) bool {
+func (e *Engine) matchesWhenConditions(trigger Trigger, entity *entity.Entity) bool {
 	if len(trigger.When) == 0 {
 		return true
 	}
@@ -239,7 +239,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 	if action.CreateRelation != nil {
 		targetID := e.interpolate(action.CreateRelation.To, event)
 		if targetID != "" && event.Entity != nil {
-			rel := model.NewRelation(event.Entity.ID, action.CreateRelation.Relation, targetID)
+			rel := entity.NewRelation(event.Entity.ID, action.CreateRelation.Relation, targetID)
 			result.RelationsToCreate = append(result.RelationsToCreate, rel)
 		}
 	}

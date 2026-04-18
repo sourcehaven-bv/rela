@@ -17,19 +17,30 @@ export class BasePage {
     const baseUrl = new URL(currentUrl).origin;
     const fullPath = path.startsWith('/') ? path : `/${path}`;
     await this.page.goto(`${baseUrl}${fullPath}`);
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async clickNavLink(name: string) {
     await this.page.getByRole('link', { name }).click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
+  }
+
+  /** Click a sidebar link by visible label and wait for the target page's heading. */
+  async clickSidebarLink(label: string, expectedHeading: string | RegExp = label) {
+    await this.page.getByRole('link', { name: new RegExp(label) }).first().click();
+    const matcher = expectedHeading instanceof RegExp ? expectedHeading : new RegExp(expectedHeading);
+    await expect(this.page.locator('h1').filter({ hasText: matcher })).toBeVisible();
+  }
+
+  async expectNavLinkVisible(label: string) {
+    await expect(this.page.getByRole('link', { name: label })).toBeVisible();
   }
 
   async waitForToast(message?: string) {
     if (message) {
-      await expect(this.page.getByText(message)).toBeVisible({ timeout: 5000 });
+      await expect(this.page.getByText(message)).toBeVisible({ timeout: 3000 });
     } else {
-      await expect(this.toastContainer.first()).toBeVisible({ timeout: 5000 });
+      await expect(this.toastContainer.first()).toBeVisible({ timeout: 3000 });
     }
   }
 
@@ -48,7 +59,7 @@ export class BasePage {
   async waitForSpinnerToDisappear() {
     const spinner = this.page.locator('.spinner, .loading-state');
     if (await spinner.isVisible({ timeout: 100 }).catch(() => false)) {
-      await expect(spinner).not.toBeVisible({ timeout: 10000 });
+      await expect(spinner).not.toBeVisible({ timeout: 3000 });
     }
   }
 

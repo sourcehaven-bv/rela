@@ -10,9 +10,9 @@ import (
 
 	"golang.org/x/net/html"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -129,7 +129,7 @@ func TestPropertyIsEmpty(t *testing.T) {
 
 func TestApplyFilters(t *testing.T) {
 	meta := testMeta()
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		testutil.EntityFor(meta, "ticket").ID("E-001").With("status", "open").With("priority", "high").Build(),
 		testutil.EntityFor(meta, "ticket").ID("E-002").With("status", "closed").With("priority", "low").Build(),
 		testutil.EntityFor(meta, "ticket").ID("E-003").With("status", "open").With("priority", "low").Build(),
@@ -202,7 +202,7 @@ func TestApplyFilters(t *testing.T) {
 func TestApplyFiltersMultiSelect(t *testing.T) {
 	// Note: Using Entity() here because "clause" type is not in testMeta()
 	// and the test is specifically testing multi-select property filtering logic
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		testutil.Entity("clause").ID("E-001").With("applies_to", "client").Build(),
 		testutil.Entity("clause").ID("E-002").WithList("applies_to", "client", "provider").Build(),
 		testutil.Entity("clause").ID("E-003").WithList("applies_to", "provider", "employee").Build(),
@@ -267,10 +267,10 @@ func TestSortEntitiesMulti(t *testing.T) {
 		},
 	}
 
-	makeEntities := func() []*model.Entity {
+	makeEntities := func() []*entity.Entity {
 		// Note: Using Entity() here because "item" type is not in testMeta()
 		// and the test is specifically testing sorting logic, not entity creation
-		return []*model.Entity{
+		return []*entity.Entity{
 			testutil.Entity("item").ID("E-003").With("name", "Charlie").Build(),
 			testutil.Entity("item").ID("E-001").With("name", "Alice").Build(),
 			testutil.Entity("item").ID("E-002").With("name", "Bob").Build(),
@@ -289,7 +289,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("empty specs does nothing", func(t *testing.T) {
 		entities := makeEntities()
-		app.sortEntitiesMulti(entities, []model.SortSpec{})
+		app.sortEntitiesMulti(entities, []filter.SortSpec{})
 		if entities[0].ID != "E-003" {
 			t.Errorf("expected no reorder, got %s first", entities[0].ID)
 		}
@@ -297,7 +297,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("ascending sort", func(t *testing.T) {
 		entities := makeEntities()
-		app.sortEntitiesMulti(entities, []model.SortSpec{{Property: "name", Direction: "asc"}})
+		app.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "asc"}})
 		if entities[0].ID != "E-001" || entities[1].ID != "E-002" || entities[2].ID != "E-003" {
 			t.Errorf("expected Alice, Bob, Charlie; got %s, %s, %s",
 				entities[0].Properties["name"], entities[1].Properties["name"], entities[2].Properties["name"])
@@ -306,7 +306,7 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("descending sort", func(t *testing.T) {
 		entities := makeEntities()
-		app.sortEntitiesMulti(entities, []model.SortSpec{{Property: "name", Direction: "desc"}})
+		app.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "desc"}})
 		if entities[0].ID != "E-003" || entities[1].ID != "E-002" || entities[2].ID != "E-001" {
 			t.Errorf("expected Charlie, Bob, Alice; got %s, %s, %s",
 				entities[0].Properties["name"], entities[1].Properties["name"], entities[2].Properties["name"])
@@ -315,12 +315,12 @@ func TestSortEntitiesMulti(t *testing.T) {
 
 	t.Run("nil property values sort to end", func(t *testing.T) {
 		// Note: Using Entity() here because "item" type is not in testMeta()
-		entities := []*model.Entity{
+		entities := []*entity.Entity{
 			testutil.Entity("item").ID("E-001").With("name", "Bob").Build(),
 			testutil.Entity("item").ID("E-002").Build(),
 			testutil.Entity("item").ID("E-003").With("name", "Alice").Build(),
 		}
-		app.sortEntitiesMulti(entities, []model.SortSpec{{Property: "name", Direction: "asc"}})
+		app.sortEntitiesMulti(entities, []filter.SortSpec{{Property: "name", Direction: "asc"}})
 		// With type-aware sorting, nil values sort to end
 		if entities[0].ID != "E-003" {
 			t.Errorf("expected Alice first, got %s", entities[0].ID)
@@ -789,7 +789,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 		},
 	}
 
-	g := graph.New()
+	g := newFixture()
 	assessment := testutil.EntityFor(meta, "assessment").ID("ASS-001").With("title", "Q1 Review").Build()
 	person1 := testutil.EntityFor(meta, "person").ID("PER-001").With("name", "Alice").Build()
 	person2 := testutil.EntityFor(meta, "person").ID("PER-002").With("name", "Bob").Build()
@@ -952,7 +952,7 @@ func TestFilterByRelation(t *testing.T) {
 		},
 	}
 
-	g := graph.New()
+	g := newFixture()
 
 	// Create components
 	cmpFrontend := testutil.EntityFor(meta, "component").ID("CMP-001").With("name", "Frontend").Build()
@@ -982,7 +982,7 @@ func TestFilterByRelation(t *testing.T) {
 
 	t.Run("filters by relation target title", func(t *testing.T) {
 		got := app.filterByRelation(allTickets, "belongs_to", "Frontend")
-		gotIDs := collectIDs(got)
+		gotIDs := collectModelIDs(got)
 		if len(got) != 2 {
 			t.Fatalf("expected 2 results, got %d: %v", len(got), gotIDs)
 		}
@@ -993,7 +993,7 @@ func TestFilterByRelation(t *testing.T) {
 
 	t.Run("filters by different relation target", func(t *testing.T) {
 		got := app.filterByRelation(allTickets, "belongs_to", "Backend")
-		gotIDs := collectIDs(got)
+		gotIDs := collectModelIDs(got)
 		if len(got) != 1 {
 			t.Fatalf("expected 1 result, got %d: %v", len(got), gotIDs)
 		}
@@ -1049,7 +1049,7 @@ func TestResolveRelationFilterValues(t *testing.T) {
 		},
 	}
 
-	g := graph.New()
+	g := newFixture()
 
 	// Create components
 	cmpFrontend := testutil.EntityFor(meta, "component").ID("CMP-001").With("name", "Frontend").Build()
@@ -1102,7 +1102,7 @@ func TestResolveRelationFilterValues(t *testing.T) {
 	})
 
 	t.Run("returns empty for empty entities list", func(t *testing.T) {
-		got := app.resolveRelationFilterValues([]*model.Entity{}, "belongs_to")
+		got := app.resolveRelationFilterValues([]*entity.Entity{}, "belongs_to")
 		if len(got) != 0 {
 			t.Errorf("expected 0 values, got %d", len(got))
 		}
@@ -1130,8 +1130,8 @@ func TestResolveScope(t *testing.T) {
 		},
 	}
 
-	makeGraph := func() *graph.Graph {
-		g := graph.New()
+	makeGraph := func() *fixture {
+		g := newFixture()
 		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-001").With("status", "open").With("priority", "high").Build())
 		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-002").With("status", "closed").With("priority", "low").Build())
 		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-003").With("status", "open").With("priority", "medium").Build())
@@ -1339,7 +1339,7 @@ func TestResolveScope(t *testing.T) {
 			},
 		}
 
-		relGraph := graph.New()
+		relGraph := newFixture()
 		cmp := testutil.EntityFor(relMeta, "component").ID("CMP-001").With("name", "Frontend").Build()
 		relGraph.AddNode(cmp)
 

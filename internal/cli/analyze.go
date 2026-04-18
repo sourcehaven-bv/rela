@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -9,8 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -71,7 +72,7 @@ var analyzeOrphansCmd = &cobra.Command{
 		}
 
 		orphans := ws.FindOrphansWithScope(*opts)
-		filter.SortByID(orphans, false)
+		filter.SortByID(orphans, storeEntityRecord, false)
 
 		if writeAnalysisJSON(len(orphans), orphans,
 			"No orphan entities found", "Found %d orphan entities") {
@@ -101,8 +102,8 @@ var analyzeDuplicatesCmd = &cobra.Command{
 		// Handle JSON output format
 		if out.Format == "json" {
 			type duplicateGroup struct {
-				Title    string          `json:"title"`
-				Entities []*model.Entity `json:"entities"`
+				Title    string           `json:"title"`
+				Entities []*entity.Entity `json:"entities"`
 			}
 			var details []duplicateGroup
 			for _, group := range duplicates {
@@ -228,8 +229,17 @@ This catches issues in manually-edited markdown files that bypass CLI validation
 
 // runPropertyValidation validates entity and relation properties against the metamodel.
 func runPropertyValidation(opts workspace.AnalyzeOptions) error {
-	allEntityErrors := ws.ValidateProperties(opts)
-	allRelationErrors := ws.ValidateRelationProperties()
+	allEntityErrors := schema.ValidateEntityProperties(ws.Store(), ws.Meta())
+	if opts.Scope != nil {
+		filtered := allEntityErrors[:0]
+		for _, ee := range allEntityErrors {
+			if opts.Scope[ee.EntityID] {
+				filtered = append(filtered, ee)
+			}
+		}
+		allEntityErrors = filtered
+	}
+	allRelationErrors := schema.ValidateRelationProperties(ws.Store(), ws.Meta())
 
 	errorCount := 0
 	for _, ee := range allEntityErrors {
@@ -247,8 +257,8 @@ func runPropertyValidation(opts workspace.AnalyzeOptions) error {
 }
 
 func writePropertyValidationJSON(
-	allEntityErrors []workspace.PropertyError,
-	allRelationErrors []workspace.RelationPropertyError,
+	allEntityErrors []schema.PropertyError,
+	allRelationErrors []schema.RelationPropertyError,
 	errorCount int,
 ) error {
 	entityResults := make([]output.PropertyValidationResult, 0, len(allEntityErrors))
@@ -302,8 +312,8 @@ func writePropertyValidationJSON(
 }
 
 func writePropertyValidationText(
-	allEntityErrors []workspace.PropertyError,
-	allRelationErrors []workspace.RelationPropertyError,
+	allEntityErrors []schema.PropertyError,
+	allRelationErrors []schema.RelationPropertyError,
 	errorCount int,
 ) error {
 	if errorCount == 0 {
@@ -591,7 +601,7 @@ Examples:
 		dataEntry := loadDataEntryConfig()
 
 		// Run analysis
-		analysis := schema.Analyze(meta, ws.Snapshot().Graph(), dataEntry, schemaThreshold)
+		analysis := schema.Analyze(meta, &schema.StoreCounter{Store: ws.Store()}, dataEntry, schemaThreshold)
 
 		// Handle cleanup mode
 		if schemaCleanup {
@@ -605,7 +615,7 @@ Examples:
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.
 func loadDataEntryConfig() *dataentryconfig.Config {
-	data, err := ws.ReadProjectFile(dataentryconfig.ConfigFile)
+	data, err := ws.Config().Load(context.Background(), dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil // File doesn't exist or can't be read
 	}

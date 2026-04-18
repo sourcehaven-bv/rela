@@ -1,175 +1,139 @@
 package workspace
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // Rename performs an entity ID rename. It updates the entity file, all
 // relation files referencing the old ID (in either direction), and the
-// in-memory graph + search index — all atomically via WithTx. On any
-// failure, no on-disk or in-memory state is modified.
+// in-memory store mirror — best-effort: if a relation rename fails
+// mid-way, earlier writes stay in place. Callers can re-run the command.
 //
-// If opts.DryRun is true, no changes are persisted; the returned Result
-// describes what *would* change against the current snapshot.
-//
-// Inherits the atomicity caveats of Workspace.WithTx — see WithTx's
-// docs for the rollback hazards in repository.Transaction's phase-2
-// deletes.
-//
-// This is the canonical replacement for the legacy `rename.Rename` free
-// function. The orchestration was moved into the workspace package so it
-// could use ws.WithTx; the rename package now contains only the public
-// types (Options, Result, RelationRef).
-func (w *Workspace) Rename(entityType, oldID, newID string, opts rename.Options) (*rename.Result, error) {
-	if opts.DryRun {
-		return w.renameDryRun(entityType, oldID, newID)
-	}
-
-	var result *rename.Result
-	err := w.WithTx(func(tx *Tx) error {
-		// Validate against the in-tx snapshot. Doing this inside the
-		// closure (rather than against w.state.Load() before WithTx)
-		// guarantees that validation, the entity payload we write,
-		// and the relation lists we walk all come from the same
-		// epoch — even if a concurrent reload landed between the
-		// caller's invocation and the moment WithTx took reloadMu.
-		entity, incoming, outgoing, err := loadAndValidateRename(tx, entityType, oldID, newID)
-		if err != nil {
-			return err
-		}
-
-		// Write the new entity under the new ID.
-		newEntity := &model.Entity{
-			ID:         newID,
-			Type:       entity.Type,
-			Properties: entity.Properties,
-			Content:    entity.Content,
-		}
-		if err := tx.WriteEntity(newEntity); err != nil {
-			return fmt.Errorf("write new entity %s: %w", newID, err)
-		}
-
-		// Write the updated relations (with the new ID substituted).
-		if err := writeRenamedRelations(tx, oldID, newID, incoming, outgoing); err != nil {
-			return err
-		}
-
-		// Delete the old entity and its old relation files. Self-
-		// referential relations are deleted exactly once via the
-		// outgoing loop; the incoming loop skips them.
-		if err := tx.DeleteEntity(entity.Type, oldID); err != nil {
-			return fmt.Errorf("delete old entity %s: %w", oldID, err)
-		}
-		for _, rel := range outgoing {
-			if err := tx.DeleteRelation(oldID, rel.Type, rel.To); err != nil {
-				return fmt.Errorf("delete old outgoing relation %s--%s-->%s: %w",
-					oldID, rel.Type, rel.To, err)
-			}
-		}
-		for _, rel := range incoming {
-			if rel.From == oldID { // self-referential, already deleted above
-				continue
-			}
-			if err := tx.DeleteRelation(rel.From, rel.Type, oldID); err != nil {
-				return fmt.Errorf("delete old incoming relation %s--%s-->%s: %w",
-					rel.From, rel.Type, oldID, err)
-			}
-		}
-
-		// Build the result from the same in-tx snapshot we just
-		// operated on, so it accurately reflects what was committed.
-		result = buildRenameResult(w.repo, tx.base.meta, entityType, oldID, newID, incoming, outgoing)
-		return nil
-	})
+// If opts.DryRun is true, no changes are persisted; the returned
+// Result describes what *would* change against the current snapshot.
+func (w *Workspace) rename(entityType, oldID, newID string, opts rename.Options) (*rename.Result, error) {
+	st := w.Store()
+	ent, incoming, outgoing, err := loadAndValidateRename(st, entityType, oldID, newID)
 	if err != nil {
 		return nil, err
 	}
+
+	result := buildRenameResult(entityType, oldID, newID, incoming, outgoing)
+
+	if opts.DryRun {
+		return result, nil
+	}
+
+	// Write the new entity under the new ID.
+	newEntity := &entity.Entity{
+		ID:         newID,
+		Type:       ent.Type,
+		Properties: ent.Properties,
+		Content:    ent.Content,
+	}
+	if err := w.writeEntity(newEntity); err != nil {
+		return nil, fmt.Errorf("write new entity %s: %w", newID, err)
+	}
+
+	// Write the updated relations (with the new ID substituted).
+	if err := writeRenamedRelations(w, oldID, newID, incoming, outgoing); err != nil {
+		return nil, err
+	}
+
+	// Delete the old relation files first, then the entity. Self-
+	// referential relations are deleted exactly once via the outgoing
+	// loop; the incoming loop skips them.
+	for _, rel := range outgoing {
+		if err := w.deleteRelationStore(oldID, rel.Type, rel.To); err != nil {
+			return nil, fmt.Errorf("delete old outgoing relation %s--%s-->%s: %w",
+				oldID, rel.Type, rel.To, err)
+		}
+	}
+	for _, rel := range incoming {
+		if rel.From == oldID { // self-referential, already deleted above
+			continue
+		}
+		if err := w.deleteRelationStore(rel.From, rel.Type, oldID); err != nil {
+			return nil, fmt.Errorf("delete old incoming relation %s--%s-->%s: %w",
+				rel.From, rel.Type, oldID, err)
+		}
+	}
+	if err := w.deleteEntityStore(oldID); err != nil {
+		return nil, fmt.Errorf("delete old entity %s: %w", oldID, err)
+	}
+
 	return result, nil
 }
 
-// renameDryRun runs the validation and result-building phase against
-// the workspace's current snapshot without acquiring reloadMu. The
-// returned result is a "what would change right now" view; a concurrent
-// commit may invalidate it before the caller can act on it. Acceptable
-// because dry-run callers do not promise consistency.
-func (w *Workspace) renameDryRun(entityType, oldID, newID string) (*rename.Result, error) {
-	s := w.state.Load()
-	if s == nil {
-		return nil, fmt.Errorf("workspace not initialized")
-	}
-	g := s.graph
-
-	if err := validateRename(g, oldID, newID); err != nil {
-		return nil, err
-	}
-	entity, ok := g.GetNode(oldID)
-	if !ok {
-		return nil, fmt.Errorf("entity not found: %s", oldID)
-	}
-	if entity.Type != entityType {
-		return nil, fmt.Errorf("entity %s has type %s, not %s", oldID, entity.Type, entityType)
-	}
-
-	incoming := g.IncomingEdges(oldID)
-	outgoing := g.OutgoingEdges(oldID)
-	return buildRenameResult(w.repo, s.meta, entityType, oldID, newID, incoming, outgoing), nil
-}
-
-// loadAndValidateRename combines the existence check, type check, and
-// edge collection that the rename closure needs. It runs against the
-// transaction's base snapshot so all callers see a consistent epoch.
+// loadAndValidateRename combines existence + type checks and incident-edge
+// collection needed by the rename flow, all against a single store.
 func loadAndValidateRename(
-	tx *Tx, entityType, oldID, newID string,
-) (entity *model.Entity, incoming, outgoing []*model.Relation, err error) {
-	g := tx.base.graph
-	if err := validateRename(g, oldID, newID); err != nil {
-		return nil, nil, nil, err
+	st store.Store, entityType, oldID, newID string,
+) (ent *entity.Entity, incoming, outgoing []*entity.Relation, err error) {
+	if vErr := validateRename(st, oldID, newID); vErr != nil {
+		return nil, nil, nil, vErr
 	}
-	entity, ok := g.GetNode(oldID)
-	if !ok {
+	ctx := context.Background()
+	ent, err = st.GetEntity(ctx, oldID)
+	if err != nil {
 		return nil, nil, nil, fmt.Errorf("entity not found: %s", oldID)
 	}
-	if entity.Type != entityType {
-		return nil, nil, nil, fmt.Errorf("entity %s has type %s, not %s", oldID, entity.Type, entityType)
+	if ent.Type != entityType {
+		return nil, nil, nil, fmt.Errorf("entity %s has type %s, not %s", oldID, ent.Type, entityType)
 	}
-	return entity, g.IncomingEdges(oldID), g.OutgoingEdges(oldID), nil
+
+	incoming = relationsForRename(st, oldID, store.DirectionIncoming)
+	outgoing = relationsForRename(st, oldID, store.DirectionOutgoing)
+	return ent, incoming, outgoing, nil
 }
 
-// validateRename checks rename preconditions against the given graph.
-func validateRename(g *graph.Graph, oldID, newID string) error {
-	if _, ok := g.GetNode(oldID); !ok {
+// relationsForRename collects incident relations in the given direction.
+// Errors from the store iterator are swallowed: a partial result is
+// preferable to failing the rename outright.
+func relationsForRename(st store.Store, id string, dir store.Direction) []*entity.Relation {
+	out := make([]*entity.Relation, 0)
+	for r, err := range st.ListRelations(context.Background(), store.RelationQuery{
+		EntityID:  id,
+		Direction: dir,
+	}) {
+		if err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// validateRename checks rename preconditions against the given store.
+func validateRename(st store.Store, oldID, newID string) error {
+	ctx := context.Background()
+	if _, err := st.GetEntity(ctx, oldID); err != nil {
 		return fmt.Errorf("entity not found: %s", oldID)
 	}
-	if _, ok := g.GetNode(newID); ok {
+	if _, err := st.GetEntity(ctx, newID); err == nil {
 		return fmt.Errorf("entity with ID %s already exists", newID)
 	}
-	if err := model.ValidateID(newID); err != nil {
+	if err := entity.ValidateID(newID); err != nil {
 		return fmt.Errorf("invalid new ID: %w", err)
 	}
 	return nil
 }
 
 // buildRenameResult assembles the descriptive Result returned by Rename.
-// It runs before the transaction so it can also serve dry-run callers.
 func buildRenameResult(
-	repo repository.Store,
-	meta *metamodel.Metamodel,
 	entityType, oldID, newID string,
-	incoming, outgoing []*model.Relation,
+	incoming, outgoing []*entity.Relation,
 ) *rename.Result {
 	result := &rename.Result{
 		OldID:            oldID,
 		NewID:            newID,
 		EntityType:       entityType,
-		EntityFile:       repo.EntityFilePath(entityType, newID, meta),
 		RelationsUpdated: make([]rename.RelationRef, 0, len(incoming)+len(outgoing)),
-		OldFilesDeleted:  make([]string, 0, 1+len(incoming)+len(outgoing)),
 	}
 
 	for _, rel := range outgoing {
@@ -187,24 +151,13 @@ func buildRenameResult(
 		})
 	}
 
-	result.OldFilesDeleted = append(result.OldFilesDeleted,
-		repo.EntityFilePath(entityType, oldID, meta))
-	for _, rel := range outgoing {
-		result.OldFilesDeleted = append(result.OldFilesDeleted,
-			repo.Paths().RelationFilePath(oldID, rel.Type, rel.To))
-	}
-	for _, rel := range incoming {
-		result.OldFilesDeleted = append(result.OldFilesDeleted,
-			repo.Paths().RelationFilePath(rel.From, rel.Type, oldID))
-	}
-
 	return result
 }
 
 // writeRenamedRelations writes the relation files with the new ID
 // substituted for the old one (in either direction). Self-referential
 // relations are written exactly once.
-func writeRenamedRelations(tx *Tx, oldID, newID string, incoming, outgoing []*model.Relation) error {
+func writeRenamedRelations(w *Workspace, oldID, newID string, incoming, outgoing []*entity.Relation) error {
 	// Outgoing: from = oldID becomes from = newID. If the relation is
 	// self-referential (to == oldID), the new to is also newID.
 	for _, rel := range outgoing {
@@ -212,14 +165,14 @@ func writeRenamedRelations(tx *Tx, oldID, newID string, incoming, outgoing []*mo
 		if rel.To == oldID {
 			newTo = newID
 		}
-		newRel := &model.Relation{
+		newRel := &entity.Relation{
 			From:       newID,
 			Type:       rel.Type,
 			To:         newTo,
 			Properties: rel.Properties,
 			Content:    rel.Content,
 		}
-		if err := tx.WriteRelation(newRel); err != nil {
+		if err := w.writeRelation(newRel); err != nil {
 			return fmt.Errorf("write relation %s--%s-->%s: %w", newID, rel.Type, newTo, err)
 		}
 	}
@@ -230,14 +183,14 @@ func writeRenamedRelations(tx *Tx, oldID, newID string, incoming, outgoing []*mo
 		if rel.From == oldID {
 			continue
 		}
-		newRel := &model.Relation{
+		newRel := &entity.Relation{
 			From:       rel.From,
 			Type:       rel.Type,
 			To:         newID,
 			Properties: rel.Properties,
 			Content:    rel.Content,
 		}
-		if err := tx.WriteRelation(newRel); err != nil {
+		if err := w.writeRelation(newRel); err != nil {
 			return fmt.Errorf("write relation %s--%s-->%s: %w", rel.From, rel.Type, newID, err)
 		}
 	}

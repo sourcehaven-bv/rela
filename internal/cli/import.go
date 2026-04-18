@@ -79,7 +79,7 @@ CSV format (relations):
 			RelationsFile: importRelationsFile,
 		}
 
-		imp := importer.New(ws.Repo(), meta, ws.Snapshot().Graph(), opts, importer.NewImportSource(ws.FS()))
+		imp := importer.New(ws.Store(), meta, opts, importer.NewImportSource(ws.FS()))
 
 		if importDryRun {
 			out.WriteInfo("Dry run - validating without creating files...")
@@ -120,11 +120,6 @@ CSV format (relations):
 			}
 			if result.RelationsSkipped > 0 {
 				out.WriteWarning("Skipped %d relations (errors or duplicates)", result.RelationsSkipped)
-			}
-
-			// Save cache
-			if err := saveCache(); err != nil {
-				out.WriteWarning("Failed to save cache: %v", err)
 			}
 		}
 

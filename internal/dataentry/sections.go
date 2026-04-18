@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // SectionFieldData holds a single resolved field for template rendering.
@@ -141,7 +141,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 		} else {
 			entities, exists := result.Collections[sec.Source]
 			if !exists {
-				entities = []*model.Entity{}
+				entities = []*entity.Entity{}
 			}
 			sd.IsEmpty = len(entities) == 0
 
@@ -151,7 +151,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
 					sed := SectionEntityData{
 						ID:         e.ID,
-						Title:      s.Meta.DisplayTitle(e),
+						Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 						Type:       e.Type,
 						EditFormID: a.editFormForType(e.Type),
 					}
@@ -178,7 +178,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 				}
 			case "table":
 				sd.Columns = sec.Columns
-				buildRow := func(e *model.Entity) SectionRowData {
+				buildRow := func(e *entity.Entity) SectionRowData {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
 					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
 					for _, col := range sec.Columns {
@@ -208,7 +208,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 				}
 				if sec.GroupBy != "" {
 					sd.IsGrouped = true
-					groups := map[string][]*model.Entity{}
+					groups := map[string][]*entity.Entity{}
 					var groupOrder []string
 					for _, e := range entities {
 						prop := strings.TrimPrefix(sec.GroupBy, "properties.")
@@ -223,7 +223,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 					}
 					for _, gName := range groupOrder {
 						gd := GroupData{GroupName: gName}
-						sortEntitiesByID(groups[gName])
+						sortStoreEntitiesByID(groups[gName])
 						for _, e := range groups[gName] {
 							gd.Rows = append(gd.Rows, buildRow(e))
 						}
@@ -240,7 +240,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
 					sed := SectionEntityData{
 						ID:         e.ID,
-						Title:      s.Meta.DisplayTitle(e),
+						Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 						Type:       e.Type,
 						EditFormID: a.editFormForType(e.Type),
 						Content:    e.Content,
@@ -299,7 +299,7 @@ func (a *App) executeSidePanel(panel *SidePanelConfig, entityID, entityType stri
 }
 
 // resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo using full view config.
-func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections []SectionData, entry *model.Entity) {
+func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections []SectionData, entry *entity.Entity) {
 	s := a.State()
 	for i, sec := range viewConfig.Sections {
 		if sec.Source == "entry" {

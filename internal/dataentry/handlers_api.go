@@ -1,13 +1,16 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -154,18 +157,21 @@ func (a *App) handleAPIEntityTypes(w http.ResponseWriter, _ *http.Request) {
 
 // handleAPIEntities returns entities, optionally filtered by type.
 func (a *App) handleAPIEntities(w http.ResponseWriter, r *http.Request) {
-	s := a.State()
+	ctx := r.Context()
+	st := a.store
 	entityType := r.URL.Query().Get("type")
 
-	var entities []*model.Entity
+	q := store.EntityQuery{}
 	if entityType != "" {
-		entities = s.Graph.NodesByType(entityType)
-	} else {
-		entities = s.Graph.AllNodes()
+		q.Type = entityType
 	}
 
-	result := make([]APIEntity, 0, len(entities))
-	for _, e := range entities {
+	result := make([]APIEntity, 0)
+	for e, err := range st.ListEntities(ctx, q) {
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		result = append(result, a.entityToAPI(e, false))
 	}
 
@@ -180,13 +186,13 @@ func (a *App) handleAPIEntity(w http.ResponseWriter, r *http.Request) { // Extra
 		return
 	}
 
-	entity, found := a.State().Graph.GetNode(path)
-	if !found {
+	e, err := a.store.GetEntity(r.Context(), path)
+	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "entity not found")
 		return
 	}
 
-	result := a.entityToAPI(entity, true)
+	result := a.entityToAPI(e, true)
 	writeJSON(w, result)
 }
 
@@ -232,8 +238,8 @@ func (a *App) handleAPIMetamodel(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, result)
 }
 
-// entityToAPI converts a model.Entity to APIEntity.
-func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
+// entityToAPI converts an entity.Entity to APIEntity.
+func (a *App) entityToAPI(e *entity.Entity, includeRelations bool) APIEntity {
 	s := a.State()
 	api := APIEntity{
 		ID:         e.ID,
@@ -247,12 +253,18 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 	}
 
 	if includeRelations {
+		ctx := context.Background()
+		st := a.store
 		api.Relations = make([]APIRelation, 0)
 
 		// Outgoing relations
-		for _, edge := range s.Graph.OutgoingEdges(e.ID) {
-			target, found := s.Graph.GetNode(edge.To)
-			if !found {
+		outQ := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionOutgoing}
+		for edge, err := range st.ListRelations(ctx, outQ) {
+			if err != nil {
+				break
+			}
+			target, err := st.GetEntity(ctx, edge.To)
+			if err != nil {
 				continue
 			}
 			rel := APIRelation{
@@ -261,7 +273,7 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 				To:          edge.To,
 				Direction:   DirectionOutgoing,
 				TargetID:    edge.To,
-				TargetTitle: s.Meta.DisplayTitle(target),
+				TargetTitle: s.Meta.DisplayTitle(target.ID, target.Type, target.Properties),
 				TargetType:  target.Type,
 			}
 			if edge.Properties != nil {
@@ -274,9 +286,13 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 		}
 
 		// Incoming relations
-		for _, edge := range s.Graph.IncomingEdges(e.ID) {
-			source, found := s.Graph.GetNode(edge.From)
-			if !found {
+		inQ := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionIncoming}
+		for edge, err := range st.ListRelations(ctx, inQ) {
+			if err != nil {
+				break
+			}
+			source, err := st.GetEntity(ctx, edge.From)
+			if err != nil {
 				continue
 			}
 			rel := APIRelation{
@@ -285,7 +301,7 @@ func (a *App) entityToAPI(e *model.Entity, includeRelations bool) APIEntity {
 				To:          edge.To,
 				Direction:   DirectionIncoming,
 				TargetID:    edge.From,
-				TargetTitle: s.Meta.DisplayTitle(source),
+				TargetTitle: s.Meta.DisplayTitle(source.ID, source.Type, source.Properties),
 				TargetType:  source.Type,
 			}
 			if edge.Properties != nil {
@@ -361,11 +377,13 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, _, err := a.ws.CreateEntity(req.Type, workspace.CreateOptions{
+	newEntity := &entity.Entity{
 		ID:         req.ID,
+		Type:       req.Type,
 		Properties: req.Properties,
 		Content:    req.Content,
-	})
+	}
+	result, err := a.entityManager.CreateEntity(r.Context(), newEntity, entitymanager.CreateOptions{ID: req.ID})
 	if err != nil {
 		var valErr *workspace.ValidationError
 		if errors.As(err, &valErr) {
@@ -376,11 +394,10 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return created entity
-	result := a.entityToAPI(entity, false)
+	apiResult := a.entityToAPI(result.Entity, false)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(result)
+	_ = json.NewEncoder(w).Encode(apiResult)
 }
 
 // handleAPIUpdateEntity handles PUT /api/entities/{id} to update an entity.
@@ -406,27 +423,24 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.State().Graph.GetNode(path)
-	if !found {
+	e, err := a.store.GetEntity(r.Context(), path)
+	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "entity not found")
 		return
 	}
 
-	oldEntity := entity.Clone()
-
-	// Update properties
+	// Apply updates
 	if req.Properties != nil {
 		for k, v := range req.Properties {
-			entity.Properties[k] = v
+			e.Properties[k] = v
 		}
 	}
-
-	// Update content if provided
 	if req.Content != nil {
-		entity.Content = *req.Content
+		e.Content = *req.Content
 	}
 
-	if _, err := a.ws.UpdateEntity(entity, oldEntity); err != nil {
+	result, err := a.entityManager.UpdateEntity(r.Context(), e)
+	if err != nil {
 		var valErr *workspace.ValidationError
 		if errors.As(err, &valErr) {
 			writeJSONError(w, http.StatusBadRequest, "validation error: "+valErr.Errors[0].Error())
@@ -436,9 +450,8 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return updated entity
-	result := a.entityToAPI(entity, false)
-	writeJSON(w, result)
+	apiResult := a.entityToAPI(result.Entity, false)
+	writeJSON(w, apiResult)
 }
 
 // handleAPIDeleteEntity handles DELETE /api/entities/{id} to delete an entity.
@@ -458,13 +471,7 @@ func (a *App) handleAPIDeleteEntity(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.State().Graph.GetNode(path)
-	if !found {
-		writeJSONError(w, http.StatusNotFound, "entity not found")
-		return
-	}
-
-	if _, err := a.ws.DeleteEntity(entity.Type, entity.ID, true); err != nil {
+	if _, err := a.entityManager.DeleteEntity(r.Context(), path, true); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete entity: "+err.Error())
 		return
 	}
@@ -493,12 +500,9 @@ func (a *App) handleAPICreateRelation(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	var opts []workspace.CreateRelationOptions
-	if len(req.Properties) > 0 {
-		opts = append(opts, workspace.CreateRelationOptions{Properties: req.Properties})
-	}
-
-	relation, err := a.ws.CreateRelation(req.From, req.Type, req.To, opts...)
+	relation, err := a.entityManager.CreateRelation(r.Context(), req.From, req.Type, req.To, entitymanager.RelationOptions{
+		Properties: req.Properties,
+	})
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to create relation: "+err.Error())
 		return
@@ -532,21 +536,13 @@ func (a *App) handleAPIDeleteRelation(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	// Find the relation
-	var targetEdge *model.Relation
-	for _, edge := range a.State().Graph.OutgoingEdges(from) {
-		if edge.Type == relType && edge.To == to {
-			targetEdge = edge
-			break
-		}
-	}
-
-	if targetEdge == nil {
+	// Verify the relation exists
+	if _, err := a.store.GetRelation(r.Context(), from, relType, to); err != nil {
 		writeJSONError(w, http.StatusNotFound, "relation not found")
 		return
 	}
 
-	if err := a.ws.DeleteRelation(from, relType, to); err != nil {
+	if err := a.entityManager.DeleteRelation(r.Context(), from, relType, to); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete relation: "+err.Error())
 		return
 	}
@@ -579,61 +575,69 @@ func (a *App) handleAPIListRelations(w http.ResponseWriter, r *http.Request) {
 
 // listOutgoingRelations returns relations where the given entity is the source.
 func (a *App) listOutgoingRelations(from string) []APIRelation {
-	s := a.State()
-	edges := s.Graph.OutgoingEdges(from)
-	relations := make([]APIRelation, 0, len(edges))
-	for _, edge := range edges {
-		target, found := s.Graph.GetNode(edge.To)
-		if !found {
+	ctx := context.Background()
+	st := a.store
+	relations := make([]APIRelation, 0)
+	q := store.RelationQuery{EntityID: from, Direction: store.DirectionOutgoing}
+	for edge, err := range st.ListRelations(ctx, q) {
+		if err != nil {
+			break
+		}
+		target, err := st.GetEntity(ctx, edge.To)
+		if err != nil {
 			continue
 		}
-		rel := a.edgeToAPIRelation(edge, target, DirectionOutgoing, edge.To)
-		relations = append(relations, rel)
+		relations = append(relations, a.edgeToAPIRelation(edge, target, DirectionOutgoing, edge.To))
 	}
 	return relations
 }
 
 // listIncomingRelations returns relations where the given entity is the target.
 func (a *App) listIncomingRelations(to string) []APIRelation {
-	s := a.State()
-	edges := s.Graph.IncomingEdges(to)
-	relations := make([]APIRelation, 0, len(edges))
-	for _, edge := range edges {
-		source, found := s.Graph.GetNode(edge.From)
-		if !found {
+	ctx := context.Background()
+	st := a.store
+	relations := make([]APIRelation, 0)
+	q := store.RelationQuery{EntityID: to, Direction: store.DirectionIncoming}
+	for edge, err := range st.ListRelations(ctx, q) {
+		if err != nil {
+			break
+		}
+		source, err := st.GetEntity(ctx, edge.From)
+		if err != nil {
 			continue
 		}
-		rel := a.edgeToAPIRelation(edge, source, DirectionIncoming, edge.From)
-		relations = append(relations, rel)
+		relations = append(relations, a.edgeToAPIRelation(edge, source, DirectionIncoming, edge.From))
 	}
 	return relations
 }
 
 // listAllRelations returns all relations in the graph.
 func (a *App) listAllRelations() []APIRelation {
-	s := a.State()
-	edges := s.Graph.AllEdges()
-	relations := make([]APIRelation, 0, len(edges))
-	for _, edge := range edges {
-		target, found := s.Graph.GetNode(edge.To)
-		if !found {
+	ctx := context.Background()
+	st := a.store
+	relations := make([]APIRelation, 0)
+	for edge, err := range st.ListRelations(ctx, store.RelationQuery{}) {
+		if err != nil {
+			break
+		}
+		target, err := st.GetEntity(ctx, edge.To)
+		if err != nil {
 			continue
 		}
-		rel := a.edgeToAPIRelation(edge, target, DirectionOutgoing, edge.To)
-		relations = append(relations, rel)
+		relations = append(relations, a.edgeToAPIRelation(edge, target, DirectionOutgoing, edge.To))
 	}
 	return relations
 }
 
-// edgeToAPIRelation converts a graph edge to an APIRelation.
-func (a *App) edgeToAPIRelation(edge *model.Relation, relatedEntity *model.Entity, direction Direction, targetID string) APIRelation {
+// edgeToAPIRelation converts a store relation to an APIRelation.
+func (a *App) edgeToAPIRelation(edge *entity.Relation, relatedEntity *entity.Entity, direction Direction, targetID string) APIRelation {
 	rel := APIRelation{
 		Type:        edge.Type,
 		From:        edge.From,
 		To:          edge.To,
 		Direction:   direction,
 		TargetID:    targetID,
-		TargetTitle: a.entityDisplayTitle(relatedEntity),
+		TargetTitle: a.State().Meta.DisplayTitle(relatedEntity.ID, relatedEntity.Type, relatedEntity.Properties),
 		TargetType:  relatedEntity.Type,
 	}
 	if edge.Properties != nil {
@@ -787,10 +791,10 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 		if len(relDef.To) > 0 {
 			rd.TargetType = relDef.To[0]
 			for _, targetType := range relDef.To {
-				for _, e := range s.Graph.NodesByType(targetType) {
+				for _, e := range listFromStoreByTypes(a.Services(), []string{targetType}) {
 					rd.Targets = append(rd.Targets, APIRelationTarget{
 						ID:    e.ID,
-						Title: s.Meta.DisplayTitle(e),
+						Title: s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 					})
 				}
 			}

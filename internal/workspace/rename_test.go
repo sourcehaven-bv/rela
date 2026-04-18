@@ -3,11 +3,10 @@ package workspace
 import (
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
@@ -16,19 +15,46 @@ import (
 var renameTestMetamodelYAML = testutil.RenameTestMetamodelYAML()
 
 // renameTestEnv bundles everything a rename test typically needs. The
-// struct return shape avoids the awkward five-value tuple unpack and
-// the dogsled lint that goes with it.
+// struct return shape avoids the awkward tuple unpack and the dogsled
+// lint that goes with it.
 type renameTestEnv struct {
 	ws   *Workspace
-	repo *repository.Repository
 	meta *metamodel.Metamodel
-	g    *graph.Graph
 	fs   storage.FS
+	ctx  *project.Context
 }
 
-// setupRenameTestEnv builds a workspace + repo + graph + in-memory fs
-// for rename tests. It mirrors the setupTestEnv that previously lived
-// in internal/rename/rename_test.go, but constructs a real Workspace so
+// addEntity persists an entity into the workspace (the fsstore writes
+// it to disk).
+func (e renameTestEnv) addEntity(t *testing.T, ent *entity.Entity) {
+	t.Helper()
+	e.ws.SeedEntityForTest(ent)
+}
+
+// addRelation persists a relation into the workspace (the fsstore
+// writes it to disk).
+func (e renameTestEnv) addRelation(t *testing.T, rel *entity.Relation) {
+	t.Helper()
+	e.ws.SeedRelationForTest(rel)
+}
+
+// entityExists reports whether an entity file exists on disk.
+func (e renameTestEnv) entityExists(plural, id string) bool {
+	path := e.ctx.EntitiesDir + "/" + plural + "/" + id + ".md"
+	_, err := e.fs.Stat(path)
+	return err == nil
+}
+
+// relationExists reports whether a relation file exists on disk.
+func (e renameTestEnv) relationExists(from, to string) bool {
+	path := e.ctx.RelationsDir + "/" + from + "--addresses--" + to + ".md"
+	_, err := e.fs.Stat(path)
+	return err == nil
+}
+
+// setupRenameTestEnv builds a workspace + repo + in-memory fs for
+// rename tests. It mirrors the setupTestEnv that previously lived in
+// internal/rename/rename_test.go, but constructs a real Workspace so
 // the tests can call ws.Rename instead of the deleted free function.
 func setupRenameTestEnv(t *testing.T) renameTestEnv {
 	t.Helper()
@@ -39,7 +65,6 @@ func setupRenameTestEnv(t *testing.T) renameTestEnv {
 		Root:                 root,
 		MetamodelPath:        root + "/metamodel.yaml",
 		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
 		EntitiesDir:          root + "/entities",
 		RelationsDir:         root + "/relations",
 		TemplatesDir:         root + "/templates",
@@ -58,26 +83,24 @@ func setupRenameTestEnv(t *testing.T) renameTestEnv {
 		t.Fatalf("failed to parse test metamodel: %v", err)
 	}
 
-	repo := repository.New(fs, ctx)
-	g := graph.New()
-	ws := NewWithGraph(repo, meta, g)
+	ws, err := New(fs, ctx, NopScriptExecutor)
+	if err != nil {
+		t.Fatalf("failed to create workspace: %v", err)
+	}
 
-	return renameTestEnv{ws: ws, repo: repo, meta: meta, g: g, fs: fs}
+	return renameTestEnv{ws: ws, meta: meta, fs: fs, ctx: ctx}
 }
 
 func TestRename_NoRelations(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g := env.ws, env.repo, env.meta, env.g
+	ws := env.ws
 
 	oldID := "REQ-001"
 	newID := "REQ-100"
 	entity := testutil.NewEntity(oldID, "requirement").With("title", "Test Requirement").Build()
-	if err := repo.WriteEntity(entity, meta); err != nil {
-		t.Fatalf("WriteEntity() error = %v", err)
-	}
-	g.AddNode(entity)
+	env.addEntity(t, entity)
 
-	result, err := ws.Rename("requirement", oldID, newID, rename.Options{})
+	result, err := ws.rename("requirement", oldID, newID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -92,46 +115,37 @@ func TestRename_NoRelations(t *testing.T) {
 		t.Errorf("RelationsUpdated = %d, want 0", len(result.RelationsUpdated))
 	}
 
-	if _, ok := g.GetNode(oldID); ok {
-		t.Error("old ID should not exist in graph")
+	if _, ok := ws.GetEntity(oldID); ok {
+		t.Error("old ID should not exist in store")
 	}
-	if _, ok := g.GetNode(newID); !ok {
-		t.Error("new ID should exist in graph")
+	if _, ok := ws.GetEntity(newID); !ok {
+		t.Error("new ID should exist in store")
 	}
 
-	if _, err := repo.ReadEntity("requirement", newID, meta); err != nil {
+	if !env.entityExists("requirements", newID) {
 		t.Errorf("new entity file should exist: %v", err)
 	}
-	if _, err := repo.ReadEntity("requirement", oldID, meta); err == nil {
+	if env.entityExists("requirements", oldID) {
 		t.Error("old entity file should not exist")
 	}
 }
 
 func TestRename_OutgoingRelations(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g := env.ws, env.repo, env.meta, env.g
+	ws := env.ws
 
 	oldDecID := "DEC-001"
 	newDecID := "DEC-100"
 	req := testutil.NewEntity("REQ-001", "requirement").With("title", "Requirement").Build()
 	dec := testutil.NewEntity(oldDecID, "decision").With("title", "Decision").Build()
 
-	if err := repo.WriteEntity(req, meta); err != nil {
-		t.Fatalf("WriteEntity(req) error = %v", err)
-	}
-	if err := repo.WriteEntity(dec, meta); err != nil {
-		t.Fatalf("WriteEntity(dec) error = %v", err)
-	}
-	g.AddNode(req)
-	g.AddNode(dec)
+	env.addEntity(t, req)
+	env.addEntity(t, dec)
 
 	rel := testutil.NewRelation(dec.ID, "addresses", req.ID).Build()
-	if err := repo.WriteRelation(rel); err != nil {
-		t.Fatalf("WriteRelation() error = %v", err)
-	}
-	g.AddEdge(rel)
+	env.addRelation(t, rel)
 
-	result, err := ws.Rename("decision", oldDecID, newDecID, rename.Options{})
+	result, err := ws.rename("decision", oldDecID, newDecID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -140,7 +154,7 @@ func TestRename_OutgoingRelations(t *testing.T) {
 		t.Errorf("RelationsUpdated = %d, want 1", len(result.RelationsUpdated))
 	}
 
-	outgoing := g.OutgoingEdges(newDecID)
+	outgoing := ws.OutgoingRelations(newDecID)
 	if len(outgoing) != 1 {
 		t.Fatalf("new entity should have 1 outgoing edge, got %d", len(outgoing))
 	}
@@ -148,39 +162,30 @@ func TestRename_OutgoingRelations(t *testing.T) {
 		t.Errorf("outgoing edge = %s -> %s, want %s -> %s", outgoing[0].From, outgoing[0].To, newDecID, req.ID)
 	}
 
-	if _, err := repo.ReadRelation(newDecID, "addresses", req.ID); err != nil {
+	if !env.relationExists(newDecID, req.ID) {
 		t.Errorf("new relation file should exist: %v", err)
 	}
-	if _, err := repo.ReadRelation(oldDecID, "addresses", req.ID); err == nil {
+	if env.relationExists(oldDecID, req.ID) {
 		t.Error("old relation file should not exist")
 	}
 }
 
 func TestRename_IncomingRelations(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g := env.ws, env.repo, env.meta, env.g
+	ws := env.ws
 
 	oldReqID := "REQ-001"
 	newReqID := "REQ-100"
 	req := testutil.NewEntity(oldReqID, "requirement").With("title", "Requirement").Build()
 	dec := testutil.NewEntity("DEC-001", "decision").With("title", "Decision").Build()
 
-	if err := repo.WriteEntity(req, meta); err != nil {
-		t.Fatalf("WriteEntity(req) error = %v", err)
-	}
-	if err := repo.WriteEntity(dec, meta); err != nil {
-		t.Fatalf("WriteEntity(dec) error = %v", err)
-	}
-	g.AddNode(req)
-	g.AddNode(dec)
+	env.addEntity(t, req)
+	env.addEntity(t, dec)
 
 	rel := testutil.NewRelation(dec.ID, "addresses", req.ID).Build()
-	if err := repo.WriteRelation(rel); err != nil {
-		t.Fatalf("WriteRelation() error = %v", err)
-	}
-	g.AddEdge(rel)
+	env.addRelation(t, rel)
 
-	result, err := ws.Rename("requirement", oldReqID, newReqID, rename.Options{})
+	result, err := ws.rename("requirement", oldReqID, newReqID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -189,7 +194,7 @@ func TestRename_IncomingRelations(t *testing.T) {
 		t.Errorf("RelationsUpdated = %d, want 1", len(result.RelationsUpdated))
 	}
 
-	incoming := g.IncomingEdges(newReqID)
+	incoming := ws.IncomingRelations(newReqID)
 	if len(incoming) != 1 {
 		t.Fatalf("new entity should have 1 incoming edge, got %d", len(incoming))
 	}
@@ -197,17 +202,17 @@ func TestRename_IncomingRelations(t *testing.T) {
 		t.Errorf("incoming edge = %s -> %s, want %s -> %s", incoming[0].From, incoming[0].To, dec.ID, newReqID)
 	}
 
-	if _, err := repo.ReadRelation(dec.ID, "addresses", newReqID); err != nil {
-		t.Errorf("new relation file should exist: %v", err)
+	if !env.relationExists(dec.ID, newReqID) {
+		t.Error("new relation file should exist")
 	}
-	if _, err := repo.ReadRelation(dec.ID, "addresses", oldReqID); err == nil {
+	if env.relationExists(dec.ID, oldReqID) {
 		t.Error("old relation file should not exist")
 	}
 }
 
 func TestRename_BothIncomingAndOutgoing(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g := env.ws, env.repo, env.meta, env.g
+	ws := env.ws
 
 	oldID := "REQ-001"
 	newID := "REQ-100"
@@ -216,25 +221,16 @@ func TestRename_BothIncomingAndOutgoing(t *testing.T) {
 
 	for _, id := range []string{oldID, req2ID, req3ID} {
 		e := testutil.NewEntity(id, "requirement").With("title", "Requirement "+id).Build()
-		if err := repo.WriteEntity(e, meta); err != nil {
-			t.Fatalf("WriteEntity(%s) error = %v", id, err)
-		}
-		g.AddNode(e)
+		env.addEntity(t, e)
 	}
 
 	rel1 := testutil.NewRelation(oldID, "depends-on", req2ID).Build()
-	if err := repo.WriteRelation(rel1); err != nil {
-		t.Fatalf("WriteRelation(rel1) error = %v", err)
-	}
-	g.AddEdge(rel1)
+	env.addRelation(t, rel1)
 
 	rel2 := testutil.NewRelation(req3ID, "depends-on", oldID).Build()
-	if err := repo.WriteRelation(rel2); err != nil {
-		t.Fatalf("WriteRelation(rel2) error = %v", err)
-	}
-	g.AddEdge(rel2)
+	env.addRelation(t, rel2)
 
-	result, err := ws.Rename("requirement", oldID, newID, rename.Options{})
+	result, err := ws.rename("requirement", oldID, newID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -243,12 +239,12 @@ func TestRename_BothIncomingAndOutgoing(t *testing.T) {
 		t.Errorf("RelationsUpdated = %d, want 2", len(result.RelationsUpdated))
 	}
 
-	outgoing := g.OutgoingEdges(newID)
+	outgoing := ws.OutgoingRelations(newID)
 	if len(outgoing) != 1 || outgoing[0].To != req2ID {
 		t.Errorf("%s should have outgoing edge to %s", newID, req2ID)
 	}
 
-	incoming := g.IncomingEdges(newID)
+	incoming := ws.IncomingRelations(newID)
 	if len(incoming) != 1 || incoming[0].From != req3ID {
 		t.Errorf("%s should have incoming edge from %s", newID, req3ID)
 	}
@@ -256,23 +252,17 @@ func TestRename_BothIncomingAndOutgoing(t *testing.T) {
 
 func TestRename_SelfReferential(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g := env.ws, env.repo, env.meta, env.g
+	ws := env.ws
 
 	oldID := "REQ-001"
 	newID := "REQ-100"
 	req := testutil.NewEntity(oldID, "requirement").With("title", "Self-referential").Build()
-	if err := repo.WriteEntity(req, meta); err != nil {
-		t.Fatalf("WriteEntity() error = %v", err)
-	}
-	g.AddNode(req)
+	env.addEntity(t, req)
 
 	rel := testutil.NewRelation(req.ID, "depends-on", req.ID).Build()
-	if err := repo.WriteRelation(rel); err != nil {
-		t.Fatalf("WriteRelation() error = %v", err)
-	}
-	g.AddEdge(rel)
+	env.addRelation(t, rel)
 
-	result, err := ws.Rename("requirement", oldID, newID, rename.Options{})
+	result, err := ws.rename("requirement", oldID, newID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -281,7 +271,7 @@ func TestRename_SelfReferential(t *testing.T) {
 		t.Errorf("RelationsUpdated = %d, want 2", len(result.RelationsUpdated))
 	}
 
-	outgoing := g.OutgoingEdges(newID)
+	outgoing := ws.OutgoingRelations(newID)
 	if len(outgoing) != 1 {
 		t.Fatalf("should have 1 outgoing edge, got %d", len(outgoing))
 	}
@@ -292,29 +282,20 @@ func TestRename_SelfReferential(t *testing.T) {
 
 func TestRename_DryRun(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g := env.ws, env.repo, env.meta, env.g
+	ws := env.ws
 
 	oldReqID := "REQ-001"
 	newReqID := "REQ-100"
 	req := testutil.NewEntity(oldReqID, "requirement").With("title", "Requirement").Build()
 	dec := testutil.NewEntity("DEC-001", "decision").With("title", "Decision").Build()
 
-	if err := repo.WriteEntity(req, meta); err != nil {
-		t.Fatalf("WriteEntity(req) error = %v", err)
-	}
-	if err := repo.WriteEntity(dec, meta); err != nil {
-		t.Fatalf("WriteEntity(dec) error = %v", err)
-	}
-	g.AddNode(req)
-	g.AddNode(dec)
+	env.addEntity(t, req)
+	env.addEntity(t, dec)
 
 	rel := testutil.NewRelation(dec.ID, "addresses", req.ID).Build()
-	if err := repo.WriteRelation(rel); err != nil {
-		t.Fatalf("WriteRelation() error = %v", err)
-	}
-	g.AddEdge(rel)
+	env.addRelation(t, rel)
 
-	result, err := ws.Rename("requirement", oldReqID, newReqID, rename.Options{DryRun: true})
+	result, err := ws.rename("requirement", oldReqID, newReqID, rename.Options{DryRun: true})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
@@ -326,35 +307,29 @@ func TestRename_DryRun(t *testing.T) {
 		t.Errorf("RelationsUpdated = %d, want 1", len(result.RelationsUpdated))
 	}
 
-	if _, ok := g.GetNode(oldReqID); !ok {
-		t.Error("old ID should still exist in graph (dry run)")
+	if _, ok := ws.GetEntity(oldReqID); !ok {
+		t.Error("old ID should still exist in store (dry run)")
 	}
-	if _, ok := g.GetNode(newReqID); ok {
-		t.Error("new ID should not exist in graph (dry run)")
+	if _, ok := ws.GetEntity(newReqID); ok {
+		t.Error("new ID should not exist in store (dry run)")
 	}
 
-	if _, readErr := repo.ReadEntity("requirement", oldReqID, meta); readErr != nil {
+	if !env.entityExists("requirements", oldReqID) {
 		t.Error("old entity file should still exist (dry run)")
 	}
 }
 
 func TestRename_ErrorNewIDExists(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g := env.ws, env.repo, env.meta, env.g
+	ws := env.ws
 
 	req1 := testutil.NewEntity("REQ-001", "requirement").With("title", "First").Build()
 	req2 := testutil.NewEntity("REQ-002", "requirement").With("title", "Second").Build()
 
-	if err := repo.WriteEntity(req1, meta); err != nil {
-		t.Fatalf("WriteEntity(req1) error = %v", err)
-	}
-	if err := repo.WriteEntity(req2, meta); err != nil {
-		t.Fatalf("WriteEntity(req2) error = %v", err)
-	}
-	g.AddNode(req1)
-	g.AddNode(req2)
+	env.addEntity(t, req1)
+	env.addEntity(t, req2)
 
-	_, err := ws.Rename("requirement", req1.ID, req2.ID, rename.Options{})
+	_, err := ws.rename("requirement", req1.ID, req2.ID, rename.Options{})
 	if err == nil {
 		t.Fatal("Rename() should fail when new ID already exists")
 	}
@@ -367,7 +342,7 @@ func TestRename_ErrorNewIDExists(t *testing.T) {
 func TestRename_ErrorOldIDNotFound(t *testing.T) {
 	ws := setupRenameTestEnv(t).ws
 
-	_, err := ws.Rename("requirement", "REQ-999", "REQ-100", rename.Options{})
+	_, err := ws.rename("requirement", "REQ-999", "REQ-100", rename.Options{})
 	if err == nil {
 		t.Fatal("Rename() should fail when old ID doesn't exist")
 	}
@@ -375,15 +350,12 @@ func TestRename_ErrorOldIDNotFound(t *testing.T) {
 
 func TestRename_ErrorInvalidNewID(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g := env.ws, env.repo, env.meta, env.g
+	ws := env.ws
 
 	req := testutil.NewEntity("REQ-001", "requirement").With("title", "Test").Build()
-	if err := repo.WriteEntity(req, meta); err != nil {
-		t.Fatalf("WriteEntity() error = %v", err)
-	}
-	g.AddNode(req)
+	env.addEntity(t, req)
 
-	_, err := ws.Rename("requirement", "REQ-001", "../evil", rename.Options{})
+	_, err := ws.rename("requirement", "REQ-001", "../evil", rename.Options{})
 	if err == nil {
 		t.Fatal("Rename() should fail for invalid new ID")
 	}
@@ -391,15 +363,12 @@ func TestRename_ErrorInvalidNewID(t *testing.T) {
 
 func TestRename_ErrorTypeMismatch(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g := env.ws, env.repo, env.meta, env.g
+	ws := env.ws
 
 	req := testutil.NewEntity("REQ-001", "requirement").With("title", "Test").Build()
-	if err := repo.WriteEntity(req, meta); err != nil {
-		t.Fatalf("WriteEntity() error = %v", err)
-	}
-	g.AddNode(req)
+	env.addEntity(t, req)
 
-	_, err := ws.Rename("decision", "REQ-001", "REQ-100", rename.Options{})
+	_, err := ws.rename("decision", "REQ-001", "REQ-100", rename.Options{})
 	if err == nil {
 		t.Fatal("Rename() should fail when entity type doesn't match")
 	}
@@ -407,7 +376,7 @@ func TestRename_ErrorTypeMismatch(t *testing.T) {
 
 func TestRename_PreservesContent(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g := env.ws, env.repo, env.meta, env.g
+	ws := env.ws
 
 	oldID := "REQ-001"
 	newID := "REQ-100"
@@ -418,19 +387,16 @@ func TestRename_PreservesContent(t *testing.T) {
 		With("status", expectedStatus).
 		WithContent("# Description\n\nThis is the detailed description.\n").
 		Build()
-	if err := repo.WriteEntity(req, meta); err != nil {
-		t.Fatalf("WriteEntity() error = %v", err)
-	}
-	g.AddNode(req)
+	env.addEntity(t, req)
 
-	_, err := ws.Rename("requirement", oldID, newID, rename.Options{})
+	_, err := ws.rename("requirement", oldID, newID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}
 
-	newEntity, err := repo.ReadEntity("requirement", newID, meta)
-	if err != nil {
-		t.Fatalf("ReadEntity() error = %v", err)
+	newEntity, ok := ws.GetEntity(newID)
+	if !ok {
+		t.Fatalf("GetEntity(%q) not found in store", newID)
 	}
 
 	if newEntity.GetString("title") != expectedTitle {
@@ -446,17 +412,14 @@ func TestRename_PreservesContent(t *testing.T) {
 
 func TestRename_NoTempFilesLeft(t *testing.T) {
 	env := setupRenameTestEnv(t)
-	ws, repo, meta, g, fs := env.ws, env.repo, env.meta, env.g, env.fs
+	ws, fs := env.ws, env.fs
 
 	oldID := "REQ-001"
 	newID := "REQ-100"
 	req := testutil.NewEntity(oldID, "requirement").With("title", "Test").Build()
-	if err := repo.WriteEntity(req, meta); err != nil {
-		t.Fatalf("WriteEntity() error = %v", err)
-	}
-	g.AddNode(req)
+	env.addEntity(t, req)
 
-	_, err := ws.Rename("requirement", oldID, newID, rename.Options{})
+	_, err := ws.rename("requirement", oldID, newID, rename.Options{})
 	if err != nil {
 		t.Fatalf("Rename() error = %v", err)
 	}

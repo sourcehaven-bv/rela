@@ -1,30 +1,60 @@
 package workspace
 
 import (
+	"context"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
+// seedStore builds a fresh memstore and applies the given seed function.
+// Tests use it in place of the old graph.AddNode/AddEdge pattern.
+func seedStore(t *testing.T, seed func(store.Store)) store.Store {
+	t.Helper()
+	s := memstore.New()
+	if seed != nil {
+		seed(s)
+	}
+	return s
+}
+
+// addEntity is a tiny helper that panics on error so tests stay terse.
+func addEntity(s store.Store, id, entityType string, props map[string]interface{}) {
+	ctx := context.Background()
+	if err := s.CreateEntity(ctx, &entity.Entity{
+		ID:         id,
+		Type:       entityType,
+		Properties: props,
+	}); err != nil {
+		panic(err)
+	}
+}
+
+// addRelation is a tiny helper that panics on error so tests stay terse.
+func addRelation(s store.Store, from, relType, to string) {
+	ctx := context.Background()
+	if _, err := s.CreateRelation(ctx, from, relType, to, nil); err != nil {
+		panic(err)
+	}
+}
+
 func TestFindOrphansWithScope(t *testing.T) {
-	g := graph.New()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"doc": {Label: "Document"},
 		},
 	}
 
-	// Create entities
-	g.AddNode(&model.Entity{ID: "DOC-001", Type: "doc"})
-	g.AddNode(&model.Entity{ID: "DOC-002", Type: "doc"})
-	g.AddNode(&model.Entity{ID: "DOC-003", Type: "doc"})
-
-	// Link DOC-001 to DOC-002
-	g.AddEdge(&model.Relation{From: "DOC-001", Type: "refs", To: "DOC-002"})
-
-	ws := NewForTest(g, meta)
+	s := seedStore(t, func(s store.Store) {
+		addEntity(s, "DOC-001", "doc", nil)
+		addEntity(s, "DOC-002", "doc", nil)
+		addEntity(s, "DOC-003", "doc", nil)
+		addRelation(s, "DOC-001", "refs", "DOC-002")
+	})
+	ws := NewForTest(meta, WithTestStore(s))
 
 	t.Run("no scope", func(t *testing.T) {
 		orphans := ws.FindOrphansWithScope(AnalyzeOptions{})
@@ -57,30 +87,18 @@ func TestFindOrphansWithScope(t *testing.T) {
 }
 
 func TestFindDuplicates(t *testing.T) {
-	g := graph.New()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"doc": {Label: "Document"},
 		},
 	}
 
-	g.AddNode(&model.Entity{
-		ID:         "DOC-001",
-		Type:       "doc",
-		Properties: map[string]interface{}{"title": "Test Document"},
+	s := seedStore(t, func(s store.Store) {
+		addEntity(s, "DOC-001", "doc", map[string]interface{}{"title": "Test Document"})
+		addEntity(s, "DOC-002", "doc", map[string]interface{}{"title": "test document"}) // Same normalized
+		addEntity(s, "DOC-003", "doc", map[string]interface{}{"title": "Different"})
 	})
-	g.AddNode(&model.Entity{
-		ID:         "DOC-002",
-		Type:       "doc",
-		Properties: map[string]interface{}{"title": "test document"}, // Same normalized
-	})
-	g.AddNode(&model.Entity{
-		ID:         "DOC-003",
-		Type:       "doc",
-		Properties: map[string]interface{}{"title": "Different"},
-	})
-
-	ws := NewForTest(g, meta)
+	ws := NewForTest(meta, WithTestStore(s))
 
 	t.Run("finds duplicates", func(t *testing.T) {
 		dups := ws.FindDuplicates(AnalyzeOptions{})
@@ -103,7 +121,6 @@ func TestFindDuplicates(t *testing.T) {
 }
 
 func TestCheckCardinality(t *testing.T) {
-	g := graph.New()
 	minOne := 1
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -120,14 +137,14 @@ func TestCheckCardinality(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&model.Entity{ID: "TKT-001", Type: "ticket"})
-	g.AddNode(&model.Entity{ID: "TKT-002", Type: "ticket"})
-	g.AddNode(&model.Entity{ID: "CON-001", Type: "concept"})
-
-	// Only TKT-001 has the required relation
-	g.AddEdge(&model.Relation{From: "TKT-001", Type: "affects", To: "CON-001"})
-
-	ws := NewForTest(g, meta)
+	s := seedStore(t, func(s store.Store) {
+		addEntity(s, "TKT-001", "ticket", nil)
+		addEntity(s, "TKT-002", "ticket", nil)
+		addEntity(s, "CON-001", "concept", nil)
+		// Only TKT-001 has the required relation
+		addRelation(s, "TKT-001", "affects", "CON-001")
+	})
+	ws := NewForTest(meta, WithTestStore(s))
 
 	t.Run("finds violations", func(t *testing.T) {
 		violations := ws.CheckCardinality(AnalyzeOptions{})
@@ -154,59 +171,7 @@ func TestCheckCardinality(t *testing.T) {
 	})
 }
 
-func TestValidateProperties(t *testing.T) {
-	g := graph.New()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {
-				Label:      "Ticket",
-				IDPrefixes: []string{"TKT-"},
-				Properties: map[string]metamodel.PropertyDef{
-					"status": {
-						Type:     "enum",
-						Required: true,
-						Values:   []string{"open", "closed"},
-					},
-				},
-			},
-		},
-	}
-
-	g.AddNode(&model.Entity{
-		ID:         "TKT-001",
-		Type:       "ticket",
-		Properties: map[string]interface{}{"status": "open"},
-	})
-	g.AddNode(&model.Entity{
-		ID:         "TKT-002",
-		Type:       "ticket",
-		Properties: map[string]interface{}{"status": "invalid"},
-	})
-
-	ws := NewForTest(g, meta)
-
-	t.Run("finds property errors", func(t *testing.T) {
-		errs := ws.ValidateProperties(AnalyzeOptions{})
-		if len(errs) != 1 {
-			t.Errorf("got %d entities with errors, want 1", len(errs))
-		}
-		if len(errs) > 0 && errs[0].EntityID != "TKT-002" {
-			t.Errorf("error entity = %s, want TKT-002", errs[0].EntityID)
-		}
-	})
-
-	t.Run("scope filters errors", func(t *testing.T) {
-		errs := ws.ValidateProperties(AnalyzeOptions{
-			Scope: map[string]bool{"TKT-001": true},
-		})
-		if len(errs) != 0 {
-			t.Errorf("got %d entities with errors, want 0", len(errs))
-		}
-	})
-}
-
 func TestAnalyzeAll(t *testing.T) {
-	g := graph.New()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"doc": {Label: "Document", IDPrefixes: []string{"DOC-"}},
@@ -214,9 +179,10 @@ func TestAnalyzeAll(t *testing.T) {
 	}
 
 	// Create one orphan
-	g.AddNode(&model.Entity{ID: "DOC-001", Type: "doc"})
-
-	ws := NewForTest(g, meta)
+	s := seedStore(t, func(s store.Store) {
+		addEntity(s, "DOC-001", "doc", nil)
+	})
+	ws := NewForTest(meta, WithTestStore(s))
 
 	summary := ws.AnalyzeAll(AnalyzeOptions{})
 	if summary.Orphans != 1 {
@@ -224,8 +190,104 @@ func TestAnalyzeAll(t *testing.T) {
 	}
 }
 
+// TestRunValidations exercises the custom-rule validation pipeline.
+// Moved here from internal/cli/validate_test.go so the correctness
+// check lives with the workspace logic it covers.
+func TestRunValidations(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Label:    "Ticket",
+				IDPrefix: "TKT-",
+				Properties: map[string]metamodel.PropertyDef{
+					"status":   {Type: "string"},
+					"assignee": {Type: "string"},
+				},
+			},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "in-progress-needs-assignee",
+				Description: "In-progress tickets must have an assignee",
+				EntityType:  "ticket",
+				When:        []string{"status=in-progress"},
+				Then:        []string{"assignee!="},
+				Severity:    "error",
+			},
+		},
+	}
+	meta.InitAliases()
+
+	s := seedStore(t, func(s store.Store) {
+		addEntity(s, "TKT-001", "ticket", map[string]interface{}{"status": "in-progress"})
+	})
+	ws := NewForTest(meta, WithTestStore(s))
+
+	violations := ws.RunValidations(AnalyzeOptions{})
+	if len(violations) != 1 {
+		t.Fatalf("got %d violations, want 1", len(violations))
+	}
+	if violations[0].EntityID != "TKT-001" {
+		t.Errorf("violation entity = %s, want TKT-001", violations[0].EntityID)
+	}
+}
+
+// TestRunValidationsFiltered confirms the filter-by-rule-name and
+// filter-by-entity-type paths. Moved here from the CLI tests.
+func TestRunValidationsFiltered(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Label:      "Ticket",
+				IDPrefix:   "TKT-",
+				Properties: map[string]metamodel.PropertyDef{"status": {Type: "string"}},
+			},
+			"bug": {
+				Label:      "Bug",
+				IDPrefix:   "BUG-",
+				Properties: map[string]metamodel.PropertyDef{"status": {Type: "string"}},
+			},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:       "ticket-rule",
+				EntityType: "ticket",
+				When:       []string{"status=bad"},
+				Then:       []string{"status!=bad"},
+				Severity:   "error",
+			},
+			{
+				Name:       "bug-rule",
+				EntityType: "bug",
+				When:       []string{"status=bad"},
+				Then:       []string{"status!=bad"},
+				Severity:   "error",
+			},
+		},
+	}
+	meta.InitAliases()
+
+	s := seedStore(t, func(s store.Store) {
+		addEntity(s, "TKT-001", "ticket", map[string]interface{}{"status": "bad"})
+		addEntity(s, "BUG-001", "bug", map[string]interface{}{"status": "bad"})
+	})
+	ws := NewForTest(meta, WithTestStore(s))
+
+	// Filter by rule name.
+	violations := ws.RunValidationsFiltered(AnalyzeOptions{}, []ValidationFilter{{RuleName: "ticket-rule"}})
+	if len(violations) != 1 || violations[0].RuleName != "ticket-rule" {
+		t.Errorf("rule-name filter: got %#v, want one ticket-rule violation", violations)
+	}
+
+	// Filter by entity type.
+	violations = ws.RunValidationsFiltered(AnalyzeOptions{}, []ValidationFilter{{EntityType: "bug"}})
+	if len(violations) != 1 || violations[0].RuleName != "bug-rule" {
+		t.Errorf("entity-type filter: got %#v, want one bug-rule violation", violations)
+	}
+}
+
 func TestFilterByScope(t *testing.T) {
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "A"},
 		{ID: "B"},
 		{ID: "C"},
@@ -251,51 +313,4 @@ func TestFilterByScope(t *testing.T) {
 			t.Errorf("got %d entities, want 0", len(result))
 		}
 	})
-}
-
-func TestInScope(t *testing.T) {
-	t.Run("nil scope returns true", func(t *testing.T) {
-		if !inScope("any", nil) {
-			t.Error("inScope(any, nil) = false, want true")
-		}
-	})
-
-	t.Run("in scope returns true", func(t *testing.T) {
-		if !inScope("A", map[string]bool{"A": true}) {
-			t.Error("inScope(A, {A:true}) = false, want true")
-		}
-	})
-
-	t.Run("not in scope returns false", func(t *testing.T) {
-		if inScope("B", map[string]bool{"A": true}) {
-			t.Error("inScope(B, {A:true}) = true, want false")
-		}
-	})
-
-	t.Run("key exists with false value returns true", func(t *testing.T) {
-		// This tests that we check key existence, not value
-		if !inScope("A", map[string]bool{"A": false}) {
-			t.Error("inScope(A, {A:false}) = false, want true")
-		}
-	})
-}
-
-func TestNormalizeTitle(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"Test Document", "test document"},
-		{"  Spaces  ", "spaces"},
-		{"Multiple   Spaces", "multiple spaces"},
-		{"UPPERCASE", "uppercase"},
-		{"", ""},
-	}
-
-	for _, tt := range tests {
-		got := normalizeTitle(tt.input)
-		if got != tt.want {
-			t.Errorf("normalizeTitle(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
 }

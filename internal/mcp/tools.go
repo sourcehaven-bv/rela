@@ -37,7 +37,6 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(toolListRelationTypes(), s.handleListRelationTypes)
 
 	// Utility tools
-	s.mcp.AddTool(toolRefresh(), s.handleRefresh)
 	s.mcp.AddTool(toolExport(), s.handleExport)
 
 	// Lua scripting tools
@@ -213,12 +212,6 @@ func toolListEntityTypes() mcp.Tool {
 func toolListRelationTypes() mcp.Tool {
 	return mcp.NewTool("list_relation_types",
 		mcp.WithDescription("List available relation types with their constraints"),
-	)
-}
-
-func toolRefresh() mcp.Tool {
-	return mcp.NewTool("refresh",
-		mcp.WithDescription("Force re-sync the graph from disk (reload all entities and relations)"),
 	)
 }
 

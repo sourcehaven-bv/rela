@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,15 +15,24 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/git"
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
+	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/state"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/templating"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -39,7 +49,6 @@ import (
 type AppState struct {
 	Cfg          *Config
 	Meta         *metamodel.Metamodel
-	Graph        *graph.Graph
 	StyleMap     map[string]map[string]string
 	StyledTypes  map[string]bool
 	UserDefaults *UserDefaults
@@ -80,7 +89,27 @@ const userPaletteFile = "palette.yaml"
 // readers — readers go through state.Load(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 type App struct {
-	ws *workspace.Workspace
+	// Primitives — immutable after NewApp.
+	fs    storage.FS
+	paths *project.Context
+
+	// Core services. Some are passed in (store, entityManager, searcher,
+	// startWatching are genuinely workspace-owned); the rest are
+	// constructed from primitives inside NewApp.
+	store         store.Store
+	entityManager entitymanager.EntityManager
+	searcher      search.Searcher
+	tracer        tracer.Tracer
+	validator     validator.Validator
+	templater     templating.Templater
+	cfgLoader     config.Loader
+	kv            state.KV
+	luaServices   lua.Services
+	startWatching func(workspace.WatchOptions) error
+
+	// documents renders and caches documents. Created once in NewApp so
+	// singleflight deduplication is stable across requests.
+	documents *documentService
 
 	// state holds the current reloadable snapshot. Readers: a.State().
 	// Writers: onReload rebuilds and publishes a new state after file
@@ -88,8 +117,7 @@ type App struct {
 	state atomic.Pointer[AppState]
 
 	// writeMu serializes mutation handlers (CreateEntity, UpdateEntity,
-	// etc.) against each other and against the reload path inside
-	// Workspace. Readers never take it.
+	// etc.) against each other. Readers never take it.
 	writeMu sync.Mutex
 
 	// gitOps provides git operations when git is enabled. Set once in
@@ -99,10 +127,23 @@ type App struct {
 	// broker delivers SSE events to connected browsers for live-reload.
 	broker *eventBroker
 
+	// stopConfigWatch releases the data-entry.yaml subscription. Set by
+	// StartWatching; nil when watching is not active.
+	stopConfigWatch func()
+
 	// security holds the configured Host/Origin allowlists. Set via
 	// SetSecurityConfig before NewRouter; nil disables the middlewares
 	// (only sensible in unit tests where no HTTP layer is exercised).
 	security *security
+}
+
+// StopWatching releases dataentry-specific watchers (config, etc.).
+// The workspace's own watcher is stopped separately by its owner.
+func (a *App) StopWatching() {
+	if a.stopConfigWatch != nil {
+		a.stopConfigWatch()
+		a.stopConfigWatch = nil
+	}
 }
 
 // State returns the current reloadable snapshot. Handlers should call
@@ -117,9 +158,6 @@ func (a *App) Cfg() *Config { return a.State().Cfg }
 
 // Meta returns the current metamodel (convenience accessor).
 func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
-
-// Graph returns the current in-memory graph (convenience accessor).
-func (a *App) Graph() *graph.Graph { return a.State().Graph }
 
 // mutateState atomically updates the published AppState. It takes
 // writeMu, builds a shallow copy of the current snapshot, runs the
@@ -149,15 +187,44 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 	return nil
 }
 
-// NewApp creates and initializes an App using the given workspace.
-func NewApp(ws *workspace.Workspace) (*App, error) {
+// NewApp creates and initializes an App. Callers pass in the primitives
+// (fs, paths, meta, store) plus the services that are genuinely
+// workspace-owned and cannot be reconstructed from primitives:
+// entityManager (runs workspace's automation engine), searcher (reads
+// the live Bleve index maintained by the workspace), and startWatching
+// (a lifecycle hook). Everything else — state.KV, config.Loader,
+// tracer, templater, validator, lua.Services — is constructed locally.
+func NewApp(
+	fs storage.FS,
+	paths *project.Context,
+	meta *metamodel.Metamodel,
+	st store.Store,
+	em entitymanager.EntityManager,
+	searcher search.Searcher,
+	startWatching func(workspace.WatchOptions) error,
+) (*App, error) {
+	// Construct reconstructible services from the primitives.
+	cfgLoader := config.NewFSLoader(fs, paths.Root)
+	kv := state.NewFSKV(fs, paths.CacheDir)
+	trc := tracer.New(st)
+	templater := templating.NewFSTemplater(fs, paths)
+	luaSvc := lua.Services{
+		Store:       st,
+		Manager:     em,
+		Tracer:      trc,
+		Searcher:    searcher,
+		Meta:        meta,
+		ProjectRoot: paths.Root,
+	}
+	val := validator.New(st, meta, luaSvc, paths.Root)
+
 	// Load data-entry config from project root
-	cfgData, err := ws.ReadProjectFile(ConfigFile)
+	cfgData, err := cfgLoader.Load(context.Background(), ConfigFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
 	// Check for deprecated syntax that needs migration
-	configPath := filepath.Join(ws.Paths().Root, ConfigFile)
+	configPath := filepath.Join(paths.Root, ConfigFile)
 	detections := migration.DetectBytes(cfgData, migration.FileTypeDataEntry)
 	if len(detections) > 0 {
 		return nil, &migration.Error{
@@ -171,10 +238,6 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		return nil, fmt.Errorf("parsing %s: %w", ConfigFile, unmarshalErr)
 	}
 
-	snap := ws.Snapshot()
-	meta := snap.Meta()
-	g := snap.Graph()
-
 	// Validate config against metamodel
 	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
@@ -186,19 +249,33 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 		if action.Script == "" {
 			continue
 		}
-		if err := script.CheckActionScriptExists(ws.Paths().Root, action.Script); err != nil {
+		if err := script.CheckActionScriptExists(paths.Root, action.Script); err != nil {
 			return nil, fmt.Errorf("invalid %s: action %q: %w", ConfigFile, id, err)
 		}
 	}
 
-	slog.Info("loaded project graph", "entities", g.NodeCount(), "relations", g.EdgeCount())
+	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{})
+	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})
+	slog.Info("loaded project", "entities", entCount, "relations", relCount)
 
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(&cfg, meta)
 
 	app := &App{
-		ws:     ws,
-		broker: newEventBroker(),
+		fs:            fs,
+		paths:         paths,
+		store:         st,
+		entityManager: em,
+		searcher:      searcher,
+		tracer:        trc,
+		validator:     val,
+		templater:     templater,
+		cfgLoader:     cfgLoader,
+		kv:            kv,
+		luaServices:   luaSvc,
+		startWatching: startWatching,
+		broker:        newEventBroker(),
+		documents:     newDocumentService(st, kv, paths.Root),
 	}
 
 	userDefaults := app.loadUserDefaults()
@@ -216,7 +293,6 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 	app.state.Store(&AppState{
 		Cfg:          &cfg,
 		Meta:         meta,
-		Graph:        g,
 		StyleMap:     styleMap,
 		StyledTypes:  styledTypes,
 		UserDefaults: userDefaults,
@@ -230,8 +306,8 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 	})
 
 	// Initialize git ops if enabled and repo is a git repository
-	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(ws.Paths().Root) {
-		app.gitOps = git.NewOps(ws.Paths().Root, *cfg.Git)
+	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(paths.Root) {
+		app.gitOps = git.NewOps(paths.Root, *cfg.Git)
 		slog.Info("git sync enabled", "mode", cfg.Git.Mode)
 	}
 
@@ -271,7 +347,7 @@ func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
 	s := a.State()
 	if list, ok := s.Cfg.Lists[nav.List]; ok {
 		item.EntityType = list.EntityType
-		entities := s.Graph.NodesByType(list.EntityType)
+		entities := listFromStoreByTypes(a.Services(), []string{list.EntityType})
 		entities = applyFilters(entities, list.Filters)
 		item.Count = len(entities)
 	}
@@ -313,42 +389,42 @@ func (a *App) navElements(activeList string) []NavElement {
 // loadUIState reads .rela/ui-state.json and returns the persisted state.
 // Returns an empty UIState if the file doesn't exist or can't be parsed.
 func (a *App) loadUIState() UIState {
-	state := UIState{CollapsedGroups: make(map[string]bool)}
-	if a.ws == nil {
-		return state
+	st := UIState{CollapsedGroups: make(map[string]bool)}
+	if a.kv == nil {
+		return st
 	}
-	data, err := a.ws.ReadCacheFile(uiStateFile)
+	data, err := a.kv.Get(context.Background(), uiStateFile)
 	if err != nil {
-		return state
+		return st
 	}
-	if err := json.Unmarshal(data, &state); err != nil {
+	if err := json.Unmarshal(data, &st); err != nil {
 		return UIState{CollapsedGroups: make(map[string]bool)}
 	}
-	if state.CollapsedGroups == nil {
-		state.CollapsedGroups = make(map[string]bool)
+	if st.CollapsedGroups == nil {
+		st.CollapsedGroups = make(map[string]bool)
 	}
-	return state
+	return st
 }
 
 // saveUIState writes the UI state to .rela/ui-state.json.
-func (a *App) saveUIState(state UIState) error {
-	if a.ws == nil {
+func (a *App) saveUIState(st UIState) error {
+	if a.kv == nil {
 		return nil
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
+	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
-	return a.ws.WriteCacheFile(uiStateFile, data)
+	return a.kv.Put(context.Background(), uiStateFile, data)
 }
 
 // loadUserDefaults reads .rela/user-defaults.yaml and returns the parsed defaults.
 // Returns nil if the file doesn't exist or can't be parsed.
 func (a *App) loadUserDefaults() *UserDefaults {
-	if a.ws == nil {
+	if a.kv == nil {
 		return nil
 	}
-	data, err := a.ws.ReadCacheFile(userDefaultsFile)
+	data, err := a.kv.Get(context.Background(), userDefaultsFile)
 	if err != nil {
 		return nil
 	}
@@ -361,14 +437,14 @@ func (a *App) loadUserDefaults() *UserDefaults {
 
 // saveUserDefaults writes the user defaults to .rela/user-defaults.yaml.
 func (a *App) saveUserDefaults(ud *UserDefaults) error {
-	if a.ws == nil {
+	if a.kv == nil {
 		return nil
 	}
 	data, err := yaml.Marshal(ud)
 	if err != nil {
 		return err
 	}
-	return a.ws.WriteCacheFile(userDefaultsFile, data)
+	return a.kv.Put(context.Background(), userDefaultsFile, data)
 }
 
 // coverage-ignore: requires running workspace, tested via e2e
@@ -385,10 +461,10 @@ func (a *App) saveUserDefaults(ud *UserDefaults) error {
 //
 //nolint:nilnil // see comment above
 func (a *App) loadUserPalette() (*PaletteConfig, error) {
-	if a.ws == nil {
+	if a.kv == nil {
 		return nil, nil
 	}
-	data, err := a.ws.ReadCacheFile(userPaletteFile)
+	data, err := a.kv.Get(context.Background(), userPaletteFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -404,14 +480,14 @@ func (a *App) loadUserPalette() (*PaletteConfig, error) {
 
 // saveUserPalette writes the user palette to .rela/palette.yaml.
 func (a *App) saveUserPalette(p *PaletteConfig) error {
-	if a.ws == nil {
+	if a.kv == nil {
 		return nil
 	}
 	data, err := yaml.Marshal(p)
 	if err != nil {
 		return err
 	}
-	return a.ws.WriteCacheFile(userPaletteFile, data)
+	return a.kv.Put(context.Background(), userPaletteFile, data)
 }
 
 // firstNavTarget returns the first navigable item from the navigation config,
@@ -479,11 +555,6 @@ func (a *App) createFormForType(entityType string) string {
 		}
 	}
 	return fallback
-}
-
-// entityDisplayTitle returns the display title for an entity.
-func (a *App) entityDisplayTitle(e *model.Entity) string {
-	return a.State().Meta.DisplayTitle(e)
 }
 
 // resolveLinkTarget resolves a link configuration value to a URL.
@@ -573,7 +644,7 @@ func (a *App) ProjectName() string {
 
 // ProjectRoot returns the root directory of the loaded project.
 func (a *App) ProjectRoot() string {
-	return a.ws.Paths().Root
+	return a.paths.Root
 }
 
 // colorToCSSClass maps a color name from config to a CSS class.
@@ -620,13 +691,4 @@ func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]
 	}
 
 	return sm, st
-}
-
-// templatesForType returns all entity templates for a type, or nil on error.
-func (a *App) templatesForType(entityType string) []*model.EntityTemplate {
-	templates, err := a.ws.DiscoverEntityTemplates(entityType)
-	if err != nil {
-		return nil
-	}
-	return templates
 }

@@ -10,35 +10,48 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func (s *Server) handleAnalyzeOrphans(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	entityType := request.GetString("type", "")
 
-	snap := s.ws.Snapshot()
-	g := snap.Graph()
-	orphans := g.FindOrphans()
+	orphanIDs, _ := s.ws.Tracer().FindOrphans(ctx)
+
+	st := s.ws.Store()
+	resolved := ""
 	if entityType != "" {
-		resolved := s.resolveType(entityType)
-		var filtered []*model.Entity
-		for _, o := range orphans {
-			if o.Type == resolved {
-				filtered = append(filtered, o)
-			}
+		resolved = s.resolveType(entityType)
+	}
+
+	type orphanInfo struct {
+		ID     string `json:"id"`
+		Type   string `json:"type"`
+		Title  string `json:"title,omitempty"`
+		Status string `json:"status,omitempty"`
+	}
+	orphans := make([]orphanInfo, 0)
+	for _, id := range orphanIDs {
+		e, err := st.GetEntity(ctx, id)
+		if err != nil {
+			continue
 		}
-		orphans = filtered
+		if resolved != "" && e.Type != resolved {
+			continue
+		}
+		orphans = append(orphans, orphanInfo{
+			ID: e.ID, Type: e.Type, Title: e.Title(), Status: e.Status(),
+		})
 	}
 
 	if len(orphans) == 0 {
 		return mcp.NewToolResultText("No orphan entities found"), nil
 	}
 
-	sortEntitiesByID(orphans)
-	text, err := convertEntitiesList(orphans)
+	text, err := marshalJSON(orphans)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -55,10 +68,9 @@ type cardinalityViolation struct {
 func (s *Server) handleAnalyzeCardinality(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	snap := s.ws.Snapshot()
 	var violations []cardinalityViolation
 
-	for relName, relDef := range snap.Meta().Relations {
+	for relName, relDef := range s.ws.Meta().Relations {
 		violations = append(violations, s.checkCardinalityForRelation(relName, relDef)...)
 	}
 
@@ -79,11 +91,9 @@ func (s *Server) checkCardinalityForRelation(
 ) []cardinalityViolation {
 	var violations []cardinalityViolation
 
-	// Check outgoing constraints (from-side: outgoing edges from source types)
 	violations = append(violations,
 		s.checkCardinalityBound(relName, relDef.From, relDef.MinOutgoing, relDef.MaxOutgoing, true)...)
 
-	// Check incoming constraints (to-side: incoming edges to target types)
 	violations = append(violations,
 		s.checkCardinalityBound(relName, relDef.To, relDef.MinIncoming, relDef.MaxIncoming, false)...)
 
@@ -95,17 +105,21 @@ func (s *Server) checkCardinalityBound(
 ) []cardinalityViolation {
 	var violations []cardinalityViolation
 
-	snap := s.ws.Snapshot()
-	g := snap.Graph()
+	ctx := context.Background()
+	st := s.ws.Store()
 	for _, entityType := range entityTypes {
-		for _, e := range g.NodesByType(entityType) {
-			var edges []*model.Relation
-			if outgoing {
-				edges = g.OutgoingEdges(e.ID)
-			} else {
-				edges = g.IncomingEdges(e.ID)
+		for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
+			if err != nil {
+				break
 			}
-			count := countEdgesByType(edges, relName)
+
+			dir := store.DirectionOutgoing
+			if !outgoing {
+				dir = store.DirectionIncoming
+			}
+			count, _ := st.CountRelations(ctx, store.RelationQuery{
+				EntityID: e.ID, Type: relName, Direction: dir,
+			})
 
 			direction := ""
 			if !outgoing {
@@ -133,7 +147,7 @@ func (s *Server) checkCardinalityBound(
 }
 
 func (s *Server) handleAnalyzeProperties(
-	_ context.Context, _ mcp.CallToolRequest,
+	ctx context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	type entityErrors struct {
 		EntityID   string   `json:"entity_id"`
@@ -142,33 +156,36 @@ func (s *Server) handleAnalyzeProperties(
 	}
 
 	type relationErrors struct {
-		RelationKey  string   `json:"relation_key"` // from--type--to
+		RelationKey  string   `json:"relation_key"`
 		RelationType string   `json:"relation_type"`
 		Errors       []string `json:"errors"`
 	}
 
-	snap := s.ws.Snapshot()
-	meta := snap.Meta()
+	meta := s.ws.Meta()
+	st := s.ws.Store()
 	var allEntityErrors []entityErrors
 
 	// Validate entity properties
-	for _, entity := range snap.Graph().AllNodes() {
-		errs := meta.ValidateEntity(entity)
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+		if err != nil {
+			break
+		}
+		errs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
 		if len(errs) > 0 {
 			errStrings := make([]string, len(errs))
-			for i, e := range errs {
-				errStrings[i] = e.Error()
+			for i, ve := range errs {
+				errStrings[i] = ve.Error()
 			}
 			allEntityErrors = append(allEntityErrors, entityErrors{
-				EntityID:   entity.ID,
-				EntityType: entity.Type,
+				EntityID:   e.ID,
+				EntityType: e.Type,
 				Errors:     errStrings,
 			})
 		}
 	}
 
 	// Validate relation properties
-	relErrors := s.ws.ValidateRelationProperties()
+	relErrors := schema.ValidateRelationProperties(s.ws.Store(), s.ws.Meta())
 	allRelationErrors := make([]relationErrors, 0, len(relErrors))
 	for _, rpe := range relErrors {
 		errStrings := make([]string, len(rpe.Errors))
@@ -189,7 +206,6 @@ func (s *Server) handleAnalyzeProperties(
 		return mcp.NewToolResultText("All entity and relation properties are valid"), nil
 	}
 
-	// Build combined result
 	result := make(map[string]interface{})
 	errorCount := 0
 
@@ -218,10 +234,9 @@ func (s *Server) handleAnalyzeProperties(
 }
 
 func (s *Server) handleAnalyzeValidations(
-	_ context.Context, _ mcp.CallToolRequest,
+	ctx context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	snap := s.ws.Snapshot()
-	rules := snap.Meta().Validations
+	rules := s.ws.Meta().Validations
 	if len(rules) == 0 {
 		return mcp.NewToolResultText("No custom validation rules defined in metamodel"), nil
 	}
@@ -232,14 +247,14 @@ func (s *Server) handleAnalyzeValidations(
 		Violations []string `json:"violations"`
 	}
 
+	validator := s.ws.Validator()
 	var results []ruleResult
 	for _, rule := range rules {
-		violations := s.checkValidationRule(rule)
-		if len(violations) > 0 {
-			ids := make([]string, len(violations))
-			for i, v := range violations {
-				ids[i] = v.ID
-			}
+		ids, err := validator.CheckRule(ctx, rule)
+		if err != nil {
+			continue
+		}
+		if len(ids) > 0 {
 			results = append(results, ruleResult{
 				Rule:       rule.Description,
 				Severity:   rule.GetSeverity(),
@@ -266,12 +281,10 @@ func (s *Server) handleAnalyzeSchema(
 ) (*mcp.CallToolResult, error) {
 	threshold := request.GetInt("threshold", 0)
 
-	// Load optional config files
 	dataEntry := s.loadDataEntryConfig()
 
-	// Run analysis
-	snap := s.ws.Snapshot()
-	analysis := schema.Analyze(snap.Meta(), snap.Graph(), dataEntry, threshold)
+	counter := &schema.StoreCounter{Store: s.ws.Store()}
+	analysis := schema.Analyze(s.ws.Meta(), counter, dataEntry, threshold)
 
 	if !analysis.HasIssues() {
 		return mcp.NewToolResultText("All schema types are in use"), nil
@@ -298,7 +311,7 @@ func (s *Server) handleAnalyzeSchema(
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.
 func (s *Server) loadDataEntryConfig() *dataentryconfig.Config {
-	data, err := s.ws.ReadProjectFile(dataentryconfig.ConfigFile)
+	data, err := s.ws.Config().Load(context.Background(), dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil
 	}

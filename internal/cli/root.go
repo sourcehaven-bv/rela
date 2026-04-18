@@ -90,7 +90,7 @@ and maintain semantic relationships between them.`,
 
 		// Convenience aliases for read-only commands
 		projectCtx = ws.Paths()
-		meta = ws.Snapshot().Meta()
+		meta = ws.Meta()
 
 		// Set up output writer
 		out = output.New(output.Format(outputFormat))
@@ -155,14 +155,6 @@ func wrapDiscoverError(err error) error {
 		return fmt.Errorf("no project found: run 'rela init' to create one")
 	}
 	return err
-}
-
-// saveCache saves the graph to the cache file.
-func saveCache() error {
-	if ws != nil {
-		return ws.SaveCache()
-	}
-	return nil
 }
 
 // resolveEntityType delegates to workspace.

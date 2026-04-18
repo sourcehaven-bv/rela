@@ -15,7 +15,7 @@ import (
 func newMdTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	var sb strings.Builder
-	return New(nil, nil, "", &sb)
+	return New(Services{}, &sb)
 }
 
 func TestMdParse(t *testing.T) {
@@ -1308,7 +1308,7 @@ func TestMdIntegrationWithEntity(t *testing.T) {
 	// Use the full test workspace to test integration with entities
 	ws := testWorkspace(t)
 	var sb strings.Builder
-	rt := New(ws, testMeta(), "/project", &sb)
+	rt := New(ws.services("/project"), &sb)
 	defer rt.Close()
 
 	code := `

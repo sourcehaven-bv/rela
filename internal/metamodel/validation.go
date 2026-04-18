@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // ValidationErrorType indicates the kind of validation error.
@@ -73,29 +71,28 @@ func (m *Metamodel) ValidateProperties(props map[string]interface{}, schema Prop
 	return errs
 }
 
-// ValidateEntity validates an entity against the metamodel.
-// Returns a slice of *ValidationError for structured error handling.
-func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
+// ValidateEntity validates an entity's type, properties, and ID prefix against the metamodel.
+func (m *Metamodel) ValidateEntity(id, entityType string, properties map[string]interface{}) []*ValidationError {
 	var errs []*ValidationError
 
-	def, ok := m.GetEntityDef(entity.Type)
+	def, ok := m.GetEntityDef(entityType)
 	if !ok {
 		errs = append(errs, &ValidationError{
 			Type:    ValidationErrorUnknownType,
-			Message: fmt.Sprintf("unknown entity type: %s", entity.Type),
+			Message: fmt.Sprintf("unknown entity type: %s", entityType),
 		})
 		return errs
 	}
 
 	// Validate properties using shared function
-	errs = append(errs, m.ValidateProperties(entity.Properties, def)...)
+	errs = append(errs, m.ValidateProperties(properties, def)...)
 
 	// Validate ID matches prefix
 	prefixes := def.GetIDPrefixes()
 	if len(prefixes) > 0 {
 		matched := false
 		for _, prefix := range prefixes {
-			if len(entity.ID) >= len(prefix) && entity.ID[:len(prefix)] == prefix {
+			if len(id) >= len(prefix) && id[:len(prefix)] == prefix {
 				matched = true
 				break
 			}
@@ -103,7 +100,7 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
 		if !matched {
 			errs = append(errs, &ValidationError{
 				Type:    ValidationErrorIDPrefix,
-				Message: fmt.Sprintf("entity ID %s does not match any prefix for type %s: %v", entity.ID, entity.Type, prefixes),
+				Message: fmt.Sprintf("entity ID %s does not match any prefix for type %s: %v", id, entityType, prefixes),
 			})
 		}
 	}
@@ -111,15 +108,11 @@ func (m *Metamodel) ValidateEntity(entity *model.Entity) []*ValidationError {
 	return errs
 }
 
-// ValidateRelation validates that a relation is allowed by the metamodel
-func (m *Metamodel) ValidateRelationEntities(relationType string, from, to *model.Entity) error {
-	return m.ValidateRelation(relationType, from.Type, to.Type)
-}
-
 // ValidateRelationProperties validates a relation's properties against the metamodel.
-// Returns nil if the relation type has no properties defined.
-func (m *Metamodel) ValidateRelationProperties(rel *model.Relation) []*ValidationError {
-	def, ok := m.Relations[rel.Type]
+func (m *Metamodel) ValidateRelationProperties(
+	relationType string, properties map[string]interface{},
+) []*ValidationError {
+	def, ok := m.Relations[relationType]
 	if !ok {
 		return nil // Unknown type - handled elsewhere
 	}
@@ -128,7 +121,7 @@ func (m *Metamodel) ValidateRelationProperties(rel *model.Relation) []*Validatio
 		return nil // No properties defined for this relation type
 	}
 
-	return m.ValidateProperties(rel.Properties, &def)
+	return m.ValidateProperties(properties, &def)
 }
 
 // ValidatePropertyValue validates a single property value against its definition.

@@ -7,22 +7,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // testEntities holds references to entities created by testGraph.
 // This avoids the need to look up entities by ID in tests.
 type testEntities struct {
-	ticket1   *model.Entity
-	ticket2   *model.Entity
-	component *model.Entity
+	ticket1   *entity.Entity
+	ticket2   *entity.Entity
+	component *entity.Entity
 }
 
 // testMeta returns a metamodel suitable for testing app-level functions.
@@ -123,16 +120,18 @@ func testConfig() *Config {
 	}
 }
 
-// testGraph returns a graph with some test entities and the entities themselves.
-func testGraph(meta *metamodel.Metamodel) (*graph.Graph, testEntities) {
-	g := graph.New()
+// testGraph returns a fixture with some test entities and the entities themselves.
+// The name is retained for continuity with older tests; the return type is
+// a fixture, not *graph.Graph.
+func testGraph(meta *metamodel.Metamodel) (*fixture, testEntities) {
+	f := newFixture()
 	t1 := testutil.EntityFor(meta, "ticket").ID("TKT-001").With("title", "First Ticket").With("status", "open").With("priority", "high").Build()
 	t2 := testutil.EntityFor(meta, "ticket").ID("TKT-002").With("title", "Second Ticket").With("status", "closed").With("priority", "low").Build()
 	c1 := testutil.EntityFor(meta, "component").ID("CMP-001").With("name", "Frontend").Build()
-	g.AddNode(t1)
-	g.AddNode(t2)
-	g.AddNode(c1)
-	return g, testEntities{ticket1: t1, ticket2: t2, component: c1}
+	f.AddNode(t1)
+	f.AddNode(t2)
+	f.AddNode(c1)
+	return f, testEntities{ticket1: t1, ticket2: t2, component: c1}
 }
 
 // testAppInstance creates a minimal App for testing app-level methods.
@@ -372,7 +371,7 @@ func TestEntityDisplayTitle(t *testing.T) {
 	app, entities := testAppInstance()
 
 	t.Run("returns primary property value", func(t *testing.T) {
-		got := app.entityDisplayTitle(entities.ticket1)
+		got := app.Meta().DisplayTitle(entities.ticket1.ID, entities.ticket1.Type, entities.ticket1.Properties)
 		if got != "First Ticket" {
 			t.Errorf("expected 'First Ticket', got %q", got)
 		}
@@ -380,7 +379,7 @@ func TestEntityDisplayTitle(t *testing.T) {
 
 	t.Run("falls back to ID for unknown type", func(t *testing.T) {
 		e := testutil.Entity("unknown").ID("UNK-001").Build()
-		got := app.entityDisplayTitle(e)
+		got := app.Meta().DisplayTitle(e.ID, e.Type, e.Properties)
 		if got != "UNK-001" {
 			t.Errorf("expected 'UNK-001', got %q", got)
 		}
@@ -388,7 +387,7 @@ func TestEntityDisplayTitle(t *testing.T) {
 
 	t.Run("falls back to ID when primary property is empty", func(t *testing.T) {
 		e := testutil.Entity("ticket").ID("TKT-099").With("title", "").Build()
-		got := app.entityDisplayTitle(e)
+		got := app.Meta().DisplayTitle(e.ID, e.Type, e.Properties)
 		if got != "TKT-099" {
 			t.Errorf("expected 'TKT-099', got %q", got)
 		}
@@ -706,10 +705,9 @@ func TestUIStateLoadSave(t *testing.T) {
 		CacheDir: "/project/.rela",
 	}
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	repo := repository.New(fs, ctx)
 
 	app, _ := testAppInstance()
-	app.ws = workspace.NewWithGraph(repo, app.Meta(), app.Graph())
+	bindRepoWithFS(app, fs, ctx)
 
 	t.Run("load returns defaults when file missing", func(t *testing.T) {
 		state := app.loadUIState()
@@ -731,7 +729,7 @@ func TestUIStateLoadSave(t *testing.T) {
 
 	t.Run("UIState overrides config default", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.ws = workspace.NewWithGraph(repo, app2.Meta(), app2.Graph())
+		bindRepoWithFS(app2, fs, ctx)
 		app2.Cfg().Navigation = []NavigationEntry{
 			{
 				Group:     "Tickets",
@@ -755,9 +753,9 @@ func TestUIStateLoadSave(t *testing.T) {
 		}
 	})
 
-	t.Run("nil ws is safe", func(t *testing.T) {
+	t.Run("nil kv is safe", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.ws = nil
+		app2.kv = nil
 		state := app2.loadUIState()
 		if len(state.CollapsedGroups) != 0 {
 			t.Error("expected empty state")
@@ -775,10 +773,9 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 		CacheDir: "/project/.rela",
 	}
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	repo := repository.New(fs, ctx)
 
 	app, _ := testAppInstance()
-	app.ws = workspace.NewWithGraph(repo, app.Meta(), app.Graph())
+	bindRepoWithFS(app, fs, ctx)
 
 	t.Run("load returns nil when file missing", func(t *testing.T) {
 		ud := app.loadUserDefaults()
@@ -823,9 +820,9 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 		}
 	})
 
-	t.Run("nil ws is safe", func(t *testing.T) {
+	t.Run("nil kv is safe", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.ws = nil
+		app2.kv = nil
 		ud := app2.loadUserDefaults()
 		if ud != nil {
 			t.Errorf("expected nil, got %+v", ud)

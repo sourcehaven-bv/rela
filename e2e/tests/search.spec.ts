@@ -50,7 +50,7 @@ test.describe('Search', () => {
 
       await searchPage.navigateToSearch();
 
-      await searchPage.search('feature');
+      await searchPage.search('User');
 
       await expect(searchPage.resultsCount).toBeVisible();
     });
@@ -78,10 +78,11 @@ test.describe('Search', () => {
       // Should show filter chip
       await searchPage.expectFilterActive('Entity Type');
 
-      // Search
-      await searchPage.search('');
+      // Search for a common term that exists in features
+      await searchPage.search('User');
 
-      // Results should all be features
+      // The matching feature should appear in results
+      await searchPage.expectResultContains('User Authentication');
       const resultCount = await searchPage.getResultCount();
       expect(resultCount).toBeGreaterThan(0);
     });
@@ -170,16 +171,10 @@ test.describe('Search', () => {
 
       await searchPage.navigateToSearch();
 
-      await searchPage.search('feature');
+      await searchPage.searchAndEnter('User');
 
-      // Tab into results
-      await appPage.keyboard.press('Tab');
-
-      // Navigate down
-      await appPage.keyboard.press('ArrowDown');
-
-      // First result should be selected
-      await expect(searchPage.resultItems.first()).toHaveClass(/selected/);
+      // Enters results mode and selects the first result
+      await searchPage.focusFirstResult();
     });
 
     test('can open result with Enter', async ({ appPage }) => {
@@ -187,14 +182,12 @@ test.describe('Search', () => {
 
       await searchPage.navigateToSearch();
 
-      await searchPage.search('Authentication');
+      await searchPage.searchAndEnter('Authentication');
 
-      // Tab into results and select first
-      await appPage.keyboard.press('Tab');
-      await appPage.keyboard.press('ArrowDown');
+      // Enters results mode and selects the first result
+      await searchPage.focusFirstResult();
 
-      // Press Enter to open
-      await appPage.keyboard.press('Enter');
+      await searchPage.openSelectedResult();
 
       await expect(appPage).not.toHaveURL(/\/search/);
     });
@@ -203,11 +196,7 @@ test.describe('Search', () => {
       const searchPage = new SearchPage(appPage);
 
       await searchPage.navigateToSearch();
-
-      // Click outside input first
-      await appPage.locator('body').click();
-
-      await appPage.keyboard.press('f');
+      await searchPage.pressFilterHotkey();
 
       await expect(searchPage.filterMenu).toBeVisible();
     });
@@ -225,10 +214,9 @@ test.describe('Search', () => {
     });
 
     test('can initialize from URL query', async ({ appPage }) => {
-      // Navigate directly with query param
-      await appPage.goto(appPage.url().replace(/\/search.*/, '/search?q=Authentication'));
-
       const searchPage = new SearchPage(appPage);
+
+      await searchPage.navigateToSearchWithQuery('Authentication');
 
       // Results should be shown
       await searchPage.expectResultContains('Authentication');

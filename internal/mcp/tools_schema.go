@@ -8,13 +8,13 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func (s *Server) handleGetMetamodel(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	snap := s.ws.Snapshot()
-	meta := snap.Meta()
+	meta := s.ws.Meta()
 	result := map[string]interface{}{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
@@ -34,7 +34,7 @@ func (s *Server) handleGetMetamodel(
 }
 
 func (s *Server) handleListEntityTypes(
-	_ context.Context, _ mcp.CallToolRequest,
+	ctx context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	type entityTypeInfo struct {
 		Name       string                           `json:"name"`
@@ -45,9 +45,8 @@ func (s *Server) handleListEntityTypes(
 		Count      int                              `json:"count"`
 	}
 
-	snap := s.ws.Snapshot()
-	meta := snap.Meta()
-	g := snap.Graph()
+	meta := s.ws.Meta()
+	st := s.ws.Store()
 	types := meta.EntityTypes()
 	natsort.Strings(types)
 
@@ -57,13 +56,14 @@ func (s *Server) handleListEntityTypes(
 		if def == nil {
 			continue
 		}
+		count, _ := st.CountEntities(ctx, store.EntityQuery{Type: name})
 		result = append(result, entityTypeInfo{
 			Name:       name,
 			Label:      def.GetLabel(),
 			IDType:     def.GetIDType(),
 			IDPrefixes: def.GetIDPrefixes(),
 			Properties: def.Properties,
-			Count:      len(g.NodesByType(name)),
+			Count:      count,
 		})
 	}
 
@@ -75,7 +75,7 @@ func (s *Server) handleListEntityTypes(
 }
 
 func (s *Server) handleListRelationTypes(
-	_ context.Context, _ mcp.CallToolRequest,
+	ctx context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	type relationTypeInfo struct {
 		Name        string   `json:"name"`
@@ -87,9 +87,8 @@ func (s *Server) handleListRelationTypes(
 		Count       int      `json:"count"`
 	}
 
-	snap := s.ws.Snapshot()
-	meta := snap.Meta()
-	g := snap.Graph()
+	meta := s.ws.Meta()
+	st := s.ws.Store()
 	types := meta.RelationTypes()
 	natsort.Strings(types)
 
@@ -99,13 +98,14 @@ func (s *Server) handleListRelationTypes(
 		if def == nil {
 			continue
 		}
+		count, _ := st.CountRelations(ctx, store.RelationQuery{Type: name})
 		info := relationTypeInfo{
 			Name:        name,
 			Label:       def.GetLabel(),
 			From:        def.GetFrom(),
 			To:          def.GetTo(),
 			Description: def.GetDescription(),
-			Count:       len(g.RelationsOfType(name)),
+			Count:       count,
 		}
 		if def.Inverse != nil {
 			info.Inverse = def.Inverse.GetID()

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -29,16 +31,19 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
+		ctx := context.Background()
+		st := ws.Store()
 
-		entity, ok := ws.GetEntity(entityID)
-		if !ok {
+		entity, err := st.GetEntity(ctx, entityID)
+		if err != nil {
 			return &entityNotFoundError{ID: entityID}
 		}
 
 		// Check for relations
-		incoming := ws.IncomingRelations(entityID)
-		outgoing := ws.OutgoingRelations(entityID)
-		totalRelations := len(incoming) + len(outgoing)
+		totalRelations, _ := st.CountRelations(ctx, store.RelationQuery{
+			EntityID:  entityID,
+			Direction: store.DirectionBoth,
+		})
 
 		if totalRelations > 0 && !deleteCascade {
 			return fmt.Errorf("entity %s has %d relation(s); use --cascade to delete them too", entityID, totalRelations)
@@ -53,9 +58,9 @@ Examples:
 			fmt.Print("? [y/N] ")
 
 			reader := bufio.NewReader(os.Stdin)
-			response, err := reader.ReadString('\n')
-			if err != nil {
-				return fmt.Errorf("failed to read input: %w", err)
+			response, readErr := reader.ReadString('\n')
+			if readErr != nil {
+				return fmt.Errorf("failed to read input: %w", readErr)
 			}
 			response = strings.TrimSpace(strings.ToLower(response))
 
@@ -65,7 +70,7 @@ Examples:
 			}
 		}
 
-		result, err := ws.DeleteEntity(entity.Type, entityID, deleteCascade)
+		result, err := ws.EntityManager().DeleteEntity(ctx, entityID, deleteCascade)
 		if err != nil {
 			if errors.Is(err, workspace.ErrHasRelations) {
 				return fmt.Errorf("entity %s has relation(s); use --cascade to delete them too", entityID)
@@ -74,8 +79,8 @@ Examples:
 		}
 
 		out.WriteSuccess("Deleted %s", entityID)
-		if deleteCascade && result.RelationsDeleted > 0 {
-			out.WriteMessage("  Also deleted %d relation(s)", result.RelationsDeleted)
+		if deleteCascade && len(result.DeletedRelations) > 0 {
+			out.WriteMessage("  Also deleted %d relation(s)", len(result.DeletedRelations))
 		}
 
 		return nil

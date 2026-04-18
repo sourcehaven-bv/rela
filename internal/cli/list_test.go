@@ -4,18 +4,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
+// list_test.go only covers CLI-specific behavior: entity-type resolution
+// via aliases/plurals. Pure graph iteration (ListByType / AllNodes /
+// empty-store) is covered by the store conformance suite in
+// internal/store/storetest/query.go and does not need to be duplicated
+// here.
+
 func setupListTestEnv() {
-	g = graph.New()
 	meta = nil // Will be set by individual tests
 	ws = nil   // Will be set by individual tests after meta is set
 	out = output.New(output.FormatTable)
@@ -24,32 +25,21 @@ func setupListTestEnv() {
 		EntitiesDir:   "/tmp/test-project/entities",
 		RelationsDir:  "/tmp/test-project/relations",
 		CacheDir:      "/tmp/test-project/.rela",
-		CachePath:     "/tmp/test-project/.rela/cache.json",
 		MetamodelPath: "/tmp/test-project/metamodel.yaml",
 	}
 }
 
-// setupWorkspaceFromMeta creates a workspace backed by a MemFS so that
-// resolveEntityType (which now delegates to ws) works in tests.
+// setupWorkspaceFromMeta wires ws/g to an empty store-backed workspace
+// using the given metamodel. Kept as a helper so tests that only need
+// resolveEntityType-style checks stay concise.
 func setupWorkspaceFromMeta(t *testing.T, m *metamodel.Metamodel) {
 	t.Helper()
-	fs := storage.NewMemFS()
-	ctx := &project.Context{
-		Root: "/tmp/test-project", MetamodelPath: "/tmp/test-project/metamodel.yaml",
-		CacheDir: "/tmp/test-project/.rela", CachePath: "/tmp/test-project/.rela/cache.json",
-		EntitiesDir: "/tmp/test-project/entities", RelationsDir: "/tmp/test-project/relations",
-	}
-	_ = fs.MkdirAll(ctx.EntitiesDir, 0o755)
-	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
-	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	repo := repository.New(fs, ctx)
-	ws = workspace.NewWithGraph(repo, m, g)
+	applySeeder(newStoreSeeder(m))
 }
 
 func TestResolveEntityTypeWithAlias(t *testing.T) {
 	setupListTestEnv()
 
-	// Use shared alias metamodel
 	var err error
 	meta, err = metamodel.Parse([]byte(testutil.AliasMetamodelYAML()))
 	if err != nil {
@@ -63,36 +53,12 @@ func TestResolveEntityTypeWithAlias(t *testing.T) {
 		wantType  string
 		wantError bool
 	}{
-		{
-			name:     "canonical name",
-			input:    "requirement",
-			wantType: "requirement",
-		},
-		{
-			name:     "alias req",
-			input:    "req",
-			wantType: "requirement",
-		},
-		{
-			name:     "plural form",
-			input:    "requirements",
-			wantType: "requirement",
-		},
-		{
-			name:     "alias ctrl",
-			input:    "ctrl",
-			wantType: "control",
-		},
-		{
-			name:     "plural controls",
-			input:    "controls",
-			wantType: "control",
-		},
-		{
-			name:      "unknown type",
-			input:     "unknown",
-			wantError: true,
-		},
+		{name: "canonical name", input: "requirement", wantType: "requirement"},
+		{name: "alias req", input: "req", wantType: "requirement"},
+		{name: "plural form", input: "requirements", wantType: "requirement"},
+		{name: "alias ctrl", input: "ctrl", wantType: "control"},
+		{name: "plural controls", input: "controls", wantType: "control"},
+		{name: "unknown type", input: "unknown", wantError: true},
 	}
 
 	for _, tt := range tests {
@@ -115,47 +81,11 @@ func TestResolveEntityTypeWithAlias(t *testing.T) {
 	}
 }
 
-func TestListCommandWithAliases(t *testing.T) {
-	setupListTestEnv()
-
-	// Use shared alias metamodel (has requirement with 'req' alias)
-	var err error
-	meta, err = metamodel.Parse([]byte(testutil.AliasMetamodelYAML()))
-	if err != nil {
-		t.Fatalf("failed to parse metamodel: %v", err)
-	}
-	ws = workspace.NewForTest(g, meta)
-
-	// Add some test entities to the graph
-	g.AddNode(testutil.EntityFor(meta, "requirement").
-		ID("REQ-001").
-		Build())
-
-	// Test using alias directly
-	resolved, def, err := resolveEntityType("req")
-	if err != nil {
-		t.Fatalf("resolveEntityType(\"req\") failed: %v", err)
-	}
-	if resolved != "requirement" {
-		t.Errorf("resolveEntityType(\"req\") = %q, want %q", resolved, "requirement")
-	}
-	if def == nil {
-		t.Error("resolveEntityType(\"req\") returned nil definition")
-	}
-
-	// Verify we can get entities by the resolved type
-	entities := g.NodesByType(resolved)
-	if len(entities) != 1 {
-		t.Errorf("NodesByType(%q) = %d entities, want 1", resolved, len(entities))
-	}
-}
-
 // TestListTypeParsingEdgeCases tests edge cases for entity type resolution
-// including entity types and aliases that end in 's' (like "bus", "autobus")
+// including entity types and aliases that end in 's' (like "bus", "autobus").
 func TestListTypeParsingEdgeCases(t *testing.T) {
 	setupListTestEnv()
 
-	// Build metamodel with entity type ending in 's' (edge case)
 	meta = testutil.NewMetamodel().
 		DefineEntity("requirement").
 		Label("Requirement").
@@ -174,54 +104,22 @@ func TestListTypeParsingEdgeCases(t *testing.T) {
 		Build()
 	setupWorkspaceFromMeta(t, meta)
 
-	// Test cases that the list command should handle correctly
-	// The fix ensures that alias resolution happens BEFORE plural stripping
 	tests := []struct {
 		name      string
 		input     string
 		wantType  string
 		wantError bool
 	}{
-		{
-			name:     "canonical name requirement",
-			input:    "requirement",
-			wantType: "requirement",
-		},
-		{
-			name:     "alias req",
-			input:    "req",
-			wantType: "requirement",
-		},
-		{
-			name:     "plural requirements",
-			input:    "requirements",
-			wantType: "requirement",
-		},
-		// Edge case: entity type that ends in 's' (bus)
-		// This was the bug - "bus" was being incorrectly stripped to "bu"
-		{
-			name:     "canonical name bus (ends in s)",
-			input:    "bus",
-			wantType: "bus",
-		},
-		// Edge case: alias that ends in 's' (autobus)
-		// This was also a bug - "autobus" was being stripped to "autobu"
-		{
-			name:     "alias autobus (ends in s)",
-			input:    "autobus",
-			wantType: "bus",
-		},
-		// Plural of bus should still work
-		{
-			name:     "plural buses",
-			input:    "buses",
-			wantType: "bus",
-		},
+		{name: "canonical name requirement", input: "requirement", wantType: "requirement"},
+		{name: "alias req", input: "req", wantType: "requirement"},
+		{name: "plural requirements", input: "requirements", wantType: "requirement"},
+		{name: "canonical name bus (ends in s)", input: "bus", wantType: "bus"},
+		{name: "alias autobus (ends in s)", input: "autobus", wantType: "bus"},
+		{name: "plural buses", input: "buses", wantType: "bus"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Call resolveEntityType directly - this is what list.go now does
 			resolved, _, err := resolveEntityType(tt.input)
 			if tt.wantError {
 				if err == nil {
@@ -240,69 +138,15 @@ func TestListTypeParsingEdgeCases(t *testing.T) {
 	}
 }
 
-func TestListAllEntities(t *testing.T) {
-	setupListTestEnv()
-
-	meta = metamodel.DefaultMetamodel()
-	ws = workspace.NewForTest(g, meta)
-
-	// Add entities of different types
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
-	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").Build())
-
-	// List all entities (no type filter)
-	entities := g.AllNodes()
-	if len(entities) != 2 {
-		t.Errorf("AllNodes() = %d entities, want 2", len(entities))
-	}
-}
-
-func TestListEmptyGraph(t *testing.T) {
-	setupListTestEnv()
-	meta = metamodel.DefaultMetamodel()
-	ws = workspace.NewForTest(g, meta)
-
-	// Empty graph
-	entities := g.AllNodes()
-	if len(entities) != 0 {
-		t.Errorf("AllNodes() = %d entities, want 0", len(entities))
-	}
-}
-
-func TestListByType(t *testing.T) {
-	setupListTestEnv()
-	meta = metamodel.DefaultMetamodel()
-	ws = workspace.NewForTest(g, meta)
-
-	// Add entities
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").Build())
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-002").Build())
-	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").Build())
-
-	// List only requirements
-	entities := g.NodesByType("requirement")
-	if len(entities) != 2 {
-		t.Errorf("NodesByType(requirement) = %d entities, want 2", len(entities))
-	}
-
-	// Verify they are requirements
-	for _, e := range entities {
-		if e.Type != "requirement" {
-			t.Errorf("expected type 'requirement', got %s", e.Type)
-		}
-	}
-}
-
 func TestListCommandWithUnknownType(t *testing.T) {
 	setupListTestEnv()
 	meta = metamodel.DefaultMetamodel()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	_, _, err := resolveEntityType("nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown entity type")
 	}
-
 	if !strings.Contains(err.Error(), "unknown entity type") {
 		t.Errorf("expected 'unknown entity type' in error, got: %v", err)
 	}

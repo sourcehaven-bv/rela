@@ -4,8 +4,8 @@
 package automation
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 // Automation defines a trigger-action rule (internal representation).
@@ -82,13 +82,13 @@ type Event struct {
 	Type EventType
 
 	// Entity is the affected entity.
-	Entity *model.Entity
+	Entity *entity.Entity
 
 	// OldEntity is the previous state (nil for Created events).
-	OldEntity *model.Entity
+	OldEntity *entity.Entity
 
 	// Relation is the affected relation (for RelationCreated/RelationRemoved events).
-	Relation *model.Relation
+	Relation *entity.Relation
 }
 
 // EventType identifies the kind of change.
@@ -130,7 +130,7 @@ type Result struct {
 	PropertiesSet map[string]string
 
 	// RelationsToCreate contains relations that should be created.
-	RelationsToCreate []*model.Relation
+	RelationsToCreate []*entity.Relation
 
 	// EntitiesToCreate contains entities that should be created.
 	EntitiesToCreate []EntityToCreate

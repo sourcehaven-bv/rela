@@ -3,7 +3,7 @@
 package conflict
 
 import (
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // Side represents which side of a conflict to use.
@@ -35,9 +35,9 @@ type ConflictedFile struct {
 
 // ParsedSide represents one side of a conflict, parsed into structured data.
 type ParsedSide struct {
-	Entity   *model.Entity   // Parsed entity (for entity files)
-	Relation *model.Relation // Parsed relation (for relation files)
-	Raw      string          // Raw content of this side
+	Entity   *entity.Entity   // Parsed entity (for entity files)
+	Relation *entity.Relation // Parsed relation (for relation files)
+	Raw      string           // Raw content of this side
 }
 
 // PropertyDiff represents the difference in a single property between sides.

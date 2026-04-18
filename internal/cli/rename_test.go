@@ -6,12 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -21,14 +18,12 @@ func setupRenameTestEnv(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	g = graph.New()
 	out = output.New(output.FormatTable)
 	projectCtx = &project.Context{
 		Root:                 dir,
 		EntitiesDir:          filepath.Join(dir, "entities"),
 		RelationsDir:         filepath.Join(dir, "relations"),
 		CacheDir:             filepath.Join(dir, ".rela"),
-		CachePath:            filepath.Join(dir, ".rela", "cache.json"),
 		MetamodelPath:        filepath.Join(dir, "metamodel.yaml"),
 		TemplatesDir:         filepath.Join(dir, "templates"),
 		EntityTemplatesDir:   filepath.Join(dir, "templates", "entities"),
@@ -51,10 +46,12 @@ func setupRenameTestEnv(t *testing.T) string {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
 
-	// Set up workspace for FS access
+	// Set up workspace backed by a real filesystem so the rename
+	// command can modify files on disk. Use NewWithGraph rather than
+	// workspace.New here because SimpleMetamodelYAML deliberately uses
+	// pre-migration syntax, which workspace.New rejects.
 	fs := storage.NewSafeFS(storage.NewOsFS())
-	repo := repository.New(fs, projectCtx)
-	ws = workspace.NewWithGraph(repo, meta, g)
+	ws = workspace.NewForTest(meta, workspace.WithFS(fs, projectCtx))
 
 	return dir
 }
@@ -112,10 +109,6 @@ func TestRenameEntityCommand(t *testing.T) {
 			filepath.Join(dir, "entities", "requirements", "REQ-002.md"),
 			"REQ-002", "requirement", "Second Requirement")
 
-		// Add to graph
-		g.AddNode(&model.Entity{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "First Requirement"}})
-		g.AddNode(&model.Entity{ID: "REQ-002", Type: "requirement", Properties: map[string]interface{}{"title": "Second Requirement"}})
-
 		// Run rename
 		renameForce = true
 		renamePlural = ""
@@ -160,11 +153,6 @@ func TestRenameEntityCommand(t *testing.T) {
 		}
 		if !strings.Contains(content, "id: REQ-001") {
 			t.Errorf("entity file should keep original ID, got:\n%s", content)
-		}
-
-		// Check cache was removed
-		if _, err := os.Stat(projectCtx.CachePath); !os.IsNotExist(err) {
-			t.Error("cache should be removed")
 		}
 	})
 
@@ -213,8 +201,6 @@ func TestRenameEntityCommand(t *testing.T) {
 		writeEntityFile(t,
 			filepath.Join(dir, "entities", "requirements", "REQ-001.md"),
 			"REQ-001", "requirement", "Test")
-
-		g.AddNode(&model.Entity{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Test"}})
 
 		renameForce = true
 		renamePlural = "policies"

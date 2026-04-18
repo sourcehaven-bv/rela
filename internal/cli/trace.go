@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -34,11 +35,12 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 
-		if _, ok := ws.GetEntity(entityID); !ok {
+		ctx := context.Background()
+		if _, err := ws.Store().GetEntity(ctx, entityID); err != nil {
 			return &entityNotFoundError{ID: entityID}
 		}
 
-		result := ws.TraceFrom(entityID, traceMaxDepth)
+		result := ws.Tracer().TraceFrom(ctx, entityID, traceMaxDepth)
 		if result == nil {
 			out.WriteMessage("No downstream dependencies found")
 			return nil
@@ -61,11 +63,12 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 
-		if _, ok := ws.GetEntity(entityID); !ok {
+		ctx := context.Background()
+		if _, err := ws.Store().GetEntity(ctx, entityID); err != nil {
 			return &entityNotFoundError{ID: entityID}
 		}
 
-		result := ws.TraceTo(entityID, traceMaxDepth)
+		result := ws.Tracer().TraceTo(ctx, entityID, traceMaxDepth)
 		if result == nil {
 			out.WriteMessage("No upstream dependencies found")
 			return nil
@@ -87,14 +90,15 @@ Examples:
 		fromID := args[0]
 		toID := args[1]
 
-		if _, ok := ws.GetEntity(fromID); !ok {
+		ctx := context.Background()
+		if _, err := ws.Store().GetEntity(ctx, fromID); err != nil {
 			return fmt.Errorf("source entity not found: %s", fromID)
 		}
-		if _, ok := ws.GetEntity(toID); !ok {
+		if _, err := ws.Store().GetEntity(ctx, toID); err != nil {
 			return fmt.Errorf("target entity not found: %s", toID)
 		}
 
-		path := ws.FindPath(fromID, toID)
+		path := ws.Tracer().FindPath(ctx, fromID, toID)
 		if path == nil {
 			out.WriteMessage("No path found between %s and %s", fromID, toID)
 			return nil

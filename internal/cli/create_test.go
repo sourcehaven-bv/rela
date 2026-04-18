@@ -8,27 +8,11 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-
-	"github.com/Sourcehaven-BV/rela/internal/graph"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/output"
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-func setupCreateTestEnv() {
-	g = graph.New()
-	meta = nil // Will be set by individual tests
-	ws = nil   // Will be set by individual tests after meta is set
-	out = output.New(output.FormatTable)
-	projectCtx = &project.Context{
-		Root:          "/tmp/test-project",
-		EntitiesDir:   "/tmp/test-project/entities",
-		RelationsDir:  "/tmp/test-project/relations",
-		CachePath:     "/tmp/test-project/.rela/cache.json",
-		MetamodelPath: "/tmp/test-project/metamodel.yaml",
-	}
-}
+// create_test.go only covers CLI-specific plumbing. Metamodel
+// introspection tests (GetPrimaryProperty etc.) live with the
+// metamodel package, and entity CRUD is covered by storetest.
 
 func TestParsePropertyFlag(t *testing.T) {
 	tests := []struct {
@@ -38,56 +22,14 @@ func TestParsePropertyFlag(t *testing.T) {
 		wantValue string
 		wantErr   bool
 	}{
-		{
-			name:      "simple key=value",
-			input:     "title=Hello World",
-			wantKey:   "title",
-			wantValue: "Hello World",
-			wantErr:   false,
-		},
-		{
-			name:      "key with spaces around equals",
-			input:     "title = Hello World",
-			wantKey:   "title",
-			wantValue: "Hello World",
-			wantErr:   false,
-		},
-		{
-			name:      "value with equals sign",
-			input:     "formula=a=b+c",
-			wantKey:   "formula",
-			wantValue: "a=b+c",
-			wantErr:   false,
-		},
-		{
-			name:      "empty value",
-			input:     "description=",
-			wantKey:   "description",
-			wantValue: "",
-			wantErr:   false,
-		},
-		{
-			name:    "missing equals sign",
-			input:   "title",
-			wantErr: true,
-		},
-		{
-			name:    "empty key",
-			input:   "=value",
-			wantErr: true,
-		},
-		{
-			name:    "only equals sign",
-			input:   "=",
-			wantErr: true,
-		},
-		{
-			name:      "key with underscore",
-			input:     "iso27001=A.5.15",
-			wantKey:   "iso27001",
-			wantValue: "A.5.15",
-			wantErr:   false,
-		},
+		{name: "simple key=value", input: "title=Hello World", wantKey: "title", wantValue: "Hello World"},
+		{name: "key with spaces around equals", input: "title = Hello World", wantKey: "title", wantValue: "Hello World"},
+		{name: "value with equals sign", input: "formula=a=b+c", wantKey: "formula", wantValue: "a=b+c"},
+		{name: "empty value", input: "description=", wantKey: "description", wantValue: ""},
+		{name: "missing equals sign", input: "title", wantErr: true},
+		{name: "empty key", input: "=value", wantErr: true},
+		{name: "only equals sign", input: "=", wantErr: true},
+		{name: "key with underscore", input: "iso27001=A.5.15", wantKey: "iso27001", wantValue: "A.5.15"},
 	}
 
 	for _, tt := range tests {
@@ -110,141 +52,6 @@ func TestParsePropertyFlag(t *testing.T) {
 				t.Errorf("parsePropertyFlag(%q) value = %q, want %q", tt.input, value, tt.wantValue)
 			}
 		})
-	}
-}
-
-func TestCreateEntityWithPrimaryPropertyName(t *testing.T) {
-	setupCreateTestEnv()
-
-	// Create a metamodel with stakeholder type that uses "name" as primary property
-	meta = &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"stakeholder": {
-				Label:    "Stakeholder",
-				IDPrefix: "SH-",
-				Properties: map[string]metamodel.PropertyDef{
-					"name":   {Type: "string", Required: true},
-					"role":   {Type: "string"},
-					"status": {Type: "status", Required: true},
-				},
-			},
-			"requirement": {
-				Label:    "Requirement",
-				Aliases:  []string{"req"},
-				IDPrefix: "REQ-",
-				Properties: map[string]metamodel.PropertyDef{
-					"title":       {Type: "string", Required: true},
-					"description": {Type: "string"},
-					"status":      {Type: "status", Required: true},
-				},
-			},
-		},
-		Types: map[string]metamodel.CustomType{
-			"status": {
-				Values:  []string{"draft", "proposed", "accepted"},
-				Default: "draft",
-			},
-		},
-	}
-	ws = workspace.NewForTest(g, meta)
-
-	// Test that GetPrimaryProperty returns correct property for each type
-	stakeholderDef, _ := meta.GetEntityDef("stakeholder")
-	if primary := stakeholderDef.GetPrimaryProperty(); primary != "name" {
-		t.Errorf("stakeholder primary property = %q, want %q", primary, "name")
-	}
-
-	reqDef, _ := meta.GetEntityDef("requirement")
-	if primary := reqDef.GetPrimaryProperty(); primary != "title" {
-		t.Errorf("requirement primary property = %q, want %q", primary, "title")
-	}
-}
-
-func TestCreateEntityWithMultipleProperties(t *testing.T) {
-	setupCreateTestEnv()
-
-	// Create a metamodel with control type that has multiple properties
-	meta = &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"control": {
-				Label:    "Control",
-				IDPrefix: "CTRL-",
-				Properties: map[string]metamodel.PropertyDef{
-					"title":    {Type: "string", Required: true},
-					"iso27001": {Type: "string"},
-					"owner":    {Type: "string"},
-					"status":   {Type: "status", Required: true},
-				},
-			},
-		},
-		Types: map[string]metamodel.CustomType{
-			"status": {
-				Values:  []string{"draft", "implemented", "verified"},
-				Default: "draft",
-			},
-		},
-	}
-	ws = workspace.NewForTest(g, meta)
-
-	// Test that GetPrimaryProperty returns "title" for control
-	controlDef, _ := meta.GetEntityDef("control")
-	if primary := controlDef.GetPrimaryProperty(); primary != "title" {
-		t.Errorf("control primary property = %q, want %q", primary, "title")
-	}
-}
-
-func TestCreateEntityTypeWithLabelProperty(t *testing.T) {
-	setupCreateTestEnv()
-
-	// Create a metamodel where "label" is the primary property
-	meta = &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"tag": {
-				Label:    "Tag",
-				IDPrefix: "TAG-",
-				Properties: map[string]metamodel.PropertyDef{
-					"label":       {Type: "string", Required: true},
-					"description": {Type: "string"},
-				},
-			},
-		},
-	}
-	ws = workspace.NewForTest(g, meta)
-
-	// Test that GetPrimaryProperty returns "label" for tag
-	tagDef, _ := meta.GetEntityDef("tag")
-	if primary := tagDef.GetPrimaryProperty(); primary != "label" {
-		t.Errorf("tag primary property = %q, want %q", primary, "label")
-	}
-}
-
-func TestCreateEntityNoPrimaryProperty(t *testing.T) {
-	setupCreateTestEnv()
-
-	// Create a metamodel where there's no required string property
-	meta = &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"marker": {
-				Label:    "Marker",
-				IDPrefix: "MRK-",
-				Properties: map[string]metamodel.PropertyDef{
-					"status": {Type: "status", Required: true},
-				},
-			},
-		},
-		Types: map[string]metamodel.CustomType{
-			"status": {
-				Values:  []string{"active", "inactive"},
-				Default: "active",
-			},
-		},
-	}
-	ws = workspace.NewForTest(g, meta)
-
-	// Test that GetPrimaryProperty returns empty string
-	markerDef, _ := meta.GetEntityDef("marker")
-	if primary := markerDef.GetPrimaryProperty(); primary != "" {
-		t.Errorf("marker primary property = %q, want empty string", primary)
 	}
 }
 

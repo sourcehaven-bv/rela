@@ -6,13 +6,13 @@ import (
 	"io"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
 // --- test helpers ---
@@ -20,7 +20,6 @@ import (
 type mockWorkspace struct {
 	mu         sync.Mutex
 	cacheFiles map[string][]byte
-	syncCount  atomic.Int32
 	paths      *project.Context
 	meta       *metamodel.Metamodel
 }
@@ -34,37 +33,40 @@ func newMockWorkspace(t *testing.T) *mockWorkspace {
 	}
 }
 
-func (m *mockWorkspace) Sync() (*model.SyncResult, error) {
-	m.syncCount.Add(1)
-	return &model.SyncResult{}, nil
-}
-
 func (m *mockWorkspace) Paths() *project.Context { return m.paths }
 
-func (m *mockWorkspace) ReadProjectFile(name string) ([]byte, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	data, ok := m.cacheFiles["project:"+name]
+func (m *mockWorkspace) Config() config.Loader { return &mockConfig{m: m} }
+
+func (m *mockWorkspace) State() state.KV { return &mockState{m: m} }
+
+type mockConfig struct{ m *mockWorkspace }
+
+func (c *mockConfig) Load(_ context.Context, name string) ([]byte, error) {
+	c.m.mu.Lock()
+	defer c.m.mu.Unlock()
+	data, ok := c.m.cacheFiles["project:"+name]
 	if !ok {
 		return nil, &notFoundError{name}
 	}
 	return data, nil
 }
 
-func (m *mockWorkspace) ReadCacheFile(name string) ([]byte, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	data, ok := m.cacheFiles[name]
+type mockState struct{ m *mockWorkspace }
+
+func (s *mockState) Get(_ context.Context, key string) ([]byte, error) {
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	data, ok := s.m.cacheFiles[key]
 	if !ok {
-		return nil, &notFoundError{name}
+		return nil, &notFoundError{key}
 	}
 	return data, nil
 }
 
-func (m *mockWorkspace) WriteCacheFile(name string, data []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cacheFiles[name] = append([]byte(nil), data...)
+func (s *mockState) Put(_ context.Context, key string, data []byte) error {
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	s.m.cacheFiles[key] = append([]byte(nil), data...)
 	return nil
 }
 
@@ -248,7 +250,7 @@ func TestScheduler_statePersistedAfterRun(t *testing.T) {
 
 	s.runDueTasks(context.Background())
 
-	data, err := ws.ReadCacheFile(stateFile)
+	data, err := ws.State().Get(context.Background(), stateFile)
 	if err != nil {
 		t.Fatalf("state file not written: %v", err)
 	}
@@ -286,28 +288,6 @@ func TestScheduler_loadState_existing(t *testing.T) {
 
 	if got := s.state.Tasks["daily"]; !got.Equal(ts) {
 		t.Errorf("loaded state: daily = %v, want %v", got, ts)
-	}
-}
-
-func TestScheduler_syncCalledBeforeExecution(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		Tasks: []TaskConfig{
-			{Name: "test", Script: "test.lua", Every: dailySchedule()},
-		},
-	}
-	now := time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC)
-	s, ws, _ := newTestScheduler(t, cfg, now)
-
-	s.executeTaskFunc = func(ctx context.Context, task TaskConfig) {
-		s.doExecuteTask(ctx, task)
-	}
-
-	s.runDueTasks(context.Background())
-
-	if ws.syncCount.Load() < 1 {
-		t.Error("expected Sync() to be called before task execution")
 	}
 }
 
@@ -354,30 +334,6 @@ func TestRunDueTasks_cancelledContext(t *testing.T) {
 	}
 }
 
-func TestScheduler_doExecuteTask_skipsOnCancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ws := newMockWorkspace(t)
-	s := &Scheduler{
-		ws:     ws,
-		metaFn: func() *metamodel.Metamodel { return ws.meta },
-		wsRaw:  ws,
-		state:  newState(),
-		logger: discardLogger(),
-		now:    time.Now,
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	task := TaskConfig{Name: "test", Script: "test.lua", Every: dailySchedule()}
-	s.doExecuteTask(ctx, task)
-
-	if ws.syncCount.Load() != 0 {
-		t.Error("expected Sync not to be called with cancelled context")
-	}
-}
-
 func TestRunDueTasks_sequential(t *testing.T) {
 	t.Parallel()
 
@@ -400,5 +356,86 @@ func TestRunDueTasks_sequential(t *testing.T) {
 	// Verify execution order matches config order.
 	if calls[0] != "a.lua" || calls[1] != "b.lua" || calls[2] != "c.lua" {
 		t.Errorf("expected [a.lua b.lua c.lua], got %v", calls)
+	}
+}
+
+func TestStartBackground_NoConfig(t *testing.T) {
+	// When schedules.yaml is missing, StartBackground should silently
+	// no-op without starting a goroutine.
+	ws := newMockWorkspace(t)
+	metaFn := func() *metamodel.Metamodel { return ws.meta }
+
+	// ws.Config().Load returns notFoundError for missing file.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Should not panic, should not log errors.
+	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+}
+
+func TestStartBackground_InvalidConfig(t *testing.T) {
+	ws := newMockWorkspace(t)
+	ws.cacheFiles["project:"+ConfigFile] = []byte("not: valid: yaml: at all:")
+	metaFn := func() *metamodel.Metamodel { return ws.meta }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Should log error and return without starting a goroutine.
+	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+}
+
+func TestStartBackground_EmptyTasks(t *testing.T) {
+	ws := newMockWorkspace(t)
+	ws.cacheFiles["project:"+ConfigFile] = []byte("tasks: []\n")
+	metaFn := func() *metamodel.Metamodel { return ws.meta }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+}
+
+func TestNew(t *testing.T) {
+	cfg := &Config{Tasks: []TaskConfig{{Name: "t", Script: "t.lua"}}}
+	ws := newMockWorkspace(t)
+	metaFn := func() *metamodel.Metamodel { return ws.meta }
+
+	s := New(cfg, nil, ws, ws, metaFn, discardLogger())
+	if s == nil {
+		t.Fatal("New returned nil")
+	}
+	if s.config != cfg {
+		t.Error("config not wired")
+	}
+	if s.ws != ws {
+		t.Error("ws not wired")
+	}
+	if s.metaFn == nil {
+		t.Error("metaFn not wired")
+	}
+}
+
+func TestSchedulerScriptContext(t *testing.T) {
+	meta := &metamodel.Metamodel{}
+	c := &schedulerScriptContext{
+		ws:          "workspace",
+		meta:        meta,
+		projectRoot: "/project",
+	}
+	if c.GetWorkspace() != "workspace" {
+		t.Error("GetWorkspace")
+	}
+	if c.GetMeta() != meta {
+		t.Error("GetMeta")
+	}
+	if c.GetProjectRoot() != "/project" {
+		t.Error("GetProjectRoot")
+	}
+	if c.GetEntity() != nil {
+		t.Error("GetEntity should be nil")
+	}
+	if c.GetOldEntity() != nil {
+		t.Error("GetOldEntity should be nil")
 	}
 }

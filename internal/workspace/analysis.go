@@ -1,12 +1,15 @@
 package workspace
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/schema"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
 )
 
@@ -32,9 +35,25 @@ type AnalyzeOptions struct {
 // --- Orphan Analysis ---
 
 // FindOrphansWithScope returns entities with no relations, filtered by scope.
-func (w *Workspace) FindOrphansWithScope(opts AnalyzeOptions) []*model.Entity {
-	orphans := w.graph().FindOrphans()
-	return filterByScope(orphans, opts.Scope)
+func (w *Workspace) FindOrphansWithScope(opts AnalyzeOptions) []*entity.Entity {
+	ctx := context.Background()
+	ids, err := w.Tracer().FindOrphans(ctx)
+	if err != nil {
+		return nil
+	}
+	st := w.Store()
+	out := make([]*entity.Entity, 0, len(ids))
+	for _, id := range ids {
+		if !inScope(id, opts.Scope) {
+			continue
+		}
+		e, err := st.GetEntity(ctx, id)
+		if err != nil {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // --- Duplicate Analysis ---
@@ -42,15 +61,15 @@ func (w *Workspace) FindOrphansWithScope(opts AnalyzeOptions) []*model.Entity {
 // DuplicateGroup represents entities with the same normalized title.
 type DuplicateGroup struct {
 	Title    string
-	Entities []*model.Entity
+	Entities []*entity.Entity
 }
 
 // FindDuplicates returns groups of entities with similar titles, filtered by scope.
 func (w *Workspace) FindDuplicates(opts AnalyzeOptions) []DuplicateGroup {
-	entities := filterByScope(w.graph().AllNodes(), opts.Scope)
+	entities := filterByScope(collectEntities(w.Store(), store.EntityQuery{}), opts.Scope)
 
 	// Group by normalized title
-	titleGroups := make(map[string][]*model.Entity)
+	titleGroups := make(map[string][]*entity.Entity)
 	for _, e := range entities {
 		title := normalizeTitle(e.Title())
 		if title != "" {
@@ -83,7 +102,7 @@ type GapResult struct {
 // FindGaps returns gaps in ID sequences, filtered by scope.
 // Excludes entity types with manual (string) IDs.
 func (w *Workspace) FindGaps(opts AnalyzeOptions) []GapResult {
-	meta := w.meta()
+	meta := w.Meta()
 	// Build a set of prefixes that belong to manual ID types (should be skipped)
 	stringIDPrefixes := make(map[string]bool)
 	for _, entityDef := range meta.Entities {
@@ -97,11 +116,11 @@ func (w *Workspace) FindGaps(opts AnalyzeOptions) []GapResult {
 
 	// Group IDs by prefix (only for sequential ID types)
 	prefixGroups := make(map[string][]int)
-	for _, id := range w.graph().AllIDs() {
-		if !inScope(id, opts.Scope) {
+	for _, e := range collectEntities(w.Store(), store.EntityQuery{}) {
+		if !inScope(e.ID, opts.Scope) {
 			continue
 		}
-		parsed, err := model.ParseEntityID(id)
+		parsed, err := entity.ParseEntityID(e.ID)
 		if err != nil || parsed.Prefix == "" {
 			continue
 		}
@@ -156,7 +175,7 @@ type CardinalityViolation struct {
 func (w *Workspace) CheckCardinality(opts AnalyzeOptions) []CardinalityViolation {
 	var violations []CardinalityViolation
 
-	for relName, relDef := range w.meta().Relations {
+	for relName, relDef := range w.Meta().Relations {
 		violations = append(violations, w.checkMinOutgoing(relName, relDef, opts.Scope)...)
 		violations = append(violations, w.checkMaxOutgoing(relName, relDef, opts.Scope)...)
 		violations = append(violations, w.checkMinIncoming(relName, relDef, opts.Scope)...)
@@ -174,7 +193,7 @@ func (w *Workspace) checkMinOutgoing(
 	}
 	var violations []CardinalityViolation
 	for _, sourceType := range relDef.From {
-		for _, e := range filterByScope(w.graph().NodesByType(sourceType), scope) {
+		for _, e := range filterByScope(collectEntities(w.Store(), store.EntityQuery{Type: sourceType}), scope) {
 			count := w.countOutgoingByType(e.ID, relName)
 			if count < *relDef.MinOutgoing {
 				violations = append(violations, CardinalityViolation{
@@ -198,7 +217,7 @@ func (w *Workspace) checkMaxOutgoing(
 	}
 	var violations []CardinalityViolation
 	for _, sourceType := range relDef.From {
-		for _, e := range filterByScope(w.graph().NodesByType(sourceType), scope) {
+		for _, e := range filterByScope(collectEntities(w.Store(), store.EntityQuery{Type: sourceType}), scope) {
 			count := w.countOutgoingByType(e.ID, relName)
 			if count > *relDef.MaxOutgoing {
 				violations = append(violations, CardinalityViolation{
@@ -222,7 +241,7 @@ func (w *Workspace) checkMinIncoming(
 	}
 	var violations []CardinalityViolation
 	for _, targetType := range relDef.To {
-		for _, e := range filterByScope(w.graph().NodesByType(targetType), scope) {
+		for _, e := range filterByScope(collectEntities(w.Store(), store.EntityQuery{Type: targetType}), scope) {
 			count := w.countIncomingByType(e.ID, relName)
 			if count < *relDef.MinIncoming {
 				// Use inverse relation name for the message if available
@@ -251,7 +270,7 @@ func (w *Workspace) checkMaxIncoming(
 	}
 	var violations []CardinalityViolation
 	for _, targetType := range relDef.To {
-		for _, e := range filterByScope(w.graph().NodesByType(targetType), scope) {
+		for _, e := range filterByScope(collectEntities(w.Store(), store.EntityQuery{Type: targetType}), scope) {
 			count := w.countIncomingByType(e.ID, relName)
 			if count > *relDef.MaxIncoming {
 				// Use inverse relation name for the message if available
@@ -273,76 +292,21 @@ func (w *Workspace) checkMaxIncoming(
 }
 
 func (w *Workspace) countOutgoingByType(entityID, relName string) int {
-	count := 0
-	for _, edge := range w.graph().OutgoingEdges(entityID) {
-		if edge.Type == relName {
-			count++
-		}
-	}
-	return count
+	n, _ := w.Store().CountRelations(context.Background(), store.RelationQuery{
+		EntityID:  entityID,
+		Direction: store.DirectionOutgoing,
+		Type:      relName,
+	})
+	return n
 }
 
 func (w *Workspace) countIncomingByType(entityID, relName string) int {
-	count := 0
-	for _, edge := range w.graph().IncomingEdges(entityID) {
-		if edge.Type == relName {
-			count++
-		}
-	}
-	return count
-}
-
-// --- Property Validation ---
-
-// PropertyError represents a property validation error.
-type PropertyError struct {
-	EntityID   string
-	EntityType string
-	Errors     []*metamodel.ValidationError
-}
-
-// ValidateProperties validates entity properties against the metamodel, filtered by scope.
-func (w *Workspace) ValidateProperties(opts AnalyzeOptions) []PropertyError {
-	meta := w.meta()
-	entities := filterByScope(w.graph().AllNodes(), opts.Scope)
-
-	var allErrors []PropertyError
-	for _, entity := range entities {
-		errs := meta.ValidateEntity(entity)
-		if len(errs) > 0 {
-			allErrors = append(allErrors, PropertyError{
-				EntityID:   entity.ID,
-				EntityType: entity.Type,
-				Errors:     errs,
-			})
-		}
-	}
-
-	return allErrors
-}
-
-// RelationPropertyError represents a relation property validation error.
-type RelationPropertyError struct {
-	RelationKey  string // "from--type--to"
-	RelationType string
-	Errors       []*metamodel.ValidationError
-}
-
-// ValidateRelationProperties validates relation properties against the metamodel.
-func (w *Workspace) ValidateRelationProperties() []RelationPropertyError {
-	meta := w.meta()
-	var allErrors []RelationPropertyError
-	for _, rel := range w.graph().AllEdges() {
-		errs := meta.ValidateRelationProperties(rel)
-		if len(errs) > 0 {
-			allErrors = append(allErrors, RelationPropertyError{
-				RelationKey:  rel.From + "--" + rel.Type + "--" + rel.To,
-				RelationType: rel.Type,
-				Errors:       errs,
-			})
-		}
-	}
-	return allErrors
+	n, _ := w.Store().CountRelations(context.Background(), store.RelationQuery{
+		EntityID:  entityID,
+		Direction: store.DirectionIncoming,
+		Type:      relName,
+	})
+	return n
 }
 
 // --- Custom Validations ---
@@ -352,18 +316,16 @@ type ValidationViolation = validation.Violation
 
 // newValidationService creates a validation service with workspace and project root configured.
 func (w *Workspace) newValidationService() *validation.Service {
-	opts := []validation.Option{
-		validation.WithWorkspace(w),
+	var root string
+	if w.paths != nil {
+		root = w.paths.Root
 	}
-	if w.repo != nil {
-		opts = append(opts, validation.WithProjectRoot(w.repo.Paths().Root))
-	}
-	return validation.New(w.meta(), opts...)
+	return validation.New(w.Meta(), w.luaServices(), root)
 }
 
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.
 func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
-	return w.newValidationService().Check(w.graph().AllNodes(), opts.Scope)
+	return w.newValidationService().Check(collectEntities(w.Store(), store.EntityQuery{}), opts.Scope)
 }
 
 // RunValidationsFiltered executes custom validation rules matching the given filters.
@@ -383,7 +345,7 @@ func (w *Workspace) RunValidationsFiltered(opts AnalyzeOptions, filters []Valida
 	}
 
 	// Run only matching rules
-	return svc.CheckRules(w.graph().AllNodes(), opts.Scope, ruleNames)
+	return svc.CheckRules(collectEntities(w.Store(), store.EntityQuery{}), opts.Scope, ruleNames)
 }
 
 // matchesFilter returns true if the rule matches the filter criteria.
@@ -429,8 +391,11 @@ func (w *Workspace) AnalyzeAll(opts AnalyzeOptions) *AnalysisSummary {
 		Cardinality: len(w.CheckCardinality(opts)),
 	}
 
-	// Count property errors
-	for _, pe := range w.ValidateProperties(opts) {
+	// Count property errors (filtered by scope if provided).
+	for _, pe := range schema.ValidateEntityProperties(w.Store(), w.Meta()) {
+		if !inScope(pe.EntityID, opts.Scope) {
+			continue
+		}
 		summary.PropertyErrors += len(pe.Errors)
 	}
 
@@ -443,11 +408,11 @@ func (w *Workspace) AnalyzeAll(opts AnalyzeOptions) *AnalysisSummary {
 
 // filterByScope filters entities to only those in the scope.
 // If scope is nil, returns the original slice unchanged.
-func filterByScope(entities []*model.Entity, scope map[string]bool) []*model.Entity {
+func filterByScope(entities []*entity.Entity, scope map[string]bool) []*entity.Entity {
 	if scope == nil {
 		return entities
 	}
-	result := make([]*model.Entity, 0, len(entities))
+	result := make([]*entity.Entity, 0, len(entities))
 	for _, e := range entities {
 		if scope[e.ID] {
 			result = append(result, e)

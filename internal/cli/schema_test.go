@@ -7,10 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // setupSchemaTest sets up the test environment with default metamodel
@@ -18,20 +16,17 @@ func setupSchemaTest(t *testing.T) (buf *bytes.Buffer, cleanup func()) {
 	t.Helper()
 
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 
 	meta = metamodel.DefaultMetamodel()
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	buf = new(bytes.Buffer)
 	out = output.NewWithWriter(buf, output.FormatTable)
 
 	cleanup = func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}
@@ -200,12 +195,10 @@ func TestSchemaEntity(t *testing.T) {
 
 func TestSchemaEntityWithAlias(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
@@ -216,8 +209,7 @@ func TestSchemaEntityWithAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -294,19 +286,16 @@ func TestSchemaRelationNotFound(t *testing.T) {
 
 func TestSchemaOverviewJSON(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatJSON)
@@ -339,19 +328,16 @@ func TestSchemaOverviewJSON(t *testing.T) {
 
 func TestSchemaEntitiesJSON(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatJSON)
@@ -378,19 +364,16 @@ func TestSchemaEntitiesJSON(t *testing.T) {
 
 func TestSchemaEntityJSON(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatJSON)
@@ -420,19 +403,16 @@ func TestSchemaEntityJSON(t *testing.T) {
 
 func TestSchemaRelationJSON(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatJSON)
@@ -462,12 +442,10 @@ func TestSchemaRelationJSON(t *testing.T) {
 
 func TestSchemaTypesEmpty(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
@@ -478,8 +456,7 @@ func TestSchemaTypesEmpty(t *testing.T) {
 		Types:    map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{},
 	}
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -498,12 +475,10 @@ func TestSchemaTypesEmpty(t *testing.T) {
 
 func TestSchemaEntitiesEmpty(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
@@ -515,8 +490,7 @@ func TestSchemaEntitiesEmpty(t *testing.T) {
 		Entities:  map[string]metamodel.EntityDef{},
 		Relations: map[string]metamodel.RelationDef{},
 	}
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -535,12 +509,10 @@ func TestSchemaEntitiesEmpty(t *testing.T) {
 
 func TestSchemaRelationsEmpty(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
@@ -552,8 +524,7 @@ func TestSchemaRelationsEmpty(t *testing.T) {
 		Entities:  map[string]metamodel.EntityDef{},
 		Relations: map[string]metamodel.RelationDef{},
 	}
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -572,12 +543,10 @@ func TestSchemaRelationsEmpty(t *testing.T) {
 
 func TestSchemaWithCardinality(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
@@ -603,8 +572,7 @@ func TestSchemaWithCardinality(t *testing.T) {
 			},
 		},
 	}
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -629,12 +597,10 @@ func TestSchemaWithCardinality(t *testing.T) {
 
 func TestSchemaWithSymmetricRelation(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
@@ -655,8 +621,7 @@ func TestSchemaWithSymmetricRelation(t *testing.T) {
 			},
 		},
 	}
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -696,19 +661,16 @@ func TestSchemaGraphviz(t *testing.T) {
 
 func TestSchemaGraphvizOutput(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
 
 	meta = metamodel.DefaultMetamodel()
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -751,13 +713,11 @@ func TestSchemaGraphvizOutput(t *testing.T) {
 
 func TestSchemaGraphvizWithConstraints(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	oldConstraints := schemaConstraints
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 		schemaConstraints = oldConstraints
@@ -783,8 +743,7 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 			},
 		},
 	}
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -808,12 +767,10 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 
 func TestSchemaGraphvizWithColors(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
@@ -831,8 +788,7 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 		},
 		Relations: map[string]metamodel.RelationDef{},
 	}
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)
@@ -855,12 +811,10 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 
 func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
 	oldMeta := meta
-	oldG := g
 	oldOut := out
 	oldWs := ws
 	defer func() {
 		meta = oldMeta
-		g = oldG
 		out = oldOut
 		ws = oldWs
 	}()
@@ -881,8 +835,7 @@ func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
 			},
 		},
 	}
-	g = graph.New()
-	ws = workspace.NewForTest(g, meta)
+	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatTable)

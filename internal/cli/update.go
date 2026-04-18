@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -41,23 +42,21 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
+		ctx := context.Background()
 
-		entity, ok := ws.GetEntity(entityID)
-		if !ok {
+		entity, err := ws.Store().GetEntity(ctx, entityID)
+		if err != nil {
 			return &entityNotFoundError{ID: entityID}
 		}
-
-		// Capture old state for automation property change detection
-		oldEntity := entity.Clone()
 
 		// Track if anything changed
 		changed := false
 
 		// Parse and apply --property flags first (so explicit flags can override if needed)
 		for _, prop := range updateProperties {
-			key, value, err := parsePropertyFlag(prop)
-			if err != nil {
-				return err
+			key, value, parseErr := parsePropertyFlag(prop)
+			if parseErr != nil {
+				return parseErr
 			}
 			entity.SetString(key, value)
 			changed = true
@@ -97,7 +96,7 @@ Examples:
 			return fmt.Errorf("no updates specified")
 		}
 
-		result, err := ws.UpdateEntity(entity, oldEntity)
+		result, err := ws.EntityManager().UpdateEntity(ctx, entity)
 		if err != nil {
 			return err
 		}

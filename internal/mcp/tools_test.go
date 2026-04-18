@@ -10,18 +10,17 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/graph"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-// makeTestServer creates a Server with a populated graph for handler testing.
+// makeTestServer creates a Server with a populated store for handler testing.
 func makeTestServer(t *testing.T) *Server {
 	t.Helper()
 
-	g := graph.New()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
@@ -50,17 +49,23 @@ func makeTestServer(t *testing.T) *Server {
 		},
 	}
 
-	// Add some entities
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("status", "accepted").Build())
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-002").With("status", "draft").Build())
-	g.AddNode(testutil.EntityFor(meta, "requirement").ID("REQ-003").With("status", "accepted").Build())
-	g.AddNode(testutil.EntityFor(meta, "decision").ID("DEC-001").With("status", "accepted").Build())
+	st := memstore.New()
+	ctx := context.Background()
+	for _, e := range []*entity.Entity{
+		testutil.EntityFor(meta, "requirement").ID("REQ-001").With("status", "accepted").Build(),
+		testutil.EntityFor(meta, "requirement").ID("REQ-002").With("status", "draft").Build(),
+		testutil.EntityFor(meta, "requirement").ID("REQ-003").With("status", "accepted").Build(),
+		testutil.EntityFor(meta, "decision").ID("DEC-001").With("status", "accepted").Build(),
+	} {
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatalf("seed entity %s: %v", e.ID, err)
+		}
+	}
+	if _, err := st.CreateRelation(ctx, "DEC-001", "addresses", "REQ-001", nil); err != nil {
+		t.Fatalf("seed relation: %v", err)
+	}
 
-	// Add a relation
-	g.AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-001").Build())
-
-	// Create workspace with pre-populated graph (no repo needed for read-only tests)
-	ws := workspace.NewWithGraph(nil, meta, g)
+	ws := workspace.NewForTest(meta, workspace.WithTestStore(st))
 
 	return &Server{
 		ws:     ws,
@@ -351,7 +356,9 @@ func TestHandleListRelations_NoMatch(t *testing.T) {
 func TestHandleListRelations_Pagination(t *testing.T) {
 	s := makeTestServer(t)
 	// Add another relation for pagination testing
-	s.ws.Snapshot().Graph().AddEdge(testutil.NewRelation("DEC-001", "addresses", "REQ-002").Build())
+	if _, err := s.ws.Store().CreateRelation(context.Background(), "DEC-001", "addresses", "REQ-002", nil); err != nil {
+		t.Fatalf("seed relation: %v", err)
+	}
 
 	req := makeToolRequest(map[string]interface{}{"limit": float64(1)})
 	result, err := s.handleListRelations(context.Background(), req)
@@ -365,6 +372,64 @@ func TestHandleListRelations_Pagination(t *testing.T) {
 	}
 	if len(rels) != 1 {
 		t.Errorf("expected 1 relation with limit=1, got %d", len(rels))
+	}
+}
+
+func TestHandleCreateRelation_MissingFields(t *testing.T) {
+	s := makeTestServer(t)
+	// Missing "type".
+	req := makeToolRequest(map[string]interface{}{
+		"from": "DEC-001",
+		"to":   "REQ-001",
+	})
+	result, err := s.handleCreateRelation(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error for missing type")
+	}
+
+	// Missing "from".
+	req = makeToolRequest(map[string]interface{}{
+		"type": "addresses",
+		"to":   "REQ-001",
+	})
+	result, err = s.handleCreateRelation(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error for missing from")
+	}
+
+	// Missing "to".
+	req = makeToolRequest(map[string]interface{}{
+		"from": "DEC-001",
+		"type": "addresses",
+	})
+	result, err = s.handleCreateRelation(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error for missing to")
+	}
+}
+
+func TestHandleDeleteRelation_MissingFields(t *testing.T) {
+	s := makeTestServer(t)
+	// Missing "type".
+	req := makeToolRequest(map[string]interface{}{
+		"from": "DEC-001",
+		"to":   "REQ-001",
+	})
+	result, err := s.handleDeleteRelation(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error for missing type")
 	}
 }
 
@@ -507,7 +572,7 @@ func TestHandleAnalyzeCardinality_WithViolation(t *testing.T) {
 	s := makeTestServer(t)
 	// Set a minimum cardinality that won't be met
 	minVal := 5
-	meta := s.ws.Snapshot().Meta()
+	meta := s.ws.Meta()
 	meta.Relations["addresses"] = metamodel.RelationDef{
 		From:        []string{"decision"},
 		To:          []string{"requirement"},
@@ -721,51 +786,6 @@ func TestResolveEntityType_Unknown(t *testing.T) {
 	_, _, err := s.resolveEntityType("nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown type")
-	}
-}
-
-func TestValidateEntity(t *testing.T) {
-	s := makeTestServer(t)
-	entity := testutil.EntityFor(s.ws.Snapshot().Meta(), "requirement").ID("REQ-001").Build()
-	result := s.validateEntity(entity)
-	if result != nil {
-		t.Error("expected no validation error for valid entity")
-	}
-}
-
-func TestFilterEntities(t *testing.T) {
-	// Create metamodel for entity creation
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"requirement": {
-				Label:    "Requirement",
-				IDPrefix: "REQ",
-				Properties: map[string]metamodel.PropertyDef{
-					"title":  {Type: "string", Required: true},
-					"status": {Type: "string"},
-				},
-			},
-		},
-	}
-
-	entities := []*model.Entity{
-		testutil.EntityFor(meta, "requirement").ID("REQ-001").With("status", "accepted").Build(),
-		testutil.EntityFor(meta, "requirement").ID("REQ-002").With("status", "draft").Build(),
-	}
-
-	filtered, err := filterEntities(entities, "status=accepted")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(filtered) != 1 {
-		t.Errorf("expected 1 filtered entity, got %d", len(filtered))
-	}
-}
-
-func TestFilterEntities_InvalidExpression(t *testing.T) {
-	_, err := filterEntities(nil, "invalid")
-	if err == nil {
-		t.Error("expected error for invalid filter expression")
 	}
 }
 

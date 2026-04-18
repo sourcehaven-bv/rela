@@ -50,7 +50,7 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	live, ok := a.State().Graph.GetNode(entityID)
+	live, ok := a.getEntity(entityID)
 	if !ok {
 		http.Error(w, "Entity not found", http.StatusNotFound)
 		return
@@ -64,10 +64,9 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 
 	// Clone to avoid mutating the live graph node while other readers
 	// (which take no lock) may be iterating it.
-	oldEntity := live.Clone()
 	updated := live.Clone()
 	updated.Content = newContent
-	if _, err := a.ws.UpdateEntity(updated, oldEntity); err != nil {
+	if _, err := a.entityManager.UpdateEntity(r.Context(), updated); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}

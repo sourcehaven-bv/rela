@@ -3,8 +3,9 @@ package validation
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 )
 
 func TestCheck(t *testing.T) {
@@ -31,7 +32,7 @@ func TestCheck(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{
 			ID:   "TKT-001",
 			Type: "ticket",
@@ -61,7 +62,7 @@ func TestCheck(t *testing.T) {
 		},
 	}
 
-	svc := New(meta)
+	svc := New(meta, lua.Services{}, "")
 
 	t.Run("finds violations", func(t *testing.T) {
 		violations := svc.Check(entities, nil)
@@ -113,7 +114,7 @@ func TestCheckWarnings(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{
 			ID:         "DOC-001",
 			Type:       "doc",
@@ -121,7 +122,7 @@ func TestCheckWarnings(t *testing.T) {
 		},
 	}
 
-	svc := New(meta)
+	svc := New(meta, lua.Services{}, "")
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 1 {
@@ -157,7 +158,7 @@ func TestRules(t *testing.T) {
 		},
 	}
 
-	svc := New(meta)
+	svc := New(meta, lua.Services{}, "")
 	rules := svc.Rules()
 
 	if len(rules) != 2 {
@@ -168,8 +169,8 @@ func TestRules(t *testing.T) {
 func TestNoRules(t *testing.T) {
 	meta := &metamodel.Metamodel{}
 
-	svc := New(meta)
-	violations := svc.Check([]*model.Entity{{ID: "X", Type: "x"}}, nil)
+	svc := New(meta, lua.Services{}, "")
+	violations := svc.Check([]*entity.Entity{{ID: "X", Type: "x"}}, nil)
 
 	if len(violations) != 0 {
 		t.Errorf("got %d violations, want 0", len(violations))
@@ -194,12 +195,12 @@ func TestAllEntityTypes(t *testing.T) {
 		},
 	}
 
-	entities := []*model.Entity{
+	entities := []*entity.Entity{
 		{ID: "DOC-001", Type: "doc", Properties: map[string]interface{}{"status": "draft"}},
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}}, // missing status
 	}
 
-	svc := New(meta)
+	svc := New(meta, lua.Services{}, "")
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 1 {

@@ -1,13 +1,14 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/model"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 func TestHandleAPIPaletteCRUD(t *testing.T) {
@@ -100,7 +101,7 @@ func TestLoadUserPalette(t *testing.T) {
 		// can't parse. Without the error path, the loader would
 		// return nil and a subsequent save would silently overwrite
 		// the user's palette with framework defaults.
-		err := app.ws.WriteCacheFile(userPaletteFile, []byte("accent: '#e11d48'\ndark: auto\n"))
+		err := app.kv.Put(context.Background(), userPaletteFile, []byte("accent: '#e11d48'\ndark: auto\n"))
 		if err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}
@@ -118,7 +119,7 @@ func TestLoadUserPalette(t *testing.T) {
 
 	t.Run("valid file parses successfully", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		err := app.ws.WriteCacheFile(userPaletteFile, []byte("accent: '#e11d48'\ndark: false\n"))
+		err := app.kv.Put(context.Background(), userPaletteFile, []byte("accent: '#e11d48'\ndark: false\n"))
 		if err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}
@@ -154,7 +155,7 @@ func TestWriteJSONError(t *testing.T) {
 
 func TestEntityToAPI_WithoutRelations(t *testing.T) {
 	app, _ := testAppInstance()
-	e := &model.Entity{
+	e := &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
 		Properties: map[string]interface{}{
@@ -183,7 +184,7 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 	app, entities := testAppInstance()
 
 	// Add a relation to test graph
-	app.Graph().AddEdge(model.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
+	seedRelation(app, entity.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
 	result := app.entityToAPI(entities.ticket1, true)
 

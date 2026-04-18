@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/repository"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -70,7 +70,6 @@ func setupReloadTestApp(t *testing.T) (*App, *storage.MemFS) {
 		Root:                 root,
 		MetamodelPath:        root + "/metamodel.yaml",
 		CacheDir:             root + "/.rela",
-		CachePath:            root + "/.rela/cache.json",
 		EntitiesDir:          root + "/entities",
 		RelationsDir:         root + "/relations",
 		TemplatesDir:         root + "/templates",
@@ -98,26 +97,22 @@ status: open
 ---
 `), 0o644)
 
-	repo := repository.New(fs, ctx)
-
-	meta, _, err := repo.LoadMetamodel()
+	meta, _, err := metamodel.NewFSLoader(fs, ctx.MetamodelPath).Load(context.Background())
 	if err != nil {
 		t.Fatalf("failed to load metamodel: %v", err)
 	}
 
-	g, _, syncErr := repo.Sync(meta)
-	if syncErr != nil {
-		t.Fatalf("failed to sync graph: %v", syncErr)
-	}
+	g := newFixture()
 
 	cfg := &Config{
 		App: AppConfig{Name: "Test App"},
 	}
 
-	ws := workspace.NewWithGraph(repo, meta, g)
+	ws := workspace.NewForTest(meta, workspace.WithFS(fs, ctx))
+	seedFromFixture(ws.Store(), g)
 
 	app := newAppFromParts(cfg, meta, g)
-	app.ws = ws
+	rebindApp(app, fs, ctx, ws)
 	app.broker = newEventBroker()
 
 	return app, fs
@@ -247,88 +242,33 @@ func TestEventBrokerConcurrency(t *testing.T) {
 	}
 }
 
-// simulateReload mimics what workspace.StartWatching does: reload the
-// workspace (metamodel + graph), then call the dataentry onReload callback.
-func (a *App) simulateReload(events []repository.ChangeEvent) {
-	_, _ = a.ws.Reload()
-	a.onReload(events)
+// simulateReload mimics what the watcher subscriptions do in production:
+// a config-path event triggers rebuildState(config); other events go to
+// onDataReload. Metamodel changes are ignored — the workspace does not
+// reload the metamodel while running.
+func (a *App) simulateReload(events []storage.ChangeEvent) {
+	configPath := a.paths.Root + "/" + ConfigFile
+	configEvent := false
+	var dataEvents []storage.ChangeEvent
+	for _, e := range events {
+		switch e.Path {
+		case configPath:
+			configEvent = true
+		default:
+			dataEvents = append(dataEvents, e)
+		}
+	}
+	if configEvent {
+		a.rebuildState(true, false)
+	}
+	if len(dataEvents) > 0 {
+		// Data changes no longer require an explicit workspace sync;
+		// the store watches its own files and reconciles internally.
+		a.onDataReload(dataEvents)
+	}
 }
 
 // --- reload tests ---
-
-func TestReloadEntityChanges(t *testing.T) {
-	app, fs := setupReloadTestApp(t)
-
-	// Verify initial state
-	initialCount := len(app.Graph().AllNodes())
-
-	// Add a new entity file
-	_ = fs.WriteFile(app.ws.Paths().EntitiesDir+"/tickets/TKT-002.md", []byte(`---
-id: TKT-002
-type: ticket
-title: Second Ticket
-status: open
----
-`), 0o644)
-
-	// Reload with a generic entity change (not metamodel or config)
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: app.ws.Paths().EntitiesDir + "/tickets/TKT-002.md", Op: repository.OpCreate},
-	})
-
-	newCount := len(app.Graph().AllNodes())
-	if newCount != initialCount+1 {
-		t.Errorf("expected %d entities after reload, got %d", initialCount+1, newCount)
-	}
-}
-
-func TestReloadMetamodelChange(t *testing.T) {
-	app, fs := setupReloadTestApp(t)
-
-	// Verify initial metamodel has 'ticket' entity
-	if _, ok := app.Meta().GetEntityDef("ticket"); !ok {
-		t.Fatal("expected 'ticket' in initial metamodel")
-	}
-
-	// Write updated metamodel with an additional entity type
-	updatedMeta := `version: "1.0"
-entities:
-  ticket:
-    label: Ticket
-    plural: tickets
-    id_prefix: "TKT-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-  component:
-    label: Component
-    plural: components
-    id_prefix: "CMP-"
-    id_type: sequential
-    properties:
-      name:
-        type: string
-        required: true
-relations:
-  depends_on:
-    label: depends on
-    from: [ticket]
-    to: [ticket]
-`
-	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
-
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
-	})
-
-	if _, ok := app.Meta().GetEntityDef("component"); !ok {
-		t.Error("expected 'component' entity in reloaded metamodel")
-	}
-}
 
 func TestReloadConfigChange(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
@@ -343,11 +283,11 @@ lists: {}
 forms: {}
 navigation: []
 `
-	configPath := app.ws.Paths().Root + "/" + ConfigFile
+	configPath := app.paths.Root + "/" + ConfigFile
 	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
 
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: configPath, Op: repository.OpModify},
+	app.simulateReload([]storage.ChangeEvent{
+		{Path: configPath, Op: storage.OpModify},
 	})
 
 	if app.Cfg().App.Name == originalName {
@@ -358,95 +298,22 @@ navigation: []
 	}
 }
 
-func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
-	app, fs := setupReloadTestApp(t)
-
-	original := app.Meta()
-
-	// Write invalid metamodel
-	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
-
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
-	})
-
-	// Metamodel should be unchanged
-	if app.Meta() != original {
-		t.Error("expected metamodel to remain unchanged after bad reload")
-	}
-}
-
 func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
 	originalName := app.Cfg().App.Name
-	configPath := app.ws.Paths().Root + "/" + ConfigFile
+	configPath := app.paths.Root + "/" + ConfigFile
 
 	// Write invalid YAML config
 	_ = fs.WriteFile(configPath, []byte(`not: valid: yaml: {{{`), 0o644)
 
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: configPath, Op: repository.OpModify},
+	app.simulateReload([]storage.ChangeEvent{
+		{Path: configPath, Op: storage.OpModify},
 	})
 
 	// Config should be unchanged
 	if app.Cfg().App.Name != originalName {
 		t.Errorf("expected config to remain unchanged, got %q", app.Cfg().App.Name)
-	}
-}
-
-func TestReloadMixedEvents(t *testing.T) {
-	app, fs := setupReloadTestApp(t)
-
-	configPath := app.ws.Paths().Root + "/" + ConfigFile
-	updatedConfig := `version: "1.0"
-app:
-  name: "Mixed Update"
-lists: {}
-forms: {}
-navigation: []
-`
-	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
-
-	updatedMeta := `version: "1.0"
-entities:
-  ticket:
-    label: Ticket
-    plural: tickets
-    id_prefix: "TKT-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-      priority:
-        type: string
-relations:
-  depends_on:
-    label: depends on
-    from: [ticket]
-    to: [ticket]
-`
-	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
-
-	// Reload with both config and metamodel changes at once
-	app.simulateReload([]repository.ChangeEvent{
-		{Path: configPath, Op: repository.OpModify},
-		{Path: app.ws.Paths().MetamodelPath, Op: repository.OpModify},
-	})
-
-	if app.Cfg().App.Name != "Mixed Update" {
-		t.Errorf("expected config name 'Mixed Update', got %q", app.Cfg().App.Name)
-	}
-
-	entDef, ok := app.Meta().GetEntityDef("ticket")
-	if !ok {
-		t.Fatal("expected 'ticket' in reloaded metamodel")
-	}
-	if _, hasPriority := entDef.Properties["priority"]; !hasPriority {
-		t.Error("expected 'priority' property in reloaded metamodel")
 	}
 }
 
@@ -638,9 +505,9 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 					t.Errorf("state.Load() returned nil")
 					return
 				}
-				if s.Cfg == nil || s.Meta == nil || s.Graph == nil {
-					t.Errorf("state.Load() returned incomplete snapshot: cfg=%v meta=%v graph=%v",
-						s.Cfg != nil, s.Meta != nil, s.Graph != nil)
+				if s.Cfg == nil || s.Meta == nil {
+					t.Errorf("state.Load() returned incomplete snapshot: cfg=%v meta=%v",
+						s.Cfg != nil, s.Meta != nil)
 					return
 				}
 				// Cross-field invariant: a published AppState always
@@ -665,7 +532,7 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 				return
 			default:
 			}
-			app.onReload(nil)
+			app.onDataReload(nil)
 		}
 	}()
 

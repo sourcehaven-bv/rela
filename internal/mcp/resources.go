@@ -47,8 +47,7 @@ func (s *Server) registerResources() {
 func (s *Server) handleReadMetamodel(
 	_ context.Context, _ mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
-	snap := s.ws.Snapshot()
-	meta := snap.Meta()
+	meta := s.ws.Meta()
 	result := map[string]interface{}{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
@@ -87,16 +86,16 @@ func (s *Server) handleReadEntity(
 	}
 	entityType, id := segments[0], segments[1]
 
-	snap := s.ws.Snapshot()
-	entity, ok := snap.GetEntity(id)
-	if !ok {
+	st := s.ws.Store()
+	e, getErr := st.GetEntity(context.Background(), id)
+	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
-	if entity.Type != entityType {
-		return nil, fmt.Errorf("entity %s is type %s, not %s", id, entity.Type, entityType)
+	if e.Type != entityType {
+		return nil, fmt.Errorf("entity %s is type %s, not %s", id, e.Type, entityType)
 	}
 
-	text, err := convertEntity(entity, snap, true)
+	text, err := convertStoreEntity(e, st, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert entity: %w", err)
 	}
@@ -123,13 +122,13 @@ func (s *Server) handleReadRelation(
 	}
 	fromID, relType, toID := segments[0], segments[1], segments[2]
 
-	snap := s.ws.Snapshot()
-	relation, ok := snap.Graph().GetEdge(fromID, relType, toID)
-	if !ok {
+	st := s.ws.Store()
+	relation, getErr := st.GetRelation(context.Background(), fromID, relType, toID)
+	if getErr != nil {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", fromID, relType, toID)
 	}
 
-	text, err := convertRelation(relation)
+	text, err := convertStoreRelation(relation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert relation: %w", err)
 	}

@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -10,10 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // actionIDRegex defines the allowed format for action IDs at request time.
@@ -91,18 +92,18 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	defer a.writeMu.Unlock()
 
 	// Resolve entity if provided in the request.
-	var entity *model.Entity
+	var ent *entity.Entity
 	if req.EntityID != "" {
-		if e, ok := s.Graph.GetNode(req.EntityID); ok {
-			entity = e
+		if e, err := a.store.GetEntity(context.Background(), req.EntityID); err == nil {
+			ent = e
 		}
 	}
 
 	ctx := &actionScriptContext{
-		ws:          a.ws,
+		luaServices: a.luaServices,
 		meta:        s.Meta,
-		projectRoot: a.ws.Paths().Root,
-		entity:      entity,
+		projectRoot: a.paths.Root,
+		entity:      ent,
 	}
 
 	engine := script.NewEngine()
@@ -143,14 +144,14 @@ func newCorrelationID() string {
 // The entity field is optionally populated when the action is invoked with
 // entity context (e.g., from a list action applied to selected rows).
 type actionScriptContext struct {
-	ws          *workspace.Workspace
+	luaServices lua.Services
 	meta        *metamodel.Metamodel
 	projectRoot string
-	entity      *model.Entity
+	entity      *entity.Entity
 }
 
-func (c *actionScriptContext) GetWorkspace() interface{}     { return c.ws }
+func (c *actionScriptContext) GetWorkspace() interface{}     { return c.luaServices }
 func (c *actionScriptContext) GetMeta() *metamodel.Metamodel { return c.meta }
 func (c *actionScriptContext) GetProjectRoot() string        { return c.projectRoot }
-func (c *actionScriptContext) GetEntity() *model.Entity      { return c.entity }
-func (c *actionScriptContext) GetOldEntity() *model.Entity   { return nil }
+func (c *actionScriptContext) GetEntity() *entity.Entity     { return c.entity }
+func (c *actionScriptContext) GetOldEntity() *entity.Entity  { return nil }

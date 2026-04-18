@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -87,9 +88,12 @@ Examples:
 
 		var createdCount, skippedCount int
 
+		tmpl := ws.Templater()
+		ctx := context.Background()
+
 		// Generate entity templates
 		for _, entityType := range entityTypes {
-			created, err := ws.GenerateEntityTemplate(entityType, templateVariant, templateForce)
+			created, err := tmpl.GenerateEntity(ctx, ws.Meta(), entityType, templateVariant, templateForce)
 			if err != nil {
 				return fmt.Errorf("failed to generate template for %s: %w", entityType, err)
 			}
@@ -110,7 +114,7 @@ Examples:
 
 		// Generate relation templates
 		for _, relationType := range relationTypes {
-			created, err := ws.GenerateRelationTemplate(relationType, templateForce)
+			created, err := tmpl.GenerateRelation(ctx, ws.Meta(), relationType, templateForce)
 			if err != nil {
 				return fmt.Errorf("failed to generate template for %s: %w", relationType, err)
 			}

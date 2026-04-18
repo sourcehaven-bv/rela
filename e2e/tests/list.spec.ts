@@ -21,9 +21,9 @@ test.describe('List View', () => {
       await listPage.navigateToList('features');
 
       // Check column headers
-      await expect(appPage.locator('th').filter({ hasText: /title/i })).toBeVisible();
-      await expect(appPage.locator('th').filter({ hasText: /status/i })).toBeVisible();
-      await expect(appPage.locator('th').filter({ hasText: /priority/i })).toBeVisible();
+      await listPage.expectColumnHeader('title');
+      await listPage.expectColumnHeader('status');
+      await listPage.expectColumnHeader('priority');
     });
 
     test('shows create button', async ({ appPage }) => {
@@ -107,11 +107,7 @@ test.describe('List View', () => {
 
       const initialCount = await listPage.getRowCount();
 
-      // Apply filter
-      const statusFilter = listPage.filterBar.locator('select').first();
-      await statusFilter.selectOption('approved');
-
-      await appPage.waitForTimeout(500);
+      await listPage.setFilterByIndex(0, 'approved');
 
       // Should show fewer results
       const filteredCount = await listPage.getRowCount();
@@ -128,14 +124,8 @@ test.describe('List View', () => {
 
       const initialCount = await listPage.getRowCount();
 
-      // Apply filter
-      const statusFilter = listPage.filterBar.locator('select').first();
-      await statusFilter.selectOption('approved');
-      await appPage.waitForTimeout(500);
-
-      // Clear filter by selecting empty option
-      await statusFilter.selectOption('');
-      await appPage.waitForTimeout(500);
+      await listPage.setFilterByIndex(0, 'approved');
+      await listPage.setFilterByIndex(0, '');
 
       // Should show all results again
       const clearedCount = await listPage.getRowCount();
@@ -147,15 +137,10 @@ test.describe('List View', () => {
 
       await listPage.navigateToList('features');
 
-      // Apply multiple filters
-      const filters = listPage.filterBar.locator('select');
-      const filterCount = await filters.count();
-
+      const filterCount = await listPage.filterBar.locator('select').count();
       if (filterCount >= 2) {
-        await filters.nth(0).selectOption({ index: 1 });
-        await appPage.waitForTimeout(300);
-        await filters.nth(1).selectOption({ index: 1 });
-        await appPage.waitForTimeout(500);
+        await listPage.setFilterByIndex(0, { index: 1 });
+        await listPage.setFilterByIndex(1, { index: 1 });
       }
 
       // Results should be filtered
@@ -193,15 +178,10 @@ test.describe('List View', () => {
 
       await listPage.navigateToList('features');
 
-      // Focus the list area
-      await appPage.locator('.entity-table, table').click();
+      await listPage.focusTable();
+      await listPage.pressKey('ArrowDown');
 
-      // Press down arrow to select
-      await appPage.keyboard.press('ArrowDown');
-
-      // First row should be selected
-      const selectedRow = appPage.locator('.entity-row.selected, tr.selected');
-      await expect(selectedRow).toBeVisible();
+      await expect(listPage.selectedRow).toBeVisible();
     });
 
     test('N key opens create form', async ({ appPage }) => {
@@ -209,8 +189,7 @@ test.describe('List View', () => {
 
       await listPage.navigateToList('features');
 
-      // Press N to create new
-      await appPage.keyboard.press('n');
+      await listPage.pressKey('n');
 
       await expect(appPage).toHaveURL(/\/form\/feature/);
     });

@@ -42,6 +42,33 @@ export class SearchPage extends BasePage {
     await this.waitForSpinnerToDisappear();
   }
 
+  /** Wait for the first result to render, then enter keyboard-results mode by
+   *  focusing the input and pressing ArrowDown. The first result will be
+   *  selected when this returns. */
+  async focusFirstResult() {
+    await expect(this.resultItems.first()).toBeVisible();
+    await this.searchInput.focus();
+    await this.page.keyboard.press('ArrowDown');
+    await expect(this.resultItems.first()).toHaveClass(/selected/);
+  }
+
+  /** Press Enter globally — used after focusFirstResult to open the selected one. */
+  async openSelectedResult() {
+    await this.page.keyboard.press('Enter');
+  }
+
+  /** Navigate to /search with an initial query param. */
+  async navigateToSearchWithQuery(query: string) {
+    await this.navigateTo(`/search?q=${encodeURIComponent(query)}`);
+    await this.waitForSpinnerToDisappear();
+  }
+
+  /** Blur the search input (by clicking the page body) then press the F key. */
+  async pressFilterHotkey() {
+    await this.page.locator('body').click();
+    await this.page.keyboard.press('f');
+  }
+
   async openFilterMenu() {
     await this.filterButton.click();
     await expect(this.filterMenu).toBeVisible();
@@ -75,12 +102,12 @@ export class SearchPage extends BasePage {
 
   async clickResult(index: number) {
     await this.resultItems.nth(index).click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async clickResultById(id: string) {
     await this.resultItems.filter({ hasText: id }).click();
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async getResultCount(): Promise<number> {
@@ -118,6 +145,6 @@ export class SearchPage extends BasePage {
 
   async openSelectedResult() {
     await this.page.keyboard.press('Enter');
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('domcontentloaded');
   }
 }

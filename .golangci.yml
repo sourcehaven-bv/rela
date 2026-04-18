@@ -294,6 +294,28 @@ issues:
         - gosec
         - errcheck
 
+    # internal/store/storetest contains reusable conformance test suites
+    # that are imported from the _test.go files of store backends. They
+    # aren't named *_test.go themselves, but they ARE test code — apply
+    # the same test-like lint relaxations.
+    - path: internal/store/storetest/
+      linters:
+        - dupl
+        - funlen
+        - gocognit
+        - gocyclo
+        - mnd
+        - lll
+        - goconst
+        - gosec
+        - errcheck
+        - thelper
+        - testifylint
+        - prealloc
+        - gocritic
+        - revive
+        - unused
+
     # Exclude lll for lines with long strings (URLs, etc.)
     - linters:
         - lll
@@ -316,6 +338,16 @@ issues:
       linters:
         - funlen        # Query parsing is inherently complex
         - gocognit      # Query parsing has complex control flow
+
+    # MCP tool handlers intentionally encode errors into the tool result
+    # (via NewToolResultError) and return (result, nil) — nilerr flags this
+    # as a bug, but it's the protocol contract. The export helpers have
+    # `error` in their signature to preserve the contract even though they
+    # currently never fail (unparam).
+    - path: internal/mcp/tools_.*\.go
+      linters:
+        - nilerr
+        - unparam
 
     # Data entry web handlers have specific patterns
     - path: internal/dataentry/.*\.go
