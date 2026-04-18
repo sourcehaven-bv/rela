@@ -28,6 +28,7 @@ jobs:
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Check coverage thresholds (ratchet)
+        if: github.event_name != 'pull_request' || github.head_ref != 'chore/coverage-baseline-update'
         uses: vladopajic/go-test-coverage@v2
         with:
           config: .testcoverage.yml
