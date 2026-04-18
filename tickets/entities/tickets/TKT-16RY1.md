@@ -5,7 +5,7 @@ title: Add internal/encryption crypto primitives (slice 1)
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Summary
