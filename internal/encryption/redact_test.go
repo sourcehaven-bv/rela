@@ -54,7 +54,8 @@ func TestRedaction_NoLeaks(t *testing.T) {
 	})
 
 	t.Run("Open wrong data-key length", func(t *testing.T) {
-		_, err := Open(bytes.Repeat([]byte{0}, aeadMinLen), secretKey)
+		nonceSize, tagSize := aeadSizes()
+		_, err := Open(bytes.Repeat([]byte{0}, nonceSize+tagSize), secretKey)
 		assertNoLeak(t, "Open", err, marker2)
 	})
 

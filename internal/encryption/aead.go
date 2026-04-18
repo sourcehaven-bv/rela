@@ -6,15 +6,11 @@ import (
 	"io"
 )
 
-const (
-	aeadNonceSize = 12
-	aeadTagSize   = 16
-	aeadMinLen    = aeadNonceSize + aeadTagSize
-)
-
 // Seal encrypts plaintext under dataKey with AES-256-GCM, prepending a
-// fresh random 12-byte nonce. Output layout: nonce (12B) || ciphertext
-// || GCM tag (16B).
+// fresh random nonce. Output layout: nonce || ciphertext || GCM tag.
+//
+// Nonce and tag sizes come from cipher.AEAD — 12 bytes and 16 bytes
+// respectively for the stdlib GCM AEAD. See newGCM.
 //
 // Callers MUST NOT reuse a data key beyond 2^32 Seal calls (AES-GCM
 // birthday bound). Because NewDataKey is cheap, the intended pattern is
@@ -28,15 +24,12 @@ func sealWith(r io.Reader, plaintext, dataKey []byte) ([]byte, error) {
 	if len(dataKey) != DataKeySize {
 		return nil, fmt.Errorf("encryption: data key %s, want %d", safe(dataKey), DataKeySize)
 	}
-	nonce := make([]byte, aeadNonceSize)
+	aead := newGCM(dataKey)
+	nonce := make([]byte, aead.NonceSize())
 	if _, err := io.ReadFull(r, nonce); err != nil {
 		return nil, fmt.Errorf("encryption: read nonce entropy: %w", err)
 	}
-	sealed := aesGCMSeal(dataKey, nonce, plaintext)
-	out := make([]byte, 0, len(nonce)+len(sealed))
-	out = append(out, nonce...)
-	out = append(out, sealed...)
-	return out, nil
+	return aead.Seal(nonce, nonce, plaintext, nil), nil
 }
 
 // Open decrypts ciphertext produced by Seal.
@@ -44,12 +37,13 @@ func Open(ciphertext, dataKey []byte) ([]byte, error) {
 	if len(dataKey) != DataKeySize {
 		return nil, fmt.Errorf("encryption: data key %s, want %d", safe(dataKey), DataKeySize)
 	}
-	if len(ciphertext) < aeadMinLen {
+	aead := newGCM(dataKey)
+	if len(ciphertext) < aead.NonceSize()+aead.Overhead() {
 		return nil, ErrDecrypt
 	}
-	nonce := ciphertext[:aeadNonceSize]
-	body := ciphertext[aeadNonceSize:]
-	plaintext, err := aesGCMOpen(dataKey, nonce, body)
+	nonce := ciphertext[:aead.NonceSize()]
+	body := ciphertext[aead.NonceSize():]
+	plaintext, err := aead.Open(nil, nonce, body, nil)
 	if err != nil {
 		return nil, errDecryptGCM(err)
 	}

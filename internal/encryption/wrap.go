@@ -18,13 +18,24 @@ import (
 // version and the info string together.
 const hkdfInfoV1 = "rela-encryption v1"
 
+// Blob format is a wire contract — offsets must be compile-time
+// constants. The AES-GCM sizes (12-byte nonce, 16-byte tag) are the
+// stdlib defaults returned by cipher.AEAD.NonceSize() / Overhead() for
+// GCM. They're hardcoded here because the blob layout fixes them at
+// V1. A future algorithm swap gets a new magic/version and can use
+// different numbers.
+//
+// Stdlib references:
+//   - https://pkg.go.dev/crypto/cipher#NewGCM           (NonceSize = 12)
+//   - https://pkg.go.dev/crypto/cipher#AEAD.Overhead    (tag = 16)
 const (
-	wrapMagic      = "RLAE"
-	wrapMagicLen   = 4
-	wrapVersion    = 0x01
-	wrapKEKSize    = 32
-	wrapNonceSize  = 12
-	wrapGCMTagSize = 16
+	wrapMagic    = "RLAE"
+	wrapMagicLen = 4
+	wrapVersion  = 0x01
+	wrapKEKSize  = 32
+
+	wrapNonceSize  = 12 // cipher.AEAD.NonceSize() for GCM
+	wrapGCMTagSize = 16 // cipher.AEAD.Overhead() for GCM
 
 	wrappedBlobSize = wrapMagicLen + 1 + x25519KeySize + mlkemCipherSize + (DataKeySize + wrapGCMTagSize)
 
@@ -139,5 +150,10 @@ func aesGCMOpen(key, nonce, ciphertext []byte) ([]byte, error) {
 
 func newGCM(key []byte) cipher.AEAD {
 	block := mustStdlibContract(aes.NewCipher(key))
-	return mustStdlibContract(cipher.NewGCM(block))
+	aead := mustStdlibContract(cipher.NewGCM(block))
+	// Guard against a hypothetical future stdlib change to GCM
+	// defaults. Our wire format hardcodes these sizes.
+	mustLen("cipher.AEAD GCM NonceSize()", aead.NonceSize(), wrapNonceSize)
+	mustLen("cipher.AEAD GCM Overhead()", aead.Overhead(), wrapGCMTagSize)
+	return aead
 }

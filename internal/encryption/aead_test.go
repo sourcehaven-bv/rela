@@ -11,14 +11,15 @@ func TestSealOpen_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	nonceSize, tagSize := aeadSizes()
 	for _, size := range []int{0, 1, 15, 16, 17, 1024, 1 << 16} {
 		plaintext := bytes.Repeat([]byte{byte(size)}, size)
 		sealed, err := Seal(plaintext, dk)
 		if err != nil {
 			t.Fatalf("size=%d: Seal: %v", size, err)
 		}
-		if len(sealed) != aeadNonceSize+size+aeadTagSize {
-			t.Fatalf("size=%d: sealed len = %d, want %d", size, len(sealed), aeadNonceSize+size+aeadTagSize)
+		if len(sealed) != nonceSize+size+tagSize {
+			t.Fatalf("size=%d: sealed len = %d, want %d", size, len(sealed), nonceSize+size+tagSize)
 		}
 		got, err := Open(sealed, dk)
 		if err != nil {
@@ -37,7 +38,8 @@ func TestSeal_NoncePrepended(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < aeadNonceSize; i++ {
+	nonceSize, _ := aeadSizes()
+	for i := 0; i < nonceSize; i++ {
 		if sealed[i] != 0xAB {
 			t.Fatalf("nonce[%d] = %#x, want 0xAB", i, sealed[i])
 		}
@@ -66,7 +68,8 @@ func TestSeal_EntropyError(t *testing.T) {
 }
 
 func TestOpen_WrongKeyLength(t *testing.T) {
-	sealed := make([]byte, aeadMinLen)
+	nonceSize, tagSize := aeadSizes()
+	sealed := make([]byte, nonceSize+tagSize)
 	for _, n := range []int{0, 16, 31, 33, 64} {
 		_, err := Open(sealed, make([]byte, n))
 		if err == nil {
@@ -77,7 +80,9 @@ func TestOpen_WrongKeyLength(t *testing.T) {
 
 func TestOpen_ShortCiphertext(t *testing.T) {
 	dk := bytes.Repeat([]byte{0x02}, DataKeySize)
-	for _, n := range []int{0, 1, aeadMinLen - 1} {
+	nonceSize, tagSize := aeadSizes()
+	minLen := nonceSize + tagSize
+	for _, n := range []int{0, 1, minLen - 1} {
 		_, err := Open(make([]byte, n), dk)
 		if !errors.Is(err, ErrDecrypt) {
 			t.Fatalf("len=%d: err = %v, want ErrDecrypt", n, err)

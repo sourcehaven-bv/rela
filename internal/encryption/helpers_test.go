@@ -49,3 +49,11 @@ func mustGenerate(t *testing.T) *Keypair {
 func ecdhX25519Zero() (*ecdh.PublicKey, error) {
 	return ecdh.X25519().NewPublicKey(make([]byte, x25519KeySize))
 }
+
+// aeadSizes queries the stdlib GCM AEAD for its nonce size and tag
+// overhead. Tests use these rather than hardcoding — so we're not
+// duplicating magic numbers.
+func aeadSizes() (nonceSize, tagSize int) {
+	aead := newGCM(make([]byte, DataKeySize))
+	return aead.NonceSize(), aead.Overhead()
+}
