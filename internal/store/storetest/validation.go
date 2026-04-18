@@ -1,7 +1,6 @@
 package storetest
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,6 +12,32 @@ import (
 
 // RunValidationTests runs input validation conformance tests.
 func RunValidationTests(t *testing.T, f Factory) {
+	t.Run("CreateEntityRejectsInvalidIDs", func(t *testing.T) {
+		s := f(t)
+
+		invalid := []struct {
+			id   string
+			want string
+		}{
+			{"", "empty"},
+			{"foo/bar", "path separator"},
+			{"foo\\bar", "path separator"},
+			{"foo\x00bar", "control character"},
+			{"foo\nbar", "control character"},
+			{"foo\tbar", "control character"},
+			{"foo\x7fbar", "control character"},
+			{"a--b", "consecutive dashes"},
+		}
+		for _, tc := range invalid {
+			err := s.CreateEntity(ctx(), entity.New(tc.id, "t"))
+			assert.Errorf(t, err, "id %q should be rejected", tc.id)
+			if err != nil {
+				assert.Containsf(t, err.Error(), tc.want,
+					"error for id %q should mention %q", tc.id, tc.want)
+			}
+		}
+	})
+
 	t.Run("RelationKeyRejectsDoubleDash", func(t *testing.T) {
 		s := f(t)
 
@@ -28,18 +53,6 @@ func RunValidationTests(t *testing.T, f Factory) {
 		assert.Contains(t, err.Error(), "consecutive dashes")
 
 		_, err = s.CreateRelation(ctx(), "A-B", "requires", "C-D", nil)
-		require.NoError(t, err)
-	})
-
-	t.Run("AttachmentKeyRejectsSlash", func(t *testing.T) {
-		s := f(t)
-		require.NoError(t, s.CreateEntity(ctx(), entity.New("E-1", "t")))
-
-		err := s.AttachFile(ctx(), "E-1", "some/prop", "f.txt", strings.NewReader("data"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "slash")
-
-		err = s.AttachFile(ctx(), "E-1", "screenshot", "f.png", strings.NewReader("data"))
 		require.NoError(t, err)
 	})
 

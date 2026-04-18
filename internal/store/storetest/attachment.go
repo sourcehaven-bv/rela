@@ -109,6 +109,18 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		assert.Contains(t, err.Error(), "empty property")
 	})
 
+	t.Run("RejectsSlashInProperty", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("E-1", "t")))
+
+		err := s.AttachFile(ctx(), "E-1", "some/prop", "f.txt", strings.NewReader("data"))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "slash")
+
+		err = s.AttachFile(ctx(), "E-1", "screenshot", "f.png", strings.NewReader("data"))
+		require.NoError(t, err)
+	})
+
 	t.Run("ReaderError", func(t *testing.T) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))

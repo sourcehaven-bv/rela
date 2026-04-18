@@ -22,6 +22,17 @@ type Factory func(t *testing.T) store.Store
 // The store is used for seeding data; the searcher is used for queries.
 type SearchFactory func(t *testing.T) (store.Store, search.Searcher)
 
+// Capabilities declares which optional Store features an implementation
+// supports. Conformance tests gate optional sections on these flags so
+// implementations that omit a feature (e.g. attachments) can still run
+// the rest of the suite.
+type Capabilities struct {
+	// Attachments indicates whether the store implements
+	// AttachmentManager. When false, attachment-related conformance
+	// tests are skipped.
+	Attachments bool
+}
+
 func ctx() context.Context { return context.Background() }
 
 // seedEntities populates a store with a standard set of entities.
@@ -122,7 +133,8 @@ func countRelations(t *testing.T, s store.Store) int {
 
 // RunAll runs the full conformance suite.
 // The optional SearchFactory is used for search tests; if nil, search tests are skipped.
-func RunAll(t *testing.T, f Factory, sf SearchFactory) {
+// Capabilities gates optional feature tests (e.g. attachments).
+func RunAll(t *testing.T, f Factory, sf SearchFactory, caps Capabilities) {
 	t.Run("Entity", func(t *testing.T) { RunEntityTests(t, f) })
 	t.Run("Relation", func(t *testing.T) { RunRelationTests(t, f) })
 	t.Run("Query", func(t *testing.T) { RunQueryTests(t, f) })
@@ -130,7 +142,9 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory) {
 	if sf != nil {
 		t.Run("Search", func(t *testing.T) { RunSearchTests(t, sf) })
 	}
-	t.Run("Attachment", func(t *testing.T) { RunAttachmentTests(t, f) })
+	if caps.Attachments {
+		t.Run("Attachment", func(t *testing.T) { RunAttachmentTests(t, f) })
+	}
 	t.Run("Watcher", func(t *testing.T) { RunWatcherTests(t, f) })
 	t.Run("Validation", func(t *testing.T) { RunValidationTests(t, f) })
 }
