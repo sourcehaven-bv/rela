@@ -82,7 +82,7 @@ func setupTestGraph() {
 	seedR("CTRL-002", "mitigates", "RISK-001")
 	seedR("CTRL-001", "evidencedBy", "EV-001")
 
-	ws = workspace.NewForTestWithStore(s, meta)
+	ws = workspace.NewForTest(meta, workspace.WithTestStore(s))
 	out = output.New(output.FormatTable)
 }
 

@@ -15,18 +15,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-func (s *Server) handleRefresh(
-	_ context.Context, _ mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	entities, relations, err := s.ws.Reload()
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
-	}
-
-	msg := fmt.Sprintf("Refreshed: %d entities, %d relations loaded", entities, relations)
-	return mcp.NewToolResultText(msg), nil
-}
-
 func (s *Server) handleExport(
 	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {

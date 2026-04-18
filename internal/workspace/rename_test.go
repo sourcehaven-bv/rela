@@ -24,15 +24,15 @@ type renameTestEnv struct {
 	ctx  *project.Context
 }
 
-// addEntity persists an entity into the workspace (the fsstore-backed
-// syncStore writes it to disk).
+// addEntity persists an entity into the workspace (the fsstore writes
+// it to disk).
 func (e renameTestEnv) addEntity(t *testing.T, ent *entity.Entity) {
 	t.Helper()
 	e.ws.SeedEntityForTest(ent)
 }
 
-// addRelation persists a relation into the workspace (the fsstore-
-// backed syncStore writes it to disk).
+// addRelation persists a relation into the workspace (the fsstore
+// writes it to disk).
 func (e renameTestEnv) addRelation(t *testing.T, rel *entity.Relation) {
 	t.Helper()
 	e.ws.SeedRelationForTest(rel)

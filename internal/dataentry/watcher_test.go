@@ -108,11 +108,11 @@ status: open
 		App: AppConfig{Name: "Test App"},
 	}
 
-	ws := workspace.NewBare(fs, ctx, meta)
-	seedFromFixture(ws, g)
+	ws := workspace.NewForTest(meta, workspace.WithFS(fs, ctx))
+	seedFromFixture(ws.Store(), g)
 
 	app := newAppFromParts(cfg, meta, g)
-	app.ws = ws
+	rebindApp(app, fs, ctx, ws)
 	app.broker = newEventBroker()
 
 	return app, fs
@@ -243,28 +243,20 @@ func TestEventBrokerConcurrency(t *testing.T) {
 }
 
 // simulateReload mimics what the watcher subscriptions do in production:
-// a metamodel-path event triggers workspace reload + onMetaReload; a
-// config-path event triggers rebuildState(config); other events go to
-// onDataReload. Mixed slices dispatch to all applicable handlers.
+// a config-path event triggers rebuildState(config); other events go to
+// onDataReload. Metamodel changes are ignored — the workspace does not
+// reload the metamodel while running.
 func (a *App) simulateReload(events []storage.ChangeEvent) {
-	metaPath := a.ws.Paths().MetamodelPath
-	configPath := a.ws.Paths().Root + "/" + ConfigFile
-	metaEvent := false
+	configPath := a.paths.Root + "/" + ConfigFile
 	configEvent := false
 	var dataEvents []storage.ChangeEvent
 	for _, e := range events {
 		switch e.Path {
-		case metaPath:
-			metaEvent = true
 		case configPath:
 			configEvent = true
 		default:
 			dataEvents = append(dataEvents, e)
 		}
-	}
-	if metaEvent {
-		_, _, _ = a.ws.Reload()
-		a.onMetaReload()
 	}
 	if configEvent {
 		a.rebuildState(true, false)
@@ -277,60 +269,6 @@ func (a *App) simulateReload(events []storage.ChangeEvent) {
 }
 
 // --- reload tests ---
-
-// TestReloadEntityChanges was removed when workspace.Sync went away.
-// Entity-file reconciliation now happens inside the store's watcher,
-// and the graph no longer picks up external edits. When graph retires
-// or starts subscribing to store events, reinstate an equivalent test
-// that asserts the new reactive path.
-
-func TestReloadMetamodelChange(t *testing.T) {
-	app, fs := setupReloadTestApp(t)
-
-	// Verify initial metamodel has 'ticket' entity
-	if _, ok := app.Meta().GetEntityDef("ticket"); !ok {
-		t.Fatal("expected 'ticket' in initial metamodel")
-	}
-
-	// Write updated metamodel with an additional entity type
-	updatedMeta := `version: "1.0"
-entities:
-  ticket:
-    label: Ticket
-    plural: tickets
-    id_prefix: "TKT-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-  component:
-    label: Component
-    plural: components
-    id_prefix: "CMP-"
-    id_type: sequential
-    properties:
-      name:
-        type: string
-        required: true
-relations:
-  depends_on:
-    label: depends on
-    from: [ticket]
-    to: [ticket]
-`
-	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
-
-	app.simulateReload([]storage.ChangeEvent{
-		{Path: app.ws.Paths().MetamodelPath, Op: storage.OpModify},
-	})
-
-	if _, ok := app.Meta().GetEntityDef("component"); !ok {
-		t.Error("expected 'component' entity in reloaded metamodel")
-	}
-}
 
 func TestReloadConfigChange(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
@@ -345,7 +283,7 @@ lists: {}
 forms: {}
 navigation: []
 `
-	configPath := app.ws.Paths().Root + "/" + ConfigFile
+	configPath := app.paths.Root + "/" + ConfigFile
 	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
 
 	app.simulateReload([]storage.ChangeEvent{
@@ -360,29 +298,11 @@ navigation: []
 	}
 }
 
-func TestReloadBadMetamodelKeepsPrevious(t *testing.T) {
-	app, fs := setupReloadTestApp(t)
-
-	original := app.Meta()
-
-	// Write invalid metamodel
-	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(`not: valid: metamodel: {{{`), 0o644)
-
-	app.simulateReload([]storage.ChangeEvent{
-		{Path: app.ws.Paths().MetamodelPath, Op: storage.OpModify},
-	})
-
-	// Metamodel should be unchanged
-	if app.Meta() != original {
-		t.Error("expected metamodel to remain unchanged after bad reload")
-	}
-}
-
 func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	app, fs := setupReloadTestApp(t)
 
 	originalName := app.Cfg().App.Name
-	configPath := app.ws.Paths().Root + "/" + ConfigFile
+	configPath := app.paths.Root + "/" + ConfigFile
 
 	// Write invalid YAML config
 	_ = fs.WriteFile(configPath, []byte(`not: valid: yaml: {{{`), 0o644)
@@ -394,61 +314,6 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 	// Config should be unchanged
 	if app.Cfg().App.Name != originalName {
 		t.Errorf("expected config to remain unchanged, got %q", app.Cfg().App.Name)
-	}
-}
-
-func TestReloadMixedEvents(t *testing.T) {
-	app, fs := setupReloadTestApp(t)
-
-	configPath := app.ws.Paths().Root + "/" + ConfigFile
-	updatedConfig := `version: "1.0"
-app:
-  name: "Mixed Update"
-lists: {}
-forms: {}
-navigation: []
-`
-	_ = fs.WriteFile(configPath, []byte(updatedConfig), 0o644)
-
-	updatedMeta := `version: "1.0"
-entities:
-  ticket:
-    label: Ticket
-    plural: tickets
-    id_prefix: "TKT-"
-    id_type: sequential
-    properties:
-      title:
-        type: string
-        required: true
-      status:
-        type: string
-      priority:
-        type: string
-relations:
-  depends_on:
-    label: depends on
-    from: [ticket]
-    to: [ticket]
-`
-	_ = fs.WriteFile(app.ws.Paths().MetamodelPath, []byte(updatedMeta), 0o644)
-
-	// Reload with both config and metamodel changes at once
-	app.simulateReload([]storage.ChangeEvent{
-		{Path: configPath, Op: storage.OpModify},
-		{Path: app.ws.Paths().MetamodelPath, Op: storage.OpModify},
-	})
-
-	if app.Cfg().App.Name != "Mixed Update" {
-		t.Errorf("expected config name 'Mixed Update', got %q", app.Cfg().App.Name)
-	}
-
-	entDef, ok := app.Meta().GetEntityDef("ticket")
-	if !ok {
-		t.Fatal("expected 'ticket' in reloaded metamodel")
-	}
-	if _, hasPriority := entDef.Properties["priority"]; !hasPriority {
-		t.Error("expected 'priority' property in reloaded metamodel")
 	}
 }
 

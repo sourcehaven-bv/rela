@@ -96,10 +96,10 @@ func (a *App) analyzeOrphans() AnalysisSection {
 	}
 
 	ctx := context.Background()
-	orphanIDs, _ := a.ws.Tracer().FindOrphans(ctx)
+	orphanIDs, _ := a.tracer.FindOrphans(ctx)
 
 	var orphans []*entity.Entity
-	st := a.ws.Store()
+	st := a.store
 	for _, id := range orphanIDs {
 		if e, err := st.GetEntity(ctx, id); err == nil {
 			orphans = append(orphans, e)
@@ -130,7 +130,7 @@ func (a *App) analyzeDuplicates() AnalysisSection {
 
 	ctx := context.Background()
 	titleGroups := make(map[string][]*entity.Entity)
-	for e, err := range a.ws.Store().ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range a.store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
@@ -191,7 +191,7 @@ func (a *App) analyzeGaps() AnalysisSection {
 	// Group IDs by prefix
 	ctx := context.Background()
 	prefixGroups := make(map[string][]int)
-	for e, err := range a.ws.Store().ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range a.store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
@@ -244,7 +244,7 @@ func (a *App) analyzeCardinality() AnalysisSection {
 	}
 
 	ctx := context.Background()
-	st := a.ws.Store()
+	st := a.store
 
 	// Sort relation names for deterministic output
 	relNames := make([]string, 0, len(s.Meta.Relations))
@@ -371,7 +371,7 @@ func (a *App) analyzeProperties() AnalysisSection {
 
 	ctx := context.Background()
 	entities := make([]*entity.Entity, 0)
-	for e, err := range a.ws.Store().ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range a.store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
@@ -404,8 +404,8 @@ func (a *App) analyzeValidations() AnalysisSection {
 	}
 
 	ctx := context.Background()
-	st := a.ws.Store()
-	validator := a.ws.Validator()
+	st := a.store
+	validator := a.validator
 
 	for _, rule := range s.Meta.Validations {
 		ids, err := validator.CheckRule(ctx, rule)

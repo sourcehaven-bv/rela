@@ -33,21 +33,19 @@ type Services struct {
 	Meta *metamodel.Metamodel
 }
 
-// Services returns the services bundle the current App state is wired to.
-// Services are read from the workspace at call time, so reloads that
-// swap the backing store surface here immediately.
+// Services returns the services bundle.
 func (a *App) Services() Services {
 	return Services{
-		Store:    a.ws.Store(),
-		Tracer:   a.ws.Tracer(),
-		Searcher: a.ws.Searcher(),
+		Store:    a.store,
+		Tracer:   a.tracer,
+		Searcher: a.searcher,
 		Meta:     a.State().Meta,
 	}
 }
 
 // getEntity looks up an entity by ID via the store.
 func (a *App) getEntity(id string) (*entity.Entity, bool) {
-	e, err := a.ws.Store().GetEntity(context.Background(), id)
+	e, err := a.store.GetEntity(context.Background(), id)
 	if err != nil {
 		return nil, false
 	}
@@ -56,7 +54,7 @@ func (a *App) getEntity(id string) (*entity.Entity, bool) {
 
 // outgoingRelations returns all outgoing relations for id.
 func (a *App) outgoingRelations(id string) []*entity.Relation {
-	return listRelations(a.ws.Store(), store.RelationQuery{
+	return listRelations(a.store, store.RelationQuery{
 		EntityID:  id,
 		Direction: store.DirectionOutgoing,
 	})
@@ -64,7 +62,7 @@ func (a *App) outgoingRelations(id string) []*entity.Relation {
 
 // incomingRelations returns all incoming relations for id.
 func (a *App) incomingRelations(id string) []*entity.Relation {
-	return listRelations(a.ws.Store(), store.RelationQuery{
+	return listRelations(a.store, store.RelationQuery{
 		EntityID:  id,
 		Direction: store.DirectionIncoming,
 	})

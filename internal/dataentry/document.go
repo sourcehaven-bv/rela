@@ -1,4 +1,4 @@
-package workspace
+package dataentry
 
 import (
 	"bytes"
@@ -22,13 +22,17 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
+	"github.com/Sourcehaven-BV/rela/internal/state"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // docCacheDir is the subdirectory under .rela/ for document cache files.
 const docCacheDir = "documents"
 
-// DocumentConfig defines how to render a document from an entry entity.
-type DocumentConfig struct {
+// documentRenderConfig is the internal render configuration — the
+// external config is dataentryconfig.DocumentConfig (YAML), which
+// toDocumentRenderConfig converts.
+type documentRenderConfig struct {
 	// Command is the external render command. Placeholders:
 	//   {id}       - entry ID
 	//   {id_lower} - lowercase entry ID
@@ -47,19 +51,34 @@ type DocumentResult struct {
 	Entities []*entity.Entity
 }
 
-// docRenderGroup dedupes concurrent render requests for the same entry.
-var docRenderGroup singleflight.Group
+// documentService renders documents by invoking an external command and
+// caches results keyed by an FNV hash of the source entities. It is
+// safe for concurrent use: render requests for the same entry are
+// deduped via singleflight.
+type documentService struct {
+	store       store.Store
+	state       state.KV
+	projectRoot string
+	group       singleflight.Group
+}
 
-// GetCachedDocument returns a cached document if available and still valid.
+// newDocumentService builds a documentService from the three inputs it
+// needs. All three are retained by reference — the service is not a
+// snapshot.
+func newDocumentService(st store.Store, kv state.KV, projectRoot string) *documentService {
+	return &documentService{store: st, state: kv, projectRoot: projectRoot}
+}
+
+// GetCached returns a cached document if available and still valid.
 // Returns nil if the cache is missing, stale, or on any error.
-func (w *Workspace) GetCachedDocument(entryID string, _ DocumentConfig) *DocumentResult {
-	entities, contentHash, err := w.computeDocumentHash(entryID)
+func (s *documentService) GetCached(entryID string) *DocumentResult {
+	entities, contentHash, err := s.computeDocumentHash(entryID)
 	if err != nil {
 		return nil
 	}
 
 	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheDir, entryID, contentHash)
-	cachedHTML, _ := w.State().Get(context.Background(), cacheFile)
+	cachedHTML, _ := s.state.Get(context.Background(), cacheFile)
 	if cachedHTML == nil {
 		return nil
 	}
@@ -71,10 +90,10 @@ func (w *Workspace) GetCachedDocument(entryID string, _ DocumentConfig) *Documen
 	}
 }
 
-// RenderDocument renders a document by executing the configured command.
-// Uses singleflight to dedupe concurrent requests. Caches the result to disk.
-func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*DocumentResult, error) {
-	entities, contentHash, err := w.computeDocumentHash(entryID)
+// Render renders a document by executing the configured command. Uses
+// singleflight to dedupe concurrent requests. Caches the result to disk.
+func (s *documentService) Render(entryID string, cfg documentRenderConfig) (*DocumentResult, error) {
+	entities, contentHash, err := s.computeDocumentHash(entryID)
 	if err != nil {
 		return nil, fmt.Errorf("computing document hash: %w", err)
 	}
@@ -82,8 +101,8 @@ func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*Documen
 	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheDir, entryID, contentHash)
 
 	// Use singleflight to dedupe concurrent render requests for the same entry
-	result, err, _ := docRenderGroup.Do(entryID, func() (interface{}, error) {
-		return w.doRenderDocument(entryID, cfg, entities, contentHash, cacheFile)
+	result, err, _ := s.group.Do(entryID, func() (interface{}, error) {
+		return s.doRender(entryID, cfg, entities, contentHash, cacheFile)
 	})
 	if err != nil {
 		return nil, err
@@ -93,15 +112,15 @@ func (w *Workspace) RenderDocument(entryID string, cfg DocumentConfig) (*Documen
 	return docResult, nil
 }
 
-// doRenderDocument performs the actual rendering work.
-func (w *Workspace) doRenderDocument(
-	entryID string, cfg DocumentConfig, entities []*entity.Entity, contentHash, cacheFile string,
+// doRender performs the actual rendering work.
+func (s *documentService) doRender(
+	entryID string, cfg documentRenderConfig, entities []*entity.Entity, contentHash, cacheFile string,
 ) (*DocumentResult, error) {
 	command := cfg.Command
 	command = strings.ReplaceAll(command, "{id}", entryID)
 	command = strings.ReplaceAll(command, "{id_lower}", strings.ToLower(entryID))
 
-	markdown, err := w.executeCommand(command, cfg.Timeout)
+	markdown, err := s.executeCommand(command, cfg.Timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +134,7 @@ func (w *Workspace) doRenderDocument(
 	// not fatal — but it must be visible: silent cache rejections previously
 	// hid validation regressions where unsafe IDs caused every render to
 	// re-execute the command.
-	if writeErr := w.State().Put(context.Background(), cacheFile, []byte(htmlContent)); writeErr != nil {
+	if writeErr := s.state.Put(context.Background(), cacheFile, []byte(htmlContent)); writeErr != nil {
 		slog.Warn("document cache write failed", "error", writeErr)
 	}
 
@@ -128,8 +147,8 @@ func (w *Workspace) doRenderDocument(
 
 // computeDocumentHash computes a content hash for cache validation.
 // Uses the entry entity for hashing. Returns the entities and their hash.
-func (w *Workspace) computeDocumentHash(entryID string) ([]*entity.Entity, string, error) {
-	e, err := w.Store().GetEntity(context.Background(), entryID)
+func (s *documentService) computeDocumentHash(entryID string) ([]*entity.Entity, string, error) {
+	e, err := s.store.GetEntity(context.Background(), entryID)
 	if err != nil {
 		return nil, "", fmt.Errorf("entity %q not found", entryID)
 	}
@@ -170,12 +189,12 @@ func hashEntities(entities []*entity.Entity) string {
 }
 
 // executeCommand runs an external command and returns its stdout.
-func (w *Workspace) executeCommand(command string, timeout time.Duration) (string, error) {
+func (s *documentService) executeCommand(command string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = w.Paths().Root
+	cmd.Dir = s.projectRoot
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -51,7 +51,7 @@ func setupRenameTestEnv(t *testing.T) string {
 	// workspace.New here because SimpleMetamodelYAML deliberately uses
 	// pre-migration syntax, which workspace.New rejects.
 	fs := storage.NewSafeFS(storage.NewOsFS())
-	ws = workspace.NewBare(fs, projectCtx, meta)
+	ws = workspace.NewForTest(meta, workspace.WithFS(fs, projectCtx))
 
 	return dir
 }

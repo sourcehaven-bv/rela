@@ -753,9 +753,9 @@ func TestUIStateLoadSave(t *testing.T) {
 		}
 	})
 
-	t.Run("nil ws is safe", func(t *testing.T) {
+	t.Run("nil kv is safe", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.ws = nil
+		app2.kv = nil
 		state := app2.loadUIState()
 		if len(state.CollapsedGroups) != 0 {
 			t.Error("expected empty state")
@@ -820,9 +820,9 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 		}
 	})
 
-	t.Run("nil ws is safe", func(t *testing.T) {
+	t.Run("nil kv is safe", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		app2.ws = nil
+		app2.kv = nil
 		ud := app2.loadUserDefaults()
 		if ud != nil {
 			t.Errorf("expected nil, got %+v", ud)

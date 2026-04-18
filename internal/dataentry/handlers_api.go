@@ -158,7 +158,7 @@ func (a *App) handleAPIEntityTypes(w http.ResponseWriter, _ *http.Request) {
 // handleAPIEntities returns entities, optionally filtered by type.
 func (a *App) handleAPIEntities(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st := a.ws.Store()
+	st := a.store
 	entityType := r.URL.Query().Get("type")
 
 	q := store.EntityQuery{}
@@ -186,7 +186,7 @@ func (a *App) handleAPIEntity(w http.ResponseWriter, r *http.Request) { // Extra
 		return
 	}
 
-	e, err := a.ws.Store().GetEntity(r.Context(), path)
+	e, err := a.store.GetEntity(r.Context(), path)
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "entity not found")
 		return
@@ -254,7 +254,7 @@ func (a *App) entityToAPI(e *entity.Entity, includeRelations bool) APIEntity {
 
 	if includeRelations {
 		ctx := context.Background()
-		st := a.ws.Store()
+		st := a.store
 		api.Relations = make([]APIRelation, 0)
 
 		// Outgoing relations
@@ -383,7 +383,7 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 		Properties: req.Properties,
 		Content:    req.Content,
 	}
-	result, err := a.ws.EntityManager().CreateEntity(r.Context(), newEntity, entitymanager.CreateOptions{ID: req.ID})
+	result, err := a.entityManager.CreateEntity(r.Context(), newEntity, entitymanager.CreateOptions{ID: req.ID})
 	if err != nil {
 		var valErr *workspace.ValidationError
 		if errors.As(err, &valErr) {
@@ -423,7 +423,7 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	e, err := a.ws.Store().GetEntity(r.Context(), path)
+	e, err := a.store.GetEntity(r.Context(), path)
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, "entity not found")
 		return
@@ -439,7 +439,7 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 		e.Content = *req.Content
 	}
 
-	result, err := a.ws.EntityManager().UpdateEntity(r.Context(), e)
+	result, err := a.entityManager.UpdateEntity(r.Context(), e)
 	if err != nil {
 		var valErr *workspace.ValidationError
 		if errors.As(err, &valErr) {
@@ -471,7 +471,7 @@ func (a *App) handleAPIDeleteEntity(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	if _, err := a.ws.EntityManager().DeleteEntity(r.Context(), path, true); err != nil {
+	if _, err := a.entityManager.DeleteEntity(r.Context(), path, true); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete entity: "+err.Error())
 		return
 	}
@@ -500,7 +500,7 @@ func (a *App) handleAPICreateRelation(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	relation, err := a.ws.EntityManager().CreateRelation(r.Context(), req.From, req.Type, req.To, entitymanager.RelationOptions{
+	relation, err := a.entityManager.CreateRelation(r.Context(), req.From, req.Type, req.To, entitymanager.RelationOptions{
 		Properties: req.Properties,
 	})
 	if err != nil {
@@ -537,12 +537,12 @@ func (a *App) handleAPIDeleteRelation(w http.ResponseWriter, r *http.Request) {
 	defer a.writeMu.Unlock()
 
 	// Verify the relation exists
-	if _, err := a.ws.Store().GetRelation(r.Context(), from, relType, to); err != nil {
+	if _, err := a.store.GetRelation(r.Context(), from, relType, to); err != nil {
 		writeJSONError(w, http.StatusNotFound, "relation not found")
 		return
 	}
 
-	if err := a.ws.EntityManager().DeleteRelation(r.Context(), from, relType, to); err != nil {
+	if err := a.entityManager.DeleteRelation(r.Context(), from, relType, to); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete relation: "+err.Error())
 		return
 	}
@@ -576,7 +576,7 @@ func (a *App) handleAPIListRelations(w http.ResponseWriter, r *http.Request) {
 // listOutgoingRelations returns relations where the given entity is the source.
 func (a *App) listOutgoingRelations(from string) []APIRelation {
 	ctx := context.Background()
-	st := a.ws.Store()
+	st := a.store
 	relations := make([]APIRelation, 0)
 	q := store.RelationQuery{EntityID: from, Direction: store.DirectionOutgoing}
 	for edge, err := range st.ListRelations(ctx, q) {
@@ -595,7 +595,7 @@ func (a *App) listOutgoingRelations(from string) []APIRelation {
 // listIncomingRelations returns relations where the given entity is the target.
 func (a *App) listIncomingRelations(to string) []APIRelation {
 	ctx := context.Background()
-	st := a.ws.Store()
+	st := a.store
 	relations := make([]APIRelation, 0)
 	q := store.RelationQuery{EntityID: to, Direction: store.DirectionIncoming}
 	for edge, err := range st.ListRelations(ctx, q) {
@@ -614,7 +614,7 @@ func (a *App) listIncomingRelations(to string) []APIRelation {
 // listAllRelations returns all relations in the graph.
 func (a *App) listAllRelations() []APIRelation {
 	ctx := context.Background()
-	st := a.ws.Store()
+	st := a.store
 	relations := make([]APIRelation, 0)
 	for edge, err := range st.ListRelations(ctx, store.RelationQuery{}) {
 		if err != nil {

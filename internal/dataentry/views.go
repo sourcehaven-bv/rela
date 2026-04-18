@@ -18,7 +18,7 @@ type viewResult struct {
 // executeView runs a view's traversal rules and returns the result.
 func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) {
 	ctx := context.Background()
-	entry, err := a.ws.Store().GetEntity(ctx, entryID)
+	entry, err := a.store.GetEntity(ctx, entryID)
 	if err != nil {
 		return nil, fmt.Errorf("entry entity not found: %s", entryID)
 	}
@@ -108,7 +108,7 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 
 func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*entity.Entity {
 	ctx := context.Background()
-	st := a.ws.Store()
+	st := a.store
 	var out []*entity.Entity
 
 	var relType string

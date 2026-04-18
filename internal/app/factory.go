@@ -1,3 +1,7 @@
+// Package app provides factories that construct the concrete services
+// needed by each rela entry point (cli, data-entry server, desktop,
+// MCP). Today that is a single factory: FSFactory, which opens an
+// fsstore rooted at a project directory.
 package app
 
 import (
@@ -31,4 +35,20 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 		CacheDir:     f.Paths.CacheDir,
 		Schemas:      buildSchemas(meta),
 	})
+}
+
+// buildSchemas translates metamodel entity-type definitions into the
+// store-facing EntityTypeSchema map used by fsstore.
+func buildSchemas(meta *metamodel.Metamodel) map[string]store.EntityTypeSchema {
+	if meta == nil {
+		return nil
+	}
+	out := make(map[string]store.EntityTypeSchema, len(meta.Entities))
+	for name, et := range meta.Entities {
+		out[name] = store.EntityTypeSchema{
+			Plural:        et.Plural,
+			PropertyOrder: et.PropertyOrder,
+		}
+	}
+	return out
 }

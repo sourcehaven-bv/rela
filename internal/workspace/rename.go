@@ -17,17 +17,6 @@ import (
 // If opts.DryRun is true, no changes are persisted; the returned
 // Result describes what *would* change against the current snapshot.
 func (w *Workspace) rename(entityType, oldID, newID string, opts rename.Options) (*rename.Result, error) {
-	w.reloadMu.Lock()
-	defer w.reloadMu.Unlock()
-
-	if w.closed.Load() {
-		return nil, fmt.Errorf("workspace is closed")
-	}
-	s := w.state.Load()
-	if s == nil {
-		return nil, fmt.Errorf("workspace not initialized")
-	}
-
 	st := w.Store()
 	ent, incoming, outgoing, err := loadAndValidateRename(st, entityType, oldID, newID)
 	if err != nil {

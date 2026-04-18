@@ -229,8 +229,17 @@ This catches issues in manually-edited markdown files that bypass CLI validation
 
 // runPropertyValidation validates entity and relation properties against the metamodel.
 func runPropertyValidation(opts workspace.AnalyzeOptions) error {
-	allEntityErrors := ws.ValidateProperties(opts)
-	allRelationErrors := ws.ValidateRelationProperties()
+	allEntityErrors := schema.ValidateEntityProperties(ws.Store(), ws.Meta())
+	if opts.Scope != nil {
+		filtered := allEntityErrors[:0]
+		for _, ee := range allEntityErrors {
+			if opts.Scope[ee.EntityID] {
+				filtered = append(filtered, ee)
+			}
+		}
+		allEntityErrors = filtered
+	}
+	allRelationErrors := schema.ValidateRelationProperties(ws.Store(), ws.Meta())
 
 	errorCount := 0
 	for _, ee := range allEntityErrors {
@@ -248,8 +257,8 @@ func runPropertyValidation(opts workspace.AnalyzeOptions) error {
 }
 
 func writePropertyValidationJSON(
-	allEntityErrors []workspace.PropertyError,
-	allRelationErrors []workspace.RelationPropertyError,
+	allEntityErrors []schema.PropertyError,
+	allRelationErrors []schema.RelationPropertyError,
 	errorCount int,
 ) error {
 	entityResults := make([]output.PropertyValidationResult, 0, len(allEntityErrors))
@@ -303,8 +312,8 @@ func writePropertyValidationJSON(
 }
 
 func writePropertyValidationText(
-	allEntityErrors []workspace.PropertyError,
-	allRelationErrors []workspace.RelationPropertyError,
+	allEntityErrors []schema.PropertyError,
+	allRelationErrors []schema.RelationPropertyError,
 	errorCount int,
 ) error {
 	if errorCount == 0 {

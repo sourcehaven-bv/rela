@@ -50,7 +50,7 @@ func TestPathsAccessor(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{"t": {}},
 	}
-	ws := NewBare(fs, paths, meta)
+	ws := NewForTest(meta, WithFS(fs, paths))
 
 	if ws.Paths() != paths {
 		t.Error("Paths() returned different context")
@@ -59,7 +59,7 @@ func TestPathsAccessor(t *testing.T) {
 
 func TestConfigAndStateFallbacks(t *testing.T) {
 	// Workspace with no fs/paths falls back to nop.
-	ws := NewForTestWithStore(memstore.New(), &metamodel.Metamodel{})
+	ws := NewForTest(&metamodel.Metamodel{}, WithTestStore(memstore.New()))
 	ctx := context.Background()
 
 	cfg := ws.Config()
@@ -101,7 +101,7 @@ func TestFindAndCleanupOrphanedTempFiles(t *testing.T) {
 		RelationsDir: "/p/relations",
 	}
 	meta := &metamodel.Metamodel{}
-	ws := NewBare(fs, paths, meta)
+	ws := NewForTest(meta, WithFS(fs, paths))
 
 	orphaned, err := ws.FindOrphanedTempFiles()
 	if err != nil {
@@ -130,7 +130,7 @@ func TestFindAndCleanupOrphanedTempFiles(t *testing.T) {
 }
 
 func TestFindOrphanedTempFiles_NoFS(t *testing.T) {
-	ws := NewForTestWithStore(memstore.New(), &metamodel.Metamodel{})
+	ws := NewForTest(&metamodel.Metamodel{}, WithTestStore(memstore.New()))
 	orphaned, err := ws.FindOrphanedTempFiles()
 	if err != nil {
 		t.Fatalf("error: %v", err)

@@ -162,6 +162,7 @@ deps:
       - filter
       - importer
       - lua
+      - markdown
       - mcp
       - metamodel
       - output
@@ -189,6 +190,7 @@ deps:
       - filter
       - git
       - htmlutil
+      - lua
       - metamodel
       - migration
       - openapi
@@ -196,12 +198,17 @@ deps:
       - script
       - search
       - searchparser
+      - state
+      - storage
       - store
+      - templating
       - tracer
+      - validator
       - workspace
     canUse:
       - goldmark
       - gogit
+      - singleflight
   dataentryconfig:
     mayDependOn:
       - git
@@ -214,17 +221,20 @@ deps:
   mcp:
     mayDependOn:
       - ai
+      - config
       - dataentryconfig
       - entitymanager
       - filter
       - lua
       - metamodel
+      - project
       - rename
       - schema
       - script
       - search
       - store
       - tracer
+      - validator
       - workspace
     canUse:
       - mcpgo
@@ -243,15 +253,13 @@ deps:
       - store
   workspace:
     mayDependOn:
+      - app
       - attachment
       - automation
       - config
       - dataentryconfig
       - entitymanager
-      - fsstore
-      - htmlutil
       - lua
-      - markdown
       - memstore
       - metamodel
       - migration
@@ -266,9 +274,6 @@ deps:
       - tracer
       - validation
       - validator
-    canUse:
-      - goldmark
-      - singleflight
 
   # Domain services
   automation:
@@ -331,8 +336,6 @@ deps:
     mayDependOn:
       - storage
   markdown:
-    mayDependOn:
-      - metamodel
     canUse:
       - goldmark
   filter:

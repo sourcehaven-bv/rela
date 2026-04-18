@@ -83,12 +83,12 @@ func (b *eventBroker) broadcastGitStatus() {
 // files change. The workspace handles metamodel + graph reload; this method
 // subscribes to the config service for data-entry.yaml changes and adds
 // SSE broadcast side-effects.
-// Stop via a.ws.StopWatching() plus the returned config-stop function.
+// Stop via a.StopWatching() plus the workspace's own watcher shutdown.
 //
 // coverage-ignore: requires real filesystem events via fsnotify
 func (a *App) StartWatching() error {
 	// Subscribe to data-entry.yaml via the config loader.
-	if sub, ok := a.ws.Config().(config.Subscriber); ok {
+	if sub, ok := a.cfgLoader.(config.Subscriber); ok {
 		stop, err := sub.Subscribe(context.Background(), ConfigFile, func() {
 			a.rebuildState(true, false)
 			a.broker.broadcast("refresh")
@@ -99,16 +99,15 @@ func (a *App) StartWatching() error {
 		a.stopConfigWatch = stop
 	}
 
-	return a.ws.StartWatching(workspace.WatchOptions{
+	if a.startWatching == nil {
+		return nil
+	}
+	return a.startWatching(workspace.WatchOptions{
 		OnChange: func(events []workspace.ChangeEvent) {
 			for _, e := range events {
 				slog.Debug("file changed", "path", e.Path, "op", e.Op)
 			}
 			a.onDataReload(events)
-			a.broker.broadcast("refresh")
-		},
-		OnMetaReload: func() {
-			a.onMetaReload()
 			a.broker.broadcast("refresh")
 		},
 	})
@@ -177,7 +176,7 @@ func (a *App) rebuildState(configChanged, metaChanged bool) {
 
 	newCfg := current.Cfg
 	if configChanged {
-		cfgData, err := a.ws.Config().Load(context.Background(), ConfigFile)
+		cfgData, err := a.cfgLoader.Load(context.Background(), ConfigFile)
 		if err != nil {
 			slog.Warn("config reload error", "error", err)
 		} else {
@@ -191,7 +190,7 @@ func (a *App) rebuildState(configChanged, metaChanged bool) {
 		}
 	}
 
-	newMeta := a.ws.Meta()
+	newMeta := a.Meta()
 
 	newStyleMap := current.StyleMap
 	newStyledTypes := current.StyledTypes

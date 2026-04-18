@@ -7,18 +7,50 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
+
+// Services is the slice of the workspace API the MCP server actually
+// uses. *workspace.Workspace satisfies it; tests that need a narrower
+// surface can implement Services directly instead of building a full
+// workspace.
+type Services interface {
+	Store() store.Store
+	Meta() *metamodel.Metamodel
+	Tracer() tracer.Tracer
+	Searcher() search.Searcher
+	Validator() validator.Validator
+	EntityManager() entitymanager.EntityManager
+	Config() config.Loader
+	Paths() *project.Context
+	LuaServices() lua.Services
+	PauseWatching()
+	ResumeWatching()
+	StartWatching(workspace.WatchOptions) error
+	StopWatching()
+}
+
+// compile-time check that *workspace.Workspace satisfies Services.
+var _ Services = (*workspace.Workspace)(nil)
 
 // Server wraps the MCP server with rela-specific state.
 type Server struct {
 	mcp    *server.MCPServer
-	ws     *workspace.Workspace
+	ws     Services
 	logger *slog.Logger
 }
 
 // NewServer creates a new MCP server for a rela project.
-func NewServer(ws *workspace.Workspace, version string) *Server {
+func NewServer(ws Services, version string) *Server {
 	s := &Server{
 		ws:     ws,
 		logger: slog.Default().With("component", "mcp"),

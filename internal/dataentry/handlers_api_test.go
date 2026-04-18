@@ -101,7 +101,7 @@ func TestLoadUserPalette(t *testing.T) {
 		// can't parse. Without the error path, the loader would
 		// return nil and a subsequent save would silently overwrite
 		// the user's palette with framework defaults.
-		err := app.ws.State().Put(context.Background(), userPaletteFile, []byte("accent: '#e11d48'\ndark: auto\n"))
+		err := app.kv.Put(context.Background(), userPaletteFile, []byte("accent: '#e11d48'\ndark: auto\n"))
 		if err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}
@@ -119,7 +119,7 @@ func TestLoadUserPalette(t *testing.T) {
 
 	t.Run("valid file parses successfully", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		err := app.ws.State().Put(context.Background(), userPaletteFile, []byte("accent: '#e11d48'\ndark: false\n"))
+		err := app.kv.Put(context.Background(), userPaletteFile, []byte("accent: '#e11d48'\ndark: false\n"))
 		if err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}

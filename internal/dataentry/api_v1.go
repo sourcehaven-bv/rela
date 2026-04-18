@@ -21,7 +21,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // --- API v1 Types ---
@@ -384,7 +383,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	createResult, err := a.ws.EntityManager().CreateEntity(r.Context(),
+	createResult, err := a.entityManager.CreateEntity(r.Context(),
 		&entityPkg.Entity{
 			Type:       typeName,
 			Properties: req.Properties,
@@ -500,7 +499,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		entity.Content = *req.Content
 	}
 
-	if _, err := a.ws.EntityManager().UpdateEntity(r.Context(), entity); err != nil {
+	if _, err := a.entityManager.UpdateEntity(r.Context(), entity); err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 		return
 	}
@@ -526,7 +525,7 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	if _, err := a.ws.EntityManager().DeleteEntity(r.Context(), entityID, true); err != nil {
+	if _, err := a.entityManager.DeleteEntity(r.Context(), entityID, true); err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "delete_failed", "Failed to delete entity", err.Error())
 		return
 	}
@@ -672,7 +671,7 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 
 	from, to := resolveRelationEndpoints(entity.ID, req.ID, req.Direction)
 
-	_, err := a.ws.EntityManager().CreateRelation(r.Context(), from, relType, to, entitymanager.RelationOptions{Properties: req.Meta})
+	_, err := a.entityManager.CreateRelation(r.Context(), from, relType, to, entitymanager.RelationOptions{Properties: req.Meta})
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())
 		return
@@ -714,7 +713,7 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 
 	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
 
-	rel, err := a.ws.EntityManager().UpdateRelation(r.Context(), from, relType, to, entitymanager.RelationOptions{
+	rel, err := a.entityManager.UpdateRelation(r.Context(), from, relType, to, entitymanager.RelationOptions{
 		Properties: req.Meta,
 	})
 	if err != nil {
@@ -747,7 +746,7 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 
 	from, to := resolveRelationEndpoints(entity.ID, targetID, r.URL.Query().Get("direction"))
 
-	if err := a.ws.EntityManager().DeleteRelation(r.Context(), from, relType, to); err != nil {
+	if err := a.entityManager.DeleteRelation(r.Context(), from, relType, to); err != nil {
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
 		return
 	}
@@ -789,7 +788,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 		props[k] = v
 	}
 
-	cloneResult, err := a.ws.EntityManager().CreateEntity(r.Context(),
+	cloneResult, err := a.entityManager.CreateEntity(r.Context(),
 		&entityPkg.Entity{
 			Type:       typeName,
 			Properties: props,
@@ -1793,9 +1792,9 @@ func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := &project.Context{
-		Root:         a.ws.Paths().Root,
-		EntitiesDir:  a.ws.Paths().EntitiesDir,
-		RelationsDir: a.ws.Paths().RelationsDir,
+		Root:         a.paths.Root,
+		EntitiesDir:  a.paths.EntitiesDir,
+		RelationsDir: a.paths.RelationsDir,
 	}
 
 	result, err := conflict.DetectAll(ctx)
@@ -1836,7 +1835,7 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get conflict details
-	ctx := a.ws.Paths()
+	ctx := a.paths
 	absPath := filepath.Join(ctx.Root, path)
 
 	cf, err := conflict.ParseConflictedFile(absPath, a.State().Meta)
@@ -1883,7 +1882,7 @@ func (a *App) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := a.ws.Paths()
+	ctx := a.paths
 	absPath := filepath.Join(ctx.Root, req.Path)
 
 	cf, err := conflict.ParseConflictedFile(absPath, a.State().Meta)
@@ -1966,17 +1965,16 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert config to workspace format
-	wsCfg := a.toWorkspaceDocConfig(&docCfg)
+	renderCfg := a.toDocumentRenderConfig(&docCfg)
 
 	// Check for refresh param - skip cache if present
 	forceRefresh := r.URL.Query().Get("refresh") == "true"
 
 	// Try to get cached content (unless refresh requested)
 	if !forceRefresh {
-		result := a.ws.GetCachedDocument(entityID, wsCfg)
+		result := a.documents.GetCached(entityID)
 		if result != nil {
-			html := workspace.RewriteDocumentLinks(result.HTML, "")
+			html := RewriteDocumentLinks(result.HTML, "")
 			writeV1JSON(w, http.StatusOK, V1DocumentResponse{
 				HTML:      html,
 				Cached:    true,
@@ -1987,13 +1985,13 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Render the document
-	result, err := a.ws.RenderDocument(entityID, wsCfg)
+	result, err := a.documents.Render(entityID, renderCfg)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "render_failed", "Document rendering failed", err.Error())
 		return
 	}
 
-	html := workspace.RewriteDocumentLinks(result.HTML, "")
+	html := RewriteDocumentLinks(result.HTML, "")
 	writeV1JSON(w, http.StatusOK, V1DocumentResponse{
 		HTML:      html,
 		Cached:    false,
@@ -2083,7 +2081,7 @@ func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	templates, _ := a.ws.Templater().EntityTemplates(r.Context(), entityType)
+	templates, _ := a.templater.EntityTemplates(r.Context(), entityType)
 	result := make([]V1Template, 0, len(templates))
 
 	for _, t := range templates {

@@ -22,13 +22,10 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
-	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -61,21 +58,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	fs, projCtx, err := discoverProject(*projectDir)
+	absDir, err := filepath.Abs(*projectDir)
 	if err != nil {
-		slog.Error("failed to discover project", "error", err)
+		slog.Error("invalid project dir", "error", err)
 		os.Exit(1)
 	}
-	factory := &app.FSFactory{FS: fs, Paths: projCtx}
-
-	ws, err := workspace.New(fs, projCtx, script.NewEngine(),
-		workspace.WithStoreFactory(factory))
+	ws, err := workspace.Discover(absDir, script.NewEngine())
 	if err != nil {
 		slog.Error("failed to initialize workspace", "error", err)
 		os.Exit(1)
 	}
 
-	app, err := dataentry.NewApp(ws)
+	app, err := dataentry.NewApp(
+		ws.FS(), ws.Paths(), ws.Meta(), ws.Store(),
+		ws.EntityManager(), ws.Searcher(),
+		ws.StartWatching,
+	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError
 		if errors.As(err, &configErr) {
@@ -233,18 +231,3 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-// discoverProject locates the rela project rooted at projectDir and
-// returns the filesystem handle and paths. The caller constructs the
-// repository and any downstream services (workspace, app bundle).
-func discoverProject(projectDir string) (storage.FS, *project.Context, error) {
-	absDir, err := filepath.Abs(projectDir)
-	if err != nil {
-		return nil, nil, err
-	}
-	fs := storage.NewSafeFS(storage.NewOsFS())
-	projCtx, err := project.Discover(absDir, fs)
-	if err != nil {
-		return nil, nil, fmt.Errorf("discovering project: %w", err)
-	}
-	return fs, projCtx, nil
-}

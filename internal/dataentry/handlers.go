@@ -66,7 +66,7 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 	// (which take no lock) may be iterating it.
 	updated := live.Clone()
 	updated.Content = newContent
-	if _, err := a.ws.EntityManager().UpdateEntity(r.Context(), updated); err != nil {
+	if _, err := a.entityManager.UpdateEntity(r.Context(), updated); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}

@@ -1,4 +1,4 @@
-package workspace
+package dataentry
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/state"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 func TestHashEntities(t *testing.T) {
@@ -192,14 +194,12 @@ func TestRewriteDocumentLinks(t *testing.T) {
 			returnPath: "/doc",
 			expected:   `<a href="/form/requirement?return_to=%2Fdoc">R</a> and <a href="/form/decision?prop.status=proposed&return_to=%2Fdoc">D</a>`,
 		},
-		// mixed edit and create
 		{
 			name:       "mixed edit and create links",
 			html:       `<a href="edit://requirement/REQ-001">Edit</a> <a href="create://decision">New</a>`,
 			returnPath: "/doc",
 			expected:   `<a href="/form/requirement/REQ-001?return_to=%2Fdoc%23req-001">Edit</a> <a href="/form/decision?return_to=%2Fdoc">New</a>`,
 		},
-		// no custom links
 		{
 			name:       "no custom links",
 			html:       `<a href="http://example.com">Normal link</a>`,
@@ -219,23 +219,20 @@ func TestRewriteDocumentLinks(t *testing.T) {
 }
 
 func TestDocumentDiskCache(t *testing.T) {
-	ws := setupTestWorkspace(t)
+	fs := storage.NewMemFS()
+	_ = fs.MkdirAll("/p/.rela", 0o755)
+	kv := state.NewFSKV(fs, "/p/.rela")
 
 	t.Run("cache file naming", func(t *testing.T) {
-		// Test that cache files are written to .rela/documents/
 		entryID := "REQ-001"
 		hash := "abc123"
 		cacheFile := docCacheDir + "/" + entryID + "-" + hash + ".html"
 		content := "<p>Test HTML</p>"
 
-		// Write to cache
-		err := ws.State().Put(context.Background(), cacheFile, []byte(content))
-		if err != nil {
+		if err := kv.Put(context.Background(), cacheFile, []byte(content)); err != nil {
 			t.Fatalf("failed to write cache file: %v", err)
 		}
-
-		// Read back
-		data, err := ws.State().Get(context.Background(), cacheFile)
+		data, err := kv.Get(context.Background(), cacheFile)
 		if err != nil {
 			t.Fatalf("failed to read cache file: %v", err)
 		}
@@ -251,13 +248,11 @@ func TestDocumentDiskCache(t *testing.T) {
 		cacheFile1 := docCacheDir + "/" + entryID + "-" + hash1 + ".html"
 		cacheFile2 := docCacheDir + "/" + entryID + "-" + hash2 + ".html"
 
-		// Write both
-		_ = ws.State().Put(context.Background(), cacheFile1, []byte("content1"))
-		_ = ws.State().Put(context.Background(), cacheFile2, []byte("content2"))
+		_ = kv.Put(context.Background(), cacheFile1, []byte("content1"))
+		_ = kv.Put(context.Background(), cacheFile2, []byte("content2"))
 
-		// Read and verify they're independent
-		data1, _ := ws.State().Get(context.Background(), cacheFile1)
-		data2, _ := ws.State().Get(context.Background(), cacheFile2)
+		data1, _ := kv.Get(context.Background(), cacheFile1)
+		data2, _ := kv.Get(context.Background(), cacheFile2)
 
 		if string(data1) != "content1" || string(data2) != "content2" {
 			t.Error("cache files should be independent")
@@ -265,16 +260,16 @@ func TestDocumentDiskCache(t *testing.T) {
 	})
 }
 
-func TestDocumentConfig(t *testing.T) {
+func TestDocumentRenderConfig(t *testing.T) {
 	t.Run("default timeout", func(t *testing.T) {
-		cfg := DocumentConfig{}
+		cfg := documentRenderConfig{}
 		if cfg.Timeout != 0 {
 			t.Errorf("expected zero timeout for unset, got %v", cfg.Timeout)
 		}
 	})
 
 	t.Run("custom timeout", func(t *testing.T) {
-		cfg := DocumentConfig{
+		cfg := documentRenderConfig{
 			Timeout: 60 * time.Second,
 		}
 		if cfg.Timeout != 60*time.Second {

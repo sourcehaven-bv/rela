@@ -56,7 +56,7 @@ func setupWorkspaceWithMetamodel(t *testing.T, metamodelYAML string) *Workspace 
 
 	ctx := testContext()
 	fs := setupWorkspaceFS(ctx, meta, metamodelYAML)
-	return NewBare(fs, ctx, meta, script.NewEngine())
+	return NewForTest(meta, WithFS(fs, ctx), WithScript(script.NewEngine()))
 }
 
 // setupTestWorkspace creates a workspace with the standard test metamodel.
@@ -69,7 +69,7 @@ func setupTestWorkspace(t *testing.T) *Workspace {
 
 	ctx := testContext()
 	fs := setupWorkspaceFS(ctx, meta, testMetamodelYAML)
-	return NewBare(fs, ctx, meta)
+	return NewForTest(meta, WithFS(fs, ctx))
 }
 
 // mustCreate is a test helper that creates an entity, fatally failing on error.
@@ -1021,7 +1021,7 @@ automations:
 
 	ctx := testContext()
 	fs := setupWorkspaceFS(ctx, meta, metamodelYAML)
-	ws := NewBare(fs, ctx, meta)
+	ws := NewForTest(meta, WithFS(fs, ctx))
 
 	return ws, fs, ctx
 }

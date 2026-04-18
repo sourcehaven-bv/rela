@@ -80,7 +80,7 @@ func (ss *storeSeeder) addRelation(from, relType, to string) {
 }
 
 func (ss *storeSeeder) build() *workspace.Workspace {
-	return workspace.NewForTestWithStore(ss.s, ss.meta)
+	return workspace.NewForTest(ss.meta, workspace.WithTestStore(ss.s))
 }
 
 // applySeeder snapshots the seeder's store into the package-level ws

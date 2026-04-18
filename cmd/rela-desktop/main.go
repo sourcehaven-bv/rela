@@ -137,7 +137,11 @@ func (d *Desktop) LoadProject(dir string) string {
 		return wsErr.Error()
 	}
 
-	app, err := dataentry.NewApp(ws)
+	app, err := dataentry.NewApp(
+		fs, projCtx, ws.Meta(), ws.Store(),
+		ws.EntityManager(), ws.Searcher(),
+		ws.StartWatching,
+	)
 	if err != nil {
 		d.mu.Lock()
 		d.loadErr = err.Error()

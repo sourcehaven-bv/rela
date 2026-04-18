@@ -1,10 +1,6 @@
 package markdown
 
-import (
-	"testing"
-
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-)
+import "testing"
 
 func TestExtractHeaders(t *testing.T) {
 	tests := []struct {
@@ -65,145 +61,87 @@ func TestExtractHeaders(t *testing.T) {
 	}
 }
 
-func TestMatchHeader(t *testing.T) {
+func TestMatchHeaderExact(t *testing.T) {
 	tests := []struct {
 		name    string
 		headers []string
-		check   metamodel.HeaderCheck
+		exact   string
 		want    bool
 	}{
 		{
-			name:    "exact match found",
+			name:    "match found",
 			headers: []string{"# Title", "## Context", "## Decision"},
-			check:   metamodel.HeaderCheck{Header: "## Context"},
+			exact:   "## Context",
 			want:    true,
 		},
 		{
-			name:    "exact match not found",
+			name:    "not found",
 			headers: []string{"# Title", "## Decision"},
-			check:   metamodel.HeaderCheck{Header: "## Context"},
+			exact:   "## Context",
 			want:    false,
 		},
 		{
-			name:    "pattern match found",
-			headers: []string{"# Title", "## Alternatives"},
-			check:   metamodel.HeaderCheck{Pattern: "## (Alternative|Alternatives)"},
-			want:    true,
-		},
-		{
-			name:    "pattern match not found",
-			headers: []string{"# Title", "## Other"},
-			check:   metamodel.HeaderCheck{Pattern: "## (Alternative|Alternatives)"},
-			want:    false,
-		},
-		{
-			name:    "empty check matches",
+			name:    "empty exact matches trivially",
 			headers: []string{"# Title"},
-			check:   metamodel.HeaderCheck{},
+			exact:   "",
 			want:    true,
 		},
 		{
 			name:    "empty headers no match",
 			headers: []string{},
-			check:   metamodel.HeaderCheck{Header: "## Context"},
-			want:    false,
-		},
-		{
-			name:    "invalid regex returns false",
-			headers: []string{"## Test"},
-			check:   metamodel.HeaderCheck{Pattern: "[invalid"},
+			exact:   "## Context",
 			want:    false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := MatchHeader(tt.headers, tt.check)
+			got := MatchHeaderExact(tt.headers, tt.exact)
 			if got != tt.want {
-				t.Errorf("MatchHeader() = %v, want %v", got, tt.want)
+				t.Errorf("MatchHeaderExact() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestCheckContentRule(t *testing.T) {
+func TestMatchHeaderPattern(t *testing.T) {
 	tests := []struct {
 		name    string
-		content string
-		rule    *metamodel.ContentRule
+		headers []string
+		pattern string
 		want    bool
 	}{
 		{
-			name:    "nil rule passes",
-			content: "# Title",
-			rule:    nil,
+			name:    "match found",
+			headers: []string{"# Title", "## Alternatives"},
+			pattern: "## (Alternative|Alternatives)",
 			want:    true,
 		},
 		{
-			name:    "empty rule passes",
-			content: "# Title",
-			rule:    &metamodel.ContentRule{},
+			name:    "not found",
+			headers: []string{"# Title", "## Other"},
+			pattern: "## (Alternative|Alternatives)",
+			want:    false,
+		},
+		{
+			name:    "empty pattern matches trivially",
+			headers: []string{"# Title"},
+			pattern: "",
 			want:    true,
 		},
 		{
-			name:    "required header present",
-			content: "# Title\n## Context\nSome text",
-			rule: &metamodel.ContentRule{
-				RequiredHeaders: []metamodel.HeaderCheck{
-					{Header: "## Context"},
-				},
-			},
-			want: true,
-		},
-		{
-			name:    "required header missing",
-			content: "# Title\nSome text",
-			rule: &metamodel.ContentRule{
-				RequiredHeaders: []metamodel.HeaderCheck{
-					{Header: "## Context"},
-				},
-			},
-			want: false,
-		},
-		{
-			name:    "multiple required headers all present",
-			content: "# Title\n## Context\n## Decision\n## Alternatives",
-			rule: &metamodel.ContentRule{
-				RequiredHeaders: []metamodel.HeaderCheck{
-					{Header: "## Context"},
-					{Header: "## Decision"},
-				},
-			},
-			want: true,
-		},
-		{
-			name:    "multiple required headers one missing",
-			content: "# Title\n## Context",
-			rule: &metamodel.ContentRule{
-				RequiredHeaders: []metamodel.HeaderCheck{
-					{Header: "## Context"},
-					{Header: "## Decision"},
-				},
-			},
-			want: false,
-		},
-		{
-			name:    "pattern header present",
-			content: "# Title\n## Alternatives",
-			rule: &metamodel.ContentRule{
-				RequiredHeaders: []metamodel.HeaderCheck{
-					{Pattern: "## (Alternative|Alternatives)"},
-				},
-			},
-			want: true,
+			name:    "invalid regex returns false",
+			headers: []string{"## Test"},
+			pattern: "[invalid",
+			want:    false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := CheckContentRule(tt.content, tt.rule)
+			got := MatchHeaderPattern(tt.headers, tt.pattern)
 			if got != tt.want {
-				t.Errorf("CheckContentRule() = %v, want %v", got, tt.want)
+				t.Errorf("MatchHeaderPattern() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -316,159 +254,6 @@ func TestExtractChecklistItems(t *testing.T) {
 				if got[i].Text != tt.want[i].Text {
 					t.Errorf("item[%d].Text = %q, want %q", i, got[i].Text, tt.want[i].Text)
 				}
-			}
-		})
-	}
-}
-
-func TestCheckChecklistRule(t *testing.T) {
-	tests := []struct {
-		name  string
-		items []ChecklistItem
-		rule  *metamodel.ChecklistRule
-		want  bool
-	}{
-		{
-			name:  "nil rule passes",
-			items: []ChecklistItem{{Checked: false}},
-			rule:  nil,
-			want:  true,
-		},
-		{
-			name:  "empty items passes",
-			items: []ChecklistItem{},
-			rule:  &metamodel.ChecklistRule{AllChecked: true},
-			want:  true,
-		},
-		{
-			name: "all checked passes",
-			items: []ChecklistItem{
-				{Checked: true, Text: "Item 1"},
-				{Checked: true, Text: "Item 2"},
-			},
-			rule: &metamodel.ChecklistRule{AllChecked: true},
-			want: true,
-		},
-		{
-			name: "unchecked item fails",
-			items: []ChecklistItem{
-				{Checked: true, Text: "Item 1"},
-				{Checked: false, Text: "Item 2"},
-			},
-			rule: &metamodel.ChecklistRule{AllChecked: true},
-			want: false,
-		},
-		{
-			name: "skipped item passes with allow-skipped",
-			items: []ChecklistItem{
-				{Checked: true, Text: "Item 1"},
-				{Checked: false, Skipped: true, Text: "Skipped item"},
-			},
-			rule: &metamodel.ChecklistRule{AllChecked: true, AllowSkipped: true},
-			want: true,
-		},
-		{
-			name: "skipped item fails without allow-skipped",
-			items: []ChecklistItem{
-				{Checked: true, Text: "Item 1"},
-				{Checked: false, Skipped: true, Text: "Skipped item"},
-			},
-			rule: &metamodel.ChecklistRule{AllChecked: true, AllowSkipped: false},
-			want: false,
-		},
-		{
-			name: "checked skipped item passes",
-			items: []ChecklistItem{
-				{Checked: true, Skipped: true, Text: "Item 1"},
-			},
-			rule: &metamodel.ChecklistRule{AllChecked: true},
-			want: true,
-		},
-		{
-			name: "no all-checked rule passes with unchecked",
-			items: []ChecklistItem{
-				{Checked: false, Text: "Unchecked"},
-			},
-			rule: &metamodel.ChecklistRule{AllChecked: false},
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := CheckChecklistRule(tt.items, tt.rule)
-			if got != tt.want {
-				t.Errorf("CheckChecklistRule() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestCheckContentRuleWithChecklist(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		rule    *metamodel.ContentRule
-		want    bool
-	}{
-		{
-			name:    "all checked passes",
-			content: "- [x] Task 1\n- [x] Task 2",
-			rule: &metamodel.ContentRule{
-				Checklist: &metamodel.ChecklistRule{AllChecked: true},
-			},
-			want: true,
-		},
-		{
-			name:    "unchecked item fails",
-			content: "- [x] Task 1\n- [ ] Task 2",
-			rule: &metamodel.ContentRule{
-				Checklist: &metamodel.ChecklistRule{AllChecked: true},
-			},
-			want: false,
-		},
-		{
-			name:    "skipped item passes with allow-skipped",
-			content: "- [x] Task 1\n- [x] ~~Task 2~~ (N/A)",
-			rule: &metamodel.ContentRule{
-				Checklist: &metamodel.ChecklistRule{AllChecked: true, AllowSkipped: true},
-			},
-			want: true,
-		},
-		{
-			name:    "combined headers and checklist both pass",
-			content: "## Summary\n- [x] Done\n## Details",
-			rule: &metamodel.ContentRule{
-				RequiredHeaders: []metamodel.HeaderCheck{{Header: "## Summary"}},
-				Checklist:       &metamodel.ChecklistRule{AllChecked: true},
-			},
-			want: true,
-		},
-		{
-			name:    "combined headers pass checklist fails",
-			content: "## Summary\n- [ ] Not done",
-			rule: &metamodel.ContentRule{
-				RequiredHeaders: []metamodel.HeaderCheck{{Header: "## Summary"}},
-				Checklist:       &metamodel.ChecklistRule{AllChecked: true},
-			},
-			want: false,
-		},
-		{
-			name:    "combined headers fail checklist passes",
-			content: "## Other\n- [x] Done",
-			rule: &metamodel.ContentRule{
-				RequiredHeaders: []metamodel.HeaderCheck{{Header: "## Summary"}},
-				Checklist:       &metamodel.ChecklistRule{AllChecked: true},
-			},
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := CheckContentRule(tt.content, tt.rule)
-			if got != tt.want {
-				t.Errorf("CheckContentRule() = %v, want %v", got, tt.want)
 			}
 		})
 	}

@@ -1,8 +1,7 @@
 // Package workspace provides a stateful domain session that owns the
-// repository, graph, metamodel, and automation engine. It provides
-// write-through operations that keep disk and in-memory state in sync,
-// eliminating the dual-write pattern that consumers would otherwise
-// duplicate.
+// authoritative store, metamodel, and automation engine. All writes go
+// through Workspace so that persistence, validation, and automation
+// stay coordinated.
 package workspace
 
 import (
@@ -11,24 +10,20 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
@@ -89,79 +84,38 @@ func (nopScriptExecutor) ExecuteFile(string, metamodel.ScriptContext) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
-// workspaceState holds the reloadable parts of a Workspace as an immutable
-// snapshot. A reload publishes a new state via atomic.Pointer.Store(); readers
-// call Load() once and work against the resulting snapshot, guaranteeing
-// that graph, meta, automation, and searchIdx are always observed as a
-// coherent tuple from the same reload epoch.
+// Workspace is a stateful domain session that ties together the store
+// (persistence), metamodel (schema), automation engine, and search index.
+// All write operations go through Workspace so that persistence,
+// validation, and automation stay coordinated.
 //
-// Reload publishes a fresh workspaceState — readers holding a pre-reload
-// snapshot continue to see a fully-populated, never-mutated-by-Reload
-// world.
-type workspaceState struct {
+// # Lifecycle
+//
+// Metamodel, automation engine, and search index are loaded once at New
+// and never reloaded — schema or automation changes require a restart.
+// The store is self-watching: when an fsstore implementation is used, it
+// observes external file edits and emits events. Workspace subscribes to
+// those events and keeps the search index in sync automatically.
+type Workspace struct {
+	fs         storage.FS
+	paths      *project.Context
+	config     *project.Config
+	scriptExec ScriptExecutor
+
+	// Core services — immutable after construction.
 	store      store.Store
 	meta       *metamodel.Metamodel
 	automation *automation.Engine // may be nil if the metamodel has no automations
 	searchIdx  *search.Index      // may be nil if index construction failed
-}
-
-// Workspace is a stateful domain session that ties together the repository
-// (persistence), graph (in-memory query), metamodel (schema), and automation
-// engine. All write operations go through Workspace so that disk and memory
-// stay in sync.
-//
-// # Concurrency model
-//
-// All reloadable state (graph, metamodel, automation engine, search index)
-// is held in an immutable workspaceState struct and published via
-// atomic.Pointer. Readers call state.Load() once and work against a
-// coherent snapshot — no torn reads, no out-of-order publication, no need
-// to coordinate two atomic loads.
-//
-// Reloads are serialized against each other and against Close via reloadMu;
-// they build a new state (with a freshly-synced graph from disk) and
-// publish it atomically. Readers holding a pre-reload state keep their
-// graph reference forever — it is never mutated by Reload.
-//
-// Mutations (CreateEntity, UpdateEntity, DeleteEntity, CreateRelation,
-// UpdateRelation, DeleteRelation) modify the currently-published graph
-// in place. The caller is expected to serialize mutations against each
-// other and against Reload — within the data-entry server this happens
-// via App.writeMu. Each mutation method captures a single state snapshot
-// at entry and uses that snapshot consistently throughout, so a Reload
-// that arrives mid-mutation cannot interleave on the wrong graph.
-type Workspace struct {
-	fs         storage.FS
-	paths      *project.Context
-	store      store.Store // optional; nil when not wired
-	state      atomic.Pointer[workspaceState]
-	config     *project.Config
-	scriptExec ScriptExecutor
-
-	// reloadMu serializes Reload/Sync/Close against each other.
-	// Readers never acquire it — they snapshot state via state.Load().
-	reloadMu sync.Mutex
-
-	// closed is set once Close has been called. Reload becomes a no-op
-	// after the workspace is closed.
-	closed atomic.Bool
 
 	// Watcher state (nil when not watching).
-	watcher         *storage.Watcher
-	stopSchema      func() // stops the metamodel loader subscription
-	stopStoreEvents func() // cancels the store event subscription
+	watcher    *storage.Watcher
+	stopSearch func() // cancels the search-index reindex goroutine
 
-	// storeFactory, when non-nil, is consulted by Sync/Reload to
-	// (re)build the graph from a store.Store instead of from repo.Sync.
-	// This is the bridge used during the migration away from the
-	// repository + graph duo toward store.Store-based reads.
+	// storeFactory opens the workspace's authoritative store. In
+	// production this builds the fsstore under the project directory;
+	// tests can inject a different factory via WithStoreFactory.
 	storeFactory store.Factory
-	syncStore    store.Store // lazily opened on first Sync/Reload
-
-	// schemaFiles holds the absolute paths of all files that make up the
-	// current metamodel (metamodel.yaml + includes). Updated after each
-	// successful Reload.
-	schemaFiles []string
 }
 
 // maxAutomationDepth limits recursive automation triggering. When an entity
@@ -201,13 +155,13 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 		exec = NopScriptExecutor
 	}
 
-	meta, schemaFiles, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
+	meta, _, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	// Pre-scan opts for a caller-supplied factory; fall back to the
-	// default fsstore factory rooted at the given fs/paths.
+	// Pre-scan opts for a caller-supplied factory; fall back to
+	// app.FSFactory rooted at the given fs/paths.
 	var factory store.Factory
 	for _, opt := range opts {
 		tmp := &Workspace{}
@@ -217,7 +171,7 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 		}
 	}
 	if factory == nil {
-		factory = &defaultStoreFactory{fs: fs, paths: paths}
+		factory = &app.FSFactory{FS: fs, Paths: paths}
 	}
 
 	s, openErr := factory.OpenStore(meta)
@@ -225,74 +179,84 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 		return nil, fmt.Errorf("open store: %w", openErr)
 	}
 	ws := newWorkspace(fs, paths, meta, exec, opts...)
-	ws.syncStore = s
+	ws.store = s
 	ws.storeFactory = factory
-	ws.schemaFiles = schemaFiles
 
-	// Index entities from the store into the newly-created search index.
-	if current := ws.state.Load(); current != nil && current.searchIdx != nil {
-		if err := indexStoreEntities(current.searchIdx, s, meta); err != nil {
+	// Populate the search index from the opened store and subscribe to
+	// store events so the index stays current when files change on disk
+	// (or when the fsstore emits updates from its own watcher).
+	if ws.searchIdx != nil {
+		if err := indexStoreEntities(ws.searchIdx, s, meta); err != nil {
 			slog.Warn("failed to index entities", "error", err)
 		}
+		ws.startSearchReindex()
 	}
 	return ws, nil
 }
 
-// NewBare creates a workspace from a repo + metamodel without loading
-// anything from disk. Use this in tests that want to seed fixtures
-// through the workspace API (SeedEntityForTest / SeedRelationForTest)
-// and in production paths that have already loaded the metamodel.
-//
-// Optional scriptExec (script.Engine) and Option values can be mixed
-// in the variadic arguments; pass a script.Engine for Lua automation,
-// otherwise NopScriptExecutor is used.
-func NewBare(
-	fs storage.FS, paths *project.Context, meta *metamodel.Metamodel, opts ...interface{},
-) *Workspace {
-	exec := NopScriptExecutor
-	var wsOpts []Option
-	for _, o := range opts {
-		switch v := o.(type) {
-		case ScriptExecutor:
-			exec = v
-		case Option:
-			wsOpts = append(wsOpts, v)
-		}
-	}
-	return newWorkspace(fs, paths, meta, exec, wsOpts...)
+// TestOption configures a workspace built via NewForTest.
+type TestOption func(*testConfig)
+
+type testConfig struct {
+	fs     storage.FS
+	paths  *project.Context
+	store  store.Store
+	script ScriptExecutor
 }
 
-// NewForTestWithStore creates a minimal workspace for testing backed by
-// a caller-supplied store.Store. Write operations panic — there is no
-// repository.
-//
-// Use this when the test naturally expresses its fixture as
-// store.CreateEntity/CreateRelation calls.
-func NewForTestWithStore(s store.Store, meta *metamodel.Metamodel) *Workspace {
-	idx, err := search.NewIndex()
-	if err != nil {
-		panic(fmt.Sprintf("NewForTestWithStore: create search index: %v", err))
+// WithFS attaches a filesystem and project paths to the test workspace,
+// enabling paths-aware behavior (Paths(), Config(), orphan-temp-file
+// scanning). Without this, those accessors return nop/zero values.
+func WithFS(fs storage.FS, paths *project.Context) TestOption {
+	return func(c *testConfig) {
+		c.fs = fs
+		c.paths = paths
 	}
-	if indexErr := indexStoreEntities(idx, s, meta); indexErr != nil {
-		panic(fmt.Sprintf("NewForTestWithStore: index entities: %v", indexErr))
+}
+
+// WithTestStore replaces the default empty memstore with a caller-
+// supplied store. The workspace's search index is populated from the
+// store's current contents at construction time.
+func WithTestStore(s store.Store) TestOption {
+	return func(c *testConfig) { c.store = s }
+}
+
+// WithScript installs a ScriptExecutor so tests that exercise Lua
+// automations run real scripts. Without this, NopScriptExecutor is used
+// and any automation-triggered script execution panics.
+func WithScript(exec ScriptExecutor) TestOption {
+	return func(c *testConfig) { c.script = exec }
+}
+
+// NewForTest creates a workspace suitable for tests. By default it has
+// no filesystem, an empty memstore, and a nop script executor. Use the
+// WithFS / WithTestStore / WithScript options to customize.
+//
+// Write operations go through the store (memstore unless WithTestStore
+// is used); SeedEntityForTest / SeedRelationForTest bypass validation
+// and automation for fixture setup.
+func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Workspace {
+	cfg := &testConfig{script: NopScriptExecutor}
+	for _, opt := range opts {
+		opt(cfg)
 	}
 
-	ws := &Workspace{
-		config: project.DefaultConfig(),
-		store:  s,
+	ws := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script)
+	if cfg.store != nil {
+		ws.store = cfg.store
+		if ws.searchIdx != nil {
+			if err := indexStoreEntities(ws.searchIdx, cfg.store, meta); err != nil {
+				panic(fmt.Sprintf("NewForTest: index entities: %v", err))
+			}
+		}
 	}
-	ws.state.Store(&workspaceState{
-		store:     s,
-		meta:      meta,
-		searchIdx: idx,
-	})
 	return ws
 }
 
-// SeedEntityForTest writes an entity directly into every store this
-// workspace tracks (the state-level mirror and the long-lived syncStore,
-// if any). Intended for tests to set up fixtures without going through
-// the validation/automation stack of the public CRUD methods.
+// SeedEntityForTest writes an entity directly into the workspace's
+// authoritative store. Intended for tests to set up fixtures without
+// going through the validation/automation stack of the public CRUD
+// methods.
 func (w *Workspace) SeedEntityForTest(e *entity.Entity) {
 	_ = w.writeEntity(e)
 }
@@ -310,44 +274,12 @@ type storeWatcher interface {
 	StopWatching()
 }
 
-// defaultStoreFactory builds an fsstore rooted at the given filesystem
-// and project paths. Used by workspace.New when the caller does not
-// inject their own factory via WithStoreFactory.
-type defaultStoreFactory struct {
-	fs    storage.FS
-	paths *project.Context
-}
-
-func (f *defaultStoreFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
-	schemas := make(map[string]store.EntityTypeSchema)
-	if meta != nil {
-		for name, et := range meta.Entities {
-			schemas[name] = store.EntityTypeSchema{
-				Plural:        et.Plural,
-				PropertyOrder: et.PropertyOrder,
-			}
-		}
-	}
-	return fsstore.New(fsstore.Config{
-		FS:           f.fs,
-		EntitiesDir:  f.paths.EntitiesDir,
-		RelationsDir: f.paths.RelationsDir,
-		CacheDir:     f.paths.CacheDir,
-		Schemas:      schemas,
-	})
-}
-
 // Option configures a Workspace.
 type Option func(*Workspace)
 
-// WithStore sets the store backing this workspace.
-func WithStore(s store.Store) Option {
-	return func(w *Workspace) { w.store = s }
-}
-
-// WithStoreFactory injects a store.Factory used by Sync/Reload to
-// (re)build the workspace graph from a store instead of repo.Sync.
-// When nil or not supplied, workspace falls back to repo.Sync.
+// WithStoreFactory injects a store.Factory used by workspace.New to
+// open the authoritative store. When nil or not supplied, New falls
+// back to the default fsstore factory.
 func WithStoreFactory(f store.Factory) Option {
 	return func(w *Workspace) { w.storeFactory = f }
 }
@@ -361,10 +293,10 @@ func newWorkspace(
 		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
 	}
 
-	// Create an empty search index — the workspace has no entities yet
-	// at construction time. Reload (or the syncStore's initial sync)
-	// will populate it. Failures degrade search but don't block
-	// construction; Search() surfaces the nil index as an explicit error.
+	// Create an empty search index — callers that use a real store
+	// populate it from that store. Failures degrade search but don't
+	// block construction; Search() surfaces the nil index as an
+	// explicit error.
 	var searchIdx *search.Index
 	if idx, err := search.NewIndex(); err == nil {
 		searchIdx = idx
@@ -390,17 +322,14 @@ func newWorkspace(
 		paths:      paths,
 		config:     cfg,
 		scriptExec: scriptExec,
-	}
-	for _, opt := range opts {
-		opt(ws)
-	}
-
-	ws.state.Store(&workspaceState{
 		store:      memstore.New(),
 		meta:       meta,
 		automation: autoEngine,
 		searchIdx:  searchIdx,
-	})
+	}
+	for _, opt := range opts {
+		opt(ws)
+	}
 	return ws
 }
 
@@ -449,20 +378,13 @@ func syncCountsFromStore(s store.Store) (entities, relations int) {
 
 // writeEntity is the single write-through path for entity upserts. It
 // calls CreateEntity (falling back to UpdateEntity on ErrConflict) on
-// every store this workspace tracks — the long-lived syncStore and the
-// state-level in-memory mirror. The syncStore's fsstore implementation
-// handles on-disk persistence; no separate repo write is needed.
+// the workspace's authoritative store. In production the store is an
+// fsstore which persists to disk; in tests it is an in-memory store.
 func (w *Workspace) writeEntity(e *entity.Entity) error {
 	if e == nil {
 		return nil
 	}
-	if err := storeUpsertEntity(w.syncStore, e); err != nil {
-		return err
-	}
-	if s := w.state.Load(); s != nil && s.store != nil && s.store != w.syncStore {
-		_ = storeUpsertEntity(s.store, e)
-	}
-	return nil
+	return storeUpsertEntity(w.currentStore(), e)
 }
 
 // deleteEntityStore is the write-through delete path. Cascade is false
@@ -472,44 +394,41 @@ func (w *Workspace) deleteEntityStore(id string) error {
 	if id == "" {
 		return nil
 	}
-	if w.syncStore != nil {
-		_, err := w.syncStore.DeleteEntity(context.Background(), id, false)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
+	st := w.currentStore()
+	if st == nil {
+		return nil
 	}
-	if s := w.state.Load(); s != nil && s.store != nil && s.store != w.syncStore {
-		_, _ = s.store.DeleteEntity(context.Background(), id, false)
+	if _, err := st.DeleteEntity(context.Background(), id, false); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
 	}
 	return nil
 }
 
-// writeRelation upserts a relation into every store.
+// writeRelation upserts a relation into the authoritative store.
 func (w *Workspace) writeRelation(r *entity.Relation) error {
 	if r == nil {
 		return nil
 	}
-	if err := storeUpsertRelation(w.syncStore, r); err != nil {
-		return err
+	return storeUpsertRelation(w.currentStore(), r)
+}
+
+// deleteRelationStore removes a relation from the authoritative store.
+func (w *Workspace) deleteRelationStore(from, relType, to string) error {
+	st := w.currentStore()
+	if st == nil {
+		return nil
 	}
-	if s := w.state.Load(); s != nil && s.store != nil && s.store != w.syncStore {
-		_ = storeUpsertRelation(s.store, r)
+	if err := st.DeleteRelation(context.Background(), from, relType, to); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
 	}
 	return nil
 }
 
-// deleteRelationStore removes a relation from every store.
-func (w *Workspace) deleteRelationStore(from, relType, to string) error {
-	if w.syncStore != nil {
-		err := w.syncStore.DeleteRelation(context.Background(), from, relType, to)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
-	}
-	if s := w.state.Load(); s != nil && s.store != nil && s.store != w.syncStore {
-		_ = s.store.DeleteRelation(context.Background(), from, relType, to)
-	}
-	return nil
+// currentStore returns the authoritative store for reads and writes.
+// Equivalent to Store(), but kept as a short private helper for the
+// write paths above.
+func (w *Workspace) currentStore() store.Store {
+	return w.Store()
 }
 
 // storeUpsertEntity tries CreateEntity first and falls back to
@@ -559,51 +478,29 @@ func storeUpsertRelation(st store.Store, r *entity.Relation) error {
 // --- Accessors ---
 
 // Meta returns the current metamodel.
-func (w *Workspace) Meta() *metamodel.Metamodel {
-	if s := w.state.Load(); s != nil {
-		return s.meta
-	}
-	return nil
-}
+func (w *Workspace) Meta() *metamodel.Metamodel { return w.meta }
 
-// Store returns the store backing this workspace. Precedence:
-//  1. An external store injected via WithStore (used by the CLI/data-entry
-//     wiring that owns the fsstore lifecycle).
-//  2. The long-lived syncStore opened by workspace.New (fsstore).
-//  3. The state-level in-memory mirror (s.store) — kept in sync via
-//     mirrorEntityUpsert/Delete on every CRUD call.
-func (w *Workspace) Store() store.Store {
-	if w.store != nil {
-		return w.store
-	}
-	if w.syncStore != nil {
-		return w.syncStore
-	}
-	if s := w.state.Load(); s != nil {
-		return s.store
-	}
-	return nil
-}
+// Store returns the store backing this workspace. In production that is
+// the fsstore opened by workspace.New; in tests it is the store injected
+// via NewForTest.
+func (w *Workspace) Store() store.Store { return w.store }
 
-// search runs the legacy word/phrase Bleve query against a single workspace
-// state snapshot so the index, the graph it was built from, and the returned
-// entities all come from the same epoch. External callers use Searcher()
-// instead; this method backs that adapter.
+// search runs the legacy word/phrase Bleve query against the workspace's
+// search index. External callers use Searcher() instead; this method
+// backs that adapter.
 func (w *Workspace) search(words, phrases []string, limit int) ([]*entity.Entity, []float64, error) {
-	s := w.state.Load()
-	if s == nil || s.searchIdx == nil {
+	if w.searchIdx == nil {
 		return nil, nil, fmt.Errorf("search index not available")
 	}
-	results, err := s.searchIdx.Search(words, phrases, limit)
+	results, err := w.searchIdx.Search(words, phrases, limit)
 	if err != nil {
 		return nil, nil, err
 	}
 	ctx := context.Background()
-	st := w.Store()
 	entities := make([]*entity.Entity, 0, len(results))
 	scores := make([]float64, 0, len(results))
 	for _, r := range results {
-		e, err := st.GetEntity(ctx, r.ID)
+		e, err := w.store.GetEntity(ctx, r.ID)
 		if err != nil {
 			continue
 		}
@@ -702,160 +599,42 @@ func findTempFilesInDir(fs storage.FS, dir string) []string {
 
 // --- Lifecycle ---
 
-// Reload reloads the metamodel and re-syncs the graph from disk. This is
-// called automatically by the file watcher but is also available for
-// programmatic use (after migration, in tests, etc.).
-//
-// Reload is serialized against concurrent Reload, Sync, and Close via
-// reloadMu. Readers (Meta, Search, etc.) never take the lock; they get
-// a coherent {graph, meta, automation, searchIdx} snapshot via state.Load().
-//
-// On success, a single new workspaceState is published atomically. The
-// new state contains a freshly-built graph (returned by repo.Sync), the
-// new metamodel, a new automation engine, and a new search index. On
-// failure, nothing is published — the previous state remains live and
-// concurrent readers never observe a broken or partial workspace.
-func (w *Workspace) Reload() (entities, relations int, err error) {
-	w.reloadMu.Lock()
-	defer w.reloadMu.Unlock()
-
-	// Skip reloads after Close: they would resurrect the workspace with
-	// fresh resources that no one would close.
-	if w.closed.Load() {
-		return 0, 0, fmt.Errorf("workspace is closed")
+// startSearchReindex subscribes to the store's event stream and updates
+// the search index on every create/update/delete. The returned cancel is
+// stored on the workspace and invoked by Close.
+func (w *Workspace) startSearchReindex() {
+	if w.searchIdx == nil || w.store == nil {
+		return
 	}
-
-	oldState := w.state.Load()
-
-	newMeta, newSchemaFiles, err := w.MetaLoader().Load(context.Background())
-	if err != nil {
-		if migration.IsMigrationError(err) {
-			return w.reloadKeepingOldMetamodel(oldState)
-		}
-		return 0, 0, fmt.Errorf("reload metamodel: %w", err)
-	}
-
-	// Pick the store that backs the reloaded state. In production the
-	// syncStore is authoritative and reflects every on-disk change.
-	// For store-less test workspaces we carry the current mirror forward
-	// unchanged — only the metamodel-derived state (automation, search
-	// index) gets refreshed.
-	newStore := w.syncStore
-	if newStore == nil && oldState != nil {
-		newStore = oldState.store
-	}
-	if newStore == nil {
-		newStore = memstore.New()
-	}
-	entitiesLoaded, relationsLoaded := syncCountsFromStore(newStore)
-
-	// Build a new automation engine from the new metamodel.
-	var newAuto *automation.Engine
-	if len(newMeta.Automations) > 0 {
-		newAuto = automation.NewEngineFromMetamodel(newMeta.Automations)
-	}
-
-	// Build the new search index against the new metamodel and the
-	// freshly-synced store. Keep the previous index if construction or
-	// indexing fails — never drop a working index in favor of a broken one.
-	newIdx := w.buildReloadSearchIndex(newStore, newMeta, oldState)
-
-	// Publish the new state atomically. Readers that call state.Load()
-	// after this point see a fully coherent {newStore, newMeta, newAuto,
-	// newIdx} tuple — no torn reads, no out-of-order publication.
-	w.state.Store(&workspaceState{
-		store:      newStore,
-		meta:       newMeta,
-		automation: newAuto,
-		searchIdx:  newIdx,
-	})
-
-	// Watch any new schema include files that appeared after reload.
-	w.updateSchemaFiles(newSchemaFiles)
-
-	// Close the old search index if it was replaced (not carried over).
-	if oldState != nil && oldState.searchIdx != nil && oldState.searchIdx != newIdx {
-		if closeErr := oldState.searchIdx.Close(); closeErr != nil {
-			slog.Warn("failed to close old search index", "error", closeErr)
-		}
-	}
-
-	return entitiesLoaded, relationsLoaded, nil
+	ch, cancel := w.store.Subscribe(storeEventBufferSize)
+	w.stopSearch = cancel
+	go w.reindexLoop(ch)
 }
 
-// reloadKeepingOldMetamodel handles the migration-error path of Reload:
-// the metamodel file changed in a way that requires `rela migrate`, but
-// we still want to pick up entity-file changes from disk. We re-sync the
-// graph with the OLD metamodel and rebuild the search index against the
-// new graph, so the published state remains internally consistent.
-//
-// Caller must hold reloadMu.
-func (w *Workspace) reloadKeepingOldMetamodel(
-	oldState *workspaceState,
-) (entities, relations int, err error) {
-	slog.Warn("metamodel needs migration, skipping metamodel reload: run 'rela migrate'")
-	if oldState == nil {
-		return 0, 0, fmt.Errorf("reload: no current metamodel and new one needs migration")
-	}
-
-	newStore := w.syncStore
-	if newStore == nil {
-		newStore = oldState.store
-	}
-	entitiesLoaded, relationsLoaded := syncCountsFromStore(newStore)
-
-	// Rebuild the search index against the freshly-synced store (with
-	// the OLD metamodel) so Search returns consistent results. Without
-	// this, the published state would have a new store paired with an
-	// index built from the previous state — a torn snapshot.
-	newIdx := w.buildReloadSearchIndex(newStore, oldState.meta, oldState)
-
-	w.state.Store(&workspaceState{
-		store:      newStore,
-		meta:       oldState.meta,
-		automation: oldState.automation,
-		searchIdx:  newIdx,
-	})
-
-	if oldState.searchIdx != nil && oldState.searchIdx != newIdx {
-		if closeErr := oldState.searchIdx.Close(); closeErr != nil {
-			slog.Warn("failed to close old search index", "error", closeErr)
+func (w *Workspace) reindexLoop(ch <-chan store.Event) {
+	ctx := context.Background()
+	for ev := range ch {
+		switch ev.Op {
+		case store.EventEntityCreated, store.EventEntityUpdated:
+			if ev.EntityID == "" {
+				continue
+			}
+			e, err := w.store.GetEntity(ctx, ev.EntityID)
+			if err != nil {
+				continue
+			}
+			if err := w.searchIdx.Index(entityToSearchDocument(e, w.meta)); err != nil {
+				slog.Warn("search index update failed", "id", ev.EntityID, "error", err)
+			}
+		case store.EventEntityDeleted:
+			if ev.EntityID == "" {
+				continue
+			}
+			if err := w.searchIdx.Remove(ev.EntityID); err != nil {
+				slog.Warn("search index remove failed", "id", ev.EntityID, "error", err)
+			}
 		}
 	}
-
-	return entitiesLoaded, relationsLoaded, nil
-}
-
-// buildReloadSearchIndex creates a fresh search index for a reload, built
-// from entities in the given store. On any failure (creating the index,
-// batch-indexing the documents), it returns the old index from oldState
-// instead of dropping indexing entirely. Caller must hold reloadMu.
-func (w *Workspace) buildReloadSearchIndex(
-	st store.Store, newMeta *metamodel.Metamodel, oldState *workspaceState,
-) *search.Index {
-	carryOver := func() *search.Index {
-		if oldState == nil {
-			return nil
-		}
-		return oldState.searchIdx
-	}
-
-	candidate, err := search.NewIndex()
-	if err != nil {
-		slog.Warn("failed to create search index during reload; keeping previous", "error", err)
-		return carryOver()
-	}
-
-	docs := storeSearchDocuments(st, newMeta)
-	if err := candidate.IndexBatch(docs); err != nil {
-		slog.Warn("failed to index entities during reload; keeping previous index", "error", err)
-		if closeErr := candidate.Close(); closeErr != nil {
-			slog.Warn("failed to close partial search index", "error", closeErr)
-		}
-		return carryOver()
-	}
-
-	return candidate
 }
 
 // --- Type resolution ---
@@ -892,11 +671,7 @@ func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.Entit
 // GenerateID generates the next ID for the given entity type. If prefix is
 // non-empty it is used instead of the default prefix from the metamodel.
 func (w *Workspace) GenerateID(entityType, prefix string) (string, error) {
-	s := w.state.Load()
-	if s == nil {
-		return "", fmt.Errorf("workspace not initialized")
-	}
-	entityDef, ok := s.meta.GetEntityDef(entityType)
+	entityDef, ok := w.meta.GetEntityDef(entityType)
 	if !ok {
 		return "", fmt.Errorf("unknown entity type: %s", entityType)
 	}
@@ -951,18 +726,8 @@ type CreateResult struct {
 }
 
 // CreateEntity generates an ID (unless provided), applies templates and
-// defaults, validates, writes to disk, updates the graph, and runs
-// automation.
-//
-// Captures a single workspace state snapshot at entry. Callers must
-// serialize CreateEntity against concurrent Reload via an external mutex
-// (App.writeMu in the data-entry server).
+// defaults, validates, writes to the store, and runs automation.
 func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entity.Entity, *CreateResult, error) {
-	s := w.state.Load()
-	if s == nil {
-		return nil, nil, fmt.Errorf("workspace not initialized")
-	}
-
 	// Check for duplicates if custom ID provided.
 	if opts.ID != "" {
 		if _, err := w.Store().GetEntity(context.Background(), opts.ID); err == nil {
@@ -984,8 +749,8 @@ func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entity
 	// Run automation and apply property changes.
 	result := &CreateResult{}
 	var autoResult *automation.Result
-	if s.automation != nil {
-		autoResult = s.automation.Process(automation.Event{
+	if w.automation != nil {
+		autoResult = w.automation.Process(automation.Event{
 			Type:   automation.EventEntityCreated,
 			Entity: entity,
 		})
@@ -1024,22 +789,10 @@ type UpdateResult struct {
 }
 
 // UpdateEntity validates and writes an existing entity, runs automation,
-// and mirrors to the in-memory store(s).
-//
-// Captures a single workspace state snapshot at entry; all reads of meta,
-// automation, and graph during this call use that snapshot. Callers must
-// serialize UpdateEntity against concurrent Reload via an external mutex
-// (App.writeMu in the data-entry server) so the snapshot the method
-// holds matches the workspace's current state until the method returns.
+// and persists to the authoritative store.
 func (w *Workspace) updateEntity(entity, oldEntity *entity.Entity) (*UpdateResult, error) {
-	s := w.state.Load()
-	if s == nil {
-		return nil, fmt.Errorf("workspace not initialized")
-	}
-	meta := s.meta
-
 	// Validate.
-	if errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
+	if errs := w.meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
 		return nil, newValidationError(errs)
 	}
 
@@ -1047,8 +800,8 @@ func (w *Workspace) updateEntity(entity, oldEntity *entity.Entity) (*UpdateResul
 
 	// Run automation to get property changes and side effects.
 	var autoResult *automation.Result
-	if s.automation != nil && oldEntity != nil {
-		autoResult = s.automation.Process(automation.Event{
+	if w.automation != nil && oldEntity != nil {
+		autoResult = w.automation.Process(automation.Event{
 			Type:      automation.EventEntityUpdated,
 			Entity:    entity,
 			OldEntity: oldEntity,
@@ -1060,8 +813,8 @@ func (w *Workspace) updateEntity(entity, oldEntity *entity.Entity) (*UpdateResul
 		result.AutomationErrors = autoResult.Errors
 	}
 
-	// Write to disk + mirror BEFORE side effects. This ensures Lua scripts
-	// can modify entities without being overwritten.
+	// Write to store BEFORE side effects. This ensures Lua scripts can
+	// modify entities without being overwritten.
 	if err := w.writeEntity(entity); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
@@ -1089,11 +842,6 @@ var ErrHasRelations = fmt.Errorf("entity has relations; set cascade=true to dele
 
 // DeleteEntity removes an entity and optionally cascades to its relations.
 func (w *Workspace) deleteEntity(_, id string, cascade bool) (*DeleteResult, error) {
-	s := w.state.Load()
-	if s == nil {
-		return nil, fmt.Errorf("workspace not initialized")
-	}
-
 	ctx := context.Background()
 	st := w.Store()
 	if _, err := st.GetEntity(ctx, id); err != nil {
@@ -1199,7 +947,7 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 		return nil, newValidationError(errs)
 	}
 
-	// Persist to every store (mirror + syncStore + disk via fsstore).
+	// Persist to the authoritative store (disk via fsstore in production).
 	if err := w.writeEntity(e); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
@@ -1338,12 +1086,11 @@ func (w *Workspace) runCreatedEntityAutomation(
 	_ *metamodel.Metamodel,
 	effects *automationSideEffects,
 ) *automationQueueItem {
-	s := w.state.Load()
-	if s == nil || s.automation == nil {
+	if w.automation == nil {
 		return nil
 	}
 
-	newAutoResult := s.automation.Process(automation.Event{
+	newAutoResult := w.automation.Process(automation.Event{
 		Type:   automation.EventEntityCreated,
 		Entity: created,
 	})
@@ -1527,13 +1274,8 @@ type CreateRelationOptions struct {
 }
 
 // CreateRelation validates both endpoints exist, checks for duplicates,
-// validates against the metamodel, writes to disk, and mirrors to the store.
+// validates against the metamodel, and writes to the authoritative store.
 func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelationOptions) (*entity.Relation, error) {
-	s := w.state.Load()
-	if s == nil {
-		return nil, fmt.Errorf("workspace not initialized")
-	}
-
 	ctx := context.Background()
 	st := w.Store()
 	fromEntity, err := st.GetEntity(ctx, from)
@@ -1546,7 +1288,7 @@ func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelat
 	}
 
 	// Validate relation type.
-	if vErr := s.meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
+	if vErr := w.meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
 		return nil, fmt.Errorf("invalid relation: %w", vErr)
 	}
 
@@ -1629,61 +1371,33 @@ type WatchOptions struct {
 	ExtraFiles []string
 	// ExtraDirs lists additional directories to watch (e.g., metamodel/).
 	ExtraDirs []string
-	// OnChange is called after the workspace has handled data-file changes
-	// (entities, relations, extras) via a graph sync or notify-only pass.
-	// Metamodel reloads fire OnMetaReload instead — they don't carry the
-	// file paths that OnChange listeners usually key off of.
+	// OnChange is called when any watched extra file changes. Store
+	// events are handled internally (they keep the search index in sync);
+	// only consumers of ExtraFiles/ExtraDirs receive events here.
 	OnChange func(events []ChangeEvent)
-	// OnMetaReload is called after the workspace has reloaded the metamodel
-	// in response to a schema-file change. Consumers that need to rebuild
-	// derived state (palette, styles, openapi, ...) hook in here.
-	OnMetaReload func()
 }
 
 // StartWatching begins watching for file changes.
 //
-//   - Metamodel changes flow through the metamodel loader's Subscribe
-//     and fire opts.OnMetaReload.
-//   - Entity/relation changes come from the store's own event stream
-//     (started by Workspace.New when a store factory is configured) and
-//     fire opts.OnChange.
+//   - Entity/relation changes: the store's own watcher (fsstore) emits
+//     events; the workspace subscribes at New() to keep the search index
+//     in sync. Nothing is wired here for entity/relation changes.
 //   - Extra files/dirs (views.yaml, etc.) are watched via a separate
-//     storage.Watcher.
+//     storage.Watcher and fire opts.OnChange.
+//
+// Metamodel and automation changes are not picked up while the workspace
+// is running — restart to apply them.
 func (w *Workspace) StartWatching(opts WatchOptions) error {
-	// Subscribe to metamodel changes via the loader.
-	if sub, ok := w.MetaLoader().(metamodel.Subscriber); ok {
-		stop, err := sub.Subscribe(context.Background(), func() {
-			if _, _, reloadErr := w.Reload(); reloadErr != nil {
-				slog.Error("reload error", "error", reloadErr)
-			}
-			if opts.OnMetaReload != nil {
-				opts.OnMetaReload()
-			}
-		})
-		if err != nil {
-			return err
-		}
-		w.stopSchema = stop
-	}
-
 	// Ask the store to start watching its own data files. The interface
 	// doesn't mandate this capability, so we feature-test via type
 	// assertion — fsstore supports it; memstore and other in-memory
 	// backends don't need to.
-	if w.syncStore != nil {
-		if sw, ok := w.syncStore.(storeWatcher); ok {
+	if w.store != nil {
+		if sw, ok := w.store.(storeWatcher); ok {
 			if err := sw.StartWatching(); err != nil {
 				slog.Warn("store watcher not started", "error", err)
 			}
 		}
-	}
-
-	// Forward store events as workspace ChangeEvents so consumers that
-	// wired up OnChange for the legacy fs watcher keep working.
-	if opts.OnChange != nil && w.syncStore != nil {
-		ch, cancel := w.syncStore.Subscribe(storeEventBufferSize)
-		w.stopStoreEvents = cancel
-		go forwardStoreEvents(ch, opts.OnChange)
 	}
 
 	// Optional extra watcher for non-store files (views.yaml, etc.).
@@ -1701,10 +1415,6 @@ func (w *Workspace) StartWatching(opts WatchOptions) error {
 			},
 		})
 		if err != nil {
-			if w.stopSchema != nil {
-				w.stopSchema()
-				w.stopSchema = nil
-			}
 			return err
 		}
 		go watcher.Start()
@@ -1713,104 +1423,38 @@ func (w *Workspace) StartWatching(opts WatchOptions) error {
 	return nil
 }
 
-// forwardStoreEvents drains a store.Event channel and fires onChange
-// once per event, shaped as a single-event workspace.ChangeEvent slice.
-// The store already debounces writes, so we don't re-batch here.
-func forwardStoreEvents(ch <-chan store.Event, onChange func([]ChangeEvent)) {
-	for ev := range ch {
-		onChange([]ChangeEvent{{
-			Path: storeEventPath(ev),
-			Op:   storeEventOp(ev),
-		}})
-	}
-}
-
-func storeEventPath(ev store.Event) string {
-	if ev.EntityID != "" {
-		return ev.EntityType + "/" + ev.EntityID
-	}
-	return ev.From + "--" + ev.RelationType + "--" + ev.To
-}
-
-func storeEventOp(ev store.Event) storage.ChangeOp {
-	switch ev.Op {
-	case store.EventEntityCreated, store.EventRelationCreated:
-		return storage.OpCreate
-	case store.EventEntityDeleted, store.EventRelationDeleted:
-		return storage.OpDelete
-	default:
-		return storage.OpModify
-	}
-}
-
-// updateSchemaFiles records the latest set of metamodel source files.
-// The metamodel loader's subscription manages its own watch list — this
-// function only tracks what was last loaded, for any code that needs it.
-// Caller must hold reloadMu.
-func (w *Workspace) updateSchemaFiles(newSchemaFiles []string) {
-	w.schemaFiles = newSchemaFiles
-}
-
-// StopWatching stops the file watcher. Serialized against Reload/Sync
-// via reloadMu to prevent races with updateSchemaFiles.
+// StopWatching stops the file watcher.
 func (w *Workspace) StopWatching() {
-	w.reloadMu.Lock()
-	defer w.reloadMu.Unlock()
-	w.stopWatchingLocked()
-}
-
-// stopWatchingLocked stops the watcher. Caller must hold reloadMu.
-func (w *Workspace) stopWatchingLocked() {
 	if w.watcher != nil {
 		w.watcher.Stop()
 		w.watcher = nil
 	}
-	if w.stopSchema != nil {
-		w.stopSchema()
-		w.stopSchema = nil
-	}
-	if w.stopStoreEvents != nil {
-		w.stopStoreEvents()
-		w.stopStoreEvents = nil
-	}
 }
 
-// Close releases resources held by the workspace (search index, watcher).
-// Close is idempotent and serialized against concurrent Reload/Sync via
-// reloadMu; the closed flag prevents any Reload that arrives after Close
-// from resurrecting the workspace.
+// Close releases resources held by the workspace (search index, watcher,
+// store). Close is not safe to call concurrently with Workspace methods.
 func (w *Workspace) Close() error {
-	w.reloadMu.Lock()
-	defer w.reloadMu.Unlock()
-	w.stopWatchingLocked()
-	if w.closed.Swap(true) {
-		return nil // already closed
+	w.StopWatching()
+	if w.stopSearch != nil {
+		w.stopSearch()
+		w.stopSearch = nil
 	}
-	s := w.state.Load()
-	if s != nil && s.searchIdx != nil {
-		if err := s.searchIdx.Close(); err != nil {
+	if w.searchIdx != nil {
+		if err := w.searchIdx.Close(); err != nil {
+			w.searchIdx = nil
 			return fmt.Errorf("close search index: %w", err)
 		}
+		w.searchIdx = nil
 	}
-	// Publish a state with nil searchIdx so that any reader still calling
-	// Search() after Close gets the "not available" error path instead of
-	// touching the closed index.
-	if s != nil {
-		w.state.Store(&workspaceState{
-			store:      s.store,
-			meta:       s.meta,
-			automation: s.automation,
-			searchIdx:  nil,
-		})
-	}
-	if w.syncStore != nil {
-		if sw, ok := w.syncStore.(storeWatcher); ok {
+	if w.store != nil {
+		if sw, ok := w.store.(storeWatcher); ok {
 			sw.StopWatching()
 		}
-		if err := w.syncStore.Close(); err != nil {
-			slog.Warn("failed to close sync store", "error", err)
+		if lc, ok := w.store.(store.Lifecycle); ok {
+			if err := lc.Close(); err != nil {
+				slog.Warn("failed to close store", "error", err)
+			}
 		}
-		w.syncStore = nil
 	}
 	return nil
 }
@@ -1835,12 +1479,6 @@ func (w *Workspace) ResumeWatching() {
 // file access (e.g., attachment store, writing output files).
 func (w *Workspace) FS() storage.FS {
 	return w.fs
-}
-
-// NormalizeContent normalizes markdown headers in content so the minimum
-// level is ## (h2). Returns the normalized content.
-func (w *Workspace) NormalizeContent(content string) string {
-	return markdown.NormalizeHeaders(content)
 }
 
 // --- Search document conversion ---

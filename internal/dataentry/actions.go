@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // actionIDRegex defines the allowed format for action IDs at request time.
@@ -94,15 +94,15 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	// Resolve entity if provided in the request.
 	var ent *entity.Entity
 	if req.EntityID != "" {
-		if e, err := a.ws.Store().GetEntity(context.Background(), req.EntityID); err == nil {
+		if e, err := a.store.GetEntity(context.Background(), req.EntityID); err == nil {
 			ent = e
 		}
 	}
 
 	ctx := &actionScriptContext{
-		ws:          a.ws,
+		luaServices: a.luaServices,
 		meta:        s.Meta,
-		projectRoot: a.ws.Paths().Root,
+		projectRoot: a.paths.Root,
 		entity:      ent,
 	}
 
@@ -144,13 +144,13 @@ func newCorrelationID() string {
 // The entity field is optionally populated when the action is invoked with
 // entity context (e.g., from a list action applied to selected rows).
 type actionScriptContext struct {
-	ws          *workspace.Workspace
+	luaServices lua.Services
 	meta        *metamodel.Metamodel
 	projectRoot string
 	entity      *entity.Entity
 }
 
-func (c *actionScriptContext) GetWorkspace() interface{}     { return c.ws.LuaServices() }
+func (c *actionScriptContext) GetWorkspace() interface{}     { return c.luaServices }
 func (c *actionScriptContext) GetMeta() *metamodel.Metamodel { return c.meta }
 func (c *actionScriptContext) GetProjectRoot() string        { return c.projectRoot }
 func (c *actionScriptContext) GetEntity() *entity.Entity     { return c.entity }

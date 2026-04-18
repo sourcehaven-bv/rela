@@ -40,7 +40,7 @@ func queryTestWorkspace(t *testing.T) *Workspace {
 			"owns":    {From: []string{"ticket"}, To: []string{"component"}},
 		},
 	}
-	return NewForTestWithStore(s, meta)
+	return NewForTest(meta, WithTestStore(s))
 }
 
 func TestGetEntity(t *testing.T) {

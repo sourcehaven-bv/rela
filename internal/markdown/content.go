@@ -9,8 +9,6 @@ import (
 	"github.com/yuin/goldmark/extension"
 	extast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
-
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // ExtractHeaders extracts all markdown headers from content using goldmark's AST parser.
@@ -47,58 +45,36 @@ func ExtractHeaders(content string) []string {
 	return headers
 }
 
-// MatchHeader checks if any header matches the given header check.
-func MatchHeader(headers []string, check metamodel.HeaderCheck) bool {
-	matchStr := check.GetMatchString()
-	if matchStr == "" {
+// MatchHeaderExact returns true if any of headers equals exact.
+// Empty exact matches trivially.
+func MatchHeaderExact(headers []string, exact string) bool {
+	if exact == "" {
 		return true
 	}
-
-	if check.IsPattern() {
-		re, err := regexp.Compile(matchStr)
-		if err != nil {
-			return false
-		}
-		for _, h := range headers {
-			if re.MatchString(h) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Exact match
 	for _, h := range headers {
-		if h == matchStr {
+		if h == exact {
 			return true
 		}
 	}
 	return false
 }
 
-// CheckContentRule validates markdown content against content rules.
-func CheckContentRule(content string, rule *metamodel.ContentRule) bool {
-	if rule == nil {
+// MatchHeaderPattern returns true if any of headers matches the regex
+// pattern. Returns false on invalid regex. Empty pattern matches trivially.
+func MatchHeaderPattern(headers []string, pattern string) bool {
+	if pattern == "" {
 		return true
 	}
-
-	headers := ExtractHeaders(content)
-
-	for _, headerCheck := range rule.RequiredHeaders {
-		if !MatchHeader(headers, headerCheck) {
-			return false
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return false
+	}
+	for _, h := range headers {
+		if re.MatchString(h) {
+			return true
 		}
 	}
-
-	// Check checklist rules
-	if rule.Checklist != nil {
-		items := ExtractChecklistItems(content)
-		if !CheckChecklistRule(items, rule.Checklist) {
-			return false
-		}
-	}
-
-	return true
+	return false
 }
 
 // ChecklistItem represents a task list item in markdown.
@@ -203,34 +179,4 @@ func extractListItemText(li *ast.ListItem, source []byte) (string, bool) {
 	}
 
 	return strings.TrimSpace(textContent.String()), hasStrikethrough
-}
-
-// CheckChecklistRule validates checklist items against a checklist rule.
-func CheckChecklistRule(items []ChecklistItem, rule *metamodel.ChecklistRule) bool {
-	if rule == nil {
-		return true
-	}
-
-	// If no checklist items, nothing to validate
-	if len(items) == 0 {
-		return true
-	}
-
-	if rule.AllChecked {
-		for _, item := range items {
-			// Item passes if:
-			// - It's checked, OR
-			// - It's skipped (strikethrough) AND allow-skipped is true
-			if item.Checked {
-				continue
-			}
-			if rule.AllowSkipped && item.Skipped {
-				continue
-			}
-			// Found an unchecked item that isn't skipped
-			return false
-		}
-	}
-
-	return true
 }

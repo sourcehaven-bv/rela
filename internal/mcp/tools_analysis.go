@@ -185,7 +185,7 @@ func (s *Server) handleAnalyzeProperties(
 	}
 
 	// Validate relation properties
-	relErrors := s.ws.ValidateRelationProperties()
+	relErrors := schema.ValidateRelationProperties(s.ws.Store(), s.ws.Meta())
 	allRelationErrors := make([]relationErrors, 0, len(relErrors))
 	for _, rpe := range relErrors {
 		errStrings := make([]string, len(rpe.Errors))

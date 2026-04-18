@@ -65,7 +65,7 @@ func makeTestServer(t *testing.T) *Server {
 		t.Fatalf("seed relation: %v", err)
 	}
 
-	ws := workspace.NewForTestWithStore(st, meta)
+	ws := workspace.NewForTest(meta, workspace.WithTestStore(st))
 
 	return &Server{
 		ws:     ws,
@@ -356,7 +356,9 @@ func TestHandleListRelations_NoMatch(t *testing.T) {
 func TestHandleListRelations_Pagination(t *testing.T) {
 	s := makeTestServer(t)
 	// Add another relation for pagination testing
-	s.ws.SeedRelationForTest(testutil.NewRelation("DEC-001", "addresses", "REQ-002").Build())
+	if _, err := s.ws.Store().CreateRelation(context.Background(), "DEC-001", "addresses", "REQ-002", nil); err != nil {
+		t.Fatalf("seed relation: %v", err)
+	}
 
 	req := makeToolRequest(map[string]interface{}{"limit": float64(1)})
 	result, err := s.handleListRelations(context.Background(), req)

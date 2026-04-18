@@ -1,18 +1,15 @@
 package dataentry
 
-import (
-	"time"
+import "time"
 
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
-)
-
-// toWorkspaceDocConfig converts dataentry config to workspace config.
-func (a *App) toWorkspaceDocConfig(cfg *DocumentConfig) workspace.DocumentConfig {
+// toDocumentRenderConfig converts the YAML-facing DocumentConfig into
+// the internal render config.
+func (a *App) toDocumentRenderConfig(cfg *DocumentConfig) documentRenderConfig {
 	timeout := time.Duration(cfg.Timeout) * time.Second
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	return workspace.DocumentConfig{
+	return documentRenderConfig{
 		Command: cfg.Command,
 		Timeout: timeout,
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
 )
@@ -308,59 +309,6 @@ func (w *Workspace) countIncomingByType(entityID, relName string) int {
 	return n
 }
 
-// --- Property Validation ---
-
-// PropertyError represents a property validation error.
-type PropertyError struct {
-	EntityID   string
-	EntityType string
-	Errors     []*metamodel.ValidationError
-}
-
-// ValidateProperties validates entity properties against the metamodel, filtered by scope.
-func (w *Workspace) ValidateProperties(opts AnalyzeOptions) []PropertyError {
-	meta := w.Meta()
-	entities := filterByScope(collectEntities(w.Store(), store.EntityQuery{}), opts.Scope)
-
-	var allErrors []PropertyError
-	for _, e := range entities {
-		errs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
-		if len(errs) > 0 {
-			allErrors = append(allErrors, PropertyError{
-				EntityID:   e.ID,
-				EntityType: e.Type,
-				Errors:     errs,
-			})
-		}
-	}
-
-	return allErrors
-}
-
-// RelationPropertyError represents a relation property validation error.
-type RelationPropertyError struct {
-	RelationKey  string // "from--type--to"
-	RelationType string
-	Errors       []*metamodel.ValidationError
-}
-
-// ValidateRelationProperties validates relation properties against the metamodel.
-func (w *Workspace) ValidateRelationProperties() []RelationPropertyError {
-	meta := w.Meta()
-	var allErrors []RelationPropertyError
-	for _, rel := range collectRelations(w.Store(), store.RelationQuery{}) {
-		errs := meta.ValidateRelationProperties(rel.Type, rel.Properties)
-		if len(errs) > 0 {
-			allErrors = append(allErrors, RelationPropertyError{
-				RelationKey:  rel.From + "--" + rel.Type + "--" + rel.To,
-				RelationType: rel.Type,
-				Errors:       errs,
-			})
-		}
-	}
-	return allErrors
-}
-
 // --- Custom Validations ---
 
 // ValidationViolation is re-exported from the validation package.
@@ -443,8 +391,11 @@ func (w *Workspace) AnalyzeAll(opts AnalyzeOptions) *AnalysisSummary {
 		Cardinality: len(w.CheckCardinality(opts)),
 	}
 
-	// Count property errors
-	for _, pe := range w.ValidateProperties(opts) {
+	// Count property errors (filtered by scope if provided).
+	for _, pe := range schema.ValidateEntityProperties(w.Store(), w.Meta()) {
+		if !inScope(pe.EntityID, opts.Scope) {
+			continue
+		}
 		summary.PropertyErrors += len(pe.Errors)
 	}
 

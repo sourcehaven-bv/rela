@@ -7,7 +7,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -174,7 +173,7 @@ func (s *Service) checkEntityAgainstRule(
 	}
 
 	// Check content rules
-	if rule.Content != nil && !markdown.CheckContentRule(e.Content, rule.Content) {
+	if rule.Content != nil && !CheckContentRule(e.Content, rule.Content) {
 		return []Violation{{
 			RuleName:    rule.Name,
 			Description: rule.Description,
