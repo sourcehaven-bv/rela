@@ -163,9 +163,9 @@ internal/storage/osfs.go;11;10
 internal/storage/safefs.go;29;16
 internal/storage/watcher.go;71;55
 internal/store/fsstore/attachment.go;48;45
-internal/store/fsstore/entity.go;234;221
+internal/store/fsstore/entity.go;234;219
 internal/store/fsstore/formatter.go;40;0
-internal/store/fsstore/fsstore.go;74;54
+internal/store/fsstore/fsstore.go;74;55
 internal/store/fsstore/index.go;160;130
 internal/store/fsstore/markdown.go;244;193
 internal/store/fsstore/propcache.go;21;19
