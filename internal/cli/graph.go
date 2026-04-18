@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -176,7 +177,7 @@ func escapeLabel(s string) string {
 func renderWithGraphviz(ctx context.Context, dot, outputPath, format string) error {
 	_, err := exec.LookPath("dot")
 	if err != nil {
-		return fmt.Errorf("graphviz 'dot' command not found; install Graphviz or use -f dot")
+		return errors.New("graphviz 'dot' command not found; install Graphviz or use -f dot")
 	}
 
 	cmd := exec.CommandContext(ctx, "dot", "-T"+format, "-o", outputPath)

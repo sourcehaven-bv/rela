@@ -231,7 +231,7 @@ func TestHandleV1Action_Concurrent(t *testing.T) {
 
 	const N = 5
 	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
+	for range N {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

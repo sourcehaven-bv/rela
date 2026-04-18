@@ -123,7 +123,7 @@ func TestAddRecentProjectMovesToFront(t *testing.T) {
 func TestAddRecentProjectCapsAtMax(t *testing.T) {
 	prefs := &Preferences{}
 
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		prefs.AddRecentProject("/path/"+string(rune('a'+i)), "Project")
 	}
 

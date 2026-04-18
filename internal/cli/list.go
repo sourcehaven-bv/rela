@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -70,7 +71,7 @@ Examples:
 		// Parse and apply filters
 		if len(listWhere) > 0 {
 			if entityTypeName == "" {
-				return fmt.Errorf("--where filters require specifying an entity type")
+				return errors.New("--where filters require specifying an entity type")
 			}
 
 			entityDef, ok := meta.GetEntityDef(entityTypeName)
@@ -105,7 +106,7 @@ Examples:
 		// Apply sorting
 		if listSort != "" {
 			if entityTypeName == "" {
-				return fmt.Errorf("--sort requires specifying an entity type")
+				return errors.New("--sort requires specifying an entity type")
 			}
 
 			entityDef, ok := meta.GetEntityDef(entityTypeName)

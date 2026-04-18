@@ -1,7 +1,7 @@
 package migration
 
 import (
-	"fmt"
+	"errors"
 
 	"gopkg.in/yaml.v3"
 )
@@ -67,7 +67,7 @@ func (m *CardinalityRenameMigration) Detect(doc *yaml.Node) bool {
 func (m *CardinalityRenameMigration) Apply(doc *yaml.Node) error {
 	root := GetDocumentRoot(doc)
 	if root == nil {
-		return fmt.Errorf("empty document")
+		return errors.New("empty document")
 	}
 
 	relations := GetMapValue(root, "relations")

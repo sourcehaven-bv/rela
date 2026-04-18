@@ -1,6 +1,7 @@
 package conflict
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -12,7 +13,7 @@ import (
 // Resolve applies a resolution to a conflicted file and returns the resolved entity or relation.
 func Resolve(cf *ConflictedFile, resolution *Resolution) (*entity.Entity, *entity.Relation, error) {
 	if cf.Ours == nil || cf.Theirs == nil {
-		return nil, nil, fmt.Errorf("cannot resolve: both sides must be parsed")
+		return nil, nil, errors.New("cannot resolve: both sides must be parsed")
 	}
 
 	// Handle entity files
@@ -27,7 +28,7 @@ func Resolve(cf *ConflictedFile, resolution *Resolution) (*entity.Entity, *entit
 		return nil, relation, nil
 	}
 
-	return nil, nil, fmt.Errorf("cannot resolve: mixed or unparseable content")
+	return nil, nil, errors.New("cannot resolve: mixed or unparseable content")
 }
 
 // resolveEntity merges two entity versions based on the resolution.
@@ -152,7 +153,7 @@ func ResolveAndWrite(cf *ConflictedFile, resolution *Resolution, meta *metamodel
 		return writeRelationFile(cf.Path, relation)
 	}
 
-	return fmt.Errorf("nothing to write")
+	return errors.New("nothing to write")
 }
 
 // AcceptOurs resolves a conflict by accepting all values from "ours" (HEAD).
@@ -209,7 +210,7 @@ func WriteResolved(path string, e *entity.Entity, relation *entity.Relation) err
 	if relation != nil {
 		return writeRelationFile(path, relation)
 	}
-	return fmt.Errorf("nothing to write")
+	return errors.New("nothing to write")
 }
 
 // writeEntityFile formats and writes an entity to disk.

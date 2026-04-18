@@ -21,6 +21,7 @@ package memstore
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -539,7 +540,7 @@ func (m *MemStore) CreateRelation(
 	defer m.mu.Unlock()
 
 	if relType == "" {
-		return nil, fmt.Errorf("store: empty relation type")
+		return nil, errors.New("store: empty relation type")
 	}
 
 	r := entity.NewRelation(from, relType, to)

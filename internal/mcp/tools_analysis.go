@@ -273,7 +273,7 @@ func (s *Server) handleAnalyzeValidations(
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return mcp.NewToolResultText(
-		fmt.Sprintf("Found validation issues:\n\n%s", text)), nil
+		"Found validation issues:\n\n" + text), nil
 }
 
 func (s *Server) handleAnalyzeSchema(

@@ -3,6 +3,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -61,7 +62,7 @@ func (s *Server) handleAnalyzeTraceabilityPrompt(
 ) (*mcp.GetPromptResult, error) {
 	id := request.Params.Arguments["id"]
 	if id == "" {
-		return nil, fmt.Errorf("id argument is required")
+		return nil, errors.New("id argument is required")
 	}
 
 	ctx := context.Background()
@@ -115,7 +116,7 @@ Please analyze:
 		id, entityText, traceFromText, traceToText)
 
 	return &mcp.GetPromptResult{
-		Description: fmt.Sprintf("Traceability analysis for %s", id),
+		Description: "Traceability analysis for " + id,
 		Messages: []mcp.PromptMessage{
 			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(content)),
 		},
@@ -283,7 +284,7 @@ func (s *Server) handleReviewEntityPrompt(
 ) (*mcp.GetPromptResult, error) {
 	id := request.Params.Arguments["id"]
 	if id == "" {
-		return nil, fmt.Errorf("id argument is required")
+		return nil, errors.New("id argument is required")
 	}
 
 	st := s.ws.Store()
@@ -341,7 +342,7 @@ Please review this entity for:
 		id, entityText, entity.Type, schemaText, validationText)
 
 	return &mcp.GetPromptResult{
-		Description: fmt.Sprintf("Entity review for %s", id),
+		Description: "Entity review for " + id,
 		Messages: []mcp.PromptMessage{
 			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(content)),
 		},

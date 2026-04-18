@@ -99,7 +99,7 @@ func RunWatcherTests(t *testing.T, f Factory) {
 		events, cancel := s.Subscribe(1)
 		defer cancel()
 
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			e := entity.New("T-"+string(rune('A'+i)), "ticket")
 			require.NoError(t, s.CreateEntity(ctx(), e))
 		}

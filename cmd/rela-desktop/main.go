@@ -50,7 +50,7 @@ const GitHubClientID = "" // Set via build flags or environment
 // It manages project lifecycle: opening a directory picker, loading a project,
 // and persisting recent projects in user preferences.
 type Desktop struct {
-	ctx               context.Context
+	ctx               context.Context //nolint:containedctx // Wails runtime ctx must live for the struct lifetime
 	mu                sync.RWMutex
 	app               *dataentry.App
 	handler           http.Handler

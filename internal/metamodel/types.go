@@ -296,7 +296,7 @@ func camelCaseToSpaced(s string) string {
 	const asciiCaseOffset = 'a' - 'A'   // 32, but as a named constant
 	result := make([]byte, 0, len(s)+4) // Extra space for inserted spaces
 
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		isUpper := c >= 'A' && c <= 'Z'
 

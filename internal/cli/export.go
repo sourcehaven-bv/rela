@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -93,7 +94,7 @@ Examples:
 		}
 
 		if len(args) == 0 {
-			return fmt.Errorf("please specify an entity type to export, or use --all to export everything")
+			return errors.New("please specify an entity type to export, or use --all to export everything")
 		}
 
 		typeName := args[0]
@@ -220,7 +221,7 @@ func exportAllData() error {
 	case "yaml":
 		return writeYAML(fullExport)
 	case "csv":
-		return fmt.Errorf("CSV format is not supported for --all export (use JSON or YAML)")
+		return errors.New("CSV format is not supported for --all export (use JSON or YAML)")
 	default:
 		return fmt.Errorf("unsupported format: %s (use json, csv, or yaml)", exportFormat)
 	}

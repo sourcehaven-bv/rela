@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -29,7 +30,7 @@ Examples:
   rela gc --attachments --dry-run # Show what would be removed`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !gcAttachments && !gcTempFiles {
-			return fmt.Errorf("specify at least one of --attachments or --temp-files")
+			return errors.New("specify at least one of --attachments or --temp-files")
 		}
 
 		if gcTempFiles {

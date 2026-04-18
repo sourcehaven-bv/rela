@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -113,7 +114,7 @@ Examples:
 			if hashPrefix != "" {
 				return fmt.Errorf("no attachment found with hash prefix %q", hashPrefix)
 			}
-			return fmt.Errorf("no attachments to remove")
+			return errors.New("no attachments to remove")
 		}
 
 		// Update entity property

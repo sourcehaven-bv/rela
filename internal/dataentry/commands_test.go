@@ -150,7 +150,7 @@ func TestResolveCommands(t *testing.T) {
 			t.Skip("need at least 2 commands")
 		}
 		// Run multiple times and check order is stable
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			cmds2 := app.resolveCommands("view", "ticket_detail", "ticket")
 			for j := range cmds {
 				if cmds[j].ID != cmds2[j].ID {

@@ -33,7 +33,7 @@ func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) 
 
 	// Multi-pass traversal (up to 10 passes until stable)
 	maxPasses := 10
-	for pass := 0; pass < maxPasses; pass++ {
+	for range maxPasses {
 		before := countViewEntities(result.Collections)
 		for _, rule := range view.Traverse {
 			a.applyViewTraverse(rule, result)

@@ -20,7 +20,7 @@ type EntityNotFoundError struct {
 }
 
 func (e *EntityNotFoundError) Error() string {
-	return fmt.Sprintf("entity not found: %s", e.ID)
+	return "entity not found: " + e.ID
 }
 
 func (e *EntityNotFoundError) Unwrap() error {
@@ -32,7 +32,7 @@ type EntityTypeNotFoundError struct {
 }
 
 func (e *EntityTypeNotFoundError) Error() string {
-	return fmt.Sprintf("unknown entity type: %s", e.Type)
+	return "unknown entity type: " + e.Type
 }
 
 func (e *EntityTypeNotFoundError) Unwrap() error {
@@ -44,7 +44,7 @@ type RelationNotFoundError struct {
 }
 
 func (e *RelationNotFoundError) Error() string {
-	return fmt.Sprintf("unknown relation: %s", e.Name)
+	return "unknown relation: " + e.Name
 }
 
 func (e *RelationNotFoundError) Unwrap() error {

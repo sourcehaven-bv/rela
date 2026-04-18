@@ -1,8 +1,10 @@
 package filter
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -67,7 +69,7 @@ type Filter struct {
 func Parse(s string) (*Filter, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return nil, fmt.Errorf("empty filter expression")
+		return nil, errors.New("empty filter expression")
 	}
 
 	// Try operators in order of specificity (longest first)
@@ -206,7 +208,7 @@ func MatchValue(value interface{}, f *Filter) bool {
 	case float32, float64:
 		strValue = fmt.Sprintf("%f", v)
 	case bool:
-		strValue = fmt.Sprintf("%t", v)
+		strValue = strconv.FormatBool(v)
 	default:
 		strValue = fmt.Sprintf("%v", v)
 	}

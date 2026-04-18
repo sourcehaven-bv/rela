@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -18,7 +17,7 @@ func (e *ValidationError) Error() string {
 	for i, err := range e.Errors {
 		msgs[i] = err.Error()
 	}
-	return fmt.Sprintf("validation errors:\n  %s", strings.Join(msgs, "\n  "))
+	return "validation errors:\n  " + strings.Join(msgs, "\n  ")
 }
 
 func newValidationError(errs []*metamodel.ValidationError) *ValidationError {

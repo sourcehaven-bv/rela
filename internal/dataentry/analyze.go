@@ -226,7 +226,7 @@ func (a *App) analyzeGaps() AnalysisSection {
 		for _, n := range gaps {
 			missingID := fmt.Sprintf("%s%03d", prefix, n)
 			section.Issues = append(section.Issues, AnalysisIssue{
-				Message:  fmt.Sprintf("Missing ID: %s", missingID),
+				Message:  "Missing ID: " + missingID,
 				Severity: "warning",
 			})
 		}

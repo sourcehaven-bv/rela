@@ -64,7 +64,7 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 
 	ctxOpts, ctxErr := lua.LoadContextOptions(s.ws.Paths().CacheDir, "")
 	if ctxErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("config error: %s", ctxErr.Error())), nil
+		return mcp.NewToolResultError("config error: " + ctxErr.Error()), nil
 	}
 	opts := make([]lua.Option, 0, 1+len(ctxOpts))
 	opts = append(opts, lua.WithContext(ctx))
@@ -73,7 +73,7 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	defer runtime.Close()
 
 	if err := runtime.RunString(code); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Lua error: %s", err.Error())), nil
+		return mcp.NewToolResultError("Lua error: " + err.Error()), nil
 	}
 
 	result := output.String()
@@ -109,14 +109,14 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Use os.Root for traversal-resistant path access
 	root, err := os.OpenRoot(projectRoot)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("cannot open project root: %s", err.Error())), nil
+		return mcp.NewToolResultError("cannot open project root: " + err.Error()), nil
 	}
 	defer root.Close()
 
 	// Verify script exists using traversal-resistant API
 	scriptsRoot, err := root.OpenRoot(scriptsDir)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("scripts directory not found: %s", err.Error())), nil
+		return mcp.NewToolResultError("scripts directory not found: " + err.Error()), nil
 	}
 	defer scriptsRoot.Close()
 
@@ -130,7 +130,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Read script content
 	scriptContent, err := io.ReadAll(scriptFile)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("cannot read script: %s", err.Error())), nil
+		return mcp.NewToolResultError("cannot read script: " + err.Error()), nil
 	}
 
 	// Capture output
@@ -138,7 +138,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	ctxOpts, ctxErr := lua.LoadContextOptions(s.ws.Paths().CacheDir, path)
 	if ctxErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("config error: %s", ctxErr.Error())), nil
+		return mcp.NewToolResultError("config error: " + ctxErr.Error()), nil
 	}
 	opts := make([]lua.Option, 0, 1+len(ctxOpts))
 	opts = append(opts, lua.WithContext(ctx))

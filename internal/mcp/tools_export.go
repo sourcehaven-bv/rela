@@ -56,7 +56,7 @@ func (s *Server) handleExport(
 	case "csv":
 		return s.exportCSV(entities)
 	default:
-		return mcp.NewToolResultError(fmt.Sprintf("unsupported format: %s", format)), nil
+		return mcp.NewToolResultError("unsupported format: " + format), nil
 	}
 }
 

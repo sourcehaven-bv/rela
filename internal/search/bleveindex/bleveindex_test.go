@@ -120,7 +120,7 @@ func TestIndex_UpdateOverwrites(t *testing.T) {
 func TestIndex_Limit(t *testing.T) {
 	idx := newTestIndex(t)
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		e := entity.New("T-"+string(rune('A'+i)), "ticket")
 		e.SetString("title", "Common keyword")
 		require.NoError(t, idx.EntityPut(e))

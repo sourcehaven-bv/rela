@@ -3,6 +3,7 @@ package lua
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -158,7 +159,7 @@ func (f *FlowRuntime) run(fn *lua.LFunction) error {
 		case lua.ResumeYield:
 			// Script yielded a screen
 			if len(values) == 0 {
-				return fmt.Errorf("emit: no screen provided")
+				return errors.New("emit: no screen provided")
 			}
 
 			screenTable, ok := values[0].(*lua.LTable)
@@ -197,7 +198,7 @@ func (f *FlowRuntime) run(fn *lua.LFunction) error {
 func (f *FlowRuntime) registerEmit() error {
 	relaTable, ok := f.l.GetGlobal("rela").(*lua.LTable)
 	if !ok {
-		return fmt.Errorf("rela module not initialized")
+		return errors.New("rela module not initialized")
 	}
 
 	flowTable := f.l.NewTable()
@@ -220,7 +221,7 @@ func (f *FlowRuntime) parseScreen(t *lua.LTable) (Screen, error) {
 	// Type (required)
 	typeVal := t.RawGetString("type")
 	if typeVal == lua.LNil {
-		return screen, fmt.Errorf("validation: missing required field 'type'")
+		return screen, errors.New("validation: missing required field 'type'")
 	}
 	screen.Type = lua.LVAsString(typeVal)
 
@@ -241,11 +242,11 @@ func (f *FlowRuntime) parseScreen(t *lua.LTable) (Screen, error) {
 	// Fields (required for form)
 	fieldsVal := t.RawGetString("fields")
 	if fieldsVal == lua.LNil {
-		return screen, fmt.Errorf("validation: missing required field 'fields'")
+		return screen, errors.New("validation: missing required field 'fields'")
 	}
 	fieldsTable, ok := fieldsVal.(*lua.LTable)
 	if !ok {
-		return screen, fmt.Errorf("validation: 'fields' must be a table")
+		return screen, errors.New("validation: 'fields' must be a table")
 	}
 
 	fields, err := f.parseFields(fieldsTable)
@@ -257,11 +258,11 @@ func (f *FlowRuntime) parseScreen(t *lua.LTable) (Screen, error) {
 	// Actions (required for form)
 	actionsVal := t.RawGetString("actions")
 	if actionsVal == lua.LNil {
-		return screen, fmt.Errorf("validation: missing required field 'actions'")
+		return screen, errors.New("validation: missing required field 'actions'")
 	}
 	actionsTable, ok := actionsVal.(*lua.LTable)
 	if !ok {
-		return screen, fmt.Errorf("validation: 'actions' must be a table")
+		return screen, errors.New("validation: 'actions' must be a table")
 	}
 
 	actions, err := f.parseActions(actionsTable)
@@ -286,7 +287,7 @@ func (f *FlowRuntime) parseFields(t *lua.LTable) ([]Field, error) {
 
 		fieldTable, ok := v.(*lua.LTable)
 		if !ok {
-			parseErr = fmt.Errorf("validation: field must be a table")
+			parseErr = errors.New("validation: field must be a table")
 			return
 		}
 
@@ -318,7 +319,7 @@ func (f *FlowRuntime) parseField(t *lua.LTable) (Field, error) {
 	// Type (required) - check first to handle markdown differently
 	typeVal := t.RawGetString("type")
 	if typeVal == lua.LNil {
-		return field, fmt.Errorf("validation: field missing required property 'type'")
+		return field, errors.New("validation: field missing required property 'type'")
 	}
 	field.Type = lua.LVAsString(typeVal)
 
@@ -343,7 +344,7 @@ func (f *FlowRuntime) parseField(t *lua.LTable) (Field, error) {
 func (f *FlowRuntime) parseMarkdownField(t *lua.LTable, field Field) (Field, error) {
 	contentVal := t.RawGetString("content")
 	if contentVal == lua.LNil {
-		return field, fmt.Errorf("validation: markdown field missing required property 'content'")
+		return field, errors.New("validation: markdown field missing required property 'content'")
 	}
 	field.Content = lua.LVAsString(contentVal)
 	// Label is optional for markdown (used as title)
@@ -358,7 +359,7 @@ func (f *FlowRuntime) parseInputField(t *lua.LTable, field Field) (Field, error)
 	// Name (required)
 	nameVal := t.RawGetString("name")
 	if nameVal == lua.LNil {
-		return field, fmt.Errorf("validation: field missing required property 'name'")
+		return field, errors.New("validation: field missing required property 'name'")
 	}
 	field.Name = lua.LVAsString(nameVal)
 
@@ -569,7 +570,7 @@ func (f *FlowRuntime) parseActions(t *lua.LTable) ([]Action, error) {
 
 		actionTable, ok := v.(*lua.LTable)
 		if !ok {
-			parseErr = fmt.Errorf("validation: action must be a table")
+			parseErr = errors.New("validation: action must be a table")
 			return
 		}
 
@@ -579,12 +580,12 @@ func (f *FlowRuntime) parseActions(t *lua.LTable) ([]Action, error) {
 		styleVal := actionTable.RawGetInt(3)
 
 		if idVal == lua.LNil {
-			parseErr = fmt.Errorf("validation: action missing id")
+			parseErr = errors.New("validation: action missing id")
 			return
 		}
 		id := lua.LVAsString(idVal)
 		if id == "" {
-			parseErr = fmt.Errorf("validation: action id cannot be empty")
+			parseErr = errors.New("validation: action id cannot be empty")
 			return
 		}
 
@@ -624,7 +625,7 @@ func (f *FlowRuntime) parseActions(t *lua.LTable) ([]Action, error) {
 	}
 
 	if len(actions) == 0 {
-		return nil, fmt.Errorf("validation: actions cannot be empty")
+		return nil, errors.New("validation: actions cannot be empty")
 	}
 
 	return actions, nil

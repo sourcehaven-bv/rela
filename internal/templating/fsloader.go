@@ -19,7 +19,7 @@ import (
 )
 
 // ErrTemplateNotFound is returned when a template file does not exist.
-var ErrTemplateNotFound = fmt.Errorf("template not found")
+var ErrTemplateNotFound = errors.New("template not found")
 
 // loadEntityTemplateDoc reads an entity template file and returns the parsed document.
 // Returns (nil, nil) if the template file does not exist.

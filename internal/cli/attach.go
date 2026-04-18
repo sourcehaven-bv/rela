@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -59,7 +60,7 @@ Examples:
 		}
 
 		if attached == 0 {
-			return fmt.Errorf("no files matched")
+			return errors.New("no files matched")
 		}
 
 		return nil

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -93,7 +94,7 @@ Examples:
 		}
 
 		if !changed {
-			return fmt.Errorf("no updates specified")
+			return errors.New("no updates specified")
 		}
 
 		result, err := ws.EntityManager().UpdateEntity(ctx, entity)
@@ -122,7 +123,7 @@ Examples:
 // Returns an error if both flags are specified or if file reading fails.
 func getUpdateBodyContent(cmd *cobra.Command) (string, error) {
 	if updateBody != "" && updateBodyFile != "" {
-		return "", fmt.Errorf("cannot specify both --body and --body-file")
+		return "", errors.New("cannot specify both --body and --body-file")
 	}
 
 	if updateBody != "" {

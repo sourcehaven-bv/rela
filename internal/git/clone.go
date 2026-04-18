@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -25,10 +26,10 @@ type CloneOptions struct {
 // For private repositories, set Token from OAuth device flow.
 func Clone(opts CloneOptions) error {
 	if opts.URL == "" {
-		return fmt.Errorf("repository URL is required")
+		return errors.New("repository URL is required")
 	}
 	if opts.Path == "" {
-		return fmt.Errorf("clone path is required")
+		return errors.New("clone path is required")
 	}
 
 	// Check if path already exists

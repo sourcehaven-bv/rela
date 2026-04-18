@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -339,10 +340,10 @@ func writeEntityBasicInfo(resolved string, def *metamodel.EntityDef) {
 	if def.Color != "" || def.BorderColor != "" {
 		colors := []string{}
 		if def.Color != "" {
-			colors = append(colors, fmt.Sprintf("fill=%s", def.Color))
+			colors = append(colors, "fill="+def.Color)
 		}
 		if def.BorderColor != "" {
-			colors = append(colors, fmt.Sprintf("border=%s", def.BorderColor))
+			colors = append(colors, "border="+def.BorderColor)
 		}
 		out.WriteMessage("Colors: %s", strings.Join(colors, ", "))
 	}
@@ -627,10 +628,10 @@ func formatCardinalityRange(minVal, maxVal *int) string {
 	maxStr := "*"
 
 	if minVal != nil {
-		minStr = fmt.Sprintf("%d", *minVal)
+		minStr = strconv.Itoa(*minVal)
 	}
 	if maxVal != nil {
-		maxStr = fmt.Sprintf("%d", *maxVal)
+		maxStr = strconv.Itoa(*maxVal)
 	}
 
 	if minStr == maxStr {

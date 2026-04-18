@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -63,7 +64,7 @@ func runScheduler(cmd *cobra.Command) error {
 
 	schedWs, err := workspace.Discover(startDir, engine)
 	if err != nil {
-		return fmt.Errorf("no project found: run 'rela init' to create one")
+		return errors.New("no project found: run 'rela init' to create one")
 	}
 
 	data, err := schedWs.Config().Load(context.Background(), scheduler.ConfigFile)

@@ -6,6 +6,7 @@ package storeutil
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -18,7 +19,7 @@ import (
 // from--type--to relation key format.
 func ValidateID(id string) error {
 	if id == "" {
-		return fmt.Errorf("store: empty ID")
+		return errors.New("store: empty ID")
 	}
 	if strings.Contains(id, "--") {
 		return fmt.Errorf("store: ID %q contains consecutive dashes", id)
@@ -30,7 +31,7 @@ func ValidateID(id string) error {
 // attachment key collisions in the entityID/property format.
 func ValidateProperty(prop string) error {
 	if prop == "" {
-		return fmt.Errorf("store: empty property name")
+		return errors.New("store: empty property name")
 	}
 	if strings.Contains(prop, "/") {
 		return fmt.Errorf("store: property name %q contains slash", prop)

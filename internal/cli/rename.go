@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -182,7 +183,7 @@ func applyRenameEntity(info *renameEntityInfo) error {
 // validateTypeName checks that a type name is valid for use in the metamodel.
 func validateTypeName(name string) error {
 	if name == "" {
-		return fmt.Errorf("type name cannot be empty")
+		return errors.New("type name cannot be empty")
 	}
 
 	if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {

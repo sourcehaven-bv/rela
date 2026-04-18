@@ -422,7 +422,7 @@ func ValidatePath(path string) error {
 		return fmt.Errorf("hash too short: %s", hash)
 	}
 	if ext == "" {
-		return fmt.Errorf("missing file extension")
+		return errors.New("missing file extension")
 	}
 	return nil
 }
