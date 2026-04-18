@@ -89,7 +89,7 @@ e2e-ui: build-server
 # Run tests with coverage profile
 test-coverage:
     @echo "Running tests with coverage..."
-    go test -race -coverprofile=coverage.out -covermode=atomic {{go_packages}}
+    go test -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./... {{go_packages}}
 
 # Generate and display coverage report
 coverage: test-coverage

@@ -35,7 +35,7 @@ jobs:
         run: go mod download
 
       - name: Run tests with coverage
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./... ./...
 
       - name: Install go-test-coverage
         run: go install github.com/vladopajic/go-test-coverage/v2@latest

@@ -25,7 +25,7 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./... ./...
 
       - name: Check coverage thresholds (ratchet)
         if: github.event_name != 'pull_request' || github.head_ref != 'chore/post-merge-sync'
