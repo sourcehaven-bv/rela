@@ -189,18 +189,18 @@ reading their output. The one swing factor is the size of the v2 lint fallout.
 
 **Documentation Impact:**
 
-- [ ] User guide / reference docs
-- [ ] CLI help text (if commands changed)
-- [ ] CLAUDE.md (if new patterns)
-- [ ] README.md (if project-level changes)
-- [ ] API docs (if applicable)
+- [x] ~~User guide / reference docs~~ (N/A)
+- [x] ~~CLI help text (if commands changed)~~ (N/A: no CLI surface change)
+- [x] ~~CLAUDE.md (if new patterns)~~ (N/A)
+- [x] ~~README.md (if project-level changes)~~ (N/A)
+- [x] ~~API docs (if applicable)~~ (N/A)
 - [x] N/A - Internal change, no user-facing docs needed
 
 Tooling/CI bumps are invisible to users. No docs-checklist needed.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: chore ticket — mechanical upgrades with well-defined acceptance criteria, no design decisions to review)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: no design review run)
 
-**Design Review Findings:** (pending user approval of plan)
+**Design Review Findings:** N/A — chore ticket
