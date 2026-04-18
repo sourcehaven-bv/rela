@@ -23,7 +23,6 @@ import (
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -112,8 +111,7 @@ func main() {
 	}
 	// Start background scheduler if schedules.yaml exists.
 	// The goroutine is cleaned up on process exit.
-	metaFn := func() *metamodel.Metamodel { return ws.Meta() }
-	scheduler.StartBackground(context.Background(), ws, metaFn, slog.Default())
+	scheduler.StartBackground(context.Background(), ws, slog.Default())
 
 	if err := startPprofIfRequested(*debugPprof); err != nil {
 		slog.Error("pprof startup failed", "error", err)

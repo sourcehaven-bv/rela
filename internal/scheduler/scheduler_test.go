@@ -10,7 +10,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -22,7 +21,6 @@ type mockWorkspace struct {
 	mu              sync.Mutex
 	cacheFiles      map[string][]byte
 	paths           *project.Context
-	meta            *metamodel.Metamodel
 	luaDepsCalls    int
 	luaDepsProvider func() lua.WriteDeps
 }
@@ -32,7 +30,6 @@ func newMockWorkspace(t *testing.T) *mockWorkspace {
 	return &mockWorkspace{
 		cacheFiles: make(map[string][]byte),
 		paths:      &project.Context{Root: t.TempDir()},
-		meta:       &metamodel.Metamodel{},
 	}
 }
 
@@ -122,7 +119,6 @@ func newTestScheduler(
 	s := &Scheduler{
 		config: cfg,
 		ws:     ws,
-		metaFn: func() *metamodel.Metamodel { return ws.meta },
 		state:  newState(),
 		logger: discardLogger(),
 		now:    func() time.Time { return now },
@@ -280,7 +276,7 @@ func TestScheduler_loadState_noFile(t *testing.T) {
 	t.Parallel()
 
 	ws := newMockWorkspace(t)
-	s := &Scheduler{ws: ws, metaFn: func() *metamodel.Metamodel { return ws.meta }, logger: discardLogger()}
+	s := &Scheduler{ws: ws, logger: discardLogger()}
 	s.loadState()
 
 	if s.state == nil || s.state.Tasks == nil {
@@ -296,7 +292,7 @@ func TestScheduler_loadState_existing(t *testing.T) {
 	stateData, _ := json.Marshal(State{Tasks: map[string]time.Time{"daily": ts}})
 	ws.cacheFiles[stateFile] = stateData
 
-	s := &Scheduler{ws: ws, metaFn: func() *metamodel.Metamodel { return ws.meta }, logger: discardLogger()}
+	s := &Scheduler{ws: ws, logger: discardLogger()}
 	s.loadState()
 
 	if got := s.state.Tasks["daily"]; !got.Equal(ts) {
@@ -311,8 +307,6 @@ func TestScheduler_Run_emptyConfig(t *testing.T) {
 	s := &Scheduler{
 		config: &Config{Tasks: nil},
 		ws:     ws,
-		metaFn: func() *metamodel.Metamodel { return ws.meta },
-
 		logger: discardLogger(),
 		now:    time.Now,
 	}
@@ -376,45 +370,41 @@ func TestStartBackground_NoConfig(t *testing.T) {
 	// When schedules.yaml is missing, StartBackground should silently
 	// no-op without starting a goroutine.
 	ws := newMockWorkspace(t)
-	metaFn := func() *metamodel.Metamodel { return ws.meta }
 
 	// ws.Config().Load returns notFoundError for missing file.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Should not panic, should not log errors.
-	StartBackground(ctx, ws, metaFn, discardLogger())
+	StartBackground(ctx, ws, discardLogger())
 }
 
 func TestStartBackground_InvalidConfig(t *testing.T) {
 	ws := newMockWorkspace(t)
 	ws.cacheFiles["project:"+ConfigFile] = []byte("not: valid: yaml: at all:")
-	metaFn := func() *metamodel.Metamodel { return ws.meta }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Should log error and return without starting a goroutine.
-	StartBackground(ctx, ws, metaFn, discardLogger())
+	StartBackground(ctx, ws, discardLogger())
 }
 
 func TestStartBackground_EmptyTasks(t *testing.T) {
 	ws := newMockWorkspace(t)
 	ws.cacheFiles["project:"+ConfigFile] = []byte("tasks: []\n")
-	metaFn := func() *metamodel.Metamodel { return ws.meta }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	StartBackground(ctx, ws, metaFn, discardLogger())
+	StartBackground(ctx, ws, discardLogger())
 }
 
 func TestNew(t *testing.T) {
 	cfg := &Config{Tasks: []TaskConfig{{Name: "t", Script: "t.lua"}}}
 	ws := newMockWorkspace(t)
-	metaFn := func() *metamodel.Metamodel { return ws.meta }
 
-	s := New(cfg, nil, ws, metaFn, discardLogger())
+	s := New(cfg, nil, ws, discardLogger())
 	if s == nil {
 		t.Fatal("New returned nil")
 	}
@@ -423,9 +413,6 @@ func TestNew(t *testing.T) {
 	}
 	if s.ws != ws {
 		t.Error("ws not wired")
-	}
-	if s.metaFn == nil {
-		t.Error("metaFn not wired")
 	}
 }
 
@@ -443,7 +430,7 @@ func TestDoExecuteTask_PullsLuaWriteDeps(t *testing.T) {
 		},
 	}
 	ws := newMockWorkspace(t)
-	s := New(cfg, script.NewEngine(), ws, func() *metamodel.Metamodel { return ws.meta }, discardLogger())
+	s := New(cfg, script.NewEngine(), ws, discardLogger())
 	s.now = func() time.Time { return time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC) }
 	s.state = newState()
 

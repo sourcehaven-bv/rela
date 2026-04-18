@@ -196,8 +196,8 @@ func TestExecuteAction_WithTriggerEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
-	if resp.Message != "T-42" {
-		t.Errorf("expected message=T-42 from triggerEntity, got %q", resp.Message)
+	if resp.Message != ent.ID {
+		t.Errorf("expected message=%s from triggerEntity, got %q", ent.ID, resp.Message)
 	}
 }
 

@@ -1042,7 +1042,6 @@ func (w *Workspace) processEntityCreations(
 	effects *automationSideEffects,
 ) []automationQueueItem {
 	var newItems []automationQueueItem
-	meta := w.Meta()
 
 	for _, toCreate := range toCreateList {
 		if skip := w.handleIfExists(trigger, toCreate, effects); skip {
@@ -1068,7 +1067,7 @@ func (w *Workspace) processEntityCreations(
 		}
 
 		// Run automation on newly created entity.
-		newItem := w.runCreatedEntityAutomation(created, meta, effects)
+		newItem := w.runCreatedEntityAutomation(created, effects)
 		if newItem != nil {
 			newItems = append(newItems, *newItem)
 		}
@@ -1080,7 +1079,6 @@ func (w *Workspace) processEntityCreations(
 // runCreatedEntityAutomation runs automation on a newly created entity and returns a queue item if needed.
 func (w *Workspace) runCreatedEntityAutomation(
 	created *entity.Entity,
-	_ *metamodel.Metamodel,
 	effects *automationSideEffects,
 ) *automationQueueItem {
 	if w.automation == nil {

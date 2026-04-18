@@ -2409,8 +2409,7 @@ func TestNewWriter_PanicsOnNilEntityManager(t *testing.T) {
 		if r == nil {
 			t.Fatal("expected panic, got none")
 		}
-		msg, ok := r.(string)
-		if !ok || !strings.Contains(msg, "EntityManager") {
+		if msg := fmt.Sprint(r); !strings.Contains(msg, "EntityManager") {
 			t.Errorf("expected panic message mentioning EntityManager, got: %v", r)
 		}
 	}()

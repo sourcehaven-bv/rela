@@ -7,7 +7,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -30,7 +29,6 @@ type WorkspaceProvider interface {
 func StartBackground(
 	ctx context.Context,
 	ws WorkspaceProvider,
-	metaFn func() *metamodel.Metamodel,
 	logger *slog.Logger,
 ) {
 	data, err := ws.Config().Load(ctx, ConfigFile)
@@ -50,7 +48,7 @@ func StartBackground(
 	}
 
 	engine := script.NewEngine()
-	s := New(cfg, engine, ws, metaFn, logger)
+	s := New(cfg, engine, ws, logger)
 
 	go func() {
 		logger.Info("background scheduler starting", "tasks", len(cfg.Tasks))
@@ -65,7 +63,6 @@ type Scheduler struct {
 	config *Config
 	engine *script.Engine
 	ws     WorkspaceProvider
-	metaFn func() *metamodel.Metamodel
 	state  *State
 	logger *slog.Logger
 	now    func() time.Time // for testing
@@ -75,20 +72,17 @@ type Scheduler struct {
 	executeTaskFunc func(ctx context.Context, task TaskConfig)
 }
 
-// New creates a Scheduler. The metaFn returns the current metamodel; callers
-// typically pass ws.Meta from a workspace.Workspace.
+// New creates a Scheduler.
 func New(
 	cfg *Config,
 	engine *script.Engine,
 	ws WorkspaceProvider,
-	metaFn func() *metamodel.Metamodel,
 	logger *slog.Logger,
 ) *Scheduler {
 	return &Scheduler{
 		config: cfg,
 		engine: engine,
 		ws:     ws,
-		metaFn: metaFn,
 		logger: logger,
 		now:    time.Now,
 	}

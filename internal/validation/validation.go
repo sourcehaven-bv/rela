@@ -21,8 +21,7 @@ type Violation struct {
 
 // Service validates entities against custom metamodel rules.
 type Service struct {
-	deps    lua.ReadDeps
-	luaExec *luaExecutor // Lazy-initialized Lua executor
+	deps lua.ReadDeps
 }
 
 // New creates a validation service for the given metamodel.
@@ -187,12 +186,7 @@ func (s *Service) checkEntityAgainstRule(
 // runLuaValidation runs Lua validation and returns violations.
 // Returns empty slice if validation passes or Lua is not configured.
 func (s *Service) runLuaValidation(e *entity.Entity, rule metamodel.ValidationRule) []Violation {
-	// Lazy-initialize the Lua executor
-	if s.luaExec == nil {
-		s.luaExec = newLuaExecutor(s.deps)
-	}
-
-	luaViolations := s.luaExec.validate(e, rule)
+	luaViolations := s.validateLua(e, rule)
 	if len(luaViolations) == 0 {
 		return nil
 	}

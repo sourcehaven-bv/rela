@@ -31,22 +31,12 @@ type LuaViolation struct {
 	Severity string // "error" or "warning" (optional, defaults to rule's severity)
 }
 
-// luaExecutor handles Lua validation execution.
+// validateLua runs Lua validation for an entity and returns any violations.
 //
-// It holds a lua.ReadDeps — validation rules run against a reader runtime
-// that cannot mutate the graph. Mutation bindings are not registered on the
-// Lua side; attempting rela.create_entity etc. from a validation rule raises
-// a Lua "attempt to call a nil value" error from the VM.
-type luaExecutor struct {
-	deps lua.ReadDeps
-}
-
-// newLuaExecutor creates a new Lua executor for validation.
-func newLuaExecutor(deps lua.ReadDeps) *luaExecutor {
-	return &luaExecutor{deps: deps}
-}
-
-// validate runs Lua validation for an entity and returns any violations.
+// Validation rules run against a reader runtime that cannot mutate the graph.
+// Mutation bindings are not registered on the Lua side; attempting
+// rela.create_entity etc. from a validation rule raises a Lua "attempt to call
+// a nil value" error from the VM.
 //
 // Lua scripts should return:
 //   - nil (or no return): validation passes
@@ -69,14 +59,14 @@ func newLuaExecutor(deps lua.ReadDeps) *luaExecutor {
 //
 // Errors are logged but do not propagate - validation fails open to avoid
 // blocking the entire validation run due to a single broken rule.
-func (e *luaExecutor) validate(
+func (s *Service) validateLua(
 	ent *entity.Entity,
 	rule metamodel.ValidationRule,
 ) []LuaViolation {
 	code := rule.Lua
 	if code == "" && rule.LuaFile != "" {
 		var err error
-		code, err = e.loadScript(rule.LuaFile)
+		code, err = s.loadLuaScript(rule.LuaFile)
 		if err != nil {
 			slog.Warn("validation rule failed to load script", "rule", rule.Name, "error", err)
 			return nil // fail open - skip rule on load error
@@ -99,7 +89,7 @@ func (e *luaExecutor) validate(
 	// also silently clip slow calls. AI-in-validations is tracked as a
 	// follow-up that needs its own design (cost guardrails, opt-in
 	// per rule, longer per-rule budget).
-	runtime := lua.NewReader(e.deps, io.Discard)
+	runtime := lua.NewReader(s.deps, io.Discard)
 	defer runtime.Close()
 
 	// Set arguments if provided
@@ -134,11 +124,11 @@ func (e *luaExecutor) validate(
 	ret := ls.Get(-1)
 	ls.Pop(1)
 
-	return e.parseReturnValue(ret, rule)
+	return parseLuaReturnValue(ret, rule)
 }
 
-// parseReturnValue interprets the Lua return value as violations.
-func (e *luaExecutor) parseReturnValue(
+// parseLuaReturnValue interprets the Lua return value as violations.
+func parseLuaReturnValue(
 	ret golua.LValue,
 	rule metamodel.ValidationRule,
 ) []LuaViolation {
@@ -158,7 +148,7 @@ func (e *luaExecutor) parseReturnValue(
 	// Check if it's a single violation (has "message" key) or array of violations
 	if msg := tbl.RawGetString("message"); msg != golua.LNil {
 		// Single violation
-		v := e.tableToViolation(tbl, rule)
+		v := luaTableToViolation(tbl, rule)
 		if v == nil {
 			return nil
 		}
@@ -173,7 +163,7 @@ func (e *luaExecutor) parseReturnValue(
 			return
 		}
 		if itemTbl, ok := value.(*golua.LTable); ok {
-			if v := e.tableToViolation(itemTbl, rule); v != nil {
+			if v := luaTableToViolation(itemTbl, rule); v != nil {
 				violations = append(violations, *v)
 			}
 		}
@@ -182,8 +172,8 @@ func (e *luaExecutor) parseReturnValue(
 	return violations
 }
 
-// tableToViolation converts a Lua table to a LuaViolation.
-func (e *luaExecutor) tableToViolation(
+// luaTableToViolation converts a Lua table to a LuaViolation.
+func luaTableToViolation(
 	tbl *golua.LTable,
 	rule metamodel.ValidationRule,
 ) *LuaViolation {
@@ -212,9 +202,9 @@ func (e *luaExecutor) tableToViolation(
 	}
 }
 
-// loadScript loads a Lua script from the validations/ directory.
+// loadLuaScript loads a Lua script from the validations/ directory.
 // Uses os.OpenRoot for traversal-resistant file access.
-func (e *luaExecutor) loadScript(scriptPath string) (string, error) {
+func (s *Service) loadLuaScript(scriptPath string) (string, error) {
 	// Security: Validate path is local (no "..", no absolute paths)
 	if !filepath.IsLocal(scriptPath) {
 		return "", fmt.Errorf(
@@ -228,7 +218,7 @@ func (e *luaExecutor) loadScript(scriptPath string) (string, error) {
 
 	// Use os.OpenRoot for traversal-resistant access.
 	// Error messages intentionally omit system paths to prevent information leakage.
-	root, err := os.OpenRoot(e.deps.ProjectRoot)
+	root, err := os.OpenRoot(s.deps.ProjectRoot)
 	if err != nil {
 		return "", errors.New("cannot access project directory")
 	}
