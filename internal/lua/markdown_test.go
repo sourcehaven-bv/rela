@@ -492,10 +492,10 @@ func TestMdTaskListEmptyText(t *testing.T) {
 	assert.Equal(t, 2, int(lua.LVAsNumber(rt.L.GetGlobal("count"))))
 	assert.Equal(t, lua.LTrue, rt.L.GetGlobal("item1_task"))
 	assert.Equal(t, lua.LTrue, rt.L.GetGlobal("item1_checked"))
-	assert.Equal(t, "", lua.LVAsString(rt.L.GetGlobal("item1_text")))
+	assert.Empty(t, lua.LVAsString(rt.L.GetGlobal("item1_text")))
 	assert.Equal(t, lua.LTrue, rt.L.GetGlobal("item2_task"))
 	assert.Equal(t, lua.LFalse, rt.L.GetGlobal("item2_checked"))
-	assert.Equal(t, "", lua.LVAsString(rt.L.GetGlobal("item2_text")))
+	assert.Empty(t, lua.LVAsString(rt.L.GetGlobal("item2_text")))
 }
 
 // TestMdTaskListNonStringText verifies the renderer coerces non-string
@@ -1150,7 +1150,7 @@ func TestMdTableRender(t *testing.T) {
 		result := lua.LVAsString(rt.L.Get(-1))
 		rt.L.Pop(1)
 		// Should produce empty output since header is nil
-		assert.Equal(t, "", result)
+		assert.Empty(t, result)
 	})
 }
 

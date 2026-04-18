@@ -97,7 +97,7 @@ Examples:
 		// Check if we need to render
 		if graphFormat != "" && graphFormat != "dot" {
 			// Use Graphviz to render
-			return renderWithGraphviz(dot, graphOutput, graphFormat)
+			return renderWithGraphviz(cmd.Context(), dot, graphOutput, graphFormat)
 		}
 
 		// Write DOT file
@@ -114,7 +114,7 @@ func generateDOT(entities []*entity.Entity, edges []*entity.Relation) string {
 	}
 
 	sb.WriteString("digraph architecture {\n")
-	sb.WriteString(fmt.Sprintf("  rankdir=%s;\n", direction))
+	fmt.Fprintf(&sb, "  rankdir=%s;\n", direction)
 	sb.WriteString("  node [shape=box, style=filled];\n")
 	sb.WriteString("\n")
 
@@ -126,8 +126,8 @@ func generateDOT(entities []*entity.Entity, edges []*entity.Relation) string {
 
 	// Write nodes grouped by type (as subgraphs for clustering)
 	for entityType, group := range typeGroups {
-		sb.WriteString(fmt.Sprintf("  subgraph cluster_%s {\n", entityType))
-		sb.WriteString(fmt.Sprintf("    label=\"%ss\";\n", strings.ToUpper(entityType[:1])+entityType[1:]))
+		fmt.Fprintf(&sb, "  subgraph cluster_%s {\n", entityType)
+		fmt.Fprintf(&sb, "    label=\"%ss\";\n", strings.ToUpper(entityType[:1])+entityType[1:])
 
 		// Get color from metamodel
 		color := "#FFFFFF"
@@ -142,8 +142,8 @@ func generateDOT(entities []*entity.Entity, edges []*entity.Relation) string {
 			} else {
 				label = e.ID + "\\n" + label
 			}
-			sb.WriteString(fmt.Sprintf("    \"%s\" [label=\"%s\", fillcolor=\"%s\"];\n",
-				e.ID, label, color))
+			fmt.Fprintf(&sb, "    \"%s\" [label=\"%s\", fillcolor=\"%s\"];\n",
+				e.ID, label, color)
 		}
 
 		sb.WriteString("  }\n\n")
@@ -151,8 +151,8 @@ func generateDOT(entities []*entity.Entity, edges []*entity.Relation) string {
 
 	// Write edges
 	for _, edge := range edges {
-		sb.WriteString(fmt.Sprintf("  \"%s\" -> \"%s\" [label=\"%s\"];\n",
-			edge.From, edge.To, edge.Type))
+		fmt.Fprintf(&sb, "  \"%s\" -> \"%s\" [label=\"%s\"];\n",
+			edge.From, edge.To, edge.Type)
 	}
 
 	sb.WriteString("}\n")
@@ -173,14 +173,13 @@ func escapeLabel(s string) string {
 }
 
 // coverage-ignore: requires external graphviz installation - tested manually
-func renderWithGraphviz(dot, outputPath, format string) error {
-	// Check if dot command is available
+func renderWithGraphviz(ctx context.Context, dot, outputPath, format string) error {
 	_, err := exec.LookPath("dot")
 	if err != nil {
 		return fmt.Errorf("graphviz 'dot' command not found; install Graphviz or use -f dot")
 	}
 
-	cmd := exec.Command("dot", "-T"+format, "-o", outputPath)
+	cmd := exec.CommandContext(ctx, "dot", "-T"+format, "-o", outputPath)
 	cmd.Stdin = strings.NewReader(dot)
 	cmd.Stderr = os.Stderr
 

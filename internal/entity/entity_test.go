@@ -22,7 +22,7 @@ func TestGetSetString(t *testing.T) {
 	e := entity.New("T-1", "ticket")
 	e.SetString("status", "open")
 	assert.Equal(t, "open", e.GetString("status"))
-	assert.Equal(t, "", e.GetString("nonexistent"))
+	assert.Empty(t, e.GetString("nonexistent"))
 }
 
 func TestConvenienceAccessors(t *testing.T) {
@@ -52,7 +52,7 @@ func TestGetAttributeString(t *testing.T) {
 
 	assert.Equal(t, "T-1", e.GetAttributeString("id"))
 	assert.Equal(t, "42", e.GetAttributeString("count"))
-	assert.Equal(t, "", e.GetAttributeString("missing"))
+	assert.Empty(t, e.GetAttributeString("missing"))
 }
 
 func TestGetAttributeStrings(t *testing.T) {

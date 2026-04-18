@@ -68,7 +68,7 @@ type cardinalityViolation struct {
 func (s *Server) handleAnalyzeCardinality(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	var violations []cardinalityViolation
+	violations := make([]cardinalityViolation, 0) //nolint:prealloc // capacity unknown
 
 	for relName, relDef := range s.ws.Meta().Relations {
 		violations = append(violations, s.checkCardinalityForRelation(relName, relDef)...)
@@ -89,7 +89,7 @@ func (s *Server) handleAnalyzeCardinality(
 func (s *Server) checkCardinalityForRelation(
 	relName string, relDef metamodel.RelationDef,
 ) []cardinalityViolation {
-	var violations []cardinalityViolation
+	violations := make([]cardinalityViolation, 0) //nolint:prealloc // capacity unknown
 
 	violations = append(violations,
 		s.checkCardinalityBound(relName, relDef.From, relDef.MinOutgoing, relDef.MaxOutgoing, true)...)

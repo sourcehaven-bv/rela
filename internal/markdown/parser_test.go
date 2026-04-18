@@ -525,11 +525,11 @@ func TestFormatDocumentOrdered(t *testing.T) {
 	titlePos := strings.Index(output, "title:")
 	priorityPos := strings.Index(output, "priority:")
 	statusPos := strings.Index(output, "status:")
-	if !(idPos < typePos && typePos < titlePos) {
+	if idPos >= typePos || typePos >= titlePos {
 		t.Errorf("expected id < type < title, got positions %d %d %d", idPos, typePos, titlePos)
 	}
 	// Remaining keys appear alphabetically after the ordered ones.
-	if !(titlePos < priorityPos && priorityPos < statusPos) {
+	if titlePos >= priorityPos || priorityPos >= statusPos {
 		t.Errorf("expected title < priority < status (alphabetical after ordered), got %d %d %d",
 			titlePos, priorityPos, statusPos)
 	}

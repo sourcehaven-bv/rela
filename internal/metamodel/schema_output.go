@@ -149,6 +149,7 @@ func (e *EntityDef) GetAliases() []string {
 }
 
 // GetIDPatterns returns the entity ID prefixes.
+//
 // Deprecated: Use GetIDPrefixes instead.
 func (e *EntityDef) GetIDPatterns() []string {
 	return e.GetIDPrefixes()

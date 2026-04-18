@@ -2,6 +2,7 @@ package automation
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"strings"
@@ -40,13 +41,15 @@ func GetGitUser() UserVars {
 		Email: "",
 	}
 
-	// Try git config user.name
-	if out, err := exec.Command("git", "config", "user.name").Output(); err == nil {
+	const gitConfigTimeout = 5 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), gitConfigTimeout)
+	defer cancel()
+
+	if out, err := exec.CommandContext(ctx, "git", "config", "user.name").Output(); err == nil {
 		vars.Name = strings.TrimSpace(string(out))
 	}
 
-	// Try git config user.email
-	if out, err := exec.Command("git", "config", "user.email").Output(); err == nil {
+	if out, err := exec.CommandContext(ctx, "git", "config", "user.email").Output(); err == nil {
 		vars.Email = strings.TrimSpace(string(out))
 	}
 

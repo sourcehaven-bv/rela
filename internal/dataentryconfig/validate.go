@@ -104,7 +104,7 @@ var validRelationWidgets = map[string]bool{
 // It returns a ConfigValidationError containing all validation issues,
 // or nil if the config is valid.
 func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
-	var errs []string
+	errs := make([]string, 0) //nolint:prealloc // total capacity unknown; aggregated from multiple helpers
 
 	// Phase 1: Structural validation (unknown keys)
 	errs = append(errs, checkUnknownKeys(data)...)

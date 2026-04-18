@@ -286,7 +286,7 @@ func findRelationTypeReferences(
 
 // findRelationTypeInDataEntry finds references to a relation type in data-entry.yaml.
 func findRelationTypeInDataEntry(relationType string, cfg *dataentryconfig.Config) []Reference {
-	var refs []Reference
+	refs := make([]Reference, 0) //nolint:prealloc // capacity unknown
 	refs = append(refs, findRelationInForms(relationType, cfg.Forms)...)
 	refs = append(refs, findRelationInLists(relationType, cfg.Lists)...)
 	refs = append(refs, findRelationInDataEntryViews(relationType, cfg.Views)...)

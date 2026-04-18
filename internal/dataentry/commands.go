@@ -353,7 +353,7 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 
 	// Start the script.
-	proc := exec.Command("sh", "-c", cmd.Script)
+	proc := exec.CommandContext(r.Context(), "sh", "-c", cmd.Script)
 	proc.Dir = a.ProjectRoot()
 	proc.Env = a.buildCommandEnv(cmd, input)
 	proc.Stdin = strings.NewReader(string(inputJSON))
@@ -481,25 +481,26 @@ func (a *App) handleOpenFile(w http.ResponseWriter, r *http.Request) { // covera
 	}
 	filePath = resolved
 
+	ctx := r.Context()
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
 		if action == "reveal" {
-			cmd = exec.Command("open", "-R", filePath)
+			cmd = exec.CommandContext(ctx, "open", "-R", filePath)
 		} else {
-			cmd = exec.Command("open", filePath)
+			cmd = exec.CommandContext(ctx, "open", filePath)
 		}
 	case "linux":
 		if action == "reveal" {
-			cmd = exec.Command("xdg-open", filepath.Dir(filePath))
+			cmd = exec.CommandContext(ctx, "xdg-open", filepath.Dir(filePath))
 		} else {
-			cmd = exec.Command("xdg-open", filePath)
+			cmd = exec.CommandContext(ctx, "xdg-open", filePath)
 		}
 	case "windows":
 		if action == "reveal" {
-			cmd = exec.Command("explorer", "/select,", filePath)
+			cmd = exec.CommandContext(ctx, "explorer", "/select,", filePath)
 		} else {
-			cmd = exec.Command("cmd", "/c", "start", "", filePath)
+			cmd = exec.CommandContext(ctx, "cmd", "/c", "start", "", filePath)
 		}
 	default:
 		http.Error(w, "Unsupported platform", http.StatusInternalServerError)
@@ -530,14 +531,15 @@ func (a *App) handleOpenURL(w http.ResponseWriter, r *http.Request) { // coverag
 		return
 	}
 
+	ctx := r.Context()
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", rawURL)
+		cmd = exec.CommandContext(ctx, "open", rawURL)
 	case "linux":
-		cmd = exec.Command("xdg-open", rawURL)
+		cmd = exec.CommandContext(ctx, "xdg-open", rawURL)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "", rawURL)
+		cmd = exec.CommandContext(ctx, "cmd", "/c", "start", "", rawURL)
 	default:
 		http.Error(w, "Unsupported platform", http.StatusInternalServerError)
 		return

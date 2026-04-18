@@ -350,7 +350,6 @@ func (s *FSStore) DeleteEntity(_ context.Context, id string, cascade bool) (*sto
 	return result, nil
 }
 
-//nolint:funlen // rename is a coherent transaction that's clearer kept together than split
 func (s *FSStore) RenameEntity(_ context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := storeutil.ValidateID(newID); err != nil {
 		return nil, err

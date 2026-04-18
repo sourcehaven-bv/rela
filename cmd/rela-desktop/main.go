@@ -765,7 +765,7 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 	var sb strings.Builder
 	sb.WriteString("version: \"1\"\n\n")
 	sb.WriteString("app:\n")
-	sb.WriteString(fmt.Sprintf("  name: %q\n", appName))
+	fmt.Fprintf(&sb, "  name: %q\n", appName)
 	sb.WriteString("  description: \"Generated data entry configuration\"\n\n")
 
 	// Get sorted entity types
@@ -780,9 +780,9 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 	for _, typeName := range entityTypes {
 		entDef := meta.Entities[typeName]
 		formID := strings.ReplaceAll(typeName, "-", "_")
-		sb.WriteString(fmt.Sprintf("  %s:\n", formID))
-		sb.WriteString(fmt.Sprintf("    entity_type: %s\n", typeName))
-		sb.WriteString(fmt.Sprintf("    title: \"%s\"\n", titleCase(typeName)))
+		fmt.Fprintf(&sb, "  %s:\n", formID)
+		fmt.Fprintf(&sb, "    entity_type: %s\n", typeName)
+		fmt.Fprintf(&sb, "    title: \"%s\"\n", titleCase(typeName))
 		sb.WriteString("    fields:\n")
 
 		// Add fields for each property
@@ -792,8 +792,8 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 		}
 		sort.Strings(propNames)
 		for _, propName := range propNames {
-			sb.WriteString(fmt.Sprintf("      - property: %s\n", propName))
-			sb.WriteString(fmt.Sprintf("        label: \"%s\"\n", titleCase(propName)))
+			fmt.Fprintf(&sb, "      - property: %s\n", propName)
+			fmt.Fprintf(&sb, "        label: \"%s\"\n", titleCase(propName))
 		}
 	}
 	sb.WriteString("\n")
@@ -803,9 +803,9 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 	for _, typeName := range entityTypes {
 		entDef := meta.Entities[typeName]
 		listID := strings.ReplaceAll(typeName, "-", "_") + "s"
-		sb.WriteString(fmt.Sprintf("  %s:\n", listID))
-		sb.WriteString(fmt.Sprintf("    entity_type: %s\n", typeName))
-		sb.WriteString(fmt.Sprintf("    title: \"%s\"\n", titleCase(typeName)+"s"))
+		fmt.Fprintf(&sb, "  %s:\n", listID)
+		fmt.Fprintf(&sb, "    entity_type: %s\n", typeName)
+		fmt.Fprintf(&sb, "    title: \"%s\"\n", titleCase(typeName)+"s")
 		sb.WriteString("    columns:\n")
 
 		// Add first few properties as columns
@@ -819,12 +819,12 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 			if i >= maxColumns {
 				break
 			}
-			sb.WriteString(fmt.Sprintf("      - property: %s\n", propName))
-			sb.WriteString(fmt.Sprintf("        label: \"%s\"\n", titleCase(propName)))
+			fmt.Fprintf(&sb, "      - property: %s\n", propName)
+			fmt.Fprintf(&sb, "        label: \"%s\"\n", titleCase(propName))
 		}
 		formID := strings.ReplaceAll(typeName, "-", "_")
-		sb.WriteString(fmt.Sprintf("    create_form: %s\n", formID))
-		sb.WriteString(fmt.Sprintf("    edit_form: %s\n", formID))
+		fmt.Fprintf(&sb, "    create_form: %s\n", formID)
+		fmt.Fprintf(&sb, "    edit_form: %s\n", formID)
 	}
 	sb.WriteString("\n")
 
@@ -832,8 +832,8 @@ func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
 	sb.WriteString("navigation:\n")
 	for _, typeName := range entityTypes {
 		listID := strings.ReplaceAll(typeName, "-", "_") + "s"
-		sb.WriteString(fmt.Sprintf("  - label: \"%s\"\n", titleCase(typeName)+"s"))
-		sb.WriteString(fmt.Sprintf("    list: %s\n", listID))
+		fmt.Fprintf(&sb, "  - label: \"%s\"\n", titleCase(typeName)+"s")
+		fmt.Fprintf(&sb, "    list: %s\n", listID)
 	}
 
 	return sb.String()

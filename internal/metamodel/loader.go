@@ -204,7 +204,7 @@ func extractEntityPropertyOrder(entitiesNode *yaml.Node, m *Metamodel) {
 			valueNode := entityDefNode.Content[j+1]
 			if keyNode.Value == "properties" && valueNode.Kind == yaml.MappingNode {
 				// Extract property names in order
-				var order []string
+				order := make([]string, 0, (len(valueNode.Content)-1)/2+1)
 				for k := 0; k < len(valueNode.Content)-1; k += 2 {
 					propNameNode := valueNode.Content[k]
 					order = append(order, propNameNode.Value)
@@ -405,7 +405,7 @@ func validateRelationReferences(m *Metamodel) []string {
 // validateRelationProperties validates property definitions on relation types.
 // Reserved property names for relations are: from, relation, to (used in YAML frontmatter).
 func validateRelationProperties(m *Metamodel) []string {
-	var errs []string
+	errs := make([]string, 0) //nolint:prealloc // capacity unknown
 
 	// Reserved property names for relations
 	reservedRelProps := map[string]bool{
