@@ -2,9 +2,8 @@
 # Generate documentation from rela entities using Lua scripts.
 #
 # This script:
-# 1. Syncs the docs-project graph (validates entities/relations)
-# 2. Runs the Lua script to generate docs from entities
-# 3. Creates directories and ensures proper file endings
+# 1. Runs the Lua script to generate docs from entities
+# 2. Creates directories and ensures proper file endings
 #
 # Prerequisites:
 #   - bin/rela must exist (run 'just build-cli' first)
@@ -23,10 +22,6 @@ if [[ ! -x "$RELA" ]]; then
     exit 1
 fi
 
-echo "==> Syncing docs-project graph..."
-(cd "$DOCS_PROJECT" && "$RELA" sync)
-
-echo ""
 echo "==> Validating docs-project..."
 (cd "$DOCS_PROJECT" && "$RELA" analyze orphans) || true
 
