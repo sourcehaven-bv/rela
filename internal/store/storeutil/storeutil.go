@@ -15,14 +15,30 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// ValidateID rejects IDs that would cause key collisions in the
-// from--type--to relation key format.
+// ValidateID rejects IDs that would cause key collisions or bucket-key
+// corruption across store backends.
+//
+// In addition to the `--` separator rule (which collides with the
+// from--type--to relation key format), IDs cannot contain path
+// separators, NUL, or ASCII control characters. Those would break
+// nested-bucket range scans in backends that key on bucket hierarchy
+// (see internal/store/boltstore) and have always been latent hazards
+// in fsstore (NUL crashes file creation on POSIX; `/` silently creates
+// nested directories).
 func ValidateID(id string) error {
 	if id == "" {
 		return errors.New("store: empty ID")
 	}
 	if strings.Contains(id, "--") {
 		return fmt.Errorf("store: ID %q contains consecutive dashes", id)
+	}
+	if strings.ContainsAny(id, "/\\") {
+		return fmt.Errorf("store: ID %q contains path separator", id)
+	}
+	for i := 0; i < len(id); i++ {
+		if id[i] < 0x20 || id[i] == 0x7f {
+			return fmt.Errorf("store: ID %q contains control character", id)
+		}
 	}
 	return nil
 }

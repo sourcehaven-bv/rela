@@ -26,7 +26,7 @@ func fuzzFactory() store.Store {
 }
 
 func TestConformance(t *testing.T) {
-	storetest.RunAll(t, factory, searchFactory)
+	storetest.RunAll(t, factory, searchFactory, storetest.Capabilities{Attachments: true})
 }
 
 func FuzzRelationKeyCollision(f *testing.F) {
