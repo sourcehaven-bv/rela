@@ -25,6 +25,10 @@ import (
 // Protocol prefix for structured command output messages.
 const commandOutputPrefix = "::rela::"
 
+// cancelGrace is the time a SIGINTed command gets to clean up before SIGKILL.
+// Shared between explicit /api/command-cancel and context-cancel (client disconnect).
+const cancelGrace = 3 * time.Second
+
 // ResolvedCommand is a command that has been matched to a specific page context.
 type ResolvedCommand struct {
 	ID       string
@@ -103,8 +107,8 @@ func matchesPage(cmd CommandConfig, pageType, qualifier, entityType string) bool
 
 // contextMatchesPage returns true when a command's context type is compatible
 // with the page type. Entity and view commands both appear on entity/view pages.
-func contextMatchesPage(context, pageType string) bool {
-	switch context {
+func contextMatchesPage(cmdContext, pageType string) bool {
+	switch cmdContext {
 	case "entity":
 		return pageType == "entity" || pageType == "view"
 	case "view":
@@ -352,8 +356,13 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Start the script.
+	// Start the script. Use r.Context() so a client disconnect triggers cancel,
+	// but mirror handleCommandCancel's SIGINT+3s-grace contract so scripts that
+	// catch SIGINT (e.g., to flush output or commit a transaction) still get
+	// the chance rather than being SIGKILLed outright.
 	proc := exec.CommandContext(r.Context(), "sh", "-c", cmd.Script)
+	proc.Cancel = func() error { return proc.Process.Signal(syscall.SIGINT) }
+	proc.WaitDelay = cancelGrace
 	proc.Dir = a.ProjectRoot()
 	proc.Env = a.buildCommandEnv(cmd, input)
 	proc.Stdin = strings.NewReader(string(inputJSON))
@@ -447,7 +456,7 @@ func (a *App) handleCommandCancel(w http.ResponseWriter, r *http.Request) {
 
 	// Wait briefly, then force kill.
 	go func() {
-		time.Sleep(3 * time.Second)
+		time.Sleep(cancelGrace)
 		if rc.cmd.Process != nil {
 			_ = rc.cmd.Process.Kill()
 		}
@@ -481,28 +490,12 @@ func (a *App) handleOpenFile(w http.ResponseWriter, r *http.Request) { // covera
 	}
 	filePath = resolved
 
-	ctx := r.Context()
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		if action == "reveal" {
-			cmd = exec.CommandContext(ctx, "open", "-R", filePath)
-		} else {
-			cmd = exec.CommandContext(ctx, "open", filePath)
-		}
-	case "linux":
-		if action == "reveal" {
-			cmd = exec.CommandContext(ctx, "xdg-open", filepath.Dir(filePath))
-		} else {
-			cmd = exec.CommandContext(ctx, "xdg-open", filePath)
-		}
-	case "windows":
-		if action == "reveal" {
-			cmd = exec.CommandContext(ctx, "explorer", "/select,", filePath)
-		} else {
-			cmd = exec.CommandContext(ctx, "cmd", "/c", "start", "", filePath)
-		}
-	default:
+	// Fire-and-forget launcher: MUST outlive the HTTP handler. If we used
+	// r.Context() here, xdg-open on Linux would be killed before it could
+	// dispatch to the real handler (gedit, nautilus, etc. don't daemonize
+	// and die with their parent).
+	cmd := openFileCommand(runtime.GOOS, action, filePath)
+	if cmd == nil {
 		http.Error(w, "Unsupported platform", http.StatusInternalServerError)
 		return
 	}
@@ -511,7 +504,33 @@ func (a *App) handleOpenFile(w http.ResponseWriter, r *http.Request) { // covera
 		http.Error(w, "Failed to open file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	go func() { _ = cmd.Wait() }() // reap zombie
 	w.WriteHeader(http.StatusOK)
+}
+
+// openFileCommand builds the OS-specific launcher for handleOpenFile.
+// Returned command has no context binding — the launcher process must
+// survive the HTTP handler's return (see handleOpenFile for rationale).
+func openFileCommand(goos, action, filePath string) *exec.Cmd {
+	switch goos {
+	case "darwin":
+		if action == "reveal" {
+			return exec.Command("open", "-R", filePath) //nolint:noctx // fire-and-forget launcher
+		}
+		return exec.Command("open", filePath) //nolint:noctx // fire-and-forget launcher
+	case "linux":
+		if action == "reveal" {
+			return exec.Command("xdg-open", filepath.Dir(filePath)) //nolint:noctx // fire-and-forget launcher
+		}
+		return exec.Command("xdg-open", filePath) //nolint:noctx // fire-and-forget launcher
+	case "windows":
+		if action == "reveal" {
+			return exec.Command("explorer", "/select,", filePath) //nolint:noctx // fire-and-forget launcher
+		}
+		return exec.Command("cmd", "/c", "start", "", filePath) //nolint:noctx // fire-and-forget launcher
+	default:
+		return nil
+	}
 }
 
 // handleOpenURL handles POST /api/open-url to open URLs in the default browser.
@@ -531,16 +550,9 @@ func (a *App) handleOpenURL(w http.ResponseWriter, r *http.Request) { // coverag
 		return
 	}
 
-	ctx := r.Context()
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.CommandContext(ctx, "open", rawURL)
-	case "linux":
-		cmd = exec.CommandContext(ctx, "xdg-open", rawURL)
-	case "windows":
-		cmd = exec.CommandContext(ctx, "cmd", "/c", "start", "", rawURL)
-	default:
+	// Fire-and-forget launcher: see handleOpenFile for why we can't bind to r.Context().
+	cmd := openURLCommand(runtime.GOOS, rawURL)
+	if cmd == nil {
 		http.Error(w, "Unsupported platform", http.StatusInternalServerError)
 		return
 	}
@@ -549,7 +561,23 @@ func (a *App) handleOpenURL(w http.ResponseWriter, r *http.Request) { // coverag
 		http.Error(w, "Failed to open URL: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	go func() { _ = cmd.Wait() }() // reap zombie
 	w.WriteHeader(http.StatusOK)
+}
+
+// openURLCommand builds the OS-specific URL launcher. Returned command is
+// deliberately unbound from any HTTP request context — see handleOpenURL.
+func openURLCommand(goos, rawURL string) *exec.Cmd {
+	switch goos {
+	case "darwin":
+		return exec.Command("open", rawURL) //nolint:noctx // fire-and-forget launcher
+	case "linux":
+		return exec.Command("xdg-open", rawURL) //nolint:noctx // fire-and-forget launcher
+	case "windows":
+		return exec.Command("cmd", "/c", "start", "", rawURL) //nolint:noctx // fire-and-forget launcher
+	default:
+		return nil
+	}
 }
 
 // --- Helpers ---

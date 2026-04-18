@@ -29,12 +29,18 @@ type RelationHelp struct {
 	Description htmltemplate.HTML
 }
 
+// maxFormBody caps request-body size for ParseForm handlers. 1 MiB is far
+// above any legitimate data-entry form payload but prevents a malicious or
+// buggy client from exhausting RAM.
+const maxFormBody = 1 << 20
+
 // handleToggleCheckbox toggles a markdown checkbox in entity content.
 func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	r.ParseForm() //nolint:errcheck // form parse errors are handled by empty values
 
 	entityID := r.FormValue("entity_id")

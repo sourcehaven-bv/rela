@@ -95,7 +95,9 @@ linters:
         - hugeParam
         - sprintfQuotedString
         - octalLiteral
-        - importShadow  # variable `entity` is natural when handling entities; renaming would be invasive
+        # `entity` shadowing the entity package is idiomatic across 40+ sites;
+        # stdlib shadows (e.g. `context`) should be caught by reviewers in PR.
+        - importShadow
       enabled-tags:
         - diagnostic
         - style
@@ -113,10 +115,10 @@ linters:
         - G204
         - G304
         - G306
-        # Taint-analysis checks (gosec v2) surface real hardening work that
-        # belongs in FEAT-ESLP (data-entry server hardening). Exclude here so
-        # they don't block lint; track the work under that feature instead.
-        - G120  # http.MaxBytesReader on form parsing
+        # Taint-analysis checks (gosec v2) surface hardening work that
+        # belongs in FEAT-ESLP (data-entry server hardening). Deferring
+        # these so the v2 migration doesn't block on threat-model decisions;
+        # track the work under that feature instead.
         - G702  # command injection via taint analysis
         - G703  # path traversal via taint analysis
         - G704  # SSRF via taint analysis
