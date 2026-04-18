@@ -7,9 +7,9 @@ internal/ai/redact.go;6;6
 internal/app/factory.go;7;7
 internal/attachment/hash.go;28;27
 internal/attachment/metadata.go;5;4
-internal/attachment/store.go;180;97
+internal/attachment/store.go;180;95
 internal/automation/engine.go;134;100
-internal/automation/template.go;53;47
+internal/automation/template.go;56;50
 internal/automation/types.go;9;3
 internal/cache/lru.go;34;34
 internal/cli/analyze.go;205;21
@@ -51,10 +51,10 @@ internal/dataentry/actions.go;45;39
 internal/dataentry/analyze.go;176;148
 internal/dataentry/api_v1.go;898;501
 internal/dataentry/app.go;221;163
-internal/dataentry/commands.go;235;194
+internal/dataentry/commands.go;254;212
 internal/dataentry/document.go;95;43
 internal/dataentry/filter_helpers.go;1;1
-internal/dataentry/handlers.go;112;81
+internal/dataentry/handlers.go;113;81
 internal/dataentry/handlers_api.go;357;101
 internal/dataentry/handlers_document.go;4;0
 internal/dataentry/handlers_git.go;53;0
@@ -103,7 +103,7 @@ internal/mcp/tools_analysis.go;133;67
 internal/mcp/tools_entity.go;169;93
 internal/mcp/tools_export.go;84;0
 internal/mcp/tools_helpers.go;65;45
-internal/mcp/tools_lua.go;83;0
+internal/mcp/tools_lua.go;85;0
 internal/mcp/tools_relation.go;57;42
 internal/mcp/tools_schema.go;43;36
 internal/mcp/tools_trace.go;38;31
@@ -161,9 +161,9 @@ internal/storage/errorfs.go;13;0
 internal/storage/memfs.go;215;190
 internal/storage/osfs.go;11;10
 internal/storage/safefs.go;29;16
-internal/storage/watcher.go;71;55
+internal/storage/watcher.go;71;56
 internal/store/fsstore/attachment.go;48;45
-internal/store/fsstore/entity.go;234;219
+internal/store/fsstore/entity.go;234;221
 internal/store/fsstore/formatter.go;40;0
 internal/store/fsstore/fsstore.go;74;54
 internal/store/fsstore/index.go;160;130
