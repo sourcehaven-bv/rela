@@ -49,25 +49,41 @@ export class KanbanPage extends BasePage {
     await this.page.waitForURL(/\/entity\/|\/form\//);
   }
 
+  /** Perform HTML5 drag-and-drop by dispatching native drag events and wait for
+   *  the resulting PATCH response. Playwright's high-level dragTo doesn't always
+   *  dispatch `drop` on Vue @drop listeners for native draggable elements. */
+  private async dragCardToColumnLocator(card: Locator, columnCards: Locator) {
+    const patchPromise = this.page.waitForResponse(
+      r => /\/api\/v1\/[^/]+\/[^/]+$/.test(r.url()) && r.request().method() === 'PATCH',
+      { timeout: 5000 },
+    ).catch(() => null);
+    await card.evaluate((sourceEl, targetSelector) => {
+      const dt = new DataTransfer();
+      sourceEl.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+      const target = document.querySelector(targetSelector) as HTMLElement | null;
+      if (!target) throw new Error(`drop target not found: ${targetSelector}`);
+      target.dispatchEvent(new DragEvent('dragenter', { bubbles: true, dataTransfer: dt }));
+      target.dispatchEvent(new DragEvent('dragover', { bubbles: true, dataTransfer: dt }));
+      target.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt }));
+      sourceEl.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+    }, await columnCards.evaluate(el => {
+      // Build a stable selector using id or a generated data attribute
+      if (!el.id) el.id = `dnd-target-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      return `#${el.id}`;
+    }));
+    await patchPromise;
+  }
+
   async dragCardToColumn(cardTitle: string, targetColumnName: string) {
     const card = this.cards.filter({ hasText: cardTitle });
     const targetColumn = await this.getColumn(targetColumnName);
-    const columnCards = targetColumn.locator('.column-cards');
-
-    // Perform drag and drop
-    await card.dragTo(columnCards);
-
-    // Wait for update
-    await this.page.waitForTimeout(500);
+    await this.dragCardToColumnLocator(card, targetColumn.locator('.column-cards'));
   }
 
   async dragCardByIdToColumn(cardId: string, targetColumnName: string) {
     const card = this.cards.filter({ hasText: cardId });
     const targetColumn = await this.getColumn(targetColumnName);
-    const columnCards = targetColumn.locator('.column-cards');
-
-    await card.dragTo(columnCards);
-    await this.page.waitForTimeout(500);
+    await this.dragCardToColumnLocator(card, targetColumn.locator('.column-cards'));
   }
 
   async setFilter(property: string, value: string) {
