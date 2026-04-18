@@ -41,12 +41,12 @@ export class KanbanPage extends BasePage {
 
   async clickCard(cardTitle: string) {
     await this.cards.filter({ hasText: cardTitle }).click();
-    await this.page.waitForLoadState('domcontentloaded');
+    await this.page.waitForURL(/\/entity\/|\/form\//);
   }
 
   async clickCardById(cardId: string) {
     await this.cards.filter({ hasText: cardId }).click();
-    await this.page.waitForLoadState('domcontentloaded');
+    await this.page.waitForURL(/\/entity\/|\/form\//);
   }
 
   async dragCardToColumn(cardTitle: string, targetColumnName: string) {
@@ -83,6 +83,14 @@ export class KanbanPage extends BasePage {
 
   async expectColumnCount(count: number) {
     await expect(this.columns).toHaveCount(count);
+  }
+
+  async expectColumnLabel(label: string) {
+    await expect(this.page.locator('.column-title').filter({ hasText: label })).toBeVisible();
+  }
+
+  async expectFirstCardSeverityVisible() {
+    await expect(this.cards.first().getByText(/high|critical|medium|low/)).toBeVisible();
   }
 
   async expectCardCount(count: number) {

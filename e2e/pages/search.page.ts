@@ -52,6 +52,23 @@ export class SearchPage extends BasePage {
     await expect(this.resultItems.first()).toHaveClass(/selected/);
   }
 
+  /** Press Enter globally — used after focusFirstResult to open the selected one. */
+  async openSelectedResult() {
+    await this.page.keyboard.press('Enter');
+  }
+
+  /** Navigate to /search with an initial query param. */
+  async navigateToSearchWithQuery(query: string) {
+    await this.navigateTo(`/search?q=${encodeURIComponent(query)}`);
+    await this.waitForSpinnerToDisappear();
+  }
+
+  /** Blur the search input (by clicking the page body) then press the F key. */
+  async pressFilterHotkey() {
+    await this.page.locator('body').click();
+    await this.page.keyboard.press('f');
+  }
+
   async openFilterMenu() {
     await this.filterButton.click();
     await expect(this.filterMenu).toBeVisible();

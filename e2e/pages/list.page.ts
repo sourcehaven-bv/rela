@@ -40,6 +40,34 @@ export class ListPage extends BasePage {
     await this.page.locator(`.entity-row[data-entity-id="${id}"]`).click();
   }
 
+  async openDeleteModalForFirstRow() {
+    const firstRow = this.page.locator('.entity-row, tbody tr').first();
+    await firstRow.locator('.delete-btn, button[title="Delete"]').click();
+  }
+
+  async cancelDeleteModal() {
+    await this.page.locator('.modal button').filter({ hasText: /^Cancel$/ }).click();
+  }
+
+  async deleteRowByTitle(title: string) {
+    const row = this.page.locator('.entity-row').filter({ hasText: title });
+    const id = await row.getAttribute('data-entity-id');
+    if (!id) throw new Error(`No data-entity-id on row with title ${title}`);
+    await this.deleteRowById(id);
+  }
+
+  async expectCellInRow(id: string, cellText: string) {
+    await expect(
+      this.page.locator(`.entity-row[data-entity-id="${id}"]`).locator(`text=${cellText}`),
+    ).toBeVisible();
+  }
+
+  async expectRowNotVisible(text: string) {
+    await expect(
+      this.page.locator('.entity-row, tbody tr').filter({ hasText: text }),
+    ).not.toBeVisible();
+  }
+
   async clickCreateButton() {
     await this.createButton.click();
     await this.page.waitForLoadState('domcontentloaded');
@@ -109,6 +137,32 @@ export class ListPage extends BasePage {
     const rowById = this.page.locator(`.entity-row[data-entity-id="${text}"]`);
     const rowByText = this.page.locator('.entity-row, tbody tr').filter({ hasText: text });
     await expect(rowById.or(rowByText).first()).toBeVisible();
+  }
+
+  async expectColumnHeader(name: string | RegExp) {
+    const matcher = name instanceof RegExp ? name : new RegExp(name, 'i');
+    await expect(this.page.locator('th').filter({ hasText: matcher })).toBeVisible();
+  }
+
+  /** Set the Nth filter in the filter bar to the given option value and wait
+   *  for any resulting list refetch to settle. */
+  async setFilterByIndex(index: number, value: string | { index: number }) {
+    const select = this.filterBar.locator('select').nth(index);
+    await select.selectOption(value as never);
+    await this.waitForSpinnerToDisappear();
+  }
+
+  /** Click anywhere in the table to give it keyboard focus. */
+  async focusTable() {
+    await this.table.click();
+  }
+
+  async pressKey(key: string) {
+    await this.page.keyboard.press(key);
+  }
+
+  get selectedRow(): Locator {
+    return this.page.locator('.entity-row.selected, tr.selected');
   }
 
   async expectEmpty() {

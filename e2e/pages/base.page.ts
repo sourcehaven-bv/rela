@@ -25,6 +25,17 @@ export class BasePage {
     await this.page.waitForLoadState('domcontentloaded');
   }
 
+  /** Click a sidebar link by visible label and wait for the target page's heading. */
+  async clickSidebarLink(label: string, expectedHeading: string | RegExp = label) {
+    await this.page.getByRole('link', { name: new RegExp(label) }).first().click();
+    const matcher = expectedHeading instanceof RegExp ? expectedHeading : new RegExp(expectedHeading);
+    await expect(this.page.locator('h1').filter({ hasText: matcher })).toBeVisible();
+  }
+
+  async expectNavLinkVisible(label: string) {
+    await expect(this.page.getByRole('link', { name: label })).toBeVisible();
+  }
+
   async waitForToast(message?: string) {
     if (message) {
       await expect(this.page.getByText(message)).toBeVisible({ timeout: 3000 });

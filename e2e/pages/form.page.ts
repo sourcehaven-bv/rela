@@ -20,6 +20,33 @@ export class FormPage extends BasePage {
   async navigateToCreateForm(formId: string) {
     await this.navigateTo(`/form/${formId}`);
     await this.waitForSpinnerToDisappear();
+    await expect(this.titleInput).toBeVisible();
+  }
+
+  /** Fill a set of property fields keyed by property name. */
+  async fillFields(values: Record<string, string>) {
+    for (const [name, value] of Object.entries(values)) {
+      await this.fillField(name, value);
+    }
+  }
+
+  /** Fill a set of select fields keyed by property name. */
+  async selectFields(values: Record<string, string>) {
+    for (const [name, value] of Object.entries(values)) {
+      await this.selectField(name, value);
+    }
+  }
+
+  /** Submit the form and wait for the create POST to succeed. Returns the entity response. */
+  async submitAndExpectCreate(plural: string): Promise<{ id: string }> {
+    const [response] = await Promise.all([
+      this.page.waitForResponse(
+        r => r.url().includes(`/api/v1/${plural}`) && r.request().method() === 'POST' && r.status() === 201,
+      ),
+      this.submitButton.click(),
+    ]);
+    expect(response.ok()).toBeTruthy();
+    return response.json() as Promise<{ id: string }>;
   }
 
   async navigateToEditForm(formId: string, entityId: string) {

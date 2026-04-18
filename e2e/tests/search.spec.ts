@@ -187,8 +187,7 @@ test.describe('Search', () => {
       // Enters results mode and selects the first result
       await searchPage.focusFirstResult();
 
-      // Press Enter to open
-      await appPage.keyboard.press('Enter');
+      await searchPage.openSelectedResult();
 
       await expect(appPage).not.toHaveURL(/\/search/);
     });
@@ -197,11 +196,7 @@ test.describe('Search', () => {
       const searchPage = new SearchPage(appPage);
 
       await searchPage.navigateToSearch();
-
-      // Click outside input first
-      await appPage.locator('body').click();
-
-      await appPage.keyboard.press('f');
+      await searchPage.pressFilterHotkey();
 
       await expect(searchPage.filterMenu).toBeVisible();
     });
@@ -218,11 +213,10 @@ test.describe('Search', () => {
       await expect(appPage).toHaveURL(/q=dashboard/);
     });
 
-    test('can initialize from URL query', async ({ appPage, serverUrl }) => {
-      // Navigate directly with query param
-      await appPage.goto(`${serverUrl}/search?q=Authentication`);
-
+    test('can initialize from URL query', async ({ appPage }) => {
       const searchPage = new SearchPage(appPage);
+
+      await searchPage.navigateToSearchWithQuery('Authentication');
 
       // Results should be shown
       await searchPage.expectResultContains('Authentication');

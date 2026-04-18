@@ -1,6 +1,5 @@
 import { test, expect } from './fixtures';
-import { KanbanPage } from '../pages/kanban.page';
-import { FormPage } from '../pages/form.page';
+import { KanbanPage, FormPage, EntityPage } from '../pages';
 
 test.describe('Kanban Board', () => {
   test.describe('Display', () => {
@@ -20,10 +19,10 @@ test.describe('Kanban Board', () => {
       await kanbanPage.navigateToKanban('feature-board');
 
       // Check column headers
-      await expect(appPage.locator('.column-title').filter({ hasText: 'Draft' })).toBeVisible();
-      await expect(appPage.locator('.column-title').filter({ hasText: 'Approved' })).toBeVisible();
-      await expect(appPage.locator('.column-title').filter({ hasText: 'In Progress' })).toBeVisible();
-      await expect(appPage.locator('.column-title').filter({ hasText: 'Done' })).toBeVisible();
+      await kanbanPage.expectColumnLabel('Draft');
+      await kanbanPage.expectColumnLabel('Approved');
+      await kanbanPage.expectColumnLabel('In Progress');
+      await kanbanPage.expectColumnLabel('Done');
     });
 
     test('displays cards with correct content', async ({ appPage }) => {
@@ -99,17 +98,13 @@ test.describe('Kanban Board', () => {
 
     test('drag updates the entity status', async ({ appPage }) => {
       const kanbanPage = new KanbanPage(appPage);
+      const formPage = new FormPage(appPage);
 
       await kanbanPage.navigateToKanban('feature-board');
-
-      // Drag a card
       await kanbanPage.dragCardToColumn('Dashboard Analytics', 'Done');
-
-      // Click on the card to verify status
       await kanbanPage.clickCard('Dashboard Analytics');
 
-      // Check that status field shows 'done'
-      await expect(appPage.locator('text=done')).toBeVisible();
+      await formPage.expectFieldValue('status', 'done');
     });
   });
 
@@ -131,10 +126,7 @@ test.describe('Kanban Board', () => {
       const initialCardCount = await kanbanPage.getCardCount();
 
       // Filter by priority
-      const priorityFilter = kanbanPage.filterBar.locator('select').first();
-      await priorityFilter.selectOption('high');
-
-      await appPage.waitForTimeout(500);
+      await kanbanPage.setFilter('Priority', 'high');
 
       // Should show fewer cards
       const filteredCardCount = await kanbanPage.getCardCount();
@@ -185,9 +177,9 @@ test.describe('Kanban Board', () => {
       await kanbanPage.expectColumnCount(3);
 
       // Check column labels
-      await expect(appPage.locator('.column-title').filter({ hasText: 'New' })).toBeVisible();
-      await expect(appPage.locator('.column-title').filter({ hasText: 'In Progress' })).toBeVisible();
-      await expect(appPage.locator('.column-title').filter({ hasText: 'Fixed' })).toBeVisible();
+      await kanbanPage.expectColumnLabel('New');
+      await kanbanPage.expectColumnLabel('In Progress');
+      await kanbanPage.expectColumnLabel('Fixed');
     });
 
     test('bug cards show severity badge', async ({ appPage }) => {
@@ -196,8 +188,7 @@ test.describe('Kanban Board', () => {
       await kanbanPage.navigateToKanban('bug-board');
 
       // Cards should show severity
-      const card = kanbanPage.cards.first();
-      await expect(card.getByText(/high|critical|medium|low/)).toBeVisible();
+      await kanbanPage.expectFirstCardSeverityVisible();
     });
   });
 });
