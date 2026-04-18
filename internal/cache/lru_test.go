@@ -118,11 +118,11 @@ func TestLRUCapacityFloor(t *testing.T) {
 func TestLRUConcurrentAccess(t *testing.T) {
 	c := NewLRU[int, int](64)
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(base int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				key := base*100 + j
 				c.Put(key, key)
 				_, _ = c.Get(key)
@@ -138,7 +138,7 @@ func TestLRUConcurrentAccess(t *testing.T) {
 
 func TestLRUHandlesLargeChurn(t *testing.T) {
 	c := NewLRU[string, int](8)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		c.Put(fmt.Sprintf("k%d", i), i)
 	}
 	if got := c.Len(); got != 8 {

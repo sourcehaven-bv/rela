@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -201,7 +202,7 @@ func matchString(val interface{}, filter *Filter) (bool, error) {
 		if filter.IsGlob {
 			// Use pre-compiled regex from finalizeFilter
 			if filter.Regex == nil {
-				return false, fmt.Errorf("glob pattern not compiled")
+				return false, errors.New("glob pattern not compiled")
 			}
 			return filter.Regex.MatchString(s), nil
 		}
@@ -211,7 +212,7 @@ func matchString(val interface{}, filter *Filter) (bool, error) {
 		if filter.IsGlob {
 			// Use pre-compiled regex from finalizeFilter
 			if filter.Regex == nil {
-				return false, fmt.Errorf("glob pattern not compiled")
+				return false, errors.New("glob pattern not compiled")
 			}
 			return !filter.Regex.MatchString(s), nil
 		}

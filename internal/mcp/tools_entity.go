@@ -85,7 +85,7 @@ func (s *Server) handleShowEntity(
 	st := s.ws.Store()
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
+		return mcp.NewToolResultError("entity not found: " + id), nil
 	}
 
 	text, err := convertStoreEntity(e, st, true)
@@ -199,7 +199,7 @@ func (s *Server) handleUpdateEntity(
 	st := s.ws.Store()
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
+		return mcp.NewToolResultError("entity not found: " + id), nil
 	}
 
 	properties := s.extractProperties(request)
@@ -228,7 +228,7 @@ func (s *Server) handleUpdateEntity(
 
 	updated, _ := st.GetEntity(ctx, id)
 	if updated == nil {
-		return mcp.NewToolResultText(fmt.Sprintf("Updated %s", id)), nil
+		return mcp.NewToolResultText("Updated " + id), nil
 	}
 
 	text, convertErr := convertStoreEntity(updated, st, true)
@@ -251,7 +251,7 @@ func (s *Server) handleDeleteEntity(
 	st := s.ws.Store()
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
+		return mcp.NewToolResultError("entity not found: " + id), nil
 	}
 
 	// Check for relations (for better error message)
@@ -269,7 +269,7 @@ func (s *Server) handleDeleteEntity(
 	}
 	_ = e // kept for the cascade relation-count check above
 
-	msg := fmt.Sprintf("Deleted %s", id)
+	msg := "Deleted " + id
 	if cascade && len(result.DeletedRelations) > 0 {
 		msg += fmt.Sprintf(" and %d relation(s)", len(result.DeletedRelations))
 	}

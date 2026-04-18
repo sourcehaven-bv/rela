@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -49,7 +50,7 @@ func DetectMigrations(startDir string) ([]MigrateDetection, error) {
 func DetectMigrationsWithFS(startDir string, fs storage.FS) ([]MigrateDetection, error) {
 	ctx, err := project.Discover(startDir, fs)
 	if err != nil {
-		return nil, fmt.Errorf("no project found: run 'rela init' to create one")
+		return nil, errors.New("no project found: run 'rela init' to create one")
 	}
 
 	// Load metamodel for context-aware migrations (ignore errors - may need migration itself)
@@ -91,7 +92,7 @@ func Migrate(startDir string) (*MigrateResult, error) {
 func MigrateWithFS(startDir string, fs storage.FS) (*MigrateResult, error) {
 	ctx, err := project.Discover(startDir, fs)
 	if err != nil {
-		return nil, fmt.Errorf("no project found: run 'rela init' to create one")
+		return nil, errors.New("no project found: run 'rela init' to create one")
 	}
 
 	// Load metamodel for context-aware migrations (ignore errors - may need migration itself)

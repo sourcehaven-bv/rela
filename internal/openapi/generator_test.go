@@ -321,7 +321,7 @@ func TestGenerator_DeterministicOutput(t *testing.T) {
 
 	// Generate multiple times
 	jsons := make([]string, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		gen.Invalidate()
 		data, _ := gen.GenerateJSON()
 		jsons[i] = string(data)

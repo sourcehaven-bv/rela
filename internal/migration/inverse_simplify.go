@@ -1,7 +1,7 @@
 package migration
 
 import (
-	"fmt"
+	"errors"
 
 	"gopkg.in/yaml.v3"
 )
@@ -59,7 +59,7 @@ func (m *InverseSimplifyMigration) Detect(doc *yaml.Node) bool {
 func (m *InverseSimplifyMigration) Apply(doc *yaml.Node) error {
 	root := GetDocumentRoot(doc)
 	if root == nil {
-		return fmt.Errorf("empty document")
+		return errors.New("empty document")
 	}
 
 	relations := GetMapValue(root, "relations")
@@ -114,7 +114,7 @@ func camelCaseToSpaced(s string) string {
 	const asciiCaseOffset = 'a' - 'A'   // 32, but as a named constant
 	result := make([]byte, 0, len(s)+4) // Extra space for inserted spaces
 
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		isUpper := c >= 'A' && c <= 'Z'
 

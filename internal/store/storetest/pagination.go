@@ -33,7 +33,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 
 		var ids []string
 		cursor := ""
-		for pages := 0; pages < 10; pages++ {
+		for range 10 {
 			page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 2, Cursor: cursor})
 			require.NoError(t, err)
 			for _, e := range page.Items {
@@ -96,7 +96,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 
 		var ids []string
 		cursor := ""
-		for pages := 0; pages < 10; pages++ {
+		for range 10 {
 			page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{
 				Type: "feature", Limit: 2, Cursor: cursor,
 			})
@@ -195,7 +195,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 
 		var keys []string
 		cursor := ""
-		for pages := 0; pages < 10; pages++ {
+		for range 10 {
 			page, err := s.ListRelationsPage(ctx(), store.RelationQuery{Limit: 2, Cursor: cursor})
 			require.NoError(t, err)
 			for _, r := range page.Items {

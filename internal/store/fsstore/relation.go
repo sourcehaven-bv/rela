@@ -2,6 +2,7 @@ package fsstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"strings"
@@ -130,7 +131,7 @@ func (s *FSStore) CreateRelation(
 		return nil, fmt.Errorf("store: relation type %q contains consecutive dashes", relType)
 	}
 	if relType == "" {
-		return nil, fmt.Errorf("store: empty relation type")
+		return nil, errors.New("store: empty relation type")
 	}
 
 	s.mu.Lock()

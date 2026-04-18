@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -203,7 +204,7 @@ func applyMetamodelChanges(path string, changes []Change, dryRun bool) error {
 
 	root := migration.GetDocumentRoot(&doc)
 	if root == nil {
-		return fmt.Errorf("failed to get document root")
+		return errors.New("failed to get document root")
 	}
 
 	// Apply each change
@@ -259,7 +260,7 @@ func applyDataEntryChanges(path string, changes []Change, dryRun bool) error {
 
 	root := migration.GetDocumentRoot(&doc)
 	if root == nil {
-		return fmt.Errorf("failed to get document root")
+		return errors.New("failed to get document root")
 	}
 
 	for _, change := range changes {

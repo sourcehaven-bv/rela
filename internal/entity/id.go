@@ -2,6 +2,7 @@ package entity
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -25,7 +26,7 @@ type EntityID struct {
 func ParseEntityID(s string) (EntityID, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return EntityID{}, fmt.Errorf("empty entity ID")
+		return EntityID{}, errors.New("empty entity ID")
 	}
 
 	// Walk from the end to find the trailing digit run.
@@ -102,7 +103,7 @@ func (id EntityID) String() string {
 	if id.Prefix != "" {
 		return fmt.Sprintf("%s%d", id.Prefix, id.Number)
 	}
-	return fmt.Sprintf("%d", id.Number)
+	return strconv.Itoa(id.Number)
 }
 
 // FormatWithPadding returns the ID with zero-padded number
@@ -132,7 +133,7 @@ func (id EntityID) MatchesPattern(pattern string) bool {
 // It rejects IDs with path traversal attempts or invalid characters
 func ValidateID(s string) error {
 	if s == "" {
-		return fmt.Errorf("empty entity ID")
+		return errors.New("empty entity ID")
 	}
 
 	// Reject path traversal
@@ -224,7 +225,7 @@ func GenerateShortID(existingIDs []string, prefix string, entityCount int, caps 
 
 	length := calculateIDLength(entityCount)
 
-	for attempts := 0; attempts < shortIDMaxAttempts; attempts++ {
+	for attempts := range shortIDMaxAttempts {
 		id := generateRandomBase36(prefix, length, caps)
 		if _, exists := existing[id]; !exists {
 			return id

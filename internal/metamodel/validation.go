@@ -79,7 +79,7 @@ func (m *Metamodel) ValidateEntity(id, entityType string, properties map[string]
 	if !ok {
 		errs = append(errs, &ValidationError{
 			Type:    ValidationErrorUnknownType,
-			Message: fmt.Sprintf("unknown entity type: %s", entityType),
+			Message: "unknown entity type: " + entityType,
 		})
 		return errs
 	}

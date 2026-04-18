@@ -50,7 +50,7 @@ func TestRandomInt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				v := RandomInt(tt.min, tt.max)
 				minVal, maxVal := tt.min, tt.max
 				if minVal > maxVal {
@@ -68,7 +68,7 @@ func TestRandomInt(t *testing.T) {
 func TestRandomBool(t *testing.T) {
 	// Run enough times to get both values
 	gotTrue, gotFalse := false, false
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if RandomBool() {
 			gotTrue = true
 		} else {
@@ -102,7 +102,7 @@ func TestRandomEnumValue(t *testing.T) {
 
 	// Run enough times to hit each value
 	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		v := RandomEnumValue(values)
 		seen[v] = true
 		// Verify value is in list

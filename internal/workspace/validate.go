@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -40,7 +41,7 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 	// Discover project
 	ctx, err := project.Discover(startDir, fs)
 	if err != nil {
-		return nil, fmt.Errorf("no project found: run 'rela init' to create one")
+		return nil, errors.New("no project found: run 'rela init' to create one")
 	}
 
 	result := &ValidateResult{}

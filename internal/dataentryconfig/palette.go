@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -73,7 +74,7 @@ func (d *DarkMode) UnmarshalYAML(value *yaml.Node) error {
 	var boolVal bool
 	if err := value.Decode(&boolVal); err == nil {
 		if boolVal {
-			return fmt.Errorf("invalid dark mode `true`: use either `false` or an explicit palette object")
+			return errors.New("invalid dark mode `true`: use either `false` or an explicit palette object")
 		}
 		d.Disabled = true
 		return nil
@@ -127,7 +128,7 @@ func (d *DarkMode) UnmarshalJSON(data []byte) error {
 	var boolVal bool
 	if err := json.Unmarshal(data, &boolVal); err == nil {
 		if boolVal {
-			return fmt.Errorf("invalid dark mode `true`: use either `false` or an explicit palette object")
+			return errors.New("invalid dark mode `true`: use either `false` or an explicit palette object")
 		}
 		d.Disabled = true
 		return nil

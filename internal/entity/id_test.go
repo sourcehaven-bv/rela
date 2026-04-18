@@ -436,7 +436,7 @@ func TestGenerateShortID_Uniqueness(t *testing.T) {
 	existingIDs := []string{}
 
 	// Generate many IDs and check for uniqueness
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		id := GenerateShortID(existingIDs, "TKT", i, "upper")
 		if generated[id] {
 			t.Errorf("Duplicate ID generated: %s", id)
@@ -452,7 +452,7 @@ func TestGenerateShortID_CollisionAvoidance(t *testing.T) {
 	existingIDs := []string{"TKT-0000", "TKT-1111", "TKT-AAAA"}
 
 	// Generate IDs and ensure none collide with existing
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		id := GenerateShortID(existingIDs, "TKT", len(existingIDs), "upper")
 		for _, existing := range existingIDs {
 			if id == existing {

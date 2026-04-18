@@ -324,7 +324,7 @@ func slugify(s string) string {
 	s = strings.ToLower(s)
 	var b strings.Builder
 	prev := byte('-')
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
 			b.WriteByte(c)

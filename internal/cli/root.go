@@ -152,7 +152,7 @@ func init() {
 // user can see what actually went wrong.
 func wrapDiscoverError(err error) error {
 	if stderrors.Is(err, errors.ErrNoProject) {
-		return fmt.Errorf("no project found: run 'rela init' to create one")
+		return stderrors.New("no project found: run 'rela init' to create one")
 	}
 	return err
 }

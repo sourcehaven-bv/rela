@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"fmt"
+	"errors"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -56,7 +56,7 @@ func runMCPServer() error {
 	// Discover project and initialize workspace
 	mcpWs, err := workspace.Discover(startDir, script.NewEngine())
 	if err != nil {
-		return fmt.Errorf("no project found: run 'rela init' to create one")
+		return errors.New("no project found: run 'rela init' to create one")
 	}
 
 	srv := relamcp.NewServer(mcpWs, Version)

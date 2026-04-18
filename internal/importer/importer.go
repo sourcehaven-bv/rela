@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -305,7 +306,7 @@ func (imp *Importer) createRelations(relations []RelationData, result *Result) e
 func (imp *Importer) validateEntityData(ed *EntityData) error {
 	// ID is required
 	if ed.ID == "" {
-		return fmt.Errorf("missing required field: id")
+		return errors.New("missing required field: id")
 	}
 	if err := storeutil.ValidateID(ed.ID); err != nil {
 		return err
@@ -313,7 +314,7 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 
 	// Type is required
 	if ed.Type == "" {
-		return fmt.Errorf("missing required field: type")
+		return errors.New("missing required field: type")
 	}
 
 	// Resolve type alias
@@ -328,7 +329,7 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 	// Check if entity already exists
 	if _, err := imp.store.GetEntity(context.Background(), ed.ID); err == nil {
 		if !imp.opts.Update {
-			return fmt.Errorf("entity already exists (use --update to overwrite)")
+			return errors.New("entity already exists (use --update to overwrite)")
 		}
 	}
 
@@ -362,13 +363,13 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 // validateRelationData validates relation data before import
 func (imp *Importer) validateRelationData(rd *RelationData, knownIDs map[string]bool) error {
 	if rd.From == "" {
-		return fmt.Errorf("missing required field: from")
+		return errors.New("missing required field: from")
 	}
 	if rd.Relation == "" {
-		return fmt.Errorf("missing required field: relation")
+		return errors.New("missing required field: relation")
 	}
 	if rd.To == "" {
-		return fmt.Errorf("missing required field: to")
+		return errors.New("missing required field: to")
 	}
 
 	// Check entities exist (either in graph or in import batch)
@@ -486,7 +487,7 @@ func parseJSON(r io.Reader) (*ImportData, error) {
 		// Accept the full format even if empty (valid structure)
 		if full.Entities != nil || full.Relations != nil {
 			if len(full.Entities) == 0 && len(full.Relations) == 0 {
-				return nil, fmt.Errorf("no entities or relations to import")
+				return nil, errors.New("no entities or relations to import")
 			}
 			return &ImportData{
 				Entities:  full.Entities,
@@ -499,12 +500,12 @@ func parseJSON(r io.Reader) (*ImportData, error) {
 	var entities []EntityData
 	if err := json.Unmarshal(raw, &entities); err == nil {
 		if len(entities) == 0 {
-			return nil, fmt.Errorf("no entities to import")
+			return nil, errors.New("no entities to import")
 		}
 		return &ImportData{Entities: entities}, nil
 	}
 
-	return nil, fmt.Errorf("invalid JSON format: expected object with 'entities' key or array of entities")
+	return nil, errors.New("invalid JSON format: expected object with 'entities' key or array of entities")
 }
 
 // parseYAML parses YAML import data
@@ -523,7 +524,7 @@ func parseYAML(r io.Reader) (*ImportData, error) {
 		// Check if this looks like the full format structure
 		if full.Entities != nil || full.Relations != nil {
 			if len(full.Entities) == 0 && len(full.Relations) == 0 {
-				return nil, fmt.Errorf("no entities or relations to import")
+				return nil, errors.New("no entities or relations to import")
 			}
 			return &ImportData{
 				Entities:  full.Entities,
@@ -536,12 +537,12 @@ func parseYAML(r io.Reader) (*ImportData, error) {
 	var entities []EntityData
 	if err := yaml.Unmarshal(content, &entities); err == nil {
 		if len(entities) == 0 {
-			return nil, fmt.Errorf("no entities to import")
+			return nil, errors.New("no entities to import")
 		}
 		return &ImportData{Entities: entities}, nil
 	}
 
-	return nil, fmt.Errorf("invalid YAML format: expected object with 'entities' key or array of entities")
+	return nil, errors.New("invalid YAML format: expected object with 'entities' key or array of entities")
 }
 
 // parseCSV parses CSV import data (entities only)
@@ -564,10 +565,10 @@ func parseCSV(r io.Reader) (*ImportData, error) {
 	idCol, hasID := colIndex["id"]
 	typeCol, hasType := colIndex["type"]
 	if !hasID {
-		return nil, fmt.Errorf("CSV must have 'id' column")
+		return nil, errors.New("CSV must have 'id' column")
 	}
 	if !hasType {
-		return nil, fmt.Errorf("CSV must have 'type' column")
+		return nil, errors.New("CSV must have 'type' column")
 	}
 
 	// Read rows - estimate capacity from file size
@@ -635,7 +636,7 @@ func (imp *Importer) parseRelationsCSV(path string) ([]RelationData, error) {
 	}
 
 	if !hasFrom || !hasTo || !hasRel {
-		return nil, fmt.Errorf("relations CSV must have 'from', 'relation' (or 'type'), and 'to' columns")
+		return nil, errors.New("relations CSV must have 'from', 'relation' (or 'type'), and 'to' columns")
 	}
 
 	// Read rows

@@ -8,7 +8,7 @@ package state
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"path/filepath"
 	"strings"
 
@@ -66,26 +66,26 @@ func (s *FSKV) Put(_ context.Context, key string, data []byte) error {
 // backslashes, control characters, and Windows drive letters are not.
 func validateKey(name string) error {
 	if name == "" {
-		return fmt.Errorf("state: key must not be empty")
+		return errors.New("state: key must not be empty")
 	}
 	for _, r := range name {
 		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("state: control character (including NUL) not allowed")
+			return errors.New("state: control character (including NUL) not allowed")
 		}
 	}
 	if strings.ContainsRune(name, '\\') {
-		return fmt.Errorf("state: backslash not allowed (use forward slash)")
+		return errors.New("state: backslash not allowed (use forward slash)")
 	}
 	if strings.HasPrefix(name, "/") {
-		return fmt.Errorf("state: key must be relative")
+		return errors.New("state: key must be relative")
 	}
 	for _, seg := range strings.Split(name, "/") {
 		if seg == "" || seg == "." || seg == ".." {
-			return fmt.Errorf("state: traversal or empty segment not allowed")
+			return errors.New("state: traversal or empty segment not allowed")
 		}
 	}
 	if len(name) >= 2 && name[1] == ':' {
-		return fmt.Errorf("state: drive letter not allowed")
+		return errors.New("state: drive letter not allowed")
 	}
 	return nil
 }

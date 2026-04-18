@@ -163,20 +163,20 @@ func (g *Generator) addSystemPaths(spec *Spec) {
 func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.EntityDef) {
 	plural := def.GetDirPlural(typeName)
 	tag := def.Label
-	basePath := fmt.Sprintf("/api/v1/%s", plural)
+	basePath := "/api/v1/" + plural
 
 	// Collection path: GET (list) and POST (create)
 	spec.Paths[basePath] = PathItem{
 		Summary: fmt.Sprintf("Collection of %s entities", def.Label),
 		Get: &Operation{
-			OperationID: fmt.Sprintf("list%s", capitalize(plural)),
-			Summary:     fmt.Sprintf("List %s", def.LabelPlural),
+			OperationID: "list" + capitalize(plural),
+			Summary:     "List " + def.LabelPlural,
 			Description: def.Description,
 			Tags:        []string{tag},
 			Parameters:  g.listParameters(),
 			Responses: map[string]Response{
 				"200": {
-					Description: fmt.Sprintf("List of %s", def.LabelPlural),
+					Description: "List of " + def.LabelPlural,
 					Content:     jsonContent(Ref("ListResponse")),
 					Headers: map[string]Header{
 						"X-Total-Count": {Description: "Total number of entities", Schema: IntegerSchema()},
@@ -188,8 +188,8 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 			},
 		},
 		Post: &Operation{
-			OperationID: fmt.Sprintf("create%s", capitalize(typeName)),
-			Summary:     fmt.Sprintf("Create a %s", def.Label),
+			OperationID: "create" + capitalize(typeName),
+			Summary:     "Create a " + def.Label,
 			Tags:        []string{tag},
 			RequestBody: &RequestBody{
 				Required: true,
@@ -197,7 +197,7 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 			},
 			Responses: map[string]Response{
 				"201": {
-					Description: fmt.Sprintf("%s created", def.Label),
+					Description: def.Label + " created",
 					Content:     jsonContent(g.buildEntitySchema(typeName, def)),
 					Headers: map[string]Header{
 						"Location": {Description: "URL of created entity", Schema: StringSchema()},
@@ -209,22 +209,22 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 	}
 
 	// Single entity path: GET, PATCH, DELETE
-	entityPath := fmt.Sprintf("%s/{id}", basePath)
+	entityPath := basePath + "/{id}"
 	spec.Paths[entityPath] = PathItem{
 		Summary: fmt.Sprintf("Single %s entity", def.Label),
 		Parameters: []Parameter{
 			{Name: "id", In: "path", Required: true, Description: "Entity ID", Schema: StringSchema()},
 		},
 		Get: &Operation{
-			OperationID: fmt.Sprintf("get%s", capitalize(typeName)),
-			Summary:     fmt.Sprintf("Get a %s", def.Label),
+			OperationID: "get" + capitalize(typeName),
+			Summary:     "Get a " + def.Label,
 			Tags:        []string{tag},
 			Parameters: []Parameter{
 				{Name: "include", In: "query", Description: "Comma-separated relation types to include", Schema: StringSchema()},
 			},
 			Responses: map[string]Response{
 				"200": {
-					Description: fmt.Sprintf("%s details", def.Label),
+					Description: def.Label + " details",
 					Content:     jsonContent(g.buildEntitySchema(typeName, def)),
 					Headers: map[string]Header{
 						"ETag": {Description: "Entity version tag", Schema: StringSchema()},
@@ -235,8 +235,8 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 			},
 		},
 		Patch: &Operation{
-			OperationID: fmt.Sprintf("update%s", capitalize(typeName)),
-			Summary:     fmt.Sprintf("Update a %s", def.Label),
+			OperationID: "update" + capitalize(typeName),
+			Summary:     "Update a " + def.Label,
 			Tags:        []string{tag},
 			Parameters: []Parameter{
 				{Name: "If-Match", In: "header", Description: "ETag for optimistic locking", Schema: StringSchema()},
@@ -247,7 +247,7 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 			},
 			Responses: map[string]Response{
 				"200": {
-					Description: fmt.Sprintf("%s updated", def.Label),
+					Description: def.Label + " updated",
 					Content:     jsonContent(g.buildEntitySchema(typeName, def)),
 					Headers: map[string]Header{
 						"ETag": {Description: "New entity version tag", Schema: StringSchema()},
@@ -259,8 +259,8 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 			},
 		},
 		Delete: &Operation{
-			OperationID: fmt.Sprintf("delete%s", capitalize(typeName)),
-			Summary:     fmt.Sprintf("Delete a %s", def.Label),
+			OperationID: "delete" + capitalize(typeName),
+			Summary:     "Delete a " + def.Label,
 			Tags:        []string{tag},
 			Responses: map[string]Response{
 				"204": {Description: "Entity deleted"},
@@ -271,15 +271,15 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 	}
 
 	// Relations path
-	relationsPath := fmt.Sprintf("%s/{id}/relations", basePath)
+	relationsPath := basePath + "/{id}/relations"
 	spec.Paths[relationsPath] = PathItem{
-		Summary: fmt.Sprintf("Relations for a %s", def.Label),
+		Summary: "Relations for a " + def.Label,
 		Parameters: []Parameter{
 			{Name: "id", In: "path", Required: true, Description: "Entity ID", Schema: StringSchema()},
 		},
 		Get: &Operation{
 			OperationID: fmt.Sprintf("get%sRelations", capitalize(typeName)),
-			Summary:     fmt.Sprintf("Get all relations for a %s", def.Label),
+			Summary:     "Get all relations for a " + def.Label,
 			Tags:        []string{tag},
 			Responses: map[string]Response{
 				"200": {
@@ -298,19 +298,19 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 	g.addRelationTypePaths(spec, typeName, def, basePath)
 
 	// Clone action
-	clonePath := fmt.Sprintf("%s/{id}/_actions/clone", basePath)
+	clonePath := basePath + "/{id}/_actions/clone"
 	spec.Paths[clonePath] = PathItem{
 		Parameters: []Parameter{
 			{Name: "id", In: "path", Required: true, Description: "Entity ID", Schema: StringSchema()},
 		},
 		Post: &Operation{
-			OperationID: fmt.Sprintf("clone%s", capitalize(typeName)),
-			Summary:     fmt.Sprintf("Clone a %s", def.Label),
+			OperationID: "clone" + capitalize(typeName),
+			Summary:     "Clone a " + def.Label,
 			Description: "Creates a copy of the entity with a new ID",
 			Tags:        []string{tag},
 			Responses: map[string]Response{
 				"201": {
-					Description: fmt.Sprintf("Cloned %s", def.Label),
+					Description: "Cloned " + def.Label,
 					Content:     jsonContent(g.buildEntitySchema(typeName, def)),
 					Headers: map[string]Header{
 						"Location": {Description: "URL of cloned entity", Schema: StringSchema()},
@@ -348,7 +348,7 @@ func (g *Generator) addRelationTypePaths(spec *Spec, typeName string, def metamo
 
 		// Build description from metamodel + target constraint
 		pathDesc := relDef.Description
-		targetConstraint := fmt.Sprintf("Target must be one of: %s", strings.Join(relDef.To, ", "))
+		targetConstraint := "Target must be one of: " + strings.Join(relDef.To, ", ")
 		if pathDesc == "" {
 			pathDesc = targetConstraint
 		} else {
@@ -398,7 +398,7 @@ func (g *Generator) addRelationTypePaths(spec *Spec, typeName string, def metamo
 		}
 
 		// Delete specific relation
-		deleteRelPath := fmt.Sprintf("%s/{targetId}", relPath)
+		deleteRelPath := relPath + "/{targetId}"
 		spec.Paths[deleteRelPath] = PathItem{
 			Parameters: []Parameter{
 				{Name: "id", In: "path", Required: true, Description: "Source entity ID", Schema: StringSchema()},

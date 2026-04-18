@@ -1,6 +1,7 @@
 package metamodel
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,7 +23,7 @@ func ValidateRrule(s string) error {
 	}
 
 	if opt.Interval > 1 && opt.Dtstart.IsZero() {
-		return fmt.Errorf("INTERVAL > 1 requires DTSTART in the RRULE string")
+		return errors.New("INTERVAL > 1 requires DTSTART in the RRULE string")
 	}
 
 	return nil

@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -181,7 +182,7 @@ func luaRruleNext(ls *lua.LState) int {
 // and returns (years, months, days).
 func parseOffset(s string) (years, months, days int, err error) {
 	if len(s) < 2 {
-		return 0, 0, 0, fmt.Errorf("too short")
+		return 0, 0, 0, errors.New("too short")
 	}
 
 	unit := s[len(s)-1]

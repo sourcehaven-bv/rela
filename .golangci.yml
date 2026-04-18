@@ -12,6 +12,12 @@ output:
 linters:
   enable:
     - bodyclose
+    - containedctx
+    # contextcheck: surfaces 84 real ctx-threading gaps across dataentry/mcp/workspace.
+    # Enabling requires a ~15-file refactor that's out of scope for this lint
+    # expansion; tracked as a follow-up ticket.
+    # - contextcheck
+    - copyloopvar
     - depguard
     - dogsled
     - dupl
@@ -20,11 +26,14 @@ linters:
     - errorlint
     - exhaustive
     - fatcontext
+    - forcetypeassert
     - funlen
+    - gocheckcompilerdirectives
     - gocognit
     - gocritic
     - gocyclo
     - gosec
+    - intrange
     - lll
     - makezero
     - mirror
@@ -36,12 +45,14 @@ linters:
     - nilnil
     - noctx
     - nolintlint
+    - perfsprint
     - prealloc
     - predeclared
     - promlinter
     - reassign
     - revive
     - rowserrcheck
+    - sloglint
     - sqlclosecheck
     - staticcheck
     - testifylint
@@ -50,6 +61,7 @@ linters:
     - unconvert
     - unparam
     - usestdlibvars
+    - usetesting
     - wastedassign
     - whitespace
   settings:
@@ -231,6 +243,7 @@ linters:
       - linters:
           - dupl
           - errcheck
+          - forcetypeassert
           - funlen
           - gocognit
           - goconst
@@ -241,6 +254,9 @@ linters:
           - noctx
           - prealloc
         path: _test\.go
+      - linters:
+          - usetesting
+        path: internal/testutil/.*\.go
       - linters:
           - dupl
           - errcheck

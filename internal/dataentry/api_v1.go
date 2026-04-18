@@ -1373,7 +1373,7 @@ func (a *App) addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, p
 		totalPages = 1
 	}
 
-	baseURL := fmt.Sprintf("/api/v1/%s", plural)
+	baseURL := "/api/v1/" + plural
 	var links []string
 
 	// First
@@ -1420,7 +1420,7 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 	w.WriteHeader(status)
 
 	err := V1Error{
-		Type:     fmt.Sprintf("https://rela.dev/errors/%s", errType),
+		Type:     "https://rela.dev/errors/" + errType,
 		Title:    title,
 		Status:   status,
 		Detail:   detail,

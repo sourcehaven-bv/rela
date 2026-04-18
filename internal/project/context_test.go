@@ -133,7 +133,7 @@ func TestContextInitialize(t *testing.T) {
 
 	t.Run("handles error when creating cache directory", func(t *testing.T) {
 		// Create context with invalid root (file instead of directory)
-		tmpFile, err := os.CreateTemp("", "testfile")
+		tmpFile, err := os.CreateTemp(t.TempDir(), "testfile")
 		if err != nil {
 			t.Fatal(err)
 		}

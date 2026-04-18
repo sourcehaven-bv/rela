@@ -55,7 +55,7 @@ func (e *Engine) ExecuteAction(
 
 	svc, ok := ctx.GetWorkspace().(lua.Services)
 	if !ok {
-		return nil, fmt.Errorf("workspace does not provide lua.Services")
+		return nil, errors.New("workspace does not provide lua.Services")
 	}
 	if svc.Meta == nil {
 		svc.Meta = ctx.GetMeta()

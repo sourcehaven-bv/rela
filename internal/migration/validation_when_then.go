@@ -1,7 +1,7 @@
 package migration
 
 import (
-	"fmt"
+	"errors"
 
 	"gopkg.in/yaml.v3"
 )
@@ -53,7 +53,7 @@ func (m *ValidationWhenThenMigration) Detect(doc *yaml.Node) bool {
 func (m *ValidationWhenThenMigration) Apply(doc *yaml.Node) error {
 	root := GetDocumentRoot(doc)
 	if root == nil {
-		return fmt.Errorf("empty document")
+		return errors.New("empty document")
 	}
 
 	validations := GetMapValue(root, "validations")

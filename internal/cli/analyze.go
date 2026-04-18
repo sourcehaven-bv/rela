@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -594,7 +595,7 @@ Examples:
   rela analyze schema --cleanup --dry-run  # Preview cleanup changes`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if schemaThreshold < 0 {
-			return fmt.Errorf("--threshold must be non-negative")
+			return errors.New("--threshold must be non-negative")
 		}
 
 		// Load optional config files

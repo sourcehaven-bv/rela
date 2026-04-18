@@ -8,7 +8,7 @@ package config
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"path/filepath"
 	"strings"
 	"time"
@@ -87,26 +87,26 @@ func (l *FSLoader) Subscribe(_ context.Context, name string, onChange func()) (f
 // (e.g. config filenames passed via flags) and must stay inside root.
 func validateName(name string) error {
 	if name == "" {
-		return fmt.Errorf("config: name must not be empty")
+		return errors.New("config: name must not be empty")
 	}
 	for _, r := range name {
 		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("config: control character (including NUL) not allowed")
+			return errors.New("config: control character (including NUL) not allowed")
 		}
 	}
 	if strings.ContainsRune(name, '\\') {
-		return fmt.Errorf("config: backslash not allowed (use forward slash)")
+		return errors.New("config: backslash not allowed (use forward slash)")
 	}
 	if strings.HasPrefix(name, "/") {
-		return fmt.Errorf("config: name must be relative")
+		return errors.New("config: name must be relative")
 	}
 	for _, seg := range strings.Split(name, "/") {
 		if seg == "" || seg == "." || seg == ".." {
-			return fmt.Errorf("config: traversal or empty segment not allowed")
+			return errors.New("config: traversal or empty segment not allowed")
 		}
 	}
 	if len(name) >= 2 && name[1] == ':' {
-		return fmt.Errorf("config: drive letter not allowed")
+		return errors.New("config: drive letter not allowed")
 	}
 	return nil
 }

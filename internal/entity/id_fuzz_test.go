@@ -382,7 +382,7 @@ func FuzzGenerateShortIDCollision(f *testing.F) {
 
 		// Generate many IDs and verify no collisions
 		seen := make(map[string]struct{}, count)
-		for i := 0; i < count; i++ {
+		for i := range count {
 			// Convert seen map to slice
 			existing := make([]string, 0, len(seen))
 			for id := range seen {

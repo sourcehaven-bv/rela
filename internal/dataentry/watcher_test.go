@@ -191,7 +191,7 @@ func TestEventBrokerBroadcastSkipsSlowClient(t *testing.T) {
 	b.broadcast("fifth")
 
 	// Drain all 4 buffered messages
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		<-ch
 	}
 
@@ -218,7 +218,7 @@ func TestEventBrokerConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Concurrently subscribe, broadcast, and unsubscribe
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -490,7 +490,7 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 
-	for i := 0; i < readers; i++ {
+	for range readers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

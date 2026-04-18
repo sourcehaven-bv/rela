@@ -81,7 +81,7 @@ func ParseQuery(query string) *SearchQuery {
 				continue
 			}
 			// Convert to property filter
-			f, err := filter.Parse(fmt.Sprintf("status=%s", statusStr))
+			f, err := filter.Parse("status=" + statusStr)
 			if err != nil {
 				sq.ParseErrors = append(sq.ParseErrors, fmt.Sprintf("invalid status filter: %v", err))
 				continue

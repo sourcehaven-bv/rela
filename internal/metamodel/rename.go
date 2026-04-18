@@ -1,6 +1,7 @@
 package metamodel
 
 import (
+	"errors"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -28,13 +29,13 @@ func RenameEntityType(path, oldType, newType string, fs storage.FS) error {
 
 	root := getDocRoot(&doc)
 	if root == nil {
-		return fmt.Errorf("empty metamodel document")
+		return errors.New("empty metamodel document")
 	}
 
 	// Rename entity key under entities:
 	entities := getMapValue(root, "entities")
 	if entities == nil {
-		return fmt.Errorf("no entities section found in metamodel")
+		return errors.New("no entities section found in metamodel")
 	}
 
 	if !renameMapKey(entities, oldType, newType) {

@@ -67,7 +67,7 @@ type Runtime struct {
 	projectRoot   string
 	outputDir     string          // Directory where write_file can write (defaults to "output")
 	timeout       time.Duration   // Execution timeout (0 = no timeout)
-	parentCtx     context.Context // Parent context for cancellation propagation (nil = Background)
+	parentCtx     context.Context //nolint:containedctx // cached parent ctx for lua-callback child-ctx propagation
 	cancelTimeout context.CancelFunc
 	params        map[string]string // rela.params values (used by action scripts)
 	secrets       map[string]string // rela.secrets values (from .rela/secrets.yaml)
@@ -230,7 +230,7 @@ func (r *Runtime) RunFile(path string, args []string) error {
 	}
 	relaTable, ok := r.L.GetGlobal("rela").(*lua.LTable)
 	if !ok {
-		return fmt.Errorf("rela module not initialized")
+		return errors.New("rela module not initialized")
 	}
 	relaTable.RawSetString("args", argsTable)
 
@@ -1264,8 +1264,8 @@ func (r *Runtime) luaSortEntities(ls *lua.LState) int {
 
 // sortEntries sorts entity entries by their property value using bubble sort.
 func sortEntries(entries []sortableEntry, descending bool) {
-	for i := 0; i < len(entries)-1; i++ {
-		for j := 0; j < len(entries)-i-1; j++ {
+	for i := range len(entries) - 1 {
+		for j := range len(entries) - i - 1 {
 			if shouldSwapEntries(entries[j].prop, entries[j+1].prop, descending) {
 				entries[j], entries[j+1] = entries[j+1], entries[j]
 			}

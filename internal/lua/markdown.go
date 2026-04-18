@@ -640,7 +640,7 @@ func (r *Runtime) extractInlineText(sb *strings.Builder, n ast.Node, source []by
 func (r *Runtime) extractCodeBlockContent(fcb *ast.FencedCodeBlock, source []byte) string {
 	var sb strings.Builder
 	lines := fcb.Lines()
-	for i := 0; i < lines.Len(); i++ {
+	for i := range lines.Len() {
 		line := lines.At(i)
 		sb.Write(line.Value(source))
 	}
@@ -652,7 +652,7 @@ func (r *Runtime) extractLinesContent(n ast.Node, source []byte) string {
 	var sb strings.Builder
 	if ln, ok := n.(interface{ Lines() *text.Segments }); ok {
 		lines := ln.Lines()
-		for i := 0; i < lines.Len(); i++ {
+		for i := range lines.Len() {
 			line := lines.At(i)
 			sb.Write(line.Value(source))
 		}
@@ -1052,7 +1052,7 @@ func (r *Runtime) renderTableNode(sb *strings.Builder, node *lua.LTable) {
 	colWidths := make([]int, numCols)
 	colAligns := make([]string, numCols)
 
-	for i := 0; i < numCols; i++ {
+	for i := range numCols {
 		headerCells[i] = lua.LVAsString(header.RawGetInt(i + 1))
 		colWidths[i] = runewidth.StringWidth(headerCells[i])
 		colAligns[i] = alignNone
@@ -1071,7 +1071,7 @@ func (r *Runtime) renderTableNode(sb *strings.Builder, node *lua.LTable) {
 				continue
 			}
 			cells := make([]string, numCols)
-			for j := 0; j < numCols; j++ {
+			for j := range numCols {
 				cells[j] = lua.LVAsString(row.RawGetInt(j + 1))
 				if runewidth.StringWidth(cells[j]) > colWidths[j] {
 					colWidths[j] = runewidth.StringWidth(cells[j])
@@ -1090,7 +1090,7 @@ func (r *Runtime) renderTableNode(sb *strings.Builder, node *lua.LTable) {
 
 	// Header row
 	sb.WriteString("|")
-	for i := 0; i < numCols; i++ {
+	for i := range numCols {
 		sb.WriteString(" ")
 		sb.WriteString(padCell(headerCells[i], colWidths[i], colAligns[i]))
 		sb.WriteString(" |")
@@ -1099,7 +1099,7 @@ func (r *Runtime) renderTableNode(sb *strings.Builder, node *lua.LTable) {
 
 	// Separator row
 	sb.WriteString("|")
-	for i := 0; i < numCols; i++ {
+	for i := range numCols {
 		sb.WriteString(" ")
 		sb.WriteString(renderSeparator(colWidths[i], colAligns[i]))
 		sb.WriteString(" |")
@@ -1109,7 +1109,7 @@ func (r *Runtime) renderTableNode(sb *strings.Builder, node *lua.LTable) {
 	// Data rows
 	for _, cells := range dataRows {
 		sb.WriteString("|")
-		for j := 0; j < numCols; j++ {
+		for j := range numCols {
 			sb.WriteString(" ")
 			sb.WriteString(padCell(cells[j], colWidths[j], colAligns[j]))
 			sb.WriteString(" |")

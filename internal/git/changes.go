@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -51,7 +52,7 @@ type RelationChange struct {
 // AnalyzeChanges examines staged/unstaged changes and returns a ChangeSet.
 func (g *Ops) AnalyzeChanges() (*ChangeSet, error) {
 	if g.repo == nil {
-		return nil, fmt.Errorf("not a git repository")
+		return nil, errors.New("not a git repository")
 	}
 
 	wt, err := g.repo.Worktree()
@@ -197,9 +198,9 @@ func (cs *ChangeSet) GenerateCommitMessage() string {
 		case len(e.PropsChanged) > 0:
 			parts = append(parts, fmt.Sprintf("%s: update %s", e.ID, strings.Join(e.PropsChanged, ", ")))
 		case e.BodyChanged:
-			parts = append(parts, fmt.Sprintf("%s: update description", e.ID))
+			parts = append(parts, e.ID+": update description")
 		default:
-			parts = append(parts, fmt.Sprintf("%s: update", e.ID))
+			parts = append(parts, e.ID+": update")
 		}
 	} else if len(cs.Modified) > 1 {
 		byType := groupByType(cs.Modified)

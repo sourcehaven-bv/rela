@@ -259,7 +259,7 @@ func TestGetPrimaryPropertyDeterministic(t *testing.T) {
 
 	// Run multiple times to check consistency
 	results := make([]string, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		results[i] = def.GetPrimaryProperty()
 	}
 

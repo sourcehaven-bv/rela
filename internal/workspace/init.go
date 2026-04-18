@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -42,7 +43,7 @@ func InitializeWithFS(targetDir string, fs storage.FS) (*InitResult, error) {
 
 	// Check if already initialized
 	if _, err := fs.Stat(metamodelPath); err == nil {
-		return nil, fmt.Errorf("project already initialized (metamodel.yaml exists)")
+		return nil, errors.New("project already initialized (metamodel.yaml exists)")
 	}
 
 	// Create project context with all paths

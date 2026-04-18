@@ -59,7 +59,7 @@ func (e *Engine) execute(code string, ctx metamodel.ScriptContext, scriptPath st
 	// Type assert workspace to lua.Services
 	svc, ok := ctx.GetWorkspace().(lua.Services)
 	if !ok {
-		return fmt.Errorf("workspace does not provide lua.Services")
+		return errors.New("workspace does not provide lua.Services")
 	}
 	// Ensure Meta and ProjectRoot are populated if not already.
 	if svc.Meta == nil {

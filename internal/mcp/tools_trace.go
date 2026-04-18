@@ -40,7 +40,7 @@ func (s *Server) handleTrace(
 	maxDepth := request.GetInt("max_depth", 0)
 
 	if _, getErr := s.ws.Store().GetEntity(ctx, id); getErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("entity not found: %s", id)), nil
+		return mcp.NewToolResultError("entity not found: " + id), nil
 	}
 
 	result := traceFn(s.ws.Tracer(), id, maxDepth)
@@ -71,10 +71,10 @@ func (s *Server) handleFindPath(
 
 	st := s.ws.Store()
 	if _, fromErr := st.GetEntity(ctx, from); fromErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("source entity not found: %s", from)), nil
+		return mcp.NewToolResultError("source entity not found: " + from), nil
 	}
 	if _, toErr := st.GetEntity(ctx, to); toErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("target entity not found: %s", to)), nil
+		return mcp.NewToolResultError("target entity not found: " + to), nil
 	}
 
 	path := s.ws.Tracer().FindPath(ctx, from, to)

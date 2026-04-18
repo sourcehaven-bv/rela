@@ -161,7 +161,7 @@ func (t *TerminalTransport) presentForm(screen lua.Screen) (lua.Event, error) {
 	err := form.Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
-			return lua.Event{}, fmt.Errorf("user interrupted")
+			return lua.Event{}, errors.New("user interrupted")
 		}
 		return lua.Event{}, err
 	}
@@ -357,11 +357,11 @@ func makeNumberValidator(f lua.Field) func(string) error {
 
 		n, err := strconv.ParseFloat(s, 64)
 		if err != nil {
-			return fmt.Errorf("must be a number")
+			return errors.New("must be a number")
 		}
 
 		if math.IsNaN(n) || math.IsInf(n, 0) {
-			return fmt.Errorf("invalid number")
+			return errors.New("invalid number")
 		}
 
 		if f.Min != nil && n < *f.Min {
@@ -397,7 +397,7 @@ func makeDateValidator(f lua.Field) func(string) error {
 
 		date, err := time.Parse("2006-01-02", s)
 		if err != nil {
-			return fmt.Errorf("must be YYYY-MM-DD format")
+			return errors.New("must be YYYY-MM-DD format")
 		}
 
 		if f.MinDate != "" {

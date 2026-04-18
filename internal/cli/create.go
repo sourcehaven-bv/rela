@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -126,7 +127,7 @@ Examples:
 // Returns an error if both flags are specified or if file reading fails.
 func getBodyContent(cmd *cobra.Command) (string, error) {
 	if createBody != "" && createBodyFile != "" {
-		return "", fmt.Errorf("cannot specify both --body and --body-file")
+		return "", errors.New("cannot specify both --body and --body-file")
 	}
 
 	if createBody != "" {

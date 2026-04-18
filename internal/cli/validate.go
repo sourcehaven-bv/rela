@@ -1,6 +1,7 @@
 package cli
 
 import (
+	stderrors "errors"
 	"fmt"
 	"os"
 	"sort"
@@ -407,7 +408,7 @@ func parseValidationFilter(filterStr string, meta workspace.MetamodelAccessor) (
 		// Entity type filter
 		entityType := strings.TrimPrefix(filterStr, "@")
 		if entityType == "" {
-			return workspace.ValidationFilter{}, fmt.Errorf("empty entity type in validation filter")
+			return workspace.ValidationFilter{}, stderrors.New("empty entity type in validation filter")
 		}
 		// Validate entity type exists
 		if !meta.HasEntityType(entityType) {

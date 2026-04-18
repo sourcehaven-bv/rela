@@ -167,7 +167,6 @@ func FuzzConcurrentOps(f *testing.F, factory FuzzFactory) {
 		wg.Add(len(ops))
 
 		for _, op := range ops {
-			op := op
 			go func() {
 				defer wg.Done()
 

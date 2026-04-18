@@ -491,7 +491,7 @@ func (w *Workspace) Store() store.Store { return w.store }
 // backs that adapter.
 func (w *Workspace) search(words, phrases []string, limit int) ([]*entity.Entity, []float64, error) {
 	if w.searchIdx == nil {
-		return nil, nil, fmt.Errorf("search index not available")
+		return nil, nil, errors.New("search index not available")
 	}
 	results, err := w.searchIdx.Search(words, phrases, limit)
 	if err != nil {
@@ -538,17 +538,17 @@ func (w *Workspace) State() state.KV {
 type nopConfig struct{}
 
 func (nopConfig) Load(context.Context, string) ([]byte, error) {
-	return nil, fmt.Errorf("workspace: no repository configured")
+	return nil, errors.New("workspace: no repository configured")
 }
 
 type nopState struct{}
 
 func (nopState) Get(context.Context, string) ([]byte, error) {
-	return nil, fmt.Errorf("workspace: no repository configured")
+	return nil, errors.New("workspace: no repository configured")
 }
 
 func (nopState) Put(context.Context, string, []byte) error {
-	return fmt.Errorf("workspace: no repository configured")
+	return errors.New("workspace: no repository configured")
 }
 
 // FindOrphanedTempFiles returns paths of leftover .new temp files in
@@ -841,7 +841,7 @@ type DeleteResult struct {
 
 // ErrHasRelations is returned by DeleteEntity when cascade is false but
 // the entity has relations.
-var ErrHasRelations = fmt.Errorf("entity has relations; set cascade=true to delete")
+var ErrHasRelations = errors.New("entity has relations; set cascade=true to delete")
 
 // DeleteEntity removes an entity and optionally cascades to its relations.
 func (w *Workspace) deleteEntity(_, id string, cascade bool) (*DeleteResult, error) {
@@ -1135,7 +1135,7 @@ func (w *Workspace) applyRelationCreations(
 		targetEntity, err := w.Store().GetEntity(context.Background(), rel.To)
 		if err != nil {
 			effects.Errors = append(effects.Errors,
-				fmt.Sprintf("automation relation target not found: %s", rel.To))
+				"automation relation target not found: "+rel.To)
 			continue
 		}
 		if err := meta.ValidateRelation(rel.Type, triggerEntity.Type, targetEntity.Type); err != nil {
@@ -1190,7 +1190,7 @@ func (w *Workspace) executeLuaActions(
 
 		if err != nil {
 			effects.Errors = append(effects.Errors,
-				fmt.Sprintf("script execution error: %s", err.Error()))
+				"script execution error: "+err.Error())
 		}
 	}
 }

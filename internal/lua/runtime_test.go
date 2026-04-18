@@ -206,7 +206,7 @@ func (m *mockManager) DeleteEntity(
 func (m *mockManager) RenameEntity(
 	_ context.Context, _, _ string, _ entitymanager.RenameOptions,
 ) (*entitymanager.RenameResult, error) {
-	return nil, fmt.Errorf("rename not supported by mockManager")
+	return nil, errors.New("rename not supported by mockManager")
 }
 
 func (m *mockManager) CreateRelation(

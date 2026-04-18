@@ -108,7 +108,7 @@ func compareNumChunks(a, b string, ia, ib *int, la, lb int) int {
 	}
 
 	// Same length — compare digit by digit
-	for k := 0; k < sigLenA; k++ {
+	for k := range sigLenA {
 		if a[sigStartA+k] != b[sigStartB+k] {
 			if a[sigStartA+k] < b[sigStartB+k] {
 				return -1

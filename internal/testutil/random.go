@@ -18,7 +18,7 @@ var (
 
 // RandomString generates a random string like "word-a3f8".
 func RandomString() string {
-	return fmt.Sprintf("word-%s", randomSuffix())
+	return "word-" + randomSuffix()
 }
 
 // RandomID generates a random ID with the given prefix like "PREFIX-a3f8".
