@@ -140,10 +140,12 @@ func TestUnwrapKey_CrossKey(t *testing.T) {
 	if err == nil {
 		t.Fatalf("cross-key must fail; got %x", got)
 	}
-	// Could be ErrDecrypt (GCM) or ErrBadBlob (if an inner step
-	// detects structural mismatch first). Both are acceptable sentinels.
-	if !errors.Is(err, ErrDecrypt) && !errors.Is(err, ErrBadBlob) {
-		t.Fatalf("err = %v, want ErrDecrypt or ErrBadBlob", err)
+	// A structurally-valid blob wrapped for A must fail AEAD
+	// authentication when unwrapped with B's key → ErrDecrypt.
+	// ErrBadBlob here would mean an inner layer rejected well-formed
+	// bytes, which shouldn't happen.
+	if !errors.Is(err, ErrDecrypt) {
+		t.Fatalf("err = %v, want ErrDecrypt", err)
 	}
 }
 
@@ -195,6 +197,27 @@ func TestUnwrapKey_TamperMLKEMCt(t *testing.T) {
 	_, err := UnwrapKey(wrapped, k)
 	if err == nil {
 		t.Fatal("expected error on tampered ml-kem ciphertext")
+	}
+}
+
+func TestWrap_SameRecipient_DistinctBlobs(t *testing.T) {
+	// Wrapping the same data key for the same recipient twice must
+	// produce different blobs — the ephemeral X25519 key and ML-KEM
+	// encapsulation must contribute fresh entropy. If these blobs
+	// were ever equal, an attacker could equality-compare wrapped
+	// keys across files.
+	k := mustGenerate(t)
+	dk, _ := NewDataKey()
+	a, err := WrapKey(dk, k.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := WrapKey(dk, k.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(a, b) {
+		t.Fatal("two wraps of the same key for the same recipient produced identical blobs — entropy broken")
 	}
 }
 

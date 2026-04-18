@@ -29,6 +29,9 @@ const hkdfInfoV1 = "rela-encryption v1"
 //   - https://pkg.go.dev/crypto/cipher#NewGCM           (NonceSize = 12)
 //   - https://pkg.go.dev/crypto/cipher#AEAD.Overhead    (tag = 16)
 const (
+	// wrapMagic is "RLAE" — an anagram of "RELA" chosen to avoid
+	// collision with plain rela-project files that might start with
+	// the literal bytes "RELA".
 	wrapMagic    = "RLAE"
 	wrapMagicLen = 4
 	wrapVersion  = 0x01
@@ -80,7 +83,13 @@ func wrapKey(r io.Reader, dataKey []byte, recipient *PublicKey) ([]byte, error) 
 
 	kek := deriveKEK(xShared, mShared)
 
-	nonce := make([]byte, wrapNonceSize) // all-zero: KEK is single-use per wrap
+	// All-zero nonce is safe HERE because the KEK is derived from
+	// fresh per-call ephemeral entropy (x25519 seed + ml-kem
+	// encapsulation), making the (KEK, nonce) pair unique without
+	// needing per-call nonce randomness. DO NOT reuse this KEK
+	// across Seal calls — that would be a classic GCM nonce-reuse
+	// break, catastrophic for both confidentiality and integrity.
+	nonce := make([]byte, wrapNonceSize)
 	wrapped := aesGCMSeal(kek, nonce, dataKey)
 
 	out := make([]byte, 0, wrappedBlobSize)

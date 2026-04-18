@@ -12,6 +12,12 @@ var (
 	ErrDecrypt      = errors.New("encryption: decryption failed")
 )
 
+// Wrapping convention: every constructor wraps its sentinel with %w so
+// callers can use errors.Is. Causes from stdlib or lower layers are
+// stringified with %s rather than wrapped with %w — the sentinel is
+// the public contract; the cause is diagnostic context that we don't
+// promise to keep stable and don't want to expose via errors.As.
+
 func errBadPEM(filename string, cause error) error {
 	if filename == "" {
 		return fmt.Errorf("%w: %s", ErrBadPEM, cause.Error())

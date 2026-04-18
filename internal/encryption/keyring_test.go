@@ -196,9 +196,10 @@ func TestKeyring_Unwrap_NoPrivateKey(t *testing.T) {
 	}
 }
 
-func TestLoadKeyring_ReadDirPermissionError(t *testing.T) {
+func TestLoadKeyring_NonDirArg(t *testing.T) {
 	// Pass a path that exists but is a file, not a directory, to
-	// trigger a non-ErrNotExist read error.
+	// trigger a non-ErrNotExist read error (EINVAL / "not a
+	// directory").
 	dir := t.TempDir()
 	file := filepath.Join(dir, "not-a-dir")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {

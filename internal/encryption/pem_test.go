@@ -110,28 +110,26 @@ func TestParsePublicKeyPEM_WrongLength(t *testing.T) {
 	}
 }
 
-func TestParsePrivateKeyPEM_BadMLKEMSeed(t *testing.T) {
-	// Correct length + valid x25519 scalar, but mlkem seed is all-zero
-	// which may or may not error — the real test is that we never
-	// return a Keypair for a truncated/garbage second half below.
-	// Here we swap the mlkem bytes after marshaling to ensure parse
-	// still succeeds or errors cleanly. (All-zeros is a valid seed.)
-	k := mustGenerate(t)
-	out, err := MarshalPrivateKeyPEM(k)
-	if err != nil {
-		t.Fatal(err)
+func TestParsePrivateKeyPEM_BoundaryLengths(t *testing.T) {
+	// Exact-boundary truncation: payload one byte short and one byte
+	// over must both fail with ErrBadPEM. privatePayloadSize itself is
+	// exercised by the round-trip test.
+	for _, n := range []int{privatePayloadSize - 1, privatePayloadSize + 1} {
+		block := &pem.Block{Type: pemTypePrivateV1, Bytes: make([]byte, n)}
+		_, err := ParsePrivateKeyPEM(pem.EncodeToMemory(block))
+		if !errors.Is(err, ErrBadPEM) {
+			t.Fatalf("len=%d: err = %v, want ErrBadPEM", n, err)
+		}
 	}
-	// Mutate the first byte of the x25519 scalar — ecdh.NewPrivateKey
-	// on X25519 only checks length, so this still parses. We use this
-	// test to exercise the success path for a mutated-but-valid scalar.
-	block, _ := pem.Decode(out)
-	if block == nil {
-		t.Fatal("re-decode failed")
-	}
-	block.Bytes[0] ^= 0xFF
-	mutated := pem.EncodeToMemory(block)
-	if _, err := ParsePrivateKeyPEM(mutated); err != nil {
-		t.Fatalf("mutated scalar should still parse: %v", err)
+}
+
+func TestParsePublicKeyPEM_BoundaryLengths(t *testing.T) {
+	for _, n := range []int{publicPayloadSize - 1, publicPayloadSize + 1} {
+		block := &pem.Block{Type: pemTypePublicV1, Bytes: make([]byte, n)}
+		_, err := ParsePublicKeyPEM(pem.EncodeToMemory(block))
+		if !errors.Is(err, ErrBadPEM) {
+			t.Fatalf("len=%d: err = %v, want ErrBadPEM", n, err)
+		}
 	}
 }
 
@@ -144,15 +142,19 @@ func TestParsePublicKeyPEM_InvalidMLKEM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Baseline: the unmutated blob must parse. If this ever fails, the
+	// mutation below is no longer measuring "valid → invalid" but
+	// "invalid → invalid" and the negative assertion is meaningless.
+	if _, perr := ParsePublicKeyPEM(valid); perr != nil {
+		t.Fatalf("baseline parse failed: %v", perr)
+	}
 	block, _ := pem.Decode(valid)
 	if block == nil {
 		t.Fatal("decode failed")
 	}
-	// ML-KEM-768 encapsulation keys are rejected when the last 32
-	// bytes (the rho seed) are preceded by bytes that don't fit
-	// FIPS 203 encoding. Set the last byte to an out-of-range value;
-	// ml-kem validates that encap key bytes decode into valid
-	// polynomial coefficients.
+	// ML-KEM-768 encapsulation keys are rejected when the bytes don't
+	// decode into valid polynomial coefficients. Flooding the encap
+	// portion with 0xFF is reliably out of range for FIPS 203 encoding.
 	for i := x25519KeySize; i < len(block.Bytes); i++ {
 		block.Bytes[i] = 0xFF
 	}

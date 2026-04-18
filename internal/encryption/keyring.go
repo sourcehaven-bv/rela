@@ -26,37 +26,21 @@ type Keyring struct {
 // as recipient public keys; the filename without the suffix is the
 // identity. Other entries are skipped.
 //
+// Behavior on errors is **fail-fast**: the first unreadable or
+// unparseable ".pub" file aborts the load. The intent is that a
+// broken recipient file in a shared repo should surface loudly rather
+// than silently drop a team member from the recipient set. Duplicate
+// identities (e.g., a case-insensitive filesystem yielding both
+// "Alice.pub" and "alice.pub") are also an error.
+//
 // If privateKeyPath is non-empty but the file is missing, an error is
 // returned — an explicit path should resolve. To indicate "no private
 // key," pass the empty string.
 func LoadKeyring(keysDir, privateKeyPath string) (*Keyring, error) {
 	kr := &Keyring{recipients: make(map[string]*PublicKey)}
 
-	if keysDir != "" {
-		entries, err := os.ReadDir(keysDir)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("encryption: read keys dir: %w", err)
-		}
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			name := e.Name()
-			if !strings.HasSuffix(name, pubSuffix) {
-				continue
-			}
-			identity := strings.TrimSuffix(name, pubSuffix)
-			path := filepath.Join(keysDir, name)
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return nil, fmt.Errorf("encryption: read %s: %w", name, err)
-			}
-			pub, err := ParsePublicKeyPEM(data)
-			if err != nil {
-				return nil, errBadPEM(name, err)
-			}
-			kr.recipients[identity] = pub
-		}
+	if err := loadRecipients(kr, keysDir); err != nil {
+		return nil, err
 	}
 
 	if privateKeyPath != "" {
@@ -72,6 +56,49 @@ func LoadKeyring(keysDir, privateKeyPath string) (*Keyring, error) {
 	}
 
 	return kr, nil
+}
+
+// loadRecipients populates kr.recipients from keysDir. Empty keysDir
+// or a missing directory is treated as "no recipients." Broken files
+// and duplicate identities fail the load.
+func loadRecipients(kr *Keyring, keysDir string) error {
+	if keysDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(keysDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("encryption: read keys dir: %w", err)
+	}
+	for _, e := range entries {
+		if err := loadRecipient(kr, keysDir, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadRecipient(kr *Keyring, keysDir string, e os.DirEntry) error {
+	if e.IsDir() {
+		return nil
+	}
+	name := e.Name()
+	if !strings.HasSuffix(name, pubSuffix) {
+		return nil
+	}
+	identity := strings.TrimSuffix(name, pubSuffix)
+	if _, dup := kr.recipients[identity]; dup {
+		return fmt.Errorf("encryption: duplicate recipient identity %q", identity)
+	}
+	data, err := os.ReadFile(filepath.Join(keysDir, name))
+	if err != nil {
+		return fmt.Errorf("encryption: read %s: %w", name, err)
+	}
+	pub, err := ParsePublicKeyPEM(data)
+	if err != nil {
+		return errBadPEM(name, err)
+	}
+	kr.recipients[identity] = pub
+	return nil
 }
 
 // Recipient looks up a recipient public key by identity.

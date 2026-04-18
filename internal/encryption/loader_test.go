@@ -75,6 +75,35 @@ func TestResolvePrivateKeyPath_UserDefault(t *testing.T) {
 	}
 }
 
+func TestResolvePrivateKeyPath_ProjectLocalBeatsHome(t *testing.T) {
+	t.Setenv(envKeyFile, "")
+	tmp := t.TempDir()
+	relaDir := filepath.Join(tmp, projectRelaDir)
+	if err := os.MkdirAll(relaDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectKey := filepath.Join(relaDir, projectKeyFile)
+	if err := os.WriteFile(projectKey, []byte("project"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Also populate a home-default key; the project-local one must win.
+	home := t.TempDir()
+	homeKey := filepath.Join(home, ".config", userConfigSubdir, projectKeyFile)
+	if err := os.MkdirAll(filepath.Dir(homeKey), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(homeKey, []byte("home"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolvePrivateKeyPath(relaDir, staticHome(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != projectKey {
+		t.Fatalf("got %q, want project-local %q (not home %q)", got, projectKey, homeKey)
+	}
+}
+
 func TestResolvePrivateKeyPath_AllMissing(t *testing.T) {
 	t.Setenv(envKeyFile, "")
 	got, err := resolvePrivateKeyPath(t.TempDir(), staticHome(t.TempDir()))
