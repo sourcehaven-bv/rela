@@ -35,9 +35,10 @@ override:
 # Exclude packages that are not meaningful to coverage-check
 exclude:
   paths:
-    - ^cmd/rela              # main entry point
-    - ^internal/testutil     # test helpers
-    - ^frontend/node_modules # Go files in npm dependencies
+    - ^cmd/rela                # main entry point
+    - ^internal/testutil       # test helpers
+    - ^internal/store/storetest # shared conformance test kit (exercised via backends)
+    - ^frontend/node_modules   # Go files in npm dependencies
 
 # Require coverage-ignore annotations to have explanatory comments
 force-annotation-comment: true
