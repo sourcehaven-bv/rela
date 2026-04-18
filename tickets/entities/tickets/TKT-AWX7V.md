@@ -5,7 +5,7 @@ title: Upgrade Go toolchain and CI tool versions
 kind: chore
 priority: medium
 effort: s
-status: in-progress
+status: done
 ---
 
 ## Description
