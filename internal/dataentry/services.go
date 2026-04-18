@@ -12,7 +12,7 @@ import (
 
 // Services bundles the backend services the data-entry handlers read
 // from. Each consuming package keeps its own Services type — the coupling
-// reduction is worth the field duplication with lua.Services and friends.
+// reduction is worth the field duplication with lua.WriteDeps and friends.
 //
 // The bundle carries only what HTTP handlers actually need: read-side
 // access to the store and tracer, free-text search, and the metamodel.

@@ -62,7 +62,7 @@ func TestCheck(t *testing.T) {
 		},
 	}
 
-	svc := New(meta, lua.Services{}, "")
+	svc := New(meta, lua.ReadDeps{})
 
 	t.Run("finds violations", func(t *testing.T) {
 		violations := svc.Check(entities, nil)
@@ -122,7 +122,7 @@ func TestCheckWarnings(t *testing.T) {
 		},
 	}
 
-	svc := New(meta, lua.Services{}, "")
+	svc := New(meta, lua.ReadDeps{})
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 1 {
@@ -158,7 +158,7 @@ func TestRules(t *testing.T) {
 		},
 	}
 
-	svc := New(meta, lua.Services{}, "")
+	svc := New(meta, lua.ReadDeps{})
 	rules := svc.Rules()
 
 	if len(rules) != 2 {
@@ -169,7 +169,7 @@ func TestRules(t *testing.T) {
 func TestNoRules(t *testing.T) {
 	meta := &metamodel.Metamodel{}
 
-	svc := New(meta, lua.Services{}, "")
+	svc := New(meta, lua.ReadDeps{})
 	violations := svc.Check([]*entity.Entity{{ID: "X", Type: "x"}}, nil)
 
 	if len(violations) != 0 {
@@ -200,7 +200,7 @@ func TestAllEntityTypes(t *testing.T) {
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}}, // missing status
 	}
 
-	svc := New(meta, lua.Services{}, "")
+	svc := New(meta, lua.ReadDeps{})
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 1 {

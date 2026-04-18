@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -37,6 +38,8 @@ func (m *mockWorkspace) Paths() *project.Context { return m.paths }
 func (m *mockWorkspace) Config() config.Loader { return &mockConfig{m: m} }
 
 func (m *mockWorkspace) State() state.KV { return &mockState{m: m} }
+
+func (m *mockWorkspace) LuaWriteDeps() lua.WriteDeps { return lua.WriteDeps{} }
 
 type mockConfig struct{ m *mockWorkspace }
 
@@ -108,7 +111,7 @@ func newTestScheduler(
 		config: cfg,
 		ws:     ws,
 		metaFn: func() *metamodel.Metamodel { return ws.meta },
-		wsRaw:  ws,
+
 		state:  newState(),
 		logger: discardLogger(),
 		now:    func() time.Time { return now },
@@ -298,7 +301,7 @@ func TestScheduler_Run_emptyConfig(t *testing.T) {
 		config: &Config{Tasks: nil},
 		ws:     ws,
 		metaFn: func() *metamodel.Metamodel { return ws.meta },
-		wsRaw:  ws,
+
 		logger: discardLogger(),
 		now:    time.Now,
 	}
@@ -369,7 +372,7 @@ func TestStartBackground_NoConfig(t *testing.T) {
 	defer cancel()
 
 	// Should not panic, should not log errors.
-	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+	StartBackground(ctx, ws, metaFn, discardLogger())
 }
 
 func TestStartBackground_InvalidConfig(t *testing.T) {
@@ -381,7 +384,7 @@ func TestStartBackground_InvalidConfig(t *testing.T) {
 	defer cancel()
 
 	// Should log error and return without starting a goroutine.
-	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+	StartBackground(ctx, ws, metaFn, discardLogger())
 }
 
 func TestStartBackground_EmptyTasks(t *testing.T) {
@@ -392,7 +395,7 @@ func TestStartBackground_EmptyTasks(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+	StartBackground(ctx, ws, metaFn, discardLogger())
 }
 
 func TestNew(t *testing.T) {
@@ -400,7 +403,7 @@ func TestNew(t *testing.T) {
 	ws := newMockWorkspace(t)
 	metaFn := func() *metamodel.Metamodel { return ws.meta }
 
-	s := New(cfg, nil, ws, ws, metaFn, discardLogger())
+	s := New(cfg, nil, ws, metaFn, discardLogger())
 	if s == nil {
 		t.Fatal("New returned nil")
 	}
@@ -415,26 +418,3 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestSchedulerScriptContext(t *testing.T) {
-	meta := &metamodel.Metamodel{}
-	c := &schedulerScriptContext{
-		ws:          "workspace",
-		meta:        meta,
-		projectRoot: "/project",
-	}
-	if c.GetWorkspace() != "workspace" {
-		t.Error("GetWorkspace")
-	}
-	if c.GetMeta() != meta {
-		t.Error("GetMeta")
-	}
-	if c.GetProjectRoot() != "/project" {
-		t.Error("GetProjectRoot")
-	}
-	if c.GetEntity() != nil {
-		t.Error("GetEntity should be nil")
-	}
-	if c.GetOldEntity() != nil {
-		t.Error("GetOldEntity should be nil")
-	}
-}

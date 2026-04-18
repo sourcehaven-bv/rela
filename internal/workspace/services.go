@@ -15,16 +15,16 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-// LuaServices builds a lua.Services struct wired to this workspace's
-// backend services. Consumers use it to run Lua scripts via lua.New.
-func (w *Workspace) LuaServices() lua.Services {
+// LuaReadDeps materialises the read-only capability bundle required by the
+// lua runtime from this workspace's backend services. Consumers pass the
+// result to lua.NewReader or script.NewReaderRuntime.
+func (w *Workspace) LuaReadDeps() lua.ReadDeps {
 	var root string
 	if w.paths != nil {
 		root = w.paths.Root
 	}
-	return lua.Services{
+	return lua.ReadDeps{
 		Store:       w.Store(),
-		Manager:     w.EntityManager(),
 		Tracer:      w.Tracer(),
 		Searcher:    w.Searcher(),
 		Meta:        w.Meta(),
@@ -32,9 +32,14 @@ func (w *Workspace) LuaServices() lua.Services {
 	}
 }
 
-// luaServices is the internal alias for LuaServices, used by scriptContextImpl.
-func (w *Workspace) luaServices() lua.Services {
-	return w.LuaServices()
+// LuaWriteDeps materialises the read-write capability bundle required by the
+// lua runtime from this workspace's backend services. Consumers pass the
+// result to lua.NewWriter or script.NewWriterRuntime.
+func (w *Workspace) LuaWriteDeps() lua.WriteDeps {
+	return lua.WriteDeps{
+		ReadDeps:      w.LuaReadDeps(),
+		EntityManager: w.EntityManager(),
+	}
 }
 
 // Tracer returns the store-backed graph traversal service.
@@ -137,13 +142,9 @@ func (w *Workspace) MetaLoader() metamodel.Loader {
 }
 
 // Validator returns a Validator service backed by the workspace's store and
-// metamodel. The service uses workspace as the Lua execution context.
+// metamodel, using read-only lua deps to execute Lua validation rules.
 func (w *Workspace) Validator() validator.Validator {
-	var root string
-	if w.paths != nil {
-		root = w.paths.Root
-	}
-	return validator.New(w.Store(), w.Meta(), w.luaServices(), root)
+	return validator.New(w.Store(), w.Meta(), w.LuaReadDeps())
 }
 
 // Templater returns the entity-and-relation template service.

@@ -33,7 +33,7 @@ func (m *mockTransport) Present(screen Screen) (Event, error) {
 func newTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	var buf bytes.Buffer
-	r := New(Services{ProjectRoot: "/tmp"}, &buf)
+	r := NewWriter(WriteDeps{ReadDeps: ReadDeps{ProjectRoot: "/tmp"}}, &buf)
 	return r
 }
 

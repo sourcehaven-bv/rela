@@ -121,9 +121,9 @@ func TestValidateRedirect(t *testing.T) {
 
 func TestExecuteAction_PathTraversal(t *testing.T) {
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: "/project"}
+	deps := testWriteDeps("/project")
 
-	_, err := engine.ExecuteAction("../etc/passwd", ctx, nil, time.Second)
+	_, err := engine.ExecuteAction("../etc/passwd", deps, "", nil, nil, time.Second)
 	if err == nil {
 		t.Fatal("expected error for path traversal")
 	}
@@ -131,9 +131,9 @@ func TestExecuteAction_PathTraversal(t *testing.T) {
 
 func TestExecuteAction_WrongExtension(t *testing.T) {
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: "/project"}
+	deps := testWriteDeps("/project")
 
-	_, err := engine.ExecuteAction("script.txt", ctx, nil, time.Second)
+	_, err := engine.ExecuteAction("script.txt", deps, "", nil, nil, time.Second)
 	if err == nil {
 		t.Fatal("expected error for wrong extension")
 	}
@@ -160,9 +160,9 @@ func TestExecuteAction_RealFile(t *testing.T) {
 	}
 
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: tmpDir}
+	deps := testWriteDeps(tmpDir)
 
-	resp, err := engine.ExecuteAction("test.lua", ctx, nil, 5*time.Second)
+	resp, err := engine.ExecuteAction("test.lua", deps, "", nil, nil, 5*time.Second)
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
@@ -185,10 +185,10 @@ func TestExecuteAction_WithParams(t *testing.T) {
 	}
 
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: tmpDir}
+	deps := testWriteDeps(tmpDir)
 	params := map[string]string{"greeting": "hello"}
 
-	resp, err := engine.ExecuteAction("params.lua", ctx, params, 5*time.Second)
+	resp, err := engine.ExecuteAction("params.lua", deps, "", nil, params, 5*time.Second)
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
@@ -211,9 +211,9 @@ func TestExecuteAction_ScriptError(t *testing.T) {
 	}
 
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: tmpDir}
+	deps := testWriteDeps(tmpDir)
 
-	_, err := engine.ExecuteAction("boom.lua", ctx, nil, 5*time.Second)
+	_, err := engine.ExecuteAction("boom.lua", deps, "", nil, nil, 5*time.Second)
 	if err == nil {
 		t.Fatal("expected error from script")
 	}

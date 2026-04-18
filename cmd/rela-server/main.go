@@ -113,7 +113,7 @@ func main() {
 	// Start background scheduler if schedules.yaml exists.
 	// The goroutine is cleaned up on process exit.
 	metaFn := func() *metamodel.Metamodel { return ws.Meta() }
-	scheduler.StartBackground(context.Background(), ws, ws, metaFn, slog.Default())
+	scheduler.StartBackground(context.Background(), ws, metaFn, slog.Default())
 
 	if err := startPprofIfRequested(*debugPprof); err != nil {
 		slog.Error("pprof startup failed", "error", err)

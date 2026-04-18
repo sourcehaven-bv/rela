@@ -64,9 +64,9 @@ func newTestValidator(t *testing.T) *validator.GenericValidator {
 
 	// Minimal Lua services; none of our validation rules use Lua so the
 	// individual service fields are not exercised here.
-	svc := lua.Services{Meta: meta}
+	deps := lua.ReadDeps{Meta: meta}
 
-	return validator.New(s, meta, svc, "/tmp")
+	return validator.New(s, meta, deps)
 }
 
 func TestGenericValidator_CheckRule(t *testing.T) {

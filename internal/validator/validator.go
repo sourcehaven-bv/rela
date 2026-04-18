@@ -47,13 +47,13 @@ type GenericValidator struct {
 var _ Validator = (*GenericValidator)(nil)
 
 // New creates a Validator backed by an EntityReader and a metamodel.
-// svc provides Lua access for validation rules that use Lua scripts.
-// projectRoot is used to resolve lua_file paths from validations/.
-func New(r store.EntityReader, meta *metamodel.Metamodel, svc lua.Services, projectRoot string) *GenericValidator {
+// deps provides read-only Lua access for validation rules that use Lua scripts.
+// deps.ProjectRoot is used to resolve lua_file paths from validations/.
+func New(r store.EntityReader, meta *metamodel.Metamodel, deps lua.ReadDeps) *GenericValidator {
 	return &GenericValidator{
 		r:    r,
 		meta: meta,
-		svc:  validation.New(meta, svc, projectRoot),
+		svc:  validation.New(meta, deps),
 	}
 }
 

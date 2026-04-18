@@ -32,7 +32,7 @@ type Services interface {
 	EntityManager() entitymanager.EntityManager
 	Config() config.Loader
 	Paths() *project.Context
-	LuaServices() lua.Services
+	LuaWriteDeps() lua.WriteDeps
 	PauseWatching()
 	ResumeWatching()
 	StartWatching(workspace.WatchOptions) error

@@ -314,13 +314,10 @@ func (w *Workspace) countIncomingByType(entityID, relName string) int {
 // ValidationViolation is re-exported from the validation package.
 type ValidationViolation = validation.Violation
 
-// newValidationService creates a validation service with workspace and project root configured.
+// newValidationService creates a validation service wired to the workspace's
+// read-only lua deps. ProjectRoot comes from the deps bundle.
 func (w *Workspace) newValidationService() *validation.Service {
-	var root string
-	if w.paths != nil {
-		root = w.paths.Root
-	}
-	return validation.New(w.Meta(), w.luaServices(), root)
+	return validation.New(w.Meta(), w.LuaReadDeps())
 }
 
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.

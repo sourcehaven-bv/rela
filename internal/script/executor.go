@@ -1,11 +1,10 @@
-// Package script orchestrates script execution for automations.
-// It combines lua.Runtime with workspace operations, handling:
-// path validation, secure file loading, and entity context injection.
+// Package script orchestrates script execution for automations and user-
+// initiated script runs. It combines lua.Runtime with secure file loading
+// and entity context injection.
 //
-// The Engine is stateless - all context (workspace, metamodel, paths, entities)
-// is passed at execution time. This avoids circular dependencies: workspace can
-// be constructed with an Engine, and the Engine receives workspace access only
-// when executing scripts.
+// The Engine is stateless — all context (deps, cacheDir, entities) is passed
+// at execution time. This avoids circular dependencies: workspace holds an
+// Engine, and the Engine receives the deps it needs only when invoked.
 package script
 
 import (
@@ -17,17 +16,16 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
 // scriptsDir is the directory where script files must be located.
 const scriptsDir = "scripts"
 
 // Engine runs scripts with provided context. It is stateless - all dependencies
-// are passed at execution time via Context. This centralizes script execution
-// concerns: path validation, secure file loading, sandbox enforcement.
+// are passed at execution time. This centralizes script execution concerns:
+// path validation, secure file loading, sandbox enforcement.
 //
 // Timeout is handled by lua.Runtime (default 30s, configurable via lua.WithTimeout).
 type Engine struct{}
@@ -37,54 +35,47 @@ func NewEngine() *Engine {
 	return &Engine{}
 }
 
-// ExecuteCode runs inline script code with the given context.
-func (e *Engine) ExecuteCode(code string, ctx metamodel.ScriptContext) error {
-	return e.execute(code, ctx, "")
+// ExecuteCode runs inline script code with entity context.
+//
+// cacheDir is the project's .rela directory; it is used by the runtime
+// wiring to locate AI config and per-script secrets (scriptPath is empty
+// for inline code, so no secrets are loaded).
+//
+// newEntity/oldEntity are optional — nil when no entity is in scope.
+func (e *Engine) ExecuteCode(code string, deps lua.WriteDeps, cacheDir string,
+	newEntity, oldEntity *entity.Entity) error {
+	return e.execute(code, deps, cacheDir, "", newEntity, oldEntity)
 }
 
 // ExecuteFile loads and runs a script file from the scripts/ directory.
 // The path must be a local path (no ".." or absolute paths) with .lua extension.
-func (e *Engine) ExecuteFile(path string, ctx metamodel.ScriptContext) error {
-	scriptCode, err := loadScript(ctx.GetProjectRoot(), path)
+func (e *Engine) ExecuteFile(path string, deps lua.WriteDeps, cacheDir string,
+	newEntity, oldEntity *entity.Entity) error {
+	scriptCode, err := loadScript(deps.ProjectRoot, path)
 	if err != nil {
 		return err
 	}
-	return e.execute(scriptCode, ctx, path)
+	return e.execute(scriptCode, deps, cacheDir, path, newEntity, oldEntity)
 }
 
 // execute runs Lua code with entity context. scriptPath is used to resolve
 // per-script secrets; pass "" for inline code (no secrets loaded).
 // Timeout is handled by lua.Runtime (default 30s).
-func (e *Engine) execute(code string, ctx metamodel.ScriptContext, scriptPath string) error {
-	// Type assert workspace to lua.Services
-	svc, ok := ctx.GetWorkspace().(lua.Services)
-	if !ok {
-		return errors.New("workspace does not provide lua.Services")
-	}
-	// Ensure Meta and ProjectRoot are populated if not already.
-	if svc.Meta == nil {
-		svc.Meta = ctx.GetMeta()
-	}
-	if svc.ProjectRoot == "" {
-		svc.ProjectRoot = ctx.GetProjectRoot()
-	}
-
+func (e *Engine) execute(code string, deps lua.WriteDeps, cacheDir, scriptPath string,
+	newEntity, oldEntity *entity.Entity) error {
 	var output bytes.Buffer
-	relaDir := filepath.Join(ctx.GetProjectRoot(), project.CacheDir)
-	opts, optErr := lua.LoadContextOptions(relaDir, scriptPath)
-	if optErr != nil {
-		return fmt.Errorf("lua context: %w", optErr)
+	runtime, err := NewWriterRuntime(deps, cacheDir, scriptPath, &output)
+	if err != nil {
+		return err
 	}
-	runtime := lua.New(svc, &output, opts...)
 	defer runtime.Close()
 
-	// Set entity context as Lua globals
 	ls := runtime.LState()
-	if ctx.GetEntity() != nil {
-		ls.SetGlobal("entity", lua.EntityToTable(ls, ctx.GetEntity()))
+	if newEntity != nil {
+		ls.SetGlobal("entity", lua.EntityToTable(ls, newEntity))
 	}
-	if ctx.GetOldEntity() != nil {
-		ls.SetGlobal("old_entity", lua.EntityToTable(ls, ctx.GetOldEntity()))
+	if oldEntity != nil {
+		ls.SetGlobal("old_entity", lua.EntityToTable(ls, oldEntity))
 	}
 
 	return runtime.RunString(code)

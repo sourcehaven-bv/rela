@@ -32,21 +32,18 @@ type LuaViolation struct {
 }
 
 // luaExecutor handles Lua validation execution.
+//
+// It holds a lua.ReadDeps — validation rules run against a reader runtime
+// that cannot mutate the graph. Mutation bindings are not registered on the
+// Lua side; attempting rela.create_entity etc. from a validation rule raises
+// a Lua "attempt to call a nil value" error from the VM.
 type luaExecutor struct {
-	svc lua.Services
+	deps lua.ReadDeps
 }
 
 // newLuaExecutor creates a new Lua executor for validation.
-// The services are wrapped to be read-only — Manager is nil so writes fail.
-func newLuaExecutor(svc lua.Services, meta *metamodel.Metamodel, projectRoot string) *luaExecutor {
-	svc.Manager = nil // read-only: disable writes
-	if svc.Meta == nil {
-		svc.Meta = meta
-	}
-	if svc.ProjectRoot == "" {
-		svc.ProjectRoot = projectRoot
-	}
-	return &luaExecutor{svc: svc}
+func newLuaExecutor(deps lua.ReadDeps) *luaExecutor {
+	return &luaExecutor{deps: deps}
 }
 
 // validate runs Lua validation for an entity and returns any violations.
@@ -90,7 +87,11 @@ func (e *luaExecutor) validate(
 		return nil // no Lua validation
 	}
 
-	// Create runtime with read-only workspace and discarded stdout.
+	// Create reader runtime with discarded stdout.
+	//
+	// The reader runtime has no mutation bindings registered — a
+	// validation rule calling rela.create_entity hits a Lua "attempt to
+	// call a nil value" error rather than executing.
 	//
 	// AI is intentionally NOT wired into validation rules: an AI-powered
 	// rule would call out to a provider on every entity on every analyze
@@ -98,7 +99,7 @@ func (e *luaExecutor) validate(
 	// also silently clip slow calls. AI-in-validations is tracked as a
 	// follow-up that needs its own design (cost guardrails, opt-in
 	// per rule, longer per-rule budget).
-	runtime := lua.New(e.svc, io.Discard)
+	runtime := lua.NewReader(e.deps, io.Discard)
 	defer runtime.Close()
 
 	// Set arguments if provided
@@ -227,7 +228,7 @@ func (e *luaExecutor) loadScript(scriptPath string) (string, error) {
 
 	// Use os.OpenRoot for traversal-resistant access.
 	// Error messages intentionally omit system paths to prevent information leakage.
-	root, err := os.OpenRoot(e.svc.ProjectRoot)
+	root, err := os.OpenRoot(e.deps.ProjectRoot)
 	if err != nil {
 		return "", errors.New("cannot access project directory")
 	}

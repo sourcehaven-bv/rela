@@ -104,7 +104,7 @@ type App struct {
 	templater     templating.Templater
 	cfgLoader     config.Loader
 	kv            state.KV
-	luaServices   lua.Services
+	luaWriteDeps  lua.WriteDeps
 	startWatching func(workspace.WatchOptions) error
 
 	// documents renders and caches documents. Created once in NewApp so
@@ -193,7 +193,7 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 // entityManager (runs workspace's automation engine), searcher (reads
 // the live Bleve index maintained by the workspace), and startWatching
 // (a lifecycle hook). Everything else — state.KV, config.Loader,
-// tracer, templater, validator, lua.Services — is constructed locally.
+// tracer, templater, validator, lua.WriteDeps — is constructed locally.
 func NewApp(
 	fs storage.FS,
 	paths *project.Context,
@@ -208,15 +208,15 @@ func NewApp(
 	kv := state.NewFSKV(fs, paths.CacheDir)
 	trc := tracer.New(st)
 	templater := templating.NewFSTemplater(fs, paths)
-	luaSvc := lua.Services{
+	readDeps := lua.ReadDeps{
 		Store:       st,
-		Manager:     em,
 		Tracer:      trc,
 		Searcher:    searcher,
 		Meta:        meta,
 		ProjectRoot: paths.Root,
 	}
-	val := validator.New(st, meta, luaSvc, paths.Root)
+	writeDeps := lua.WriteDeps{ReadDeps: readDeps, EntityManager: em}
+	val := validator.New(st, meta, readDeps)
 
 	// Load data-entry config from project root
 	cfgData, err := cfgLoader.Load(context.Background(), ConfigFile)
@@ -272,7 +272,7 @@ func NewApp(
 		templater:     templater,
 		cfgLoader:     cfgLoader,
 		kv:            kv,
-		luaServices:   luaSvc,
+		luaWriteDeps:  writeDeps,
 		startWatching: startWatching,
 		broker:        newEventBroker(),
 		documents:     newDocumentService(st, kv, paths.Root),

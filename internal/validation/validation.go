@@ -21,20 +21,22 @@ type Violation struct {
 
 // Service validates entities against custom metamodel rules.
 type Service struct {
-	meta        *metamodel.Metamodel
-	svc         lua.Services
-	projectRoot string
-	luaExec     *luaExecutor // Lazy-initialized Lua executor
+	meta    *metamodel.Metamodel
+	deps    lua.ReadDeps
+	luaExec *luaExecutor // Lazy-initialized Lua executor
 }
 
 // New creates a validation service for the given metamodel.
-// svc provides Lua access for validation rules that use Lua scripts.
-// projectRoot is used to resolve lua_file paths from validations/.
-func New(meta *metamodel.Metamodel, svc lua.Services, projectRoot string) *Service {
+// deps provides read-only lua access for rules that use Lua scripts.
+// The ProjectRoot field of deps is used to resolve lua_file paths from
+// validations/. Meta is set to the supplied metamodel if deps.Meta is nil.
+func New(meta *metamodel.Metamodel, deps lua.ReadDeps) *Service {
+	if deps.Meta == nil {
+		deps.Meta = meta
+	}
 	return &Service{
-		meta:        meta,
-		svc:         svc,
-		projectRoot: projectRoot,
+		meta: meta,
+		deps: deps,
 	}
 }
 
@@ -191,7 +193,7 @@ func (s *Service) checkEntityAgainstRule(
 func (s *Service) runLuaValidation(e *entity.Entity, rule metamodel.ValidationRule) []Violation {
 	// Lazy-initialize the Lua executor
 	if s.luaExec == nil {
-		s.luaExec = newLuaExecutor(s.svc, s.meta, s.projectRoot)
+		s.luaExec = newLuaExecutor(s.deps)
 	}
 
 	luaViolations := s.luaExec.validate(e, rule)

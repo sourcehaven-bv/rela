@@ -10,9 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
 // actionsDir is the directory where action scripts must be located.
@@ -42,42 +41,37 @@ var validMessageTypes = map[string]bool{
 //
 // The timeout applies to script execution. The caller is responsible for
 // holding any necessary workspace lock — actions may mutate the graph.
+//
+// triggerEntity is optional — nil when the action is invoked without entity
+// context. When non-nil it is exposed to the Lua script as the `entity` global.
 func (e *Engine) ExecuteAction(
 	scriptPath string,
-	ctx metamodel.ScriptContext,
+	deps lua.WriteDeps,
+	cacheDir string,
+	triggerEntity *entity.Entity,
 	params map[string]string,
 	timeout time.Duration,
 ) (*ActionResponse, error) {
-	scriptCode, err := loadActionScript(ctx.GetProjectRoot(), scriptPath)
+	scriptCode, err := loadActionScript(deps.ProjectRoot, scriptPath)
 	if err != nil {
 		return nil, err
 	}
 
-	svc, ok := ctx.GetWorkspace().(lua.Services)
-	if !ok {
-		return nil, errors.New("workspace does not provide lua.Services")
-	}
-	if svc.Meta == nil {
-		svc.Meta = ctx.GetMeta()
-	}
-	if svc.ProjectRoot == "" {
-		svc.ProjectRoot = ctx.GetProjectRoot()
-	}
-
 	var output bytes.Buffer
-	relaDir := filepath.Join(ctx.GetProjectRoot(), project.CacheDir)
-	ctxOpts, ctxErr := lua.LoadContextOptions(relaDir, scriptPath)
-	if ctxErr != nil {
-		return nil, ctxErr
-	}
-	luaOpts := append([]lua.Option{
+	runtime, err := NewWriterRuntime(deps, cacheDir, scriptPath, &output,
 		lua.WithParams(params),
 		lua.WithActionMode(),
 		lua.WithTimeout(timeout),
-	}, ctxOpts...)
-
-	runtime := lua.New(svc, &output, luaOpts...)
+	)
+	if err != nil {
+		return nil, err
+	}
 	defer runtime.Close()
+
+	if triggerEntity != nil {
+		ls := runtime.LState()
+		ls.SetGlobal("entity", lua.EntityToTable(ls, triggerEntity))
+	}
 
 	ret, err := runtime.RunActionString(scriptCode, scriptPath)
 	if errors.Is(err, lua.ErrNoReturnValue) {

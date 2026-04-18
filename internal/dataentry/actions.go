@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
@@ -99,15 +97,9 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx := &actionScriptContext{
-		luaServices: a.luaServices,
-		meta:        s.Meta,
-		projectRoot: a.paths.Root,
-		entity:      ent,
-	}
-
 	engine := script.NewEngine()
-	resp, err := engine.ExecuteAction(action.Script, ctx, action.Params, actionTimeout)
+	resp, err := engine.ExecuteAction(action.Script, a.luaWriteDeps,
+		a.paths.CacheDir, ent, action.Params, actionTimeout)
 	if err != nil {
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
 		writeV1JSON(w, http.StatusInternalServerError, V1ActionResponse{
@@ -140,18 +132,3 @@ func newCorrelationID() string {
 	return hex.EncodeToString(b)
 }
 
-// actionScriptContext implements metamodel.ScriptContext for action scripts.
-// The entity field is optionally populated when the action is invoked with
-// entity context (e.g., from a list action applied to selected rows).
-type actionScriptContext struct {
-	luaServices lua.Services
-	meta        *metamodel.Metamodel
-	projectRoot string
-	entity      *entity.Entity
-}
-
-func (c *actionScriptContext) GetWorkspace() interface{}     { return c.luaServices }
-func (c *actionScriptContext) GetMeta() *metamodel.Metamodel { return c.meta }
-func (c *actionScriptContext) GetProjectRoot() string        { return c.projectRoot }
-func (c *actionScriptContext) GetEntity() *entity.Entity     { return c.entity }
-func (c *actionScriptContext) GetOldEntity() *entity.Entity  { return nil }

@@ -13,7 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
-// mockWorkspace is a test helper that produces a lua.Services backed by
+// mockWorkspace is a test helper that produces lua.ReadDeps backed by
 // a memstore pre-populated with sample entities. Writes are disabled
 // (nil Manager) because validation runs in read-only mode.
 type mockWorkspace struct {
@@ -69,9 +69,9 @@ func newMockWorkspace() *mockWorkspace {
 	return &mockWorkspace{meta: meta, store: st}
 }
 
-// services returns a read-only lua.Services for validation runtime.
-func (m *mockWorkspace) services(projectRoot string) lua.Services {
-	return lua.Services{
+// services returns lua.ReadDeps for the validation runtime.
+func (m *mockWorkspace) services(projectRoot string) lua.ReadDeps {
+	return lua.ReadDeps{
 		Store:       m.store,
 		Tracer:      tracer.New(m.store),
 		Meta:        m.meta,
@@ -119,7 +119,7 @@ func TestLuaValidation_SingleViolation(t *testing.T) {
 		},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 1 {
@@ -175,7 +175,7 @@ func TestLuaValidation_MultipleViolations(t *testing.T) {
 		},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 2 {
@@ -220,7 +220,7 @@ func TestLuaValidation_SeverityOverride(t *testing.T) {
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 1 {
@@ -251,7 +251,7 @@ func TestLuaValidation_SeverityDefault(t *testing.T) {
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 1 {
@@ -326,7 +326,7 @@ func TestLuaValidation_ReturnValues(t *testing.T) {
 				{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 			}
 
-			svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+			svc := New(meta, ws.services(t.TempDir()))
 			violations := svc.Check(entities, nil)
 
 			gotPass := len(violations) == 0
@@ -388,7 +388,7 @@ func TestLuaValidation_EntityContext(t *testing.T) {
 		},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 0 {
@@ -425,7 +425,7 @@ func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 0 {
@@ -461,7 +461,7 @@ func TestLuaValidation_MutationsBlocked(t *testing.T) {
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 0 {
@@ -507,7 +507,7 @@ func TestLuaValidation_CombinedWithWhenThen(t *testing.T) {
 		{ID: "TKT-004", Type: "ticket", Properties: map[string]interface{}{"status": "draft"}},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	// Should have 2 violations: TKT-002 (then fails) and TKT-003 (lua fails)
@@ -546,7 +546,7 @@ func TestLuaValidation_SyntaxError(t *testing.T) {
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	// Syntax error should fail open (no violation)
@@ -574,7 +574,7 @@ func TestLuaValidation_RuntimeError(t *testing.T) {
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	// Runtime error should fail open (no violation)
@@ -626,7 +626,7 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"status": "invalid"}},
 	}
 
-	svc := New(meta, ws.services(tmpDir), tmpDir)
+	svc := New(meta, ws.services(tmpDir))
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 1 {
@@ -667,7 +667,7 @@ func TestLuaValidation_ScriptFileNotFound(t *testing.T) {
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
 
-	svc := New(meta, ws.services(tmpDir), tmpDir)
+	svc := New(meta, ws.services(tmpDir))
 	violations := svc.Check(entities, nil)
 
 	// Missing script should fail open (no violation)
@@ -719,7 +719,7 @@ func TestLuaValidation_CrossEntityValidation(t *testing.T) {
 		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"status": "draft"}},
 	}
 
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	if len(violations) != 0 {
@@ -748,7 +748,7 @@ func TestLuaValidation_Timeout(t *testing.T) {
 	}
 
 	// Should complete within reasonable time (timeout kicks in)
-	svc := New(meta, ws.services(t.TempDir()), t.TempDir())
+	svc := New(meta, ws.services(t.TempDir()))
 	violations := svc.Check(entities, nil)
 
 	// Timeout should fail open (no violation, rule skipped due to error)
@@ -827,7 +827,7 @@ func TestLuaValidation_PathTraversal(t *testing.T) {
 				{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 			}
 
-			svc := New(meta, ws.services(tmpDir), tmpDir)
+			svc := New(meta, ws.services(tmpDir))
 			violations := svc.Check(entities, nil)
 
 			// If rule should be skipped, expect 0 violations (fail open)
