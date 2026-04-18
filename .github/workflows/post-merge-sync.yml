@@ -1,6 +1,7 @@
-name: Coverage Ratchet
+name: Post-Merge Sync
 
-# After a PR merges, regenerate the coverage baseline and open a PR if it improved.
+# After a PR merges, regenerate derived files (coverage baselines) and open a
+# PR if anything drifted. Will grow to handle more derived files over time.
 on:
   push:
     branches: [main, develop]
@@ -10,8 +11,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  update-baseline:
-    name: Update Coverage Baseline
+  sync:
+    name: Sync Derived Files
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
@@ -61,16 +62,16 @@ jobs:
         working-directory: frontend
         run: npm run coverage:generate
 
-      - name: Create PR for updated baseline
+      - name: Create PR for synced files
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           if git diff --quiet .coverage-baseline frontend/.coverage-baseline; then
-            echo "No coverage baseline changes"
+            echo "No derived-file changes"
             exit 0
           fi
 
-          BRANCH="chore/coverage-baseline-update"
+          BRANCH="chore/post-merge-sync"
           BASE="${{ github.ref_name }}"
 
           # Clean up any existing branch/PR
@@ -80,15 +81,13 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add .coverage-baseline frontend/.coverage-baseline
-          git commit -m "chore: update coverage baseline"
+          git commit -m "chore: sync derived files"
           git push -u origin "$BRANCH"
 
           PR_URL=$(gh pr create \
             --base "$BASE" \
             --head "$BRANCH" \
-            --title "chore: update coverage baseline" \
-            --body "Auto-generated coverage baseline update after merge to \`$BASE\`.
-
-          Coverage can only ratchet upward — this PR records improved coverage.")
+            --title "chore: sync derived files" \
+            --body "Auto-generated sync of derived files after merge to \`$BASE\`.")
 
           gh pr merge "$PR_URL" --auto --squash
