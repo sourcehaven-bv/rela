@@ -71,7 +71,7 @@ internal/dataentryconfig/palette.go;228;214
 internal/dataentryconfig/validate.go;422;334
 internal/desktop/preferences.go;44;34
 internal/entity/entity.go;57;45
-internal/entity/id.go;98;90
+internal/entity/id.go;98;91
 internal/errors/errors.go;10;10
 internal/filter/filter.go;118;108
 internal/filter/fuzzy.go;22;21
@@ -161,15 +161,15 @@ internal/storage/errorfs.go;13;0
 internal/storage/memfs.go;215;190
 internal/storage/osfs.go;11;10
 internal/storage/safefs.go;29;16
-internal/storage/watcher.go;71;57
+internal/storage/watcher.go;71;56
 internal/store/fsstore/attachment.go;48;45
-internal/store/fsstore/entity.go;234;219
+internal/store/fsstore/entity.go;234;221
 internal/store/fsstore/formatter.go;40;0
-internal/store/fsstore/fsstore.go;74;55
+internal/store/fsstore/fsstore.go;74;54
 internal/store/fsstore/index.go;160;130
-internal/store/fsstore/markdown.go;244;193
+internal/store/fsstore/markdown.go;244;194
 internal/store/fsstore/propcache.go;21;19
-internal/store/fsstore/relation.go;118;108
+internal/store/fsstore/relation.go;118;110
 internal/store/fsstore/watcher.go;150;117
 internal/store/memstore/memstore.go;342;329
 internal/store/storetest/attachment.go;83;0
@@ -202,4 +202,4 @@ internal/workspace/rename.go;68;59
 internal/workspace/rename_type.go;58;31
 internal/workspace/services.go;48;8
 internal/workspace/validate.go;35;0
-internal/workspace/workspace.go;558;399
+internal/workspace/workspace.go;558;398
