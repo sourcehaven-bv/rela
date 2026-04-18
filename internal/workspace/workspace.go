@@ -558,7 +558,7 @@ func (w *Workspace) FindOrphanedTempFiles() ([]string, error) {
 	if w.fs == nil || w.paths == nil {
 		return nil, nil
 	}
-	var orphaned []string
+	orphaned := make([]string, 0) //nolint:prealloc // capacity unknown
 	orphaned = append(orphaned, findTempFilesInDir(w.fs, w.paths.EntitiesDir)...)
 	orphaned = append(orphaned, findTempFilesInDir(w.fs, w.paths.RelationsDir)...)
 	return orphaned, nil

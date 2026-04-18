@@ -955,3 +955,89 @@ func envToMap(env []string) map[string]string {
 	}
 	return m
 }
+
+// --- openFileCommand / openURLCommand ---
+
+func TestOpenFileCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		goos     string
+		action   string
+		path     string
+		wantArgs []string // expected args including argv[0]
+	}{
+		{"darwin open", "darwin", "open", "/tmp/x.pdf", []string{"open", "/tmp/x.pdf"}},
+		{"darwin reveal", "darwin", "reveal", "/tmp/x.pdf", []string{"open", "-R", "/tmp/x.pdf"}},
+		{"linux open", "linux", "open", "/tmp/x.pdf", []string{"xdg-open", "/tmp/x.pdf"}},
+		{"linux reveal", "linux", "reveal", "/tmp/sub/x.pdf", []string{"xdg-open", "/tmp/sub"}},
+		{"windows open", "windows", "open", `C:\x.pdf`, []string{"cmd", "/c", "start", "", `C:\x.pdf`}},
+		{"windows reveal", "windows", "reveal", `C:\x.pdf`, []string{"explorer", "/select,", `C:\x.pdf`}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := openFileCommand(tc.goos, tc.action, tc.path)
+			if cmd == nil {
+				t.Fatalf("openFileCommand returned nil for %s", tc.name)
+			}
+			if got := cmd.Args; !equalArgs(got, tc.wantArgs) {
+				t.Errorf("args = %v, want %v", got, tc.wantArgs)
+			}
+		})
+	}
+
+	if got := openFileCommand("plan9", "open", "/tmp/x"); got != nil {
+		t.Errorf("unsupported platform should return nil, got %v", got)
+	}
+}
+
+func TestOpenURLCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		goos     string
+		url      string
+		wantArgs []string
+	}{
+		{"darwin", "darwin", "https://example.com", []string{"open", "https://example.com"}},
+		{"linux", "linux", "https://example.com", []string{"xdg-open", "https://example.com"}},
+		{"windows", "windows", "https://example.com", []string{"cmd", "/c", "start", "", "https://example.com"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := openURLCommand(tc.goos, tc.url)
+			if cmd == nil {
+				t.Fatalf("openURLCommand returned nil for %s", tc.name)
+			}
+			if got := cmd.Args; !equalArgs(got, tc.wantArgs) {
+				t.Errorf("args = %v, want %v", got, tc.wantArgs)
+			}
+		})
+	}
+
+	if got := openURLCommand("plan9", "https://example.com"); got != nil {
+		t.Errorf("unsupported platform should return nil, got %v", got)
+	}
+}
+
+func equalArgs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// exec.Command resolves argv[0] to an absolute path if found on PATH;
+	// compare by basename for the program name and exact for the rest.
+	aProg := a[0]
+	if idx := strings.LastIndexByte(aProg, '/'); idx >= 0 {
+		aProg = aProg[idx+1:]
+	}
+	if idx := strings.LastIndexByte(aProg, '\\'); idx >= 0 {
+		aProg = aProg[idx+1:]
+	}
+	if aProg != b[0] {
+		return false
+	}
+	for i := 1; i < len(a); i++ {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

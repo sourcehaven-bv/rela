@@ -113,7 +113,7 @@ type fieldValue struct {
 
 func (t *TerminalTransport) presentForm(screen lua.Screen) (lua.Event, error) {
 	// Build huh form fields
-	var groups []*huh.Group
+	groups := make([]*huh.Group, 0, 1)
 	fieldValues := make(map[string]fieldValue)
 
 	fields := make([]huh.Field, 0, len(screen.Fields)+1) // +1 for action select

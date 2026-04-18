@@ -102,6 +102,7 @@ func (c *Context) Initialize(fs storage.FS) error {
 }
 
 // EntityTypeDir returns the directory for a given entity type (pluralized)
+//
 // Deprecated: Use EntityTypeDirWithPlural when metamodel is available
 func (c *Context) EntityTypeDir(entityType string) string {
 	// Simple pluralization: just add 's'
@@ -116,6 +117,7 @@ func (c *Context) EntityTypeDirWithPlural(plural string) string {
 }
 
 // EntityFilePath returns the file path for an entity
+//
 // Deprecated: Use EntityFilePathWithPlural when metamodel is available
 func (c *Context) EntityFilePath(entityType, id string) string {
 	return filepath.Join(c.EntityTypeDir(entityType), id+".md")

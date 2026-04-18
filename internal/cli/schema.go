@@ -527,8 +527,8 @@ func runSchemaGraphviz() error {
 			// Derive border color from fill (darker shade)
 			borderColor = darkenColor(fillColor)
 		}
-		sb.WriteString(fmt.Sprintf("  %s [label=\"%s\", fillcolor=\"%s\", color=\"%s\"];\n",
-			name, def.Label, fillColor, borderColor))
+		fmt.Fprintf(&sb, "  %s [label=\"%s\", fillcolor=\"%s\", color=\"%s\"];\n",
+			name, def.Label, fillColor, borderColor)
 	}
 	sb.WriteString("\n")
 
@@ -556,8 +556,8 @@ func runSchemaGraphviz() error {
 			edgeColor := defaultEdgeColors[entityColorIndex[from]%len(defaultEdgeColors)]
 
 			for _, to := range relDef.To {
-				sb.WriteString(fmt.Sprintf("  %s -> %s [label=\"%s\", color=\"%s\", fontcolor=\"%s\"];\n",
-					from, to, edgeLabel, edgeColor, edgeColor))
+				fmt.Fprintf(&sb, "  %s -> %s [label=\"%s\", color=\"%s\", fontcolor=\"%s\"];\n",
+					from, to, edgeLabel, edgeColor, edgeColor)
 			}
 		}
 	}

@@ -30,7 +30,7 @@ func (s *SafeFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 
 	// Ensure directory exists
-	if err := s.FS.MkdirAll(dir, 0755); err != nil {
+	if err := s.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 

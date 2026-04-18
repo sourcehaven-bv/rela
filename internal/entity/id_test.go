@@ -417,11 +417,11 @@ func TestGenerateShortID(t *testing.T) {
 			randomPart := got[len(tt.wantPrefix):]
 			for _, c := range randomPart {
 				if tt.wantUpper {
-					if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z')) {
+					if (c < '0' || c > '9') && (c < 'A' || c > 'Z') {
 						t.Errorf("GenerateShortID() random part contains invalid char %q in %q (expected uppercase)", c, got)
 					}
 				} else {
-					if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+					if (c < '0' || c > '9') && (c < 'a' || c > 'z') {
 						t.Errorf("GenerateShortID() random part contains invalid char %q in %q (expected lowercase)", c, got)
 					}
 				}

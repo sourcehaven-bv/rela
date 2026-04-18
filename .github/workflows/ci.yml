@@ -19,7 +19,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Download dependencies
         run: go mod download
@@ -35,7 +35,7 @@ jobs:
           github-action-output: true
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: ./coverage.out
           fail_ci_if_error: false
@@ -249,13 +249,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Install golangci-lint
-        # The official golangci-lint-action ships a pre-built binary compiled with go1.24,
-        # which refuses to lint code whose toolchain (go.mod) targets go1.25. Build v1.64.8
-        # from source against the active Go toolchain so it can analyse our code.
-        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+        # Build from source against the active Go toolchain so the linter can
+        # analyse our code regardless of the go.mod toolchain directive.
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 
       - name: Run golangci-lint
         run: golangci-lint run ./...
@@ -269,7 +268,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Install go-arch-lint
         run: go install github.com/fe3dback/go-arch-lint@latest
@@ -336,7 +335,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -391,7 +390,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Run fuzz tests
         run: |
@@ -409,7 +408,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Build
         run: go build -o bin/rela ./cmd/rela
@@ -432,7 +431,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela
@@ -484,7 +483,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Build rela
         run: go build -o bin/rela ./cmd/rela

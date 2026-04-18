@@ -173,7 +173,7 @@ type CardinalityViolation struct {
 
 // CheckCardinality checks all cardinality constraints, filtered by scope.
 func (w *Workspace) CheckCardinality(opts AnalyzeOptions) []CardinalityViolation {
-	var violations []CardinalityViolation
+	violations := make([]CardinalityViolation, 0) //nolint:prealloc // capacity unknown
 
 	for relName, relDef := range w.Meta().Relations {
 		violations = append(violations, w.checkMinOutgoing(relName, relDef, opts.Scope)...)

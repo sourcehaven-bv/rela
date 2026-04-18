@@ -1,404 +1,346 @@
-# golangci-lint configuration
-# Run with: golangci-lint run
-
+version: "2"
 run:
-  timeout: 5m
+  modules-download-mode: readonly
   issues-exit-code: 1
   tests: true
-  modules-download-mode: readonly
-
 output:
   formats:
-    - format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
-  sort-results: true
-
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
 linters:
   enable:
-    # Default linters
-    - errcheck          # Check for unchecked errors
-    - gosimple          # Simplify code
-    - govet             # Examine Go source code and report suspicious constructs
-    - ineffassign       # Detect ineffectual assignments
-    - staticcheck       # State-of-the-art static analysis
-    - unused            # Check for unused constants, variables, functions and types
-
-    # Additional linters - Code Quality
-    - bodyclose         # Check whether HTTP response body is closed
-    # - copyloopvar     # Detect loop variable copy issues (requires Go 1.22+)
-    - depguard          # Forbid specific imports (enforces log/slog over stdlib log)
-    - dupl              # Detect duplicate code
-    - durationcheck     # Check for two durations multiplied together
-    - errname           # Check that sentinel errors are prefixed with Err
-    - errorlint         # Find code that could cause problems with error wrapping
-    - exhaustive        # Check exhaustiveness of enum switch statements
-    - dogsled           # Check for too many blank identifiers
-    - fatcontext        # Detect context.Context misuse
-    - funlen            # Check function length
-    # - gochecknoinits  # Check for init functions (disabled: Cobra CLIs use init)
-    # - goconst         # Find repeated strings that could be constants (too noisy)
-    - gocritic          # Comprehensive linter with many checks
-    - gocognit          # Cognitive complexity checker
-    - gocyclo           # Cyclomatic complexity checker
-    # - godot           # Check if comments end in a period (too pedantic)
-    - gofmt             # Check if code is gofmt-ed
-    - goimports         # Check imports are sorted and grouped
-    - mnd               # Magic number detector (formerly gomnd)
-    # - goprintffuncname # Check that printf-like functions end with f (naming preference)
-    - gosec             # Security checker
-    # - intrange        # Check for integer range issues (requires Go 1.22+)
-    - lll               # Line length linter
-    - makezero          # Find slice declarations not initialized with zero length
-    - mirror            # Report wrong mirror patterns of bytes/strings usage
-    - misspell          # Find commonly misspelled English words
-    - nakedret          # Find naked returns in large functions
-    - nestif            # Reports deeply nested if statements
-    - nilerr            # Find code that returns nil even on error path
-    - nilnil            # Check for simultaneous return of nil error and invalid value
-    - noctx             # Find HTTP requests without context.Context
-    - nolintlint        # Check for ill-formed or insufficient nolint directives
-    # - perfsprint      # Check for fmt.Sprintf optimizations (micro-optimizations)
-    - prealloc          # Find slice declarations that could be preallocated
-    - predeclared       # Find code that shadows predeclared identifiers
-    - promlinter        # Check Prometheus metrics naming via promlint
-    - reassign          # Check that package variables are not reassigned
-    - revive            # Replacement for golint
-    - rowserrcheck      # Check whether Rows.Err is checked
-    - sqlclosecheck     # Check that sql.Rows and sql.Stmt are closed
-    - stylecheck        # Replacement for golint
-    - testifylint       # Check for testify issues
-    - thelper           # Detect test helpers without t.Helper()
-    - tparallel         # Detect inappropriate usage of t.Parallel() in tests
-    - unconvert         # Remove unnecessary type conversions
-    - unparam           # Find unused function parameters
-    - usestdlibvars     # Detect possibility to use stdlib variables/constants
-    - wastedassign      # Find wasted assignment statements
-    - whitespace        # Check for unnecessary newlines
-
-linters-settings:
-  depguard:
+    - bodyclose
+    - depguard
+    - dogsled
+    - dupl
+    - durationcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - fatcontext
+    - funlen
+    - gocognit
+    - gocritic
+    - gocyclo
+    - gosec
+    - lll
+    - makezero
+    - mirror
+    - misspell
+    - mnd
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - promlinter
+    - reassign
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - testifylint
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+  settings:
+    depguard:
+      rules:
+        no-stdlib-log:
+          list-mode: lax
+          files:
+            - '!**/internal/mcp/server.go'
+          allow:
+            - log/slog
+          deny:
+            - pkg: log
+              desc: use log/slog instead of stdlib log; the stdlib log package is global mutable state with no levels and races with parallel tests
+    dupl:
+      threshold: 150
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+    errorlint:
+      errorf: true
+      errorf-multi: true
+      asserts: true
+      comparison: true
+    exhaustive:
+      default-signifies-exhaustive: true
+    funlen:
+      lines: 100
+      statements: 60
+      ignore-comments: true
+    gocognit:
+      min-complexity: 30
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    gocritic:
+      disabled-checks:
+        - whyNoLint
+        - hugeParam
+        - sprintfQuotedString
+        - octalLiteral
+        # `entity` shadowing the entity package is idiomatic across 40+ sites;
+        # stdlib shadows (e.g. `context`) should be caught by reviewers in PR.
+        - importShadow
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+        - experimental
+        - opinionated
+    gocyclo:
+      min-complexity: 35
+    godot:
+      scope: toplevel
+      capital: true
+    gosec:
+      excludes:
+        - G104
+        - G204
+        - G304
+        - G306
+        # Taint-analysis checks (gosec v2) surface hardening work that
+        # belongs in FEAT-ESLP (data-entry server hardening). Deferring
+        # these so the v2 migration doesn't block on threat-model decisions;
+        # track the work under that feature instead.
+        - G702  # command injection via taint analysis
+        - G703  # path traversal via taint analysis
+        - G704  # SSRF via taint analysis
+        - G705  # XSS via taint analysis
+        - G706  # log injection via taint analysis
+      config:
+        global:
+          audit: true
+    govet:
+      disable:
+        - fieldalignment
+      enable-all: true
+    lll:
+      line-length: 120
+      tab-width: 4
+    misspell:
+      locale: US
+      ignore-rules:
+        - rela
+        - analyses
+        - cancelled
+        - eles
+    mnd:
+      checks:
+        - argument
+        - case
+        - condition
+        - return
+      ignored-numbers:
+        - "0"
+        - "1"
+        - "2"
+        - "3"
+        - "10"
+        - "100"
+        - "0644"
+        - "0755"
+        - "0o644"
+        - "0o755"
+      ignored-functions:
+        - strings.SplitN
+        - make
+        - cobra.ExactArgs
+        - cobra.MinimumNArgs
+        - cobra.MaximumNArgs
+        - cobra.RangeArgs
+    nakedret:
+      max-func-lines: 30
+    nestif:
+      min-complexity: 6
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    prealloc:
+      simple: true
+      range-loops: true
+      for-loops: true
+    revive:
+      severity: warning
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: var-declaration
+        - name: var-naming
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+    unparam:
+      check-exported: false
+    unused:
+      field-writes-are-uses: true
+      post-statements-are-reads: true
+      exported-fields-are-used: true
+      parameters-are-used: true
+      local-variables-are-used: true
+      generated-is-used: true
+    whitespace:
+      multi-if: true
+      multi-func: false
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      # Force the use of log/slog instead of the stdlib "log" package.
-      # The stdlib log package is global mutable state, has no levels, and
-      # is not safe to capture from parallel tests. See the adopt-slog
-      # refactor for the migration rationale.
-      #
-      # Note: `deny.pkg: log` matches `log/slog` too because depguard uses
-      # prefix matching, so we allow `log/slog` explicitly via `allow`.
-      no-stdlib-log:
-        list-mode: lax
-        allow:
-          - "log/slog"
-        deny:
-          - pkg: "log"
-            desc: "use log/slog instead of stdlib log; the stdlib log package is global mutable state with no levels and races with parallel tests"
-        files:
-          # internal/mcp must bridge to mcp-go's WithErrorLogger which
-          # takes a *log.Logger. It builds one via slog.NewLogLogger so
-          # everything still flows through the slog handler.
-          - "!**/internal/mcp/server.go"
-
-  dupl:
-    threshold: 150
-
-  errcheck:
-    check-type-assertions: true
-    check-blank: false  # Allow _ = to explicitly ignore errors
-    exclude-functions:
-      - fmt.Fprintf
-      - fmt.Fprintln
-      - fmt.Fprint
-
-  errorlint:
-    errorf: true
-    errorf-multi: true
-    asserts: true
-    comparison: true
-
-  exhaustive:
-    check-generated: false
-    default-signifies-exhaustive: true
-
-  funlen:
-    lines: 100
-    statements: 60
-    ignore-comments: true
-
-  gocognit:
-    min-complexity: 30
-
-  gocyclo:
-    min-complexity: 35
-
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-    ignore-tests: true
-
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-      - experimental
-      - opinionated
-    disabled-checks:
-      - whyNoLint
-      - hugeParam           # Can be noisy for struct receivers
-      - sprintfQuotedString # %q changes escaping behavior
-      - octalLiteral        # Old-style octal is fine and widely used
-
-  godot:
-    scope: toplevel
-    capital: true
-
-  gofmt:
-    simplify: true
-
-  goimports:
-    local-prefixes: github.com/Sourcehaven-BV/rela
-
-  gosec:
-    excludes:
-      - G104  # Audit errors not checked (handled by errcheck)
-      - G204  # Subprocess execution (CLI tools need this)
-      - G304  # File path injection (common in CLI tools)
-      - G306  # WriteFile permissions (0644 is appropriate for config/data files)
-    config:
-      global:
-        audit: true
-
-  govet:
-    enable-all: true
-    disable:
-      - fieldalignment  # Can be noisy, enable if optimizing for memory
-
-  lll:
-    line-length: 120
-    tab-width: 4
-
-  mnd:
-    checks:
-      - argument
-      - case
-      - condition
-      - return
-    ignored-numbers:
-      - "0"
-      - "1"
-      - "2"
-      - "3"
-      - "10"
-      - "100"
-      - "0644"
-      - "0755"
-      - "0o644"
-      - "0o755"
-    ignored-functions:
-      - "strings.SplitN"
-      - "make"
-      - "cobra.ExactArgs"
-      - "cobra.MinimumNArgs"
-      - "cobra.MaximumNArgs"
-      - "cobra.RangeArgs"
-
-  misspell:
-    locale: US
-    ignore-words:
-      - rela       # Project name
-      - analyses   # Valid plural of analysis
-      - cancelled  # British spelling is acceptable
-      - eles       # Cytoscape.js API parameter (elements)
-
-  nakedret:
-    max-func-lines: 30
-
-  nestif:
-    min-complexity: 6
-
-  nolintlint:
-    require-explanation: true
-    require-specific: true
-
-  prealloc:
-    simple: true
-    range-loops: true
-    for-loops: true
-
-  revive:
-    severity: warning
-    rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: empty-block
-      - name: error-naming
-      - name: error-return
-      - name: error-strings
-      - name: errorf
-      - name: exported
-      - name: if-return
-      - name: increment-decrement
-      - name: indent-error-flow
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: redefines-builtin-id
-      - name: superfluous-else
-      - name: time-naming
-      - name: unexported-return
-      - name: unreachable-code
-      - name: unused-parameter
-      - name: var-declaration
-      - name: var-naming
-
-  staticcheck:
-    checks:
-      - all
-
-  stylecheck:
-    checks:
-      - all
-      - -ST1000  # Package comments (can be noisy)
-      - -ST1003  # Naming conventions (handled by revive)
-
-  unparam:
-    check-exported: false
-
-  unused:
-    field-writes-are-uses: true
-    post-statements-are-reads: true
-    exported-fields-are-used: true
-    parameters-are-used: true
-    local-variables-are-used: true
-    generated-is-used: true
-
-  whitespace:
-    multi-if: true
-    multi-func: false  # Disabled: conflicts with multiline function signatures
-
+      - linters:
+          - dupl
+          - errcheck
+          - funlen
+          - gocognit
+          - goconst
+          - gocyclo
+          - gosec
+          - lll
+          - mnd
+          - noctx
+          - prealloc
+        path: _test\.go
+      - linters:
+          - dupl
+          - errcheck
+          - funlen
+          - gocognit
+          - goconst
+          - gocritic
+          - gocyclo
+          - gosec
+          - lll
+          - mnd
+          - prealloc
+          - revive
+          - testifylint
+          - thelper
+          - unused
+        path: internal/store/storetest/
+      - linters:
+          - lll
+        source: ^//|`.*`|".*"
+      - path: _test\.go
+        text: 'mnd:'
+      - path: _test\.go
+        text: dot-imports
+      - path: internal/cli/.*\.go
+        text: unused-parameter.*(cmd|args)
+      - linters:
+          - funlen
+          - gocognit
+        path: internal/search/searchparser/.*\.go
+      - linters:
+          - nilerr
+          - unparam
+        path: internal/mcp/tools_.*\.go
+      - linters:
+          - funlen
+          - gocognit
+          - gocyclo
+          - lll
+          - mnd
+          - nestif
+        path: internal/dataentry/.*\.go
+      - linters:
+          - funlen
+          - gocognit
+          - gocyclo
+          - lll
+          - mnd
+          - nestif
+        path: internal/dataentryconfig/.*\.go
+      - linters:
+          - gocritic
+        text: evalOrder
+      - linters:
+          - gocritic
+        text: rangeValCopy
+      - linters:
+          - funlen
+        path: internal/metamodel/loader\.go
+        text: DefaultMetamodelYAML
+      - linters:
+          - gocognit
+        path: internal/metamodel/validation\.go
+      - linters:
+          - goconst
+        path: (.+)_test\.go
+    paths:
+      - vendor
+      - third_party
+      - testdata
+      - legacy-reference
+      - prototypes
+      - node_modules
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  exclude-rules:
-    # Exclude some linters from running on tests
-    - path: _test\.go
-      linters:
-        - dupl
-        - funlen
-        - gocognit
-        - gocyclo
-        - mnd
-        - lll
-        - goconst
-        - gosec
-        - errcheck
-
-    # internal/store/storetest contains reusable conformance test suites
-    # that are imported from the _test.go files of store backends. They
-    # aren't named *_test.go themselves, but they ARE test code — apply
-    # the same test-like lint relaxations.
-    - path: internal/store/storetest/
-      linters:
-        - dupl
-        - funlen
-        - gocognit
-        - gocyclo
-        - mnd
-        - lll
-        - goconst
-        - gosec
-        - errcheck
-        - thelper
-        - testifylint
-        - prealloc
-        - gocritic
-        - revive
-        - unused
-
-    # Exclude lll for lines with long strings (URLs, etc.)
-    - linters:
-        - lll
-      source: "^//|`.*`|\".*\""
-
-    # Allow magic numbers in table-driven tests
-    - path: _test\.go
-      text: "mnd:"
-
-    # Allow dot imports for testing frameworks
-    - path: _test\.go
-      text: "dot-imports"
-
-    # Allow unused cmd/args parameters in Cobra RunE handlers (common pattern)
-    - path: internal/cli/.*\.go
-      text: "unused-parameter.*(cmd|args)"
-
-    # Search parser has complex parsing logic
-    - path: internal/search/searchparser/.*\.go
-      linters:
-        - funlen        # Query parsing is inherently complex
-        - gocognit      # Query parsing has complex control flow
-
-    # MCP tool handlers intentionally encode errors into the tool result
-    # (via NewToolResultError) and return (result, nil) — nilerr flags this
-    # as a bug, but it's the protocol contract. The export helpers have
-    # `error` in their signature to preserve the contract even though they
-    # currently never fail (unparam).
-    - path: internal/mcp/tools_.*\.go
-      linters:
-        - nilerr
-        - unparam
-
-    # Data entry web handlers have specific patterns
-    - path: internal/dataentry/.*\.go
-      linters:
-        - funlen        # HTTP handlers with template data are inherently long
-        - gocognit      # View section building has complex control flow
-        - gocyclo       # Handler functions are inherently complex
-        - mnd           # HTTP status codes and limits
-        - nestif        # View/section logic has nested conditionals
-        - lll           # Template strings are long by design
-
-    # Data entry config validation has complex but well-tested logic
-    - path: internal/dataentryconfig/.*\.go
-      linters:
-        - funlen        # Validation functions are inherently long
-        - gocognit      # Cross-reference validation has complex control flow
-        - gocyclo       # Validation functions are inherently complex
-        - mnd           # Color math constants (HSL thresholds, mix ratios)
-        - nestif        # Validation logic has nested conditionals
-        - lll           # Error message format strings are long
-
-    # Gocritic evalOrder is often false positive with method calls returning commands
-    - linters:
-        - gocritic
-      text: "evalOrder"
-
-    # Allow rangeValCopy in iteration over small config structs
-    - linters:
-        - gocritic
-      text: "rangeValCopy"
-
-    # DefaultMetamodelYAML is a template - long by design
-    - path: internal/metamodel/loader\.go
-      linters:
-        - funlen
-      text: "DefaultMetamodelYAML"
-
-    # ValidateEntity has necessarily complex validation logic
-    - path: internal/metamodel/validation\.go
-      linters:
-        - gocognit
-
-  exclude-dirs:
-    - vendor
-    - third_party
-    - testdata
-    - legacy-reference
-    - prototypes
-    - node_modules
-
   max-issues-per-linter: 0
   max-same-issues: 0
   new: false
   fix: false
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+        - github.com/Sourcehaven-BV/rela
+  exclusions:
+    generated: lax
+    paths:
+      - vendor
+      - third_party
+      - testdata
+      - legacy-reference
+      - prototypes
+      - node_modules
+      - third_party$
+      - builtin$
+      - examples$

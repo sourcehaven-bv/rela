@@ -346,12 +346,12 @@ func FuzzGenerateShortID(f *testing.F) {
 		randomPart := strings.TrimPrefix(result, expectedPrefix)
 		for _, c := range randomPart {
 			if caps == "upper" {
-				if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z')) {
+				if (c < '0' || c > '9') && (c < 'A' || c > 'Z') {
 					t.Errorf("GenerateShortID random part %q contains invalid char %q (expected uppercase)",
 						randomPart, c)
 				}
 			} else {
-				if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+				if (c < '0' || c > '9') && (c < 'a' || c > 'z') {
 					t.Errorf("GenerateShortID random part %q contains invalid char %q (expected lowercase)",
 						randomPart, c)
 				}

@@ -62,11 +62,12 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	// Capture output
 	var output bytes.Buffer
 
-	opts := []lua.Option{lua.WithContext(ctx)}
 	ctxOpts, ctxErr := lua.LoadContextOptions(s.ws.Paths().CacheDir, "")
 	if ctxErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("config error: %s", ctxErr.Error())), nil
 	}
+	opts := make([]lua.Option, 0, 1+len(ctxOpts))
+	opts = append(opts, lua.WithContext(ctx))
 	opts = append(opts, ctxOpts...)
 	runtime := lua.New(s.ws.LuaServices(), &output, opts...)
 	defer runtime.Close()
@@ -135,11 +136,12 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Capture output
 	var output bytes.Buffer
 
-	opts := []lua.Option{lua.WithContext(ctx)}
 	ctxOpts, ctxErr := lua.LoadContextOptions(s.ws.Paths().CacheDir, path)
 	if ctxErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("config error: %s", ctxErr.Error())), nil
 	}
+	opts := make([]lua.Option, 0, 1+len(ctxOpts))
+	opts = append(opts, lua.WithContext(ctx))
 	opts = append(opts, ctxOpts...)
 	runtime := lua.New(s.ws.LuaServices(), &output, opts...)
 	defer runtime.Close()
