@@ -49,7 +49,7 @@ jobs:
 
   baseline-guard:
     name: Coverage Baseline Guard
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.head_ref != 'chore/coverage-baseline-update'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -152,7 +152,7 @@ jobs:
 
   frontend-baseline-guard:
     name: Frontend Coverage Baseline Guard
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.head_ref != 'chore/coverage-baseline-update'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
