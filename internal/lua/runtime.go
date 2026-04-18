@@ -993,7 +993,8 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 		Properties: props,
 		Content:    content,
 	}
-	result, err := r.deps.EntityManager.CreateEntity(context.Background(), newE, entitymanager.CreateOptions{ID: customID})
+	result, err := r.deps.EntityManager.CreateEntity(
+		context.Background(), newE, entitymanager.CreateOptions{ID: customID})
 	if err != nil {
 		ls.RaiseError("create entity error: %s", err.Error())
 		return 0
@@ -1078,7 +1079,8 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	rel, err := r.deps.EntityManager.CreateRelation(context.Background(), from, relType, to, entitymanager.RelationOptions{})
+	rel, err := r.deps.EntityManager.CreateRelation(
+		context.Background(), from, relType, to, entitymanager.RelationOptions{})
 	if err != nil {
 		ls.RaiseError("create relation error: %s", err.Error())
 		return 0

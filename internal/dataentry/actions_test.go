@@ -254,4 +254,3 @@ func TestNewCorrelationID(t *testing.T) {
 		t.Error("correlation ID is empty")
 	}
 }
-

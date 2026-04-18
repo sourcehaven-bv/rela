@@ -203,4 +203,3 @@ func (s *Scheduler) saveState() {
 		s.logger.Error("failed to save scheduler state", "error", err)
 	}
 }
-

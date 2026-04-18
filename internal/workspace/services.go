@@ -15,7 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-// LuaReadDeps materialises the read-only capability bundle required by the
+// LuaReadDeps materializes the read-only capability bundle required by the
 // lua runtime from this workspace's backend services. Consumers pass the
 // result to lua.NewReader or script.NewReaderRuntime.
 func (w *Workspace) LuaReadDeps() lua.ReadDeps {
@@ -32,7 +32,7 @@ func (w *Workspace) LuaReadDeps() lua.ReadDeps {
 	}
 }
 
-// LuaWriteDeps materialises the read-write capability bundle required by the
+// LuaWriteDeps materializes the read-write capability bundle required by the
 // lua runtime from this workspace's backend services. Consumers pass the
 // result to lua.NewWriter or script.NewWriterRuntime.
 func (w *Workspace) LuaWriteDeps() lua.WriteDeps {

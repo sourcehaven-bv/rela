@@ -2374,7 +2374,7 @@ func TestReaderRuntime_MutationBindingsAbsent(t *testing.T) {
 
 // TestReaderRuntime_MutationCallIsLuaNilCall asserts that calling a mutation
 // binding on a reader produces a VM-level nil-call error (not a Go
-// RaiseError from runtime code). This is the user-visible behaviour a
+// RaiseError from runtime code). This is the user-visible behavior a
 // validation rule author would encounter if they accidentally called a
 // mutation.
 func TestReaderRuntime_MutationCallIsLuaNilCall(t *testing.T) {

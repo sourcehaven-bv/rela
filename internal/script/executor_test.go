@@ -14,29 +14,36 @@ import (
 
 // stubEntityManager is a no-op EntityManager for tests that exercise the
 // script runtime wiring but never reach a mutation binding. It exists only
-// to satisfy lua.NewWriter's construction-time non-nil check.
+// to satisfy lua.NewWriter's construction-time non-nil check; every method
+// panics so an accidental test reaching a mutation path fails loudly.
 type stubEntityManager struct{}
 
-func (stubEntityManager) CreateEntity(context.Context, *entity.Entity, entitymanager.CreateOptions) (*entitymanager.CreateResult, error) {
-	return nil, nil
+func (stubEntityManager) CreateEntity(context.Context, *entity.Entity,
+	entitymanager.CreateOptions) (*entitymanager.CreateResult, error) {
+	panic("stubEntityManager.CreateEntity: not expected in this test")
 }
-func (stubEntityManager) UpdateEntity(context.Context, *entity.Entity) (*entitymanager.UpdateResult, error) {
-	return nil, nil
+func (stubEntityManager) UpdateEntity(context.Context,
+	*entity.Entity) (*entitymanager.UpdateResult, error) {
+	panic("stubEntityManager.UpdateEntity: not expected in this test")
 }
-func (stubEntityManager) DeleteEntity(context.Context, string, bool) (*entitymanager.DeleteResult, error) {
-	return nil, nil
+func (stubEntityManager) DeleteEntity(context.Context, string,
+	bool) (*entitymanager.DeleteResult, error) {
+	panic("stubEntityManager.DeleteEntity: not expected in this test")
 }
-func (stubEntityManager) RenameEntity(context.Context, string, string, entitymanager.RenameOptions) (*entitymanager.RenameResult, error) {
-	return nil, nil
+func (stubEntityManager) RenameEntity(context.Context, string, string,
+	entitymanager.RenameOptions) (*entitymanager.RenameResult, error) {
+	panic("stubEntityManager.RenameEntity: not expected in this test")
 }
-func (stubEntityManager) CreateRelation(context.Context, string, string, string, entitymanager.RelationOptions) (*entity.Relation, error) {
-	return nil, nil
+func (stubEntityManager) CreateRelation(context.Context, string, string, string,
+	entitymanager.RelationOptions) (*entity.Relation, error) {
+	panic("stubEntityManager.CreateRelation: not expected in this test")
 }
-func (stubEntityManager) UpdateRelation(context.Context, string, string, string, entitymanager.RelationOptions) (*entity.Relation, error) {
-	return nil, nil
+func (stubEntityManager) UpdateRelation(context.Context, string, string, string,
+	entitymanager.RelationOptions) (*entity.Relation, error) {
+	panic("stubEntityManager.UpdateRelation: not expected in this test")
 }
 func (stubEntityManager) DeleteRelation(context.Context, string, string, string) error {
-	return nil
+	panic("stubEntityManager.DeleteRelation: not expected in this test")
 }
 
 func testWriteDeps(projectRoot string) lua.WriteDeps {

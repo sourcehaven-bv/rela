@@ -123,7 +123,6 @@ func newTestScheduler(
 		config: cfg,
 		ws:     ws,
 		metaFn: func() *metamodel.Metamodel { return ws.meta },
-
 		state:  newState(),
 		logger: discardLogger(),
 		now:    func() time.Time { return now },
@@ -457,4 +456,3 @@ func TestDoExecuteTask_PullsLuaWriteDeps(t *testing.T) {
 		t.Errorf("expected LuaWriteDeps called once, got %d", calls)
 	}
 }
-
