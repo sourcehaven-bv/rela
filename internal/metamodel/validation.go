@@ -3,6 +3,7 @@ package metamodel
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,69 @@ type ValidationError struct {
 // Error implements the error interface.
 func (e *ValidationError) Error() string {
 	return e.Message
+}
+
+// ValidateEncryption checks that every `encrypted:` declaration in
+// the metamodel (on properties or entity bodies) references a group
+// that exists in the provided *Groups.
+//
+// A nil *Groups represents "no groups.yaml loaded" and is only valid
+// if the metamodel declares no encrypted: references anywhere.
+//
+// Returns nil on success. On failure, returns the first *GroupError
+// encountered when walking entities and properties in sorted name
+// order — the ordering guarantee matters so users see the same error
+// message across runs and rela validate output stays stable.
+//
+// Callers use errors.Is(err, ErrGroupsNotFound) / ErrUnknownGroup to
+// branch on failure mode.
+func (m *Metamodel) ValidateEncryption(g *Groups) error {
+	entityNames := make([]string, 0, len(m.Entities))
+	for name := range m.Entities {
+		entityNames = append(entityNames, name)
+	}
+	sort.Strings(entityNames)
+
+	for _, typeName := range entityNames {
+		e := m.Entities[typeName]
+
+		propNames := make([]string, 0, len(e.Properties))
+		for name := range e.Properties {
+			propNames = append(propNames, name)
+		}
+		sort.Strings(propNames)
+
+		for _, propName := range propNames {
+			prop := e.Properties[propName]
+			if prop.Encrypted == "" {
+				continue
+			}
+			if g == nil {
+				return &GroupError{Kind: GroupErrorNotFound}
+			}
+			if !g.Contains(prop.Encrypted) {
+				return &GroupError{
+					Kind:  GroupErrorUnknown,
+					Group: prop.Encrypted,
+					Path:  fmt.Sprintf("entities.%s.properties.%s", typeName, propName),
+				}
+			}
+		}
+		if e.EncryptedBody == "" {
+			continue
+		}
+		if g == nil {
+			return &GroupError{Kind: GroupErrorNotFound}
+		}
+		if !g.Contains(e.EncryptedBody) {
+			return &GroupError{
+				Kind:  GroupErrorUnknown,
+				Group: e.EncryptedBody,
+				Path:  fmt.Sprintf("entities.%s.encrypted_body", typeName),
+			}
+		}
+	}
+	return nil
 }
 
 // ValidateProperties validates a properties map against a PropertySchema.
