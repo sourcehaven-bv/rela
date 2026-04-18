@@ -70,25 +70,54 @@ command can force full re-encryption when needed.
 
 ## File Format
 
-Per-value encryption using a YAML `!enc` tag:
+Per-value encryption uses a **key-prefix** marker — the encrypted property's
+YAML key is prefixed with `_enc_v1_` and the value holds base64-encoded
+ciphertext (nonce || ciphertext || AES-GCM tag):
 
 ```yaml
 ---
-title: My Requirement        # cleartext
-status: open                  # cleartext
-description: !enc AES256-GCM:<iv>:<ciphertext>:<tag>
-notes: !enc AES256-GCM:<iv>:<ciphertext>:<tag>
+title: My Requirement              # cleartext
+status: open                        # cleartext
+_enc_v1_description: SGVsbG8gd29ybGQgY2lwaGVydGV4dA==
+_enc_v1_notes: QW5vdGhlciBzZWNyZXQ=
 _encryption:
-    key_version: 3
+    key_version: 1
     data_keys:
         engineering:
-            jeroen: <hybrid wrapped data key>
-            alice: <hybrid wrapped data key>
+            jeroen: <hybrid wrapped data key (base64)>
+            alice: <hybrid wrapped data key (base64)>
 ---
+
+# My Requirement
+
+(cleartext body — see encrypted_body below for the encrypted variant)
 ```
 
-An encrypted body is stored as a single `!enc` blob following the frontmatter,
-or as an `_encrypted_body` property if structure is preferred.
+Why key-prefix, not a YAML `!enc` tag (earlier draft): `gopkg.in/yaml.v3`'s
+`Unmarshaler` interface is not invoked when the destination is
+`map[string]interface{}`, which is what fsstore's property loader uses. A YAML
+tag would require a `*yaml.Node`-level parser migration. The key-prefix
+approach is equivalent in expressiveness, needs no parser changes, and makes
+encrypted files trivially greppable (`grep -r '_enc_v1_' entities/`).
+
+The `_` underscore prefix on these keys is reserved: fsstore treats `_enc_v<N>_*`
+and `_encryption` as internal metadata. Metamodel validation rejects user
+property names starting with `_`.
+
+An encrypted body uses a sibling frontmatter key `_encrypted_body` holding
+base64 ciphertext; the markdown body section is left empty:
+
+```yaml
+---
+id: TKT-123
+type: ticket
+title: My Requirement
+_encrypted_body: QmFzZTY0ZW5jb2RlZENpcGhlcnRleHQ=
+_encryption:
+    key_version: 1
+    data_keys: {...}
+---
+```
 
 ## Key Storage
 
