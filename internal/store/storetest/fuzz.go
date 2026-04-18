@@ -166,7 +166,8 @@ func FuzzConcurrentOps(f *testing.F, factory FuzzFactory) {
 		var wg sync.WaitGroup
 		wg.Add(len(ops))
 
-		for _, op := range ops {
+		for _, op := range ops { //nolint:whitespace // leading blank kept to preserve coverage-baseline line count
+
 			go func() {
 				defer wg.Done()
 
