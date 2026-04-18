@@ -202,4 +202,4 @@ internal/workspace/rename.go;68;59
 internal/workspace/rename_type.go;58;31
 internal/workspace/services.go;48;8
 internal/workspace/validate.go;35;0
-internal/workspace/workspace.go;558;399
+internal/workspace/workspace.go;558;398
