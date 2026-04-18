@@ -161,7 +161,7 @@ internal/storage/errorfs.go;13;0
 internal/storage/memfs.go;215;190
 internal/storage/osfs.go;11;10
 internal/storage/safefs.go;29;16
-internal/storage/watcher.go;71;55
+internal/storage/watcher.go;71;56
 internal/store/fsstore/attachment.go;48;45
 internal/store/fsstore/entity.go;234;221
 internal/store/fsstore/formatter.go;40;0
@@ -174,7 +174,7 @@ internal/store/fsstore/watcher.go;150;117
 internal/store/memstore/memstore.go;342;329
 internal/store/storetest/attachment.go;83;0
 internal/store/storetest/entity.go;209;0
-internal/store/storetest/fuzz.go;164;0
+internal/store/storetest/fuzz.go;163;0
 internal/store/storetest/pagination.go;143;0
 internal/store/storetest/query.go;110;0
 internal/store/storetest/relation.go;269;0
