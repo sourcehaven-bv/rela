@@ -159,12 +159,6 @@ func (a *App) StartGitFetch() (stop func()) {
 // callable and so future per-entity reactions have an obvious hook.
 func (a *App) onDataReload(_ []workspace.ChangeEvent) {}
 
-// onMetaReload handles dataentry-specific side-effects after the workspace
-// has reloaded the metamodel.
-func (a *App) onMetaReload() {
-	a.rebuildState(false, true)
-}
-
 // rebuildState re-reads changed inputs and publishes a fresh AppState
 // snapshot atomically. Readers observe either the pre-reload or the
 // post-reload snapshot, never a torn state.

@@ -265,6 +265,7 @@ deps:
       - migration
       - project
       - rename
+      - schema
       - search
       - searchparser
       - state

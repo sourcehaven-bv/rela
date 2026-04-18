@@ -230,4 +230,3 @@ func isLoopbackHost(host string) bool {
 	}
 	return false
 }
-

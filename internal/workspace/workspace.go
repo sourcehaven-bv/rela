@@ -418,7 +418,8 @@ func (w *Workspace) deleteRelationStore(from, relType, to string) error {
 	if st == nil {
 		return nil
 	}
-	if err := st.DeleteRelation(context.Background(), from, relType, to); err != nil && !errors.Is(err, store.ErrNotFound) {
+	err := st.DeleteRelation(context.Background(), from, relType, to)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
 	return nil
@@ -633,6 +634,8 @@ func (w *Workspace) reindexLoop(ch <-chan store.Event) {
 			if err := w.searchIdx.Remove(ev.EntityID); err != nil {
 				slog.Warn("search index remove failed", "id", ev.EntityID, "error", err)
 			}
+		case store.EventRelationCreated, store.EventRelationUpdated, store.EventRelationDeleted:
+			// Relations don't affect the entity search index.
 		}
 	}
 }
