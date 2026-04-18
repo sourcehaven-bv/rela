@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 func TestParseActionResponse_Nil(t *testing.T) {
@@ -168,6 +170,34 @@ func TestExecuteAction_RealFile(t *testing.T) {
 	}
 	if resp.Redirect != "/test" || resp.Message != "executed" || resp.MessageType != "success" {
 		t.Errorf("unexpected response: %+v", resp)
+	}
+}
+
+func TestExecuteAction_WithTriggerEntity(t *testing.T) {
+	tmpDir := t.TempDir()
+	actionsDir := filepath.Join(tmpDir, "actions")
+	if err := os.MkdirAll(actionsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Script reads the `entity` global injected by ExecuteAction when
+	// triggerEntity is non-nil.
+	scriptContent := `return {message = entity.id}`
+	scriptPath := filepath.Join(actionsDir, "ent.lua")
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := NewEngine()
+	deps := testWriteDeps(tmpDir)
+	ent := &entity.Entity{ID: "T-42", Type: "ticket"}
+
+	resp, err := engine.ExecuteAction("ent.lua", deps, ent, nil, 5*time.Second)
+	if err != nil {
+		t.Fatalf("ExecuteAction failed: %v", err)
+	}
+	if resp.Message != "T-42" {
+		t.Errorf("expected message=T-42 from triggerEntity, got %q", resp.Message)
 	}
 }
 
