@@ -26,6 +26,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
@@ -761,82 +762,96 @@ func discoverProject(projectDir string) (storage.FS, *project.Context, error) {
 }
 
 // generateDataEntryConfig creates a minimal data-entry.yaml from the metamodel.
+// Builds a typed structure and marshals via yaml.v3 so every string value is
+// correctly escaped regardless of the characters a user's metamodel contains.
 func generateDataEntryConfig(appName string, meta *metamodel.Metamodel) string {
-	var sb strings.Builder
-	sb.WriteString("version: \"1\"\n\n")
-	sb.WriteString("app:\n")
-	fmt.Fprintf(&sb, "  name: %q\n", appName)
-	sb.WriteString("  description: \"Generated data entry configuration\"\n\n")
-
-	// Get sorted entity types
 	entityTypes := make([]string, 0, len(meta.Entities))
 	for name := range meta.Entities {
 		entityTypes = append(entityTypes, name)
 	}
 	sort.Strings(entityTypes)
 
-	// Generate forms
-	sb.WriteString("forms:\n")
+	forms := yaml.Node{Kind: yaml.MappingNode}
+	lists := yaml.Node{Kind: yaml.MappingNode}
+	navigation := yaml.Node{Kind: yaml.SequenceNode}
+
+	const maxColumns = 4
 	for _, typeName := range entityTypes {
 		entDef := meta.Entities[typeName]
 		formID := strings.ReplaceAll(typeName, "-", "_")
-		fmt.Fprintf(&sb, "  %s:\n", formID)
-		fmt.Fprintf(&sb, "    entity_type: %s\n", typeName)
-		fmt.Fprintf(&sb, "    title: \"%s\"\n", titleCase(typeName))
-		sb.WriteString("    fields:\n")
+		listID := formID + "s"
 
-		// Add fields for each property
 		propNames := make([]string, 0, len(entDef.Properties))
 		for name := range entDef.Properties {
 			propNames = append(propNames, name)
 		}
 		sort.Strings(propNames)
+
+		fields := make([]map[string]string, 0, len(propNames))
 		for _, propName := range propNames {
-			fmt.Fprintf(&sb, "      - property: %s\n", propName)
-			fmt.Fprintf(&sb, "        label: \"%s\"\n", titleCase(propName))
+			fields = append(fields, map[string]string{"property": propName, "label": titleCase(propName)})
 		}
-	}
-	sb.WriteString("\n")
+		appendMapEntry(&forms, formID, map[string]any{
+			"entity_type": typeName,
+			"title":       titleCase(typeName),
+			"fields":      fields,
+		})
 
-	// Generate lists
-	sb.WriteString("lists:\n")
-	for _, typeName := range entityTypes {
-		entDef := meta.Entities[typeName]
-		listID := strings.ReplaceAll(typeName, "-", "_") + "s"
-		fmt.Fprintf(&sb, "  %s:\n", listID)
-		fmt.Fprintf(&sb, "    entity_type: %s\n", typeName)
-		fmt.Fprintf(&sb, "    title: \"%s\"\n", titleCase(typeName)+"s")
-		sb.WriteString("    columns:\n")
-
-		// Add first few properties as columns
-		colPropNames := make([]string, 0, len(entDef.Properties))
-		for name := range entDef.Properties {
-			colPropNames = append(colPropNames, name)
-		}
-		sort.Strings(colPropNames)
-		const maxColumns = 4
-		for i, propName := range colPropNames {
+		columns := make([]map[string]string, 0, maxColumns)
+		for i, propName := range propNames {
 			if i >= maxColumns {
 				break
 			}
-			fmt.Fprintf(&sb, "      - property: %s\n", propName)
-			fmt.Fprintf(&sb, "        label: \"%s\"\n", titleCase(propName))
+			columns = append(columns, map[string]string{"property": propName, "label": titleCase(propName)})
 		}
-		formID := strings.ReplaceAll(typeName, "-", "_")
-		fmt.Fprintf(&sb, "    create_form: %s\n", formID)
-		fmt.Fprintf(&sb, "    edit_form: %s\n", formID)
-	}
-	sb.WriteString("\n")
+		appendMapEntry(&lists, listID, map[string]any{
+			"entity_type": typeName,
+			"title":       titleCase(typeName) + "s",
+			"columns":     columns,
+			"create_form": formID,
+			"edit_form":   formID,
+		})
 
-	// Generate navigation
-	sb.WriteString("navigation:\n")
-	for _, typeName := range entityTypes {
-		listID := strings.ReplaceAll(typeName, "-", "_") + "s"
-		fmt.Fprintf(&sb, "  - label: \"%s\"\n", titleCase(typeName)+"s")
-		fmt.Fprintf(&sb, "    list: %s\n", listID)
+		navItem := yaml.Node{Kind: yaml.MappingNode}
+		appendMapEntry(&navItem, "label", titleCase(typeName)+"s")
+		appendMapEntry(&navItem, "list", listID)
+		navigation.Content = append(navigation.Content, &navItem)
 	}
 
-	return sb.String()
+	root := yaml.Node{Kind: yaml.MappingNode}
+	appendMapEntry(&root, "version", "1")
+	appendMapEntry(&root, "app", map[string]any{
+		"name":        appName,
+		"description": "Generated data entry configuration",
+	})
+	root.Content = append(root.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: "forms"}, &forms,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: "lists"}, &lists,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: "navigation"}, &navigation,
+	)
+
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		// yaml.Marshal on a manually-built node graph shouldn't fail; surface
+		// as a comment so the generated file is still valid YAML.
+		return fmt.Sprintf("# failed to generate config: %v\n", err)
+	}
+	return string(out)
+}
+
+// appendMapEntry adds a key/value pair to a yaml MappingNode. Value may be any
+// Go value yaml.Marshal accepts (string, map, slice, etc.) or a pre-built
+// *yaml.Node.
+func appendMapEntry(m *yaml.Node, key string, value any) {
+	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
+	var valNode *yaml.Node
+	if n, ok := value.(*yaml.Node); ok {
+		valNode = n
+	} else {
+		valNode = &yaml.Node{}
+		_ = valNode.Encode(value)
+	}
+	m.Content = append(m.Content, keyNode, valNode)
 }
 
 // titleCase converts a-kebab-case or snake_case to Title Case.

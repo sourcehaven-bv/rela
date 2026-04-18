@@ -3,14 +3,24 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
+
+// decodeConfig parses the string returned by generateDataEntryConfig into a
+// generic map. Tests use this rather than substring matching so they stay
+// independent of yaml.v3 formatting choices (when it quotes vs doesn't).
+func decodeConfig(t *testing.T, config string) map[string]any {
+	t.Helper()
+	var out map[string]any
+	require.NoError(t, yaml.Unmarshal([]byte(config), &out), "generated config must be valid YAML")
+	return out
+}
 
 func TestTitleCase(t *testing.T) {
 	tests := []struct {
@@ -100,38 +110,40 @@ func TestGenerateDataEntryConfig(t *testing.T) {
 		},
 	}
 
-	config := generateDataEntryConfig("Test App", meta)
+	cfg := decodeConfig(t, generateDataEntryConfig("Test App", meta))
 
-	// Check app name (new format uses app.name)
-	assert.Contains(t, config, "name: \"Test App\"")
+	app := cfg["app"].(map[string]any)
+	assert.Equal(t, "Test App", app["name"])
 
-	// Check forms section
-	assert.Contains(t, config, "forms:")
-	assert.Contains(t, config, "  feature:")
-	assert.Contains(t, config, "    entity_type: feature")
-	assert.Contains(t, config, "    title: \"Feature\"")
-	assert.Contains(t, config, "  bug:")
-	assert.Contains(t, config, "    entity_type: bug")
-	assert.Contains(t, config, "    title: \"Bug\"")
+	forms := cfg["forms"].(map[string]any)
+	feature := forms["feature"].(map[string]any)
+	assert.Equal(t, "feature", feature["entity_type"])
+	assert.Equal(t, "Feature", feature["title"])
+	bug := forms["bug"].(map[string]any)
+	assert.Equal(t, "bug", bug["entity_type"])
+	assert.Equal(t, "Bug", bug["title"])
 
-	// Check lists section
-	assert.Contains(t, config, "lists:")
-	assert.Contains(t, config, "  features:")
-	assert.Contains(t, config, "    entity_type: feature")
-	assert.Contains(t, config, "  bugs:")
-	assert.Contains(t, config, "    entity_type: bug")
+	lists := cfg["lists"].(map[string]any)
+	featuresList := lists["features"].(map[string]any)
+	assert.Equal(t, "feature", featuresList["entity_type"])
+	bugsList := lists["bugs"].(map[string]any)
+	assert.Equal(t, "bug", bugsList["entity_type"])
 
-	// Check navigation section
-	assert.Contains(t, config, "navigation:")
-	assert.Contains(t, config, "  - label: \"Features\"")
-	assert.Contains(t, config, "    list: features")
-	assert.Contains(t, config, "  - label: \"Bugs\"")
-	assert.Contains(t, config, "    list: bugs")
+	navigation := cfg["navigation"].([]any)
+	navLabels := make([]string, 0, len(navigation))
+	for _, item := range navigation {
+		navLabels = append(navLabels, item.(map[string]any)["label"].(string))
+	}
+	assert.Contains(t, navLabels, "Features")
+	assert.Contains(t, navLabels, "Bugs")
 
-	// Check properties exist (they're sorted alphabetically)
-	assert.Contains(t, config, "property: priority")
-	assert.Contains(t, config, "property: status")
-	assert.Contains(t, config, "property: title")
+	// Properties are sorted alphabetically
+	featureFields := feature["fields"].([]any)
+	propNames := make([]string, 0, len(featureFields))
+	for _, f := range featureFields {
+		propNames = append(propNames, f.(map[string]any)["property"].(string))
+	}
+	assert.Equal(t, []string{"priority", "status", "title"}, propNames)
 }
 
 func TestGenerateDataEntryConfig_EmptyMetamodel(t *testing.T) {
@@ -139,12 +151,12 @@ func TestGenerateDataEntryConfig_EmptyMetamodel(t *testing.T) {
 		Entities: map[string]metamodel.EntityDef{},
 	}
 
-	config := generateDataEntryConfig("Empty App", meta)
-
-	assert.Contains(t, config, "name: \"Empty App\"")
-	assert.Contains(t, config, "forms:")
-	assert.Contains(t, config, "lists:")
-	assert.Contains(t, config, "navigation:")
+	cfg := decodeConfig(t, generateDataEntryConfig("Empty App", meta))
+	app := cfg["app"].(map[string]any)
+	assert.Equal(t, "Empty App", app["name"])
+	assert.Contains(t, cfg, "forms")
+	assert.Contains(t, cfg, "lists")
+	assert.Contains(t, cfg, "navigation")
 }
 
 func TestGenerateDataEntryConfig_KebabCaseEntityType(t *testing.T) {
@@ -158,15 +170,21 @@ func TestGenerateDataEntryConfig_KebabCaseEntityType(t *testing.T) {
 		},
 	}
 
-	config := generateDataEntryConfig("Test App", meta)
+	cfg := decodeConfig(t, generateDataEntryConfig("Test App", meta))
 
-	// Kebab-case should be converted to underscore for form/list IDs
-	assert.Contains(t, config, "  test_case:")
-	assert.Contains(t, config, "    entity_type: test-case")
-	assert.Contains(t, config, "    title: \"Test Case\"")
-	assert.Contains(t, config, "  test_cases:")
-	assert.Contains(t, config, "  - label: \"Test Cases\"")
-	assert.Contains(t, config, "    list: test_cases")
+	forms := cfg["forms"].(map[string]any)
+	testCase := forms["test_case"].(map[string]any) // hyphen -> underscore for the key
+	assert.Equal(t, "test-case", testCase["entity_type"])
+	assert.Equal(t, "Test Case", testCase["title"])
+
+	lists := cfg["lists"].(map[string]any)
+	require.Contains(t, lists, "test_cases")
+
+	navigation := cfg["navigation"].([]any)
+	require.Len(t, navigation, 1)
+	nav := navigation[0].(map[string]any)
+	assert.Equal(t, "Test Cases", nav["label"])
+	assert.Equal(t, "test_cases", nav["list"])
 }
 
 func TestGenerateDataEntryConfig_MaxColumns(t *testing.T) {
@@ -185,25 +203,50 @@ func TestGenerateDataEntryConfig_MaxColumns(t *testing.T) {
 		},
 	}
 
-	config := generateDataEntryConfig("Test App", meta)
+	cfg := decodeConfig(t, generateDataEntryConfig("Test App", meta))
+	entitys := cfg["lists"].(map[string]any)["entitys"].(map[string]any)
+	columns := entitys["columns"].([]any)
+	assert.Len(t, columns, 4, "lists should cap at 4 columns")
+}
 
-	// Lists should have max 4 columns
-	// Find the entitys list section between "  entitys:" and "create_form:"
-	listsIdx := strings.Index(config, "lists:")
-	require.NotEqual(t, -1, listsIdx, "should have lists section")
+// TestGenerateDataEntryConfig_YAMLSpecialChars is the regression test for
+// BUG-F9I2Z: titles derived from entity/property names that contain YAML-special
+// characters must still produce valid YAML. The previous Fprintf-based
+// implementation would embed the raw string inside double quotes without
+// escaping, producing unparseable output for names like `foo"bar` or `a\nb`.
+func TestGenerateDataEntryConfig_YAMLSpecialChars(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			`quote"type`: {
+				Properties: map[string]metamodel.PropertyDef{
+					`back\slash`:    {Type: "string"},
+					"newline\nprop": {Type: "string"},
+					"tab\tprop":     {Type: "string"},
+				},
+			},
+		},
+	}
 
-	entitysIdx := strings.Index(config[listsIdx:], "  entitys:")
-	require.NotEqual(t, -1, entitysIdx, "should have entitys list")
+	appName := `App with "quotes" and \backslash`
+	cfg := decodeConfig(t, generateDataEntryConfig(appName, meta))
 
-	columnsIdx := strings.Index(config[listsIdx+entitysIdx:], "columns:")
-	require.NotEqual(t, -1, columnsIdx, "should have columns")
+	// Round-tripping proves the YAML parsed; spot-check that values survived
+	// unmangled.
+	assert.Equal(t, appName, cfg["app"].(map[string]any)["name"])
 
-	createFormIdx := strings.Index(config[listsIdx+entitysIdx+columnsIdx:], "    create_form:")
-	require.NotEqual(t, -1, createFormIdx, "should have create_form")
-
-	columnsSection := config[listsIdx+entitysIdx+columnsIdx : listsIdx+entitysIdx+columnsIdx+createFormIdx]
-
-	// Count property occurrences in columns section
-	propertyCount := strings.Count(columnsSection, "- property:")
-	assert.Equal(t, 4, propertyCount, "should have max 4 columns")
+	forms := cfg["forms"].(map[string]any)
+	// The form key goes through hyphen→underscore, but the entity_type value is
+	// the raw string. Exactly one form was generated; find it.
+	require.Len(t, forms, 1)
+	for _, v := range forms {
+		form := v.(map[string]any)
+		assert.Equal(t, `quote"type`, form["entity_type"])
+		fields := form["fields"].([]any)
+		propNames := make([]string, 0, len(fields))
+		for _, f := range fields {
+			propNames = append(propNames, f.(map[string]any)["property"].(string))
+		}
+		// Sorted alphabetically by the generator.
+		assert.ElementsMatch(t, []string{`back\slash`, "newline\nprop", "tab\tprop"}, propNames)
+	}
 }
