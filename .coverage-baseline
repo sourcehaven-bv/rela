@@ -161,9 +161,9 @@ internal/storage/errorfs.go;13;0
 internal/storage/memfs.go;215;190
 internal/storage/osfs.go;11;10
 internal/storage/safefs.go;29;16
-internal/storage/watcher.go;71;55
+internal/storage/watcher.go;71;56
 internal/store/fsstore/attachment.go;48;45
-internal/store/fsstore/entity.go;234;219
+internal/store/fsstore/entity.go;234;221
 internal/store/fsstore/formatter.go;40;0
 internal/store/fsstore/fsstore.go;74;54
 internal/store/fsstore/index.go;160;130
