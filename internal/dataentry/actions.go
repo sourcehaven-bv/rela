@@ -98,8 +98,8 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	}
 
 	engine := script.NewEngine()
-	resp, err := engine.ExecuteAction(action.Script, a.luaWriteDeps,
-		a.paths.CacheDir, ent, action.Params, actionTimeout)
+	resp, err := engine.ExecuteAction(action.Script, a.luaWriteDeps(),
+		ent, action.Params, actionTimeout)
 	if err != nil {
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
 		writeV1JSON(w, http.StatusInternalServerError, V1ActionResponse{

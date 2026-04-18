@@ -15,7 +15,7 @@ import (
 func newMdTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	var sb strings.Builder
-	return NewWriter(WriteDeps{}, &sb)
+	return NewReader(ReadDeps{}, &sb)
 }
 
 func TestMdParse(t *testing.T) {

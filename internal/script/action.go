@@ -47,7 +47,6 @@ var validMessageTypes = map[string]bool{
 func (e *Engine) ExecuteAction(
 	scriptPath string,
 	deps lua.WriteDeps,
-	cacheDir string,
 	triggerEntity *entity.Entity,
 	params map[string]string,
 	timeout time.Duration,
@@ -58,7 +57,7 @@ func (e *Engine) ExecuteAction(
 	}
 
 	var output bytes.Buffer
-	runtime, err := NewWriterRuntime(deps, cacheDir, scriptPath, &output,
+	runtime, err := NewWriterRuntime(deps, scriptPath, &output,
 		lua.WithParams(params),
 		lua.WithActionMode(),
 		lua.WithTimeout(timeout),

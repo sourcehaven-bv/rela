@@ -104,7 +104,6 @@ type App struct {
 	templater     templating.Templater
 	cfgLoader     config.Loader
 	kv            state.KV
-	luaWriteDeps  lua.WriteDeps
 	startWatching func(workspace.WatchOptions) error
 
 	// documents renders and caches documents. Created once in NewApp so
@@ -158,6 +157,23 @@ func (a *App) Cfg() *Config { return a.State().Cfg }
 
 // Meta returns the current metamodel (convenience accessor).
 func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
+
+// luaWriteDeps builds a lua.WriteDeps bundle using the current AppState
+// metamodel. Called per action-script invocation so that metamodel reloads
+// propagate to scripts without requiring app reconstruction. All other
+// fields are immutable for the App's lifetime.
+func (a *App) luaWriteDeps() lua.WriteDeps {
+	return lua.WriteDeps{
+		ReadDeps: lua.ReadDeps{
+			Store:       a.store,
+			Tracer:      a.tracer,
+			Searcher:    a.searcher,
+			Meta:        a.Meta(),
+			ProjectRoot: a.paths.Root,
+		},
+		EntityManager: a.entityManager,
+	}
+}
 
 // mutateState atomically updates the published AppState. It takes
 // writeMu, builds a shallow copy of the current snapshot, runs the
@@ -215,7 +231,6 @@ func NewApp(
 		Meta:        meta,
 		ProjectRoot: paths.Root,
 	}
-	writeDeps := lua.WriteDeps{ReadDeps: readDeps, EntityManager: em}
 	val := validator.New(st, meta, readDeps)
 
 	// Load data-entry config from project root
@@ -272,7 +287,6 @@ func NewApp(
 		templater:     templater,
 		cfgLoader:     cfgLoader,
 		kv:            kv,
-		luaWriteDeps:  writeDeps,
 		startWatching: startWatching,
 		broker:        newEventBroker(),
 		documents:     newDocumentService(st, kv, paths.Root),

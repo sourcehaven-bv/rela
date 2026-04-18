@@ -63,7 +63,7 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	// Capture output
 	var output bytes.Buffer
 
-	runtime, err := script.NewWriterRuntime(s.ws.LuaWriteDeps(), s.ws.Paths().CacheDir, "",
+	runtime, err := script.NewWriterRuntime(s.ws.LuaWriteDeps(), "",
 		&output, lua.WithContext(ctx))
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("config error: %s", err.Error())), nil
@@ -134,7 +134,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Capture output
 	var output bytes.Buffer
 
-	runtime, err := script.NewWriterRuntime(s.ws.LuaWriteDeps(), s.ws.Paths().CacheDir, path,
+	runtime, err := script.NewWriterRuntime(s.ws.LuaWriteDeps(), path,
 		&output, lua.WithContext(ctx))
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("config error: %s", err.Error())), nil

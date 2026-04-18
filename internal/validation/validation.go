@@ -21,7 +21,6 @@ type Violation struct {
 
 // Service validates entities against custom metamodel rules.
 type Service struct {
-	meta    *metamodel.Metamodel
 	deps    lua.ReadDeps
 	luaExec *luaExecutor // Lazy-initialized Lua executor
 }
@@ -29,20 +28,17 @@ type Service struct {
 // New creates a validation service for the given metamodel.
 // deps provides read-only lua access for rules that use Lua scripts.
 // The ProjectRoot field of deps is used to resolve lua_file paths from
-// validations/. Meta is set to the supplied metamodel if deps.Meta is nil.
+// validations/. The supplied metamodel is authoritative — it overwrites
+// deps.Meta so the Go-side rule evaluator and the Lua-side filter helpers
+// cannot disagree about which schema is in effect.
 func New(meta *metamodel.Metamodel, deps lua.ReadDeps) *Service {
-	if deps.Meta == nil {
-		deps.Meta = meta
-	}
-	return &Service{
-		meta: meta,
-		deps: deps,
-	}
+	deps.Meta = meta
+	return &Service{deps: deps}
 }
 
 // Rules returns the validation rules from the metamodel.
 func (s *Service) Rules() []metamodel.ValidationRule {
-	return s.meta.Validations
+	return s.deps.Meta.Validations
 }
 
 // Check runs all validation rules against the given entities.
@@ -57,7 +53,7 @@ func (s *Service) Check(entities []*entity.Entity, scope map[string]bool) []Viol
 func (s *Service) CheckRules(entities []*entity.Entity, scope, ruleNames map[string]bool) []Violation {
 	var violations []Violation
 
-	for _, rule := range s.meta.Validations {
+	for _, rule := range s.deps.Meta.Validations {
 		// Skip rules not in the filter set (if filter is specified)
 		if ruleNames != nil && !ruleNames[rule.Name] {
 			continue
@@ -137,7 +133,7 @@ func (s *Service) checkEntityAgainstRule(
 	rule metamodel.ValidationRule,
 	whenFilters, thenFilters []*filter.Filter,
 ) []Violation {
-	entityDef, ok := s.meta.GetEntityDef(e.Type)
+	entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
 	if !ok {
 		return nil
 	}
@@ -146,7 +142,7 @@ func (s *Service) checkEntityAgainstRule(
 
 	// Check 'when' conditions - if they don't match, rule doesn't apply
 	if len(whenFilters) > 0 {
-		matches, err := filter.MatchAll(rec, whenFilters, entityDef, s.meta)
+		matches, err := filter.MatchAll(rec, whenFilters, entityDef, s.deps.Meta)
 		if err != nil || !matches {
 			return nil
 		}
@@ -154,7 +150,7 @@ func (s *Service) checkEntityAgainstRule(
 
 	// Check 'then' conditions - if they don't satisfy, it's a violation
 	if len(thenFilters) > 0 {
-		satisfies, err := filter.MatchAll(rec, thenFilters, entityDef, s.meta)
+		satisfies, err := filter.MatchAll(rec, thenFilters, entityDef, s.deps.Meta)
 		if err != nil || !satisfies {
 			return []Violation{{
 				RuleName:    rule.Name,

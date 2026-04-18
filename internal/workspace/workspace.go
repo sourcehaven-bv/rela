@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"context"
@@ -27,6 +28,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 // ChangeEvent is re-exported from storage so consumers don't need to
@@ -41,17 +43,16 @@ type ChangeOp = storage.ChangeOp
 // package implements it. Workspace stays independent of Lua specifics beyond
 // the lua.WriteDeps capability bundle.
 //
-// The executor is stateless — workspace passes deps, cache dir, and the
-// triggering entity pair (new + old) at execution time.
+// The executor is stateless — workspace passes deps and the triggering entity
+// pair at execution time. The .rela/ cache dir for AI/secrets is derived from
+// deps.ProjectRoot by the executor.
 //
 // For production, pass script.NewEngine(). For tests, pass NopScriptExecutor.
 type ScriptExecutor interface {
 	// ExecuteCode runs inline script code with entity context.
-	ExecuteCode(code string, deps lua.WriteDeps, cacheDir string,
-		newEntity, oldEntity *entity.Entity) error
+	ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
 	// ExecuteFile runs a script file from the scripts/ directory.
-	ExecuteFile(path string, deps lua.WriteDeps, cacheDir string,
-		newEntity, oldEntity *entity.Entity) error
+	ExecuteFile(path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
 }
 
 // NopScriptExecutor is a no-op implementation of ScriptExecutor for tests
@@ -61,11 +62,11 @@ var NopScriptExecutor ScriptExecutor = nopScriptExecutor{}
 
 type nopScriptExecutor struct{}
 
-func (nopScriptExecutor) ExecuteCode(string, lua.WriteDeps, string, *entity.Entity, *entity.Entity) error {
+func (nopScriptExecutor) ExecuteCode(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
-func (nopScriptExecutor) ExecuteFile(string, lua.WriteDeps, string, *entity.Entity, *entity.Entity) error {
+func (nopScriptExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
@@ -92,6 +93,14 @@ type Workspace struct {
 	meta       *metamodel.Metamodel
 	automation *automation.Engine // may be nil if the metamodel has no automations
 	searchIdx  *search.Index      // may be nil if index construction failed
+
+	// Derived services — memoised on first access. tracer wraps the store
+	// and wsSearcher wraps the workspace; both are cheap wrappers but
+	// accessing them from Lua bindings on every call was unnecessary churn.
+	tracerOnce   sync.Once
+	tracer       tracer.Tracer
+	searcherOnce sync.Once
+	searcher     search.Searcher
 
 	// Watcher state (nil when not watching).
 	watcher    *storage.Watcher
@@ -1150,16 +1159,15 @@ func (w *Workspace) executeLuaActions(
 	}
 
 	deps := w.LuaWriteDeps()
-	cacheDir := w.paths.CacheDir
 
 	for _, action := range luaActions {
 		var err error
 
 		switch {
 		case action.Code != "":
-			err = w.scriptExec.ExecuteCode(action.Code, deps, cacheDir, newEntity, oldEntity)
+			err = w.scriptExec.ExecuteCode(action.Code, deps, newEntity, oldEntity)
 		case action.FilePath != "":
-			err = w.scriptExec.ExecuteFile(action.FilePath, deps, cacheDir, newEntity, oldEntity)
+			err = w.scriptExec.ExecuteFile(action.FilePath, deps, newEntity, oldEntity)
 		default:
 			// Empty action - skip
 			continue

@@ -12,16 +12,19 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
 // --- test helpers ---
 
 type mockWorkspace struct {
-	mu         sync.Mutex
-	cacheFiles map[string][]byte
-	paths      *project.Context
-	meta       *metamodel.Metamodel
+	mu              sync.Mutex
+	cacheFiles      map[string][]byte
+	paths           *project.Context
+	meta            *metamodel.Metamodel
+	luaDepsCalls    int
+	luaDepsProvider func() lua.WriteDeps
 }
 
 func newMockWorkspace(t *testing.T) *mockWorkspace {
@@ -39,7 +42,16 @@ func (m *mockWorkspace) Config() config.Loader { return &mockConfig{m: m} }
 
 func (m *mockWorkspace) State() state.KV { return &mockState{m: m} }
 
-func (m *mockWorkspace) LuaWriteDeps() lua.WriteDeps { return lua.WriteDeps{} }
+func (m *mockWorkspace) LuaWriteDeps() lua.WriteDeps {
+	m.mu.Lock()
+	m.luaDepsCalls++
+	provider := m.luaDepsProvider
+	m.mu.Unlock()
+	if provider != nil {
+		return provider()
+	}
+	return lua.WriteDeps{}
+}
 
 type mockConfig struct{ m *mockWorkspace }
 
@@ -415,6 +427,34 @@ func TestNew(t *testing.T) {
 	}
 	if s.metaFn == nil {
 		t.Error("metaFn not wired")
+	}
+}
+
+// TestDoExecuteTask_PullsLuaWriteDeps exercises the real doExecuteTask path
+// (no executeTaskFunc override) to verify the scheduler pulls lua.WriteDeps
+// from its WorkspaceProvider before invoking the engine. The Lua script is
+// intentionally absent, so ExecuteFile returns an error — what we're
+// verifying is that LuaWriteDeps() was called regardless.
+func TestDoExecuteTask_PullsLuaWriteDeps(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Tasks: []TaskConfig{
+			{Name: "t", Script: "missing.lua", Every: dailySchedule()},
+		},
+	}
+	ws := newMockWorkspace(t)
+	s := New(cfg, script.NewEngine(), ws, func() *metamodel.Metamodel { return ws.meta }, discardLogger())
+	s.now = func() time.Time { return time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC) }
+	s.state = newState()
+
+	s.doExecuteTask(context.Background(), cfg.Tasks[0])
+
+	ws.mu.Lock()
+	calls := ws.luaDepsCalls
+	ws.mu.Unlock()
+	if calls != 1 {
+		t.Errorf("expected LuaWriteDeps called once, got %d", calls)
 	}
 }
 

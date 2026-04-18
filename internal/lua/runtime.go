@@ -167,6 +167,14 @@ func NewWriter(d WriteDeps, stdout io.Writer, opts ...Option) *Runtime {
 }
 
 func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Option) *Runtime {
+	// Fail loud at construction: a writer runtime with no EntityManager
+	// would register mutation bindings that nil-deref on first call.
+	// Catching this here turns a silent runtime surprise into a build-time
+	// or start-time panic with a clear message.
+	if allowWrites && deps.EntityManager == nil {
+		panic("lua.NewWriter: WriteDeps.EntityManager is required for a writer runtime")
+	}
+
 	// Create sandboxed Lua state - skip default libraries for security
 	L := lua.NewState(lua.Options{
 		SkipOpenLibs:  true,
@@ -404,7 +412,6 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 
 	// Output functions
 	r.L.SetField(rela, "output", r.L.NewFunction(r.luaOutput))
-	r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
 
 	// Schema introspection
 	r.L.SetField(rela, "get_entity_types", r.L.NewFunction(r.luaGetEntityTypes))
@@ -422,15 +429,17 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 	r.registerMarkdownModule(rela)
 }
 
-// registerWriteBindings installs mutation bindings on the rela table:
-// create/update/delete for entities and relations. Only called on writer
-// runtimes; absent entirely from reader runtimes.
+// registerWriteBindings installs mutation bindings on the rela table.
+// Graph mutations (create/update/delete for entities and relations) and
+// filesystem writes (write_file) are all restricted to writer runtimes —
+// readers (validation rules, etc.) have no way to mutate state of any kind.
 func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "create_entity", r.L.NewFunction(r.luaCreateEntity))
 	r.L.SetField(rela, "update_entity", r.L.NewFunction(r.luaUpdateEntity))
 	r.L.SetField(rela, "delete_entity", r.L.NewFunction(r.luaDeleteEntity))
 	r.L.SetField(rela, "create_relation", r.L.NewFunction(r.luaCreateRelation))
 	r.L.SetField(rela, "delete_relation", r.L.NewFunction(r.luaDeleteRelation))
+	r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
 }
 
 // registerContextBindings installs per-runtime context tables: args, params,

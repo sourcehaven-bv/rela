@@ -72,7 +72,7 @@ Example:
 			opts = append(opts, lua.WithOutputDir(flowOutputDir))
 		}
 
-		runtime, rtErr := script.NewWriterRuntime(flowWs.LuaWriteDeps(), flowWs.Paths().CacheDir,
+		runtime, rtErr := script.NewWriterRuntime(flowWs.LuaWriteDeps(),
 			scriptPath, os.Stdout, opts...)
 		if rtErr != nil {
 			return rtErr

@@ -12,7 +12,7 @@ import (
 func newDateTestRuntime(t *testing.T) (*Runtime, *strings.Builder) {
 	t.Helper()
 	var sb strings.Builder
-	rt := NewWriter(WriteDeps{}, &sb)
+	rt := NewReader(ReadDeps{}, &sb)
 	return rt, &sb
 }
 

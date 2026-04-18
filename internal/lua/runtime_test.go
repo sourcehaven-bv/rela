@@ -2354,7 +2354,7 @@ func TestReaderRuntime_MutationBindingsAbsent(t *testing.T) {
 	defer r.Close()
 
 	// Each of these is a mutation binding that must be absent on a reader.
-	mutators := []string{"create_entity", "update_entity", "delete_entity", "create_relation", "delete_relation"}
+	mutators := []string{"create_entity", "update_entity", "delete_entity", "create_relation", "delete_relation", "write_file"}
 
 	for _, name := range mutators {
 		script := `rela.output({kind = type(rela.` + name + `)})`
@@ -2399,6 +2399,27 @@ func TestReaderRuntime_MutationCallIsLuaNilCall(t *testing.T) {
 	}
 }
 
+// TestNewWriter_PanicsOnNilEntityManager asserts the construction-time guard
+// against a writer built with no EntityManager. Without this guard, mutation
+// bindings would be registered and nil-deref on first call — fail loud at
+// construction instead.
+func TestNewWriter_PanicsOnNilEntityManager(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic, got none")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, "EntityManager") {
+			t.Errorf("expected panic message mentioning EntityManager, got: %v", r)
+		}
+	}()
+
+	var buf bytes.Buffer
+	// EntityManager left nil — must panic.
+	_ = NewWriter(WriteDeps{ReadDeps: ReadDeps{ProjectRoot: "/tmp"}}, &buf)
+}
+
 // TestWriterRuntime_MutationBindingsPresent is the positive counterpart:
 // a writer runtime has all mutation bindings registered as functions.
 func TestWriterRuntime_MutationBindingsPresent(t *testing.T) {
@@ -2408,7 +2429,7 @@ func TestWriterRuntime_MutationBindingsPresent(t *testing.T) {
 	r := NewWriter(ws.services("/tmp"), &buf)
 	defer r.Close()
 
-	mutators := []string{"create_entity", "update_entity", "delete_entity", "create_relation", "delete_relation"}
+	mutators := []string{"create_entity", "update_entity", "delete_entity", "create_relation", "delete_relation", "write_file"}
 	for _, name := range mutators {
 		script := `rela.output({kind = type(rela.` + name + `)})`
 		buf.Reset()

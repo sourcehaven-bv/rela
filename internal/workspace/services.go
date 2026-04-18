@@ -42,9 +42,13 @@ func (w *Workspace) LuaWriteDeps() lua.WriteDeps {
 	}
 }
 
-// Tracer returns the store-backed graph traversal service.
+// Tracer returns the store-backed graph traversal service. The wrapper is
+// created on first access and reused for the lifetime of the workspace.
 func (w *Workspace) Tracer() tracer.Tracer {
-	return tracer.New(w.Store())
+	w.tracerOnce.Do(func() {
+		w.tracer = tracer.New(w.Store())
+	})
+	return w.tracer
 }
 
 // wsSearcher adapts the workspace's Bleve-backed Search to search.Searcher.
@@ -131,8 +135,13 @@ func (s *wsSearcher) streamText(
 }
 
 // Searcher returns a search.Searcher backed by the workspace's search index.
+// The wrapper is created on first access and reused for the lifetime of the
+// workspace.
 func (w *Workspace) Searcher() search.Searcher {
-	return &wsSearcher{w: w}
+	w.searcherOnce.Do(func() {
+		w.searcher = &wsSearcher{w: w}
+	})
+	return w.searcher
 }
 
 // MetaLoader returns the metamodel loader for this workspace. Callers

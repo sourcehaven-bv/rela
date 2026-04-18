@@ -5,7 +5,7 @@ title: Replace lua.Services struct with minimal consumer interfaces per call sit
 kind: refactor
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Description

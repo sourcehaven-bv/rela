@@ -169,7 +169,7 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
 
-	err := s.engine.ExecuteFile(task.Script, s.ws.LuaWriteDeps(), s.ws.Paths().CacheDir, nil, nil)
+	err := s.engine.ExecuteFile(task.Script, s.ws.LuaWriteDeps(), nil, nil)
 	elapsed := s.now().Sub(start)
 
 	if err != nil {

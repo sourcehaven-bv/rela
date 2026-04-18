@@ -37,34 +37,31 @@ func NewEngine() *Engine {
 
 // ExecuteCode runs inline script code with entity context.
 //
-// cacheDir is the project's .rela directory; it is used by the runtime
-// wiring to locate AI config and per-script secrets (scriptPath is empty
-// for inline code, so no secrets are loaded).
-//
+// AI config and per-script secrets are loaded from deps.ProjectRoot/.rela.
 // newEntity/oldEntity are optional — nil when no entity is in scope.
-func (e *Engine) ExecuteCode(code string, deps lua.WriteDeps, cacheDir string,
+func (e *Engine) ExecuteCode(code string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
-	return e.execute(code, deps, cacheDir, "", newEntity, oldEntity)
+	return e.execute(code, deps, "", newEntity, oldEntity)
 }
 
 // ExecuteFile loads and runs a script file from the scripts/ directory.
 // The path must be a local path (no ".." or absolute paths) with .lua extension.
-func (e *Engine) ExecuteFile(path string, deps lua.WriteDeps, cacheDir string,
+func (e *Engine) ExecuteFile(path string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
 	scriptCode, err := loadScript(deps.ProjectRoot, path)
 	if err != nil {
 		return err
 	}
-	return e.execute(scriptCode, deps, cacheDir, path, newEntity, oldEntity)
+	return e.execute(scriptCode, deps, path, newEntity, oldEntity)
 }
 
 // execute runs Lua code with entity context. scriptPath is used to resolve
 // per-script secrets; pass "" for inline code (no secrets loaded).
 // Timeout is handled by lua.Runtime (default 30s).
-func (e *Engine) execute(code string, deps lua.WriteDeps, cacheDir, scriptPath string,
+func (e *Engine) execute(code string, deps lua.WriteDeps, scriptPath string,
 	newEntity, oldEntity *entity.Entity) error {
 	var output bytes.Buffer
-	runtime, err := NewWriterRuntime(deps, cacheDir, scriptPath, &output)
+	runtime, err := NewWriterRuntime(deps, scriptPath, &output)
 	if err != nil {
 		return err
 	}

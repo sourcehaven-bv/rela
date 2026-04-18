@@ -64,7 +64,7 @@ Example:
 			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
 		}
 
-		runtime, err := script.NewWriterRuntime(ws.LuaWriteDeps(), projectCtx.CacheDir, scriptPath,
+		runtime, err := script.NewWriterRuntime(ws.LuaWriteDeps(), scriptPath,
 			os.Stdout, opts...)
 		if err != nil {
 			return err
