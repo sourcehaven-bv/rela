@@ -130,29 +130,6 @@ Unseals every file, removes `.rela/encryption.yaml` and the recipient
 pubkey files. Leaves any non-`*.pub` files in `keys/` alone (README,
 user-organized subdirs, etc.).
 
-## How operations are crash-safe
-
-- **Individual writes** (entity create/update, relation add/remove,
-  attachment upload) go through `temp-file + rename`. A crash leaves
-  either the old file untouched or the new file fully sealed — never
-  half-written plaintext.
-
-- **`keys init`** walks the repo and writes each sealed file via
-  `temp + rename`. A crash mid-walk leaves some files sealed and some
-  still cleartext; `rela keys init` will refuse to re-run until the repo
-  is consistent. Fix by removing `.rela/encryption.yaml` and re-running.
-
-- **`keys add` / `keys remove`** is two-phase:
-  1. Write every `<path>.rewrap.new` sealed under the new recipient set.
-     No original files are touched.
-  2. Rename each `.rewrap.new` → `<path>`. Individual renames are atomic
-     on POSIX; the batch is not, but every path either holds the new
-     sealed bytes or the old sealed bytes, never garbage.
-
-  A crash between phase 1 and phase 2 leaves the old recipient set still
-  readable and the `.rewrap.new` files as orphans (fsstore cleans up
-  `.new`-suffixed files on open).
-
 ## Recovery escape hatch
 
 If rela itself is broken or you want to inspect a sealed file outside the
