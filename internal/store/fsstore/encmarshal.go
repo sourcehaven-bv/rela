@@ -160,22 +160,32 @@ func sealProperties(
 		return nil, nil, "", opaqueErr
 	}
 
-	dataKey, err := encryption.NewDataKey()
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("fsstore: generate data key: %w", err)
+	// One data key per group (not per file): properties sealed for
+	// group A use data key A; properties sealed for group B use data
+	// key B. This means recipients of one group can only decrypt that
+	// group's properties — single-file multi-group isolation.
+	dataKeys := make(map[string][]byte, len(plan.groupsNeeded))
+	for g := range plan.groupsNeeded {
+		dk, dkErr := encryption.NewDataKey()
+		if dkErr != nil {
+			return nil, nil, "", fmt.Errorf("fsstore: generate data key for %s: %w", g, dkErr)
+		}
+		dataKeys[g] = dk
 	}
 
-	envelope, envErr := buildEnvelope(crypto, plan.groupsNeeded, dataKey)
+	envelope, envErr := buildEnvelope(crypto, dataKeys)
 	if envErr != nil {
 		return nil, nil, "", envErr
 	}
 
-	frontmatter, newOrder, fmErr := sealFrontmatter(props, order, plan.propGroups, dataKey)
+	frontmatter, newOrder, fmErr := sealFrontmatter(props, order, plan.propGroups, dataKeys)
 	if fmErr != nil {
 		return nil, nil, "", fmErr
 	}
 
-	sealedBody, newOrder, bodyErr := sealBodyIfNeeded(rawBody, dataKey, plan.bodyEncrypted, frontmatter, newOrder)
+	bodyGroup, _ := crypto.BodyGroup(entityType)
+	sealedBody, newOrder, bodyErr := sealBodyIfNeeded(
+		rawBody, plan.bodyEncrypted, bodyGroup, dataKeys, frontmatter, newOrder)
 	if bodyErr != nil {
 		return nil, nil, "", bodyErr
 	}
@@ -221,12 +231,12 @@ func refuseOpaqueWrites(props map[string]any) error {
 	return nil
 }
 
-func buildEnvelope(crypto Crypto, groups map[string]struct{}, dataKey []byte) (*encryptionBlock, error) {
+func buildEnvelope(crypto Crypto, dataKeys map[string][]byte) (*encryptionBlock, error) {
 	envelope := &encryptionBlock{
 		keyVersion: 1,
-		dataKeys:   make(map[string]map[string][]byte, len(groups)),
+		dataKeys:   make(map[string]map[string][]byte, len(dataKeys)),
 	}
-	for g := range groups {
+	for g, dk := range dataKeys {
 		ids, ok := crypto.Recipients(g)
 		if !ok {
 			return nil, &EncryptionError{
@@ -234,7 +244,7 @@ func buildEnvelope(crypto Crypto, groups map[string]struct{}, dataKey []byte) (*
 				Cause: fmt.Errorf("group %q", g),
 			}
 		}
-		wraps, err := wrapForGroup(crypto, g, ids, dataKey)
+		wraps, err := wrapForGroup(crypto, g, ids, dk)
 		if err != nil {
 			return nil, err
 		}
@@ -269,13 +279,13 @@ func sealFrontmatter(
 	props map[string]any,
 	order []string,
 	propGroups map[string]string,
-	dataKey []byte,
+	dataKeys map[string][]byte,
 ) (out map[string]any, newOrder []string, err error) {
 	out = make(map[string]any, len(props)+1)
 	newOrder = make([]string, 0, len(order)+1)
 
 	emit := func(name string, v any) error {
-		outKey, outVal, err := sealPropertyIfNeeded(name, v, propGroups, dataKey)
+		outKey, outVal, err := sealPropertyIfNeeded(name, v, propGroups, dataKeys)
 		if err != nil {
 			return err
 		}
@@ -307,18 +317,31 @@ func sealFrontmatter(
 
 // sealPropertyIfNeeded returns the wire-format key and value for
 // one property. Cleartext properties pass through unchanged;
-// encrypted properties are sealed and renamed with the _enc_v1_
-// prefix.
+// encrypted properties are sealed with the data key for their
+// declared group and renamed with the _enc_v1_ prefix.
 func sealPropertyIfNeeded(
 	name string,
 	v any,
 	propGroups map[string]string,
-	dataKey []byte,
+	dataKeys map[string][]byte,
 ) (outKey string, outVal any, err error) {
-	if propGroups[name] == "" {
+	group := propGroups[name]
+	if group == "" {
 		return name, v, nil
 	}
-	sealed, err := sealOne(dataKey, v)
+	dk, ok := dataKeys[group]
+	if !ok {
+		// sealProperties pre-generates a data key for every group in
+		// plan.groupsNeeded, and propGroups was derived from the same
+		// plan. Getting here means the plan is inconsistent with
+		// itself — a bug, not user error.
+		return "", nil, &EncryptionError{
+			Kind:     ErrKindCorruptedFile,
+			Property: name,
+			Cause:    fmt.Errorf("internal: no data key for group %q", group),
+		}
+	}
+	sealed, err := sealOne(dk, v)
 	if err != nil {
 		return "", nil, &EncryptionError{
 			Kind:     ErrKindCorruptedFile,
@@ -331,8 +354,9 @@ func sealPropertyIfNeeded(
 
 func sealBodyIfNeeded(
 	rawBody string,
-	dataKey []byte,
 	encrypted bool,
+	bodyGroup string,
+	dataKeys map[string][]byte,
 	out map[string]any,
 	newOrder []string,
 ) (sealedBody string, newOrderOut []string, err error) {
@@ -342,7 +366,14 @@ func sealBodyIfNeeded(
 	if rawBody == "" {
 		return "", newOrder, nil
 	}
-	encBody, err := encryption.Seal([]byte(rawBody), dataKey)
+	dk, ok := dataKeys[bodyGroup]
+	if !ok {
+		return "", nil, &EncryptionError{
+			Kind:  ErrKindCorruptedFile,
+			Cause: fmt.Errorf("internal: no data key for body group %q", bodyGroup),
+		}
+	}
+	encBody, err := encryption.Seal([]byte(rawBody), dk)
 	if err != nil {
 		return "", nil, fmt.Errorf("fsstore: seal body: %w", err)
 	}

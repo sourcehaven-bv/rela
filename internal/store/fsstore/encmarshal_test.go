@@ -660,6 +660,71 @@ func TestSealProperties_UnknownRecipient(t *testing.T) {
 
 // --- tests: envelope determinism (non-ciphertext fields) -------------
 
+// TestSealUnseal_MultiGroup_IsolationWithinSameFile is the missing
+// coverage that the end-to-end demo exposed: with one data key per
+// group (not per file), a recipient of group A CANNOT decrypt
+// properties sealed for group B, even though both envelopes live in
+// the same file. Under the earlier single-per-file-data-key design
+// this test would have revealed the cross-group leak.
+func TestSealUnseal_MultiGroup_IsolationWithinSameFile(t *testing.T) {
+	f := newFixture(t)
+	// description → engineering ([alice, bob])
+	// secret      → exec ([bob])
+	//
+	// alice is NOT in exec. She should see description cleartext
+	// but secret as Opaque.
+	c := f.cryptoAs("alice")
+
+	props := map[string]any{
+		"description": "eng-plaintext",
+		"secret":      "exec-plaintext",
+	}
+	order := []string{"description", "secret"}
+	sealed, _, _, err := sealProperties(c, "ticket", props, "", order)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The envelope should have two groups, each with its own data key
+	// wrapped. Different ciphertext for description and secret.
+	b1 := sealed["_enc_v1_description"]
+	b2 := sealed["_enc_v1_secret"]
+	if b1 == b2 {
+		t.Fatal("two properties sealed with same ciphertext — data-key reuse across groups?")
+	}
+
+	// Unseal as alice.
+	back, _, opaque, err := unsealProperties(c, sealed, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back["description"] != "eng-plaintext" {
+		t.Errorf("description should decrypt, got %v", back["description"])
+	}
+	if _, isOpaque := back["secret"].(encryption.Opaque); !isOpaque {
+		t.Fatalf("secret MUST be Opaque for alice (not in exec), got %T = %v",
+			back["secret"], back["secret"])
+	}
+	if !opaque["secret"] {
+		t.Error("opaque set missing 'secret'")
+	}
+
+	// Unseal as bob (member of both groups): both decrypt.
+	bobC := f.cryptoAs("bob")
+	backBob, _, opaqueBob, err := unsealProperties(bobC, sealed, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backBob["description"] != "eng-plaintext" {
+		t.Errorf("bob description = %v", backBob["description"])
+	}
+	if backBob["secret"] != "exec-plaintext" {
+		t.Errorf("bob secret = %v", backBob["secret"])
+	}
+	if len(opaqueBob) != 0 {
+		t.Errorf("bob should see zero Opaque values, got %v", opaqueBob)
+	}
+}
+
 func TestSealProperties_EnvelopeGroupOrder(t *testing.T) {
 	// Two writes must yield the same set of groups in data_keys.
 	f := newFixture(t)
