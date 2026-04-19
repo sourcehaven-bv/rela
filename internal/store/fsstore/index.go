@@ -42,7 +42,7 @@ func (s *FSStore) loadPersistedIndex() *persistedIndex {
 	if s.cacheDir == "" {
 		return nil
 	}
-	data, err := s.readFileUnsealed(filepath.Join(s.cacheDir, indexFile))
+	data, err := s.readDataFile(filepath.Join(s.cacheDir, indexFile))
 	if err != nil {
 		return nil
 	}
@@ -81,15 +81,13 @@ func (s *FSStore) savePersistedIndex() error {
 	if err != nil {
 		return err
 	}
-
 	if mkdirErr := s.fs.MkdirAll(s.cacheDir, 0o755); mkdirErr != nil {
 		return mkdirErr
 	}
-	sealed, sealErr := s.crypto.Seal(data)
-	if sealErr != nil {
-		return sealErr
-	}
-	return s.fs.WriteFile(filepath.Join(s.cacheDir, indexFile), sealed, 0o644)
+	// Uses the same s.bytes.WriteFile path as every other write, so
+	// the transform stack (encryption, future compression) is applied
+	// consistently.
+	return s.bytes.WriteFile(filepath.Join(s.cacheDir, indexFile), data, 0o644)
 }
 
 // syncIndex reconciles all in-memory state with the filesystem:

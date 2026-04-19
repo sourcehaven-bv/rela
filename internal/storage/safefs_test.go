@@ -139,3 +139,120 @@ func TestSafeFS_ImplementsFS(_ *testing.T) {
 	// Compile-time check that SafeFS implements FS
 	var _ FS = NewSafeFS(NewOsFS())
 }
+
+// --- PostWrite observer ---
+
+func TestSafeFS_OnPostWrite_FiresWithBytesOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	sfs := NewSafeFS(NewOsFS())
+
+	type call struct {
+		path string
+		data []byte
+	}
+	var calls []call
+	sfs.OnPostWrite(func(p string, d []byte) {
+		// Copy d: the hook contract is "with the bytes that hit disk,"
+		// and the caller may recycle the slice.
+		cp := make([]byte, len(d))
+		copy(cp, d)
+		calls = append(calls, call{path: p, data: cp})
+	})
+
+	path := filepath.Join(dir, "observed.txt")
+	data := []byte("observed bytes")
+	if err := sfs.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if len(calls) != 1 {
+		t.Fatalf("observer calls = %d, want exactly 1", len(calls))
+	}
+	if calls[0].path != path {
+		t.Errorf("observer path = %q, want %q", calls[0].path, path)
+	}
+	if !bytes.Equal(calls[0].data, data) {
+		t.Errorf("observer data = %q, want %q", calls[0].data, data)
+	}
+
+	// Verify the observed bytes match what actually sits on disk.
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(onDisk, calls[0].data) {
+		t.Errorf("observed bytes differ from on-disk bytes")
+	}
+}
+
+func TestSafeFS_OnPostWrite_DoesNotFireOnFailedWrite(t *testing.T) {
+	dir := t.TempDir()
+	sfs := NewSafeFS(NewOsFS())
+
+	var fired bool
+	sfs.OnPostWrite(func(_ string, _ []byte) {
+		fired = true
+	})
+
+	// Writing to a path inside a non-directory produces a failure
+	// during the temp-file open (ENOTDIR). Reliable cross-platform.
+	notADir := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	badPath := filepath.Join(notADir, "child.txt")
+
+	if err := sfs.WriteFile(badPath, []byte("data"), 0o644); err == nil {
+		t.Fatal("expected WriteFile to fail inside a non-directory")
+	}
+	if fired {
+		t.Error("observer fired on a failed write; must only fire on successful durable writes")
+	}
+}
+
+func TestSafeFS_OnPostWrite_NoObserverIsFineByDefault(t *testing.T) {
+	dir := t.TempDir()
+	sfs := NewSafeFS(NewOsFS())
+
+	// With no observer installed, WriteFile must still work normally.
+	path := filepath.Join(dir, "no-obs.txt")
+	if err := sfs.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("WriteFile without observer: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, []byte("hello")) {
+		t.Errorf("ReadFile = %q, want %q", got, "hello")
+	}
+}
+
+func TestSafeFS_OnPostWrite_ReplacesPreviousObserver(t *testing.T) {
+	dir := t.TempDir()
+	sfs := NewSafeFS(NewOsFS())
+
+	var aCalls, bCalls int
+	sfs.OnPostWrite(func(_ string, _ []byte) { aCalls++ })
+	sfs.OnPostWrite(func(_ string, _ []byte) { bCalls++ })
+
+	path := filepath.Join(dir, "replaced.txt")
+	if err := sfs.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if aCalls != 0 {
+		t.Errorf("replaced observer still fired: aCalls = %d", aCalls)
+	}
+	if bCalls != 1 {
+		t.Errorf("current observer fired %d times, want 1", bCalls)
+	}
+
+	// nil clears the observer.
+	sfs.OnPostWrite(nil)
+	if err := sfs.WriteFile(path, []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if bCalls != 1 {
+		t.Errorf("cleared observer still fired: bCalls = %d", bCalls)
+	}
+}

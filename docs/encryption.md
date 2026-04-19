@@ -53,9 +53,9 @@ The local private identity is resolved in this order:
 3. `~/.config/rela/key` — per-user identity shared across projects.
 
 Any of these is an age private-key file in the standard
-`AGE-SECRET-KEY-1...` format (single line). A missing identity at all three
-paths is fine for read-only inspection of a cleartext repo; it becomes a
-failure at decrypt time.
+`AGE-SECRET-KEY-PQ-1...` format (hybrid post-quantum; single line). A missing
+identity at all three paths is fine for read-only inspection of a cleartext
+repo; it becomes a failure at decrypt time.
 
 ## Quick start
 
@@ -69,7 +69,7 @@ rela keys generate alice --out ~/rela-keys
 #    to .rela/key so subsequent commands pick it up automatically.
 rela keys init \
     --recipient alice \
-    --pub "$(cat ~/rela-keys/alice.pub)" \
+    --pub-file ~/rela-keys/alice.pub \
     --identity ~/rela-keys/alice.key
 
 # 3. Verify.
@@ -97,7 +97,7 @@ which recipient corresponds to the locally loaded identity (marked `(you)`).
 ### Add a team member
 
 ```bash
-rela keys add bob --pub "$(cat bob.pub)"
+rela keys add bob --pub-file bob.pub
 ```
 
 Re-encrypts every data file so bob can read. Bob's private key is on bob's

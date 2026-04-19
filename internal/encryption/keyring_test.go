@@ -18,7 +18,7 @@ func writeKeyring(t *testing.T, pubs map[string]Recipient, id Identity) (keysDir
 	}
 	if id != nil {
 		idPath = filepath.Join(dir, "local.key")
-		if err := os.WriteFile(idPath, []byte(id.(*x25519Identity).i.String()+"\n"), 0o600); err != nil {
+		if err := os.WriteFile(idPath, []byte(id.(*hybridIdentity).i.String()+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

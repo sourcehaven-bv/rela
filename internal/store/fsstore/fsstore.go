@@ -37,8 +37,27 @@ import (
 const recentHashCapacity = 4096
 
 // Config holds the configuration for creating a new FSStore.
+//
+// # FS boundaries
+//
+// fsstore separates byte I/O from directory topology:
+//
+//   - Bytes is the decorated byte-I/O handle. Every entity, relation,
+//     attachment, and index read/write goes through Bytes. Callers
+//     typically pass a cryptofs.FS(SafeFS(OsFS)) for encrypted repos
+//     or a SafeFS(OsFS) for cleartext. When Bytes is nil, Config falls
+//     back to FS so pre-decorator callers keep working.
+//
+//   - FS is the raw directory handle. Used for ReadDir, Walk, Stat,
+//     and temp-file cleanup. Never used for ReadFile/WriteFile of
+//     data files — that would bypass any decorator stacked above.
+//
+// The split exists so transforms (encryption today, compression or
+// dedup tomorrow) compose cleanly without fsstore's data-write sites
+// having to know which transforms are active.
 type Config struct {
 	FS             storage.FS
+	Bytes          StoreFS
 	EntitiesDir    string
 	RelationsDir   string
 	AttachmentsDir string
@@ -50,12 +69,13 @@ type Config struct {
 	// after New returns and feed their observer directly.
 	Observers []store.EntityObserver
 
-	// Crypto controls at-rest encryption at the I/O boundary. When
-	// nil, FSStore.New installs IdentityCrypto so reads/writes pass
-	// bytes through unchanged (byte-for-byte identical to pre-
-	// encryption behavior). Callers enabling encryption pass
-	// NewAgeCrypto(keyring).
-	Crypto Crypto
+	// WantSealed reports whether the repo is encryption-enabled. Used
+	// by the startup consistency check: every data file must be
+	// sealed (true) or every data file must be cleartext (false). The
+	// factory is the single source of truth for this bit; it is set
+	// from the same branch that decides whether to wrap Bytes in an
+	// EncryptedFS decorator, so the two cannot drift.
+	WantSealed bool
 }
 
 // entityMeta is the lightweight in-memory representation of an entity.
@@ -81,18 +101,27 @@ type attachMeta struct {
 
 // FSStore is a filesystem-backed store implementation.
 type FSStore struct {
-	// filesystem
-	fs           storage.FS
+	// fs is the raw directory handle for ReadDir/Walk/Stat and
+	// temp-file cleanup. It MUST NOT be used for data-file ReadFile
+	// or WriteFile — that would bypass any transform (e.g.
+	// encryption) stacked above. Use bytes for all byte I/O.
+	fs storage.FS
+
+	// bytes is the decorated byte-I/O handle. Every entity,
+	// relation, attachment, and index read/write goes through this.
+	// For a cleartext repo, bytes may alias fs; for an encrypted
+	// repo, bytes is a cryptofs.FS that seals/unseals transparently.
+	bytes StoreFS
+
 	entitiesDir  string
 	relationsDir string
 	attachDir    string
 	cacheDir     string
 	schemas      map[string]store.EntityTypeSchema
 
-	// crypto is the seal/unseal boundary for at-rest encryption.
-	// Never nil on a live FSStore: IdentityCrypto is installed when
-	// the repo is cleartext.
-	crypto Crypto
+	// wantSealed mirrors Config.WantSealed; drives the startup
+	// consistency check.
+	wantSealed bool
 
 	// in-memory index
 	mu            sync.RWMutex
@@ -132,18 +161,23 @@ func New(cfg Config) (*FSStore, error) {
 	if cfg.Schemas == nil {
 		cfg.Schemas = make(map[string]store.EntityTypeSchema)
 	}
-	if cfg.Crypto == nil {
-		cfg.Crypto = IdentityCrypto()
+	// Back-compat: callers that only set Config.FS (no decorator) get
+	// transparent byte passthrough via the same handle. Encryption
+	// callers set Config.Bytes explicitly to a cryptofs.FS.
+	bytes := cfg.Bytes
+	if bytes == nil {
+		bytes = cfg.FS
 	}
 
 	s := &FSStore{
 		fs:           cfg.FS,
+		bytes:        bytes,
 		entitiesDir:  cfg.EntitiesDir,
 		relationsDir: cfg.RelationsDir,
 		attachDir:    cfg.AttachmentsDir,
 		cacheDir:     cfg.CacheDir,
 		schemas:      cfg.Schemas,
-		crypto:       cfg.Crypto,
+		wantSealed:   cfg.WantSealed,
 		observers:    cfg.Observers,
 		entities:     make(map[string]entityMeta),
 		relations:    make(map[string]relationMeta),

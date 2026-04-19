@@ -14,7 +14,7 @@ import (
 type Recipient interface {
 	ageRecipient() age.Recipient
 	// String returns the canonical age public-key encoding
-	// ("age1..."). Safe to print, log, and commit.
+	// ("age1pq1..."). Safe to print, log, and commit.
 	String() string
 }
 
@@ -28,71 +28,72 @@ type Identity interface {
 	PublicRecipient() Recipient
 }
 
-// x25519Recipient wraps *age.X25519Recipient with a stable interface.
-type x25519Recipient struct {
-	r *age.X25519Recipient
+// hybridRecipient wraps *age.HybridRecipient with a stable interface.
+type hybridRecipient struct {
+	r *age.HybridRecipient
 }
 
-func (r *x25519Recipient) ageRecipient() age.Recipient { return r.r }
-func (r *x25519Recipient) String() string              { return r.r.String() }
+func (r *hybridRecipient) ageRecipient() age.Recipient { return r.r }
+func (r *hybridRecipient) String() string              { return r.r.String() }
 
-// x25519Identity wraps *age.X25519Identity. String intentionally
+// hybridIdentity wraps *age.HybridIdentity. String intentionally
 // redacts the secret bytes.
-type x25519Identity struct {
-	i *age.X25519Identity
+type hybridIdentity struct {
+	i *age.HybridIdentity
 }
 
-func (i *x25519Identity) ageIdentity() age.Identity { return i.i }
-func (i *x25519Identity) PublicRecipient() Recipient {
-	return &x25519Recipient{r: i.i.Recipient()}
+func (i *hybridIdentity) ageIdentity() age.Identity { return i.i }
+func (i *hybridIdentity) PublicRecipient() Recipient {
+	return &hybridRecipient{r: i.i.Recipient()}
 }
 
 // String returns a fixed redacted marker. We deliberately do NOT
-// return age.X25519Identity.String() (the AGE-SECRET-KEY-1... form)
+// return age.HybridIdentity.String() (the AGE-SECRET-KEY-PQ-1... form)
 // because Identity values flow through logs and error messages in
 // calling code; accidentally printing them must not leak the key.
-func (i *x25519Identity) String() string { return "<redacted age identity>" }
+func (i *hybridIdentity) String() string { return "<redacted age identity>" }
 
 // MarshalJSON mirrors String: refuse to serialize the secret.
-func (i *x25519Identity) MarshalJSON() ([]byte, error) {
+func (i *hybridIdentity) MarshalJSON() ([]byte, error) {
 	return []byte(`"<redacted age identity>"`), nil
 }
 
-// GenerateIdentity returns a fresh X25519 age identity.
+// GenerateIdentity returns a fresh hybrid (post-quantum) age identity.
 func GenerateIdentity() (Identity, error) {
-	id, err := age.GenerateX25519Identity()
+	id, err := age.GenerateHybridIdentity()
 	if err != nil {
 		return nil, fmt.Errorf("encryption: generate identity: %w", err)
 	}
-	return &x25519Identity{i: id}, nil
+	return &hybridIdentity{i: id}, nil
 }
 
-// ParseRecipient parses an age public-key string ("age1...") into a
-// Recipient. Accepts one recipient per input; rejects empty input.
+// ParseRecipient parses an age hybrid public-key string ("age1pq1...")
+// into a Recipient. Accepts one recipient per input; rejects empty
+// input.
 func ParseRecipient(s string) (Recipient, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, errors.New("encryption: empty recipient string")
 	}
-	r, err := age.ParseX25519Recipient(s)
+	r, err := age.ParseHybridRecipient(s)
 	if err != nil {
 		return nil, fmt.Errorf("encryption: parse recipient: %w", err)
 	}
-	return &x25519Recipient{r: r}, nil
+	return &hybridRecipient{r: r}, nil
 }
 
-// ParseIdentity parses an age private-key string ("AGE-SECRET-KEY-1...")
-// into an Identity.
+// ParseIdentity parses an age hybrid private-key string
+// ("AGE-SECRET-KEY-PQ-1...") into an Identity.
 func ParseIdentity(s string) (Identity, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, errors.New("encryption: empty identity string")
 	}
-	id, err := age.ParseX25519Identity(s)
+	id, err := age.ParseHybridIdentity(s)
 	if err != nil {
 		return nil, fmt.Errorf("encryption: parse identity: %w", err)
 	}
-	return &x25519Identity{i: id}, nil
+	return &hybridIdentity{i: id}, nil
 }
 
 // ReadIdentity reads a single age identity from r. Equivalent to
@@ -110,11 +111,11 @@ func ReadIdentity(r io.Reader) (Identity, error) {
 	if len(ids) > 1 {
 		return nil, errors.New("encryption: multiple identities in input (expected one)")
 	}
-	x, ok := ids[0].(*age.X25519Identity)
+	h, ok := ids[0].(*age.HybridIdentity)
 	if !ok {
-		return nil, fmt.Errorf("encryption: unsupported identity kind %T (want X25519)", ids[0])
+		return nil, fmt.Errorf("encryption: unsupported identity kind %T (want Hybrid)", ids[0])
 	}
-	return &x25519Identity{i: x}, nil
+	return &hybridIdentity{i: h}, nil
 }
 
 // recipientsAsAge extracts the underlying age.Recipient from each

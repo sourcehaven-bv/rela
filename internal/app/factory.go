@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/encryption"
+	"github.com/Sourcehaven-BV/rela/internal/encryption/cryptofs"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -30,41 +31,68 @@ type FSFactory struct {
 // compile-time interface check
 var _ store.Factory = (*FSFactory)(nil)
 
-// OpenStore constructs a new fsstore configured for meta's entity-type
-// schemas. If .rela/encryption.yaml exists, the factory loads the
-// keyring from <root>/keys and the local identity via the standard
-// precedence chain, then installs an age Crypto. Otherwise it
-// installs IdentityCrypto (cleartext mode).
+// OpenStore constructs a new fsstore wired with the appropriate byte
+// transform stack.
+//
+// Decision branch: if .rela/encryption.yaml exists, the factory
+// loads the keyring and wraps the FS in a cryptofs.FS decorator;
+// otherwise it passes the raw FS through unchanged. The same boolean
+// (wantSealed) flows into fsstore.Config.WantSealed, so the
+// "encrypted decorator installed?" and "consistency check expects
+// sealed files?" answers come from one place and cannot drift.
+//
+// If the underlying FS is a *storage.SafeFS, the factory also
+// subscribes the store's RecordWrite method as the SafeFS post-write
+// observer. This is how the watcher's self-echo LRU stays correct
+// across any transform (encryption today, compression tomorrow):
+// the hash is always taken of the bytes that actually landed on
+// disk, at the only layer that performs the OS write.
 func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
-	crypto, err := f.loadCrypto()
+	wantSealed, kr, err := f.loadEncryption()
 	if err != nil {
 		return nil, err
 	}
-	return fsstore.New(fsstore.Config{
+
+	var bytes fsstore.StoreFS = f.FS
+	if wantSealed {
+		bytes = cryptofs.New(f.FS, kr.Recipients(), kr.Identity())
+	}
+
+	s, err := fsstore.New(fsstore.Config{
 		FS:           f.FS,
+		Bytes:        bytes,
+		WantSealed:   wantSealed,
 		EntitiesDir:  f.Paths.EntitiesDir,
 		RelationsDir: f.Paths.RelationsDir,
 		CacheDir:     f.Paths.CacheDir,
 		Schemas:      buildSchemas(meta),
-		Crypto:       crypto,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if safe, ok := f.FS.(*storage.SafeFS); ok {
+		safe.OnPostWrite(s.RecordWrite)
+	}
+	return s, nil
 }
 
-// loadCrypto returns the Crypto to pass to fsstore.New, based on the
-// presence of .rela/encryption.yaml.
-func (f *FSFactory) loadCrypto() (fsstore.Crypto, error) {
+// loadEncryption decides whether encryption is on for this project
+// by checking for .rela/encryption.yaml. When on, it also loads the
+// keyring (recipients + local identity). Returns (false, nil, nil)
+// when encryption is off.
+func (f *FSFactory) loadEncryption() (bool, *encryption.Keyring, error) {
 	cfgPath := filepath.Join(f.Paths.CacheDir, encryption.ConfigFileName)
 	if _, err := os.Stat(cfgPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fsstore.IdentityCrypto(), nil
+			return false, nil, nil
 		}
-		return nil, fmt.Errorf("app: stat %s: %w", cfgPath, err)
+		return false, nil, fmt.Errorf("app: stat %s: %w", cfgPath, err)
 	}
 	kr, err := encryption.LoadFromDir(f.Paths.Root)
 	if err != nil {
-		return nil, fmt.Errorf("app: load keyring: %w", err)
+		return false, nil, fmt.Errorf("app: load keyring: %w", err)
 	}
-	return fsstore.NewAgeCrypto(kr), nil
+	return true, kr, nil
 }
 
 // buildSchemas translates metamodel entity-type definitions into the

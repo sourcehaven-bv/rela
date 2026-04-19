@@ -16,7 +16,7 @@ func TestLoadFromDir_AllPresent(t *testing.T) {
 	mustWrite(t, filepath.Join(root, projectKeysDir, "alice.pub"),
 		[]byte(alice.PublicRecipient().String()+"\n"), 0o644)
 	mustWrite(t, filepath.Join(root, projectRelaDir, projectKeyFile),
-		[]byte(alice.(*x25519Identity).i.String()+"\n"), 0o600)
+		[]byte(alice.(*hybridIdentity).i.String()+"\n"), 0o600)
 
 	// Clear env so $RELA_KEY_FILE doesn't interfere.
 	t.Setenv(envKeyFile, "")
@@ -58,7 +58,7 @@ func TestLoadFromDir_EnvOverride(t *testing.T) {
 
 	// Put identity at an arbitrary path and point $RELA_KEY_FILE at it.
 	custom := filepath.Join(t.TempDir(), "custom.key")
-	mustWrite(t, custom, []byte(alice.(*x25519Identity).i.String()+"\n"), 0o600)
+	mustWrite(t, custom, []byte(alice.(*hybridIdentity).i.String()+"\n"), 0o600)
 	t.Setenv(envKeyFile, custom)
 
 	kr, err := LoadFromDir(root)

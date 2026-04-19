@@ -1,7 +1,7 @@
 package encryption
 
-// MarshalIdentity returns the "AGE-SECRET-KEY-1..." wire form of id,
-// suitable for writing to a private-key file on disk. This is the
+// MarshalIdentity returns the "AGE-SECRET-KEY-PQ-1..." wire form of
+// id, suitable for writing to a private-key file on disk. This is the
 // one legitimate way to serialize a private identity; Identity.String
 // and MarshalJSON deliberately return a redacted marker so that
 // identity values flowing through logs, error messages, and JSON
@@ -13,10 +13,10 @@ package encryption
 //   - not log, print, or otherwise surface the returned string
 //
 // Returns the empty string on an unsupported Identity kind. v1 only
-// supports *x25519Identity; future PQ plugins would extend this.
+// supports *hybridIdentity (post-quantum hybrid age identities).
 func MarshalIdentity(id Identity) string {
-	if x, ok := id.(*x25519Identity); ok {
-		return x.i.String()
+	if h, ok := id.(*hybridIdentity); ok {
+		return h.i.String()
 	}
 	return ""
 }

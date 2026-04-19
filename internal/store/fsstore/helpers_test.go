@@ -35,8 +35,8 @@ func mustGenerateIdentity(t *testing.T) encryption.Identity {
 	return id
 }
 
-// identityPrivate returns the AGE-SECRET-KEY-1... encoding of id so
-// tests can write it to a key file and load it via LoadKeyring.
+// identityPrivate returns the AGE-SECRET-KEY-PQ-1... encoding of id
+// so tests can write it to a key file and load it via LoadKeyring.
 func identityPrivate(t *testing.T, id encryption.Identity) string {
 	t.Helper()
 	s := encryption.MarshalIdentity(id)

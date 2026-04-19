@@ -72,10 +72,9 @@ done
 pass "alice/bob/eve identity + pubkey files generated"
 
 step "4. Encrypt the project for alice (rela keys init)"
-ALICE_PUB="$(cat "${KEYS_WORK}/alice.pub")"
 "${RELA}" keys init \
     --recipient alice \
-    --pub "${ALICE_PUB}" \
+    --pub-file "${KEYS_WORK}/alice.pub" \
     --identity "${KEYS_WORK}/alice.key" >/dev/null
 
 if ! head -c 22 entities/requirements/REQ-002.md | grep -q '^age-encryption.org/v1'; then
@@ -113,8 +112,7 @@ set -e
 pass "bob is refused (error: '$(echo "${BOB_SEE}" | head -1)')"
 
 step "6. Add bob as a recipient"
-BOB_PUB="$(cat "${KEYS_WORK}/bob.pub")"
-"${RELA}" keys add bob --pub "${BOB_PUB}" >/dev/null
+"${RELA}" keys add bob --pub-file "${KEYS_WORK}/bob.pub" >/dev/null
 
 BOB_SEE="$(RELA_KEY_FILE="${KEYS_WORK}/bob.key" "${RELA}" show REQ-002 2>&1)"
 grep -q "Confidential" <<<"${BOB_SEE}" || fail "bob should read REQ-002 after keys add"

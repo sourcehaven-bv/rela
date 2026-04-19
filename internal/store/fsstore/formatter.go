@@ -28,7 +28,7 @@ func (s *FSStore) FormatEntity(ctx context.Context, id string, dryRun bool) (boo
 		return false, fmt.Errorf("format entity: %w", err)
 	}
 
-	currentBytes, err := s.fs.ReadFile(path)
+	currentBytes, err := s.bytes.ReadFile(path)
 	if err != nil {
 		return false, fmt.Errorf("read entity file: %w", err)
 	}
@@ -64,7 +64,7 @@ func (s *FSStore) FormatRelation(ctx context.Context, from, relType, to string, 
 		return false, fmt.Errorf("format relation: %w", err)
 	}
 
-	currentBytes, err := s.fs.ReadFile(path)
+	currentBytes, err := s.bytes.ReadFile(path)
 	if err != nil {
 		return false, fmt.Errorf("read relation file: %w", err)
 	}

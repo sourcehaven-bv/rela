@@ -42,7 +42,7 @@ func (s *FSStore) AttachFile(_ context.Context, entityID, property, fileName str
 	}
 
 	path := filepath.Join(dir, fileName)
-	if err := s.writeFileSealed(path, data, 0o644); err != nil {
+	if err := s.writeDataFile(path, data, 0o644); err != nil {
 		return err
 	}
 
@@ -66,7 +66,7 @@ func (s *FSStore) ReadAttachment(_ context.Context, entityID, property string) (
 	}
 
 	path := filepath.Join(s.attachDir, a.entityID, a.property, a.fileName)
-	data, err := s.readFileUnsealed(path)
+	data, err := s.readDataFile(path)
 	if err != nil {
 		return nil, err
 	}

@@ -99,16 +99,19 @@ Enable at-rest encryption on the current project. Refuses to run if the project 
 encrypted or contains any sealed file.
 
 ```bash
-rela keys init --recipient <name> --pub <age1...> [--identity <path>]
+rela keys init --recipient <name> --pub-file <path> [--identity <path>]
 ```
 
 **Flags:**
 
-| Flag          | Description                                                        |
-| ------------- | ------------------------------------------------------------------ |
-| `--recipient` | Filename stem for the first recipient. Required.                   |
-| `--pub`       | Age public key (`age1...`). Required.                              |
-| `--identity`  | Path to the private identity file to copy into `.rela/key`.        |
+| Flag          | Description                                                                  |
+| ------------- | ---------------------------------------------------------------------------- |
+| `--recipient` | Filename stem for the first recipient. Required.                             |
+| `--pub-file`  | Path to the recipient's age public key file (`age1pq1...`). Required.        |
+| `--identity`  | Path to the private identity file to copy into `.rela/key`.                  |
+
+Hybrid (post-quantum) age public keys are ~2 KB, so `--pub-file` takes a path
+rather than a string.
 
 Seals every file under `entities/`, `relations/`, and `attachments/` in place via `temp + rename`.
 Writes `.rela/encryption.yaml` and `<repo>/keys/<name>.pub`.
@@ -118,7 +121,7 @@ Writes `.rela/encryption.yaml` and `<repo>/keys/<name>.pub`.
 Add a recipient and re-encrypt every data file.
 
 ```bash
-rela keys add <name> --pub <age1...>
+rela keys add <name> --pub-file <path>
 ```
 
 **Arguments:**
@@ -127,9 +130,9 @@ rela keys add <name> --pub <age1...>
 
 **Flags:**
 
-| Flag    | Description                             |
-| ------- | --------------------------------------- |
-| `--pub` | Age public key (`age1...`). Required.   |
+| Flag         | Description                                                         |
+| ------------ | ------------------------------------------------------------------- |
+| `--pub-file` | Path to the new recipient's age public key file. Required.          |
 
 Two-phase rewrap: writes every `<path>.rewrap.new` sealed for the expanded recipient set,
 then renames. The local identity must be a current recipient (needed to unseal existing files).

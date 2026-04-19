@@ -40,8 +40,8 @@ Subcommands:
 // Flags specific to subcommands.
 var (
 	keysGenerateOut   string
-	keysAddPub        string
-	keysInitPub       string
+	keysAddPubFile    string
+	keysInitPubFile   string
 	keysInitRecipient string
 	keysInitIdentity  string
 )
@@ -60,13 +60,27 @@ func init() {
 
 	keysInitCmd.Flags().StringVar(&keysInitRecipient, "recipient", "",
 		"name of the first recipient (also the pub-file stem: <name>.pub)")
-	keysInitCmd.Flags().StringVar(&keysInitPub, "pub", "",
-		"age public key string for the first recipient (e.g. age1...)")
+	keysInitCmd.Flags().StringVar(&keysInitPubFile, "pub-file", "",
+		"path to a file containing the age public key for the first recipient")
 	keysInitCmd.Flags().StringVar(&keysInitIdentity, "identity", "",
 		"path to the private identity file to install at .rela/key")
 
-	keysAddCmd.Flags().StringVar(&keysAddPub, "pub", "",
-		"age public key string for the new recipient")
+	keysAddCmd.Flags().StringVar(&keysAddPubFile, "pub-file", "",
+		"path to a file containing the age public key for the new recipient")
+}
+
+// readRecipientFromFile reads path and parses its contents as a single
+// age recipient. Hybrid public keys are ~1959 characters, so they are
+// distributed as files rather than command-line arguments.
+func readRecipientFromFile(path string) (encryption.Recipient, error) {
+	if path == "" {
+		return nil, errors.New("--pub-file is required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return encryption.ParseRecipient(strings.TrimSpace(string(data)))
 }
 
 // --- generate ---
@@ -113,10 +127,12 @@ var keysInitCmd = &cobra.Command{
 	Long: `Encrypt every entity, relation, and attachment in this project.
 
 Usage:
-  rela keys init --recipient <name> --pub <age1...> [--identity <path>]
+  rela keys init --recipient <name> --pub-file <path> [--identity <path>]
 
 --recipient must be a filename-stem (alphanumerics + hyphen/underscore).
---pub is the age public key string for that recipient.
+--pub-file is the path to the recipient's age public key file. Hybrid
+  (post-quantum) public keys are ~2 KB so they are passed by path, not
+  as a command-line string.
 --identity, if set, copies the private key to .rela/key so this user
   becomes the default reader of the encrypted repo.
 
@@ -125,10 +141,7 @@ The command refuses to proceed if the repo is already encrypted.`,
 		if err := validateRecipientName(keysInitRecipient); err != nil {
 			return err
 		}
-		if keysInitPub == "" {
-			return errors.New("--pub is required")
-		}
-		rec, err := encryption.ParseRecipient(keysInitPub)
+		rec, err := readRecipientFromFile(keysInitPubFile)
 		if err != nil {
 			return err
 		}
@@ -260,10 +273,7 @@ var keysAddCmd = &cobra.Command{
 		if err := validateRecipientName(name); err != nil {
 			return err
 		}
-		if keysAddPub == "" {
-			return errors.New("--pub is required")
-		}
-		rec, err := encryption.ParseRecipient(keysAddPub)
+		rec, err := readRecipientFromFile(keysAddPubFile)
 		if err != nil {
 			return err
 		}

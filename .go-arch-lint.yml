@@ -73,11 +73,13 @@ components:
   cache:            { in: internal/cache }
   config:           { in: internal/config }
   encryption:       { in: internal/encryption }
+  cryptofs:         { in: internal/encryption/cryptofs }
   git:              { in: internal/git }
   output:           { in: internal/output }
   project:          { in: internal/project }
   state:            { in: internal/state }
   storage:          { in: internal/storage }
+  integrity:        { in: internal/storage/integrity }
 
   # Shared utilities
   errors:           { in: internal/errors }
@@ -249,6 +251,7 @@ deps:
   # Application services
   app:
     mayDependOn:
+      - cryptofs
       - encryption
       - fsstore
       - metamodel
@@ -398,6 +401,7 @@ deps:
     mayDependOn:
       - cache
       - encryption
+      - integrity
       - storage
       - store
       - storeutil
@@ -423,6 +427,12 @@ deps:
   encryption:
     canUse:
       - age
+  cryptofs:
+    mayDependOn:
+      - encryption
+  integrity:
+    mayDependOn:
+      - encryption
   config:
     mayDependOn:
       - storage

@@ -10,6 +10,6 @@
 //
 // See DEC-D5P4X for why we chose age over a custom envelope.
 //
-// v1 uses age's built-in X25519 recipients. Post-quantum hybrid support
-// will land as an age recipient plugin in a follow-up ticket.
+// v1 uses age's built-in hybrid (post-quantum) recipients via
+// age.GenerateHybridIdentity / age.ParseHybridRecipient.
 package encryption

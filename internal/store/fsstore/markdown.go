@@ -328,7 +328,7 @@ func isSpecialLine(line string) bool {
 
 // readEntityFile reads and parses an entity from a markdown file.
 func (s *FSStore) readEntityFile(path string) (*entity.Entity, error) {
-	data, err := s.readFileUnsealed(path)
+	data, err := s.readDataFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -387,14 +387,14 @@ func (s *FSStore) writeEntityFile(e *entity.Entity) error {
 	if err != nil {
 		return err
 	}
-	return s.writeFileSealed(path, []byte(content), 0o644)
+	return s.writeDataFile(path, []byte(content), 0o644)
 }
 
 // --- relation I/O ---
 
 // readRelationFile reads and parses a relation from a markdown file.
 func (s *FSStore) readRelationFile(path string) (*entity.Relation, error) {
-	data, err := s.readFileUnsealed(path)
+	data, err := s.readDataFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +455,7 @@ func (s *FSStore) writeRelationFile(r *entity.Relation) error {
 	if err != nil {
 		return err
 	}
-	return s.writeFileSealed(path, []byte(content), 0o644)
+	return s.writeDataFile(path, []byte(content), 0o644)
 }
 
 // hashContent returns the hex-encoded SHA256 of content. Used by the
@@ -471,44 +471,59 @@ func (s *FSStore) recordHash(path string, content []byte) {
 	s.recentHashes.Put(path, hashContent(content))
 }
 
+// RecordWrite is the public adapter for external write observers
+// (e.g. SafeFS.OnPostWrite). It records the hash of the bytes that
+// landed on disk so the watcher can recognize self-writes via its
+// recentHashes LRU. Safe to call concurrently: the LRU is
+// self-synchronized.
+//
+// Signature matches storage.WriteObserver so the factory can pass
+// s.RecordWrite directly as the SafeFS post-write hook.
+func (s *FSStore) RecordWrite(path string, content []byte) {
+	s.recordHash(path, content)
+}
+
 // forgetHash removes any recorded hash for path (e.g. after delete).
 func (s *FSStore) forgetHash(path string) {
 	s.recentHashes.Delete(path)
 }
 
-// readFileUnsealed reads path from the underlying FS and unseals the
-// bytes via s.crypto. When s.crypto is IdentityCrypto this is the
-// same as s.fs.ReadFile. Centralizing the unseal here means every
-// read path (entity, relation, attachment, watcher) goes through
-// the same Crypto boundary.
-func (s *FSStore) readFileUnsealed(path string) ([]byte, error) {
-	raw, err := s.fs.ReadFile(path)
-	if err != nil {
-		return nil, err
+// writeDataFile writes content to path through the StoreFS byte
+// boundary. Any transform (encryption, compression) is applied by
+// the decorator stack the factory assembled; fsstore sees plain
+// bytes in and plain bytes out.
+//
+// Atomic-write semantics (temp+rename, fsync) live one layer down
+// in SafeFS. fsstore does not manage temp paths here anymore — the
+// invariant "crash leaves either sealed or nothing, never plaintext"
+// holds because SafeFS writes a sealed-temp and only renames after
+// successful fsync.
+//
+// Parent-directory creation is performed through the raw directory
+// handle (s.fs). SafeFS-backed production paths also mkdir inside
+// WriteFile, so this is idempotent; test backends like MemFS that
+// reject writes to missing directories need the explicit mkdir.
+//
+// # Self-echo hash recording
+//
+// The watcher's self-echo LRU compares hash-of-on-disk-bytes. We
+// record the hash BEFORE calling s.bytes.WriteFile so that a
+// SafeFS PostWrite hook (which fires synchronously inside the
+// WriteFile call with the actual on-disk bytes, potentially sealed
+// by a transform above SafeFS) can overwrite this entry with the
+// correct sealed hash. In the MemFS test backend with no SafeFS in
+// the stack, content itself is the on-disk bytes, so the pre-write
+// record remains correct.
+func (s *FSStore) writeDataFile(path string, content []byte, perm os.FileMode) error {
+	if err := s.fs.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
 	}
-	return s.crypto.Unseal(raw)
+	s.recordHash(path, content)
+	return s.bytes.WriteFile(path, content, perm)
 }
 
-// writeFileSealed seals content via s.crypto and writes the result
-// to path atomically via temp-file + rename. The seal happens BEFORE
-// the temp file exists, so an interrupted write leaves a valid
-// sealed blob on disk, never plaintext.
-func (s *FSStore) writeFileSealed(path string, content []byte, perm os.FileMode) error {
-	sealed, err := s.crypto.Seal(content)
-	if err != nil {
-		return fmt.Errorf("seal %s: %w", path, err)
-	}
-	tempPath := path + ".new"
-	dir := filepath.Dir(tempPath)
-	if err := s.fs.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	if err := s.fs.WriteFile(tempPath, sealed, perm); err != nil {
-		return err
-	}
-	if err := s.fs.Rename(tempPath, path); err != nil {
-		return err
-	}
-	s.recordHash(path, sealed)
-	return nil
+// readDataFile reads path through the StoreFS byte boundary. Any
+// decoding (unseal, decompress) is done by the decorator stack.
+func (s *FSStore) readDataFile(path string) ([]byte, error) {
+	return s.bytes.ReadFile(path)
 }

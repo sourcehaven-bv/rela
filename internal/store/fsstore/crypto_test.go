@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/encryption"
+	"github.com/Sourcehaven-BV/rela/internal/encryption/cryptofs"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -38,27 +39,36 @@ func setupEncryptedRepo(t *testing.T) (root string, kr *encryption.Keyring) {
 	return root, kr
 }
 
-// buildEncryptedStore sets up a brand-new fsstore with a real age
-// Crypto built from a single-recipient keyring.
+// buildEncryptedStore sets up a brand-new fsstore wired with the
+// full production decorator stack: cryptofs.FS(SafeFS(OsFS)) using a
+// single-recipient keyring.
 func buildEncryptedStore(t *testing.T) (s *fsstore.FSStore, root string) {
 	t.Helper()
 	var kr *encryption.Keyring
 	root, kr = setupEncryptedRepo(t)
-	s = mustOpenStore(t, root, fsstore.NewAgeCrypto(kr), true)
+	s = mustOpenEncryptedStore(t, root, kr, true)
 	return s, root
 }
 
-// mustOpenStore constructs an fsstore rooted at root with the given
-// Crypto, optionally including an attachments dir.
-func mustOpenStore(t *testing.T, root string, crypto fsstore.Crypto, withAttachments bool) *fsstore.FSStore {
+// mustOpenEncryptedStore wires cryptofs.FS(SafeFS(OsFS)) for the
+// given keyring and opens an fsstore with it. The raw SafeFS is
+// also used as the fsstore's directory handle; the PostWrite hook
+// is subscribed so the watcher's self-echo LRU stays correct.
+func mustOpenEncryptedStore(
+	t *testing.T, root string, kr *encryption.Keyring, withAttachments bool,
+) *fsstore.FSStore {
 	t.Helper()
+	safe := storage.NewSafeFS(storage.NewOsFS())
+	enc := cryptofs.New(safe, kr.Recipients(), kr.Identity())
+
 	cfg := fsstore.Config{
-		FS:           storage.NewOsFS(),
+		FS:           safe,
+		Bytes:        enc,
+		WantSealed:   true,
 		EntitiesDir:  filepath.Join(root, "entities"),
 		RelationsDir: filepath.Join(root, "relations"),
 		CacheDir:     filepath.Join(root, ".rela"),
 		Schemas:      map[string]store.EntityTypeSchema{"ticket": {Plural: "tickets"}},
-		Crypto:       crypto,
 	}
 	if withAttachments {
 		cfg.AttachmentsDir = filepath.Join(root, "attachments")
@@ -67,6 +77,28 @@ func mustOpenStore(t *testing.T, root string, crypto fsstore.Crypto, withAttachm
 	if err != nil {
 		t.Fatal(err)
 	}
+	safe.OnPostWrite(s.RecordWrite)
+	return s
+}
+
+// mustOpenCleartextStore opens an fsstore with no encryption
+// decorator — SafeFS(OsFS) is both the byte handle and the dir
+// handle. WantSealed=false, matching the factory's decision branch.
+func mustOpenCleartextStore(t *testing.T, root string) *fsstore.FSStore {
+	t.Helper()
+	safe := storage.NewSafeFS(storage.NewOsFS())
+	cfg := fsstore.Config{
+		FS:           safe,
+		EntitiesDir:  filepath.Join(root, "entities"),
+		RelationsDir: filepath.Join(root, "relations"),
+		CacheDir:     filepath.Join(root, ".rela"),
+		Schemas:      map[string]store.EntityTypeSchema{"ticket": {Plural: "tickets"}},
+	}
+	s, err := fsstore.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	safe.OnPostWrite(s.RecordWrite)
 	return s
 }
 
@@ -131,7 +163,7 @@ func TestFSStore_Encrypted_TamperedPayloadSurfacesAsCorrupted(t *testing.T) {
 
 func TestFSStore_Encrypted_AttachmentRoundTrip(t *testing.T) {
 	root, kr := setupEncryptedRepo(t)
-	s := mustOpenStore(t, root, fsstore.NewAgeCrypto(kr), true)
+	s := mustOpenEncryptedStore(t, root, kr, true)
 	ctx := context.Background()
 
 	e := entity.New("TKT-003", "ticket")
@@ -166,21 +198,24 @@ func TestFSStore_Encrypted_AttachmentRoundTrip(t *testing.T) {
 }
 
 func TestFSStore_Encrypted_Refuses_CleartextDataFiles(t *testing.T) {
-	// Crypto is configured, but a cleartext entity file exists on
-	// disk. fsstore.New must refuse to open the repo.
+	// WantSealed=true but a cleartext entity file exists on disk.
+	// fsstore.New must refuse to open the repo.
 	root, kr := setupEncryptedRepo(t)
 	entitiesDir := filepath.Join(root, "entities", "tickets")
 	mustMkdir(t, entitiesDir)
 	mustWrite(t, filepath.Join(entitiesDir, "TKT-C1.md"),
 		[]byte("---\nid: TKT-C1\ntype: ticket\ntitle: cleartext\n---\n"), 0o644)
 
+	safe := storage.NewSafeFS(storage.NewOsFS())
+	enc := cryptofs.New(safe, kr.Recipients(), kr.Identity())
 	_, err := fsstore.New(fsstore.Config{
-		FS:           storage.NewOsFS(),
+		FS:           safe,
+		Bytes:        enc,
+		WantSealed:   true,
 		EntitiesDir:  filepath.Join(root, "entities"),
 		RelationsDir: filepath.Join(root, "relations"),
 		CacheDir:     filepath.Join(root, ".rela"),
 		Schemas:      map[string]store.EntityTypeSchema{"ticket": {Plural: "tickets"}},
-		Crypto:       fsstore.NewAgeCrypto(kr),
 	})
 	if err == nil {
 		t.Fatal("fsstore.New should refuse cleartext files when encryption is enabled")
@@ -222,16 +257,7 @@ func TestFSStore_Cleartext_Refuses_SealedDataFiles(t *testing.T) {
 func TestFSStore_Cleartext_Roundtrip_Unchanged(t *testing.T) {
 	// Cleartext mode: files on disk are plain markdown, no sealing.
 	root := t.TempDir()
-	s, err := fsstore.New(fsstore.Config{
-		FS:           storage.NewOsFS(),
-		EntitiesDir:  filepath.Join(root, "entities"),
-		RelationsDir: filepath.Join(root, "relations"),
-		CacheDir:     filepath.Join(root, ".rela"),
-		Schemas:      map[string]store.EntityTypeSchema{"ticket": {Plural: "tickets"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := mustOpenCleartextStore(t, root)
 	ctx := context.Background()
 	e := entity.New("TKT-C2", "ticket")
 	e.Properties["title"] = "cleartext"

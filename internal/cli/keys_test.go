@@ -220,6 +220,45 @@ func TestEnsureKeyGitignored(t *testing.T) {
 	})
 }
 
+func TestReadRecipientFromFile(t *testing.T) {
+	t.Run("reads and parses a hybrid public key", func(t *testing.T) {
+		id := newTestIdentity(t)
+		path := filepath.Join(t.TempDir(), "alice.pub")
+		if err := os.WriteFile(path, []byte(id.PublicRecipient().String()+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := readRecipientFromFile(path)
+		if err != nil {
+			t.Fatalf("readRecipientFromFile: %v", err)
+		}
+		if got.String() != id.PublicRecipient().String() {
+			t.Errorf("recipient mismatch: got %q, want %q", got.String(), id.PublicRecipient().String())
+		}
+	})
+
+	t.Run("empty path errors", func(t *testing.T) {
+		if _, err := readRecipientFromFile(""); err == nil {
+			t.Error("expected error for empty path")
+		}
+	})
+
+	t.Run("missing file errors", func(t *testing.T) {
+		if _, err := readRecipientFromFile(filepath.Join(t.TempDir(), "nope.pub")); err == nil {
+			t.Error("expected error for missing file")
+		}
+	})
+
+	t.Run("garbage contents errors", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "junk.pub")
+		if err := os.WriteFile(path, []byte("not-an-age-key\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readRecipientFromFile(path); err == nil {
+			t.Error("expected parse error for garbage contents")
+		}
+	})
+}
+
 func TestWalkDataFiles_SkipsTempAndDotfiles(t *testing.T) {
 	root := t.TempDir()
 	// regular file

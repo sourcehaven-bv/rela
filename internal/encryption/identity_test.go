@@ -20,7 +20,7 @@ func newTestIdentity(t *testing.T) Identity {
 
 func TestIdentity_String_Redacts(t *testing.T) {
 	id := newTestIdentity(t)
-	if s := id.(interface{ String() string }).String(); strings.Contains(s, "AGE-SECRET-KEY-1") {
+	if s := id.(interface{ String() string }).String(); strings.Contains(s, "AGE-SECRET-KEY-") {
 		t.Errorf("Identity.String() must not contain the secret (got %q)", s)
 	}
 }
@@ -31,7 +31,7 @@ func TestIdentity_MarshalJSON_Redacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	if strings.Contains(string(b), "AGE-SECRET-KEY-1") {
+	if strings.Contains(string(b), "AGE-SECRET-KEY-") {
 		t.Errorf("json.Marshal must not contain the secret (got %s)", b)
 	}
 }
@@ -43,14 +43,14 @@ func TestIdentity_MarshalJSON_Redacts(t *testing.T) {
 // whose String() is the age default (which would print the secret).
 func TestSecretTypes_NoStringMethods(t *testing.T) {
 	id := newTestIdentity(t)
-	// x25519Identity is the concrete type; inspect its struct fields
-	// to make sure the embedded *age.X25519Identity isn't publicly
+	// hybridIdentity is the concrete type; inspect its struct fields
+	// to make sure the embedded *age.HybridIdentity isn't publicly
 	// reachable via a method that would print the secret.
 	rv := reflect.ValueOf(id).Elem()
 	for i := range rv.NumField() {
 		f := rv.Type().Field(i)
 		if f.IsExported() {
-			t.Errorf("x25519Identity.%s is exported; secret fields MUST be unexported", f.Name)
+			t.Errorf("hybridIdentity.%s is exported; secret fields MUST be unexported", f.Name)
 		}
 	}
 }
@@ -65,7 +65,7 @@ func TestParseRecipient_BadInput(t *testing.T) {
 }
 
 func TestParseIdentity_BadInput(t *testing.T) {
-	cases := []string{"", "   ", "not-an-identity", "AGE-SECRET-KEY-1GARBAGE"}
+	cases := []string{"", "   ", "not-an-identity", "AGE-SECRET-KEY-PQ-1GARBAGE"}
 	for _, c := range cases {
 		if _, err := ParseIdentity(c); err == nil {
 			t.Errorf("ParseIdentity(%q) should error", c)
@@ -83,7 +83,7 @@ func TestReadIdentity_EmptyInput(t *testing.T) {
 func TestReadIdentity_Multiple(t *testing.T) {
 	a := newTestIdentity(t)
 	b := newTestIdentity(t)
-	input := a.(*x25519Identity).i.String() + "\n" + b.(*x25519Identity).i.String() + "\n"
+	input := a.(*hybridIdentity).i.String() + "\n" + b.(*hybridIdentity).i.String() + "\n"
 	if _, err := ReadIdentity(strings.NewReader(input)); err == nil {
 		t.Fatal("ReadIdentity(two identities) should error (expected one)")
 	}
@@ -91,7 +91,7 @@ func TestReadIdentity_Multiple(t *testing.T) {
 
 func TestReadIdentity_WithComments(t *testing.T) {
 	a := newTestIdentity(t)
-	input := "# this is a comment\n\n" + a.(*x25519Identity).i.String() + "\n"
+	input := "# this is a comment\n\n" + a.(*hybridIdentity).i.String() + "\n"
 	got, err := ReadIdentity(strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("ReadIdentity: %v", err)

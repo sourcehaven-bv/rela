@@ -182,14 +182,16 @@ func (s *FSStore) reconcileEntityPath(path string) {
 		return
 	}
 
-	// Self-echo detection hashes the sealed bytes (that's what we
-	// recorded on write), but downstream parsing needs cleartext.
+	// Self-echo detection hashes the on-disk bytes (that's what the
+	// SafeFS post-write hook recorded), so the hash is computed on
+	// the raw read. Downstream parsing needs plaintext, which we get
+	// by re-reading through the transform stack (s.bytes).
 	hash := hashContent(rawData)
 	if cached, ok := s.recentHashes.Get(path); ok && cached == hash {
 		return // self-echo
 	}
 
-	data, err := s.crypto.Unseal(rawData)
+	data, err := s.bytes.ReadFile(path)
 	if err != nil {
 		// Distinguish the two classes so a corrupted file is loud:
 		// "not for us" is a drop-and-continue; "corrupted/tampered"
