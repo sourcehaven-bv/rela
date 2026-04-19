@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -123,7 +124,7 @@ func (s *FSStore) syncEntities(cached *persistedIndex) error {
 			s.entities[id] = entityMeta(ie)
 			s.entityOrder = append(s.entityOrder, id)
 		}
-		sortStrings(s.entityOrder)
+		sort.Strings(s.entityOrder)
 		return nil
 	}
 
@@ -141,7 +142,7 @@ func (s *FSStore) syncRelations(cached *persistedIndex) error {
 			s.relations[key] = relationMeta(ir)
 			s.relationOrder = append(s.relationOrder, key)
 		}
-		sortStrings(s.relationOrder)
+		sort.Strings(s.relationOrder)
 		return nil
 	}
 
@@ -215,7 +216,7 @@ func (s *FSStore) scanEntityDirs() error {
 		}
 	}
 
-	sortStrings(s.entityOrder)
+	sort.Strings(s.entityOrder)
 	return nil
 }
 
@@ -244,7 +245,7 @@ func (s *FSStore) scanRelationDir() error {
 		s.relationOrder = append(s.relationOrder, key)
 	}
 
-	sortStrings(s.relationOrder)
+	sort.Strings(s.relationOrder)
 	return nil
 }
 
