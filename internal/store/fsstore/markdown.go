@@ -3,8 +3,6 @@ package fsstore
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -456,36 +454,6 @@ func (s *FSStore) writeRelationFile(r *entity.Relation) error {
 		return err
 	}
 	return s.writeDataFile(path, []byte(content), 0o644)
-}
-
-// hashContent returns the hex-encoded SHA256 of content. Used by the
-// external-change watcher to suppress self-echoes from fsnotify.
-func hashContent(content []byte) string {
-	sum := sha256.Sum256(content)
-	return hex.EncodeToString(sum[:])
-}
-
-// recordHash stores the hash of content written to path. The LRU is
-// self-synchronized so no store lock is required.
-func (s *FSStore) recordHash(path string, content []byte) {
-	s.recentHashes.Put(path, hashContent(content))
-}
-
-// RecordWrite is the public adapter for external write observers
-// (e.g. SafeFS.OnPostWrite). It records the hash of the bytes that
-// landed on disk so the watcher can recognize self-writes via its
-// recentHashes LRU. Safe to call concurrently: the LRU is
-// self-synchronized.
-//
-// Signature matches storage.WriteObserver so the factory can pass
-// s.RecordWrite directly as the SafeFS post-write hook.
-func (s *FSStore) RecordWrite(path string, content []byte) {
-	s.recordHash(path, content)
-}
-
-// forgetHash removes any recorded hash for path (e.g. after delete).
-func (s *FSStore) forgetHash(path string) {
-	s.recentHashes.Delete(path)
 }
 
 // writeDataFile writes content to path through the StoreFS byte

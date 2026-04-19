@@ -25,7 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/cache"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -146,17 +145,27 @@ type FSStore struct {
 	// fs watcher (external-change detection). nil when not started.
 	extWatcher *storage.Watcher
 
-	// recentHashes records the SHA256 of the last content written by this
-	// store for each entity/relation file path. The external-change watcher
-	// uses these to distinguish its own writes (self-echoes) from genuine
-	// external edits: if the on-disk file hashes to the recorded value, the
-	// event is a self-echo and gets dropped. Bounded-LRU so memory stays
-	// bounded under large-project bulk writes.
-	recentHashes *cache.LRU[string, string]
+	// echoes tracks the hash of bytes most recently written by
+	// this store so the external-change watcher can distinguish
+	// its own writes (self-echoes) from genuine external edits.
+	// Fed by SafeFS.OnPostWrite with the bytes that landed on
+	// disk (sealed bytes on encrypted repos, raw bytes otherwise).
+	echoes *echoTracker
 }
 
 // compile-time interface check
 var _ store.Store = (*FSStore)(nil)
+
+// RecordWrite is the post-write observer entry point for the
+// underlying FS transform stack. Typically wired via
+// SafeFS.OnPostWrite(store.RecordWrite). content is the bytes
+// that landed on disk (sealed if encryption is active); the
+// watcher uses the recorded hash to suppress self-echoes.
+//
+// Signature matches storage.WriteObserver.
+func (s *FSStore) RecordWrite(path string, content []byte) {
+	s.echoes.Recorded(path, content)
+}
 
 // New creates a new filesystem-backed store. It scans the entities and
 // relations directories to build the in-memory index, and loads or rebuilds
@@ -188,7 +197,7 @@ func New(cfg Config) (*FSStore, error) {
 		attachments:  make(map[string]attachMeta),
 		propCache:    make(map[string]map[string]int),
 		subscribers:  make(map[int]chan store.Event),
-		recentHashes: cache.NewLRU[string, string](recentHashCapacity),
+		echoes:       newEchoTracker(recentHashCapacity),
 	}
 
 	s.cleanupTempFiles()

@@ -70,7 +70,7 @@ func (s *FSStore) Close() error {
 // StartWatching begins watching the entities and relations directories for
 // external file changes (edits made outside the store API). Detected
 // changes are reconciled into the in-memory index and re-emitted as
-// store.Events. Self-writes are suppressed via the recentHashes LRU.
+// store.Events. Self-writes are suppressed via the echoTracker.
 //
 // Calling StartWatching more than once is a no-op after the first call.
 //
@@ -182,12 +182,11 @@ func (s *FSStore) reconcileEntityPath(path string) {
 		return
 	}
 
-	// Self-echo detection hashes the on-disk bytes (that's what the
-	// SafeFS post-write hook recorded), so the hash is computed on
-	// the raw read. Downstream parsing needs plaintext, which we get
+	// Self-echo detection compares the on-disk bytes against the
+	// hash recorded by SafeFS.OnPostWrite when fsstore itself wrote
+	// this path. Downstream parsing needs plaintext, which we get
 	// by re-reading through the transform stack (s.bytes).
-	hash := hashContent(rawData)
-	if cached, ok := s.recentHashes.Get(path); ok && cached == hash {
+	if s.echoes.IsEcho(path, rawData) {
 		return // self-echo
 	}
 
@@ -208,7 +207,7 @@ func (s *FSStore) reconcileEntityPath(path string) {
 		return
 	}
 
-	s.recentHashes.Put(path, hash)
+	s.echoes.Recorded(path, rawData)
 
 	existing, known := s.entities[e.ID]
 	if known {
@@ -234,7 +233,7 @@ func (s *FSStore) reconcileEntityPath(path string) {
 // handleEntityRemoval handles the disappearance of an entity file.
 // Must be called under mu.Lock.
 func (s *FSStore) handleEntityRemoval(path string) {
-	s.recentHashes.Delete(path)
+	s.echoes.Forget(path)
 
 	id, ok := s.entityIDFromPath(path)
 	if !ok {
@@ -283,11 +282,10 @@ func (s *FSStore) reconcileRelationPath(path string) {
 		return
 	}
 
-	hash := hashContent(data)
-	if cached, ok := s.recentHashes.Get(path); ok && cached == hash {
+	if s.echoes.IsEcho(path, data) {
 		return
 	}
-	s.recentHashes.Put(path, hash)
+	s.echoes.Recorded(path, data)
 
 	_, known := s.relations[key]
 	if !known {
@@ -305,7 +303,7 @@ func (s *FSStore) reconcileRelationPath(path string) {
 // handleRelationRemoval handles the disappearance of a relation file.
 // Must be called under mu.Lock.
 func (s *FSStore) handleRelationRemoval(path, key, from, relType, to string) {
-	s.recentHashes.Delete(path)
+	s.echoes.Forget(path)
 
 	if _, known := s.relations[key]; !known {
 		return
