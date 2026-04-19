@@ -205,6 +205,51 @@ func TestFSStore_Encrypted_AttachmentSizeOnReopen(t *testing.T) {
 	}
 }
 
+// TestFSStore_Encrypted_AttachmentIndex_SkipsUnreadableFile covers
+// the error branch in loadAttachmentsIndex: if a file in the
+// attachments tree cannot be read via s.bytes (e.g. corrupted sealed
+// blob left by an interrupted migration), the index skips it instead
+// of failing the whole open. Keeps partial-index > failed-open
+// behavior consistent with the rest of loadAttachmentsIndex.
+func TestFSStore_Encrypted_AttachmentIndex_SkipsUnreadableFile(t *testing.T) {
+	root, kr := setupEncryptedRepo(t)
+	s := mustOpenEncryptedStore(t, root, kr)
+	ctx := context.Background()
+
+	e := entity.New("TKT-UNREAD", "ticket")
+	e.Properties["title"] = "host"
+	if err := s.CreateEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AttachFile(ctx, "TKT-UNREAD", "doc", "doc.bin",
+		bytesReader([]byte("hi"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Overwrite the attachment with a blob that LooksSealed (passes
+	// the integrity verifier) but can't be decrypted by kr on reopen.
+	// A header-only byte string suffices: encryption.LooksSealed only
+	// checks the header magic, but age.Decrypt rejects the payload.
+	attachPath := filepath.Join(root, "attachments", "TKT-UNREAD", "doc", "doc.bin")
+	mustWrite(t, attachPath,
+		[]byte(encryption.SealedMagic+"garbage after header\n"), 0o644)
+
+	s2 := mustOpenEncryptedStore(t, root, kr)
+	defer s2.Close()
+
+	infos, err := s2.ListAttachments(ctx, "TKT-UNREAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 0 {
+		t.Errorf("unreadable attachment should be skipped on reopen, "+
+			"got %d entries: %+v", len(infos), infos)
+	}
+}
+
 func TestFSStore_Encrypted_AttachmentRoundTrip(t *testing.T) {
 	root, kr := setupEncryptedRepo(t)
 	s := mustOpenEncryptedStore(t, root, kr)
