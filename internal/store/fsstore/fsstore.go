@@ -55,6 +55,13 @@ const recentHashCapacity = 4096
 // The split exists so transforms (encryption today, compression or
 // dedup tomorrow) compose cleanly without fsstore's data-write sites
 // having to know which transforms are active.
+//
+// # Consistency checks
+//
+// fsstore does NOT verify on-disk consistency (sealed vs cleartext,
+// schema drift, etc.). That's a wiring-layer concern: the caller that
+// decides how to construct Bytes is also the caller that knows what
+// the on-disk state should be. See internal/storage/integrity.
 type Config struct {
 	FS             storage.FS
 	Bytes          StoreFS
@@ -68,14 +75,6 @@ type Config struct {
 	// startup — callers that need that behavior can iterate ListEntities
 	// after New returns and feed their observer directly.
 	Observers []store.EntityObserver
-
-	// WantSealed reports whether the repo is encryption-enabled. Used
-	// by the startup consistency check: every data file must be
-	// sealed (true) or every data file must be cleartext (false). The
-	// factory is the single source of truth for this bit; it is set
-	// from the same branch that decides whether to wrap Bytes in an
-	// EncryptedFS decorator, so the two cannot drift.
-	WantSealed bool
 }
 
 // entityMeta is the lightweight in-memory representation of an entity.
@@ -127,10 +126,6 @@ type FSStore struct {
 	attachDir    string
 	cacheDir     string
 	schemas      map[string]store.EntityTypeSchema
-
-	// wantSealed mirrors Config.WantSealed; drives the startup
-	// consistency check.
-	wantSealed bool
 
 	// in-memory index
 	mu            sync.RWMutex
@@ -187,7 +182,6 @@ func New(cfg Config) (*FSStore, error) {
 		attachDir:    cfg.AttachmentsDir,
 		cacheDir:     cfg.CacheDir,
 		schemas:      cfg.Schemas,
-		wantSealed:   cfg.WantSealed,
 		observers:    cfg.Observers,
 		entities:     make(map[string]entityMeta),
 		relations:    make(map[string]relationMeta),
@@ -199,9 +193,6 @@ func New(cfg Config) (*FSStore, error) {
 
 	s.cleanupTempFiles()
 
-	if err := s.verifyEncryptionConsistency(); err != nil {
-		return nil, err
-	}
 	if err := s.syncIndex(); err != nil {
 		return nil, err
 	}

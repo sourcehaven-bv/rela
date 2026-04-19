@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/storage/integrity"
 )
 
 func TestFSFactoryOpensWorkingStore(t *testing.T) {
@@ -249,4 +250,74 @@ func TestFSFactory_EncryptedNeedsIdentity(t *testing.T) {
 	_, err = factory.OpenStore(&metamodel.Metamodel{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, app.ErrEncryptedRepoNeedsIdentity)
+}
+
+// TestFSFactory_Encrypted_RefusesCleartextDataFiles: when the repo
+// is encryption-enabled but a data file on disk is cleartext, the
+// factory (via integrity.Verify) refuses to open. Covers the
+// "half-migrated" case — e.g. a file added on a branch that didn't
+// know about encryption.
+func TestFSFactory_Encrypted_RefusesCleartextDataFiles(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "keys"), 0o755))
+
+	id, err := encryption.GenerateIdentity()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "keys", "alice.pub"),
+		[]byte(id.PublicRecipient().String()+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".rela", "key"),
+		[]byte(encryption.MarshalIdentity(id)+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, ".rela", encryption.ConfigFileName),
+		[]byte("recipients:\n  - alice\n"), 0o644))
+	t.Setenv("RELA_KEY_FILE", "")
+
+	// Plant a cleartext entity file that the integrity verifier must reject.
+	entitiesDir := filepath.Join(root, "entities", "tickets")
+	require.NoError(t, os.MkdirAll(entitiesDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(entitiesDir, "TKT-CT.md"),
+		[]byte("---\nid: TKT-CT\ntype: ticket\n---\ncleartext body\n"), 0o644))
+
+	paths := &project.Context{
+		Root:         root,
+		CacheDir:     filepath.Join(root, ".rela"),
+		EntitiesDir:  filepath.Join(root, "entities"),
+		RelationsDir: filepath.Join(root, "relations"),
+	}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+	_, err = factory.OpenStore(&metamodel.Metamodel{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, integrity.ErrRepoHasCleartextFilesButEncryptionEnabled)
+}
+
+// TestFSFactory_Cleartext_RefusesSealedDataFiles: the inverse — when
+// encryption is NOT configured but a sealed file is already on disk
+// (e.g. a merge from a branch that was encrypted), the factory refuses.
+func TestFSFactory_Cleartext_RefusesSealedDataFiles(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
+
+	// Plant a sealed file under entities. The verifier peeks headers,
+	// so a real age-sealed blob is needed (not just the magic).
+	id, err := encryption.GenerateIdentity()
+	require.NoError(t, err)
+	sealed, err := encryption.Seal(
+		[]byte("---\nid: TKT-S\ntype: ticket\n---\n"),
+		[]encryption.Recipient{id.PublicRecipient()})
+	require.NoError(t, err)
+	entitiesDir := filepath.Join(root, "entities", "tickets")
+	require.NoError(t, os.MkdirAll(entitiesDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(entitiesDir, "TKT-S.md"), sealed, 0o644))
+
+	paths := &project.Context{
+		Root:         root,
+		CacheDir:     filepath.Join(root, ".rela"),
+		EntitiesDir:  filepath.Join(root, "entities"),
+		RelationsDir: filepath.Join(root, "relations"),
+	}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+	_, err = factory.OpenStore(&metamodel.Metamodel{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, integrity.ErrRepoHasSealedFilesButNoConfig)
 }

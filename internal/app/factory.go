@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/storage/integrity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
@@ -67,10 +68,13 @@ var _ store.Factory = (*FSFactory)(nil)
 //
 // Decision branch: if .rela/encryption.yaml exists, the factory
 // loads the keyring and wraps the FS in a cryptofs.FS decorator;
-// otherwise it passes the raw FS through unchanged. The same boolean
-// (wantSealed) flows into fsstore.Config.WantSealed, so the
-// "encrypted decorator installed?" and "consistency check expects
-// sealed files?" answers come from one place and cannot drift.
+// otherwise it passes the raw FS through unchanged.
+//
+// Before opening the store, the factory runs a consistency check
+// (integrity.Verify) to reject half-migrated repos where the
+// on-disk state disagrees with the declared encryption mode. The
+// same boolean (wantSealed) drives both the decorator install and
+// the consistency check, so they cannot drift.
 //
 // The factory subscribes the store's RecordWrite method as the SafeFS
 // post-write observer. This is how the watcher's self-echo LRU stays
@@ -98,6 +102,16 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 		return nil, ErrEncryptedRepoNeedsSafeFS
 	}
 
+	// Consistency check against the raw on-disk state — must happen
+	// BEFORE fsstore.New so we refuse to open half-migrated repos.
+	// Same wantSealed boolean that drives the decorator install below.
+	if verifyErr := integrity.Verify(f.FS, wantSealed, []string{
+		f.Paths.EntitiesDir,
+		f.Paths.RelationsDir,
+	}); verifyErr != nil {
+		return nil, verifyErr
+	}
+
 	var bytes fsstore.StoreFS = f.FS
 	if wantSealed {
 		bytes = cryptofs.New(f.FS, kr.Recipients(), kr.Identity())
@@ -106,7 +120,6 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 	s, err := fsstore.New(fsstore.Config{
 		FS:           f.FS,
 		Bytes:        bytes,
-		WantSealed:   wantSealed,
 		EntitiesDir:  f.Paths.EntitiesDir,
 		RelationsDir: f.Paths.RelationsDir,
 		CacheDir:     f.Paths.CacheDir,

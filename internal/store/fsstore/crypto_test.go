@@ -3,7 +3,6 @@ package fsstore_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,7 +12,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/encryption/cryptofs"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/storage/integrity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
@@ -68,7 +66,6 @@ func mustOpenEncryptedStore(
 	s, err := fsstore.New(fsstore.Config{
 		FS:             safe,
 		Bytes:          enc,
-		WantSealed:     true,
 		EntitiesDir:    filepath.Join(root, "entities"),
 		RelationsDir:   filepath.Join(root, "relations"),
 		AttachmentsDir: filepath.Join(root, "attachments"),
@@ -283,63 +280,6 @@ func TestFSStore_Encrypted_AttachmentRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(got, body) {
 		t.Errorf("attachment read = %q, want %q", got, body)
-	}
-}
-
-func TestFSStore_Encrypted_Refuses_CleartextDataFiles(t *testing.T) {
-	// WantSealed=true but a cleartext entity file exists on disk.
-	// fsstore.New must refuse to open the repo.
-	root, kr := setupEncryptedRepo(t)
-	entitiesDir := filepath.Join(root, "entities", "tickets")
-	mustMkdir(t, entitiesDir)
-	mustWrite(t, filepath.Join(entitiesDir, "TKT-C1.md"),
-		[]byte("---\nid: TKT-C1\ntype: ticket\ntitle: cleartext\n---\n"), 0o644)
-
-	safe := storage.NewSafeFS(storage.NewOsFS())
-	enc := cryptofs.New(safe, kr.Recipients(), kr.Identity())
-	_, err := fsstore.New(fsstore.Config{
-		FS:           safe,
-		Bytes:        enc,
-		WantSealed:   true,
-		EntitiesDir:  filepath.Join(root, "entities"),
-		RelationsDir: filepath.Join(root, "relations"),
-		CacheDir:     filepath.Join(root, ".rela"),
-		Schemas:      map[string]store.EntityTypeSchema{"ticket": {Plural: "tickets"}},
-	})
-	if err == nil {
-		t.Fatal("fsstore.New should refuse cleartext files when encryption is enabled")
-	}
-	if !errors.Is(err, integrity.ErrRepoHasCleartextFilesButEncryptionEnabled) {
-		t.Errorf("wrong error: %v", err)
-	}
-}
-
-func TestFSStore_Cleartext_Refuses_SealedDataFiles(t *testing.T) {
-	// Crypto is identityCrypto (cleartext mode), but a sealed file
-	// exists on disk. fsstore.New must refuse.
-	root := t.TempDir()
-	id := mustGenerateIdentity(t)
-	sealed, err := encryption.Seal([]byte("---\nid: TKT-S1\ntype: ticket\n---\n"),
-		[]encryption.Recipient{id.PublicRecipient()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	entitiesDir := filepath.Join(root, "entities", "tickets")
-	mustMkdir(t, entitiesDir)
-	mustWrite(t, filepath.Join(entitiesDir, "TKT-S1.md"), sealed, 0o644)
-
-	_, err = fsstore.New(fsstore.Config{
-		FS:           storage.NewOsFS(),
-		EntitiesDir:  filepath.Join(root, "entities"),
-		RelationsDir: filepath.Join(root, "relations"),
-		CacheDir:     filepath.Join(root, ".rela"),
-		Schemas:      map[string]store.EntityTypeSchema{"ticket": {Plural: "tickets"}},
-	})
-	if err == nil {
-		t.Fatal("fsstore.New should refuse sealed files without encryption configured")
-	}
-	if !errors.Is(err, integrity.ErrRepoHasSealedFilesButNoConfig) {
-		t.Errorf("wrong error: %v", err)
 	}
 }
 
