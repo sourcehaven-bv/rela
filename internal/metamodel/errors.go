@@ -43,14 +43,23 @@ func (e *InvalidIDCapsError) Error() string {
 	return "invalid id_caps for entity " + e.EntityType + ": " + e.IDCaps + " (must be 'upper' or 'lower')"
 }
 
-// ReservedPropertyError is returned when a property name conflicts with a reserved name.
+// ReservedPropertyError is returned when a property name conflicts
+// with a reserved name. The zero-value Reason renders the historical
+// generic message (for "id" / "type"); specific reasons render a
+// more actionable message (e.g., "underscore prefix is reserved for
+// fsstore metadata like _encryption and _enc_v1_*").
 type ReservedPropertyError struct {
 	EntityType   string
 	PropertyName string
+	Reason       string // optional, freeform explanation
 }
 
 func (e *ReservedPropertyError) Error() string {
-	return "entity " + e.EntityType + ": property \"" + e.PropertyName + "\" is reserved and cannot be used"
+	base := "entity " + e.EntityType + ": property \"" + e.PropertyName + "\" is reserved and cannot be used"
+	if e.Reason != "" {
+		base += " (" + e.Reason + ")"
+	}
+	return base
 }
 
 // WhitespacePropertyError is returned when a property name has leading or trailing whitespace.

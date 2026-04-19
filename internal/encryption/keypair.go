@@ -1,6 +1,7 @@
 package encryption
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/mlkem"
 	"crypto/rand"
@@ -57,4 +58,17 @@ func (k *Keypair) PublicKey() *PublicKey {
 		x25519: k.x25519.PublicKey(),
 		mlkem:  k.mlkem.EncapsulationKey(),
 	}
+}
+
+// equal reports whether two public keys encode to the same bytes.
+// Used by Keyring to identify which stored recipient corresponds to
+// the local private key — no user-visible API change.
+func (p *PublicKey) equal(other *PublicKey) bool {
+	if p == nil || other == nil {
+		return false
+	}
+	if !bytes.Equal(p.x25519.Bytes(), other.x25519.Bytes()) {
+		return false
+	}
+	return bytes.Equal(p.mlkem.Bytes(), other.mlkem.Bytes())
 }

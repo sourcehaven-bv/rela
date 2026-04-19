@@ -15,9 +15,6 @@ package encryption
 //   - MarshalJSON produces the same redacted string.
 //   - Bytes() returns an independent copy of the ciphertext for
 //     general use.
-//   - BorrowBytes() returns the underlying slice without copying for
-//     performance-sensitive re-emit paths. The caller MUST NOT mutate
-//     the returned slice.
 type Opaque struct {
 	ciphertext []byte
 }
@@ -50,15 +47,6 @@ func (o Opaque) Bytes() []byte {
 	cp := make([]byte, len(o.ciphertext))
 	copy(cp, o.ciphertext)
 	return cp
-}
-
-// BorrowBytes returns the underlying ciphertext slice WITHOUT copying.
-// The caller MUST NOT mutate the returned slice. Use only on
-// performance-sensitive paths (e.g. re-emit-on-write in fsstore) where
-// the slice is immediately consumed and discarded. For any other use,
-// call Bytes().
-func (o Opaque) BorrowBytes() []byte {
-	return o.ciphertext
 }
 
 // Len returns the length of the underlying ciphertext in bytes.

@@ -121,23 +121,27 @@ func (a *cryptoAdapter) UnwrapAny(wraps map[string][]byte) (dataKey []byte, matc
 	if !a.keyring.HasPrivateKey() {
 		return nil, "", encryption.ErrNoPrivateKey
 	}
-	// Try each offered wrap. Keyring.Unwrap only matches the local
-	// private key, so wraps sealed for other identities return an
-	// error — we skip past those and only surface a real failure if
-	// a wrap the key should have opened fails.
-	var corruption error
-	for id, wrapped := range wraps {
-		_ = id
-		dk, err := a.keyring.Unwrap(wrapped)
-		if err == nil {
-			return dk, id, nil
-		}
-		// Record corruption from the first wrap that was attempted
-		// against our actual private key. Keyring can't currently
-		// tell us "wrong recipient" vs "corrupt" directly — if every
-		// wrap fails we treat it as no-matching-key.
-		corruption = err
+	// Look up exactly the wrap labeled for the local identity. This
+	// preserves the error taxonomy: if that specific wrap fails
+	// decryption, the error is genuine corruption (or tamper) and
+	// propagates verbatim — consumers classify it as CorruptedFile.
+	// If the group's recipient list doesn't include this identity,
+	// it's genuine "not a recipient" and we return ErrNoMatchingKey.
+	//
+	// Probing every wrap (the earlier implementation) erased the
+	// distinction: a tampered own-wrap failed like any cross-key
+	// wrap and callers saw Opaque instead of CorruptedFile.
+	localID := a.keyring.LocalIdentity()
+	if localID == "" {
+		return nil, "", encryption.ErrNoMatchingKey
 	}
-	_ = corruption
-	return nil, "", encryption.ErrNoMatchingKey
+	wrapped, ok := wraps[localID]
+	if !ok {
+		return nil, "", encryption.ErrNoMatchingKey
+	}
+	dk, err := a.keyring.Unwrap(wrapped)
+	if err != nil {
+		return nil, "", err
+	}
+	return dk, localID, nil
 }

@@ -168,8 +168,13 @@ func TestUnwrapKey_TamperEphemeralPub(t *testing.T) {
 	wrapped, _ := WrapKey(dk, k.PublicKey())
 	wrapped[wrapOffsetEphPub] ^= 0x01
 	_, err := UnwrapKey(wrapped, k)
-	if err == nil {
-		t.Fatal("expected error on tampered ephemeral pub")
+	// Mutating the ephemeral pubkey changes the ECDH shared secret,
+	// derives a different KEK, and causes GCM auth failure on the
+	// wrapped data key → ErrDecrypt. (A mutation that happens to
+	// produce a low-order point would instead produce ErrBadBlob,
+	// but that's vanishingly unlikely for a 1-bit flip.)
+	if !errors.Is(err, ErrDecrypt) {
+		t.Fatalf("err = %v, want ErrDecrypt", err)
 	}
 }
 
@@ -195,8 +200,13 @@ func TestUnwrapKey_TamperMLKEMCt(t *testing.T) {
 	wrapped, _ := WrapKey(dk, k.PublicKey())
 	wrapped[wrapOffsetMLKEMCt+10] ^= 0x01
 	_, err := UnwrapKey(wrapped, k)
-	if err == nil {
-		t.Fatal("expected error on tampered ml-kem ciphertext")
+	// Flipping a byte in the ML-KEM ciphertext changes the shared
+	// secret after decapsulation (ML-KEM decap doesn't return error
+	// for ciphertext tampering — it returns a different key by
+	// design, for implicit rejection). The derived KEK then fails
+	// GCM auth on the wrapped blob → ErrDecrypt.
+	if !errors.Is(err, ErrDecrypt) {
+		t.Fatalf("err = %v, want ErrDecrypt", err)
 	}
 }
 

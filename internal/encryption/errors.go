@@ -53,7 +53,16 @@ func errBadBlobLength(got int) error {
 	return fmt.Errorf("%w: length %d, want %d", ErrBadBlob, got, wrappedBlobSize)
 }
 
-func errDecryptGCM(cause error) error {
-	_ = cause
+// errDecryptGCM intentionally produces the bare ErrDecrypt sentinel
+// and DROPS its argument. The name encodes the security invariant:
+// an AEAD decryption failure must never be wrapped to carry the
+// underlying cause. Exposing the cause could create a padding-oracle-
+// adjacent side channel even though AEAD itself is safer than CBC —
+// a helpful "wrong-key" distinction tells an attacker whether their
+// guess was structurally plausible. See TestErrDecryptGCM_DoesNotWrapCause.
+//
+// The unused parameter is kept so call sites read naturally at
+// wrap-call points: `return nil, errDecryptGCM(err)`.
+func errDecryptGCM(_ error) error {
 	return ErrDecrypt
 }

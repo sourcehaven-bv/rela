@@ -100,7 +100,7 @@ func LoadWithGroups(path string, fs storage.FS) (*Metamodel, *Groups, []string, 
 	if err != nil {
 		// Missing groups.yaml is only a problem if the metamodel
 		// declares encryption — ValidateEncryption enforces that.
-		if !IsGroupsNotFound(err) {
+		if !errors.Is(err, ErrGroupsNotFound) {
 			return nil, nil, nil, err
 		}
 		g = nil
@@ -109,17 +109,6 @@ func LoadWithGroups(path string, fs storage.FS) (*Metamodel, *Groups, []string, 
 		return nil, nil, nil, err
 	}
 	return m, g, paths, nil
-}
-
-// IsGroupsNotFound reports whether err represents a missing
-// groups.yaml. Sugar over errors.As so callers don't need to know
-// the sentinel or its struct shape.
-func IsGroupsNotFound(err error) bool {
-	var ge *GroupError
-	if !errors.As(err, &ge) {
-		return false
-	}
-	return ge.Kind == GroupErrorNotFound
 }
 
 // LoadWithoutMigrationCheck loads a metamodel without checking for migrations.
@@ -310,10 +299,18 @@ func validateEntityStructure(m *Metamodel) error {
 			}
 			// Underscore-prefixed names are reserved for fsstore
 			// metadata (e.g., _encryption, _enc_v1_*, _encrypted_body).
-			// One rule future-proofs the reserved namespace rather than
-			// enumerating individual keys.
+			// One rule future-proofs the reserved namespace rather
+			// than enumerating individual keys. If you're upgrading
+			// an existing project that used "_something" as a property
+			// name, rename both the metamodel declaration and any
+			// entity files referencing it.
 			if strings.HasPrefix(propName, "_") {
-				return &ReservedPropertyError{EntityType: name, PropertyName: propName}
+				return &ReservedPropertyError{
+					EntityType:   name,
+					PropertyName: propName,
+					Reason: "names beginning with \"_\" are reserved for fsstore metadata " +
+						"(e.g., _encryption, _enc_v1_*); rename the property",
+				}
 			}
 		}
 

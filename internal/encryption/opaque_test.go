@@ -30,19 +30,6 @@ func TestOpaque_BytesReturnsCopy(t *testing.T) {
 	}
 }
 
-func TestOpaque_BorrowBytesAliasesUnderlying(t *testing.T) {
-	// BorrowBytes is explicitly an escape hatch for re-emit paths.
-	// Document the alias semantics via test so future readers see the
-	// trade-off: fast path, caller responsible for read-only access.
-	o := NewOpaque([]byte{1, 2, 3})
-	b := o.BorrowBytes()
-	if !bytes.Equal(b, []byte{1, 2, 3}) {
-		t.Fatalf("BorrowBytes() = %v, want [1 2 3]", b)
-	}
-	// We deliberately don't mutate b here — doing so in production
-	// code would violate the documented contract.
-}
-
 func TestOpaque_StringRedacts(t *testing.T) {
 	o := NewOpaque([]byte("SECRET-PLAINTEXT-XYZ"))
 	if got := o.String(); got != "<encrypted>" {

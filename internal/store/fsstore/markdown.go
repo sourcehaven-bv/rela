@@ -373,15 +373,6 @@ func formatEntity(e *entity.Entity, propertyOrder []string, crypto Crypto) (stri
 		props[key] = value
 	}
 
-	// Body conflict check (criterion 15): if this entity type's body
-	// is declared encrypted AND Content is cleartext + non-empty,
-	// that's the normal first-write case — seal the content.
-	// But if the caller supplies both a pre-existing _encrypted_body
-	// and non-empty Content, refuse. Here we only see cleartext
-	// input, so the body conflict is structurally impossible at this
-	// layer — the decoder side ensures _encrypted_body never lands
-	// in e.Properties (it gets moved to e.Content on read).
-
 	sealedFM, sealedOrder, sealedBody, err := sealProperties(
 		crypto, e.Type, props, e.Content, propertyOrder)
 	if err != nil {

@@ -14,9 +14,16 @@ const pubSuffix = ".pub"
 // Keyring holds loaded recipient public keys and, optionally, a local
 // private keypair. The private keypair is never exposed; callers
 // decrypt through Keyring.Unwrap.
+//
+// localIdentity is the identity string whose stored public key matches
+// the loaded private key, or "" when either side is absent or no
+// recipient matches. Computed once at load; used by consumers to
+// attempt only the wrap that should work and surface tamper/corruption
+// errors verbatim (instead of collapsing them into "no matching key").
 type Keyring struct {
-	recipients map[string]*PublicKey
-	private    *Keypair
+	recipients    map[string]*PublicKey
+	private       *Keypair
+	localIdentity string
 }
 
 // LoadKeyring loads recipients from keysDir and, if privateKeyPath is
@@ -53,9 +60,24 @@ func LoadKeyring(keysDir, privateKeyPath string) (*Keyring, error) {
 			return nil, errBadPEM(filepath.Base(privateKeyPath), err)
 		}
 		kr.private = priv
+		kr.localIdentity = matchLocalIdentity(kr.recipients, priv.PublicKey())
 	}
 
 	return kr, nil
+}
+
+// matchLocalIdentity returns the identity whose stored public key
+// equals pub, or "" if none match. A private key that doesn't
+// correspond to any listed recipient is still a valid configuration —
+// Unwrap will simply never match any wrap and consumers fall back to
+// the Opaque / no-matching-key path.
+func matchLocalIdentity(recipients map[string]*PublicKey, pub *PublicKey) string {
+	for id, rp := range recipients {
+		if rp.equal(pub) {
+			return id
+		}
+	}
+	return ""
 }
 
 // loadRecipients populates kr.recipients from keysDir. Empty keysDir
@@ -120,6 +142,13 @@ func (kr *Keyring) Identities() []string {
 // HasPrivateKey reports whether a local private key was loaded.
 func (kr *Keyring) HasPrivateKey() bool {
 	return kr.private != nil
+}
+
+// LocalIdentity returns the identity whose stored recipient public
+// key corresponds to the loaded private key, or "" when either the
+// private key is absent or it doesn't match any known recipient.
+func (kr *Keyring) LocalIdentity() string {
+	return kr.localIdentity
 }
 
 // Unwrap decrypts a wrapped data key using the loaded private key.

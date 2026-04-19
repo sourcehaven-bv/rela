@@ -24,11 +24,6 @@ const (
 	// re-seal without a data key.
 	ErrKindOpaqueWrite EncryptionErrorKind = "opaque_write"
 
-	// ErrKindBodyConflict: entity was written with both _encrypted_body
-	// and non-empty Content. Defends against accidental co-storage of
-	// ciphertext and cleartext under the same semantic slot.
-	ErrKindBodyConflict EncryptionErrorKind = "body_conflict"
-
 	// ErrKindUnknownGroup: entity frontmatter references a group name
 	// that the Crypto layer doesn't know about.
 	ErrKindUnknownGroup EncryptionErrorKind = "unknown_group"
@@ -59,3 +54,26 @@ func (e *EncryptionError) Error() string {
 }
 
 func (e *EncryptionError) Unwrap() error { return e.Cause }
+
+// Is supports errors.Is matching against the sentinel variables
+// below: two EncryptionErrors match if they share the same Kind.
+// This mirrors the GroupError pattern in internal/metamodel and
+// lets callers write errors.Is(err, ErrMissingKeyring) instead of
+// errors.As + comparing Kind manually.
+func (e *EncryptionError) Is(target error) bool {
+	t, ok := target.(*EncryptionError)
+	if !ok {
+		return false
+	}
+	return e.Kind == t.Kind
+}
+
+// Sentinel matchers. Callers use errors.Is(err, ErrMissingKeyring)
+// etc. to branch on failure mode without inspecting the full struct.
+var (
+	ErrMissingKeyring   = &EncryptionError{Kind: ErrKindMissingKeyring}
+	ErrCorruptedFile    = &EncryptionError{Kind: ErrKindCorruptedFile}
+	ErrOpaqueWrite      = &EncryptionError{Kind: ErrKindOpaqueWrite}
+	ErrUnknownGroup     = &EncryptionError{Kind: ErrKindUnknownGroup}
+	ErrUnknownRecipient = &EncryptionError{Kind: ErrKindUnknownRecipient}
+)

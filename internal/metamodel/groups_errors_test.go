@@ -71,15 +71,3 @@ func TestGroupError_Is_DifferentKind(t *testing.T) {
 		t.Error("NotFound should not match Unknown")
 	}
 }
-
-func TestIsGroupsNotFound_WrongType(t *testing.T) {
-	if IsGroupsNotFound(errors.New("not a group error")) {
-		t.Error("IsGroupsNotFound should be false for non-GroupError")
-	}
-}
-
-func TestIsGroupsNotFound_Nil(t *testing.T) {
-	if IsGroupsNotFound(nil) {
-		t.Error("IsGroupsNotFound(nil) should be false")
-	}
-}

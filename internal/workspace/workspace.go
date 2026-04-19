@@ -173,9 +173,19 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 	}
 	if factory == nil {
 		// Optional encryption: load groups.yaml + keyring if present.
-		// Missing either leaves the store in cleartext-only mode.
-		groups, _ := metamodel.LoadGroups(paths.Root, fs)
-		keyring, _ := encryption.LoadFromDir(paths.Root)
+		// Missing files leave the store in cleartext-only mode;
+		// present-but-malformed files propagate as a workspace error
+		// so the user notices (swallowing a YAML parse error here
+		// would silently turn an encrypted project into a cleartext
+		// one — worst possible failure mode).
+		groups, err := metamodel.LoadGroups(paths.Root, fs)
+		if err != nil && !errors.Is(err, metamodel.ErrGroupsNotFound) {
+			return nil, fmt.Errorf("load groups.yaml: %w", err)
+		}
+		keyring, err := encryption.LoadFromDir(paths.Root)
+		if err != nil {
+			return nil, fmt.Errorf("load keyring: %w", err)
+		}
 		factory = &app.FSFactory{
 			FS:      fs,
 			Paths:   paths,

@@ -495,6 +495,49 @@ func TestUnsealProperties_TamperedEnvelopeWrap(t *testing.T) {
 
 // --- tests: envelope shape / determinism ------------------------------
 
+// TestUnsealProperties_RejectsUnsupportedKeyVersion is C2 regression:
+// a future v2 envelope format must NOT be silently parsed as v1
+// (which would produce garbage data keys). Also reject non-numeric
+// key_version types.
+func TestUnsealProperties_RejectsUnsupportedKeyVersion(t *testing.T) {
+	f := newFixture(t)
+	c := f.cryptoAs("alice")
+
+	// First produce a valid sealed map, then mutate its key_version.
+	sealed, _, _, err := sealProperties(
+		c, "ticket",
+		map[string]any{"description": "s"},
+		"",
+		[]string{"description"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		kv   any
+	}{
+		{"future version", 2},
+		{"string version", "1"},
+		{"bool version", true},
+		{"nil version", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := sealed[encryptionKey].(map[string]any)
+			env["key_version"] = tc.kv
+			_, _, _, err := unsealProperties(c, sealed, "")
+			var ee *EncryptionError
+			if !errors.As(err, &ee) {
+				t.Fatalf("err = %v, want EncryptionError", err)
+			}
+			if ee.Kind != ErrKindCorruptedFile {
+				t.Errorf("Kind = %s, want CorruptedFile", ee.Kind)
+			}
+		})
+	}
+}
+
 func TestSealProperties_EnvelopeShape(t *testing.T) {
 	f := newFixture(t)
 	c := f.cryptoAs("alice")
@@ -659,6 +702,40 @@ func TestSealProperties_UnknownRecipient(t *testing.T) {
 }
 
 // --- tests: envelope determinism (non-ciphertext fields) -------------
+
+// TestSealProperties_OneKeyPerGroupPerWrite pins down the
+// "fresh data key per write per group" invariant that keeps the
+// AES-GCM 2^32 message-per-key bound unreachable. Two sequential
+// writes of the same entity produce different ciphertext even for
+// identical plaintext — proving each write generates fresh data
+// keys and doesn't reuse an earlier one.
+func TestSealProperties_OneKeyPerGroupPerWrite(t *testing.T) {
+	f := newFixture(t)
+	c := f.cryptoAs("alice")
+	props := map[string]any{"description": "same value"}
+	order := []string{"description"}
+
+	s1, _, _, err := sealProperties(c, "ticket", props, "", order)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2, _, _, err := sealProperties(c, "ticket", props, "", order)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s1["_enc_v1_description"] == s2["_enc_v1_description"] {
+		t.Fatal("identical ciphertext across writes — data-key reuse (hits 2^32 bound over time)")
+	}
+	// The envelope's wrapped data key also differs (new data key
+	// means new wrapped blob).
+	env1 := s1["_encryption"].(map[string]any)
+	env2 := s2["_encryption"].(map[string]any)
+	g1 := env1["data_keys"].(map[string]any)["engineering"].(map[string]any)
+	g2 := env2["data_keys"].(map[string]any)["engineering"].(map[string]any)
+	if g1["alice"] == g2["alice"] {
+		t.Fatal("envelope wrap identical across writes — data-key reuse")
+	}
+}
 
 // TestSealUnseal_MultiGroup_IsolationWithinSameFile is the missing
 // coverage that the end-to-end demo exposed: with one data key per

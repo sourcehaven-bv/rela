@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -16,6 +17,12 @@ const (
 	encKeyPrefix     = "_enc_v1_"
 	encryptionKey    = "_encryption"
 	encryptedBodyKey = "_encrypted_body"
+
+	// supportedKeyVersion is the single envelope format version this
+	// build understands. Reading a file that declares anything else
+	// is a hard error — otherwise a future v2 envelope would be
+	// silently parsed as v1 and produce decrypted-garbage surprises.
+	supportedKeyVersion = 1
 )
 
 // stripEncKey returns (propName, true) if key has the _enc_v1_ prefix.
@@ -66,19 +73,34 @@ func parseEncryptionBlock(raw any) (*encryptionBlock, error) {
 		return nil, fmt.Errorf("fsstore: _encryption must be a map, got %T", raw)
 	}
 	blk := &encryptionBlock{
-		keyVersion: 1,
+		keyVersion: supportedKeyVersion,
 		dataKeys:   make(map[string]map[string][]byte),
 	}
-	// key_version (optional, defaults to 1).
+	// key_version: required, must be numeric, must equal
+	// supportedKeyVersion. A missing key is accepted and defaults to
+	// the supported version (legacy files — harmless). Non-numeric
+	// types and unsupported numeric values are rejected. This
+	// prevents a future v2 file from being silently misinterpreted
+	// as v1.
 	if v, hasKV := m["key_version"]; hasKV {
-		switch kv := v.(type) {
+		var kv int
+		switch x := v.(type) {
 		case int:
-			blk.keyVersion = kv
+			kv = x
 		case int64:
-			blk.keyVersion = int(kv)
+			kv = int(x)
 		case float64:
-			blk.keyVersion = int(kv)
+			kv = int(x)
+		default:
+			return nil, fmt.Errorf("fsstore: _encryption.key_version must be numeric, got %T", v)
 		}
+		if kv != supportedKeyVersion {
+			return nil, fmt.Errorf(
+				"fsstore: unsupported _encryption.key_version %d (this rela build supports %d)",
+				kv, supportedKeyVersion,
+			)
+		}
+		blk.keyVersion = kv
 	}
 	// data_keys: group → identity → base64 wrap.
 	dkRaw, ok := m["data_keys"]
@@ -152,7 +174,7 @@ func sealProperties(
 		return props, order, rawBody, nil
 	}
 
-	plan := discoverEncryption(crypto, entityType, props)
+	plan := discoverEncryption(crypto, entityType, props, rawBody)
 	if !plan.hasWork() {
 		return props, order, rawBody, nil
 	}
@@ -204,7 +226,7 @@ type encryptionPlan struct {
 
 func (p *encryptionPlan) hasWork() bool { return len(p.groupsNeeded) > 0 }
 
-func discoverEncryption(crypto Crypto, entityType string, props map[string]any) *encryptionPlan {
+func discoverEncryption(crypto Crypto, entityType string, props map[string]any, body string) *encryptionPlan {
 	p := &encryptionPlan{
 		propGroups:   make(map[string]string, len(props)),
 		groupsNeeded: make(map[string]struct{}),
@@ -215,7 +237,12 @@ func discoverEncryption(crypto Crypto, entityType string, props map[string]any) 
 			p.groupsNeeded[g] = struct{}{}
 		}
 	}
-	if g, enc := crypto.BodyGroup(entityType); enc {
+	// Only declare the body group as "needed" when there's actually
+	// something to seal. An empty body writes no _encrypted_body key
+	// and needs no wrap — emitting an envelope listing the body
+	// group's recipients would leak the policy intent for a write
+	// that isn't even using it.
+	if g, enc := crypto.BodyGroup(entityType); enc && body != "" {
 		p.bodyEncrypted = true
 		p.groupsNeeded[g] = struct{}{}
 	}
@@ -233,7 +260,7 @@ func refuseOpaqueWrites(props map[string]any) error {
 
 func buildEnvelope(crypto Crypto, dataKeys map[string][]byte) (*encryptionBlock, error) {
 	envelope := &encryptionBlock{
-		keyVersion: 1,
+		keyVersion: supportedKeyVersion,
 		dataKeys:   make(map[string]map[string][]byte, len(dataKeys)),
 	}
 	for g, dk := range dataKeys {
@@ -305,7 +332,7 @@ func sealFrontmatter(
 	}
 	// Catch properties not mentioned in order (defensive).
 	for name, v := range props {
-		if containsString(newOrder, name) || containsString(newOrder, applyEncKey(name)) {
+		if slices.Contains(newOrder, name) || slices.Contains(newOrder, applyEncKey(name)) {
 			continue
 		}
 		if err := emit(name, v); err != nil {
@@ -409,16 +436,6 @@ func valueToBytes(v any) []byte {
 	default:
 		return fmt.Appendf(nil, "%v", x)
 	}
-}
-
-// containsString reports whether a string appears in a slice.
-func containsString(s []string, target string) bool {
-	for _, v := range s {
-		if v == target {
-			return true
-		}
-	}
-	return false
 }
 
 // unsealProperties is the inverse of sealProperties.
