@@ -23,7 +23,7 @@ func (s *FSStore) FormatEntity(ctx context.Context, id string, dryRun bool) (boo
 	path := s.entityFilePath(e.Type, e.ID)
 	s.mu.RUnlock()
 
-	formatted, err := formatEntity(e, order)
+	formatted, err := formatEntity(e, order, s.crypto)
 	if err != nil {
 		return false, fmt.Errorf("format entity: %w", err)
 	}

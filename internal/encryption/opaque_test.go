@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -47,12 +48,11 @@ func TestOpaque_StringRedacts(t *testing.T) {
 	if got := o.String(); got != "<encrypted>" {
 		t.Errorf("String() = %q, want %q", got, "<encrypted>")
 	}
-	// And via fmt.Sprintf, the stringer is invoked.
-	if got := fmt.Sprintf("%s", o); got != "<encrypted>" {
-		t.Errorf("%%s = %q, want %q", got, "<encrypted>")
-	}
-	if got := fmt.Sprintf("%v", o); got != "<encrypted>" {
-		t.Errorf("%%v = %q, want %q", got, "<encrypted>")
+	// Also via a Stringer-consuming format verb: gocritic would
+	// flag fmt.Sprint(o) as "use o.String() instead", but the
+	// whole point is to verify fmt verbs go through String.
+	if got := fmt.Sprintf("%s", any(o)); got != "<encrypted>" {
+		t.Errorf("fmt.Sprintf(%%s) = %q, want %q", got, "<encrypted>")
 	}
 }
 
@@ -69,14 +69,14 @@ func TestOpaque_MarshalJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got string
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatalf("round-trip unmarshal: %v", err)
+	if umErr := json.Unmarshal(b, &got); umErr != nil {
+		t.Fatalf("round-trip unmarshal: %v", umErr)
 	}
 	if got != wantUnescaped {
 		t.Fatalf("MarshalJSON round-trip = %q, want %q", got, wantUnescaped)
 	}
 
-	// Marshalling a struct with an Opaque field should also redact.
+	// Marshaling a struct with an Opaque field should also redact.
 	wrap := struct {
 		Value Opaque `json:"value"`
 	}{Value: o}
@@ -114,7 +114,7 @@ func TestOpaque_NoLeakOnFmtVerbs(t *testing.T) {
 	o := NewOpaque([]byte(marker))
 	for _, verb := range []string{"%v", "%s", "%q"} {
 		out := fmt.Sprintf(verb, o)
-		if bytes.Contains([]byte(out), []byte(marker)) {
+		if strings.Contains(out, marker) {
 			t.Errorf("verb %s leaked marker: %q", verb, out)
 		}
 	}

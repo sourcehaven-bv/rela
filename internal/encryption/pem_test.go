@@ -79,7 +79,7 @@ func TestParsePublicKeyPEM_NoBlock(t *testing.T) {
 }
 
 func TestParsePrivateKeyPEM_WrongType(t *testing.T) {
-	block := &pem.Block{Type: "SOMETHING ELSE", Bytes: bytes.Repeat([]byte{0}, privatePayloadSize)}
+	block := &pem.Block{Type: "SOMETHING ELSE", Bytes: make([]byte, privatePayloadSize)}
 	_, err := ParsePrivateKeyPEM(pem.EncodeToMemory(block))
 	if !errors.Is(err, ErrBadPEM) {
 		t.Fatalf("err = %v, want ErrBadPEM", err)
@@ -87,7 +87,7 @@ func TestParsePrivateKeyPEM_WrongType(t *testing.T) {
 }
 
 func TestParsePublicKeyPEM_WrongType(t *testing.T) {
-	block := &pem.Block{Type: "NOT A REAL TYPE", Bytes: bytes.Repeat([]byte{0}, publicPayloadSize)}
+	block := &pem.Block{Type: "NOT A REAL TYPE", Bytes: make([]byte, publicPayloadSize)}
 	_, err := ParsePublicKeyPEM(pem.EncodeToMemory(block))
 	if !errors.Is(err, ErrBadPEM) {
 		t.Fatalf("err = %v, want ErrBadPEM", err)

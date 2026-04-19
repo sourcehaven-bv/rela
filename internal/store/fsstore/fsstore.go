@@ -49,6 +49,12 @@ type Config struct {
 	// startup — callers that need that behavior can iterate ListEntities
 	// after New returns and feed their observer directly.
 	Observers []store.EntityObserver
+
+	// Crypto, if non-nil, enables transparent at-rest encryption of
+	// entity properties and bodies per the metamodel's `encrypted:`
+	// declarations. A nil Crypto preserves cleartext-only behavior
+	// (no encryption code runs on reads or writes).
+	Crypto Crypto
 }
 
 // entityMeta is the lightweight in-memory representation of an entity.
@@ -81,6 +87,9 @@ type FSStore struct {
 	attachDir    string
 	cacheDir     string
 	schemas      map[string]store.EntityTypeSchema
+
+	// crypto is the optional encryption policy. nil = cleartext-only.
+	crypto Crypto
 
 	// in-memory index
 	mu            sync.RWMutex
@@ -128,6 +137,7 @@ func New(cfg Config) (*FSStore, error) {
 		attachDir:    cfg.AttachmentsDir,
 		cacheDir:     cfg.CacheDir,
 		schemas:      cfg.Schemas,
+		crypto:       cfg.Crypto,
 		observers:    cfg.Observers,
 		entities:     make(map[string]entityMeta),
 		relations:    make(map[string]relationMeta),

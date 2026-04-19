@@ -39,7 +39,7 @@ func TestSeal_NoncePrepended(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonceSize, _ := aeadSizes()
-	for i := 0; i < nonceSize; i++ {
+	for i := range nonceSize {
 		if sealed[i] != 0xAB {
 			t.Fatalf("nonce[%d] = %#x, want 0xAB", i, sealed[i])
 		}
@@ -97,7 +97,7 @@ func TestOpen_Tamper(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Flip one byte at each position up to the first 32.
-	for i := 0; i < 32 && i < len(sealed); i++ {
+	for i := range min(32, len(sealed)) {
 		mutated := append([]byte(nil), sealed...)
 		mutated[i] ^= 0x01
 		if _, err := Open(mutated, dk); !errors.Is(err, ErrDecrypt) {

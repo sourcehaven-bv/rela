@@ -341,13 +341,21 @@ func (s *FSStore) readEntityFile(path string) (*entity.Entity, error) {
 	entityType := doc.getString("type")
 
 	e := entity.New(id, entityType)
-	e.Content = doc.content
 
 	if info, err := s.fs.Stat(path); err == nil {
 		e.UpdatedAt = info.ModTime()
 	}
 
-	for key, value := range doc.frontmatter {
+	// If the frontmatter carries any encrypted keys or an envelope,
+	// unseal through the Crypto layer. Cleartext files bypass the
+	// encryption path entirely (nil-crypto fast path).
+	frontmatter, body, _, unErr := unsealProperties(s.crypto, doc.frontmatter, doc.content)
+	if unErr != nil {
+		return nil, unErr
+	}
+	e.Content = body
+
+	for key, value := range frontmatter {
 		if key != "id" && key != "type" {
 			e.Properties[key] = entity.CloneValue(value)
 		}
@@ -357,20 +365,41 @@ func (s *FSStore) readEntityFile(path string) (*entity.Entity, error) {
 }
 
 // formatEntity formats an entity as markdown with YAML frontmatter.
-func formatEntity(e *entity.Entity, propertyOrder []string) (string, error) {
-	fm := make(map[string]interface{})
+// crypto may be nil (cleartext-only stores).
+func formatEntity(e *entity.Entity, propertyOrder []string, crypto Crypto) (string, error) {
+	// Split props (user-defined) from the fixed id/type pair.
+	props := make(map[string]any, len(e.Properties))
+	for key, value := range e.Properties {
+		props[key] = value
+	}
+
+	// Body conflict check (criterion 15): if this entity type's body
+	// is declared encrypted AND Content is cleartext + non-empty,
+	// that's the normal first-write case — seal the content.
+	// But if the caller supplies both a pre-existing _encrypted_body
+	// and non-empty Content, refuse. Here we only see cleartext
+	// input, so the body conflict is structurally impossible at this
+	// layer — the decoder side ensures _encrypted_body never lands
+	// in e.Properties (it gets moved to e.Content on read).
+
+	sealedFM, sealedOrder, sealedBody, err := sealProperties(
+		crypto, e.Type, props, e.Content, propertyOrder)
+	if err != nil {
+		return "", err
+	}
+
+	fm := make(map[string]any, len(sealedFM)+2)
 	fm["id"] = e.ID
 	fm["type"] = e.Type
-	for key, value := range e.Properties {
-		fm[key] = value
+	for k, v := range sealedFM {
+		fm[k] = v
 	}
 
-	keyOrder := []string{"id", "type"}
-	if len(propertyOrder) > 0 {
-		keyOrder = append(keyOrder, propertyOrder...)
-	}
+	keyOrder := make([]string, 0, 2+len(sealedOrder))
+	keyOrder = append(keyOrder, "id", "type")
+	keyOrder = append(keyOrder, sealedOrder...)
 
-	content := e.Content
+	content := sealedBody
 	if content != "" {
 		content = formatMarkdown(content)
 	}
@@ -384,7 +413,7 @@ func (s *FSStore) writeEntityFile(e *entity.Entity) error {
 	tempPath := path + ".new"
 
 	order := s.propertyOrder(e.Type)
-	content, err := formatEntity(e, order)
+	content, err := formatEntity(e, order, s.crypto)
 	if err != nil {
 		return err
 	}

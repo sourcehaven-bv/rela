@@ -38,7 +38,7 @@ func NewOpaque(ciphertext []byte) Opaque {
 func (Opaque) String() string { return "<encrypted>" }
 
 // MarshalJSON produces the same redacted string so cache files,
-// API responses, and logs never serialise ciphertext bytes.
+// API responses, and logs never serialize ciphertext bytes.
 func (Opaque) MarshalJSON() ([]byte, error) {
 	return []byte(`"<encrypted>"`), nil
 }
