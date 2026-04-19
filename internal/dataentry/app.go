@@ -104,7 +104,6 @@ type App struct {
 	templater     templating.Templater
 	cfgLoader     config.Loader
 	kv            state.KV
-	luaServices   lua.Services
 	startWatching func(workspace.WatchOptions) error
 
 	// documents renders and caches documents. Created once in NewApp so
@@ -159,6 +158,23 @@ func (a *App) Cfg() *Config { return a.State().Cfg }
 // Meta returns the current metamodel (convenience accessor).
 func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 
+// luaWriteDeps builds a lua.WriteDeps bundle using the current AppState
+// metamodel. Called per action-script invocation so that metamodel reloads
+// propagate to scripts without requiring app reconstruction. All other
+// fields are immutable for the App's lifetime.
+func (a *App) luaWriteDeps() lua.WriteDeps {
+	return lua.WriteDeps{
+		ReadDeps: lua.ReadDeps{
+			Store:       a.store,
+			Tracer:      a.tracer,
+			Searcher:    a.searcher,
+			Meta:        a.Meta(),
+			ProjectRoot: a.paths.Root,
+		},
+		EntityManager: a.entityManager,
+	}
+}
+
 // mutateState atomically updates the published AppState. It takes
 // writeMu, builds a shallow copy of the current snapshot, runs the
 // caller's mutator on the copy, and publishes the copy via state.Store.
@@ -193,7 +209,7 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 // entityManager (runs workspace's automation engine), searcher (reads
 // the live Bleve index maintained by the workspace), and startWatching
 // (a lifecycle hook). Everything else — state.KV, config.Loader,
-// tracer, templater, validator, lua.Services — is constructed locally.
+// tracer, templater, validator, lua.WriteDeps — is constructed locally.
 func NewApp(
 	fs storage.FS,
 	paths *project.Context,
@@ -208,15 +224,14 @@ func NewApp(
 	kv := state.NewFSKV(fs, paths.CacheDir)
 	trc := tracer.New(st)
 	templater := templating.NewFSTemplater(fs, paths)
-	luaSvc := lua.Services{
+	readDeps := lua.ReadDeps{
 		Store:       st,
-		Manager:     em,
 		Tracer:      trc,
 		Searcher:    searcher,
 		Meta:        meta,
 		ProjectRoot: paths.Root,
 	}
-	val := validator.New(st, meta, luaSvc, paths.Root)
+	val := validator.New(st, meta, readDeps)
 
 	// Load data-entry config from project root
 	cfgData, err := cfgLoader.Load(context.Background(), ConfigFile)
@@ -272,7 +287,6 @@ func NewApp(
 		templater:     templater,
 		cfgLoader:     cfgLoader,
 		kv:            kv,
-		luaServices:   luaSvc,
 		startWatching: startWatching,
 		broker:        newEventBroker(),
 		documents:     newDocumentService(st, kv, paths.Root),

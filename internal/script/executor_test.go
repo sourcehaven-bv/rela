@@ -1,40 +1,66 @@
 package script
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
-// testContext implements script.Context for testing.
-type testContext struct {
-	projectRoot string
+// stubEntityManager is a no-op EntityManager for tests that exercise the
+// script runtime wiring but never reach a mutation binding. It exists only
+// to satisfy lua.NewWriter's construction-time non-nil check; every method
+// panics so an accidental test reaching a mutation path fails loudly.
+type stubEntityManager struct{}
+
+func (stubEntityManager) CreateEntity(context.Context, *entity.Entity,
+	entitymanager.CreateOptions) (*entitymanager.CreateResult, error) {
+	panic("stubEntityManager.CreateEntity: not expected in this test")
+}
+func (stubEntityManager) UpdateEntity(context.Context,
+	*entity.Entity) (*entitymanager.UpdateResult, error) {
+	panic("stubEntityManager.UpdateEntity: not expected in this test")
+}
+func (stubEntityManager) DeleteEntity(context.Context, string,
+	bool) (*entitymanager.DeleteResult, error) {
+	panic("stubEntityManager.DeleteEntity: not expected in this test")
+}
+func (stubEntityManager) RenameEntity(context.Context, string, string,
+	entitymanager.RenameOptions) (*entitymanager.RenameResult, error) {
+	panic("stubEntityManager.RenameEntity: not expected in this test")
+}
+func (stubEntityManager) CreateRelation(context.Context, string, string, string,
+	entitymanager.RelationOptions) (*entity.Relation, error) {
+	panic("stubEntityManager.CreateRelation: not expected in this test")
+}
+func (stubEntityManager) UpdateRelation(context.Context, string, string, string,
+	entitymanager.RelationOptions) (*entity.Relation, error) {
+	panic("stubEntityManager.UpdateRelation: not expected in this test")
+}
+func (stubEntityManager) DeleteRelation(context.Context, string, string, string) error {
+	panic("stubEntityManager.DeleteRelation: not expected in this test")
 }
 
-func (c *testContext) GetWorkspace() interface{} {
+func testWriteDeps(projectRoot string) lua.WriteDeps {
 	st := memstore.New()
-	return lua.Services{
-		Store:       st,
-		Tracer:      tracer.New(st),
-		ProjectRoot: c.projectRoot,
+	return lua.WriteDeps{
+		ReadDeps: lua.ReadDeps{
+			Store:       st,
+			Tracer:      tracer.New(st),
+			ProjectRoot: projectRoot,
+		},
+		EntityManager: stubEntityManager{},
 	}
 }
-func (c *testContext) GetMeta() *metamodel.Metamodel { return nil }
-func (c *testContext) GetProjectRoot() string        { return c.projectRoot }
-func (c *testContext) GetEntity() *entity.Entity     { return nil }
-func (c *testContext) GetOldEntity() *entity.Entity  { return nil }
 
 func TestEngine_ExecuteFile_PathTraversal(t *testing.T) {
-	// Test that path traversal attempts are blocked.
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: "/project"}
-
-	err := engine.ExecuteFile("../../../etc/passwd", ctx)
+	err := engine.ExecuteFile("../../../etc/passwd", testWriteDeps("/project"), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for path traversal, got none")
 	}
@@ -44,11 +70,8 @@ func TestEngine_ExecuteFile_PathTraversal(t *testing.T) {
 }
 
 func TestEngine_ExecuteFile_AbsolutePath(t *testing.T) {
-	// Test that absolute paths are blocked.
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: "/project"}
-
-	err := engine.ExecuteFile("/etc/passwd", ctx)
+	err := engine.ExecuteFile("/etc/passwd", testWriteDeps("/project"), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for absolute path, got none")
 	}
@@ -58,11 +81,8 @@ func TestEngine_ExecuteFile_AbsolutePath(t *testing.T) {
 }
 
 func TestEngine_ExecuteFile_WrongExtension(t *testing.T) {
-	// Test that non-.lua files are blocked.
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: "/project"}
-
-	err := engine.ExecuteFile("script.txt", ctx)
+	err := engine.ExecuteFile("script.txt", testWriteDeps("/project"), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for wrong extension, got none")
 	}
@@ -72,13 +92,8 @@ func TestEngine_ExecuteFile_WrongExtension(t *testing.T) {
 }
 
 func TestEngine_ExecuteFile_ValidPath(t *testing.T) {
-	// Test that valid paths pass validation (but fail at file access since
-	// we don't have a real filesystem in tests).
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: "/nonexistent"}
-
-	err := engine.ExecuteFile("test.lua", ctx)
-	// Should fail at project directory access (not validation)
+	err := engine.ExecuteFile("test.lua", testWriteDeps("/nonexistent"), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for missing project directory")
 	}

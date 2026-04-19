@@ -126,7 +126,6 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, ws *workspace.Wo
 	app.templater = ws.Templater()
 	app.cfgLoader = ws.Config()
 	app.kv = ws.State()
-	app.luaServices = ws.LuaServices()
 	app.startWatching = ws.StartWatching
 }
 

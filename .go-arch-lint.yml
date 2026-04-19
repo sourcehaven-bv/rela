@@ -361,6 +361,7 @@ deps:
   scheduler:
     mayDependOn:
       - config
+      - lua
       - metamodel
       - project
       - script

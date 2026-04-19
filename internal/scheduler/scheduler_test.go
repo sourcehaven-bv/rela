@@ -9,18 +9,20 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 )
 
 // --- test helpers ---
 
 type mockWorkspace struct {
-	mu         sync.Mutex
-	cacheFiles map[string][]byte
-	paths      *project.Context
-	meta       *metamodel.Metamodel
+	mu              sync.Mutex
+	cacheFiles      map[string][]byte
+	paths           *project.Context
+	luaDepsCalls    int
+	luaDepsProvider func() lua.WriteDeps
 }
 
 func newMockWorkspace(t *testing.T) *mockWorkspace {
@@ -28,7 +30,6 @@ func newMockWorkspace(t *testing.T) *mockWorkspace {
 	return &mockWorkspace{
 		cacheFiles: make(map[string][]byte),
 		paths:      &project.Context{Root: t.TempDir()},
-		meta:       &metamodel.Metamodel{},
 	}
 }
 
@@ -37,6 +38,17 @@ func (m *mockWorkspace) Paths() *project.Context { return m.paths }
 func (m *mockWorkspace) Config() config.Loader { return &mockConfig{m: m} }
 
 func (m *mockWorkspace) State() state.KV { return &mockState{m: m} }
+
+func (m *mockWorkspace) LuaWriteDeps() lua.WriteDeps {
+	m.mu.Lock()
+	m.luaDepsCalls++
+	provider := m.luaDepsProvider
+	m.mu.Unlock()
+	if provider != nil {
+		return provider()
+	}
+	return lua.WriteDeps{}
+}
 
 type mockConfig struct{ m *mockWorkspace }
 
@@ -107,8 +119,6 @@ func newTestScheduler(
 	s := &Scheduler{
 		config: cfg,
 		ws:     ws,
-		metaFn: func() *metamodel.Metamodel { return ws.meta },
-		wsRaw:  ws,
 		state:  newState(),
 		logger: discardLogger(),
 		now:    func() time.Time { return now },
@@ -266,7 +276,7 @@ func TestScheduler_loadState_noFile(t *testing.T) {
 	t.Parallel()
 
 	ws := newMockWorkspace(t)
-	s := &Scheduler{ws: ws, metaFn: func() *metamodel.Metamodel { return ws.meta }, logger: discardLogger()}
+	s := &Scheduler{ws: ws, logger: discardLogger()}
 	s.loadState()
 
 	if s.state == nil || s.state.Tasks == nil {
@@ -282,7 +292,7 @@ func TestScheduler_loadState_existing(t *testing.T) {
 	stateData, _ := json.Marshal(State{Tasks: map[string]time.Time{"daily": ts}})
 	ws.cacheFiles[stateFile] = stateData
 
-	s := &Scheduler{ws: ws, metaFn: func() *metamodel.Metamodel { return ws.meta }, logger: discardLogger()}
+	s := &Scheduler{ws: ws, logger: discardLogger()}
 	s.loadState()
 
 	if got := s.state.Tasks["daily"]; !got.Equal(ts) {
@@ -297,8 +307,6 @@ func TestScheduler_Run_emptyConfig(t *testing.T) {
 	s := &Scheduler{
 		config: &Config{Tasks: nil},
 		ws:     ws,
-		metaFn: func() *metamodel.Metamodel { return ws.meta },
-		wsRaw:  ws,
 		logger: discardLogger(),
 		now:    time.Now,
 	}
@@ -362,45 +370,41 @@ func TestStartBackground_NoConfig(t *testing.T) {
 	// When schedules.yaml is missing, StartBackground should silently
 	// no-op without starting a goroutine.
 	ws := newMockWorkspace(t)
-	metaFn := func() *metamodel.Metamodel { return ws.meta }
 
 	// ws.Config().Load returns notFoundError for missing file.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Should not panic, should not log errors.
-	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+	StartBackground(ctx, ws, discardLogger())
 }
 
 func TestStartBackground_InvalidConfig(t *testing.T) {
 	ws := newMockWorkspace(t)
 	ws.cacheFiles["project:"+ConfigFile] = []byte("not: valid: yaml: at all:")
-	metaFn := func() *metamodel.Metamodel { return ws.meta }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Should log error and return without starting a goroutine.
-	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+	StartBackground(ctx, ws, discardLogger())
 }
 
 func TestStartBackground_EmptyTasks(t *testing.T) {
 	ws := newMockWorkspace(t)
 	ws.cacheFiles["project:"+ConfigFile] = []byte("tasks: []\n")
-	metaFn := func() *metamodel.Metamodel { return ws.meta }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	StartBackground(ctx, ws, ws, metaFn, discardLogger())
+	StartBackground(ctx, ws, discardLogger())
 }
 
 func TestNew(t *testing.T) {
 	cfg := &Config{Tasks: []TaskConfig{{Name: "t", Script: "t.lua"}}}
 	ws := newMockWorkspace(t)
-	metaFn := func() *metamodel.Metamodel { return ws.meta }
 
-	s := New(cfg, nil, ws, ws, metaFn, discardLogger())
+	s := New(cfg, nil, ws, discardLogger())
 	if s == nil {
 		t.Fatal("New returned nil")
 	}
@@ -410,31 +414,32 @@ func TestNew(t *testing.T) {
 	if s.ws != ws {
 		t.Error("ws not wired")
 	}
-	if s.metaFn == nil {
-		t.Error("metaFn not wired")
-	}
 }
 
-func TestSchedulerScriptContext(t *testing.T) {
-	meta := &metamodel.Metamodel{}
-	c := &schedulerScriptContext{
-		ws:          "workspace",
-		meta:        meta,
-		projectRoot: "/project",
+// TestDoExecuteTask_PullsLuaWriteDeps exercises the real doExecuteTask path
+// (no executeTaskFunc override) to verify the scheduler pulls lua.WriteDeps
+// from its WorkspaceProvider before invoking the engine. The Lua script is
+// intentionally absent, so ExecuteFile returns an error — what we're
+// verifying is that LuaWriteDeps() was called regardless.
+func TestDoExecuteTask_PullsLuaWriteDeps(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Tasks: []TaskConfig{
+			{Name: "t", Script: "missing.lua", Every: dailySchedule()},
+		},
 	}
-	if c.GetWorkspace() != "workspace" {
-		t.Error("GetWorkspace")
-	}
-	if c.GetMeta() != meta {
-		t.Error("GetMeta")
-	}
-	if c.GetProjectRoot() != "/project" {
-		t.Error("GetProjectRoot")
-	}
-	if c.GetEntity() != nil {
-		t.Error("GetEntity should be nil")
-	}
-	if c.GetOldEntity() != nil {
-		t.Error("GetOldEntity should be nil")
+	ws := newMockWorkspace(t)
+	s := New(cfg, script.NewEngine(), ws, discardLogger())
+	s.now = func() time.Time { return time.Date(2026, 4, 10, 14, 0, 0, 0, time.UTC) }
+	s.state = newState()
+
+	s.doExecuteTask(context.Background(), cfg.Tasks[0])
+
+	ws.mu.Lock()
+	calls := ws.luaDepsCalls
+	ws.mu.Unlock()
+	if calls != 1 {
+		t.Errorf("expected LuaWriteDeps called once, got %d", calls)
 	}
 }

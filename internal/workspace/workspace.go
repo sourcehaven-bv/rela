@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"context"
@@ -18,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -26,6 +28,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
 // ChangeEvent is re-exported from storage so consumers don't need to
@@ -35,39 +38,22 @@ type ChangeEvent = storage.ChangeEvent
 // ChangeOp is re-exported from storage for the same reason as ChangeEvent.
 type ChangeOp = storage.ChangeOp
 
-// ScriptExecutor runs scripts with entity context. This follows dependency
-// inversion: workspace defines the interface it needs, script package implements it.
-// This keeps workspace independent of specific script languages (Lua, etc.).
+// ScriptExecutor runs automation scripts with entity context. This follows
+// dependency inversion: workspace defines the interface it needs; the script
+// package implements it. Workspace stays independent of Lua specifics beyond
+// the lua.WriteDeps capability bundle.
 //
-// The executor is stateless - all context is passed at execution time via
-// metamodel.ScriptContext. This avoids circular dependencies: workspace can be
-// created with a script engine, and the engine receives workspace access only
-// when executing scripts.
+// The executor is stateless — workspace passes deps and the triggering entity
+// pair at execution time. The .rela/ cache dir for AI/secrets is derived from
+// deps.ProjectRoot by the executor.
 //
 // For production, pass script.NewEngine(). For tests, pass NopScriptExecutor.
 type ScriptExecutor interface {
 	// ExecuteCode runs inline script code with entity context.
-	ExecuteCode(code string, ctx metamodel.ScriptContext) error
+	ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
 	// ExecuteFile runs a script file from the scripts/ directory.
-	ExecuteFile(path string, ctx metamodel.ScriptContext) error
+	ExecuteFile(path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
 }
-
-// scriptContextImpl implements metamodel.ScriptContext for passing to ScriptExecutor.
-// GetWorkspace() returns a lua.Services (via Workspace.LuaServices); the
-// script package type-asserts to that before running.
-type scriptContextImpl struct {
-	workspace   *Workspace
-	meta        *metamodel.Metamodel
-	projectRoot string
-	entity      *entity.Entity
-	oldEntity   *entity.Entity
-}
-
-func (c *scriptContextImpl) GetWorkspace() interface{}     { return c.workspace.luaServices() }
-func (c *scriptContextImpl) GetMeta() *metamodel.Metamodel { return c.meta }
-func (c *scriptContextImpl) GetProjectRoot() string        { return c.projectRoot }
-func (c *scriptContextImpl) GetEntity() *entity.Entity     { return c.entity }
-func (c *scriptContextImpl) GetOldEntity() *entity.Entity  { return c.oldEntity }
 
 // NopScriptExecutor is a no-op implementation of ScriptExecutor for tests
 // that don't trigger Lua automations. It panics if actually called, making
@@ -76,11 +62,11 @@ var NopScriptExecutor ScriptExecutor = nopScriptExecutor{}
 
 type nopScriptExecutor struct{}
 
-func (nopScriptExecutor) ExecuteCode(string, metamodel.ScriptContext) error {
+func (nopScriptExecutor) ExecuteCode(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
-func (nopScriptExecutor) ExecuteFile(string, metamodel.ScriptContext) error {
+func (nopScriptExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
 
@@ -107,6 +93,14 @@ type Workspace struct {
 	meta       *metamodel.Metamodel
 	automation *automation.Engine // may be nil if the metamodel has no automations
 	searchIdx  *search.Index      // may be nil if index construction failed
+
+	// Derived services — memoised on first access. tracer wraps the store
+	// and wsSearcher wraps the workspace; both are cheap wrappers but
+	// accessing them from Lua bindings on every call was unnecessary churn.
+	tracerOnce   sync.Once
+	tracer       tracer.Tracer
+	searcherOnce sync.Once
+	searcher     search.Searcher
 
 	// Watcher state (nil when not watching).
 	watcher    *storage.Watcher
@@ -1048,7 +1042,6 @@ func (w *Workspace) processEntityCreations(
 	effects *automationSideEffects,
 ) []automationQueueItem {
 	var newItems []automationQueueItem
-	meta := w.Meta()
 
 	for _, toCreate := range toCreateList {
 		if skip := w.handleIfExists(trigger, toCreate, effects); skip {
@@ -1074,7 +1067,7 @@ func (w *Workspace) processEntityCreations(
 		}
 
 		// Run automation on newly created entity.
-		newItem := w.runCreatedEntityAutomation(created, meta, effects)
+		newItem := w.runCreatedEntityAutomation(created, effects)
 		if newItem != nil {
 			newItems = append(newItems, *newItem)
 		}
@@ -1086,7 +1079,6 @@ func (w *Workspace) processEntityCreations(
 // runCreatedEntityAutomation runs automation on a newly created entity and returns a queue item if needed.
 func (w *Workspace) runCreatedEntityAutomation(
 	created *entity.Entity,
-	_ *metamodel.Metamodel,
 	effects *automationSideEffects,
 ) *automationQueueItem {
 	if w.automation == nil {
@@ -1155,7 +1147,7 @@ func (w *Workspace) applyRelationCreations(
 
 // executeLuaActions executes Lua scripts from automation results.
 func (w *Workspace) executeLuaActions(
-	entity *entity.Entity,
+	newEntity *entity.Entity,
 	oldEntity *entity.Entity,
 	luaActions []automation.LuaToExecute,
 	effects *automationSideEffects,
@@ -1164,25 +1156,16 @@ func (w *Workspace) executeLuaActions(
 		return
 	}
 
-	// Build script context once for all actions
-	ctx := &scriptContextImpl{
-		workspace:   w,
-		meta:        w.Meta(),
-		projectRoot: w.paths.Root,
-		entity:      entity,
-		oldEntity:   oldEntity,
-	}
+	deps := w.LuaWriteDeps()
 
 	for _, action := range luaActions {
 		var err error
 
 		switch {
 		case action.Code != "":
-			// Inline script code
-			err = w.scriptExec.ExecuteCode(action.Code, ctx)
+			err = w.scriptExec.ExecuteCode(action.Code, deps, newEntity, oldEntity)
 		case action.FilePath != "":
-			// Script file from scripts/ directory
-			err = w.scriptExec.ExecuteFile(action.FilePath, ctx)
+			err = w.scriptExec.ExecuteFile(action.FilePath, deps, newEntity, oldEntity)
 		default:
 			// Empty action - skip
 			continue

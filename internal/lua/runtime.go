@@ -26,7 +26,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
@@ -59,12 +58,15 @@ func stripShebang(code string) string {
 }
 
 // Runtime wraps gopher-lua VM with rela bindings.
+//
+// The runtime is constructed via NewReader (read-only) or NewWriter (read-
+// write). A read-only runtime has no mutation bindings (create/update/delete
+// of entities and relations) registered at all; calling those from Lua raises
+// a "attempt to call a nil value" error from the VM itself.
 type Runtime struct {
 	L             *lua.LState
-	svc           Services
-	meta          *metamodel.Metamodel
+	deps          WriteDeps // EntityManager is nil on a reader runtime.
 	stdout        io.Writer
-	projectRoot   string
 	outputDir     string          // Directory where write_file can write (defaults to "output")
 	timeout       time.Duration   // Execution timeout (0 = no timeout)
 	parentCtx     context.Context //nolint:containedctx // cached parent ctx for lua-callback child-ctx propagation
@@ -146,13 +148,33 @@ func WithAIProvider(p ai.Provider) Option {
 	}
 }
 
-// New creates a Runtime with rela bindings registered.
+// NewReader creates a read-only Runtime with query/trace/search/output bindings.
+// Mutation bindings (create/update/delete for entities and relations) are not
+// registered; calling them from Lua raises "attempt to call a nil value".
+//
 // The Lua VM is sandboxed with only safe libraries loaded (no io, os, or debug).
-func New(
-	svc Services,
-	stdout io.Writer,
-	opts ...Option,
-) *Runtime {
+func NewReader(d ReadDeps, stdout io.Writer, opts ...Option) *Runtime {
+	return newRuntime(WriteDeps{ReadDeps: d}, stdout, false, opts...)
+}
+
+// NewWriter creates a read-write Runtime. All read bindings plus mutation
+// bindings (create_entity, update_entity, delete_entity, create_relation,
+// delete_relation) are registered.
+//
+// The Lua VM is sandboxed with only safe libraries loaded (no io, os, or debug).
+func NewWriter(d WriteDeps, stdout io.Writer, opts ...Option) *Runtime {
+	return newRuntime(d, stdout, true, opts...)
+}
+
+func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Option) *Runtime {
+	// Fail loud at construction: a writer runtime with no EntityManager
+	// would register mutation bindings that nil-deref on first call.
+	// Catching this here turns a silent runtime surprise into a build-time
+	// or start-time panic with a clear message.
+	if allowWrites && deps.EntityManager == nil {
+		panic("lua.NewWriter: WriteDeps.EntityManager is required for a writer runtime")
+	}
+
 	// Create sandboxed Lua state - skip default libraries for security
 	L := lua.NewState(lua.Options{
 		SkipOpenLibs:  true,
@@ -164,13 +186,11 @@ func New(
 	openSafeLibraries(L)
 
 	r := &Runtime{
-		L:           L,
-		svc:         svc,
-		meta:        svc.Meta,
-		stdout:      stdout,
-		projectRoot: svc.ProjectRoot,
-		outputDir:   defaultOutputDir,
-		timeout:     DefaultTimeout,
+		L:         L,
+		deps:      deps,
+		stdout:    stdout,
+		outputDir: defaultOutputDir,
+		timeout:   DefaultTimeout,
 	}
 
 	// Apply options
@@ -178,7 +198,7 @@ func New(
 		opt(r)
 	}
 
-	r.registerBindings()
+	r.registerBindings(allowWrites)
 	return r
 }
 
@@ -355,26 +375,35 @@ func (r *Runtime) LState() *lua.LState {
 	return r.L
 }
 
-// registerBindings sets up the rela module with all functions.
-func (r *Runtime) registerBindings() {
+// registerBindings sets up the rela module. When allowWrites is false, only
+// read bindings are registered — mutation functions are absent from the rela.*
+// table and calling them from Lua raises "attempt to call a nil value".
+func (r *Runtime) registerBindings(allowWrites bool) {
 	rela := r.L.NewTable()
 
+	r.registerReadBindings(rela)
+	if allowWrites {
+		r.registerWriteBindings(rela)
+	}
+	r.registerContextBindings(rela)
+
+	r.L.SetGlobal("rela", rela)
+
+	// Top-level ai.* module (always registered; functions return a
+	// typed not_configured error when no provider is wired).
+	r.registerAIModule()
+}
+
+// registerReadBindings installs read-only bindings on the rela table: entity
+// and relation queries, graph traversal, output, schema introspection.
+func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 	// Entity query functions
 	r.L.SetField(rela, "get_entity", r.L.NewFunction(r.luaGetEntity))
 	r.L.SetField(rela, "list_entities", r.L.NewFunction(r.luaListEntities))
 	r.L.SetField(rela, "search", r.L.NewFunction(r.luaSearch))
 
-	// Entity mutation functions
-	r.L.SetField(rela, "create_entity", r.L.NewFunction(r.luaCreateEntity))
-	r.L.SetField(rela, "update_entity", r.L.NewFunction(r.luaUpdateEntity))
-	r.L.SetField(rela, "delete_entity", r.L.NewFunction(r.luaDeleteEntity))
-
 	// Relation query functions
 	r.L.SetField(rela, "get_relations", r.L.NewFunction(r.luaGetRelations))
-
-	// Relation mutation functions
-	r.L.SetField(rela, "create_relation", r.L.NewFunction(r.luaCreateRelation))
-	r.L.SetField(rela, "delete_relation", r.L.NewFunction(r.luaDeleteRelation))
 
 	// Graph traversal
 	r.L.SetField(rela, "trace_from", r.L.NewFunction(r.luaTraceFrom))
@@ -383,7 +412,6 @@ func (r *Runtime) registerBindings() {
 
 	// Output functions
 	r.L.SetField(rela, "output", r.L.NewFunction(r.luaOutput))
-	r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
 
 	// Schema introspection
 	r.L.SetField(rela, "get_entity_types", r.L.NewFunction(r.luaGetEntityTypes))
@@ -394,6 +422,29 @@ func (r *Runtime) registerBindings() {
 	r.L.SetField(rela, "days_since", r.L.NewFunction(luaDaysSince))
 	r.L.SetField(rela, "today", lua.LString(time.Now().Format("2006-01-02")))
 
+	// Date and RRULE utility functions
+	registerDateHelpers(r.L, rela)
+
+	// Markdown AST and generation helpers module (rela.md.*)
+	r.registerMarkdownModule(rela)
+}
+
+// registerWriteBindings installs mutation bindings on the rela table.
+// Graph mutations (create/update/delete for entities and relations) and
+// filesystem writes (write_file) are all restricted to writer runtimes —
+// readers (validation rules, etc.) have no way to mutate state of any kind.
+func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
+	r.L.SetField(rela, "create_entity", r.L.NewFunction(r.luaCreateEntity))
+	r.L.SetField(rela, "update_entity", r.L.NewFunction(r.luaUpdateEntity))
+	r.L.SetField(rela, "delete_entity", r.L.NewFunction(r.luaDeleteEntity))
+	r.L.SetField(rela, "create_relation", r.L.NewFunction(r.luaCreateRelation))
+	r.L.SetField(rela, "delete_relation", r.L.NewFunction(r.luaDeleteRelation))
+	r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
+}
+
+// registerContextBindings installs per-runtime context tables: args, params,
+// secrets. Present on both reader and writer runtimes.
+func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// Context
 	r.L.SetField(rela, "args", r.L.NewTable()) // Will be set before running script
 
@@ -410,18 +461,6 @@ func (r *Runtime) registerBindings() {
 		r.L.SetField(secretsTable, k, lua.LString(v))
 	}
 	r.L.SetField(rela, "secrets", secretsTable)
-
-	// Date and RRULE utility functions
-	registerDateHelpers(r.L, rela)
-
-	// Markdown AST and generation helpers module (rela.md.*)
-	r.registerMarkdownModule(rela)
-
-	r.L.SetGlobal("rela", rela)
-
-	// Top-level ai.* module (always registered; functions return a
-	// typed not_configured error when no provider is wired).
-	r.registerAIModule()
 }
 
 // luaGetEntity implements rela.get_entity(id) -> table|nil
@@ -432,7 +471,7 @@ func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	e, err := r.svc.Store.GetEntity(context.Background(), id)
+	e, err := r.deps.Store.GetEntity(context.Background(), id)
 	if err != nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -452,7 +491,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 	filterExpr := ls.OptString(2, "")
 
 	entities := make([]*entity.Entity, 0)
-	for e, err := range r.svc.Store.ListEntities(context.Background(), store.EntityQuery{Type: entityType}) {
+	for e, err := range r.deps.Store.ListEntities(context.Background(), store.EntityQuery{Type: entityType}) {
 		if err != nil {
 			break
 		}
@@ -467,7 +506,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 			return 0
 		}
 
-		entityDef, found := r.meta.GetEntityDef(entityType)
+		entityDef, found := r.deps.Meta.GetEntityDef(entityType)
 		if !found {
 			ls.RaiseError("unknown entity type: %s", entityType)
 			return 0
@@ -477,7 +516,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 		filtered := make([]*entity.Entity, 0)
 		for _, e := range entities {
 			record := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
-			match, err := filter.MatchAll(record, filters, entityDef, r.meta)
+			match, err := filter.MatchAll(record, filters, entityDef, r.deps.Meta)
 			if err != nil {
 				ls.RaiseError("filter error: %s", err.Error())
 				return 0
@@ -519,7 +558,7 @@ func (r *Runtime) luaGetRelations(ls *lua.LState) int {
 	q := store.RelationQuery{From: fromFilter, Type: typeFilter, To: toFilter}
 	result := ls.NewTable()
 	idx := 1
-	for rel, err := range r.svc.Store.ListRelations(context.Background(), q) {
+	for rel, err := range r.deps.Store.ListRelations(context.Background(), q) {
 		if err != nil {
 			break
 		}
@@ -539,7 +578,7 @@ func (r *Runtime) luaTraceFrom(ls *lua.LState) int {
 	}
 	maxDepth := ls.OptInt(2, 0)
 
-	trace := r.svc.Tracer.TraceFrom(context.Background(), id, maxDepth)
+	trace := r.deps.Tracer.TraceFrom(context.Background(), id, maxDepth)
 	if trace == nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -557,7 +596,7 @@ func (r *Runtime) luaTraceTo(ls *lua.LState) int {
 	}
 	maxDepth := ls.OptInt(2, 0)
 
-	trace := r.svc.Tracer.TraceTo(context.Background(), id, maxDepth)
+	trace := r.deps.Tracer.TraceTo(context.Background(), id, maxDepth)
 	if trace == nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -632,7 +671,7 @@ func (r *Runtime) luaWriteFile(ls *lua.LState) int {
 	if filepath.IsAbs(r.outputDir) {
 		outputPath = r.outputDir
 	} else {
-		outputPath = filepath.Join(r.projectRoot, r.outputDir)
+		outputPath = filepath.Join(r.deps.ProjectRoot, r.outputDir)
 	}
 
 	// Ensure output directory exists
@@ -911,19 +950,19 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 
 	limit := ls.OptInt(2, defaultSearchLimit)
 
-	if r.svc.Searcher == nil {
+	if r.deps.Searcher == nil {
 		ls.RaiseError("search not available")
 		return 0
 	}
 	result := ls.NewTable()
 	i := 1
-	for hit, err := range r.svc.Searcher.Search(context.Background(), search.Query{Text: query, Limit: limit}) {
+	for hit, err := range r.deps.Searcher.Search(context.Background(), search.Query{Text: query, Limit: limit}) {
 		if err != nil {
 			ls.RaiseError("search error: %s", err.Error())
 			return 0
 		}
 		// Fetch the full entity for the lua table (search hits are minimal).
-		e, err := r.svc.Store.GetEntity(context.Background(), hit.ID)
+		e, err := r.deps.Store.GetEntity(context.Background(), hit.ID)
 		if err != nil {
 			continue
 		}
@@ -948,17 +987,14 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 	content := ls.OptString(3, "")
 	customID := ls.OptString(argPosCreateEntityID, "")
 
-	if r.svc.Manager == nil {
-		ls.RaiseError("entity manager not available")
-		return 0
-	}
 	newE := &entity.Entity{
 		ID:         customID,
 		Type:       entityType,
 		Properties: props,
 		Content:    content,
 	}
-	result, err := r.svc.Manager.CreateEntity(context.Background(), newE, entitymanager.CreateOptions{ID: customID})
+	result, err := r.deps.EntityManager.CreateEntity(
+		context.Background(), newE, entitymanager.CreateOptions{ID: customID})
 	if err != nil {
 		ls.RaiseError("create entity error: %s", err.Error())
 		return 0
@@ -976,13 +1012,8 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	if r.svc.Manager == nil {
-		ls.RaiseError("entity manager not available")
-		return 0
-	}
-
 	ctx := context.Background()
-	existing, err := r.svc.Store.GetEntity(ctx, id)
+	existing, err := r.deps.Store.GetEntity(ctx, id)
 	if err != nil {
 		ls.RaiseError("entity not found: %s", id)
 		return 0
@@ -1008,7 +1039,7 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		updated.Content = ls.CheckString(3)
 	}
 
-	result, err := r.svc.Manager.UpdateEntity(ctx, updated)
+	result, err := r.deps.EntityManager.UpdateEntity(ctx, updated)
 	if err != nil {
 		ls.RaiseError("update entity error: %s", err.Error())
 		return 0
@@ -1028,12 +1059,7 @@ func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 
 	cascade := ls.OptBool(2, false)
 
-	if r.svc.Manager == nil {
-		ls.RaiseError("entity manager not available")
-		return 0
-	}
-
-	if _, err := r.svc.Manager.DeleteEntity(context.Background(), id, cascade); err != nil {
+	if _, err := r.deps.EntityManager.DeleteEntity(context.Background(), id, cascade); err != nil {
 		ls.RaiseError("delete entity error: %s", err.Error())
 		return 0
 	}
@@ -1053,12 +1079,8 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	if r.svc.Manager == nil {
-		ls.RaiseError("entity manager not available")
-		return 0
-	}
-
-	rel, err := r.svc.Manager.CreateRelation(context.Background(), from, relType, to, entitymanager.RelationOptions{})
+	rel, err := r.deps.EntityManager.CreateRelation(
+		context.Background(), from, relType, to, entitymanager.RelationOptions{})
 	if err != nil {
 		ls.RaiseError("create relation error: %s", err.Error())
 		return 0
@@ -1079,12 +1101,7 @@ func (r *Runtime) luaDeleteRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	if r.svc.Manager == nil {
-		ls.RaiseError("entity manager not available")
-		return 0
-	}
-
-	if err := r.svc.Manager.DeleteRelation(context.Background(), from, relType, to); err != nil {
+	if err := r.deps.EntityManager.DeleteRelation(context.Background(), from, relType, to); err != nil {
 		ls.RaiseError("delete relation error: %s", err.Error())
 		return 0
 	}
@@ -1103,7 +1120,7 @@ func (r *Runtime) luaFindPath(ls *lua.LState) int {
 		return 0
 	}
 
-	path := r.svc.Tracer.FindPath(context.Background(), from, to)
+	path := r.deps.Tracer.FindPath(context.Background(), from, to)
 	if path == nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -1145,7 +1162,7 @@ func luaTableToGoMap(t *lua.LTable) map[string]interface{} {
 func (r *Runtime) luaGetEntityTypes(ls *lua.LState) int {
 	result := ls.NewTable()
 
-	for name, et := range r.meta.Entities {
+	for name, et := range r.deps.Meta.Entities {
 		typeTable := ls.NewTable()
 		typeTable.RawSetString("name", lua.LString(name))
 		typeTable.RawSetString("label", lua.LString(et.Label))
@@ -1184,7 +1201,7 @@ func (r *Runtime) luaGetEntityTypes(ls *lua.LState) int {
 func (r *Runtime) luaGetRelationTypes(ls *lua.LState) int {
 	result := ls.NewTable()
 
-	for name, rt := range r.meta.Relations {
+	for name, rt := range r.deps.Meta.Relations {
 		typeTable := ls.NewTable()
 		typeTable.RawSetString("name", lua.LString(name))
 		typeTable.RawSetString("label", lua.LString(rt.Label))

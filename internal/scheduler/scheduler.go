@@ -6,8 +6,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -21,6 +20,7 @@ type WorkspaceProvider interface {
 	Paths() *project.Context
 	Config() config.Loader
 	State() state.KV
+	LuaWriteDeps() lua.WriteDeps
 }
 
 // StartBackground starts the scheduler in a background goroutine if
@@ -29,8 +29,6 @@ type WorkspaceProvider interface {
 func StartBackground(
 	ctx context.Context,
 	ws WorkspaceProvider,
-	wsRaw interface{},
-	metaFn func() *metamodel.Metamodel,
 	logger *slog.Logger,
 ) {
 	data, err := ws.Config().Load(ctx, ConfigFile)
@@ -50,7 +48,7 @@ func StartBackground(
 	}
 
 	engine := script.NewEngine()
-	s := New(cfg, engine, ws, wsRaw, metaFn, logger)
+	s := New(cfg, engine, ws, logger)
 
 	go func() {
 		logger.Info("background scheduler starting", "tasks", len(cfg.Tasks))
@@ -65,10 +63,6 @@ type Scheduler struct {
 	config *Config
 	engine *script.Engine
 	ws     WorkspaceProvider
-	metaFn func() *metamodel.Metamodel
-	// wsRaw is the workspace as interface{} for passing to ScriptContext.
-	// ScriptContext.GetWorkspace() consumers type-assert to lua.Services.
-	wsRaw  interface{}
 	state  *State
 	logger *slog.Logger
 	now    func() time.Time // for testing
@@ -78,22 +72,17 @@ type Scheduler struct {
 	executeTaskFunc func(ctx context.Context, task TaskConfig)
 }
 
-// New creates a Scheduler. The metaFn returns the current metamodel; callers
-// typically pass ws.Meta from a workspace.Workspace.
+// New creates a Scheduler.
 func New(
 	cfg *Config,
 	engine *script.Engine,
 	ws WorkspaceProvider,
-	wsRaw interface{},
-	metaFn func() *metamodel.Metamodel,
 	logger *slog.Logger,
 ) *Scheduler {
 	return &Scheduler{
 		config: cfg,
 		engine: engine,
 		ws:     ws,
-		metaFn: metaFn,
-		wsRaw:  wsRaw,
 		logger: logger,
 		now:    time.Now,
 	}
@@ -174,13 +163,7 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
 
-	sctx := &schedulerScriptContext{
-		ws:          s.wsRaw,
-		meta:        s.metaFn(),
-		projectRoot: s.ws.Paths().Root,
-	}
-
-	err := s.engine.ExecuteFile(task.Script, sctx)
+	err := s.engine.ExecuteFile(task.Script, s.ws.LuaWriteDeps(), nil, nil)
 	elapsed := s.now().Sub(start)
 
 	if err != nil {
@@ -214,16 +197,3 @@ func (s *Scheduler) saveState() {
 		s.logger.Error("failed to save scheduler state", "error", err)
 	}
 }
-
-// schedulerScriptContext implements metamodel.ScriptContext for scheduled tasks.
-type schedulerScriptContext struct {
-	ws          interface{}
-	meta        *metamodel.Metamodel
-	projectRoot string
-}
-
-func (c *schedulerScriptContext) GetWorkspace() interface{}     { return c.ws }
-func (c *schedulerScriptContext) GetMeta() *metamodel.Metamodel { return c.meta }
-func (c *schedulerScriptContext) GetProjectRoot() string        { return c.projectRoot }
-func (c *schedulerScriptContext) GetEntity() *entity.Entity     { return nil }
-func (c *schedulerScriptContext) GetOldEntity() *entity.Entity  { return nil }

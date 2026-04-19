@@ -15,16 +15,16 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-// LuaServices builds a lua.Services struct wired to this workspace's
-// backend services. Consumers use it to run Lua scripts via lua.New.
-func (w *Workspace) LuaServices() lua.Services {
+// LuaReadDeps materializes the read-only capability bundle required by the
+// lua runtime from this workspace's backend services. Consumers pass the
+// result to lua.NewReader or script.NewReaderRuntime.
+func (w *Workspace) LuaReadDeps() lua.ReadDeps {
 	var root string
 	if w.paths != nil {
 		root = w.paths.Root
 	}
-	return lua.Services{
+	return lua.ReadDeps{
 		Store:       w.Store(),
-		Manager:     w.EntityManager(),
 		Tracer:      w.Tracer(),
 		Searcher:    w.Searcher(),
 		Meta:        w.Meta(),
@@ -32,14 +32,23 @@ func (w *Workspace) LuaServices() lua.Services {
 	}
 }
 
-// luaServices is the internal alias for LuaServices, used by scriptContextImpl.
-func (w *Workspace) luaServices() lua.Services {
-	return w.LuaServices()
+// LuaWriteDeps materializes the read-write capability bundle required by the
+// lua runtime from this workspace's backend services. Consumers pass the
+// result to lua.NewWriter or script.NewWriterRuntime.
+func (w *Workspace) LuaWriteDeps() lua.WriteDeps {
+	return lua.WriteDeps{
+		ReadDeps:      w.LuaReadDeps(),
+		EntityManager: w.EntityManager(),
+	}
 }
 
-// Tracer returns the store-backed graph traversal service.
+// Tracer returns the store-backed graph traversal service. The wrapper is
+// created on first access and reused for the lifetime of the workspace.
 func (w *Workspace) Tracer() tracer.Tracer {
-	return tracer.New(w.Store())
+	w.tracerOnce.Do(func() {
+		w.tracer = tracer.New(w.Store())
+	})
+	return w.tracer
 }
 
 // wsSearcher adapts the workspace's Bleve-backed Search to search.Searcher.
@@ -126,8 +135,13 @@ func (s *wsSearcher) streamText(
 }
 
 // Searcher returns a search.Searcher backed by the workspace's search index.
+// The wrapper is created on first access and reused for the lifetime of the
+// workspace.
 func (w *Workspace) Searcher() search.Searcher {
-	return &wsSearcher{w: w}
+	w.searcherOnce.Do(func() {
+		w.searcher = &wsSearcher{w: w}
+	})
+	return w.searcher
 }
 
 // MetaLoader returns the metamodel loader for this workspace. Callers
@@ -137,13 +151,9 @@ func (w *Workspace) MetaLoader() metamodel.Loader {
 }
 
 // Validator returns a Validator service backed by the workspace's store and
-// metamodel. The service uses workspace as the Lua execution context.
+// metamodel, using read-only lua deps to execute Lua validation rules.
 func (w *Workspace) Validator() validator.Validator {
-	var root string
-	if w.paths != nil {
-		root = w.paths.Root
-	}
-	return validator.New(w.Store(), w.Meta(), w.luaServices(), root)
+	return validator.New(w.Store(), w.Meta(), w.LuaReadDeps())
 }
 
 // Templater returns the entity-and-relation template service.

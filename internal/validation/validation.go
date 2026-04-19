@@ -21,26 +21,23 @@ type Violation struct {
 
 // Service validates entities against custom metamodel rules.
 type Service struct {
-	meta        *metamodel.Metamodel
-	svc         lua.Services
-	projectRoot string
-	luaExec     *luaExecutor // Lazy-initialized Lua executor
+	deps lua.ReadDeps
 }
 
 // New creates a validation service for the given metamodel.
-// svc provides Lua access for validation rules that use Lua scripts.
-// projectRoot is used to resolve lua_file paths from validations/.
-func New(meta *metamodel.Metamodel, svc lua.Services, projectRoot string) *Service {
-	return &Service{
-		meta:        meta,
-		svc:         svc,
-		projectRoot: projectRoot,
-	}
+// deps provides read-only lua access for rules that use Lua scripts.
+// The ProjectRoot field of deps is used to resolve lua_file paths from
+// validations/. The supplied metamodel is authoritative — it overwrites
+// deps.Meta so the Go-side rule evaluator and the Lua-side filter helpers
+// cannot disagree about which schema is in effect.
+func New(meta *metamodel.Metamodel, deps lua.ReadDeps) *Service {
+	deps.Meta = meta
+	return &Service{deps: deps}
 }
 
 // Rules returns the validation rules from the metamodel.
 func (s *Service) Rules() []metamodel.ValidationRule {
-	return s.meta.Validations
+	return s.deps.Meta.Validations
 }
 
 // Check runs all validation rules against the given entities.
@@ -55,7 +52,7 @@ func (s *Service) Check(entities []*entity.Entity, scope map[string]bool) []Viol
 func (s *Service) CheckRules(entities []*entity.Entity, scope, ruleNames map[string]bool) []Violation {
 	var violations []Violation
 
-	for _, rule := range s.meta.Validations {
+	for _, rule := range s.deps.Meta.Validations {
 		// Skip rules not in the filter set (if filter is specified)
 		if ruleNames != nil && !ruleNames[rule.Name] {
 			continue
@@ -135,7 +132,7 @@ func (s *Service) checkEntityAgainstRule(
 	rule metamodel.ValidationRule,
 	whenFilters, thenFilters []*filter.Filter,
 ) []Violation {
-	entityDef, ok := s.meta.GetEntityDef(e.Type)
+	entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
 	if !ok {
 		return nil
 	}
@@ -144,7 +141,7 @@ func (s *Service) checkEntityAgainstRule(
 
 	// Check 'when' conditions - if they don't match, rule doesn't apply
 	if len(whenFilters) > 0 {
-		matches, err := filter.MatchAll(rec, whenFilters, entityDef, s.meta)
+		matches, err := filter.MatchAll(rec, whenFilters, entityDef, s.deps.Meta)
 		if err != nil || !matches {
 			return nil
 		}
@@ -152,7 +149,7 @@ func (s *Service) checkEntityAgainstRule(
 
 	// Check 'then' conditions - if they don't satisfy, it's a violation
 	if len(thenFilters) > 0 {
-		satisfies, err := filter.MatchAll(rec, thenFilters, entityDef, s.meta)
+		satisfies, err := filter.MatchAll(rec, thenFilters, entityDef, s.deps.Meta)
 		if err != nil || !satisfies {
 			return []Violation{{
 				RuleName:    rule.Name,
@@ -189,12 +186,7 @@ func (s *Service) checkEntityAgainstRule(
 // runLuaValidation runs Lua validation and returns violations.
 // Returns empty slice if validation passes or Lua is not configured.
 func (s *Service) runLuaValidation(e *entity.Entity, rule metamodel.ValidationRule) []Violation {
-	// Lazy-initialize the Lua executor
-	if s.luaExec == nil {
-		s.luaExec = newLuaExecutor(s.svc, s.meta, s.projectRoot)
-	}
-
-	luaViolations := s.luaExec.validate(e, rule)
+	luaViolations := s.validateLua(e, rule)
 	if len(luaViolations) == 0 {
 		return nil
 	}

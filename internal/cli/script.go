@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 var scriptOutputDir string
@@ -62,13 +63,12 @@ Example:
 		if scriptOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
 		}
-		ctxOpts, err := lua.LoadContextOptions(projectCtx.CacheDir, scriptPath)
+
+		runtime, err := script.NewWriterRuntime(ws.LuaWriteDeps(), scriptPath,
+			os.Stdout, opts...)
 		if err != nil {
 			return err
 		}
-		opts = append(opts, ctxOpts...)
-
-		runtime := lua.New(ws.LuaServices(), os.Stdout, opts...)
 		defer runtime.Close()
 
 		return runtime.RunFile(scriptPath, scriptArgs)

@@ -166,8 +166,7 @@ func (d *Desktop) LoadProject(dir string) string {
 	d.stopScheduler = schedCancel
 	d.mu.Unlock()
 
-	metaFn := func() *metamodel.Metamodel { return ws.Meta() }
-	scheduler.StartBackground(schedCtx, ws, ws, metaFn, slog.Default())
+	scheduler.StartBackground(schedCtx, ws, slog.Default())
 
 	if d.ctx != nil {
 		runtime.WindowSetTitle(d.ctx, app.ProjectName())

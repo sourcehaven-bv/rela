@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 func TestParseActionResponse_Nil(t *testing.T) {
@@ -121,9 +123,9 @@ func TestValidateRedirect(t *testing.T) {
 
 func TestExecuteAction_PathTraversal(t *testing.T) {
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: "/project"}
+	deps := testWriteDeps("/project")
 
-	_, err := engine.ExecuteAction("../etc/passwd", ctx, nil, time.Second)
+	_, err := engine.ExecuteAction("../etc/passwd", deps, nil, nil, time.Second)
 	if err == nil {
 		t.Fatal("expected error for path traversal")
 	}
@@ -131,9 +133,9 @@ func TestExecuteAction_PathTraversal(t *testing.T) {
 
 func TestExecuteAction_WrongExtension(t *testing.T) {
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: "/project"}
+	deps := testWriteDeps("/project")
 
-	_, err := engine.ExecuteAction("script.txt", ctx, nil, time.Second)
+	_, err := engine.ExecuteAction("script.txt", deps, nil, nil, time.Second)
 	if err == nil {
 		t.Fatal("expected error for wrong extension")
 	}
@@ -160,14 +162,42 @@ func TestExecuteAction_RealFile(t *testing.T) {
 	}
 
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: tmpDir}
+	deps := testWriteDeps(tmpDir)
 
-	resp, err := engine.ExecuteAction("test.lua", ctx, nil, 5*time.Second)
+	resp, err := engine.ExecuteAction("test.lua", deps, nil, nil, 5*time.Second)
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
 	if resp.Redirect != "/test" || resp.Message != "executed" || resp.MessageType != "success" {
 		t.Errorf("unexpected response: %+v", resp)
+	}
+}
+
+func TestExecuteAction_WithTriggerEntity(t *testing.T) {
+	tmpDir := t.TempDir()
+	actionsDir := filepath.Join(tmpDir, "actions")
+	if err := os.MkdirAll(actionsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Script reads the `entity` global injected by ExecuteAction when
+	// triggerEntity is non-nil.
+	scriptContent := `return {message = entity.id}`
+	scriptPath := filepath.Join(actionsDir, "ent.lua")
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := NewEngine()
+	deps := testWriteDeps(tmpDir)
+	ent := &entity.Entity{ID: "T-42", Type: "ticket"}
+
+	resp, err := engine.ExecuteAction("ent.lua", deps, ent, nil, 5*time.Second)
+	if err != nil {
+		t.Fatalf("ExecuteAction failed: %v", err)
+	}
+	if resp.Message != ent.ID {
+		t.Errorf("expected message=%s from triggerEntity, got %q", ent.ID, resp.Message)
 	}
 }
 
@@ -185,10 +215,10 @@ func TestExecuteAction_WithParams(t *testing.T) {
 	}
 
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: tmpDir}
+	deps := testWriteDeps(tmpDir)
 	params := map[string]string{"greeting": "hello"}
 
-	resp, err := engine.ExecuteAction("params.lua", ctx, params, 5*time.Second)
+	resp, err := engine.ExecuteAction("params.lua", deps, nil, params, 5*time.Second)
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
@@ -211,9 +241,9 @@ func TestExecuteAction_ScriptError(t *testing.T) {
 	}
 
 	engine := NewEngine()
-	ctx := &testContext{projectRoot: tmpDir}
+	deps := testWriteDeps(tmpDir)
 
-	_, err := engine.ExecuteAction("boom.lua", ctx, nil, 5*time.Second)
+	_, err := engine.ExecuteAction("boom.lua", deps, nil, nil, 5*time.Second)
 	if err == nil {
 		t.Fatal("expected error from script")
 	}
