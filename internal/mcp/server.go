@@ -64,8 +64,12 @@ func NewServer(ws Services, version string) *Server {
 		server.WithPromptCapabilities(true),
 		server.WithRecovery(),
 		server.WithInstructions(
-			"rela is a traceability CLI that manages entities and their relationships. "+
-				"Data is stored as markdown files with YAML frontmatter. "+
+			"rela is a schema-driven entity-graph platform. The domain is defined by a "+
+				"YAML metamodel (entity types, relation types, properties, validation rules); "+
+				"entities and relations are stored as markdown files with YAML frontmatter. "+
+				"Traceability is one common use case, not the only one — the graph can model "+
+				"requirements, compliance controls, project plans, issue trackers, "+
+				"knowledge bases, or any typed-entity-and-relation domain. "+
 				"Use tools to query, create, update, and delete entities and relations. "+
 				"Use resources to read entity and metamodel data directly.",
 		),
