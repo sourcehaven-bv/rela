@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/encryption"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -171,7 +172,16 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 		}
 	}
 	if factory == nil {
-		factory = &app.FSFactory{FS: fs, Paths: paths}
+		// Optional encryption: load groups.yaml + keyring if present.
+		// Missing either leaves the store in cleartext-only mode.
+		groups, _ := metamodel.LoadGroups(paths.Root, fs)
+		keyring, _ := encryption.LoadFromDir(paths.Root)
+		factory = &app.FSFactory{
+			FS:      fs,
+			Paths:   paths,
+			Keyring: keyring,
+			Groups:  groups,
+		}
 	}
 
 	s, openErr := factory.OpenStore(meta)
