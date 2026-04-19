@@ -72,6 +72,7 @@ components:
   attachment:       { in: internal/attachment }
   cache:            { in: internal/cache }
   config:           { in: internal/config }
+  encryption:       { in: internal/encryption }
   git:              { in: internal/git }
   output:           { in: internal/output }
   project:          { in: internal/project }
@@ -415,6 +416,8 @@ deps:
     mayDependOn:
       - storage
   # cache: pure in-memory utility, no internal deps
+  # encryption: pure leaf — only stdlib (crypto/*, encoding/pem, os). No
+  # internal deps. Keyring is consumed by future fsstore/cli wiring.
   config:
     mayDependOn:
       - storage
