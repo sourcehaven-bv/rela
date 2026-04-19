@@ -31,6 +31,12 @@ override:
     threshold: 60
   - path: ^internal/dataentryconfig$
     threshold: 70
+  # internal/encryption: the 4 uncovered lines (3 in loader.go, 1 in
+  # keyring.go) are non-deterministic filesystem errors (stat EACCES,
+  # ReadFile TOCTOU between ReadDir and read). Stdlib-contract errors
+  # are handled via mustStdlibContract / mustLen panics instead.
+  - path: ^internal/encryption$
+    threshold: 95
 
 # Exclude packages that are not meaningful to coverage-check
 exclude:

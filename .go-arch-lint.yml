@@ -68,6 +68,7 @@ components:
 
   # Infrastructure
   ai:               { in: internal/ai }
+  encryption:       { in: internal/encryption }
   secrets:          { in: internal/secrets }
   attachment:       { in: internal/attachment }
   cache:            { in: internal/cache }
@@ -410,6 +411,9 @@ deps:
   # yaml (already in commonVendors). The Provider interface is consumed
   # by lua, script, cli, and mcp. No mayDependOn/canUse entry needed
   # because the component is component-only with no internal deps.
+  # encryption: pure leaf — only stdlib (crypto/*, encoding/pem, os).
+  # No internal deps, no vendor deps. The Keyring type is consumed by
+  # future integrations (store, cli) when encryption is wired in.
   attachment:
     mayDependOn:
       - storage
