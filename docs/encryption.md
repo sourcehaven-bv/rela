@@ -81,6 +81,10 @@ the age header (`age-encryption.org/v1`). The operation refuses to run if
 the repo is already encrypted, or if it contains any file that's already
 sealed (half-migrated state).
 
+When `--identity` is used, rela also appends `.rela/key` to the project's
+`.gitignore` so the private key cannot be accidentally committed. Existing
+`.gitignore` entries (including broader rules like `.rela/`) are preserved.
+
 ### Check status
 
 ```bash

@@ -89,6 +89,12 @@ if grep -q "DEC-001" "${REL_FILE}"; then
 fi
 pass "entity AND relation files now start with the age header (ciphertext on disk)"
 
+# The private key must be gitignored so the user can't commit it by accident.
+if ! grep -q '^\.rela/key$' .gitignore 2>/dev/null; then
+    fail ".rela/key not added to .gitignore by keys init"
+fi
+pass ".rela/key is explicitly gitignored"
+
 STATUS_OUT="$("${RELA}" keys status)"
 grep -q "Recipients (1)" <<<"${STATUS_OUT}" || fail "expected 'Recipients (1)' in keys status"
 grep -q "alice" <<<"${STATUS_OUT}" || fail "expected alice in keys status"

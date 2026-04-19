@@ -152,6 +152,9 @@ The command refuses to proceed if the repo is already encrypted.`,
 			if err := copyFile(keysInitIdentity, filepath.Join(projectCtx.CacheDir, "key"), keyFilePerm); err != nil {
 				return err
 			}
+			if err := ensureKeyGitignored(projectCtx.Root); err != nil {
+				out.WriteMessage("warning: could not update .gitignore: %v", err)
+			}
 		}
 
 		// Seal every data file under this new recipient set.
@@ -556,6 +559,42 @@ func writeAtomic(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// ensureKeyGitignored appends `.rela/key` to <root>/.gitignore if it
+// is not already matched by an existing line. Called after writing
+// the private identity so it cannot be accidentally committed even
+// when the user's existing rules (e.g. `.rela/`) already cover it.
+//
+// Design notes:
+//   - If .gitignore does not exist, we create it. Committing a new
+//     .gitignore is a valid side effect of `rela keys init` since the
+//     user just asked the tool to manage private keys.
+//   - Matching is literal line comparison, not git's glob semantics.
+//     Overly strict: someone with `.rela/*` in .gitignore still gets
+//     a redundant `.rela/key` line. Acceptable: false positives are
+//     cheap (one extra comment line) and the security win is real.
+func ensureKeyGitignored(root string) error {
+	const pattern = ".rela/key"
+	gitignorePath := filepath.Join(root, ".gitignore")
+	existing, err := os.ReadFile(gitignorePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	for _, line := range strings.Split(string(existing), "\n") {
+		if strings.TrimSpace(line) == pattern {
+			return nil
+		}
+	}
+
+	addition := ""
+	if !strings.Contains(string(existing), "# rela encryption") {
+		addition = "\n# rela encryption — never commit private identities\n"
+	}
+	addition += pattern + "\n"
+
+	return os.WriteFile(gitignorePath, append(existing, []byte(addition)...), 0o644)
 }
 
 // walkDataFiles invokes fn for every regular file under root's

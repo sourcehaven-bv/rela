@@ -170,6 +170,56 @@ func TestWriteEncryptionConfig(t *testing.T) {
 	}
 }
 
+func TestEnsureKeyGitignored(t *testing.T) {
+	t.Run("appends to existing gitignore", func(t *testing.T) {
+		root := t.TempDir()
+		gi := filepath.Join(root, ".gitignore")
+		if err := os.WriteFile(gi, []byte("*.log\nbin/\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensureKeyGitignored(root); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(gi)
+		if !bytes.Contains(got, []byte("\n.rela/key\n")) {
+			t.Errorf(".rela/key not appended: %s", got)
+		}
+		if !bytes.Contains(got, []byte("# rela encryption")) {
+			t.Errorf("section header missing: %s", got)
+		}
+	})
+
+	t.Run("idempotent when pattern already present", func(t *testing.T) {
+		root := t.TempDir()
+		gi := filepath.Join(root, ".gitignore")
+		initial := "*.log\n.rela/key\nbin/\n"
+		if err := os.WriteFile(gi, []byte(initial), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensureKeyGitignored(root); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(gi)
+		if string(got) != initial {
+			t.Errorf("gitignore modified when pattern already present:\n%s", got)
+		}
+	})
+
+	t.Run("creates new gitignore when missing", func(t *testing.T) {
+		root := t.TempDir()
+		if err := ensureKeyGitignored(root); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(got, []byte(".rela/key")) {
+			t.Errorf(".rela/key missing from fresh gitignore: %s", got)
+		}
+	})
+}
+
 func TestWalkDataFiles_SkipsTempAndDotfiles(t *testing.T) {
 	root := t.TempDir()
 	// regular file
