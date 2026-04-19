@@ -174,15 +174,24 @@ func hasPathPrefix(path, dir string) bool {
 // reconcileEntityPath handles a change event for an entity file. Must be
 // called under mu.Lock.
 func (s *FSStore) reconcileEntityPath(path string) {
-	data, readErr := s.fs.ReadFile(path)
+	rawData, readErr := s.fs.ReadFile(path)
 	if readErr != nil {
 		s.handleEntityRemoval(path)
 		return
 	}
 
-	hash := hashContent(data)
+	// Self-echo detection hashes the sealed bytes (that's what we
+	// recorded on write), but downstream parsing needs cleartext.
+	hash := hashContent(rawData)
 	if cached, ok := s.recentHashes.Get(path); ok && cached == hash {
 		return // self-echo
+	}
+
+	data, err := s.crypto.Unseal(rawData)
+	if err != nil {
+		// Corrupted or not-for-us sealed file; drop the event
+		// rather than crashing reconciliation.
+		return
 	}
 
 	e, err := parseEntityFromPath(data, path)

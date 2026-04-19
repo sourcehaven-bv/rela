@@ -42,7 +42,7 @@ func (s *FSStore) loadPersistedIndex() *persistedIndex {
 	if s.cacheDir == "" {
 		return nil
 	}
-	data, err := s.fs.ReadFile(filepath.Join(s.cacheDir, indexFile))
+	data, err := s.readFileUnsealed(filepath.Join(s.cacheDir, indexFile))
 	if err != nil {
 		return nil
 	}
@@ -82,10 +82,14 @@ func (s *FSStore) savePersistedIndex() error {
 		return err
 	}
 
-	if err := s.fs.MkdirAll(s.cacheDir, 0755); err != nil {
-		return err
+	if mkdirErr := s.fs.MkdirAll(s.cacheDir, 0o755); mkdirErr != nil {
+		return mkdirErr
 	}
-	return s.fs.WriteFile(filepath.Join(s.cacheDir, indexFile), data, 0644)
+	sealed, sealErr := s.crypto.Seal(data)
+	if sealErr != nil {
+		return sealErr
+	}
+	return s.fs.WriteFile(filepath.Join(s.cacheDir, indexFile), sealed, 0o644)
 }
 
 // syncIndex reconciles all in-memory state with the filesystem:

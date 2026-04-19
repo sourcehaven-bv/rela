@@ -1,6 +1,7 @@
 package fsstore
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -41,8 +42,12 @@ func (s *FSStore) AttachFile(_ context.Context, entityID, property, fileName str
 	}
 
 	path := filepath.Join(dir, fileName)
-	if err := s.fs.WriteFile(path, data, 0644); err != nil {
-		return err
+	sealed, sealErr := s.crypto.Seal(data)
+	if sealErr != nil {
+		return sealErr
+	}
+	if writeErr := s.fs.WriteFile(path, sealed, 0o644); writeErr != nil {
+		return writeErr
 	}
 
 	s.attachments[key] = attachMeta{
@@ -65,7 +70,11 @@ func (s *FSStore) ReadAttachment(_ context.Context, entityID, property string) (
 	}
 
 	path := filepath.Join(s.attachDir, a.entityID, a.property, a.fileName)
-	return s.fs.Open(path)
+	data, err := s.readFileUnsealed(path)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 func (s *FSStore) DeleteAttachment(_ context.Context, entityID, property string) error {

@@ -248,6 +248,7 @@ deps:
   # Application services
   app:
     mayDependOn:
+      - encryption
       - fsstore
       - metamodel
       - project
@@ -395,6 +396,7 @@ deps:
   fsstore:
     mayDependOn:
       - cache
+      - encryption
       - storage
       - store
       - storeutil

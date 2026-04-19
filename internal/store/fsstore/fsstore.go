@@ -49,6 +49,13 @@ type Config struct {
 	// startup — callers that need that behavior can iterate ListEntities
 	// after New returns and feed their observer directly.
 	Observers []store.EntityObserver
+
+	// Crypto controls at-rest encryption at the I/O boundary. When
+	// nil, FSStore.New installs IdentityCrypto so reads/writes pass
+	// bytes through unchanged (byte-for-byte identical to pre-
+	// encryption behavior). Callers enabling encryption pass
+	// NewAgeCrypto(keyring).
+	Crypto Crypto
 }
 
 // entityMeta is the lightweight in-memory representation of an entity.
@@ -81,6 +88,11 @@ type FSStore struct {
 	attachDir    string
 	cacheDir     string
 	schemas      map[string]store.EntityTypeSchema
+
+	// crypto is the seal/unseal boundary for at-rest encryption.
+	// Never nil on a live FSStore: IdentityCrypto is installed when
+	// the repo is cleartext.
+	crypto Crypto
 
 	// in-memory index
 	mu            sync.RWMutex
@@ -120,6 +132,9 @@ func New(cfg Config) (*FSStore, error) {
 	if cfg.Schemas == nil {
 		cfg.Schemas = make(map[string]store.EntityTypeSchema)
 	}
+	if cfg.Crypto == nil {
+		cfg.Crypto = IdentityCrypto()
+	}
 
 	s := &FSStore{
 		fs:           cfg.FS,
@@ -128,6 +143,7 @@ func New(cfg Config) (*FSStore, error) {
 		attachDir:    cfg.AttachmentsDir,
 		cacheDir:     cfg.CacheDir,
 		schemas:      cfg.Schemas,
+		crypto:       cfg.Crypto,
 		observers:    cfg.Observers,
 		entities:     make(map[string]entityMeta),
 		relations:    make(map[string]relationMeta),
@@ -139,6 +155,9 @@ func New(cfg Config) (*FSStore, error) {
 
 	s.cleanupTempFiles()
 
+	if err := s.verifyEncryptionConsistency(); err != nil {
+		return nil, err
+	}
 	if err := s.syncIndex(); err != nil {
 		return nil, err
 	}

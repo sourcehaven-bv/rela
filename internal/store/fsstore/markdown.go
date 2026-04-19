@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -327,7 +328,7 @@ func isSpecialLine(line string) bool {
 
 // readEntityFile reads and parses an entity from a markdown file.
 func (s *FSStore) readEntityFile(path string) (*entity.Entity, error) {
-	data, err := s.fs.ReadFile(path)
+	data, err := s.readFileUnsealed(path)
 	if err != nil {
 		return nil, err
 	}
@@ -381,34 +382,19 @@ func formatEntity(e *entity.Entity, propertyOrder []string) (string, error) {
 // writeEntityFile writes an entity to a markdown file using temp-file + rename.
 func (s *FSStore) writeEntityFile(e *entity.Entity) error {
 	path := s.entityFilePath(e.Type, e.ID)
-	tempPath := path + ".new"
-
 	order := s.propertyOrder(e.Type)
 	content, err := formatEntity(e, order)
 	if err != nil {
 		return err
 	}
-
-	dir := filepath.Dir(tempPath)
-	if err := s.fs.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	if err := s.fs.WriteFile(tempPath, []byte(content), 0644); err != nil {
-		return err
-	}
-	if err := s.fs.Rename(tempPath, path); err != nil {
-		return err
-	}
-	s.recordHash(path, []byte(content))
-	return nil
+	return s.writeFileSealed(path, []byte(content), 0o644)
 }
 
 // --- relation I/O ---
 
 // readRelationFile reads and parses a relation from a markdown file.
 func (s *FSStore) readRelationFile(path string) (*entity.Relation, error) {
-	data, err := s.fs.ReadFile(path)
+	data, err := s.readFileUnsealed(path)
 	if err != nil {
 		return nil, err
 	}
@@ -465,26 +451,11 @@ func formatRelation(r *entity.Relation) (string, error) {
 // writeRelationFile writes a relation to a markdown file using temp-file + rename.
 func (s *FSStore) writeRelationFile(r *entity.Relation) error {
 	path := s.relationFilePath(r.From, r.Type, r.To)
-	tempPath := path + ".new"
-
 	content, err := formatRelation(r)
 	if err != nil {
 		return err
 	}
-
-	dir := filepath.Dir(tempPath)
-	if err := s.fs.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	if err := s.fs.WriteFile(tempPath, []byte(content), 0644); err != nil {
-		return err
-	}
-	if err := s.fs.Rename(tempPath, path); err != nil {
-		return err
-	}
-	s.recordHash(path, []byte(content))
-	return nil
+	return s.writeFileSealed(path, []byte(content), 0o644)
 }
 
 // hashContent returns the hex-encoded SHA256 of content. Used by the
@@ -503,4 +474,41 @@ func (s *FSStore) recordHash(path string, content []byte) {
 // forgetHash removes any recorded hash for path (e.g. after delete).
 func (s *FSStore) forgetHash(path string) {
 	s.recentHashes.Delete(path)
+}
+
+// readFileUnsealed reads path from the underlying FS and unseals the
+// bytes via s.crypto. When s.crypto is IdentityCrypto this is the
+// same as s.fs.ReadFile. Centralizing the unseal here means every
+// read path (entity, relation, attachment, watcher) goes through
+// the same Crypto boundary.
+func (s *FSStore) readFileUnsealed(path string) ([]byte, error) {
+	raw, err := s.fs.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return s.crypto.Unseal(raw)
+}
+
+// writeFileSealed seals content via s.crypto and writes the result
+// to path atomically via temp-file + rename. The seal happens BEFORE
+// the temp file exists, so an interrupted write leaves a valid
+// sealed blob on disk, never plaintext.
+func (s *FSStore) writeFileSealed(path string, content []byte, perm os.FileMode) error {
+	sealed, err := s.crypto.Seal(content)
+	if err != nil {
+		return fmt.Errorf("seal %s: %w", path, err)
+	}
+	tempPath := path + ".new"
+	dir := filepath.Dir(tempPath)
+	if err := s.fs.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := s.fs.WriteFile(tempPath, sealed, perm); err != nil {
+		return err
+	}
+	if err := s.fs.Rename(tempPath, path); err != nil {
+		return err
+	}
+	s.recordHash(path, sealed)
+	return nil
 }
