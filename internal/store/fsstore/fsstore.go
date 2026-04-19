@@ -335,8 +335,8 @@ func (s *FSStore) cleanupTempFiles() {
 			continue
 		}
 		var toRemove []string
-		_ = s.dirs.Walk(dir, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
+		_ = s.dirs.Walk(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
 				return nil //nolint:nilerr // walker continuation on error is intentional
 			}
 			if strings.HasSuffix(path, ".new") {

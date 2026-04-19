@@ -162,11 +162,11 @@ func TestMemFS_WalkSkipDir(t *testing.T) {
 	}
 
 	var walked []string
-	err := m.Walk("/root", func(path string, info os.FileInfo, err error) error {
+	err := m.Walk("/root", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() && info.Name() == "skip" {
+		if d.IsDir() && d.Name() == "skip" {
 			return filepath.SkipDir
 		}
 		walked = append(walked, path)

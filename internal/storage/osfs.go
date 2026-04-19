@@ -2,6 +2,7 @@ package storage
 
 import (
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -43,8 +44,8 @@ func (f *OsFS) ReadDir(path string) ([]os.DirEntry, error) {
 	return os.ReadDir(path)
 }
 
-func (f *OsFS) Walk(root string, fn filepath.WalkFunc) error {
-	return filepath.Walk(root, fn)
+func (f *OsFS) Walk(root string, fn fs.WalkDirFunc) error {
+	return filepath.WalkDir(root, fn)
 }
 
 func (f *OsFS) Open(path string) (io.ReadCloser, error) {

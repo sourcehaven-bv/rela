@@ -1,8 +1,8 @@
 package fsstore
 
 import (
+	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -43,7 +43,7 @@ type DirFS interface {
 	MkdirAll(path string, perm os.FileMode) error
 	ReadDir(path string) ([]os.DirEntry, error)
 	Stat(path string) (os.FileInfo, error)
-	Walk(root string, fn filepath.WalkFunc) error
+	Walk(root string, fn fs.WalkDirFunc) error
 	Remove(path string) error
 }
 

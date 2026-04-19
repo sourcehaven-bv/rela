@@ -299,13 +299,13 @@ func (s *Store) GC(referencedPaths []string) (*GCResult, error) {
 	}
 
 	// Walk attachments directory
-	err := s.fs.Walk(attachmentsDir, func(path string, info os.FileInfo, err error) error {
+	err := s.fs.Walk(attachmentsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
 		// Skip directories
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 
@@ -323,8 +323,13 @@ func (s *Store) GC(referencedPaths []string) (*GCResult, error) {
 
 		// Check if referenced
 		if !referenced[relPath] {
-			// Not referenced, remove it
-			result.Reclaimed += info.Size()
+			// Not referenced, remove it. Stat once to get size (DirEntry
+			// doesn't carry it — that's the performance win vs
+			// filepath.WalkFunc).
+			info, statErr := d.Info()
+			if statErr == nil {
+				result.Reclaimed += info.Size()
+			}
 			result.Removed = append(result.Removed, relPath)
 		}
 
@@ -354,13 +359,13 @@ func (s *Store) List() ([]string, error) {
 		return paths, nil
 	}
 
-	err := s.fs.Walk(attachmentsDir, func(path string, info os.FileInfo, err error) error {
+	err := s.fs.Walk(attachmentsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
 		// Skip directories and metadata files
-		if info.IsDir() || strings.HasSuffix(path, ".yaml") {
+		if d.IsDir() || strings.HasSuffix(path, ".yaml") {
 			return nil
 		}
 

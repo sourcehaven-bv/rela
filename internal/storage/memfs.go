@@ -361,7 +361,7 @@ func (m *MemFS) ReadDir(path string) ([]os.DirEntry, error) {
 	return entries, nil
 }
 
-func (m *MemFS) Walk(root string, fn filepath.WalkFunc) error {
+func (m *MemFS) Walk(root string, fn fs.WalkDirFunc) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -379,7 +379,8 @@ func (m *MemFS) Walk(root string, fn filepath.WalkFunc) error {
 			i++
 			continue
 		}
-		err := fn(p, info, nil)
+		entry := &memDirEntry{name: info.Name(), isDir: info.IsDir(), info: info}
+		err := fn(p, entry, nil)
 		if err != nil {
 			if errors.Is(err, filepath.SkipDir) && info.IsDir() {
 				// Skip all entries under this directory.
