@@ -9,7 +9,7 @@ internal/attachment/hash.go;28;27
 internal/attachment/metadata.go;5;4
 internal/attachment/store.go;180;95
 internal/automation/engine.go;134;100
-internal/automation/template.go;56;52
+internal/automation/template.go;56;50
 internal/automation/types.go;9;3
 internal/cache/lru.go;34;34
 internal/cli/analyze.go;205;21
@@ -38,7 +38,7 @@ internal/cli/root.go;27;10
 internal/cli/scheduler.go;17;1
 internal/cli/schema.go;314;279
 internal/cli/script.go;2;2
-internal/cli/show.go;8;4
+internal/cli/show.go;8;8
 internal/cli/template.go;6;6
 internal/cli/trace.go;5;5
 internal/cli/unlink.go;1;1
@@ -70,7 +70,7 @@ internal/dataentryconfig/config.go;36;35
 internal/dataentryconfig/errors.go;3;3
 internal/dataentryconfig/palette.go;228;214
 internal/dataentryconfig/validate.go;422;334
-internal/desktop/preferences.go;44;35
+internal/desktop/preferences.go;44;34
 internal/encryption/cryptofs/cryptofs.go;12;12
 internal/encryption/errors.go;3;3
 internal/encryption/identity.go;39;35
@@ -88,7 +88,7 @@ internal/filter/pattern.go;5;5
 internal/filter/sort.go;161;148
 internal/git/changes.go;104;55
 internal/git/clone.go;68;30
-internal/git/git.go;189;66
+internal/git/git.go;189;61
 internal/git/oauth.go;68;0
 internal/htmlutil/mermaid.go;1;1
 internal/importer/importer.go;264;209
@@ -174,9 +174,9 @@ internal/storage/safefs.go;37;25
 internal/storage/watcher.go;71;67
 internal/store/fsstore/attachment.go;51;47
 internal/store/fsstore/crypto_verify.go;7;7
-internal/store/fsstore/entity.go;234;222
+internal/store/fsstore/entity.go;234;220
 internal/store/fsstore/formatter.go;40;23
-internal/store/fsstore/fsstore.go;80;64
+internal/store/fsstore/fsstore.go;80;63
 internal/store/fsstore/index.go;160;130
 internal/store/fsstore/markdown.go;231;185
 internal/store/fsstore/propcache.go;21;19
