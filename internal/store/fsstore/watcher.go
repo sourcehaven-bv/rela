@@ -176,7 +176,7 @@ func hasPathPrefix(path, dir string) bool {
 // reconcileEntityPath handles a change event for an entity file. Must be
 // called under mu.Lock.
 func (s *FSStore) reconcileEntityPath(path string) {
-	rawData, readErr := s.fs.ReadFile(path)
+	rawData, readErr := s.rawReader.ReadFile(path)
 	if readErr != nil {
 		s.handleEntityRemoval(path)
 		return
@@ -277,7 +277,7 @@ func (s *FSStore) reconcileRelationPath(path string) {
 	}
 	key := from + "--" + relType + "--" + to
 
-	data, readErr := s.fs.ReadFile(path)
+	data, readErr := s.rawReader.ReadFile(path)
 	if readErr != nil {
 		s.handleRelationRemoval(path, key, from, relType, to)
 		return

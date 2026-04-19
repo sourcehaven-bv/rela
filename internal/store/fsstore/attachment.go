@@ -30,7 +30,7 @@ func (s *FSStore) AttachFile(_ context.Context, entityID, property, fileName str
 
 	// Write file to disk.
 	dir := filepath.Join(s.attachDir, entityID, property)
-	if err := s.fs.MkdirAll(dir, 0755); err != nil {
+	if err := s.dirs.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
@@ -38,7 +38,7 @@ func (s *FSStore) AttachFile(_ context.Context, entityID, property, fileName str
 
 	// Remove old file if replacing with different name.
 	if old, exists := s.attachments[key]; exists && old.fileName != fileName {
-		_ = s.fs.Remove(filepath.Join(dir, old.fileName))
+		_ = s.dirs.Remove(filepath.Join(dir, old.fileName))
 	}
 
 	path := filepath.Join(dir, fileName)
@@ -84,7 +84,7 @@ func (s *FSStore) DeleteAttachment(_ context.Context, entityID, property string)
 	}
 
 	path := filepath.Join(s.attachDir, a.entityID, a.property, a.fileName)
-	if err := s.fs.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err := s.dirs.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 

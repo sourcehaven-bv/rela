@@ -19,10 +19,41 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
 
+// ErrEncryptedRepoNeedsIdentity is returned by OpenStore when the
+// repository is encryption-enabled (.rela/encryption.yaml exists) but
+// the caller has no local age identity configured ($RELA_KEY_FILE,
+// .rela/key, ~/.config/rela/key all absent or unreadable).
+//
+// Opening an encrypted store without an identity would silently cripple
+// every read path (GetEntity, ListEntities, rebuildPropCache all swallow
+// errors and return empty). Failing loudly at factory time makes the
+// misconfiguration visible instead.
+var ErrEncryptedRepoNeedsIdentity = errors.New(
+	"app: repository is encryption-enabled but no local identity is configured " +
+		"(set $RELA_KEY_FILE or place .rela/key or ~/.config/rela/key)")
+
+// ErrEncryptedRepoNeedsSafeFS is returned by OpenStore when the
+// repository is encryption-enabled but the caller passed a raw FS
+// (e.g. OsFS or MemFS) instead of a *storage.SafeFS. Without SafeFS
+// we cannot install the OnPostWrite observer that keeps the watcher's
+// self-echo LRU correct — every internal write would register as an
+// external change and trigger spurious reconciles.
+var ErrEncryptedRepoNeedsSafeFS = errors.New(
+	"app: encrypted repos require the FS handle to be a *storage.SafeFS " +
+		"(wrap your FS with storage.NewSafeFS at the entry point)")
+
 // FSFactory is a store.Factory that opens filesystem-backed stores
 // (fsstore) rooted at the given project paths. Each OpenStore call
 // returns a fresh, independent store — callers that want a single
 // long-lived store should open it once and keep it alive.
+//
+// FS should typically be a *storage.SafeFS in production so the
+// factory can subscribe OnPostWrite for self-echo detection across
+// any byte transform (encryption, future compression). When FS is
+// NOT a SafeFS AND wantSealed is true, OpenStore returns an error
+// rather than silently proceeding with a broken watcher — see
+// ErrEncryptedRepoNeedsSafeFS. Tests that don't exercise the
+// watcher may pass a MemFS on cleartext repos.
 type FSFactory struct {
 	FS    storage.FS
 	Paths *project.Context
@@ -41,16 +72,30 @@ var _ store.Factory = (*FSFactory)(nil)
 // "encrypted decorator installed?" and "consistency check expects
 // sealed files?" answers come from one place and cannot drift.
 //
-// If the underlying FS is a *storage.SafeFS, the factory also
-// subscribes the store's RecordWrite method as the SafeFS post-write
-// observer. This is how the watcher's self-echo LRU stays correct
-// across any transform (encryption today, compression tomorrow):
-// the hash is always taken of the bytes that actually landed on
-// disk, at the only layer that performs the OS write.
+// The factory subscribes the store's RecordWrite method as the SafeFS
+// post-write observer. This is how the watcher's self-echo LRU stays
+// correct across any transform: the hash is always taken of the
+// bytes that actually landed on disk, at the only layer that performs
+// the OS write.
+//
+// Returns ErrEncryptedRepoNeedsIdentity if the repo is encrypted but
+// no local identity is configured.
 func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 	wantSealed, kr, err := f.loadEncryption()
 	if err != nil {
 		return nil, err
+	}
+	if wantSealed && kr.Identity() == nil {
+		return nil, ErrEncryptedRepoNeedsIdentity
+	}
+
+	// Encrypted repos require SafeFS so we can install the OnPostWrite
+	// observer that keeps self-echo detection correct. Fail loudly
+	// when that invariant is violated; silent type-casts here have
+	// bitten the watcher in the past.
+	safe, hasSafeFS := f.FS.(*storage.SafeFS)
+	if wantSealed && !hasSafeFS {
+		return nil, ErrEncryptedRepoNeedsSafeFS
 	}
 
 	var bytes fsstore.StoreFS = f.FS
@@ -70,7 +115,7 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if safe, ok := f.FS.(*storage.SafeFS); ok {
+	if hasSafeFS {
 		safe.OnPostWrite(s.RecordWrite)
 	}
 	return s, nil

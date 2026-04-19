@@ -2,6 +2,7 @@ package workspace_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,19 +18,21 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-// bridgePaths builds a MemFS + project.Context seeded with a valid
-// metamodel at the standard location.
-func bridgePaths(t *testing.T) (storage.FS, *project.Context) {
+// bridgePaths builds a SafeFS(OsFS) + project.Context seeded with a
+// valid metamodel at the standard location. Uses t.TempDir so the
+// production FS stack is exercised end-to-end (app.FSFactory requires
+// *storage.SafeFS to install the post-write hook).
+func bridgePaths(t *testing.T) (*storage.SafeFS, *project.Context) {
 	t.Helper()
-	fs := storage.NewMemFS()
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	root := t.TempDir()
 	paths := &project.Context{
-		Root:          "/proj",
-		MetamodelPath: "/proj/metamodel.yaml",
-		EntitiesDir:   "/proj/entities",
-		RelationsDir:  "/proj/relations",
-		CacheDir:      "/proj/.rela",
+		Root:          root,
+		MetamodelPath: filepath.Join(root, "metamodel.yaml"),
+		EntitiesDir:   filepath.Join(root, "entities"),
+		RelationsDir:  filepath.Join(root, "relations"),
+		CacheDir:      filepath.Join(root, ".rela"),
 	}
-	require.NoError(t, fs.MkdirAll(paths.Root, 0o755))
 	require.NoError(t, fs.MkdirAll(paths.EntitiesDir, 0o755))
 	require.NoError(t, fs.MkdirAll(paths.RelationsDir, 0o755))
 	require.NoError(t, fs.MkdirAll(paths.CacheDir, 0o755))

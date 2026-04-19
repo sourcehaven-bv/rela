@@ -101,16 +101,25 @@ type attachMeta struct {
 
 // FSStore is a filesystem-backed store implementation.
 type FSStore struct {
-	// fs is the raw directory handle for ReadDir/Walk/Stat and
-	// temp-file cleanup. It MUST NOT be used for data-file ReadFile
-	// or WriteFile — that would bypass any transform (e.g.
-	// encryption) stacked above. Use bytes for all byte I/O.
-	fs storage.FS
+	// dirs is the raw directory handle for ReadDir / Walk / Stat /
+	// Remove and temp-file cleanup. Its DirFS type DELIBERATELY
+	// omits ReadFile, WriteFile, and Open — any byte I/O on dirs
+	// would bypass the transform stack stacked above bytes
+	// (encryption, compression). The compiler enforces the
+	// separation; adding a raw byte read here is a type error.
+	dirs DirFS
+
+	// rawReader is the single-method window the watcher uses to
+	// read on-disk bytes for self-echo hashing. It is deliberately
+	// isolated from dirs so the scope of "raw byte read" is visible
+	// at every call site (watcher.go is the only consumer).
+	rawReader RawReader
 
 	// bytes is the decorated byte-I/O handle. Every entity,
 	// relation, attachment, and index read/write goes through this.
-	// For a cleartext repo, bytes may alias fs; for an encrypted
-	// repo, bytes is a cryptofs.FS that seals/unseals transparently.
+	// For a cleartext repo, bytes may alias the raw FS; for an
+	// encrypted repo, bytes is a cryptofs.FS that seals/unseals
+	// transparently.
 	bytes StoreFS
 
 	entitiesDir  string
@@ -170,7 +179,8 @@ func New(cfg Config) (*FSStore, error) {
 	}
 
 	s := &FSStore{
-		fs:           cfg.FS,
+		dirs:         cfg.FS,
+		rawReader:    cfg.FS,
 		bytes:        bytes,
 		entitiesDir:  cfg.EntitiesDir,
 		relationsDir: cfg.RelationsDir,
@@ -208,11 +218,11 @@ func (s *FSStore) loadAttachmentsIndex() {
 		return
 	}
 
-	if _, err := s.fs.Stat(s.attachDir); err != nil {
+	if _, err := s.dirs.Stat(s.attachDir); err != nil {
 		return
 	}
 
-	entries, err := s.fs.ReadDir(s.attachDir)
+	entries, err := s.dirs.ReadDir(s.attachDir)
 	if err != nil {
 		return
 	}
@@ -222,7 +232,7 @@ func (s *FSStore) loadAttachmentsIndex() {
 			continue
 		}
 		entityID := entityEntry.Name()
-		propEntries, err := s.fs.ReadDir(filepath.Join(s.attachDir, entityID))
+		propEntries, err := s.dirs.ReadDir(filepath.Join(s.attachDir, entityID))
 		if err != nil {
 			continue
 		}
@@ -231,7 +241,7 @@ func (s *FSStore) loadAttachmentsIndex() {
 				continue
 			}
 			prop := propEntry.Name()
-			fileEntries, err := s.fs.ReadDir(filepath.Join(s.attachDir, entityID, prop))
+			fileEntries, err := s.dirs.ReadDir(filepath.Join(s.attachDir, entityID, prop))
 			if err != nil {
 				continue
 			}
@@ -239,7 +249,12 @@ func (s *FSStore) loadAttachmentsIndex() {
 				if fileEntry.IsDir() {
 					continue
 				}
-				info, err := fileEntry.Info()
+				// Read through s.bytes so the reported size reflects
+				// plaintext bytes, not ciphertext bytes on disk. Using
+				// info.Size() here would silently report age-overhead-
+				// inflated sizes on encrypted repos (RR-HBER2).
+				path := filepath.Join(s.attachDir, entityID, prop, fileEntry.Name())
+				data, err := s.bytes.ReadFile(path)
 				if err != nil {
 					continue
 				}
@@ -248,7 +263,7 @@ func (s *FSStore) loadAttachmentsIndex() {
 					entityID: entityID,
 					property: prop,
 					fileName: fileEntry.Name(),
-					size:     info.Size(),
+					size:     int64(len(data)),
 				}
 				break // one file per property
 			}
@@ -320,7 +335,7 @@ func (s *FSStore) cleanupTempFiles() {
 			continue
 		}
 		var toRemove []string
-		_ = s.fs.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		_ = s.dirs.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil //nolint:nilerr // walker continuation on error is intentional
 			}
@@ -330,7 +345,7 @@ func (s *FSStore) cleanupTempFiles() {
 			return nil
 		})
 		for _, path := range toRemove {
-			_ = s.fs.Remove(path)
+			_ = s.dirs.Remove(path)
 		}
 	}
 }

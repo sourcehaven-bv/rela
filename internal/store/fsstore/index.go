@@ -81,7 +81,7 @@ func (s *FSStore) savePersistedIndex() error {
 	if err != nil {
 		return err
 	}
-	if mkdirErr := s.fs.MkdirAll(s.cacheDir, 0o755); mkdirErr != nil {
+	if mkdirErr := s.dirs.MkdirAll(s.cacheDir, 0o755); mkdirErr != nil {
 		return mkdirErr
 	}
 	// Uses the same s.bytes.WriteFile path as every other write, so
@@ -167,7 +167,7 @@ func (s *FSStore) rebuildPropCache() error {
 // scanEntityDirs walks the entity type directories concurrently and
 // populates the index from directory structure alone (no file reads).
 func (s *FSStore) scanEntityDirs() error {
-	typeDirs, err := s.fs.ReadDir(s.entitiesDir)
+	typeDirs, err := s.dirs.ReadDir(s.entitiesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -192,7 +192,7 @@ func (s *FSStore) scanEntityDirs() error {
 		go func(idx int, dirName string) {
 			defer wg.Done()
 			entityType := s.resolveEntityType(dirName, pluralToType)
-			files, readErr := s.fs.ReadDir(filepath.Join(s.entitiesDir, dirName))
+			files, readErr := s.dirs.ReadDir(filepath.Join(s.entitiesDir, dirName))
 			if readErr != nil {
 				return
 			}
@@ -224,7 +224,7 @@ func (s *FSStore) scanEntityDirs() error {
 // scanRelationDir lists the relations directory and parses relation keys
 // from filenames (FROM--TYPE--TO.md). No file reads needed.
 func (s *FSStore) scanRelationDir() error {
-	files, err := s.fs.ReadDir(s.relationsDir)
+	files, err := s.dirs.ReadDir(s.relationsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -298,7 +298,7 @@ func (s *FSStore) newestEntityFileMtime() time.Time {
 	var newest time.Time
 	for _, meta := range s.entities {
 		path := s.entityFilePath(meta.Type, meta.ID)
-		if info, err := s.fs.Stat(path); err == nil {
+		if info, err := s.dirs.Stat(path); err == nil {
 			if info.ModTime().After(newest) {
 				newest = info.ModTime()
 			}
@@ -313,7 +313,7 @@ func (s *FSStore) newestRelationFileMtime() time.Time {
 	var newest time.Time
 	for _, meta := range s.relations {
 		path := s.relationFilePath(meta.From, meta.Type, meta.To)
-		if info, err := s.fs.Stat(path); err == nil {
+		if info, err := s.dirs.Stat(path); err == nil {
 			if info.ModTime().After(newest) {
 				newest = info.ModTime()
 			}
@@ -326,13 +326,13 @@ func (s *FSStore) newestRelationFileMtime() time.Time {
 func (s *FSStore) entitiesDirMtime() time.Time {
 	var latest time.Time
 
-	info, err := s.fs.Stat(s.entitiesDir)
+	info, err := s.dirs.Stat(s.entitiesDir)
 	if err != nil {
 		return latest
 	}
 	latest = info.ModTime()
 
-	entries, err := s.fs.ReadDir(s.entitiesDir)
+	entries, err := s.dirs.ReadDir(s.entitiesDir)
 	if err != nil {
 		return latest
 	}
@@ -351,7 +351,7 @@ func (s *FSStore) entitiesDirMtime() time.Time {
 
 // relationsDirMtime returns the mtime of the relations directory.
 func (s *FSStore) relationsDirMtime() time.Time {
-	info, err := s.fs.Stat(s.relationsDir)
+	info, err := s.dirs.Stat(s.relationsDir)
 	if err != nil {
 		return time.Time{}
 	}

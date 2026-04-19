@@ -47,16 +47,27 @@ type DirFS interface {
 	Remove(path string) error
 }
 
-// Compile-time assertions: the existing storage.FS satisfies both
-// of the narrower interfaces fsstore consumes. This lets the factory
-// wire a single storage.FS today and a decorated StoreFS + raw
-// DirFS pair later without changing fsstore call sites.
+// RawReader is the single-method window the watcher uses to read
+// the raw on-disk bytes of a file (before any transform). It is
+// structurally separate from DirFS so that only code which
+// legitimately needs raw bytes (the fsnotify self-echo path) ever
+// holds a handle that exposes ReadFile.
+type RawReader interface {
+	ReadFile(path string) ([]byte, error)
+}
+
+// Compile-time assertions: the existing storage.FS satisfies the
+// narrower interfaces fsstore consumes. This lets the factory wire
+// a single storage.FS today and a decorated StoreFS + raw DirFS
+// pair later without changing fsstore call sites.
 var (
-	_ StoreFS = storage.FS(nil)
-	_ DirFS   = storage.FS(nil)
+	_ StoreFS   = storage.FS(nil)
+	_ DirFS     = storage.FS(nil)
+	_ RawReader = storage.FS(nil)
 
 	// *storage.SafeFS embeds storage.FS and must therefore also
-	// satisfy both interfaces.
-	_ StoreFS = (*storage.SafeFS)(nil)
-	_ DirFS   = (*storage.SafeFS)(nil)
+	// satisfy all three interfaces.
+	_ StoreFS   = (*storage.SafeFS)(nil)
+	_ DirFS     = (*storage.SafeFS)(nil)
+	_ RawReader = (*storage.SafeFS)(nil)
 )

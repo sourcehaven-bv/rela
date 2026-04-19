@@ -344,7 +344,7 @@ func (s *FSStore) readEntityFile(path string) (*entity.Entity, error) {
 	e := entity.New(id, entityType)
 	e.Content = doc.content
 
-	if info, err := s.fs.Stat(path); err == nil {
+	if info, err := s.dirs.Stat(path); err == nil {
 		e.UpdatedAt = info.ModTime()
 	}
 
@@ -411,7 +411,7 @@ func (s *FSStore) readRelationFile(path string) (*entity.Relation, error) {
 	)
 	r.Content = doc.content
 
-	if info, err := s.fs.Stat(path); err == nil {
+	if info, err := s.dirs.Stat(path); err == nil {
 		r.UpdatedAt = info.ModTime()
 	}
 
@@ -499,26 +499,20 @@ func (s *FSStore) forgetHash(path string) {
 // holds because SafeFS writes a sealed-temp and only renames after
 // successful fsync.
 //
-// Parent-directory creation is performed through the raw directory
-// handle (s.fs). SafeFS-backed production paths also mkdir inside
-// WriteFile, so this is idempotent; test backends like MemFS that
-// reject writes to missing directories need the explicit mkdir.
+// Parent-directory creation goes through the raw directory handle
+// (s.dirs). SafeFS-backed production paths also mkdir inside
+// WriteFile, so this is idempotent; test backends that reject writes
+// to missing directories need the explicit mkdir.
 //
-// # Self-echo hash recording
-//
-// The watcher's self-echo LRU compares hash-of-on-disk-bytes. We
-// record the hash BEFORE calling s.bytes.WriteFile so that a
-// SafeFS PostWrite hook (which fires synchronously inside the
-// WriteFile call with the actual on-disk bytes, potentially sealed
-// by a transform above SafeFS) can overwrite this entry with the
-// correct sealed hash. In the MemFS test backend with no SafeFS in
-// the stack, content itself is the on-disk bytes, so the pre-write
-// record remains correct.
+// Self-echo hash recording is handled entirely by the post-write
+// observer installed on the bottom-most FS (SafeFS.OnPostWrite or
+// MemFS.OnPostWrite for tests). That's where the actual on-disk
+// bytes are visible — fsstore sees only plaintext here and must not
+// record a plaintext hash the watcher can't match.
 func (s *FSStore) writeDataFile(path string, content []byte, perm os.FileMode) error {
-	if err := s.fs.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := s.dirs.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	s.recordHash(path, content)
 	return s.bytes.WriteFile(path, content, perm)
 }
 

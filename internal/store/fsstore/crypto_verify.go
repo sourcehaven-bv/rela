@@ -1,22 +1,24 @@
 package fsstore
 
 import (
+	"io/fs"
+
 	"github.com/Sourcehaven-BV/rela/internal/storage/integrity"
 )
 
-// ErrRepoHasSealedFilesButNoConfig is re-exported from the integrity
-// package so existing callers that errors.Is against fsstore symbols
-// keep compiling. New code should import the canonical symbol from
-// internal/storage/integrity.
-//
-// Deprecated: use integrity.ErrRepoHasSealedFilesButNoConfig.
-var ErrRepoHasSealedFilesButNoConfig = integrity.ErrRepoHasSealedFilesButNoConfig
+// dirReader combines the fsstore DirFS + RawReader handles into the
+// integrity.FSReader surface. Both handles came from the same raw
+// filesystem in New, so bundling them here is equivalent to passing
+// the original storage.FS while keeping the narrow types at their
+// normal call sites.
+type dirReader struct {
+	dirs DirFS
+	raw  RawReader
+}
 
-// ErrRepoHasCleartextFilesButEncryptionEnabled is re-exported from
-// the integrity package for the same reason.
-//
-// Deprecated: use integrity.ErrRepoHasCleartextFilesButEncryptionEnabled.
-var ErrRepoHasCleartextFilesButEncryptionEnabled = integrity.ErrRepoHasCleartextFilesButEncryptionEnabled
+func (d dirReader) Stat(path string) (fs.FileInfo, error)      { return d.dirs.Stat(path) }
+func (d dirReader) ReadDir(path string) ([]fs.DirEntry, error) { return d.dirs.ReadDir(path) }
+func (d dirReader) ReadFile(path string) ([]byte, error)       { return d.raw.ReadFile(path) }
 
 // verifyEncryptionConsistency delegates to integrity.Verify using
 // the raw filesystem handle and the declared wantSealed mode. The
@@ -28,5 +30,5 @@ func (s *FSStore) verifyEncryptionConsistency() error {
 	if s.attachDir != "" {
 		dirs = append(dirs, s.attachDir)
 	}
-	return integrity.Verify(s.fs, s.wantSealed, dirs)
+	return integrity.Verify(dirReader{dirs: s.dirs, raw: s.rawReader}, s.wantSealed, dirs)
 }

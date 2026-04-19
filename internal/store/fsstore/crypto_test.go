@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/encryption/cryptofs"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/storage/integrity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
@@ -46,7 +47,7 @@ func buildEncryptedStore(t *testing.T) (s *fsstore.FSStore, root string) {
 	t.Helper()
 	var kr *encryption.Keyring
 	root, kr = setupEncryptedRepo(t)
-	s = mustOpenEncryptedStore(t, root, kr, true)
+	s = mustOpenEncryptedStore(t, root, kr)
 	return s, root
 }
 
@@ -54,26 +55,26 @@ func buildEncryptedStore(t *testing.T) (s *fsstore.FSStore, root string) {
 // given keyring and opens an fsstore with it. The raw SafeFS is
 // also used as the fsstore's directory handle; the PostWrite hook
 // is subscribed so the watcher's self-echo LRU stays correct.
+//
+// Always configures AttachmentsDir so every encrypted test exercises
+// the attachments path too.
 func mustOpenEncryptedStore(
-	t *testing.T, root string, kr *encryption.Keyring, withAttachments bool,
+	t *testing.T, root string, kr *encryption.Keyring,
 ) *fsstore.FSStore {
 	t.Helper()
 	safe := storage.NewSafeFS(storage.NewOsFS())
 	enc := cryptofs.New(safe, kr.Recipients(), kr.Identity())
 
-	cfg := fsstore.Config{
-		FS:           safe,
-		Bytes:        enc,
-		WantSealed:   true,
-		EntitiesDir:  filepath.Join(root, "entities"),
-		RelationsDir: filepath.Join(root, "relations"),
-		CacheDir:     filepath.Join(root, ".rela"),
-		Schemas:      map[string]store.EntityTypeSchema{"ticket": {Plural: "tickets"}},
-	}
-	if withAttachments {
-		cfg.AttachmentsDir = filepath.Join(root, "attachments")
-	}
-	s, err := fsstore.New(cfg)
+	s, err := fsstore.New(fsstore.Config{
+		FS:             safe,
+		Bytes:          enc,
+		WantSealed:     true,
+		EntitiesDir:    filepath.Join(root, "entities"),
+		RelationsDir:   filepath.Join(root, "relations"),
+		AttachmentsDir: filepath.Join(root, "attachments"),
+		CacheDir:       filepath.Join(root, ".rela"),
+		Schemas:        map[string]store.EntityTypeSchema{"ticket": {Plural: "tickets"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,9 +162,52 @@ func TestFSStore_Encrypted_TamperedPayloadSurfacesAsCorrupted(t *testing.T) {
 	}
 }
 
+// TestFSStore_Encrypted_AttachmentSizeOnReopen is the regression
+// test for RR-HBER2: loadAttachmentsIndex previously cached
+// info.Size() (ciphertext on disk) which on encrypted repos is
+// plaintext + ~229 bytes of age overhead. Reopening a store and
+// listing attachments must return plaintext size, not ciphertext.
+func TestFSStore_Encrypted_AttachmentSizeOnReopen(t *testing.T) {
+	root, kr := setupEncryptedRepo(t)
+	s := mustOpenEncryptedStore(t, root, kr)
+	ctx := context.Background()
+
+	e := entity.New("TKT-SZ-1", "ticket")
+	e.Properties["title"] = "size test"
+	if err := s.CreateEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("plaintext attachment body")
+	if err := s.AttachFile(ctx, "TKT-SZ-1", "spec", "spec.bin", bytesReader(body)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before reopen: size is set from AttachFile's len(data), so
+	// already plaintext. The regression is specifically about reopen.
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := mustOpenEncryptedStore(t, root, kr)
+	defer s2.Close()
+
+	infos, err := s2.ListAttachments(ctx, "TKT-SZ-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("got %d attachments, want 1", len(infos))
+	}
+	if infos[0].Size != int64(len(body)) {
+		t.Errorf("attachment size on reopen = %d, want plaintext size %d "+
+			"(did loadAttachmentsIndex leak ciphertext size?)",
+			infos[0].Size, len(body))
+	}
+}
+
 func TestFSStore_Encrypted_AttachmentRoundTrip(t *testing.T) {
 	root, kr := setupEncryptedRepo(t)
-	s := mustOpenEncryptedStore(t, root, kr, true)
+	s := mustOpenEncryptedStore(t, root, kr)
 	ctx := context.Background()
 
 	e := entity.New("TKT-003", "ticket")
@@ -220,7 +264,7 @@ func TestFSStore_Encrypted_Refuses_CleartextDataFiles(t *testing.T) {
 	if err == nil {
 		t.Fatal("fsstore.New should refuse cleartext files when encryption is enabled")
 	}
-	if !errors.Is(err, fsstore.ErrRepoHasCleartextFilesButEncryptionEnabled) {
+	if !errors.Is(err, integrity.ErrRepoHasCleartextFilesButEncryptionEnabled) {
 		t.Errorf("wrong error: %v", err)
 	}
 }
@@ -249,7 +293,7 @@ func TestFSStore_Cleartext_Refuses_SealedDataFiles(t *testing.T) {
 	if err == nil {
 		t.Fatal("fsstore.New should refuse sealed files without encryption configured")
 	}
-	if !errors.Is(err, fsstore.ErrRepoHasSealedFilesButNoConfig) {
+	if !errors.Is(err, integrity.ErrRepoHasSealedFilesButNoConfig) {
 		t.Errorf("wrong error: %v", err)
 	}
 }
