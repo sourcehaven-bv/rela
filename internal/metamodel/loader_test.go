@@ -130,6 +130,54 @@ entities:
 			wantErr:      true,
 			wantPropName: "id",
 		},
+		{
+			name: "underscore-prefixed property _encryption",
+			yaml: `
+version: "1.0"
+entities:
+  task:
+    label: Task
+    id_prefix: "TASK-"
+    id_type: sequential
+    properties:
+      _encryption:
+        type: string
+`,
+			wantErr:      true,
+			wantPropName: "_encryption",
+		},
+		{
+			name: "underscore-prefixed property _enc_v1_description",
+			yaml: `
+version: "1.0"
+entities:
+  task:
+    label: Task
+    id_prefix: "TASK-"
+    id_type: sequential
+    properties:
+      _enc_v1_description:
+        type: string
+`,
+			wantErr:      true,
+			wantPropName: "_enc_v1_description",
+		},
+		{
+			name: "underscore-prefixed property any future reserved key",
+			yaml: `
+version: "1.0"
+entities:
+  task:
+    label: Task
+    id_prefix: "TASK-"
+    id_type: sequential
+    properties:
+      _some_future_thing:
+        type: string
+`,
+			wantErr:      true,
+			wantPropName: "_some_future_thing",
+		},
 	}
 
 	for _, tt := range tests {

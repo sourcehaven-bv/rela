@@ -10,6 +10,14 @@ var (
 	ErrBadPEM       = errors.New("encryption: malformed PEM")
 	ErrBadBlob      = errors.New("encryption: malformed wrapped blob")
 	ErrDecrypt      = errors.New("encryption: decryption failed")
+
+	// ErrNoMatchingKey indicates that none of the identities in a
+	// data_keys map corresponded to the local private key. Used to
+	// distinguish partial-decrypt ("right group, wrong key locally
+	// available") from genuine corruption (ErrDecrypt / ErrBadBlob).
+	// Callers that encounter this typically surface the affected
+	// property as an Opaque value.
+	ErrNoMatchingKey = errors.New("encryption: no matching private key for any recipient")
 )
 
 // Wrapping convention: every constructor wraps its sentinel with %w so

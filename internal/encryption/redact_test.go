@@ -1,7 +1,6 @@
 package encryption
 
 import (
-	"bytes"
 	"encoding/pem"
 	"reflect"
 	"strings"
@@ -55,7 +54,7 @@ func TestRedaction_NoLeaks(t *testing.T) {
 
 	t.Run("Open wrong data-key length", func(t *testing.T) {
 		nonceSize, tagSize := aeadSizes()
-		_, err := Open(bytes.Repeat([]byte{0}, nonceSize+tagSize), secretKey)
+		_, err := Open(make([]byte, nonceSize+tagSize), secretKey)
 		assertNoLeak(t, "Open", err, marker2)
 	})
 

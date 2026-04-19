@@ -9,7 +9,7 @@ import (
 func TestGenerateKeypair_Unique(t *testing.T) {
 	const n = 10
 	seen := make(map[string]struct{})
-	for i := 0; i < n; i++ {
+	for i := range n {
 		k := mustGenerate(t)
 		b := k.x25519.PublicKey().Bytes()
 		key := string(b)

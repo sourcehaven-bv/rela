@@ -308,6 +308,13 @@ func validateEntityStructure(m *Metamodel) error {
 			if ReservedPropertyNames[propName] {
 				return &ReservedPropertyError{EntityType: name, PropertyName: propName}
 			}
+			// Underscore-prefixed names are reserved for fsstore
+			// metadata (e.g., _encryption, _enc_v1_*, _encrypted_body).
+			// One rule future-proofs the reserved namespace rather than
+			// enumerating individual keys.
+			if strings.HasPrefix(propName, "_") {
+				return &ReservedPropertyError{EntityType: name, PropertyName: propName}
+			}
 		}
 
 		if def.IDPrefix != "" && len(def.IDPrefixes) > 0 {

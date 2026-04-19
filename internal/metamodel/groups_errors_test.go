@@ -2,7 +2,6 @@ package metamodel
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -74,7 +73,7 @@ func TestGroupError_Is_DifferentKind(t *testing.T) {
 }
 
 func TestIsGroupsNotFound_WrongType(t *testing.T) {
-	if IsGroupsNotFound(fmt.Errorf("not a group error")) {
+	if IsGroupsNotFound(errors.New("not a group error")) {
 		t.Error("IsGroupsNotFound should be false for non-GroupError")
 	}
 }
