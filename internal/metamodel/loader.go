@@ -1,6 +1,7 @@
 package metamodel
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -77,6 +78,48 @@ func Load(path string, fs storage.FS) (*Metamodel, []string, error) {
 	}
 
 	return m, []string{absPath}, nil
+}
+
+// LoadWithGroups loads the metamodel and (if present) groups.yaml
+// sitting next to it (in filepath.Dir(path)), then cross-validates
+// that every `encrypted:` declaration references a known group.
+//
+// Semantics:
+//   - Missing groups.yaml + no `encrypted:` declarations → (m, nil, paths, nil).
+//   - Missing groups.yaml + any `encrypted:` declaration → (_, _, _, &GroupError{Kind: NotFound}).
+//   - Present groups.yaml + unknown group reference → (_, _, _, &GroupError{Kind: Unknown, Path}).
+//
+// Callers that don't care about encryption can keep using Load directly.
+func LoadWithGroups(path string, fs storage.FS) (*Metamodel, *Groups, []string, error) {
+	m, paths, err := Load(path, fs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	projectRoot := filepath.Dir(path)
+	g, err := LoadGroups(projectRoot, fs)
+	if err != nil {
+		// Missing groups.yaml is only a problem if the metamodel
+		// declares encryption — ValidateEncryption enforces that.
+		if !IsGroupsNotFound(err) {
+			return nil, nil, nil, err
+		}
+		g = nil
+	}
+	if err := m.ValidateEncryption(g); err != nil {
+		return nil, nil, nil, err
+	}
+	return m, g, paths, nil
+}
+
+// IsGroupsNotFound reports whether err represents a missing
+// groups.yaml. Sugar over errors.As so callers don't need to know
+// the sentinel or its struct shape.
+func IsGroupsNotFound(err error) bool {
+	var ge *GroupError
+	if !errors.As(err, &ge) {
+		return false
+	}
+	return ge.Kind == GroupErrorNotFound
 }
 
 // LoadWithoutMigrationCheck loads a metamodel without checking for migrations.

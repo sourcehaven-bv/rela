@@ -1,5 +1,7 @@
 package metamodel
 
+import "sort"
+
 // GetPlural returns the plural label for an entity type
 func (e *EntityDef) GetPlural() string {
 	if e.LabelPlural != "" {
@@ -160,6 +162,52 @@ func (e *EntityDef) MatchesID(id string) bool {
 		}
 	}
 	return false
+}
+
+// EncryptedProperties returns a map of {propertyName: groupName} for
+// every property on this entity that declares an `encrypted:` group.
+// Returns an empty map (never nil) when no properties are encrypted.
+//
+// Intended for validation use cases ("is every reference resolvable?").
+// Use PropertiesByGroup when you need the inverse shape for write/read.
+func (e *EntityDef) EncryptedProperties() map[string]string {
+	out := make(map[string]string)
+	for name, p := range e.Properties {
+		if p.Encrypted != "" {
+			out[name] = p.Encrypted
+		}
+	}
+	return out
+}
+
+// PropertiesByGroup returns a map of {groupName: [propertyName...]}
+// inverting EncryptedProperties. Property names within each group are
+// sorted for determinism. Returns an empty map (never nil) when no
+// properties are encrypted.
+//
+// Intended for read/write use cases ("for group G, which properties
+// go into its envelope?").
+func (e *EntityDef) PropertiesByGroup() map[string][]string {
+	out := make(map[string][]string)
+	for name, p := range e.Properties {
+		if p.Encrypted != "" {
+			out[p.Encrypted] = append(out[p.Encrypted], name)
+		}
+	}
+	for g := range out {
+		sort.Strings(out[g])
+	}
+	return out
+}
+
+// BodyGroup returns the group name for body encryption and whether
+// the body is encrypted. When the entity's body is cleartext (the
+// default) returns ("", false).
+func (e *EntityDef) BodyGroup() (string, bool) {
+	if e.EncryptedBody == "" {
+		return "", false
+	}
+	return e.EncryptedBody, true
 }
 
 // GetPropertyOrder returns the property names in their definition order.

@@ -124,6 +124,15 @@ type EntityDef struct {
 	DefaultSort   []SortSpec             `yaml:"default_sort,omitempty"` // Default sort order for this entity type
 	Color         string                 `yaml:"color,omitempty"`
 	BorderColor   string                 `yaml:"border_color,omitempty"`
+
+	// EncryptedBody is the group name whose recipients can decrypt the
+	// markdown body at rest. Empty means cleartext body (default).
+	//
+	// A body has exactly one group — the feature does not support
+	// multi-group bodies in V1. If multi-group encryption of a single
+	// body is ever needed, a new version of the envelope format will
+	// add it.
+	EncryptedBody string `yaml:"encrypted_body,omitempty"`
 }
 
 // PropertyDefs implements PropertySchema for EntityDef.
@@ -159,6 +168,15 @@ type PropertyDef struct {
 	Description string   `yaml:"description,omitempty"` // Documentation for the property
 	Format      string   `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
 	List        bool     `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
+
+	// Encrypted is the group name whose recipients can decrypt this
+	// property at rest. Empty means cleartext (default).
+	//
+	// This is the metamodel attribute — the on-disk entity YAML uses a
+	// `!enc` tag (introduced in slice 3) whose name is unrelated to
+	// this field. Callers resolve the group via the project's
+	// groups.yaml (see LoadGroups).
+	Encrypted string `yaml:"encrypted,omitempty"`
 }
 
 // Built-in property types
