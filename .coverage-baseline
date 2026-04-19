@@ -168,10 +168,10 @@ internal/state/state.go;25;15
 internal/storage/change.go;6;6
 internal/storage/errorfs.go;13;0
 internal/storage/integrity/verify.go;59;46
-internal/storage/memfs.go;231;193
+internal/storage/memfs.go;231;206
 internal/storage/osfs.go;11;10
 internal/storage/safefs.go;37;25
-internal/storage/watcher.go;71;67
+internal/storage/watcher.go;71;68
 internal/store/fsstore/attachment.go;51;47
 internal/store/fsstore/crypto_verify.go;7;7
 internal/store/fsstore/entity.go;234;220

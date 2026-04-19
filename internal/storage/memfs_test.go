@@ -229,3 +229,80 @@ func TestMemFS_WriteReadEmptyFile(t *testing.T) {
 		t.Errorf("expected empty file, got %d bytes", len(got))
 	}
 }
+
+func TestMemFS_OnPostWriteFiresWithOnDiskBytes(t *testing.T) {
+	m := storage.NewMemFS()
+	var calls []struct {
+		path string
+		data []byte
+	}
+	m.OnPostWrite(func(p string, d []byte) {
+		cp := make([]byte, len(d))
+		copy(cp, d)
+		calls = append(calls, struct {
+			path string
+			data []byte
+		}{path: p, data: cp})
+	})
+
+	if err := m.WriteFile("/obs.txt", []byte("observed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("observer calls = %d, want 1", len(calls))
+	}
+	if string(calls[0].data) != "observed" {
+		t.Errorf("observer got %q, want %q", calls[0].data, "observed")
+	}
+
+	// Replace with nil clears the observer.
+	m.OnPostWrite(nil)
+	if err := m.WriteFile("/obs2.txt", []byte("ignored"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Errorf("cleared observer fired: calls = %d", len(calls))
+	}
+}
+
+func TestMemFS_WriteFileExternalSkipsObserver(t *testing.T) {
+	m := storage.NewMemFS()
+	var fired bool
+	m.OnPostWrite(func(_ string, _ []byte) { fired = true })
+
+	if err := m.WriteFileExternal("/ext.txt", []byte("external edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if fired {
+		t.Error("WriteFileExternal must NOT fire the observer")
+	}
+
+	// Observer should still be active for subsequent normal WriteFile.
+	if err := m.WriteFile("/internal.txt", []byte("self edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !fired {
+		t.Error("observer should fire for regular WriteFile after WriteFileExternal")
+	}
+}
+
+func TestMemFS_WriteFileExternalFailurePreservesObserver(t *testing.T) {
+	m := storage.NewMemFS()
+	obs := func(_ string, _ []byte) {}
+	m.OnPostWrite(obs)
+
+	// Write to a missing parent fails (no MkdirAll). Observer must still
+	// be installed after the failure.
+	if err := m.WriteFileExternal("/never/exists/path.txt", []byte("x"), 0o644); err == nil {
+		t.Fatal("expected error writing to missing parent")
+	}
+	// Install a marker and verify it sticks (implies restoration happened).
+	var fired bool
+	m.OnPostWrite(func(_ string, _ []byte) { fired = true })
+	if err := m.WriteFile("/ok.txt", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !fired {
+		t.Error("observer set after WriteFileExternal failure did not fire")
+	}
+}

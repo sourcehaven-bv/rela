@@ -188,7 +188,7 @@ func TestClassifyReadError(t *testing.T) {
 
 	other := errors.New("some other error")
 	passthrough := classifyReadError("REQ-005", other)
-	if passthrough != other {
+	if !errors.Is(passthrough, other) {
 		t.Errorf("unknown errors should pass through unchanged, got %v", passthrough)
 	}
 }
