@@ -56,6 +56,118 @@ Creates:
 
 ---
 
+### rela keys
+
+Manage at-rest encryption for the project. See the [encryption guide](encryption.md) for the full
+threat model, file layout, and crash-safety guarantees.
+
+A repo is encryption-enabled when `.rela/encryption.yaml` is present. Every entity, relation,
+attachment, and derived-cache file on disk is then an age blob (`filippo.io/age`); `metamodel.yaml`
+and templates stay cleartext. The private identity is resolved from `$RELA_KEY_FILE` →
+`.rela/key` → `~/.config/rela/key`.
+
+#### rela keys generate
+
+Generate a fresh age keypair.
+
+```bash
+rela keys generate <name> --out <dir>
+```
+
+**Arguments:**
+
+- `name` - Identity stem, used for `<name>.pub` and `<name>.key` filenames
+
+**Flags:**
+
+| Flag    | Description                                                  |
+| ------- | ------------------------------------------------------------ |
+| `--out` | Target directory (created if missing). Required.             |
+
+Writes two files in `<dir>`: `<name>.pub` (age public key, committable) and `<name>.key`
+(private identity, chmod 0600, **never** commit). Does not require a rela project.
+
+#### rela keys init
+
+Enable at-rest encryption on the current project. Refuses to run if the project is already
+encrypted or contains any sealed file.
+
+```bash
+rela keys init --recipient <name> --pub <age1...> [--identity <path>]
+```
+
+**Flags:**
+
+| Flag          | Description                                                        |
+| ------------- | ------------------------------------------------------------------ |
+| `--recipient` | Filename stem for the first recipient. Required.                   |
+| `--pub`       | Age public key (`age1...`). Required.                              |
+| `--identity`  | Path to the private identity file to copy into `.rela/key`.        |
+
+Seals every file under `entities/`, `relations/`, and `attachments/` in place via `temp + rename`.
+Writes `.rela/encryption.yaml` and `<repo>/keys/<name>.pub`.
+
+#### rela keys add
+
+Add a recipient and re-encrypt every data file.
+
+```bash
+rela keys add <name> --pub <age1...>
+```
+
+**Arguments:**
+
+- `name` - Filename stem for the new recipient
+
+**Flags:**
+
+| Flag    | Description                             |
+| ------- | --------------------------------------- |
+| `--pub` | Age public key (`age1...`). Required.   |
+
+Two-phase rewrap: writes every `<path>.rewrap.new` sealed for the expanded recipient set,
+then renames. The local identity must be a current recipient (needed to unseal existing files).
+
+#### rela keys remove
+
+Remove a recipient and re-encrypt every data file under the reduced set.
+
+```bash
+rela keys remove <name>
+```
+
+**Arguments:**
+
+- `name` - Filename stem of the recipient to remove
+
+Refuses to remove the last recipient (use `rela keys decrypt` instead). The removed recipient
+retains access to any file they previously read and copied locally — cryptography cannot enforce
+forgetting.
+
+#### rela keys decrypt
+
+Disable encryption: unseal every data file, remove the `encryption.yaml` marker, and delete the
+recipient `*.pub` files. Other contents of `keys/` (README, subdirs) are left alone.
+
+```bash
+rela keys decrypt
+```
+
+Requires a local identity that matches one of the current recipients.
+
+#### rela keys status
+
+Show encryption status and recipient list.
+
+```bash
+rela keys status
+```
+
+For an encrypted repo, reports the recipient count and lists each recipient plus their age public
+key. The local user's recipient is marked `(you)`.
+
+---
+
 ### rela create
 
 Create a new entity.
