@@ -5,7 +5,7 @@ title: Fix misfiled entity files in docs-project/entities/
 kind: chore
 priority: medium
 effort: xs
-status: review
+status: done
 ---
 
 In this repo's `docs-project/` rela instance, entity files are split across
