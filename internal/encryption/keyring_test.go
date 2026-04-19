@@ -1,212 +1,148 @@
 package encryption
 
 import (
-	"bytes"
-	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 )
 
-func writePubKey(t *testing.T, dir, name string) *Keypair {
+// writeKeyring sets up a keysDir and (optionally) an identity file,
+// returning their paths. Used by LoadKeyring tests.
+func writeKeyring(t *testing.T, pubs map[string]Recipient, id Identity) (keysDir, idPath string) {
 	t.Helper()
-	k := mustGenerate(t)
-	pemBytes, err := MarshalPublicKeyPEM(k.PublicKey())
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, name+".pub")
-	if err := os.WriteFile(path, pemBytes, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return k
-}
-
-func writePrivKey(t *testing.T, path string, k *Keypair) {
-	t.Helper()
-	pemBytes, err := MarshalPrivateKeyPEM(k)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestLoadKeyring_Empty(t *testing.T) {
 	dir := t.TempDir()
+	for name, r := range pubs {
+		if err := os.WriteFile(filepath.Join(dir, name+".pub"), []byte(r.String()+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if id != nil {
+		idPath = filepath.Join(dir, "local.key")
+		if err := os.WriteFile(idPath, []byte(id.(*x25519Identity).i.String()+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir, idPath
+}
+
+func TestLoadKeyring_Basic(t *testing.T) {
+	alice := newTestIdentity(t)
+	bob := newTestIdentity(t)
+	dir, idPath := writeKeyring(t, map[string]Recipient{
+		"alice": alice.PublicRecipient(),
+		"bob":   bob.PublicRecipient(),
+	}, alice)
+
+	kr, err := LoadKeyring(dir, idPath)
+	if err != nil {
+		t.Fatalf("LoadKeyring: %v", err)
+	}
+	if !kr.HasIdentity() {
+		t.Fatal("HasIdentity = false, want true")
+	}
+	if kr.LocalName() != "alice" {
+		t.Errorf("LocalName = %q, want alice", kr.LocalName())
+	}
+	if got := kr.RecipientNames(); len(got) != 2 || got[0] != "alice" || got[1] != "bob" {
+		t.Errorf("RecipientNames = %v, want [alice bob] sorted", got)
+	}
+}
+
+func TestLoadKeyring_NoIdentity(t *testing.T) {
+	alice := newTestIdentity(t)
+	dir, _ := writeKeyring(t, map[string]Recipient{"alice": alice.PublicRecipient()}, nil)
 	kr, err := LoadKeyring(dir, "")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("LoadKeyring: %v", err)
 	}
-	if got := kr.Identities(); len(got) != 0 {
-		t.Fatalf("Identities = %v, want empty", got)
+	if kr.HasIdentity() {
+		t.Error("HasIdentity = true, want false")
 	}
-	if kr.HasPrivateKey() {
-		t.Fatal("HasPrivateKey should be false")
+	if kr.LocalName() != "" {
+		t.Errorf("LocalName = %q, want empty", kr.LocalName())
 	}
 }
 
-func TestLoadKeyring_NonexistentDir(t *testing.T) {
-	kr, err := LoadKeyring(filepath.Join(t.TempDir(), "missing"), "")
+func TestLoadKeyring_OrphanIdentity(t *testing.T) {
+	// Identity doesn't correspond to any listed recipient -> LocalName is "".
+	alice := newTestIdentity(t)
+	orphan := newTestIdentity(t)
+	dir, idPath := writeKeyring(t, map[string]Recipient{"alice": alice.PublicRecipient()}, orphan)
+	kr, err := LoadKeyring(dir, idPath)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("LoadKeyring: %v", err)
 	}
-	if len(kr.Identities()) != 0 {
-		t.Fatal("missing dir should yield empty recipients")
+	if !kr.HasIdentity() {
+		t.Fatal("HasIdentity = false, want true")
+	}
+	if kr.LocalName() != "" {
+		t.Errorf("LocalName = %q, want empty (orphan identity)", kr.LocalName())
 	}
 }
 
-func TestLoadKeyring_EmptyKeysDirArgument(t *testing.T) {
-	kr, err := LoadKeyring("", "")
+func TestLoadKeyring_MissingKeysDir(t *testing.T) {
+	kr, err := LoadKeyring(filepath.Join(t.TempDir(), "nope"), "")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("LoadKeyring should tolerate missing keys dir: %v", err)
 	}
-	if len(kr.Identities()) != 0 {
-		t.Fatal("empty keysDir arg should skip load")
+	if n := len(kr.RecipientNames()); n != 0 {
+		t.Errorf("got %d recipients, want 0", n)
 	}
 }
 
-func TestLoadKeyring_SingleRecipient(t *testing.T) {
+func TestLoadKeyring_MalformedPubFile(t *testing.T) {
 	dir := t.TempDir()
-	writePubKey(t, dir, "alice")
+	if err := os.WriteFile(filepath.Join(dir, "bob.pub"), []byte("not-a-recipient\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadKeyring(dir, ""); err == nil {
+		t.Fatal("LoadKeyring with malformed pub file should error")
+	}
+}
+
+func TestLoadKeyring_MalformedIdentity(t *testing.T) {
+	alice := newTestIdentity(t)
+	dir, _ := writeKeyring(t, map[string]Recipient{"alice": alice.PublicRecipient()}, nil)
+	idPath := filepath.Join(dir, "bad.key")
+	if err := os.WriteFile(idPath, []byte("garbage\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadKeyring(dir, idPath); err == nil {
+		t.Fatal("LoadKeyring with malformed identity should error")
+	}
+}
+
+func TestLoadKeyring_PubFileWithCommentLine(t *testing.T) {
+	alice := newTestIdentity(t)
+	dir := t.TempDir()
+	content := "# alice's pubkey\n" + alice.PublicRecipient().String() + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "alice.pub"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	kr, err := LoadKeyring(dir, "")
 	if err != nil {
-		t.Fatal(err)
-	}
-	got := kr.Identities()
-	if !reflect.DeepEqual(got, []string{"alice"}) {
-		t.Fatalf("Identities = %v, want [alice]", got)
+		t.Fatalf("LoadKeyring: %v", err)
 	}
 	if _, ok := kr.Recipient("alice"); !ok {
-		t.Fatal("alice missing")
-	}
-	if _, ok := kr.Recipient("bob"); ok {
-		t.Fatal("bob should not exist")
+		t.Error("Recipient(alice) not found")
 	}
 }
 
-func TestLoadKeyring_ManyRecipients_Sorted(t *testing.T) {
-	dir := t.TempDir()
-	for _, name := range []string{"charlie", "alice", "bob"} {
-		writePubKey(t, dir, name)
+func TestLoadKeyring_IgnoresNonPubFiles(t *testing.T) {
+	alice := newTestIdentity(t)
+	dir, _ := writeKeyring(t, map[string]Recipient{"alice": alice.PublicRecipient()}, nil)
+	// Drop some red-herring files.
+	_ = os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ".DS_Store"), []byte("macos"), 0o644)
+	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
 	}
+
 	kr, err := LoadKeyring(dir, "")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("LoadKeyring: %v", err)
 	}
-	got := kr.Identities()
-	want := []string{"alice", "bob", "charlie"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("Identities = %v, want %v", got, want)
-	}
-}
-
-func TestLoadKeyring_IgnoresSubdirsAndNonPub(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "nested"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "readme.md"), []byte("ignore"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".DS_Store"), []byte("ignore"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	writePubKey(t, dir, "alice")
-	kr, err := LoadKeyring(dir, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := kr.Identities(); !reflect.DeepEqual(got, []string{"alice"}) {
-		t.Fatalf("Identities = %v, want [alice]", got)
-	}
-}
-
-func TestLoadKeyring_BadPubFile(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "bad.pub"), []byte("not a PEM"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, err := LoadKeyring(dir, "")
-	if !errors.Is(err, ErrBadPEM) {
-		t.Fatalf("err = %v, want ErrBadPEM", err)
-	}
-}
-
-func TestLoadKeyring_PrivateKey(t *testing.T) {
-	dir := t.TempDir()
-	alice := writePubKey(t, dir, "alice")
-	privPath := filepath.Join(dir, "key")
-	writePrivKey(t, privPath, alice)
-
-	kr, err := LoadKeyring(dir, privPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !kr.HasPrivateKey() {
-		t.Fatal("HasPrivateKey should be true")
-	}
-
-	// End-to-end: wrap for alice, unwrap via keyring.
-	dk, _ := NewDataKey()
-	wrapped, err := WrapKey(dk, alice.PublicKey())
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := kr.Unwrap(wrapped)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, dk) {
-		t.Fatal("unwrap via keyring mismatch")
-	}
-}
-
-func TestLoadKeyring_PrivateKeyMissing(t *testing.T) {
-	dir := t.TempDir()
-	_, err := LoadKeyring(dir, filepath.Join(dir, "does-not-exist"))
-	if err == nil {
-		t.Fatal("expected error for explicit missing private key")
-	}
-}
-
-func TestLoadKeyring_PrivateKeyBadPEM(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "key")
-	if err := os.WriteFile(path, []byte("garbage"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := LoadKeyring(dir, path)
-	if !errors.Is(err, ErrBadPEM) {
-		t.Fatalf("err = %v, want ErrBadPEM", err)
-	}
-}
-
-func TestKeyring_Unwrap_NoPrivateKey(t *testing.T) {
-	dir := t.TempDir()
-	kr, err := LoadKeyring(dir, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = kr.Unwrap(make([]byte, wrappedBlobSize))
-	if !errors.Is(err, ErrNoPrivateKey) {
-		t.Fatalf("err = %v, want ErrNoPrivateKey", err)
-	}
-}
-
-func TestLoadKeyring_NonDirArg(t *testing.T) {
-	// Pass a path that exists but is a file, not a directory, to
-	// trigger a non-ErrNotExist read error (EINVAL / "not a
-	// directory").
-	dir := t.TempDir()
-	file := filepath.Join(dir, "not-a-dir")
-	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, err := LoadKeyring(file, "")
-	if err == nil {
-		t.Fatal("expected error reading a file as a dir")
+	if n := len(kr.RecipientNames()); n != 1 {
+		t.Errorf("got %d recipients, want 1", n)
 	}
 }

@@ -1,67 +1,37 @@
 package encryption
 
-import (
-	"errors"
-	"fmt"
-)
+import "errors"
 
-var (
-	ErrNoPrivateKey = errors.New("encryption: no private key configured")
-	ErrBadPEM       = errors.New("encryption: malformed PEM")
-	ErrBadBlob      = errors.New("encryption: malformed wrapped blob")
-	ErrDecrypt      = errors.New("encryption: decryption failed")
-
-	// ErrNoMatchingKey indicates that none of the wrapped-for identities
-	// corresponded to the local private key. Distinct from ErrDecrypt /
-	// ErrBadBlob (which signal genuine corruption): if the local key
-	// legitimately isn't in the recipient set, the caller is simply not
-	// authorized to read this blob.
-	ErrNoMatchingKey = errors.New("encryption: no matching private key for any recipient")
-)
-
-// Wrapping convention: every constructor wraps its sentinel with %w so
-// callers can use errors.Is. Causes from stdlib or lower layers are
-// stringified with %s rather than wrapped with %w — the sentinel is
-// the public contract; the cause is diagnostic context that we don't
-// promise to keep stable and don't want to expose via errors.As.
-
-func errBadPEM(filename string, cause error) error {
-	if filename == "" {
-		return fmt.Errorf("%w: %s", ErrBadPEM, cause.Error())
-	}
-	return fmt.Errorf("%w: %s: %s", ErrBadPEM, filename, cause.Error())
-}
-
-func errBadPEMType(gotType, wantType string) error {
-	return fmt.Errorf("%w: block type %q, want %q", ErrBadPEM, gotType, wantType)
-}
-
-func errBadPEMLength(gotLen, wantLen int) error {
-	return fmt.Errorf("%w: payload length %d, want %d", ErrBadPEM, gotLen, wantLen)
-}
-
-func errBadBlobMagic() error {
-	return fmt.Errorf("%w: bad magic", ErrBadBlob)
-}
-
-func errBadBlobVersion(got byte) error {
-	return fmt.Errorf("%w: version %d unsupported", ErrBadBlob, got)
-}
-
-func errBadBlobLength(got int) error {
-	return fmt.Errorf("%w: length %d, want %d", ErrBadBlob, got, wrappedBlobSize)
-}
-
-// errDecryptGCM intentionally produces the bare ErrDecrypt sentinel
-// and DROPS its argument. The name encodes the security invariant:
-// an AEAD decryption failure must never be wrapped to carry the
-// underlying cause. Exposing the cause could create a padding-oracle-
-// adjacent side channel even though AEAD itself is safer than CBC —
-// a helpful "wrong-key" distinction tells an attacker whether their
-// guess was structurally plausible. See TestErrDecryptGCM_DoesNotWrapCause.
+// Package error predicates.
 //
-// The unused parameter is kept so call sites read naturally at
-// wrap-call points: `return nil, errDecryptGCM(err)`.
-func errDecryptGCM(_ error) error {
-	return ErrDecrypt
-}
+// Consumers classify errors via these three predicates rather than by
+// comparing against sentinel values. Predicate-only API prevents the
+// prior C1 regression where a call site accidentally collapsed tamper
+// (decrypt failure) into "no matching key" by conflating sentinels.
+
+// ErrNoMatchingKey is returned when no loaded identity matches the
+// recipient list of the sealed blob. The blob is well-formed; the
+// local user simply is not authorized to read it.
+var ErrNoMatchingKey = errors.New("encryption: no matching identity for any recipient")
+
+// ErrCorrupted is returned when a sealed blob is malformed or has been
+// tampered with. AEAD authentication failure, header parse failure,
+// and truncated input all surface as this error.
+var ErrCorrupted = errors.New("encryption: sealed blob is corrupted or malformed")
+
+// ErrNoPrivateKey is returned when Unseal is called but no local
+// identity is loaded at all. Distinct from ErrNoMatchingKey (which
+// means an identity IS loaded, just not one in the recipient set).
+var ErrNoPrivateKey = errors.New("encryption: no private identity loaded")
+
+// IsNoMatchingKey reports whether err indicates the loaded identity
+// is not among the blob's recipients.
+func IsNoMatchingKey(err error) bool { return errors.Is(err, ErrNoMatchingKey) }
+
+// IsCorrupted reports whether err indicates a tampered or malformed
+// sealed blob.
+func IsCorrupted(err error) bool { return errors.Is(err, ErrCorrupted) }
+
+// IsNoPrivateKey reports whether err indicates no local identity is
+// loaded at all.
+func IsNoPrivateKey(err error) bool { return errors.Is(err, ErrNoPrivateKey) }

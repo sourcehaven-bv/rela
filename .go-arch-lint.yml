@@ -107,6 +107,7 @@ vendors:
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
   singleflight: { in: golang.org/x/sync/singleflight }
+  age:         { in: filippo.io/age }
   http2:
     in:
       - golang.org/x/net/http2
@@ -416,8 +417,9 @@ deps:
     mayDependOn:
       - storage
   # cache: pure in-memory utility, no internal deps
-  # encryption: pure leaf — only stdlib (crypto/*, encoding/pem, os). No
-  # internal deps. Keyring is consumed by future fsstore/cli wiring.
+  encryption:
+    canUse:
+      - age
   config:
     mayDependOn:
       - storage

@@ -16,30 +16,32 @@ const (
 )
 
 // LoadFromDir loads a Keyring rooted at projectRoot. Recipients come
-// from <projectRoot>/keys. The private key is resolved in this order:
+// from <projectRoot>/keys. The local identity is resolved in this
+// order:
 //
 //  1. $RELA_KEY_FILE (if set; missing file is an error)
 //  2. <projectRoot>/.rela/key (if present)
 //  3. ~/.config/rela/key (if present)
 //
-// A missing private key is not an error — Keyring.Unwrap returns
-// ErrNoPrivateKey at call time. This lets read-only flows work without
-// a configured key.
+// A missing identity file in positions 2 and 3 is fine; Unseal will
+// return ErrNoPrivateKey at call time. This lets read-only flows
+// inspect an unencrypted repo without a configured key.
 func LoadFromDir(projectRoot string) (*Keyring, error) {
 	keysDir := filepath.Join(projectRoot, projectKeysDir)
 	relaDir := filepath.Join(projectRoot, projectRelaDir)
-	privPath, err := resolvePrivateKeyPath(relaDir, userHomeDir)
+	identityPath, err := resolveIdentityPath(relaDir, userHomeDir)
 	if err != nil {
 		return nil, err
 	}
-	return LoadKeyring(keysDir, privPath)
+	return LoadKeyring(keysDir, identityPath)
 }
 
-// resolvePrivateKeyPath walks the private-key precedence chain and
+// resolveIdentityPath walks the identity-path precedence chain and
 // returns the first path that resolves to an existing file, or "" if
-// none is configured. If $RELA_KEY_FILE is set but the file does not
-// exist, an error is returned.
-func resolvePrivateKeyPath(relaDir string, home func() (string, error)) (string, error) {
+// none is configured. If $RELA_KEY_FILE is set but the target file
+// does not exist, an error is returned (explicit overrides MUST
+// resolve).
+func resolveIdentityPath(relaDir string, home func() (string, error)) (string, error) {
 	if env := os.Getenv(envKeyFile); env != "" {
 		if _, err := os.Stat(env); err != nil {
 			return "", fmt.Errorf("encryption: %s=%q: %w", envKeyFile, env, err)
@@ -54,7 +56,7 @@ func resolvePrivateKeyPath(relaDir string, home func() (string, error)) (string,
 	}
 	h, err := home()
 	if err != nil {
-		return "", nil //nolint:nilerr // no home dir → treat as "no private key configured"
+		return "", nil //nolint:nilerr // no home dir -> treat as "no identity configured"
 	}
 	userPath := filepath.Join(h, ".config", userConfigSubdir, projectKeyFile)
 	if _, err := os.Stat(userPath); err == nil {
@@ -65,6 +67,4 @@ func resolvePrivateKeyPath(relaDir string, home func() (string, error)) (string,
 	return "", nil
 }
 
-func userHomeDir() (string, error) {
-	return os.UserHomeDir()
-}
+func userHomeDir() (string, error) { return os.UserHomeDir() }

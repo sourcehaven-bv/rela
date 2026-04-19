@@ -11,94 +11,73 @@ import (
 
 const pubSuffix = ".pub"
 
-// Keyring holds loaded recipient public keys and, optionally, a local
-// private keypair. The private keypair is never exposed; callers
-// decrypt through Keyring.Unwrap.
-//
-// localIdentity is the identity string whose stored public key matches
-// the loaded private key, or "" when either side is absent or no
-// recipient matches. Computed once at load; used by consumers to
-// attempt only the wrap that should work and surface tamper/corruption
-// errors verbatim (instead of collapsing them into "no matching key").
+// Keyring holds the set of recipient public keys for a rela repo and,
+// optionally, the local identity used to unseal blobs addressed to us.
 type Keyring struct {
-	recipients    map[string]*PublicKey
-	private       *Keypair
-	localIdentity string
+	// recipients maps identity-name ("alice", "bob") to Recipient.
+	// The name is the filename stem of "<name>.pub" under keysDir.
+	recipients map[string]Recipient
+
+	// identity is the loaded private identity, or nil if none.
+	identity Identity
+
+	// localName is the filename-stem whose recipient public key
+	// matches identity. Empty when identity is nil OR when identity
+	// doesn't correspond to any listed recipient. UX affordance only.
+	localName string
 }
 
-// LoadKeyring loads recipients from keysDir and, if privateKeyPath is
-// non-empty, the local private key from that path.
+// LoadKeyring loads recipient pubkeys from every "<name>.pub" file in
+// keysDir, and optionally the local identity from identityPath. A
+// missing keysDir is treated as an empty recipient set; a missing
+// identityPath is treated as "no local identity." A present but
+// unreadable or malformed file is a hard error.
 //
-// keysDir is walked non-recursively. Files ending in ".pub" are parsed
-// as recipient public keys; the filename without the suffix is the
-// identity. Other entries are skipped.
-//
-// Behavior on errors is **fail-fast**: the first unreadable or
-// unparseable ".pub" file aborts the load. The intent is that a
-// broken recipient file in a shared repo should surface loudly rather
-// than silently drop a team member from the recipient set. Duplicate
-// identities (e.g., a case-insensitive filesystem yielding both
-// "Alice.pub" and "alice.pub") are also an error.
-//
-// If privateKeyPath is non-empty but the file is missing, an error is
-// returned — an explicit path should resolve. To indicate "no private
-// key," pass the empty string.
-func LoadKeyring(keysDir, privateKeyPath string) (*Keyring, error) {
-	kr := &Keyring{recipients: make(map[string]*PublicKey)}
+// Use LoadFromDir for the standard project-root layout.
+func LoadKeyring(keysDir, identityPath string) (*Keyring, error) {
+	kr := &Keyring{recipients: make(map[string]Recipient)}
 
 	if err := loadRecipients(kr, keysDir); err != nil {
 		return nil, err
 	}
 
-	if privateKeyPath != "" {
-		data, err := os.ReadFile(privateKeyPath)
+	if identityPath != "" {
+		f, err := os.Open(identityPath)
 		if err != nil {
-			return nil, fmt.Errorf("encryption: read private key: %w", err)
+			return nil, fmt.Errorf("encryption: open identity %s: %w", identityPath, err)
 		}
-		priv, err := ParsePrivateKeyPEM(data)
+		defer f.Close()
+		id, err := ReadIdentity(f)
 		if err != nil {
-			return nil, errBadPEM(filepath.Base(privateKeyPath), err)
+			return nil, fmt.Errorf("encryption: %s: %w", filepath.Base(identityPath), err)
 		}
-		kr.private = priv
-		kr.localIdentity = matchLocalIdentity(kr.recipients, priv.PublicKey())
+		kr.identity = id
+		kr.localName = matchLocalName(kr.recipients, id)
 	}
 
 	return kr, nil
 }
 
-// matchLocalIdentity returns the identity whose stored public key
-// equals pub, or "" if none match. A private key that doesn't
-// correspond to any listed recipient is still a valid configuration —
-// Unwrap will simply return ErrNoMatchingKey.
-func matchLocalIdentity(recipients map[string]*PublicKey, pub *PublicKey) string {
-	for id, rp := range recipients {
-		if rp.equal(pub) {
-			return id
-		}
-	}
-	return ""
-}
-
-// loadRecipients populates kr.recipients from keysDir. Empty keysDir
-// or a missing directory is treated as "no recipients." Broken files
-// and duplicate identities fail the load.
 func loadRecipients(kr *Keyring, keysDir string) error {
 	if keysDir == "" {
 		return nil
 	}
 	entries, err := os.ReadDir(keysDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("encryption: read keys dir: %w", err)
 	}
 	for _, e := range entries {
-		if err := loadRecipient(kr, keysDir, e); err != nil {
+		if err := loadOneRecipient(kr, keysDir, e); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func loadRecipient(kr *Keyring, keysDir string, e os.DirEntry) error {
+func loadOneRecipient(kr *Keyring, keysDir string, e os.DirEntry) error {
 	if e.IsDir() {
 		return nil
 	}
@@ -106,55 +85,87 @@ func loadRecipient(kr *Keyring, keysDir string, e os.DirEntry) error {
 	if !strings.HasSuffix(name, pubSuffix) {
 		return nil
 	}
-	identity := strings.TrimSuffix(name, pubSuffix)
-	if _, dup := kr.recipients[identity]; dup {
-		return fmt.Errorf("encryption: duplicate recipient identity %q", identity)
+	stem := strings.TrimSuffix(name, pubSuffix)
+	if _, dup := kr.recipients[stem]; dup {
+		return fmt.Errorf("encryption: duplicate recipient identity %q", stem)
 	}
 	data, err := os.ReadFile(filepath.Join(keysDir, name))
 	if err != nil {
 		return fmt.Errorf("encryption: read %s: %w", name, err)
 	}
-	pub, err := ParsePublicKeyPEM(data)
+	// Each .pub file contains one age recipient as a single line
+	// (possibly with a comment line above it, which ParseRecipient
+	// cannot handle). Trim to the first non-empty non-comment line.
+	line := firstContentLine(data)
+	r, err := ParseRecipient(line)
 	if err != nil {
-		return errBadPEM(name, err)
+		return fmt.Errorf("encryption: %s: %w", name, err)
 	}
-	kr.recipients[identity] = pub
+	kr.recipients[stem] = r
 	return nil
 }
 
-// Recipient looks up a recipient public key by identity.
-func (kr *Keyring) Recipient(id string) (*PublicKey, bool) {
-	p, ok := kr.recipients[id]
-	return p, ok
-}
-
-// Identities returns the recipient identities in sorted order.
-func (kr *Keyring) Identities() []string {
-	ids := make([]string, 0, len(kr.recipients))
-	for id := range kr.recipients {
-		ids = append(ids, id)
+// firstContentLine returns the first non-empty, non-comment line of b.
+// Matches age's ParseRecipients convention so the same .pub files work
+// with the age CLI.
+func firstContentLine(b []byte) string {
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return line
 	}
-	sort.Strings(ids)
-	return ids
+	return ""
 }
 
-// HasPrivateKey reports whether a local private key was loaded.
-func (kr *Keyring) HasPrivateKey() bool {
-	return kr.private != nil
-}
-
-// LocalIdentity returns the identity whose stored recipient public
-// key corresponds to the loaded private key, or "" when either the
-// private key is absent or it doesn't match any known recipient.
-func (kr *Keyring) LocalIdentity() string {
-	return kr.localIdentity
-}
-
-// Unwrap decrypts a wrapped data key using the loaded private key.
-// Returns ErrNoPrivateKey when no private key is loaded.
-func (kr *Keyring) Unwrap(wrapped []byte) ([]byte, error) {
-	if kr.private == nil {
-		return nil, ErrNoPrivateKey
+// matchLocalName returns the recipient name whose public key equals
+// identity's public recipient, or "" if none match.
+func matchLocalName(recipients map[string]Recipient, identity Identity) string {
+	pub := identity.PublicRecipient().String()
+	for name, r := range recipients {
+		if r.String() == pub {
+			return name
+		}
 	}
-	return UnwrapKey(wrapped, kr.private)
+	return ""
 }
+
+// Recipients returns all loaded recipients (public keys). Order is
+// sorted by name so callers that feed this to age.Encrypt get
+// deterministic output.
+func (kr *Keyring) Recipients() []Recipient {
+	names := kr.RecipientNames()
+	out := make([]Recipient, 0, len(names))
+	for _, n := range names {
+		out = append(out, kr.recipients[n])
+	}
+	return out
+}
+
+// RecipientNames returns the sorted list of recipient identity names.
+func (kr *Keyring) RecipientNames() []string {
+	names := make([]string, 0, len(kr.recipients))
+	for n := range kr.recipients {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Recipient returns the recipient registered under name, if any.
+func (kr *Keyring) Recipient(name string) (Recipient, bool) {
+	r, ok := kr.recipients[name]
+	return r, ok
+}
+
+// Identity returns the loaded local identity, or nil.
+func (kr *Keyring) Identity() Identity { return kr.identity }
+
+// HasIdentity reports whether a local identity was loaded.
+func (kr *Keyring) HasIdentity() bool { return kr.identity != nil }
+
+// LocalName returns the recipient name whose public key corresponds
+// to the loaded identity, or "" when either no identity is loaded or
+// the loaded identity isn't in the recipient set.
+func (kr *Keyring) LocalName() string { return kr.localName }
