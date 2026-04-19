@@ -58,9 +58,9 @@ func TestFSFactory_EncryptedModeInstallsAgeCrypto(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "keys", "alice.pub"),
 		[]byte(id.PublicRecipient().String()+"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".rela", "key"),
-		[]byte(encryption.IdentitySecretForTest(id)+"\n"), 0o600))
+		[]byte(encryption.MarshalIdentity(id)+"\n"), 0o600))
 	require.NoError(t, os.WriteFile(
-		filepath.Join(root, ".rela", app.EncryptionConfigFile),
+		filepath.Join(root, ".rela", encryption.ConfigFileName),
 		[]byte("recipients:\n  - alice\n"), 0o644))
 	t.Setenv("RELA_KEY_FILE", "")
 

@@ -24,16 +24,6 @@ type Crypto interface {
 	// function; for the real age implementation this delegates to
 	// encryption.Unseal with the loaded local identity.
 	Unseal(blob []byte) ([]byte, error)
-
-	// LooksSealed reports whether blob begins with a sealed-blob
-	// envelope header. Used by the partial-encryption invariant
-	// check at FSStore.New. Must be cheap and side-effect-free; it
-	// is called on every data file during scan.
-	LooksSealed(blob []byte) bool
-
-	// Enabled reports whether this Crypto actually seals (true) or
-	// is the identity/no-op variant (false).
-	Enabled() bool
 }
 
 // identityCrypto is installed when the repo is not encryption-enabled.
@@ -48,8 +38,16 @@ func IdentityCrypto() Crypto { return identityCrypto{} }
 
 func (identityCrypto) Seal(p []byte) ([]byte, error)   { return p, nil }
 func (identityCrypto) Unseal(p []byte) ([]byte, error) { return p, nil }
-func (identityCrypto) LooksSealed([]byte) bool         { return false }
-func (identityCrypto) Enabled() bool                   { return false }
+
+// isCleartextMode reports whether c is the no-op identityCrypto.
+// Used by verifyEncryptionConsistency to choose which invariant to
+// check. Kept as a free function rather than an interface method
+// because the mode-selection concern is specific to fsstore's open
+// path and does not belong in the Crypto contract.
+func isCleartextMode(c Crypto) bool {
+	_, ok := c.(identityCrypto)
+	return ok
+}
 
 // ageCrypto wraps an encryption.Keyring into a Crypto. Writes seal
 // for every loaded recipient; reads unseal with the loaded local
@@ -73,7 +71,3 @@ func (a *ageCrypto) Seal(p []byte) ([]byte, error) {
 func (a *ageCrypto) Unseal(blob []byte) ([]byte, error) {
 	return encryption.Unseal(blob, a.kr.Identity())
 }
-
-func (*ageCrypto) LooksSealed(blob []byte) bool { return encryption.LooksSealed(blob) }
-
-func (*ageCrypto) Enabled() bool { return true }

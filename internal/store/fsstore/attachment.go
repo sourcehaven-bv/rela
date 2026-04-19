@@ -42,12 +42,8 @@ func (s *FSStore) AttachFile(_ context.Context, entityID, property, fileName str
 	}
 
 	path := filepath.Join(dir, fileName)
-	sealed, sealErr := s.crypto.Seal(data)
-	if sealErr != nil {
-		return sealErr
-	}
-	if writeErr := s.fs.WriteFile(path, sealed, 0o644); writeErr != nil {
-		return writeErr
+	if err := s.writeFileSealed(path, data, 0o644); err != nil {
+		return err
 	}
 
 	s.attachments[key] = attachMeta{

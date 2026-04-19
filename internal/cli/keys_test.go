@@ -49,7 +49,7 @@ func writeRecipientsAndIdentity(
 	if err := os.MkdirAll(filepath.Dir(idPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(idPath, []byte(encryption.IdentitySecretForTest(local)+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(idPath, []byte(encryption.MarshalIdentity(local)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	kr, err := encryption.LoadKeyring(keysDir, idPath)

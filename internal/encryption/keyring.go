@@ -18,6 +18,14 @@ type Keyring struct {
 	// The name is the filename stem of "<name>.pub" under keysDir.
 	recipients map[string]Recipient
 
+	// sortedNames is the sorted list of recipient names. Computed
+	// once at load time; read on every Seal call without mutating.
+	sortedNames []string
+
+	// sortedRecipients mirrors sortedNames; same order. Cached so
+	// Recipients() is an O(1) slice copy instead of O(n log n).
+	sortedRecipients []Recipient
+
 	// identity is the loaded private identity, or nil if none.
 	identity Identity
 
@@ -55,7 +63,24 @@ func LoadKeyring(keysDir, identityPath string) (*Keyring, error) {
 		kr.localName = matchLocalName(kr.recipients, id)
 	}
 
+	kr.buildSortedIndex()
 	return kr, nil
+}
+
+// buildSortedIndex populates the sortedNames / sortedRecipients
+// caches from the recipients map. Called once at load; the keyring
+// is immutable after construction, so subsequent Recipients() calls
+// return the cached slice.
+func (kr *Keyring) buildSortedIndex() {
+	kr.sortedNames = make([]string, 0, len(kr.recipients))
+	for n := range kr.recipients {
+		kr.sortedNames = append(kr.sortedNames, n)
+	}
+	sort.Strings(kr.sortedNames)
+	kr.sortedRecipients = make([]Recipient, 0, len(kr.sortedNames))
+	for _, n := range kr.sortedNames {
+		kr.sortedRecipients = append(kr.sortedRecipients, kr.recipients[n])
+	}
 }
 
 func loadRecipients(kr *Keyring, keysDir string) error {
@@ -131,27 +156,15 @@ func matchLocalName(recipients map[string]Recipient, identity Identity) string {
 	return ""
 }
 
-// Recipients returns all loaded recipients (public keys). Order is
-// sorted by name so callers that feed this to age.Encrypt get
-// deterministic output.
-func (kr *Keyring) Recipients() []Recipient {
-	names := kr.RecipientNames()
-	out := make([]Recipient, 0, len(names))
-	for _, n := range names {
-		out = append(out, kr.recipients[n])
-	}
-	return out
-}
+// Recipients returns all loaded recipients in deterministic
+// name-sorted order so age.Encrypt produces stable stanza ordering
+// across runs. Returns the internal cached slice; callers must not
+// mutate it.
+func (kr *Keyring) Recipients() []Recipient { return kr.sortedRecipients }
 
-// RecipientNames returns the sorted list of recipient identity names.
-func (kr *Keyring) RecipientNames() []string {
-	names := make([]string, 0, len(kr.recipients))
-	for n := range kr.recipients {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
+// RecipientNames returns the sorted list of recipient identity
+// names. Returns the internal cached slice; callers must not mutate.
+func (kr *Keyring) RecipientNames() []string { return kr.sortedNames }
 
 // Recipient returns the recipient registered under name, if any.
 func (kr *Keyring) Recipient(name string) (Recipient, bool) {

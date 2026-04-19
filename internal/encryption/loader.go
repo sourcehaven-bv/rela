@@ -13,6 +13,12 @@ const (
 	projectKeyFile   = "key"
 	projectKeysDir   = "keys"
 	userConfigSubdir = "rela"
+
+	// ConfigFileName is the filename under .rela/ whose presence
+	// flips a rela project into encryption-enabled mode. Its contents
+	// are advisory (a recipient-name list for human inspection); the
+	// authoritative recipients live as .pub files under <root>/keys.
+	ConfigFileName = "encryption.yaml"
 )
 
 // LoadFromDir loads a Keyring rooted at projectRoot. Recipients come

@@ -18,10 +18,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
 
-// EncryptionConfigFile is the filename under .rela/ whose presence
-// turns on at-rest encryption for a rela project.
-const EncryptionConfigFile = "encryption.yaml"
-
 // FSFactory is a store.Factory that opens filesystem-backed stores
 // (fsstore) rooted at the given project paths. Each OpenStore call
 // returns a fresh, independent store — callers that want a single
@@ -57,7 +53,7 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 // loadCrypto returns the Crypto to pass to fsstore.New, based on the
 // presence of .rela/encryption.yaml.
 func (f *FSFactory) loadCrypto() (fsstore.Crypto, error) {
-	cfgPath := filepath.Join(f.Paths.CacheDir, EncryptionConfigFile)
+	cfgPath := filepath.Join(f.Paths.CacheDir, encryption.ConfigFileName)
 	if _, err := os.Stat(cfgPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fsstore.IdentityCrypto(), nil

@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/encryption"
 )
 
 // Errors returned by verifyEncryptionConsistency when fsstore.New
@@ -42,35 +44,33 @@ const offendingFilesLimit = 5
 //   - Crypto is a real age crypto (encryption enabled) AND any data
 //     file does NOT look sealed -> ErrRepoHasCleartextFilesButEncryptionEnabled.
 //
-// The scan reads only the first SealedMagic-worth of bytes per file.
+// The scan peeks only the first bytes of each file via peekHeader.
 func (s *FSStore) verifyEncryptionConsistency() error {
 	var offenders []string
-	expectSealed := s.crypto.Enabled()
+	expectSealed := !isCleartextMode(s.crypto)
+	const peek = 64 // large enough for encryption.SealedMagic
 
 	check := func(path string) error {
-		// Peek just enough bytes to check for the age header.
-		// s.fs.ReadFile reads the whole file; for very small files
-		// this is cheap, and most entity/relation files are a few
-		// KiB at most. Optimize later if needed.
-		data, err := s.fs.ReadFile(path)
+		head, err := peekHeader(s.fs, path, peek)
 		if err != nil {
 			return err
 		}
-		looksSealed := len(data) > 0 && looksLikeAgeBlob(data)
-		if expectSealed && !looksSealed {
+		looksSealed := encryption.LooksSealed(head)
+		if expectSealed != looksSealed {
 			offenders = append(offenders, path)
 		}
-		if !expectSealed && looksSealed {
-			offenders = append(offenders, path)
+		if len(offenders) >= offendingFilesLimit {
+			return errStopVerify
 		}
 		return nil
 	}
 
 	for _, dir := range s.dataDirsToVerify() {
-		if err := walkMarkdownFiles(s.fs, dir, check); err != nil {
+		err := walkForVerification(s.fs, dir, check)
+		if err != nil && !errors.Is(err, errStopVerify) {
 			return fmt.Errorf("verify encryption consistency: %w", err)
 		}
-		if len(offenders) >= offendingFilesLimit {
+		if errors.Is(err, errStopVerify) {
 			break
 		}
 	}
@@ -101,26 +101,41 @@ func (s *FSStore) dataDirsToVerify() []string {
 	return dirs
 }
 
-// looksLikeAgeBlob is a package-local copy of
-// encryption.LooksSealed. Duplicated so the consistency check
-// doesn't depend on a live Crypto (needed for the "we're in
-// cleartext mode and want to detect sealed files" case). Kept in
-// sync via the constant.
-const ageMagic = "age-encryption.org/v1\n"
+// errStopVerify signals from a check callback that the walk should
+// stop (offender list hit its cap). Unwrapped and ignored by the
+// top-level caller; not a real error.
+var errStopVerify = errors.New("stop verify walk")
 
-func looksLikeAgeBlob(b []byte) bool {
-	return strings.HasPrefix(string(b), ageMagic)
+// peekHeader reads at most n bytes from path. Used by the
+// consistency check to classify a file without reading its body.
+func peekHeader(fsys fsReader, path string, n int) ([]byte, error) {
+	data, err := fsys.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	// The storage.FS interface is byte-slice based; a streaming
+	// read-first-N is not available. For small entity files this is
+	// fine; for large attachments it's wasted I/O — acceptable v1
+	// cost, optimize if profiling flags it.
+	if len(data) > n {
+		return data[:n], nil
+	}
+	return data, nil
 }
 
-// walkMarkdownFiles walks dir and invokes fn on every regular .md
-// file. Attachment binaries have arbitrary names, so the walk
-// accepts all regular files in attachment subtrees. A missing dir
-// is not an error (empty repo).
-func walkMarkdownFiles(fsys interface {
+// fsReader is the narrow FS surface this file needs. Declared here
+// to avoid depending on the full storage.FS interface in the walk
+// functions' signatures.
+type fsReader interface {
 	Stat(string) (fs.FileInfo, error)
 	ReadDir(string) ([]fs.DirEntry, error)
 	ReadFile(string) ([]byte, error)
-}, dir string, fn func(string) error) error {
+}
+
+// walkForVerification walks dir and invokes fn on every regular
+// file (not just .md; attachments have arbitrary names). A missing
+// dir is not an error. Skips temp/backup files and dotfiles.
+func walkForVerification(fsys fsReader, dir string, fn func(string) error) error {
 	if _, err := fsys.Stat(dir); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -132,11 +147,7 @@ func walkMarkdownFiles(fsys interface {
 
 // walkRecursive is a minimal recursive walker using the fsstore FS
 // interface. Skips temp/backup files (.new, .bak, *~, dotfiles).
-func walkRecursive(fsys interface {
-	Stat(string) (fs.FileInfo, error)
-	ReadDir(string) ([]fs.DirEntry, error)
-	ReadFile(string) ([]byte, error)
-}, dir string, fn func(string) error) error {
+func walkRecursive(fsys fsReader, dir string, fn func(string) error) error {
 	entries, err := fsys.ReadDir(dir)
 	if err != nil {
 		return err

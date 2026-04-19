@@ -39,9 +39,9 @@ func mustGenerateIdentity(t *testing.T) encryption.Identity {
 // tests can write it to a key file and load it via LoadKeyring.
 func identityPrivate(t *testing.T, id encryption.Identity) string {
 	t.Helper()
-	s := encryption.IdentitySecretForTest(id)
+	s := encryption.MarshalIdentity(id)
 	if s == "" {
-		t.Fatal("IdentitySecretForTest returned empty")
+		t.Fatal("MarshalIdentity returned empty")
 	}
 	return s
 }

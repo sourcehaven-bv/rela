@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/encryption"
 )
 
@@ -96,7 +95,7 @@ var keysGenerateCmd = &cobra.Command{
 			return err
 		}
 		// Private key is sensitive; chmod 0600.
-		if err := os.WriteFile(keyPath, []byte(encryption.IdentitySecretForTest(id)+"\n"), keyFilePerm); err != nil {
+		if err := os.WriteFile(keyPath, []byte(encryption.MarshalIdentity(id)+"\n"), keyFilePerm); err != nil {
 			return err
 		}
 		out.WriteSuccess("Generated age identity %q", name)
@@ -198,17 +197,52 @@ var keysDecryptCmd = &cobra.Command{
 			return err
 		}
 
-		// Remove the encryption marker and the keys dir.
-		if err := os.Remove(filepath.Join(projectCtx.CacheDir, app.EncryptionConfigFile)); err != nil {
+		// Remove the encryption marker and the recipient pubkey files.
+		// Only remove files we own (*.pub); leave any other contents
+		// of keys/ alone (README, user-organized subdirs, etc.).
+		if err := os.Remove(filepath.Join(projectCtx.CacheDir, encryption.ConfigFileName)); err != nil {
 			return err
 		}
-		if err := os.RemoveAll(filepath.Join(projectCtx.Root, "keys")); err != nil {
+		if err := removeRecipientPubFiles(filepath.Join(projectCtx.Root, "keys")); err != nil {
 			return err
 		}
 
 		out.WriteSuccess("Encryption disabled. Repo is now cleartext.")
 		return nil
 	},
+}
+
+// removeRecipientPubFiles deletes every "*.pub" file under keysDir
+// and removes the directory itself only if it becomes empty. Any
+// non-pub files or subdirectories are left untouched — users sometimes
+// keep README.md, .gitignore, or offline-signed keys in this dir.
+func removeRecipientPubFiles(keysDir string) error {
+	entries, err := os.ReadDir(keysDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	remainingFiles := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			remainingFiles++
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".pub") {
+			if err := os.Remove(filepath.Join(keysDir, e.Name())); err != nil {
+				return err
+			}
+			continue
+		}
+		remainingFiles++
+	}
+	if remainingFiles == 0 {
+		// Directory is empty now; clean up.
+		_ = os.Remove(keysDir)
+	}
+	return nil
 }
 
 // --- add ---
@@ -357,7 +391,7 @@ func validateRecipientName(name string) error {
 }
 
 func repoIsEncrypted() (bool, error) {
-	_, err := os.Stat(filepath.Join(projectCtx.CacheDir, app.EncryptionConfigFile))
+	_, err := os.Stat(filepath.Join(projectCtx.CacheDir, encryption.ConfigFileName))
 	if err == nil {
 		return true, nil
 	}
@@ -390,6 +424,11 @@ func ensureEncryptedRepo() error {
 }
 
 func copyFile(src, dst string, perm os.FileMode) error {
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("refusing to overwrite existing file: %s", dst)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
@@ -397,12 +436,20 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, perm)
+	return writeAtomic(dst, data, perm)
 }
 
-// sealAllFiles walks the data dirs under root and seals every
-// cleartext file for recipients. Used by `rela keys init` and
-// exposed as a package-private function for testing.
+// sealAllFiles transitions a cleartext repo to sealed. Walks data
+// dirs under root; seals every cleartext file for recipients. Any
+// already-sealed file aborts the command (the invariant is "this
+// repo is entirely cleartext before init", so a sealed file is a
+// sign the repo is half-migrated from a prior interrupted run).
+//
+// Writes are atomic per file (temp + rename), so a crash mid-walk
+// leaves an all-or-nothing-per-file state: some files fully sealed
+// under recipients, the rest still cleartext. The repo is in a
+// partial state; recovery is manual (delete .rela/encryption.yaml
+// if present, re-run `keys init`).
 func sealAllFiles(root string, recipients []encryption.Recipient) error {
 	return walkDataFiles(root, func(path string) error {
 		raw, err := os.ReadFile(path)
@@ -410,17 +457,18 @@ func sealAllFiles(root string, recipients []encryption.Recipient) error {
 			return err
 		}
 		if encryption.LooksSealed(raw) {
-			return nil // already sealed, skip
+			return fmt.Errorf("file %s is already sealed (repo may be half-migrated)", path)
 		}
 		sealed, err := encryption.Seal(raw, recipients)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(path, sealed, 0o644)
+		return writeAtomic(path, sealed, 0o644)
 	})
 }
 
-// unsealAllFiles walks the same set and unseals every sealed file.
+// unsealAllFiles walks the same set and unseals every sealed file,
+// using kr's local identity. Per-file atomic writes.
 func unsealAllFiles(root string, kr *encryption.Keyring) error {
 	return walkDataFiles(root, func(path string) error {
 		raw, err := os.ReadFile(path)
@@ -432,17 +480,31 @@ func unsealAllFiles(root string, kr *encryption.Keyring) error {
 		}
 		cleartext, err := encryption.Unseal(raw, kr.Identity())
 		if err != nil {
-			return err
+			return fmt.Errorf("unseal %s: %w", path, err)
 		}
-		return os.WriteFile(path, cleartext, 0o644)
+		return writeAtomic(path, cleartext, 0o644)
 	})
 }
 
-// reencryptAll unseals every file using kr's identity and reseals it
-// for kr's full recipient list. Used by `rela keys add/remove`.
+// reencryptAll rewraps every sealed file under kr's full recipient
+// list. Two-phase: first pass writes every path.rewrap.new sealed
+// under the new recipients; second pass renames each .rewrap.new to
+// its final path. A crash between phases leaves every .rewrap.new
+// as an orphan sweepable on next open (fsstore's cleanupTempFiles
+// already deletes ".new" suffixed files).
+//
+// This keeps the repo in a recoverable state even if the walk is
+// interrupted: before the rename phase, every final file is still
+// sealed for the pre-rewrap recipient set (no data loss); after
+// partial rename, fsstore can still open the repo (the new-recipient
+// files decrypt for the new identity; the old-recipient files
+// decrypt for anyone who was a recipient both before and after).
 func reencryptAll(root string, kr *encryption.Keyring) error {
 	recipients := kr.Recipients()
-	return walkDataFiles(root, func(path string) error {
+
+	// Phase 1: write .rewrap.new sealed under the new recipient set.
+	var rewrapPaths []string
+	err := walkDataFiles(root, func(path string) error {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -458,8 +520,42 @@ func reencryptAll(root string, kr *encryption.Keyring) error {
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(path, sealed, 0o644)
+		rewrapPath := path + ".rewrap.new"
+		if err := os.WriteFile(rewrapPath, sealed, 0o644); err != nil {
+			return err
+		}
+		rewrapPaths = append(rewrapPaths, path)
+		return nil
 	})
+	if err != nil {
+		// Roll back phase-1 partial: delete every .rewrap.new we wrote.
+		for _, p := range rewrapPaths {
+			_ = os.Remove(p + ".rewrap.new")
+		}
+		return err
+	}
+
+	// Phase 2: rename each .rewrap.new -> path. These renames are
+	// individually atomic on POSIX; as a batch they're not atomic,
+	// but every path either holds the new sealed bytes or the old
+	// sealed bytes, never garbage.
+	for _, p := range rewrapPaths {
+		if err := os.Rename(p+".rewrap.new", p); err != nil {
+			return fmt.Errorf("rename %s: %w", p, err)
+		}
+	}
+	return nil
+}
+
+// writeAtomic writes data to path via a temp file and rename. If
+// the function returns without error, path either holds data (on
+// success) or its previous contents (on failure).
+func writeAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".new"
+	if err := os.WriteFile(tmp, data, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // walkDataFiles invokes fn for every regular file under root's
@@ -515,7 +611,7 @@ func writeEncryptionConfig(cacheDir string, recipients []string) error {
 		return err
 	}
 	return os.WriteFile(
-		filepath.Join(cacheDir, app.EncryptionConfigFile),
+		filepath.Join(cacheDir, encryption.ConfigFileName),
 		[]byte(buf.String()),
 		0o644,
 	)

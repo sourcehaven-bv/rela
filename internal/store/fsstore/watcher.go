@@ -3,10 +3,12 @@ package fsstore
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/encryption"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -189,8 +191,13 @@ func (s *FSStore) reconcileEntityPath(path string) {
 
 	data, err := s.crypto.Unseal(rawData)
 	if err != nil {
-		// Corrupted or not-for-us sealed file; drop the event
-		// rather than crashing reconciliation.
+		// Distinguish the two classes so a corrupted file is loud:
+		// "not for us" is a drop-and-continue; "corrupted/tampered"
+		// deserves an operator-visible signal.
+		if encryption.IsCorrupted(err) {
+			slog.Warn("fsstore: watcher could not unseal entity (corrupted?)",
+				"path", path, "err", err)
+		}
 		return
 	}
 
