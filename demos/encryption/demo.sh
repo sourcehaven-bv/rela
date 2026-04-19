@@ -43,14 +43,21 @@ cd "${PROJ}"
 "${RELA}" migrate >/dev/null 2>&1 || true
 pass "project initialized at ${PROJ}"
 
-step "2. Create a couple of requirements in cleartext"
+step "2. Create a couple of requirements + a decision + a relation in cleartext"
 "${RELA}" create req --id REQ-001 --title "Public roadmap" --status proposed >/dev/null
 "${RELA}" create req --id REQ-002 --title "Confidential: rotate master API key" --status proposed >/dev/null
+"${RELA}" create decision --id DEC-001 --title "Rotate quarterly" --status proposed >/dev/null
+"${RELA}" link DEC-001 addresses REQ-002 >/dev/null
+
+REL_FILE="relations/DEC-001--addresses--REQ-002.md"
 
 if ! grep -q "Confidential" entities/requirements/REQ-002.md; then
     fail "expected cleartext body in entities/requirements/REQ-002.md"
 fi
-pass "on-disk files are human-readable cleartext"
+if ! grep -q "from: DEC-001" "${REL_FILE}"; then
+    fail "expected cleartext relation in ${REL_FILE}"
+fi
+pass "on-disk entity and relation files are human-readable cleartext"
 
 step "3. Generate age identities for alice, bob, eve"
 KEYS_WORK="${WORK}/keys-work"
@@ -74,7 +81,13 @@ ALICE_PUB="$(cat "${KEYS_WORK}/alice.pub")"
 if ! head -c 22 entities/requirements/REQ-002.md | grep -q '^age-encryption.org/v1'; then
     fail "REQ-002.md is not sealed"
 fi
-pass "entity files now start with the age header (ciphertext on disk)"
+if ! head -c 22 "${REL_FILE}" | grep -q '^age-encryption.org/v1'; then
+    fail "${REL_FILE} is not sealed"
+fi
+if grep -q "DEC-001" "${REL_FILE}"; then
+    fail "${REL_FILE} still leaks endpoint IDs in cleartext after keys init"
+fi
+pass "entity AND relation files now start with the age header (ciphertext on disk)"
 
 STATUS_OUT="$("${RELA}" keys status)"
 grep -q "Recipients (1)" <<<"${STATUS_OUT}" || fail "expected 'Recipients (1)' in keys status"
@@ -129,9 +142,13 @@ grep -q "Confidential" entities/requirements/REQ-002.md || fail "cleartext not r
 if head -c 22 entities/requirements/REQ-002.md | grep -q '^age-encryption.org/v1'; then
     fail "file still sealed after decrypt"
 fi
+grep -q "from: DEC-001" "${REL_FILE}" || fail "cleartext relation not restored after decrypt"
+if head -c 22 "${REL_FILE}" | grep -q '^age-encryption.org/v1'; then
+    fail "relation still sealed after decrypt"
+fi
 [[ ! -f ".rela/encryption.yaml" ]] || fail "encryption.yaml still present after decrypt"
 [[ ! -d "keys" ]] || fail "keys/ still present after decrypt"
-pass "project is cleartext again; marker and keys/ dir removed; content preserved"
+pass "project is cleartext again; marker and keys/ dir removed; entity + relation content preserved"
 
 "${RELA}" show REQ-002 2>&1 | grep -q "Confidential" || fail "REQ-002 not readable in cleartext mode"
 pass "REQ-002 readable without any identity"
