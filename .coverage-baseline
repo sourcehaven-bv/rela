@@ -176,12 +176,12 @@ internal/storage/integrity/verify.go;60;47
 internal/storage/memfs.go;232;207
 internal/storage/osfs.go;11;10
 internal/storage/safefs.go;37;25
-internal/storage/watcher.go;71;67
+internal/storage/watcher.go;71;66
 internal/store/fsstore/attachment.go;51;47
 internal/store/fsstore/echo.go;7;7
-internal/store/fsstore/entity.go;234;220
+internal/store/fsstore/entity.go;234;222
 internal/store/fsstore/formatter.go;40;23
-internal/store/fsstore/fsstore.go;79;63
+internal/store/fsstore/fsstore.go;79;62
 internal/store/fsstore/index.go;160;130
 internal/store/fsstore/markdown.go;226;180
 internal/store/fsstore/propcache.go;21;19
