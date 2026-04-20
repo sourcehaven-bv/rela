@@ -5,6 +5,8 @@
 package app
 
 import (
+	"path/filepath"
+
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -30,11 +32,12 @@ var _ store.Factory = (*FSFactory)(nil)
 // than this process.
 func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 	return fsstore.New(fsstore.Config{
-		FS:           f.FS,
-		EntitiesDir:  f.Paths.EntitiesDir,
-		RelationsDir: f.Paths.RelationsDir,
-		CacheDir:     f.Paths.CacheDir,
-		Schemas:      buildSchemas(meta),
+		FS:             f.FS,
+		EntitiesDir:    f.Paths.EntitiesDir,
+		RelationsDir:   f.Paths.RelationsDir,
+		AttachmentsDir: filepath.Join(f.Paths.Root, "attachments"),
+		CacheDir:       f.Paths.CacheDir,
+		Schemas:        buildSchemas(meta),
 	})
 }
 

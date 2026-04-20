@@ -326,8 +326,9 @@ Attach file(s) to an entity.
 rela attach <entity-id> <file>... [flags]
 ```
 
-Files are stored in a content-addressable store using SHA-256 hashes.
-Duplicate files are automatically deduplicated.
+Each file is stored at `attachments/<entity-id>/<property>/<filename>`.
+Each file-type property holds at most one attachment; re-running `attach`
+replaces the existing file.
 
 **Arguments:**
 
@@ -347,8 +348,7 @@ If `--property` is not specified, uses the first `file`-type property defined fo
 ```bash
 rela attach BUG-042 screenshot.png
 rela attach BUG-042 screenshot.png --property screenshot
-rela attach DEC-007 *.pdf --property supporting-docs
-rela attach REQ-001 diagram.png spec.pdf
+rela attach DEC-007 supporting-doc.pdf --property supporting-docs
 ```
 
 ---
@@ -361,7 +361,7 @@ List all file attachments for an entity.
 rela attachments <entity-id>
 ```
 
-Shows the property name, file path, original filename, and size for each attachment.
+Shows the property name, path, and size for each attachment.
 
 **Arguments:**
 
@@ -378,29 +378,26 @@ rela attachments DEC-007
 
 ### rela detach
 
-Remove an attachment reference from an entity.
+Remove the attachment from an entity property.
 
 ```bash
-rela detach <entity-id> <property> [hash-prefix]
+rela detach <entity-id> <property>
 ```
 
-This removes the reference from the entity's property but does NOT delete the
-actual file. Use `rela gc --attachments` to clean up unreferenced files.
+Clears the property on the entity and deletes the underlying file from the
+attachment store. Each file-type property holds at most one attachment, so no
+further disambiguation is needed.
 
 **Arguments:**
 
 - `entity-id` - Entity ID
 - `property` - Property name containing the attachment
-- `hash-prefix` - Optional: first characters of hash to identify specific attachment
-
-If the property contains multiple attachments, provide a hash prefix to specify
-which one to remove. Without a prefix, removes all attachments from the property.
 
 **Examples:**
 
 ```bash
 rela detach BUG-042 screenshot
-rela detach DEC-007 supporting-docs ab3f
+rela detach DEC-007 supporting-docs
 ```
 
 ---
@@ -1379,26 +1376,27 @@ rela schema --graphviz --constraints  # DOT with cardinality
 
 ### rela gc
 
-Garbage collect unreferenced files from the project.
+Remove orphaned files left behind by interrupted writes.
 
 ```bash
 rela gc [flags]
 ```
 
+Attachments are 1:1 with their owning entity — deleting an entity takes its
+attachments with it, so there is no separate attachment GC pass.
+
 **Flags:**
 
 | Flag            | Description                                              |
 | --------------- | -------------------------------------------------------- |
-| `--attachments` | Clean up unreferenced attachment files                   |
 | `--temp-files`  | Clean up orphaned `.new` files from interrupted writes   |
 | `--dry-run`     | Show what would be removed without actually removing     |
 
 **Examples:**
 
 ```bash
-rela gc --attachments           # Remove unreferenced attachment files
 rela gc --temp-files            # Remove orphaned temp files
-rela gc --attachments --dry-run # Preview what would be removed
+rela gc --temp-files --dry-run  # Preview what would be removed
 ```
 
 ---

@@ -385,7 +385,7 @@ func TestValidatePropertyValue_File(t *testing.T) {
 	meta := &Metamodel{}
 	propDef := &PropertyDef{Type: PropertyTypeFile}
 
-	if err := meta.ValidatePropertyValue("design_doc", propDef, "attachments/ab/abc123.pdf"); err != nil {
+	if err := meta.ValidatePropertyValue("design_doc", propDef, "attachments/REQ-001/design_doc/design.pdf"); err != nil {
 		t.Errorf("valid file path rejected: %v", err)
 	}
 	if err := meta.ValidatePropertyValue("design_doc", propDef, 42); err == nil {

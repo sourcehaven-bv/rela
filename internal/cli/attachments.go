@@ -14,7 +14,7 @@ var attachmentsCmd = &cobra.Command{
 	Short: "List attachments for an entity",
 	Long: `List all file attachments for an entity.
 
-Shows the property name, file path, original filename, and size for each attachment.
+Shows the property name, path, and size for each attachment.
 
 Examples:
   rela attachments BUG-042
@@ -33,14 +33,10 @@ Examples:
 			return nil
 		}
 
-		// Print table
 		out.WriteMessage("Attachments for %s:\n", entityID)
 
-		// Calculate column widths
 		propWidth := len("PROPERTY")
 		pathWidth := len("PATH")
-		origWidth := len("ORIGINAL")
-
 		for _, info := range infos {
 			if len(info.Property) > propWidth {
 				propWidth = len(info.Property)
@@ -48,31 +44,21 @@ Examples:
 			if len(info.Path) > pathWidth {
 				pathWidth = len(info.Path)
 			}
-			if len(info.OriginalName) > origWidth {
-				origWidth = len(info.OriginalName)
-			}
 		}
 
-		// Print header
-		format := fmt.Sprintf("  %%-%ds  %%-%ds  %%-%ds  %%s\n", propWidth, pathWidth, origWidth)
-		out.WriteMessage(format, "PROPERTY", "PATH", "ORIGINAL", "SIZE")
+		format := fmt.Sprintf("  %%-%ds  %%-%ds  %%s\n", propWidth, pathWidth)
+		out.WriteMessage(format, "PROPERTY", "PATH", "SIZE")
 		out.WriteMessage(format,
 			strings.Repeat("-", propWidth),
 			strings.Repeat("-", pathWidth),
-			strings.Repeat("-", origWidth),
 			"----")
 
-		// Print rows
 		for _, info := range infos {
-			original := info.OriginalName
-			if original == "" {
-				original = "-"
-			}
 			size := "-"
 			if info.Size > 0 {
 				size = output.FormatSize(info.Size)
 			}
-			out.WriteMessage(format, info.Property, info.Path, original, size)
+			out.WriteMessage(format, info.Property, info.Path, size)
 		}
 
 		return nil

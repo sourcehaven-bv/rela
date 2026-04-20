@@ -2,10 +2,7 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,129 +10,56 @@ import (
 )
 
 var detachCmd = &cobra.Command{
-	Use:   "detach <entity-id> <property> [hash-prefix]",
-	Short: "Remove attachment reference from an entity",
-	Long: `Remove an attachment reference from an entity.
+	Use:   "detach <entity-id> <property>",
+	Short: "Remove the attachment from an entity property",
+	Long: `Remove the attachment referenced by an entity property.
 
-This removes the reference from the entity's property but does NOT delete the
-actual file. Use 'rela gc --attachments' to clean up unreferenced files.
-
-If the property contains multiple attachments, provide a hash prefix to specify
-which one to remove. Without a prefix, removes all attachments from the property.
+Clears the property on the entity and deletes the underlying file
+from the attachment store. Each file-type property holds at most one
+attachment, so no further disambiguation is needed.
 
 Examples:
   rela detach BUG-042 screenshot
-  rela detach DEC-007 supporting-docs ab3f
-  rela detach DEC-007 supporting-docs --all`,
-	Args: cobra.RangeArgs(2, 3),
+  rela detach DEC-007 supporting-docs`,
+	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 		propName := args[1]
-		hashPrefix := ""
-		if len(args) > 2 {
-			hashPrefix = args[2]
-		}
 
-		// Get entity
 		ctx := context.Background()
-		entity, err := ws.Store().GetEntity(ctx, entityID)
+		e, err := ws.Store().GetEntity(ctx, entityID)
 		if err != nil {
 			return fmt.Errorf("entity not found: %s", entityID)
 		}
 
-		// Get entity definition
-		entityDef, ok := meta.GetEntityDef(entity.Type)
+		entityDef, ok := meta.GetEntityDef(e.Type)
 		if !ok {
-			return fmt.Errorf("unknown entity type: %s", entity.Type)
+			return fmt.Errorf("unknown entity type: %s", e.Type)
 		}
 
-		// Validate property exists and is file type
 		propDef, ok := entityDef.Properties[propName]
 		if !ok {
-			return fmt.Errorf("property %q not defined for entity type %s", propName, entity.Type)
+			return fmt.Errorf("property %q not defined for entity type %s", propName, e.Type)
 		}
 		if propDef.Type != metamodel.PropertyTypeFile {
 			return fmt.Errorf("property %q is not a file type (is %s)", propName, propDef.Type)
 		}
 
-		// Get current value
-		val, ok := entity.Properties[propName]
-		if !ok || val == nil {
-			return fmt.Errorf("property %q has no attachments", propName)
+		val, ok := e.Properties[propName]
+		if !ok || val == nil || val == "" {
+			return fmt.Errorf("property %q has no attachment", propName)
 		}
 
-		// Handle single value or list
-		var currentPaths []string
-		switch v := val.(type) {
-		case string:
-			if v != "" {
-				currentPaths = append(currentPaths, v)
-			}
-		case []interface{}:
-			for _, item := range v {
-				if s, ok := item.(string); ok && s != "" {
-					currentPaths = append(currentPaths, s)
-				}
-			}
-		case []string:
-			currentPaths = append(currentPaths, v...)
+		if err := ws.Store().DeleteAttachment(ctx, entityID, propName); err != nil {
+			return fmt.Errorf("delete attachment: %w", err)
 		}
 
-		if len(currentPaths) == 0 {
-			return fmt.Errorf("property %q has no attachments", propName)
+		delete(e.Properties, propName)
+		if _, err := ws.EntityManager().UpdateEntity(ctx, e); err != nil {
+			return fmt.Errorf("update entity: %w", err)
 		}
 
-		// Find attachments to remove
-		var remaining []string
-		var removed []string
-
-		for _, path := range currentPaths {
-			if hashPrefix == "" {
-				// Remove all
-				removed = append(removed, path)
-			} else {
-				// Check if path contains the hash prefix
-				// Path format: attachments/ab/ab3f8c2e9d1a.png
-				// Hash is between last / and last .
-				parts := strings.Split(path, "/")
-				if len(parts) >= 1 {
-					filename := parts[len(parts)-1]
-					hash := strings.TrimSuffix(filename, filepath.Ext(filename))
-					if strings.HasPrefix(hash, hashPrefix) {
-						removed = append(removed, path)
-						continue
-					}
-				}
-				remaining = append(remaining, path)
-			}
-		}
-
-		if len(removed) == 0 {
-			if hashPrefix != "" {
-				return fmt.Errorf("no attachment found with hash prefix %q", hashPrefix)
-			}
-			return errors.New("no attachments to remove")
-		}
-
-		// Update entity property
-		if len(remaining) == 0 {
-			delete(entity.Properties, propName)
-		} else if len(remaining) == 1 {
-			entity.Properties[propName] = remaining[0]
-		} else {
-			entity.Properties[propName] = remaining
-		}
-
-		// Write through workspace (validates, persists, updates graph+cache).
-		if _, err := ws.EntityManager().UpdateEntity(ctx, entity); err != nil {
-			return fmt.Errorf("failed to update entity: %w", err)
-		}
-
-		for _, path := range removed {
-			out.WriteSuccess("Detached %s from %s.%s", path, entityID, propName)
-		}
-		out.WriteMessage("Note: Files remain in storage. Use 'rela gc --attachments' to clean up.")
-
+		out.WriteSuccess("Detached attachment from %s.%s", entityID, propName)
 		return nil
 	},
 }

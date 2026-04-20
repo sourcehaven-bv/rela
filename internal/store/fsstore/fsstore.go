@@ -165,9 +165,13 @@ func New(cfg Config) (*FSStore, error) {
 	return s, nil
 }
 
-// loadAttachmentsIndex walks the attachments directory and populates metadata.
-// Missing directory and read errors are swallowed — a partial index is
-// preferable to failing the open.
+// loadAttachmentsIndex walks the attachments directory and populates
+// in-memory metadata. Missing directory and read errors are swallowed
+// — a partial index is preferable to failing the open.
+//
+// Size comes from fs.DirEntry.Info() so we never read the file
+// contents during index load. Previously used s.bytes.ReadFile which
+// pulled every attachment into memory on every store open.
 func (s *FSStore) loadAttachmentsIndex() {
 	if s.attachDir == "" {
 		return
@@ -204,8 +208,7 @@ func (s *FSStore) loadAttachmentsIndex() {
 				if fileEntry.IsDir() {
 					continue
 				}
-				path := filepath.Join(s.attachDir, entityID, prop, fileEntry.Name())
-				data, err := s.bytes.ReadFile(path)
+				info, err := fileEntry.Info()
 				if err != nil {
 					continue
 				}
@@ -214,7 +217,7 @@ func (s *FSStore) loadAttachmentsIndex() {
 					entityID: entityID,
 					property: prop,
 					fileName: fileEntry.Name(),
-					size:     int64(len(data)),
+					size:     info.Size(),
 				}
 				break // one file per property
 			}

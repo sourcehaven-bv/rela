@@ -151,4 +151,42 @@ func RunAttachmentTests(t *testing.T, f Factory) {
 		assert.Len(t, infos, 1)
 		assert.Equal(t, "v2.txt", infos[0].FileName)
 	})
+
+	t.Run("RenameMovesAttachments", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
+		require.NoError(t, s.AttachFile(ctx(), "T-1", "spec", "doc.pdf", strings.NewReader("pdf bytes")))
+
+		_, err := s.RenameEntity(ctx(), "T-1", "T-2")
+		require.NoError(t, err)
+
+		_, err = s.ListAttachments(ctx(), "T-1")
+		assert.ErrorIs(t, err, store.ErrNotFound)
+
+		infos, err := s.ListAttachments(ctx(), "T-2")
+		require.NoError(t, err)
+		require.Len(t, infos, 1)
+		assert.Equal(t, "doc.pdf", infos[0].FileName)
+
+		rc, err := s.ReadAttachment(ctx(), "T-2", "spec")
+		require.NoError(t, err)
+		defer rc.Close()
+		got, _ := io.ReadAll(rc)
+		assert.Equal(t, "pdf bytes", string(got))
+	})
+
+	t.Run("DeleteCascadesAttachments", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
+		require.NoError(t, s.AttachFile(ctx(), "T-1", "spec", "doc.pdf", strings.NewReader("pdf bytes")))
+
+		_, err := s.DeleteEntity(ctx(), "T-1", false)
+		require.NoError(t, err)
+
+		// Re-create with the same ID; stale attachments must not resurrect.
+		require.NoError(t, s.CreateEntity(ctx(), entity.New("T-1", "ticket")))
+		infos, err := s.ListAttachments(ctx(), "T-1")
+		require.NoError(t, err)
+		assert.Empty(t, infos)
+	})
 }
