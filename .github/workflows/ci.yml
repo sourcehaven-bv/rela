@@ -473,6 +473,39 @@ jobs:
           echo ""
           echo "All rela checks passed!"
 
+  demos:
+    name: Demos
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
+      - name: Build rela
+        run: go build -o bin/rela ./cmd/rela
+
+      - name: Run demo scripts
+        run: |
+          set -euo pipefail
+          # Skyward demos chain off setup; run it first if present.
+          if [ -x scripts/setup-skyward-demo.sh ]; then
+            echo "==> scripts/setup-skyward-demo.sh"
+            scripts/setup-skyward-demo.sh
+          fi
+          shopt -s nullglob
+          for demo in scripts/demo-*.sh; do
+            echo ""
+            echo "==> ${demo}"
+            "${demo}"
+          done
+
   docs:
     name: Docs
     runs-on: ubuntu-latest
