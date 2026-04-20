@@ -372,6 +372,27 @@ func TestValidatePropertyValue_Integer(t *testing.T) {
 	}
 }
 
+func TestValidatePropertyValue_File(t *testing.T) {
+	// File-type properties hold the repo-relative path of a blob in
+	// the attachment store. The metamodel layer only validates that
+	// the value is a string; content-level checks (file existence,
+	// hash match) are the attachment store's concern.
+	//
+	// Previously this path fell through to the `default` branch and
+	// surfaced as "Unknown type \"file\"", breaking `rela attach` on
+	// any project whose metamodel declared a file property. The
+	// regression test keeps the fix honest.
+	meta := &Metamodel{}
+	propDef := &PropertyDef{Type: PropertyTypeFile}
+
+	if err := meta.ValidatePropertyValue("design_doc", propDef, "attachments/ab/abc123.pdf"); err != nil {
+		t.Errorf("valid file path rejected: %v", err)
+	}
+	if err := meta.ValidatePropertyValue("design_doc", propDef, 42); err == nil {
+		t.Error("non-string should be rejected")
+	}
+}
+
 func TestValidatePropertyValue_Enum(t *testing.T) {
 	meta := &Metamodel{}
 	propDef := &PropertyDef{

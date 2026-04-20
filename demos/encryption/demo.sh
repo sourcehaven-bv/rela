@@ -3,12 +3,15 @@
 #
 # Walks through the full lifecycle:
 #   1. Create a cleartext rela project with sample requirements.
-#   2. Generate age identities for alice, bob, eve.
-#   3. Encrypt the project for alice only; verify bob cannot read.
-#   4. Add bob as a recipient; verify bob can now read.
-#   5. Remove bob; verify bob has lost access to future content.
-#   6. Eve (never a recipient) never has access.
-#   7. Decrypt the project back to cleartext; verify contents preserved.
+#   2. Attach a file to a requirement (exercises the attachment store).
+#   3. Generate age identities for alice, bob, eve.
+#   4. Encrypt the project for alice only; verify attachment is now sealed.
+#   5. Attach a second file under encryption; verify it lands sealed.
+#   6. Verify bob cannot read; alice can.
+#   7. Add bob as a recipient; verify bob can now read attachments too.
+#   8. Remove bob; verify bob has lost access.
+#   9. Eve (never a recipient) never has access.
+#  10. Decrypt the project back to cleartext; verify attachments preserved.
 #
 # The script returns 0 only if every expected invariant holds.
 
@@ -44,6 +47,23 @@ cd "${PROJ}"
 pass "project initialized at ${PROJ}"
 
 step "2. Create a couple of requirements + a decision + a relation in cleartext"
+# Add a file-typed property to the requirement schema so we can
+# exercise the attachment path (C1 regression: attachments must be
+# routed through cryptofs on encrypted repos, not the raw FS).
+python3 - <<'PY'
+with open('metamodel.yaml') as f:
+    s = f.read()
+s = s.replace(
+    '''      priority:
+        type: priority''',
+    '''      priority:
+        type: priority
+      design_doc:
+        type: file''', 1)
+with open('metamodel.yaml', 'w') as f:
+    f.write(s)
+PY
+
 "${RELA}" create req --id REQ-001 --title "Public roadmap" --status proposed >/dev/null
 "${RELA}" create req --id REQ-002 --title "Confidential: rotate master API key" --status proposed >/dev/null
 "${RELA}" create decision --id DEC-001 --title "Rotate quarterly" --status proposed >/dev/null
@@ -58,6 +78,20 @@ if ! grep -q "from: DEC-001" "${REL_FILE}"; then
     fail "expected cleartext relation in ${REL_FILE}"
 fi
 pass "on-disk entity and relation files are human-readable cleartext"
+
+# Attach a file BEFORE encryption is turned on — lands cleartext in
+# the content-addressable attachment store.
+CLEAR_ATTACH_SRC="${WORK}/design-pre.md"
+printf 'CLEARTEXT-PRE-ENCRYPTION-DESIGN-DOC\ncontains leaky body\n' > "${CLEAR_ATTACH_SRC}"
+"${RELA}" attach REQ-001 "${CLEAR_ATTACH_SRC}" --property design_doc >/dev/null
+
+# Capture the resulting attachment path from the entity's property.
+PRE_ATTACH_PATH="$(grep -oE 'attachments/[a-f0-9]{2}/[a-f0-9]+\.[a-z]+' entities/requirements/REQ-001.md | head -1)"
+[[ -n "${PRE_ATTACH_PATH}" ]] || fail "pre-encryption attachment path not recorded in REQ-001"
+[[ -s "${PRE_ATTACH_PATH}" ]] || fail "pre-encryption attachment file missing on disk"
+grep -q "CLEARTEXT-PRE-ENCRYPTION-DESIGN-DOC" "${PRE_ATTACH_PATH}" \
+    || fail "pre-encryption attachment is not the cleartext we wrote"
+pass "attached a cleartext file to REQ-001 (${PRE_ATTACH_PATH##*/})"
 
 step "3. Generate age identities for alice, bob, eve"
 KEYS_WORK="${WORK}/keys-work"
@@ -104,6 +138,43 @@ pass "keys status reports 1 recipient (alice)"
 head -c 22 recipients.age | grep -q '^age-encryption.org/v1' \
     || fail "recipients.age is not itself sealed"
 pass "recipients.age present and sealed"
+
+# Existing (pre-encryption) attachment must now be sealed too.
+if ! head -c 22 "${PRE_ATTACH_PATH}" | grep -q '^age-encryption.org/v1'; then
+    fail "pre-existing attachment ${PRE_ATTACH_PATH} not sealed after keys init"
+fi
+if grep -q "CLEARTEXT-PRE-ENCRYPTION-DESIGN-DOC" "${PRE_ATTACH_PATH}"; then
+    fail "attachment plaintext still visible on disk after keys init"
+fi
+# The sidecar YAML (content type, original filename, added_by) must
+# also be sealed — finding S4.
+SIDECAR="${PRE_ATTACH_PATH}.yaml"
+if [[ -f "${SIDECAR}" ]]; then
+    if ! head -c 22 "${SIDECAR}" | grep -q '^age-encryption.org/v1'; then
+        fail "attachment sidecar ${SIDECAR} not sealed after keys init"
+    fi
+    pass "pre-existing attachment + sidecar YAML are sealed"
+else
+    pass "pre-existing attachment is sealed"
+fi
+
+step "4b. Attach a second file under encryption (exercises C1 fix end-to-end)"
+ENC_ATTACH_SRC="${WORK}/design-post.md"
+printf 'SECRET-POST-ENCRYPTION-DESIGN-DOC\nmust-never-land-cleartext\n' > "${ENC_ATTACH_SRC}"
+"${RELA}" attach REQ-002 "${ENC_ATTACH_SRC}" --property design_doc >/dev/null
+
+POST_ATTACH_PATH="$(grep -oE 'attachments/[a-f0-9]{2}/[a-f0-9]+\.[a-z]+' \
+    <(RELA_KEY_FILE="${KEYS_WORK}/alice.key" "${RELA}" show REQ-002 2>&1) | head -1)"
+[[ -n "${POST_ATTACH_PATH}" ]] || fail "post-encryption attachment path not recorded in REQ-002"
+[[ -s "${POST_ATTACH_PATH}" ]] || fail "post-encryption attachment file missing"
+
+if ! head -c 22 "${POST_ATTACH_PATH}" | grep -q '^age-encryption.org/v1'; then
+    fail "post-encryption attachment ${POST_ATTACH_PATH} landed cleartext — C1 regressed"
+fi
+if grep -q "SECRET-POST-ENCRYPTION-DESIGN-DOC" "${POST_ATTACH_PATH}"; then
+    fail "post-encryption attachment plaintext leaked on disk — C1 regressed"
+fi
+pass "new attachment written under encryption is sealed (${POST_ATTACH_PATH##*/})"
 
 step "5. Alice reads; bob cannot (bob is not yet a recipient)"
 ALICE_SEE="$("${RELA}" show REQ-002 2>&1)"
@@ -158,6 +229,19 @@ if head -c 22 "${REL_FILE}" | grep -q '^age-encryption.org/v1'; then
 fi
 [[ ! -f "recipients.age" ]] || fail "recipients.age still present after decrypt"
 pass "project is cleartext again; recipients.age removed; entity + relation content preserved"
+
+# Both attachments must be cleartext again, with their original bodies.
+grep -q "CLEARTEXT-PRE-ENCRYPTION-DESIGN-DOC" "${PRE_ATTACH_PATH}" \
+    || fail "pre-encryption attachment body not restored after decrypt"
+if head -c 22 "${PRE_ATTACH_PATH}" | grep -q '^age-encryption.org/v1'; then
+    fail "pre-encryption attachment still sealed after decrypt"
+fi
+grep -q "SECRET-POST-ENCRYPTION-DESIGN-DOC" "${POST_ATTACH_PATH}" \
+    || fail "post-encryption attachment body not restored after decrypt"
+if head -c 22 "${POST_ATTACH_PATH}" | grep -q '^age-encryption.org/v1'; then
+    fail "post-encryption attachment still sealed after decrypt"
+fi
+pass "both attachments restored to cleartext with original bodies intact"
 
 "${RELA}" show REQ-002 2>&1 | grep -q "Confidential" || fail "REQ-002 not readable in cleartext mode"
 pass "REQ-002 readable without any identity"

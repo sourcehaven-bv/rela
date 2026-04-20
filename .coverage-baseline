@@ -131,7 +131,7 @@ internal/metamodel/rrule.go;7;7
 internal/metamodel/schema_output.go;73;24
 internal/metamodel/sort.go;1;1
 internal/metamodel/types.go;68;48
-internal/metamodel/validation.go;166;157
+internal/metamodel/validation.go;168;159
 internal/metamodel/yaml_errors.go;60;55
 internal/migration/cardinality_rename.go;31;27
 internal/migration/dataentry_cleanup.go;216;192
