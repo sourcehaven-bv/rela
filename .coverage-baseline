@@ -84,7 +84,7 @@ internal/encryption/reseal.go;106;76
 internal/encryption/reseal_sentinel.go;57;48
 internal/encryption/seal.go;26;22
 internal/entity/entity.go;57;45
-internal/entity/id.go;98;90
+internal/entity/id.go;98;91
 internal/errors/errors.go;10;10
 internal/filter/filter.go;118;108
 internal/filter/fuzzy.go;22;21
@@ -176,7 +176,7 @@ internal/storage/integrity/verify.go;60;47
 internal/storage/memfs.go;232;207
 internal/storage/osfs.go;11;10
 internal/storage/safefs.go;37;25
-internal/storage/watcher.go;71;67
+internal/storage/watcher.go;71;66
 internal/store/fsstore/attachment.go;51;47
 internal/store/fsstore/echo.go;7;7
 internal/store/fsstore/entity.go;234;220
