@@ -12,13 +12,6 @@ import (
 // hook calls Recorded with the bytes that landed on disk; fsstore
 // call sites that delete files call Forget; the watcher asks
 // IsEcho when fsnotify delivers a change event.
-//
-// The data being hashed is whatever actually sits on disk — in a
-// cleartext repo that's the raw bytes fsstore wrote; in an
-// encrypted repo that's the sealed blob produced by cryptofs before
-// SafeFS renamed it into place. The tracker doesn't care which;
-// the hash comes from the bottom of the FS transform stack via
-// SafeFS.OnPostWrite.
 type echoTracker struct {
 	hashes *cache.LRU[string, string]
 }

@@ -84,9 +84,6 @@ func (s *FSStore) savePersistedIndex() error {
 	if mkdirErr := s.dirs.MkdirAll(s.cacheDir, 0o755); mkdirErr != nil {
 		return mkdirErr
 	}
-	// Uses the same s.bytes.WriteFile path as every other write, so
-	// the transform stack (encryption, future compression) is applied
-	// consistently.
 	return s.bytes.WriteFile(filepath.Join(s.cacheDir, indexFile), data, 0o644)
 }
 

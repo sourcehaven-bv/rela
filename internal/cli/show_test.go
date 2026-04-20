@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/encryption"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -159,31 +157,13 @@ func TestEntityNotFoundError(t *testing.T) {
 	}
 }
 
-// TestClassifyReadError covers the four branches of the error
-// classifier so a future change to one branch can't silently regress.
+// TestClassifyReadError covers the two branches of the error
+// classifier so a future change can't silently regress.
 func TestClassifyReadError(t *testing.T) {
 	notFound := classifyReadError("REQ-001", store.ErrNotFound)
 	var nfe *entityNotFoundError
 	if !errors.As(notFound, &nfe) {
 		t.Errorf("ErrNotFound should classify as entityNotFoundError, got %T", notFound)
-	}
-
-	noMatch := classifyReadError("REQ-002",
-		fmt.Errorf("wrap: %w", encryption.ErrNoMatchingKey))
-	if !strings.Contains(noMatch.Error(), "not authorized") {
-		t.Errorf("no-matching-key error missing 'not authorized': %v", noMatch)
-	}
-
-	noKey := classifyReadError("REQ-003",
-		fmt.Errorf("wrap: %w", encryption.ErrNoPrivateKey))
-	if !strings.Contains(noKey.Error(), "no identity loaded") {
-		t.Errorf("no-private-key error missing 'no identity loaded': %v", noKey)
-	}
-
-	corrupt := classifyReadError("REQ-004",
-		fmt.Errorf("wrap: %w", encryption.ErrCorrupted))
-	if !strings.Contains(corrupt.Error(), "corrupted") {
-		t.Errorf("corrupted error missing 'corrupted': %v", corrupt)
 	}
 
 	other := errors.New("some other error")

@@ -16,16 +16,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-// BytesFS is the byte-I/O boundary the attachment store uses for
-// file contents and metadata sidecars. In production it is the
-// cryptofs-decorated handle, so attachment bytes are sealed before
-// they hit disk and unsealed on read. On cleartext repos it passes
-// through unchanged.
-//
-// Deliberately a narrow subset of storage.FS: every method here
-// transforms bytes (ReadFile/WriteFile/Stat). Directory-topology
-// operations (MkdirAll, Walk, ReadDir) live on a separate raw handle
-// so a misplaced byte read cannot silently bypass the transform stack.
+// BytesFS is the narrow byte-I/O subset of storage.FS that the
+// attachment store needs (ReadFile, WriteFile, Remove, Stat). A
+// single interface keeps Store wiring independent of the concrete
+// FS type used by the caller.
 type BytesFS interface {
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte, perm os.FileMode) error
@@ -34,19 +28,6 @@ type BytesFS interface {
 }
 
 // Store manages content-addressable attachment storage.
-//
-// Two-handle structure mirrors fsstore's StoreFS / DirFS split:
-//
-//   - bytes: all file-content and metadata-sidecar I/O goes through
-//     this handle. On encrypted repos it is cryptofs-decorated; on
-//     cleartext repos it is the raw FS.
-//   - dirs: directory-topology operations (MkdirAll, Walk, Stat for
-//     directory existence) go through the raw FS. Encrypting a
-//     directory entry would make no sense.
-//
-// The compile-time type separation is the enforcement: you cannot
-// accidentally call bytes.ReadFile on a filename that was supposed
-// to be handled raw, because the method sets are disjoint.
 type Store struct {
 	bytes   BytesFS
 	dirs    storage.FS
@@ -55,9 +36,10 @@ type Store struct {
 
 // NewStore creates a new attachment store.
 //
-// bytes is the byte-I/O handle (cryptofs-decorated on encrypted
-// repos, raw otherwise). dirs is the raw FS for directory topology.
-// Pass the same handle for both on cleartext repos.
+// bytes handles file-content I/O (ReadFile/WriteFile/Stat/Remove).
+// dirs handles directory topology (MkdirAll, Walk, ReadDir). On
+// cleartext repos callers typically pass the same storage.FS for
+// both.
 func NewStore(bytes BytesFS, dirs storage.FS, rootDir string) *Store {
 	return &Store{
 		bytes:   bytes,
@@ -134,11 +116,6 @@ type Attachment struct {
 // It computes the SHA-256 hash, copies the file if not already present,
 // and creates a metadata sidecar.
 // Returns the attachment with its relative path.
-//
-// sourcePath is read through bytes — callers expect source files to
-// be cleartext from the caller's point of view regardless of
-// encryption mode. The resulting attachment and sidecar are written
-// through bytes as well, so on encrypted repos both land sealed.
 func (s *Store) Add(sourcePath, addedBy string) (*Attachment, error) {
 	// Read source file
 	data, readErr := s.bytes.ReadFile(sourcePath)

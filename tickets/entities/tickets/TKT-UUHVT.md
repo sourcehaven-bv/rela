@@ -8,6 +8,37 @@ effort: m
 status: ready
 ---
 
+## Status: PAUSED (2026-04-20)
+
+Implementation was ~90% complete but paused when a strategic shift was decided:
+move encryption from the storage layer to the sync layer (see
+`.ignored/encryption-rollback-design.md`). Under the new design, roughly half of
+the implementation (cryptofs streaming writer, header- stamping wrapper,
+rename-entity encryption guard, two-handle FS split for attachments) becomes
+redundant — all exists to coexist with cryptofs, and cryptofs is being removed.
+
+Re-pick this ticket **after** the encryption rollback lands. The attachment
+refactor will then be a much smaller change (per-entity layout,
+`storage.FS.OpenWriteStream` for plain I/O, workspace rewire, delete
+`internal/attachment/`) on a simpler codebase.
+
+The finished-but-stashed work lives in a git stash on branch
+`encryption-doc-cleanup` (`stash@{0}: TKT-UUHVT work`). Reusable pieces include:
+
+- Per-entity attachment layout design (matches what already existed
+dead-code in `fsstore.AttachmentManager` / `memstore.AttachmentManager`)
+- `storetest` conformance cases: `RenameMovesAttachments`,
+`DeleteCascadesAttachments`
+- Workspace `AttachFile` + `ListAttachments` routing through
+`store.AttachmentManager`
+- CLI changes: `detach` loses hash-prefix arg, `gc --attachments` gone,
+`attachments` drops OriginalName column
+
+Do NOT re-apply the stash — it's on top of a codebase that's about to change
+substantially. Treat it as reference material only.
+
+---
+
 ## Problem
 
 Today `internal/attachment/Store` writes uploaded files to
@@ -48,7 +79,7 @@ attachments/<entity-id>/<property>/<original-filename>
 - No content-visible filename. Leaks entity ID + property name
 (already leaked elsewhere) but not content.
 - Streaming natural: `OpenWrite(path)` returns an `io.WriteCloser`
-that pipes through `age.Encrypt` directly. Fixed 64 KiB peak memory.
+that pipes through the underlying FS directly. Fixed 64 KiB peak memory.
 - 1:1 ownership — delete the entity, delete the directory. No GC
 pass needed.
 - Original filename IS the filename on disk. No sidecar YAML in
@@ -71,13 +102,10 @@ holding the path).
 
 ## Migration
 
-None needed — the encryption feature is unreleased, no on-disk data to migrate.
+None needed — the attachment feature is unreleased, no on-disk data to migrate.
 
 ## Related
 
-- `encryption-security-review.md` C1: attachments sealed via
-cryptofs (shipped in #464, imperfect — this ticket is the proper fix).
-- `encryption-security-review.md` S4: sidecar YAML plaintext
-(resolved in #464; disappears entirely when CAS is removed).
-- `.ignored/attachment-dedup-removal.md`: full design notes and
-rationale.
+- `.ignored/attachment-dedup-removal.md`: design notes, still accurate.
+- `.ignored/encryption-rollback-design.md`: explains why this ticket
+is paused and what happens first.

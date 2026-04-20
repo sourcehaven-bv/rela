@@ -36,34 +36,8 @@ import (
 const recentHashCapacity = 4096
 
 // Config holds the configuration for creating a new FSStore.
-//
-// # FS boundaries
-//
-// fsstore separates byte I/O from directory topology:
-//
-//   - Bytes is the decorated byte-I/O handle. Every entity, relation,
-//     attachment, and index read/write goes through Bytes. Callers
-//     typically pass a cryptofs.FS(SafeFS(OsFS)) for encrypted repos
-//     or a SafeFS(OsFS) for cleartext. When Bytes is nil, Config falls
-//     back to FS so pre-decorator callers keep working.
-//
-//   - FS is the raw directory handle. Used for ReadDir, Walk, Stat,
-//     and temp-file cleanup. Never used for ReadFile/WriteFile of
-//     data files — that would bypass any decorator stacked above.
-//
-// The split exists so transforms (encryption today, compression or
-// dedup tomorrow) compose cleanly without fsstore's data-write sites
-// having to know which transforms are active.
-//
-// # Consistency checks
-//
-// fsstore does NOT verify on-disk consistency (sealed vs cleartext,
-// schema drift, etc.). That's a wiring-layer concern: the caller that
-// decides how to construct Bytes is also the caller that knows what
-// the on-disk state should be. See internal/storage/integrity.
 type Config struct {
 	FS             storage.FS
-	Bytes          StoreFS
 	EntitiesDir    string
 	RelationsDir   string
 	AttachmentsDir string
@@ -99,26 +73,17 @@ type attachMeta struct {
 
 // FSStore is a filesystem-backed store implementation.
 type FSStore struct {
-	// dirs is the raw directory handle for ReadDir / Walk / Stat /
-	// Remove and temp-file cleanup. Its DirFS type DELIBERATELY
-	// omits ReadFile, WriteFile, and Open — any byte I/O on dirs
-	// would bypass the transform stack stacked above bytes
-	// (encryption, compression). The compiler enforces the
-	// separation; adding a raw byte read here is a type error.
-	dirs DirFS
+	// dirs is used for directory-topology operations (ReadDir, Walk,
+	// Stat, Remove, MkdirAll) and temp-file cleanup.
+	dirs storage.FS
 
-	// rawReader is the single-method window the watcher uses to
-	// read on-disk bytes for self-echo hashing. It is deliberately
-	// isolated from dirs so the scope of "raw byte read" is visible
-	// at every call site (watcher.go is the only consumer).
-	rawReader RawReader
+	// rawReader is the window the watcher uses to read on-disk bytes
+	// for self-echo hashing.
+	rawReader storage.FS
 
-	// bytes is the decorated byte-I/O handle. Every entity,
-	// relation, attachment, and index read/write goes through this.
-	// For a cleartext repo, bytes may alias the raw FS; for an
-	// encrypted repo, bytes is a cryptofs.FS that seals/unseals
-	// transparently.
-	bytes StoreFS
+	// bytes is used for byte I/O on data files (entities, relations,
+	// attachments, index).
+	bytes storage.FS
 
 	entitiesDir  string
 	relationsDir string
@@ -148,19 +113,16 @@ type FSStore struct {
 	// echoes tracks the hash of bytes most recently written by
 	// this store so the external-change watcher can distinguish
 	// its own writes (self-echoes) from genuine external edits.
-	// Fed by SafeFS.OnPostWrite with the bytes that landed on
-	// disk (sealed bytes on encrypted repos, raw bytes otherwise).
+	// Fed by SafeFS.OnPostWrite with the bytes that landed on disk.
 	echoes *echoTracker
 }
 
 // compile-time interface check
 var _ store.Store = (*FSStore)(nil)
 
-// RecordWrite is the post-write observer entry point for the
-// underlying FS transform stack. Typically wired via
-// SafeFS.OnPostWrite(store.RecordWrite). content is the bytes
-// that landed on disk (sealed if encryption is active); the
-// watcher uses the recorded hash to suppress self-echoes.
+// RecordWrite is the post-write observer entry point. Typically
+// wired via SafeFS.OnPostWrite(store.RecordWrite). The watcher
+// uses the recorded hash to suppress self-echoes.
 //
 // Signature matches storage.WriteObserver.
 func (s *FSStore) RecordWrite(path string, content []byte) {
@@ -174,18 +136,11 @@ func New(cfg Config) (*FSStore, error) {
 	if cfg.Schemas == nil {
 		cfg.Schemas = make(map[string]store.EntityTypeSchema)
 	}
-	// Back-compat: callers that only set Config.FS (no decorator) get
-	// transparent byte passthrough via the same handle. Encryption
-	// callers set Config.Bytes explicitly to a cryptofs.FS.
-	bytes := cfg.Bytes
-	if bytes == nil {
-		bytes = cfg.FS
-	}
 
 	s := &FSStore{
 		dirs:         cfg.FS,
 		rawReader:    cfg.FS,
-		bytes:        bytes,
+		bytes:        cfg.FS,
 		entitiesDir:  cfg.EntitiesDir,
 		relationsDir: cfg.RelationsDir,
 		attachDir:    cfg.AttachmentsDir,
@@ -249,10 +204,6 @@ func (s *FSStore) loadAttachmentsIndex() {
 				if fileEntry.IsDir() {
 					continue
 				}
-				// Read through s.bytes so the reported size reflects
-				// plaintext bytes, not ciphertext bytes on disk. Using
-				// info.Size() here would silently report age-overhead-
-				// inflated sizes on encrypted repos (RR-HBER2).
 				path := filepath.Join(s.attachDir, entityID, prop, fileEntry.Name())
 				data, err := s.bytes.ReadFile(path)
 				if err != nil {

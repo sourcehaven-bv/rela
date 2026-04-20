@@ -25,12 +25,8 @@ type WriteObserver func(path string, data []byte)
 // fires exactly once per successful durable write, with the bytes
 // that sit on disk after the atomic rename. Failed writes (the temp
 // file was created but the rename failed) do NOT fire the hook.
-//
-// The hook is the "hash what durably sits on disk" boundary. Higher
-// layers that decorate SafeFS (e.g. an encryption layer that seals
-// on WriteFile before delegating to SafeFS) naturally land already-
-// transformed bytes here, so a single observer covers every write
-// regardless of transforms stacked above.
+// The fsstore watcher uses this hook to hash self-writes so it can
+// skip its own fsnotify echoes.
 type SafeFS struct {
 	FS
 

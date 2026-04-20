@@ -3,12 +3,10 @@ package fsstore
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/encryption"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -184,21 +182,13 @@ func (s *FSStore) reconcileEntityPath(path string) {
 
 	// Self-echo detection compares the on-disk bytes against the
 	// hash recorded by SafeFS.OnPostWrite when fsstore itself wrote
-	// this path. Downstream parsing needs plaintext, which we get
-	// by re-reading through the transform stack (s.bytes).
+	// this path.
 	if s.echoes.IsEcho(path, rawData) {
 		return // self-echo
 	}
 
 	data, err := s.bytes.ReadFile(path)
 	if err != nil {
-		// Distinguish the two classes so a corrupted file is loud:
-		// "not for us" is a drop-and-continue; "corrupted/tampered"
-		// deserves an operator-visible signal.
-		if encryption.IsCorrupted(err) {
-			slog.Warn("fsstore: watcher could not unseal entity (corrupted?)",
-				"path", path, "err", err)
-		}
 		return
 	}
 

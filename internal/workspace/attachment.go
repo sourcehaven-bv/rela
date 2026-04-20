@@ -37,14 +37,8 @@ func (w *Workspace) Attachments() attachment.Manager {
 // attachmentStore returns the concrete content-addressable backend.
 // Used by workspace internals that need backend-specific operations
 // (GC) beyond the Manager interface.
-//
-// Byte I/O goes through w.bytesFS, which is the cryptofs-decorated
-// handle on encrypted repos and the raw FS on cleartext repos.
-// Directory topology (MkdirAll, Walk, Stat for directory existence)
-// uses the raw w.FS() because encrypting directory entries makes no
-// sense.
 func (w *Workspace) attachmentStore() *attachment.Store {
-	return attachment.NewStore(w.bytesFS, w.FS(), w.Paths().Root)
+	return attachment.NewStore(w.FS(), w.FS(), w.Paths().Root)
 }
 
 // AttachFile attaches a file to an entity's file property.

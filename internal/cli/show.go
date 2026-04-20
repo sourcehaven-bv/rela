@@ -3,11 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/encryption"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -64,21 +62,12 @@ func (e *entityNotFoundError) Error() string {
 }
 
 // classifyReadError maps a store.GetEntity error onto a user-facing
-// message. Distinguishes the three encryption-class errors from a
-// genuine "not found" so the CLI doesn't lie about the state of the
-// repo (e.g., reporting "not found" when the entity exists but the
-// local identity can't decrypt it).
+// message. Today it only distinguishes "not found" from every other
+// error shape, but the indirection stays so future error classes can
+// plug in without touching the showCmd body.
 func classifyReadError(id string, err error) error {
-	switch {
-	case errors.Is(err, store.ErrNotFound):
+	if errors.Is(err, store.ErrNotFound) {
 		return &entityNotFoundError{ID: id}
-	case encryption.IsNoMatchingKey(err):
-		return fmt.Errorf("%s: not authorized (your identity is not in this repo's recipient list)", id)
-	case encryption.IsNoPrivateKey(err):
-		return fmt.Errorf("%s: no identity loaded (set $RELA_KEY_FILE or place .rela/key)", id)
-	case encryption.IsCorrupted(err):
-		return fmt.Errorf("%s: sealed file is corrupted or tampered: %w", id, err)
-	default:
-		return err
 	}
+	return err
 }
