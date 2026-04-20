@@ -165,7 +165,7 @@ internal/storage/safefs.go;37;25
 internal/storage/watcher.go;71;66
 internal/store/fsstore/attachment.go;51;47
 internal/store/fsstore/echo.go;7;7
-internal/store/fsstore/entity.go;234;221
+internal/store/fsstore/entity.go;234;219
 internal/store/fsstore/formatter.go;40;0
 internal/store/fsstore/fsstore.go;76;57
 internal/store/fsstore/index.go;160;130
@@ -194,4 +194,4 @@ internal/workspace/rename.go;68;59
 internal/workspace/rename_type.go;58;31
 internal/workspace/services.go;49;12
 internal/workspace/validate.go;35;0
-internal/workspace/workspace.go;552;394
+internal/workspace/workspace.go;552;393
