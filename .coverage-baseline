@@ -162,9 +162,9 @@ internal/storage/safefs.go;37;25
 internal/storage/watcher.go;71;66
 internal/store/fsstore/attachment.go;120;89
 internal/store/fsstore/echo.go;7;7
-internal/store/fsstore/entity.go;238;223
+internal/store/fsstore/entity.go;238;221
 internal/store/fsstore/formatter.go;40;0
-internal/store/fsstore/fsstore.go;75;56
+internal/store/fsstore/fsstore.go;75;55
 internal/store/fsstore/index.go;160;130
 internal/store/fsstore/markdown.go;226;180
 internal/store/fsstore/propcache.go;21;19
