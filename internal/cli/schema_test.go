@@ -950,3 +950,362 @@ func captureStdout(t *testing.T, fn func()) string {
 
 	return buf.String()
 }
+
+// --- graphviz rendering-pipeline tests -------------------------------------
+//
+// These cover the --exclude flag and the classification rule that renders
+// many-target relations as a hub bundle or a legend table rather than a
+// fan of edges.
+
+// schemaGraphvizFixture builds a bare metamodel with the given entities and
+// relations, applies it, and restores the previous state on cleanup.
+// Pass bs as nil to keep all rendering flags at their default.
+func schemaGraphvizFixture(
+	t *testing.T,
+	ents map[string]metamodel.EntityDef,
+	rels map[string]metamodel.RelationDef,
+) {
+	t.Helper()
+	oldMeta := meta
+	oldOut := out
+	oldWs := ws
+	oldGraphviz := schemaGraphviz
+	oldExclude := schemaExclude
+	oldNoBundle := schemaNoBundle
+	oldNoLegend := schemaNoLegend
+	t.Cleanup(func() {
+		meta = oldMeta
+		out = oldOut
+		ws = oldWs
+		schemaGraphviz = oldGraphviz
+		schemaExclude = oldExclude
+		schemaNoBundle = oldNoBundle
+		schemaNoLegend = oldNoLegend
+	})
+
+	meta = &metamodel.Metamodel{
+		Version:   "1.0",
+		Types:     map[string]metamodel.CustomType{},
+		Entities:  ents,
+		Relations: rels,
+	}
+	applySeeder(newStoreSeeder(meta))
+
+	var buf bytes.Buffer
+	out = output.NewWithWriter(&buf, output.FormatTable)
+	schemaGraphviz = true
+	schemaExclude = nil
+	schemaNoBundle = false
+	schemaNoLegend = false
+}
+
+func TestSchemaGraphvizExclude(t *testing.T) {
+	schemaGraphvizFixture(t,
+		map[string]metamodel.EntityDef{
+			"a": {Label: "A", IDPrefix: "A-"},
+			"b": {Label: "B", IDPrefix: "B-"},
+			"c": {Label: "C", IDPrefix: "C-"},
+		},
+		map[string]metamodel.RelationDef{
+			"ab": {Label: "ab", From: []string{"a"}, To: []string{"b"}},
+			"ac": {Label: "ac", From: []string{"a"}, To: []string{"c"}},
+		},
+	)
+	schemaExclude = []string{"c"}
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	if strings.Contains(result, "  c [label") {
+		t.Errorf("excluded node c should not appear:\n%s", result)
+	}
+	if strings.Contains(result, `a -> c `) || strings.Contains(result, `-> c [`) {
+		t.Errorf("edges to c should not appear:\n%s", result)
+	}
+	if !strings.Contains(result, `a -> b `) {
+		t.Errorf("non-excluded edge a->b should appear:\n%s", result)
+	}
+}
+
+func TestSchemaGraphvizLegendFiveTargets(t *testing.T) {
+	ents := map[string]metamodel.EntityDef{
+		"src": {Label: "Src", IDPrefix: "S-"},
+	}
+	// 5 unconnected leaf targets -> relation with 5 targets -> legend bucket.
+	targets := []string{"t1", "t2", "t3", "t4", "t5"}
+	for _, t := range targets {
+		ents[t] = metamodel.EntityDef{Label: strings.ToUpper(t), IDPrefix: t + "-"}
+	}
+	schemaGraphvizFixture(t, ents,
+		map[string]metamodel.RelationDef{
+			"fans": {Label: "fans", From: []string{"src"}, To: targets},
+		},
+	)
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	if !strings.Contains(result, "__legend [") {
+		t.Errorf("expected __legend node:\n%s", result)
+	}
+	if strings.Contains(result, `src -> t1`) || strings.Contains(result, `src -> t5`) {
+		t.Errorf("5-target relation should not emit direct edges:\n%s", result)
+	}
+	if !strings.Contains(result, "<B>Src</B> <I>fans</I>") {
+		t.Errorf("legend should contain source + relation label:\n%s", result)
+	}
+}
+
+func TestSchemaGraphvizHubIsolatedTargets(t *testing.T) {
+	ents := map[string]metamodel.EntityDef{
+		"src": {Label: "Src", IDPrefix: "S-"},
+		"t1":  {Label: "T1", IDPrefix: "T1-"},
+		"t2":  {Label: "T2", IDPrefix: "T2-"},
+		"t3":  {Label: "T3", IDPrefix: "T3-"},
+	}
+	// 3 isolated targets -> hub bundle.
+	schemaGraphvizFixture(t, ents,
+		map[string]metamodel.RelationDef{
+			"fans": {Label: "fans", From: []string{"src"}, To: []string{"t1", "t2", "t3"}},
+		},
+	)
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	if !strings.Contains(result, "__hub_0 [shape=point") {
+		t.Errorf("expected __hub_0 point node:\n%s", result)
+	}
+	if !strings.Contains(result, `src -> __hub_0 [label="fans"`) {
+		t.Errorf("expected labeled source->hub edge:\n%s", result)
+	}
+	if !strings.Contains(result, `__hub_0 -> t1 [color=`) {
+		t.Errorf("expected hub->target edges (unlabeled):\n%s", result)
+	}
+	if strings.Contains(result, "__legend [") {
+		t.Errorf("3 isolated targets should use hub, not legend:\n%s", result)
+	}
+}
+
+func TestSchemaGraphvizLegendConnectedTargets(t *testing.T) {
+	// 4 targets, each with another incoming edge -> all otherwise-connected
+	// -> legend (not hub).
+	ents := map[string]metamodel.EntityDef{
+		"src":    {Label: "Src", IDPrefix: "S-"},
+		"anchor": {Label: "Anchor", IDPrefix: "A-"},
+		"t1":     {Label: "T1", IDPrefix: "T1-"},
+		"t2":     {Label: "T2", IDPrefix: "T2-"},
+		"t3":     {Label: "T3", IDPrefix: "T3-"},
+		"t4":     {Label: "T4", IDPrefix: "T4-"},
+	}
+	schemaGraphvizFixture(t, ents,
+		map[string]metamodel.RelationDef{
+			"fans": {Label: "fans", From: []string{"src"}, To: []string{"t1", "t2", "t3", "t4"}},
+			// Each target additionally has an incoming edge from anchor,
+			// giving every target "otherwise connected" status.
+			"anchors": {Label: "anchors", From: []string{"anchor"}, To: []string{"t1", "t2", "t3", "t4"}},
+		},
+	)
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	if !strings.Contains(result, "__legend [") {
+		t.Errorf("4 connected targets should collapse to legend:\n%s", result)
+	}
+	if strings.Contains(result, "__hub_") {
+		t.Errorf("should not emit hub when all targets are otherwise connected:\n%s", result)
+	}
+	// anchors relation also has 4 targets all connected -> also legend,
+	// but self-check: no direct src->tN edges for the 'fans' relation.
+	if strings.Contains(result, `src -> t1 [label="fans"`) {
+		t.Errorf("fans edges should be suppressed:\n%s", result)
+	}
+}
+
+func TestSchemaGraphvizFewTargetsPlain(t *testing.T) {
+	schemaGraphvizFixture(t,
+		map[string]metamodel.EntityDef{
+			"a": {Label: "A", IDPrefix: "A-"},
+			"b": {Label: "B", IDPrefix: "B-"},
+			"c": {Label: "C", IDPrefix: "C-"},
+		},
+		map[string]metamodel.RelationDef{
+			"r": {Label: "r", From: []string{"a"}, To: []string{"b", "c"}},
+		},
+	)
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	if !strings.Contains(result, `a -> b [label="r"`) ||
+		!strings.Contains(result, `a -> c [label="r"`) {
+
+		t.Errorf("2-target relation should emit plain edges:\n%s", result)
+	}
+	if strings.Contains(result, "__hub_") || strings.Contains(result, "__legend [") {
+		t.Errorf("≤2 targets should never hub/legend:\n%s", result)
+	}
+}
+
+func TestSchemaGraphvizDropsEmptyNode(t *testing.T) {
+	// 'island' participates only in a legend-collapsed relation (≥5 targets),
+	// and has no other edges, so it must be dropped from the body.
+	ents := map[string]metamodel.EntityDef{
+		"island": {Label: "Island", IDPrefix: "I-"},
+	}
+	targets := []string{"t1", "t2", "t3", "t4", "t5"}
+	for _, t := range targets {
+		ents[t] = metamodel.EntityDef{Label: strings.ToUpper(t), IDPrefix: t + "-"}
+	}
+	schemaGraphvizFixture(t, ents,
+		map[string]metamodel.RelationDef{
+			"fans": {Label: "fans", From: []string{"island"}, To: targets},
+			// each target has another connection so they stay visible.
+			"link": {Label: "link", From: []string{"t1"}, To: []string{"t2"}},
+		},
+	)
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	if strings.Contains(result, `island [label`) {
+		t.Errorf("legend-only entity 'island' should be hidden:\n%s", result)
+	}
+	if !strings.Contains(result, `t1 [label="T1"`) {
+		t.Errorf("connected target t1 should remain visible:\n%s", result)
+	}
+}
+
+func TestSchemaGraphvizNoLegendFlag(t *testing.T) {
+	ents := map[string]metamodel.EntityDef{
+		"src": {Label: "Src", IDPrefix: "S-"},
+	}
+	targets := []string{"t1", "t2", "t3", "t4", "t5"}
+	for _, t := range targets {
+		ents[t] = metamodel.EntityDef{Label: strings.ToUpper(t), IDPrefix: t + "-"}
+	}
+	schemaGraphvizFixture(t, ents,
+		map[string]metamodel.RelationDef{
+			"fans": {Label: "fans", From: []string{"src"}, To: targets},
+		},
+	)
+	schemaNoLegend = true
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	if strings.Contains(result, "__legend [") {
+		t.Errorf("--no-legend should suppress the legend:\n%s", result)
+	}
+}
+
+func TestSchemaGraphvizNoBundleFlag(t *testing.T) {
+	ents := map[string]metamodel.EntityDef{
+		"src": {Label: "Src", IDPrefix: "S-"},
+		"t1":  {Label: "T1", IDPrefix: "T1-"},
+		"t2":  {Label: "T2", IDPrefix: "T2-"},
+		"t3":  {Label: "T3", IDPrefix: "T3-"},
+	}
+	schemaGraphvizFixture(t, ents,
+		map[string]metamodel.RelationDef{
+			"fans": {Label: "fans", From: []string{"src"}, To: []string{"t1", "t2", "t3"}},
+		},
+	)
+	schemaNoBundle = true
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	if strings.Contains(result, "__hub_") {
+		t.Errorf("--no-bundle should suppress hub even when targets are isolated:\n%s", result)
+	}
+	// With no bundle and isolated targets, the classification falls back to
+	// legend — which is the correct remaining collapse path.
+	if !strings.Contains(result, "__legend [") {
+		t.Errorf("with --no-bundle the pair should fall back to legend:\n%s", result)
+	}
+}
+
+func TestFormatTargets(t *testing.T) {
+	labels := map[string]string{
+		"a": "A", "b": "B", "c": "C", "d": "D", "e": "E",
+	}
+	tests := []struct {
+		name    string
+		to      []string
+		total   int
+		want    string
+		wantSub string
+	}{
+		{name: "empty total returns empty", total: 0, want: ""},
+		{name: "exactly all", to: []string{"a", "b", "c", "d", "e"}, total: 5, want: "any entity"},
+		{name: "minus one", to: []string{"a", "c", "d", "e"}, total: 5, wantSub: "except B"},
+		{name: "minus two", to: []string{"c", "d", "e"}, total: 5, wantSub: "except A, B"},
+		{name: "small list", to: []string{"c", "a"}, total: 5, wantSub: "A, C"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatTargets(tc.to, labels, tc.total)
+			if tc.want != "" && got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+			if tc.wantSub != "" && !strings.Contains(got, tc.wantSub) {
+				t.Errorf("got %q, want substring %q", got, tc.wantSub)
+			}
+		})
+	}
+}
+
+func TestSchemaGraphvizEscapesHTML(t *testing.T) {
+	ents := map[string]metamodel.EntityDef{
+		"src": {Label: "Src<&>", IDPrefix: "S-"},
+	}
+	targets := []string{"t1", "t2", "t3", "t4", "t5"}
+	for _, t := range targets {
+		ents[t] = metamodel.EntityDef{Label: strings.ToUpper(t), IDPrefix: t + "-"}
+	}
+	schemaGraphvizFixture(t, ents,
+		map[string]metamodel.RelationDef{
+			"rel": {Label: `has "quote"`, From: []string{"src"}, To: targets},
+		},
+	)
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	// The legend uses HTML-like labels, so the unsafe characters must be escaped.
+	if !strings.Contains(result, "Src&lt;&amp;&gt;") {
+		t.Errorf("legend should HTML-escape source label:\n%s", result)
+	}
+	if !strings.Contains(result, "has &#34;quote&#34;") {
+		t.Errorf("legend should HTML-escape relation label:\n%s", result)
+	}
+}
