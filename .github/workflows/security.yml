@@ -16,44 +16,139 @@ jobs:
     name: Vulnerability Check
     runs-on: ubuntu-latest
     steps:
+      - name: Generate app token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.26"
 
-      - name: Run govulncheck
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck (initial)
         id: vulncheck
         run: |
           set -euo pipefail
-          go install golang.org/x/vuln/cmd/govulncheck@latest
           status=0
           ./scripts/govulncheck-filtered.sh > /tmp/vulncheck.log 2>&1 || status=$?
           cat /tmp/vulncheck.log
-          exit "$status"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          # Don't fail the step — follow-up steps decide what to do.
 
-      - name: File issue on failure
-        if: failure()
+      - name: Try auto-update for fixable vulns
+        id: autoupdate
+        if: steps.vulncheck.outputs.status != '0'
+        run: |
+          set -euo pipefail
+
+          # Extract fixable (called) vulns: <module> <fixed-version>.
+          govulncheck -format json ./... > /tmp/vulncheck.json 2>&1 || true
+          if ! ./scripts/govulncheck-fixable.sh < /tmp/vulncheck.json > /tmp/fixable.txt; then
+            echo "No fixable, called vulnerabilities — falling through to issue-filing."
+            echo "fixed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Fixable vulnerabilities:"
+          cat /tmp/fixable.txt
+
+          # Apply `go get <mod>@<ver>` for each unique module — last fixed version wins
+          # when multiple OSVs affect the same module.
+          declare -A latest
+          while read -r mod ver; do
+            [[ -z "$mod" ]] && continue
+            latest["$mod"]="$ver"
+          done < /tmp/fixable.txt
+
+          for mod in "${!latest[@]}"; do
+            ver="${latest[$mod]}"
+            echo "go get $mod@v$ver"
+            go get "$mod@v$ver" || {
+              echo "go get failed for $mod@v$ver — may be transitive-only; continuing."
+            }
+          done
+          go mod tidy
+
+          # Re-run govulncheck to confirm no called vulns remain.
+          if ./scripts/govulncheck-filtered.sh > /tmp/vulncheck2.log 2>&1; then
+            echo "Auto-update resolved all called vulnerabilities."
+            echo "fixed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Auto-update did not resolve all called vulnerabilities:"
+            cat /tmp/vulncheck2.log
+            echo "fixed=partial" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open auto-update PR with auto-merge
+        if: steps.autoupdate.outputs.fixed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- go.mod go.sum; then
+            echo "No go.mod/go.sum diff despite auto-update — nothing to open."
+            exit 0
+          fi
+
+          BRANCH="chore/govulncheck-autoupdate"
+          BASE="${{ github.ref_name }}"
+
+          # Clean any stale branch from a previous run.
+          git push origin --delete "$BRANCH" 2>/dev/null || true
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add go.mod go.sum
+          git commit -m "chore(deps): govulncheck auto-update for fixable vulnerabilities
+
+          Automated by the weekly Security Scan workflow. See run:
+          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          git push -u origin "$BRANCH"
+
+          # Ensure labels exist (idempotent).
+          gh label create security  --repo "$GITHUB_REPOSITORY" --color B60205 --description "Security-related issue"  --force >/dev/null
+          gh label create automated --repo "$GITHUB_REPOSITORY" --color EDEDED --description "Filed by an automated job" --force >/dev/null
+          gh label create dependencies --repo "$GITHUB_REPOSITORY" --color 0366D6 --description "Dependency update" --force >/dev/null
+
+          PR_URL=$(gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base "$BASE" \
+            --head "$BRANCH" \
+            --title "chore(deps): govulncheck auto-update" \
+            --label security,automated,dependencies \
+            --body "Auto-applied \`go get\` updates to resolve vulnerabilities found by the weekly scan. Verified locally that post-update \`govulncheck\` is clean. Enabled auto-merge once CI passes.")
+
+          gh pr merge "$PR_URL" --auto --squash
+
+      - name: File issue (no auto-fix available)
+        if: steps.vulncheck.outputs.status != '0' && steps.autoupdate.outputs.fixed != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
 
-          # Stable, phrase-matchable title (no qualifier-like colons).
           TITLE='govulncheck scheduled scan found vulnerabilities'
 
-          # Ensure required labels exist (no-op if already present).
           gh label create security  --repo "$GITHUB_REPOSITORY" --color B60205 --description "Security-related issue"  --force >/dev/null
           gh label create automated --repo "$GITHUB_REPOSITORY" --color EDEDED --description "Filed by an automated job" --force >/dev/null
 
           LOG=$(tail -c 8000 /tmp/vulncheck.log 2>/dev/null || echo '(no log captured)')
 
-          # Build body with literal-heredoc + printf so attacker-influenced $LOG
-          # is never shell-evaluated. RUN_URL / LOG are substituted explicitly.
           BODY=$(cat <<'BODY_EOF'
-          The weekly `govulncheck` scan found actionable vulnerabilities.
+          The weekly `govulncheck` scan found actionable vulnerabilities that the auto-update workflow could not resolve (no upstream fix, or update did not clear the finding).
 
           Scan run: __RUN_URL__
 
@@ -68,8 +163,8 @@ jobs:
 
           To triage:
           - Run `just govulncheck` locally to reproduce.
-          - If upstream has a fix, update the dependency.
-          - If no fix is available, add the OSV id to `IGNORED_OSVS` in `scripts/govulncheck-filtered.sh` with a justification and tracking link.
+          - If upstream has a fix that the auto-update script missed, upgrade manually.
+          - If no fix is available, add the OSV id to `IGNORED_OSVS` in `scripts/govulncheck-filtered.sh` and `scripts/govulncheck-fixable.sh` with a justification and tracking link.
 
           This issue will be updated by subsequent weekly runs rather than duplicated.
           BODY_EOF
@@ -77,7 +172,6 @@ jobs:
           BODY=${BODY//__RUN_URL__/$RUN_URL}
           BODY=${BODY//__LOG__/$LOG}
 
-          # Quoted phrase search so we match the exact title, not tokenised words.
           EXISTING=$(gh issue list \
             --repo "$GITHUB_REPOSITORY" \
             --state open \

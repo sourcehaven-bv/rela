@@ -375,9 +375,19 @@ just install-hooks
 
 ## Security Checks
 
-`govulncheck` runs on every PR (blocking) and weekly (files a GitHub issue if a new
-vulnerability drops with no commit activity). Known-unfixable vulnerabilities are
-filtered via `scripts/govulncheck-filtered.sh` with documented OSV ids.
+`govulncheck` runs:
+
+- **On every PR that touches `go.mod` or `go.sum`** (blocking via the `vulncheck` job in
+  `ci.yml`). Unrelated PRs skip the check — the weekly schedule below covers them.
+- **Weekly from `security.yml`** (scheduled Monday 09:00 UTC). On failure, the workflow first
+  attempts an auto-update: it parses govulncheck JSON for called-and-fixable vulns, runs
+  `go get <mod>@<fixed>` + `go mod tidy`, re-verifies, and if clean, opens a PR with
+  auto-merge enabled (App token auth via `APP_ID` / `APP_PRIVATE_KEY`). If the auto-update
+  cannot resolve the finding (upstream has no fix, or fix doesn't clear the trace), it falls
+  back to filing / updating a deduplicated GitHub issue.
+
+Known-unfixable vulnerabilities are filtered via `scripts/govulncheck-filtered.sh` with
+documented OSV ids. Keep `IGNORED_OSVS` in sync with `scripts/govulncheck-fixable.sh`.
 
 ```bash
 # Run govulncheck locally with the project's filter list
