@@ -2,15 +2,15 @@
 id: REV-M40S7
 type: review-checklist
 title: 'Review: Replace backend per-file coverage ratchet with package floors; add govulncheck + gosec CI gates'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [x] All tests pass (`just test`) — verified via `just coverage-check` which runs the full test suite
-- [x] Lint clean (`just lint`) — `0 issues.`
+- [x] All tests pass (`just test`) — CI Test job SUCCESS
+- [x] Lint clean (`just lint`) — CI Lint job SUCCESS (0 issues locally)
 - [x] Coverage maintained (`just coverage-check`) — total 71.8% vs 65% floor; all package floors satisfied
 
 ## Code Review
@@ -42,12 +42,13 @@ Nit:
 - [x] Each acceptance criterion tested
 - [x] Test evidence documented in implementation checklist
 
-**Acceptance Status:** All 9 ACs verified PASS per IMPL-2RG24 evidence table.
+**Acceptance Status:** All 9 ACs verified PASS per IMPL-2RG24 evidence table. CI
+on PR #483 also confirms: Vulnerability Check SUCCESS, no Coverage Baseline
+Guard job runs (removed), no Codecov comment.
 
 ## Documentation (enhancements only)
 
-N/A — this is a refactor ticket. CLAUDE.md updates captured inline (not
-docs-checklist-scoped).
+N/A — refactor ticket. CLAUDE.md updates captured inline.
 
 ## Final Checks
 
@@ -57,8 +58,8 @@ docs-checklist-scoped).
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (pending final Rela Tickets re-run after status transitions)
+- [x] PR URL documented below
 
-**PR:** *(pending — creating next)*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/483

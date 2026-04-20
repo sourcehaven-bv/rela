@@ -5,7 +5,7 @@ title: Replace backend per-file coverage ratchet with package floors; add govuln
 kind: refactor
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## Problem
