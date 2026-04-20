@@ -5,27 +5,27 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 // setupTestRepo creates an encrypted repo on disk with one sealed
-// entity at version fromVersion, returns (root, keyring). The
+// entity at version fromVersion, returns (root, keyring, svc). The
 // keyring is loaded from the resulting state so ResumeInterruptedRotation
 // sees a real parsed keyring, not a hand-built one.
-func setupTestRepo(t *testing.T, fromVersion int) (string, *Keyring, Identity) {
+func setupTestRepo(t *testing.T, fromVersion int) (string, *Keyring, Identity, userstate.FSService) {
 	t.Helper()
 	root := t.TempDir()
+	svc := userstate.NewForTest(t.TempDir())
 
 	id := newTestIdentity(t)
 	priv, err := MarshalIdentity(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Install identity at .rela/key so LoadFromDir finds it.
-	if err = os.MkdirAll(filepath.Join(root, ".rela"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(root, ".rela", "key"),
-		[]byte(priv+"\n"), 0o600); err != nil {
+	// Install identity via the user-state service — LoadFromDir
+	// reads <us-root>/key.
+	if err = os.WriteFile(svc.Path(identityKey), []byte(priv+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Seal one entity file under the OLD recipient set at fromVersion.
@@ -56,18 +56,16 @@ func setupTestRepo(t *testing.T, fromVersion int) (string, *Keyring, Identity) {
 		t.Fatal(err)
 	}
 	t.Setenv("RELA_KEY_FILE", "")
-	kr, err := LoadFromDir(root)
+	kr, err := LoadFromDir(root, svc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return root, kr, id
+	return root, kr, id, svc
 }
 
 func TestResumeInterruptedRotation_NoSentinelIsNoOp(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	root, kr, _ := setupTestRepo(t, 1)
-	resumed, err := ResumeInterruptedRotation(root, kr)
+	root, kr, _, svc := setupTestRepo(t, 1)
+	resumed, err := ResumeInterruptedRotation(root, kr, svc)
 	if err != nil {
 		t.Fatalf("ResumeInterruptedRotation: %v", err)
 	}
@@ -80,9 +78,7 @@ func TestResumeInterruptedRotation_CompletedButUncleanedSentinel(t *testing.T) {
 	// Scenario: a prior rela run completed the rotation (recipients.age
 	// is at ToVersion) but crashed before DeleteResealSentinel. Recovery
 	// should just delete the sentinel.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	root, kr, id := setupTestRepo(t, 7)
+	root, kr, id, svc := setupTestRepo(t, 7)
 	sentinel := &ResealSentinel{
 		FromVersion:   6, // any older value — the rotation already finished at 7
 		ToVersion:     7,
@@ -90,18 +86,18 @@ func TestResumeInterruptedRotation_CompletedButUncleanedSentinel(t *testing.T) {
 		NewRecipients: map[string]string{"alice": id.PublicRecipient().String()},
 		Operation:     "keys add alice",
 	}
-	if err := WriteResealSentinel(kr.RepoID(), sentinel); err != nil {
+	if err := WriteResealSentinel(svc, sentinel); err != nil {
 		t.Fatal(err)
 	}
 
-	resumed, err := ResumeInterruptedRotation(root, kr)
+	resumed, err := ResumeInterruptedRotation(root, kr, svc)
 	if err != nil {
 		t.Fatalf("ResumeInterruptedRotation: %v", err)
 	}
 	if resumed {
 		t.Error("resumed = true but rotation was already complete")
 	}
-	if _, err := ReadResealSentinel(kr.RepoID()); !errors.Is(err, os.ErrNotExist) {
+	if _, err := ReadResealSentinel(svc); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("sentinel not cleaned up, got err=%v", err)
 	}
 }
@@ -110,9 +106,7 @@ func TestResumeInterruptedRotation_MidFlightCompletes(t *testing.T) {
 	// Scenario: a prior rela run wrote the sentinel, started the walk,
 	// crashed before recipients.age was rewritten. On recovery, the
 	// walk must finish and recipients.age must land at ToVersion.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	root, kr, aliceID := setupTestRepo(t, 3)
+	root, kr, aliceID, svc := setupTestRepo(t, 3)
 	bobID := newTestIdentity(t)
 	// New recipient set = {alice, bob}; new version = 4.
 	sentinel := &ResealSentinel{
@@ -125,11 +119,11 @@ func TestResumeInterruptedRotation_MidFlightCompletes(t *testing.T) {
 		},
 		Operation: "keys add bob",
 	}
-	if err := WriteResealSentinel(kr.RepoID(), sentinel); err != nil {
+	if err := WriteResealSentinel(svc, sentinel); err != nil {
 		t.Fatal(err)
 	}
 
-	resumed, err := ResumeInterruptedRotation(root, kr)
+	resumed, err := ResumeInterruptedRotation(root, kr, svc)
 	if err != nil {
 		t.Fatalf("ResumeInterruptedRotation: %v", err)
 	}
@@ -171,7 +165,7 @@ func TestResumeInterruptedRotation_MidFlightCompletes(t *testing.T) {
 	}
 
 	// Sentinel gone.
-	if _, err := ReadResealSentinel(kr.RepoID()); !errors.Is(err, os.ErrNotExist) {
+	if _, err := ReadResealSentinel(svc); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("sentinel not cleaned up after recovery, got err=%v", err)
 	}
 }
@@ -182,9 +176,7 @@ func TestResumeInterruptedRotation_WrongRepoRootRejected(t *testing.T) {
 	// the sentinel's directory, so the wrong repo shouldn't normally
 	// find a sentinel at all, but if state directories get copied
 	// around we'd rather refuse than rotate the wrong tree.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	root, kr, id := setupTestRepo(t, 1)
+	root, kr, id, svc := setupTestRepo(t, 1)
 	bogus := &ResealSentinel{
 		FromVersion:   1,
 		ToVersion:     2,
@@ -192,11 +184,11 @@ func TestResumeInterruptedRotation_WrongRepoRootRejected(t *testing.T) {
 		NewRecipients: map[string]string{"alice": id.PublicRecipient().String()},
 		Operation:     "keys add",
 	}
-	if err := WriteResealSentinel(kr.RepoID(), bogus); err != nil {
+	if err := WriteResealSentinel(svc, bogus); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := ResumeInterruptedRotation(root, kr)
+	_, err := ResumeInterruptedRotation(root, kr, svc)
 	if err == nil {
 		t.Error("expected error when sentinel.RepoRoot doesn't match")
 	}
@@ -206,9 +198,7 @@ func TestResumeInterruptedRotation_StaleSentinelRejected(t *testing.T) {
 	// A sentinel whose ToVersion is OLDER than the current
 	// recipients.age version indicates local state is corrupt.
 	// Refuse loudly rather than trying to recover.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	root, kr, id := setupTestRepo(t, 10) // current version = 10
+	root, kr, id, svc := setupTestRepo(t, 10) // current version = 10
 	stale := &ResealSentinel{
 		FromVersion:   1,
 		ToVersion:     2, // older than current (10)
@@ -216,11 +206,11 @@ func TestResumeInterruptedRotation_StaleSentinelRejected(t *testing.T) {
 		NewRecipients: map[string]string{"alice": id.PublicRecipient().String()},
 		Operation:     "keys add",
 	}
-	if err := WriteResealSentinel(kr.RepoID(), stale); err != nil {
+	if err := WriteResealSentinel(svc, stale); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := ResumeInterruptedRotation(root, kr)
+	_, err := ResumeInterruptedRotation(root, kr, svc)
 	if err == nil {
 		t.Error("expected error for stale sentinel")
 	}
@@ -229,9 +219,7 @@ func TestResumeInterruptedRotation_StaleSentinelRejected(t *testing.T) {
 func TestResumeInterruptedRotation_IdempotentOnRerun(t *testing.T) {
 	// After successful recovery, a second recovery attempt on the
 	// same state must be a no-op (no sentinel, nothing to do).
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	root, kr, aliceID := setupTestRepo(t, 1)
+	root, kr, aliceID, svc := setupTestRepo(t, 1)
 	bobID := newTestIdentity(t)
 	sentinel := &ResealSentinel{
 		FromVersion: 1,
@@ -243,12 +231,12 @@ func TestResumeInterruptedRotation_IdempotentOnRerun(t *testing.T) {
 		},
 		Operation: "keys add bob",
 	}
-	if err := WriteResealSentinel(kr.RepoID(), sentinel); err != nil {
+	if err := WriteResealSentinel(svc, sentinel); err != nil {
 		t.Fatal(err)
 	}
 
 	// First recovery: resumed = true.
-	resumed1, err := ResumeInterruptedRotation(root, kr)
+	resumed1, err := ResumeInterruptedRotation(root, kr, svc)
 	if err != nil {
 		t.Fatalf("first recovery: %v", err)
 	}
@@ -257,13 +245,13 @@ func TestResumeInterruptedRotation_IdempotentOnRerun(t *testing.T) {
 	}
 
 	// Reload kr to reflect the post-recovery state.
-	kr2, err := LoadFromDir(root)
+	kr2, err := LoadFromDir(root, svc)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Second recovery: resumed = false, error = nil.
-	resumed2, err := ResumeInterruptedRotation(root, kr2)
+	resumed2, err := ResumeInterruptedRotation(root, kr2, svc)
 	if err != nil {
 		t.Fatalf("second recovery: %v", err)
 	}
@@ -276,9 +264,7 @@ func TestResumeInterruptedRotation_SkipsFilesAlreadyAtNewVersion(t *testing.T) {
 	// Mid-flight state: some files are already at newVersion (the
 	// walk had renamed them before the crash); others are still at
 	// oldVersion. Recovery must re-seal only the stragglers.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	root, kr, aliceID := setupTestRepo(t, 1)
+	root, kr, aliceID, svc := setupTestRepo(t, 1)
 	bobID := newTestIdentity(t)
 	newRecipients := []Recipient{
 		aliceID.PublicRecipient(),
@@ -324,11 +310,11 @@ func TestResumeInterruptedRotation_SkipsFilesAlreadyAtNewVersion(t *testing.T) {
 		},
 		Operation: "keys add bob",
 	}
-	if err = WriteResealSentinel(kr.RepoID(), sentinel); err != nil {
+	if err = WriteResealSentinel(svc, sentinel); err != nil {
 		t.Fatal(err)
 	}
 
-	resumed, err := ResumeInterruptedRotation(root, kr)
+	resumed, err := ResumeInterruptedRotation(root, kr, svc)
 	if err != nil {
 		t.Fatalf("ResumeInterruptedRotation: %v", err)
 	}

@@ -240,6 +240,29 @@ jobs:
 
           echo "Frontend coverage baseline check passed — no coverage was lowered."
 
+  userstate-cross-platform:
+    name: userstate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Run userstate tests
+        # Cross-platform regression gate for the per-user, per-repo
+        # state service. Full-suite tests run only on ubuntu (see
+        # job "test"); this keeps macOS and Windows wall-clock cheap
+        # while still exercising path resolution, locking, and the
+        # platform-specific indexer opt-out hooks on every PR.
+        run: go test -race ./internal/userstate/... ./internal/project/...
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -401,7 +424,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, lint, arch-lint, lint-markdown, fuzz, frontend, e2e]
+    needs: [test, userstate-cross-platform, lint, arch-lint, lint-markdown, fuzz, frontend, e2e]
     steps:
       - uses: actions/checkout@v4
 

@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/encryption"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 // keyFilePerm is the filesystem permission for private-key files
@@ -193,16 +195,41 @@ The command refuses to proceed if the repo is already encrypted.`,
 			return err
 		}
 
-		// Copy the private identity into .rela/key if provided. This
-		// must happen before we seal anything — unseal during the
-		// seal-all walk would need an identity, and we also want the
-		// user to be able to decrypt their own just-sealed repo.
+		// Resolve the repo identifier and open the user-state
+		// service first — both the installed identity (below) and
+		// every subsequent encryption-aware command need the user-
+		// state directory in place. The resolver writes .rela/repo-id
+		// when missing and cross-checks on re-init.
+		repoID, err := resolveOrGenerateRepoID()
+		if err != nil {
+			return err
+		}
+		us, err := userstate.NewFSWithRepoID(projectCtx.Root, repoID)
+		if err != nil {
+			return err
+		}
+
+		// Install the private identity into the per-user, per-repo
+		// directory under the OS user-config tree — outside the repo
+		// and outside any directory-sync scope. The source file is
+		// left untouched; we warn if it's inside the project tree
+		// because that file is now a copy of the private key that
+		// would still land on Dropbox / iCloud / OneDrive.
 		if keysInitIdentity != "" {
-			if err = copyFile(keysInitIdentity, filepath.Join(projectCtx.CacheDir, "key"), keyFilePerm); err != nil {
+			if err = copyFile(keysInitIdentity, us.Path("key"), keyFilePerm); err != nil {
 				return err
 			}
-			if err = ensureKeyGitignored(projectCtx.Root); err != nil {
-				out.WriteMessage("warning: could not update .gitignore: %v", err)
+			if isInsideProject(keysInitIdentity, projectCtx.Root) {
+				out.WriteMessage(
+					"warning: --identity source %q is inside the project tree.",
+					keysInitIdentity)
+				out.WriteMessage(
+					"A copy is now in the user-state directory (%s);",
+					us.Path("key"))
+				out.WriteMessage(
+					"the source file is still in the project and is the cleartext")
+				out.WriteMessage(
+					"private key. Delete it if the project directory may be synced.")
 			}
 		}
 
@@ -215,14 +242,9 @@ The command refuses to proceed if the repo is already encrypted.`,
 			return err
 		}
 
-		// Generate per-repo identifier and write the authoritative
-		// recipients file last — recipients.age being present is the
-		// "encryption enabled" signal; do not set it until the rest
-		// of the state is consistent.
-		repoID, err := encryption.NewRepoID()
-		if err != nil {
-			return err
-		}
+		// Write the authoritative recipients file last — recipients.age
+		// being present is the "encryption enabled" signal; do not set
+		// it until the rest of the state is consistent.
 		rf := &encryption.RecipientsFile{
 			Version:    1,
 			RepoID:     repoID,
@@ -235,14 +257,58 @@ The command refuses to proceed if the repo is already encrypted.`,
 
 		out.WriteSuccess("Encryption enabled. Repo is now sealed for %s.", keysInitRecipient)
 		out.WriteMessage("")
-		out.WriteMessage("Note: the .rela/ directory holds user-local caches (rendered")
-		out.WriteMessage("documents, UI state, index) that are NOT sealed. .rela/ is")
-		out.WriteMessage("gitignored, but directory-sync tools (Dropbox, iCloud, OneDrive)")
-		out.WriteMessage("do not honor .gitignore — if you sync this project directory to")
-		out.WriteMessage("untrusted cloud storage, exclude .rela/ from the sync. See")
-		out.WriteMessage("docs/encryption.md for details.")
+		out.WriteMessage("The private identity is stored at:")
+		out.WriteMessage("  %s", us.Path("key"))
+		out.WriteMessage("")
+		out.WriteMessage("This path is outside the project tree — safe to place the")
+		out.WriteMessage("project directory on Dropbox/iCloud/OneDrive. Per-user caches")
+		out.WriteMessage("(rendered documents, UI state) also live under the user-state")
+		out.WriteMessage("directory. See docs/encryption.md for details.")
 		return nil
 	},
+}
+
+// resolveOrGenerateRepoID returns the canonical per-repo identifier
+// for the current project, creating .rela/repo-id on first access.
+// If the file is missing we generate a fresh id; if present we
+// validate and reuse it. Used by keys-related commands at a point
+// where the workspace has not yet constructed a user-state service
+// (init time, pre-factory).
+func resolveOrGenerateRepoID() (string, error) {
+	id, err := project.ResolveRepoID(projectCtx.Root, "")
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// openUserState returns a user-state service scoped to the current
+// project. The service reads (and if missing, generates) the
+// .rela/repo-id file. On encrypted repos the caller should call
+// userstate.VerifyKeyringRepoID after the keyring loads to catch
+// .rela/ directories copied in from other projects.
+func openUserState() (userstate.FSService, error) {
+	return userstate.Open(projectCtx.Root)
+}
+
+// isInsideProject reports whether path resolves to a location under
+// projectRoot. Used for the --identity source warning: a key file
+// inside the repo tree is the exact shape the ticket is moving
+// away from.
+func isInsideProject(path, projectRoot string) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	absRoot, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return false
+	}
+	return !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
 }
 
 // --- decrypt ---
@@ -256,9 +322,16 @@ var keysDecryptCmd = &cobra.Command{
 			return err
 		}
 
-		kr, err := encryption.LoadFromDir(projectCtx.Root)
+		us, err := openUserState()
 		if err != nil {
 			return err
+		}
+		kr, err := encryption.LoadFromDir(projectCtx.Root, us)
+		if err != nil {
+			return err
+		}
+		if vErr := userstate.VerifyKeyringRepoID(projectCtx.Root, kr.RepoID()); vErr != nil {
+			return vErr
 		}
 		if kr.LocalName() == "" {
 			return errors.New("loaded identity is not in the recipient list; cannot unseal")
@@ -305,9 +378,16 @@ by someone without a private key.`,
 			return err
 		}
 
-		kr, err := encryption.LoadFromDir(projectCtx.Root)
+		us, err := openUserState()
 		if err != nil {
 			return err
+		}
+		kr, err := encryption.LoadFromDir(projectCtx.Root, us)
+		if err != nil {
+			return err
+		}
+		if vErr := userstate.VerifyKeyringRepoID(projectCtx.Root, kr.RepoID()); vErr != nil {
+			return vErr
 		}
 		if _, exists := kr.File().Recipients[name]; exists {
 			return fmt.Errorf("recipient %s already exists", name)
@@ -324,7 +404,7 @@ by someone without a private key.`,
 		newRF.Recipients[name] = pubStr
 		newRF.Version = kr.Version() + 1
 
-		if err = rotateRecipients(projectCtx.Root, kr, &newRF, "keys add "+name); err != nil {
+		if err = rotateRecipients(projectCtx.Root, kr, us, &newRF, "keys add "+name); err != nil {
 			return err
 		}
 
@@ -347,9 +427,16 @@ var keysRemoveCmd = &cobra.Command{
 			return err
 		}
 
-		kr, err := encryption.LoadFromDir(projectCtx.Root)
+		us, err := openUserState()
 		if err != nil {
 			return err
+		}
+		kr, err := encryption.LoadFromDir(projectCtx.Root, us)
+		if err != nil {
+			return err
+		}
+		if vErr := userstate.VerifyKeyringRepoID(projectCtx.Root, kr.RepoID()); vErr != nil {
+			return vErr
 		}
 		if _, exists := kr.File().Recipients[name]; !exists {
 			return fmt.Errorf("recipient %s not found", name)
@@ -371,7 +458,7 @@ var keysRemoveCmd = &cobra.Command{
 		}
 		newRF.Version = kr.Version() + 1
 
-		if err = rotateRecipients(projectCtx.Root, kr, &newRF, "keys remove "+name); err != nil {
+		if err = rotateRecipients(projectCtx.Root, kr, us, &newRF, "keys remove "+name); err != nil {
 			return err
 		}
 
@@ -395,9 +482,16 @@ var keysStatusCmd = &cobra.Command{
 			out.WriteMessage("Repo is cleartext (no recipients.age).")
 			return nil
 		}
-		kr, err := encryption.LoadFromDir(projectCtx.Root)
+		us, err := openUserState()
 		if err != nil {
 			return err
+		}
+		kr, err := encryption.LoadFromDir(projectCtx.Root, us)
+		if err != nil {
+			return err
+		}
+		if vErr := userstate.VerifyKeyringRepoID(projectCtx.Root, kr.RepoID()); vErr != nil {
+			return vErr
 		}
 		out.WriteMessage("Repo is encrypted (version %d, repo_id %s).", kr.Version(), kr.RepoID())
 		out.WriteMessage("Recipients (%d):", len(kr.RecipientNames()))
@@ -648,7 +742,9 @@ func reencryptAll(root string, kr *encryption.Keyring, newRecipients []encryptio
 //
 // operation is a human-readable label ("keys add alice", "keys
 // remove bob") surfaced in diagnostics if recovery kicks in.
-func rotateRecipients(root string, kr *encryption.Keyring, newRF *encryption.RecipientsFile, operation string) error {
+func rotateRecipients(root string, kr *encryption.Keyring, us userstate.FSService,
+	newRF *encryption.RecipientsFile, operation string,
+) error {
 	newRecipients, err := newRF.RecipientList()
 	if err != nil {
 		return err
@@ -661,7 +757,7 @@ func rotateRecipients(root string, kr *encryption.Keyring, newRF *encryption.Rec
 		NewRecipients: newRF.Recipients,
 		Operation:     operation,
 	}
-	if err := encryption.WriteResealSentinel(kr.RepoID(), sentinel); err != nil {
+	if err := encryption.WriteResealSentinel(us, sentinel); err != nil {
 		return fmt.Errorf("record rotation in progress: %w", err)
 	}
 
@@ -680,7 +776,7 @@ func rotateRecipients(root string, kr *encryption.Keyring, newRF *encryption.Rec
 	// failure here is survivable — the factory recognizes a
 	// completed rotation by sentinel.to_version == keyring.version
 	// and cleans up on next open.
-	if err := encryption.DeleteResealSentinel(kr.RepoID()); err != nil {
+	if err := encryption.DeleteResealSentinel(us); err != nil {
 		out.WriteMessage("warning: %s left a stale sentinel; will be cleaned up on next rela invocation", operation)
 	}
 	return nil

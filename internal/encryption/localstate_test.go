@@ -5,13 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 func TestLocalState_TOFU_ReadsZero(t *testing.T) {
-	// Point XDG at an empty tree so no prior state exists.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	s, err := NewLocalState("abc123")
+	svc := userstate.NewForTest(t.TempDir())
+	s, err := NewLocalState(svc)
 	if err != nil {
 		t.Fatalf("NewLocalState: %v", err)
 	}
@@ -25,9 +25,8 @@ func TestLocalState_TOFU_ReadsZero(t *testing.T) {
 }
 
 func TestLocalState_StoreAndLoad(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	s, err := NewLocalState("repo-1")
+	svc := userstate.NewForTest(t.TempDir())
+	s, err := NewLocalState(svc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,22 +44,24 @@ func TestLocalState_StoreAndLoad(t *testing.T) {
 
 func TestLocalState_PerRepoIsolation(t *testing.T) {
 	// Two repos on the same machine must not see each other's
-	// version state. That's what repo_id is for.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	s1, err := NewLocalState("repo-A")
+	// version state. Scoping happens at the userstate layer now —
+	// each project gets its own FSService rooted at a distinct
+	// path, so a typical caller never shares one.
+	svcA := userstate.NewForTest(t.TempDir())
+	svcB := userstate.NewForTest(t.TempDir())
+	sA, err := NewLocalState(svcA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := NewLocalState("repo-B")
+	sB, err := NewLocalState(svcB)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sErr := s1.StoreVersion(42); sErr != nil {
+	if sErr := sA.StoreVersion(42); sErr != nil {
 		t.Fatal(sErr)
 	}
 
-	got, err := s2.LoadVersion()
+	got, err := sB.LoadVersion()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,17 +71,14 @@ func TestLocalState_PerRepoIsolation(t *testing.T) {
 }
 
 func TestLocalState_CorruptedFileErrors(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	s, err := NewLocalState("repo-X")
+	root := t.TempDir()
+	svc := userstate.NewForTest(root)
+	s, err := NewLocalState(svc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Manually plant garbage where the version file should be.
-	if err = os.MkdirAll(s.root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(s.root, versionFile),
+	// Plant garbage where the version file should be.
+	if err = os.WriteFile(filepath.Join(root, versionKey),
 		[]byte("not-an-integer\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -92,16 +90,13 @@ func TestLocalState_CorruptedFileErrors(t *testing.T) {
 }
 
 func TestLocalState_NegativeVersionRejected(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	s, err := NewLocalState("repo-Y")
+	root := t.TempDir()
+	svc := userstate.NewForTest(root)
+	s, err := NewLocalState(svc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.MkdirAll(s.root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(s.root, versionFile),
+	if err = os.WriteFile(filepath.Join(root, versionKey),
 		[]byte("-5\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -112,28 +107,9 @@ func TestLocalState_NegativeVersionRejected(t *testing.T) {
 	}
 }
 
-func TestLocalState_EmptyRepoIDRejected(t *testing.T) {
-	if _, err := NewLocalState(""); err == nil {
-		t.Error("NewLocalState with empty repo id should error")
-	}
-}
-
-func TestLocalState_XDGOverride(t *testing.T) {
-	// XDG_STATE_HOME takes precedence over the per-OS default.
-	custom := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", custom)
-
-	s, err := NewLocalState("repo-Z")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.StoreVersion(3); err != nil {
-		t.Fatal(err)
-	}
-	// The file must land under $XDG_STATE_HOME/rela/repos/<id>/.
-	want := filepath.Join(custom, "rela", "repos", "repo-Z", versionFile)
-	if _, err := os.Stat(want); err != nil {
-		t.Errorf("version file not at XDG location %s: %v", want, err)
+func TestLocalState_NilServiceRejected(t *testing.T) {
+	if _, err := NewLocalState(nil); err == nil {
+		t.Error("NewLocalState with nil service should error")
 	}
 }
 
@@ -143,9 +119,9 @@ func TestLocalState_AtomicWrite(t *testing.T) {
 	// We can't kill the process mid-StoreVersion; instead verify
 	// the tmp-file + rename pattern by observing no .tmp is left
 	// behind on successful write.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	s, err := NewLocalState("repo-A")
+	root := t.TempDir()
+	svc := userstate.NewForTest(root)
+	s, err := NewLocalState(svc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,12 +129,12 @@ func TestLocalState_AtomicWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := os.ReadDir(s.root)
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		if e.Name() == versionFile+".tmp" {
+		if e.Name() == versionKey+".tmp" {
 			t.Errorf("orphan .tmp left behind after successful StoreVersion")
 		}
 	}

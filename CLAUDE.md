@@ -390,15 +390,47 @@ relations/                  # Markdown relation files (FROM--type--TO.md)
 templates/entities/<type>.md  # Optional: entity templates for defaults
 templates/relations/<type>.md # Optional: relation templates for defaults
 .rela/cache.json            # Graph cache (gitignored)
-.rela/user-defaults.yaml    # User-specific default values (gitignored)
-.rela/scheduler-state.json  # Scheduler last-run timestamps (gitignored)
+.rela/fsstore-index.json    # Store index cache (gitignored)
+.rela/repo-id               # Per-repo fingerprint used to scope user-state (gitignored)
+.rela/ai.yaml               # AI provider config, shared with team (gitignored)
+.rela/secrets.yaml          # Script credentials (gitignored)
+recipients.age              # Encrypted recipient list (present iff encryption is enabled)
 ```
+
+## User-Local State
+
+Per-user, per-repo state that must not be synced with the project tree (age
+identity, UI state, rendered caches, scheduler execution history, user
+defaults, encryption rollback marker) lives under the OS user-config directory,
+scoped by `.rela/repo-id`:
+
+| Platform | Path |
+| -------- | ---- |
+| Linux / BSD | `$XDG_CONFIG_HOME/rela/repos/<repo-id>/` → `~/.config/rela/repos/<repo-id>/` |
+| macOS | `~/Library/Application Support/rela/repos/<repo-id>/` |
+| Windows | `%AppData%\rela\repos\<repo-id>\` |
+
+Set `$RELA_USER_STATE_DIR` to override the base directory. The override must
+be absolute and must not point inside the project tree (rela refuses —
+pointing user-state back into the synced tree defeats the at-rest encryption
+threat model). The implementation lives in `internal/userstate`.
+
+Files that live in the user-state directory:
+
+- `key` — age private identity (mode 0o600)
+- `last_seen_version` — highest encryption version observed (rollback defense anchor)
+- `reseal-progress.yaml` — in-flight `keys add` / `keys remove` sentinel
+- `ui-state.json` — collapsed navigation groups
+- `user-defaults.yaml` — per-user entity default values
+- `palette.yaml` — per-user UI palette overrides
+- `scheduler-state.json` — scheduler last-run timestamps
+- `documents/<id>-<hash>.html` — rendered-entity HTML cache
 
 ### User Defaults
 
 The data entry app supports user-configurable default values for entity creation,
-stored in `.rela/user-defaults.yaml` (gitignored, per-user). Users configure these
-via the Settings page in the web UI.
+stored in `user-defaults.yaml` under the per-user state directory. Users
+configure these via the Settings page in the web UI.
 
 **Types and resolution** (`internal/dataentry/config.go`):
 

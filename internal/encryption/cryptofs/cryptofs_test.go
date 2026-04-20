@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/encryption"
 	"github.com/Sourcehaven-BV/rela/internal/encryption/cryptofs"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 // newTestIdentity returns a fresh hybrid identity, failing the test
@@ -310,8 +311,7 @@ func TestReadFile_SwapBetweenFilesDetected(t *testing.T) {
 func TestReadFile_RollbackDetected(t *testing.T) {
 	// Wire a LocalState explicitly so the rollback check has
 	// something to compare against.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	state, err := encryption.NewLocalState("test-repo")
+	state, err := encryption.NewLocalState(userstate.NewForTest(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,8 +365,7 @@ func TestReadFile_RollbackDetected(t *testing.T) {
 func TestReadFile_TOFUAcceptsFirstVersion(t *testing.T) {
 	// First read on a new machine (no local state) must accept
 	// whatever version it sees and persist it.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	state, err := encryption.NewLocalState("tofu-repo")
+	state, err := encryption.NewLocalState(userstate.NewForTest(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}

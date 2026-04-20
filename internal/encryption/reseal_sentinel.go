@@ -1,23 +1,26 @@
 package encryption
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
-// resealSentinelFile is the filename of the in-progress re-seal
-// sentinel, kept in the same XDG per-repo directory as the
+// resealSentinelKey is the user-state key for the in-progress
+// re-seal sentinel, kept in the same per-repo directory as the
 // last-seen-version file. Plaintext YAML — living outside the
 // synced tree means the cloud adversary we defend against can't
 // see or tamper with it, so encryption would add no security
 // benefit and complicate crash recovery (we'd need a key to
 // decrypt the sentinel, but the re-seal flow is mid-rotation and
 // the key situation is fragile).
-const resealSentinelFile = "reseal-progress.yaml"
+const resealSentinelKey = "reseal-progress.yaml"
 
 // ResealSentinel captures the in-flight state of a `rela keys add`
 // or `rela keys remove` operation. It is written to XDG state
@@ -85,44 +88,36 @@ func (s *ResealSentinel) Validate() error {
 	return nil
 }
 
-// WriteResealSentinel persists s under the per-repo XDG state
-// directory keyed by repoID. Writes atomically (tmp + rename);
-// callers can assume that after a successful return the file is
-// durable or doesn't exist at all, never partial.
-func WriteResealSentinel(repoID string, s *ResealSentinel) error {
+// WriteResealSentinel persists s under the per-repo user-state
+// directory reached via svc. Writes atomically; callers can assume
+// that after a successful return the file is durable or doesn't
+// exist at all, never partial.
+func WriteResealSentinel(svc userstate.FSService, s *ResealSentinel) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	state, err := NewLocalState(repoID)
-	if err != nil {
-		return err
-	}
-	if err = os.MkdirAll(state.root, stateDirPerm); err != nil {
-		return fmt.Errorf("reseal sentinel: prepare state dir: %w", err)
+	if svc == nil {
+		return errors.New("reseal sentinel: nil user-state service")
 	}
 	data, err := yaml.Marshal(s)
 	if err != nil {
 		return fmt.Errorf("reseal sentinel: marshal: %w", err)
 	}
-	path := filepath.Join(state.root, resealSentinelFile)
-	tmp := path + ".tmp"
-	if err = os.WriteFile(tmp, data, stateFilePerm); err != nil {
+	if err := svc.Put(context.Background(), resealSentinelKey, data); err != nil {
 		return fmt.Errorf("reseal sentinel: write: %w", err)
 	}
-	return os.Rename(tmp, path)
+	return nil
 }
 
-// ReadResealSentinel loads the sentinel for repoID, or returns
+// ReadResealSentinel loads the sentinel via svc, or returns
 // os.ErrNotExist if none exists (the normal case). Callers
 // distinguish "no rotation in flight" from "sentinel present but
 // malformed" via errors.Is.
-func ReadResealSentinel(repoID string) (*ResealSentinel, error) {
-	state, err := NewLocalState(repoID)
-	if err != nil {
-		return nil, err
+func ReadResealSentinel(svc userstate.FSService) (*ResealSentinel, error) {
+	if svc == nil {
+		return nil, errors.New("reseal sentinel: nil user-state service")
 	}
-	path := filepath.Join(state.root, resealSentinelFile)
-	data, err := os.ReadFile(path)
+	data, err := svc.Get(context.Background(), resealSentinelKey)
 	if err != nil {
 		return nil, err
 	}
@@ -136,14 +131,13 @@ func ReadResealSentinel(repoID string) (*ResealSentinel, error) {
 	return &s, nil
 }
 
-// DeleteResealSentinel removes the sentinel for repoID. Idempotent:
+// DeleteResealSentinel removes the sentinel via svc. Idempotent:
 // a missing file is not an error.
-func DeleteResealSentinel(repoID string) error {
-	state, err := NewLocalState(repoID)
-	if err != nil {
-		return err
+func DeleteResealSentinel(svc userstate.FSService) error {
+	if svc == nil {
+		return errors.New("reseal sentinel: nil user-state service")
 	}
-	path := filepath.Join(state.root, resealSentinelFile)
+	path := filepath.Join(svc.Root(), resealSentinelKey)
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("reseal sentinel: delete: %w", err)
 	}

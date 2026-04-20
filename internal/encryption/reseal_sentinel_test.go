@@ -1,10 +1,13 @@
 package encryption
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 func newTestSentinel(t *testing.T) *ResealSentinel {
@@ -22,13 +25,12 @@ func newTestSentinel(t *testing.T) *ResealSentinel {
 }
 
 func TestResealSentinel_RoundTrip(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
+	svc := userstate.NewForTest(t.TempDir())
 	s := newTestSentinel(t)
-	if err := WriteResealSentinel("repo-1", s); err != nil {
+	if err := WriteResealSentinel(svc, s); err != nil {
 		t.Fatalf("WriteResealSentinel: %v", err)
 	}
-	got, err := ReadResealSentinel("repo-1")
+	got, err := ReadResealSentinel(svc)
 	if err != nil {
 		t.Fatalf("ReadResealSentinel: %v", err)
 	}
@@ -47,28 +49,28 @@ func TestResealSentinel_RoundTrip(t *testing.T) {
 }
 
 func TestResealSentinel_MissingIsNotExist(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	_, err := ReadResealSentinel("nobody-home")
+	svc := userstate.NewForTest(t.TempDir())
+	_, err := ReadResealSentinel(svc)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("expected os.ErrNotExist, got %v", err)
 	}
 }
 
 func TestResealSentinel_Delete(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	svc := userstate.NewForTest(t.TempDir())
 
 	s := newTestSentinel(t)
-	if err := WriteResealSentinel("repo-D", s); err != nil {
+	if err := WriteResealSentinel(svc, s); err != nil {
 		t.Fatal(err)
 	}
-	if err := DeleteResealSentinel("repo-D"); err != nil {
+	if err := DeleteResealSentinel(svc); err != nil {
 		t.Fatalf("DeleteResealSentinel: %v", err)
 	}
-	if _, err := ReadResealSentinel("repo-D"); !errors.Is(err, os.ErrNotExist) {
+	if _, err := ReadResealSentinel(svc); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("sentinel not deleted, got %v", err)
 	}
 	// Idempotent on a second delete.
-	if err := DeleteResealSentinel("repo-D"); err != nil {
+	if err := DeleteResealSentinel(svc); err != nil {
 		t.Errorf("second delete should be idempotent, got %v", err)
 	}
 }
@@ -128,36 +130,30 @@ func TestResealSentinel_NewRecipientListIsSorted(t *testing.T) {
 }
 
 func TestResealSentinel_MalformedFileRejected(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	// Create the directory and plant a broken YAML file at the
-	// expected path; Read must surface an error rather than
-	// silently accepting it.
-	state, err := NewLocalState("repo-M")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.MkdirAll(state.root, stateDirPerm); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(
-		filepath.Join(state.root, resealSentinelFile),
-		[]byte("not: valid: yaml: [\n"), stateFilePerm,
+	root := t.TempDir()
+	svc := userstate.NewForTest(root)
+	// Plant broken YAML directly at the key path; Read must surface
+	// an error rather than silently accepting it.
+	if err := os.WriteFile(
+		filepath.Join(root, resealSentinelKey),
+		[]byte("not: valid: yaml: [\n"), 0o600,
 	); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := ReadResealSentinel("repo-M"); err == nil {
+	if _, err := ReadResealSentinel(svc); err == nil {
 		t.Error("expected parse error for malformed sentinel")
 	}
 }
 
 func TestResealSentinel_RejectedOnWriteIfInvalid(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
+	svc := userstate.NewForTest(t.TempDir())
 	s := newTestSentinel(t)
 	s.ToVersion = s.FromVersion // invalid
-	if err := WriteResealSentinel("bad-repo", s); err == nil {
+	if err := WriteResealSentinel(svc, s); err == nil {
 		t.Error("expected validation error on write")
 	}
 }
+
+// keep the context import used elsewhere for package test compile
+var _ = context.Background

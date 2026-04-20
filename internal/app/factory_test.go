@@ -16,7 +16,16 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/storage/integrity"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
+
+// newTestUserState returns a per-test user-state service rooted at
+// a fresh tempdir. Tests that don't care about state-path details
+// pair it with FSFactory construction via the helper below.
+func newTestUserState(t *testing.T) userstate.FSService {
+	t.Helper()
+	return userstate.NewForTest(t.TempDir())
+}
 
 func TestFSFactoryOpensWorkingStore(t *testing.T) {
 	root := t.TempDir()
@@ -33,7 +42,7 @@ func TestFSFactoryOpensWorkingStore(t *testing.T) {
 		},
 	}
 
-	factory := &app.FSFactory{FS: fs, Paths: paths}
+	factory := &app.FSFactory{FS: fs, Paths: paths, UserState: newTestUserState(t)}
 	s, err := factory.OpenStore(meta)
 	require.NoError(t, err)
 	defer s.Close()
@@ -52,9 +61,10 @@ func TestFSFactory_EncryptedModeInstallsAgeCrypto(t *testing.T) {
 	// When <root>/recipients.age exists, OpenStore loads the keyring
 	// and installs a real age Crypto. Entity writes hit disk sealed.
 	root := t.TempDir()
+	us := newTestUserState(t)
 	id, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
-	setupEncryptedRepo(t, root, id, true)
+	setupEncryptedRepo(t, root, id, us, true)
 
 	paths := &project.Context{
 		Root:         root,
@@ -62,7 +72,7 @@ func TestFSFactory_EncryptedModeInstallsAgeCrypto(t *testing.T) {
 		EntitiesDir:  filepath.Join(root, "entities"),
 		RelationsDir: filepath.Join(root, "relations"),
 	}
-	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths, UserState: us}
 	s, err := factory.OpenStore(&metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Plural: "tickets"},
@@ -91,7 +101,7 @@ func TestFSFactoryOpenStoreReturnsIndependentStores(t *testing.T) {
 		CacheDir:     filepath.Join(root, ".rela"),
 	}
 
-	factory := &app.FSFactory{FS: fs, Paths: paths}
+	factory := &app.FSFactory{FS: fs, Paths: paths, UserState: newTestUserState(t)}
 	s1, err := factory.OpenStore(nil)
 	require.NoError(t, err)
 	defer s1.Close()
@@ -110,9 +120,10 @@ func TestFSFactoryOpenStoreReturnsIndependentStores(t *testing.T) {
 // self-echo detection on every write.
 func TestFSFactory_EncryptedNeedsSafeFS(t *testing.T) {
 	root := t.TempDir()
+	us := newTestUserState(t)
 	id, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
-	setupEncryptedRepo(t, root, id, true)
+	setupEncryptedRepo(t, root, id, us, true)
 
 	paths := &project.Context{
 		Root:         root,
@@ -121,7 +132,7 @@ func TestFSFactory_EncryptedNeedsSafeFS(t *testing.T) {
 		RelationsDir: filepath.Join(root, "relations"),
 	}
 	// Raw OsFS (no SafeFS wrap) on an encrypted repo must be refused.
-	factory := &app.FSFactory{FS: storage.NewOsFS(), Paths: paths}
+	factory := &app.FSFactory{FS: storage.NewOsFS(), Paths: paths, UserState: us}
 	_, err = factory.OpenStore(&metamodel.Metamodel{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, app.ErrEncryptedRepoNeedsSafeFS)
@@ -137,29 +148,31 @@ func TestFSFactory_EncryptedNeedsSafeFS(t *testing.T) {
 // Regression gate for the "decorator installed vs wantSealed
 // consistency check drift" class of bugs.
 func TestFSFactory_SingleBranchInvariant(t *testing.T) {
-	newProject := func(t *testing.T, encrypted bool) (string, *project.Context) {
+	newProject := func(t *testing.T, encrypted bool) (string, *project.Context, userstate.FSService) {
 		t.Helper()
 		root := t.TempDir()
+		us := newTestUserState(t)
 		require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
 		if encrypted {
 			id, err := encryption.GenerateIdentity()
 			require.NoError(t, err)
-			setupEncryptedRepo(t, root, id, true)
+			setupEncryptedRepo(t, root, id, us, true)
 		}
 		return root, &project.Context{
 			Root:         root,
 			CacheDir:     filepath.Join(root, ".rela"),
 			EntitiesDir:  filepath.Join(root, "entities"),
 			RelationsDir: filepath.Join(root, "relations"),
-		}
+		}, us
 	}
 
-	writeSentinel := func(t *testing.T, paths *project.Context) {
+	writeSentinel := func(t *testing.T, paths *project.Context, us userstate.FSService) {
 		t.Helper()
 		t.Setenv("RELA_KEY_FILE", "")
 		factory := &app.FSFactory{
-			FS:    storage.NewSafeFS(storage.NewOsFS()),
-			Paths: paths,
+			FS:        storage.NewSafeFS(storage.NewOsFS()),
+			Paths:     paths,
+			UserState: us,
 		}
 		s, err := factory.OpenStore(&metamodel.Metamodel{
 			Entities: map[string]metamodel.EntityDef{"ticket": {Plural: "tickets"}},
@@ -173,8 +186,8 @@ func TestFSFactory_SingleBranchInvariant(t *testing.T) {
 	}
 
 	t.Run("encrypted branch writes sealed bytes", func(t *testing.T) {
-		root, paths := newProject(t, true)
-		writeSentinel(t, paths)
+		root, paths, us := newProject(t, true)
+		writeSentinel(t, paths, us)
 		raw, err := os.ReadFile(filepath.Join(root, "entities", "tickets", "TKT-SENTINEL.md"))
 		require.NoError(t, err)
 		assert.True(t, encryption.LooksSealed(raw),
@@ -183,8 +196,8 @@ func TestFSFactory_SingleBranchInvariant(t *testing.T) {
 	})
 
 	t.Run("cleartext branch writes plaintext bytes", func(t *testing.T) {
-		root, paths := newProject(t, false)
-		writeSentinel(t, paths)
+		root, paths, us := newProject(t, false)
+		writeSentinel(t, paths, us)
 		raw, err := os.ReadFile(filepath.Join(root, "entities", "tickets", "TKT-SENTINEL.md"))
 		require.NoError(t, err)
 		assert.False(t, encryption.LooksSealed(raw),
@@ -199,11 +212,12 @@ func TestFSFactory_SingleBranchInvariant(t *testing.T) {
 // configured. Silent success would cripple every read path.
 func TestFSFactory_EncryptedNeedsIdentity(t *testing.T) {
 	root := t.TempDir()
+	us := newTestUserState(t)
 	id, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
 	// writeIdentity=false: encrypted repo state on disk but no
 	// private key anywhere resolvable.
-	setupEncryptedRepo(t, root, id, false)
+	setupEncryptedRepo(t, root, id, us, false)
 	t.Setenv("HOME", t.TempDir())
 
 	paths := &project.Context{
@@ -212,7 +226,7 @@ func TestFSFactory_EncryptedNeedsIdentity(t *testing.T) {
 		EntitiesDir:  filepath.Join(root, "entities"),
 		RelationsDir: filepath.Join(root, "relations"),
 	}
-	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths, UserState: us}
 	_, err = factory.OpenStore(&metamodel.Metamodel{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, app.ErrEncryptedRepoNeedsIdentity)
@@ -225,9 +239,10 @@ func TestFSFactory_EncryptedNeedsIdentity(t *testing.T) {
 // know about encryption.
 func TestFSFactory_Encrypted_RefusesCleartextDataFiles(t *testing.T) {
 	root := t.TempDir()
+	us := newTestUserState(t)
 	id, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
-	setupEncryptedRepo(t, root, id, true)
+	setupEncryptedRepo(t, root, id, us, true)
 
 	// Plant a cleartext entity file that the integrity verifier must reject.
 	entitiesDir := filepath.Join(root, "entities", "tickets")
@@ -241,7 +256,7 @@ func TestFSFactory_Encrypted_RefusesCleartextDataFiles(t *testing.T) {
 		EntitiesDir:  filepath.Join(root, "entities"),
 		RelationsDir: filepath.Join(root, "relations"),
 	}
-	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths, UserState: us}
 	_, err = factory.OpenStore(&metamodel.Metamodel{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, integrity.ErrRepoHasCleartextFilesButEncryptionEnabled)
@@ -272,7 +287,7 @@ func TestFSFactory_Cleartext_RefusesSealedDataFiles(t *testing.T) {
 		EntitiesDir:  filepath.Join(root, "entities"),
 		RelationsDir: filepath.Join(root, "relations"),
 	}
-	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths, UserState: newTestUserState(t)}
 	_, err = factory.OpenStore(&metamodel.Metamodel{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, integrity.ErrRepoHasSealedFilesButNoConfig)
@@ -290,7 +305,7 @@ func TestFSFactory_OpenBytesFS_Cleartext(t *testing.T) {
 		EntitiesDir:  filepath.Join(root, "entities"),
 		RelationsDir: filepath.Join(root, "relations"),
 	}
-	factory := &app.FSFactory{FS: fs, Paths: paths}
+	factory := &app.FSFactory{FS: fs, Paths: paths, UserState: newTestUserState(t)}
 
 	handle, err := factory.OpenBytesFS()
 	require.NoError(t, err)
@@ -313,9 +328,10 @@ func TestFSFactory_OpenBytesFS_Cleartext(t *testing.T) {
 // the attachment store) rely on this so attachments land sealed.
 func TestFSFactory_OpenBytesFS_Encrypted(t *testing.T) {
 	root := t.TempDir()
+	us := newTestUserState(t)
 	id, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
-	setupEncryptedRepo(t, root, id, true)
+	setupEncryptedRepo(t, root, id, us, true)
 
 	paths := &project.Context{
 		Root:         root,
@@ -323,7 +339,7 @@ func TestFSFactory_OpenBytesFS_Encrypted(t *testing.T) {
 		EntitiesDir:  filepath.Join(root, "entities"),
 		RelationsDir: filepath.Join(root, "relations"),
 	}
-	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths, UserState: us}
 
 	handle, err := factory.OpenBytesFS()
 	require.NoError(t, err)
@@ -349,23 +365,19 @@ func TestFSFactory_OpenBytesFS_Encrypted(t *testing.T) {
 // finished, recipients.age is rewritten at the new version, and
 // OpenStore returns a store wired to the post-rotation state.
 func TestFSFactory_OpenStore_RecoversInterruptedRotation(t *testing.T) {
-	// Point XDG at a fresh tempdir so the sentinel lands somewhere
-	// we control and doesn't pollute the developer's state.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
 	root := t.TempDir()
+	us := newTestUserState(t)
 	alice, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
-	setupEncryptedRepo(t, root, alice, true)
+	setupEncryptedRepo(t, root, alice, us, true)
 
 	// Seed one sealed entity at v=1 (matching the repo's current state).
 	entityDir := filepath.Join(root, "entities", "tickets")
 	require.NoError(t, os.MkdirAll(entityDir, 0o755))
 
-	// Load keyring to get the repo ID and current version.
-	kr, err := encryption.LoadFromDir(root)
+	// Load keyring to confirm the repo loads under the test us.
+	_, err = encryption.LoadFromDir(root, us)
 	require.NoError(t, err)
-	repoID := kr.RepoID()
 
 	// Plant a reseal sentinel pointing at a v=2 rotation to alice+bob.
 	bob, err := encryption.GenerateIdentity()
@@ -380,7 +392,7 @@ func TestFSFactory_OpenStore_RecoversInterruptedRotation(t *testing.T) {
 		},
 		Operation: "keys add bob",
 	}
-	require.NoError(t, encryption.WriteResealSentinel(repoID, sentinel))
+	require.NoError(t, encryption.WriteResealSentinel(us, sentinel))
 
 	paths := &project.Context{
 		Root:         root,
@@ -388,7 +400,7 @@ func TestFSFactory_OpenStore_RecoversInterruptedRotation(t *testing.T) {
 		EntitiesDir:  filepath.Join(root, "entities"),
 		RelationsDir: filepath.Join(root, "relations"),
 	}
-	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths, UserState: us}
 
 	// Factory should auto-resume and open the store cleanly.
 	s, err := factory.OpenStore(&metamodel.Metamodel{
@@ -410,10 +422,11 @@ func TestFSFactory_OpenStore_RecoversInterruptedRotation(t *testing.T) {
 // returning a cripple-read handle when no identity is configured.
 func TestFSFactory_OpenBytesFS_EncryptedMissingIdentity(t *testing.T) {
 	root := t.TempDir()
+	us := newTestUserState(t)
 	id, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
 	// writeIdentity=false: recipients.age present but no key resolvable.
-	setupEncryptedRepo(t, root, id, false)
+	setupEncryptedRepo(t, root, id, us, false)
 	t.Setenv("HOME", t.TempDir())
 
 	paths := &project.Context{
@@ -422,7 +435,7 @@ func TestFSFactory_OpenBytesFS_EncryptedMissingIdentity(t *testing.T) {
 		EntitiesDir:  filepath.Join(root, "entities"),
 		RelationsDir: filepath.Join(root, "relations"),
 	}
-	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths, UserState: us}
 
 	_, err = factory.OpenBytesFS()
 	require.Error(t, err)
@@ -440,17 +453,21 @@ func mustMarshalIdentity(t *testing.T, id encryption.Identity) string {
 }
 
 // setupEncryptedRepo wires an encrypted repo on disk at root for
-// factory tests. Writes .rela/key with the given identity (so
-// LoadFromDir resolves it) and recipients.age sealed to that
-// identity. Mirrors the production `rela keys init` output shape.
+// factory tests. When writeIdentity is true it installs the private
+// identity into the user-state service (us.Path("key")) so
+// LoadFromDir resolves it; otherwise it skips that write so tests
+// can assert "missing identity" errors.
 //
-// writeIdentity controls whether the .rela/key file is written —
-// tests that assert "missing identity" errors should pass false.
-func setupEncryptedRepo(t *testing.T, root string, id encryption.Identity, writeIdentity bool) {
+// Callers must pass a user-state service that matches the one they
+// attach to the FSFactory being tested — otherwise LoadFromDir's
+// resolver won't find the key.
+func setupEncryptedRepo(t *testing.T, root string, id encryption.Identity,
+	us userstate.FSService, writeIdentity bool,
+) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
 	if writeIdentity {
-		require.NoError(t, os.WriteFile(filepath.Join(root, ".rela", "key"),
+		require.NoError(t, os.WriteFile(us.Path("key"),
 			[]byte(mustMarshalIdentity(t, id)+"\n"), 0o600))
 	}
 	repoID, err := encryption.NewRepoID()

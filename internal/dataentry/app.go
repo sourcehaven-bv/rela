@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -217,11 +218,15 @@ func NewApp(
 	st store.Store,
 	em entitymanager.EntityManager,
 	searcher search.Searcher,
+	userState state.KV,
 	startWatching func(workspace.WatchOptions) error,
 ) (*App, error) {
+	if userState == nil {
+		return nil, errors.New("dataentry: NewApp requires a non-nil userState")
+	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
-	kv := state.NewFSKV(fs, paths.CacheDir)
+	kv := userState
 	trc := tracer.New(st)
 	templater := templating.NewFSTemplater(fs, paths)
 	readDeps := lua.ReadDeps{

@@ -71,6 +71,7 @@ func main() {
 	app, err := dataentry.NewApp(
 		ws.FS(), ws.Paths(), ws.Meta(), ws.Store(),
 		ws.EntityManager(), ws.Searcher(),
+		ws.State(),
 		ws.StartWatching,
 	)
 	if err != nil {

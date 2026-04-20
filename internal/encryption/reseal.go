@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 // ResumeInterruptedRotation is called at store-open time to recover
@@ -36,8 +38,8 @@ import (
 // authoritative again — but a recovery path that ran MUST reload
 // the keyring because recipients.age was just rewritten. The
 // caller is responsible for that reload.
-func ResumeInterruptedRotation(repoRoot string, kr *Keyring) (resumed bool, err error) {
-	sentinel, err := ReadResealSentinel(kr.RepoID())
+func ResumeInterruptedRotation(repoRoot string, kr *Keyring, us userstate.FSService) (resumed bool, err error) {
+	sentinel, err := ReadResealSentinel(us)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
@@ -55,7 +57,7 @@ func ResumeInterruptedRotation(repoRoot string, kr *Keyring) (resumed bool, err 
 	// Completed-but-not-cleaned case: recipients.age is already at
 	// to_version. Just sweep the sentinel.
 	if sentinel.ToVersion == kr.Version() {
-		return false, DeleteResealSentinel(kr.RepoID())
+		return false, DeleteResealSentinel(us)
 	}
 
 	// Mid-flight case: we need to resume. kr carries the OLD
@@ -65,7 +67,7 @@ func ResumeInterruptedRotation(repoRoot string, kr *Keyring) (resumed bool, err 
 		return false, fmt.Errorf(
 			"resume rotation: sentinel to_version %d is older than current version %d "+
 				"(sentinel appears stale; delete %s manually if you're sure)",
-			sentinel.ToVersion, kr.Version(), resealSentinelPath(kr.RepoID()))
+			sentinel.ToVersion, kr.Version(), us.Path(resealSentinelKey))
 	}
 	if sentinel.FromVersion != kr.Version() {
 		return false, fmt.Errorf(
@@ -90,7 +92,7 @@ func ResumeInterruptedRotation(repoRoot string, kr *Keyring) (resumed bool, err 
 	if err := WriteRecipientsFile(filepath.Join(repoRoot, RecipientsFileName), newRF); err != nil {
 		return true, fmt.Errorf("resume rotation: rewrite %s: %w", RecipientsFileName, err)
 	}
-	if err := DeleteResealSentinel(kr.RepoID()); err != nil {
+	if err := DeleteResealSentinel(us); err != nil {
 		return true, fmt.Errorf("resume rotation: delete sentinel: %w", err)
 	}
 	return true, nil
@@ -255,16 +257,4 @@ func shouldSkipRotationFile(name string) bool {
 		}
 	}
 	return false
-}
-
-// resealSentinelPath returns the absolute path of the sentinel for
-// a given repo id, for use in error messages. Best-effort —
-// callers use it only in surfacing diagnostic text, so a failure
-// to resolve XDG silently collapses to a placeholder.
-func resealSentinelPath(repoID string) string {
-	state, err := NewLocalState(repoID)
-	if err != nil {
-		return "<xdg-state>/rela/repos/" + repoID + "/" + resealSentinelFile
-	}
-	return filepath.Join(state.root, resealSentinelFile)
 }

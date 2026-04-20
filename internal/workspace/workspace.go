@@ -30,6 +30,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 // ChangeEvent is re-exported from storage so consumers don't need to
@@ -124,6 +125,11 @@ type Workspace struct {
 	// production this builds the fsstore under the project directory;
 	// tests can inject a different factory via WithStoreFactory.
 	storeFactory store.Factory
+
+	// userState is the per-user, per-repo state service. May be nil
+	// for test workspaces constructed without a project (NewForTest
+	// without WithFS, typically). When non-nil it backs State().
+	userState userstate.FSService
 }
 
 // maxAutomationDepth limits recursive automation triggering. When an entity
@@ -148,7 +154,11 @@ func Discover(startDir string, scriptExec ScriptExecutor) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	return New(fs, ctx, scriptExec)
+	us, err := userstate.Open(ctx.Root)
+	if err != nil {
+		return nil, fmt.Errorf("open user state: %w", err)
+	}
+	return New(fs, ctx, scriptExec, WithUserState(us))
 }
 
 // New creates a workspace over the given filesystem + project paths.
@@ -178,8 +188,17 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 			factory = tmp.storeFactory
 		}
 	}
+	// Extract userState from options so the factory can be wired.
+	var us userstate.FSService
+	for _, opt := range opts {
+		tmp := &Workspace{}
+		opt(tmp)
+		if tmp.userState != nil {
+			us = tmp.userState
+		}
+	}
 	if factory == nil {
-		factory = &app.FSFactory{FS: fs, Paths: paths}
+		factory = &app.FSFactory{FS: fs, Paths: paths, UserState: us}
 	}
 
 	s, openErr := factory.OpenStore(meta)
@@ -220,10 +239,11 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 type TestOption func(*testConfig)
 
 type testConfig struct {
-	fs     storage.FS
-	paths  *project.Context
-	store  store.Store
-	script ScriptExecutor
+	fs        storage.FS
+	paths     *project.Context
+	store     store.Store
+	script    ScriptExecutor
+	userState userstate.FSService
 }
 
 // WithFS attaches a filesystem and project paths to the test workspace,
@@ -250,6 +270,15 @@ func WithScript(exec ScriptExecutor) TestOption {
 	return func(c *testConfig) { c.script = exec }
 }
 
+// WithTestUserState attaches a user-state service to the test
+// workspace. Use userstate.NewForTest(t.TempDir()) for a throwaway
+// service. Without this, State() returns a nop KV and tests that
+// exercise user-state (UI state, user defaults, palette, scheduler)
+// fail with "no repository configured".
+func WithTestUserState(us userstate.FSService) TestOption {
+	return func(c *testConfig) { c.userState = us }
+}
+
 // NewForTest creates a workspace suitable for tests. By default it has
 // no filesystem, an empty memstore, and a nop script executor. Use the
 // WithFS / WithTestStore / WithScript options to customize.
@@ -263,7 +292,11 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Workspace {
 		opt(cfg)
 	}
 
-	ws := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script)
+	var wsOpts []Option
+	if cfg.userState != nil {
+		wsOpts = append(wsOpts, WithUserState(cfg.userState))
+	}
+	ws := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script, wsOpts...)
 	if cfg.store != nil {
 		ws.store = cfg.store
 		if ws.searchIdx != nil {
@@ -304,6 +337,13 @@ type Option func(*Workspace)
 // back to the default fsstore factory.
 func WithStoreFactory(f store.Factory) Option {
 	return func(w *Workspace) { w.storeFactory = f }
+}
+
+// WithUserState injects the per-user, per-repo state service. Required
+// for production paths (Discover wires this automatically); tests that
+// don't hit encryption can omit it and State() falls back to nopState.
+func WithUserState(us userstate.FSService) Option {
+	return func(w *Workspace) { w.userState = us }
 }
 
 // bytesOpener is the optional interface a store.Factory can
@@ -563,13 +603,18 @@ func (w *Workspace) Config() config.Loader {
 }
 
 // State returns the per-user state KV (UI state, render caches, scheduler state).
-// Returns a no-op KV when the workspace has no filesystem configured.
+// Returns a no-op KV when the workspace has no user-state service
+// configured (test workspaces without WithFS / WithUserState).
 func (w *Workspace) State() state.KV {
-	if w.fs == nil || w.paths == nil {
+	if w.userState == nil {
 		return nopState{}
 	}
-	return state.NewFSKV(w.fs, w.paths.CacheDir)
+	return w.userState
 }
+
+// UserState returns the workspace's per-user state service. May be
+// nil on test workspaces; production workspaces always have one.
+func (w *Workspace) UserState() userstate.FSService { return w.userState }
 
 type nopConfig struct{}
 

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 // writeRepoSetup seals a single-recipient recipients.age at
@@ -30,15 +32,17 @@ func writeRepoSetup(t *testing.T, root string, alice Identity, identityPath stri
 	}
 }
 
-func TestLoadFromDir_AllPresent(t *testing.T) {
+func TestLoadFromDir_ResolvesViaUserState(t *testing.T) {
 	root := t.TempDir()
-	alice := newTestIdentity(t)
-	writeRepoSetup(t, root, alice, filepath.Join(root, projectRelaDir, projectKeyFile))
+	userStateRoot := t.TempDir()
+	svc := userstate.NewForTest(userStateRoot)
 
-	// Clear env so $RELA_KEY_FILE doesn't interfere.
+	alice := newTestIdentity(t)
+	writeRepoSetup(t, root, alice, filepath.Join(userStateRoot, identityKey))
+
 	t.Setenv(envKeyFile, "")
 
-	kr, err := LoadFromDir(root)
+	kr, err := LoadFromDir(root, svc)
 	if err != nil {
 		t.Fatalf("LoadFromDir: %v", err)
 	}
@@ -55,6 +59,8 @@ func TestLoadFromDir_NoIdentityIsError(t *testing.T) {
 	// cannot succeed — surface it as a hard error rather than a
 	// silently-crippled keyring.
 	root := t.TempDir()
+	svc := userstate.NewForTest(t.TempDir())
+
 	alice := newTestIdentity(t)
 	repoID, _ := NewRepoID()
 	rf := &RecipientsFile{
@@ -67,9 +73,8 @@ func TestLoadFromDir_NoIdentityIsError(t *testing.T) {
 	}
 
 	t.Setenv(envKeyFile, "")
-	t.Setenv("HOME", t.TempDir()) // empty home, no ~/.config/rela/key
 
-	_, err := LoadFromDir(root)
+	_, err := LoadFromDir(root, svc)
 	if !errors.Is(err, ErrNoPrivateKey) {
 		t.Errorf("expected ErrNoPrivateKey, got %v", err)
 	}
@@ -77,6 +82,7 @@ func TestLoadFromDir_NoIdentityIsError(t *testing.T) {
 
 func TestLoadFromDir_EnvOverride(t *testing.T) {
 	root := t.TempDir()
+	svc := userstate.NewForTest(t.TempDir())
 	alice := newTestIdentity(t)
 
 	// Put identity at an arbitrary path and point $RELA_KEY_FILE at it.
@@ -84,7 +90,7 @@ func TestLoadFromDir_EnvOverride(t *testing.T) {
 	writeRepoSetup(t, root, alice, custom)
 	t.Setenv(envKeyFile, custom)
 
-	kr, err := LoadFromDir(root)
+	kr, err := LoadFromDir(root, svc)
 	if err != nil {
 		t.Fatalf("LoadFromDir: %v", err)
 	}
@@ -95,41 +101,64 @@ func TestLoadFromDir_EnvOverride(t *testing.T) {
 
 func TestLoadFromDir_EnvOverrideMissingFile(t *testing.T) {
 	root := t.TempDir()
+	svc := userstate.NewForTest(t.TempDir())
 	t.Setenv(envKeyFile, filepath.Join(t.TempDir(), "does-not-exist"))
 
-	_, err := LoadFromDir(root)
+	_, err := LoadFromDir(root, svc)
 	if err == nil {
 		t.Fatal("LoadFromDir with missing $RELA_KEY_FILE target should error")
 	}
 }
 
-func TestResolveIdentityPath_ProjectWins(t *testing.T) {
-	relaDir := t.TempDir()
-	mustWrite(t, filepath.Join(relaDir, projectKeyFile), []byte("x"), 0o600)
-	t.Setenv(envKeyFile, "")
-	got, err := resolveIdentityPath(relaDir, func() (string, error) { return "", errors.New("no home") })
-	if err != nil {
-		t.Fatalf("resolveIdentityPath: %v", err)
-	}
-	if got != filepath.Join(relaDir, projectKeyFile) {
-		t.Errorf("got %q, want project path", got)
+func TestLoadFromDir_NilServiceRejected(t *testing.T) {
+	if _, err := LoadFromDir(t.TempDir(), nil); err == nil {
+		t.Fatal("LoadFromDir with nil service should error")
 	}
 }
 
-func TestResolveIdentityPath_HomeFallback(t *testing.T) {
-	relaDir := t.TempDir() // empty, no .rela/key
-	home := t.TempDir()
-	mustMkdir(t, filepath.Join(home, ".config", userConfigSubdir))
-	mustWrite(t, filepath.Join(home, ".config", userConfigSubdir, projectKeyFile), []byte("x"), 0o600)
+func TestResolveIdentityPath_UserState(t *testing.T) {
+	userStateRoot := t.TempDir()
+	svc := userstate.NewForTest(userStateRoot)
+	mustWrite(t, filepath.Join(userStateRoot, identityKey), []byte("x"), 0o600)
 	t.Setenv(envKeyFile, "")
 
-	got, err := resolveIdentityPath(relaDir, func() (string, error) { return home, nil })
+	got, err := resolveIdentityPath(svc)
 	if err != nil {
 		t.Fatalf("resolveIdentityPath: %v", err)
 	}
-	want := filepath.Join(home, ".config", userConfigSubdir, projectKeyFile)
+	want := filepath.Join(userStateRoot, identityKey)
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestResolveIdentityPath_NothingConfigured(t *testing.T) {
+	svc := userstate.NewForTest(t.TempDir())
+	t.Setenv(envKeyFile, "")
+	got, err := resolveIdentityPath(svc)
+	if err != nil {
+		t.Fatalf("resolveIdentityPath: %v", err)
+	}
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestResolveIdentityPath_EnvWinsOverUserState(t *testing.T) {
+	userStateRoot := t.TempDir()
+	svc := userstate.NewForTest(userStateRoot)
+	mustWrite(t, filepath.Join(userStateRoot, identityKey), []byte("userstate"), 0o600)
+
+	custom := filepath.Join(t.TempDir(), "env.key")
+	mustWrite(t, custom, []byte("env"), 0o600)
+	t.Setenv(envKeyFile, custom)
+
+	got, err := resolveIdentityPath(svc)
+	if err != nil {
+		t.Fatalf("resolveIdentityPath: %v", err)
+	}
+	if got != custom {
+		t.Errorf("env override not honored: got %q, want %q", got, custom)
 	}
 }
 
@@ -157,18 +186,6 @@ func TestIsEnabled(t *testing.T) {
 			t.Error("IsEnabled = false, want true")
 		}
 	})
-}
-
-func TestResolveIdentityPath_NothingConfigured(t *testing.T) {
-	relaDir := t.TempDir()
-	t.Setenv(envKeyFile, "")
-	got, err := resolveIdentityPath(relaDir, func() (string, error) { return "", errors.New("no home") })
-	if err != nil {
-		t.Fatalf("resolveIdentityPath: %v", err)
-	}
-	if got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
 }
 
 func mustMkdir(t *testing.T, path string) {

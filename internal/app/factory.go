@@ -18,21 +18,23 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage/integrity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 // ErrEncryptedRepoNeedsIdentity is returned by OpenStore when the
-// repository is encryption-enabled (<root>/recipients.age exists)
-// but the caller has no local age identity configured
-// ($RELA_KEY_FILE, .rela/key, ~/.config/rela/key all absent or
-// unreadable).
+// repository is encryption-enabled (recipients.age is present) but
+// no local age identity could be found.
 //
-// Opening an encrypted store without an identity would silently cripple
-// every read path (GetEntity, ListEntities, rebuildPropCache all swallow
-// errors and return empty). Failing loudly at factory time makes the
+// Identity resolution tries $RELA_KEY_FILE first and then
+// <user-config>/rela/repos/<repo-id>/key — both absent or
+// unreadable means no key is configured. Opening an encrypted store
+// without an identity would silently cripple every read path
+// (GetEntity, ListEntities, rebuildPropCache all swallow errors
+// and return empty). Failing loudly at factory time makes the
 // misconfiguration visible instead.
 var ErrEncryptedRepoNeedsIdentity = errors.New(
 	"app: repository is encryption-enabled but no local identity is configured " +
-		"(set $RELA_KEY_FILE or place .rela/key or ~/.config/rela/key)")
+		"(set $RELA_KEY_FILE or run `rela keys init` to create one)")
 
 // ErrEncryptedRepoNeedsSafeFS is returned by OpenStore when the
 // repository is encryption-enabled but the caller passed a raw FS
@@ -56,9 +58,38 @@ var ErrEncryptedRepoNeedsSafeFS = errors.New(
 // rather than silently proceeding with a broken watcher — see
 // ErrEncryptedRepoNeedsSafeFS. Tests that don't exercise the
 // watcher may pass a MemFS on cleartext repos.
+//
+// UserState is the per-user, per-repo state service that the
+// factory threads through to encryption helpers (LocalState,
+// identity resolution, reseal sentinel). It must be non-nil in
+// production; tests that don't touch encryption can pass
+// userstate.NewForTest(t.TempDir()).
 type FSFactory struct {
-	FS    storage.FS
-	Paths *project.Context
+	FS        storage.FS
+	Paths     *project.Context
+	UserState userstate.FSService
+}
+
+// NewFSFactory constructs an FSFactory with explicit service wiring.
+// All three arguments must be non-nil; passing a nil UserState is a
+// programming error that would silently fall through to a
+// filesystem-less encryption path in later construction.
+//
+// The struct-literal form remains available for tests that want to
+// customize individual fields; production callers should prefer
+// this constructor so the non-nil contract is enforced at the
+// package boundary.
+func NewFSFactory(fs storage.FS, paths *project.Context, us userstate.FSService) (*FSFactory, error) {
+	if fs == nil {
+		return nil, errors.New("app: NewFSFactory: nil FS")
+	}
+	if paths == nil {
+		return nil, errors.New("app: NewFSFactory: nil Paths")
+	}
+	if us == nil {
+		return nil, errors.New("app: NewFSFactory: nil UserState")
+	}
+	return &FSFactory{FS: fs, Paths: paths, UserState: us}, nil
 }
 
 // compile-time interface check
@@ -180,7 +211,7 @@ func (f *FSFactory) OpenBytesFS() (attachment.BytesFS, error) {
 // handle) and OpenBytesFS (for workspace-level components like
 // attachments) so both consumers see the same configuration.
 func (f *FSFactory) newCryptoFS(inner storage.FS, kr *encryption.Keyring) (*cryptofs.FS, error) {
-	state, err := encryption.NewLocalState(kr.RepoID())
+	state, err := encryption.NewLocalState(f.UserState)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +245,7 @@ func (f *FSFactory) loadEncryption() (bool, *encryption.Keyring, error) {
 	if !enabled {
 		return false, nil, nil
 	}
-	kr, err := encryption.LoadFromDir(f.Paths.Root)
+	kr, err := encryption.LoadFromDir(f.Paths.Root, f.UserState)
 	if err != nil {
 		if errors.Is(err, encryption.ErrNoPrivateKey) {
 			return false, nil, ErrEncryptedRepoNeedsIdentity
@@ -227,12 +258,12 @@ func (f *FSFactory) loadEncryption() (bool, *encryption.Keyring, error) {
 	// case (no sentinel, nothing to do). On the rare recovery
 	// path, recipients.age gets rewritten — reload the keyring so
 	// the rest of the store-open path sees the new state.
-	resumed, err := encryption.ResumeInterruptedRotation(f.Paths.Root, kr)
+	resumed, err := encryption.ResumeInterruptedRotation(f.Paths.Root, kr, f.UserState)
 	if err != nil {
 		return false, nil, fmt.Errorf("app: resume interrupted rotation: %w", err)
 	}
 	if resumed {
-		kr, err = encryption.LoadFromDir(f.Paths.Root)
+		kr, err = encryption.LoadFromDir(f.Paths.Root, f.UserState)
 		if err != nil {
 			return false, nil, fmt.Errorf("app: reload keyring after recovery: %w", err)
 		}

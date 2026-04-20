@@ -36,6 +36,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -130,7 +131,14 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	ws, wsErr := workspace.New(fs, projCtx, script.NewEngine())
+	us, usErr := userstate.Open(projCtx.Root)
+	if usErr != nil {
+		d.mu.Lock()
+		d.loadErr = usErr.Error()
+		d.mu.Unlock()
+		return usErr.Error()
+	}
+	ws, wsErr := workspace.New(fs, projCtx, script.NewEngine(), workspace.WithUserState(us))
 	if wsErr != nil {
 		d.mu.Lock()
 		d.loadErr = wsErr.Error()
@@ -141,6 +149,7 @@ func (d *Desktop) LoadProject(dir string) string {
 	app, err := dataentry.NewApp(
 		fs, projCtx, ws.Meta(), ws.Store(),
 		ws.EntityManager(), ws.Searcher(),
+		ws.State(),
 		ws.StartWatching,
 	)
 	if err != nil {

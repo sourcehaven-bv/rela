@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -11,8 +12,21 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
+
+// testTempDir returns an OS-level temp directory for test user-state.
+// Callers that want per-test isolation should use t.TempDir() via a
+// dedicated helper; this one is for anonymous test plumbing where a
+// stable dir-per-process is fine.
+func testTempDir() string {
+	d, err := os.MkdirTemp("", "rela-userstate-*")
+	if err != nil {
+		panic(err)
+	}
+	return d
+}
 
 // seedEntity writes an entity directly into the app's store.
 func seedEntity(app *App, e *entity.Entity) {
@@ -108,7 +122,11 @@ func bindRepo(app *App, root string) {
 // share a specific filesystem (e.g., an in-memory FS across multiple
 // App instances).
 func bindRepoWithFS(app *App, fs storage.FS, paths *project.Context) {
-	newWs := workspace.NewForTest(app.Meta(), workspace.WithFS(fs, paths))
+	us := userstate.NewForTest(testTempDir())
+	newWs := workspace.NewForTest(app.Meta(),
+		workspace.WithFS(fs, paths),
+		workspace.WithTestUserState(us),
+	)
 	reseedStore(newWs.Store(), app.store)
 	rebindApp(app, fs, paths, newWs)
 }

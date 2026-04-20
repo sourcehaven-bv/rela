@@ -5,13 +5,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Sourcehaven-BV/rela/internal/userstate"
 )
 
 const (
-	envKeyFile       = "RELA_KEY_FILE"
-	projectRelaDir   = ".rela"
-	projectKeyFile   = "key"
-	userConfigSubdir = "rela"
+	envKeyFile = "RELA_KEY_FILE"
+
+	// ConfigFileName is the filename under .rela/ whose presence
+	// historically flipped a rela project into encryption-enabled
+	// mode. The S2 design promoted <root>/recipients.age to the
+	// authoritative signal; this file is retained only for tooling
+	// that still peeks at .rela/ to decide whether a repo is
+	// encrypted.
+	ConfigFileName = "encryption.yaml"
+
+	// identityKey names the user-state key holding the age
+	// private-key identity. Matches the key used by `rela keys init`.
+	identityKey = "key"
 )
 
 // IsEnabled reports whether encryption is enabled for the project at
@@ -31,23 +42,27 @@ func IsEnabled(projectRoot string) (bool, error) {
 	return false, fmt.Errorf("encryption: stat %s: %w", recipientsPath, err)
 }
 
-// LoadFromDir loads a Keyring rooted at projectRoot. The local
-// identity is resolved in this order:
+// LoadFromDir loads a Keyring rooted at projectRoot, reading the
+// local age identity via the user-state service.
+//
+// Identity resolution precedence:
 //
 //  1. $RELA_KEY_FILE (if set; missing file is an error)
-//  2. <projectRoot>/.rela/key (if present)
-//  3. ~/.config/rela/key (if present)
+//  2. us.Path(identityKey) in the user-state directory
 //
-// Then <projectRoot>/recipients.age is decrypted with that identity
-// to produce the authoritative recipient list.
+// There is no fallback to the project tree; an age identity
+// checked into the repo would defeat the at-rest encryption
+// threat model (cloud-synced repo = cloud-synced key).
 //
 // Returns os.ErrNotExist when recipients.age is absent (repo is
 // cleartext) so callers can distinguish that from a load failure.
 // Returns ErrNoPrivateKey when the repo is encrypted but no
 // identity could be resolved.
-func LoadFromDir(projectRoot string) (*Keyring, error) {
-	relaDir := filepath.Join(projectRoot, projectRelaDir)
-	identityPath, err := resolveIdentityPath(relaDir, userHomeDir)
+func LoadFromDir(projectRoot string, us userstate.FSService) (*Keyring, error) {
+	if us == nil {
+		return nil, errors.New("encryption: LoadFromDir: nil user-state service")
+	}
+	identityPath, err := resolveIdentityPath(us)
 	if err != nil {
 		return nil, err
 	}
@@ -71,24 +86,14 @@ func LoadFromDir(projectRoot string) (*Keyring, error) {
 // none is configured. If $RELA_KEY_FILE is set but the target file
 // does not exist, an error is returned (explicit overrides MUST
 // resolve).
-func resolveIdentityPath(relaDir string, home func() (string, error)) (string, error) {
+func resolveIdentityPath(us userstate.FSService) (string, error) {
 	if env := os.Getenv(envKeyFile); env != "" {
 		if _, err := os.Stat(env); err != nil {
 			return "", fmt.Errorf("encryption: %s=%q: %w", envKeyFile, env, err)
 		}
 		return env, nil
 	}
-	projectPath := filepath.Join(relaDir, projectKeyFile)
-	if _, err := os.Stat(projectPath); err == nil {
-		return projectPath, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("encryption: stat %s: %w", projectPath, err)
-	}
-	h, err := home()
-	if err != nil {
-		return "", nil //nolint:nilerr // no home dir -> treat as "no identity configured"
-	}
-	userPath := filepath.Join(h, ".config", userConfigSubdir, projectKeyFile)
+	userPath := us.Path(identityKey)
 	if _, err := os.Stat(userPath); err == nil {
 		return userPath, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -96,5 +101,3 @@ func resolveIdentityPath(relaDir string, home func() (string, error)) (string, e
 	}
 	return "", nil
 }
-
-func userHomeDir() (string, error) { return os.UserHomeDir() }
