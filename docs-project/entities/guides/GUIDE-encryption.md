@@ -40,28 +40,37 @@ readable history on the raw files.
 | `metamodel.yaml`                  | no      | Bootstrap config; tooling needs it readable |
 | `groups.yaml`, `schedules.yaml`   | no      | Bootstrap config                            |
 | `templates/`                      | no      | Project scaffolding                         |
-| **`.rela/` (the rest)**           | **no**  | **User-local state — see caveat below**     |
+| `.rela/repo-id`                   | no      | Per-repo fingerprint (32 hex chars)         |
+| `.rela/cache.json`                | no      | Graph cache (rebuildable)                   |
+| `.rela/ai.yaml`, `.rela/secrets.yaml` | no  | Project-scoped tooling config               |
 
-### `.rela/` is cleartext
+### User-local state lives outside the project tree
 
-The `.rela/` directory holds user-local state that rela treats as
-machine-specific: rendered document caches, UI state, user-default
-values, the in-memory index. These files are **NOT** sealed.
+Per-user state — age private key, rendered-document cache, UI state,
+user defaults, palette overrides, scheduler execution history, and the
+encryption rollback-defense marker — lives **outside** the project
+directory under the OS user-config tree:
 
-`.rela/` is gitignored, so `git push` does not leak it. But **directory
-sync tools like Dropbox, iCloud Drive, and OneDrive do not honor
-`.gitignore`**. If you sync your project directory via one of those
-services, the contents of `.rela/` land on the sync provider in the
-clear, including rendered HTML previews of every entity you opened
-recently.
+| Platform | Path |
+| -------- | ---- |
+| Linux / BSD | `$XDG_CONFIG_HOME/rela/repos/<repo-id>/` (default `~/.config/rela/repos/<repo-id>/`) |
+| macOS | `~/Library/Application Support/rela/repos/<repo-id>/` |
+| Windows | `%AppData%\rela\repos\<repo-id>\` |
 
-**Recommendation:** do not sync your project directory as a whole to
-untrusted cloud storage. Use `git` (which honors `.gitignore`) or
-exclude `.rela/` explicitly in your sync tool's ignore rules.
+`<repo-id>` is the UUID-shaped fingerprint stored in `.rela/repo-id`
+(auto-generated on first use). For encrypted repos, `.rela/repo-id`
+is cross-checked against the RepoID baked into `recipients.age`;
+a mismatch aborts with a clear error — the signature of a `.rela/`
+directory copied in from another project.
 
-A follow-up release will relocate these caches to the platform's state
-directory (`~/.local/state/rela/` / `~/Library/Application Support/rela/`),
-outside any project directory, eliminating this risk.
+Use `$RELA_USER_STATE_DIR` to override the base path (absolute only).
+Rela refuses overrides that point inside the project tree — the whole
+point of this layout is to keep state out of any synced directory.
+
+This means it is **safe** to put your project directory on Dropbox,
+iCloud Drive, or OneDrive: nothing in the project tree is user-local
+plaintext that could leak via a sync. The project contains only
+committed source and the `.rela/repo-id` fingerprint.
 
 ### Filenames and sizes leak
 
@@ -89,19 +98,25 @@ key and therefore cannot silently expand the recipient set.
 The local private identity is resolved in this order:
 
 1. `$RELA_KEY_FILE` — explicit path via environment variable.
-2. `<repo>/.rela/key` — per-repo identity (gitignored).
-3. `~/.config/rela/key` — per-user identity shared across projects.
+2. The `key` file inside the per-user, per-repo state directory
+   (see "User-local state" above).
 
-Any of these is an age private-key file in the standard
-`AGE-SECRET-KEY-PQ-1...` format (hybrid post-quantum; single line).
+There is no project-tree fallback. A key inside the repo tree would
+defeat the at-rest encryption threat model (cloud-synced project =
+cloud-synced key). `rela keys init --identity <path>` installs the
+provided key into the user-state directory at the standard location;
+the original source file is not moved.
+
+The private key file is in the standard `AGE-SECRET-KEY-PQ-1...`
+format (hybrid post-quantum; single line).
 
 ### Rotation and versioning
 
 Every `rela keys add` / `rela keys remove` bumps a monotonic version
 counter stored in `recipients.age` and stamped into every re-sealed
-data file. A per-machine state directory
-(`$XDG_STATE_HOME/rela/repos/<repo-id>/`) records the highest version
-this machine has seen. On every read, rela verifies the file's
+data file. The per-user, per-repo state directory
+(see "User-local state") records the highest version this machine
+has seen. On every read, rela verifies the file's
 version is not lower than the last-seen version — catching attempts
 by a cloud-side adversary to restore an older snapshot of any single
 sealed file.
@@ -198,10 +213,13 @@ Unseals every file and removes `recipients.age`.
 ## Recovery escape hatch
 
 If rela itself is broken or you want to inspect a sealed file outside
-the CLI, use the `age` binary directly:
+the CLI, use the `age` binary directly. The private key lives in the
+user-state directory — look up the exact path via the table in
+"User-local state" above. On Linux:
 
 ```bash
-age -d -i ~/.config/rela/key entities/requirements/REQ-001.md
+KEY="$XDG_CONFIG_HOME/rela/repos/$(cat .rela/repo-id)/key"
+age -d -i "$KEY" entities/requirements/REQ-001.md
 ```
 
 The sealed plaintext begins with a small rela-specific header (one
