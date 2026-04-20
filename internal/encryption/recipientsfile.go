@@ -11,11 +11,8 @@ import (
 )
 
 // RecipientsFileName is the filename of the authoritative encrypted
-// recipient list, committed at the project root. Its presence (not
-// .rela/encryption.yaml's presence) is what flips the store into
-// encrypted mode in the post-S2 design, though the marker in
-// .rela/encryption.yaml is retained during the transition for
-// back-compat with callers that haven't been updated yet.
+// recipient list, committed at the project root. Its presence is
+// what flips the store into encrypted mode.
 const RecipientsFileName = "recipients.age"
 
 // RecipientsFile is the plaintext payload sealed inside
@@ -26,20 +23,18 @@ const RecipientsFileName = "recipients.age"
 //
 //   - Version is the monotonic repo-wide encryption epoch. It bumps
 //     on every recipient-set change (keys add / keys remove). Every
-//     sealed data file carries this value in its X-Rela-Version
-//     header; readers enforce "observed ≥ last-seen-locally" so
-//     rollback of the recipient list or any individual file is
-//     detected.
+//     sealed data file stamps this value into its rela header;
+//     readers enforce "observed ≥ last-seen-locally" so rollback
+//     of the recipient list or any individual file is detected.
 //   - RepoID is a one-time UUID generated at `rela keys init`.
 //     Identifies the repo across machines and cloud backups so
 //     per-machine state (last-seen-version, in-flight reseal
 //     sentinels) can be kept outside the synced tree without
 //     colliding across different rela projects.
 //   - Recipients maps name → age public-key string. This is the
-//     authoritative recipient set — keys/*.pub no longer exists.
-//     Adding an unauthorized recipient requires decrypting the
-//     current file, so the cloud adversary (without a private key)
-//     cannot silently add themselves.
+//     authoritative recipient set. Adding an unauthorized recipient
+//     requires decrypting the current file, so an adversary without
+//     a private key cannot silently add themselves.
 type RecipientsFile struct {
 	Version    int               `yaml:"version"`
 	RepoID     string            `yaml:"repo_id"`

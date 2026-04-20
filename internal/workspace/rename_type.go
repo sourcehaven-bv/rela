@@ -14,12 +14,13 @@ import (
 
 // ErrRenameTypeNotSupportedOnEncryptedRepo is returned by
 // RenameEntityType when the project has at-rest encryption enabled.
-// The current implementation rewrites entity files through the raw
-// workspace FS; on an encrypted repo that reads ciphertext and fails
-// to match the YAML frontmatter delimiters, silently no-opping while
-// reporting success (see encryption-security-review finding C3). A
-// proper fix requires routing the operation through a schemaop
-// migrator per backend — deferred pending a package-layout refactor.
+//
+// The implementation rewrites entity files through the raw
+// workspace FS. On an encrypted repo that reads ciphertext and
+// fails to match the YAML frontmatter delimiters, so a naïve run
+// would silently no-op while reporting success. Refuse upfront
+// instead. A proper fix routes the operation through a per-backend
+// schemaop migrator.
 //
 // Workaround for users: `rela keys decrypt` → `rela rename-type …` →
 // `rela keys init`.

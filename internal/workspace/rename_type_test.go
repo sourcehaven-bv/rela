@@ -206,9 +206,9 @@ func TestRewriteEntityTypeInDir_MissingDir(t *testing.T) {
 
 // On encrypted repos, the current rewrite path reads ciphertext
 // through the raw FS and would silently report success while leaving
-// every frontmatter untouched. Until the backend-layout refactor lands,
-// the operation must refuse upfront. Uses a real tempdir because the
-// guard checks for .rela/encryption.yaml on the OS filesystem.
+// every frontmatter untouched. The operation must refuse upfront.
+// Uses a real tempdir because the guard stats <root>/recipients.age
+// on the OS filesystem.
 func TestRenameEntityType_RefusesOnEncryptedRepo(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{
@@ -222,9 +222,9 @@ func TestRenameEntityType_RefusesOnEncryptedRepo(t *testing.T) {
 		}
 	}
 	// Presence of <root>/recipients.age is what flips the repo into
-	// encrypted mode (post-S2). Contents don't matter for the guard
-	// check — we're only asserting RenameEntityType refuses early
-	// before any decryption is attempted.
+	// encrypted mode. Contents don't matter for the guard check —
+	// we're only asserting RenameEntityType refuses early before
+	// any decryption is attempted.
 	if err := os.WriteFile(
 		filepath.Join(root, "recipients.age"),
 		[]byte("dummy"), 0o644,

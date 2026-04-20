@@ -21,9 +21,10 @@ import (
 )
 
 // ErrEncryptedRepoNeedsIdentity is returned by OpenStore when the
-// repository is encryption-enabled (.rela/encryption.yaml exists) but
-// the caller has no local age identity configured ($RELA_KEY_FILE,
-// .rela/key, ~/.config/rela/key all absent or unreadable).
+// repository is encryption-enabled (<root>/recipients.age exists)
+// but the caller has no local age identity configured
+// ($RELA_KEY_FILE, .rela/key, ~/.config/rela/key all absent or
+// unreadable).
 //
 // Opening an encrypted store without an identity would silently cripple
 // every read path (GetEntity, ListEntities, rebuildPropCache all swallow
@@ -66,7 +67,7 @@ var _ store.Factory = (*FSFactory)(nil)
 // OpenStore constructs a new fsstore wired with the appropriate byte
 // transform stack.
 //
-// Decision branch: if .rela/encryption.yaml exists, the factory
+// Decision branch: if <root>/recipients.age exists, the factory
 // loads the keyring and wraps the FS in a cryptofs.FS decorator;
 // otherwise it passes the raw FS through unchanged.
 //
@@ -110,8 +111,7 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 	// Attachments are verified alongside entities/relations: on an
 	// encrypted repo every data file must be sealed, including the
 	// content-addressable attachment blobs and their metadata
-	// sidecars, otherwise C1 has regressed and plaintext has leaked
-	// back into the tree.
+	// sidecars, otherwise plaintext has leaked back into the tree.
 	if verifyErr := integrity.Verify(f.FS, wantSealed, []string{
 		f.Paths.EntitiesDir,
 		f.Paths.RelationsDir,
@@ -151,10 +151,10 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 //
 // This is the same handle the factory wires into the store's own
 // bytes path, exposed so workspace-level components outside the
-// store (today: the attachment store) can stay consistent with the
-// store's encryption behavior. Callers that bypass this helper and
-// reach for the raw FS directly will silently skip seal/unseal on
-// encrypted repos — see encryption-security-review.md finding C1.
+// store (today: the attachment store) can stay consistent with
+// the store's encryption behavior. Callers that bypass this helper
+// and reach for the raw FS directly silently skip seal/unseal on
+// encrypted repos, landing plaintext on disk — use this method.
 //
 // The return type is attachment.BytesFS, the narrow subset of byte
 // operations workspace components actually need. fsstore.StoreFS and
@@ -195,8 +195,8 @@ func (f *FSFactory) newCryptoFS(inner storage.FS, kr *encryption.Keyring) (*cryp
 }
 
 // loadEncryption decides whether encryption is on for this project
-// by checking for <root>/recipients.age (the S2 authoritative
-// encrypted recipient list). When present, it loads the keyring
+// by checking for <root>/recipients.age — the authoritative
+// encrypted recipient list. When present, it loads the keyring
 // (recipients + local identity via LoadFromDir).
 //
 // Returns (false, nil, nil) when the repo is cleartext.

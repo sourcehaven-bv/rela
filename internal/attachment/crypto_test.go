@@ -13,10 +13,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-// TestStoreWritesSealedBytesThroughCryptoFS verifies the fix for
-// encryption-security-review finding C1: attachment contents and
-// metadata sidecars written via attachment.Store on an encrypted repo
-// must land sealed on disk, not cleartext.
+// TestStoreWritesSealedBytesThroughCryptoFS asserts that attachment
+// contents and metadata sidecars written via attachment.Store on
+// an encrypted repo land sealed on disk, not cleartext.
 //
 // The test builds a store.Store with bytes = cryptofs.FS and then
 // AttachFile()s a payload with distinctive plaintext. It then reads
@@ -47,8 +46,9 @@ func TestStoreWritesSealedBytesThroughCryptoFS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// bytes = sealed; dirs = raw. This is the split the C1 fix
-	// introduced.
+	// bytes = sealed (content + metadata sidecars go through
+	// cryptofs); dirs = raw (directory topology has nothing to
+	// seal). The Store enforces this split by construction.
 	s := attachment.NewStore(sealed, raw, root)
 
 	const plaintextMarker = "TOP-SECRET-PAYLOAD-ABCDEF"

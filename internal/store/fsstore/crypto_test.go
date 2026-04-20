@@ -153,8 +153,10 @@ func TestFSStore_Encrypted_RoundTrip(t *testing.T) {
 }
 
 func TestFSStore_Encrypted_TamperedPayloadSurfacesAsCorrupted(t *testing.T) {
-	// C1 regression: tampered on-disk bytes MUST classify as
-	// IsCorrupted via the production fsstore.GetEntity path.
+	// Regression guard: tampered on-disk bytes MUST classify as
+	// IsCorrupted via the production fsstore.GetEntity path —
+	// never as IsNoMatchingKey, otherwise tampering is
+	// indistinguishable from an authorization problem.
 	s, root := buildEncryptedStore(t)
 	ctx := context.Background()
 

@@ -4,10 +4,12 @@ import "errors"
 
 // Package error predicates.
 //
-// Consumers classify errors via these three predicates rather than by
-// comparing against sentinel values. Predicate-only API prevents the
-// prior C1 regression where a call site accidentally collapsed tamper
-// (decrypt failure) into "no matching key" by conflating sentinels.
+// Consumers classify errors via these predicates rather than by
+// comparing against sentinel values. A predicate-only API prevents
+// a call site from accidentally collapsing tamper (decrypt
+// failure) into "no matching key" by conflating sentinels — the
+// two classes must surface distinctly so the user can tell "I
+// don't have the right key" from "someone modified this file".
 
 // ErrNoMatchingKey is returned when no loaded identity matches the
 // recipient list of the sealed blob. The blob is well-formed; the
@@ -36,19 +38,20 @@ func IsCorrupted(err error) bool { return errors.Is(err, ErrCorrupted) }
 // loaded at all.
 func IsNoPrivateKey(err error) bool { return errors.Is(err, ErrNoPrivateKey) }
 
-// ErrRollbackDetected is returned when a sealed file's X-Rela-Version
-// header carries a version LOWER than the highest this machine has
+// ErrRollbackDetected is returned when a sealed file's rela header
+// carries a version LOWER than the highest this machine has
 // already observed for this repo. Indicates either an adversary
 // restored an older version of the file from cloud-side snapshot,
 // or the local user intentionally reverted (in which case they
 // should clear the per-repo XDG state).
 var ErrRollbackDetected = errors.New("encryption: rollback detected: sealed file is older than last seen")
 
-// ErrFileRelocated is returned when a sealed file's X-Rela-Path
-// header does not match the path the file was read from.
-// Indicates either an adversary renamed a sealed file on disk to
-// impersonate another file, or a legitimate but uncoordinated
-// manual rename (rare; recovery is re-seal under the new path).
+// ErrFileRelocated is returned when a sealed file's rela header
+// carries a path that does not match the path the file was read
+// from. Indicates either an adversary renamed a sealed file on
+// disk to impersonate another file, or a legitimate but
+// uncoordinated manual rename (rare; recovery is re-seal under
+// the new path).
 var ErrFileRelocated = errors.New("encryption: sealed file path mismatch: possible swap or rename")
 
 // IsRollbackDetected / IsFileRelocated mirror the other predicate
