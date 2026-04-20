@@ -8,6 +8,18 @@ import (
 )
 
 func TestResolveBase(t *testing.T) {
+	// Build platform-appropriate absolute paths. On Unix this is
+	// "/opt/rela-state"; on Windows it's "C:\opt\rela-state". The
+	// resolver's only absoluteness criterion is filepath.IsAbs, so
+	// we use filepath.Join on an absolute root to stay portable.
+	absRoot := t.TempDir()
+	absA := filepath.Join(absRoot, "rela-state")
+	absB := filepath.Join(absRoot, "rela")
+	absCtrl := absRoot + string(filepath.Separator) + "bad\x00dir"
+	absCleaned := filepath.Join(absRoot, "rela", "..", "rela", "state")
+	absCleanedWant := filepath.Clean(absCleaned)
+	userCfg := filepath.Join(absRoot, "cfg")
+
 	tests := []struct {
 		name        string
 		env         map[string]string
@@ -19,32 +31,32 @@ func TestResolveBase(t *testing.T) {
 		{
 			name:    "default path uses UserConfigDir",
 			env:     map[string]string{},
-			userCfg: "/home/u/.config",
-			want:    "/home/u/.config",
+			userCfg: userCfg,
+			want:    userCfg,
 		},
 		{
 			name:    "override takes precedence",
-			env:     map[string]string{EnvOverride: "/opt/rela-state"},
-			userCfg: "/home/u/.config",
-			want:    "/opt/rela-state",
+			env:     map[string]string{EnvOverride: absA},
+			userCfg: userCfg,
+			want:    absA,
 		},
 		{
 			name:    "override trims whitespace",
-			env:     map[string]string{EnvOverride: "  /opt/rela  "},
-			userCfg: "/home/u/.config",
-			want:    "/opt/rela",
+			env:     map[string]string{EnvOverride: "  " + absB + "  "},
+			userCfg: userCfg,
+			want:    absB,
 		},
 		{
 			name:        "relative override rejected",
 			env:         map[string]string{EnvOverride: "relative/path"},
-			userCfg:     "/home/u/.config",
+			userCfg:     userCfg,
 			wantErrPart: "must be an absolute path",
 		},
 		{
 			name:        "empty override falls through",
 			env:         map[string]string{EnvOverride: "   "},
-			userCfg:     "/home/u/.config",
-			want:        "/home/u/.config",
+			userCfg:     userCfg,
+			want:        userCfg,
 			wantErrPart: "",
 		},
 		{
@@ -55,15 +67,15 @@ func TestResolveBase(t *testing.T) {
 		},
 		{
 			name:        "control char in override rejected",
-			env:         map[string]string{EnvOverride: "/opt/bad\x00dir"},
-			userCfg:     "/home/u/.config",
+			env:         map[string]string{EnvOverride: absCtrl},
+			userCfg:     userCfg,
 			wantErrPart: "control or NUL",
 		},
 		{
 			name:    "override cleans path",
-			env:     map[string]string{EnvOverride: "/opt/rela/../rela/state"},
-			userCfg: "/home/u/.config",
-			want:    "/opt/rela/state",
+			env:     map[string]string{EnvOverride: absCleaned},
+			userCfg: userCfg,
+			want:    absCleanedWant,
 		},
 	}
 	for _, tc := range tests {

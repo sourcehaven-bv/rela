@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -74,6 +75,9 @@ func TestNewForTest_AtomicWrite(t *testing.T) {
 }
 
 func TestNewForTest_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode bits are not enforced on Windows")
+	}
 	dir := t.TempDir()
 	svc := NewForTest(dir)
 	if err := svc.Put(context.Background(), "key", []byte("secret")); err != nil {
@@ -83,7 +87,6 @@ func TestNewForTest_FilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Only meaningful on POSIX; Windows silently uses its ACL model.
 	const mask os.FileMode = 0o777
 	if got := info.Mode() & mask; got&0o077 != 0 {
 		t.Errorf("Put wrote world- or group-readable file: mode=%o", got)
