@@ -1,24 +1,29 @@
 # go-test-coverage configuration
 # https://github.com/vladopajic/go-test-coverage
+#
+# Coverage is enforced as floor thresholds per package (and a project total).
+# Packages may rise or fall freely within their band — no per-file ratchet.
+# See CLAUDE.md "Test Coverage" for rationale.
 
 profile: coverage.out
 
-# Minimum coverage thresholds (floor - packages must never drop below these)
+# Minimum coverage thresholds (floor — packages must not drop below these)
 threshold:
   file: 0
   package: 0
-  total: 45
+  total: 65
 
-# Per-package minimum thresholds
+# Per-package minimum thresholds.
+# Set ~5pp below current measured coverage to give refactor headroom.
 override:
   - path: ^internal/entity$
-    threshold: 85
+    threshold: 80
   - path: ^internal/errors$
     threshold: 95
   - path: ^internal/output$
     threshold: 90
   - path: ^internal/project$
-    threshold: 85
+    threshold: 80
   - path: ^internal/markdown$
     threshold: 85
   - path: ^internal/filter$
@@ -28,7 +33,7 @@ override:
   - path: ^internal/importer$
     threshold: 65
   - path: ^internal/dataentry$
-    threshold: 60
+    threshold: 55
   - path: ^internal/dataentryconfig$
     threshold: 70
 
@@ -42,10 +47,3 @@ exclude:
 
 # Require coverage-ignore annotations to have explanatory comments
 force-annotation-comment: true
-
-# Coverage ratchet: compare against committed baseline
-# .coverage-baseline is the committed ratchet file (read-only during checks)
-# The coverage-ratchet workflow updates it after merges
-diff:
-  base-breakdown-file-name: .coverage-baseline
-  threshold: 0  # coverage must not decrease

@@ -22,9 +22,8 @@ go test ./...                 # Quick test
 go test -v ./internal/graph/  # Single package with verbose output
 go test -run TestName ./...   # Single test by name
 
-# Coverage Requirements (enforced in CI via go-test-coverage)
-# Configured in .testcoverage.yml with ratchet baseline in .coverage-baseline
-# Minimum thresholds per package — coverage can never decrease (ratchet)
+# Coverage (floor thresholds enforced in CI via go-test-coverage)
+# Configured in .testcoverage.yml — minimum floor per package, no ratchet
 
 # Lint
 just lint                     # Run golangci-lint
@@ -314,25 +313,30 @@ budget) and are tracked as a follow-up.
 
 ## Test Coverage
 
-The project uses [go-test-coverage](https://github.com/vladopajic/go-test-coverage) with a
-**coverage ratchet**: coverage can never decrease. Configuration is in `.testcoverage.yml` and
-the current baseline is stored in `.coverage-baseline` (committed to the repo).
+The Go backend uses [go-test-coverage](https://github.com/vladopajic/go-test-coverage)
+to enforce **floor thresholds**: each package must stay above a minimum percentage,
+and the project total must stay above 65%. Configuration is in `.testcoverage.yml`.
 
-### How the Ratchet Works
+Coverage within the floor is free to move up or down — there is no per-file ratchet.
+Trivial refactors don't trip the check. Floors only catch "someone added a whole new
+untested package" and "core packages silently lost their tests" — the failure modes
+worth gating on.
 
-- `.testcoverage.yml` defines minimum floor thresholds per package (override rules)
-- `.coverage-baseline` records per-file coverage from the last merge to main/develop
-- On PRs, CI checks that coverage hasn't dropped below the baseline (`diff.threshold: 0`)
-- After a PR merges, CI regenerates and commits the baseline if coverage improved
-- Coverage can only go up, never down
+The frontend uses a per-file ratchet at 100% (configured under `frontend/`); that's
+a different scale of codebase and a different rule.
 
 ### Coverage Policy
 
-- **Core packages** (model, errors): Floor threshold ≥95%
-- **Critical functionality** (output, project, markdown, filter): Floor threshold ≥85%
-- **Complex logic** (graph, metamodel, importer): Floor threshold ≥65%
-- **UI/CLI code**: May have lower coverage with `coverage-ignore` comments for unreasonable-to-test code
-- **Ratchet**: Actual coverage is tracked per-file in `.coverage-baseline` and must not decrease
+- **Core packages**: `errors` ≥95%, `output` ≥90%
+- **Critical functionality**: `markdown`, `filter` ≥85%; `entity`, `project` ≥80%; `dataentryconfig` ≥70%
+- **Complex logic**: `metamodel`, `importer` ≥65%; `dataentry` ≥55%
+- **Project total**: ≥65%
+- **UI/CLI code**: Not gated; use `coverage-ignore` comments for unreasonable-to-test code
+- Floors are set ~5pp below current coverage to give refactor headroom without being a rubber-stamp
+
+When `just coverage-check` fails, add tests to restore the floor. Do not lower the
+threshold in `.testcoverage.yml` to match regressed coverage — if the floor is genuinely
+too strict, raise it (deliberately) in a separate commit with reasoning.
 
 ### Coverage-Ignore Comments
 
@@ -356,13 +360,10 @@ Valid reasons for `coverage-ignore`:
 - External tool dependencies (graphviz, etc.)
 - OS-specific functionality that can't be reliably mocked
 
-**Important**: When the coverage baseline/ratchet check fails, always add
-tests to improve coverage rather than updating the baseline file.
-
 ### Running Coverage Checks Locally
 
 ```bash
-# Check if your changes meet coverage requirements (uses go-test-coverage)
+# Check coverage meets floor thresholds (uses go-test-coverage)
 just coverage-check
 
 # See detailed coverage report
@@ -370,6 +371,27 @@ just coverage-html
 
 # Install pre-commit hook (runs lint + test, coverage is checked in CI)
 just install-hooks
+```
+
+## Security Checks
+
+`govulncheck` runs:
+
+- **On every PR that touches `go.mod` or `go.sum`** (blocking via the `vulncheck` job in
+  `ci.yml`). Unrelated PRs skip the check — the weekly schedule below covers them.
+- **Weekly from `security.yml`** (scheduled Monday 09:00 UTC). On failure, the workflow first
+  attempts an auto-update: it parses govulncheck JSON for called-and-fixable vulns, runs
+  `go get <mod>@<fixed>` + `go mod tidy`, re-verifies, and if clean, opens a PR with
+  auto-merge enabled (App token auth via `APP_ID` / `APP_PRIVATE_KEY`). If the auto-update
+  cannot resolve the finding (upstream has no fix, or fix doesn't clear the trace), it falls
+  back to filing / updating a deduplicated GitHub issue.
+
+Known-unfixable vulnerabilities are filtered via `scripts/govulncheck-filtered.sh` with
+documented OSV ids. Keep `IGNORED_OSVS` in sync with `scripts/govulncheck-fixable.sh`.
+
+```bash
+# Run govulncheck locally with the project's filter list
+just govulncheck
 ```
 
 ## Lint Configuration
