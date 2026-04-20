@@ -361,6 +361,13 @@ func (m *MemStore) DeleteEntity(_ context.Context, id string, cascade bool) (*st
 	m.entityOrder = sortedRemove(m.entityOrder, id)
 	m.notifyDelete(id)
 
+	// Cascade attachments — 1:1 ownership.
+	for key, a := range m.attachments {
+		if a.entityID == id {
+			delete(m.attachments, key)
+		}
+	}
+
 	for _, r := range related {
 		result.DeletedRelations = append(result.DeletedRelations, r.Clone())
 		key := r.Key()
@@ -439,6 +446,20 @@ func (m *MemStore) RenameEntity(_ context.Context, oldID, newID string) (*store.
 		newKey := r.Key()
 		m.relations[newKey] = r
 		m.relationOrder = sortedInsert(m.relationOrder, newKey)
+	}
+
+	// Re-key attachments owned by the renamed entity.
+	reKey := make(map[string]*attachment)
+	for key, a := range m.attachments {
+		if a.entityID != oldID {
+			continue
+		}
+		delete(m.attachments, key)
+		a.entityID = newID
+		reKey[newID+"/"+a.property] = a
+	}
+	for k, v := range reKey {
+		m.attachments[k] = v
 	}
 
 	m.emit(store.Event{

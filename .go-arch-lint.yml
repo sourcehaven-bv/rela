@@ -69,7 +69,6 @@ components:
   # Infrastructure
   ai:               { in: internal/ai }
   secrets:          { in: internal/secrets }
-  attachment:       { in: internal/attachment }
   cache:            { in: internal/cache }
   config:           { in: internal/config }
   git:              { in: internal/git }
@@ -246,7 +245,6 @@ deps:
   # Application services
   app:
     mayDependOn:
-      - attachment
       - fsstore
       - metamodel
       - project
@@ -255,7 +253,6 @@ deps:
   workspace:
     mayDependOn:
       - app
-      - attachment
       - automation
       - config
       - dataentryconfig
@@ -412,9 +409,6 @@ deps:
   # yaml (already in commonVendors). The Provider interface is consumed
   # by lua, script, cli, and mcp. No mayDependOn/canUse entry needed
   # because the component is component-only with no internal deps.
-  attachment:
-    mayDependOn:
-      - storage
   # cache: pure in-memory utility, no internal deps
   config:
     mayDependOn:

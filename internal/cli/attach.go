@@ -15,8 +15,9 @@ var attachCmd = &cobra.Command{
 	Short: "Attach file(s) to an entity",
 	Long: `Attach one or more files to an entity.
 
-Files are stored in a content-addressable store using SHA-256 hashes.
-Duplicate files are automatically deduplicated.
+Each file is stored at ` + "`attachments/<entity-id>/<property>/<filename>`" + `.
+Each file-type property holds at most one attachment; re-running
+` + "`attach`" + ` replaces the existing file.
 
 The --property flag specifies which property to attach the file(s) to.
 If not specified, uses the first file-type property defined for the entity type.
@@ -24,8 +25,7 @@ If not specified, uses the first file-type property defined for the entity type.
 Examples:
   rela attach BUG-042 screenshot.png
   rela attach BUG-042 screenshot.png --property screenshot
-  rela attach DEC-007 *.pdf --property supporting-docs
-  rela attach REQ-001 diagram.png spec.pdf`,
+  rela attach DEC-007 supporting-doc.pdf --property supporting-docs`,
 	Args: cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]

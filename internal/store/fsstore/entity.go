@@ -316,6 +316,12 @@ func (s *FSStore) DeleteEntity(_ context.Context, id string, cascade bool) (*sto
 	}
 	s.echoes.Forget(path)
 
+	// Cascade attachments — under the per-entity layout the
+	// attachment directory is owned 1:1 by the entity.
+	if err := s.removeAttachmentDir(id); err != nil {
+		return nil, err
+	}
+
 	// Update index
 	delete(s.entities, id)
 	s.entityOrder = storeutil.SortedRemove(s.entityOrder, id)
@@ -420,6 +426,11 @@ func (s *FSStore) RenameEntity(_ context.Context, oldID, newID string) (*store.R
 	oldPath := s.entityFilePath(meta.Type, oldID)
 	_ = s.dirs.Remove(oldPath)
 	s.echoes.Forget(oldPath)
+
+	// Move the attachment directory (if any) onto the new ID.
+	if err := s.renameAttachmentDir(oldID, newID); err != nil {
+		return nil, err
+	}
 
 	// Update entity index.
 	delete(s.entities, oldID)
