@@ -167,7 +167,7 @@ internal/store/fsstore/attachment.go;51;47
 internal/store/fsstore/echo.go;7;7
 internal/store/fsstore/entity.go;234;219
 internal/store/fsstore/formatter.go;40;0
-internal/store/fsstore/fsstore.go;76;56
+internal/store/fsstore/fsstore.go;76;57
 internal/store/fsstore/index.go;160;130
 internal/store/fsstore/markdown.go;226;180
 internal/store/fsstore/propcache.go;21;19
