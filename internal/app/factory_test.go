@@ -278,6 +278,157 @@ func TestFSFactory_Cleartext_RefusesSealedDataFiles(t *testing.T) {
 	assert.ErrorIs(t, err, integrity.ErrRepoHasSealedFilesButNoConfig)
 }
 
+// TestFSFactory_OpenBytesFS_Cleartext asserts the byte-I/O handle
+// returned by the factory on a cleartext repo is the raw FS itself
+// — no decorator wrap when there's nothing to seal.
+func TestFSFactory_OpenBytesFS_Cleartext(t *testing.T) {
+	root := t.TempDir()
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths := &project.Context{
+		Root:         root,
+		CacheDir:     filepath.Join(root, ".rela"),
+		EntitiesDir:  filepath.Join(root, "entities"),
+		RelationsDir: filepath.Join(root, "relations"),
+	}
+	factory := &app.FSFactory{FS: fs, Paths: paths}
+
+	handle, err := factory.OpenBytesFS()
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// Round-trip through the returned handle: the bytes on disk are
+	// exactly what we wrote (no seal wrap).
+	testPath := filepath.Join(root, "probe.txt")
+	payload := []byte("plaintext")
+	require.NoError(t, handle.WriteFile(testPath, payload, 0o644))
+
+	raw, err := os.ReadFile(testPath)
+	require.NoError(t, err)
+	assert.Equal(t, payload, raw, "cleartext repo must not seal via OpenBytesFS")
+}
+
+// TestFSFactory_OpenBytesFS_Encrypted asserts that on an encrypted
+// repo the handle seals writes transparently — the same guarantee
+// the store itself provides. This is what C1 relied on for
+// attachments to land sealed.
+func TestFSFactory_OpenBytesFS_Encrypted(t *testing.T) {
+	root := t.TempDir()
+	id, err := encryption.GenerateIdentity()
+	require.NoError(t, err)
+	setupEncryptedRepo(t, root, id, true)
+
+	paths := &project.Context{
+		Root:         root,
+		CacheDir:     filepath.Join(root, ".rela"),
+		EntitiesDir:  filepath.Join(root, "entities"),
+		RelationsDir: filepath.Join(root, "relations"),
+	}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+
+	handle, err := factory.OpenBytesFS()
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// Write through the handle and assert the on-disk bytes are sealed.
+	testPath := filepath.Join(root, "attachments", "probe.bin")
+	require.NoError(t, os.MkdirAll(filepath.Dir(testPath), 0o755))
+	plaintext := []byte("top-secret-attachment-contents")
+	require.NoError(t, handle.WriteFile(testPath, plaintext, 0o644))
+
+	raw, err := os.ReadFile(testPath)
+	require.NoError(t, err)
+	assert.True(t, encryption.LooksSealed(raw),
+		"encrypted repo: OpenBytesFS handle must seal writes")
+	assert.NotContains(t, string(raw), "top-secret-attachment-contents",
+		"plaintext must not survive on disk")
+}
+
+// TestFSFactory_OpenStore_RecoversInterruptedRotation asserts the
+// factory detects an XDG-local reseal sentinel at open time and
+// resumes the rotation transparently — mid-flight re-seal is
+// finished, recipients.age is rewritten at the new version, and
+// OpenStore returns a store wired to the post-rotation state.
+func TestFSFactory_OpenStore_RecoversInterruptedRotation(t *testing.T) {
+	// Point XDG at a fresh tempdir so the sentinel lands somewhere
+	// we control and doesn't pollute the developer's state.
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	root := t.TempDir()
+	alice, err := encryption.GenerateIdentity()
+	require.NoError(t, err)
+	setupEncryptedRepo(t, root, alice, true)
+
+	// Seed one sealed entity at v=1 (matching the repo's current state).
+	entityDir := filepath.Join(root, "entities", "tickets")
+	require.NoError(t, os.MkdirAll(entityDir, 0o755))
+
+	// Load keyring to get the repo ID and current version.
+	kr, err := encryption.LoadFromDir(root)
+	require.NoError(t, err)
+	repoID := kr.RepoID()
+
+	// Plant a reseal sentinel pointing at a v=2 rotation to alice+bob.
+	bob, err := encryption.GenerateIdentity()
+	require.NoError(t, err)
+	sentinel := &encryption.ResealSentinel{
+		FromVersion: 1,
+		ToVersion:   2,
+		RepoRoot:    root,
+		NewRecipients: map[string]string{
+			"alice": alice.PublicRecipient().String(),
+			"bob":   bob.PublicRecipient().String(),
+		},
+		Operation: "keys add bob",
+	}
+	require.NoError(t, encryption.WriteResealSentinel(repoID, sentinel))
+
+	paths := &project.Context{
+		Root:         root,
+		CacheDir:     filepath.Join(root, ".rela"),
+		EntitiesDir:  filepath.Join(root, "entities"),
+		RelationsDir: filepath.Join(root, "relations"),
+	}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+
+	// Factory should auto-resume and open the store cleanly.
+	s, err := factory.OpenStore(&metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{"ticket": {Plural: "tickets"}},
+	})
+	require.NoError(t, err)
+	defer s.Close()
+
+	// After recovery, recipients.age should be at v=2 with bob present.
+	rf, err := encryption.ReadRecipientsFile(
+		filepath.Join(root, encryption.RecipientsFileName), alice)
+	require.NoError(t, err)
+	assert.Equal(t, 2, rf.Version)
+	assert.Contains(t, rf.Recipients, "bob")
+}
+
+// TestFSFactory_OpenBytesFS_EncryptedMissingIdentity asserts the
+// factory surfaces ErrEncryptedRepoNeedsIdentity rather than silently
+// returning a cripple-read handle when no identity is configured.
+func TestFSFactory_OpenBytesFS_EncryptedMissingIdentity(t *testing.T) {
+	root := t.TempDir()
+	id, err := encryption.GenerateIdentity()
+	require.NoError(t, err)
+	// writeIdentity=false: recipients.age present but no key resolvable.
+	setupEncryptedRepo(t, root, id, false)
+	t.Setenv("HOME", t.TempDir())
+
+	paths := &project.Context{
+		Root:         root,
+		CacheDir:     filepath.Join(root, ".rela"),
+		EntitiesDir:  filepath.Join(root, "entities"),
+		RelationsDir: filepath.Join(root, "relations"),
+	}
+	factory := &app.FSFactory{FS: storage.NewSafeFS(storage.NewOsFS()), Paths: paths}
+
+	_, err = factory.OpenBytesFS()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, app.ErrEncryptedRepoNeedsIdentity)
+}
+
 // mustMarshalIdentity wraps encryption.MarshalIdentity for test use:
 // any serialization failure is treated as a test failure rather than
 // a value to thread through call sites.
