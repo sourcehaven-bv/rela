@@ -12,15 +12,6 @@ const (
 	projectRelaDir   = ".rela"
 	projectKeyFile   = "key"
 	userConfigSubdir = "rela"
-
-	// ConfigFileName is the filename under .rela/ whose presence
-	// flips a rela project into encryption-enabled mode.
-	// Historically this marker doubled as the recipient list; in
-	// the S2 design, recipients live in <root>/recipients.age
-	// (authoritative and encrypted) and this file is a simple
-	// presence marker kept for back-compat with tooling that only
-	// peeks at .rela/ to decide whether a repo is encrypted.
-	ConfigFileName = "encryption.yaml"
 )
 
 // IsEnabled reports whether encryption is enabled for the project at
@@ -28,10 +19,6 @@ const (
 // disk. A stat error other than ErrNotExist surfaces as false +
 // error so callers can distinguish a misconfigured filesystem from
 // a genuinely cleartext repo.
-//
-// Uses the presence of recipients.age (the S2 authoritative file)
-// rather than .rela/encryption.yaml so adversary-deletion of the
-// marker can't mask an encrypted repo as cleartext.
 func IsEnabled(projectRoot string) (bool, error) {
 	recipientsPath := filepath.Join(projectRoot, RecipientsFileName)
 	_, err := os.Stat(recipientsPath)

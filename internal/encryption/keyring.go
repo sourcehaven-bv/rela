@@ -104,10 +104,11 @@ func (kr *Keyring) Recipient(name string) (Recipient, bool) {
 // Identity returns the loaded local identity, or nil.
 func (kr *Keyring) Identity() Identity { return kr.identity }
 
-// HasIdentity reports whether a local identity was loaded.
-// Retained for API compatibility with the pre-S2 Keyring; callers
-// now generally assume Identity is non-nil since LoadKeyring
-// requires it.
+// HasIdentity reports whether a local identity was loaded. Always
+// true for keyrings returned from LoadKeyring — the constructor
+// requires an identity to decrypt recipients.age. The method is
+// retained for call sites that receive a Keyring via interface
+// and want to guard against a zero-value.
 func (kr *Keyring) HasIdentity() bool { return kr.identity != nil }
 
 // LocalName returns the recipient name whose public key corresponds
@@ -117,7 +118,7 @@ func (kr *Keyring) LocalName() string { return kr.localName }
 
 // Version returns the monotonic repo-encryption version from the
 // loaded recipients file. Every data file sealed under this keyring
-// stamps this value into its X-Rela-Version header.
+// stamps this value into its rela header.
 func (kr *Keyring) Version() int { return kr.file.Version }
 
 // RepoID returns the per-repo UUID generated at `rela keys init`.

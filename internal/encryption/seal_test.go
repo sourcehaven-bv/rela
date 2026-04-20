@@ -88,9 +88,10 @@ func TestUnseal_TamperedHeader(t *testing.T) {
 }
 
 func TestUnseal_TamperedPayload(t *testing.T) {
-	// This is the C1 regression case: the local identity IS a
-	// recipient, but the payload is flipped. The error MUST surface
-	// as corruption, not "no matching key."
+	// Regression guard: the local identity IS a recipient, but the
+	// payload is flipped. The error MUST surface as corruption, not
+	// "no matching key" — otherwise callers can't tell tampering
+	// apart from authorization problems.
 	alice := newTestIdentity(t)
 	sealed, err := Seal([]byte("secret-payload-long-enough-to-have-payload-bytes"), []Recipient{alice.PublicRecipient()})
 	if err != nil {

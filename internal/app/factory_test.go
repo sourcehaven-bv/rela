@@ -49,7 +49,7 @@ func TestFSFactoryOpensWorkingStore(t *testing.T) {
 }
 
 func TestFSFactory_EncryptedModeInstallsAgeCrypto(t *testing.T) {
-	// When .rela/encryption.yaml exists, OpenStore loads the keyring
+	// When <root>/recipients.age exists, OpenStore loads the keyring
 	// and installs a real age Crypto. Entity writes hit disk sealed.
 	root := t.TempDir()
 	id, err := encryption.GenerateIdentity()
@@ -129,13 +129,13 @@ func TestFSFactory_EncryptedNeedsSafeFS(t *testing.T) {
 
 // TestFSFactory_SingleBranchInvariant asserts that the factory's
 // decision to install cryptofs and the fsstore's expectation of
-// sealed bytes come from the same signal (.rela/encryption.yaml
+// sealed bytes come from the same signal (<root>/recipients.age
 // presence). Opens two parallel projects — one encrypted, one
 // cleartext — and verifies the observable on-disk bytes match the
 // declared mode, proving the single branch controls both sides.
 //
-// This is the regression gate for the "decorator installed vs
-// wantSealed consistency check drift" class of bugs.
+// Regression gate for the "decorator installed vs wantSealed
+// consistency check drift" class of bugs.
 func TestFSFactory_SingleBranchInvariant(t *testing.T) {
 	newProject := func(t *testing.T, encrypted bool) (string, *project.Context) {
 		t.Helper()
@@ -309,8 +309,8 @@ func TestFSFactory_OpenBytesFS_Cleartext(t *testing.T) {
 
 // TestFSFactory_OpenBytesFS_Encrypted asserts that on an encrypted
 // repo the handle seals writes transparently — the same guarantee
-// the store itself provides. This is what C1 relied on for
-// attachments to land sealed.
+// the store itself provides. Workspace-level components (today:
+// the attachment store) rely on this so attachments land sealed.
 func TestFSFactory_OpenBytesFS_Encrypted(t *testing.T) {
 	root := t.TempDir()
 	id, err := encryption.GenerateIdentity()

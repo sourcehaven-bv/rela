@@ -19,8 +19,6 @@ const keyFilePerm os.FileMode = 0o600
 // keysCmd is the top-level parent for all encryption-related
 // commands.
 //
-// Design (post-S2):
-//
 // The authoritative recipient list for a rela project lives in
 // <root>/recipients.age — an age-encrypted YAML blob sealed to
 // itself. Its plaintext carries:
@@ -29,20 +27,17 @@ const keyFilePerm os.FileMode = 0o600
 //   - repo_id: one-time UUID for keying per-machine state
 //   - recipients: name → age public-key string
 //
-// Adding a recipient therefore requires the caller to already be
-// able to read recipients.age (i.e. already be a recipient). The
-// cloud adversary — who lacks any private key — cannot silently
-// add themselves: every attempt to replace recipients.age with a
-// blob of their choosing makes it undecryptable for legitimate
-// users, which surfaces loudly rather than silently expanding
-// access.
+// Adding a recipient requires the caller to already be able to
+// read recipients.age (i.e. already be a recipient). An adversary
+// without a private key cannot silently add themselves: any attempt
+// to replace recipients.age with a blob of their choosing makes it
+// undecryptable for legitimate users, which surfaces loudly rather
+// than silently expanding access.
 //
-// There is no <root>/keys/ directory anymore. Public keys for
-// proposed new recipients are passed to `rela keys add` via a
-// file path (--pub-file); they never land inside the repo except
-// as an entry in the encrypted recipients list.
-//
-// Private keys live outside the repo. See $RELA_KEY_FILE,
+// Public keys for proposed new recipients are passed to
+// `rela keys add` via a file path (--pub-file); they never land
+// inside the repo except as an entry in the encrypted recipients
+// list. Private keys live outside the repo. See $RELA_KEY_FILE,
 // .rela/key, and ~/.config/rela/key (resolution order).
 var keysCmd = &cobra.Command{
 	Use:   "keys",

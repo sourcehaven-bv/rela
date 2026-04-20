@@ -20,12 +20,13 @@
 // The header carries a monotonic version and the repo-relative
 // path. On read the decorator enforces:
 //
-//   - X-Rela-Version ≥ the last version this machine observed for
-//     this repo (stored in XDG state). Catches rollback attacks
-//     where the cloud adversary restores an older sealed file.
-//   - X-Rela-Path equals the path the file was loaded from.
-//     Catches swap/rename attacks where the cloud adversary
-//     renames sealed A to B and vice versa.
+//   - The header's version is ≥ the last version this machine
+//     observed for this repo (stored in XDG state). Catches
+//     rollback attacks where an adversary with storage write
+//     access restores an older sealed file.
+//   - The header's path equals the path the file was loaded from.
+//     Catches swap/rename attacks where the adversary renames
+//     sealed A to B and vice versa.
 //
 // Error classification is preserved: a failed Unseal wraps
 // encryption.ErrNoMatchingKey, ErrCorrupted, or ErrNoPrivateKey

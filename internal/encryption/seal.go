@@ -73,9 +73,13 @@ func LooksSealed(blob []byte) bool {
 // can unwrap any recipient stanza. We map that to ErrNoMatchingKey.
 //
 // Everything else (header parse, stanza parse, AEAD failure) is
-// classified as ErrCorrupted. This is deliberately broad: we prefer
-// false-positive "corrupted" reports to the C1 failure mode where
-// tamper silently becomes no-matching-key.
+// classified as ErrCorrupted. The mapping is deliberately broad:
+// a false "corrupted" on an actually-valid-but-unreadable blob is
+// acceptable, but the inverse — tamper silently surfacing as
+// "no matching key" — would make it impossible for callers to
+// distinguish "I don't have the right key" from "someone modified
+// this file", which is the primary thing the error taxonomy exists
+// to tell apart.
 func classifyDecryptErr(err error) error {
 	if errors.Is(err, age.ErrIncorrectIdentity) {
 		return fmt.Errorf("%w: %w", ErrNoMatchingKey, err)

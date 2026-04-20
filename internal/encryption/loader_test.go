@@ -51,10 +51,9 @@ func TestLoadFromDir_AllPresent(t *testing.T) {
 }
 
 func TestLoadFromDir_NoIdentityIsError(t *testing.T) {
-	// With the S2 design, recipients.age is encrypted; loading
-	// without an identity is a hard error — the previous "fine, no
-	// identity" semantic only made sense when the recipient list
-	// was cleartext.
+	// recipients.age is encrypted, so loading without an identity
+	// cannot succeed — surface it as a hard error rather than a
+	// silently-crippled keyring.
 	root := t.TempDir()
 	alice := newTestIdentity(t)
 	repoID, _ := NewRepoID()
