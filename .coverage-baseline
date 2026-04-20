@@ -24,7 +24,7 @@ internal/cli/filter_helpers.go;1;0
 internal/cli/flow.go;159;2
 internal/cli/fmt.go;3;3
 internal/cli/gc.go;33;4
-internal/cli/graph.go;48;38
+internal/cli/graph.go;55;45
 internal/cli/import.go;6;6
 internal/cli/init.go;1;1
 internal/cli/link.go;1;1
@@ -162,7 +162,7 @@ internal/storage/errorfs.go;13;0
 internal/storage/memfs.go;232;207
 internal/storage/osfs.go;11;10
 internal/storage/safefs.go;37;25
-internal/storage/watcher.go;71;67
+internal/storage/watcher.go;71;68
 internal/store/fsstore/attachment.go;51;47
 internal/store/fsstore/echo.go;7;7
 internal/store/fsstore/entity.go;234;219
