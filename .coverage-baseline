@@ -5,9 +5,6 @@ internal/ai/openai.go;147;137
 internal/ai/openai_embed.go;53;50
 internal/ai/redact.go;6;6
 internal/app/factory.go;7;7
-internal/attachment/hash.go;28;27
-internal/attachment/metadata.go;5;4
-internal/attachment/store.go;182;97
 internal/automation/engine.go;134;100
 internal/automation/template.go;56;50
 internal/automation/types.go;9;3
@@ -23,8 +20,8 @@ internal/cli/export.go;168;138
 internal/cli/filter_helpers.go;1;0
 internal/cli/flow.go;159;2
 internal/cli/fmt.go;3;3
-internal/cli/gc.go;22;3
-internal/cli/graph.go;48;38
+internal/cli/gc.go;19;3
+internal/cli/graph.go;55;45
 internal/cli/import.go;6;6
 internal/cli/init.go;1;1
 internal/cli/link.go;1;1
@@ -37,7 +34,7 @@ internal/cli/root.go;27;10
 internal/cli/scheduler.go;17;1
 internal/cli/schema.go;314;279
 internal/cli/script.go;2;2
-internal/cli/show.go;8;8
+internal/cli/show.go;5;5
 internal/cli/template.go;6;6
 internal/cli/trace.go;5;5
 internal/cli/unlink.go;1;1
@@ -71,7 +68,7 @@ internal/dataentryconfig/palette.go;228;214
 internal/dataentryconfig/validate.go;422;334
 internal/desktop/preferences.go;44;34
 internal/entity/entity.go;57;45
-internal/entity/id.go;98;90
+internal/entity/id.go;98;91
 internal/errors/errors.go;10;10
 internal/filter/filter.go;118;108
 internal/filter/fuzzy.go;22;21
@@ -162,12 +159,12 @@ internal/storage/errorfs.go;13;0
 internal/storage/memfs.go;232;207
 internal/storage/osfs.go;11;10
 internal/storage/safefs.go;37;25
-internal/storage/watcher.go;71;69
+internal/storage/watcher.go;71;66
 internal/store/fsstore/attachment.go;120;89
 internal/store/fsstore/echo.go;7;7
-internal/store/fsstore/entity.go;234;219
+internal/store/fsstore/entity.go;238;223
 internal/store/fsstore/formatter.go;40;0
-internal/store/fsstore/fsstore.go;75;56
+internal/store/fsstore/fsstore.go;75;55
 internal/store/fsstore/index.go;160;130
 internal/store/fsstore/markdown.go;226;180
 internal/store/fsstore/propcache.go;21;19
@@ -194,4 +191,4 @@ internal/workspace/rename.go;68;59
 internal/workspace/rename_type.go;58;31
 internal/workspace/services.go;49;12
 internal/workspace/validate.go;35;0
-internal/workspace/workspace.go;552;394
+internal/workspace/workspace.go;552;393
