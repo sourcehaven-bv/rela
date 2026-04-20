@@ -21,3 +21,55 @@ updates:
       interval: weekly
     commit-message:
       prefix: "ci"
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      vue-ecosystem:
+        patterns:
+          - "vue"
+          - "vue-*"
+          - "@vue/*"
+          - "@vitejs/*"
+          - "pinia"
+          - "@pinia/*"
+      build-tooling:
+        patterns:
+          - "vite"
+          - "vite-*"
+          - "typescript"
+          - "typescript-*"
+          - "tsx"
+          - "vue-tsc"
+      lint-and-format:
+        patterns:
+          - "eslint"
+          - "eslint-*"
+          - "@eslint/*"
+          - "prettier"
+          - "prettier-*"
+          - "jscpd"
+      testing:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "@testing-library/*"
+          - "happy-dom"
+          - "fast-check"
+          - "@playwright/*"
+    commit-message:
+      prefix: "deps(frontend)"
+
+  - package-ecosystem: npm
+    directory: /e2e
+    schedule:
+      interval: weekly
+    groups:
+      playwright:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+    commit-message:
+      prefix: "deps(e2e)"

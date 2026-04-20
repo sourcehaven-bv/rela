@@ -91,3 +91,17 @@ jobs:
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # npm updates (frontend/, e2e/) — defer 7 days for supply-chain safety.
+      # npm packages have more maintainers and higher churn than Go modules,
+      # so the 7-day soak window catches post-publish retractions / malicious
+      # versions before merge. Same pattern as Go packages above.
+      - name: Approve npm updates (merge deferred 7 days)
+        if: steps.metadata.outputs.package-ecosystem == 'npm_and_yarn'
+        run: |
+          gh pr review --approve "$PR_URL" \
+            --body "Auto-approved. Merge deferred 7 days from PR creation for supply chain safety."
+          gh pr edit "$PR_URL" --add-label "dependabot-deferred"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
