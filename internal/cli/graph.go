@@ -125,9 +125,12 @@ func generateDOT(entities []*entity.Entity, edges []*entity.Relation) string {
 		typeGroups[e.Type] = append(typeGroups[e.Type], e)
 	}
 
-	// Write nodes grouped by type (as subgraphs for clustering)
+	// Write nodes grouped by type (as subgraphs for clustering).
+	// DOT unquoted IDs must match [_A-Za-z][_A-Za-z0-9]*, so entity
+	// types with hyphens (e.g. `review-response`) need sanitization
+	// to keep the cluster ID valid.
 	for entityType, group := range typeGroups {
-		fmt.Fprintf(&sb, "  subgraph cluster_%s {\n", entityType)
+		fmt.Fprintf(&sb, "  subgraph cluster_%s {\n", sanitizeDOTID(entityType))
 		fmt.Fprintf(&sb, "    label=\"%ss\";\n", strings.ToUpper(entityType[:1])+entityType[1:])
 
 		// Get color from metamodel
@@ -162,6 +165,24 @@ func generateDOT(entities []*entity.Entity, edges []*entity.Relation) string {
 }
 
 const maxLabelLen = 40
+
+// sanitizeDOTID converts a string into a valid unquoted DOT identifier
+// by replacing any character outside [A-Za-z0-9_] with '_'. Used for
+// subgraph cluster IDs, where entity types containing hyphens would
+// otherwise produce invalid DOT.
+func sanitizeDOTID(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			sb.WriteRune(r)
+		default:
+			sb.WriteByte('_')
+		}
+	}
+	return sb.String()
+}
 
 func escapeLabel(s string) string {
 	s = strings.ReplaceAll(s, "\"", "\\\"")
