@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  issues: write
 
 jobs:
   vulncheck:
@@ -23,6 +24,77 @@ jobs:
           go-version: "1.26"
 
       - name: Run govulncheck
+        id: vulncheck
         run: |
+          set -euo pipefail
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          ./scripts/govulncheck-filtered.sh
+          status=0
+          ./scripts/govulncheck-filtered.sh > /tmp/vulncheck.log 2>&1 || status=$?
+          cat /tmp/vulncheck.log
+          exit "$status"
+
+      - name: File issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # Stable, phrase-matchable title (no qualifier-like colons).
+          TITLE='govulncheck scheduled scan found vulnerabilities'
+
+          # Ensure required labels exist (no-op if already present).
+          gh label create security  --repo "$GITHUB_REPOSITORY" --color B60205 --description "Security-related issue"  --force >/dev/null
+          gh label create automated --repo "$GITHUB_REPOSITORY" --color EDEDED --description "Filed by an automated job" --force >/dev/null
+
+          LOG=$(tail -c 8000 /tmp/vulncheck.log 2>/dev/null || echo '(no log captured)')
+
+          # Build body with literal-heredoc + printf so attacker-influenced $LOG
+          # is never shell-evaluated. RUN_URL / LOG are substituted explicitly.
+          BODY=$(cat <<'BODY_EOF'
+          The weekly `govulncheck` scan found actionable vulnerabilities.
+
+          Scan run: __RUN_URL__
+
+          <details>
+          <summary>Output (last 8KB)</summary>
+
+          ```
+          __LOG__
+          ```
+
+          </details>
+
+          To triage:
+          - Run `just govulncheck` locally to reproduce.
+          - If upstream has a fix, update the dependency.
+          - If no fix is available, add the OSV id to `IGNORED_OSVS` in `scripts/govulncheck-filtered.sh` with a justification and tracking link.
+
+          This issue will be updated by subsequent weekly runs rather than duplicated.
+          BODY_EOF
+          )
+          BODY=${BODY//__RUN_URL__/$RUN_URL}
+          BODY=${BODY//__LOG__/$LOG}
+
+          # Quoted phrase search so we match the exact title, not tokenised words.
+          EXISTING=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --label security,automated \
+            --search "\"$TITLE\" in:title" \
+            --json number,title \
+            --jq ".[] | select(.title == \"$TITLE\") | .number" \
+            | head -n 1)
+
+          if [[ -n "$EXISTING" ]]; then
+            echo "Updating existing issue #$EXISTING"
+            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          else
+            echo "Creating new issue"
+            gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TITLE" \
+              --label security,automated \
+              --body "$BODY"
+          fi

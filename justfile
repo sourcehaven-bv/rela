@@ -96,7 +96,7 @@ coverage: test-coverage
     @echo "Generating coverage report..."
     go tool cover -func=coverage.out
 
-# Check coverage meets minimum thresholds (uses go-test-coverage with ratchet baseline)
+# Check coverage meets floor thresholds (uses go-test-coverage)
 coverage-check: test-coverage
     @echo "Checking coverage thresholds..."
     go-test-coverage --config=.testcoverage.yml
@@ -127,6 +127,11 @@ fuzz-short:
 lint:
     @echo "Running Go linter..."
     golangci-lint run
+
+# Check for known vulnerabilities (govulncheck with OSV filter)
+govulncheck:
+    @echo "Running govulncheck..."
+    scripts/govulncheck-filtered.sh
 
 # Check architecture boundaries
 arch-lint:

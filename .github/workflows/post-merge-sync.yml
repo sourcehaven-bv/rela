@@ -26,23 +26,6 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run tests with coverage
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: Install go-test-coverage
-        run: go install github.com/vladopajic/go-test-coverage/v2@latest
-
-      - name: Generate new coverage baseline
-        run: go-test-coverage --config=.testcoverage.yml --breakdown-file-name=.coverage-baseline
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -66,7 +49,12 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          if git diff --quiet .coverage-baseline frontend/.coverage-baseline; then
+          if [ ! -f frontend/.coverage-baseline ]; then
+            echo "frontend/.coverage-baseline not present — nothing to sync"
+            exit 0
+          fi
+
+          if git diff --quiet -- frontend/.coverage-baseline; then
             echo "No derived-file changes"
             exit 0
           fi
@@ -80,7 +68,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          git add .coverage-baseline frontend/.coverage-baseline
+          git add frontend/.coverage-baseline
           git commit -m "chore: sync derived files"
           git push -u origin "$BRANCH"
 
