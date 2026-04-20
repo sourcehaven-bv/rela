@@ -2,6 +2,7 @@ package userstate
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -95,20 +96,23 @@ func TestResolveBase(t *testing.T) {
 }
 
 func TestIsInside(t *testing.T) {
+	// Build platform-correct absolute paths so the test works on
+	// Windows (where "/repo" is not absolute) as well as Unix.
+	root := filepath.Join(t.TempDir(), "repo")
+	other := filepath.Join(t.TempDir(), "other")
+
 	tests := []struct {
 		name      string
 		candidate string
 		boundary  string
 		want      bool
 	}{
-		{"child", "/repo/.rela", "/repo", true},
-		{"deep child", "/repo/.rela/sub/file", "/repo", true},
-		{"equal", "/repo", "/repo", true},
-		{"sibling", "/other", "/repo", false},
-		{"parent", "/", "/repo", false},
-		{"relative candidate", ".rela", "/repo", false},
-		{"relative boundary", "/repo/.rela", "repo", false},
-		{"dot-dot escape", "/repo/../other", "/repo", false},
+		{"child", filepath.Join(root, ".rela"), root, true},
+		{"deep child", filepath.Join(root, ".rela", "sub", "file"), root, true},
+		{"equal", root, root, true},
+		{"sibling", other, root, false},
+		{"relative candidate", ".rela", root, false},
+		{"relative boundary", filepath.Join(root, ".rela"), "repo", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

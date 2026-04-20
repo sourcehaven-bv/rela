@@ -107,6 +107,65 @@ func TestResolveRepoID_MalformedFileErrors(t *testing.T) {
 	}
 }
 
+func TestResolveRepoID_MultipleContentLinesRejected(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".rela"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Plant a file with two non-comment lines — the parser refuses.
+	content := "# comment\ndeadbeefdeadbeefdeadbeefdeadbeef\nextra\n"
+	if err := os.WriteFile(filepath.Join(root, ".rela", RepoIDFile),
+		[]byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveRepoID(root, ""); !errors.Is(err, ErrRepoIDMalformed) {
+		t.Errorf("want ErrRepoIDMalformed, got %v", err)
+	}
+}
+
+func TestWriteRepoID_RejectsInvalid(t *testing.T) {
+	root := t.TempDir()
+	if err := WriteRepoID(root, "not-a-repo-id"); !errors.Is(err, ErrRepoIDMalformed) {
+		t.Errorf("want ErrRepoIDMalformed, got %v", err)
+	}
+	if err := WriteRepoID(root, ""); !errors.Is(err, ErrRepoIDMalformed) {
+		t.Errorf("want ErrRepoIDMalformed for empty, got %v", err)
+	}
+}
+
+func TestResolveRepoID_GeneratesFromKeyring(t *testing.T) {
+	// Encrypted-repo first open: .rela/repo-id missing, keyring id
+	// passed in — must be adopted and written.
+	root := t.TempDir()
+	kr := "feedfacefeedfacefeedfacefeedface"
+	id, err := ResolveRepoID(root, kr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != kr {
+		t.Errorf("got %q, want %q", id, kr)
+	}
+	// File now exists with that content.
+	raw, err := os.ReadFile(filepath.Join(root, ".rela", RepoIDFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), kr) {
+		t.Errorf("repo-id file missing keyring id: %s", raw)
+	}
+}
+
+func TestResolveRepoID_MalformedKeyringRejected(t *testing.T) {
+	root := t.TempDir()
+	_, err := ResolveRepoID(root, "not-a-valid-keyring-id")
+	if err == nil {
+		t.Fatal("want error for malformed keyring id")
+	}
+	if !strings.Contains(err.Error(), "keyring repo-id") {
+		t.Errorf("error should mention keyring: %v", err)
+	}
+}
+
 func TestResolveRepoID_RefusesTrackedByGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

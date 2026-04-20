@@ -74,8 +74,9 @@ layout.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (after the fix commits for coverage, Windows paths,
+and the rebase onto develop)
+- [x] PR URL documented below
 
-**PR:** (to be added after creation)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/506
