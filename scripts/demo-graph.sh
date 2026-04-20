@@ -18,7 +18,7 @@ step() { printf '    %s\n' "$*"; }
 say "Building rela → ${BIN}"
 (cd "${REPO}" && go build -o "${BIN}" ./cmd/rela)
 
-say "Seeding demo project at ${DEMO}"
+say "Seeding metamodel at ${DEMO}"
 cat > "${DEMO}/metamodel.yaml" <<'YAML'
 version: "1.0"
 namespace: "https://example.com/demo#"
@@ -60,58 +60,20 @@ relations:
     to: [review-response]
 YAML
 
-mkdir -p \
-  "${DEMO}/entities/features" \
-  "${DEMO}/entities/tickets" \
-  "${DEMO}/entities/review-responses" \
-  "${DEMO}/relations"
-
-cat > "${DEMO}/entities/features/FEAT-001.md" <<'MD'
----
-id: FEAT-001
-type: feature
-title: Graph DOT export
----
-MD
-
-cat > "${DEMO}/entities/tickets/TKT-001.md" <<'MD'
----
-id: TKT-001
-type: ticket
-title: Render DOT with subgraph clusters per type
----
-MD
-
-cat > "${DEMO}/entities/review-responses/RR-001.md" <<'MD'
----
-id: RR-001
-type: review-response
-title: Sanitize cluster IDs for hyphenated types
-status: addressed
----
-MD
-
-cat > "${DEMO}/relations/TKT-001--implements--FEAT-001.md" <<'MD'
----
-from: TKT-001
-relation: implements
-to: FEAT-001
----
-MD
-
-cat > "${DEMO}/relations/TKT-001--has-review-response--RR-001.md" <<'MD'
----
-from: TKT-001
-relation: has-review-response
-to: RR-001
----
-MD
-
 cd "${DEMO}"
 
-say "rela graph → stdout (DOT)"
+say "Creating entities with rela create"
+"${BIN}" create feature         --id FEAT-001 -t "Graph DOT export" -q
+"${BIN}" create ticket          --id TKT-001  -t "Render DOT with subgraph clusters per type" -q
+"${BIN}" create review-response --id RR-001   -t "Sanitize cluster IDs for hyphenated types" -P status=addressed -q
+
+say "Creating relations with rela link"
+"${BIN}" link TKT-001 implements          FEAT-001 -q
+"${BIN}" link TKT-001 has-review-response RR-001   -q
+
+say "rela graph → stdout (DOT, first 12 lines)"
 "${BIN}" graph | sed -n '1,12p'
-step "(truncated — first 12 lines shown)"
+step "(truncated)"
 
 say "rela graph -o graph.dot  (write DOT to file)"
 "${BIN}" graph -o graph.dot
