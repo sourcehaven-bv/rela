@@ -135,7 +135,7 @@ jobs:
       - name: File issue (no auto-fix available)
         if: steps.vulncheck.outputs.status != '0' && steps.autoupdate.outputs.fixed != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
