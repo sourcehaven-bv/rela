@@ -456,16 +456,9 @@ func (s *FSStore) writeRelationFile(r *entity.Relation) error {
 	return s.writeDataFile(path, []byte(content), 0o644)
 }
 
-// writeDataFile writes content to path through the StoreFS byte
-// boundary. Any transform (encryption, compression) is applied by
-// the decorator stack the factory assembled; fsstore sees plain
-// bytes in and plain bytes out.
-//
+// writeDataFile writes content to path through the byte FS.
 // Atomic-write semantics (temp+rename, fsync) live one layer down
-// in SafeFS. fsstore does not manage temp paths here anymore — the
-// invariant "crash leaves either sealed or nothing, never plaintext"
-// holds because SafeFS writes a sealed-temp and only renames after
-// successful fsync.
+// in SafeFS.
 //
 // Parent-directory creation goes through the raw directory handle
 // (s.dirs). SafeFS-backed production paths also mkdir inside
