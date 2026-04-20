@@ -68,7 +68,7 @@ internal/dataentryconfig/palette.go;228;214
 internal/dataentryconfig/validate.go;422;334
 internal/desktop/preferences.go;44;34
 internal/entity/entity.go;57;45
-internal/entity/id.go;98;91
+internal/entity/id.go;98;90
 internal/errors/errors.go;10;10
 internal/filter/filter.go;118;108
 internal/filter/fuzzy.go;22;21
