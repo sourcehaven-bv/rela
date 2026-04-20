@@ -1,3 +1,23 @@
+// Package scheduler runs Lua scripts on recurring schedules defined in
+// schedules.yaml.
+//
+// The scheduler is a single-threaded sequential loop: tasks execute one at
+// a time in config order. Each task gets a fresh ws.LuaWriteDeps() from the
+// workspace; the store is the source of truth, so no explicit sync is
+// needed. Last-run timestamps are persisted in .rela/scheduler-state.json.
+// Tasks that missed their scheduled window run immediately on startup.
+// Shutdown is graceful on SIGINT/SIGTERM.
+//
+// Schedule values in schedules.yaml:
+//
+//	day          once per day (after midnight local time)
+//	<weekday>    once per week on that weekday (monday, friday, ...)
+//	week         alias for monday
+//	30m, 2h      fixed interval (any Go duration)
+//	15           bare number interpreted as minutes
+//
+// See Config/TaskConfig for the YAML shape and Schedule.IsDue for the
+// due-time logic.
 package scheduler
 
 import (

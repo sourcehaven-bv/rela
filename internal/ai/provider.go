@@ -1,3 +1,38 @@
+// Package ai provides an OpenAI-compatible LLM Provider (chat + embed)
+// that is exposed to Lua scripts as the `ai` global.
+//
+// # Configuration
+//
+// AI is opt-in: requires .rela/ai.yaml (gitignored, per-user). Without it,
+// bindings return a `not_configured` error. api_key_env is optional —
+// absent means no Authorization header (supports Ollama, apfel, LM Studio).
+// The env var is read at call time, not at startup.
+//
+// # Wiring
+//
+// Single wiring path: lua.LoadContextOptions(cacheDir, scriptPath) loads
+// AI + secrets; script.NewWriterRuntime calls it. Do not add parallel
+// ai.LoadProvider call sites — go through NewWriterRuntime.
+//
+// # Convention deviation
+//
+// ai.chat / ai.complete / ai.embed are the only rela Lua bindings that
+// return (nil, err_table) instead of raising. AI is network-bound;
+// scripts should handle failures inline rather than wrap every call in
+// pcall. Stable err.kind values live in errors.go; full rationale in
+// internal/lua/ai.go.
+//
+// # Security
+//
+// Treat Lua scripts as trusted code. A malicious script with AI access
+// can exfiltrate project data through the user's own provider. Validation
+// deliberately does not get AI wired — a per-entity ai.chat call during
+// `analyze` would hit the provider with no quota or kill switch; AI-
+// powered validation needs its own design.
+//
+// Mitigations: key redaction in logs and errors, credential-URL rejection,
+// 10 MiB response cap, structured logs that never include headers,
+// API keys, or message content.
 package ai
 
 import "context"
