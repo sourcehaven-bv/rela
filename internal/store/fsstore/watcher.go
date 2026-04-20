@@ -3,10 +3,12 @@ package fsstore
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/encryption"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -68,7 +70,7 @@ func (s *FSStore) Close() error {
 // StartWatching begins watching the entities and relations directories for
 // external file changes (edits made outside the store API). Detected
 // changes are reconciled into the in-memory index and re-emitted as
-// store.Events. Self-writes are suppressed via the recentHashes LRU.
+// store.Events. Self-writes are suppressed via the echoTracker.
 //
 // Calling StartWatching more than once is a no-op after the first call.
 //
@@ -174,15 +176,30 @@ func hasPathPrefix(path, dir string) bool {
 // reconcileEntityPath handles a change event for an entity file. Must be
 // called under mu.Lock.
 func (s *FSStore) reconcileEntityPath(path string) {
-	data, readErr := s.fs.ReadFile(path)
+	rawData, readErr := s.rawReader.ReadFile(path)
 	if readErr != nil {
 		s.handleEntityRemoval(path)
 		return
 	}
 
-	hash := hashContent(data)
-	if cached, ok := s.recentHashes.Get(path); ok && cached == hash {
+	// Self-echo detection compares the on-disk bytes against the
+	// hash recorded by SafeFS.OnPostWrite when fsstore itself wrote
+	// this path. Downstream parsing needs plaintext, which we get
+	// by re-reading through the transform stack (s.bytes).
+	if s.echoes.IsEcho(path, rawData) {
 		return // self-echo
+	}
+
+	data, err := s.bytes.ReadFile(path)
+	if err != nil {
+		// Distinguish the two classes so a corrupted file is loud:
+		// "not for us" is a drop-and-continue; "corrupted/tampered"
+		// deserves an operator-visible signal.
+		if encryption.IsCorrupted(err) {
+			slog.Warn("fsstore: watcher could not unseal entity (corrupted?)",
+				"path", path, "err", err)
+		}
+		return
 	}
 
 	e, err := parseEntityFromPath(data, path)
@@ -190,7 +207,7 @@ func (s *FSStore) reconcileEntityPath(path string) {
 		return
 	}
 
-	s.recentHashes.Put(path, hash)
+	s.echoes.Recorded(path, rawData)
 
 	existing, known := s.entities[e.ID]
 	if known {
@@ -216,7 +233,7 @@ func (s *FSStore) reconcileEntityPath(path string) {
 // handleEntityRemoval handles the disappearance of an entity file.
 // Must be called under mu.Lock.
 func (s *FSStore) handleEntityRemoval(path string) {
-	s.recentHashes.Delete(path)
+	s.echoes.Forget(path)
 
 	id, ok := s.entityIDFromPath(path)
 	if !ok {
@@ -259,17 +276,16 @@ func (s *FSStore) reconcileRelationPath(path string) {
 	}
 	key := from + "--" + relType + "--" + to
 
-	data, readErr := s.fs.ReadFile(path)
+	data, readErr := s.rawReader.ReadFile(path)
 	if readErr != nil {
 		s.handleRelationRemoval(path, key, from, relType, to)
 		return
 	}
 
-	hash := hashContent(data)
-	if cached, ok := s.recentHashes.Get(path); ok && cached == hash {
+	if s.echoes.IsEcho(path, data) {
 		return
 	}
-	s.recentHashes.Put(path, hash)
+	s.echoes.Recorded(path, data)
 
 	_, known := s.relations[key]
 	if !known {
@@ -287,7 +303,7 @@ func (s *FSStore) reconcileRelationPath(path string) {
 // handleRelationRemoval handles the disappearance of a relation file.
 // Must be called under mu.Lock.
 func (s *FSStore) handleRelationRemoval(path, key, from, relType, to string) {
-	s.recentHashes.Delete(path)
+	s.echoes.Forget(path)
 
 	if _, known := s.relations[key]; !known {
 		return

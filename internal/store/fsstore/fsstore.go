@@ -25,7 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/cache"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -37,8 +36,34 @@ import (
 const recentHashCapacity = 4096
 
 // Config holds the configuration for creating a new FSStore.
+//
+// # FS boundaries
+//
+// fsstore separates byte I/O from directory topology:
+//
+//   - Bytes is the decorated byte-I/O handle. Every entity, relation,
+//     attachment, and index read/write goes through Bytes. Callers
+//     typically pass a cryptofs.FS(SafeFS(OsFS)) for encrypted repos
+//     or a SafeFS(OsFS) for cleartext. When Bytes is nil, Config falls
+//     back to FS so pre-decorator callers keep working.
+//
+//   - FS is the raw directory handle. Used for ReadDir, Walk, Stat,
+//     and temp-file cleanup. Never used for ReadFile/WriteFile of
+//     data files — that would bypass any decorator stacked above.
+//
+// The split exists so transforms (encryption today, compression or
+// dedup tomorrow) compose cleanly without fsstore's data-write sites
+// having to know which transforms are active.
+//
+// # Consistency checks
+//
+// fsstore does NOT verify on-disk consistency (sealed vs cleartext,
+// schema drift, etc.). That's a wiring-layer concern: the caller that
+// decides how to construct Bytes is also the caller that knows what
+// the on-disk state should be. See internal/storage/integrity.
 type Config struct {
 	FS             storage.FS
+	Bytes          StoreFS
 	EntitiesDir    string
 	RelationsDir   string
 	AttachmentsDir string
@@ -74,8 +99,27 @@ type attachMeta struct {
 
 // FSStore is a filesystem-backed store implementation.
 type FSStore struct {
-	// filesystem
-	fs           storage.FS
+	// dirs is the raw directory handle for ReadDir / Walk / Stat /
+	// Remove and temp-file cleanup. Its DirFS type DELIBERATELY
+	// omits ReadFile, WriteFile, and Open — any byte I/O on dirs
+	// would bypass the transform stack stacked above bytes
+	// (encryption, compression). The compiler enforces the
+	// separation; adding a raw byte read here is a type error.
+	dirs DirFS
+
+	// rawReader is the single-method window the watcher uses to
+	// read on-disk bytes for self-echo hashing. It is deliberately
+	// isolated from dirs so the scope of "raw byte read" is visible
+	// at every call site (watcher.go is the only consumer).
+	rawReader RawReader
+
+	// bytes is the decorated byte-I/O handle. Every entity,
+	// relation, attachment, and index read/write goes through this.
+	// For a cleartext repo, bytes may alias the raw FS; for an
+	// encrypted repo, bytes is a cryptofs.FS that seals/unseals
+	// transparently.
+	bytes StoreFS
+
 	entitiesDir  string
 	relationsDir string
 	attachDir    string
@@ -101,17 +145,27 @@ type FSStore struct {
 	// fs watcher (external-change detection). nil when not started.
 	extWatcher *storage.Watcher
 
-	// recentHashes records the SHA256 of the last content written by this
-	// store for each entity/relation file path. The external-change watcher
-	// uses these to distinguish its own writes (self-echoes) from genuine
-	// external edits: if the on-disk file hashes to the recorded value, the
-	// event is a self-echo and gets dropped. Bounded-LRU so memory stays
-	// bounded under large-project bulk writes.
-	recentHashes *cache.LRU[string, string]
+	// echoes tracks the hash of bytes most recently written by
+	// this store so the external-change watcher can distinguish
+	// its own writes (self-echoes) from genuine external edits.
+	// Fed by SafeFS.OnPostWrite with the bytes that landed on
+	// disk (sealed bytes on encrypted repos, raw bytes otherwise).
+	echoes *echoTracker
 }
 
 // compile-time interface check
 var _ store.Store = (*FSStore)(nil)
+
+// RecordWrite is the post-write observer entry point for the
+// underlying FS transform stack. Typically wired via
+// SafeFS.OnPostWrite(store.RecordWrite). content is the bytes
+// that landed on disk (sealed if encryption is active); the
+// watcher uses the recorded hash to suppress self-echoes.
+//
+// Signature matches storage.WriteObserver.
+func (s *FSStore) RecordWrite(path string, content []byte) {
+	s.echoes.Recorded(path, content)
+}
 
 // New creates a new filesystem-backed store. It scans the entities and
 // relations directories to build the in-memory index, and loads or rebuilds
@@ -120,9 +174,18 @@ func New(cfg Config) (*FSStore, error) {
 	if cfg.Schemas == nil {
 		cfg.Schemas = make(map[string]store.EntityTypeSchema)
 	}
+	// Back-compat: callers that only set Config.FS (no decorator) get
+	// transparent byte passthrough via the same handle. Encryption
+	// callers set Config.Bytes explicitly to a cryptofs.FS.
+	bytes := cfg.Bytes
+	if bytes == nil {
+		bytes = cfg.FS
+	}
 
 	s := &FSStore{
-		fs:           cfg.FS,
+		dirs:         cfg.FS,
+		rawReader:    cfg.FS,
+		bytes:        bytes,
 		entitiesDir:  cfg.EntitiesDir,
 		relationsDir: cfg.RelationsDir,
 		attachDir:    cfg.AttachmentsDir,
@@ -134,7 +197,7 @@ func New(cfg Config) (*FSStore, error) {
 		attachments:  make(map[string]attachMeta),
 		propCache:    make(map[string]map[string]int),
 		subscribers:  make(map[int]chan store.Event),
-		recentHashes: cache.NewLRU[string, string](recentHashCapacity),
+		echoes:       newEchoTracker(recentHashCapacity),
 	}
 
 	s.cleanupTempFiles()
@@ -155,11 +218,11 @@ func (s *FSStore) loadAttachmentsIndex() {
 		return
 	}
 
-	if _, err := s.fs.Stat(s.attachDir); err != nil {
+	if _, err := s.dirs.Stat(s.attachDir); err != nil {
 		return
 	}
 
-	entries, err := s.fs.ReadDir(s.attachDir)
+	entries, err := s.dirs.ReadDir(s.attachDir)
 	if err != nil {
 		return
 	}
@@ -169,7 +232,7 @@ func (s *FSStore) loadAttachmentsIndex() {
 			continue
 		}
 		entityID := entityEntry.Name()
-		propEntries, err := s.fs.ReadDir(filepath.Join(s.attachDir, entityID))
+		propEntries, err := s.dirs.ReadDir(filepath.Join(s.attachDir, entityID))
 		if err != nil {
 			continue
 		}
@@ -178,7 +241,7 @@ func (s *FSStore) loadAttachmentsIndex() {
 				continue
 			}
 			prop := propEntry.Name()
-			fileEntries, err := s.fs.ReadDir(filepath.Join(s.attachDir, entityID, prop))
+			fileEntries, err := s.dirs.ReadDir(filepath.Join(s.attachDir, entityID, prop))
 			if err != nil {
 				continue
 			}
@@ -186,7 +249,12 @@ func (s *FSStore) loadAttachmentsIndex() {
 				if fileEntry.IsDir() {
 					continue
 				}
-				info, err := fileEntry.Info()
+				// Read through s.bytes so the reported size reflects
+				// plaintext bytes, not ciphertext bytes on disk. Using
+				// info.Size() here would silently report age-overhead-
+				// inflated sizes on encrypted repos (RR-HBER2).
+				path := filepath.Join(s.attachDir, entityID, prop, fileEntry.Name())
+				data, err := s.bytes.ReadFile(path)
 				if err != nil {
 					continue
 				}
@@ -195,7 +263,7 @@ func (s *FSStore) loadAttachmentsIndex() {
 					entityID: entityID,
 					property: prop,
 					fileName: fileEntry.Name(),
-					size:     info.Size(),
+					size:     int64(len(data)),
 				}
 				break // one file per property
 			}
@@ -260,24 +328,28 @@ func (s *FSStore) propertyOrder(entityType string) []string {
 	return nil
 }
 
-// cleanupTempFiles removes orphaned .new temp files left by interrupted writes.
+// cleanupTempFiles removes orphaned temp files left by interrupted
+// writes. Two suffixes are swept: ".new" (legacy direct fsstore
+// atomic-write) and ".tmp" (SafeFS atomic-write). Both are produced by
+// writeFile → rename paths and are never expected to survive a normal
+// process shutdown.
 func (s *FSStore) cleanupTempFiles() {
 	for _, dir := range []string{s.entitiesDir, s.relationsDir} {
 		if dir == "" {
 			continue
 		}
 		var toRemove []string
-		_ = s.fs.Walk(dir, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
+		_ = s.dirs.Walk(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
 				return nil //nolint:nilerr // walker continuation on error is intentional
 			}
-			if strings.HasSuffix(path, ".new") {
+			if strings.HasSuffix(path, ".new") || strings.HasSuffix(path, ".tmp") {
 				toRemove = append(toRemove, path)
 			}
 			return nil
 		})
 		for _, path := range toRemove {
-			_ = s.fs.Remove(path)
+			_ = s.dirs.Remove(path)
 		}
 	}
 }

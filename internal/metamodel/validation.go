@@ -253,6 +253,20 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 			}
 		}
 
+	case PropertyTypeFile:
+		// File-type properties hold a string path (repo-relative)
+		// pointing at a blob in the attachment store. Structural
+		// validation is just "it's a string"; content-level checks
+		// (file exists, hash matches) are the attachment store's
+		// concern.
+		if _, ok := val.(string); !ok {
+			return &ValidationError{
+				Type:     ValidationErrorInvalidType,
+				Property: propName,
+				Message:  "Must be a string (attachment path)",
+			}
+		}
+
 	default:
 		// Custom type (enum defined in types section)
 		if customType, ok := m.Types[propDef.Type]; ok {

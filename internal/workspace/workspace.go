@@ -16,6 +16,7 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/app"
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -83,7 +84,20 @@ func (nopScriptExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Ent
 // observes external file edits and emits events. Workspace subscribes to
 // those events and keeps the search index in sync automatically.
 type Workspace struct {
-	fs         storage.FS
+	// fs is the raw filesystem handle used for directory topology
+	// (ReadDir, MkdirAll, Stat, Walk). It is NOT wrapped by the
+	// encryption decorator — callers that need sealed byte I/O for
+	// data files must use bytesFS instead.
+	fs storage.FS
+
+	// bytesFS is the decorated byte-I/O handle: cryptofs.FS on
+	// encrypted repos, the raw fs on cleartext repos. Every workspace
+	// component that writes plaintext user content (attachments today;
+	// future additions like the state/document cache — see C2) MUST
+	// use this handle rather than fs, otherwise content lands
+	// cleartext on disk even when encryption is enabled.
+	bytesFS attachment.BytesFS
+
 	paths      *project.Context
 	config     *project.Config
 	scriptExec ScriptExecutor
@@ -175,6 +189,20 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 	ws := newWorkspace(fs, paths, meta, exec, opts...)
 	ws.store = s
 	ws.storeFactory = factory
+
+	// Resolve the byte-I/O handle that attachments (and future
+	// plaintext-owning components) must use. On encrypted repos this
+	// is cryptofs.FS, matching what the factory wired into the store
+	// itself. Factories that don't implement bytesOpener (test
+	// factories) fall back to the raw fs — acceptable because tests
+	// are cleartext.
+	if opener, ok := factory.(bytesOpener); ok {
+		bytes, bErr := opener.OpenBytesFS()
+		if bErr != nil {
+			return nil, fmt.Errorf("open bytes fs: %w", bErr)
+		}
+		ws.bytesFS = bytes
+	}
 
 	// Populate the search index from the opened store and subscribe to
 	// store events so the index stays current when files change on disk
@@ -278,6 +306,19 @@ func WithStoreFactory(f store.Factory) Option {
 	return func(w *Workspace) { w.storeFactory = f }
 }
 
+// bytesOpener is the optional interface a store.Factory can
+// implement to hand back the decorated byte-I/O handle (cryptofs on
+// encrypted repos, raw FS otherwise). Workspace uses it to keep
+// attachment I/O consistent with the store's encryption behavior.
+// The returned handle is deliberately the same subset of methods
+// attachment.BytesFS cares about (ReadFile/WriteFile/Remove/Stat);
+// fsstore.StoreFS is a superset and is accepted implicitly.
+// Test factories that don't encrypt can skip implementing this —
+// Workspace falls back to the raw fs.
+type bytesOpener interface {
+	OpenBytesFS() (attachment.BytesFS, error)
+}
+
 func newWorkspace(
 	fs storage.FS, paths *project.Context, meta *metamodel.Metamodel, scriptExec ScriptExecutor,
 	opts ...Option,
@@ -313,6 +354,7 @@ func newWorkspace(
 
 	ws := &Workspace{
 		fs:         fs,
+		bytesFS:    fs, // default: cleartext passthrough. Overridden in New() when encryption is enabled.
 		paths:      paths,
 		config:     cfg,
 		scriptExec: scriptExec,

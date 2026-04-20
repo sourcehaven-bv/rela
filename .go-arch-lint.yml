@@ -72,11 +72,14 @@ components:
   attachment:       { in: internal/attachment }
   cache:            { in: internal/cache }
   config:           { in: internal/config }
+  encryption:       { in: internal/encryption }
+  cryptofs:         { in: internal/encryption/cryptofs }
   git:              { in: internal/git }
   output:           { in: internal/output }
   project:          { in: internal/project }
   state:            { in: internal/state }
   storage:          { in: internal/storage }
+  integrity:        { in: internal/storage/integrity }
 
   # Shared utilities
   errors:           { in: internal/errors }
@@ -106,6 +109,7 @@ vendors:
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
   singleflight: { in: golang.org/x/sync/singleflight }
+  age:         { in: filippo.io/age }
   http2:
     in:
       - golang.org/x/net/http2
@@ -158,6 +162,7 @@ deps:
     mayDependOn:
       - ai
       - dataentryconfig
+      - encryption
       - entitymanager
       - filter
       - importer
@@ -246,7 +251,11 @@ deps:
   # Application services
   app:
     mayDependOn:
+      - attachment
+      - cryptofs
+      - encryption
       - fsstore
+      - integrity
       - metamodel
       - project
       - storage
@@ -258,6 +267,7 @@ deps:
       - automation
       - config
       - dataentryconfig
+      - encryption
       - entitymanager
       - lua
       - memstore
@@ -393,6 +403,8 @@ deps:
   fsstore:
     mayDependOn:
       - cache
+      - encryption
+      - integrity
       - storage
       - store
       - storeutil
@@ -415,6 +427,15 @@ deps:
     mayDependOn:
       - storage
   # cache: pure in-memory utility, no internal deps
+  encryption:
+    canUse:
+      - age
+  cryptofs:
+    mayDependOn:
+      - encryption
+  integrity:
+    mayDependOn:
+      - encryption
   config:
     mayDependOn:
       - storage

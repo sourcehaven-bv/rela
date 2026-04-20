@@ -22,6 +22,10 @@ func newTestStore(t *testing.T) (*FSStore, *storage.MemFS) {
 		CacheDir:     "/.rela",
 	})
 	require.NoError(t, err)
+	// Mirror production wiring: subscribe the store's RecordWrite to
+	// the filesystem's post-write hook so the watcher's self-echo
+	// LRU sees the bytes that actually landed.
+	fs.OnPostWrite(s.RecordWrite)
 	return s, fs
 }
 
@@ -48,7 +52,7 @@ func TestExternalCreateEmitsCreated(t *testing.T) {
 	path := "/entities/tickets/T-1.md"
 	body := "---\nid: T-1\ntype: ticket\n---\n\nBody\n"
 	require.NoError(t, fs.MkdirAll("/entities/tickets", 0o755))
-	require.NoError(t, fs.WriteFile(path, []byte(body), 0o644))
+	require.NoError(t, fs.WriteFileExternal(path, []byte(body), 0o644))
 
 	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpCreate}})
 
@@ -77,7 +81,7 @@ func TestExternalUpdateEmitsUpdated(t *testing.T) {
 
 	path := "/entities/tickets/T-1.md"
 	body := "---\nid: T-1\ntype: ticket\nstatus: closed\n---\n\nUpdated\n"
-	require.NoError(t, fs.WriteFile(path, []byte(body), 0o644))
+	require.NoError(t, fs.WriteFileExternal(path, []byte(body), 0o644))
 
 	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpModify}})
 
@@ -148,7 +152,7 @@ func TestExternalRelationChange(t *testing.T) {
 	path := "/relations/A--blocks--B.md"
 	body := "---\nfrom: A\nrelation: blocks\nto: B\n---\n"
 	require.NoError(t, fs.MkdirAll("/relations", 0o755))
-	require.NoError(t, fs.WriteFile(path, []byte(body), 0o644))
+	require.NoError(t, fs.WriteFileExternal(path, []byte(body), 0o644))
 
 	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpCreate}})
 
@@ -188,7 +192,7 @@ func TestNonMarkdownPathIgnored(t *testing.T) {
 	defer cancel()
 
 	require.NoError(t, fs.MkdirAll("/entities/tickets", 0o755))
-	require.NoError(t, fs.WriteFile("/entities/tickets/note.txt", []byte("hi"), 0o644))
+	require.NoError(t, fs.WriteFileExternal("/entities/tickets/note.txt", []byte("hi"), 0o644))
 
 	s.handleExternalEvents([]storage.ChangeEvent{
 		{Path: "/entities/tickets/note.txt", Op: storage.OpCreate},
@@ -204,7 +208,7 @@ func TestOutsideWatchedDirsIgnored(t *testing.T) {
 	defer cancel()
 
 	require.NoError(t, fs.MkdirAll("/other", 0o755))
-	require.NoError(t, fs.WriteFile("/other/stray.md", []byte("---\nid: X\ntype: y\n---\n"), 0o644))
+	require.NoError(t, fs.WriteFileExternal("/other/stray.md", []byte("---\nid: X\ntype: y\n---\n"), 0o644))
 
 	s.handleExternalEvents([]storage.ChangeEvent{
 		{Path: "/other/stray.md", Op: storage.OpCreate},

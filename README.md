@@ -5,17 +5,23 @@
 A database layer on top of markdown. Define entities, link them together, and query their
 relationships—all stored as human-readable, version-controllable markdown files.
 
-Rela lets you model any domain where traceability matters:
+Rela is a schema-driven entity-graph platform. You define the shape of your domain in a
+YAML metamodel; rela gives you typed entities, typed relations between them, and a set of
+tools for querying, validating, analyzing, and presenting the resulting graph.
 
-- **Architecture** — Link requirements to decisions to components
-- **Compliance** — Connect controls to evidence and audit findings
-- **Risk Management** — Trace risks through mitigations to controls
-- **Product Development** — Map features to user stories to tasks
-- **Knowledge Bases** — Relate concepts, documents, and references
-- **Project Governance** — Track goals through milestones to deliverables
+Common domains:
 
-Define your own entity types and relationships in a simple YAML metamodel. Rela handles the rest:
-ID generation, bidirectional linking, orphan detection, coverage analysis, and graph export.
+- **Architecture & design** — Link requirements to decisions to components
+- **Compliance & ISMS** — Connect controls to evidence and audit findings
+- **Risk management** — Trace risks through mitigations to controls
+- **Product development** — Map features to user stories to tasks
+- **Knowledge bases** — Relate concepts, documents, and references
+- **Project governance** — Track goals through milestones to deliverables
+- **Issue tracking** — Bugs, features, and tickets with their lifecycle
+
+Traceability is one use case, not the identity. Anything with typed entities and
+typed relations fits. Rela handles the rest: ID generation, bidirectional linking,
+orphan detection, coverage analysis, validation rules, and graph export.
 
 ## Quick Start
 
@@ -78,6 +84,7 @@ go build -o rela ./cmd/rela
 | [MCP Server](docs/mcp-server.md) | AI assistant integration via MCP |
 | [Data Entry Web App](docs/data-entry.md) | Config-driven web UI for entity management |
 | [Lua Scripting](docs/lua-scripting.md) | Programmable automation with embedded Lua |
+| [At-Rest Encryption](docs/encryption.md) | Encrypt entity, relation, and attachment files transparently using age |
 | [Scheduled Tasks](docs/scheduled-tasks.md) | Run Lua scripts on recurring schedules |
 
 ### Tutorials

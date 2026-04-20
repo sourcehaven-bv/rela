@@ -1,22 +1,49 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/encryption"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
+// ErrRenameTypeNotSupportedOnEncryptedRepo is returned by
+// RenameEntityType when the project has at-rest encryption enabled.
+// The current implementation rewrites entity files through the raw
+// workspace FS; on an encrypted repo that reads ciphertext and fails
+// to match the YAML frontmatter delimiters, silently no-opping while
+// reporting success (see encryption-security-review finding C3). A
+// proper fix requires routing the operation through a schemaop
+// migrator per backend — deferred pending a package-layout refactor.
+//
+// Workaround for users: `rela keys decrypt` → `rela rename-type …` →
+// `rela keys init`.
+var ErrRenameTypeNotSupportedOnEncryptedRepo = errors.New(
+	"rename-type is not supported on encrypted repos; " +
+		"run `rela keys decrypt`, rename, then `rela keys init`")
+
 // RenameEntityType renames an entity type across the project:
 // metamodel, entity directory, entity files, and templates.
 // Returns the number of entity files updated.
+//
+// Refuses to run on encryption-enabled projects — the current
+// implementation cannot unseal entity files, and a silent no-op
+// would violate user trust more than an upfront error does.
 func (w *Workspace) RenameEntityType(oldType, newType, newPlural string) (int, error) {
 	fs := w.FS()
 	meta := w.Meta()
 	paths := w.Paths()
+
+	if enabled, err := encryption.IsEnabled(paths.Root); err != nil {
+		return 0, fmt.Errorf("check encryption status: %w", err)
+	} else if enabled {
+		return 0, ErrRenameTypeNotSupportedOnEncryptedRepo
+	}
 
 	oldDef, ok := meta.GetEntityDef(oldType)
 	if !ok {

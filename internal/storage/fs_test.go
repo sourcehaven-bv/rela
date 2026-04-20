@@ -281,7 +281,7 @@ func fsTestSuite(t *testing.T, name string, setup func(t *testing.T) (storage.FS
 
 		var walked []string
 		walkRoot := filepath.Join(root, "walk")
-		err := fs.Walk(walkRoot, func(path string, _ os.FileInfo, err error) error {
+		err := fs.Walk(walkRoot, func(path string, _ os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}

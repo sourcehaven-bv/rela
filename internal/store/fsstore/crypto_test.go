@@ -1,0 +1,333 @@
+package fsstore_test
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/encryption"
+	"github.com/Sourcehaven-BV/rela/internal/encryption/cryptofs"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
+)
+
+// setupEncryptedRepo writes an identity file and recipients.age,
+// and returns the root path plus a keyring ready for fsstore.NewAgeCrypto.
+//
+// Matches the on-disk shape `rela keys init` would leave behind:
+// <root>/.rela/key (private, gitignored) and <root>/recipients.age
+// (the authoritative encrypted recipient list).
+func setupEncryptedRepo(t *testing.T) (root string, kr *encryption.Keyring) {
+	t.Helper()
+	root = t.TempDir()
+	id := mustGenerateIdentity(t)
+
+	idPath := filepath.Join(root, ".rela", "key")
+	mustMkdir(t, filepath.Dir(idPath))
+	mustWrite(t, idPath, []byte(identityPrivate(t, id)+"\n"), 0o600)
+
+	repoID, err := encryption.NewRepoID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rf := &encryption.RecipientsFile{
+		Version:    1,
+		RepoID:     repoID,
+		Recipients: map[string]string{"alice": id.PublicRecipient().String()},
+	}
+	recipientsPath := filepath.Join(root, encryption.RecipientsFileName)
+	if err = encryption.WriteRecipientsFile(recipientsPath, rf); err != nil {
+		t.Fatal(err)
+	}
+
+	kr, err = encryption.LoadKeyring(recipientsPath, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, kr
+}
+
+// buildEncryptedStore sets up a brand-new fsstore wired with the
+// full production decorator stack: cryptofs.FS(SafeFS(OsFS)) using a
+// single-recipient keyring.
+func buildEncryptedStore(t *testing.T) (s *fsstore.FSStore, root string) {
+	t.Helper()
+	var kr *encryption.Keyring
+	root, kr = setupEncryptedRepo(t)
+	s = mustOpenEncryptedStore(t, root, kr)
+	return s, root
+}
+
+// mustOpenEncryptedStore wires cryptofs.FS(SafeFS(OsFS)) for the
+// given keyring and opens an fsstore with it. The raw SafeFS is
+// also used as the fsstore's directory handle; the PostWrite hook
+// is subscribed so the watcher's self-echo LRU stays correct.
+//
+// Always configures AttachmentsDir so every encrypted test exercises
+// the attachments path too.
+func mustOpenEncryptedStore(
+	t *testing.T, root string, kr *encryption.Keyring,
+) *fsstore.FSStore {
+	t.Helper()
+	safe := storage.NewSafeFS(storage.NewOsFS())
+	enc, err := cryptofs.New(cryptofs.Config{
+		Inner:        safe,
+		Recipients:   kr.Recipients(),
+		Identity:     kr.Identity(),
+		RepoRoot:     root,
+		WriteVersion: kr.Version(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := fsstore.New(fsstore.Config{
+		FS:             safe,
+		Bytes:          enc,
+		EntitiesDir:    filepath.Join(root, "entities"),
+		RelationsDir:   filepath.Join(root, "relations"),
+		AttachmentsDir: filepath.Join(root, "attachments"),
+		CacheDir:       filepath.Join(root, ".rela"),
+		Schemas:        map[string]store.EntityTypeSchema{"ticket": {Plural: "tickets"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	safe.OnPostWrite(s.RecordWrite)
+	return s
+}
+
+// mustOpenCleartextStore opens an fsstore with no encryption
+// decorator — SafeFS(OsFS) is both the byte handle and the dir
+// handle. WantSealed=false, matching the factory's decision branch.
+func mustOpenCleartextStore(t *testing.T, root string) *fsstore.FSStore {
+	t.Helper()
+	safe := storage.NewSafeFS(storage.NewOsFS())
+	cfg := fsstore.Config{
+		FS:           safe,
+		EntitiesDir:  filepath.Join(root, "entities"),
+		RelationsDir: filepath.Join(root, "relations"),
+		CacheDir:     filepath.Join(root, ".rela"),
+		Schemas:      map[string]store.EntityTypeSchema{"ticket": {Plural: "tickets"}},
+	}
+	s, err := fsstore.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	safe.OnPostWrite(s.RecordWrite)
+	return s
+}
+
+func TestFSStore_Encrypted_RoundTrip(t *testing.T) {
+	s, root := buildEncryptedStore(t)
+	ctx := context.Background()
+
+	e := entity.New("TKT-001", "ticket")
+	e.Properties["title"] = "confidential ticket"
+	e.Content = "only authorized recipients should read this body"
+	if err := s.CreateEntity(ctx, e); err != nil {
+		t.Fatalf("CreateEntity: %v", err)
+	}
+
+	path := filepath.Join(root, "entities", "tickets", "TKT-001.md")
+	raw := mustReadFile(t, path)
+	if !encryption.LooksSealed(raw) {
+		t.Fatalf("on-disk file is not sealed:\n%s", raw)
+	}
+
+	got, err := s.GetEntity(ctx, "TKT-001")
+	if err != nil {
+		t.Fatalf("GetEntity: %v", err)
+	}
+	if got.Properties["title"] != "confidential ticket" {
+		t.Errorf("title = %v, want original", got.Properties["title"])
+	}
+	if got.Content != "only authorized recipients should read this body" {
+		t.Errorf("content = %q, want original", got.Content)
+	}
+}
+
+func TestFSStore_Encrypted_TamperedPayloadSurfacesAsCorrupted(t *testing.T) {
+	// C1 regression: tampered on-disk bytes MUST classify as
+	// IsCorrupted via the production fsstore.GetEntity path.
+	s, root := buildEncryptedStore(t)
+	ctx := context.Background()
+
+	e := entity.New("TKT-002", "ticket")
+	e.Properties["title"] = "will be tampered"
+	e.Content = "payload bytes must be long enough to tamper"
+	if err := s.CreateEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(root, "entities", "tickets", "TKT-002.md")
+	raw := mustReadFile(t, path)
+	raw[len(raw)-5] ^= 0x01
+	mustWrite(t, path, raw, 0o644)
+
+	_, err := s.GetEntity(ctx, "TKT-002")
+	if err == nil {
+		t.Fatal("expected error reading tampered file, got nil")
+	}
+	if !encryption.IsCorrupted(err) {
+		t.Errorf("IsCorrupted(err) = false (err = %v)", err)
+	}
+	if encryption.IsNoMatchingKey(err) {
+		t.Errorf("tamper must not collapse to IsNoMatchingKey (err = %v)", err)
+	}
+}
+
+// TestFSStore_Encrypted_AttachmentSizeOnReopen is the regression
+// test for RR-HBER2: loadAttachmentsIndex previously cached
+// info.Size() (ciphertext on disk) which on encrypted repos is
+// plaintext + ~229 bytes of age overhead. Reopening a store and
+// listing attachments must return plaintext size, not ciphertext.
+func TestFSStore_Encrypted_AttachmentSizeOnReopen(t *testing.T) {
+	root, kr := setupEncryptedRepo(t)
+	s := mustOpenEncryptedStore(t, root, kr)
+	ctx := context.Background()
+
+	e := entity.New("TKT-SZ-1", "ticket")
+	e.Properties["title"] = "size test"
+	if err := s.CreateEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("plaintext attachment body")
+	if err := s.AttachFile(ctx, "TKT-SZ-1", "spec", "spec.bin", bytesReader(body)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before reopen: size is set from AttachFile's len(data), so
+	// already plaintext. The regression is specifically about reopen.
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := mustOpenEncryptedStore(t, root, kr)
+	defer s2.Close()
+
+	infos, err := s2.ListAttachments(ctx, "TKT-SZ-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("got %d attachments, want 1", len(infos))
+	}
+	if infos[0].Size != int64(len(body)) {
+		t.Errorf("attachment size on reopen = %d, want plaintext size %d "+
+			"(did loadAttachmentsIndex leak ciphertext size?)",
+			infos[0].Size, len(body))
+	}
+}
+
+// TestFSStore_Encrypted_AttachmentIndex_SkipsUnreadableFile covers
+// the error branch in loadAttachmentsIndex: if a file in the
+// attachments tree cannot be read via s.bytes (e.g. corrupted sealed
+// blob left by an interrupted migration), the index skips it instead
+// of failing the whole open. Keeps partial-index > failed-open
+// behavior consistent with the rest of loadAttachmentsIndex.
+func TestFSStore_Encrypted_AttachmentIndex_SkipsUnreadableFile(t *testing.T) {
+	root, kr := setupEncryptedRepo(t)
+	s := mustOpenEncryptedStore(t, root, kr)
+	ctx := context.Background()
+
+	e := entity.New("TKT-UNREAD", "ticket")
+	e.Properties["title"] = "host"
+	if err := s.CreateEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AttachFile(ctx, "TKT-UNREAD", "doc", "doc.bin",
+		bytesReader([]byte("hi"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Overwrite the attachment with a blob that LooksSealed (passes
+	// the integrity verifier) but can't be decrypted by kr on reopen.
+	// A header-only byte string suffices: encryption.LooksSealed only
+	// checks the header magic, but age.Decrypt rejects the payload.
+	attachPath := filepath.Join(root, "attachments", "TKT-UNREAD", "doc", "doc.bin")
+	mustWrite(t, attachPath,
+		[]byte(encryption.SealedMagic+"garbage after header\n"), 0o644)
+
+	s2 := mustOpenEncryptedStore(t, root, kr)
+	defer s2.Close()
+
+	infos, err := s2.ListAttachments(ctx, "TKT-UNREAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 0 {
+		t.Errorf("unreadable attachment should be skipped on reopen, "+
+			"got %d entries: %+v", len(infos), infos)
+	}
+}
+
+func TestFSStore_Encrypted_AttachmentRoundTrip(t *testing.T) {
+	root, kr := setupEncryptedRepo(t)
+	s := mustOpenEncryptedStore(t, root, kr)
+	ctx := context.Background()
+
+	e := entity.New("TKT-003", "ticket")
+	e.Properties["title"] = "attached"
+	if err := s.CreateEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte("secret pdf contents placeholder")
+	if err := s.AttachFile(ctx, "TKT-003", "spec", "spec.bin", bytesReader(body)); err != nil {
+		t.Fatalf("AttachFile: %v", err)
+	}
+
+	attachPath := filepath.Join(root, "attachments", "TKT-003", "spec", "spec.bin")
+	rawAttach := mustReadFile(t, attachPath)
+	if !encryption.LooksSealed(rawAttach) {
+		t.Fatalf("attachment is not sealed:\n%s", rawAttach)
+	}
+
+	rc, err := s.ReadAttachment(ctx, "TKT-003", "spec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("attachment read = %q, want %q", got, body)
+	}
+}
+
+func TestFSStore_Cleartext_Roundtrip_Unchanged(t *testing.T) {
+	// Cleartext mode: files on disk are plain markdown, no sealing.
+	root := t.TempDir()
+	s := mustOpenCleartextStore(t, root)
+	ctx := context.Background()
+	e := entity.New("TKT-C2", "ticket")
+	e.Properties["title"] = "cleartext"
+	if err := s.CreateEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "entities", "tickets", "TKT-C2.md")
+	raw := mustReadFile(t, path)
+	if encryption.LooksSealed(raw) {
+		t.Fatalf("cleartext mode wrote a sealed file!\n%s", raw)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}

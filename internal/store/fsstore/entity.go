@@ -307,14 +307,14 @@ func (s *FSStore) DeleteEntity(_ context.Context, id string, cascade bool) (*sto
 	// Delete relation files first, then entity file.
 	for _, rm := range related {
 		path := s.relationFilePath(rm.From, rm.Type, rm.To)
-		_ = s.fs.Remove(path)
-		s.forgetHash(path)
+		_ = s.dirs.Remove(path)
+		s.echoes.Forget(path)
 	}
 	path := s.entityFilePath(meta.Type, id)
-	if err := s.fs.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err := s.dirs.Remove(path); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	s.forgetHash(path)
+	s.echoes.Forget(path)
 
 	// Update index
 	delete(s.entities, id)
@@ -412,14 +412,14 @@ func (s *FSStore) RenameEntity(_ context.Context, oldID, newID string) (*store.R
 
 		// Delete old relation file.
 		oldPath := s.relationFilePath(rm.From, rm.Type, rm.To)
-		_ = s.fs.Remove(oldPath)
-		s.forgetHash(oldPath)
+		_ = s.dirs.Remove(oldPath)
+		s.echoes.Forget(oldPath)
 	}
 
 	// Delete old entity file.
 	oldPath := s.entityFilePath(meta.Type, oldID)
-	_ = s.fs.Remove(oldPath)
-	s.forgetHash(oldPath)
+	_ = s.dirs.Remove(oldPath)
+	s.echoes.Forget(oldPath)
 
 	// Update entity index.
 	delete(s.entities, oldID)

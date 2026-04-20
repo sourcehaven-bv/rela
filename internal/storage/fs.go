@@ -8,8 +8,8 @@ package storage
 
 import (
 	"io"
+	"io/fs"
 	"os"
-	"path/filepath"
 )
 
 // FS abstracts filesystem operations used throughout rela.
@@ -37,8 +37,12 @@ type FS interface {
 	// ReadDir reads the named directory and returns its directory entries sorted by name.
 	ReadDir(path string) ([]os.DirEntry, error)
 
-	// Walk walks the file tree rooted at root, calling fn for each file or directory.
-	Walk(root string, fn filepath.WalkFunc) error
+	// Walk walks the file tree rooted at root, calling fn for each
+	// file or directory. Uses fs.WalkDirFunc (Go 1.16+) so entries
+	// expose fs.DirEntry rather than os.FileInfo — no stat syscall
+	// per entry unless the callback explicitly asks for one via
+	// d.Info().
+	Walk(root string, fn fs.WalkDirFunc) error
 
 	// Open opens the named file for reading.
 	Open(path string) (io.ReadCloser, error)

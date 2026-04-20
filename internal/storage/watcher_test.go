@@ -433,3 +433,49 @@ func TestWatcher_FileModifyAndDelete(t *testing.T) {
 		t.Error("timeout waiting for file delete event")
 	}
 }
+
+func TestWatcher_PauseResumeIsPaused(t *testing.T) {
+	dir := t.TempDir()
+	w, err := NewWatcher(WatchConfig{
+		Dirs:     []string{dir},
+		Debounce: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer w.Stop()
+
+	if w.IsPaused() {
+		t.Error("new watcher should not be paused")
+	}
+	w.Pause()
+	if !w.IsPaused() {
+		t.Error("after Pause, IsPaused should be true")
+	}
+	w.Resume()
+	if w.IsPaused() {
+		t.Error("after Resume, IsPaused should be false")
+	}
+}
+
+func TestWatcher_AddFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tracked.md")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := NewWatcher(WatchConfig{
+		Dirs:     []string{dir},
+		Debounce: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer w.Stop()
+
+	// Adding the file (even though its dir is already watched) must not error.
+	if err := w.AddFile(path); err != nil {
+		t.Errorf("AddFile(%q): %v", path, err)
+	}
+}

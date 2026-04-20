@@ -62,6 +62,124 @@ Creates:
 
 ---
 
+### rela keys
+
+Manage at-rest encryption for the project. See the [encryption guide](encryption.md) for the full
+threat model, file layout, and crash-safety guarantees.
+
+A repo is encryption-enabled when `.rela/encryption.yaml` is present. Every entity, relation,
+attachment, and derived-cache file on disk is then an age blob (`filippo.io/age`); `metamodel.yaml`
+and templates stay cleartext. The private identity is resolved from `$RELA_KEY_FILE` →
+`.rela/key` → `~/.config/rela/key`.
+
+#### rela keys generate
+
+Generate a fresh age keypair.
+
+```bash
+rela keys generate <name> --out <dir>
+```
+
+**Arguments:**
+
+- `name` - Identity stem, used for `<name>.pub` and `<name>.key` filenames
+
+**Flags:**
+
+| Flag    | Description                                                  |
+| ------- | ------------------------------------------------------------ |
+| `--out` | Target directory (created if missing). Required.             |
+
+Writes two files in `<dir>`: `<name>.pub` (age public key, committable) and `<name>.key`
+(private identity, chmod 0600, **never** commit). Does not require a rela project.
+
+#### rela keys init
+
+Enable at-rest encryption on the current project. Refuses to run if the project is already
+encrypted or contains any sealed file.
+
+```bash
+rela keys init --recipient <name> --pub-file <path> [--identity <path>]
+```
+
+**Flags:**
+
+| Flag          | Description                                                                  |
+| ------------- | ---------------------------------------------------------------------------- |
+| `--recipient` | Display name for the first recipient. Required.                              |
+| `--pub-file`  | Path to the recipient's age public key file (`age1pq1...`). Required.        |
+| `--identity`  | Path to the private identity file to copy into `.rela/key`.                  |
+
+Hybrid (post-quantum) age public keys are ~2 KB, so `--pub-file` takes a path
+rather than a string.
+
+Seals every file under `entities/`, `relations/`, and `attachments/` in place via `temp + rename`.
+Writes `<repo>/recipients.age` — the authoritative encrypted recipient list, sealed to itself —
+and generates a per-repo UUID used to key machine-local state (last-seen version,
+in-flight-rotation sentinels) under `$XDG_STATE_HOME/rela/repos/<repo-id>/`.
+
+#### rela keys add
+
+Add a recipient and re-encrypt every data file.
+
+```bash
+rela keys add <name> --pub-file <path>
+```
+
+**Arguments:**
+
+- `name` - Display name for the new recipient
+
+**Flags:**
+
+| Flag         | Description                                                         |
+| ------------ | ------------------------------------------------------------------- |
+| `--pub-file` | Path to the new recipient's age public key file. Required.          |
+
+The caller must be an existing recipient (have a working identity for the current
+`recipients.age`). Bumps the repo's monotonic encryption version and re-seals every data file
+under the expanded set. Crash-safe: an interrupted rotation is resumed automatically on the
+next rela invocation.
+
+#### rela keys remove
+
+Remove a recipient and re-encrypt every data file under the reduced set.
+
+```bash
+rela keys remove <name>
+```
+
+**Arguments:**
+
+- `name` - Display name of the recipient to remove
+
+Refuses to remove the last recipient (use `rela keys decrypt` instead) and refuses to remove
+yourself (would lock you out). The removed recipient retains access to any file they previously
+read and copied locally — cryptography cannot enforce forgetting.
+
+#### rela keys decrypt
+
+Disable encryption: unseal every data file and delete `<repo>/recipients.age`.
+
+```bash
+rela keys decrypt
+```
+
+Requires a local identity that matches one of the current recipients.
+
+#### rela keys status
+
+Show encryption status and recipient list.
+
+```bash
+rela keys status
+```
+
+For an encrypted repo, reports the current version and repo UUID, then lists each recipient
+plus their age public key. The local user's recipient is marked `(you)`.
+
+---
+
 ### rela create
 
 Create a new entity.

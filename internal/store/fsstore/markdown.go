@@ -3,10 +3,9 @@ package fsstore
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -327,7 +326,7 @@ func isSpecialLine(line string) bool {
 
 // readEntityFile reads and parses an entity from a markdown file.
 func (s *FSStore) readEntityFile(path string) (*entity.Entity, error) {
-	data, err := s.fs.ReadFile(path)
+	data, err := s.readDataFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +342,7 @@ func (s *FSStore) readEntityFile(path string) (*entity.Entity, error) {
 	e := entity.New(id, entityType)
 	e.Content = doc.content
 
-	if info, err := s.fs.Stat(path); err == nil {
+	if info, err := s.dirs.Stat(path); err == nil {
 		e.UpdatedAt = info.ModTime()
 	}
 
@@ -381,34 +380,19 @@ func formatEntity(e *entity.Entity, propertyOrder []string) (string, error) {
 // writeEntityFile writes an entity to a markdown file using temp-file + rename.
 func (s *FSStore) writeEntityFile(e *entity.Entity) error {
 	path := s.entityFilePath(e.Type, e.ID)
-	tempPath := path + ".new"
-
 	order := s.propertyOrder(e.Type)
 	content, err := formatEntity(e, order)
 	if err != nil {
 		return err
 	}
-
-	dir := filepath.Dir(tempPath)
-	if err := s.fs.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	if err := s.fs.WriteFile(tempPath, []byte(content), 0644); err != nil {
-		return err
-	}
-	if err := s.fs.Rename(tempPath, path); err != nil {
-		return err
-	}
-	s.recordHash(path, []byte(content))
-	return nil
+	return s.writeDataFile(path, []byte(content), 0o644)
 }
 
 // --- relation I/O ---
 
 // readRelationFile reads and parses a relation from a markdown file.
 func (s *FSStore) readRelationFile(path string) (*entity.Relation, error) {
-	data, err := s.fs.ReadFile(path)
+	data, err := s.readDataFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -425,7 +409,7 @@ func (s *FSStore) readRelationFile(path string) (*entity.Relation, error) {
 	)
 	r.Content = doc.content
 
-	if info, err := s.fs.Stat(path); err == nil {
+	if info, err := s.dirs.Stat(path); err == nil {
 		r.UpdatedAt = info.ModTime()
 	}
 
@@ -465,42 +449,43 @@ func formatRelation(r *entity.Relation) (string, error) {
 // writeRelationFile writes a relation to a markdown file using temp-file + rename.
 func (s *FSStore) writeRelationFile(r *entity.Relation) error {
 	path := s.relationFilePath(r.From, r.Type, r.To)
-	tempPath := path + ".new"
-
 	content, err := formatRelation(r)
 	if err != nil {
 		return err
 	}
-
-	dir := filepath.Dir(tempPath)
-	if err := s.fs.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	if err := s.fs.WriteFile(tempPath, []byte(content), 0644); err != nil {
-		return err
-	}
-	if err := s.fs.Rename(tempPath, path); err != nil {
-		return err
-	}
-	s.recordHash(path, []byte(content))
-	return nil
+	return s.writeDataFile(path, []byte(content), 0o644)
 }
 
-// hashContent returns the hex-encoded SHA256 of content. Used by the
-// external-change watcher to suppress self-echoes from fsnotify.
-func hashContent(content []byte) string {
-	sum := sha256.Sum256(content)
-	return hex.EncodeToString(sum[:])
+// writeDataFile writes content to path through the StoreFS byte
+// boundary. Any transform (encryption, compression) is applied by
+// the decorator stack the factory assembled; fsstore sees plain
+// bytes in and plain bytes out.
+//
+// Atomic-write semantics (temp+rename, fsync) live one layer down
+// in SafeFS. fsstore does not manage temp paths here anymore — the
+// invariant "crash leaves either sealed or nothing, never plaintext"
+// holds because SafeFS writes a sealed-temp and only renames after
+// successful fsync.
+//
+// Parent-directory creation goes through the raw directory handle
+// (s.dirs). SafeFS-backed production paths also mkdir inside
+// WriteFile, so this is idempotent; test backends that reject writes
+// to missing directories need the explicit mkdir.
+//
+// Self-echo hash recording is handled entirely by the post-write
+// observer installed on the bottom-most FS (SafeFS.OnPostWrite or
+// MemFS.OnPostWrite for tests). That's where the actual on-disk
+// bytes are visible — fsstore sees only plaintext here and must not
+// record a plaintext hash the watcher can't match.
+func (s *FSStore) writeDataFile(path string, content []byte, perm os.FileMode) error {
+	if err := s.dirs.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return s.bytes.WriteFile(path, content, perm)
 }
 
-// recordHash stores the hash of content written to path. The LRU is
-// self-synchronized so no store lock is required.
-func (s *FSStore) recordHash(path string, content []byte) {
-	s.recentHashes.Put(path, hashContent(content))
-}
-
-// forgetHash removes any recorded hash for path (e.g. after delete).
-func (s *FSStore) forgetHash(path string) {
-	s.recentHashes.Delete(path)
+// readDataFile reads path through the StoreFS byte boundary. Any
+// decoding (unseal, decompress) is done by the decorator stack.
+func (s *FSStore) readDataFile(path string) ([]byte, error) {
+	return s.bytes.ReadFile(path)
 }

@@ -58,6 +58,38 @@ func TestRecovery_OrphanedRelationTempFile(t *testing.T) {
 	assert.True(t, isNotExist(err), "orphaned relation .new file should be cleaned up")
 }
 
+// SafeFS writes via <path>.tmp → rename, so a crash between write and
+// rename leaves a sibling .tmp file. The historical sweep only removed
+// .new orphans; .tmp orphans would accumulate forever.
+func TestRecovery_OrphanedSafeFSTempFile(t *testing.T) {
+	fs := storage.NewMemFS()
+	ctx := context.Background()
+
+	s1 := openStore(t, fs)
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
+	require.NoError(t, s1.Close())
+
+	// Simulate a SafeFS crash: path.tmp left in place of the rename target.
+	require.NoError(t, fs.WriteFile("/entities/requirements/REQ-2.md.tmp", []byte("partial write"), 0644))
+	require.NoError(t, fs.MkdirAll("/relations", 0755))
+	require.NoError(t, fs.WriteFile("/relations/A--rel--B.md.tmp", []byte("partial"), 0644))
+
+	s2 := openStore(t, fs)
+	defer s2.Close()
+
+	for _, p := range []string{
+		"/entities/requirements/REQ-2.md.tmp",
+		"/relations/A--rel--B.md.tmp",
+	} {
+		_, err := fs.ReadFile(p)
+		assert.Truef(t, isNotExist(err), "orphaned %s should be cleaned up on startup", p)
+	}
+
+	// Pre-existing entity still accessible.
+	_, err := s2.GetEntity(ctx, "REQ-1")
+	require.NoError(t, err)
+}
+
 // --- Crash mid-create: file on disk but index not updated ---
 
 func TestRecovery_EntityFileWithoutIndex(t *testing.T) {

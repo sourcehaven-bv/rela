@@ -1,9 +1,14 @@
 package workspace
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -196,5 +201,58 @@ func TestRewriteEntityTypeInDir_MissingDir(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("count = %d, want 0", count)
+	}
+}
+
+// On encrypted repos, the current rewrite path reads ciphertext
+// through the raw FS and would silently report success while leaving
+// every frontmatter untouched. Until the backend-layout refactor lands,
+// the operation must refuse upfront. Uses a real tempdir because the
+// guard checks for .rela/encryption.yaml on the OS filesystem.
+func TestRenameEntityType_RefusesOnEncryptedRepo(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(root, ".rela"),
+		filepath.Join(root, "entities", "requirements"),
+		filepath.Join(root, "relations"),
+		filepath.Join(root, "templates", "entities"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Presence of <root>/recipients.age is what flips the repo into
+	// encrypted mode (post-S2). Contents don't matter for the guard
+	// check — we're only asserting RenameEntityType refuses early
+	// before any decryption is attempted.
+	if err := os.WriteFile(
+		filepath.Join(root, "recipients.age"),
+		[]byte("dummy"), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := metamodel.Parse([]byte(testMetamodelYAML))
+	if err != nil {
+		t.Fatalf("parse metamodel: %v", err)
+	}
+	ctx := &project.Context{
+		Root:                 root,
+		MetamodelPath:        filepath.Join(root, "metamodel.yaml"),
+		CacheDir:             filepath.Join(root, ".rela"),
+		EntitiesDir:          filepath.Join(root, "entities"),
+		RelationsDir:         filepath.Join(root, "relations"),
+		TemplatesDir:         filepath.Join(root, "templates"),
+		EntityTemplatesDir:   filepath.Join(root, "templates", "entities"),
+		RelationTemplatesDir: filepath.Join(root, "templates", "relations"),
+	}
+	ws := NewForTest(meta, WithFS(storage.NewOsFS(), ctx))
+
+	count, err := ws.RenameEntityType("requirement", "feature", "features")
+	if !errors.Is(err, ErrRenameTypeNotSupportedOnEncryptedRepo) {
+		t.Fatalf("got err=%v, want ErrRenameTypeNotSupportedOnEncryptedRepo", err)
+	}
+	if count != 0 {
+		t.Errorf("count = %d, want 0 on guard failure", count)
 	}
 }

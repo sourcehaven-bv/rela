@@ -15,11 +15,17 @@ import (
 // MemFS implements FS using an in-memory filesystem.
 // It is safe for concurrent use.
 // Primarily intended for testing.
+//
+// MemFS supports an OnPostWrite observer (like SafeFS) so tests that
+// need to exercise the watcher's self-echo LRU can install a hook
+// without building a SafeFS(OsFS) stack. The hook fires synchronously
+// from WriteFile with the bytes that were stored.
 type MemFS struct {
-	mu    sync.RWMutex
-	files map[string]*memFile  // path → file contents
-	dirs  map[string]time.Time // directory path → mtime
-	cwd   string               // current working directory for Getwd
+	mu       sync.RWMutex
+	files    map[string]*memFile  // path → file contents
+	dirs     map[string]time.Time // directory path → mtime
+	cwd      string               // current working directory for Getwd
+	observer WriteObserver
 }
 
 type memFile struct {
@@ -59,15 +65,40 @@ func (m *MemFS) ReadFile(path string) ([]byte, error) {
 	return data, nil
 }
 
-func (m *MemFS) WriteFile(path string, data []byte, perm os.FileMode) error {
+// OnPostWrite installs a write observer. Mirrors SafeFS.OnPostWrite
+// so tests that need self-echo hashing wired into fsstore can install
+// a hook on a MemFS-based store without a SafeFS(OsFS) stack.
+func (m *MemFS) OnPostWrite(obs WriteObserver) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.observer = obs
+}
 
+// WriteFileExternal writes data without firing the post-write
+// observer. Used by tests to simulate an edit made by another process
+// (e.g. a user touching a file on disk) — in production such an edit
+// would never flow through SafeFS.WriteFile, so it shouldn't register
+// with the observer either.
+func (m *MemFS) WriteFileExternal(path string, data []byte, perm os.FileMode) error {
+	m.mu.Lock()
+	obs := m.observer
+	m.observer = nil
+	m.mu.Unlock()
+	err := m.WriteFile(path, data, perm)
+	m.mu.Lock()
+	m.observer = obs
+	m.mu.Unlock()
+	return err
+}
+
+func (m *MemFS) WriteFile(path string, data []byte, perm os.FileMode) error {
+	m.mu.Lock()
 	path = cleanPath(path)
 
 	// Check that parent directory exists.
 	dir := filepath.Dir(path)
 	if _, ok := m.dirs[dir]; !ok {
+		m.mu.Unlock()
 		return &os.PathError{Op: "open", Path: path, Err: os.ErrNotExist}
 	}
 
@@ -84,6 +115,11 @@ func (m *MemFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 	}
 	if !existed {
 		m.touchDir(dir, now)
+	}
+	obs := m.observer
+	m.mu.Unlock()
+	if obs != nil {
+		obs(path, stored)
 	}
 	return nil
 }
@@ -325,7 +361,7 @@ func (m *MemFS) ReadDir(path string) ([]os.DirEntry, error) {
 	return entries, nil
 }
 
-func (m *MemFS) Walk(root string, fn filepath.WalkFunc) error {
+func (m *MemFS) Walk(root string, fn fs.WalkDirFunc) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -343,7 +379,8 @@ func (m *MemFS) Walk(root string, fn filepath.WalkFunc) error {
 			i++
 			continue
 		}
-		err := fn(p, info, nil)
+		entry := &memDirEntry{name: info.Name(), isDir: info.IsDir(), info: info}
+		err := fn(p, entry, nil)
 		if err != nil {
 			if errors.Is(err, filepath.SkipDir) && info.IsDir() {
 				// Skip all entries under this directory.

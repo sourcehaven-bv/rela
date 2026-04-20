@@ -48,8 +48,15 @@ just dev-catalog              # Run catalog example on :8282
 
 ## Architecture Overview
 
-rela is a traceability CLI that manages entities and their relationships. Common use cases include
-requirements, decisions, solutions, and components. Data is stored as markdown files with YAML frontmatter.
+rela is a schema-driven entity-graph platform. You define the shape of your domain in a
+YAML metamodel (entity types, relation types, properties, validation rules); rela gives
+you typed entities, typed relations between them, and tools to query / validate / analyze
+/ present the graph. Data is stored as markdown files with YAML frontmatter.
+
+Traceability (requirements → decisions → components) is one common use case, not the
+identity. Other real-world uses in-tree: ISO 27001 ISMS, project management, DevOps
+runbooks, issue/ticket tracking (rela dogfoods itself — see `tickets/`), and documentation
+mirrors of this repo (see `docs-project/`). Anything with typed entities and relations fits.
 
 ### Core Data Flow
 

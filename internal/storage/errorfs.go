@@ -2,8 +2,8 @@ package storage
 
 import (
 	"io"
+	"io/fs"
 	"os"
-	"path/filepath"
 )
 
 // ErrorFS wraps an FS and returns an error for specified operations.
@@ -46,7 +46,7 @@ func (e *ErrorFS) ReadDir(path string) ([]os.DirEntry, error) {
 	return e.FS.ReadDir(path)
 }
 
-func (e *ErrorFS) Walk(root string, fn filepath.WalkFunc) error {
+func (e *ErrorFS) Walk(root string, fn fs.WalkDirFunc) error {
 	if e.WalkError != nil {
 		return e.WalkError
 	}
