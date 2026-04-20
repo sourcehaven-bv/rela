@@ -5,7 +5,7 @@ title: Relocate .rela/ user-local state to user config directory (cross-platform
 kind: enhancement
 priority: high
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Problem

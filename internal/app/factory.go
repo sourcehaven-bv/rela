@@ -253,6 +253,19 @@ func (f *FSFactory) loadEncryption() (bool, *encryption.Keyring, error) {
 		return false, nil, fmt.Errorf("app: load keyring: %w", err)
 	}
 
+	// Cross-check .rela/repo-id against the keyring's RepoID. A
+	// mismatch means either a copied-in .rela/ from another project
+	// or (on first open of a freshly cloned encrypted repo) a
+	// missing .rela/repo-id — the latter is written on demand.
+	//
+	// This fires on EVERY factory open, not just CLI key commands,
+	// so rollback-defense state (last_seen_version, reseal sentinel)
+	// can never get keyed under the wrong per-repo directory on a
+	// fresh clone. See TKT-XZ4EO review finding RR-ZW7E9.
+	if vErr := userstate.VerifyKeyringRepoID(f.Paths.Root, kr.RepoID()); vErr != nil {
+		return false, nil, fmt.Errorf("app: verify repo id: %w", vErr)
+	}
+
 	// Resume any interrupted `keys add` / `keys remove` rotation
 	// from a prior crashed rela invocation. No-op in the normal
 	// case (no sentinel, nothing to do). On the rare recovery

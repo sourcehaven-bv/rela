@@ -80,6 +80,7 @@ components:
   state:            { in: internal/state }
   storage:          { in: internal/storage }
   integrity:        { in: internal/storage/integrity }
+  userstate:        { in: internal/userstate }
 
   # Shared utilities
   errors:           { in: internal/errors }
@@ -108,6 +109,7 @@ vendors:
   tablewriter: { in: github.com/olekukonko/tablewriter }
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
+  lockedfile:  { in: github.com/rogpeppe/go-internal/lockedfile }
   singleflight: { in: golang.org/x/sync/singleflight }
   age:         { in: filippo.io/age }
   http2:
@@ -139,6 +141,7 @@ deps:
       - scheduler
       - script
       - storage
+      - userstate
       - workspace
     canUse:
       - http2
@@ -153,6 +156,7 @@ deps:
       - scheduler
       - script
       - storage
+      - userstate
       - workspace
     canUse:
       - wails
@@ -177,6 +181,7 @@ deps:
       - schema
       - script
       - store
+      - userstate
       - workspace
     canUse:
       - cobra
@@ -260,6 +265,7 @@ deps:
       - project
       - storage
       - store
+      - userstate
   workspace:
     mayDependOn:
       - app
@@ -283,6 +289,7 @@ deps:
       - store
       - templating
       - tracer
+      - userstate
       - validation
       - validator
 
@@ -428,6 +435,8 @@ deps:
       - storage
   # cache: pure in-memory utility, no internal deps
   encryption:
+    mayDependOn:
+      - userstate
     canUse:
       - age
   cryptofs:
@@ -458,3 +467,10 @@ deps:
     anyProjectDeps: true
     canUse:
       - fsnotify
+  userstate:
+    mayDependOn:
+      - project
+      - state
+      - storage
+    canUse:
+      - lockedfile

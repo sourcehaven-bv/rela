@@ -16,18 +16,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-// testTempDir returns an OS-level temp directory for test user-state.
-// Callers that want per-test isolation should use t.TempDir() via a
-// dedicated helper; this one is for anonymous test plumbing where a
-// stable dir-per-process is fine.
-func testTempDir() string {
-	d, err := os.MkdirTemp("", "rela-userstate-*")
-	if err != nil {
-		panic(err)
-	}
-	return d
-}
-
 // seedEntity writes an entity directly into the app's store.
 func seedEntity(app *App, e *entity.Entity) {
 	if err := app.store.CreateEntity(context.Background(), e); err != nil {
@@ -121,8 +109,18 @@ func bindRepo(app *App, root string) {
 // filesystem + paths, preserving fixtures. Use when the test needs to
 // share a specific filesystem (e.g., an in-memory FS across multiple
 // App instances).
+//
+// The user-state service is rooted at a scratch directory under
+// os.TempDir(). The directory is not explicitly cleaned up — tests
+// are short-lived and the OS sweeps TMPDIR on most CI runners.
+// Tests that assert on filesystem side effects should reach in via
+// app.UserStatePathForTest.
 func bindRepoWithFS(app *App, fs storage.FS, paths *project.Context) {
-	us := userstate.NewForTest(testTempDir())
+	dir, err := os.MkdirTemp("", "rela-userstate-*")
+	if err != nil {
+		panic(err)
+	}
+	us := userstate.NewForTest(dir)
 	newWs := workspace.NewForTest(app.Meta(),
 		workspace.WithFS(fs, paths),
 		workspace.WithTestUserState(us),

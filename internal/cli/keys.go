@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -36,11 +37,13 @@ const keyFilePerm os.FileMode = 0o600
 // undecryptable for legitimate users, which surfaces loudly rather
 // than silently expanding access.
 //
-// Public keys for proposed new recipients are passed to
-// `rela keys add` via a file path (--pub-file); they never land
-// inside the repo except as an entry in the encrypted recipients
-// list. Private keys live outside the repo. See $RELA_KEY_FILE,
-// .rela/key, and ~/.config/rela/key (resolution order).
+// There is no <root>/keys/ directory anymore. Public keys for
+// proposed new recipients are passed to `rela keys add` via a
+// file path (--pub-file); they never land inside the repo except
+// as an entry in the encrypted recipients list.
+//
+// Private keys live outside the repo. See $RELA_KEY_FILE,
+// or the user-state directory's key file (resolution order).
 var keysCmd = &cobra.Command{
 	Use:   "keys",
 	Short: "Manage at-rest encryption keys and recipients",
@@ -52,8 +55,9 @@ carries the repo's monotonic encryption version. Adding a
 recipient requires decrypting the current file first, so only
 existing recipients can expand the set.
 
-Private keys live outside the repo (see $RELA_KEY_FILE,
-.rela/key, ~/.config/rela/key in order).
+Private keys live outside the repo: either at $RELA_KEY_FILE or in
+the per-user, per-repo state directory under the OS user config
+root (see docs/encryption.md for the platform-specific path).
 
 Subcommands:
   generate    Generate a fresh age identity (pub+priv)
@@ -90,7 +94,7 @@ func init() {
 	keysInitCmd.Flags().StringVar(&keysInitPubFile, "pub-file", "",
 		"path to a file containing the age public key for the first recipient")
 	keysInitCmd.Flags().StringVar(&keysInitIdentity, "identity", "",
-		"path to the private identity file to install at .rela/key")
+		"path to the private identity file to install into the user-state directory")
 
 	keysAddCmd.Flags().StringVar(&keysAddPubFile, "pub-file", "",
 		"path to a file containing the age public key for the new recipient")
@@ -173,8 +177,9 @@ Usage:
 --pub-file is the path to the recipient's age public key file. Hybrid
   (post-quantum) public keys are ~2 KB so they are passed by path, not
   as a command-line string.
---identity, if set, copies the matching private key to .rela/key so
-  this user becomes the default reader of the encrypted repo.
+--identity, if set, copies the matching private key into the per-
+  user, per-repo state directory so this user becomes the default
+  reader of the encrypted repo. The source file is not moved.
 
 On success, <root>/recipients.age is written — an age-encrypted YAML
 payload with the recipient list, the initial version (1), and a
@@ -200,7 +205,7 @@ The command refuses to proceed if the repo is already encrypted.`,
 		// every subsequent encryption-aware command need the user-
 		// state directory in place. The resolver writes .rela/repo-id
 		// when missing and cross-checks on re-init.
-		repoID, err := resolveOrGenerateRepoID()
+		repoID, err := project.ResolveRepoID(projectCtx.Root, "")
 		if err != nil {
 			return err
 		}
@@ -268,20 +273,6 @@ The command refuses to proceed if the repo is already encrypted.`,
 	},
 }
 
-// resolveOrGenerateRepoID returns the canonical per-repo identifier
-// for the current project, creating .rela/repo-id on first access.
-// If the file is missing we generate a fresh id; if present we
-// validate and reuse it. Used by keys-related commands at a point
-// where the workspace has not yet constructed a user-state service
-// (init time, pre-factory).
-func resolveOrGenerateRepoID() (string, error) {
-	id, err := project.ResolveRepoID(projectCtx.Root, "")
-	if err != nil {
-		return "", err
-	}
-	return id, nil
-}
-
 // openUserState returns a user-state service scoped to the current
 // project. The service reads (and if missing, generates) the
 // .rela/repo-id file. On encrypted repos the caller should call
@@ -295,6 +286,14 @@ func openUserState() (userstate.FSService, error) {
 // projectRoot. Used for the --identity source warning: a key file
 // inside the repo tree is the exact shape the ticket is moving
 // away from.
+//
+// Uses filepath.EvalSymlinks so:
+//   - A symlink inside the project pointing at path is detected.
+//   - macOS /var → /private/var collapsing does not produce false
+//     negatives.
+//
+// On Windows, the comparison is case-insensitive (filesystem paths
+// are compared case-insensitively by the OS).
 func isInsideProject(path, projectRoot string) bool {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -304,9 +303,18 @@ func isInsideProject(path, projectRoot string) bool {
 	if err != nil {
 		return false
 	}
+	if resolved, rErr := filepath.EvalSymlinks(absPath); rErr == nil {
+		absPath = resolved
+	}
+	if resolved, rErr := filepath.EvalSymlinks(absRoot); rErr == nil {
+		absRoot = resolved
+	}
 	rel, err := filepath.Rel(absRoot, absPath)
 	if err != nil {
 		return false
+	}
+	if runtime.GOOS == "windows" {
+		rel = strings.ToLower(rel)
 	}
 	return !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
 }
@@ -791,33 +799,6 @@ func writeAtomic(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-// ensureKeyGitignored appends `.rela/key` to <root>/.gitignore if it
-// is not already matched by an existing line. Called after writing
-// the private identity so it cannot be accidentally committed even
-// when the user's existing rules (e.g. `.rela/`) already cover it.
-func ensureKeyGitignored(root string) error {
-	const pattern = ".rela/key"
-	gitignorePath := filepath.Join(root, ".gitignore")
-	existing, err := os.ReadFile(gitignorePath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-
-	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.TrimSpace(line) == pattern {
-			return nil
-		}
-	}
-
-	addition := ""
-	if !strings.Contains(string(existing), "# rela encryption") {
-		addition = "\n# rela encryption — never commit private identities\n"
-	}
-	addition += pattern + "\n"
-
-	return os.WriteFile(gitignorePath, append(existing, []byte(addition)...), 0o644)
 }
 
 // shouldSkipWalk reports whether a directory entry name should be

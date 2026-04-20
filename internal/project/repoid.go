@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // repoIDFileMode is the permission for .rela/repo-id — owner-
@@ -177,10 +178,19 @@ func newRepoID() (string, error) {
 }
 
 // refuseIfTracked runs `git ls-files --error-unmatch` to detect
-// whether path is in the git index. A non-zero exit means
-// "not tracked" (or "not a git repo", or "git not installed"); we
-// treat all of those as safe. A zero exit means the file is tracked
-// and we must refuse.
+// whether path is in the git index.
+//
+// Outcomes:
+//
+//   - `git ls-files` exits 0: file IS tracked → ErrRepoIDTracked.
+//   - `git ls-files` exits non-zero (ExitError) with no deadline
+//     or context error: file is NOT tracked → nil.
+//   - No .git anywhere up the tree, or git not on $PATH, or the
+//     path is outside the repo: not a meaningful check → nil.
+//   - Anything else (context deadline exceeded, non-ExitError from
+//     exec, permission denied, etc.): we don't know the answer.
+//     Returning nil would let a tracked repo-id slip through on a
+//     hung git; returning the error surfaces the ambiguity.
 func refuseIfTracked(root, path string) error {
 	if !isGitRepo(root) {
 		return nil
@@ -197,19 +207,27 @@ func refuseIfTracked(root, path string) error {
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--error-unmatch", rel)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	if runErr := cmd.Run(); runErr == nil {
+	runErr := cmd.Run()
+	if runErr == nil {
 		return fmt.Errorf("%w: add '.rela/%s' to .gitignore "+
 			"(or to .rela/.gitignore) and remove it from the index with "+
 			"'git rm --cached .rela/%s'",
 			ErrRepoIDTracked, RepoIDFile, RepoIDFile)
 	}
-	return nil
+	// A clean non-zero exit is the "definitely not tracked" signal.
+	// Any other failure mode (deadline exceeded, I/O error, startup
+	// failure) is ambiguous and we refuse to proceed.
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		return nil
+	}
+	return fmt.Errorf("project: git ls-files check failed: %w", runErr)
 }
 
 // gitTimeout caps how long we wait for `git ls-files` to report.
 // The call is cheap in normal conditions; a long delay typically
 // means git is blocked on a lock or an unresponsive filesystem.
-const gitTimeout = 5 * 1_000_000_000 // 5 seconds in ns; avoids time import
+const gitTimeout = 5 * time.Second
 
 // isGitRepo walks up from root looking for a .git entry. We don't
 // require the project root itself to hold .git — rela projects
