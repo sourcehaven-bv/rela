@@ -144,6 +144,59 @@ func TestGenerateDOT_EntityWithoutTitle(t *testing.T) {
 	}
 }
 
+// TestGenerateDOT_HyphenatedEntityType verifies that entity types
+// containing hyphens produce DOT with a valid (sanitized) cluster ID.
+// DOT unquoted identifiers reject '-', so `cluster_review-response`
+// would be rejected by graphviz with a syntax error.
+func TestGenerateDOT_HyphenatedEntityType(t *testing.T) {
+	meta = &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"review-response": {
+				Label:    "Review response",
+				IDPrefix: "RR-",
+				Color:    "#FFEBEE",
+			},
+		},
+	}
+	seeder := newStoreSeeder(meta)
+	seeder.addEntity(testutil.EntityFor(meta, "review-response").
+		ID("RR-001").With("title", "Finding"))
+	applySeeder(seeder)
+
+	dot := generateDOT(fixtureAllEntities(), fixtureAllRelations())
+
+	if !strings.Contains(dot, "subgraph cluster_review_response") {
+		t.Errorf("expected sanitized cluster ID 'cluster_review_response', got:\n%s", dot)
+	}
+	if strings.Contains(dot, "cluster_review-response") {
+		t.Errorf("DOT must not contain unsanitized hyphenated cluster ID, got:\n%s", dot)
+	}
+}
+
+func TestSanitizeDOTID(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain alphanumeric unchanged", "requirement", "requirement"},
+		{"hyphens replaced with underscore", "review-response", "review_response"},
+		{"multiple hyphens", "bug-analysis-checklist", "bug_analysis_checklist"},
+		{"digits preserved", "type42", "type42"},
+		{"underscore preserved", "my_type", "my_type"},
+		{"dots and spaces replaced", "a.b c", "a_b_c"},
+		{"empty string", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sanitizeDOTID(tt.input); got != tt.want {
+				t.Errorf("sanitizeDOTID(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEscapeLabel(t *testing.T) {
 	tests := []struct {
 		name  string
