@@ -16,16 +16,52 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
+// BytesFS is the byte-I/O boundary the attachment store uses for
+// file contents and metadata sidecars. In production it is the
+// cryptofs-decorated handle, so attachment bytes are sealed before
+// they hit disk and unsealed on read. On cleartext repos it passes
+// through unchanged.
+//
+// Deliberately a narrow subset of storage.FS: every method here
+// transforms bytes (ReadFile/WriteFile/Stat). Directory-topology
+// operations (MkdirAll, Walk, ReadDir) live on a separate raw handle
+// so a misplaced byte read cannot silently bypass the transform stack.
+type BytesFS interface {
+	ReadFile(path string) ([]byte, error)
+	WriteFile(path string, data []byte, perm os.FileMode) error
+	Remove(path string) error
+	Stat(path string) (os.FileInfo, error)
+}
+
 // Store manages content-addressable attachment storage.
+//
+// Two-handle structure mirrors fsstore's StoreFS / DirFS split:
+//
+//   - bytes: all file-content and metadata-sidecar I/O goes through
+//     this handle. On encrypted repos it is cryptofs-decorated; on
+//     cleartext repos it is the raw FS.
+//   - dirs: directory-topology operations (MkdirAll, Walk, Stat for
+//     directory existence) go through the raw FS. Encrypting a
+//     directory entry would make no sense.
+//
+// The compile-time type separation is the enforcement: you cannot
+// accidentally call bytes.ReadFile on a filename that was supposed
+// to be handled raw, because the method sets are disjoint.
 type Store struct {
-	fs      storage.FS
+	bytes   BytesFS
+	dirs    storage.FS
 	rootDir string // Absolute path to project root
 }
 
 // NewStore creates a new attachment store.
-func NewStore(fs storage.FS, rootDir string) *Store {
+//
+// bytes is the byte-I/O handle (cryptofs-decorated on encrypted
+// repos, raw otherwise). dirs is the raw FS for directory topology.
+// Pass the same handle for both on cleartext repos.
+func NewStore(bytes BytesFS, dirs storage.FS, rootDir string) *Store {
 	return &Store{
-		fs:      fs,
+		bytes:   bytes,
+		dirs:    dirs,
 		rootDir: rootDir,
 	}
 }
@@ -98,9 +134,14 @@ type Attachment struct {
 // It computes the SHA-256 hash, copies the file if not already present,
 // and creates a metadata sidecar.
 // Returns the attachment with its relative path.
+//
+// sourcePath is read through bytes — callers expect source files to
+// be cleartext from the caller's point of view regardless of
+// encryption mode. The resulting attachment and sidecar are written
+// through bytes as well, so on encrypted repos both land sealed.
 func (s *Store) Add(sourcePath, addedBy string) (*Attachment, error) {
 	// Read source file
-	data, readErr := s.fs.ReadFile(sourcePath)
+	data, readErr := s.bytes.ReadFile(sourcePath)
 	if readErr != nil {
 		return nil, fmt.Errorf("read source file: %w", readErr)
 	}
@@ -118,8 +159,11 @@ func (s *Store) Add(sourcePath, addedBy string) (*Attachment, error) {
 	relPath := PathFromHash(hash, ext)
 	absPath := filepath.Join(s.rootDir, relPath)
 
-	// Check if file already exists (deduplication)
-	if _, statErr := s.fs.Stat(absPath); statErr == nil {
+	// Check if file already exists (deduplication).
+	// Stat goes through bytes because the existence of a plaintext
+	// content-addressable file is itself the dedup signal — if the
+	// decorator can see it, a duplicate write is safe to skip.
+	if _, statErr := s.bytes.Stat(absPath); statErr == nil {
 		// File exists, just return the attachment info
 		meta, _ := s.GetMetadata(relPath)
 		return &Attachment{
@@ -130,14 +174,14 @@ func (s *Store) Add(sourcePath, addedBy string) (*Attachment, error) {
 		}, nil
 	}
 
-	// Create directory structure
+	// Create directory structure — topology, goes through dirs.
 	dir := filepath.Dir(absPath)
-	if mkdirErr := s.fs.MkdirAll(dir, 0755); mkdirErr != nil {
+	if mkdirErr := s.dirs.MkdirAll(dir, 0755); mkdirErr != nil {
 		return nil, fmt.Errorf("create directory: %w", mkdirErr)
 	}
 
 	// Write file
-	if writeErr := s.fs.WriteFile(absPath, data, 0644); writeErr != nil {
+	if writeErr := s.bytes.WriteFile(absPath, data, 0644); writeErr != nil {
 		return nil, fmt.Errorf("write attachment: %w", writeErr)
 	}
 
@@ -156,7 +200,7 @@ func (s *Store) Add(sourcePath, addedBy string) (*Attachment, error) {
 	if marshalErr != nil {
 		return nil, fmt.Errorf("marshal metadata: %w", marshalErr)
 	}
-	if writeMetaErr := s.fs.WriteFile(metaPath, metaData, 0644); writeMetaErr != nil {
+	if writeMetaErr := s.bytes.WriteFile(metaPath, metaData, 0644); writeMetaErr != nil {
 		return nil, fmt.Errorf("write metadata: %w", writeMetaErr)
 	}
 
@@ -184,7 +228,7 @@ func (s *Store) AddBytes(data []byte, originalName, addedBy string) (*Attachment
 	absPath := filepath.Join(s.rootDir, relPath)
 
 	// Check if file already exists (deduplication)
-	if _, err := s.fs.Stat(absPath); err == nil {
+	if _, err := s.bytes.Stat(absPath); err == nil {
 		meta, _ := s.GetMetadata(relPath)
 		return &Attachment{
 			Hash:     hash,
@@ -194,14 +238,14 @@ func (s *Store) AddBytes(data []byte, originalName, addedBy string) (*Attachment
 		}, nil
 	}
 
-	// Create directory structure
+	// Create directory structure — topology, goes through dirs.
 	dir := filepath.Dir(absPath)
-	if err := s.fs.MkdirAll(dir, 0755); err != nil {
+	if err := s.dirs.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create directory: %w", err)
 	}
 
 	// Write file
-	if err := s.fs.WriteFile(absPath, data, 0644); err != nil {
+	if err := s.bytes.WriteFile(absPath, data, 0644); err != nil {
 		return nil, fmt.Errorf("write attachment: %w", err)
 	}
 
@@ -220,7 +264,7 @@ func (s *Store) AddBytes(data []byte, originalName, addedBy string) (*Attachment
 	if err != nil {
 		return nil, fmt.Errorf("marshal metadata: %w", err)
 	}
-	if err := s.fs.WriteFile(metaPath, metaData, 0644); err != nil {
+	if err = s.bytes.WriteFile(metaPath, metaData, 0644); err != nil {
 		return nil, fmt.Errorf("write metadata: %w", err)
 	}
 
@@ -235,7 +279,7 @@ func (s *Store) AddBytes(data []byte, originalName, addedBy string) (*Attachment
 // Get retrieves an attachment's data by its relative path.
 func (s *Store) Get(relPath string) ([]byte, error) {
 	absPath := filepath.Join(s.rootDir, relPath)
-	return s.fs.ReadFile(absPath)
+	return s.bytes.ReadFile(absPath)
 }
 
 // GetMetadata retrieves an attachment's metadata by its relative path.
@@ -243,7 +287,7 @@ func (s *Store) GetMetadata(relPath string) (*Metadata, error) {
 	absPath := filepath.Join(s.rootDir, relPath)
 	metaPath := MetadataPath(absPath)
 
-	data, err := s.fs.ReadFile(metaPath)
+	data, err := s.bytes.ReadFile(metaPath)
 	if err != nil {
 		return nil, fmt.Errorf("read metadata: %w", err)
 	}
@@ -254,7 +298,7 @@ func (s *Store) GetMetadata(relPath string) (*Metadata, error) {
 // Exists checks if an attachment exists by its relative path.
 func (s *Store) Exists(relPath string) bool {
 	absPath := filepath.Join(s.rootDir, relPath)
-	_, err := s.fs.Stat(absPath)
+	_, err := s.bytes.Stat(absPath)
 	return err == nil
 }
 
@@ -264,10 +308,10 @@ func (s *Store) Remove(relPath string) error {
 	metaPath := MetadataPath(absPath)
 
 	// Remove metadata first (non-fatal if missing)
-	_ = s.fs.Remove(metaPath)
+	_ = s.bytes.Remove(metaPath)
 
 	// Remove the attachment file
-	if err := s.fs.Remove(absPath); err != nil {
+	if err := s.bytes.Remove(absPath); err != nil {
 		return fmt.Errorf("remove attachment: %w", err)
 	}
 
@@ -293,13 +337,15 @@ func (s *Store) GC(referencedPaths []string) (*GCResult, error) {
 	result := &GCResult{}
 	attachmentsDir := filepath.Join(s.rootDir, AttachmentsDir)
 
-	// Check if attachments directory exists
-	if _, err := s.fs.Stat(attachmentsDir); errors.Is(err, os.ErrNotExist) {
+	// Check if attachments directory exists (topology via dirs).
+	if _, err := s.dirs.Stat(attachmentsDir); errors.Is(err, os.ErrNotExist) {
 		return result, nil
 	}
 
-	// Walk attachments directory
-	err := s.fs.Walk(attachmentsDir, func(path string, d os.DirEntry, err error) error {
+	// Walk attachments directory (topology via dirs). We only need
+	// filenames and sizes here — no byte reads — so staying on the
+	// raw handle is the right scope.
+	err := s.dirs.Walk(attachmentsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -354,12 +400,12 @@ func (s *Store) List() ([]string, error) {
 	var paths []string
 	attachmentsDir := filepath.Join(s.rootDir, AttachmentsDir)
 
-	// Check if attachments directory exists
-	if _, err := s.fs.Stat(attachmentsDir); errors.Is(err, os.ErrNotExist) {
+	// Check if attachments directory exists (topology via dirs).
+	if _, err := s.dirs.Stat(attachmentsDir); errors.Is(err, os.ErrNotExist) {
 		return paths, nil
 	}
 
-	err := s.fs.Walk(attachmentsDir, func(path string, d os.DirEntry, err error) error {
+	err := s.dirs.Walk(attachmentsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -489,7 +535,7 @@ func (s *Store) UpdateDisplayName(relPath, newName string) error {
 	if err != nil {
 		return fmt.Errorf("marshal metadata: %w", err)
 	}
-	if err := s.fs.WriteFile(metaPath, metaData, 0644); err != nil {
+	if err = s.bytes.WriteFile(metaPath, metaData, 0644); err != nil {
 		return fmt.Errorf("write metadata: %w", err)
 	}
 

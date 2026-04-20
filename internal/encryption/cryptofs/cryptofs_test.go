@@ -22,14 +22,26 @@ func newTestIdentity(t *testing.T) encryption.Identity {
 	return id
 }
 
-// newCryptoFS builds a cryptofs.FS over a raw MemFS (no SafeFS) with
-// a single-recipient, single-identity setup. The identity is kept
-// internal; tests that need an explicit identity build their own.
+// newCryptoFS builds a cryptofs.FS over a raw MemFS using "/" as
+// the repo root (MemFS treats /-prefixed paths as absolute). Each
+// test has a single-recipient, single-identity setup.
+//
+// State is nil — rollback detection is covered by dedicated tests;
+// round-trip tests don't need the XDG state machinery.
 func newCryptoFS(t *testing.T) (*cryptofs.FS, *storage.MemFS) {
 	t.Helper()
 	mem := storage.NewMemFS()
 	id := newTestIdentity(t)
-	fs := cryptofs.New(mem, []encryption.Recipient{id.PublicRecipient()}, id)
+	fs, err := cryptofs.New(cryptofs.Config{
+		Inner:        mem,
+		Recipients:   []encryption.Recipient{id.PublicRecipient()},
+		Identity:     id,
+		RepoRoot:     "/",
+		WriteVersion: 1,
+	})
+	if err != nil {
+		t.Fatalf("cryptofs.New: %v", err)
+	}
 	return fs, mem
 }
 
@@ -77,16 +89,34 @@ func TestReadFile_NoMatchingKeyClassifiedViaErrorsIs(t *testing.T) {
 	alice := newTestIdentity(t)
 	bob := newTestIdentity(t)
 
-	// Alice seals; Bob tries to read with Alice as a stranger.
-	writer := cryptofs.New(mem, []encryption.Recipient{alice.PublicRecipient()}, alice)
-	if err := writer.WriteFile("/not-for-bob.md", []byte("hi"), 0o644); err != nil {
+	// Alice seals; Bob tries to read.
+	writer, err := cryptofs.New(cryptofs.Config{
+		Inner:        mem,
+		Recipients:   []encryption.Recipient{alice.PublicRecipient()},
+		Identity:     alice,
+		RepoRoot:     "/",
+		WriteVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = writer.WriteFile("/not-for-bob.md", []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Bob's cryptofs uses Bob's identity; sealed blob isn't addressed
 	// to Bob, so Unseal returns ErrNoMatchingKey.
-	reader := cryptofs.New(mem, []encryption.Recipient{bob.PublicRecipient()}, bob)
-	_, err := reader.ReadFile("/not-for-bob.md")
+	reader, err := cryptofs.New(cryptofs.Config{
+		Inner:        mem,
+		Recipients:   []encryption.Recipient{bob.PublicRecipient()},
+		Identity:     bob,
+		RepoRoot:     "/",
+		WriteVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = reader.ReadFile("/not-for-bob.md")
 	if err == nil {
 		t.Fatal("expected error when bob reads a blob addressed to alice")
 	}
@@ -125,28 +155,6 @@ func TestReadFile_CorruptedClassifiedViaErrorsIs(t *testing.T) {
 	}
 }
 
-func TestReadFile_NoPrivateKeyClassifiedViaErrorsIs(t *testing.T) {
-	mem := storage.NewMemFS()
-	writer := newTestIdentity(t)
-
-	// Write with a valid writer so the blob on disk is well-formed.
-	fs := cryptofs.New(mem, []encryption.Recipient{writer.PublicRecipient()}, writer)
-	if err := fs.WriteFile("/blob.md", []byte("payload"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Now read through a FS with nil identity — simulates "no
-	// $RELA_KEY_FILE, no .rela/key, no ~/.config/rela/key".
-	noID := cryptofs.New(mem, []encryption.Recipient{writer.PublicRecipient()}, nil)
-	_, err := noID.ReadFile("/blob.md")
-	if err == nil {
-		t.Fatal("expected error reading without an identity")
-	}
-	if !encryption.IsNoPrivateKey(err) {
-		t.Errorf("IsNoPrivateKey(err) = false (err = %v)", err)
-	}
-}
-
 func TestReadFile_NotExistPassesThrough(t *testing.T) {
 	fs, _ := newCryptoFS(t)
 	_, err := fs.ReadFile("/never/written.md")
@@ -158,19 +166,64 @@ func TestReadFile_NotExistPassesThrough(t *testing.T) {
 	}
 }
 
-func TestWriteFile_EmptyRecipientsFailsAtSeal(t *testing.T) {
+func TestNew_ValidatesConfig(t *testing.T) {
 	mem := storage.NewMemFS()
 	id := newTestIdentity(t)
-	fs := cryptofs.New(mem, nil, id)
 
-	err := fs.WriteFile("/nobody.md", []byte("x"), 0o644)
-	if err == nil {
-		t.Fatal("expected error sealing for zero recipients")
-	}
-	// Inner FS must NOT have been touched when seal failed.
-	if _, statErr := mem.Stat("/nobody.md"); statErr == nil {
-		t.Error("inner FS has file despite sealing failure")
-	}
+	t.Run("empty recipients", func(t *testing.T) {
+		_, err := cryptofs.New(cryptofs.Config{
+			Inner: mem, Identity: id, RepoRoot: "/", WriteVersion: 1,
+		})
+		if err == nil {
+			t.Fatal("expected error for empty recipients")
+		}
+	})
+	t.Run("nil identity", func(t *testing.T) {
+		_, err := cryptofs.New(cryptofs.Config{
+			Inner:        mem,
+			Recipients:   []encryption.Recipient{id.PublicRecipient()},
+			RepoRoot:     "/",
+			WriteVersion: 1,
+		})
+		if err == nil {
+			t.Fatal("expected error for nil identity")
+		}
+	})
+	t.Run("empty repo root", func(t *testing.T) {
+		_, err := cryptofs.New(cryptofs.Config{
+			Inner:        mem,
+			Recipients:   []encryption.Recipient{id.PublicRecipient()},
+			Identity:     id,
+			WriteVersion: 1,
+		})
+		if err == nil {
+			t.Fatal("expected error for empty repo root")
+		}
+	})
+	t.Run("relative repo root", func(t *testing.T) {
+		_, err := cryptofs.New(cryptofs.Config{
+			Inner:        mem,
+			Recipients:   []encryption.Recipient{id.PublicRecipient()},
+			Identity:     id,
+			RepoRoot:     "relative/path",
+			WriteVersion: 1,
+		})
+		if err == nil {
+			t.Fatal("expected error for relative repo root")
+		}
+	})
+	t.Run("zero version", func(t *testing.T) {
+		_, err := cryptofs.New(cryptofs.Config{
+			Inner:        mem,
+			Recipients:   []encryption.Recipient{id.PublicRecipient()},
+			Identity:     id,
+			RepoRoot:     "/",
+			WriteVersion: 0,
+		})
+		if err == nil {
+			t.Fatal("expected error for zero version")
+		}
+	})
 }
 
 func TestRemove_PassesThrough(t *testing.T) {
@@ -189,7 +242,10 @@ func TestRemove_PassesThrough(t *testing.T) {
 	}
 }
 
-func TestRename_PassesThrough(t *testing.T) {
+func TestRename_TripsPathCheckOnRead(t *testing.T) {
+	// A bare rename moves the ciphertext but the header inside still
+	// names the old path. ReadFile at the new path surfaces
+	// ErrFileRelocated — precisely the swap/rename defense.
 	fs, mem := newCryptoFS(t)
 	if err := fs.WriteFile("/old.md", []byte("payload"), 0o644); err != nil {
 		t.Fatal(err)
@@ -201,13 +257,12 @@ func TestRename_PassesThrough(t *testing.T) {
 		t.Errorf("new path missing after rename: %v", err)
 	}
 
-	// Content at the new path must still decrypt cleanly through fs.
-	got, err := fs.ReadFile("/new.md")
-	if err != nil {
-		t.Fatalf("ReadFile after rename: %v", err)
+	_, err := fs.ReadFile("/new.md")
+	if err == nil {
+		t.Fatal("expected ErrFileRelocated reading a renamed sealed file")
 	}
-	if !bytes.Equal(got, []byte("payload")) {
-		t.Errorf("post-rename plaintext = %q, want %q", got, "payload")
+	if !encryption.IsFileRelocated(err) {
+		t.Errorf("IsFileRelocated(err) = false (err = %v)", err)
 	}
 }
 
@@ -222,10 +277,125 @@ func TestStat_ReflectsCiphertextSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Age overhead is a fixed constant; ciphertext is always bigger
-	// than plaintext. This is a documented side effect of Stat
-	// reporting ciphertext metadata.
 	if info.Size() <= int64(len(plaintext)) {
 		t.Errorf("ciphertext size %d not greater than plaintext %d", info.Size(), len(plaintext))
+	}
+}
+
+func TestReadFile_SwapBetweenFilesDetected(t *testing.T) {
+	// Adversary swaps two sealed files on disk. Both still decrypt
+	// (same recipient key) but each now has a mismatched path
+	// header. Reads through cryptofs must surface ErrFileRelocated
+	// rather than returning the wrong entity's bytes.
+	fs, mem := newCryptoFS(t)
+	if err := fs.WriteFile("/a.md", []byte("contents-of-a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.WriteFile("/b.md", []byte("contents-of-b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Swap the ciphertext bytes between the two paths.
+	rawA, _ := mem.ReadFile("/a.md")
+	rawB, _ := mem.ReadFile("/b.md")
+	_ = mem.WriteFile("/a.md", rawB, 0o644)
+	_ = mem.WriteFile("/b.md", rawA, 0o644)
+
+	_, err := fs.ReadFile("/a.md")
+	if !encryption.IsFileRelocated(err) {
+		t.Errorf("swap on /a.md: IsFileRelocated = false (err = %v)", err)
+	}
+}
+
+func TestReadFile_RollbackDetected(t *testing.T) {
+	// Wire a LocalState explicitly so the rollback check has
+	// something to compare against.
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	state, err := encryption.NewLocalState("test-repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mem := storage.NewMemFS()
+	id := newTestIdentity(t)
+
+	// v=5 writer seals the "new" version of the file.
+	newWriter, err := cryptofs.New(cryptofs.Config{
+		Inner:        mem,
+		Recipients:   []encryption.Recipient{id.PublicRecipient()},
+		Identity:     id,
+		RepoRoot:     "/",
+		WriteVersion: 5,
+		State:        state,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = newWriter.WriteFile("/vers.md", []byte("v5 body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// First read advances last-seen to 5.
+	if _, rerr := newWriter.ReadFile("/vers.md"); rerr != nil {
+		t.Fatal(rerr)
+	}
+
+	// Adversary rolls the file back: overwrite with a v=2 blob.
+	oldWriter, err := cryptofs.New(cryptofs.Config{
+		Inner:        mem,
+		Recipients:   []encryption.Recipient{id.PublicRecipient()},
+		Identity:     id,
+		RepoRoot:     "/",
+		WriteVersion: 2,
+		State:        nil, // rollback attacker doesn't touch our state
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = oldWriter.WriteFile("/vers.md", []byte("v2 body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reading through the state-aware FS now detects the rollback.
+	_, err = newWriter.ReadFile("/vers.md")
+	if !encryption.IsRollbackDetected(err) {
+		t.Errorf("IsRollbackDetected(err) = false (err = %v)", err)
+	}
+}
+
+func TestReadFile_TOFUAcceptsFirstVersion(t *testing.T) {
+	// First read on a new machine (no local state) must accept
+	// whatever version it sees and persist it.
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	state, err := encryption.NewLocalState("tofu-repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mem := storage.NewMemFS()
+	id := newTestIdentity(t)
+	fs, err := cryptofs.New(cryptofs.Config{
+		Inner:        mem,
+		Recipients:   []encryption.Recipient{id.PublicRecipient()},
+		Identity:     id,
+		RepoRoot:     "/",
+		WriteVersion: 42,
+		State:        state,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if werr := fs.WriteFile("/t.md", []byte("hello"), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	if _, rerr := fs.ReadFile("/t.md"); rerr != nil {
+		t.Errorf("first-read TOFU should succeed, got %v", rerr)
+	}
+	// Subsequent rollback is now detected.
+	stored, err := state.LoadVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored != 42 {
+		t.Errorf("stored version = %d, want 42", stored)
 	}
 }

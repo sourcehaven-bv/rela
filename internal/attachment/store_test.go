@@ -9,7 +9,7 @@ import (
 
 func TestStoreAdd(t *testing.T) {
 	fs := storage.NewMemFS()
-	store := NewStore(fs, "/project")
+	store := NewStore(fs, fs, "/project")
 
 	// Create a source file
 	fs.MkdirAll("/tmp", 0755)
@@ -55,7 +55,7 @@ func TestStoreAdd(t *testing.T) {
 
 func TestStoreDeduplication(t *testing.T) {
 	fs := storage.NewMemFS()
-	store := NewStore(fs, "/project")
+	store := NewStore(fs, fs, "/project")
 
 	// Create source files with same content
 	fs.MkdirAll("/tmp", 0755)
@@ -84,7 +84,7 @@ func TestStoreDeduplication(t *testing.T) {
 
 func TestStoreAddBytes(t *testing.T) {
 	fs := storage.NewMemFS()
-	store := NewStore(fs, "/project")
+	store := NewStore(fs, fs, "/project")
 
 	data := []byte("test data")
 	att, err := store.AddBytes(data, "document.pdf", "testuser")
@@ -108,7 +108,7 @@ func TestStoreAddBytes(t *testing.T) {
 
 func TestStoreRemove(t *testing.T) {
 	fs := storage.NewMemFS()
-	store := NewStore(fs, "/project")
+	store := NewStore(fs, fs, "/project")
 
 	// Add a file
 	fs.MkdirAll("/tmp", 0755)
@@ -137,7 +137,7 @@ func TestStoreRemove(t *testing.T) {
 
 func TestStoreGC(t *testing.T) {
 	fs := storage.NewMemFS()
-	store := NewStore(fs, "/project")
+	store := NewStore(fs, fs, "/project")
 
 	// Add files
 	fs.MkdirAll("/tmp", 0755)
@@ -184,7 +184,7 @@ func TestStoreGC(t *testing.T) {
 
 func TestStoreList(t *testing.T) {
 	fs := storage.NewMemFS()
-	store := NewStore(fs, "/project")
+	store := NewStore(fs, fs, "/project")
 
 	// Add files
 	fs.MkdirAll("/tmp", 0755)
@@ -226,7 +226,7 @@ func TestValidatePath(t *testing.T) {
 
 func TestStoreNoExtension(t *testing.T) {
 	fs := storage.NewMemFS()
-	store := NewStore(fs, "/project")
+	store := NewStore(fs, fs, "/project")
 
 	// File without extension
 	fs.MkdirAll("/tmp", 0755)

@@ -251,9 +251,11 @@ deps:
   # Application services
   app:
     mayDependOn:
+      - attachment
       - cryptofs
       - encryption
       - fsstore
+      - integrity
       - metamodel
       - project
       - storage
@@ -265,6 +267,7 @@ deps:
       - automation
       - config
       - dataentryconfig
+      - encryption
       - entitymanager
       - lua
       - memstore

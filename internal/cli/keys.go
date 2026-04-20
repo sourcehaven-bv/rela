@@ -17,16 +17,46 @@ import (
 const keyFilePerm os.FileMode = 0o600
 
 // keysCmd is the top-level parent for all encryption-related
-// commands. Its subcommands manage the recipient keyring and the
-// cleartext/encrypted state of the repository.
+// commands.
+//
+// Design (post-S2):
+//
+// The authoritative recipient list for a rela project lives in
+// <root>/recipients.age — an age-encrypted YAML blob sealed to
+// itself. Its plaintext carries:
+//
+//   - version: monotonic counter, bumped on every recipient change
+//   - repo_id: one-time UUID for keying per-machine state
+//   - recipients: name → age public-key string
+//
+// Adding a recipient therefore requires the caller to already be
+// able to read recipients.age (i.e. already be a recipient). The
+// cloud adversary — who lacks any private key — cannot silently
+// add themselves: every attempt to replace recipients.age with a
+// blob of their choosing makes it undecryptable for legitimate
+// users, which surfaces loudly rather than silently expanding
+// access.
+//
+// There is no <root>/keys/ directory anymore. Public keys for
+// proposed new recipients are passed to `rela keys add` via a
+// file path (--pub-file); they never land inside the repo except
+// as an entry in the encrypted recipients list.
+//
+// Private keys live outside the repo. See $RELA_KEY_FILE,
+// .rela/key, and ~/.config/rela/key (resolution order).
 var keysCmd = &cobra.Command{
 	Use:   "keys",
 	Short: "Manage at-rest encryption keys and recipients",
 	Long: `Manage age-based at-rest encryption for this rela project.
 
-A repo is encryption-enabled when .rela/encryption.yaml is present.
-Public keys live in <repo>/keys/*.pub; private keys live outside the
-project (see $RELA_KEY_FILE, .rela/key, ~/.config/rela/key in order).
+A repo is encryption-enabled when <root>/recipients.age is present.
+That file is the authoritative, encrypted list of recipients and
+carries the repo's monotonic encryption version. Adding a
+recipient requires decrypting the current file first, so only
+existing recipients can expand the set.
+
+Private keys live outside the repo (see $RELA_KEY_FILE,
+.rela/key, ~/.config/rela/key in order).
 
 Subcommands:
   generate    Generate a fresh age identity (pub+priv)
@@ -59,7 +89,7 @@ func init() {
 		"directory to write <name>.pub and <name>.key (required)")
 
 	keysInitCmd.Flags().StringVar(&keysInitRecipient, "recipient", "",
-		"name of the first recipient (also the pub-file stem: <name>.pub)")
+		"name of the first recipient")
 	keysInitCmd.Flags().StringVar(&keysInitPubFile, "pub-file", "",
 		"path to a file containing the age public key for the first recipient")
 	keysInitCmd.Flags().StringVar(&keysInitIdentity, "identity", "",
@@ -69,18 +99,23 @@ func init() {
 		"path to a file containing the age public key for the new recipient")
 }
 
-// readRecipientFromFile reads path and parses its contents as a single
-// age recipient. Hybrid public keys are ~1959 characters, so they are
-// distributed as files rather than command-line arguments.
-func readRecipientFromFile(path string) (encryption.Recipient, error) {
+// readRecipientFromFile reads path and parses its contents as a
+// single age recipient. Hybrid public keys are ~1959 characters, so
+// they are distributed as files rather than command-line arguments.
+func readRecipientFromFile(path string) (encryption.Recipient, string, error) {
 	if path == "" {
-		return nil, errors.New("--pub-file is required")
+		return nil, "", errors.New("--pub-file is required")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, "", fmt.Errorf("read %s: %w", path, err)
 	}
-	return encryption.ParseRecipient(strings.TrimSpace(string(data)))
+	s := strings.TrimSpace(string(data))
+	rec, err := encryption.ParseRecipient(s)
+	if err != nil {
+		return nil, "", err
+	}
+	return rec, s, nil
 }
 
 // --- generate ---
@@ -105,11 +140,19 @@ var keysGenerateCmd = &cobra.Command{
 		}
 		pubPath := filepath.Join(keysGenerateOut, name+".pub")
 		keyPath := filepath.Join(keysGenerateOut, name+".key")
-		if err := os.WriteFile(pubPath, []byte(id.PublicRecipient().String()+"\n"), 0o644); err != nil {
+		if err = os.WriteFile(pubPath, []byte(id.PublicRecipient().String()+"\n"), 0o644); err != nil {
 			return err
 		}
-		// Private key is sensitive; chmod 0600.
-		if err := os.WriteFile(keyPath, []byte(encryption.MarshalIdentity(id)+"\n"), keyFilePerm); err != nil {
+		// Serialize the private identity before writing anything. An
+		// unsupported identity kind is a programming error, not a
+		// runtime partial-failure we want to tolerate.
+		priv, err := encryption.MarshalIdentity(id)
+		if err != nil {
+			return err
+		}
+		// Private key is sensitive; chmod 0600 and write atomically so
+		// a crash mid-write cannot leave a truncated key on disk.
+		if err = writeAtomic(keyPath, []byte(priv+"\n"), keyFilePerm); err != nil {
 			return err
 		}
 		out.WriteSuccess("Generated age identity %q", name)
@@ -129,58 +172,80 @@ var keysInitCmd = &cobra.Command{
 Usage:
   rela keys init --recipient <name> --pub-file <path> [--identity <path>]
 
---recipient must be a filename-stem (alphanumerics + hyphen/underscore).
+--recipient is a display name for the first recipient.
 --pub-file is the path to the recipient's age public key file. Hybrid
   (post-quantum) public keys are ~2 KB so they are passed by path, not
   as a command-line string.
---identity, if set, copies the private key to .rela/key so this user
-  becomes the default reader of the encrypted repo.
+--identity, if set, copies the matching private key to .rela/key so
+  this user becomes the default reader of the encrypted repo.
+
+On success, <root>/recipients.age is written — an age-encrypted YAML
+payload with the recipient list, the initial version (1), and a
+one-time repo identifier. Every entity / relation / attachment file
+is then sealed under the same recipient set.
 
 The command refuses to proceed if the repo is already encrypted.`,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if err := validateRecipientName(keysInitRecipient); err != nil {
 			return err
 		}
-		rec, err := readRecipientFromFile(keysInitPubFile)
+		rec, pubStr, err := readRecipientFromFile(keysInitPubFile)
 		if err != nil {
 			return err
 		}
 
-		if err := ensureCleartextRepo(); err != nil {
+		if err = ensureCleartextRepo(); err != nil {
 			return err
 		}
 
-		// Write the recipient pubkey.
-		keysDir := filepath.Join(projectCtx.Root, "keys")
-		if err := os.MkdirAll(keysDir, 0o755); err != nil {
-			return err
-		}
-		pubPath := filepath.Join(keysDir, keysInitRecipient+".pub")
-		if err := os.WriteFile(pubPath, []byte(rec.String()+"\n"), 0o644); err != nil {
-			return err
-		}
-
-		// Copy the private identity into .rela/key if provided.
+		// Copy the private identity into .rela/key if provided. This
+		// must happen before we seal anything — unseal during the
+		// seal-all walk would need an identity, and we also want the
+		// user to be able to decrypt their own just-sealed repo.
 		if keysInitIdentity != "" {
-			if err := copyFile(keysInitIdentity, filepath.Join(projectCtx.CacheDir, "key"), keyFilePerm); err != nil {
+			if err = copyFile(keysInitIdentity, filepath.Join(projectCtx.CacheDir, "key"), keyFilePerm); err != nil {
 				return err
 			}
-			if err := ensureKeyGitignored(projectCtx.Root); err != nil {
+			if err = ensureKeyGitignored(projectCtx.Root); err != nil {
 				out.WriteMessage("warning: could not update .gitignore: %v", err)
 			}
 		}
 
-		// Seal every data file under this new recipient set.
-		if err := sealAllFiles(projectCtx.Root, []encryption.Recipient{rec}); err != nil {
+		// Seal every data file under this recipient set first. If
+		// the walk fails we haven't written recipients.age, so the
+		// repo is still in a recognizably-cleartext state (the
+		// partially sealed state is diagnosed by integrity.Verify on
+		// next open).
+		if err = sealAllFiles(projectCtx.Root, []encryption.Recipient{rec}); err != nil {
 			return err
 		}
 
-		// Write the encryption marker.
-		if err := writeEncryptionConfig(projectCtx.CacheDir, []string{keysInitRecipient}); err != nil {
+		// Generate per-repo identifier and write the authoritative
+		// recipients file last — recipients.age being present is the
+		// "encryption enabled" signal; do not set it until the rest
+		// of the state is consistent.
+		repoID, err := encryption.NewRepoID()
+		if err != nil {
+			return err
+		}
+		rf := &encryption.RecipientsFile{
+			Version:    1,
+			RepoID:     repoID,
+			Recipients: map[string]string{keysInitRecipient: pubStr},
+		}
+		if err = encryption.WriteRecipientsFile(
+			filepath.Join(projectCtx.Root, encryption.RecipientsFileName), rf); err != nil {
 			return err
 		}
 
 		out.WriteSuccess("Encryption enabled. Repo is now sealed for %s.", keysInitRecipient)
+		out.WriteMessage("")
+		out.WriteMessage("Note: the .rela/ directory holds user-local caches (rendered")
+		out.WriteMessage("documents, UI state, index) that are NOT sealed. .rela/ is")
+		out.WriteMessage("gitignored, but directory-sync tools (Dropbox, iCloud, OneDrive)")
+		out.WriteMessage("do not honor .gitignore — if you sync this project directory to")
+		out.WriteMessage("untrusted cloud storage, exclude .rela/ from the sync. See")
+		out.WriteMessage("docs/encryption.md for details.")
 		return nil
 	},
 }
@@ -190,36 +255,27 @@ The command refuses to proceed if the repo is already encrypted.`,
 var keysDecryptCmd = &cobra.Command{
 	Use:   "decrypt",
 	Short: "Disable at-rest encryption for this project",
-	Long:  `Unseal every entity, relation, and attachment, then remove .rela/encryption.yaml.`,
+	Long:  `Unseal every entity, relation, and attachment, then remove <root>/recipients.age.`,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if err := ensureEncryptedRepo(); err != nil {
 			return err
 		}
 
-		// Load the keyring first (we need an identity to unseal).
 		kr, err := encryption.LoadFromDir(projectCtx.Root)
 		if err != nil {
 			return err
-		}
-		if !kr.HasIdentity() {
-			return errors.New("no local identity loaded; cannot unseal (set $RELA_KEY_FILE or place .rela/key)")
 		}
 		if kr.LocalName() == "" {
 			return errors.New("loaded identity is not in the recipient list; cannot unseal")
 		}
 
-		// Unseal every data file.
-		if err := unsealAllFiles(projectCtx.Root, kr); err != nil {
+		if err = unsealAllFiles(projectCtx.Root, kr); err != nil {
 			return err
 		}
 
-		// Remove the encryption marker and the recipient pubkey files.
-		// Only remove files we own (*.pub); leave any other contents
-		// of keys/ alone (README, user-organized subdirs, etc.).
-		if err := os.Remove(filepath.Join(projectCtx.CacheDir, encryption.ConfigFileName)); err != nil {
-			return err
-		}
-		if err := removeRecipientPubFiles(filepath.Join(projectCtx.Root, "keys")); err != nil {
+		// Remove the authoritative file last so a crash before this
+		// point still leaves a recognizable encrypted repo.
+		if err = os.Remove(filepath.Join(projectCtx.Root, encryption.RecipientsFileName)); err != nil {
 			return err
 		}
 
@@ -228,82 +284,57 @@ var keysDecryptCmd = &cobra.Command{
 	},
 }
 
-// removeRecipientPubFiles deletes every "*.pub" file under keysDir
-// and removes the directory itself only if it becomes empty. Any
-// non-pub files or subdirectories are left untouched — users sometimes
-// keep README.md, .gitignore, or offline-signed keys in this dir.
-func removeRecipientPubFiles(keysDir string) error {
-	entries, err := os.ReadDir(keysDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	remainingFiles := 0
-	for _, e := range entries {
-		if e.IsDir() {
-			remainingFiles++
-			continue
-		}
-		if strings.HasSuffix(e.Name(), ".pub") {
-			if err := os.Remove(filepath.Join(keysDir, e.Name())); err != nil {
-				return err
-			}
-			continue
-		}
-		remainingFiles++
-	}
-	if remainingFiles == 0 {
-		// Directory is empty now; clean up.
-		_ = os.Remove(keysDir)
-	}
-	return nil
-}
-
 // --- add ---
 
 var keysAddCmd = &cobra.Command{
 	Use:   "add <name>",
 	Short: "Add a recipient and re-encrypt all files",
-	Long:  `Add a new recipient public key and re-encrypt every data file so the recipient can read.`,
-	Args:  cobra.ExactArgs(1),
+	Long: `Add a new recipient public key and re-encrypt every data file so the recipient can read.
+
+The caller must be an existing recipient (have a working identity
+for the current recipients.age). A new recipient cannot be added
+by someone without a private key.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		name := args[0]
 		if err := validateRecipientName(name); err != nil {
 			return err
 		}
-		rec, err := readRecipientFromFile(keysAddPubFile)
+		rec, pubStr, err := readRecipientFromFile(keysAddPubFile)
 		if err != nil {
 			return err
 		}
+		_ = rec // rec is validated by ParseRecipient; we only store the string form
+
 		if err = ensureEncryptedRepo(); err != nil {
 			return err
 		}
-		keysDir := filepath.Join(projectCtx.Root, "keys")
-		pubPath := filepath.Join(keysDir, name+".pub")
-		if _, statErr := os.Stat(pubPath); statErr == nil {
-			return fmt.Errorf("recipient %s already exists", name)
-		}
-		if err = os.WriteFile(pubPath, []byte(rec.String()+"\n"), 0o644); err != nil {
-			return err
-		}
 
-		// Re-encrypt everything.
 		kr, err := encryption.LoadFromDir(projectCtx.Root)
 		if err != nil {
 			return err
 		}
-		if !kr.HasIdentity() {
-			return errors.New("no local identity loaded; cannot re-encrypt")
+		if _, exists := kr.File().Recipients[name]; exists {
+			return fmt.Errorf("recipient %s already exists", name)
 		}
-		if err = reencryptAll(projectCtx.Root, kr); err != nil {
+
+		// Mutate a copy of the current recipients file: bump version
+		// and add the new recipient. The authoritative file is
+		// written after the re-seal walk completes successfully.
+		newRF := *kr.File()
+		newRF.Recipients = make(map[string]string, len(kr.File().Recipients)+1)
+		for k, v := range kr.File().Recipients {
+			newRF.Recipients[k] = v
+		}
+		newRF.Recipients[name] = pubStr
+		newRF.Version = kr.Version() + 1
+
+		if err = rotateRecipients(projectCtx.Root, kr, &newRF, "keys add "+name); err != nil {
 			return err
 		}
-		if err = writeEncryptionConfig(projectCtx.CacheDir, kr.RecipientNames()); err != nil {
-			return err
-		}
-		out.WriteSuccess("Added recipient %q and re-encrypted %d data files.", name, len(kr.RecipientNames()))
+
+		out.WriteSuccess("Added recipient %q and re-encrypted %d data files (version %d).",
+			name, len(newRF.Recipients), newRF.Version)
 		return nil
 	},
 }
@@ -320,30 +351,37 @@ var keysRemoveCmd = &cobra.Command{
 		if err := ensureEncryptedRepo(); err != nil {
 			return err
 		}
-		pubPath := filepath.Join(projectCtx.Root, "keys", name+".pub")
-		if _, err := os.Stat(pubPath); err != nil {
-			return fmt.Errorf("recipient %s not found", name)
-		}
-		if err := os.Remove(pubPath); err != nil {
-			return err
-		}
+
 		kr, err := encryption.LoadFromDir(projectCtx.Root)
 		if err != nil {
 			return err
 		}
-		if len(kr.Recipients()) == 0 {
+		if _, exists := kr.File().Recipients[name]; !exists {
+			return fmt.Errorf("recipient %s not found", name)
+		}
+		if len(kr.File().Recipients) <= 1 {
 			return errors.New("refusing to remove last recipient; run `rela keys decrypt` instead")
 		}
-		if !kr.HasIdentity() {
-			return errors.New("no local identity loaded; cannot re-encrypt")
+		if name == kr.LocalName() {
+			return errors.New("refusing to remove yourself (current identity); would lock you out")
 		}
-		if err := reencryptAll(projectCtx.Root, kr); err != nil {
+
+		newRF := *kr.File()
+		newRF.Recipients = make(map[string]string, len(kr.File().Recipients)-1)
+		for k, v := range kr.File().Recipients {
+			if k == name {
+				continue
+			}
+			newRF.Recipients[k] = v
+		}
+		newRF.Version = kr.Version() + 1
+
+		if err = rotateRecipients(projectCtx.Root, kr, &newRF, "keys remove "+name); err != nil {
 			return err
 		}
-		if err := writeEncryptionConfig(projectCtx.CacheDir, kr.RecipientNames()); err != nil {
-			return err
-		}
-		out.WriteSuccess("Removed recipient %q and re-encrypted %d data files.", name, len(kr.RecipientNames()))
+
+		out.WriteSuccess("Removed recipient %q and re-encrypted %d data files (version %d).",
+			name, len(newRF.Recipients), newRF.Version)
 		return nil
 	},
 }
@@ -359,14 +397,14 @@ var keysStatusCmd = &cobra.Command{
 			return err
 		}
 		if !encrypted {
-			out.WriteMessage("Repo is cleartext (no .rela/encryption.yaml).")
+			out.WriteMessage("Repo is cleartext (no recipients.age).")
 			return nil
 		}
 		kr, err := encryption.LoadFromDir(projectCtx.Root)
 		if err != nil {
 			return err
 		}
-		out.WriteMessage("Repo is encrypted.")
+		out.WriteMessage("Repo is encrypted (version %d, repo_id %s).", kr.Version(), kr.RepoID())
 		out.WriteMessage("Recipients (%d):", len(kr.RecipientNames()))
 		for _, n := range kr.RecipientNames() {
 			marker := ""
@@ -376,9 +414,7 @@ var keysStatusCmd = &cobra.Command{
 			r, _ := kr.Recipient(n)
 			out.WriteMessage("  %s%s  %s", n, marker, r.String())
 		}
-		if !kr.HasIdentity() {
-			out.WriteMessage("No local identity loaded.")
-		} else if kr.LocalName() == "" {
+		if kr.LocalName() == "" {
 			out.WriteMessage("Local identity does not match any recipient.")
 		}
 		return nil
@@ -387,8 +423,11 @@ var keysStatusCmd = &cobra.Command{
 
 // --- helpers ---
 
-// validateRecipientName rejects names that would break the filename
-// stem convention <name>.pub.
+// validateRecipientName rejects names that would be inconvenient for
+// CLI and YAML use. The old regime required these to be filesystem-
+// safe for <name>.pub files; with recipients.age the constraint is
+// weaker, but we keep a conservative character set to avoid
+// surprises in CLI output, YAML encoding, and future extensions.
 func validateRecipientName(name string) error {
 	if name == "" {
 		return errors.New("recipient name is required (--recipient)")
@@ -404,14 +443,7 @@ func validateRecipientName(name string) error {
 }
 
 func repoIsEncrypted() (bool, error) {
-	_, err := os.Stat(filepath.Join(projectCtx.CacheDir, encryption.ConfigFileName))
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	return false, err
+	return encryption.IsEnabled(projectCtx.Root)
 }
 
 func ensureCleartextRepo() error {
@@ -420,7 +452,7 @@ func ensureCleartextRepo() error {
 		return err
 	}
 	if enc {
-		return errors.New("repo is already encrypted (see .rela/encryption.yaml)")
+		return errors.New("repo is already encrypted (see <root>/recipients.age)")
 	}
 	return nil
 }
@@ -452,17 +484,58 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	return writeAtomic(dst, data, perm)
 }
 
+// sealPlaintext wraps raw with a rela header (version + repo-
+// relative path) and seals the combined bytes for recipients.
+// Mirrors what cryptofs.FS.WriteFile does internally; we do it by
+// hand here because the CLI seal walkers need to stage writes to
+// <path>.rewrap.new while stamping the header with the FINAL path.
+func sealPlaintext(root, absPath string, raw []byte, recipients []encryption.Recipient, version int) ([]byte, error) {
+	rel, err := filepath.Rel(root, absPath)
+	if err != nil {
+		return nil, fmt.Errorf("compute relative path for %s: %w", absPath, err)
+	}
+	h := &encryption.Header{Version: version, Path: filepath.ToSlash(rel)}
+	plaintext := append(h.Encode(), raw...)
+	return encryption.Seal(plaintext, recipients)
+}
+
+// unsealPayload unseals sealed with identity, strips the rela
+// header, and returns just the body bytes. Verifies the header's
+// path matches absPath (ErrFileRelocated if not) but does NOT
+// check rollback — CLI walkers operate on the whole tree at once
+// and the rollback check belongs on the per-file store read path.
+func unsealPayload(root, absPath string, sealed []byte, identity encryption.Identity) ([]byte, error) {
+	plaintext, err := encryption.Unseal(sealed, identity)
+	if err != nil {
+		return nil, err
+	}
+	h, body, err := encryption.ParseHeader(plaintext)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", absPath, err)
+	}
+	rel, err := filepath.Rel(root, absPath)
+	if err != nil {
+		return nil, err
+	}
+	expected := filepath.ToSlash(rel)
+	if h.Path != expected {
+		return nil, fmt.Errorf("%w: header path %q != file path %q",
+			encryption.ErrFileRelocated, h.Path, expected)
+	}
+	return body, nil
+}
+
 // sealAllFiles transitions a cleartext repo to sealed. Walks data
-// dirs under root; seals every cleartext file for recipients. Any
-// already-sealed file aborts the command (the invariant is "this
-// repo is entirely cleartext before init", so a sealed file is a
-// sign the repo is half-migrated from a prior interrupted run).
+// dirs under root; seals every cleartext file for recipients at
+// version 1 (initial encryption state). Any already-sealed file
+// aborts the command — the invariant is "this repo is entirely
+// cleartext before init", so a sealed file is a sign the repo is
+// half-migrated from a prior interrupted run.
 //
-// Writes are atomic per file (temp + rename), so a crash mid-walk
-// leaves an all-or-nothing-per-file state: some files fully sealed
-// under recipients, the rest still cleartext. The repo is in a
-// partial state; recovery is manual (delete .rela/encryption.yaml
-// if present, re-run `keys init`).
+// Writes are atomic per file (temp + rename); a crash mid-walk
+// leaves a partial state that integrity.Verify surfaces on next
+// open. Recovery is manual (remove recipients.age if it was
+// written, re-run `keys init`).
 func sealAllFiles(root string, recipients []encryption.Recipient) error {
 	return walkDataFiles(root, func(path string) error {
 		raw, err := os.ReadFile(path)
@@ -472,7 +545,7 @@ func sealAllFiles(root string, recipients []encryption.Recipient) error {
 		if encryption.LooksSealed(raw) {
 			return fmt.Errorf("file %s is already sealed (repo may be half-migrated)", path)
 		}
-		sealed, err := encryption.Seal(raw, recipients)
+		sealed, err := sealPlaintext(root, path, raw, recipients, 1)
 		if err != nil {
 			return err
 		}
@@ -491,31 +564,32 @@ func unsealAllFiles(root string, kr *encryption.Keyring) error {
 		if !encryption.LooksSealed(raw) {
 			return nil
 		}
-		cleartext, err := encryption.Unseal(raw, kr.Identity())
+		body, err := unsealPayload(root, path, raw, kr.Identity())
 		if err != nil {
 			return fmt.Errorf("unseal %s: %w", path, err)
 		}
-		return writeAtomic(path, cleartext, 0o644)
+		return writeAtomic(path, body, 0o644)
 	})
 }
 
-// reencryptAll rewraps every sealed file under kr's full recipient
-// list. Two-phase: first pass writes every path.rewrap.new sealed
-// under the new recipients; second pass renames each .rewrap.new to
-// its final path. A crash between phases leaves every .rewrap.new
-// as an orphan sweepable on next open (fsstore's cleanupTempFiles
-// already deletes ".new" suffixed files).
+// reencryptAll rewraps every sealed file under newRecipients at
+// newVersion. Two-phase: first pass writes every path.rewrap.new
+// sealed at the new version; second pass renames each .rewrap.new
+// to its final path. A crash between phases leaves every
+// .rewrap.new as an orphan sweepable on next open (fsstore's
+// cleanupTempFiles handles ".new" suffixed files).
 //
-// This keeps the repo in a recoverable state even if the walk is
-// interrupted: before the rename phase, every final file is still
-// sealed for the pre-rewrap recipient set (no data loss); after
-// partial rename, fsstore can still open the repo (the new-recipient
-// files decrypt for the new identity; the old-recipient files
-// decrypt for anyone who was a recipient both before and after).
-func reencryptAll(root string, kr *encryption.Keyring) error {
-	recipients := kr.Recipients()
-
-	// Phase 1: write .rewrap.new sealed under the new recipient set.
+// Before the rename phase, every final file is still sealed at
+// the OLD version / recipient set — readable by existing
+// identities. After partial rename, every final file holds valid
+// sealed bytes — either the new or old recipient set, never
+// garbage. A subsequent re-run resumes from whichever phase the
+// crash left off in.
+func reencryptAll(root string, kr *encryption.Keyring, newRecipients []encryption.Recipient, newVersion int) error {
+	// Phase 1: write .rewrap.new sealed at the new version for the
+	// new recipient set. Header stamps the FINAL path (path), not
+	// the staging path (path.rewrap.new), so phase-2 rename leaves
+	// the header consistent with the file's location.
 	var rewrapPaths []string
 	err := walkDataFiles(root, func(path string) error {
 		raw, err := os.ReadFile(path)
@@ -525,11 +599,11 @@ func reencryptAll(root string, kr *encryption.Keyring) error {
 		if !encryption.LooksSealed(raw) {
 			return fmt.Errorf("expected sealed file, got cleartext: %s", path)
 		}
-		cleartext, err := encryption.Unseal(raw, kr.Identity())
+		body, err := unsealPayload(root, path, raw, kr.Identity())
 		if err != nil {
 			return fmt.Errorf("unseal %s: %w", path, err)
 		}
-		sealed, err := encryption.Seal(cleartext, recipients)
+		sealed, err := sealPlaintext(root, path, body, newRecipients, newVersion)
 		if err != nil {
 			return err
 		}
@@ -541,21 +615,78 @@ func reencryptAll(root string, kr *encryption.Keyring) error {
 		return nil
 	})
 	if err != nil {
-		// Roll back phase-1 partial: delete every .rewrap.new we wrote.
 		for _, p := range rewrapPaths {
 			_ = os.Remove(p + ".rewrap.new")
 		}
 		return err
 	}
 
-	// Phase 2: rename each .rewrap.new -> path. These renames are
-	// individually atomic on POSIX; as a batch they're not atomic,
-	// but every path either holds the new sealed bytes or the old
-	// sealed bytes, never garbage.
+	// Phase 2: rename each .rewrap.new -> path.
 	for _, p := range rewrapPaths {
 		if err := os.Rename(p+".rewrap.new", p); err != nil {
 			return fmt.Errorf("rename %s: %w", p, err)
 		}
+	}
+	return nil
+}
+
+// rotateRecipients orchestrates the full recipient-rotation flow
+// used by `keys add` and `keys remove`:
+//
+//  1. Write an XDG-local sentinel describing the in-flight rotation
+//     (from/to version, new recipient set, repo root, operation
+//     label). Must land before any data-file mutation so a crash
+//     mid-walk leaves a breadcrumb future rela invocations can
+//     pick up and finish.
+//  2. Run the two-phase reencryptAll walk (stage .rewrap.new files,
+//     then rename each into place).
+//  3. Write the new recipients.age — this is the commit point; a
+//     crash before this has the walk visible but the official
+//     recipient list still at the old version. Recovery re-runs
+//     the walk (idempotent on already-rewritten files) and then
+//     writes recipients.age.
+//  4. Delete the sentinel. Any failure after step 3 leaves the
+//     sentinel pointing at a completed rotation; the factory's
+//     open-time recovery recognizes that case (sentinel.to_version
+//     matches current recipients.age) and just deletes the
+//     sentinel.
+//
+// operation is a human-readable label ("keys add alice", "keys
+// remove bob") surfaced in diagnostics if recovery kicks in.
+func rotateRecipients(root string, kr *encryption.Keyring, newRF *encryption.RecipientsFile, operation string) error {
+	newRecipients, err := newRF.RecipientList()
+	if err != nil {
+		return err
+	}
+
+	sentinel := &encryption.ResealSentinel{
+		FromVersion:   kr.Version(),
+		ToVersion:     newRF.Version,
+		RepoRoot:      root,
+		NewRecipients: newRF.Recipients,
+		Operation:     operation,
+	}
+	if err := encryption.WriteResealSentinel(kr.RepoID(), sentinel); err != nil {
+		return fmt.Errorf("record rotation in progress: %w", err)
+	}
+
+	if err := reencryptAll(root, kr, newRecipients, newRF.Version); err != nil {
+		// Keep the sentinel on walk failure so a rerun can pick
+		// up from the partial state.
+		return err
+	}
+
+	if err := encryption.WriteRecipientsFile(
+		filepath.Join(root, encryption.RecipientsFileName), newRF); err != nil {
+		return err
+	}
+
+	// Best-effort delete: the sentinel has served its purpose. A
+	// failure here is survivable — the factory recognizes a
+	// completed rotation by sentinel.to_version == keyring.version
+	// and cleans up on next open.
+	if err := encryption.DeleteResealSentinel(kr.RepoID()); err != nil {
+		out.WriteMessage("warning: %s left a stale sentinel; will be cleaned up on next rela invocation", operation)
 	}
 	return nil
 }
@@ -575,15 +706,6 @@ func writeAtomic(path string, data []byte, perm os.FileMode) error {
 // is not already matched by an existing line. Called after writing
 // the private identity so it cannot be accidentally committed even
 // when the user's existing rules (e.g. `.rela/`) already cover it.
-//
-// Design notes:
-//   - If .gitignore does not exist, we create it. Committing a new
-//     .gitignore is a valid side effect of `rela keys init` since the
-//     user just asked the tool to manage private keys.
-//   - Matching is literal line comparison, not git's glob semantics.
-//     Overly strict: someone with `.rela/*` in .gitignore still gets
-//     a redundant `.rela/key` line. Acceptable: false positives are
-//     cheap (one extra comment line) and the security win is real.
 func ensureKeyGitignored(root string) error {
 	const pattern = ".rela/key"
 	gitignorePath := filepath.Join(root, ".gitignore")
@@ -607,9 +729,27 @@ func ensureKeyGitignored(root string) error {
 	return os.WriteFile(gitignorePath, append(existing, []byte(addition)...), 0o644)
 }
 
+// shouldSkipWalk reports whether a directory entry name should be
+// skipped during walkDataFiles. Matches dotfiles and the temp /
+// backup suffixes various editors and atomic-write implementations
+// leave behind.
+func shouldSkipWalk(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	for _, suffix := range []string{".new", ".tmp", ".bak", "~"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 // walkDataFiles invokes fn for every regular file under root's
 // entities/, relations/, attachments/, and the fsstore index file.
-// Hidden files and temp/backup files are skipped.
+// Hidden files and temp/backup files are skipped. The authoritative
+// recipients.age at the root is NOT walked — it has its own
+// re-encrypt path (write a new one sealed to the new set).
 func walkDataFiles(root string, fn func(string) error) error {
 	dirs := []string{
 		filepath.Join(root, "entities"),
@@ -627,8 +767,7 @@ func walkDataFiles(root string, fn func(string) error) error {
 			if d.IsDir() {
 				return nil
 			}
-			name := d.Name()
-			if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".new") || strings.HasSuffix(name, ".bak") || strings.HasSuffix(name, "~") {
+			if shouldSkipWalk(d.Name()) {
 				return nil
 			}
 			return fn(path)
@@ -643,25 +782,4 @@ func walkDataFiles(root string, fn func(string) error) error {
 		}
 	}
 	return nil
-}
-
-// writeEncryptionConfig writes the recipient list marker file under
-// cacheDir. Content is a minimal list; the tool treats the file's
-// presence as the "encryption is on" bit.
-func writeEncryptionConfig(cacheDir string, recipients []string) error {
-	var buf strings.Builder
-	buf.WriteString("# This file's presence enables at-rest encryption for this rela repo.\n")
-	buf.WriteString("# Recipient public keys live in <repo>/keys/<name>.pub.\n")
-	buf.WriteString("recipients:\n")
-	for _, r := range recipients {
-		buf.WriteString("  - " + r + "\n")
-	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(
-		filepath.Join(cacheDir, encryption.ConfigFileName),
-		[]byte(buf.String()),
-		0o644,
-	)
 }

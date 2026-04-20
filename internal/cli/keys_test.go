@@ -27,32 +27,44 @@ func mustReadFile(t *testing.T, path string) []byte {
 	return b
 }
 
-// writeRecipientsAndIdentity writes <root>/keys/<name>.pub for each
-// entry in pubs, writes local identity to <root>/.rela/key, and
-// returns a keyring loaded from that layout.
-func writeRecipientsAndIdentity(
+// writeEncryptedRepo wires an encrypted repo for cli helper tests:
+// writes .rela/key with local's private key and <root>/recipients.age
+// sealed to every identity in recipients. Returns a loaded keyring.
+func writeEncryptedRepo(
 	t *testing.T, root string,
-	pubs map[string]encryption.Identity, local encryption.Identity,
+	recipients map[string]encryption.Identity, local encryption.Identity,
 ) *encryption.Keyring {
 	t.Helper()
-	keysDir := filepath.Join(root, "keys")
-	if err := os.MkdirAll(keysDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for name, id := range pubs {
-		pubPath := filepath.Join(keysDir, name+".pub")
-		if err := os.WriteFile(pubPath, []byte(id.PublicRecipient().String()+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
 	idPath := filepath.Join(root, ".rela", "key")
 	if err := os.MkdirAll(filepath.Dir(idPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(idPath, []byte(encryption.MarshalIdentity(local)+"\n"), 0o600); err != nil {
+	priv, err := encryption.MarshalIdentity(local)
+	if err != nil {
 		t.Fatal(err)
 	}
-	kr, err := encryption.LoadKeyring(keysDir, idPath)
+	if err = os.WriteFile(idPath, []byte(priv+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	repoID, err := encryption.NewRepoID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rf := &encryption.RecipientsFile{
+		Version:    1,
+		RepoID:     repoID,
+		Recipients: map[string]string{},
+	}
+	for name, id := range recipients {
+		rf.Recipients[name] = id.PublicRecipient().String()
+	}
+	if err = encryption.WriteRecipientsFile(
+		filepath.Join(root, encryption.RecipientsFileName), rf); err != nil {
+		t.Fatal(err)
+	}
+
+	kr, err := encryption.LoadKeyring(filepath.Join(root, encryption.RecipientsFileName), local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +129,7 @@ func TestSealAllFiles_AndUnseal(t *testing.T) {
 		}
 	}
 
-	kr := writeRecipientsAndIdentity(t, root, map[string]encryption.Identity{"alice": id}, id)
+	kr := writeEncryptedRepo(t, root, map[string]encryption.Identity{"alice": id}, id)
 
 	if err := unsealAllFiles(root, kr); err != nil {
 		t.Fatalf("unsealAllFiles: %v", err)
@@ -139,34 +151,32 @@ func TestReencryptAll_AddsNewRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	kr := writeRecipientsAndIdentity(t, root,
-		map[string]encryption.Identity{"alice": alice, "bob": bob},
+	// Keyring currently reflects the pre-add state (just alice). The
+	// new recipient set we're re-sealing TO is alice + bob.
+	kr := writeEncryptedRepo(t, root,
+		map[string]encryption.Identity{"alice": alice},
 		alice)
+	newRecipients := []encryption.Recipient{
+		alice.PublicRecipient(),
+		bob.PublicRecipient(),
+	}
 
-	if err := reencryptAll(root, kr); err != nil {
+	if err := reencryptAll(root, kr, newRecipients, kr.Version()+1); err != nil {
 		t.Fatalf("reencryptAll: %v", err)
 	}
 
 	for _, p := range paths {
 		raw := mustReadFile(t, p)
-		if _, err := encryption.Unseal(raw, bob); err != nil {
+		plaintext, err := encryption.Unseal(raw, bob)
+		if err != nil {
 			t.Errorf("bob could not read %s after re-encrypt: %v", p, err)
+			continue
 		}
-	}
-}
-
-func TestWriteEncryptionConfig(t *testing.T) {
-	root := t.TempDir()
-	cacheDir := filepath.Join(root, ".rela")
-	if err := writeEncryptionConfig(cacheDir, []string{"alice", "bob"}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(filepath.Join(cacheDir, "encryption.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(got, []byte("alice")) || !bytes.Contains(got, []byte("bob")) {
-		t.Errorf("encryption.yaml missing recipients: %s", got)
+		// After re-encrypt, the plaintext starts with a rela
+		// header. Parse it off to verify the body round-trip.
+		if _, _, hErr := encryption.ParseHeader(plaintext); hErr != nil {
+			t.Errorf("missing rela header on %s: %v", p, hErr)
+		}
 	}
 }
 
@@ -227,23 +237,26 @@ func TestReadRecipientFromFile(t *testing.T) {
 		if err := os.WriteFile(path, []byte(id.PublicRecipient().String()+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		got, err := readRecipientFromFile(path)
+		got, pubStr, err := readRecipientFromFile(path)
 		if err != nil {
 			t.Fatalf("readRecipientFromFile: %v", err)
 		}
 		if got.String() != id.PublicRecipient().String() {
 			t.Errorf("recipient mismatch: got %q, want %q", got.String(), id.PublicRecipient().String())
 		}
+		if pubStr != id.PublicRecipient().String() {
+			t.Errorf("pubStr mismatch: got %q, want %q", pubStr, id.PublicRecipient().String())
+		}
 	})
 
 	t.Run("empty path errors", func(t *testing.T) {
-		if _, err := readRecipientFromFile(""); err == nil {
+		if _, _, err := readRecipientFromFile(""); err == nil {
 			t.Error("expected error for empty path")
 		}
 	})
 
 	t.Run("missing file errors", func(t *testing.T) {
-		if _, err := readRecipientFromFile(filepath.Join(t.TempDir(), "nope.pub")); err == nil {
+		if _, _, err := readRecipientFromFile(filepath.Join(t.TempDir(), "nope.pub")); err == nil {
 			t.Error("expected error for missing file")
 		}
 	})
@@ -253,7 +266,7 @@ func TestReadRecipientFromFile(t *testing.T) {
 		if err := os.WriteFile(path, []byte("not-an-age-key\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := readRecipientFromFile(path); err == nil {
+		if _, _, err := readRecipientFromFile(path); err == nil {
 			t.Error("expected parse error for garbage contents")
 		}
 	})
@@ -272,6 +285,7 @@ func TestWalkDataFiles_SkipsTempAndDotfiles(t *testing.T) {
 	}
 	must(filepath.Join(root, "entities", "tickets", "TKT-1.md"), "real")
 	must(filepath.Join(root, "entities", "tickets", "TKT-1.md.new"), "temp")
+	must(filepath.Join(root, "entities", "tickets", "TKT-1.md.tmp"), "safefs-temp")
 	must(filepath.Join(root, "entities", "tickets", "TKT-1.md.bak"), "backup")
 	must(filepath.Join(root, "entities", "tickets", ".DS_Store"), "macos")
 	must(filepath.Join(root, "entities", "tickets", "editor~"), "emacs")

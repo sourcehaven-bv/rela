@@ -16,22 +16,36 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
 
-// setupEncryptedRepo writes a keys dir, identity file, and returns
-// the root path plus a keyring ready for fsstore.NewAgeCrypto.
+// setupEncryptedRepo writes an identity file and recipients.age,
+// and returns the root path plus a keyring ready for fsstore.NewAgeCrypto.
+//
+// Matches the on-disk shape `rela keys init` would leave behind:
+// <root>/.rela/key (private, gitignored) and <root>/recipients.age
+// (the authoritative encrypted recipient list).
 func setupEncryptedRepo(t *testing.T) (root string, kr *encryption.Keyring) {
 	t.Helper()
 	root = t.TempDir()
 	id := mustGenerateIdentity(t)
-	keysDir := filepath.Join(root, "keys")
-	mustMkdir(t, keysDir)
-	mustWrite(t, filepath.Join(keysDir, "alice.pub"),
-		[]byte(id.PublicRecipient().String()+"\n"), 0o644)
+
 	idPath := filepath.Join(root, ".rela", "key")
 	mustMkdir(t, filepath.Dir(idPath))
 	mustWrite(t, idPath, []byte(identityPrivate(t, id)+"\n"), 0o600)
 
-	var err error
-	kr, err = encryption.LoadKeyring(keysDir, idPath)
+	repoID, err := encryption.NewRepoID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rf := &encryption.RecipientsFile{
+		Version:    1,
+		RepoID:     repoID,
+		Recipients: map[string]string{"alice": id.PublicRecipient().String()},
+	}
+	recipientsPath := filepath.Join(root, encryption.RecipientsFileName)
+	if err = encryption.WriteRecipientsFile(recipientsPath, rf); err != nil {
+		t.Fatal(err)
+	}
+
+	kr, err = encryption.LoadKeyring(recipientsPath, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +75,16 @@ func mustOpenEncryptedStore(
 ) *fsstore.FSStore {
 	t.Helper()
 	safe := storage.NewSafeFS(storage.NewOsFS())
-	enc := cryptofs.New(safe, kr.Recipients(), kr.Identity())
+	enc, err := cryptofs.New(cryptofs.Config{
+		Inner:        safe,
+		Recipients:   kr.Recipients(),
+		Identity:     kr.Identity(),
+		RepoRoot:     root,
+		WriteVersion: kr.Version(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	s, err := fsstore.New(fsstore.Config{
 		FS:             safe,

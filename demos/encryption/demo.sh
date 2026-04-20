@@ -99,6 +99,12 @@ grep -q "Recipients (1)" <<<"${STATUS_OUT}" || fail "expected 'Recipients (1)' i
 grep -q "alice" <<<"${STATUS_OUT}" || fail "expected alice in keys status"
 pass "keys status reports 1 recipient (alice)"
 
+# The authoritative recipient list must land at <root>/recipients.age.
+[[ -s recipients.age ]] || fail "recipients.age missing after keys init"
+head -c 22 recipients.age | grep -q '^age-encryption.org/v1' \
+    || fail "recipients.age is not itself sealed"
+pass "recipients.age present and sealed"
+
 step "5. Alice reads; bob cannot (bob is not yet a recipient)"
 ALICE_SEE="$("${RELA}" show REQ-002 2>&1)"
 grep -q "Confidential" <<<"${ALICE_SEE}" || fail "alice should read REQ-002 (got: ${ALICE_SEE})"
@@ -150,9 +156,8 @@ grep -q "from: DEC-001" "${REL_FILE}" || fail "cleartext relation not restored a
 if head -c 22 "${REL_FILE}" | grep -q '^age-encryption.org/v1'; then
     fail "relation still sealed after decrypt"
 fi
-[[ ! -f ".rela/encryption.yaml" ]] || fail "encryption.yaml still present after decrypt"
-[[ ! -d "keys" ]] || fail "keys/ still present after decrypt"
-pass "project is cleartext again; marker and keys/ dir removed; entity + relation content preserved"
+[[ ! -f "recipients.age" ]] || fail "recipients.age still present after decrypt"
+pass "project is cleartext again; recipients.age removed; entity + relation content preserved"
 
 "${RELA}" show REQ-002 2>&1 | grep -q "Confidential" || fail "REQ-002 not readable in cleartext mode"
 pass "REQ-002 readable without any identity"

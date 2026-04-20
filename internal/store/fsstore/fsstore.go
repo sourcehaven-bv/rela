@@ -328,7 +328,11 @@ func (s *FSStore) propertyOrder(entityType string) []string {
 	return nil
 }
 
-// cleanupTempFiles removes orphaned .new temp files left by interrupted writes.
+// cleanupTempFiles removes orphaned temp files left by interrupted
+// writes. Two suffixes are swept: ".new" (legacy direct fsstore
+// atomic-write) and ".tmp" (SafeFS atomic-write). Both are produced by
+// writeFile → rename paths and are never expected to survive a normal
+// process shutdown.
 func (s *FSStore) cleanupTempFiles() {
 	for _, dir := range []string{s.entitiesDir, s.relationsDir} {
 		if dir == "" {
@@ -339,7 +343,7 @@ func (s *FSStore) cleanupTempFiles() {
 			if err != nil || d.IsDir() {
 				return nil //nolint:nilerr // walker continuation on error is intentional
 			}
-			if strings.HasSuffix(path, ".new") {
+			if strings.HasSuffix(path, ".new") || strings.HasSuffix(path, ".tmp") {
 				toRemove = append(toRemove, path)
 			}
 			return nil

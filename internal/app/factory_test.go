@@ -52,19 +52,9 @@ func TestFSFactory_EncryptedModeInstallsAgeCrypto(t *testing.T) {
 	// When .rela/encryption.yaml exists, OpenStore loads the keyring
 	// and installs a real age Crypto. Entity writes hit disk sealed.
 	root := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "keys"), 0o755))
-
 	id, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "keys", "alice.pub"),
-		[]byte(id.PublicRecipient().String()+"\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(root, ".rela", "key"),
-		[]byte(encryption.MarshalIdentity(id)+"\n"), 0o600))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(root, ".rela", encryption.ConfigFileName),
-		[]byte("recipients:\n  - alice\n"), 0o644))
-	t.Setenv("RELA_KEY_FILE", "")
+	setupEncryptedRepo(t, root, id, true)
 
 	paths := &project.Context{
 		Root:         root,
@@ -120,19 +110,9 @@ func TestFSFactoryOpenStoreReturnsIndependentStores(t *testing.T) {
 // self-echo detection on every write.
 func TestFSFactory_EncryptedNeedsSafeFS(t *testing.T) {
 	root := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "keys"), 0o755))
-
 	id, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "keys", "alice.pub"),
-		[]byte(id.PublicRecipient().String()+"\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(root, ".rela", "key"),
-		[]byte(encryption.MarshalIdentity(id)+"\n"), 0o600))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(root, ".rela", encryption.ConfigFileName),
-		[]byte("recipients:\n  - alice\n"), 0o644))
-	t.Setenv("RELA_KEY_FILE", "")
+	setupEncryptedRepo(t, root, id, true)
 
 	paths := &project.Context{
 		Root:         root,
@@ -162,16 +142,9 @@ func TestFSFactory_SingleBranchInvariant(t *testing.T) {
 		root := t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
 		if encrypted {
-			require.NoError(t, os.MkdirAll(filepath.Join(root, "keys"), 0o755))
 			id, err := encryption.GenerateIdentity()
 			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(filepath.Join(root, "keys", "alice.pub"),
-				[]byte(id.PublicRecipient().String()+"\n"), 0o644))
-			require.NoError(t, os.WriteFile(filepath.Join(root, ".rela", "key"),
-				[]byte(encryption.MarshalIdentity(id)+"\n"), 0o600))
-			require.NoError(t, os.WriteFile(
-				filepath.Join(root, ".rela", encryption.ConfigFileName),
-				[]byte("recipients:\n  - alice\n"), 0o644))
+			setupEncryptedRepo(t, root, id, true)
 		}
 		return root, &project.Context{
 			Root:         root,
@@ -226,18 +199,11 @@ func TestFSFactory_SingleBranchInvariant(t *testing.T) {
 // configured. Silent success would cripple every read path.
 func TestFSFactory_EncryptedNeedsIdentity(t *testing.T) {
 	root := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "keys"), 0o755))
-
 	id, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "keys", "alice.pub"),
-		[]byte(id.PublicRecipient().String()+"\n"), 0o644))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(root, ".rela", encryption.ConfigFileName),
-		[]byte("recipients:\n  - alice\n"), 0o644))
-	// NB: no identity written to .rela/key and no $RELA_KEY_FILE.
-	t.Setenv("RELA_KEY_FILE", "")
+	// writeIdentity=false: encrypted repo state on disk but no
+	// private key anywhere resolvable.
+	setupEncryptedRepo(t, root, id, false)
 	t.Setenv("HOME", t.TempDir())
 
 	paths := &project.Context{
@@ -259,19 +225,9 @@ func TestFSFactory_EncryptedNeedsIdentity(t *testing.T) {
 // know about encryption.
 func TestFSFactory_Encrypted_RefusesCleartextDataFiles(t *testing.T) {
 	root := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "keys"), 0o755))
-
 	id, err := encryption.GenerateIdentity()
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "keys", "alice.pub"),
-		[]byte(id.PublicRecipient().String()+"\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(root, ".rela", "key"),
-		[]byte(encryption.MarshalIdentity(id)+"\n"), 0o600))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(root, ".rela", encryption.ConfigFileName),
-		[]byte("recipients:\n  - alice\n"), 0o644))
-	t.Setenv("RELA_KEY_FILE", "")
+	setupEncryptedRepo(t, root, id, true)
 
 	// Plant a cleartext entity file that the integrity verifier must reject.
 	entitiesDir := filepath.Join(root, "entities", "tickets")
@@ -320,4 +276,40 @@ func TestFSFactory_Cleartext_RefusesSealedDataFiles(t *testing.T) {
 	_, err = factory.OpenStore(&metamodel.Metamodel{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, integrity.ErrRepoHasSealedFilesButNoConfig)
+}
+
+// mustMarshalIdentity wraps encryption.MarshalIdentity for test use:
+// any serialization failure is treated as a test failure rather than
+// a value to thread through call sites.
+func mustMarshalIdentity(t *testing.T, id encryption.Identity) string {
+	t.Helper()
+	s, err := encryption.MarshalIdentity(id)
+	require.NoError(t, err)
+	return s
+}
+
+// setupEncryptedRepo wires an encrypted repo on disk at root for
+// factory tests. Writes .rela/key with the given identity (so
+// LoadFromDir resolves it) and recipients.age sealed to that
+// identity. Mirrors the production `rela keys init` output shape.
+//
+// writeIdentity controls whether the .rela/key file is written —
+// tests that assert "missing identity" errors should pass false.
+func setupEncryptedRepo(t *testing.T, root string, id encryption.Identity, writeIdentity bool) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
+	if writeIdentity {
+		require.NoError(t, os.WriteFile(filepath.Join(root, ".rela", "key"),
+			[]byte(mustMarshalIdentity(t, id)+"\n"), 0o600))
+	}
+	repoID, err := encryption.NewRepoID()
+	require.NoError(t, err)
+	rf := &encryption.RecipientsFile{
+		Version:    1,
+		RepoID:     repoID,
+		Recipients: map[string]string{"alice": id.PublicRecipient().String()},
+	}
+	require.NoError(t, encryption.WriteRecipientsFile(
+		filepath.Join(root, encryption.RecipientsFileName), rf))
+	t.Setenv("RELA_KEY_FILE", "")
 }

@@ -110,6 +110,7 @@ func TestVerify_SkipsTempAndDotfiles(t *testing.T) {
 	// and must be ignored.
 	writeFile(t, filepath.Join(dir, "real.md"), sealedSentinel)
 	writeFile(t, filepath.Join(dir, "real.md.new"), []byte("cleartext temp"))
+	writeFile(t, filepath.Join(dir, "real.md.tmp"), []byte("cleartext safefs temp"))
 	writeFile(t, filepath.Join(dir, "real.md.bak"), []byte("cleartext backup"))
 	writeFile(t, filepath.Join(dir, "editor~"), []byte("cleartext editor"))
 	writeFile(t, filepath.Join(dir, ".dotfile"), []byte("cleartext dotfile"))

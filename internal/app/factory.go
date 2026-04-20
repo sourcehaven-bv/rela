@@ -7,9 +7,9 @@ package app
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/encryption"
 	"github.com/Sourcehaven-BV/rela/internal/encryption/cryptofs"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -89,9 +89,10 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if wantSealed && kr.Identity() == nil {
-		return nil, ErrEncryptedRepoNeedsIdentity
-	}
+	// Past this point, wantSealed implies kr != nil and kr.Identity()
+	// is non-nil — LoadFromDir refuses to succeed without one, and
+	// the missing-identity case has already been translated to
+	// ErrEncryptedRepoNeedsIdentity by loadEncryption.
 
 	// Encrypted repos require SafeFS so we can install the OnPostWrite
 	// observer that keeps self-echo detection correct. Fail loudly
@@ -105,16 +106,26 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 	// Consistency check against the raw on-disk state — must happen
 	// BEFORE fsstore.New so we refuse to open half-migrated repos.
 	// Same wantSealed boolean that drives the decorator install below.
+	//
+	// Attachments are verified alongside entities/relations: on an
+	// encrypted repo every data file must be sealed, including the
+	// content-addressable attachment blobs and their metadata
+	// sidecars, otherwise C1 has regressed and plaintext has leaked
+	// back into the tree.
 	if verifyErr := integrity.Verify(f.FS, wantSealed, []string{
 		f.Paths.EntitiesDir,
 		f.Paths.RelationsDir,
+		filepath.Join(f.Paths.Root, "attachments"),
 	}); verifyErr != nil {
 		return nil, verifyErr
 	}
 
 	var bytes fsstore.StoreFS = f.FS
 	if wantSealed {
-		bytes = cryptofs.New(f.FS, kr.Recipients(), kr.Identity())
+		bytes, err = f.newCryptoFS(f.FS, kr)
+		if err != nil {
+			return nil, fmt.Errorf("app: build cryptofs: %w", err)
+		}
 	}
 
 	s, err := fsstore.New(fsstore.Config{
@@ -134,21 +145,97 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 	return s, nil
 }
 
+// OpenBytesFS returns the byte-I/O handle appropriate for this
+// project: cryptofs-decorated when encryption is enabled, the raw
+// FS handle otherwise.
+//
+// This is the same handle the factory wires into the store's own
+// bytes path, exposed so workspace-level components outside the
+// store (today: the attachment store) can stay consistent with the
+// store's encryption behavior. Callers that bypass this helper and
+// reach for the raw FS directly will silently skip seal/unseal on
+// encrypted repos — see encryption-security-review.md finding C1.
+//
+// The return type is attachment.BytesFS, the narrow subset of byte
+// operations workspace components actually need. fsstore.StoreFS and
+// storage.FS are both supersets and are returned transparently.
+//
+// Returns ErrEncryptedRepoNeedsIdentity if the repo is encrypted but
+// no local identity is configured.
+func (f *FSFactory) OpenBytesFS() (attachment.BytesFS, error) {
+	wantSealed, kr, err := f.loadEncryption()
+	if err != nil {
+		return nil, err
+	}
+	if !wantSealed {
+		return f.FS, nil
+	}
+	return f.newCryptoFS(f.FS, kr)
+}
+
+// newCryptoFS builds a cryptofs.FS wired from the keyring: its
+// write-version, its loaded identity and recipients, and the
+// per-machine last-seen-version state derived from the keyring's
+// repo id. Called from both OpenStore (for the store's own bytes
+// handle) and OpenBytesFS (for workspace-level components like
+// attachments) so both consumers see the same configuration.
+func (f *FSFactory) newCryptoFS(inner storage.FS, kr *encryption.Keyring) (*cryptofs.FS, error) {
+	state, err := encryption.NewLocalState(kr.RepoID())
+	if err != nil {
+		return nil, err
+	}
+	return cryptofs.New(cryptofs.Config{
+		Inner:        inner,
+		Recipients:   kr.Recipients(),
+		Identity:     kr.Identity(),
+		RepoRoot:     f.Paths.Root,
+		WriteVersion: kr.Version(),
+		State:        state,
+	})
+}
+
 // loadEncryption decides whether encryption is on for this project
-// by checking for .rela/encryption.yaml. When on, it also loads the
-// keyring (recipients + local identity). Returns (false, nil, nil)
-// when encryption is off.
+// by checking for <root>/recipients.age (the S2 authoritative
+// encrypted recipient list). When present, it loads the keyring
+// (recipients + local identity via LoadFromDir).
+//
+// Returns (false, nil, nil) when the repo is cleartext.
+//
+// Returns (false, nil, ErrEncryptedRepoNeedsIdentity) when the
+// repo is encrypted but no local identity could be resolved. This
+// error is translated from encryption.ErrNoPrivateKey (the inner
+// package's sentinel) to the app-level sentinel so callers can use
+// errors.Is at the app boundary without importing encryption.
 func (f *FSFactory) loadEncryption() (bool, *encryption.Keyring, error) {
-	cfgPath := filepath.Join(f.Paths.CacheDir, encryption.ConfigFileName)
-	if _, err := os.Stat(cfgPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil, nil
-		}
-		return false, nil, fmt.Errorf("app: stat %s: %w", cfgPath, err)
+	enabled, err := encryption.IsEnabled(f.Paths.Root)
+	if err != nil {
+		return false, nil, fmt.Errorf("app: check encryption: %w", err)
+	}
+	if !enabled {
+		return false, nil, nil
 	}
 	kr, err := encryption.LoadFromDir(f.Paths.Root)
 	if err != nil {
+		if errors.Is(err, encryption.ErrNoPrivateKey) {
+			return false, nil, ErrEncryptedRepoNeedsIdentity
+		}
 		return false, nil, fmt.Errorf("app: load keyring: %w", err)
+	}
+
+	// Resume any interrupted `keys add` / `keys remove` rotation
+	// from a prior crashed rela invocation. No-op in the normal
+	// case (no sentinel, nothing to do). On the rare recovery
+	// path, recipients.age gets rewritten — reload the keyring so
+	// the rest of the store-open path sees the new state.
+	resumed, err := encryption.ResumeInterruptedRotation(f.Paths.Root, kr)
+	if err != nil {
+		return false, nil, fmt.Errorf("app: resume interrupted rotation: %w", err)
+	}
+	if resumed {
+		kr, err = encryption.LoadFromDir(f.Paths.Root)
+		if err != nil {
+			return false, nil, fmt.Errorf("app: reload keyring after recovery: %w", err)
+		}
 	}
 	return true, kr, nil
 }

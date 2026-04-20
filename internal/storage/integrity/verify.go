@@ -189,8 +189,10 @@ func shouldSkipScan(name string) bool {
 	if name == "" || strings.HasPrefix(name, ".") {
 		return true
 	}
-	if strings.HasSuffix(name, ".new") || strings.HasSuffix(name, ".bak") || strings.HasSuffix(name, "~") {
-		return true
+	for _, suffix := range []string{".new", ".tmp", ".bak", "~"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
 	}
 	return false
 }

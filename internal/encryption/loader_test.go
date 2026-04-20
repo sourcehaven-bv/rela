@@ -7,16 +7,33 @@ import (
 	"testing"
 )
 
+// writeRepoSetup seals a single-recipient recipients.age at
+// <root>/recipients.age and writes the matching identity file at
+// identityPath. Used by LoadFromDir tests that need a working
+// encrypted repo on disk.
+func writeRepoSetup(t *testing.T, root string, alice Identity, identityPath string) {
+	t.Helper()
+	mustMkdir(t, filepath.Dir(identityPath))
+	mustWrite(t, identityPath, []byte(alice.(*hybridIdentity).i.String()+"\n"), 0o600)
+
+	repoID, err := NewRepoID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rf := &RecipientsFile{
+		Version:    1,
+		RepoID:     repoID,
+		Recipients: map[string]string{"alice": alice.PublicRecipient().String()},
+	}
+	if err := WriteRecipientsFile(filepath.Join(root, RecipientsFileName), rf); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoadFromDir_AllPresent(t *testing.T) {
 	root := t.TempDir()
 	alice := newTestIdentity(t)
-
-	mustMkdir(t, filepath.Join(root, projectKeysDir))
-	mustMkdir(t, filepath.Join(root, projectRelaDir))
-	mustWrite(t, filepath.Join(root, projectKeysDir, "alice.pub"),
-		[]byte(alice.PublicRecipient().String()+"\n"), 0o644)
-	mustWrite(t, filepath.Join(root, projectRelaDir, projectKeyFile),
-		[]byte(alice.(*hybridIdentity).i.String()+"\n"), 0o600)
+	writeRepoSetup(t, root, alice, filepath.Join(root, projectRelaDir, projectKeyFile))
 
 	// Clear env so $RELA_KEY_FILE doesn't interfere.
 	t.Setenv(envKeyFile, "")
@@ -28,37 +45,44 @@ func TestLoadFromDir_AllPresent(t *testing.T) {
 	if kr.LocalName() != "alice" {
 		t.Errorf("LocalName = %q, want alice", kr.LocalName())
 	}
+	if kr.Version() != 1 {
+		t.Errorf("Version = %d, want 1", kr.Version())
+	}
 }
 
-func TestLoadFromDir_MissingIdentityIsFine(t *testing.T) {
+func TestLoadFromDir_NoIdentityIsError(t *testing.T) {
+	// With the S2 design, recipients.age is encrypted; loading
+	// without an identity is a hard error — the previous "fine, no
+	// identity" semantic only made sense when the recipient list
+	// was cleartext.
 	root := t.TempDir()
 	alice := newTestIdentity(t)
-	mustMkdir(t, filepath.Join(root, projectKeysDir))
-	mustWrite(t, filepath.Join(root, projectKeysDir, "alice.pub"),
-		[]byte(alice.PublicRecipient().String()+"\n"), 0o644)
+	repoID, _ := NewRepoID()
+	rf := &RecipientsFile{
+		Version:    1,
+		RepoID:     repoID,
+		Recipients: map[string]string{"alice": alice.PublicRecipient().String()},
+	}
+	if err := WriteRecipientsFile(filepath.Join(root, RecipientsFileName), rf); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Setenv(envKeyFile, "")
-	t.Setenv("HOME", t.TempDir()) // empty home dir, no ~/.config/rela/key
+	t.Setenv("HOME", t.TempDir()) // empty home, no ~/.config/rela/key
 
-	kr, err := LoadFromDir(root)
-	if err != nil {
-		t.Fatalf("LoadFromDir: %v", err)
-	}
-	if kr.HasIdentity() {
-		t.Error("HasIdentity = true, want false (no identity configured anywhere)")
+	_, err := LoadFromDir(root)
+	if !errors.Is(err, ErrNoPrivateKey) {
+		t.Errorf("expected ErrNoPrivateKey, got %v", err)
 	}
 }
 
 func TestLoadFromDir_EnvOverride(t *testing.T) {
 	root := t.TempDir()
 	alice := newTestIdentity(t)
-	mustMkdir(t, filepath.Join(root, projectKeysDir))
-	mustWrite(t, filepath.Join(root, projectKeysDir, "alice.pub"),
-		[]byte(alice.PublicRecipient().String()+"\n"), 0o644)
 
 	// Put identity at an arbitrary path and point $RELA_KEY_FILE at it.
 	custom := filepath.Join(t.TempDir(), "custom.key")
-	mustWrite(t, custom, []byte(alice.(*hybridIdentity).i.String()+"\n"), 0o600)
+	writeRepoSetup(t, root, alice, custom)
 	t.Setenv(envKeyFile, custom)
 
 	kr, err := LoadFromDir(root)
@@ -110,6 +134,32 @@ func TestResolveIdentityPath_HomeFallback(t *testing.T) {
 	}
 }
 
+func TestIsEnabled(t *testing.T) {
+	t.Run("no recipients file", func(t *testing.T) {
+		root := t.TempDir()
+		got, err := IsEnabled(root)
+		if err != nil {
+			t.Fatalf("IsEnabled: %v", err)
+		}
+		if got {
+			t.Error("IsEnabled = true, want false (no recipients.age)")
+		}
+	})
+
+	t.Run("recipients file present", func(t *testing.T) {
+		root := t.TempDir()
+		// Contents don't matter — IsEnabled is a presence check.
+		mustWrite(t, filepath.Join(root, RecipientsFileName), []byte("dummy"), 0o644)
+		got, err := IsEnabled(root)
+		if err != nil {
+			t.Fatalf("IsEnabled: %v", err)
+		}
+		if !got {
+			t.Error("IsEnabled = false, want true")
+		}
+	})
+}
+
 func TestResolveIdentityPath_NothingConfigured(t *testing.T) {
 	relaDir := t.TempDir()
 	t.Setenv(envKeyFile, "")
@@ -131,6 +181,9 @@ func mustMkdir(t *testing.T, path string) {
 
 func mustWrite(t *testing.T, path string, data []byte, perm os.FileMode) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, data, perm); err != nil {
 		t.Fatal(err)
 	}

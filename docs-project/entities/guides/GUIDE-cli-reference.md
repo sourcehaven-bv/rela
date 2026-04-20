@@ -106,7 +106,7 @@ rela keys init --recipient <name> --pub-file <path> [--identity <path>]
 
 | Flag          | Description                                                                  |
 | ------------- | ---------------------------------------------------------------------------- |
-| `--recipient` | Filename stem for the first recipient. Required.                             |
+| `--recipient` | Display name for the first recipient. Required.                              |
 | `--pub-file`  | Path to the recipient's age public key file (`age1pq1...`). Required.        |
 | `--identity`  | Path to the private identity file to copy into `.rela/key`.                  |
 
@@ -114,7 +114,9 @@ Hybrid (post-quantum) age public keys are ~2 KB, so `--pub-file` takes a path
 rather than a string.
 
 Seals every file under `entities/`, `relations/`, and `attachments/` in place via `temp + rename`.
-Writes `.rela/encryption.yaml` and `<repo>/keys/<name>.pub`.
+Writes `<repo>/recipients.age` — the authoritative encrypted recipient list, sealed to itself —
+and generates a per-repo UUID used to key machine-local state (last-seen version,
+in-flight-rotation sentinels) under `$XDG_STATE_HOME/rela/repos/<repo-id>/`.
 
 #### rela keys add
 
@@ -126,7 +128,7 @@ rela keys add <name> --pub-file <path>
 
 **Arguments:**
 
-- `name` - Filename stem for the new recipient
+- `name` - Display name for the new recipient
 
 **Flags:**
 
@@ -134,8 +136,10 @@ rela keys add <name> --pub-file <path>
 | ------------ | ------------------------------------------------------------------- |
 | `--pub-file` | Path to the new recipient's age public key file. Required.          |
 
-Two-phase rewrap: writes every `<path>.rewrap.new` sealed for the expanded recipient set,
-then renames. The local identity must be a current recipient (needed to unseal existing files).
+The caller must be an existing recipient (have a working identity for the current
+`recipients.age`). Bumps the repo's monotonic encryption version and re-seals every data file
+under the expanded set. Crash-safe: an interrupted rotation is resumed automatically on the
+next rela invocation.
 
 #### rela keys remove
 
@@ -147,16 +151,15 @@ rela keys remove <name>
 
 **Arguments:**
 
-- `name` - Filename stem of the recipient to remove
+- `name` - Display name of the recipient to remove
 
-Refuses to remove the last recipient (use `rela keys decrypt` instead). The removed recipient
-retains access to any file they previously read and copied locally — cryptography cannot enforce
-forgetting.
+Refuses to remove the last recipient (use `rela keys decrypt` instead) and refuses to remove
+yourself (would lock you out). The removed recipient retains access to any file they previously
+read and copied locally — cryptography cannot enforce forgetting.
 
 #### rela keys decrypt
 
-Disable encryption: unseal every data file, remove the `encryption.yaml` marker, and delete the
-recipient `*.pub` files. Other contents of `keys/` (README, subdirs) are left alone.
+Disable encryption: unseal every data file and delete `<repo>/recipients.age`.
 
 ```bash
 rela keys decrypt
@@ -172,8 +175,8 @@ Show encryption status and recipient list.
 rela keys status
 ```
 
-For an encrypted repo, reports the recipient count and lists each recipient plus their age public
-key. The local user's recipient is marked `(you)`.
+For an encrypted repo, reports the current version and repo UUID, then lists each recipient
+plus their age public key. The local user's recipient is marked `(you)`.
 
 ---
 
