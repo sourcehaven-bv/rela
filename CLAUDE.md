@@ -1,552 +1,172 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Rules for new code
 
-## Build & Test Commands
+- **Define interfaces at the call site, not next to the implementation.**
+  Producer-side interfaces couple consumers to every method the producer
+  exposes. Each consumer declares the minimum interface it needs —
+  usually one to three methods.
+- **Capability bundles, not service locators.** When a subsystem needs
+  several collaborators, group them in a purpose-specific struct (see
+  `internal/lua/deps.go` with `ReadDeps` / `WriteDeps`), split by read vs.
+  write so read-only code can't accidentally mutate state. A scoped
+  consumer-side `Services` interface is fine (see `internal/mcp/server.go`);
+  a cross-subsystem grab-bag is not.
+- **No repository or transaction abstractions.** Depend directly on
+  `store.Store`, `tracer.Tracer`, `search.Searcher`,
+  `entitymanager.EntityManager`. The old `repo` and `tx` layers are gone
+  — do not reintroduce equivalents.
+- **Boundaries are enforced.** `just arch-lint` checks package import
+  rules; run it before PR.
 
-```bash
-# Build
-just build                    # Build all binaries (CLI + server + desktop)
-just build-cli                # Build CLI binary to bin/rela
-just build-server             # Build data entry server to bin/rela-server
-just build-desktop            # Build Wails desktop app to bin/rela-desktop
-go build -o rela ./cmd/rela   # Quick build to current directory
+### Don't do this
 
-# Test
-just test                     # Run tests with race detection
-just test-coverage            # Run tests with coverage report
-just coverage                 # Generate and display coverage report
-just coverage-check           # Check coverage meets minimum thresholds
-just coverage-html            # Generate HTML coverage report
-go test ./...                 # Quick test
-go test -v ./internal/graph/  # Single package with verbose output
-go test -run TestName ./...   # Single test by name
+- **Don't import `internal/graph` or `internal/model`** — both deleted.
+  Use `internal/entity`, `internal/store`, `internal/tracer`.
+- **Don't add a cross-subsystem service locator** (à la the removed
+  `lua.Services`). Use `ReadDeps` / `WriteDeps` or a scoped consumer-side
+  interface.
+- **Don't call `ai.LoadProvider` directly from a new entry point.** Go
+  through `script.NewWriterRuntime`, which calls `lua.LoadContextOptions`.
+- **Don't wire AI into the validation path** — per-entity cost blowup
+  with no quota. See `internal/ai/` docs for the rationale.
+- **Don't extend `internal/workspace` in new code.** It is a transitional
+  shim still wired in `cli/root.go` and `mcp/server.go`. New call sites
+  take the focused interfaces above directly. When touching code that
+  still uses workspace, prefer migrating it out over extending.
 
-# Coverage (floor thresholds enforced in CI via go-test-coverage)
-# Configured in .testcoverage.yml — minimum floor per package, no ratchet
+## Architecture
 
-# Lint
-just lint                     # Run golangci-lint
-just lint-fix                 # Auto-fix lint issues
-just fmt                      # Format code (gofmt + goimports)
+rela is a schema-driven entity-graph platform. You define the shape of your
+domain in a YAML metamodel (entity types, relation types, properties,
+validation rules); rela gives you typed entities, typed relations, and tools
+to query / validate / analyze / present the graph. Data is stored as markdown
+files with YAML frontmatter.
 
-# Fuzz testing
-just fuzz-short               # Quick fuzz tests (5s each)
-just fuzz                     # Full fuzz tests (30s each)
-
-# Git hooks
-just install-hooks            # Install pre-commit hook (runs lint, test)
-
-# All checks (CI)
-just ci                       # lint + test + coverage-check + build
-
-# Dev server
-just dev                      # Run data entry server (ticketing example on :8080)
-just dev-catalog              # Run catalog example on :8282
-```
-
-## Architecture Overview
-
-rela is a schema-driven entity-graph platform. You define the shape of your domain in a
-YAML metamodel (entity types, relation types, properties, validation rules); rela gives
-you typed entities, typed relations between them, and tools to query / validate / analyze
-/ present the graph. Data is stored as markdown files with YAML frontmatter.
-
-Traceability (requirements → decisions → components) is one common use case, not the
-identity. Other real-world uses in-tree: ISO 27001 ISMS, project management, DevOps
-runbooks, issue/ticket tracking (rela dogfoods itself — see `tickets/`), and documentation
-mirrors of this repo (see `docs-project/`). Anything with typed entities and relations fits.
-
-### Core Data Flow
+Traceability (requirements → decisions → components) is one common use case,
+not the identity. Other in-tree uses: ISO 27001 ISMS, project management,
+DevOps runbooks, issue/ticket tracking (rela dogfoods itself — see `tickets/`),
+documentation mirrors (`docs-project/`). Anything with typed entities and
+relations fits.
 
 ```text
-metamodel.yaml → Metamodel (defines entity types, relations, properties)
+metamodel.yaml → Metamodel (entity types, relations, properties)
                      ↓
-entities/*.md  → Entity → Graph (in-memory)
-relations/*.md → Relation ↗      ↓
-                              Cache (.rela/cache.json)
+entities/*.md  → entity.Entity  ↘
+                                 store.Store → tracer.Tracer  (pure reader)
+relations/*.md → entity.Relation ↗          → search.Searcher (EntityObserver)
+                                            → entitymanager.EntityManager
+                                              (writes + automations + validation)
 ```
 
-### Package Structure
+The store is the source of truth. `search` maintains a derived index as a
+`store.EntityObserver`. `tracer` is a pure reader — no subscription, no
+derived state. `entitymanager` is the "human intent" write path that runs
+automations and validation on top of the store.
 
-| Package              | Purpose                                                 |
-| -------------------- | ------------------------------------------------------- |
-| `cmd/rela`           | CLI entry point                                         |
-| `cmd/rela-server`    | Data entry HTTP server entry point                      |
-| `cmd/rela-desktop`   | Wails desktop app entry point                           |
-| `internal/cli`       | Cobra commands (create, link, analyze, export, etc.)    |
-| `internal/dataentry` | Config-driven data entry web app (Go API handlers serving Vue 3 SPA in `frontend/`) |
-| `internal/model`     | Core types: `Entity`, `Relation`, `Status`              |
-| `internal/graph`     | In-memory graph with adjacency lists, tracing, analysis |
-| `internal/metamodel` | Schema loading, validation, custom types                |
-| `internal/markdown`  | Parse/write entities and relations from markdown files  |
-| `internal/project`   | Project discovery, paths (`Context`)                    |
-| `internal/output`    | CLI output formatting (table, JSON)                     |
-| `internal/filter`    | Entity filtering by properties                          |
-| `internal/mcp`       | MCP server: tools, resources, prompts, file watcher     |
-| `internal/migration` | Schema migration system for project files               |
-| `internal/scheduler` | Sequential Lua script scheduler with missed-run detection |
+### Packages
 
-### Key Types
+Entry points: `cmd/rela`, `cmd/rela-server`, `cmd/rela-desktop`.
 
-- **Entity** (`internal/model/entity.go`): Architecture artifact with ID, type, properties map
-- **Relation** (`internal/model/entity.go`): Directed edge between two entities
-- **Graph** (`internal/graph/graph.go`): Thread-safe graph with nodes/edges and adjacency maps
-- **Metamodel** (`internal/metamodel/types.go`): Schema defining entity types, relations, and property types
-- **Context** (`internal/project/context.go`): Project paths (root, entities/, relations/, templates/, .rela/)
-- **Server** (`internal/mcp/server.go`): MCP server wrapping graph, metamodel, and project context
+Domain and storage:
 
-### MCP Server
+| Package                  | Purpose                                                   |
+| ------------------------ | --------------------------------------------------------- |
+| `internal/entity`        | Domain types: `Entity`, `Relation` (no storage metadata)  |
+| `internal/metamodel`     | Schema: entity types, relations, properties, validation   |
+| `internal/store`         | Storage abstraction — CRUD + events, `fsstore`/`memstore` |
+| `internal/tracer`        | Pure-reader graph traversal (trace, path, orphans, cycles)|
+| `internal/search`        | Full-text + structured search (bleve + linear)            |
+| `internal/entitymanager` | Write path: automations, validation, policy               |
+| `internal/validator`     | Validation engine invoked by entitymanager                |
+| `internal/markdown`      | Parse/write entity and relation markdown                  |
+| `internal/project`       | Project discovery, paths (`Context`)                      |
+| `internal/workspace`     | Legacy aggregate — transitional, being phased out         |
 
-The `rela mcp` command starts a Model Context Protocol server over stdio, exposing rela's
-capabilities to AI assistants (Claude Code, Cursor, etc.):
+Subsystems (see each package's doc comment for details):
 
-- **21 tools**: Entity/relation CRUD, graph tracing, analysis, schema introspection, export
-- **3 resources**: `rela://metamodel`, `rela://entity/{type}/{id}`, `rela://relation/{from}/{type}/{to}`
-- **4 prompts**: `analyze-traceability`, `review-orphans`, `summarize-project`, `review-entity`
-- **File watcher**: Watches entities/, relations/, and metamodel.yaml with 200ms debounce
+| Package               | Purpose                                                        |
+| --------------------- | -------------------------------------------------------------- |
+| `internal/cli`        | Cobra commands                                                 |
+| `internal/mcp`        | MCP server over stdio — tools, resources, prompts, watcher    |
+| `internal/dataentry`  | Data entry web app (Go API + Vue 3 SPA in `frontend/`)         |
+| `internal/scheduler`  | Sequential Lua script scheduler (`rela scheduler`)             |
+| `internal/lua`        | Lua runtime + bindings (`ReadDeps`, `WriteDeps`)               |
+| `internal/script`     | Script execution helpers that wrap `lua` with project context  |
+| `internal/automation` | Automation engine invoked by `entitymanager`                   |
+| `internal/ai`         | OpenAI-compatible LLM provider (used from Lua)                 |
+| `internal/migration`  | Schema migrations for project YAML files                       |
 
-The `rela mcp` command handles its own initialization (project discovery, metamodel loading, graph
-sync) independently from the standard CLI state setup in `PersistentPreRunE`.
+Other packages under `internal/` are self-descriptive — ls the tree.
 
-### CLI State Initialization
+## Tests
 
-`internal/cli/root.go` sets up shared state in `PersistentPreRunE`:
+- Prefer table-driven tests with `t.Run(tc.name, ...)` subtests.
+- Use `t.Helper()` on assertion helpers.
+- `internal/store/storetest` provides the store conformance harness — any
+  new `store.Store` implementation must pass it.
+- Race detector is on in CI; don't add `//go:build !race` tags.
 
-1. Discover project root (find `metamodel.yaml`)
-2. Load metamodel
-3. Initialize graph (from cache or by syncing markdown files)
+## Coverage
 
-All commands share `projectCtx`, `meta`, `g` (graph), and `out` (output writer).
+Go: `go-test-coverage` enforces **package floor thresholds** (no ratchet);
+minimums live in `.testcoverage.yml`. Coverage within the floor is free to
+move up or down — floors exist to catch "new untested package added" and
+"core package silently lost its tests." Frontend uses a separate per-file
+ratchet at 100%.
 
-Commands that manage their own initialization (or don't need a project) annotate themselves
-with `skipProjectDiscovery: "true"` in their Cobra `Annotations` map. This includes:
-`init`, `version`, `completion`, `migrate`, `mcp`, `validate`, `flow`, `scheduler`.
+- Run locally: `just coverage-check`, `just coverage-html`.
+- When a floor fails, add tests — don't lower the threshold without a reason.
+- Use `// coverage-ignore: <reason>` sparingly, only for genuinely
+  untestable code (main functions, external-tool dependencies,
+  OS-specific paths). Reason is required.
 
-### Scheduled Tasks
+## Lint
 
-The `rela scheduler` command starts a long-running process that executes Lua scripts on
-recurring schedules defined in `schedules.yaml`. Like `rela mcp`, it handles its own
-workspace initialization independently from `PersistentPreRunE`.
+golangci-lint with project rules. Test files exempt from `dupl`, `funlen`,
+magic numbers. Cobra `cmd`/`args` unused parameters allowed. Line length: 120.
 
-**Configuration** (`schedules.yaml` in project root):
+## Security
 
-```yaml
-tasks:
-  - name: daily-report
-    script: reports/daily.lua
-    every: day
-  - name: weekly-review
-    script: checks/weekly.lua
-    every: week
-  - name: quick-check
-    script: checks/orphans.lua
-    every: 30m
-```
+`govulncheck` runs on every PR that touches `go.mod` / `go.sum` (blocking,
+`vulncheck` job in `ci.yml`) and weekly from `security.yml`. The weekly run
+auto-updates called-and-fixable vulns via `go get` + `go mod tidy` and opens
+an auto-merge PR on success, or files / updates a deduplicated issue on
+failure.
 
-**Schedule values:**
+Known-unfixable vulnerabilities are filtered via
+`scripts/govulncheck-filtered.sh`; keep `IGNORED_OSVS` in sync between that
+script and `scripts/govulncheck-fixable.sh`. Run locally: `just govulncheck`.
 
-| Value        | Meaning                                              |
-| ------------ | ---------------------------------------------------- |
-| `day`        | Once per day (after midnight local time)              |
-| `monday`     | Once per week on Mondays (any weekday name works)     |
-| `friday`     | Once per week on Fridays                              |
-| `week`       | Alias for `monday`                                    |
-| `30m`, `2h`  | Fixed interval (any Go duration)                      |
-| `15`         | Bare number interpreted as minutes                    |
+## Commands
 
-**Architecture:**
+Read the `justfile` for the full set. The shortcuts used most often:
 
-- Single-threaded sequential loop — tasks execute one at a time in config order
-- Workspace is synced before each task execution for fresh graph state
-- Scripts have the same capabilities as `rela script` (entity CRUD, graph queries, AI)
-- State persisted in `.rela/scheduler-state.json` (last-run timestamps per task)
-- On startup, tasks that missed their window execute immediately
-- Graceful shutdown on SIGINT/SIGTERM
+- `just build` — build all binaries
+- `just test` — race-enabled test run
+- `just lint` / `just lint-fix` — golangci-lint
+- `just arch-lint` — package boundary check
+- `just ci` — run the full CI pipeline
+- `just dev` — run the data entry server locally
+- `go test -run TestName ./...` — single test
 
-**Key types** (`internal/scheduler/`):
-
-- `Config` / `TaskConfig`: YAML config with name, script path, schedule
-- `Schedule`: Parsed schedule (day/week/interval) with `IsDue(lastRun, now)` method
-- `Scheduler`: Main loop — `Run(ctx)` blocks until context cancellation
-- `State`: JSON-serialized last-run timestamps
-
-## AI Integration
-
-The `internal/ai` package provides LLM access via OpenAI-compatible providers
-(OpenAI, Anthropic via compat layer, Ollama, LM Studio, Groq, apfel, etc.).
-It is exposed to Lua scripts as a top-level `ai` global.
-
-### Configuration
-
-User config lives in `.rela/ai.yaml` (gitignored, per-user):
-
-```yaml
-base_url: http://127.0.0.1:11434/v1   # required, must include scheme
-model: gemma3:12b                      # required, default model
-embedding_model: nomic-embed-text      # optional; falls back to model
-api_key_env: OPENAI_API_KEY            # optional; absent = no auth header
-timeout_seconds: 60                    # optional, default 30
-```
-
-`api_key_env` is **optional**. When absent, no `Authorization` header is sent —
-this supports local providers like ollama, apfel, and LM Studio that run without
-authentication. When set, the named env var is read at request time (not at
-startup), so commands that don't use AI never fail because the env var is unset.
-
-### Lua API
-
-```lua
--- Full form
-local result, err = ai.chat({
-  messages = {
-    {role = "system", content = "You are concise."},
-    {role = "user",   content = "What is 2+2?"},
-  },
-  model = "gemma3:12b",   -- optional, falls back to .rela/ai.yaml
-  temperature = 0,        -- optional; 0 is sent distinctly from "unset"
-  max_tokens = 50,        -- optional
-})
-
--- Convenience: single user message, returns just the content string
-local text, err = ai.complete("Summarize: " .. content)
-
--- Embeddings: single text or batch
-local vecs, err = ai.embed("hello world")          -- returns {{0.1, 0.2, ...}}
-local vecs, err = ai.embed({"first", "second"})    -- returns {{...}, {...}}
-local vecs, err = ai.embed("text", {model = "nomic-embed-text"})  -- model override
-```
-
-**ai.chat** returns a table `{content, model, finish_reason, usage}` with
-flat fields. `usage` is a sub-table `{prompt_tokens, completion_tokens, total_tokens}`.
-
-**ai.embed** always returns an array of arrays (one vector per input), even for
-a single string input. Vectors are float64. Batch input is limited to 2048 texts.
-Empty strings and empty tables raise a programming error.
-
-On failure: `err` is a typed table `{kind, status, message, retry_after}` with
-stable `kind` values:
-
-| `err.kind` | When |
-|---|---|
-| `not_configured` | No `.rela/ai.yaml` or it failed to load |
-| `auth` | API key missing/invalid; HTTP 401/403 |
-| `bad_request` | HTTP 400/4xx; unknown model, unsupported parameter |
-| `rate_limited` | HTTP 429; `err.retry_after` populated when server provides Retry-After |
-| `server_error` | HTTP 5xx |
-| `timeout` | Request exceeded its deadline |
-| `network` | DNS, connection refused, TLS, etc. |
-| `bad_response` | Non-JSON, malformed JSON, missing choices, unrecognized content shape |
-| `streaming_unsupported` | Provider returned SSE despite `stream: false` |
-
-**Convention deviation**: `ai.chat`, `ai.complete`, and `ai.embed` are the
-*only* rela Lua bindings that return `(nil, err_table)` for runtime failures.
-All other rela bindings raise via `RaiseError`. The deviation is deliberate —
-AI calls are network-bound, failure is expected, and scripts should handle it
-inline rather than wrap every call in `pcall`. Programming errors (wrong arg
-type, empty input) still raise. See `internal/lua/ai.go` top-of-file comment for
-the full rationale.
-
-### Security: New threat surface
-
-Adding AI to the Lua sandbox introduces a **new threat class**: a malicious or
-compromised Lua script can now silently exfiltrate every entity in the project
-to the user's *own* legitimate provider via
-`ai.chat({messages = {{role="user", content=entity_dump}}})`. The data lands in
-the provider's logs, possibly in training data, possibly readable by junior
-staff, possibly billed to the user. The script needs no malicious config and no
-filesystem write — it uses the user's own working setup.
-
-**Mitigations in place:**
-
-- Operational logging (debug/info/warn) makes unusual call patterns visible
-- API is opt-in: requires `.rela/ai.yaml` to exist
-- API key is read at call time and never logged or echoed in errors (`redactKey` helper + table-driven leak test)
-- Config rejects URLs with embedded credentials (`https://user:pass@host`)
-- Response body is capped at 10 MiB to prevent OOM
-
-**Treat Lua scripts as trusted code.** The `rela.write_file` and `ai.chat`
-capabilities together mean a malicious script can do real damage. Don't run
-Lua scripts you don't trust.
-
-### Operational logging
-
-Every AI request emits structured log lines via `slog`:
-
-- `ai request start base_url=... model=... messages=N` (debug)
-- `ai request ok status=200 model=... latency_ms=... prompt_tokens=... completion_tokens=... total_tokens=...` (info)
-- `ai embed start base_url=... model=... inputs=N` (debug)
-- `ai embed ok status=200 model=... latency_ms=... vectors=N prompt_tokens=... total_tokens=...` (info)
-- `ai request failed kind=... status=... latency_ms=... message=...` (warn)
-
-No headers, no API keys, no message content are ever logged.
-
-### Architecture
+## Project files
 
 ```text
-internal/ai/
-  config.go        Config struct, LoadConfig (ErrConfigNotFound on missing file)
-  errors.go        ErrKind enum, *Error type, classify(), redaction
-  provider.go      Provider interface, Chat/Embed requests and responses
-  openai.go        Chat HTTP implementation, shared request/response infrastructure
-  openai_embed.go  Embed HTTP implementation (wire types, response parsing)
-  loader.go        LoadProvider helper for entry-point wiring
-  redact.go        redactKey(s, key) helper
+metamodel.yaml                  # Entity/relation schema
+schedules.yaml                  # Optional: schedules for `rela scheduler`
+entities/<type>/                # Markdown entity files by type
+relations/                      # Markdown relation files (FROM--type--TO.md)
+templates/entities/<type>.md    # Optional: entity templates for defaults
+templates/relations/<type>.md   # Optional: relation templates for defaults
+.rela/user-defaults.yaml        # Per-user defaults (gitignored)
+.rela/scheduler-state.json      # Scheduler last-run timestamps (gitignored)
 ```
 
-The `Provider` interface aggregates `Chat` and `Embed`. The Lua runtime takes a
-single `ai.Provider` via `lua.WithAIProvider(p)`, so adding capabilities does not require
-parallel wiring paths.
+## Working documents
 
-Four entry points wire AI into the Lua runtime: `internal/cli/script.go`,
-`internal/cli/flow.go`, `internal/script/executor.go`, `internal/mcp/tools_lua.go`.
-Each calls `ai.LoadProvider(.rela_dir)` and passes the result to `lua.New` via
-`WithAIProvider`. Missing or malformed config silently disables AI for that
-runtime; the Lua bindings return `not_configured` at call time.
-
-**`internal/validation/lua.go` is intentionally NOT wired with AI.** A validation
-rule that calls `ai.chat` would hit the provider on every entity on every
-`analyze` run with no quota, no kill switch, and no cost warning. The 5-second
-validation timeout would also silently clip slow calls. AI-powered validation
-rules need their own design (per-rule opt-in, cost guardrails, longer per-rule
-budget) and are tracked as a follow-up.
-
-## Test Coverage
-
-The Go backend uses [go-test-coverage](https://github.com/vladopajic/go-test-coverage)
-to enforce **floor thresholds**: each package must stay above a minimum percentage,
-and the project total must stay above 65%. Configuration is in `.testcoverage.yml`.
-
-Coverage within the floor is free to move up or down — there is no per-file ratchet.
-Trivial refactors don't trip the check. Floors only catch "someone added a whole new
-untested package" and "core packages silently lost their tests" — the failure modes
-worth gating on.
-
-The frontend uses a per-file ratchet at 100% (configured under `frontend/`); that's
-a different scale of codebase and a different rule.
-
-### Coverage Policy
-
-- **Core packages**: `errors` ≥95%, `output` ≥90%
-- **Critical functionality**: `markdown`, `filter` ≥85%; `entity`, `project` ≥80%; `dataentryconfig` ≥70%
-- **Complex logic**: `metamodel`, `importer` ≥65%; `dataentry` ≥55%
-- **Project total**: ≥65%
-- **UI/CLI code**: Not gated; use `coverage-ignore` comments for unreasonable-to-test code
-- Floors are set ~5pp below current coverage to give refactor headroom without being a rubber-stamp
-
-When `just coverage-check` fails, add tests to restore the floor. Do not lower the
-threshold in `.testcoverage.yml` to match regressed coverage — if the floor is genuinely
-too strict, raise it (deliberately) in a separate commit with reasoning.
-
-### Coverage-Ignore Comments
-
-Use `coverage-ignore` comments for code that is unreasonable to unit test:
-
-```go
-// coverage-ignore: main function - entry point, tested via integration tests
-func main() {
-    // ...
-}
-
-// coverage-ignore: requires external graphviz installation
-func renderWithGraphviz() error {
-    // ...
-}
-```
-
-Valid reasons for `coverage-ignore`:
-
-- Main/entry point functions (better tested via integration tests)
-- External tool dependencies (graphviz, etc.)
-- OS-specific functionality that can't be reliably mocked
-
-### Running Coverage Checks Locally
-
-```bash
-# Check coverage meets floor thresholds (uses go-test-coverage)
-just coverage-check
-
-# See detailed coverage report
-just coverage-html
-
-# Install pre-commit hook (runs lint + test, coverage is checked in CI)
-just install-hooks
-```
-
-## Security Checks
-
-`govulncheck` runs:
-
-- **On every PR that touches `go.mod` or `go.sum`** (blocking via the `vulncheck` job in
-  `ci.yml`). Unrelated PRs skip the check — the weekly schedule below covers them.
-- **Weekly from `security.yml`** (scheduled Monday 09:00 UTC). On failure, the workflow first
-  attempts an auto-update: it parses govulncheck JSON for called-and-fixable vulns, runs
-  `go get <mod>@<fixed>` + `go mod tidy`, re-verifies, and if clean, opens a PR with
-  auto-merge enabled (App token auth via `APP_ID` / `APP_PRIVATE_KEY`). If the auto-update
-  cannot resolve the finding (upstream has no fix, or fix doesn't clear the trace), it falls
-  back to filing / updating a deduplicated GitHub issue.
-
-Known-unfixable vulnerabilities are filtered via `scripts/govulncheck-filtered.sh` with
-documented OSV ids. Keep `IGNORED_OSVS` in sync with `scripts/govulncheck-fixable.sh`.
-
-```bash
-# Run govulncheck locally with the project's filter list
-just govulncheck
-```
-
-## Lint Configuration
-
-The project uses golangci-lint with extensive rules. Key exclusions:
-
-- Test files exempt from dupl, funlen, magic numbers
-- Cobra `cmd`/`args` unused parameters are allowed
-- Line length limit: 120 chars
-
-## Project Files
-
-```text
-metamodel.yaml              # Entity/relation schema
-schedules.yaml              # Optional: scheduled task definitions for `rela scheduler`
-entities/<type>/            # Markdown entity files by type
-relations/                  # Markdown relation files (FROM--type--TO.md)
-templates/entities/<type>.md  # Optional: entity templates for defaults
-templates/relations/<type>.md # Optional: relation templates for defaults
-.rela/cache.json            # Graph cache (gitignored)
-.rela/user-defaults.yaml    # User-specific default values (gitignored)
-.rela/scheduler-state.json  # Scheduler last-run timestamps (gitignored)
-```
-
-### User Defaults
-
-The data entry app supports user-configurable default values for entity creation,
-stored in `.rela/user-defaults.yaml` (gitignored, per-user). Users configure these
-via the Settings page in the web UI.
-
-**Types and resolution** (`internal/dataentry/config.go`):
-
-- `UserDefaults` holds global property defaults, global relation defaults, and entity-type overrides
-- `DefaultOverride` scopes defaults to a list of entity types
-- `ResolvePropertyDefault(entityType, property)` checks overrides first, then global defaults
-- `ResolveRelationDefault(entityType, relation)` same resolution order for relations
-
-**Default resolution chain** (highest to lowest priority):
-
-1. Entity-type override from user defaults
-2. Global user default
-3. Form-level default (from `data-entry.yaml`)
-4. Metamodel default (from `metamodel.yaml`)
-
-**Integration points**:
-
-- `handleForm`: user defaults populate `ResolvedField.Default` via `coalesce()` and pre-select relations
-- `handleCreate` / `handleInlineCreate`: user defaults fill empty properties and create default relations
-- `handleSettings` / `handleSaveSettings`: Settings page renders metamodel-aware widgets and persists to YAML
-
-## Migration System
-
-The migration system (`internal/migration/`) handles schema evolution for project files like
-`metamodel.yaml`. It uses AST-level YAML transformations to preserve comments and formatting.
-
-### Architecture
-
-```text
-Migration Interface
-       ↓
-   Registry (ordered list of migrations)
-       ↓
-   Runner (detect → apply → write)
-       ↓
-   yaml.Node helpers (AST manipulation)
-```
-
-### Key Types
-
-- **Migration** (`migration.go`): Interface for schema migrations
-- **FileType** (`migration.go`): Enum for file types (`metamodel`, `views`, etc.)
-- **Result** (`runner.go`): Result of applying a single migration
-- **FileResult** (`runner.go`): Result of migrating a file
-
-### Adding a New Migration
-
-1. Create a new file in `internal/migration/` (e.g., `my_migration.go`)
-
-2. Implement the `Migration` interface:
-
-```go
-package migration
-
-import "gopkg.in/yaml.v3"
-
-func init() {
-    Register(&MyMigration{})
-}
-
-type MyMigration struct{}
-
-func (m *MyMigration) Name() string {
-    return "my-migration"
-}
-
-func (m *MyMigration) Description() string {
-    return "Description shown to users"
-}
-
-func (m *MyMigration) FileTypes() []FileType {
-    return []FileType{FileTypeMetamodel}
-}
-
-func (m *MyMigration) Detect(doc *yaml.Node) bool {
-    // Return true if this migration should be applied
-    root := GetDocumentRoot(doc)
-    // Use yaml_util.go helpers to inspect the document
-    return false
-}
-
-func (m *MyMigration) Apply(doc *yaml.Node) error {
-    // Transform the document in-place
-    root := GetDocumentRoot(doc)
-    // Use yaml_util.go helpers to modify the document
-    return nil
-}
-```
-
-1. Add tests in `internal/migration/my_migration_test.go`
-
-### yaml.Node Helpers
-
-`yaml_util.go` provides helpers for safe AST manipulation:
-
-| Function                                    | Purpose                             |
-| ------------------------------------------- | ----------------------------------- |
-| `GetDocumentRoot(doc)`                      | Get root mapping from document node |
-| `GetMapValue(node, key)`                    | Get value node by key               |
-| `SetMapValue(node, key, val)`               | Set/add value in mapping            |
-| `RenameMapKey(node, old, new)`              | Rename a key                        |
-| `FindMapEntriesByKey(node, key)`            | Find all entries with key           |
-| `ReplaceMapValueByKey(node, key, old, new)` | Replace values by key               |
-| `WalkMappings(node, fn)`                    | Walk all mapping nodes              |
-
-### Integration with Loader
-
-The metamodel loader (`internal/metamodel/loader.go`) checks for migrations on load:
-
-1. Before parsing, it runs `migration.Detect()` on the file
-2. If migrations are detected, it returns a `migration.Error`
-3. The error message tells users to run `rela migrate`
-
-Commands that don't need the metamodel (init, migrate, mcp, version, etc.) are excluded from this check in `internal/cli/root.go`.
-
-## Working Documents
-
-Place temporary working documents in the `.ignored/` directory:
-
-- Design documents
-- Bug/ticket tracking files
-- QA reports
-- Test reports
-- Scratch notes
-
-This directory is gitignored. Never commit design docs, tickets, or reports to the repository.
+Anything temporary — designs, tickets, QA notes, scratch — goes in
+`.ignored/` (gitignored). Do not commit these.
 
 <!-- @managed: claude-workflow start -->
 

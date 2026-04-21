@@ -1,3 +1,22 @@
+// Package mcp implements the Model Context Protocol server exposed by
+// `rela mcp` over stdio.
+//
+// The server exposes rela's capabilities to AI assistants:
+//
+//   - Tools for entity/relation CRUD, graph trace/path, analysis (orphans,
+//     cardinality, properties, validations, schema), schema introspection,
+//     export, and Lua execution. Registered in tools.go (grep AddTool).
+//   - Resources: rela://metamodel, rela://entity/{type}/{id},
+//     rela://relation/{from}/{type}/{to}
+//   - Prompts: analyze-traceability, review-orphans, summarize-project,
+//     review-entity
+//   - A file watcher over entities/, relations/, and metamodel.yaml with
+//     a 200ms debounce; tests that exercise the watcher must wait past it
+//     (see watcher.go).
+//
+// The server handles its own project init (discovery, metamodel load,
+// store wiring) independently from the standard CLI PersistentPreRunE.
+
 // coverage-ignore: MCP server - tested via integration tests
 package mcp
 
