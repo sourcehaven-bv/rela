@@ -5,7 +5,7 @@
 package app
 
 import (
-	"path/filepath"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -31,12 +31,17 @@ var _ store.Factory = (*FSFactory)(nil)
 // is the responsibility of git-crypt (or an equivalent tool) rather
 // than this process.
 func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
+	rooted, err := storage.NewRootedFS(f.FS, f.Paths.Root)
+	if err != nil {
+		return nil, fmt.Errorf("app: rooted fs for fsstore: %w", err)
+	}
 	return fsstore.New(fsstore.Config{
 		FS:             f.FS,
-		EntitiesDir:    f.Paths.EntitiesDir,
-		RelationsDir:   f.Paths.RelationsDir,
-		AttachmentsDir: filepath.Join(f.Paths.Root, "attachments"),
-		CacheDir:       f.Paths.CacheDir,
+		Rooted:         rooted,
+		EntitiesKey:    "entities",
+		RelationsKey:   "relations",
+		AttachmentsKey: "attachments",
+		CacheKey:       ".rela",
 		Schemas:        buildSchemas(meta),
 	})
 }

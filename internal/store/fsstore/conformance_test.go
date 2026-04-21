@@ -14,27 +14,13 @@ import (
 
 func factory(t *testing.T) store.Store {
 	t.Helper()
-	fs := storage.NewMemFS()
-	s, err := fsstore.New(fsstore.Config{
-		FS:             fs,
-		EntitiesDir:    "/entities",
-		RelationsDir:   "/relations",
-		AttachmentsDir: "/attachments",
-		CacheDir:       "/.rela",
-	})
+	s, err := fsstore.New(newConfig(storage.NewMemFS()))
 	require.NoError(t, err)
 	return s
 }
 
 func fuzzFactory() store.Store {
-	fs := storage.NewMemFS()
-	s, err := fsstore.New(fsstore.Config{
-		FS:             fs,
-		EntitiesDir:    "/entities",
-		RelationsDir:   "/relations",
-		AttachmentsDir: "/attachments",
-		CacheDir:       "/.rela",
-	})
+	s, err := fsstore.New(newConfig(storage.NewMemFS()))
 	if err != nil {
 		panic(err)
 	}
@@ -43,16 +29,10 @@ func fuzzFactory() store.Store {
 
 func searchFactory(t *testing.T) (store.Store, search.Searcher) {
 	t.Helper()
-	fs := storage.NewMemFS()
 	idx := search.NewLinearSearch()
-	s, err := fsstore.New(fsstore.Config{
-		FS:             fs,
-		EntitiesDir:    "/entities",
-		RelationsDir:   "/relations",
-		AttachmentsDir: "/attachments",
-		CacheDir:       "/.rela",
-		Observers:      []store.EntityObserver{idx},
-	})
+	cfg := newConfig(storage.NewMemFS())
+	cfg.Observers = []store.EntityObserver{idx}
+	s, err := fsstore.New(cfg)
 	require.NoError(t, err)
 	return s, search.New(s, idx)
 }

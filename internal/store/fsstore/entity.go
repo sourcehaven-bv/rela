@@ -306,15 +306,15 @@ func (s *FSStore) DeleteEntity(_ context.Context, id string, cascade bool) (*sto
 
 	// Delete relation files first, then entity file.
 	for _, rm := range related {
-		path := s.relationFilePath(rm.From, rm.Type, rm.To)
-		_ = s.dirs.Remove(path)
-		s.echoes.Forget(path)
+		key := s.relationFileKey(rm.From, rm.Type, rm.To)
+		_ = s.rooted.Remove(key)
+		s.echoes.Forget(s.absPath(key))
 	}
-	path := s.entityFilePath(meta.Type, id)
-	if err := s.dirs.Remove(path); err != nil && !os.IsNotExist(err) {
+	key := s.entityFileKey(meta.Type, id)
+	if err := s.rooted.Remove(key); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	s.echoes.Forget(path)
+	s.echoes.Forget(s.absPath(key))
 
 	// Cascade attachments — under the per-entity layout the
 	// attachment directory is owned 1:1 by the entity.
@@ -417,15 +417,15 @@ func (s *FSStore) RenameEntity(_ context.Context, oldID, newID string) (*store.R
 		}
 
 		// Delete old relation file.
-		oldPath := s.relationFilePath(rm.From, rm.Type, rm.To)
-		_ = s.dirs.Remove(oldPath)
-		s.echoes.Forget(oldPath)
+		oldKey := s.relationFileKey(rm.From, rm.Type, rm.To)
+		_ = s.rooted.Remove(oldKey)
+		s.echoes.Forget(s.absPath(oldKey))
 	}
 
 	// Delete old entity file.
-	oldPath := s.entityFilePath(meta.Type, oldID)
-	_ = s.dirs.Remove(oldPath)
-	s.echoes.Forget(oldPath)
+	oldKey := s.entityFileKey(meta.Type, oldID)
+	_ = s.rooted.Remove(oldKey)
+	s.echoes.Forget(s.absPath(oldKey))
 
 	// Move the attachment directory (if any) onto the new ID.
 	if err := s.renameAttachmentDir(oldID, newID); err != nil {

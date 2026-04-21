@@ -82,11 +82,11 @@ func (s *FSStore) StartWatching() error {
 	s.mu.Unlock()
 
 	var dirs []string
-	if s.entitiesDir != "" {
-		dirs = append(dirs, s.entitiesDir)
+	if abs := s.absPath(s.entitiesKey); abs != "" {
+		dirs = append(dirs, abs)
 	}
-	if s.relationsDir != "" {
-		dirs = append(dirs, s.relationsDir)
+	if abs := s.absPath(s.relationsKey); abs != "" {
+		dirs = append(dirs, abs)
 	}
 	if len(dirs) == 0 {
 		return nil
@@ -150,14 +150,17 @@ func (s *FSStore) handleExternalEvent(ev storage.ChangeEvent) {
 	}
 }
 
-// isEntityPath reports whether path lives under entitiesDir.
+// isEntityPath reports whether path lives under the entities directory.
+// path is absolute (from fsnotify); converted via absPath(entitiesKey).
 func (s *FSStore) isEntityPath(path string) bool {
-	return s.entitiesDir != "" && hasPathPrefix(path, s.entitiesDir)
+	abs := s.absPath(s.entitiesKey)
+	return abs != "" && hasPathPrefix(path, abs)
 }
 
-// isRelationPath reports whether path lives under relationsDir.
+// isRelationPath reports whether path lives under the relations directory.
 func (s *FSStore) isRelationPath(path string) bool {
-	return s.relationsDir != "" && hasPathPrefix(path, s.relationsDir)
+	abs := s.absPath(s.relationsKey)
+	return abs != "" && hasPathPrefix(path, abs)
 }
 
 // hasPathPrefix reports whether path is inside dir (as a prefix, with
@@ -187,12 +190,7 @@ func (s *FSStore) reconcileEntityPath(path string) {
 		return // self-echo
 	}
 
-	data, err := s.bytes.ReadFile(path)
-	if err != nil {
-		return
-	}
-
-	e, err := parseEntityFromPath(data, path)
+	e, err := parseEntityFromPath(rawData, path)
 	if err != nil {
 		return
 	}

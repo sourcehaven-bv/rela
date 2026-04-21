@@ -22,12 +22,17 @@ import (
 func newStores() (store.Store, store.Store) {
 	mem := memstore.New()
 	fs := storage.NewMemFS()
+	rooted, err := storage.NewRootedFS(fs, "/")
+	if err != nil {
+		panic(err)
+	}
 	fss, err := fsstore.New(fsstore.Config{
 		FS:             fs,
-		EntitiesDir:    "/entities",
-		RelationsDir:   "/relations",
-		AttachmentsDir: "/attachments",
-		CacheDir:       "/.rela",
+		Rooted:         rooted,
+		EntitiesKey:    "entities",
+		RelationsKey:   "relations",
+		AttachmentsKey: "attachments",
+		CacheKey:       ".rela",
 	})
 	if err != nil {
 		panic(err)

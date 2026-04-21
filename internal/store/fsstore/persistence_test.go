@@ -16,17 +16,24 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
 
-func newConfig(fs storage.FS) fsstore.Config {
+// newConfig builds an fsstore Config for the given in-memory FS
+// rooted at "/". Shared across fsstore_test files.
+func newConfig(fs *storage.MemFS) fsstore.Config {
+	rooted, err := storage.NewRootedFS(fs, "/")
+	if err != nil {
+		panic(err)
+	}
 	return fsstore.Config{
 		FS:             fs,
-		EntitiesDir:    "/entities",
-		RelationsDir:   "/relations",
-		AttachmentsDir: "/attachments",
-		CacheDir:       "/.rela",
+		Rooted:         rooted,
+		EntitiesKey:    "entities",
+		RelationsKey:   "relations",
+		AttachmentsKey: "attachments",
+		CacheKey:       ".rela",
 	}
 }
 
-func openStore(t *testing.T, fs storage.FS) *fsstore.FSStore {
+func openStore(t *testing.T, fs *storage.MemFS) *fsstore.FSStore {
 	t.Helper()
 	s, err := fsstore.New(newConfig(fs))
 	require.NoError(t, err)

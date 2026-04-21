@@ -5,5 +5,5 @@ title: Migrate fsstore write paths to RootedFS (closes CodeQL path-injection ale
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: review
 ---

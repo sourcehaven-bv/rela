@@ -257,14 +257,9 @@ func TestRecovery_SearchIndexRebuilt(t *testing.T) {
 	// from disk by fsstore itself, feed the search index manually by
 	// iterating the store's current entities.
 	idx := search.NewLinearSearch()
-	s2, err := fsstore.New(fsstore.Config{
-		FS:             fs,
-		EntitiesDir:    "/entities",
-		RelationsDir:   "/relations",
-		AttachmentsDir: "/attachments",
-		CacheDir:       "/.rela",
-		Observers:      []store.EntityObserver{idx},
-	})
+	cfg := newConfig(fs)
+	cfg.Observers = []store.EntityObserver{idx}
+	s2, err := fsstore.New(cfg)
 	require.NoError(t, err)
 	defer s2.Close()
 

@@ -19,8 +19,10 @@ package fsstore
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -36,12 +38,22 @@ import (
 const recentHashCapacity = 4096
 
 // Config holds the configuration for creating a new FSStore.
+//
+// Rooted is the primary write/read surface — every data I/O flows
+// through it, so path validation sits in one auditable place.
+// FS remains for raw operations that legitimately need absolute
+// paths (watcher self-echo reads from fsnotify events).
+//
+// EntitiesKey/RelationsKey/AttachmentsKey/CacheKey are root-relative
+// forward-slash keys (e.g. "entities", ".rela"), not absolute paths.
+// They feed RootedFS directly.
 type Config struct {
 	FS             storage.FS
-	EntitiesDir    string
-	RelationsDir   string
-	AttachmentsDir string
-	CacheDir       string                            // for property-cache.json
+	Rooted         *storage.RootedFS
+	EntitiesKey    string
+	RelationsKey   string
+	AttachmentsKey string
+	CacheKey       string                            // for fsstore-index.json
 	Schemas        map[string]store.EntityTypeSchema // type → plural + property order
 	// Observers are notified synchronously on entity writes (create, update,
 	// delete, rename). They are NOT populated from existing entity files on
@@ -73,22 +85,26 @@ type attachMeta struct {
 
 // FSStore is a filesystem-backed store implementation.
 type FSStore struct {
-	// dirs is used for directory-topology operations (ReadDir, Walk,
-	// Stat, Remove, MkdirAll) and temp-file cleanup.
-	dirs storage.FS
+	// rooted is the validated-key I/O surface. Every read, write,
+	// directory op, and remove that operates on files under the
+	// project root flows through it — the RootedFS.resolve() barrier
+	// sits between callers and the underlying FS.
+	rooted *storage.RootedFS
 
-	// rawReader is the window the watcher uses to read on-disk bytes
-	// for self-echo hashing.
+	// rawReader is the watcher's window into on-disk bytes for
+	// self-echo hashing. Receives fsnotify absolute paths, so it
+	// cannot use RootedFS (which takes keys).
 	rawReader storage.FS
 
-	// bytes is used for byte I/O on data files (entities, relations,
-	// attachments, index).
-	bytes storage.FS
+	// streamingSupported caches rooted.SupportsStreaming() to avoid
+	// walking the decorator chain per attachment write.
+	streamingSupported bool
 
-	entitiesDir  string
-	relationsDir string
-	attachDir    string
-	cacheDir     string
+	// Keys (root-relative forward-slash) for the standard subtrees.
+	entitiesKey  string
+	relationsKey string
+	attachKey    string
+	cacheKey     string
 	schemas      map[string]store.EntityTypeSchema
 
 	// in-memory index
@@ -133,26 +149,38 @@ func (s *FSStore) RecordWrite(path string, content []byte) {
 // relations directories to build the in-memory index, and loads or rebuilds
 // the property value cache.
 func New(cfg Config) (*FSStore, error) {
+	if cfg.Rooted == nil {
+		return nil, errors.New("fsstore: Config.Rooted must not be nil")
+	}
+	if cfg.FS == nil {
+		return nil, errors.New("fsstore: Config.FS must not be nil")
+	}
+	if cfg.EntitiesKey == "" {
+		return nil, errors.New("fsstore: Config.EntitiesKey must not be empty")
+	}
+	if cfg.RelationsKey == "" {
+		return nil, errors.New("fsstore: Config.RelationsKey must not be empty")
+	}
 	if cfg.Schemas == nil {
 		cfg.Schemas = make(map[string]store.EntityTypeSchema)
 	}
 
 	s := &FSStore{
-		dirs:         cfg.FS,
-		rawReader:    cfg.FS,
-		bytes:        cfg.FS,
-		entitiesDir:  cfg.EntitiesDir,
-		relationsDir: cfg.RelationsDir,
-		attachDir:    cfg.AttachmentsDir,
-		cacheDir:     cfg.CacheDir,
-		schemas:      cfg.Schemas,
-		observers:    cfg.Observers,
-		entities:     make(map[string]entityMeta),
-		relations:    make(map[string]relationMeta),
-		attachments:  make(map[string]attachMeta),
-		propCache:    make(map[string]map[string]int),
-		subscribers:  make(map[int]chan store.Event),
-		echoes:       newEchoTracker(recentHashCapacity),
+		rooted:             cfg.Rooted,
+		rawReader:          cfg.FS,
+		streamingSupported: cfg.Rooted.SupportsStreaming(),
+		entitiesKey:        cfg.EntitiesKey,
+		relationsKey:       cfg.RelationsKey,
+		attachKey:          cfg.AttachmentsKey,
+		cacheKey:           cfg.CacheKey,
+		schemas:            cfg.Schemas,
+		observers:          cfg.Observers,
+		entities:           make(map[string]entityMeta),
+		relations:          make(map[string]relationMeta),
+		attachments:        make(map[string]attachMeta),
+		propCache:          make(map[string]map[string]int),
+		subscribers:        make(map[int]chan store.Event),
+		echoes:             newEchoTracker(recentHashCapacity),
 	}
 
 	s.cleanupTempFiles()
@@ -165,6 +193,25 @@ func New(cfg Config) (*FSStore, error) {
 	return s, nil
 }
 
+// absPath resolves a key to an absolute path. Used by the watcher
+// (which needs absolute paths for fsnotify) and the self-echo LRU
+// interaction points, where paths must match what SafeFS.OnPostWrite
+// observes.
+//
+// Returns ("", nil) on resolve failure — keys constructed from
+// configured fields should always resolve, but upstream validators
+// (storeutil.ValidateID) don't cover all cases RootedFS rejects
+// (e.g. Windows reserved names). A resolve failure here means no
+// file was ever written under that key, so the LRU can safely no-op
+// a Forget and the watcher can safely skip-setup.
+func (s *FSStore) absPath(key string) string {
+	abs, err := s.rooted.AbsPath(key)
+	if err != nil {
+		return ""
+	}
+	return abs
+}
+
 // loadAttachmentsIndex walks the attachments directory and populates
 // in-memory metadata. Missing directory and read errors are swallowed
 // — a partial index is preferable to failing the open.
@@ -173,15 +220,15 @@ func New(cfg Config) (*FSStore, error) {
 // contents during index load. Previously used s.bytes.ReadFile which
 // pulled every attachment into memory on every store open.
 func (s *FSStore) loadAttachmentsIndex() {
-	if s.attachDir == "" {
+	if s.attachKey == "" {
 		return
 	}
 
-	if _, err := s.dirs.Stat(s.attachDir); err != nil {
+	if _, err := s.rooted.Stat(s.attachKey); err != nil {
 		return
 	}
 
-	entries, err := s.dirs.ReadDir(s.attachDir)
+	entries, err := s.rooted.ReadDir(s.attachKey)
 	if err != nil {
 		return
 	}
@@ -191,7 +238,7 @@ func (s *FSStore) loadAttachmentsIndex() {
 			continue
 		}
 		entityID := entityEntry.Name()
-		propEntries, err := s.dirs.ReadDir(filepath.Join(s.attachDir, entityID))
+		propEntries, err := s.rooted.ReadDir(path.Join(s.attachKey, entityID))
 		if err != nil {
 			continue
 		}
@@ -200,7 +247,7 @@ func (s *FSStore) loadAttachmentsIndex() {
 				continue
 			}
 			prop := propEntry.Name()
-			fileEntries, err := s.dirs.ReadDir(filepath.Join(s.attachDir, entityID, prop))
+			fileEntries, err := s.rooted.ReadDir(path.Join(s.attachKey, entityID, prop))
 			if err != nil {
 				continue
 			}
@@ -260,18 +307,19 @@ func (s *FSStore) notifyDelete(id string) {
 	}
 }
 
-// entityFilePath returns the path for an entity file: entities/<plural>/<id>.md
-func (s *FSStore) entityFilePath(entityType, id string) string {
+// entityFileKey returns the key for an entity file:
+// "<entitiesKey>/<plural>/<id>.md" — forward slashes, no leading slash.
+func (s *FSStore) entityFileKey(entityType, id string) string {
 	plural := entityType + "s"
 	if schema, ok := s.schemas[entityType]; ok && schema.Plural != "" {
 		plural = schema.Plural
 	}
-	return filepath.Join(s.entitiesDir, plural, id+".md")
+	return path.Join(s.entitiesKey, plural, id+".md")
 }
 
-// relationFilePath returns the path for a relation file.
-func (s *FSStore) relationFilePath(from, relType, to string) string {
-	return filepath.Join(s.relationsDir, from+"--"+relType+"--"+to+".md")
+// relationFileKey returns the key for a relation file.
+func (s *FSStore) relationFileKey(from, relType, to string) string {
+	return path.Join(s.relationsKey, from+"--"+relType+"--"+to+".md")
 }
 
 // propertyOrder returns the property order for an entity type, if configured.
@@ -288,22 +336,24 @@ func (s *FSStore) propertyOrder(entityType string) []string {
 // writeFile → rename paths and are never expected to survive a normal
 // process shutdown.
 func (s *FSStore) cleanupTempFiles() {
-	for _, dir := range []string{s.entitiesDir, s.relationsDir} {
-		if dir == "" {
+	for _, dirKey := range []string{s.entitiesKey, s.relationsKey} {
+		if dirKey == "" {
 			continue
 		}
 		var toRemove []string
-		_ = s.dirs.Walk(dir, func(path string, d os.DirEntry, err error) error {
+		if err := s.rooted.Walk(dirKey, func(p string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return nil //nolint:nilerr // walker continuation on error is intentional
 			}
-			if strings.HasSuffix(path, ".new") || strings.HasSuffix(path, ".tmp") {
-				toRemove = append(toRemove, path)
+			if strings.HasSuffix(p, ".new") || strings.HasSuffix(p, ".tmp") {
+				toRemove = append(toRemove, p)
 			}
 			return nil
-		})
-		for _, path := range toRemove {
-			_ = s.dirs.Remove(path)
+		}); err != nil {
+			slog.Warn("fsstore: temp-file cleanup walk failed", "dir", dirKey, "err", err)
+		}
+		for _, p := range toRemove {
+			_ = s.rooted.Remove(p)
 		}
 	}
 }

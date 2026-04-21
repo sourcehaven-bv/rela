@@ -344,6 +344,81 @@ func (s *callSpyFS) WriteFile(path string, data []byte, perm os.FileMode) error 
 	return s.FS.WriteFile(path, data, perm)
 }
 
+func TestRootedFS_OpenForWrite_WritesAndReadsBack(t *testing.T) {
+	// OS-backed: OpenForWrite uses os.OpenFile directly.
+	dir := t.TempDir()
+	rfs, err := NewRootedFS(NewOsFS(), dir)
+	if err != nil {
+		t.Fatalf("NewRootedFS: %v", err)
+	}
+	wc, err := rfs.OpenForWrite("stream.txt", 0o644)
+	if err != nil {
+		t.Fatalf("OpenForWrite: %v", err)
+	}
+	if _, writeErr := wc.Write([]byte("hello streaming")); writeErr != nil {
+		t.Fatalf("Write: %v", writeErr)
+	}
+	if closeErr := wc.Close(); closeErr != nil {
+		t.Fatalf("Close: %v", closeErr)
+	}
+	got, err := rfs.ReadFile("stream.txt")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != "hello streaming" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestRootedFS_OpenForWrite_RejectsBadKey(t *testing.T) {
+	// Bad-key rejection happens in resolve, before os.OpenFile is reached,
+	// so MemFS is fine here.
+	rfs := newTestRooted(t)
+	_, err := rfs.OpenForWrite("../escape", 0o644)
+	if err == nil {
+		t.Fatal("expected error for bad key")
+	}
+}
+
+func TestRootedFS_OpenForWrite_CreatesParentDirs(t *testing.T) {
+	// Needs OS-backed FS since we use os.OpenFile; skip on memfs.
+	dir := t.TempDir()
+	rfs, err := NewRootedFS(NewOsFS(), dir)
+	if err != nil {
+		t.Fatalf("NewRootedFS: %v", err)
+	}
+	wc, err := rfs.OpenForWrite("deep/nested/stream.txt", 0o644)
+	if err != nil {
+		t.Fatalf("OpenForWrite: %v", err)
+	}
+	if _, err := wc.Write([]byte("x")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := wc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestRootedFS_AbsPath(t *testing.T) {
+	rfs := newTestRooted(t)
+	full, err := rfs.AbsPath("sub/file.txt")
+	if err != nil {
+		t.Fatalf("AbsPath: %v", err)
+	}
+	want := filepath.Join(rfs.root, "sub", "file.txt")
+	if full != want {
+		t.Fatalf("AbsPath = %q, want %q", full, want)
+	}
+}
+
+func TestRootedFS_AbsPath_RejectsBadKey(t *testing.T) {
+	rfs := newTestRooted(t)
+	_, err := rfs.AbsPath("..")
+	if err == nil {
+		t.Fatal("expected error for bad key")
+	}
+}
+
 func TestRootedFS_WriteFile_CreatesParentDirs(t *testing.T) {
 	rfs := newTestRooted(t)
 	// No explicit MkdirAll — WriteFile should create parents itself.
