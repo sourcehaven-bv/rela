@@ -165,13 +165,14 @@ func TestCacheSetRejectsIndirectCycle(t *testing.T) {
 	}
 }
 
-func TestLogFieldsBareKeyEmitsUnnamespacedMarker(t *testing.T) {
-	// If a caller ever slips a bare key past the namespacing layer,
-	// the log line should surface the anomaly with a literal sentinel
-	// rather than a plausible-looking sha256("") hash that collides
-	// across every such entry.
-	fields := logFields("miss", "bare-no-separator")
-	// Walk the k/v pairs looking for namespace_hash.
+func TestLogFieldsShortKeyEmitsUnnamespacedMarker(t *testing.T) {
+	// Keys constructed via requireCacheContext always have a 16-char
+	// hex prefix (the namespace hash). A key shorter than 16 chars
+	// could only arrive if a Go caller bypassed requireCacheContext
+	// and called cache.get/set directly. When that happens, log
+	// operators should see a literal sentinel instead of a truncated
+	// slice that looks like a plausible hash.
+	fields := logFields("miss", "short")
 	for i := 0; i < len(fields); i += 2 {
 		k, _ := fields[i].(string)
 		if k != "namespace_hash" {

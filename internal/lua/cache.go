@@ -1,10 +1,9 @@
 package lua
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"math"
 	"sort"
@@ -31,17 +30,18 @@ const (
 	// re-running on short intervals.
 	defaultCacheTTL = time.Hour
 
-	// cacheNamespaceSeparator is an octet that cannot appear in POSIX
-	// paths, so prepending "<scriptPath>\x00" to a user key yields a
-	// namespaced key that cannot collide with a differently-namespaced
-	// entry.
-	cacheNamespaceSeparator = "\x00"
-
-	// hashFieldLen is the number of hex characters (= bytes/2) kept from
-	// a sha256 digest when emitting diagnostic fields. 16 hex chars =
-	// 64 bits = collision-resistant enough for debug logging without
-	// bloating each line.
-	hashFieldLen = 16
+	// hashFieldHexLen is the width in hex characters of the diagnostic
+	// fields emitted to logs AND of the fixed-width namespace prefix in
+	// stored keys. fnv-1a 64-bit gives 16 hex chars. Crypto strength
+	// isn't needed here — we're not storing user data, comparing
+	// user-supplied input against trusted values, or guarding anything
+	// with these; fnv is ~10× faster than sha256 and allocation-free.
+	//
+	// Collision risk: namespaces are hashed to this width before
+	// concatenation with the user key, which means two paths that fnv
+	// collide would share a cache namespace. Probability for N scripts
+	// sharing 2^64 space is ~N²/2^65, negligible for any realistic N.
+	hashFieldHexLen = 16
 
 	// maxCacheTTLSeconds is the largest accepted TTL (in seconds) we
 	// can convert to a time.Duration without float64→int64 overflow.
@@ -203,47 +203,44 @@ func (c *Cache) evictLRULocked() {
 // hashKey returns a short hex digest of s, suitable for diagnostic
 // logging. Never log the raw key — it may contain user data (entity
 // properties, AI prompts, paths).
+//
+// Uses fnv-1a 64-bit because the use case is "make a stable identifier
+// for log grep," not "resist pre-image attacks." Same 16-hex-char
+// width as the sha256[:16] it replaces, so existing grep patterns
+// keep working.
 func hashKey(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])[:hashFieldLen]
-}
-
-// splitNamespaced returns the namespace and user-key halves of a
-// namespaced cache key. Only used for log-field construction; if the
-// separator is missing (shouldn't happen) the whole string is treated
-// as a key with no namespace.
-func splitNamespaced(namespacedKey string) (namespace, user string) {
-	for i := range len(namespacedKey) {
-		if namespacedKey[i] == cacheNamespaceSeparator[0] {
-			return namespacedKey[:i], namespacedKey[i+1:]
-		}
-	}
-	return "", namespacedKey
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(s))
+	return fmt.Sprintf("%0*x", hashFieldHexLen, h.Sum64())
 }
 
 // unnamespacedMarker is the literal value emitted for namespace_hash
-// when a cache key lacks the \x00 separator. Using a stable literal
-// (instead of sha256("")) surfaces the anomaly to log operators
-// instead of shipping a plausible-looking hash that collides across
-// every improperly-namespaced entry.
+// when a cache key is shorter than the fixed-width namespace prefix
+// (shouldn't happen via the Lua bindings, but might via a direct Go
+// call with a hand-built key). A stable literal surfaces the anomaly
+// to log operators instead of shipping a truncated hex string that
+// looks plausible.
 const unnamespacedMarker = "<unnamespaced>"
 
 // logFields builds the (namespace_hash, key_hash) pair for a cache log
-// line, given a namespaced key. Safe to call with any string — never
-// emits the raw values. Keys that arrive without the namespace
-// separator (shouldn't happen via the Lua bindings, but might via a
-// direct Go call) are flagged with a sentinel in namespace_hash so
-// operators notice.
+// line from a fully-namespaced cache key. Safe to call with any string
+// — never emits the raw user key.
+//
+// Keys are `hashKey(scriptPath) + userKey` with a fixed-width prefix,
+// so the namespace half is a slice (no scan, no re-hash). The user
+// half is hashed for the log field — we do not log raw user keys,
+// they may contain entity properties, AI prompts, or paths.
 func logFields(event, namespacedKey string) []any {
-	ns, user := splitNamespaced(namespacedKey)
 	nsHash := unnamespacedMarker
-	if ns != "" {
-		nsHash = hashKey(ns)
+	userHash := hashKey(namespacedKey)
+	if len(namespacedKey) >= hashFieldHexLen {
+		nsHash = namespacedKey[:hashFieldHexLen]
+		userHash = hashKey(namespacedKey[hashFieldHexLen:])
 	}
 	return []any{
 		"cache", event,
 		"namespace_hash", nsHash,
-		"key_hash", hashKey(user),
+		"key_hash", userHash,
 	}
 }
 
@@ -268,6 +265,14 @@ func (r *Runtime) registerCacheBindings(rela *glua.LTable) {
 // enforces the "no cache outside of RunFile" rule by raising a Lua
 // error when scriptPath is unset. Returns the namespaced key for the
 // given user key, and validates its length.
+//
+// The namespaced-key format is a fixed-width hex hash of the script
+// path followed by the raw user key, with no separator. That lets
+// splitNamespaced / logFields reconstruct the namespace hash with
+// O(1) slicing instead of scanning for a separator byte, and removes
+// any reliance on the user key not containing the separator. Raw
+// script paths are never stored in cache keys (they'd leak structure
+// on any memory dump).
 func (r *Runtime) requireCacheContext(ls *glua.LState, userKey string) string {
 	if r.scriptPath == "" {
 		ls.RaiseError("cache: not available in inline/eval contexts")
@@ -278,7 +283,7 @@ func (r *Runtime) requireCacheContext(ls *glua.LState, userKey string) string {
 			len(userKey), maxCacheKeyBytes)
 		return ""
 	}
-	return r.scriptPath + cacheNamespaceSeparator + userKey
+	return hashKey(r.scriptPath) + userKey
 }
 
 // cacheOptions captures the parsed options table for set/memoize.
