@@ -221,7 +221,11 @@ func TestRewriteDocumentLinks(t *testing.T) {
 func TestDocumentDiskCache(t *testing.T) {
 	fs := storage.NewMemFS()
 	_ = fs.MkdirAll("/p/.rela", 0o755)
-	kv := state.NewFSKV(fs, "/p/.rela")
+	kvRoot, err := storage.NewRootedFS(fs, "/p/.rela")
+	if err != nil {
+		t.Fatalf("NewRootedFS: %v", err)
+	}
+	kv := state.NewFSKV(kvRoot)
 
 	t.Run("cache file naming", func(t *testing.T) {
 		entryID := "REQ-001"

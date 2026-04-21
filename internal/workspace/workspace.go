@@ -528,12 +528,19 @@ func (w *Workspace) Config() config.Loader {
 }
 
 // State returns the per-user state KV (UI state, render caches, scheduler state).
-// Returns a no-op KV when the workspace has no filesystem configured.
+// Returns a no-op KV when the workspace has no filesystem or cache directory
+// configured. A non-empty CacheDir with an invalid value panics — this
+// indicates programmer error (the CacheDir was populated but malformed),
+// which should fail loud rather than silently degrade to nopState.
 func (w *Workspace) State() state.KV {
-	if w.fs == nil || w.paths == nil {
+	if w.fs == nil || w.paths == nil || w.paths.CacheDir == "" {
 		return nopState{}
 	}
-	return state.NewFSKV(w.fs, w.paths.CacheDir)
+	rfs, err := storage.NewRootedFS(w.fs, w.paths.CacheDir)
+	if err != nil {
+		panic(fmt.Errorf("workspace: invalid state root %q: %w", w.paths.CacheDir, err))
+	}
+	return state.NewFSKV(rfs)
 }
 
 type nopConfig struct{}
