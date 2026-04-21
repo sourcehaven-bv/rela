@@ -5,7 +5,7 @@ title: Fix enum list property input, rendering, and validation in data-entry
 kind: enhancement
 priority: medium
 effort: s
-status: in-progress
+status: done
 ---
 
 ## Problem

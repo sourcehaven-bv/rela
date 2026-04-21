@@ -150,7 +150,7 @@ Effort: **s** (~1 day: 3 small component changes + a new helper + tests).
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: user approved the plan directly in review with "looks good, start coding")
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: no design-review run; no findings)
 
 **Design Review Findings:** <!-- To be filled after /design-review run -->
