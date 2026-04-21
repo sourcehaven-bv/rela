@@ -58,7 +58,7 @@ export interface ListParams {
 // Side panel types
 export interface SidePanelField {
   label: string
-  value: string
+  values?: string[]
   propType?: string
 }
 

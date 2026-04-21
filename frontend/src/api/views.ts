@@ -4,7 +4,7 @@ import type { Entity } from '@/types'
 // Field data for view sections
 export interface ViewSectionField {
   label: string
-  value: string
+  values?: string[]
   propType?: string
 }
 

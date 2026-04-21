@@ -100,3 +100,13 @@ const badgeClass = computed(() => {
   color: var(--badge-yellow);
 }
 </style>
+
+<style>
+/* Shared row layout for rendering multiple badges from a list-typed value.
+   Unscoped so any consumer can wrap badges in <div class="badge-row">. */
+.badge-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+</style>

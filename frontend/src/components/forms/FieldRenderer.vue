@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { FormFieldOrRelation, PropertyDef } from '@/types'
 import RruleBuilder from './RruleBuilder.vue'
+import TagSelect from '@/components/ui/TagSelect.vue'
 
 const props = defineProps<{
   field: FormFieldOrRelation
@@ -105,10 +106,8 @@ function handleInput(event: Event) {
   }
 }
 
-function handleMultiSelect(event: Event) {
-  const select = event.target as HTMLSelectElement
-  const selected = Array.from(select.selectedOptions).map((opt) => opt.value)
-  emit('update', selected)
+function handleTagSelect(value: string[]) {
+  emit('update', value)
 }
 </script>
 
@@ -145,23 +144,14 @@ function handleMultiSelect(event: Event) {
       @input="handleInput"
     />
 
-    <!-- Multi-select -->
-    <select
+    <!-- Multi-select (SlimSelect via TagSelect) -->
+    <TagSelect
       v-else-if="isMultiSelect"
-      :id="`field-${field.property}`"
-      :disabled="readonly"
-      multiple
-      @change="handleMultiSelect"
-    >
-      <option
-        v-for="opt in options"
-        :key="opt"
-        :value="opt"
-        :selected="arrayValue.includes(opt)"
-      >
-        {{ opt }}
-      </option>
-    </select>
+      :model-value="arrayValue.map(String)"
+      :options="options"
+      :placeholder="placeholder || 'Select...'"
+      @update:model-value="handleTagSelect"
+    />
 
     <!-- Select -->
     <select
@@ -278,10 +268,6 @@ textarea:disabled,
 select:disabled {
   background: var(--hover-bg);
   cursor: not-allowed;
-}
-
-select[multiple] {
-  min-height: 120px;
 }
 
 .has-error input,

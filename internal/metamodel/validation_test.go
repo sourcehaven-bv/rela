@@ -164,6 +164,103 @@ func TestValidatePropertyValue_EnumEmptyString(t *testing.T) {
 	}
 }
 
+func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
+	// An empty list is "no value" for a list-typed property. For non-required
+	// properties it must pass validation; for required ones it's reported as
+	// missing (same shape as the empty-string / missing-key checks).
+	meta := &Metamodel{
+		Types: map[string]CustomType{
+			"ticket_tag": {
+				Values: []string{"bug", "ui", "infra"},
+			},
+		},
+	}
+	schema := &EntityDef{
+		Properties: map[string]PropertyDef{
+			"optional_tags": {Type: "ticket_tag", List: true, Required: false},
+			"required_tags": {Type: "ticket_tag", List: true, Required: true},
+		},
+	}
+
+	t.Run("empty []string for optional list passes", func(t *testing.T) {
+		errs := meta.ValidateProperties(
+			map[string]interface{}{
+				"optional_tags": []string{},
+				"required_tags": []string{"bug"},
+			},
+			schema,
+		)
+		if len(errs) != 0 {
+			t.Errorf("expected no errors, got: %v", errs)
+		}
+	})
+
+	t.Run("empty []interface{} for optional list passes", func(t *testing.T) {
+		errs := meta.ValidateProperties(
+			map[string]interface{}{
+				"optional_tags": []interface{}{},
+				"required_tags": []string{"bug"},
+			},
+			schema,
+		)
+		if len(errs) != 0 {
+			t.Errorf("expected no errors, got: %v", errs)
+		}
+	})
+
+	t.Run("missing optional list passes", func(t *testing.T) {
+		errs := meta.ValidateProperties(
+			map[string]interface{}{"required_tags": []string{"bug"}},
+			schema,
+		)
+		if len(errs) != 0 {
+			t.Errorf("expected no errors, got: %v", errs)
+		}
+	})
+
+	t.Run("empty []string for required list reports required error", func(t *testing.T) {
+		errs := meta.ValidateProperties(
+			map[string]interface{}{
+				"optional_tags": []string{"bug"},
+				"required_tags": []string{},
+			},
+			schema,
+		)
+		if len(errs) != 1 {
+			t.Fatalf("expected 1 error, got: %v", errs)
+		}
+		if errs[0].Type != ValidationErrorRequired || errs[0].Property != "required_tags" {
+			t.Errorf("expected required error on required_tags, got: %+v", errs[0])
+		}
+	})
+
+	t.Run("non-empty list with valid items passes", func(t *testing.T) {
+		errs := meta.ValidateProperties(
+			map[string]interface{}{
+				"optional_tags": []string{"bug", "ui"},
+				"required_tags": []string{"infra"},
+			},
+			schema,
+		)
+		if len(errs) != 0 {
+			t.Errorf("expected no errors, got: %v", errs)
+		}
+	})
+
+	t.Run("non-empty list with invalid item still fails", func(t *testing.T) {
+		errs := meta.ValidateProperties(
+			map[string]interface{}{
+				"optional_tags": []string{"bogus"},
+				"required_tags": []string{"infra"},
+			},
+			schema,
+		)
+		if len(errs) == 0 {
+			t.Error("expected invalid-value error, got none")
+		}
+	})
+}
+
 func TestValidateEntity_IDPatternValidation(t *testing.T) {
 	// Verify ID pattern validation is included
 	meta := &Metamodel{

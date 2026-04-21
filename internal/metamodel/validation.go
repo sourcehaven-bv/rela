@@ -40,7 +40,7 @@ func (m *Metamodel) ValidateProperties(props map[string]interface{}, schema Prop
 	for propName, propDef := range schema.PropertyDefs() {
 		if propDef.Required {
 			val, exists := props[propName]
-			if !exists || val == nil || val == "" {
+			if !exists || val == nil || val == "" || isEmptyList(val) {
 				errs = append(errs, &ValidationError{
 					Type:     ValidationErrorRequired,
 					Property: propName,
@@ -57,9 +57,9 @@ func (m *Metamodel) ValidateProperties(props map[string]interface{}, schema Prop
 			continue
 		}
 
-		// Skip empty strings - they represent "no value"
-		// For required properties, this is already reported as missing above
-		if val == "" {
+		// Skip empty strings and empty lists - they represent "no value".
+		// For required properties, this is already reported as missing above.
+		if val == "" || isEmptyList(val) {
 			continue
 		}
 
@@ -122,6 +122,19 @@ func (m *Metamodel) ValidateRelationProperties(
 	}
 
 	return m.ValidateProperties(properties, &def)
+}
+
+// isEmptyList reports whether val is a zero-length slice. Both []string
+// (coerced from form submissions) and []interface{} (from YAML frontmatter)
+// are treated as list values.
+func isEmptyList(val interface{}) bool {
+	switch v := val.(type) {
+	case []string:
+		return len(v) == 0
+	case []interface{}:
+		return len(v) == 0
+	}
+	return false
 }
 
 // ValidatePropertyValue validates a single property value against its definition.
@@ -285,8 +298,6 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 // validateCustomTypeValue validates a value against a custom type's allowed values and regex validations.
 // Supports both single string values and []string (multi-select).
 // Returns an error combining all validation failures.
-//
-//nolint:funlen // validation logic for multiple cases; splitting would reduce readability
 func validateCustomTypeValue(propName string, customType CustomType, val interface{}) *ValidationError {
 	hasEnumValues := len(customType.Values) > 0
 	hasValidations := len(customType.Validations) > 0
@@ -309,15 +320,10 @@ func validateCustomTypeValue(propName string, customType CustomType, val interfa
 		allowed[v] = true
 	}
 
-	// Handle []string (multi-select from form submission)
+	// Handle []string (multi-select from form submission).
+	// An empty list means "no value" and is the caller's job to reject
+	// via the required check — here we only validate present items.
 	if list, ok := val.([]string); ok {
-		if len(list) == 0 && hasEnumValues {
-			return &ValidationError{
-				Type:     ValidationErrorInvalidValue,
-				Property: propName,
-				Message:  fmt.Sprintf("Empty list (allowed: %v)", customType.Values),
-			}
-		}
 		// Collect all errors from all list items
 		var allErrors []string
 		for i, s := range list {
@@ -339,15 +345,9 @@ func validateCustomTypeValue(propName string, customType CustomType, val interfa
 		return nil
 	}
 
-	// Handle []interface{} (from YAML parsing)
+	// Handle []interface{} (from YAML parsing).
+	// An empty list is treated as "no value" — see []string branch above.
 	if list, ok := val.([]interface{}); ok {
-		if len(list) == 0 && hasEnumValues {
-			return &ValidationError{
-				Type:     ValidationErrorInvalidValue,
-				Property: propName,
-				Message:  fmt.Sprintf("Empty list (allowed: %v)", customType.Values),
-			}
-		}
 		// Collect all errors from all list items
 		var allErrors []string
 		for i, item := range list {

@@ -8,10 +8,47 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
+// propertyToStrings normalises a property value into a slice of non-empty
+// strings. Handles scalars, []string, and []any (the three shapes markdown
+// frontmatter can produce). nil or empty input returns an empty slice.
+func propertyToStrings(v any) []string {
+	if v == nil {
+		return nil
+	}
+	switch t := v.(type) {
+	case []string:
+		out := make([]string, 0, len(t))
+		for _, s := range t {
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			s := fmt.Sprintf("%v", item)
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		s := fmt.Sprintf("%v", t)
+		if s == "" {
+			return nil
+		}
+		return []string{s}
+	}
+}
+
 // SectionFieldData holds a single resolved field for template rendering.
+// Values is always a list so that list-typed properties (list: true in the
+// metamodel) retain per-item structure; scalar properties become a 1-element
+// slice. Empty properties emit an empty slice.
 type SectionFieldData struct {
 	Label    string
-	Value    string
+	Values   []string
 	PropType string
 }
 
@@ -116,10 +153,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 			switch sec.Display {
 			case "properties":
 				for _, f := range sec.Fields {
-					val := ""
-					if v := e.Properties[f.Property]; v != nil {
-						val = fmt.Sprintf("%v", v)
-					}
+					values := propertyToStrings(e.Properties[f.Property])
 					propType := ""
 					if entDef != nil {
 						if pd, ok := entDef.Properties[f.Property]; ok {
@@ -131,7 +165,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 						label = titleCase(f.Property)
 					}
 					sd.Fields = append(sd.Fields, SectionFieldData{
-						Label: label, Value: val, PropType: propType,
+						Label: label, Values: values, PropType: propType,
 					})
 				}
 			case "content":
@@ -156,10 +190,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 						EditFormID: a.editFormForType(e.Type),
 					}
 					for _, f := range sec.Fields {
-						val := ""
-						if v := e.Properties[f.Property]; v != nil {
-							val = fmt.Sprintf("%v", v)
-						}
+						values := propertyToStrings(e.Properties[f.Property])
 						propType := ""
 						if eDef != nil {
 							if pd, ok := eDef.Properties[f.Property]; ok {
@@ -171,7 +202,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 							label = titleCase(f.Property)
 						}
 						sed.Fields = append(sed.Fields, SectionFieldData{
-							Label: label, Value: val, PropType: propType,
+							Label: label, Values: values, PropType: propType,
 						})
 					}
 					sd.Entities = append(sd.Entities, sed)
@@ -247,10 +278,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 						HasContent: e.Content != "",
 					}
 					for _, f := range sec.Fields {
-						val := ""
-						if v := e.Properties[f.Property]; v != nil {
-							val = fmt.Sprintf("%v", v)
-						}
+						values := propertyToStrings(e.Properties[f.Property])
 						propType := ""
 						if eDef != nil {
 							if pd, ok := eDef.Properties[f.Property]; ok {
@@ -262,7 +290,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 							label = titleCase(f.Property)
 						}
 						sed.Fields = append(sed.Fields, SectionFieldData{
-							Label: label, Value: val, PropType: propType,
+							Label: label, Values: values, PropType: propType,
 						})
 					}
 					sd.Entities = append(sd.Entities, sed)

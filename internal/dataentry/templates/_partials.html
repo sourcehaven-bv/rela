@@ -1,15 +1,15 @@
 {{/* Reusable template partials */}}
 
 {{/* field-value: renders a field value with badge styling when applicable */}}
-{{/* Expects: .Label, .Value, .PropType */}}
+{{/* Expects: .Label, .Values ([]string), .PropType */}}
 {{- define "field-value" -}}
-{{ if .Value }}{{ if isBadgeType .PropType }}<span class="badge {{ badgeClass .PropType .Value }}">{{ .Value }}</span>{{ else }}{{ .Value }}{{ end }}{{ end }}
+{{ if .Values }}{{ $pt := .PropType }}{{ range $i, $v := .Values }}{{ if $i }} {{ end }}{{ if isBadgeType $pt }}<span class="badge {{ badgeClass $pt $v }}">{{ $v }}</span>{{ else }}{{ $v }}{{ end }}{{ end }}{{ end }}
 {{- end -}}
 
 {{/* field-row: renders a label + value row with badge styling */}}
-{{/* Expects: .Label, .Value, .PropType */}}
+{{/* Expects: .Label, .Values ([]string), .PropType */}}
 {{- define "field-row" -}}
-{{ if .Value }}<div class="field-row"><span class="field-label">{{ .Label }}:</span> {{ template "field-value" . }}</div>{{ end }}
+{{ if .Values }}<div class="field-row"><span class="field-label">{{ .Label }}:</span> {{ template "field-value" . }}</div>{{ end }}
 {{- end -}}
 
 {{/* card-props: renders relation property values for display on cards */}}

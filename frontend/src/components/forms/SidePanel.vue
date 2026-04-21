@@ -122,7 +122,17 @@ onMounted(() => loadSidePanel())
             <dl class="properties-list">
               <div v-for="field in section.fields" :key="field.label" class="property-item">
                 <dt>{{ field.label }}</dt>
-                <dd>{{ field.value || '-' }}</dd>
+                <dd>
+                  <div v-if="field.propType === 'enum' && field.values?.length" class="badge-row">
+                    <Badge
+                      v-for="v in field.values"
+                      :key="v"
+                      :value="v"
+                      :property="field.label.toLowerCase()"
+                    />
+                  </div>
+                  <template v-else>{{ field.values?.join(', ') || '-' }}</template>
+                </dd>
               </div>
             </dl>
           </template>
@@ -157,12 +167,15 @@ onMounted(() => loadSidePanel())
                 <div v-if="entity.fields?.length" class="card-fields">
                   <div v-for="field in entity.fields" :key="field.label" class="card-field">
                     <span class="field-label">{{ field.label }}:</span>
-                    <Badge
-                      v-if="field.propType === 'enum'"
-                      :value="field.value"
-                      :property="field.label.toLowerCase()"
-                    />
-                    <span v-else class="field-value">{{ field.value }}</span>
+                    <div v-if="field.propType === 'enum' && field.values?.length" class="badge-row">
+                      <Badge
+                        v-for="v in field.values"
+                        :key="v"
+                        :value="v"
+                        :property="field.label.toLowerCase()"
+                      />
+                    </div>
+                    <span v-else class="field-value">{{ field.values?.join(', ') || '-' }}</span>
                   </div>
                 </div>
               </div>

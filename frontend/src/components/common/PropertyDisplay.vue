@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import Badge from './Badge.vue'
-import { formatValue, isEnumProperty } from '@/utils/format'
+import { asArray, formatValue, isEnumProperty } from '@/utils/format'
 import type { EntityType } from '@/types'
 
 export interface PropertyItem {
@@ -19,16 +19,24 @@ defineProps<{
 }>()
 
 function shouldUseBadge(prop: PropertyItem): boolean {
-  // Check if it's an enum property (has values array or propType)
-  if (isEnumProperty(prop)) return prop.value != null && prop.value !== ''
+  if (!hasBadgeValue(prop)) return false
+  if (isEnumProperty(prop)) return true
   // Also show badge if propType is explicitly set (CustomView API response)
-  if (prop.propType && prop.value != null && prop.value !== '') return true
-  return false
+  return !!prop.propType
+}
+
+function hasBadgeValue(prop: PropertyItem): boolean {
+  if (Array.isArray(prop.value)) return asArray(prop.value).length > 0
+  return prop.value != null && prop.value !== ''
 }
 
 function getBadgeProperty(prop: PropertyItem): string {
   // Use propType if available (from CustomView API), otherwise use property name
   return prop.propType || prop.name
+}
+
+function getBadgeValues(prop: PropertyItem): string[] {
+  return asArray(prop.value)
 }
 
 function isLong(prop: PropertyItem): boolean {
@@ -48,12 +56,15 @@ function isLong(prop: PropertyItem): boolean {
     >
       <dt>{{ prop.label }}</dt>
       <dd>
-        <Badge
-          v-if="shouldUseBadge(prop)"
-          :value="String(prop.value)"
-          :property="getBadgeProperty(prop)"
-          :entity-type="entityType"
-        />
+        <div v-if="shouldUseBadge(prop)" class="badge-row">
+          <Badge
+            v-for="badgeValue in getBadgeValues(prop)"
+            :key="badgeValue"
+            :value="badgeValue"
+            :property="getBadgeProperty(prop)"
+            :entity-type="entityType"
+          />
+        </div>
         <span v-else>{{ formatValue(prop.value, prop.type) }}</span>
       </dd>
     </div>

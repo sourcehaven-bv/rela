@@ -283,8 +283,13 @@ function validate(): boolean {
         }
       }
 
-      if (propDef.values?.length && !propDef.values.includes(String(value))) {
-        errors.value[propName] = `Must be one of: ${propDef.values.join(', ')}`
+      if (propDef.values?.length) {
+        const allowed = propDef.values
+        const items = propDef.list && Array.isArray(value) ? value : [value]
+        const invalid = items.some((v) => !allowed.includes(String(v)))
+        if (invalid) {
+          errors.value[propName] = `Must be one of: ${allowed.join(', ')}`
+        }
       }
     }
   }

@@ -10,6 +10,7 @@ import type { PropertyDef, EntityType } from '@/types'
  */
 export function formatValue(value: unknown, type?: string): string {
   if (value === null || value === undefined) return '-'
+  if (Array.isArray(value) && value.length === 0) return '-'
 
   if (type === 'date' && typeof value === 'string') {
     const date = new Date(value)
@@ -92,6 +93,16 @@ export function getCellValue(
  */
 export function isEnumProperty(prop: { type?: string; values?: string[] }): boolean {
   return prop.type === 'enum' || (prop.values?.length ?? 0) > 0
+}
+
+/**
+ * Coerce a property value to an array of non-empty strings.
+ * Used for list-typed properties where the value may be a raw array,
+ * a single scalar, or null/undefined.
+ */
+export function asArray(value: unknown): string[] {
+  const items = Array.isArray(value) ? value : value == null || value === '' ? [] : [value]
+  return items.map((v) => String(v)).filter((s) => s !== '')
 }
 
 /**
