@@ -198,32 +198,20 @@ test.describe('Edit Form - Default Relation Picker Save', () => {
     createdCategoryIds = []
   })
 
-  test('adding a target in the picker persists after Save', async ({ apiPage, api }) => {
+  test('adding a target in the picker persists after Save', async ({ pages, api }) => {
     const [catAId, catBId] = createdCategoryIds
+    const formPage = pages.form(`edit_ticket/${testTicketId}`)
 
-    await apiPage.goto(`/form/edit_ticket/${testTicketId}`)
-    await apiPage.locator('input[placeholder^="Search "]').first().waitFor({ state: 'visible', timeout: 10000 })
+    await formPage.goto()
+    await formPage.waitForLoad()
+    await formPage.waitForRelationPicker()
+    await formPage.pickRelationTarget('category', catBId)
 
-    // Fill with the full target id. The RelationPicker matches on
-    // id/title substrings so passing the whole id avoids hard-coding
-    // metamodel knowledge (id prefix, sequential format, etc.).
-    const search = apiPage.locator('input[placeholder^="Search category"]').first()
-    await search.fill(catBId)
-    const option = apiPage.locator(`.dropdown-item:has-text("${catBId}")`).first()
-    await option.click({ timeout: 5000 })
-
-    // Wait for the PATCH the Save click triggers. waitForResponse is
-    // deterministic — waitForTimeout would race on loaded CI.
-    const savedResponse = apiPage.waitForResponse(
-      (r) => r.url().includes(`/api/v1/tickets/${testTicketId}`) && r.request().method() === 'PATCH',
-    )
-    await apiPage.getByRole('button', { name: /Save Changes/i }).click()
-    const response = await savedResponse
+    const response = await formPage.saveAndWaitForPatch('tickets', testTicketId!)
     expect(response.status()).toBe(200)
 
-    // The new edge must be persisted server-side.
     const updated = await api.getEntity('tickets', testTicketId!)
-    const edges: string[] = updated.relations?.['belongs-to'] ?? []
+    const edges: string[] = (updated.relations?.['belongs-to'] ?? []) as string[]
     expect(edges).toContain(catAId)
     expect(edges).toContain(catBId)
   })
