@@ -52,9 +52,18 @@ func (a *App) getEntity(id string) (*entity.Entity, bool) {
 	return e, true
 }
 
-// outgoingRelations returns all outgoing relations for id.
+// outgoingRelations returns all outgoing relations for id using the
+// background context. Prefer outgoingRelationsCtx when a request context
+// is in scope.
 func (a *App) outgoingRelations(id string) []*entity.Relation {
-	return listRelations(a.store, store.RelationQuery{
+	rels, _ := a.outgoingRelationsCtx(context.Background(), id)
+	return rels
+}
+
+// outgoingRelationsCtx returns all outgoing relations for id and surfaces
+// iterator errors rather than silently truncating the slice.
+func (a *App) outgoingRelationsCtx(ctx context.Context, id string) ([]*entity.Relation, error) {
+	return listRelationsCtx(ctx, a.store, store.RelationQuery{
 		EntityID:  id,
 		Direction: store.DirectionOutgoing,
 	})
@@ -69,12 +78,17 @@ func (a *App) incomingRelations(id string) []*entity.Relation {
 }
 
 func listRelations(s store.Store, q store.RelationQuery) []*entity.Relation {
+	rels, _ := listRelationsCtx(context.Background(), s, q)
+	return rels
+}
+
+func listRelationsCtx(ctx context.Context, s store.Store, q store.RelationQuery) ([]*entity.Relation, error) {
 	out := make([]*entity.Relation, 0)
-	for r, err := range s.ListRelations(context.Background(), q) {
+	for r, err := range s.ListRelations(ctx, q) {
 		if err != nil {
-			return out
+			return out, err
 		}
 		out = append(out, r)
 	}
-	return out
+	return out, nil
 }

@@ -376,6 +376,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		ID         string                 `json:"id,omitempty"`
 		Properties map[string]interface{} `json:"properties"`
 		Content    string                 `json:"content,omitempty"`
+		Relations  map[string][]string    `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -397,7 +398,12 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 	created := createResult.Entity
 
-	result := a.entityToV1(created, plural, false, false)
+	if err := a.reconcileOutgoingRelations(r.Context(), created.ID, req.Relations); err != nil {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relations", reconcileDetail(err))
+		return
+	}
+
+	result := a.entityToV1(created, plural, true, false)
 
 	// Set Location header
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, created.ID))
@@ -482,6 +488,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	var req struct {
 		Properties map[string]interface{} `json:"properties,omitempty"`
 		Content    *string                `json:"content,omitempty"`
+		Relations  map[string][]string    `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -499,8 +506,19 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		entity.Content = *req.Content
 	}
 
-	if _, err := a.entityManager.UpdateEntity(r.Context(), entity); err != nil {
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
+	// Skip UpdateEntity when the PATCH only touches relations: otherwise we
+	// rewrite the entity file, bump mtime, re-run validation, and broadcast
+	// a misleading "entity updated" SSE event with no byte-level change.
+	entityChanged := req.Properties != nil || req.Content != nil
+	if entityChanged {
+		if _, err := a.entityManager.UpdateEntity(r.Context(), entity); err != nil {
+			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
+			return
+		}
+	}
+
+	if err := a.reconcileOutgoingRelations(r.Context(), entityID, req.Relations); err != nil {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to update relations", reconcileDetail(err))
 		return
 	}
 
@@ -1400,10 +1418,32 @@ func (a *App) computeEntityETag(e *entityPkg.Entity) string {
 	_, _ = h.Write([]byte(e.ID))
 	_, _ = h.Write([]byte(e.Type))
 	_, _ = h.Write([]byte(e.Content))
-	for k, v := range e.Properties {
-		_, _ = h.Write([]byte(k))
-		_, _ = fmt.Fprintf(h, "%v", v)
+
+	// Sort properties so the hash is stable across map iteration order.
+	propKeys := make([]string, 0, len(e.Properties))
+	for k := range e.Properties {
+		propKeys = append(propKeys, k)
 	}
+	sort.Strings(propKeys)
+	for _, k := range propKeys {
+		_, _ = h.Write([]byte(k))
+		_, _ = fmt.Fprintf(h, "=%v;", e.Properties[k])
+	}
+
+	// Fold outgoing relations into the hash so PATCHes that only change
+	// edges also change the ETag — otherwise If-Match / If-None-Match
+	// round-trips poison client caches.
+	edges := a.outgoingRelations(e.ID)
+	edgeKeys := make([]string, 0, len(edges))
+	for _, edge := range edges {
+		edgeKeys = append(edgeKeys, edge.Type+"|"+edge.To)
+	}
+	sort.Strings(edgeKeys)
+	for _, k := range edgeKeys {
+		_, _ = h.Write([]byte("r:"))
+		_, _ = h.Write([]byte(k))
+	}
+
 	sum := h.Sum(nil)
 	return fmt.Sprintf("\"%s\"", base64.StdEncoding.EncodeToString(sum[:8]))
 }

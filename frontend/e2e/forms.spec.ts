@@ -152,6 +152,83 @@ test.describe('Edit Form', () => {
   })
 })
 
+test.describe('Edit Form - Default Relation Picker Save', () => {
+  // Regression test for BUG-UNEBR: the PATCH /api/v1/{plural}/{id} handler
+  // silently dropped the `relations` payload, so edits made via the default
+  // chip picker appeared to save (200 + success toast) but were not
+  // persisted. The only covered save path was the `widget: cards` variant
+  // (relation-cards.spec.ts); this test locks in the default picker path.
+  let testTicketId: string | null = null
+  let createdCategoryIds: string[] = []
+
+  test.beforeEach(async ({ api }) => {
+    // Need at least two categories so we can switch the belongs-to target
+    // without colliding with whatever the project is seeded with.
+    const suffix = Date.now().toString(36)
+    const catA = await api.createEntity('categories', {
+      properties: { name: `E2E Picker Cat A ${suffix}` },
+    })
+    const catB = await api.createEntity('categories', {
+      properties: { name: `E2E Picker Cat B ${suffix}` },
+    })
+    createdCategoryIds = [catA.id, catB.id]
+
+    const ticket = await api.createEntity('tickets', {
+      properties: {
+        title: `E2E Picker Ticket ${suffix}`,
+        status: 'open',
+        priority: 'low',
+        reporter: 'e2e-test',
+      },
+      relations: {
+        'belongs-to': [catA.id],
+      },
+    })
+    testTicketId = ticket.id
+  })
+
+  test.afterEach(async ({ api }) => {
+    if (testTicketId) {
+      await api.deleteEntity('tickets', testTicketId)
+      testTicketId = null
+    }
+    for (const id of createdCategoryIds) {
+      await api.deleteEntity('categories', id)
+    }
+    createdCategoryIds = []
+  })
+
+  test('adding a target in the picker persists after Save', async ({ apiPage, api }) => {
+    const [catAId, catBId] = createdCategoryIds
+
+    await apiPage.goto(`/form/edit_ticket/${testTicketId}`)
+    await apiPage.locator('input[placeholder^="Search "]').first().waitFor({ state: 'visible', timeout: 10000 })
+
+    // Fill with the full target id. The RelationPicker matches on
+    // id/title substrings so passing the whole id avoids hard-coding
+    // metamodel knowledge (id prefix, sequential format, etc.).
+    const search = apiPage.locator('input[placeholder^="Search category"]').first()
+    await search.fill(catBId)
+    const option = apiPage.locator(`.dropdown-item:has-text("${catBId}")`).first()
+    await option.click({ timeout: 5000 })
+
+    // Wait for the PATCH the Save click triggers. waitForResponse is
+    // deterministic — waitForTimeout would race on loaded CI.
+    const savedResponse = apiPage.waitForResponse(
+      (r) => r.url().includes(`/api/v1/tickets/${testTicketId}`) && r.request().method() === 'PATCH',
+    )
+    await apiPage.getByRole('button', { name: /Save Changes/i }).click()
+    const response = await savedResponse
+    expect(response.status()).toBe(200)
+
+    // The new edge must be persisted server-side.
+    const updated = await api.getEntity('tickets', testTicketId!)
+    const edges: string[] = updated.relations?.['belongs-to'] ?? []
+    expect(edges).toContain(catAId)
+    expect(edges).toContain(catBId)
+  })
+})
+
 test.describe('Create Category Form', () => {
   let createdCategoryId: string | null = null
 
