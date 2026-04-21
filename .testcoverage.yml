@@ -36,6 +36,8 @@ override:
     threshold: 55
   - path: ^internal/dataentryconfig$
     threshold: 70
+  - path: ^internal/lua$
+    threshold: 80
 
 # Exclude packages that are not meaningful to coverage-check
 exclude:

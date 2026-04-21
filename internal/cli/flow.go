@@ -67,7 +67,10 @@ Example:
 			return fmt.Errorf("no project found for script %s", scriptPath)
 		}
 
-		opts := []lua.Option{lua.WithContext(cmd.Context())}
+		opts := []lua.Option{
+			lua.WithContext(cmd.Context()),
+			lua.WithCache(flowWs.LuaCache()),
+		}
 		if flowOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(flowOutputDir))
 		}

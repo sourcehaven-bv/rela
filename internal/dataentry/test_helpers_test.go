@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -163,7 +164,7 @@ func reseedStore(dst, src store.Store) {
 // Palette, UserPalette, OpenAPIGen) so handlers that touch the
 // less-common fields don't nil-deref in tests that didn't ask for them.
 func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
-	app := &App{}
+	app := &App{scriptEngine: script.NewEngine()}
 	if meta != nil {
 		ws := workspace.NewForTest(meta)
 		rebindApp(app, nil, &project.Context{}, ws)

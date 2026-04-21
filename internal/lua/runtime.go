@@ -75,6 +75,19 @@ type Runtime struct {
 	secrets       map[string]string // rela.secrets values (from .rela/secrets.yaml)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
 	aiProvider    ai.Provider       // nil means AI is not configured
+	cache         cacheStore        // nil means rela.cache.* is not registered
+	scriptPath    string            // set by RunFile; empty for RunString/inline
+}
+
+// cacheStore is the minimal contract the Lua cache bindings need from
+// their backend. It's defined at the consumer (Runtime) so alternative
+// implementations (a future disk-backed cache, a test fake) can drop in
+// without touching wiring code. Kept unexported: callers still pass
+// *Cache via WithCache and we keep the flexibility internally.
+type cacheStore interface {
+	get(namespacedKey string) ([]interface{}, bool)
+	set(namespacedKey string, values []interface{}, ttl time.Duration)
+	delete(namespacedKey string)
 }
 
 // Option configures a Runtime.
@@ -145,6 +158,19 @@ func WithSecrets(secrets map[string]string) Option {
 func WithAIProvider(p ai.Provider) Option {
 	return func(r *Runtime) {
 		r.aiProvider = p
+	}
+}
+
+// WithCache wires a process-wide cache into the runtime so the
+// rela.cache.* Lua bindings are registered. When omitted (or passed
+// nil), rela.cache.* is absent from the rela table — calling it from
+// Lua raises "attempt to call a nil value" from the VM. The cache is
+// namespaced by the runtime's script path (set by RunFile); inline or
+// eval contexts that call rela.cache.* receive a fixed Lua error
+// rather than sharing a nameless namespace.
+func WithCache(c *Cache) Option {
+	return func(r *Runtime) {
+		r.cache = c
 	}
 }
 
@@ -242,7 +268,26 @@ func openSafeLibraries(ls *lua.LState) {
 
 // RunFile executes a Lua script file with arguments.
 // Shebang lines (starting with #!) are automatically stripped.
+//
+// RunFile sets the runtime's scriptPath (via filepath.Clean(path)) so
+// the rela.cache.* bindings can namespace entries by script. Callers
+// using RunString/inline code do not get this identity and any
+// rela.cache.* call raises a Lua error.
 func (r *Runtime) RunFile(path string, args []string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read script file: %w", err)
+	}
+	return r.RunFileContent(path, content, args)
+}
+
+// RunFileContent executes Lua code loaded from `path`, using the
+// already-read `content`. This exists for callers that need traversal-
+// resistant file reads (e.g. MCP's lua_run, which uses os.OpenRoot).
+// Effects match RunFile: chunk name for errors, scriptPath for
+// rela.cache.* namespacing, rela.args for script arguments. Shebangs
+// are stripped.
+func (r *Runtime) RunFileContent(path string, content []byte, args []string) error {
 	// Set rela.args
 	argsTable := r.L.NewTable()
 	for i, arg := range args {
@@ -254,11 +299,12 @@ func (r *Runtime) RunFile(path string, args []string) error {
 	}
 	relaTable.RawSetString("args", argsTable)
 
-	// Read the file content
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("cannot read script file: %w", err)
-	}
+	// Record the cleaned script path so rela.cache.* can namespace
+	// entries. Cleaning (rather than absolutising) keeps two runs with
+	// different CWDs sharing the same namespace when the relative path
+	// is identical — the CLI already chdirs to project root, so this is
+	// the stable identity.
+	r.scriptPath = filepath.Clean(path)
 
 	// Strip shebang if present
 	code := stripShebang(string(content))
@@ -350,6 +396,26 @@ func (r *Runtime) clearTimeout() {
 		r.cancelTimeout = nil
 	}
 	r.L.RemoveContext()
+}
+
+// SetScriptPath records a cache namespace identity for callers that
+// run via RunString or RunActionString (not RunFile/RunFileContent,
+// which set it automatically). The "path" here is used purely as the
+// rela.cache.* namespace — for inline-code callers that need a
+// stable cache scope it's the caller's name for the script
+// (e.g. "validations/<rule-name>"); for file-backed callers
+// RunFileContent is preferred because it sets chunk name, args, and
+// namespace in one step. The path is cleaned (filepath.Clean).
+//
+// SetScriptPath persists across subsequent RunString calls on the
+// same Runtime. Call with "" to revert to inline/eval mode (cache
+// calls raise). RunFile / RunFileContent override it.
+func (r *Runtime) SetScriptPath(path string) {
+	if path == "" {
+		r.scriptPath = ""
+		return
+	}
+	r.scriptPath = filepath.Clean(path)
 }
 
 // SetArgs sets the script arguments (rela.args) before execution.
@@ -461,6 +527,12 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 		r.L.SetField(secretsTable, k, lua.LString(v))
 	}
 	r.L.SetField(rela, "secrets", secretsTable)
+
+	// rela.cache.{get,set,memoize} when a cache is wired. The binding
+	// itself guards against inline/eval contexts (empty scriptPath) by
+	// raising a Lua error on any call, so a runtime with a cache but
+	// no script path still behaves safely.
+	r.registerCacheBindings(rela)
 }
 
 // luaGetEntity implements rela.get_entity(id) -> table|nil
@@ -866,8 +938,18 @@ func GoToLuaValue(ls *lua.LState, v interface{}) lua.LValue {
 	}
 }
 
-// luaValueToGo converts a Lua value to a Go value.
+// luaValueToGo converts a Lua value to a Go value. Safe against cyclic
+// tables: a second visit to a table already on the current ancestry
+// chain yields the sentinel string "<cyclic reference>" rather than
+// recursing forever. Without that guard, a self-referential Lua value
+// (e.g. `t.self = t`) would overflow the Go stack and crash the entire
+// process — not catchable from PCall. Every caller (rela.output,
+// RunActionString, luaTableToGoMap, and the cache) inherits the guard.
 func luaValueToGo(lv lua.LValue) interface{} {
+	return luaValueToGoSeen(lv, make(map[*lua.LTable]bool))
+}
+
+func luaValueToGoSeen(lv lua.LValue, seen map[*lua.LTable]bool) interface{} {
 	switch v := lv.(type) {
 	case lua.LBool:
 		return bool(v)
@@ -876,7 +958,7 @@ func luaValueToGo(lv lua.LValue) interface{} {
 	case lua.LString:
 		return string(v)
 	case *lua.LTable:
-		return luaTableToGo(v)
+		return luaTableToGoSeen(v, seen)
 	case *lua.LNilType:
 		return nil
 	default:
@@ -887,8 +969,26 @@ func luaValueToGo(lv lua.LValue) interface{} {
 // maxArraySize is the maximum size for arrays converted from Lua tables.
 const maxArraySize = 100000
 
-// luaTableToGo converts a Lua table to a Go map or slice.
-func luaTableToGo(t *lua.LTable) interface{} {
+// cyclicReferenceMarker is the string inserted in place of a table that
+// appears a second time on its own ancestry chain during conversion.
+// Callers that render JSON, compare structures, or use `rela.output`
+// see this marker and can investigate, rather than hanging forever.
+const cyclicReferenceMarker = "<cyclic reference>"
+
+// luaTableToGoSeen converts a Lua table to a Go map or slice, using
+// the ancestry set `seen` to terminate cycles. Callers wanting a fresh
+// conversion should go through luaValueToGo, which bootstraps the
+// seen-set.
+func luaTableToGoSeen(t *lua.LTable, seen map[*lua.LTable]bool) interface{} {
+	if seen[t] {
+		return cyclicReferenceMarker
+	}
+	seen[t] = true
+	// Unmark on return so siblings that share a non-cyclic inner table
+	// are not false-positive rejected. Cycle detection is per-ancestry,
+	// not per-occurrence.
+	defer delete(seen, t)
+
 	// Check if it's an array (sequential positive integer keys starting at 1)
 	isArray := true
 	maxN := 0
@@ -915,7 +1015,7 @@ func luaTableToGo(t *lua.LTable) interface{} {
 			if kn, ok := k.(lua.LNumber); ok {
 				idx := int(kn) - 1
 				if idx >= 0 && idx < maxN {
-					arr[idx] = luaValueToGo(v)
+					arr[idx] = luaValueToGoSeen(v, seen)
 				}
 			}
 		})
@@ -934,7 +1034,7 @@ func luaTableToGo(t *lua.LTable) interface{} {
 		default:
 			key = k.String()
 		}
-		m[key] = luaValueToGo(v)
+		m[key] = luaValueToGoSeen(v, seen)
 	})
 	return m
 }

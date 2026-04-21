@@ -23,16 +23,32 @@ import (
 // scriptsDir is the directory where script files must be located.
 const scriptsDir = "scripts"
 
-// Engine runs scripts with provided context. It is stateless - all dependencies
-// are passed at execution time. This centralizes script execution concerns:
-// path validation, secure file loading, sandbox enforcement.
+// Engine runs scripts with provided context. Besides enforcing path
+// validation, secure file loading, and sandbox rules at execution time,
+// it also owns a process-wide Lua cache (see lua.Cache) shared across
+// every runtime it builds so that memoization and TTL semantics span
+// repeated script invocations within the same process.
 //
 // Timeout is handled by lua.Runtime (default 30s, configurable via lua.WithTimeout).
-type Engine struct{}
+type Engine struct {
+	cache *lua.Cache
+}
 
-// NewEngine creates a stateless script engine.
+// NewEngine creates a script engine with a fresh Lua cache. Typically one
+// Engine is constructed per process; callers that create multiple engines
+// (e.g. in tests, or the CLI root + scheduler subcommand) get independent
+// caches, which is intentional — each Engine is a logical cache scope.
 func NewEngine() *Engine {
-	return &Engine{}
+	return &Engine{cache: lua.NewCache()}
+}
+
+// LuaCache exposes the Engine's shared Lua cache so callers that build
+// Lua runtimes outside of ExecuteCode/ExecuteFile (validation rules,
+// MCP lua_eval, flow, etc.) can pass it via lua.WithCache and share
+// cache state with engine-built runtimes. Also satisfies
+// workspace.ScriptExecutor.
+func (e *Engine) LuaCache() *lua.Cache {
+	return e.cache
 }
 
 // ExecuteCode runs inline script code with entity context.
@@ -61,11 +77,19 @@ func (e *Engine) ExecuteFile(path string, deps lua.WriteDeps,
 func (e *Engine) execute(code string, deps lua.WriteDeps, scriptPath string,
 	newEntity, oldEntity *entity.Entity) error {
 	var output bytes.Buffer
-	runtime, err := NewWriterRuntime(deps, scriptPath, &output)
+	runtime, err := NewWriterRuntime(deps, scriptPath, &output, lua.WithCache(e.cache))
 	if err != nil {
 		return err
 	}
 	defer runtime.Close()
+
+	// Engine.execute reads the file content itself and runs via
+	// RunString, which doesn't set the script path automatically the
+	// way RunFile does. Wire it manually so rela.cache.* bindings get
+	// a namespace. Inline code (scriptPath == "") keeps the
+	// inline/eval identity so cache calls raise loudly instead of
+	// silently sharing a nameless namespace.
+	runtime.SetScriptPath(scriptPath)
 
 	ls := runtime.LState()
 	if newEntity != nil {

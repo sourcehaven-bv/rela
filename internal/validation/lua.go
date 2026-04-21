@@ -89,13 +89,27 @@ func (s *Service) validateLua(
 	// also silently clip slow calls. AI-in-validations is tracked as a
 	// follow-up that needs its own design (cost guardrails, opt-in
 	// per rule, longer per-rule budget).
-	runtime := lua.NewReader(s.deps, io.Discard)
+	// Build the reader runtime. A shared cache is passed when wired so
+	// validation rules can memoize expensive lookups (e.g. an AI
+	// verdict) across entities within a single analyze pass.
+	// A stable pseudo-path per rule is set as the script path so the
+	// rule's cache entries are namespaced to itself — different rules
+	// calling rela.cache with the same user key don't collide.
+	var opts []lua.Option
+	if s.cache != nil {
+		opts = append(opts, lua.WithCache(s.cache))
+	}
+	runtime := lua.NewReader(s.deps, io.Discard, opts...)
 	defer runtime.Close()
 
 	// Set arguments if provided
 	if len(rule.LuaArgs) > 0 {
 		runtime.SetArgs(rule.LuaArgs)
 	}
+
+	// Pseudo script path: "validations/<rule-name>". Stable per rule,
+	// distinct from any real script so cache hits group by rule.
+	runtime.SetScriptPath("validations/" + rule.Name)
 
 	// Inject entity as global
 	ls := runtime.LState()

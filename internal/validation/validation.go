@@ -21,7 +21,8 @@ type Violation struct {
 
 // Service validates entities against custom metamodel rules.
 type Service struct {
-	deps lua.ReadDeps
+	deps  lua.ReadDeps
+	cache *lua.Cache
 }
 
 // New creates a validation service for the given metamodel.
@@ -33,6 +34,14 @@ type Service struct {
 func New(meta *metamodel.Metamodel, deps lua.ReadDeps) *Service {
 	deps.Meta = meta
 	return &Service{deps: deps}
+}
+
+// WithCache wires a shared Lua cache into validation runs so
+// rela.cache.* inside validation scripts is functional and namespaced
+// per-rule. Zero-or-nil cache leaves validation runtimes un-cached.
+func (s *Service) WithCache(c *lua.Cache) *Service {
+	s.cache = c
+	return s
 }
 
 // Rules returns the validation rules from the metamodel.

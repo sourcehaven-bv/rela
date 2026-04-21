@@ -42,6 +42,18 @@ func (w *Workspace) LuaWriteDeps() lua.WriteDeps {
 	}
 }
 
+// LuaCache returns the process-wide Lua cache shared by every runtime
+// built from this workspace's script executor. Callers wrap the result
+// in lua.WithCache when building runtimes directly (validation rules,
+// lua_eval in MCP, flow commands, etc.). Returns nil when the workspace
+// was constructed with a no-op script executor (tests without Lua).
+func (w *Workspace) LuaCache() *lua.Cache {
+	if w.scriptExec == nil {
+		return nil
+	}
+	return w.scriptExec.LuaCache()
+}
+
 // Tracer returns the store-backed graph traversal service. The wrapper is
 // created on first access and reused for the lifetime of the workspace.
 func (w *Workspace) Tracer() tracer.Tracer {
