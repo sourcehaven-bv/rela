@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -958,8 +959,9 @@ func captureStdout(t *testing.T, fn func()) string {
 // fan of edges.
 
 // schemaGraphvizFixture builds a bare metamodel with the given entities and
-// relations, applies it, and restores the previous state on cleanup.
-// Pass bs as nil to keep all rendering flags at their default.
+// relations, applies it, and restores the previous state on cleanup. All
+// rendering flags start at their defaults — tests can override them after
+// calling this helper.
 func schemaGraphvizFixture(
 	t *testing.T,
 	ents map[string]metamodel.EntityDef,
@@ -1097,22 +1099,25 @@ func TestSchemaGraphvizHubIsolatedTargets(t *testing.T) {
 }
 
 func TestSchemaGraphvizLegendConnectedTargets(t *testing.T) {
-	// 4 targets, each with another incoming edge -> all otherwise-connected
-	// -> legend (not hub).
+	// 4 targets each have a non-collapsing incoming edge from a separate
+	// anchor -> all otherwise-connected -> legend (not hub). The anchor's
+	// edges must NOT themselves collapse, or the whole body ends up empty.
 	ents := map[string]metamodel.EntityDef{
-		"src":    {Label: "Src", IDPrefix: "S-"},
-		"anchor": {Label: "Anchor", IDPrefix: "A-"},
-		"t1":     {Label: "T1", IDPrefix: "T1-"},
-		"t2":     {Label: "T2", IDPrefix: "T2-"},
-		"t3":     {Label: "T3", IDPrefix: "T3-"},
-		"t4":     {Label: "T4", IDPrefix: "T4-"},
+		"src": {Label: "Src", IDPrefix: "S-"},
+		"a1":  {Label: "A1", IDPrefix: "A1-"},
+		"a2":  {Label: "A2", IDPrefix: "A2-"},
+		"t1":  {Label: "T1", IDPrefix: "T1-"},
+		"t2":  {Label: "T2", IDPrefix: "T2-"},
+		"t3":  {Label: "T3", IDPrefix: "T3-"},
+		"t4":  {Label: "T4", IDPrefix: "T4-"},
 	}
 	schemaGraphvizFixture(t, ents,
 		map[string]metamodel.RelationDef{
 			"fans": {Label: "fans", From: []string{"src"}, To: []string{"t1", "t2", "t3", "t4"}},
-			// Each target additionally has an incoming edge from anchor,
-			// giving every target "otherwise connected" status.
-			"anchors": {Label: "anchors", From: []string{"anchor"}, To: []string{"t1", "t2", "t3", "t4"}},
+			// Two small (≤2 target) anchor relations keep every target
+			// otherwise-connected without themselves collapsing.
+			"a1r": {Label: "a1r", From: []string{"a1"}, To: []string{"t1", "t2"}},
+			"a2r": {Label: "a2r", From: []string{"a2"}, To: []string{"t3", "t4"}},
 		},
 	)
 
@@ -1128,10 +1133,66 @@ func TestSchemaGraphvizLegendConnectedTargets(t *testing.T) {
 	if strings.Contains(result, "__hub_") {
 		t.Errorf("should not emit hub when all targets are otherwise connected:\n%s", result)
 	}
-	// anchors relation also has 4 targets all connected -> also legend,
-	// but self-check: no direct src->tN edges for the 'fans' relation.
 	if strings.Contains(result, `src -> t1 [label="fans"`) {
 		t.Errorf("fans edges should be suppressed:\n%s", result)
+	}
+	// The anchors and targets must still be rendered — the snapshot-lie bug
+	// would hide all of them behind an empty-body legend.
+	for _, id := range []string{"a1", "a2", "t1", "t2", "t3", "t4"} {
+		wantLine := id + ` [label="` + strings.ToUpper(id) + `"`
+		if !strings.Contains(result, wantLine) {
+			t.Errorf("expected %s node in body:\n%s", id, result)
+		}
+	}
+	// src's only relation is legend-collapsed and it has no incoming edges,
+	// so it must be hidden (AC 6).
+	if strings.Contains(result, `src [label`) {
+		t.Errorf("src should be hidden when its only pair is legend-collapsed:\n%s", result)
+	}
+	if !strings.Contains(result, `a1 -> t1 [label="a1r"`) {
+		t.Errorf("a1 -> t1 plain edge missing:\n%s", result)
+	}
+}
+
+// TestSchemaGraphvizFivePairStarvesThreePair covers the "snapshot lies" case:
+// a ≥5-target relation will legend-collapse, and its targets' connectedness
+// from that relation should NOT be counted when classifying an adjacent 3-4
+// target relation. Before the two-pass classifier, both relations ended up in
+// the legend and the body was empty.
+func TestSchemaGraphvizFivePairStarvesThreePair(t *testing.T) {
+	ents := map[string]metamodel.EntityDef{
+		"big":   {Label: "Big", IDPrefix: "B-"},
+		"small": {Label: "Small", IDPrefix: "S-"},
+		"t1":    {Label: "T1", IDPrefix: "T1-"},
+		"t2":    {Label: "T2", IDPrefix: "T2-"},
+		"t3":    {Label: "T3", IDPrefix: "T3-"},
+		"t4":    {Label: "T4", IDPrefix: "T4-"},
+		"t5":    {Label: "T5", IDPrefix: "T5-"},
+	}
+	schemaGraphvizFixture(t, ents,
+		map[string]metamodel.RelationDef{
+			"many":  {Label: "many", From: []string{"big"}, To: []string{"t1", "t2", "t3", "t4", "t5"}},
+			"three": {Label: "three", From: []string{"small"}, To: []string{"t1", "t2", "t3"}},
+		},
+	)
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	// The 5-target relation unconditionally legend-collapses.
+	if !strings.Contains(result, `<B>Big</B> <I>many</I>`) {
+		t.Errorf("expected Big/many in legend:\n%s", result)
+	}
+	// The 3-target 'three' relation must NOT also legend-collapse — after
+	// 'many' collapses, t1/t2/t3 are isolated and 'three' should hub-bundle.
+	if !strings.Contains(result, "__hub_") {
+		t.Errorf("3-target relation should hub-bundle when its co-targets lose their only other edge:\n%s", result)
+	}
+	if strings.Contains(result, `<B>Small</B> <I>three</I>`) {
+		t.Errorf("Small/three must not legend-collapse:\n%s", result)
 	}
 }
 
@@ -1256,28 +1317,132 @@ func TestFormatTargets(t *testing.T) {
 		"a": "A", "b": "B", "c": "C", "d": "D", "e": "E",
 	}
 	tests := []struct {
-		name    string
-		to      []string
-		total   int
-		want    string
-		wantSub string
+		name           string
+		to             []string
+		effectiveTotal int
+		source         string
+		srcInTargets   bool
+		want           string
+		wantSub        string
+		wantNotSub     string
 	}{
-		{name: "empty total returns empty", total: 0, want: ""},
-		{name: "exactly all", to: []string{"a", "b", "c", "d", "e"}, total: 5, want: "any entity"},
-		{name: "minus one", to: []string{"a", "c", "d", "e"}, total: 5, wantSub: "except B"},
-		{name: "minus two", to: []string{"c", "d", "e"}, total: 5, wantSub: "except A, B"},
-		{name: "small list", to: []string{"c", "a"}, total: 5, wantSub: "A, C"},
+		{name: "empty total returns empty", effectiveTotal: 0, source: "a", want: ""},
+		{name: "exactly all", to: []string{"a", "b", "c", "d", "e"}, effectiveTotal: 5, source: "z", srcInTargets: false, want: "any entity"},
+		{name: "minus one", to: []string{"a", "c", "d", "e"}, effectiveTotal: 5, source: "z", srcInTargets: false, wantSub: "except B"},
+		{name: "minus two", to: []string{"c", "d", "e"}, effectiveTotal: 5, source: "z", srcInTargets: false, wantSub: "except A, B"},
+		{name: "small list", to: []string{"c", "a"}, effectiveTotal: 5, source: "z", srcInTargets: false, wantSub: "A, C"},
+		{name: "src excluded from complement", to: []string{"a", "c", "d", "e"}, effectiveTotal: 4, source: "b", srcInTargets: false, want: "any entity", wantNotSub: "except"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := formatTargets(tc.to, labels, tc.total)
+			got := formatTargets(tc.to, labels, tc.effectiveTotal, tc.source, tc.srcInTargets)
 			if tc.want != "" && got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 			if tc.wantSub != "" && !strings.Contains(got, tc.wantSub) {
 				t.Errorf("got %q, want substring %q", got, tc.wantSub)
 			}
+			if tc.wantNotSub != "" && strings.Contains(got, tc.wantNotSub) {
+				t.Errorf("got %q, must not contain %q", got, tc.wantNotSub)
+			}
 		})
+	}
+}
+
+func TestDotID(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"simple", "simple"},
+		{"with_underscore", "with_underscore"},
+		{"camelCase", "camelCase"},
+		{"type42", "type42"},
+		{"bug-analysis-checklist", `"bug-analysis-checklist"`},
+		{"has.dot", `"has.dot"`},
+		{"has space", `"has space"`},
+		{"1leading", `"1leading"`},
+		{"", `""`},
+		{`"quoted"`, `"\"quoted\""`},
+		{`back\slash`, `"back\\slash"`},
+	}
+	for _, tc := range tests {
+		if got := dotID(tc.in); got != tc.want {
+			t.Errorf("dotID(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestSchemaGraphvizHyphenatedIDs is a regression test for the class of bug
+// where entity identifiers containing hyphens (or any other non-[_A-Za-z0-9]
+// characters) are emitted unquoted and break DOT parsing. Exercises the full
+// pipeline: plain edge, hub, and legend — each with hyphenated names.
+func TestSchemaGraphvizHyphenatedIDs(t *testing.T) {
+	ents := map[string]metamodel.EntityDef{
+		"review-response":          {Label: "Review Response", IDPrefix: "RR-"},
+		"planning-checklist":       {Label: "Planning Checklist", IDPrefix: "PL-"},
+		"bug-analysis-checklist":   {Label: "Bug Analysis", IDPrefix: "BA-"},
+		"implementation-checklist": {Label: "Implementation Checklist", IDPrefix: "IM-"},
+		"review-checklist":         {Label: "Review Checklist", IDPrefix: "RV-"},
+		"docs-checklist":           {Label: "Docs Checklist", IDPrefix: "DC-"},
+	}
+	schemaGraphvizFixture(t, ents,
+		map[string]metamodel.RelationDef{
+			"touches": {
+				Label: "touches",
+				From:  []string{"review-response"},
+				To:    []string{"planning-checklist"},
+			},
+			// 3 isolated targets to force a hub bundle with hyphenated dsts.
+			"hub-rel": {
+				Label: "hub-rel",
+				From:  []string{"review-response"},
+				To:    []string{"bug-analysis-checklist", "implementation-checklist", "review-checklist"},
+			},
+		},
+	)
+
+	result := captureStdout(t, func() {
+		if err := runSchemaGraphviz(); err != nil {
+			t.Fatalf("runSchemaGraphviz: %v", err)
+		}
+	})
+
+	// All hyphenated identifiers must be emitted quoted.
+	mustNot := []string{
+		"  review-response [",
+		"  planning-checklist [",
+		"review-response -> planning-checklist",
+		"__hub_0 -> bug-analysis-checklist",
+	}
+	for _, bad := range mustNot {
+		if strings.Contains(result, bad) {
+			t.Errorf("unquoted hyphenated identifier leaked: %q\n%s", bad, result)
+		}
+	}
+	mustHave := []string{
+		`"review-response" [label="Review Response"`,
+		`"planning-checklist" [label="Planning Checklist"`,
+		`"review-response" -> "planning-checklist" [label="touches"`,
+		`__hub_0 -> "bug-analysis-checklist"`,
+	}
+	for _, good := range mustHave {
+		if !strings.Contains(result, good) {
+			t.Errorf("expected quoted line %q\n%s", good, result)
+		}
+	}
+
+	// If graphviz is available, round-trip through `dot -Tdot` as a parse
+	// check — the ultimate validation that the DOT is well-formed.
+	if _, err := exec.LookPath("dot"); err != nil {
+		t.Skip("graphviz 'dot' not in PATH; skipping parse round-trip")
+	}
+	cmd := exec.Command("dot", "-Tdot")
+	cmd.Stdin = strings.NewReader(result)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("dot rejected the DOT output: %v\nstderr: %s\nDOT:\n%s",
+			err, stderr.String(), result)
 	}
 }
 

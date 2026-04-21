@@ -5,7 +5,7 @@ title: Make `rela schema --graphviz` readable for large/polymorphic metamodels
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 Large or polymorphic metamodels render poorly with `rela schema --graphviz |

@@ -519,10 +519,56 @@ const (
 	renderLegend = "legend"
 )
 
-// legendTargetThreshold is the target count at which a many-target relation
-// unconditionally collapses into the legend (instead of a hub-bundle, which is
-// only used for 3-4 targets with at least one otherwise-isolated node).
-const legendTargetThreshold = 5
+// Thresholds for the (source, relation) classifier:
+//   - fewer than minHubTargets targets always render as plain edges
+//   - minHubTargets..legendTargetThreshold-1 may hub-bundle when at least one
+//     target is otherwise isolated; otherwise they collapse into the legend
+//   - legendTargetThreshold or more unconditionally collapse into the legend
+const (
+	minHubTargets         = 3
+	legendTargetThreshold = 5
+)
+
+// legendNodeID and hubIDPrefix are reserved identifiers used for synthetic
+// nodes in the generated DOT. They are intentionally underscore-prefixed and
+// the classifier assumes no user-defined entity type uses these names.
+const (
+	legendNodeID = "__legend"
+	hubIDPrefix  = "__hub_"
+)
+
+// dotID returns a DOT-safe identifier for an arbitrary string. DOT accepts
+// unquoted identifiers only when they match [_A-Za-z][_0-9A-Za-z]*. Anything
+// else — including hyphens, dots, spaces, or an empty string — must be
+// double-quoted. The function always emits the quoted form when the input
+// needs it, otherwise returns the raw identifier untouched.
+func dotID(s string) string {
+	if s == "" {
+		return `""`
+	}
+	for i, r := range s {
+		first := i == 0
+		valid := r == '_' ||
+			(r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(!first && r >= '0' && r <= '9')
+		if !valid {
+			// Escape backslashes and quotes per DOT's quoted-string syntax.
+			var sb strings.Builder
+			sb.Grow(len(s) + 2)
+			sb.WriteByte('"')
+			for _, c := range s {
+				if c == '\\' || c == '"' {
+					sb.WriteByte('\\')
+				}
+				sb.WriteRune(c)
+			}
+			sb.WriteByte('"')
+			return sb.String()
+		}
+	}
+	return s
+}
 
 // relPair is a classified pair with its effective (post-exclude) target list.
 type relPair struct {
@@ -567,7 +613,7 @@ func runSchemaGraphviz() error {
 			borderColor = darkenColor(fillColor)
 		}
 		fmt.Fprintf(&sb, "  %s [label=%q, fillcolor=%q, color=%q];\n",
-			name, def.Label, fillColor, borderColor)
+			dotID(name), def.Label, fillColor, borderColor)
 	}
 	sb.WriteString("\n")
 
@@ -585,16 +631,16 @@ func runSchemaGraphviz() error {
 		case renderPlain:
 			for _, to := range p.to {
 				fmt.Fprintf(&sb, "  %s -> %s [label=%q, color=%q, fontcolor=%q];\n",
-					p.source, to, edgeLabel, edgeColor, edgeColor)
+					dotID(p.source), dotID(to), edgeLabel, edgeColor, edgeColor)
 			}
 		case renderHub:
-			hub := fmt.Sprintf("__hub_%d", hubIdx)
+			hub := fmt.Sprintf("%s%d", hubIDPrefix, hubIdx)
 			hubIdx++
 			fmt.Fprintf(&sb, "  %s [shape=point, width=0.05, height=0.05, label=\"\"];\n", hub)
 			fmt.Fprintf(&sb, "  %s -> %s [label=%q, color=%q, fontcolor=%q, arrowhead=none];\n",
-				p.source, hub, edgeLabel, edgeColor, edgeColor)
+				dotID(p.source), hub, edgeLabel, edgeColor, edgeColor)
 			for _, to := range p.to {
-				fmt.Fprintf(&sb, "  %s -> %s [color=%q];\n", hub, to, edgeColor)
+				fmt.Fprintf(&sb, "  %s -> %s [color=%q];\n", hub, dotID(to), edgeColor)
 			}
 		case renderLegend:
 			legendEntries = append(legendEntries, p)
@@ -662,60 +708,83 @@ func prepareSchemaGraph(m *metamodel.Metamodel) ([]string, []relPair) {
 	return entityNames, pairs
 }
 
-// classifyRenderings assigns a render bucket to each pair using the
-// total-degree snapshot (computed assuming all pairs are plain) to decide
-// whether a target is "otherwise connected".
+// classifyRenderings assigns a render bucket to each pair. The "otherwise
+// connected" check — whether a target has any edge to non-legend pairs — is
+// computed in two passes to avoid a snapshot-based lie: if pair A targets T
+// and pair B (≥5 targets) also targets T, classifying A as plain or hub
+// against a snapshot that assumed B was plain would be wrong, because B will
+// actually collapse into the legend and contribute nothing to T's connectedness.
+//
+//  1. Unconditional-legend pairs (n ≥ legendTargetThreshold) are classified
+//     first and contribute 0 edges.
+//  2. The incoming-degree is computed from the remaining pairs, modeling the
+//     final diagram before the ambiguous 3-4 pairs are classified.
+//  3. Each 3-4 pair is classified against that degree, then if it ends up as
+//     legend its targets' degrees are decremented (because its edges also
+//     disappear) so later pairs see the true reduced degree.
 func classifyRenderings(entityNames []string, pairs []relPair) {
-	// Count potential edges per entity across every pair. For each pair we
-	// count +1 for the source (one outgoing edge per target) and +1 for each
-	// target (one incoming edge from the source). The snapshot is frozen —
-	// reclassifying a pair later doesn't change the counts.
-	degree := make(map[string]int, len(entityNames))
-	for _, p := range pairs {
-		degree[p.source] += len(p.to)
-		for _, t := range p.to {
-			degree[t]++
-		}
-	}
-
+	// Pass 1: handle the always-legend / always-plain buckets.
 	for i := range pairs {
 		p := &pairs[i]
 		n := len(p.to)
-
-		if schemaNoLegend && schemaNoBundle {
+		switch {
+		case n < minHubTargets:
 			p.render = renderPlain
+		case n >= legendTargetThreshold && !schemaNoLegend:
+			p.render = renderLegend
+		case n >= legendTargetThreshold && schemaNoLegend:
+			p.render = renderPlain
+		default:
+			p.render = "" // deferred to pass 2
+		}
+	}
+
+	// Pass 2: incoming-degree for every target, counting only pairs whose edges
+	// will actually be drawn (plain + deferred). Legend-classified pairs are
+	// excluded because their edges never appear.
+	inDegree := make(map[string]int, len(entityNames))
+	for _, p := range pairs {
+		if p.render == renderLegend {
 			continue
 		}
-		if n >= legendTargetThreshold {
-			if !schemaNoLegend {
-				p.render = renderLegend
+		for _, t := range p.to {
+			inDegree[t]++
+		}
+	}
+
+	// Pass 3: classify the deferred pairs, adjusting inDegree on-the-fly when
+	// a deferred pair collapses (so downstream classifications see the true
+	// connectedness).
+	for i := range pairs {
+		p := &pairs[i]
+		if p.render != "" {
+			continue
+		}
+		// Count "other" incoming edges for each target: inDegree[t] counts
+		// this pair's own edge plus edges from other non-legend pairs, so
+		// subtract 1 to get the "otherwise connected" signal.
+		anyIsolated := false
+		for _, t := range p.to {
+			if inDegree[t]-1 <= 0 {
+				anyIsolated = true
+				break
 			}
-			continue
 		}
-		if n >= 3 {
-			// Count the "other" connections each target has: total minus the
-			// contribution this pair makes (one incoming edge from source).
-			anyIsolated := false
+		// Prefer hub for isolated targets, legend otherwise. Respect --no-*
+		// fallbacks: when the preferred collapse is disabled, fall back to
+		// the other collapse mode before giving up and drawing plain edges.
+		switch {
+		case anyIsolated && !schemaNoBundle:
+			p.render = renderHub
+		case !schemaNoLegend:
+			p.render = renderLegend
+			// Legend collapse makes this pair's edges disappear too — keep
+			// inDegree honest so later deferred pairs see reality.
 			for _, t := range p.to {
-				if degree[t]-1 <= 0 {
-					anyIsolated = true
-					break
-				}
+				inDegree[t]--
 			}
-			// Choose the best available rendering given flag overrides.
-			// Preferred: hub when any target is isolated, legend otherwise.
-			// When the preferred mode is disabled, fall back to the other
-			// collapse mode before giving up and drawing plain edges.
-			switch {
-			case anyIsolated && !schemaNoBundle:
-				p.render = renderHub
-			case anyIsolated && !schemaNoLegend:
-				p.render = renderLegend
-			case !anyIsolated && !schemaNoLegend:
-				p.render = renderLegend
-			default:
-				p.render = renderPlain
-			}
+		default:
+			p.render = renderPlain
 		}
 	}
 }
@@ -726,46 +795,28 @@ func classifyRenderings(entityNames []string, pairs []relPair) {
 // would produce a disconnected node. Entities that belong to no pair at all
 // (e.g. leaf types in a tiny metamodel) stay visible.
 func visibleEntities(entityNames []string, pairs []relPair) map[string]bool {
-	visible := make(map[string]bool, len(entityNames))
-	participates := make(map[string]bool, len(entityNames))
-	for _, name := range entityNames {
-		visible[name] = true
-	}
+	// Two sets: every entity that appears in any pair, and every entity that
+	// appears in a pair whose edges will actually be drawn. The final decision
+	// is: hidden iff in seenAny but not in seenDrawn.
+	seenAny := make(map[string]bool, len(entityNames))
+	seenDrawn := make(map[string]bool, len(entityNames))
 	for _, p := range pairs {
-		participates[p.source] = true
+		seenAny[p.source] = true
 		for _, t := range p.to {
-			participates[t] = true
+			seenAny[t] = true
 		}
 		if p.render == renderLegend {
 			continue
 		}
-		visible[p.source] = true
+		seenDrawn[p.source] = true
 		for _, t := range p.to {
-			visible[t] = true
+			seenDrawn[t] = true
 		}
 	}
-	// For every entity that participates in pairs but only via legend-collapsed
-	// ones, mark it hidden.
-	for name := range participates {
-		onlyLegend := true
-		for _, p := range pairs {
-			involved := p.source == name
-			if !involved {
-				for _, t := range p.to {
-					if t == name {
-						involved = true
-						break
-					}
-				}
-			}
-			if involved && p.render != renderLegend {
-				onlyLegend = false
-				break
-			}
-		}
-		if onlyLegend {
-			visible[name] = false
-		}
+
+	visible := make(map[string]bool, len(entityNames))
+	for _, name := range entityNames {
+		visible[name] = !seenAny[name] || seenDrawn[name]
 	}
 	return visible
 }
@@ -781,50 +832,77 @@ func renderLegendNode(entries []relPair, entityNames []string) string {
 
 	var tbl strings.Builder
 	tbl.WriteString(`<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">`)
-	tbl.WriteString(`<TR><TD ALIGN="LEFT"><B>Universal relations</B></TD></TR>`)
+	tbl.WriteString(`<TR><TD ALIGN="LEFT"><B>Collapsed relations</B></TD></TR>`)
 	for _, e := range entries {
 		src := html.EscapeString(meta.Entities[e.source].Label)
 		rel := html.EscapeString(e.relDef.Label)
 		fmt.Fprintf(&tbl,
 			`<TR><TD ALIGN="LEFT" SIDES="LTR"><B>%s</B> <I>%s</I></TD></TR>`,
 			src, rel)
+		// Effective total excludes the source itself when it's not in its own
+		// target set — otherwise the legend would read "any entity except Src",
+		// listing Src as an exception against its own row.
+		effTotal := total
+		srcInTargets := false
+		for _, t := range e.to {
+			if t == e.source {
+				srcInTargets = true
+				break
+			}
+		}
+		if !srcInTargets {
+			effTotal--
+		}
 		fmt.Fprintf(&tbl,
 			`<TR><TD ALIGN="LEFT" SIDES="LBR"><I>%s</I></TD></TR>`,
-			formatTargets(e.to, labelOf, total))
+			formatTargets(e.to, labelOf, effTotal, e.source, srcInTargets))
 	}
 	tbl.WriteString(`</TABLE>>`)
 
 	var sb strings.Builder
 	sb.WriteString("  // Legend\n")
 	fmt.Fprintf(&sb,
-		"  __legend [shape=plaintext, margin=0, style=solid, fillcolor=white, label=%s];\n",
-		tbl.String())
+		"  %s [shape=plaintext, margin=0, style=solid, fillcolor=white, label=%s];\n",
+		legendNodeID, tbl.String())
 	return sb.String()
 }
 
 // formatTargets picks one of three rendering modes based on how close the
-// target set size is to the total number of entity types:
-//   - all entities (after the legend can exclude self): "any entity"
-//   - at least total-2: "any entity except X, Y"
+// target set size is to the effective total number of targetable entity types:
+//   - equals effectiveTotal: "any entity"
+//   - at least effectiveTotal-2: "any entity except X, Y"
 //   - otherwise: sorted labels, 2 per line, left-aligned with <BR ALIGN="LEFT"/>.
-func formatTargets(to []string, labelOf map[string]string, total int) string {
-	if total == 0 {
+//
+// When `srcInTargets` is false, the source entity is not a valid target and
+// must be excluded from the "except" complement. `source` is the id of that
+// entity so the complement iteration can skip it.
+func formatTargets(
+	to []string,
+	labelOf map[string]string,
+	effectiveTotal int,
+	source string,
+	srcInTargets bool,
+) string {
+	if effectiveTotal <= 0 {
 		return ""
 	}
 	switch {
-	case len(to) == total:
+	case len(to) == effectiveTotal:
 		return "any entity"
-	case len(to) >= total-2:
+	case len(to) >= effectiveTotal-2:
 		included := make(map[string]bool, len(to))
 		for _, t := range to {
 			included[t] = true
 		}
-		missing := make([]string, 0, total-len(to))
-		names := make([]string, 0, total)
+		names := make([]string, 0, len(labelOf))
 		for n := range labelOf {
+			if !srcInTargets && n == source {
+				continue
+			}
 			names = append(names, n)
 		}
 		sort.Strings(names)
+		missing := make([]string, 0, effectiveTotal-len(to))
 		for _, n := range names {
 			if !included[n] {
 				missing = append(missing, html.EscapeString(labelOf[n]))

@@ -60,9 +60,18 @@ entities:
     color: "#FFFDE7"
     properties:
       title: {type: string, required: true}
-  anchor:
-    label: Anchor
-    id_prefix: "ANC-"
+  # Two anchors, each with a ≤2-target relation, keep every c-node otherwise
+  # connected without themselves collapsing.
+  anchor1:
+    label: Anchor1
+    id_prefix: "A1-"
+    id_type: sequential
+    color: "#EFEBE9"
+    properties:
+      title: {type: string, required: true}
+  anchor2:
+    label: Anchor2
+    id_prefix: "A2-"
     id_type: sequential
     color: "#EFEBE9"
     properties:
@@ -74,6 +83,14 @@ entities:
   catch:
     label: Catch
     id_prefix: "CATCH-"
+    id_type: sequential
+    color: "#FFEBEE"
+    properties:
+      title: {type: string, required: true}
+  # Hyphenated type — exercises DOT identifier quoting.
+  review-response:
+    label: Review Response
+    id_prefix: "RR-"
     id_type: sequential
     color: "#FFEBEE"
     properties:
@@ -103,10 +120,14 @@ relations:
     label: web
     from: [webber]
     to: [c1, c2, c3, c4]
-  anchors:
-    label: anchors
-    from: [anchor]
-    to: [c1, c2, c3, c4]
+  anchors1:
+    label: anchors1
+    from: [anchor1]
+    to: [c1, c2]
+  anchors2:
+    label: anchors2
+    from: [anchor2]
+    to: [c3, c4]
   catches:
     label: catches
     from: [catch]
@@ -115,6 +136,10 @@ relations:
     label: lost
     from: [excluded]
     to: [leaf]
+  responds-to:
+    label: responds to
+    from: [review-response]
+    to: [core]
 YAML
 
 cd "${DEMO}"
@@ -166,12 +191,29 @@ EX_DOT="$("${BIN}" schema --graphviz --exclude excluded)"
 refute "excluded node absent" "$EX_DOT" '  excluded \[label'
 refute "no edges from excluded" "$EX_DOT" 'excluded -> '
 
-say "Rendering to PNG via graphviz"
+say "Parse-checking DOT + rendering to PNG via graphviz"
 if ! command -v dot >/dev/null 2>&1; then
     say "graphviz 'dot' not found — skipping PNG render"
     step "install with: brew install graphviz  (or: apt-get install graphviz)"
     exit 0
 fi
+
+# First: pipe through `dot -Tdot` as a pure syntax check. This catches bugs
+# where DOT is accepted by `dot -Tpng` in lenient mode but is actually malformed.
+if ! printf '%s\n' "$DOT" | dot -Tdot > /dev/null 2>dot.err; then
+    step "✗ dot rejected the generated DOT"
+    cat dot.err
+    exit 1
+fi
+step "✓ DOT parses cleanly"
+
+# Same for the --exclude variant.
+if ! printf '%s\n' "$EX_DOT" | dot -Tdot > /dev/null 2>dot.err; then
+    step "✗ dot rejected the --exclude DOT"
+    cat dot.err
+    exit 1
+fi
+step "✓ --exclude DOT parses cleanly"
 
 printf '%s\n' "$DOT" | dot -Tpng -o graph.png
 SIZE=$(wc -c < graph.png | tr -d ' ')
