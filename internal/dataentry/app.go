@@ -221,7 +221,11 @@ func NewApp(
 ) (*App, error) {
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
-	kv := state.NewFSKV(fs, paths.CacheDir)
+	kvRoot, err := storage.NewRootedFS(fs, paths.CacheDir)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: rooted fs for state kv: %w", err)
+	}
+	kv := state.NewFSKV(kvRoot)
 	trc := tracer.New(st)
 	templater := templating.NewFSTemplater(fs, paths)
 	readDeps := lua.ReadDeps{

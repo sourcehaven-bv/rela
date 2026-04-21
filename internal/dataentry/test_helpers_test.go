@@ -242,7 +242,11 @@ func newHandlerTestApp(t *testing.T) *App {
 	app := &App{}
 	rebindApp(app, fs, ctx, ws)
 	// Make sure kv hits the real filesystem through state.KV, matching production.
-	app.kv = state.NewFSKV(fs, ctx.CacheDir)
+	kvRoot, err := storage.NewRootedFS(fs, ctx.CacheDir)
+	if err != nil {
+		t.Fatalf("NewRootedFS: %v", err)
+	}
+	app.kv = state.NewFSKV(kvRoot)
 	app.state.Store(&AppState{
 		Cfg:         cfg,
 		Meta:        meta,
