@@ -110,6 +110,12 @@ type App struct {
 	// singleflight deduplication is stable across requests.
 	documents *documentService
 
+	// scriptEngine is the long-lived Lua script engine used for action
+	// execution. Holding one per App (rather than per-request) means
+	// every request shares the same rela.cache state, which is the
+	// whole point of having a cache in a long-lived server.
+	scriptEngine *script.Engine
+
 	// state holds the current reloadable snapshot. Readers: a.State().
 	// Writers: onReload rebuilds and publishes a new state after file
 	// changes. Initial state is published in NewApp.
@@ -294,6 +300,7 @@ func NewApp(
 		startWatching: startWatching,
 		broker:        newEventBroker(),
 		documents:     newDocumentService(st, kv, paths.Root),
+		scriptEngine:  script.NewEngine(),
 	}
 
 	userDefaults := app.loadUserDefaults()

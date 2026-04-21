@@ -61,11 +61,17 @@ func (e *Engine) ExecuteAction(
 		lua.WithParams(params),
 		lua.WithActionMode(),
 		lua.WithTimeout(timeout),
+		lua.WithCache(e.cache),
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer runtime.Close()
+
+	// RunActionString takes a chunk name but doesn't touch scriptPath,
+	// so wire the namespace explicitly for rela.cache.* — otherwise
+	// action scripts would always hit the inline/eval guard.
+	runtime.SetScriptPath(scriptPath)
 
 	if triggerEntity != nil {
 		ls := runtime.LState()

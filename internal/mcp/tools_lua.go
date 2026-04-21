@@ -64,12 +64,15 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	var output bytes.Buffer
 
 	runtime, err := script.NewWriterRuntime(s.ws.LuaWriteDeps(), "",
-		&output, lua.WithContext(ctx))
+		&output, lua.WithContext(ctx), lua.WithCache(s.ws.LuaCache()))
 	if err != nil {
 		return mcp.NewToolResultError("config error: " + err.Error()), nil
 	}
 	defer runtime.Close()
 
+	// scriptPath is intentionally left empty: rela.cache.* in lua_eval
+	// raises "not available in inline/eval contexts" so sessions can't
+	// accidentally share a nameless namespace.
 	if err := runtime.RunString(code); err != nil {
 		return mcp.NewToolResultError("Lua error: " + err.Error()), nil
 	}
@@ -135,17 +138,19 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	var output bytes.Buffer
 
 	runtime, err := script.NewWriterRuntime(s.ws.LuaWriteDeps(), path,
-		&output, lua.WithContext(ctx))
+		&output, lua.WithContext(ctx), lua.WithCache(s.ws.LuaCache()))
 	if err != nil {
 		return mcp.NewToolResultError("config error: " + err.Error()), nil
 	}
 	defer runtime.Close()
 
-	// Set script args before execution
-	runtime.SetArgs(args)
-
-	// Execute script content directly (bypasses symlink escapes since we read via os.Root)
-	if err := runtime.RunString(string(scriptContent)); err != nil {
+	// Use RunFileContent rather than RunString so the runtime wires
+	// up chunk name, rela.args, and cache namespace identically to a
+	// normal RunFile call. We read the bytes ourselves (via
+	// os.OpenRoot above) specifically for traversal resistance; passing
+	// them through RunFileContent keeps that while sharing all the
+	// downstream invariants.
+	if err := runtime.RunFileContent(path, scriptContent, args); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Lua error in %s: %s", path, err.Error())), nil
 	}
 

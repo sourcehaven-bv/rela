@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 // actionIDRegex defines the allowed format for action IDs at request time.
@@ -97,8 +96,10 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	engine := script.NewEngine()
-	resp, err := engine.ExecuteAction(action.Script, a.luaWriteDeps(),
+	// Reuse the App's long-lived engine so rela.cache state persists
+	// across action invocations. Constructing a fresh engine per
+	// request would reset the cache each time and defeat memoization.
+	resp, err := a.scriptEngine.ExecuteAction(action.Script, a.luaWriteDeps(),
 		ent, action.Params, actionTimeout)
 	if err != nil {
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)

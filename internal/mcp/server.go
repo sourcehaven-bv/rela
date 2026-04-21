@@ -52,6 +52,7 @@ type Services interface {
 	Config() config.Loader
 	Paths() *project.Context
 	LuaWriteDeps() lua.WriteDeps
+	LuaCache() *lua.Cache
 	PauseWatching()
 	ResumeWatching()
 	StartWatching(workspace.WatchOptions) error

@@ -527,6 +527,7 @@ end
 | `rela.today` | Current date as "YYYY-MM-DD" |
 | `rela.params` | Action script parameters (table, from data-entry config) |
 | `rela.secrets` | Per-script secrets (table, from `.rela/secrets.yaml`) |
+| `rela.cache` | Process-wide memoization cache namespaced per script (see [Cache](#cache)) |
 
 ### Secrets
 
@@ -582,6 +583,95 @@ If `.rela/secrets.yaml` does not exist, `rela.secrets` is an empty table (no err
 - `.rela/` is gitignored by convention — secrets are not committed to version control
 - Treat Lua scripts as trusted code: any script can read all secrets available to it
 - For shared projects, each contributor maintains their own `.rela/secrets.yaml`
+
+### Cache
+
+Scripts can memoize expensive computations (AI calls, graph traversals, property
+lookups) via the `rela.cache` module. The cache is in-memory, process-wide, and
+**namespaced per script path** so two scripts that happen to use the same key
+do not collide.
+
+#### API
+
+```lua
+-- Fetch a cached value, or nil on miss/expiry.
+local v = rela.cache.get("my-key")
+
+-- Store a value. nil deletes the entry. ttl defaults to 1 hour.
+rela.cache.set("my-key", value, {ttl = 3600})
+
+-- Get-or-compute: on miss, call fn(), store and return all its
+-- return values; on hit, return the cached values without calling fn.
+local result = rela.cache.memoize("expensive-" .. entity.id, function()
+    return do_expensive_work(entity)
+end, {ttl = 86400})
+```
+
+#### Options
+
+| Option | Applies to | Default | Meaning |
+|--------|------------|---------|---------|
+| `ttl` | `set`, `memoize` | 3600 (1h) | Seconds until expiry. 0 or negative = no expiry |
+| `bypass` | `memoize` only | false | Skip the read, always call fn and write |
+
+`get` takes no options. Unknown option keys raise a Lua error, so typos like
+`{refersh = true}` surface loudly instead of being silently dropped.
+
+#### Multi-return values
+
+`memoize`'s `fn` may return multiple values; `rela.cache` stores and re-emits
+all of them. This matches the `(result, err)` convention used by `ai.chat`:
+
+```lua
+local resp, err = rela.cache.memoize("summary:" .. id, function()
+    return ai.complete("Summarize: " .. content)
+end)
+if err then error(err.message) end
+```
+
+#### Caveat: nested `set` on the same key
+
+If `fn` inside `memoize("k", fn)` itself writes to the same key via
+`rela.cache.set("k", ...)`, that write is silently overwritten when
+`memoize` stores `fn`'s return values. Use a different key for
+side-channel writes:
+
+```lua
+rela.cache.memoize("result:" .. id, function()
+    local aux = compute_aux()
+    rela.cache.set("result:" .. id .. ":aux", aux)  -- different key; survives
+    return compute_main(aux)
+end)
+```
+
+#### Limits
+
+- Keys are Lua strings, ≤ 512 bytes
+- Values must be plain data (strings, numbers, booleans, nested tables);
+  functions, userdata, and coroutines are rejected at `set` time with an
+  error naming the offending type
+- The cache is capped globally at 10,000 entries across all namespaces;
+  when the cap is reached, the least-recently-accessed entry is evicted
+  on the next write
+
+#### Scope
+
+- The cache is in-memory and shared across all Lua runtimes within a single
+  `rela` process. Scheduled tasks running in the same `rela scheduler` process
+  reuse cache state across their repeat invocations; HTTP action scripts on the
+  same `rela-server` share state across requests
+- Each new `rela` invocation starts with an empty cache — nothing is persisted
+  to disk. A one-shot `rela script` run gets no cross-invocation reuse
+- `rela.cache.*` is **not available** in inline/eval contexts (`rela mcp`'s
+  `lua_eval`) — calling it raises `cache: not available in inline/eval contexts`.
+  This prevents accidental cross-session bleed where two sessions would share a
+  nameless namespace
+
+#### Numeric precision
+
+Lua numbers are 64-bit floats. Integer IDs larger than 2^53 cannot round-trip
+through any Lua value — this is a Lua limitation, not a cache one, but worth
+keeping in mind if you cache things keyed by raw integer IDs.
 
 ### Markdown AST: Task Lists
 

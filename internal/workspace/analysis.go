@@ -315,9 +315,11 @@ func (w *Workspace) countIncomingByType(entityID, relName string) int {
 type ValidationViolation = validation.Violation
 
 // newValidationService creates a validation service wired to the workspace's
-// read-only lua deps. ProjectRoot comes from the deps bundle.
+// read-only lua deps. ProjectRoot comes from the deps bundle. The shared
+// Lua cache is wired so rela.cache.* inside validation rules is functional
+// and namespaced per rule (see validation/lua.go).
 func (w *Workspace) newValidationService() *validation.Service {
-	return validation.New(w.Meta(), w.LuaReadDeps())
+	return validation.New(w.Meta(), w.LuaReadDeps()).WithCache(w.LuaCache())
 }
 
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.

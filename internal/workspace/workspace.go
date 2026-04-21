@@ -53,6 +53,11 @@ type ScriptExecutor interface {
 	ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
 	// ExecuteFile runs a script file from the scripts/ directory.
 	ExecuteFile(path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
+	// LuaCache returns the executor's shared Lua cache, or nil if the
+	// executor does not provide one. Callers that build Lua runtimes
+	// directly (validation rules, lua_eval, flow, etc.) pass this via
+	// lua.WithCache so every runtime in the process shares cache state.
+	LuaCache() *lua.Cache
 }
 
 // NopScriptExecutor is a no-op implementation of ScriptExecutor for tests
@@ -69,6 +74,8 @@ func (nopScriptExecutor) ExecuteCode(_ string, _ lua.WriteDeps, _, _ *entity.Ent
 func (nopScriptExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
 	panic("NopScriptExecutor: Lua execution not expected in this context")
 }
+
+func (nopScriptExecutor) LuaCache() *lua.Cache { return nil }
 
 // Workspace is a stateful domain session that ties together the store
 // (persistence), metamodel (schema), automation engine, and search index.
