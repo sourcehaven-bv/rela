@@ -4,6 +4,7 @@ import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
+import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import type { PropertyDef, FormFieldOrRelation, Template } from '@/types'
 import { getTemplates, createRelation, updateRelationProperties, deleteRelation } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
@@ -56,6 +57,20 @@ const entityType = computed(() => {
 })
 
 const isEdit = computed(() => !!props.entityId)
+const formMode = computed(() => (isEdit.value ? 'edit' : 'create') as 'create' | 'edit')
+
+const idControls = useEntityIDControls(entityType, formMode)
+const {
+  showManualIDInput,
+  showPrefixPicker,
+  prefixOptions,
+  manualId,
+  selectedPrefix,
+} = idControls
+
+const showReadOnlyID = computed(
+  () => isEdit.value && entityType.value?.id_type === 'manual'
+)
 
 const title = computed(() => {
   if (!formConfig.value) return ''
@@ -123,6 +138,8 @@ function applyReturnToFromQuery() {
 
 function initializeDefaults() {
   if (!entityType.value || isEdit.value) return
+
+  idControls.reset()
 
   // Parse query params for pre-filling (prop.*, rel.*, link_*)
   const query = route.query
@@ -327,7 +344,13 @@ async function handleSubmit() {
       }
     }
 
-    const payload = {
+    const payload: {
+      id?: string
+      prefix?: string
+      properties: Record<string, unknown>
+      relations: Record<string, string[]>
+      content?: string
+    } = {
       properties: formData.value,
       relations: filteredRelations,
       content: content.value || undefined,
@@ -339,6 +362,7 @@ async function handleSubmit() {
       await savePendingRelationCards()
       uiStore.success('Entity updated successfully')
     } else {
+      Object.assign(payload, idControls.buildPayloadFields())
       const entity = await entitiesStore.create(formConfig.value.entity, payload)
 
       // Handle auto-linking from link_* params (e.g., from custom view "Add" buttons)
@@ -385,7 +409,7 @@ async function handleSubmit() {
     // not a user-facing failure; the user clicked away before the
     // save completed, which is their choice.
     if (isCancelledFetch(err)) return
-    if (err && typeof err === 'object' && 'errors' in err) {
+    if (err && typeof err === 'object' && 'errors' in err && Array.isArray((err as { errors: unknown }).errors)) {
       const problemErrors = (err as { errors: Array<{ field?: string; message?: string; detail?: string }> }).errors
       for (const e of problemErrors) {
         if (e.field) {
@@ -393,6 +417,9 @@ async function handleSubmit() {
         }
       }
       uiStore.error('Please fix the validation errors')
+    } else if (err && typeof err === 'object' && ('detail' in err || 'title' in err)) {
+      const problem = err as { detail?: string; title?: string }
+      uiStore.error(problem.detail || problem.title || 'Failed to save entity')
     } else {
       uiStore.error('Failed to save entity')
     }
@@ -569,6 +596,22 @@ onBeforeRouteLeave((_to, _from, next) => {
       </div>
 
       <form v-else @submit.prevent="handleSubmit">
+        <div v-if="showReadOnlyID" class="form-field id-field">
+          <label>ID</label>
+          <div class="id-display">{{ entityId }}</div>
+          <p class="field-help">IDs cannot be changed here; use rename.</p>
+        </div>
+        <div v-if="showManualIDInput" class="form-field id-field">
+          <label>ID <span class="required">*</span></label>
+          <input v-model="manualId" type="text" required placeholder="Unique ID..." />
+        </div>
+        <div v-if="showPrefixPicker" class="form-field id-field">
+          <label>Prefix <span class="required">*</span></label>
+          <select v-model="selectedPrefix" required>
+            <option v-for="p in prefixOptions" :key="p" :value="p">{{ p }}</option>
+          </select>
+        </div>
+
         <template v-if="formConfig.sections?.length">
           <div
             v-for="section in formConfig.sections"
@@ -786,6 +829,41 @@ onBeforeRouteLeave((_to, _from, next) => {
   font-size: 14px;
   font-weight: 500;
   color: var(--text-color);
+}
+
+.id-field {
+  margin-bottom: 16px;
+}
+
+.id-field input,
+.id-field select {
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.id-display {
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+  background: var(--input-bg);
+  color: var(--muted-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.required {
+  color: var(--error-color, #ef4444);
+  margin-left: 2px;
+}
+
+.field-help {
+  font-size: 12px;
+  color: var(--muted-text);
+  margin: 0;
 }
 
 .content-field {

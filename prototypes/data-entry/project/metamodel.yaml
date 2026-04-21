@@ -55,6 +55,37 @@ entities:
       name:
         type: string
         required: true
+  tag:
+    label: Tag
+    id_type: manual
+    properties:
+      name:
+        type: string
+        required: true
+  decision:
+    label: Decision
+    id_prefixes: ["DEC-", "ADR-"]
+    id_type: sequential
+    properties:
+      title:
+        type: string
+        required: true
+  module:
+    label: Module
+    id_type: manual
+    id_prefix: "MOD-"
+    properties:
+      name:
+        type: string
+        required: true
+  specification:
+    label: Specification
+    id_type: manual
+    id_prefixes: ["RFC-", "SPEC-"]
+    properties:
+      name:
+        type: string
+        required: true
 relations:
   belongs-to:
     label: belongs to

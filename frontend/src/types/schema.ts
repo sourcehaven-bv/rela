@@ -11,6 +11,7 @@ export interface EntityType {
   description?: string
   id_type?: 'short' | 'sequential' | 'manual'
   id_prefix?: string
+  id_prefixes?: string[]
   properties: Record<string, PropertyDef>
   default_sort?: SortSpec[]
   color?: string

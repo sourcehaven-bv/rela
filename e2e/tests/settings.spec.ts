@@ -165,7 +165,7 @@ test.describe('Settings', () => {
 
       await settingsPage.navigateToSettings();
 
-      await settingsPage.expectAppInfo('Entity Types', '3'); // feature, bug, task
+      await settingsPage.expectAppInfo('Entity Types', '7'); // feature, bug, task, tag, decision, module, specification
     });
 
     test('shows relation type count', async ({ appPage }) => {
@@ -181,7 +181,7 @@ test.describe('Settings', () => {
 
       await settingsPage.navigateToSettings();
 
-      await settingsPage.expectAppInfo('Forms', '3'); // feature, bug, task
+      await settingsPage.expectAppInfo('Forms', '7'); // feature, bug, task, tag, decision, module, specification
     });
 
     test('shows lists count', async ({ appPage }) => {

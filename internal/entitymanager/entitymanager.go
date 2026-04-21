@@ -20,6 +20,10 @@ import (
 type CreateOptions struct {
 	// ID is an optional explicit ID. If empty, the manager generates one.
 	ID string
+	// Prefix overrides the default ID prefix when the entity type declares
+	// multiple via `id_prefixes`. Ignored when ID is set or when the entity
+	// type uses manual IDs.
+	Prefix string
 	// Variant selects an entity template variant (empty = default).
 	Variant string
 	// SkipAutomation suppresses on-create automations. Defaults to false.

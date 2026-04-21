@@ -264,4 +264,38 @@ export class FormPage extends BasePage {
   pickerTileByText(picker: Locator, text: string): Locator {
     return picker.locator('.selected-entity', { hasText: text });
   }
+
+  // --- Manual ID / prefix picker (TKT-E7NNM) ---
+
+  get idInput(): Locator {
+    return this.page.locator('.id-field input[type="text"]');
+  }
+
+  get prefixSelect(): Locator {
+    return this.page.locator('.id-field select');
+  }
+
+  async expectIdInputVisible() {
+    await expect(this.idInput).toBeVisible();
+  }
+
+  async expectPrefixSelectVisible() {
+    await expect(this.prefixSelect).toBeVisible();
+  }
+
+  async expectPrefixSelectHidden() {
+    await expect(this.prefixSelect).toHaveCount(0);
+  }
+
+  async fillId(value: string) {
+    await this.idInput.fill(value);
+  }
+
+  async selectPrefix(value: string) {
+    await this.prefixSelect.selectOption(value);
+  }
+
+  async getPrefixOptions(): Promise<string[]> {
+    return this.prefixSelect.locator('option').allTextContents();
+  }
 }

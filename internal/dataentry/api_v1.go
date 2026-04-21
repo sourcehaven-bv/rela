@@ -79,6 +79,7 @@ type V1EntityType struct {
 	Primary     string                   `json:"primary,omitempty"`
 	IDType      string                   `json:"id_type,omitempty"`
 	IDPrefix    string                   `json:"id_prefix,omitempty"`
+	IDPrefixes  []string                 `json:"id_prefixes,omitempty"`
 	Properties  map[string]V1PropertyDef `json:"properties"`
 }
 
@@ -374,6 +375,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 
 	var req struct {
 		ID         string                 `json:"id,omitempty"`
+		Prefix     string                 `json:"prefix,omitempty"`
 		Properties map[string]interface{} `json:"properties"`
 		Content    string                 `json:"content,omitempty"`
 		Relations  map[string][]string    `json:"relations,omitempty"`
@@ -384,13 +386,26 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
+	entityDef, defOK := a.State().Meta.Entities[typeName]
+	if !defOK {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", typeName)
+		return
+	}
+
+	req.ID = strings.TrimSpace(req.ID)
+	req.Prefix = strings.TrimSpace(req.Prefix)
+	if msg := validateCreateIDOpts(&entityDef, req.ID, req.Prefix); msg != "" {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", msg, "")
+		return
+	}
+
 	createResult, err := a.entityManager.CreateEntity(r.Context(),
 		&entityPkg.Entity{
 			Type:       typeName,
 			Properties: req.Properties,
 			Content:    req.Content,
 		},
-		entitymanager.CreateOptions{ID: req.ID},
+		entitymanager.CreateOptions{ID: req.ID, Prefix: req.Prefix},
 	)
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
@@ -852,8 +867,10 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 			IDType:      def.GetIDType(),
 			Properties:  make(map[string]V1PropertyDef),
 		}
-		if len(def.GetIDPrefixes()) > 0 {
-			et.IDPrefix = def.GetIDPrefixes()[0]
+		prefixes := def.GetIDPrefixes()
+		if len(prefixes) > 0 {
+			et.IDPrefix = prefixes[0]
+			et.IDPrefixes = prefixes
 		}
 		for propName, propDef := range def.Properties {
 			et.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
@@ -920,6 +937,10 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 			Primary:     def.GetPrimaryProperty(),
 			IDType:      def.GetIDType(),
 			Properties:  make(map[string]V1PropertyDef),
+		}
+		if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
+			et.IDPrefix = prefixes[0]
+			et.IDPrefixes = prefixes
 		}
 		for propName, propDef := range def.Properties {
 			pd := V1PropertyDef{
@@ -1446,6 +1467,50 @@ func (a *App) computeEntityETag(e *entityPkg.Entity) string {
 
 	sum := h.Sum(nil)
 	return fmt.Sprintf("\"%s\"", base64.StdEncoding.EncodeToString(sum[:8]))
+}
+
+// validateCreateIDOpts enforces that `id` is only accepted for manual-ID types
+// and that `prefix` is only accepted for non-manual types with a known prefix.
+// For manual-ID types that declare one or more prefixes, the `id` must start
+// with one of them AND include a non-empty suffix. Surrounding whitespace on
+// the inputs is trimmed at the boundary so the error message lines up with
+// what the user actually typed. Returns an empty string when valid.
+func validateCreateIDOpts(def *metamodel.EntityDef, id, prefix string) string {
+	id = strings.TrimSpace(id)
+	prefix = strings.TrimSpace(prefix)
+
+	if id != "" && !def.IsManualID() {
+		return "id not accepted for non-manual ID type; use 'prefix' instead"
+	}
+	if id != "" && def.IsManualID() {
+		if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
+			matched := false
+			for _, p := range prefixes {
+				// Reject the bare prefix (id == p) — the entity needs a
+				// distinguishing suffix or it conflicts with the prefix
+				// concept itself. (RR-…)
+				if strings.HasPrefix(id, p) && len(id) > len(p) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return fmt.Sprintf("id %q must start with one of %v and include a suffix", id, prefixes)
+			}
+		}
+	}
+	if prefix == "" {
+		return ""
+	}
+	if def.IsManualID() {
+		return "prefix not applicable to manual ID type"
+	}
+	for _, p := range def.GetIDPrefixes() {
+		if p == prefix {
+			return ""
+		}
+	}
+	return fmt.Sprintf("prefix %q is not valid; allowed: %v", prefix, def.GetIDPrefixes())
 }
 
 func writeV1JSON(w http.ResponseWriter, status int, data interface{}) {

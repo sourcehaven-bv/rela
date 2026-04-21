@@ -79,7 +79,7 @@ export interface PaginatedResponse<T = EntityResponse> {
 }
 
 export interface ApiHelpers {
-  createEntity(plural: string, data: { properties: Record<string, unknown>; relations?: Record<string, string[]>; id?: string }): Promise<EntityResponse>;
+  createEntity(plural: string, data: { properties: Record<string, unknown>; relations?: Record<string, string[]>; id?: string; prefix?: string }): Promise<EntityResponse>;
   getEntity(plural: string, id: string): Promise<EntityResponse>;
   updateEntity(plural: string, id: string, properties: Record<string, unknown>): Promise<EntityResponse>;
   deleteEntity(plural: string, id: string): Promise<void>;
@@ -467,6 +467,44 @@ entities:
       done:
         type: boolean
 
+  # TKT-E7NNM fixtures: covers manual-ID, multi-prefix, and the combinations
+  # we want to exercise in forms.spec.ts. Keep names short and orthogonal
+  # so the inline metamodel stays readable.
+  tag:
+    label: Tag
+    id_type: manual
+    properties:
+      name:
+        type: string
+        required: true
+
+  decision:
+    label: Decision
+    id_type: short
+    id_prefixes: [DEC-, ADR-]
+    properties:
+      title:
+        type: string
+        required: true
+
+  module:
+    label: Module
+    id_type: manual
+    id_prefix: MOD-
+    properties:
+      name:
+        type: string
+        required: true
+
+  specification:
+    label: Specification
+    id_type: manual
+    id_prefixes: [SPEC-, RFC-]
+    properties:
+      name:
+        type: string
+        required: true
+
 relations:
   blocks:
     from: [feature, bug, task]
@@ -629,6 +667,30 @@ forms:
         label: Implements Feature
       - relation: fixes
         label: Fixes Bug
+
+  tag:
+    entity_type: tag
+    title: "Tag"
+    fields:
+      - property: name
+
+  decision:
+    entity_type: decision
+    title: "Decision"
+    fields:
+      - property: title
+
+  module:
+    entity_type: module
+    title: "Module"
+    fields:
+      - property: name
+
+  specification:
+    entity_type: specification
+    title: "Specification"
+    fields:
+      - property: name
 
 lists:
   features:

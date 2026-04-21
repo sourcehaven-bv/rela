@@ -319,6 +319,24 @@ When no widget is specified, the system auto-detects from the property's type in
 enum types render as a `<select>`, booleans as checkboxes, dates as date pickers, and everything
 else as text inputs.
 
+### ID Controls on Create Forms
+
+Create forms adapt to the entity type's `id_type` and `id_prefix` / `id_prefixes`
+configuration in the metamodel. The user-facing UI is generated automatically —
+no extra form configuration is required.
+
+- **Single-prefix types** (`id_prefix: "TKT-"`): no extra controls. The form
+  submits and the server assigns the next ID.
+- **Multi-prefix types** (`id_prefixes: ["DEC-", "ADR-"]`): the create form
+  renders a **Prefix** dropdown so the user picks which prefix the new entity
+  should use. The server validates the chosen prefix against the declared
+  list — unknown values are rejected with a 422.
+- **Manual ID types** (`id_type: manual`): the create form renders a required
+  **ID** text input that is sent verbatim as the entity's ID. If the type also
+  declares one or more prefixes, the supplied ID must start with one of them
+  and include a non-empty suffix. The edit form shows the ID as a read-only
+  display; renaming uses the dedicated rename flow.
+
 ### State Transitions
 
 For edit forms, you can restrict which enum values are selectable based on the current value:
