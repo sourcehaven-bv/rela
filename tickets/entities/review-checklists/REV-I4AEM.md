@@ -61,8 +61,8 @@ for future internal contributors.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — all code checks green (Test/E2E/Frontend/Fuzz/Lint/Build/Architecture/Docs/Demos/Vulnerability), ticket-validation check will go green on transition-to-done
+- [x] PR URL documented below
 
-**PR:** *(pending)*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/552

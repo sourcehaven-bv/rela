@@ -289,9 +289,9 @@ migration is ~20 LOC of diff. No cross-package changes except `state`.
 
 - [x] N/A - Internal change, no user-facing docs needed
 
-- [ ] User guide / reference docs — N/A (internal type)
-- [ ] CLI help text — N/A (no CLI changes)
-- [ ] CLAUDE.md — will update in a follow-up ticket once the pattern is established across more callers. For a single-caller pilot, premature.
+- [x] ~~User guide / reference docs~~ (N/A: internal type)
+- [x] ~~CLI help text~~ (N/A: no CLI changes)
+- [x] ~~CLAUDE.md~~ (N/A: will update in a follow-up ticket once the pattern is established across more callers; premature for a single-caller pilot)
 - [x] ~~README.md~~ (N/A: internal type, no project-level change)
 - [x] ~~API docs~~ (N/A: no public HTTP/CLI API surface)
 
