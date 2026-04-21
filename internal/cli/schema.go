@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"html"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,9 @@ import (
 var (
 	schemaGraphviz    bool
 	schemaConstraints bool
+	schemaExclude     []string
+	schemaNoBundle    bool
+	schemaNoLegend    bool
 )
 
 var schemaCmd = &cobra.Command{
@@ -40,6 +44,9 @@ Subcommands:
 Flags:
   --graphviz      Output metamodel as GraphViz DOT format
   --constraints   Include cardinality constraints in GraphViz output
+  --exclude       Hide an entity type (repeatable; only affects --graphviz)
+  --no-bundle     Disable the hub bundle for 3-4 targets with an isolated node
+  --no-legend     Disable the legend table for many-target / fully-connected relations
 
 Examples:
   rela schema                    # Overview
@@ -49,7 +56,8 @@ Examples:
   rela schema entity service     # Detail for one entity type
   rela schema relation addresses # Detail for one relation type
   rela schema --graphviz         # Output as DOT format
-  rela schema --graphviz --constraints  # DOT with cardinality`,
+  rela schema --graphviz --constraints  # DOT with cardinality
+  rela schema --graphviz --exclude referentie  # hide an entity type`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if schemaGraphviz {
 			return runSchemaGraphviz()
@@ -504,69 +512,421 @@ var defaultEdgeColors = []string{
 	"#5d4037", // brown
 }
 
-func runSchemaGraphviz() error {
-	var sb strings.Builder
+// Classification buckets for each (sourceEntity, relation) pair.
+const (
+	renderPlain  = "plain"
+	renderHub    = "hub"
+	renderLegend = "legend"
+)
 
+// Thresholds for the (source, relation) classifier:
+//   - fewer than minHubTargets targets always render as plain edges
+//   - minHubTargets..legendTargetThreshold-1 may hub-bundle when at least one
+//     target is otherwise isolated; otherwise they collapse into the legend
+//   - legendTargetThreshold or more unconditionally collapse into the legend
+const (
+	minHubTargets         = 3
+	legendTargetThreshold = 5
+)
+
+// legendNodeID and hubIDPrefix are reserved identifiers used for synthetic
+// nodes in the generated DOT. They are intentionally underscore-prefixed and
+// the classifier assumes no user-defined entity type uses these names.
+const (
+	legendNodeID = "__legend"
+	hubIDPrefix  = "__hub_"
+)
+
+// dotID returns a DOT-safe identifier for an arbitrary string. DOT accepts
+// unquoted identifiers only when they match [_A-Za-z][_0-9A-Za-z]*. Anything
+// else — including hyphens, dots, spaces, or an empty string — must be
+// double-quoted. The function always emits the quoted form when the input
+// needs it, otherwise returns the raw identifier untouched.
+func dotID(s string) string {
+	if s == "" {
+		return `""`
+	}
+	for i, r := range s {
+		first := i == 0
+		valid := r == '_' ||
+			(r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(!first && r >= '0' && r <= '9')
+		if !valid {
+			// Escape backslashes and quotes per DOT's quoted-string syntax.
+			var sb strings.Builder
+			sb.Grow(len(s) + 2)
+			sb.WriteByte('"')
+			for _, c := range s {
+				if c == '\\' || c == '"' {
+					sb.WriteByte('\\')
+				}
+				sb.WriteRune(c)
+			}
+			sb.WriteByte('"')
+			return sb.String()
+		}
+	}
+	return s
+}
+
+// relPair is a classified pair with its effective (post-exclude) target list.
+type relPair struct {
+	source string
+	rel    string
+	to     []string
+	render string
+	relDef metamodel.RelationDef
+	srcIdx int // color index of the source in the entity palette
+}
+
+func runSchemaGraphviz() error {
+	entityNames, relPairs := prepareSchemaGraph(meta)
+	classifyRenderings(entityNames, relPairs)
+
+	var sb strings.Builder
 	sb.WriteString("digraph metamodel {\n")
 	sb.WriteString("  rankdir=LR;\n")
 	sb.WriteString("  node [shape=box, style=\"filled,rounded\", fontname=\"Helvetica\"];\n")
 	sb.WriteString("  edge [fontsize=10, fontname=\"Helvetica\"];\n")
 	sb.WriteString("\n")
 
-	// Entity types as nodes
+	// Determine which entity types are visible in the final diagram. An entity
+	// is omitted when the exclude filter dropped it, or when it has no edges
+	// remaining (including hub-bundled edges) and no incoming edges.
+	visible := visibleEntities(entityNames, relPairs)
+
 	sb.WriteString("  // Entity types\n")
-	entityNames := getSortedEntityNames(meta)
+	entityColorIndex := make(map[string]int)
 	for i, name := range entityNames {
+		entityColorIndex[name] = i
+		if !visible[name] {
+			continue
+		}
 		def := meta.Entities[name]
-		// Use color from metamodel if defined, otherwise use default palette
 		fillColor := def.Color
 		if fillColor == "" {
 			fillColor = defaultEntityColors[i%len(defaultEntityColors)]
 		}
 		borderColor := def.BorderColor
 		if borderColor == "" {
-			// Derive border color from fill (darker shade)
 			borderColor = darkenColor(fillColor)
 		}
-		fmt.Fprintf(&sb, "  %s [label=\"%s\", fillcolor=\"%s\", color=\"%s\"];\n",
-			name, def.Label, fillColor, borderColor)
+		fmt.Fprintf(&sb, "  %s [label=%q, fillcolor=%q, color=%q];\n",
+			dotID(name), def.Label, fillColor, borderColor)
 	}
 	sb.WriteString("\n")
 
-	// Build a map of entity type -> color index for edge coloring
-	entityColorIndex := make(map[string]int)
-	for i, name := range entityNames {
-		entityColorIndex[name] = i
+	sb.WriteString("  // Relations\n")
+	var legendEntries []relPair
+	hubIdx := 0
+	for _, p := range relPairs {
+		edgeLabel := p.relDef.Label
+		if schemaConstraints {
+			edgeLabel = buildConstraintLabel(p.relDef)
+		}
+		edgeColor := defaultEdgeColors[entityColorIndex[p.source]%len(defaultEdgeColors)]
+
+		switch p.render {
+		case renderPlain:
+			for _, to := range p.to {
+				fmt.Fprintf(&sb, "  %s -> %s [label=%q, color=%q, fontcolor=%q];\n",
+					dotID(p.source), dotID(to), edgeLabel, edgeColor, edgeColor)
+			}
+		case renderHub:
+			hub := fmt.Sprintf("%s%d", hubIDPrefix, hubIdx)
+			hubIdx++
+			fmt.Fprintf(&sb, "  %s [shape=point, width=0.05, height=0.05, label=\"\"];\n", hub)
+			fmt.Fprintf(&sb, "  %s -> %s [label=%q, color=%q, fontcolor=%q, arrowhead=none];\n",
+				dotID(p.source), hub, edgeLabel, edgeColor, edgeColor)
+			for _, to := range p.to {
+				fmt.Fprintf(&sb, "  %s -> %s [color=%q];\n", hub, dotID(to), edgeColor)
+			}
+		case renderLegend:
+			legendEntries = append(legendEntries, p)
+		}
 	}
 
-	// Relations as edges
-	sb.WriteString("  // Relations\n")
-	relationNames := getSortedRelationNames(meta)
-	for _, relName := range relationNames {
-		relDef := meta.Relations[relName]
-
-		// Build edge label
-		edgeLabel := relDef.Label
-		if schemaConstraints {
-			edgeLabel = buildConstraintLabel(relDef)
-		}
-
-		// Create edges for all from->to combinations
-		for _, from := range relDef.From {
-			// Edge color based on source entity type
-			edgeColor := defaultEdgeColors[entityColorIndex[from]%len(defaultEdgeColors)]
-
-			for _, to := range relDef.To {
-				fmt.Fprintf(&sb, "  %s -> %s [label=\"%s\", color=\"%s\", fontcolor=\"%s\"];\n",
-					from, to, edgeLabel, edgeColor, edgeColor)
-			}
-		}
+	if len(legendEntries) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(renderLegendNode(legendEntries, entityNames))
 	}
 
 	sb.WriteString("}\n")
 
 	fmt.Print(sb.String())
 	return nil
+}
+
+// prepareSchemaGraph applies --exclude filtering and returns the visible entity
+// list plus one relPair per (source, relation) in the post-exclude metamodel.
+func prepareSchemaGraph(m *metamodel.Metamodel) ([]string, []relPair) {
+	excluded := make(map[string]bool, len(schemaExclude))
+	for _, name := range schemaExclude {
+		excluded[name] = true
+	}
+
+	allNames := getSortedEntityNames(m)
+	entityNames := make([]string, 0, len(allNames))
+	for _, name := range allNames {
+		if !excluded[name] {
+			entityNames = append(entityNames, name)
+		}
+	}
+
+	colorIndex := make(map[string]int, len(allNames))
+	for i, name := range allNames {
+		colorIndex[name] = i
+	}
+
+	var pairs []relPair
+	for _, relName := range getSortedRelationNames(m) {
+		relDef := m.Relations[relName]
+		for _, from := range relDef.From {
+			if excluded[from] {
+				continue
+			}
+			targets := make([]string, 0, len(relDef.To))
+			for _, to := range relDef.To {
+				if !excluded[to] {
+					targets = append(targets, to)
+				}
+			}
+			if len(targets) == 0 {
+				continue
+			}
+			pairs = append(pairs, relPair{
+				source: from,
+				rel:    relName,
+				to:     targets,
+				render: renderPlain,
+				relDef: relDef,
+				srcIdx: colorIndex[from],
+			})
+		}
+	}
+	return entityNames, pairs
+}
+
+// classifyRenderings assigns a render bucket to each pair. The "otherwise
+// connected" check — whether a target has any edge to non-legend pairs — is
+// computed in two passes to avoid a snapshot-based lie: if pair A targets T
+// and pair B (≥5 targets) also targets T, classifying A as plain or hub
+// against a snapshot that assumed B was plain would be wrong, because B will
+// actually collapse into the legend and contribute nothing to T's connectedness.
+//
+//  1. Unconditional-legend pairs (n ≥ legendTargetThreshold) are classified
+//     first and contribute 0 edges.
+//  2. The incoming-degree is computed from the remaining pairs, modeling the
+//     final diagram before the ambiguous 3-4 pairs are classified.
+//  3. Each 3-4 pair is classified against that degree, then if it ends up as
+//     legend its targets' degrees are decremented (because its edges also
+//     disappear) so later pairs see the true reduced degree.
+func classifyRenderings(entityNames []string, pairs []relPair) {
+	// Pass 1: handle the always-legend / always-plain buckets.
+	for i := range pairs {
+		p := &pairs[i]
+		n := len(p.to)
+		switch {
+		case n < minHubTargets:
+			p.render = renderPlain
+		case n >= legendTargetThreshold && !schemaNoLegend:
+			p.render = renderLegend
+		case n >= legendTargetThreshold && schemaNoLegend:
+			p.render = renderPlain
+		default:
+			p.render = "" // deferred to pass 2
+		}
+	}
+
+	// Pass 2: incoming-degree for every target, counting only pairs whose edges
+	// will actually be drawn (plain + deferred). Legend-classified pairs are
+	// excluded because their edges never appear.
+	inDegree := make(map[string]int, len(entityNames))
+	for _, p := range pairs {
+		if p.render == renderLegend {
+			continue
+		}
+		for _, t := range p.to {
+			inDegree[t]++
+		}
+	}
+
+	// Pass 3: classify the deferred pairs, adjusting inDegree on-the-fly when
+	// a deferred pair collapses (so downstream classifications see the true
+	// connectedness).
+	for i := range pairs {
+		p := &pairs[i]
+		if p.render != "" {
+			continue
+		}
+		// Count "other" incoming edges for each target: inDegree[t] counts
+		// this pair's own edge plus edges from other non-legend pairs, so
+		// subtract 1 to get the "otherwise connected" signal.
+		anyIsolated := false
+		for _, t := range p.to {
+			if inDegree[t]-1 <= 0 {
+				anyIsolated = true
+				break
+			}
+		}
+		// Prefer hub for isolated targets, legend otherwise. Respect --no-*
+		// fallbacks: when the preferred collapse is disabled, fall back to
+		// the other collapse mode before giving up and drawing plain edges.
+		switch {
+		case anyIsolated && !schemaNoBundle:
+			p.render = renderHub
+		case !schemaNoLegend:
+			p.render = renderLegend
+			// Legend collapse makes this pair's edges disappear too — keep
+			// inDegree honest so later deferred pairs see reality.
+			for _, t := range p.to {
+				inDegree[t]--
+			}
+		default:
+			p.render = renderPlain
+		}
+	}
+}
+
+// visibleEntities returns the set of entity types that should appear in the
+// DOT body. An entity is hidden only when it participates in one or more pairs
+// and every such pair is collapsed into the legend — keeping it in the body
+// would produce a disconnected node. Entities that belong to no pair at all
+// (e.g. leaf types in a tiny metamodel) stay visible.
+func visibleEntities(entityNames []string, pairs []relPair) map[string]bool {
+	// Two sets: every entity that appears in any pair, and every entity that
+	// appears in a pair whose edges will actually be drawn. The final decision
+	// is: hidden iff in seenAny but not in seenDrawn.
+	seenAny := make(map[string]bool, len(entityNames))
+	seenDrawn := make(map[string]bool, len(entityNames))
+	for _, p := range pairs {
+		seenAny[p.source] = true
+		for _, t := range p.to {
+			seenAny[t] = true
+		}
+		if p.render == renderLegend {
+			continue
+		}
+		seenDrawn[p.source] = true
+		for _, t := range p.to {
+			seenDrawn[t] = true
+		}
+	}
+
+	visible := make(map[string]bool, len(entityNames))
+	for _, name := range entityNames {
+		visible[name] = !seenAny[name] || seenDrawn[name]
+	}
+	return visible
+}
+
+// renderLegendNode emits the __legend plaintext node containing an HTML-like
+// TABLE with one two-row block per legend entry.
+func renderLegendNode(entries []relPair, entityNames []string) string {
+	total := len(entityNames)
+	labelOf := make(map[string]string, total)
+	for _, name := range entityNames {
+		labelOf[name] = meta.Entities[name].Label
+	}
+
+	var tbl strings.Builder
+	tbl.WriteString(`<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">`)
+	tbl.WriteString(`<TR><TD ALIGN="LEFT"><B>Collapsed relations</B></TD></TR>`)
+	for _, e := range entries {
+		src := html.EscapeString(meta.Entities[e.source].Label)
+		rel := html.EscapeString(e.relDef.Label)
+		fmt.Fprintf(&tbl,
+			`<TR><TD ALIGN="LEFT" SIDES="LTR"><B>%s</B> <I>%s</I></TD></TR>`,
+			src, rel)
+		// Effective total excludes the source itself when it's not in its own
+		// target set — otherwise the legend would read "any entity except Src",
+		// listing Src as an exception against its own row.
+		effTotal := total
+		srcInTargets := false
+		for _, t := range e.to {
+			if t == e.source {
+				srcInTargets = true
+				break
+			}
+		}
+		if !srcInTargets {
+			effTotal--
+		}
+		fmt.Fprintf(&tbl,
+			`<TR><TD ALIGN="LEFT" SIDES="LBR"><I>%s</I></TD></TR>`,
+			formatTargets(e.to, labelOf, effTotal, e.source, srcInTargets))
+	}
+	tbl.WriteString(`</TABLE>>`)
+
+	var sb strings.Builder
+	sb.WriteString("  // Legend\n")
+	fmt.Fprintf(&sb,
+		"  %s [shape=plaintext, margin=0, style=solid, fillcolor=white, label=%s];\n",
+		legendNodeID, tbl.String())
+	return sb.String()
+}
+
+// formatTargets picks one of three rendering modes based on how close the
+// target set size is to the effective total number of targetable entity types:
+//   - equals effectiveTotal: "any entity"
+//   - at least effectiveTotal-2: "any entity except X, Y"
+//   - otherwise: sorted labels, 2 per line, left-aligned with <BR ALIGN="LEFT"/>.
+//
+// When `srcInTargets` is false, the source entity is not a valid target and
+// must be excluded from the "except" complement. `source` is the id of that
+// entity so the complement iteration can skip it.
+func formatTargets(
+	to []string,
+	labelOf map[string]string,
+	effectiveTotal int,
+	source string,
+	srcInTargets bool,
+) string {
+	if effectiveTotal <= 0 {
+		return ""
+	}
+	switch {
+	case len(to) == effectiveTotal:
+		return "any entity"
+	case len(to) >= effectiveTotal-2:
+		included := make(map[string]bool, len(to))
+		for _, t := range to {
+			included[t] = true
+		}
+		names := make([]string, 0, len(labelOf))
+		for n := range labelOf {
+			if !srcInTargets && n == source {
+				continue
+			}
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		missing := make([]string, 0, effectiveTotal-len(to))
+		for _, n := range names {
+			if !included[n] {
+				missing = append(missing, html.EscapeString(labelOf[n]))
+			}
+		}
+		return fmt.Sprintf(`any entity<BR ALIGN="LEFT"/>except %s<BR ALIGN="LEFT"/>`,
+			strings.Join(missing, ", "))
+	default:
+		labels := make([]string, 0, len(to))
+		for _, t := range to {
+			labels = append(labels, html.EscapeString(labelOf[t]))
+		}
+		sort.Strings(labels)
+		const perLine = 2
+		var lines []string
+		for i := 0; i < len(labels); i += perLine {
+			end := i + perLine
+			if end > len(labels) {
+				end = len(labels)
+			}
+			lines = append(lines, strings.Join(labels[i:end], ", "))
+		}
+		return strings.Join(lines, `<BR ALIGN="LEFT"/>`) + `<BR ALIGN="LEFT"/>`
+	}
 }
 
 // darkenColor takes a hex color and returns a darker version for borders
@@ -692,6 +1052,12 @@ func init() {
 
 	schemaCmd.Flags().BoolVar(&schemaGraphviz, "graphviz", false, "Output metamodel as GraphViz DOT format")
 	schemaCmd.Flags().BoolVar(&schemaConstraints, "constraints", false, "Include cardinality constraints in GraphViz output")
+	schemaCmd.Flags().StringSliceVar(&schemaExclude, "exclude", nil,
+		"Hide an entity type in --graphviz output (repeatable)")
+	schemaCmd.Flags().BoolVar(&schemaNoBundle, "no-bundle", false,
+		"Disable the hub bundle for 3-4 targets with an isolated node")
+	schemaCmd.Flags().BoolVar(&schemaNoLegend, "no-legend", false,
+		"Disable the legend table for many-target / fully-connected relations")
 
 	rootCmd.AddCommand(schemaCmd)
 }
