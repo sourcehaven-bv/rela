@@ -11,7 +11,6 @@ import {
   KanbanPage,
   createKanbanPage,
   DashboardPage,
-  GraphPage,
 } from './page-objects'
 import { spawn, ChildProcess, execSync } from 'child_process'
 import * as net from 'net'
@@ -50,9 +49,12 @@ async function findFreePort(): Promise<number> {
 /**
  * Check if a server is responding
  */
-async function isServerRunning(url: string): Promise<boolean> {
+async function isServerRunning(url: string, origin: string): Promise<boolean> {
   try {
-    const response = await fetch(url)
+    // Send a matching Origin so the backend's security middleware doesn't
+    // reject the probe with origin_missing and make a live server look
+    // down. Accepting any 403 here would mask real breakage.
+    const response = await fetch(url, { headers: { Origin: origin } })
     return response.ok || response.status === 404
   } catch {
     return false
@@ -99,10 +101,10 @@ function rmDirSync(dir: string): void {
 /**
  * Wait for a server to become available
  */
-async function waitForServer(url: string, timeout = 30000): Promise<void> {
+async function waitForServer(url: string, origin: string, timeout = 30000): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeout) {
-    if (await isServerRunning(url)) {
+    if (await isServerRunning(url, origin)) {
       return
     }
     await new Promise((resolve) => setTimeout(resolve, 200))
@@ -197,7 +199,6 @@ export interface BackendContext {
 export interface PageFactories {
   search(): SearchPage
   dashboard(): DashboardPage
-  graph(): GraphPage
   entityDetail(type: string, id: string): EntityDetailPage
   list(listName: string): ListPage
   kanban(boardName: string): KanbanPage
@@ -260,10 +261,22 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     const baseUrl = `http://localhost:${port}`
 
     // Start the server
-    const serverProcess: ChildProcess = spawn(serverBinary, ['-project', tempDir, '-port', String(port)], {
-      cwd: PROJECT_ROOT,
-      stdio: 'pipe',
-    })
+    const serverProcess: ChildProcess = spawn(
+      serverBinary,
+      [
+        '-project', tempDir,
+        '-port', String(port),
+        // The Playwright harness loads the SPA from the Vite dev server,
+        // so API calls originate from localhost:5173. Without this flag
+        // the backend's security middleware rejects every request with
+        // 403 origin_missing.
+        '-allowed-origin', 'http://localhost:5173',
+      ],
+      {
+        cwd: PROJECT_ROOT,
+        stdio: 'pipe',
+      },
+    )
 
     // Log server output for debugging
     serverProcess.stdout?.on('data', (data) => {
@@ -277,8 +290,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       }
     })
 
-    // Wait for server to be ready
-    await waitForServer(`${baseUrl}/api/v1/_config`)
+    // Wait for server to be ready. Use the same Origin the api/apiPage
+    // fixtures will use so the readiness probe passes the security
+    // middleware's Origin allowlist.
+    await waitForServer(`${baseUrl}/api/v1/_config`, baseUrl)
 
     // Provide backend context to test
     await use({
@@ -295,7 +310,13 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   // API helpers pre-bound to request and backend URL
   api: async ({ request, backend }, use) => {
     async function call(method: string, path: string, data?: unknown): Promise<APIResponse> {
-      const options: Record<string, unknown> = { method }
+      const options: Record<string, unknown> = {
+        method,
+        // The backend's security middleware rejects requests with no Origin
+        // header (rule: origin_missing). Playwright's request context does
+        // not set Origin by default, so include it explicitly.
+        headers: { Origin: backend.baseUrl },
+      }
       if (data !== undefined) options.data = data
       const response = await request.fetch(`${backend.baseUrl}/api/v1/${path}`, options)
       if (!response.ok()) {
@@ -358,7 +379,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       }
       const url = new URL(originalUrl)
       url.host = `localhost:${backend.port}`
-      await route.continue({ url: url.toString() })
+      // The SPA makes same-origin calls from Vite (:5173), so the browser
+      // omits Origin. Inject one that matches the backend's allowlist so
+      // the security middleware doesn't reject every call as origin_missing.
+      const headers = { ...route.request().headers(), origin: 'http://localhost:5173' }
+      await route.continue({ url: url.toString(), headers })
     })
 
     await use(page)
@@ -369,7 +394,6 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     await use({
       search: () => new SearchPage(apiPage),
       dashboard: () => new DashboardPage(apiPage),
-      graph: () => new GraphPage(apiPage),
       entityDetail: (type: string, id: string) => createEntityDetailPage(apiPage, type, id),
       list: (listName: string) => createListPage(apiPage, listName),
       kanban: (boardName: string) => createKanbanPage(apiPage, boardName),

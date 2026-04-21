@@ -242,6 +242,42 @@ export class FormPage extends BasePage {
     const field = this.page.locator(`#field-${fieldName}, [name="${fieldName}"]`).first()
     return (await field.inputValue()) || ''
   }
+
+  /**
+   * Wait for the default RelationPicker widget to render. Use this after
+   * navigating to a form that has at least one picker; it tolerates the
+   * picker's async candidate-load by waiting on the input rather than on
+   * any candidate being present.
+   */
+  async waitForRelationPicker(): Promise<void> {
+    await this.page.locator('input[placeholder^="Search "]').first().waitFor({ state: 'visible', timeout: 10000 })
+  }
+
+  /**
+   * Pick a relation target in the default RelationPicker widget. Types
+   * the target id into the picker's search input and clicks the matching
+   * dropdown item. Raises if no item matching targetId appears within the
+   * timeout, which surfaces schema/metadata mismatches as clear failures
+   * rather than silent no-ops.
+   */
+  async pickRelationTarget(targetType: string, targetId: string): Promise<void> {
+    const search = this.page.locator(`input[placeholder^="Search ${targetType}"]`).first()
+    await search.fill(targetId)
+    await this.page.locator(`.dropdown-item:has-text("${targetId}")`).first().click({ timeout: 5000 })
+  }
+
+  /**
+   * Submit the form and wait for the PATCH that the Save click triggers
+   * on the named entity, returning the response for assertions. Only
+   * valid for edit forms — create forms POST a different URL shape.
+   */
+  async saveAndWaitForPatch(plural: string, entityId: string): Promise<import('@playwright/test').Response> {
+    const saved = this.page.waitForResponse(
+      (r) => r.url().includes(`/api/v1/${plural}/${entityId}`) && r.request().method() === 'PATCH',
+    )
+    await this.submit()
+    return saved
+  }
 }
 
 /**

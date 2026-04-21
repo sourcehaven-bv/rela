@@ -2263,6 +2263,11 @@ func newTestAppV1(t *testing.T) *App {
 				From:  []string{"ticket"},
 				To:    []string{"feature"},
 			},
+			"blocks": {
+				Label: "blocks",
+				From:  []string{"ticket"},
+				To:    []string{"ticket"},
+			},
 		},
 	}
 
@@ -2364,6 +2369,321 @@ func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", rec.Code)
+	}
+}
+
+// implementsTargets returns the set of target IDs on outgoing `implements`
+// edges for entityID, used to keep the relation-save tests concise.
+func implementsTargets(app *App, entityID string) map[string]bool {
+	out := map[string]bool{}
+	for _, r := range app.outgoingRelations(entityID) {
+		if r.Type == "implements" {
+			out[r.To] = true
+		}
+	}
+	return out
+}
+
+// TestV1CreateEntity_SavesRelations covers the default chip-picker create
+// path. Like TestV1UpdateEntity_SavesRelations this was red before the
+// BUG-UNEBR fix — POST /api/v1/{plural} decoded only id/properties/content
+// and silently dropped the relations payload that the frontend sends.
+func TestV1CreateEntity_SavesRelations(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+
+	seedEntity(app, &entity.Entity{
+		ID:         "FEAT-001",
+		Type:       "feature",
+		Properties: map[string]interface{}{"title": "Feature One"},
+	})
+	seedEntity(app, &entity.Entity{
+		ID:         "FEAT-002",
+		Type:       "feature",
+		Properties: map[string]interface{}{"title": "Feature Two"},
+	})
+
+	body := `{
+		"id": "TKT-CREATE",
+		"properties": {"title":"New","status":"open"},
+		"relations": {"implements": ["FEAT-001","FEAT-002"]}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	app.handleV1CreateEntity(rec, req, "ticket", "tickets")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST returned %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got := implementsTargets(app, "TKT-CREATE")
+	if !got["FEAT-001"] || !got["FEAT-002"] || len(got) != 2 {
+		t.Fatalf("after create: outgoing implements edges = %v, want FEAT-001+FEAT-002", got)
+	}
+}
+
+// TestV1UpdateEntity_SavesRelations covers the default chip-picker save path:
+// the frontend PATCHes the entity with a `relations` key, expecting outgoing
+// edges for each provided relation type to be reconciled (adds + removes).
+// Before BUG-UNEBR was fixed this test was red — the handler decoded only
+// properties and content, silently dropping the relations payload.
+func TestV1UpdateEntity_SavesRelations(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	// Bind to a temp filesystem so the workspace's relation writer has a
+	// real FS and Paths context to persist to.
+	bindRepo(app, t.TempDir())
+
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Test Ticket",
+			"status": "open",
+		},
+	})
+	seedEntity(app, &entity.Entity{
+		ID:         "FEAT-001",
+		Type:       "feature",
+		Properties: map[string]interface{}{"title": "Feature One"},
+	})
+	seedEntity(app, &entity.Entity{
+		ID:         "FEAT-002",
+		Type:       "feature",
+		Properties: map[string]interface{}{"title": "Feature Two"},
+	})
+
+	patch := func(t *testing.T, body string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	// Add an edge via PATCH.
+	patch(t, `{"relations":{"implements":["FEAT-001"]}}`)
+	if got := implementsTargets(app, "TKT-001"); !got["FEAT-001"] || len(got) != 1 {
+		t.Fatalf("after add: outgoing implements edges = %v, want only FEAT-001", got)
+	}
+
+	// Adding a second target leaves the first in place.
+	patch(t, `{"relations":{"implements":["FEAT-001","FEAT-002"]}}`)
+	got := implementsTargets(app, "TKT-001")
+	if !got["FEAT-001"] || !got["FEAT-002"] || len(got) != 2 {
+		t.Fatalf("after second add: outgoing implements edges = %v, want FEAT-001+FEAT-002", got)
+	}
+
+	// Shrinking the list removes the dropped target.
+	patch(t, `{"relations":{"implements":["FEAT-001"]}}`)
+	got = implementsTargets(app, "TKT-001")
+	if !got["FEAT-001"] || got["FEAT-002"] || len(got) != 1 {
+		t.Fatalf("after remove: outgoing implements edges = %v, want only FEAT-001", got)
+	}
+
+	// An empty list for a relation type removes all of its edges.
+	patch(t, `{"relations":{"implements":[]}}`)
+	if got := implementsTargets(app, "TKT-001"); len(got) != 0 {
+		t.Fatalf("after empty list: outgoing implements edges = %v, want none", got)
+	}
+
+	// A PATCH that omits the relations key must leave existing edges alone.
+	patch(t, `{"relations":{"implements":["FEAT-002"]}}`)
+	patch(t, `{"properties":{"title":"Renamed"}}`)
+	if got := implementsTargets(app, "TKT-001"); !got["FEAT-002"] || len(got) != 1 {
+		t.Fatalf("after properties-only PATCH: edges = %v, want FEAT-002 preserved", got)
+	}
+
+	// Duplicate ids in the caller-supplied list collapse to the same edge.
+	patch(t, `{"relations":{"implements":["FEAT-001","FEAT-001"]}}`)
+	if got := implementsTargets(app, "TKT-001"); !got["FEAT-001"] || len(got) != 1 {
+		t.Fatalf("after duplicate-id list: edges = %v, want single FEAT-001", got)
+	}
+}
+
+// TestV1UpdateEntity_Relations_ScopedToTypesInPayload is the explicit guard
+// for the "scoped" semantic that the rest of the tests only cover
+// indirectly: reconciling one relation type must not touch another type's
+// existing edges, even when both appear on the same entity.
+func TestV1UpdateEntity_Relations_ScopedToTypesInPayload(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "U"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F1"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-002", Type: "feature", Properties: map[string]interface{}{"title": "F2"}})
+	seedRelation(app, &entity.Relation{From: "TKT-001", Type: "implements", To: "FEAT-001"})
+	seedRelation(app, &entity.Relation{From: "TKT-001", Type: "blocks", To: "TKT-002"})
+
+	// PATCH implements only — blocks must be untouched.
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
+		strings.NewReader(`{"relations":{"implements":["FEAT-002"]}}`))
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
+	}
+
+	impls := map[string]bool{}
+	blocks := map[string]bool{}
+	for _, r := range app.outgoingRelations("TKT-001") {
+		switch r.Type {
+		case "implements":
+			impls[r.To] = true
+		case "blocks":
+			blocks[r.To] = true
+		}
+	}
+	if !impls["FEAT-002"] || impls["FEAT-001"] || len(impls) != 1 {
+		t.Fatalf("implements edges = %v, want only FEAT-002", impls)
+	}
+	if !blocks["TKT-002"] || len(blocks) != 1 {
+		t.Fatalf("blocks edges = %v, want TKT-002 untouched", blocks)
+	}
+}
+
+// TestV1UpdateEntity_Relations_MultiType drives two relation types in a
+// single PATCH and asserts each is reconciled independently.
+func TestV1UpdateEntity_Relations_MultiType(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "U"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F"}})
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
+		strings.NewReader(`{"relations":{"implements":["FEAT-001"],"blocks":["TKT-002"]}}`))
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
+	}
+
+	types := map[string]bool{}
+	for _, r := range app.outgoingRelations("TKT-001") {
+		types[r.Type+"->"+r.To] = true
+	}
+	if !types["implements->FEAT-001"] || !types["blocks->TKT-002"] || len(types) != 2 {
+		t.Fatalf("edges = %v, want implements->FEAT-001 + blocks->TKT-002", types)
+	}
+}
+
+// TestV1UpdateEntity_Relations_UnknownType asserts that an unknown
+// relation type surfaces as a 422 with the type name in the detail, and
+// no writes happen.
+func TestV1UpdateEntity_Relations_UnknownType(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
+		strings.NewReader(`{"relations":{"bogus":["FEAT-001"]}}`))
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "unknown_relation_type") || !strings.Contains(rec.Body.String(), "bogus") {
+		t.Fatalf("detail missing structured reason/type, got: %s", rec.Body.String())
+	}
+	if len(app.outgoingRelations("TKT-001")) != 0 {
+		t.Fatalf("no edges should have been written on a rejected type")
+	}
+}
+
+// TestV1UpdateEntity_Relations_UnknownTarget asserts that a missing target
+// id surfaces cleanly with the id in the detail and no writes happen.
+func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
+		strings.NewReader(`{"relations":{"implements":["FEAT-999"]}}`))
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "target_not_found") || !strings.Contains(rec.Body.String(), "FEAT-999") {
+		t.Fatalf("detail missing structured reason/target, got: %s", rec.Body.String())
+	}
+	if len(app.outgoingRelations("TKT-001")) != 0 {
+		t.Fatalf("no edges should have been written on a rejected target")
+	}
+}
+
+// TestV1UpdateEntity_Relations_SourceTypeMismatch asserts that using a
+// relation whose `from` list doesn't include the source type is rejected
+// by the up-front validation rather than swallowed as a Go error string.
+func TestV1UpdateEntity_Relations_SourceTypeMismatch(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+
+	// `implements` is ticket -> feature. Call the update on a feature and
+	// try to add an `implements` edge from it.
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-002", Type: "feature", Properties: map[string]interface{}{"title": "F2"}})
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/FEAT-001",
+		strings.NewReader(`{"relations":{"implements":["FEAT-002"]}}`))
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "feature", "features", "FEAT-001")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "source_type_not_allowed") {
+		t.Fatalf("detail missing source_type_not_allowed reason, got: %s", rec.Body.String())
+	}
+}
+
+// TestV1UpdateEntity_Relations_OnlyPATCH_NoEntityRewrite asserts that a
+// PATCH that only changes relations does not round-trip UpdateEntity
+// (which would rewrite the file and emit a misleading SSE event).
+// Verified indirectly: the entity's mtime-free identity holds via the
+// ETag — relations-only PATCH should change the ETag because relations
+// are folded in, but the entity properties/content hash stays stable.
+func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F"}})
+
+	entityBefore, _ := app.getEntity("TKT-001")
+	etagBefore := app.computeEntityETag(entityBefore)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
+		strings.NewReader(`{"relations":{"implements":["FEAT-001"]}}`))
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
+	}
+
+	entityAfter, _ := app.getEntity("TKT-001")
+	// Entity fields (id/type/props/content) should be byte-identical.
+	if entityAfter.Content != entityBefore.Content ||
+		len(entityAfter.Properties) != len(entityBefore.Properties) {
+
+		t.Fatalf("relations-only PATCH mutated entity fields: before=%+v after=%+v", entityBefore, entityAfter)
+	}
+	// ETag must change because it now folds in relations.
+	etagAfter := app.computeEntityETag(entityAfter)
+	if etagAfter == etagBefore {
+		t.Fatalf("ETag did not change after relations-only PATCH: %s", etagAfter)
 	}
 }
 

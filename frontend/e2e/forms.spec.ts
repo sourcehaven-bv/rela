@@ -152,6 +152,71 @@ test.describe('Edit Form', () => {
   })
 })
 
+test.describe('Edit Form - Default Relation Picker Save', () => {
+  // Regression test for BUG-UNEBR: the PATCH /api/v1/{plural}/{id} handler
+  // silently dropped the `relations` payload, so edits made via the default
+  // chip picker appeared to save (200 + success toast) but were not
+  // persisted. The only covered save path was the `widget: cards` variant
+  // (relation-cards.spec.ts); this test locks in the default picker path.
+  let testTicketId: string | null = null
+  let createdCategoryIds: string[] = []
+
+  test.beforeEach(async ({ api }) => {
+    // Need at least two categories so we can switch the belongs-to target
+    // without colliding with whatever the project is seeded with.
+    const suffix = Date.now().toString(36)
+    const catA = await api.createEntity('categories', {
+      properties: { name: `E2E Picker Cat A ${suffix}` },
+    })
+    const catB = await api.createEntity('categories', {
+      properties: { name: `E2E Picker Cat B ${suffix}` },
+    })
+    createdCategoryIds = [catA.id, catB.id]
+
+    const ticket = await api.createEntity('tickets', {
+      properties: {
+        title: `E2E Picker Ticket ${suffix}`,
+        status: 'open',
+        priority: 'low',
+        reporter: 'e2e-test',
+      },
+      relations: {
+        'belongs-to': [catA.id],
+      },
+    })
+    testTicketId = ticket.id
+  })
+
+  test.afterEach(async ({ api }) => {
+    if (testTicketId) {
+      await api.deleteEntity('tickets', testTicketId)
+      testTicketId = null
+    }
+    for (const id of createdCategoryIds) {
+      await api.deleteEntity('categories', id)
+    }
+    createdCategoryIds = []
+  })
+
+  test('adding a target in the picker persists after Save', async ({ pages, api }) => {
+    const [catAId, catBId] = createdCategoryIds
+    const formPage = pages.form(`edit_ticket/${testTicketId}`)
+
+    await formPage.goto()
+    await formPage.waitForLoad()
+    await formPage.waitForRelationPicker()
+    await formPage.pickRelationTarget('category', catBId)
+
+    const response = await formPage.saveAndWaitForPatch('tickets', testTicketId!)
+    expect(response.status()).toBe(200)
+
+    const updated = await api.getEntity('tickets', testTicketId!)
+    const edges: string[] = (updated.relations?.['belongs-to'] ?? []) as string[]
+    expect(edges).toContain(catAId)
+    expect(edges).toContain(catBId)
+  })
+})
+
 test.describe('Create Category Form', () => {
   let createdCategoryId: string | null = null
 
