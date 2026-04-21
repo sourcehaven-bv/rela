@@ -5,6 +5,7 @@ import {
   getCellValue,
   isEnumProperty,
   isEnumPropertyDef,
+  asArray,
 } from './format'
 import type { EntityType } from '@/types'
 
@@ -37,6 +38,10 @@ describe('format', () => {
 
     it('joins arrays with comma', () => {
       expect(formatValue(['a', 'b', 'c'])).toBe('a, b, c')
+    })
+
+    it('returns dash for empty array', () => {
+      expect(formatValue([])).toBe('-')
     })
 
     it('converts numbers to string', () => {
@@ -179,6 +184,44 @@ describe('format', () => {
 
     it('returns false for non-enum without values', () => {
       expect(isEnumPropertyDef({ type: 'string' })).toBe(false)
+    })
+  })
+
+  describe('asArray', () => {
+    it('returns [] for null', () => {
+      expect(asArray(null)).toEqual([])
+    })
+
+    it('returns [] for undefined', () => {
+      expect(asArray(undefined)).toEqual([])
+    })
+
+    it('returns [] for empty string', () => {
+      expect(asArray('')).toEqual([])
+    })
+
+    it('wraps scalar string in array', () => {
+      expect(asArray('bug')).toEqual(['bug'])
+    })
+
+    it('coerces number to string', () => {
+      expect(asArray(42)).toEqual(['42'])
+    })
+
+    it('returns array as-is', () => {
+      expect(asArray(['bug', 'ui'])).toEqual(['bug', 'ui'])
+    })
+
+    it('filters empty strings from array', () => {
+      expect(asArray(['bug', '', 'ui'])).toEqual(['bug', 'ui'])
+    })
+
+    it('coerces mixed array items to string', () => {
+      expect(asArray(['bug', 42, true])).toEqual(['bug', '42', 'true'])
+    })
+
+    it('returns empty array for empty input array', () => {
+      expect(asArray([])).toEqual([])
     })
   })
 })

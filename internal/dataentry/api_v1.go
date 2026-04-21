@@ -1446,10 +1446,13 @@ type V1SidePanelSection struct {
 }
 
 // V1SectionField represents a field in a side panel section.
+// Values is always an array so that list-typed properties retain per-item
+// structure; scalar properties become a one-element array. Empty fields emit
+// an empty array (omitted via omitempty when nil).
 type V1SectionField struct {
-	Label    string `json:"label"`
-	Value    string `json:"value"`
-	PropType string `json:"propType,omitempty"`
+	Label    string   `json:"label"`
+	Values   []string `json:"values,omitempty"`
+	PropType string   `json:"propType,omitempty"`
 }
 
 // V1SidePanelEntity represents an entity in a side panel section.

@@ -157,7 +157,7 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
   return fields.map((field) => ({
     name: field.label.toLowerCase().replace(/\s+/g, '_'),
     label: field.label,
-    value: field.value,
+    value: field.values ?? [],
     propType: field.propType,
   }))
 }
@@ -320,12 +320,15 @@ onMounted(() => loadView())
               <div v-if="entity.fields?.length" class="card-fields">
                 <div v-for="field in entity.fields" :key="field.label" class="card-field">
                   <span class="field-label">{{ field.label }}:</span>
-                  <Badge
-                    v-if="shouldUseBadge(field.value, field.propType)"
-                    :value="field.value"
-                    :property="field.propType"
-                  />
-                  <span v-else class="field-value">{{ field.value }}</span>
+                  <div v-if="field.propType && field.values?.length" class="badge-row">
+                    <Badge
+                      v-for="v in field.values"
+                      :key="v"
+                      :value="v"
+                      :property="field.propType"
+                    />
+                  </div>
+                  <span v-else class="field-value">{{ field.values?.join(', ') || '-' }}</span>
                 </div>
               </div>
             </article>
@@ -343,12 +346,14 @@ onMounted(() => loadView())
                 <span class="entity-title">{{ entity.title }}</span>
               </a>
               <span v-if="entity.fields?.length" class="list-fields">
-                <Badge
-                  v-for="field in entity.fields"
-                  :key="field.label"
-                  :value="field.value"
-                  :property="field.propType"
-                />
+                <template v-for="field in entity.fields" :key="field.label">
+                  <Badge
+                    v-for="v in field.values ?? []"
+                    :key="`${field.label}-${v}`"
+                    :value="v"
+                    :property="field.propType"
+                  />
+                </template>
               </span>
             </li>
           </ul>

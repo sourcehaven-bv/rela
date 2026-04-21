@@ -8,7 +8,7 @@ import { useListActions } from '@/composables/useListActions'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
-import { getCellValue, formatCellValue, isEnumPropertyDef } from '@/utils/format'
+import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
 import type { Entity, ListMeta, ListParams, FilterState, ActionConfig } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
@@ -522,12 +522,18 @@ onMounted(() => {
               class="mobile-card-field"
             >
               <span class="mobile-card-label">{{ column.label || column.property || column.relation }}</span>
-              <Badge
-                v-if="isEnumColumn(column)"
-                :value="String(getCellValue(entity, column) || '')"
-                :property="column.property"
-                :entity-type="entityType"
-              />
+              <div
+                v-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
+                class="badge-row"
+              >
+                <Badge
+                  v-for="badgeValue in asArray(getCellValue(entity, column))"
+                  :key="badgeValue"
+                  :value="badgeValue"
+                  :property="column.property"
+                  :entity-type="entityType"
+                />
+              </div>
               <span v-else class="mobile-card-value">{{ getFormattedCellValue(entity, column) }}</span>
             </div>
           </div>
@@ -608,12 +614,18 @@ onMounted(() => {
               v-for="column in listConfig.columns"
               :key="column.property || column.relation"
             >
-              <Badge
-                v-if="isEnumColumn(column)"
-                :value="String(getCellValue(entity, column) || '')"
-                :property="column.property"
-                :entity-type="entityType"
-              />
+              <div
+                v-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
+                class="badge-row"
+              >
+                <Badge
+                  v-for="badgeValue in asArray(getCellValue(entity, column))"
+                  :key="badgeValue"
+                  :value="badgeValue"
+                  :property="column.property"
+                  :entity-type="entityType"
+                />
+              </div>
               <span v-else>
                 {{ getFormattedCellValue(entity, column) }}
               </span>
