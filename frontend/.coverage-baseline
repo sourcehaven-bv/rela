@@ -15,6 +15,6 @@ src/stores/ui.ts;150;150
 src/types/config.ts;295;295
 src/utils/dom.ts;14;14
 src/utils/filters.ts;213;213
-src/utils/format.ts;103;92
+src/utils/format.ts;114;103
 src/utils/markdown.ts;82;82
 src/utils/palette.ts;508;447
