@@ -1,15 +1,5 @@
-import { test, expect } from './fixtures';
+import { test } from './fixtures';
 import { ConflictsPage } from '../pages';
-
-interface ConflictsResponse {
-  conflicts: Array<{
-    path: string;
-    entity_type?: string;
-    entity_id?: string;
-    marker_count: number;
-  }>;
-  count: number;
-}
 
 test.describe('Conflicts Page', () => {
   test('conflicts page is accessible at /conflicts', async ({ appPage }) => {
@@ -36,20 +26,6 @@ test.describe('Conflicts Page', () => {
   });
 });
 
-test.describe('Conflicts API', () => {
-  test('GET /api/v1/_conflicts returns valid response shape', async ({ api }) => {
-    const resp = await api.rawRequest('GET', '_conflicts');
-    const result: ConflictsResponse = await resp.json();
-    expect(result).toHaveProperty('conflicts');
-    expect(result).toHaveProperty('count');
-    expect(Array.isArray(result.conflicts)).toBeTruthy();
-    expect(result.count).toBe(result.conflicts.length);
-  });
-
-  test('GET /api/v1/_conflicts returns empty list for clean project', async ({ api }) => {
-    const resp = await api.rawRequest('GET', '_conflicts');
-    const result: ConflictsResponse = await resp.json();
-    expect(result.conflicts).toHaveLength(0);
-    expect(result.count).toBe(0);
-  });
-});
+/* Conflicts-API shape tests (response envelope, empty-list-for-clean-project)
+ * belong in Go handler unit tests on internal/dataentry — they repeat work at a
+ * slower layer here. The Page tests above exercise the rendered surface. */

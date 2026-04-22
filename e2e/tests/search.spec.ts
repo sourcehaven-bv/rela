@@ -215,29 +215,16 @@ test.describe('Search', () => {
   });
 });
 
-test.describe('Search API', () => {
+test.describe('Search (create → index → query integration)', () => {
+  // Kept as an e2e test because it exercises the create→index→search pipeline
+  // end-to-end. Pure shape/filter tests live in Go handler unit tests on
+  // internal/dataentry/api_v1.go (handleV1Search).
   type SearchHit = { id: string; type: string; properties: Record<string, unknown> };
   interface SearchResultsEnvelope {
     data?: SearchHit[];
   }
 
-  test('GET /api/v1/_search supports q parameter', async ({ api }) => {
-    const resp = await api.rawRequest('GET', '_search?q=Authentication');
-    const body = (await resp.json()) as SearchResultsEnvelope | SearchHit[];
-    const results = Array.isArray(body) ? body : body.data ?? [];
-    expect(Array.isArray(results)).toBeTruthy();
-  });
-
-  test('GET /api/v1/_search supports type filter', async ({ api }) => {
-    const resp = await api.rawRequest('GET', '_search?q=User&type=feature');
-    const body = (await resp.json()) as SearchResultsEnvelope;
-    const results = body.data ?? [];
-    if (results.length > 0) {
-      expect(results.every((r) => r.type === 'feature')).toBeTruthy();
-    }
-  });
-
-  test('search returns entities with properties', async ({ api }) => {
+  test('newly-created entity appears in search results with properties intact', async ({ api }) => {
     const created = await api.createEntity('features', {
       properties: { title: 'API Search Test Feature', status: 'draft', priority: 'medium' },
     });

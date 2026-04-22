@@ -1,18 +1,5 @@
-import { test, expect } from './fixtures';
+import { test, expect, ANALYSIS_CHECKS } from './fixtures';
 import { AnalyzePage } from '../pages';
-
-interface AnalyzeResponse {
-  errors: number;
-  warnings: number;
-  issues: Array<{
-    entityId: string;
-    entityType: string;
-    message: string;
-    severity: 'error' | 'warning';
-    checkType: string;
-  }>;
-  byCheck: Record<string, number>;
-}
 
 test.describe('Analyze Page', () => {
   test('is accessible at /analyze', async ({ appPage }) => {
@@ -24,8 +11,8 @@ test.describe('Analyze Page', () => {
   test('shows all check type cards', async ({ appPage }) => {
     const analyze = new AnalyzePage(appPage);
     await analyze.navigate();
-    await analyze.expectCheckCardCount(4);
-    await analyze.expectCheckTitles(['Properties', 'Cardinality', 'Validations', 'Orphans']);
+    await analyze.expectCheckCardCount(ANALYSIS_CHECKS.length);
+    await analyze.expectCheckTitles([...ANALYSIS_CHECKS]);
   });
 
   test('shows check type descriptions', async ({ appPage }) => {
@@ -38,7 +25,7 @@ test.describe('Analyze Page', () => {
   test('shows issue counts per check type', async ({ appPage }) => {
     const analyze = new AnalyzePage(appPage);
     await analyze.navigate();
-    await expect(analyze.checkCounts).toHaveCount(4);
+    await expect(analyze.checkCounts).toHaveCount(ANALYSIS_CHECKS.length);
   });
 
   test('displays issues without error when entities exist', async ({ appPage, api }) => {
@@ -77,47 +64,12 @@ test.describe('Analyze Page', () => {
     const analyze = new AnalyzePage(appPage);
     await analyze.navigate();
     await analyze.clickRefresh();
-    await analyze.expectCheckCardCount(4);
+    await analyze.expectCheckCardCount(ANALYSIS_CHECKS.length);
   });
 });
 
-test.describe('Analyze API', () => {
-  test('GET /api/v1/_analyze returns valid data', async ({ api }) => {
-    const resp = await api.rawRequest('GET', '_analyze');
-    const result: AnalyzeResponse = await resp.json();
-    expect(typeof result.errors).toBe('number');
-    expect(typeof result.warnings).toBe('number');
-    expect(Array.isArray(result.issues)).toBeTruthy();
-    expect(typeof result.byCheck).toBe('object');
-  });
-
-  test('analyze issues have required fields', async ({ api }) => {
-    const resp = await api.rawRequest('GET', '_analyze');
-    const result: AnalyzeResponse = await resp.json();
-    for (const issue of result.issues) {
-      expect(issue.entityId).toBeTruthy();
-      expect(issue.entityType).toBeTruthy();
-      expect(issue.message).toBeTruthy();
-      expect(['error', 'warning']).toContain(issue.severity);
-      expect(issue.checkType).toBeTruthy();
-    }
-  });
-
-  test('byCheck keys match known check types', async ({ api }) => {
-    const resp = await api.rawRequest('GET', '_analyze');
-    const result: AnalyzeResponse = await resp.json();
-    const known = ['Properties', 'Cardinality', 'Validations', 'Orphans'];
-    for (const key of Object.keys(result.byCheck)) {
-      expect(known).toContain(key);
-    }
-  });
-
-  test('error and warning counts match issues', async ({ api }) => {
-    const resp = await api.rawRequest('GET', '_analyze');
-    const result: AnalyzeResponse = await resp.json();
-    const errorCount = result.issues.filter((i) => i.severity === 'error').length;
-    const warningCount = result.issues.filter((i) => i.severity === 'warning').length;
-    expect(result.errors).toBe(errorCount);
-    expect(result.warnings).toBe(warningCount);
-  });
-});
+/* Analyze-API shape and invariant tests (returns-valid-data, required fields,
+ * byCheck keys, error/warning counts) are better covered by Go unit tests on
+ * internal/dataentry/api_v1.go (handleV1Analyze) — they'd only repeat work at a
+ * slower layer here. The e2e coverage above exercises the full rendered
+ * surface via AnalyzePage, which is where this suite adds real value. */

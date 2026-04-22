@@ -1,28 +1,26 @@
-import { test, expect } from './fixtures';
+import { test, expect, SEED } from './fixtures';
 import { EntityPage } from '../pages';
 
 /**
  * Body content with GFM checkboxes renders as interactive checkboxes in the
  * entity detail view. Clicking toggles the markdown source on the server.
  *
- * These tests rely on the `content` field being writable via PATCH. The
- * inline project seeds FEAT-001 with checkboxes in its body, so we don't need
- * to stage content per test — we simply assert on the rendered state.
+ * SEED.features.checkboxBody (FEAT-004) is the dedicated fixture: its body has
+ * one unchecked and one checked item. Specs read or flip the rendered state;
+ * there is no per-test API setup.
  */
 
 test.describe('Checkbox toggling', () => {
   test('entity detail shows checkbox stats for content with checkboxes', async ({ appPage }) => {
     const entity = new EntityPage(appPage);
-    await entity.navigateToEntity('feature', 'FEAT-001');
+    await entity.navigateToEntity('feature', SEED.features.checkboxBody);
 
-    // Either the stats widget is shown (most likely) or not — if shown, the
-    // format should be "n/m". Both outcomes are acceptable; we're asserting
-    // the render contract, not that the widget must be present.
+    // Stats widget renders when the body contains checkboxes; format is "n/m".
     if (await entity.hasCheckboxStats()) {
       expect(await entity.getCheckboxStatsText()).toMatch(/\d+\/\d+/);
     }
 
-    expect(await entity.contentCheckboxCount()).toBeGreaterThanOrEqual(1);
+    expect(await entity.contentCheckboxCount()).toBeGreaterThanOrEqual(2);
   });
 
   // Skipped: tracked by BUG-9RANL (Playwright's `force: true` click on the
@@ -31,38 +29,24 @@ test.describe('Checkbox toggling', () => {
   // the gap is test-harness-only. See the bug for the repro harness needed
   // to unskip this test.
   test.skip('clicking a checkbox persists the toggle on the server', async ({ appPage, api }) => {
-    // Stage the content via API so this test doesn't depend on seed ordering.
-    const feature = await api.createEntity('features', {
-      properties: { title: 'Checkbox toggle test', status: 'draft', priority: 'low' },
-    });
-    try {
-      await api.rawRequest('PATCH', `features/${feature.id}`, {
-        content: '- [ ] First\n- [x] Second\n',
-      });
+    const entity = new EntityPage(appPage);
+    await entity.navigateToEntity('feature', SEED.features.checkboxBody);
 
-      const entity = new EntityPage(appPage);
-      await entity.navigateToEntity('feature', feature.id);
+    expect(await entity.contentCheckboxCount()).toBeGreaterThanOrEqual(2);
+    await entity.clickContentCheckbox(0);
 
-      expect(await entity.contentCheckboxCount()).toBeGreaterThanOrEqual(2);
-      await entity.clickContentCheckbox(0);
-
-      // Verify persistence by re-fetching the entity content from the API,
-      // independent of SSE/frontend re-render timing. The first line starts
-      // unchecked; after a click it should be checked.
-      await expect
-        .poll(
-          async () => {
-            const resp = await api.rawRequest('GET', `features/${feature.id}`);
-            const body = await resp.json();
-            const content: string = body.content ?? '';
-            const firstLine = content.split('\n')[0] ?? '';
-            return /- \[x\]/i.test(firstLine);
-          },
-          { timeout: 5000 },
-        )
-        .toBe(true);
-    } finally {
-      await api.deleteEntity('features', feature.id).catch(() => {});
-    }
+    // The first line starts unchecked; after a click the server-side content
+    // should report it checked. Re-read via the API to avoid racing SSE and
+    // frontend re-render timing.
+    await expect
+      .poll(
+        async () => {
+          const content = await api.getContent('features', SEED.features.checkboxBody);
+          const firstLine = content.split('\n')[0] ?? '';
+          return /- \[x\]/i.test(firstLine);
+        },
+        { timeout: 5000 },
+      )
+      .toBe(true);
   });
 });

@@ -39,6 +39,12 @@ export const PRIORITY = {
   high: 'high',
 } as const;
 
+/** The metamodel analysis check types the backend emits and the SPA renders
+ *  as check-cards at /analyze. Mirrors CHECK_TYPES in
+ *  frontend/src/views/AnalyzeView.vue; if that list grows the spec will fail
+ *  and the list here should be updated in lockstep. */
+export const ANALYSIS_CHECKS = ['Properties', 'Cardinality', 'Validations', 'Orphans'] as const;
+
 /** Seed entity IDs present in every fresh test project. Assumes the inline
  *  seed data below, in insertion order. Import from specs instead of
  *  writing 'FEAT-001' / 'BUG-001' strings directly. */
@@ -47,6 +53,9 @@ export const SEED = {
     authentication: 'FEAT-001',
     dashboardAnalytics: 'FEAT-002',
     exportData: 'FEAT-003',
+    /** Body content contains two GFM checkboxes (one unchecked, one checked).
+     *  Used by checkboxes.spec.ts to exercise the toggle UI. */
+    checkboxBody: 'FEAT-004',
   },
   bugs: {
     loginFormValidation: 'BUG-001',
@@ -76,6 +85,8 @@ export interface ApiHelpers {
   deleteEntity(plural: string, id: string): Promise<void>;
   listEntities(plural: string, query?: string): Promise<PaginatedResponse>;
   createRelation(fromPlural: string, fromId: string, relation: string, toId: string): Promise<void>;
+  /** Returns the markdown body of an entity, or "" if the entity has no body. */
+  getContent(plural: string, id: string): Promise<string>;
   rawRequest(method: string, path: string, data?: unknown): Promise<import('@playwright/test').APIResponse>;
   /** Wait for an entity to appear in the search index. Use before
    *  navigating to a view that reads via /_search (dashboard, search). */
@@ -331,6 +342,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       },
       async createRelation(fromPlural, fromId, relation, toId) {
         await call('POST', `${fromPlural}/${fromId}/relations/${relation}`, { id: toId });
+      },
+      async getContent(plural, id) {
+        const resp = await call('GET', `${plural}/${id}`);
+        const body = (await resp.json()) as { content?: string };
+        return body.content ?? '';
       },
       async rawRequest(method, apiPath, data) {
         return call(method, apiPath, data);
@@ -730,6 +746,20 @@ priority: low
 ---
 
 Export data to CSV.
+`,
+  // FEAT-004 exists specifically to exercise GFM-checkbox rendering and
+  // toggling; the body has one unchecked + one checked item so specs can
+  // observe and flip either state.
+  'entities/features/FEAT-004.md': `---
+id: FEAT-004
+type: feature
+title: Checkbox render fixture
+status: draft
+priority: low
+---
+
+- [ ] First
+- [x] Second
 `,
   'entities/bugs/BUG-001.md': `---
 id: BUG-001
