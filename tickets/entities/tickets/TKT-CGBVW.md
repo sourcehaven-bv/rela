@@ -5,7 +5,7 @@ title: Document the documents feature and add Lua script renderer
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Problem
