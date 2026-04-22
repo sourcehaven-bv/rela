@@ -111,9 +111,7 @@ test.describe('Search', () => {
       await searchPage.expectFilterActive('Entity Type');
 
       await searchPage.removeFilter('Entity Type');
-
-      // Filter should be removed
-      await expect(searchPage.activeFilters.locator('.filter-chip')).toHaveCount(0);
+      await searchPage.expectNoActiveFilters();
     });
 
     test('can clear all filters', async ({ appPage }) => {
@@ -124,8 +122,7 @@ test.describe('Search', () => {
       await searchPage.addFilter('Entity Type', 'bug');
 
       await searchPage.clearAllFilters();
-
-      await expect(searchPage.activeFilters.locator('.filter-chip')).toHaveCount(0);
+      await searchPage.expectNoActiveFilters();
     });
   });
 
@@ -146,22 +143,16 @@ test.describe('Search', () => {
       const searchPage = new SearchPage(appPage);
 
       await searchPage.navigateToSearch();
-
       await searchPage.search('Authentication');
-
-      const result = searchPage.resultItems.first();
-      await expect(result.locator('.result-type')).toBeVisible();
+      await searchPage.expectFirstResultHasTypeBadge();
     });
 
     test('results show entity ID', async ({ appPage }) => {
       const searchPage = new SearchPage(appPage);
 
       await searchPage.navigateToSearch();
-
       await searchPage.search('Authentication');
-
-      const result = searchPage.resultItems.first();
-      await expect(result.locator('.result-id')).toContainText('FEAT-');
+      await searchPage.expectFirstResultIdContains('FEAT-');
     });
   });
 

@@ -137,7 +137,7 @@ test.describe('List View', () => {
 
       await listPage.navigateToList('features');
 
-      const filterCount = await listPage.filterBar.locator('select').count();
+      const filterCount = await listPage.filterControlCount();
       if (filterCount >= 2) {
         await listPage.setFilterByIndex(0, { index: 1 });
         await listPage.setFilterByIndex(1, { index: 1 });

@@ -117,4 +117,47 @@ export class SettingsPage extends BasePage {
   async getOverrideGroupCount(): Promise<number> {
     return this.overridesCard.locator('.override-group').count();
   }
+
+  /** Select the first available option from the "Add property default" dropdown
+   *  (index 0 is the placeholder, so we pick index 1) and wait for the new
+   *  row to render. Returns the property name selected. */
+  async addFirstAvailablePropertyDefault(): Promise<string> {
+    const addSelect = this.propertyDefaultsCard.locator('select').last();
+    const firstOption = addSelect.locator('option').nth(1);
+    const value = await firstOption.getAttribute('value');
+    if (!value) throw new Error('No available property to add as default');
+    const beforeRows = await this.propertyDefaultsCard.locator('.settings-row').count();
+    await addSelect.selectOption(value);
+    // Wait for the settings-row to appear so follow-up interactions don't race
+    // the re-render.
+    await expect(async () => {
+      const now = await this.propertyDefaultsCard.locator('.settings-row').count();
+      expect(now).toBeGreaterThan(beforeRows);
+    }).toPass({ timeout: 5000 });
+    return value;
+  }
+
+  /** Set the value of the last-added property default row. If the input is a
+   *  select, selects the first non-placeholder option (callers rarely care
+   *  which value, just that the change round-trips). If a text field, fills
+   *  the provided string. */
+  async setLastPropertyDefaultValue(fallbackText: string): Promise<void> {
+    const row = this.propertyDefaultsCard.locator('.settings-row').last();
+    const input = row.locator('input, select').first();
+    await expect(input).toBeVisible();
+    const tag = await input.evaluate((el) => el.tagName.toLowerCase());
+    if (tag === 'select') {
+      await input.selectOption({ index: 1 });
+    } else {
+      await input.fill(fallbackText);
+    }
+  }
+
+  async getPropertyDefaultRowCount(): Promise<number> {
+    return this.propertyDefaultsCard.locator('.settings-row').count();
+  }
+
+  async removeFirstPropertyDefault(): Promise<void> {
+    await this.propertyDefaultsCard.locator('.remove-btn').first().click();
+  }
 }

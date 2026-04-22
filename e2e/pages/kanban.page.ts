@@ -129,6 +129,11 @@ export class KanbanPage extends BasePage {
     await expect(countBadge).toHaveText(String(count));
   }
 
+  async expectColumnCountVisible(columnName: string) {
+    const column = await this.getColumn(columnName);
+    await expect(column.locator('.column-count')).toBeVisible();
+  }
+
   async expectEmptyColumn(columnName: string) {
     const column = await this.getColumn(columnName);
     await expect(column.locator('.empty-column')).toBeVisible();

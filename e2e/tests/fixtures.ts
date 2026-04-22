@@ -1,38 +1,307 @@
-import { test as base, type Page } from '@playwright/test';
-import { spawn, type ChildProcess } from 'child_process';
+import { test as base, type Page, type APIRequestContext } from '@playwright/test';
+import { spawn, type ChildProcess, execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as net from 'net';
 
-export interface DesktopFixtures {
-  /** The Playwright page connected to the app */
-  appPage: Page;
-  /** Path to the test project directory */
-  testProject: string;
-  /** Base URL for the server */
-  serverUrl: string;
+const PROJECT_ROOT = path.resolve(__dirname, '../..');
+const SERVER_BINARY = path.join(PROJECT_ROOT, 'bin', 'rela-server');
+// Resolve symlinks once — macOS $TMPDIR is typically /var/folders/... which
+// canonicalises to /private/var/folders/.... Tests that compare paths want
+// the canonical form. (review-response RR-F3IA3)
+const TMPDIR = fs.realpathSync(os.tmpdir());
+
+export interface EntityResponse {
+  id: string;
+  type: string;
+  properties: Record<string, unknown>;
+  relations?: Record<string, string[]>;
 }
 
-// Find an available port
-async function findAvailablePort(startPort: number = 34115): Promise<number> {
-  return new Promise((resolve) => {
+export interface PaginatedResponse<T = EntityResponse> {
+  data: T[];
+  meta: { total: number; page: number; per_page: number; has_more: boolean };
+}
+
+export interface ApiHelpers {
+  createEntity(plural: string, data: { properties: Record<string, unknown>; relations?: Record<string, string[]>; id?: string }): Promise<EntityResponse>;
+  getEntity(plural: string, id: string): Promise<EntityResponse>;
+  updateEntity(plural: string, id: string, properties: Record<string, unknown>): Promise<EntityResponse>;
+  deleteEntity(plural: string, id: string): Promise<void>;
+  listEntities(plural: string, query?: string): Promise<PaginatedResponse>;
+  createRelation(fromPlural: string, fromId: string, relation: string, toId: string): Promise<void>;
+  rawRequest(method: string, path: string, data?: unknown): Promise<import('@playwright/test').APIResponse>;
+}
+
+export interface TestFixtures {
+  testProject: string;
+  serverUrl: string;
+  appPage: Page;
+  api: ApiHelpers;
+}
+
+export interface WorkerFixtures {
+  serverBinary: string;
+}
+
+/** Find a free ephemeral port on loopback. Note: between this call and the
+ *  child binding the port, the kernel may reassign it elsewhere under load —
+ *  callers MUST retry on startup failure (see spawnServer). */
+async function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
     const server = net.createServer();
-    server.listen(startPort, () => {
-      const port = (server.address() as net.AddressInfo).port;
-      server.close(() => resolve(port));
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      if (addr && typeof addr === 'object') {
+        const port = addr.port;
+        server.close(() => resolve(port));
+      } else {
+        reject(new Error('Could not get port'));
+      }
     });
-    server.on('error', () => {
-      resolve(findAvailablePort(startPort + 1));
-    });
+    server.on('error', reject);
   });
 }
 
-// Create a rich test project with metamodel, data-entry config, entities, and kanban
-function createTestProject(): string {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rela-e2e-'));
+/** Probe a known-live API endpoint with the same Origin header the tests will
+ *  use. The root path serves the SPA static bundle and is ready before the API
+ *  handlers are wired, which is why we target /api/v1/_config specifically
+ *  (see RR-LWG6W). The backend's security middleware otherwise rejects
+ *  Origin-less probes with 403 origin_missing, so we always send Origin. */
+async function waitForServer(url: string, origin: string, timeout = 30000): Promise<void> {
+  const start = Date.now();
+  const probeUrl = `${url}/api/v1/_config`;
+  while (Date.now() - start < timeout) {
+    try {
+      const r = await fetch(probeUrl, { headers: { Origin: origin } });
+      if (r.ok) return;
+    } catch {
+      // not ready
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`Server at ${probeUrl} did not start within ${timeout}ms`);
+}
 
-  fs.writeFileSync(path.join(tmpDir, 'metamodel.yaml'), `
+/** Wait for a child process to actually exit. SIGTERM is async; a bare
+ *  proc.kill() returns immediately and the kernel may hold the socket past the
+ *  next test start. See RR-17XTS. */
+async function waitForExit(proc: ChildProcess, signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
+  if (proc.exitCode !== null || proc.signalCode !== null) return;
+  await new Promise<void>((resolve) => {
+    const done = () => resolve();
+    proc.once('exit', done);
+    proc.kill(signal);
+    // Escalate to SIGKILL if the server refuses to die within 5s
+    setTimeout(() => {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        proc.kill('SIGKILL');
+      }
+    }, 5000);
+  });
+}
+
+/** Build a Go binary if missing, using a filesystem lock so concurrent workers
+ *  don't race each other writing the same output file (RR-BZUH5). In CI the
+ *  fixture should never fire because the binary is pre-built in a prior step;
+ *  we fail loudly there to surface misconfiguration. */
+function buildIfMissing(binaryPath: string, target: string): string {
+  if (fs.existsSync(binaryPath)) return binaryPath;
+  if (process.env.CI) {
+    throw new Error(
+      `Missing ${binaryPath} in CI. The e2e CI job is expected to build it in a prior step; ` +
+        'do not fall back to in-fixture builds on CI.',
+    );
+  }
+
+  const lockPath = `${binaryPath}.lock`;
+  const start = Date.now();
+  // Try to acquire an exclusive lock. Another worker may already be building.
+  let acquired = false;
+  while (!acquired) {
+    try {
+      fs.mkdirSync(lockPath);
+      acquired = true;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') throw e;
+      if (fs.existsSync(binaryPath)) return binaryPath;
+      if (Date.now() - start > 300_000) {
+        throw new Error(`Build lock ${lockPath} held > 5 min; something is stuck.`);
+      }
+      // busy-wait 250ms; builds take seconds
+      const end = Date.now() + 250;
+      while (Date.now() < end) {
+        // naive sync wait — this fixture runs once per worker only
+      }
+    }
+  }
+  try {
+    console.log(`Building ${path.basename(binaryPath)}...`);
+    execSync(`go build -o ${binaryPath} ${target}`, { cwd: PROJECT_ROOT, stdio: 'inherit' });
+  } finally {
+    fs.rmdirSync(lockPath);
+  }
+  return binaryPath;
+}
+
+function createTestProject(): string {
+  const tmpDir = fs.mkdtempSync(path.join(TMPDIR, 'rela-e2e-'));
+  fs.writeFileSync(path.join(tmpDir, 'metamodel.yaml'), METAMODEL_YAML);
+  fs.writeFileSync(path.join(tmpDir, 'data-entry.yaml'), DATA_ENTRY_YAML);
+  fs.mkdirSync(path.join(tmpDir, 'entities', 'features'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'entities', 'bugs'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'entities', 'tasks'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'relations'), { recursive: true });
+  for (const [rel, content] of Object.entries(SEED_ENTITIES)) {
+    fs.writeFileSync(path.join(tmpDir, rel), content);
+  }
+  return tmpDir;
+}
+
+/** Spawn rela-server on a free port with retry-on-startup-failure: the port
+ *  we pick from findFreePort may have been reassigned by the kernel before the
+ *  child binds it, under load (RR-B8GJT). Up to 3 attempts. */
+async function spawnServer(
+  serverBinary: string,
+  cwd: string,
+): Promise<{ proc: ChildProcess; url: string; logs: () => string }> {
+  const attempts = 3;
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    const port = await findFreePort();
+    const url = `http://localhost:${port}`;
+    const proc: ChildProcess = spawn(
+      serverBinary,
+      ['-port', String(port), '-allowed-origin', url],
+      { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let stdout = '';
+    let stderr = '';
+    proc.stdout?.on('data', (d) => (stdout += d.toString()));
+    proc.stderr?.on('data', (d) => (stderr += d.toString()));
+
+    try {
+      await waitForServer(url, url);
+      return {
+        proc,
+        url,
+        logs: () => `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`,
+      };
+    } catch (e) {
+      lastErr = e;
+      await waitForExit(proc);
+    }
+  }
+  throw new Error(`Failed to start rela-server after ${attempts} attempts: ${String(lastErr)}`);
+}
+
+export const test = base.extend<TestFixtures, WorkerFixtures>({
+  serverBinary: [
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, use) => {
+      await use(buildIfMissing(SERVER_BINARY, './cmd/rela-server'));
+    },
+    { scope: 'worker' },
+  ],
+
+  // eslint-disable-next-line no-empty-pattern
+  testProject: async ({}, use) => {
+    const dir = createTestProject();
+    await use(dir);
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      // Real cleanup failures likely indicate a process-still-holding-files
+      // bug — warn rather than silently accumulating /tmp detritus.
+      // (review-response RR-3DJ2C)
+      console.warn(`Failed to remove temp project ${dir}: ${String(e)}`);
+    }
+  },
+
+  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+    const { proc, url, logs } = await spawnServer(serverBinary, testProject);
+    try {
+      await use(url);
+    } finally {
+      if (testInfo.status !== testInfo.expectedStatus) {
+        // Attach server logs to the failing test so a CI reader can correlate
+        // a 500 with what the backend was saying. (review-response RR-J9BIT)
+        await testInfo.attach('rela-server.log', { body: logs(), contentType: 'text/plain' });
+      }
+      await waitForExit(proc);
+    }
+  },
+
+  appPage: async ({ browser, serverUrl }, use) => {
+    const context = await browser.newContext({
+      extraHTTPHeaders: { Origin: serverUrl },
+    });
+    const page = await context.newPage();
+    await page.goto(`${serverUrl}/`);
+    await use(page);
+    await context.close();
+  },
+
+  api: async ({ serverUrl, appPage }, use) => {
+    const request: APIRequestContext = appPage.request;
+
+    async function call(method: string, apiPath: string, data?: unknown) {
+      const options: Record<string, unknown> = {
+        method,
+        // Redundant because the context already carries Origin, but keeps
+        // the intent visible for readers auditing a test's API calls.
+        headers: { Origin: serverUrl },
+      };
+      if (data !== undefined) options.data = data;
+      const resp = await request.fetch(`${serverUrl}/api/v1/${apiPath}`, options);
+      if (!resp.ok()) {
+        throw new Error(`${method} /api/v1/${apiPath} → ${resp.status()}: ${await resp.text()}`);
+      }
+      return resp;
+    }
+
+    await use({
+      async createEntity(plural, data) {
+        return (await call('POST', plural, data)).json();
+      },
+      async getEntity(plural, id) {
+        return (await call('GET', `${plural}/${id}`)).json();
+      },
+      async updateEntity(plural, id, properties) {
+        return (await call('PATCH', `${plural}/${id}`, { properties })).json();
+      },
+      async deleteEntity(plural, id) {
+        // Fails loudly on error. Callers doing cleanup should append
+        // `.catch(() => {})` explicitly. (RR-MS1FM)
+        await call('DELETE', `${plural}/${id}`);
+      },
+      async listEntities(plural, query) {
+        const p = query ? `${plural}?${query}` : plural;
+        return (await call('GET', p)).json();
+      },
+      async createRelation(fromPlural, fromId, relation, toId) {
+        await call('POST', `${fromPlural}/${fromId}/relations/${relation}`, { id: toId });
+      },
+      async rawRequest(method, apiPath, data) {
+        return call(method, apiPath, data);
+      },
+    });
+  },
+});
+
+export { expect } from '@playwright/test';
+
+// ---- Test project fixture data ----
+//
+// The inline metamodel is deliberately minimal: feature/bug/task with a
+// handful of properties. No automations, no validation rules. Tests that
+// need those will have to add them here; do NOT point the fixture at the
+// dogfood `tickets/` project (it's load-bearing real data, not a fixture).
+// (review-response RR-GX4BK)
+
+const METAMODEL_YAML = `
 version: "1.0"
 
 types:
@@ -91,6 +360,8 @@ entities:
         type: feature_status
       assignee:
         type: string
+      done:
+        type: boolean
 
 relations:
   blocks:
@@ -102,9 +373,9 @@ relations:
   fixes:
     from: [task]
     to: [bug]
-`);
+`;
 
-  fs.writeFileSync(path.join(tmpDir, 'data-entry.yaml'), `
+const DATA_ENTRY_YAML = `
 version: "1.0"
 
 app:
@@ -115,6 +386,7 @@ forms:
   feature:
     entity_type: feature
     title: "Feature"
+    body: true
     fields:
       - property: title
       - property: status
@@ -140,6 +412,7 @@ forms:
       - property: title
       - property: status
       - property: assignee
+      - property: done
     relations:
       - relation: implements
         label: Implements Feature
@@ -245,16 +518,14 @@ navigation:
     search: true
   - label: "Settings"
     settings: true
-`);
+  - label: "Analyze"
+    analyze: true
+  - label: "Conflicts"
+    conflicts: true
+`;
 
-  // Create entity directories
-  fs.mkdirSync(path.join(tmpDir, 'entities', 'features'), { recursive: true });
-  fs.mkdirSync(path.join(tmpDir, 'entities', 'bugs'), { recursive: true });
-  fs.mkdirSync(path.join(tmpDir, 'entities', 'tasks'), { recursive: true });
-  fs.mkdirSync(path.join(tmpDir, 'relations'), { recursive: true });
-
-  // Create some test entities
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-001.md'), `---
+const SEED_ENTITIES: Record<string, string> = {
+  'entities/features/FEAT-001.md': `---
 id: FEAT-001
 type: feature
 title: User Authentication
@@ -263,9 +534,11 @@ priority: high
 ---
 
 Implement user authentication system.
-`);
 
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-002.md'), `---
+- [ ] Define password policy
+- [x] Pick OAuth provider
+`,
+  'entities/features/FEAT-002.md': `---
 id: FEAT-002
 type: feature
 title: Dashboard Analytics
@@ -274,9 +547,8 @@ priority: medium
 ---
 
 Add analytics dashboard.
-`);
-
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'features', 'FEAT-003.md'), `---
+`,
+  'entities/features/FEAT-003.md': `---
 id: FEAT-003
 type: feature
 title: Export Data
@@ -285,9 +557,8 @@ priority: low
 ---
 
 Export data to CSV.
-`);
-
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'bugs', 'BUG-001.md'), `---
+`,
+  'entities/bugs/BUG-001.md': `---
 id: BUG-001
 type: bug
 title: Login form validation
@@ -297,9 +568,8 @@ priority: high
 ---
 
 Form validation is not working.
-`);
-
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'bugs', 'BUG-002.md'), `---
+`,
+  'entities/bugs/BUG-002.md': `---
 id: BUG-002
 type: bug
 title: Memory leak in list view
@@ -309,9 +579,8 @@ priority: high
 ---
 
 Memory leak detected.
-`);
-
-  fs.writeFileSync(path.join(tmpDir, 'entities', 'tasks', 'TASK-001.md'), `---
+`,
+  'entities/tasks/TASK-001.md': `---
 id: TASK-001
 type: task
 title: Write unit tests
@@ -320,118 +589,5 @@ assignee: Alice
 ---
 
 Write unit tests for auth module.
-`);
-
-  return tmpDir;
-}
-
-let serverProcess: ChildProcess | null = null;
-let testProjectDir: string | null = null;
-let serverPort: number | null = null;
-
-export const test = base.extend<DesktopFixtures>({
-  testProject: async ({}, use) => {
-    // Create a fresh project directory per test so that mutations (create,
-    // update, delete) don't leak into the next test's pre-seeded state.
-    const dir = createTestProject();
-    testProjectDir = dir;
-    await use(dir);
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
-  },
-
-  serverUrl: async ({}, use) => {
-    await use(`http://localhost:${serverPort}`);
-  },
-
-  appPage: async ({ browser, testProject }, use) => {
-    const projectRoot = path.resolve(__dirname, '../..');
-
-    // Use rela-server for HTTP-based testing
-    const binaryPath = path.join(projectRoot, 'bin', 'rela-server');
-
-    if (!fs.existsSync(binaryPath)) {
-      throw new Error(
-        `Server binary not found at ${binaryPath}. Run 'just build-server' first.`
-      );
-    }
-
-    // Find available port
-    serverPort = await findAvailablePort();
-
-    // Start the server with the test project
-    serverProcess = spawn(binaryPath, ['-port', String(serverPort)], {
-      cwd: testProject,
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    // Collect output for debugging
-    let stdout = '';
-    let stderr = '';
-    serverProcess.stdout?.on('data', (data) => {
-      stdout += data.toString();
-    });
-    serverProcess.stderr?.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    // Wait for server to start
-    const serverUrl = `http://localhost:${serverPort}`;
-    let ready = false;
-    const maxAttempts = 100;
-
-    for (let i = 0; i < maxAttempts && !ready; i++) {
-      try {
-        const response = await fetch(`${serverUrl}/`);
-        if (response.ok || response.status === 200) {
-          ready = true;
-        }
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-    }
-
-    if (!ready) {
-      console.error('Server stdout:', stdout);
-      console.error('Server stderr:', stderr);
-      throw new Error(`Server failed to start on ${serverUrl}`);
-    }
-
-    // Create a new page and navigate to the SPA. Provide an Origin header so
-    // that direct API calls via page.request pass the same-origin CSRF check.
-    const context = await browser.newContext({
-      extraHTTPHeaders: { Origin: serverUrl },
-    });
-    const page = await context.newPage();
-    await page.goto(`${serverUrl}/`);
-
-    await use(page);
-
-    // Cleanup
-    await context.close();
-    if (serverProcess) {
-      serverProcess.kill('SIGTERM');
-      serverProcess = null;
-    }
-  },
-});
-
-export { expect } from '@playwright/test';
-
-// Cleanup on process exit
-process.on('exit', () => {
-  if (serverProcess) {
-    serverProcess.kill('SIGTERM');
-  }
-  if (testProjectDir) {
-    try {
-      fs.rmSync(testProjectDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
-  }
-});
+`,
+};

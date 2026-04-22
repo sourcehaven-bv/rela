@@ -2,16 +2,20 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests',
-  timeout: 15000,
-  expect: { timeout: 3000 },
-  retries: 0,
-  workers: 1, // Run tests serially since we control a single server per test
-  reporter: [['html', { open: 'never' }], ['list']],
+  timeout: 30000,
+  expect: { timeout: 5000 },
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 2 : undefined,
+  reporter: process.env.CI
+    ? [['line'], ['html', { open: 'never' }]]
+    : [['list'], ['html', { open: 'never' }]],
   use: {
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    actionTimeout: 3000,
-    navigationTimeout: 5000,
+    actionTimeout: 5000,
+    navigationTimeout: 10000,
   },
   projects: [
     {

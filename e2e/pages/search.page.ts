@@ -134,6 +134,18 @@ export class SearchPage extends BasePage {
     await expect(this.activeFilters.locator('.filter-chip').filter({ hasText: filterLabel })).toBeVisible();
   }
 
+  async expectNoActiveFilters() {
+    await expect(this.activeFilters.locator('.filter-chip')).toHaveCount(0);
+  }
+
+  async expectFirstResultHasTypeBadge() {
+    await expect(this.resultItems.first().locator('.result-type')).toBeVisible();
+  }
+
+  async expectFirstResultIdContains(text: string) {
+    await expect(this.resultItems.first().locator('.result-id')).toContainText(text);
+  }
+
   // Keyboard navigation
   async pressKey(key: string) {
     await this.page.keyboard.press(key);

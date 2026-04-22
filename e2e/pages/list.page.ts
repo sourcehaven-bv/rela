@@ -152,6 +152,10 @@ export class ListPage extends BasePage {
     await this.waitForSpinnerToDisappear();
   }
 
+  async filterControlCount(): Promise<number> {
+    return this.filterBar.locator('select').count();
+  }
+
   /** Click anywhere in the table to give it keyboard focus. */
   async focusTable() {
     await this.table.click();
