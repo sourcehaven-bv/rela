@@ -891,53 +891,67 @@ func TestValidateConfig_ViewSectionUsesPreviousCollectAs(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_DocumentMissingCommand(t *testing.T) {
+// TestValidateConfig_Documents is a table-driven sweep of DocumentConfig
+// validation. Covers the {command, script} mutual-exclusion rule and the
+// still-required entity_type invariant (addresses RR-1FA8W, the risk that
+// relaxing command's required-ness would silently drop entity_type).
+func TestValidateConfig_Documents(t *testing.T) {
 	meta := testMetamodel()
-	cfg := &Config{
-		Documents: map[string]DocumentConfig{
-			"spec": {},
+
+	cases := []struct {
+		name    string
+		doc     DocumentConfig
+		wantErr string // substring that must appear; "" means expect success
+	}{
+		{
+			name:    "only command is valid",
+			doc:     DocumentConfig{Command: "render.sh", EntityType: "requirement"},
+			wantErr: "",
+		},
+		{
+			name:    "only script is valid",
+			doc:     DocumentConfig{Script: "docs/render.lua", EntityType: "requirement"},
+			wantErr: "",
+		},
+		{
+			name:    "both command and script is an error",
+			doc:     DocumentConfig{Command: "render.sh", Script: "docs/render.lua", EntityType: "requirement"},
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "neither command nor script is an error",
+			doc:     DocumentConfig{EntityType: "requirement"},
+			wantErr: "one of command or script must be set",
+		},
+		{
+			name:    "missing entity_type with command",
+			doc:     DocumentConfig{Command: "render.sh"},
+			wantErr: "entity_type is required",
+		},
+		{
+			name:    "missing entity_type with script",
+			doc:     DocumentConfig{Script: "docs/render.lua"},
+			wantErr: "entity_type is required",
 		},
 	}
 
-	err := ValidateConfig(nil, cfg, meta)
-	if err == nil {
-		t.Error("expected error for document with missing command")
-	}
-	errStr := err.Error()
-	if !strings.Contains(errStr, "command is required") {
-		t.Errorf("expected 'command is required' error, got: %s", errStr)
-	}
-}
-
-func TestValidateConfig_DocumentMissingEntityType(t *testing.T) {
-	meta := testMetamodel()
-	cfg := &Config{
-		Documents: map[string]DocumentConfig{
-			"spec": {Command: "render.sh"},
-		},
-	}
-
-	err := ValidateConfig(nil, cfg, meta)
-	if err == nil {
-		t.Error("expected error for document with missing entity_type")
-	}
-	errStr := err.Error()
-	if !strings.Contains(errStr, "entity_type is required") {
-		t.Errorf("expected 'entity_type is required' error, got: %s", errStr)
-	}
-}
-
-func TestValidateConfig_DocumentValid(t *testing.T) {
-	meta := testMetamodel()
-	cfg := &Config{
-		Documents: map[string]DocumentConfig{
-			"spec": {Command: "render.sh", EntityType: "requirement"},
-		},
-	}
-
-	err := ValidateConfig(nil, cfg, meta)
-	if err != nil {
-		t.Errorf("expected valid document config to pass, got: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{Documents: map[string]DocumentConfig{"spec": tc.doc}}
+			err := ValidateConfig(nil, cfg, meta)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected success, got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error to contain %q, got: %s", tc.wantErr, err.Error())
+			}
+		})
 	}
 }
 

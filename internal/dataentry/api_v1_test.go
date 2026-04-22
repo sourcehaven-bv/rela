@@ -2714,3 +2714,88 @@ func TestExtractEntityIDs_Empty(t *testing.T) {
 		t.Errorf("extractEntityIDs(nil) returned %d IDs, want 0", len(got))
 	}
 }
+
+// TestHandleV1Documents_EntityTypeMismatch verifies AC9 / RR-FLCXC:
+// the handler rejects a request whose entity.Type doesn't match the
+// document's configured entity_type, and does NOT run the renderer.
+func TestHandleV1Documents_EntityTypeMismatch(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title": "a ticket",
+		},
+	})
+	// Configure a document that applies only to features. Renderer is
+	// a shell command, but the handler must reject before it runs.
+	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
+		"feature-notes": {
+			EntityType: "feature",
+			Command:    "echo hello",
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_documents/feature-notes/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Documents(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for type mismatch, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "entity_type") {
+		t.Errorf("expected body to mention entity_type, got: %s", rec.Body.String())
+	}
+}
+
+// TestHandleV1Documents_EntityTypeMatch verifies the positive case:
+// when the types line up, the handler proceeds past the type check.
+// We use a command doc so the test doesn't need Lua machinery; the
+// render may or may not succeed depending on the shell, but the
+// response must not be our explicit 400 mismatch error.
+func TestHandleV1Documents_EntityTypeMatch(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title": "a ticket",
+		},
+	})
+	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
+		"ticket-summary": {
+			EntityType: "ticket",
+			Command:    "echo hello",
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_documents/ticket-summary/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Documents(rec, req)
+
+	// The renderer itself may succeed (echo in PATH) or fail; what we
+	// care about here is that the handler got past the type check.
+	if rec.Code == http.StatusBadRequest && strings.Contains(rec.Body.String(), "entity_type") {
+		t.Errorf("unexpected type-mismatch 400 for matching types: %s", rec.Body.String())
+	}
+}
+
+// TestHandleV1Documents_EntityNotFound verifies the 404 path for a
+// missing entry before any renderer runs.
+func TestHandleV1Documents_EntityNotFound(t *testing.T) {
+	app := newTestAppV1(t)
+	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
+		"notes": {
+			EntityType: "ticket",
+			Command:    "echo hi",
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_documents/notes/TKT-MISSING", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Documents(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for missing entity, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

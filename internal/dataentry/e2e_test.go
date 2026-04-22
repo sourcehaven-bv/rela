@@ -24,8 +24,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -50,21 +49,17 @@ func newE2ETestApp(t *testing.T) (*App, string, func()) {
 		t.Fatalf("copying prototype: %v", err)
 	}
 
-	ctx := &project.Context{
-		Root:          projectDir,
-		MetamodelPath: filepath.Join(projectDir, "metamodel.yaml"),
-		EntitiesDir:   filepath.Join(projectDir, "entities"),
-		RelationsDir:  filepath.Join(projectDir, "relations"),
-		CacheDir:      filepath.Join(projectDir, ".rela"),
-	}
-	_ = os.MkdirAll(ctx.CacheDir, 0o755)
+	_ = os.MkdirAll(filepath.Join(projectDir, ".rela"), 0o755)
 
-	fs := storage.NewSafeFS(storage.NewOsFS())
-	ws, err := workspace.New(fs, ctx, workspace.NopScriptExecutor)
+	ws, err := workspace.Discover(projectDir, script.NewEngine())
 	if err != nil {
 		t.Fatalf("creating workspace: %v", err)
 	}
-	app, err := NewApp(ws)
+	app, err := NewApp(
+		ws.FS(), ws.Paths(), ws.Meta(), ws.Store(),
+		ws.EntityManager(), ws.Searcher(),
+		ws.StartWatching,
+	)
 	if err != nil {
 		t.Fatalf("creating app: %v", err)
 	}
@@ -222,5 +217,84 @@ func TestE2E_FormFieldSubmit(t *testing.T) {
 
 	if !strings.Contains(string(savedData), newTitle) {
 		t.Errorf("saved content does not contain new title %q\n\nSaved content:\n%s", newTitle, savedData)
+	}
+}
+
+// TestE2E_LuaDocumentRenders verifies the full path for a Lua-rendered
+// document in a headless browser: navigate to the entity detail page,
+// wait for DocumentsPanel to fetch /api/v1/_documents/..., and assert
+// the rendered HTML contains markers produced by the Lua script plus
+// a rewritten edit:// link. Exercises the full chain:
+//
+//   HTTP handler → documentService.Render → script.Engine.ExecuteDocument
+//   → Lua VM (with rela.document bindings) → goldmark → DOMPurify in browser
+//
+// The prototype ships `scripts/docs/category_report.lua` wired as the
+// `category_overview` document for entity_type `category`. The `backend`
+// category has multiple belongs-to tickets, so the rendered output must
+// contain both a ticket-table row and a rewritten form link.
+func TestE2E_LuaDocumentRenders(t *testing.T) {
+	app, _, cleanup := newE2ETestApp(t)
+	defer cleanup()
+
+	server := httptest.NewServer(app.NewRouter())
+	defer server.Close()
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("no-sandbox", true),
+	)
+
+	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer allocCancel()
+
+	ctx, cancel := chromedp.NewContext(allocCtx)
+	defer cancel()
+
+	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	var panelHTML string
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(server.URL+"/entity/category/backend"),
+
+		// DocumentsPanel renders asynchronously after the initial page
+		// load, once it fetches the rendered HTML. Wait for the body
+		// element specifically (not just the panel container) so we
+		// know render has completed.
+		chromedp.WaitVisible(`.documents-panel .document-body`, chromedp.ByQuery),
+
+		// Small buffer for v-html + DOMPurify to actually paint.
+		chromedp.Sleep(300*time.Millisecond),
+
+		chromedp.OuterHTML(`.documents-panel .document-body`, &panelHTML),
+	)
+	if err != nil {
+		t.Fatalf("browser automation failed: %v\n\nlast panel HTML:\n%s", err, panelHTML)
+	}
+
+	// The Lua script always prints "## Tickets (N)" as a section header,
+	// independent of N — so this assertion survives prototype fixture
+	// changes (adding/removing tickets or belongs-to relations for the
+	// `backend` category). If the header stops appearing entirely, the
+	// Lua render itself is broken.
+	if !strings.Contains(panelHTML, "Tickets (") {
+		t.Errorf("expected rendered doc to contain 'Tickets (' header, got:\n%s", panelHTML)
+	}
+
+	// The script emits edit:// links via a markdown table. goldmark's
+	// HTML output is postprocessed by the data-entry layer to rewrite
+	// them as /form/... links. DOMPurify then sanitizes in the browser.
+	// Finding a /form/ticket/ href proves the rewrite happened end-to-end.
+	if !strings.Contains(panelHTML, "/form/ticket/") {
+		t.Errorf("expected rewritten /form/ticket/... link in panel, got:\n%s", panelHTML)
+	}
+
+	// The edit:// scheme must NOT leak through as a raw href: DOMPurify
+	// would strip it as an unknown scheme, but the upstream rewrite
+	// should have consumed every occurrence first.
+	if strings.Contains(panelHTML, "edit://") {
+		t.Errorf("expected edit:// scheme to be rewritten, found raw in panel:\n%s", panelHTML)
 	}
 }

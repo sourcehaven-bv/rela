@@ -968,15 +968,28 @@ func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
 }
 
 // validateDocuments validates document configurations.
+//
+// Invariant: every document must have entity_type set, and exactly one of
+// {command, script} must be non-empty. entity_type is enforced at the HTTP
+// handler layer to reject cross-type render requests; the mutual exclusion
+// prevents ambiguous configs (which renderer runs when both are set?).
 func validateDocuments(cfg *Config) []string {
 	var errs []string
 
 	for docID, doc := range cfg.Documents {
-		if doc.Command == "" {
-			errs = append(errs, fmt.Sprintf("document %q: command is required", docID))
-		}
 		if doc.EntityType == "" {
 			errs = append(errs, fmt.Sprintf("document %q: entity_type is required", docID))
+		}
+
+		hasCmd := doc.Command != ""
+		hasScript := doc.Script != ""
+		switch {
+		case hasCmd && hasScript:
+			errs = append(errs, fmt.Sprintf(
+				"document %q: command and script are mutually exclusive", docID))
+		case !hasCmd && !hasScript:
+			errs = append(errs, fmt.Sprintf(
+				"document %q: one of command or script must be set", docID))
 		}
 	}
 

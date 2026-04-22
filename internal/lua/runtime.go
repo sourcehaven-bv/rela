@@ -74,6 +74,9 @@ type Runtime struct {
 	params        map[string]string // rela.params values (used by action scripts)
 	secrets       map[string]string // rela.secrets values (from .rela/secrets.yaml)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
+	isDocument    bool              // document mode: rela.document populated, rela.output becomes a warning
+	documentID    string            // data-entry.yaml documents: key, exposed as rela.document.id
+	documentEntry string            // ID of the entity being rendered, exposed as rela.document.entry_id
 	aiProvider    ai.Provider       // nil means AI is not configured
 	cache         cacheStore        // nil means rela.cache.* is not registered
 	scriptPath    string            // set by RunFile; empty for RunString/inline
@@ -141,6 +144,21 @@ func WithParams(params map[string]string) Option {
 func WithActionMode() Option {
 	return func(r *Runtime) {
 		r.isAction = true
+	}
+}
+
+// WithDocumentMode marks the runtime as running a data-entry document
+// renderer. Populates the rela.document.{id, entry_id} table and sets
+// rela.mode = "document" so scripts can branch on context; also changes
+// rela.output behavior to emit a warning line (the captured stdout is the
+// rendered document, so JSON noise in-band is almost certainly a mistake).
+// documentID is the key under documents: in data-entry.yaml; entryID is
+// the ID of the entity being rendered.
+func WithDocumentMode(documentID, entryID string) Option {
+	return func(r *Runtime) {
+		r.isDocument = true
+		r.documentID = documentID
+		r.documentEntry = entryID
 	}
 }
 
@@ -224,8 +242,34 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		opt(r)
 	}
 
+	// In captured-stdout contexts (document mode, action mode), redirect
+	// Lua's base `print` through r.stdout. gopher-lua's default writes to
+	// os.Stdout, which silently drops output from runtimes whose stdout
+	// is a buffer. We override only for these modes so CLI / scheduler /
+	// MCP / validation / automation scripts keep the default behavior —
+	// users rely on print() reaching their terminal there.
+	if r.isDocument || r.isAction {
+		L.SetGlobal("print", L.NewFunction(r.luaPrint))
+	}
+
 	r.registerBindings(allowWrites)
 	return r
+}
+
+// luaPrint replaces gopher-lua's base print so its output lands in
+// r.stdout rather than os.Stdout. Matches Lua's stock print: each
+// argument is stringified via __tostring, joined with tabs, terminated
+// by a newline.
+func (r *Runtime) luaPrint(ls *lua.LState) int {
+	top := ls.GetTop()
+	for i := 1; i <= top; i++ {
+		if i > 1 {
+			fmt.Fprint(r.stdout, "\t")
+		}
+		fmt.Fprint(r.stdout, ls.ToStringMeta(ls.Get(i)).String())
+	}
+	fmt.Fprintln(r.stdout)
+	return 0
 }
 
 // openSafeLibraries loads only safe Lua standard libraries.
@@ -533,6 +577,18 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// raising a Lua error on any call, so a runtime with a cache but
 	// no script path still behaves safely.
 	r.registerCacheBindings(rela)
+
+	// Document-mode context: rela.mode + rela.document.{id, entry_id}.
+	// Only populated when WithDocumentMode was applied. In every other
+	// context rela.mode and rela.document are absent (Lua nil), so a
+	// script that branches on them sees nil outside document renders.
+	if r.isDocument {
+		r.L.SetField(rela, "mode", lua.LString("document"))
+		docTable := r.L.NewTable()
+		r.L.SetField(docTable, "id", lua.LString(r.documentID))
+		r.L.SetField(docTable, "entry_id", lua.LString(r.documentEntry))
+		r.L.SetField(rela, "document", docTable)
+	}
 }
 
 // luaGetEntity implements rela.get_entity(id) -> table|nil
@@ -679,9 +735,10 @@ func (r *Runtime) luaTraceTo(ls *lua.LState) int {
 
 // luaOutput implements rela.output(data) - JSON encode to stdout
 func (r *Runtime) luaOutput(ls *lua.LState) int {
+	// Type-check the arg up front; the Lua → Go conversion is deferred
+	// past the mode guards so muted modes (action/document) don't pay
+	// for converting a potentially-large nested table.
 	data := ls.CheckAny(1)
-
-	goData := luaValueToGo(data)
 
 	if r.isAction {
 		// In action mode, rela.output is a no-op. Log a warning so script
@@ -690,6 +747,16 @@ func (r *Runtime) luaOutput(ls *lua.LState) int {
 		return 0
 	}
 
+	if r.isDocument {
+		// In document mode, captured stdout is the rendered document.
+		// Raw JSON in the middle of rendered markdown is almost always a
+		// mistake — emit a warning line (visible in the panel) so the
+		// script author notices, rather than silently producing garbage.
+		fmt.Fprintln(r.stdout, "warning: rela.output() called in document mode; use print() to emit markdown")
+		return 0
+	}
+
+	goData := luaValueToGo(data)
 	encoder := json.NewEncoder(r.stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(goData); err != nil {

@@ -2001,20 +2001,43 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	if !isSafePathSegment(docName) || !isSafePathSegment(entityID) {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
 		return
-	} // Get document config
+	}
+
+	// Get document config
 	docCfg, ok := a.State().Cfg.Documents[docName]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
 		return
 	}
 
-	renderCfg := a.toDocumentRenderConfig(&docCfg)
+	// Enforce the doc's entity_type before running the renderer: a
+	// release-notes script authored for releases must not run against a
+	// ticket. The frontend already filters the docs shown for an entity,
+	// but an HTTP caller can hit /_documents/<doc>/<wrong-type-id>
+	// directly; reject here.
+	ent, entErr := a.store.GetEntity(r.Context(), entityID)
+	if entErr != nil {
+		writeV1Error(w, r, http.StatusNotFound, "entity_not_found",
+			fmt.Sprintf("entity %q not found", entityID), "")
+		return
+	}
+	if ent.Type != docCfg.EntityType {
+		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
+			fmt.Sprintf("document %q is for entity_type %q, but %q is a %q",
+				docName, docCfg.EntityType, entityID, ent.Type), "")
+		return
+	}
+
+	renderCfg := a.toDocumentRenderConfig(docName, &docCfg)
 
 	// Check for refresh param - skip cache if present
 	forceRefresh := r.URL.Query().Get("refresh") == "true"
 
-	// Try to get cached content (unless refresh requested)
-	if !forceRefresh {
+	// Try to get cached content (unless refresh requested). Disk cache
+	// is only populated for command: renders (see doRender); skip the
+	// read for script: docs so we don't serve a stale command:-era file
+	// after a doc is switched to a Lua script.
+	if !forceRefresh && docCfg.Script == "" {
 		result := a.documents.GetCached(entityID)
 		if result != nil {
 			html := RewriteDocumentLinks(result.HTML, "")

@@ -2444,3 +2444,94 @@ func TestWriterRuntime_MutationBindingsPresent(t *testing.T) {
 		}
 	}
 }
+
+// TestDocumentMode_ContextInjection asserts that WithDocumentMode populates
+// rela.mode, rela.document.id and rela.document.entry_id so scripts can
+// read the context they're running under. Mirrors AC3.
+//
+// We use print() to readback because rela.output is intentionally silenced
+// in document mode (see TestDocumentMode_OutputIsWarning).
+func TestDocumentMode_ContextInjection(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	r := NewWriter(ws.services("/tmp"), &buf, WithDocumentMode("release-notes", "REL-001"))
+	defer r.Close()
+
+	script := `print(rela.mode)
+print(rela.document.id)
+print(rela.document.entry_id)`
+	if err := r.RunString(script); err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	out := buf.String()
+	want := "document\nrelease-notes\nREL-001\n"
+	if out != want {
+		t.Errorf("unexpected output:\n got: %q\nwant: %q", out, want)
+	}
+}
+
+// TestDocumentMode_AbsentInOtherContexts asserts that rela.mode and
+// rela.document are nil when WithDocumentMode is not applied. Mirrors AC4.
+// If these variables leaked into other contexts, scripts that branch on
+// them would behave incorrectly outside document renders.
+//
+// Uses rela.output for readback: print() is only captured in document or
+// action mode (so that CLI/scheduler/MCP keep their native os.Stdout);
+// rela.output routes to the captured buffer in vanilla mode.
+func TestDocumentMode_AbsentInOtherContexts(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	// No WithDocumentMode, no WithActionMode — vanilla writer runtime.
+	r := NewWriter(ws.services("/tmp"), &buf)
+	defer r.Close()
+
+	script := `rela.output({
+    mode_type = type(rela.mode),
+    document_type = type(rela.document),
+})`
+	if err := r.RunString(script); err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("parse output: %v — buf=%q", err, buf.String())
+	}
+	if result["mode_type"] != "nil" {
+		t.Errorf("expected rela.mode to be nil outside document mode, got type %v", result["mode_type"])
+	}
+	if result["document_type"] != "nil" {
+		t.Errorf("expected rela.document to be nil outside document mode, got type %v", result["document_type"])
+	}
+}
+
+// TestDocumentMode_OutputIsWarning asserts that rela.output in document
+// mode writes a warning line to captured stdout and does NOT emit JSON.
+// Captured stdout in document mode is the rendered markdown, so stray
+// JSON would land inline in the rendered document. Mirrors AC5.
+func TestDocumentMode_OutputIsWarning(t *testing.T) {
+	ws := newMockWorkspace(t)
+	var buf bytes.Buffer
+
+	r := NewWriter(ws.services("/tmp"), &buf, WithDocumentMode("my-doc", "E-1"))
+	defer r.Close()
+
+	script := `rela.output({foo = "bar"})`
+	if err := r.RunString(script); err != nil {
+		t.Fatalf("RunString failed: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "warning") {
+		t.Errorf("expected warning in output, got %q", out)
+	}
+	if !strings.Contains(out, "document mode") {
+		t.Errorf("expected warning to mention document mode, got %q", out)
+	}
+	if strings.Contains(out, `"foo"`) {
+		t.Errorf("expected JSON payload to be dropped in document mode, got %q", out)
+	}
+}

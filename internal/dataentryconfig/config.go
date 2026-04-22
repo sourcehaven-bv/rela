@@ -434,16 +434,30 @@ type CommandScope struct {
 }
 
 // DocumentConfig defines how to render a document from an entry entity.
+//
+// Exactly one of Command or Script must be set. Command shells out to an
+// external process that produces markdown on stdout; Script executes a Lua
+// script from scripts/ under the project root and captures its stdout.
+// Validated via validateDocuments at config-load time.
 type DocumentConfig struct {
 	// Title is the display title for the document.
 	Title string `yaml:"title,omitempty" json:"title,omitempty"`
 	// EntityType specifies which entity types this document applies to.
-	// Used by the frontend to filter which documents to show for a given entity.
+	// Used by the frontend to filter which documents to show for a given entity,
+	// and by the HTTP handler to reject cross-type requests (a doc with
+	// entity_type=release cannot render against a ticket entity).
 	EntityType string `yaml:"entity_type,omitempty" json:"entity_type,omitempty"`
 	// Command is the external render command. Placeholders:
 	//   {id}       - entry ID
 	//   {id_lower} - lowercase entry ID
-	Command string `yaml:"command" json:"command"`
-	// Timeout is the command execution timeout in seconds. Defaults to 30.
+	// Mutually exclusive with Script.
+	Command string `yaml:"command,omitempty" json:"command,omitempty"`
+	// Script is a relative path to a Lua file under scripts/ (e.g.
+	// "docs/release_notes.lua"). The script runs in document mode with
+	// rela.mode="document", rela.document.{id,entry_id}, and captures its
+	// stdout as markdown. Mutually exclusive with Command.
+	Script string `yaml:"script,omitempty" json:"script,omitempty"`
+	// Timeout is the render timeout in seconds. Defaults to 30. Applies
+	// to both Command and Script renderers.
 	Timeout int `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 }

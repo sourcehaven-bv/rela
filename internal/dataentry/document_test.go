@@ -230,7 +230,7 @@ func TestDocumentDiskCache(t *testing.T) {
 	t.Run("cache file naming", func(t *testing.T) {
 		entryID := "REQ-001"
 		hash := "abc123"
-		cacheFile := docCacheDir + "/" + entryID + "-" + hash + ".html"
+		cacheFile := docCacheSubdir + "/" + entryID + "-" + hash + ".html"
 		content := "<p>Test HTML</p>"
 
 		if err := kv.Put(context.Background(), cacheFile, []byte(content)); err != nil {
@@ -249,8 +249,8 @@ func TestDocumentDiskCache(t *testing.T) {
 		entryID := "REQ-002"
 		hash1 := "hash1"
 		hash2 := "hash2"
-		cacheFile1 := docCacheDir + "/" + entryID + "-" + hash1 + ".html"
-		cacheFile2 := docCacheDir + "/" + entryID + "-" + hash2 + ".html"
+		cacheFile1 := docCacheSubdir + "/" + entryID + "-" + hash1 + ".html"
+		cacheFile2 := docCacheSubdir + "/" + entryID + "-" + hash2 + ".html"
 
 		_ = kv.Put(context.Background(), cacheFile1, []byte("content1"))
 		_ = kv.Put(context.Background(), cacheFile2, []byte("content2"))
