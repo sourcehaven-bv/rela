@@ -216,6 +216,21 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 // the live Bleve index maintained by the workspace), and startWatching
 // (a lifecycle hook). Everything else — state.KV, config.Loader,
 // tracer, templater, validator, lua.WriteDeps — is constructed locally.
+// AppOption configures an App at construction.
+type AppOption func(*appConfig)
+
+type appConfig struct {
+	routeCatalog lua.RouteCatalog
+}
+
+// WithRouteCatalog wires a frontend-route catalog into the app's internal
+// script engine, enabling `rela.url` inside document renders. Pass
+// frontendroutes.Has via lua.RouteCatalogFunc. If unset, document scripts
+// can still run but `rela.url` is absent from the rela table.
+func WithRouteCatalog(c lua.RouteCatalog) AppOption {
+	return func(ac *appConfig) { ac.routeCatalog = c }
+}
+
 func NewApp(
 	fs storage.FS,
 	paths *project.Context,
@@ -224,7 +239,12 @@ func NewApp(
 	em entitymanager.EntityManager,
 	searcher search.Searcher,
 	startWatching func(workspace.WatchOptions) error,
+	opts ...AppOption,
 ) (*App, error) {
+	var ac appConfig
+	for _, opt := range opts {
+		opt(&ac)
+	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
 	kvRoot, err := storage.NewRootedFS(fs, paths.CacheDir)
@@ -299,7 +319,11 @@ func NewApp(
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(&cfg, meta)
 
-	scriptEngine := script.NewEngine()
+	var engineOpts []script.EngineOption
+	if ac.routeCatalog != nil {
+		engineOpts = append(engineOpts, script.WithRouteCatalog(ac.routeCatalog))
+	}
+	scriptEngine := script.NewEngine(engineOpts...)
 	app := &App{
 		fs:            fs,
 		paths:         paths,

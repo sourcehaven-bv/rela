@@ -1866,9 +1866,9 @@ print()
 for _, child in ipairs((rela.trace_from(entry.id, 2) or {children = {}}).children) do
   local e = rela.get_entity(child.id)
   if e then
-    -- Build an edit-form URL via the helper so the catalogue verifies the
-    -- path and any unknown route fails loudly at render time.
-    local href = rela.url("/form/full_ticket/" .. e.id)
+    -- rela.url.form builds a verified edit-form URL; rela.url.detail
+    -- would be an alternative that links to the canonical detail page.
+    local href = rela.url.form("full_ticket", e)
     print("## [" .. e.id .. "](" .. href .. ")")
     print(e.content or "")
   end
@@ -1915,21 +1915,55 @@ warning and pass through unchanged so downstream projects notice and migrate.
 
 ### Building links from Lua: `rela.url`
 
-For URLs built in Lua scripts — particularly when the path includes
-interpolated IDs or query parameters — use `rela.url(path, params?)`:
+Document scripts build URLs via the `rela.url` submodule. Each helper
+corresponds to one route kind the SPA exposes; every result is verified
+against the frontend route catalogue so a typo fails loudly at render
+time instead of a 404 in the browser.
+
+| Helper | Returns | Typical use |
+|--------|---------|-------------|
+| `rela.url.form(name, entity)` | `/form/<name>/<entity.id>` | Edit-link for an entity, using form `<name>` |
+| `rela.url.form(name, {relations, properties, query})` | `/form/<name>?…` | Create-link with pre-filled relations/properties |
+| `rela.url.form(name)` | `/form/<name>` | Create-link with no pre-fill |
+| `rela.url.detail(entity)` | `/entity/<entity.type>/<entity.id>` | Canonical entity detail page |
+| `rela.url.list(name, {query?})` | `/list/<name>?…` | Link to a configured list |
+| `rela.url.view(name, entity)` | `/view/<name>/<entity.id>` | Custom view for an entity |
+| `rela.url.kanban(name, {query?})` | `/kanban/<name>?…` | Kanban board |
+| `rela.url.document(name, entity)` | `/document/<name>/<entity.id>` | Render a different document for an entity |
+| `rela.url(path, params?)` | verbatim path + query | Escape hatch for singletons (`/search`, `/dashboard`) or hand-assembled paths |
+
+Examples:
 
 ```lua
--- verified against the catalogue; raises at render time on an unknown path
-rela.url("/form/full_ticket/TKT-001")
+local ticket = rela.get_entity("TKT-001")
+
+-- Edit the ticket in the "full_ticket" form.
+rela.url.form("full_ticket", ticket)
 -- → "/form/full_ticket/TKT-001"
 
--- params table becomes the query; keys are sorted deterministically;
--- values are URL-escaped. Existing query on the input path is preserved.
-rela.url("/form/full_ticket", {["prop.status"] = "open", ["rel.parent"] = "TKT-001"})
--- → "/form/full_ticket?prop.status=open&rel.parent=TKT-001"
+-- Create a new ticket pre-filled with relations and properties. Relation
+-- and property names are taken from the metamodel; the helper adds the
+-- "rel." / "prop." prefixes the form expects.
+rela.url.form("create_ticket", {
+  relations  = {parent = ticket.id, assignee = "actor-me"},
+  properties = {status = "open", priority = "high"},
+})
+-- → "/form/create_ticket?prop.priority=high&prop.status=open&rel.assignee=actor-me&rel.parent=TKT-001"
+
+-- Canonical detail page — no form choice, always safe.
+rela.url.detail(ticket)
+-- → "/entity/ticket/TKT-001"
+
+-- Escape hatch for singletons without a dedicated helper.
+rela.url("/search")
 ```
 
-The catalogue checks only the path *shape*: `rela.url("/form/anything/TKT-1")`
+Form links get a `return_to` query parameter injected by the document
+link rewriter so submitting the form returns the user to the document.
+`return_to` is reserved — setting it in a `query = { … }` table is
+rejected with a Lua error.
+
+The catalogue checks only the path *shape*: `rela.url.form("anything", e)`
 passes because `/form/:id/:entityId` matches, even if `anything` isn't a
 real form in your project — form existence is validated when the user
 actually clicks.

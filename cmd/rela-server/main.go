@@ -73,9 +73,11 @@ func main() {
 		slog.Error("invalid project dir", "error", err)
 		os.Exit(1)
 	}
-	ws, err := workspace.Discover(absDir, script.NewEngine(
-		script.WithRouteCatalog(lua.RouteCatalogFunc(frontendroutes.Has)),
-	))
+	// The workspace's engine runs scheduler/flow/validation scripts — none
+	// of which need rela.url (they have no frontend to target). The
+	// catalog is wired into dataentry.NewApp below, where it scopes to
+	// document renders only.
+	ws, err := workspace.Discover(absDir, script.NewEngine())
 	if err != nil {
 		slog.Error("failed to initialize workspace", "error", err)
 		os.Exit(1)
@@ -85,6 +87,7 @@ func main() {
 		ws.FS(), ws.Paths(), ws.Meta(), ws.Store(),
 		ws.EntityManager(), ws.Searcher(),
 		ws.StartWatching,
+		dataentry.WithRouteCatalog(lua.RouteCatalogFunc(frontendroutes.Has)),
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError

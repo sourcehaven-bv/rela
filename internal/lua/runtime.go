@@ -579,12 +579,11 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// no script path still behaves safely.
 	r.registerCacheBindings(rela)
 
-	// rela.url when a route catalog is wired. Absent by default so
-	// runtimes that have no business building frontend URLs (validation
-	// rules, scheduler scripts, etc.) don't accidentally reference one.
-	if r.routes != nil {
-		r.L.SetField(rela, "url", r.L.NewFunction(r.luaURL))
-	}
+	// rela.url submodule (and callable primitive rela.url("/path")) when a
+	// route catalog is wired. Absent by default — runtimes that have no
+	// business building frontend URLs (validation rules, scheduler scripts,
+	// etc.) don't accidentally reference one.
+	r.registerURLModule(rela)
 
 	// Document-mode context: rela.mode + rela.document.{id, entry_id}.
 	// Only populated when WithDocumentMode was applied. In every other

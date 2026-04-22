@@ -132,9 +132,10 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	ws, wsErr := workspace.New(fs, projCtx, script.NewEngine(
-		script.WithRouteCatalog(lua.RouteCatalogFunc(frontendroutes.Has)),
-	))
+	// Workspace engine runs scheduler/flow/validation — no frontend to
+	// target, so no route catalog. The catalog is wired into
+	// dataentry.NewApp below, scoped to document renders only.
+	ws, wsErr := workspace.New(fs, projCtx, script.NewEngine())
 	if wsErr != nil {
 		d.mu.Lock()
 		d.loadErr = wsErr.Error()
@@ -146,6 +147,7 @@ func (d *Desktop) LoadProject(dir string) string {
 		fs, projCtx, ws.Meta(), ws.Store(),
 		ws.EntityManager(), ws.Searcher(),
 		ws.StartWatching,
+		dataentry.WithRouteCatalog(lua.RouteCatalogFunc(frontendroutes.Has)),
 	)
 	if err != nil {
 		d.mu.Lock()

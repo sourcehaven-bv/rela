@@ -226,3 +226,201 @@ func TestURL_emptyQueryNoTrailingQuestion(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "/x")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// rela.url.* typed helpers
+// -----------------------------------------------------------------------------
+
+func urlHelperCatalog() fakeCatalog {
+	return newCatalog(
+		"/form/full_ticket",
+		"/form/full_ticket/TKT-001",
+		"/form/quick_task",
+		"/entity/ticket/TKT-001",
+		"/list/all_tasks",
+		"/view/timeline/TKT-001",
+		"/kanban/sprint",
+		"/document/release_notes/REL-001",
+	)
+}
+
+func TestURLForm_editMode(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	got := evalString(t, r, `rela.url.form("full_ticket", {id="TKT-001", type="ticket"})`)
+	want := "/form/full_ticket/TKT-001"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestURLForm_createMode(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	cases := []struct {
+		name string
+		code string
+		want string
+	}{
+		{
+			name: "bare",
+			code: `rela.url.form("full_ticket")`,
+			want: "/form/full_ticket",
+		},
+		{
+			name: "with relations",
+			code: `rela.url.form("full_ticket", {relations = {parent = "TKT-PARENT", assignee = "actor-me"}})`,
+			want: "/form/full_ticket?rel.assignee=actor-me&rel.parent=TKT-PARENT",
+		},
+		{
+			name: "relation name with dash",
+			code: `rela.url.form("full_ticket", {relations = {["belongs-to"] = "CAT-1"}})`,
+			want: "/form/full_ticket?rel.belongs-to=CAT-1",
+		},
+		{
+			name: "with properties",
+			code: `rela.url.form("full_ticket", {properties = {status = "open", priority = "high"}})`,
+			want: "/form/full_ticket?prop.priority=high&prop.status=open",
+		},
+		{
+			name: "with relations + properties + query",
+			code: `rela.url.form("full_ticket", {
+                relations = {parent = "TKT-1"},
+                properties = {status = "open"},
+                query = {source = "doc"},
+            })`,
+			want: "/form/full_ticket?prop.status=open&rel.parent=TKT-1&source=doc",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := evalString(t, r, tc.code)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestURLForm_editWithExtraQuery(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	got := evalString(t, r,
+		`rela.url.form("full_ticket", {id="TKT-001", type="ticket", query={source="doc"}})`)
+	want := "/form/full_ticket/TKT-001?source=doc"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestURLForm_errors(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	cases := []struct {
+		name    string
+		code    string
+		wantSub string
+	}{
+		{
+			name:    "empty name",
+			code:    `rela.url.form("")`,
+			wantSub: "cannot be empty",
+		},
+		{
+			name:    "unknown form",
+			code:    `rela.url.form("nope")`,
+			wantSub: "unknown frontend route",
+		},
+		{
+			name:    "relation key with prefix",
+			code:    `rela.url.form("full_ticket", {relations = {["rel.parent"] = "TKT-1"}})`,
+			wantSub: "forbidden characters",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := r.RunString(tc.code)
+			if err == nil {
+				t.Fatalf("expected error containing %q", tc.wantSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("error %v does not contain %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+func TestURLDetail(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	got := evalString(t, r, `rela.url.detail({id="TKT-001", type="ticket"})`)
+	want := "/entity/ticket/TKT-001"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestURLDetail_requiresFields(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	cases := []string{
+		`rela.url.detail({type="ticket"})`,          // no id
+		`rela.url.detail({id="TKT-001"})`,           // no type
+		`rela.url.detail({id=123, type="ticket"})`,  // id not string
+		`rela.url.detail({id="TKT-001", type=nil})`, // type nil
+	}
+	for _, code := range cases {
+		t.Run(code, func(t *testing.T) {
+			err := r.RunString(code)
+			if err == nil {
+				t.Fatalf("expected error for %q", code)
+			}
+		})
+	}
+}
+
+func TestURLList(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	cases := []struct{ code, want string }{
+		{`rela.url.list("all_tasks")`, "/list/all_tasks"},
+		{`rela.url.list("all_tasks", {query = {status = "open"}})`, "/list/all_tasks?status=open"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			got := evalString(t, r, tc.code)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestURLView(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	got := evalString(t, r, `rela.url.view("timeline", {id="TKT-001", type="ticket"})`)
+	want := "/view/timeline/TKT-001"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestURLKanban(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	got := evalString(t, r, `rela.url.kanban("sprint")`)
+	if got != "/kanban/sprint" {
+		t.Errorf("got %q, want /kanban/sprint", got)
+	}
+}
+
+func TestURLDocument(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	got := evalString(t, r, `rela.url.document("release_notes", {id="REL-001", type="release"})`)
+	want := "/document/release_notes/REL-001"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestURLCallable_stillWorks(t *testing.T) {
+	// The rela.url table is itself callable via a __call metamethod, so the
+	// flat primitive keeps working for ad-hoc paths and escape hatches.
+	r := newURLWriter(t, urlHelperCatalog())
+	got := evalString(t, r, `rela.url("/list/all_tasks")`)
+	if got != "/list/all_tasks" {
+		t.Errorf("got %q", got)
+	}
+}
