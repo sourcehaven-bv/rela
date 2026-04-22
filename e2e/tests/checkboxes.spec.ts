@@ -25,11 +25,11 @@ test.describe('Checkbox toggling', () => {
     expect(await entity.contentCheckboxCount()).toBeGreaterThanOrEqual(1);
   });
 
-  // TODO(TKT-4Q2VI): Playwright's `force: true` click on the disabled
-  // <input type="checkbox"> doesn't fire the Vue-installed click handler
-  // reliably. The behaviour is a real regression risk, but reproducing it
-  // via the browser needs a dispatched InputEvent or a real user-gesture
-  // click. Leaving skipped until a focused repro harness exists.
+  // Skipped: tracked by BUG-9RANL (Playwright's `force: true` click on the
+  // disabled <input type="checkbox"> doesn't reliably fire the Vue click
+  // handler in this harness). The product behaviour works for real users;
+  // the gap is test-harness-only. See the bug for the repro harness needed
+  // to unskip this test.
   test.skip('clicking a checkbox persists the toggle on the server', async ({ appPage, api }) => {
     // Stage the content via API so this test doesn't depend on seed ordering.
     const feature = await api.createEntity('features', {

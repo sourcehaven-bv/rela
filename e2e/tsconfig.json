@@ -4,12 +4,11 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "strict": true,
+    "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "outDir": "./dist",
-    "rootDir": "./tests"
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["tests/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": ["tests/**/*.ts", "pages/**/*.ts"],
+  "exclude": ["node_modules", "test-results", "playwright-report"]
 }

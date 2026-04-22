@@ -52,11 +52,6 @@ export class SearchPage extends BasePage {
     await expect(this.resultItems.first()).toHaveClass(/selected/);
   }
 
-  /** Press Enter globally — used after focusFirstResult to open the selected one. */
-  async openSelectedResult() {
-    await this.page.keyboard.press('Enter');
-  }
-
   /** Navigate to /search with an initial query param. */
   async navigateToSearchWithQuery(query: string) {
     await this.navigateTo(`/search?q=${encodeURIComponent(query)}`);

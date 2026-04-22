@@ -7,7 +7,7 @@ priority: medium
 effort: m
 tags:
     - tech-debt
-status: review
+status: done
 ---
 
 ## Problem

@@ -66,9 +66,26 @@ test.describe('Entity CRUD via API', () => {
     });
 
     test('list filters by property', async ({ api }) => {
-      const page = await api.listEntities('features', 'filter[status]=draft');
-      for (const e of page.data) {
-        expect(e.properties.status).toBe('draft');
+      // Seed entities to guarantee a non-empty set regardless of inline-project
+      // seed drift. Without this, an empty result would pass the assertion
+      // vacuously and we'd miss a filter-parser regression. (RR-UKYG7)
+      const draft = await api.createEntity('features', {
+        properties: { title: 'Filter test draft', status: 'draft', priority: 'low' },
+      });
+      const done = await api.createEntity('features', {
+        properties: { title: 'Filter test done', status: 'done', priority: 'low' },
+      });
+      try {
+        const page = await api.listEntities('features', 'filter[status]=draft');
+        expect(page.data.length).toBeGreaterThanOrEqual(1);
+        for (const e of page.data) {
+          expect(e.properties.status).toBe('draft');
+        }
+        expect(page.data.some((e) => e.id === draft.id)).toBeTruthy();
+        expect(page.data.some((e) => e.id === done.id)).toBeFalsy();
+      } finally {
+        await api.deleteEntity('features', draft.id).catch(() => {});
+        await api.deleteEntity('features', done.id).catch(() => {});
       }
     });
   });

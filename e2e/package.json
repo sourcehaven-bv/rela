@@ -7,13 +7,15 @@
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
     "test:ui": "playwright test --ui",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "@playwright/test": "^1.58.2",
     "@types/node": "^20.11.0",
     "eslint": "^9.17.0",
+    "typescript": "^5.7.0",
     "typescript-eslint": "^8.18.0"
   }
 }

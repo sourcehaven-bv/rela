@@ -216,13 +216,14 @@ test.describe('Search', () => {
 });
 
 test.describe('Search API', () => {
+  type SearchHit = { id: string; type: string; properties: Record<string, unknown> };
   interface SearchResultsEnvelope {
-    data?: Array<{ id: string; type: string; properties: Record<string, unknown> }>;
+    data?: SearchHit[];
   }
 
   test('GET /api/v1/_search supports q parameter', async ({ api }) => {
     const resp = await api.rawRequest('GET', '_search?q=Authentication');
-    const body = (await resp.json()) as SearchResultsEnvelope | typeof Array;
+    const body = (await resp.json()) as SearchResultsEnvelope | SearchHit[];
     const results = Array.isArray(body) ? body : body.data ?? [];
     expect(Array.isArray(results)).toBeTruthy();
   });

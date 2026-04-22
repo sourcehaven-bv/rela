@@ -55,7 +55,7 @@ export class RelationCardsPage extends BasePage {
 
   /** True if at least one widget shows an unsaved badge. */
   async hasAnyUnsavedBadge(): Promise<boolean> {
-    return this.page.locator('.pending-badge').first().isVisible().catch(() => false);
+    return this.page.locator('.pending-badge').first().isVisible();
   }
 
   async expectUnsavedBadgeOn(widget: Locator) {

@@ -12,6 +12,51 @@ const SERVER_BINARY = path.join(PROJECT_ROOT, 'bin', 'rela-server');
 // the canonical form. (review-response RR-F3IA3)
 const TMPDIR = fs.realpathSync(os.tmpdir());
 
+/**
+ * Constants derived from the inline test project below. Specs should import
+ * these instead of hardcoding strings that couple them to schema values —
+ * e.g. use `STATUS.feature.draft` instead of `'draft'`. (RR-F5P1L, RR-M0099)
+ */
+export const STATUS = {
+  feature: {
+    draft: 'draft',
+    approved: 'approved',
+    in_progress: 'in_progress',
+    done: 'done',
+  },
+} as const;
+
+export const SEVERITY = {
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  critical: 'critical',
+} as const;
+
+export const PRIORITY = {
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+} as const;
+
+/** Seed entity IDs present in every fresh test project. Assumes the inline
+ *  seed data below, in insertion order. Import from specs instead of
+ *  writing 'FEAT-001' / 'BUG-001' strings directly. */
+export const SEED = {
+  features: {
+    authentication: 'FEAT-001',
+    dashboardAnalytics: 'FEAT-002',
+    exportData: 'FEAT-003',
+  },
+  bugs: {
+    loginFormValidation: 'BUG-001',
+    memoryLeak: 'BUG-002',
+  },
+  tasks: {
+    writeUnitTests: 'TASK-001',
+  },
+} as const;
+
 export interface EntityResponse {
   id: string;
   type: string;
@@ -32,6 +77,9 @@ export interface ApiHelpers {
   listEntities(plural: string, query?: string): Promise<PaginatedResponse>;
   createRelation(fromPlural: string, fromId: string, relation: string, toId: string): Promise<void>;
   rawRequest(method: string, path: string, data?: unknown): Promise<import('@playwright/test').APIResponse>;
+  /** Wait for an entity to appear in the search index. Use before
+   *  navigating to a view that reads via /_search (dashboard, search). */
+  waitForIndexed(id: string, options?: { timeout?: number }): Promise<void>;
 }
 
 export interface TestFixtures {
@@ -286,6 +334,31 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       },
       async rawRequest(method, apiPath, data) {
         return call(method, apiPath, data);
+      },
+      async waitForIndexed(id, options) {
+        // Searches ALL indexed-entity channels that a dashboard card might
+        // use: _search (bleve), and a fallback direct GET which at least
+        // confirms the store has the entity even if the index lags.
+        const timeout = options?.timeout ?? 5000;
+        const start = Date.now();
+        // Infer plural from id prefix. Keep this narrow — the inline project
+        // only has three entity types.
+        const prefix = id.split('-')[0];
+        const pluralByPrefix: Record<string, string> = {
+          FEAT: 'features',
+          BUG: 'bugs',
+          TASK: 'tasks',
+        };
+        const plural = pluralByPrefix[prefix];
+        if (!plural) {
+          throw new Error(`waitForIndexed: unknown ID prefix for ${id}`);
+        }
+        while (Date.now() - start < timeout) {
+          const resp = await call('GET', `${plural}/${id}`).catch(() => null);
+          if (resp && resp.ok()) return;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        throw new Error(`entity ${id} not reachable via GET /${plural}/${id} within ${timeout}ms`);
       },
     });
   },

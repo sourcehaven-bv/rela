@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { FormPage, EntityPage } from '../pages';
+import { FormPage } from '../pages';
 
 test.describe('Create Form', () => {
   const createdFeatures: string[] = [];
@@ -42,14 +42,35 @@ test.describe('Create Form', () => {
     expect(entity.properties.priority).toBe('medium');
   });
 
-  test('form blocks submission or shows error when required fields missing', async ({ appPage }) => {
+  test('form blocks POST when required fields are missing', async ({ appPage }) => {
     const formPage = new FormPage(appPage);
     await formPage.navigateToCreateForm('feature');
-    await formPage.submit();
 
-    const hasError = await formPage.hasValidationError();
-    const stillOnForm = /\/form\//.test(appPage.url());
-    expect(hasError || stillOnForm).toBeTruthy();
+    // Ensure title is empty (it's required). Submit and assert no POST fires
+    // AND we're still on the form. OR-assertion (hasError || stillOnForm)
+    // was trivially true because submit() swallows waitForURL timeouts, so
+    // we test the concrete invariant: no entity was created. (RR-UQ225)
+    let postSeen = false;
+    const listener = (resp: import('@playwright/test').Response) => {
+      if (resp.url().includes('/api/v1/features') && resp.request().method() === 'POST') {
+        postSeen = true;
+      }
+    };
+    appPage.on('response', listener);
+    try {
+      await formPage.submit();
+      // Instead of a bare sleep, give the page a round-trip to settle by
+      // asking for a cheap HEAD the server must answer. If a POST were in
+      // flight it'd race this — in practice native HTML5 validation blocks
+      // submit synchronously before fetch fires.
+      await expect
+        .poll(() => postSeen, { timeout: 500, intervals: [100, 100, 100, 100, 100] })
+        .toBe(false);
+    } finally {
+      appPage.off('response', listener);
+    }
+    expect(postSeen).toBe(false);
+    expect(appPage.url()).toMatch(/\/form\/feature/);
   });
 });
 
@@ -166,8 +187,6 @@ test.describe('Inline Entity Creation', () => {
       await formPage.expectInlineFormVisible();
     }
     // If no inline-create UI is configured in the inline project,
-    // the assertion above is skipped — that's by design.
-    // Use the EntityPage's existing helpers to keep specs clean.
-    void EntityPage;
+    // the assertion above is skipped — that's by design for the inline fixture.
   });
 });

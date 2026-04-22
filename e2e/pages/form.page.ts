@@ -6,7 +6,6 @@ export class FormPage extends BasePage {
   readonly submitButton: Locator;
   readonly cancelButton: Locator;
   readonly titleInput: Locator;
-  readonly markdownEditor: Locator;
 
   constructor(page: Page) {
     super(page);
@@ -14,7 +13,6 @@ export class FormPage extends BasePage {
     this.submitButton = page.locator('button[type="submit"], button:has-text("Save"), button:has-text("Create")');
     this.cancelButton = page.locator('button:has-text("Cancel")');
     this.titleInput = page.locator('#field-title');
-    this.markdownEditor = page.locator('.EasyMDEContainer, .markdown-editor, textarea[name="content"]');
   }
 
   async navigateToCreateForm(formId: string) {
