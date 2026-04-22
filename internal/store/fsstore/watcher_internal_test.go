@@ -15,11 +15,14 @@ import (
 func newTestStore(t *testing.T) (*FSStore, *storage.MemFS) {
 	t.Helper()
 	fs := storage.NewMemFS()
+	rooted, err := storage.NewRootedFS(fs, "/")
+	require.NoError(t, err)
 	s, err := New(Config{
 		FS:           fs,
-		EntitiesDir:  "/entities",
-		RelationsDir: "/relations",
-		CacheDir:     "/.rela",
+		Rooted:       rooted,
+		EntitiesKey:  "entities",
+		RelationsKey: "relations",
+		CacheKey:     ".rela",
 	})
 	require.NoError(t, err)
 	// Mirror production wiring: subscribe the store's RecordWrite to

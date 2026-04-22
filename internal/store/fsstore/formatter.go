@@ -20,7 +20,7 @@ func (s *FSStore) FormatEntity(ctx context.Context, id string, dryRun bool) (boo
 
 	s.mu.RLock()
 	order := s.propertyOrder(e.Type)
-	path := s.entityFilePath(e.Type, e.ID)
+	key := s.entityFileKey(e.Type, e.ID)
 	s.mu.RUnlock()
 
 	formatted, err := formatEntity(e, order)
@@ -28,7 +28,7 @@ func (s *FSStore) FormatEntity(ctx context.Context, id string, dryRun bool) (boo
 		return false, fmt.Errorf("format entity: %w", err)
 	}
 
-	currentBytes, err := s.bytes.ReadFile(path)
+	currentBytes, err := s.rooted.ReadFile(key)
 	if err != nil {
 		return false, fmt.Errorf("read entity file: %w", err)
 	}
@@ -56,7 +56,7 @@ func (s *FSStore) FormatRelation(ctx context.Context, from, relType, to string, 
 	}
 
 	s.mu.RLock()
-	path := s.relationFilePath(from, relType, to)
+	key := s.relationFileKey(from, relType, to)
 	s.mu.RUnlock()
 
 	formatted, err := formatRelation(r)
@@ -64,7 +64,7 @@ func (s *FSStore) FormatRelation(ctx context.Context, from, relType, to string, 
 		return false, fmt.Errorf("format relation: %w", err)
 	}
 
-	currentBytes, err := s.bytes.ReadFile(path)
+	currentBytes, err := s.rooted.ReadFile(key)
 	if err != nil {
 		return false, fmt.Errorf("read relation file: %w", err)
 	}

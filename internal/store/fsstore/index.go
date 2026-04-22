@@ -3,7 +3,7 @@ package fsstore
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -39,10 +39,10 @@ type indexedRelation struct {
 
 // loadPersistedIndex reads the index from disk. Returns nil if missing or corrupt.
 func (s *FSStore) loadPersistedIndex() *persistedIndex {
-	if s.cacheDir == "" {
+	if s.cacheKey == "" {
 		return nil
 	}
-	data, err := s.readDataFile(filepath.Join(s.cacheDir, indexFile))
+	data, err := s.readDataFile(path.Join(s.cacheKey, indexFile))
 	if err != nil {
 		return nil
 	}
@@ -55,7 +55,7 @@ func (s *FSStore) loadPersistedIndex() *persistedIndex {
 
 // savePersistedIndex writes the current index state to disk.
 func (s *FSStore) savePersistedIndex() error {
-	if s.cacheDir == "" {
+	if s.cacheKey == "" {
 		return nil
 	}
 
@@ -81,10 +81,7 @@ func (s *FSStore) savePersistedIndex() error {
 	if err != nil {
 		return err
 	}
-	if mkdirErr := s.dirs.MkdirAll(s.cacheDir, 0o755); mkdirErr != nil {
-		return mkdirErr
-	}
-	return s.bytes.WriteFile(filepath.Join(s.cacheDir, indexFile), data, 0o644)
+	return s.rooted.WriteFile(path.Join(s.cacheKey, indexFile), data, 0o644)
 }
 
 // syncIndex reconciles all in-memory state with the filesystem:
@@ -164,7 +161,7 @@ func (s *FSStore) rebuildPropCache() error {
 // scanEntityDirs walks the entity type directories concurrently and
 // populates the index from directory structure alone (no file reads).
 func (s *FSStore) scanEntityDirs() error {
-	typeDirs, err := s.dirs.ReadDir(s.entitiesDir)
+	typeDirs, err := s.rooted.ReadDir(s.entitiesKey)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -189,7 +186,7 @@ func (s *FSStore) scanEntityDirs() error {
 		go func(idx int, dirName string) {
 			defer wg.Done()
 			entityType := s.resolveEntityType(dirName, pluralToType)
-			files, readErr := s.dirs.ReadDir(filepath.Join(s.entitiesDir, dirName))
+			files, readErr := s.rooted.ReadDir(path.Join(s.entitiesKey, dirName))
 			if readErr != nil {
 				return
 			}
@@ -221,7 +218,7 @@ func (s *FSStore) scanEntityDirs() error {
 // scanRelationDir lists the relations directory and parses relation keys
 // from filenames (FROM--TYPE--TO.md). No file reads needed.
 func (s *FSStore) scanRelationDir() error {
-	files, err := s.dirs.ReadDir(s.relationsDir)
+	files, err := s.rooted.ReadDir(s.relationsKey)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -294,8 +291,8 @@ func (s *FSStore) resolveEntityType(dirName string, pluralToType map[string]stri
 func (s *FSStore) newestEntityFileMtime() time.Time {
 	var newest time.Time
 	for _, meta := range s.entities {
-		path := s.entityFilePath(meta.Type, meta.ID)
-		if info, err := s.dirs.Stat(path); err == nil {
+		key := s.entityFileKey(meta.Type, meta.ID)
+		if info, err := s.rooted.Stat(key); err == nil {
 			if info.ModTime().After(newest) {
 				newest = info.ModTime()
 			}
@@ -309,8 +306,8 @@ func (s *FSStore) newestEntityFileMtime() time.Time {
 func (s *FSStore) newestRelationFileMtime() time.Time {
 	var newest time.Time
 	for _, meta := range s.relations {
-		path := s.relationFilePath(meta.From, meta.Type, meta.To)
-		if info, err := s.dirs.Stat(path); err == nil {
+		key := s.relationFileKey(meta.From, meta.Type, meta.To)
+		if info, err := s.rooted.Stat(key); err == nil {
 			if info.ModTime().After(newest) {
 				newest = info.ModTime()
 			}
@@ -323,13 +320,13 @@ func (s *FSStore) newestRelationFileMtime() time.Time {
 func (s *FSStore) entitiesDirMtime() time.Time {
 	var latest time.Time
 
-	info, err := s.dirs.Stat(s.entitiesDir)
+	info, err := s.rooted.Stat(s.entitiesKey)
 	if err != nil {
 		return latest
 	}
 	latest = info.ModTime()
 
-	entries, err := s.dirs.ReadDir(s.entitiesDir)
+	entries, err := s.rooted.ReadDir(s.entitiesKey)
 	if err != nil {
 		return latest
 	}
@@ -348,7 +345,7 @@ func (s *FSStore) entitiesDirMtime() time.Time {
 
 // relationsDirMtime returns the mtime of the relations directory.
 func (s *FSStore) relationsDirMtime() time.Time {
-	info, err := s.dirs.Stat(s.relationsDir)
+	info, err := s.rooted.Stat(s.relationsKey)
 	if err != nil {
 		return time.Time{}
 	}

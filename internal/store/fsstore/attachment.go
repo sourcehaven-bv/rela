@@ -5,20 +5,18 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
+	"path"
 
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
-// AttachFile streams r to `attachments/<entityID>/<property>/<fileName>`.
+// AttachFile streams r to `<attachKey>/<entityID>/<property>/<fileName>`.
 //
-// The write goes through writeDataFile so the atomic-rename + fsync
-// guarantees from SafeFS apply; on encryption-free repos (all repos,
-// post-rollback) that's just the standard write path. The source reader
-// is drained in chunks — peak memory is bounded by io.Copy's internal
-// buffer, not the payload size.
+// The write goes through RootedFS so the path is validated before it
+// reaches the underlying FS. On OS-backed filesystems the data is
+// streamed through RootedFS.OpenForWrite; on MemFS the data is buffered
+// and written via RootedFS.WriteFile.
 //
 // If an attachment already exists at this (entityID, property) under a
 // different filename, the old file is removed first (1:1 ownership per
@@ -35,18 +33,18 @@ func (s *FSStore) AttachFile(_ context.Context, entityID, property, fileName str
 		return store.ErrNotFound
 	}
 
-	dir := filepath.Join(s.attachDir, entityID, property)
-	if err := s.dirs.MkdirAll(dir, 0o755); err != nil {
+	dirKey := path.Join(s.attachKey, entityID, property)
+	if err := s.rooted.MkdirAll(dirKey, 0o755); err != nil {
 		return err
 	}
 
 	key := entityID + "/" + property
 	if old, exists := s.attachments[key]; exists && old.fileName != fileName {
-		_ = s.dirs.Remove(filepath.Join(dir, old.fileName))
+		_ = s.rooted.Remove(path.Join(dirKey, old.fileName))
 	}
 
-	path := filepath.Join(dir, fileName)
-	n, err := s.writeAttachment(path, r)
+	fileKey := path.Join(dirKey, fileName)
+	n, err := s.writeAttachment(fileKey, r)
 	if err != nil {
 		return err
 	}
@@ -60,27 +58,28 @@ func (s *FSStore) AttachFile(_ context.Context, entityID, property, fileName str
 	return nil
 }
 
-// writeAttachment persists r to path. On a real OS-backed FS it
-// streams (constant memory); on a MemFS-backed test FS it falls
-// back to buffered WriteFile since MemFS lives in the process
-// heap and has no streaming primitive worth plumbing.
+// writeAttachment persists r to the given key. On OsFS-backed stacks
+// it streams via RootedFS.OpenForWrite (constant memory); on MemFS it
+// buffers via WriteFile since MemFS has no streaming primitive.
 //
-// Callers must have already created the parent directory via
-// s.dirs.MkdirAll.
-func (s *FSStore) writeAttachment(path string, r io.Reader) (int64, error) {
-	if _, ok := s.dirs.(*storage.OsFS); ok {
-		return s.streamToFile(path, r)
-	}
-	if safe, ok := s.dirs.(*storage.SafeFS); ok {
-		if _, inner := safe.FS.(*storage.OsFS); inner {
-			return s.streamToFile(path, r)
+// Parent directory creation is guaranteed by AttachFile's MkdirAll
+// above.
+func (s *FSStore) writeAttachment(key string, r io.Reader) (int64, error) {
+	if s.streamingSupported {
+		if err := s.streamToFile(key, r); err != nil {
+			return 0, err
 		}
+		info, err := s.rooted.Stat(key)
+		if err != nil {
+			return 0, err
+		}
+		return info.Size(), nil
 	}
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return 0, err
 	}
-	if err := s.bytes.WriteFile(path, data, 0o644); err != nil {
+	if err := s.rooted.WriteFile(key, data, 0o644); err != nil {
 		return 0, err
 	}
 	return int64(len(data)), nil
@@ -98,8 +97,8 @@ func (s *FSStore) ReadAttachment(_ context.Context, entityID, property string) (
 		return nil, store.ErrNotFound
 	}
 
-	path := filepath.Join(s.attachDir, a.entityID, a.property, a.fileName)
-	return s.bytes.Open(path)
+	fileKey := path.Join(s.attachKey, a.entityID, a.property, a.fileName)
+	return s.rooted.Open(fileKey)
 }
 
 func (s *FSStore) DeleteAttachment(_ context.Context, entityID, property string) error {
@@ -112,8 +111,8 @@ func (s *FSStore) DeleteAttachment(_ context.Context, entityID, property string)
 		return store.ErrNotFound
 	}
 
-	path := filepath.Join(s.attachDir, a.entityID, a.property, a.fileName)
-	if err := s.dirs.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	fileKey := path.Join(s.attachKey, a.entityID, a.property, a.fileName)
+	if err := s.rooted.Remove(fileKey); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
@@ -143,7 +142,7 @@ func (s *FSStore) ListAttachments(_ context.Context, entityID string) ([]store.A
 	return result, nil
 }
 
-// removeAttachmentDir removes `attachments/<entityID>/` and every
+// removeAttachmentDir removes `<attachKey>/<entityID>/` and every
 // file underneath. Prunes the in-memory index for the entity
 // regardless of whether the on-disk dir exists. Must be called with
 // s.mu held.
@@ -159,17 +158,17 @@ func (s *FSStore) removeAttachmentDir(entityID string) error {
 		}
 	}
 
-	if s.attachDir == "" {
+	if s.attachKey == "" {
 		return nil
 	}
-	root := filepath.Join(s.attachDir, entityID)
-	if _, err := s.dirs.Stat(root); errors.Is(err, os.ErrNotExist) {
+	rootKey := path.Join(s.attachKey, entityID)
+	if _, err := s.rooted.Stat(rootKey); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
 		return err
 	}
 
-	propEntries, err := s.dirs.ReadDir(root)
+	propEntries, err := s.rooted.ReadDir(rootKey)
 	if err != nil {
 		return err
 	}
@@ -177,8 +176,8 @@ func (s *FSStore) removeAttachmentDir(entityID string) error {
 		if !pe.IsDir() {
 			continue
 		}
-		propDir := filepath.Join(root, pe.Name())
-		fileEntries, err := s.dirs.ReadDir(propDir)
+		propDirKey := path.Join(rootKey, pe.Name())
+		fileEntries, err := s.rooted.ReadDir(propDirKey)
 		if err != nil {
 			return err
 		}
@@ -186,37 +185,37 @@ func (s *FSStore) removeAttachmentDir(entityID string) error {
 			if fe.IsDir() {
 				continue
 			}
-			rmErr := s.dirs.Remove(filepath.Join(propDir, fe.Name()))
+			rmErr := s.rooted.Remove(path.Join(propDirKey, fe.Name()))
 			if rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 				return rmErr
 			}
 		}
-		if rmErr := s.dirs.Remove(propDir); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+		if rmErr := s.rooted.Remove(propDirKey); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 			return rmErr
 		}
 	}
-	if rmErr := s.dirs.Remove(root); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+	if rmErr := s.rooted.Remove(rootKey); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 		return rmErr
 	}
 	return nil
 }
 
-// renameAttachmentDir moves `attachments/<oldID>/` to
-// `attachments/<newID>/` and updates the in-memory index. No-op if
+// renameAttachmentDir moves `<attachKey>/<oldID>/` to
+// `<attachKey>/<newID>/` and updates the in-memory index. No-op if
 // the old dir does not exist. Must be called with s.mu held.
 func (s *FSStore) renameAttachmentDir(oldID, newID string) error {
-	if s.attachDir == "" {
+	if s.attachKey == "" {
 		return nil
 	}
-	oldRoot := filepath.Join(s.attachDir, oldID)
-	if _, err := s.dirs.Stat(oldRoot); errors.Is(err, os.ErrNotExist) {
+	oldRootKey := path.Join(s.attachKey, oldID)
+	if _, err := s.rooted.Stat(oldRootKey); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
 		return err
 	}
 
-	newRoot := filepath.Join(s.attachDir, newID)
-	if err := s.dirs.Rename(oldRoot, newRoot); err != nil {
+	newRootKey := path.Join(s.attachKey, newID)
+	if err := s.rooted.Rename(oldRootKey, newRootKey); err != nil {
 		return err
 	}
 
@@ -235,28 +234,23 @@ func (s *FSStore) renameAttachmentDir(oldID, newID string) error {
 	return nil
 }
 
-// streamToFile copies r into path, reporting the number of bytes
-// written. Uses os.OpenFile directly (bypassing s.bytes.WriteFile)
-// so attachments stream chunk-by-chunk instead of materializing the
-// entire payload in a byte slice.
-//
-// Production couples this to a real OS filesystem; fsstore is OsFS-
-// backed everywhere in production. The streaming contract is the
-// whole point — a 500 MB attachment writes at constant memory.
-func (s *FSStore) streamToFile(path string, r io.Reader) (int64, error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+// streamToFile copies r into the file at key using RootedFS.OpenForWrite.
+// Returns nil on success. Callers must ensure the underlying FS supports
+// streaming (RootedFS.SupportsStreaming) before calling.
+func (s *FSStore) streamToFile(key string, r io.Reader) error {
+	wc, err := s.rooted.OpenForWrite(key, 0o644)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	n, copyErr := io.Copy(f, r)
-	closeErr := f.Close()
+	_, copyErr := io.Copy(wc, r)
+	closeErr := wc.Close()
 	if copyErr != nil {
-		_ = os.Remove(path)
-		return n, copyErr
+		_ = s.rooted.Remove(key)
+		return copyErr
 	}
 	if closeErr != nil {
-		_ = os.Remove(path)
-		return n, closeErr
+		_ = s.rooted.Remove(key)
+		return closeErr
 	}
-	return n, nil
+	return nil
 }

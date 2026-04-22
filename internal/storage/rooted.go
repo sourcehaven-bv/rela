@@ -138,6 +138,58 @@ func (r *RootedFS) WriteFile(key string, data []byte, perm os.FileMode) error {
 	return r.fs.WriteFile(full, data, perm)
 }
 
+// OpenForWrite opens key for streaming writes, creating parent
+// directories and truncating the file if it exists. The returned
+// WriteCloser wraps the underlying os.File; the caller is responsible
+// for Close and, if atomic-rename semantics are desired, for writing
+// to a temp key and renaming on successful Close.
+//
+// Unlike WriteFile, OpenForWrite does NOT go through SafeFS's
+// atomic-rename-and-fsync path. It's the streaming counterpart, used
+// when the data is too large to buffer in memory.
+func (r *RootedFS) OpenForWrite(key string, perm os.FileMode) (io.WriteCloser, error) {
+	full, err := r.resolve(key)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.fs.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+}
+
+// AbsPath resolves key to its absolute filesystem path. Used by
+// integration points that must hand an absolute path to code outside
+// the rooted abstraction — notably the fsnotify watcher, which takes
+// an absolute directory to watch.
+//
+// Returns the resolve() error on invalid keys. Callers should treat
+// the returned path as write-protected — do NOT pass it back into
+// raw FS methods to bypass validation. If you need that, you're
+// probably looking for OpenForWrite.
+func (r *RootedFS) AbsPath(key string) (string, error) {
+	return r.resolve(key)
+}
+
+// SupportsStreaming reports whether OpenForWrite can be used against
+// the underlying filesystem. True for OsFS-backed stacks (direct or
+// via SafeFS). False for MemFS-backed stacks (no on-disk file for
+// os.OpenFile to open). Callers use this to choose between
+// OpenForWrite (streaming) and WriteFile (buffered).
+func (r *RootedFS) SupportsStreaming() bool {
+	fs := r.fs
+	for {
+		switch v := fs.(type) {
+		case *OsFS:
+			return true
+		case *SafeFS:
+			fs = v.FS
+		default:
+			return false
+		}
+	}
+}
+
 // Remove removes the file or empty directory at key.
 func (r *RootedFS) Remove(key string) error {
 	full, err := r.resolve(key)

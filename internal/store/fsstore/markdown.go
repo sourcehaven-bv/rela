@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -324,9 +323,9 @@ func isSpecialLine(line string) bool {
 
 // --- entity I/O ---
 
-// readEntityFile reads and parses an entity from a markdown file.
-func (s *FSStore) readEntityFile(path string) (*entity.Entity, error) {
-	data, err := s.readDataFile(path)
+// readEntityFile reads and parses an entity from a markdown file key.
+func (s *FSStore) readEntityFile(key string) (*entity.Entity, error) {
+	data, err := s.readDataFile(key)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +341,7 @@ func (s *FSStore) readEntityFile(path string) (*entity.Entity, error) {
 	e := entity.New(id, entityType)
 	e.Content = doc.content
 
-	if info, err := s.dirs.Stat(path); err == nil {
+	if info, err := s.rooted.Stat(key); err == nil {
 		e.UpdatedAt = info.ModTime()
 	}
 
@@ -379,20 +378,20 @@ func formatEntity(e *entity.Entity, propertyOrder []string) (string, error) {
 
 // writeEntityFile writes an entity to a markdown file using temp-file + rename.
 func (s *FSStore) writeEntityFile(e *entity.Entity) error {
-	path := s.entityFilePath(e.Type, e.ID)
+	key := s.entityFileKey(e.Type, e.ID)
 	order := s.propertyOrder(e.Type)
 	content, err := formatEntity(e, order)
 	if err != nil {
 		return err
 	}
-	return s.writeDataFile(path, []byte(content), 0o644)
+	return s.writeDataFile(key, []byte(content), 0o644)
 }
 
 // --- relation I/O ---
 
-// readRelationFile reads and parses a relation from a markdown file.
-func (s *FSStore) readRelationFile(path string) (*entity.Relation, error) {
-	data, err := s.readDataFile(path)
+// readRelationFile reads and parses a relation from a markdown file key.
+func (s *FSStore) readRelationFile(key string) (*entity.Relation, error) {
+	data, err := s.readDataFile(key)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +408,7 @@ func (s *FSStore) readRelationFile(path string) (*entity.Relation, error) {
 	)
 	r.Content = doc.content
 
-	if info, err := s.dirs.Stat(path); err == nil {
+	if info, err := s.rooted.Stat(key); err == nil {
 		r.UpdatedAt = info.ModTime()
 	}
 
@@ -448,37 +447,31 @@ func formatRelation(r *entity.Relation) (string, error) {
 
 // writeRelationFile writes a relation to a markdown file using temp-file + rename.
 func (s *FSStore) writeRelationFile(r *entity.Relation) error {
-	path := s.relationFilePath(r.From, r.Type, r.To)
+	key := s.relationFileKey(r.From, r.Type, r.To)
 	content, err := formatRelation(r)
 	if err != nil {
 		return err
 	}
-	return s.writeDataFile(path, []byte(content), 0o644)
+	return s.writeDataFile(key, []byte(content), 0o644)
 }
 
-// writeDataFile writes content to path through the byte FS.
-// Atomic-write semantics (temp+rename, fsync) live one layer down
-// in SafeFS.
-//
-// Parent-directory creation goes through the raw directory handle
-// (s.dirs). SafeFS-backed production paths also mkdir inside
-// WriteFile, so this is idempotent; test backends that reject writes
-// to missing directories need the explicit mkdir.
+// writeDataFile writes content to the given key through RootedFS.
+// RootedFS handles path validation, parent-directory creation, and
+// delegates the actual write to the underlying FS (SafeFS in
+// production, which then handles atomic temp+rename+fsync).
 //
 // Self-echo hash recording is handled entirely by the post-write
 // observer installed on the bottom-most FS (SafeFS.OnPostWrite or
 // MemFS.OnPostWrite for tests). That's where the actual on-disk
 // bytes are visible — fsstore sees only plaintext here and must not
 // record a plaintext hash the watcher can't match.
-func (s *FSStore) writeDataFile(path string, content []byte, perm os.FileMode) error {
-	if err := s.dirs.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return s.bytes.WriteFile(path, content, perm)
+func (s *FSStore) writeDataFile(key string, content []byte, perm os.FileMode) error {
+	return s.rooted.WriteFile(key, content, perm)
 }
 
-// readDataFile reads path through the StoreFS byte boundary. Any
-// decoding (unseal, decompress) is done by the decorator stack.
-func (s *FSStore) readDataFile(path string) ([]byte, error) {
-	return s.bytes.ReadFile(path)
+// readDataFile reads the given key through RootedFS. RootedFS
+// validates the key and delegates to the underlying FS (which applies
+// any decoding decorators — none currently in production).
+func (s *FSStore) readDataFile(key string) ([]byte, error) {
+	return s.rooted.ReadFile(key)
 }

@@ -224,11 +224,11 @@ func (s *FSStore) DeleteRelation(_ context.Context, from, relType, to string) er
 	}
 
 	// Delete file.
-	path := s.relationFilePath(from, relType, to)
-	if err := s.dirs.Remove(path); err != nil {
+	fileKey := s.relationFileKey(from, relType, to)
+	if err := s.rooted.Remove(fileKey); err != nil {
 		return err
 	}
-	s.echoes.Forget(path)
+	s.echoes.Forget(s.absPath(fileKey))
 
 	// Update index.
 	delete(s.relations, key)
