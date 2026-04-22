@@ -79,6 +79,7 @@ type Runtime struct {
 	documentEntry string            // ID of the entity being rendered, exposed as rela.document.entry_id
 	aiProvider    ai.Provider       // nil means AI is not configured
 	cache         cacheStore        // nil means rela.cache.* is not registered
+	routes        RouteCatalog      // nil means rela.url is not registered
 	scriptPath    string            // set by RunFile; empty for RunString/inline
 }
 
@@ -577,6 +578,13 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// raising a Lua error on any call, so a runtime with a cache but
 	// no script path still behaves safely.
 	r.registerCacheBindings(rela)
+
+	// rela.url when a route catalog is wired. Absent by default so
+	// runtimes that have no business building frontend URLs (validation
+	// rules, scheduler scripts, etc.) don't accidentally reference one.
+	if r.routes != nil {
+		r.L.SetField(rela, "url", r.L.NewFunction(r.luaURL))
+	}
 
 	// Document-mode context: rela.mode + rela.document.{id, entry_id}.
 	// Only populated when WithDocumentMode was applied. In every other

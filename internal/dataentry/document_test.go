@@ -1,7 +1,9 @@
 package dataentry
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -150,69 +152,180 @@ func TestRewriteDocumentLinks(t *testing.T) {
 		html       string
 		returnPath string
 		expected   string
+		wantWarn   string // substring expected in warning log; "" means no warning
 	}{
+		// Form routes: return_to injected.
 		{
-			name:       "basic edit link",
+			name:       "edit form link with full return path",
+			html:       `<a href="/form/full_ticket/TKT-001">Edit</a>`,
+			returnPath: "/document/preview?entry=DOC-001",
+			expected:   `<a href="/form/full_ticket/TKT-001?return_to=%2Fdocument%2Fpreview%3Fentry%3DDOC-001%23tkt-001">Edit</a>`,
+		},
+		{
+			name:       "multiple edit form links",
+			html:       `<a href="/form/full_ticket/TKT-001">R1</a> and <a href="/form/full_ticket/TKT-002">R2</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/form/full_ticket/TKT-001?return_to=%2Fdoc%23tkt-001">R1</a> and <a href="/form/full_ticket/TKT-002?return_to=%2Fdoc%23tkt-002">R2</a>`,
+		},
+		{
+			name:       "create form link no query",
+			html:       `<a href="/form/full_ticket">Add</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/form/full_ticket?return_to=%2Fdoc">Add</a>`,
+		},
+		{
+			name:       "create form link preserves existing query",
+			html:       `<a href="/form/full_ticket?prop.status=draft&rel.implements=FEAT-001">Add</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/form/full_ticket?prop.status=draft&rel.implements=FEAT-001&return_to=%2Fdoc">Add</a>`,
+		},
+		{
+			name:       "form link preserves fragment",
+			html:       `<a href="/form/full_ticket#section">Add</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/form/full_ticket?return_to=%2Fdoc#section">Add</a>`,
+		},
+
+		// Non-form internal links: unchanged.
+		{
+			name:       "list link unchanged",
+			html:       `<a href="/list/all_tasks">List</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/list/all_tasks">List</a>`,
+		},
+		{
+			name:       "entity detail unchanged",
+			html:       `<a href="/entity/ticket/TKT-001">Detail</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/entity/ticket/TKT-001">Detail</a>`,
+		},
+		{
+			name:       "search with query unchanged",
+			html:       `<a href="/search?q=foo">Search</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/search?q=foo">Search</a>`,
+		},
+		{
+			name:       "kanban unchanged",
+			html:       `<a href="/kanban/sprint">Kanban</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/kanban/sprint">Kanban</a>`,
+		},
+
+		// External / anchor / mailto: unchanged.
+		{
+			name:       "external link",
+			html:       `<a href="https://example.com">Docs</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="https://example.com">Docs</a>`,
+		},
+		{
+			name:       "mailto",
+			html:       `<a href="mailto:a@b.c">Mail</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="mailto:a@b.c">Mail</a>`,
+		},
+		{
+			name:       "anchor only",
+			html:       `<a href="#section">Jump</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="#section">Jump</a>`,
+		},
+		{
+			name:       "empty href",
+			html:       `<a href="">X</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="">X</a>`,
+		},
+
+		// Legacy schemes: warn + passthrough.
+		{
+			name:       "legacy edit scheme warns and passes through",
 			html:       `<a href="edit://requirement/REQ-001">Edit</a>`,
-			returnPath: "/document/preview?entry=DOC-001",
-			// Return path is URL-encoded including the hash so browsers send it to the server
-			expected: `<a href="/form/requirement/REQ-001?return_to=%2Fdocument%2Fpreview%3Fentry%3DDOC-001%23req-001">Edit</a>`,
-		},
-		{
-			name:       "multiple edit links",
-			html:       `<a href="edit://requirement/REQ-001">R1</a> and <a href="edit://decision/DEC-002">D2</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/requirement/REQ-001?return_to=%2Fdoc%23req-001">R1</a> and <a href="/form/decision/DEC-002?return_to=%2Fdoc%23dec-002">D2</a>`,
+			expected:   `<a href="edit://requirement/REQ-001">Edit</a>`,
+			wantWarn:   "removed scheme",
 		},
 		{
-			name:       "edit link mixed with normal",
-			html:       `<a href="edit://requirement/REQ-001">Edit</a> and <a href="/other">Other</a>`,
+			name:       "legacy create scheme warns and passes through",
+			html:       `<a href="create://requirement?prop.x=1">New</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/requirement/REQ-001?return_to=%2Fdoc%23req-001">Edit</a> and <a href="/other">Other</a>`,
+			expected:   `<a href="create://requirement?prop.x=1">New</a>`,
+			wantWarn:   "removed scheme",
 		},
+
+		// Unknown internal path: warn + passthrough.
 		{
-			name:       "basic create link",
-			html:       `<a href="create://requirement">Add</a>`,
-			returnPath: "/document/preview?entry=DOC-001",
-			expected:   `<a href="/form/requirement?return_to=%2Fdocument%2Fpreview%3Fentry%3DDOC-001">Add</a>`,
-		},
-		{
-			name:       "create link with props",
-			html:       `<a href="create://requirement?prop.status=draft">Add</a>`,
+			name:       "unknown internal path warns and passes through",
+			html:       `<a href="/nope/foo">Bogus</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/requirement?prop.status=draft&return_to=%2Fdoc">Add</a>`,
+			expected:   `<a href="/nope/foo">Bogus</a>`,
+			wantWarn:   "no matching frontend route",
+		},
+
+		// Goldmark emits & as &amp; in href values — rewriter must
+		// treat both as pair separators when stripping return_to and
+		// preserve the author's encoding on output.
+		{
+			name:       "goldmark-encoded ampersand in query preserved",
+			html:       `<a href="/form/full_ticket?prop.status=draft&amp;rel.implements=FEAT-001">Add</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/form/full_ticket?prop.status=draft&amp;rel.implements=FEAT-001&return_to=%2Fdoc">Add</a>`,
+		},
+
+		// return_to collision: author-supplied return_to must be
+		// stripped and replaced (with a warning) so vue-router doesn't
+		// see it as an array.
+		{
+			name:       "author-supplied return_to stripped and replaced",
+			html:       `<a href="/form/full_ticket?return_to=/evil">Trick</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/form/full_ticket?return_to=%2Fdoc">Trick</a>`,
+			wantWarn:   "reserved key return_to",
 		},
 		{
-			name:       "create link with props and relations",
-			html:       `<a href="create://requirement?prop.status=draft&rel.implements=FEAT-001">Add</a>`,
+			name:       "author-supplied return_to stripped with other params preserved",
+			html:       `<a href="/form/full_ticket?a=1&return_to=/evil&b=2">Trick</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/requirement?prop.status=draft&rel.implements=FEAT-001&return_to=%2Fdoc">Add</a>`,
+			expected:   `<a href="/form/full_ticket?a=1&b=2&return_to=%2Fdoc">Trick</a>`,
+			wantWarn:   "reserved key return_to",
 		},
 		{
-			name:       "multiple create links",
-			html:       `<a href="create://requirement">R</a> and <a href="create://decision?prop.status=proposed">D</a>`,
+			name:       "author-supplied return_to stripped through goldmark entity",
+			html:       `<a href="/form/full_ticket?a=1&amp;return_to=/evil&amp;b=2">Trick</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/requirement?return_to=%2Fdoc">R</a> and <a href="/form/decision?prop.status=proposed&return_to=%2Fdoc">D</a>`,
+			expected:   `<a href="/form/full_ticket?a=1&amp;b=2&return_to=%2Fdoc">Trick</a>`,
+			wantWarn:   "reserved key return_to",
+		},
+
+		// Empty returnPath on non-edit form link: skip return_to entirely.
+		{
+			name:       "empty returnPath skips return_to on create form",
+			html:       `<a href="/form/full_ticket?prop.status=open">Add</a>`,
+			returnPath: "",
+			expected:   `<a href="/form/full_ticket?prop.status=open">Add</a>`,
 		},
 		{
-			name:       "mixed edit and create links",
-			html:       `<a href="edit://requirement/REQ-001">Edit</a> <a href="create://decision">New</a>`,
-			returnPath: "/doc",
-			expected:   `<a href="/form/requirement/REQ-001?return_to=%2Fdoc%23req-001">Edit</a> <a href="/form/decision?return_to=%2Fdoc">New</a>`,
-		},
-		{
-			name:       "no custom links",
-			html:       `<a href="http://example.com">Normal link</a>`,
-			returnPath: "/doc",
-			expected:   `<a href="http://example.com">Normal link</a>`,
+			name:       "empty returnPath still emits entity hash on edit form",
+			html:       `<a href="/form/full_ticket/TKT-001">Edit</a>`,
+			returnPath: "",
+			expected:   `<a href="/form/full_ticket/TKT-001?return_to=%23tkt-001">Edit</a>`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := RewriteDocumentLinks(tt.html, tt.returnPath)
+			var buf bytes.Buffer
+			log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			result := RewriteDocumentLinks(tt.html, tt.returnPath, routeMatcherFunc(matchFrontendRoute), log)
 			if result != tt.expected {
 				t.Errorf("RewriteDocumentLinks() =\n%s\nwant:\n%s", result, tt.expected)
+			}
+			if tt.wantWarn == "" && buf.Len() > 0 {
+				t.Errorf("unexpected warning output: %s", buf.String())
+			}
+			if tt.wantWarn != "" && !strings.Contains(buf.String(), tt.wantWarn) {
+				t.Errorf("expected warning containing %q, got: %s", tt.wantWarn, buf.String())
 			}
 		})
 	}

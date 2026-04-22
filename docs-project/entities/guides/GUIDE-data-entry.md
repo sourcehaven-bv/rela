@@ -1797,9 +1797,11 @@ Documents are read-only rendered markdown panels attached to an entity's detail
 view. A document's configuration declares which entity type it applies to and
 how to produce the markdown — either a shell `command:` that writes markdown to
 stdout, or a Lua `script:` that does the same via the embedded runtime.
-Captured markdown is converted to HTML via goldmark, with links using
-`edit://` and `create://` URL schemes rewritten into data-entry form URLs
-(see "Links in rendered documents" below).
+Captured markdown is converted to HTML via goldmark. Links using
+app-relative paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`)
+resolve against the frontend route catalogue; form links get a `return_to`
+query param appended automatically so the user lands back on the document
+after submitting the form. See "Links in rendered documents" below.
 
 The frontend's `DocumentsPanel.vue` shows every document whose `entity_type`
 matches the current entity. SSE live-reload re-renders a document when the
@@ -1870,7 +1872,10 @@ print()
 for _, child in ipairs((rela.trace_from(entry.id, 2) or {children = {}}).children) do
   local e = rela.get_entity(child.id)
   if e then
-    print("## [" .. e.id .. "](edit://" .. e.type .. "/" .. e.id .. ")")
+    -- Build an edit-form URL via the helper so the catalogue verifies the
+    -- path and any unknown route fails loudly at render time.
+    local href = rela.url("/form/full_ticket/" .. e.id)
+    print("## [" .. e.id .. "](" .. href .. ")")
     print(e.content or "")
   end
 end
@@ -1893,17 +1898,49 @@ lines in the rendered output — that is intentionally loud.
 
 ### Links in rendered documents
 
-The goldmark→HTML step rewrites two custom URL schemes into data-entry
-form URLs, so documents can link directly to edit and create forms:
+Documents link to anywhere in the SPA by writing app-relative paths. The
+goldmark→HTML step walks every `href="/..."` attribute, verifies it against
+the frontend route catalogue, and appends a `return_to` query param to any
+href targeting a form route so the user comes back to the document after
+submitting the form.
 
-| Scheme                      | Renders as                                           |
-|-----------------------------|------------------------------------------------------|
-| `edit://<type>/<id>`        | `/form/<type>/<id>?return_to=...` (edit an entity)   |
-| `create://<type>`           | `/form/<type>?return_to=...` (new entity)            |
-| `create://<type>?k=v&...`   | `/form/<type>?k=v&...&return_to=...` (with defaults) |
+| Target                | Write this in markdown                          | Notes                               |
+|-----------------------|-------------------------------------------------|-------------------------------------|
+| Edit an entity        | `[Edit](/form/full_ticket/TKT-001)`             | Adds `return_to=...#tkt-001`        |
+| Create a new entity   | `[New](/form/full_ticket)`                      | Adds `return_to=...`                |
+| Create with defaults  | `[New](/form/full_ticket?prop.status=open)`     | Preserves query + appends `return_to` |
+| Link to entity detail | `[Detail](/entity/ticket/TKT-001)`              | Not a form; no `return_to` added    |
+| Link to a list        | `[All](/list/all_tasks)`                        | Not a form; passthrough             |
+| Link to a kanban      | `[Board](/kanban/sprint)`                       | Not a form; passthrough             |
+| External link         | `[Docs](https://example.com)`                   | Untouched                           |
 
-The return URL points back to the entity view that hosts the document, so
-submitting the form returns the user to where they were.
+The rewriter leaves non-form internal links alone (for now — individual
+route pages don't yet honour `return_to`; that's tracked as a follow-on).
+Unknown internal paths and the legacy `edit://` / `create://` schemes log a
+warning and pass through unchanged so downstream projects notice and migrate.
+
+### Building links from Lua: `rela.url`
+
+For URLs built in Lua scripts — particularly when the path includes
+interpolated IDs or query parameters — use `rela.url(path, params?)`:
+
+```lua
+-- verified against the catalogue; raises at render time on an unknown path
+rela.url("/form/full_ticket/TKT-001")
+-- → "/form/full_ticket/TKT-001"
+
+-- params table becomes the query; keys are sorted deterministically;
+-- values are URL-escaped. Existing query on the input path is preserved.
+rela.url("/form/full_ticket", {["prop.status"] = "open", ["rel.parent"] = "TKT-001"})
+-- → "/form/full_ticket?prop.status=open&rel.parent=TKT-001"
+```
+
+The catalogue checks only the path *shape*: `rela.url("/form/anything/TKT-1")`
+passes because `/form/:id/:entityId` matches, even if `anything` isn't a
+real form in your project — form existence is validated when the user
+actually clicks.
+
+Run `rela-server routes` to see every known path and its Lua param names.
 
 ### Caching and live-reload
 

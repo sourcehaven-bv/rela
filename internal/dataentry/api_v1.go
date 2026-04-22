@@ -2040,7 +2040,7 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	if !forceRefresh && docCfg.Script == "" {
 		result := a.documents.GetCached(entityID)
 		if result != nil {
-			html := RewriteDocumentLinks(result.HTML, "")
+			html := RewriteDocumentLinks(result.HTML, "", routeMatcherFunc(matchFrontendRoute), nil)
 			writeV1JSON(w, http.StatusOK, V1DocumentResponse{
 				HTML:      html,
 				Cached:    true,
@@ -2057,7 +2057,7 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	html := RewriteDocumentLinks(result.HTML, "")
+	html := RewriteDocumentLinks(result.HTML, "", routeMatcherFunc(matchFrontendRoute), nil)
 	writeV1JSON(w, http.StatusOK, V1DocumentResponse{
 		HTML:      html,
 		Cached:    false,

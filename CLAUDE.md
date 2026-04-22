@@ -96,6 +96,10 @@ Subsystems (see each package's doc comment for details):
 | `internal/automation` | Automation engine invoked by `entitymanager`                   |
 | `internal/ai`         | OpenAI-compatible LLM provider (used from Lua)                 |
 | `internal/migration`  | Schema migrations for project YAML files                       |
+| `internal/frontendroutes` | Go-side catalogue of SPA routes — consumed by the Lua       |
+|                       | `rela.url` helper, the document link rewriter, and             |
+|                       | `rela-server routes`. Stdlib-only leaf. Parity with             |
+|                       | `frontend/src/router/index.ts` enforced by `internal/frontendparity`. |
 
 Other packages under `internal/` are self-descriptive — ls the tree.
 

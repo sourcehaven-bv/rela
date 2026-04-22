@@ -30,7 +30,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
+	"github.com/Sourcehaven-BV/rela/internal/frontendroutes"
 	"github.com/Sourcehaven-BV/rela/internal/git"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
@@ -130,7 +132,9 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	ws, wsErr := workspace.New(fs, projCtx, script.NewEngine())
+	ws, wsErr := workspace.New(fs, projCtx, script.NewEngine(
+		script.WithRouteCatalog(lua.RouteCatalogFunc(frontendroutes.Has)),
+	))
 	if wsErr != nil {
 		d.mu.Lock()
 		d.loadErr = wsErr.Error()

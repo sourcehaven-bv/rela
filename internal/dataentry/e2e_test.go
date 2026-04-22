@@ -224,15 +224,17 @@ func TestE2E_FormFieldSubmit(t *testing.T) {
 // document in a headless browser: navigate to the entity detail page,
 // wait for DocumentsPanel to fetch /api/v1/_documents/..., and assert
 // the rendered HTML contains markers produced by the Lua script plus
-// a rewritten edit:// link. Exercises the full chain:
+// a rewritten form link. Exercises the full chain:
 //
 //   HTTP handler → documentService.Render → script.Engine.ExecuteDocument
-//   → Lua VM (with rela.document bindings) → goldmark → DOMPurify in browser
+//   → Lua VM (with rela.document + rela.url bindings) → goldmark → link
+//   rewriter (adds return_to to form routes) → DOMPurify in browser
 //
 // The prototype ships `scripts/docs/category_report.lua` wired as the
 // `category_overview` document for entity_type `category`. The `backend`
 // category has multiple belongs-to tickets, so the rendered output must
-// contain both a ticket-table row and a rewritten form link.
+// contain both a ticket-table row and an /form/edit_ticket/... link
+// produced via rela.url in the script.
 func TestE2E_LuaDocumentRenders(t *testing.T) {
 	app, _, cleanup := newE2ETestApp(t)
 	defer cleanup()
@@ -283,18 +285,15 @@ func TestE2E_LuaDocumentRenders(t *testing.T) {
 		t.Errorf("expected rendered doc to contain 'Tickets (' header, got:\n%s", panelHTML)
 	}
 
-	// The script emits edit:// links via a markdown table. goldmark's
-	// HTML output is postprocessed by the data-entry layer to rewrite
-	// them as /form/... links. DOMPurify then sanitizes in the browser.
-	// Finding a /form/ticket/ href proves the rewrite happened end-to-end.
-	if !strings.Contains(panelHTML, "/form/ticket/") {
-		t.Errorf("expected rewritten /form/ticket/... link in panel, got:\n%s", panelHTML)
+	// The script builds /form/edit_ticket/<id> links via rela.url. The
+	// data-entry layer then appends return_to so the submit navigation
+	// returns to the category page. Finding an /form/edit_ticket/ href
+	// with a return_to query proves the full chain (catalog-verified
+	// URL in Lua → goldmark → link rewriter) worked end-to-end.
+	if !strings.Contains(panelHTML, "/form/edit_ticket/") {
+		t.Errorf("expected /form/edit_ticket/... link in panel, got:\n%s", panelHTML)
 	}
-
-	// The edit:// scheme must NOT leak through as a raw href: DOMPurify
-	// would strip it as an unknown scheme, but the upstream rewrite
-	// should have consumed every occurrence first.
-	if strings.Contains(panelHTML, "edit://") {
-		t.Errorf("expected edit:// scheme to be rewritten, found raw in panel:\n%s", panelHTML)
+	if !strings.Contains(panelHTML, "return_to=") {
+		t.Errorf("expected return_to query on rewritten form link, got:\n%s", panelHTML)
 	}
 }
