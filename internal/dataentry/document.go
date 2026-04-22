@@ -418,16 +418,17 @@ func rewriteHref(href, returnPath string, m routeMatcher, log *slog.Logger) stri
 		return fmt.Sprintf(`href="%s"`, href)
 	}
 
-	// Form routes: append return_to. For edit-mode (two segments after /form/),
-	// suffix the return value with #<lowercased entityId> so the browser
-	// scrolls the entity into view when the user returns.
-	entityID := editFormEntityID(base)
-
-	// When the caller didn't supply a returnPath and the link isn't an
-	// edit form (so there's no entity suffix to add), appending an empty
-	// return_to= just litters every form link with a useless query key.
-	// Skip the append in that case and leave existing query + fragment.
-	if returnPath == "" && entityID == "" {
+	// Form routes: append return_to verbatim. We deliberately do NOT add
+	// a #<entity-id> suffix here — goldmark's auto-generated heading ids
+	// don't match a predictable pattern (they slugify heading text, which
+	// often includes link URLs), so a fragment we synthesize here rarely
+	// hits a real anchor. The frontend's document click handler appends
+	// the nearest-ancestor element id to return_to at click time, which
+	// always matches whatever goldmark emitted.
+	//
+	// When returnPath is empty, there's nothing useful to inject; leave
+	// the query and fragment alone.
+	if returnPath == "" {
 		out := base
 		if existingQuery != "" {
 			out += "?" + existingQuery
@@ -436,11 +437,6 @@ func rewriteHref(href, returnPath string, m routeMatcher, log *slog.Logger) stri
 			out += "#" + fragment
 		}
 		return fmt.Sprintf(`href="%s"`, out)
-	}
-
-	returnValue := returnPath
-	if entityID != "" {
-		returnValue = returnPath + "#" + strings.ToLower(entityID)
 	}
 
 	// Strip any pre-existing return_to (authors shouldn't set it, but they
@@ -455,7 +451,7 @@ func rewriteHref(href, returnPath string, m routeMatcher, log *slog.Logger) stri
 	if finalQuery != "" {
 		finalQuery += "&"
 	}
-	finalQuery += "return_to=" + url.QueryEscape(returnValue)
+	finalQuery += "return_to=" + url.QueryEscape(returnPath)
 
 	out := base + "?" + finalQuery
 	if fragment != "" {
@@ -529,19 +525,4 @@ func splitHref(href string) (base, rawQuery, fragment string) {
 		base = base[:i]
 	}
 	return base, rawQuery, fragment
-}
-
-// editFormEntityID extracts the entity ID from an edit-form path, i.e. the
-// second path segment of /form/<form_id>/<entity_id>. Returns "" for any
-// other shape so callers can branch cleanly.
-func editFormEntityID(base string) string {
-	if !strings.HasPrefix(base, "/form/") {
-		return ""
-	}
-	rest := strings.TrimPrefix(base, "/form/")
-	parts := strings.Split(rest, "/")
-	if len(parts) != 2 || parts[1] == "" {
-		return ""
-	}
-	return parts[1]
 }

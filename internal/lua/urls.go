@@ -26,7 +26,8 @@ func (r *Runtime) registerURLModule(rela *glua.LTable) {
 	}
 
 	tbl := r.L.NewTable()
-	r.L.SetField(tbl, "form", r.L.NewFunction(r.luaURLForm))
+	r.L.SetField(tbl, "form_edit", r.L.NewFunction(r.luaURLFormEdit))
+	r.L.SetField(tbl, "form_create", r.L.NewFunction(r.luaURLFormCreate))
 	r.L.SetField(tbl, "detail", r.L.NewFunction(r.luaURLDetail))
 	r.L.SetField(tbl, "list", r.L.NewFunction(r.luaURLList))
 	r.L.SetField(tbl, "view", r.L.NewFunction(r.luaURLView))
@@ -113,44 +114,47 @@ func optionalTable(ls *glua.LState, n int) *glua.LTable {
 // Typed helpers (rela.url.form, rela.url.detail, ...)
 // -----------------------------------------------------------------------------
 
-// luaURLForm implements rela.url.form(name, arg?).
+// luaURLFormEdit implements rela.url.form_edit(name, entity).
+// Builds /form/<name>/<entity.id>. `entity` is an entity-shaped table —
+// at minimum a string `id` field; rela.get_entity results satisfy this.
+func (r *Runtime) luaURLFormEdit(ls *glua.LState) int {
+	name := ls.CheckString(1)
+	if name == "" {
+		ls.RaiseError("rela.url.form_edit: form name cannot be empty")
+		return 0
+	}
+	entity := ls.CheckTable(2)
+	id := entityIDOf(entity)
+	if id == "" {
+		ls.RaiseError(`rela.url.form_edit: entity must be a table with a string "id" field`)
+		return 0
+	}
+	return r.emitURL(ls, "/form/"+name+"/"+id, nil)
+}
+
+// luaURLFormCreate implements rela.url.form_create(name, opts?).
 //
-// When arg is an entity table (has a string `id` field), builds
-// /form/<name>/<id> — edit mode.
-//
-// Otherwise arg is treated as an opts table with optional keys:
+// opts is an optional table with any of:
 //
 //	relations  = {name = target_id, ...}   → rel.<name>=<target_id>
 //	properties = {name = value, ...}       → prop.<name>=<value>
 //	query      = {k = v, ...}              → k=v (verbatim)
 //
-// and builds /form/<name>?<query> — create mode.
-func (r *Runtime) luaURLForm(ls *glua.LState) int {
+// and builds /form/<name>?<folded-query>. Bare rela.url.form_create("foo")
+// with no opts yields an empty create form.
+func (r *Runtime) luaURLFormCreate(ls *glua.LState) int {
 	name := ls.CheckString(1)
 	if name == "" {
-		ls.RaiseError("rela.url.form: form name cannot be empty")
+		ls.RaiseError("rela.url.form_create: form name cannot be empty")
 		return 0
 	}
-
 	if ls.GetTop() < 2 || ls.Get(2) == glua.LNil {
-		// rela.url.form("foo") — bare create form, no pre-fill.
 		return r.emitURL(ls, "/form/"+name, nil)
 	}
-
-	arg := ls.CheckTable(2)
-	if entityID := entityIDOf(arg); entityID != "" {
-		// Edit mode: /form/<name>/<id>. Pass any extra query the caller
-		// squeezed in via a "query" key — rare, but honest.
-		if extra := tableField(arg, "query"); extra != nil {
-			return r.emitURL(ls, "/form/"+name+"/"+entityID, extra)
-		}
-		return r.emitURL(ls, "/form/"+name+"/"+entityID, nil)
-	}
-
-	// Create mode: fold relations / properties / query into one query map.
-	query, err := foldFormOpts(arg)
+	opts := ls.CheckTable(2)
+	query, err := foldFormOpts(opts)
 	if err != nil {
-		ls.RaiseError("rela.url.form: %s", err.Error())
+		ls.RaiseError("rela.url.form_create: %s", err.Error())
 		return 0
 	}
 	return r.emitURLFromMap(ls, "/form/"+name, query)
@@ -409,6 +413,12 @@ func existingQueryValues(rawQuery string) (map[string]string, error) {
 // be string, number, or bool. The key "return_to" is reserved (the document
 // link rewriter injects it) and is rejected here so authors can't silently
 // collide with it.
+//
+// Note: foldPrefixed (used for relations= and properties= sub-tables in
+// form opts) does not reject "return_to" — those become rel.return_to /
+// prop.return_to at the URL, which are different keys and don't collide
+// with the reserved top-level "return_to". Intentional; documented here
+// so the reservation scope is explicit.
 func mergeParamsTable(t *glua.LTable, out map[string]string) error {
 	var err error
 	t.ForEach(func(k, v glua.LValue) {

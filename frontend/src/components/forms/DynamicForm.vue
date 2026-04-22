@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
+import { readReturnTo } from '@/utils/returnPath'
 import type { PropertyDef, FormFieldOrRelation, Template } from '@/types'
 import { getTemplates, createRelation, updateRelationProperties, deleteRelation } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
@@ -108,10 +109,22 @@ async function loadEntity() {
   }
 }
 
+// Read return_to from the query eagerly — needed in both create and
+// edit modes. initializeDefaults below handles create-only pre-fills
+// (prop.*, rel.*, link_*) and early-returns in edit mode, so return_to
+// can't live in there if edit submits are to honour it too.
+//
+// readReturnTo from utils enforces the open-redirect guard and the
+// array-valued-query case (vue-router yields string[] on duplicate keys).
+function applyReturnToFromQuery() {
+  const safe = readReturnTo(route.query)
+  if (safe) returnTo.value = safe
+}
+
 function initializeDefaults() {
   if (!entityType.value || isEdit.value) return
 
-  // Parse query params for pre-filling (prop.*, rel.*, link_*, return_to)
+  // Parse query params for pre-filling (prop.*, rel.*, link_*)
   const query = route.query
   const queryProps: Record<string, string> = {}
   const queryRels: Record<string, string[]> = {}
@@ -134,8 +147,6 @@ function initializeDefaults() {
         peer: query.link_peer,
         as: (query.link_as as 'from' | 'to') || 'to',
       }
-    } else if (key === 'return_to') {
-      returnTo.value = value
     }
   }
 
@@ -351,7 +362,7 @@ async function handleSubmit() {
       dirty.value = false
 
       // Navigate to return_to or entity detail
-      if (returnTo.value && returnTo.value.startsWith('/')) {
+      if (returnTo.value) {
         router.push(returnTo.value)
       } else {
         router.push(`/entity/${formConfig.value.entity}/${entity.id}`)
@@ -363,7 +374,7 @@ async function handleSubmit() {
     originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
 
     // Navigate to return_to or back
-    if (returnTo.value && returnTo.value.startsWith('/')) {
+    if (returnTo.value) {
       router.push(returnTo.value)
     } else {
       router.back()
@@ -473,6 +484,9 @@ onMounted(async () => {
   // Setup event listeners
   window.addEventListener('beforeunload', handleBeforeUnload)
   document.addEventListener('keydown', handleKeydown)
+
+  // return_to is honoured in both modes — read it eagerly.
+  applyReturnToFromQuery()
 
   // Load form data
   loading.value = true

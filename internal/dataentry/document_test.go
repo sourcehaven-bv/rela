@@ -154,18 +154,21 @@ func TestRewriteDocumentLinks(t *testing.T) {
 		expected   string
 		wantWarn   string // substring expected in warning log; "" means no warning
 	}{
-		// Form routes: return_to injected.
+		// Form routes: return_to injected verbatim. The frontend click
+		// handler appends the nearest-ancestor #id at click time; the
+		// rewriter no longer synthesizes a #<entity-id> fragment here
+		// because goldmark's auto-ids don't match a predictable pattern.
 		{
 			name:       "edit form link with full return path",
 			html:       `<a href="/form/full_ticket/TKT-001">Edit</a>`,
 			returnPath: "/document/preview?entry=DOC-001",
-			expected:   `<a href="/form/full_ticket/TKT-001?return_to=%2Fdocument%2Fpreview%3Fentry%3DDOC-001%23tkt-001">Edit</a>`,
+			expected:   `<a href="/form/full_ticket/TKT-001?return_to=%2Fdocument%2Fpreview%3Fentry%3DDOC-001">Edit</a>`,
 		},
 		{
 			name:       "multiple edit form links",
 			html:       `<a href="/form/full_ticket/TKT-001">R1</a> and <a href="/form/full_ticket/TKT-002">R2</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/full_ticket/TKT-001?return_to=%2Fdoc%23tkt-001">R1</a> and <a href="/form/full_ticket/TKT-002?return_to=%2Fdoc%23tkt-002">R2</a>`,
+			expected:   `<a href="/form/full_ticket/TKT-001?return_to=%2Fdoc">R1</a> and <a href="/form/full_ticket/TKT-002?return_to=%2Fdoc">R2</a>`,
 		},
 		{
 			name:       "create form link no query",
@@ -306,10 +309,13 @@ func TestRewriteDocumentLinks(t *testing.T) {
 			expected:   `<a href="/form/full_ticket?prop.status=open">Add</a>`,
 		},
 		{
-			name:       "empty returnPath still emits entity hash on edit form",
+			// With no returnPath and no synthesized fragment, the rewriter
+			// has nothing useful to inject on an edit form link either —
+			// pass it through unchanged.
+			name:       "empty returnPath leaves edit form link untouched",
 			html:       `<a href="/form/full_ticket/TKT-001">Edit</a>`,
 			returnPath: "",
-			expected:   `<a href="/form/full_ticket/TKT-001?return_to=%23tkt-001">Edit</a>`,
+			expected:   `<a href="/form/full_ticket/TKT-001">Edit</a>`,
 		},
 	}
 

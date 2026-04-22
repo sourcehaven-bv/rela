@@ -69,7 +69,7 @@ else
   print("|----|-------|--------|----------|----------|")
   for _, t in ipairs(tickets) do
     -- The server appends return_to so submitting the form lands back here.
-    local link = "[" .. t.id .. "](" .. rela.url.form("edit_ticket", t) .. ")"
+    local link = "[" .. t.id .. "](" .. rela.url.form_edit("edit_ticket", t) .. ")"
     print("| " .. link ..
           " | " .. t.title ..
           " | " .. t.status ..
@@ -83,6 +83,6 @@ end
 print("---")
 print()
 print("[+ New ticket in this category](" ..
-  rela.url.form("create_ticket", {
+  rela.url.form_create("create_ticket", {
     relations = {["belongs-to"] = entry_id},
   }) .. ")")

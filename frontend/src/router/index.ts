@@ -85,7 +85,49 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
+  scrollBehavior(to, _from, savedPosition) {
+    // Browser back/forward: restore the previous scroll position.
+    if (savedPosition) return savedPosition
+    // Navigation with a hash: scroll the targeted element into view.
+    // Targets inside rendered-document panels don't exist at route-change
+    // time (the HTML is fetched async after mount), so poll briefly
+    // until the element appears — up to ~2s. If the user navigates away
+    // or scrolls manually during the wait, bail out without stomping
+    // their position.
+    if (to.hash) {
+      const startPath = to.fullPath
+      const startScrollY = window.scrollY
+      return waitForElement(to.hash, 2000, () =>
+        router.currentRoute.value.fullPath !== startPath || window.scrollY !== startScrollY,
+      ).then((found) => {
+        if (found) return { el: to.hash, behavior: 'smooth' as const }
+        // Element never appeared (or user took over): don't stomp. Use
+        // the current scroll position so vue-router doesn't snap to top.
+        return { left: window.scrollX, top: window.scrollY }
+      })
+    }
+    // Otherwise: top of the page.
+    return { top: 0 }
+  },
 })
+
+function waitForElement(
+  hash: string,
+  timeoutMs: number,
+  abort: () => boolean,
+): Promise<boolean> {
+  const id = decodeURIComponent(hash.slice(1)) // strip leading "#" and decode
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs
+    const tick = () => {
+      if (document.getElementById(id)) return resolve(true)
+      if (abort()) return resolve(false)
+      if (Date.now() > deadline) return resolve(false)
+      requestAnimationFrame(tick)
+    }
+    tick()
+  })
+}
 
 // Global navigation error handler.
 //

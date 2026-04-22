@@ -244,16 +244,16 @@ func urlHelperCatalog() fakeCatalog {
 	)
 }
 
-func TestURLForm_editMode(t *testing.T) {
+func TestURLFormEdit(t *testing.T) {
 	r := newURLWriter(t, urlHelperCatalog())
-	got := evalString(t, r, `rela.url.form("full_ticket", {id="TKT-001", type="ticket"})`)
+	got := evalString(t, r, `rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket"})`)
 	want := "/form/full_ticket/TKT-001"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-func TestURLForm_createMode(t *testing.T) {
+func TestURLFormCreate(t *testing.T) {
 	r := newURLWriter(t, urlHelperCatalog())
 	cases := []struct {
 		name string
@@ -262,27 +262,27 @@ func TestURLForm_createMode(t *testing.T) {
 	}{
 		{
 			name: "bare",
-			code: `rela.url.form("full_ticket")`,
+			code: `rela.url.form_create("full_ticket")`,
 			want: "/form/full_ticket",
 		},
 		{
 			name: "with relations",
-			code: `rela.url.form("full_ticket", {relations = {parent = "TKT-PARENT", assignee = "actor-me"}})`,
+			code: `rela.url.form_create("full_ticket", {relations = {parent = "TKT-PARENT", assignee = "actor-me"}})`,
 			want: "/form/full_ticket?rel.assignee=actor-me&rel.parent=TKT-PARENT",
 		},
 		{
 			name: "relation name with dash",
-			code: `rela.url.form("full_ticket", {relations = {["belongs-to"] = "CAT-1"}})`,
+			code: `rela.url.form_create("full_ticket", {relations = {["belongs-to"] = "CAT-1"}})`,
 			want: "/form/full_ticket?rel.belongs-to=CAT-1",
 		},
 		{
 			name: "with properties",
-			code: `rela.url.form("full_ticket", {properties = {status = "open", priority = "high"}})`,
+			code: `rela.url.form_create("full_ticket", {properties = {status = "open", priority = "high"}})`,
 			want: "/form/full_ticket?prop.priority=high&prop.status=open",
 		},
 		{
 			name: "with relations + properties + query",
-			code: `rela.url.form("full_ticket", {
+			code: `rela.url.form_create("full_ticket", {
                 relations = {parent = "TKT-1"},
                 properties = {status = "open"},
                 query = {source = "doc"},
@@ -300,11 +300,17 @@ func TestURLForm_createMode(t *testing.T) {
 	}
 }
 
-func TestURLForm_editWithExtraQuery(t *testing.T) {
+// form_edit — unlike the old form(), doesn't accept a "query" sub-key
+// on the entity table. Authors wanting extra query go through rela.url
+// directly (rela.url(rela.url.form_edit(...), {...})).
+func TestURLFormEdit_noExtraQuerySugar(t *testing.T) {
 	r := newURLWriter(t, urlHelperCatalog())
 	got := evalString(t, r,
-		`rela.url.form("full_ticket", {id="TKT-001", type="ticket", query={source="doc"}})`)
-	want := "/form/full_ticket/TKT-001?source=doc"
+		`rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket", query={source="doc"}})`)
+	// Note: no source=doc — form_edit ignores the opts.query sugar that
+	// existed on the old polymorphic form helper. The entity id alone is
+	// what the helper takes from the table.
+	want := "/form/full_ticket/TKT-001"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -318,18 +324,28 @@ func TestURLForm_errors(t *testing.T) {
 		wantSub string
 	}{
 		{
-			name:    "empty name",
-			code:    `rela.url.form("")`,
+			name:    "form_edit empty name",
+			code:    `rela.url.form_edit("", {id="x"})`,
 			wantSub: "cannot be empty",
 		},
 		{
-			name:    "unknown form",
-			code:    `rela.url.form("nope")`,
+			name:    "form_edit entity without id",
+			code:    `rela.url.form_edit("full_ticket", {type="ticket"})`,
+			wantSub: "id",
+		},
+		{
+			name:    "form_create empty name",
+			code:    `rela.url.form_create("")`,
+			wantSub: "cannot be empty",
+		},
+		{
+			name:    "form_create unknown form",
+			code:    `rela.url.form_create("nope")`,
 			wantSub: "unknown frontend route",
 		},
 		{
-			name:    "relation key with prefix",
-			code:    `rela.url.form("full_ticket", {relations = {["rel.parent"] = "TKT-1"}})`,
+			name:    "form_create relation key with prefix",
+			code:    `rela.url.form_create("full_ticket", {relations = {["rel.parent"] = "TKT-1"}})`,
 			wantSub: "forbidden characters",
 		},
 	}
