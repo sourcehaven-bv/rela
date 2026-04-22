@@ -1,165 +1,80 @@
 ---
-description: Render documents from external commands in the data-entry UI, enabling live preview of composed documents built from rela entities.
 id: FEAT-023
-priority: medium
-status: proposed
-title: Document Rendering in Data Entry Server
 type: feature
+title: Document Rendering in Data Entry Server
+summary: Read-only markdown document panels attached to entity views, rendered by shell command or Lua script with caching and edit:// link rewriting.
+description: Render documents from external commands in the data-entry UI, enabling live preview of composed documents built from rela entities.
+priority: medium
+status: implemented
 ---
 
 # Document Rendering in Data Entry Server
 
+## Status
+
+**V1 (shipped)** — shell `command:` renderer producing markdown, rendered as
+HTML panels in the data-entry UI with live-reload and `edit://`/`create://` link
+rewriting. `DocumentConfig` in `data-entry.yaml`; rendering in
+`internal/dataentry/document.go`.
+
+**V2 (shipped via TKT-CGBVW)** — Lua `script:` renderer as an alternative to
+`command:`. Exactly one of `{command, script}` must be set per document. Script
+runs via `script.Engine.ExecuteDocument` with a writer runtime; captured stdout
+is the rendered markdown. New context: `rela.mode == "document"`,
+`rela.document.{id, entry_id}`. Lua renders bypass the disk cache (Lua's
+in-process `rela.cache` is the caching story). The HTTP handler enforces
+`entity_type:` before invoking any renderer.
+
 ## Overview
 
-Add the ability to render documents in the data-entry server by invoking an external render command that produces markdown. This enables users to preview composed documents (like technical designs built from multiple entities) directly in the data-entry UI, with live reload on entity changes.
+Render documents in the data-entry UI from either a shell command or a Lua
+script. Composed documents (e.g. a category overview that walks related tickets)
+render as HTML panels in the entity view with live-reload on SSE entity-change
+events and clickable `edit://` / `create://` links that deep-link into the
+data-entry forms.
 
-## Background
+## Follow-up work
 
-Projects like `gf` use `mdcomp` to compose documents from rela entities using Jinja2 templates. The current workflow requires:
-1. Running `rela view` to collect related entities
-2. Transforming output via Python script
-3. Rendering with `mdcomp render`
-4. Converting to HTML/DOCX/PDF with pandoc
+Tracked separately:
 
-This feature brings step 3 into the data-entry server, providing an integrated preview experience.
+- **TKT-E1FO1** — `rela.document.depends_on(id)` for SSE dependency tracking.
+V1 live-reload fires only on entry entity changes; a Lua doc composed from many
+entities relies on the refresh button when non-entry entities change.
+- **TKT-CGPYW** — generalize `rela.mode` to other contexts (script / flow /
+action / scheduled / validation) once a concrete need surfaces.
 
-## Prototype Scope (V1)
+## Usage
 
-Build a minimal prototype to validate the approach:
+```yaml
+documents:
+  ticket_summary:
+    title: "Ticket Summary"
+    entity_type: ticket
+    command: "my-renderer {id}"   # shell render
+    timeout: 30
 
-### 1. Hardcoded Configuration
-
-For the prototype, hardcode:
-- A single render command (e.g., `mdcomp render template.md.j2`)
-- A single URL endpoint (e.g., `/document/preview`)
-- Context format (YAML via stdin)
-
-### 2. Document Handler
-
-```go
-// GET /document/preview?entry=<entity-id>
-func (a *App) handleDocumentPreview(w http.ResponseWriter, r *http.Request) {
-    entryID := r.URL.Query().Get("entry")
-    
-    // 1. Execute view (hardcoded view name for prototype)
-    result, err := a.executeView(viewConfig, entryID)
-    
-    // 2. Build context (YAML)
-    context := buildContext(result)
-    
-    // 3. Run render command
-    cmd := exec.Command("sh", "-c", renderCommand)
-    cmd.Stdin = strings.NewReader(context)
-    cmd.Dir = a.ws.Paths().Root
-    markdown, err := cmd.Output()
-    
-    // 4. Convert markdown to HTML
-    html := goldmark.Convert(markdown)
-    
-    // 5. Rewrite edit:// links
-    html = rewriteEditLinks(html)
-    
-    // 6. Wrap in page template and serve
-    a.tmpl.ExecuteTemplate(w, "document.html", html)
-}
+  category_overview:
+    title: "Category Overview"
+    entity_type: category
+    script: docs/category_report.lua  # Lua render
+    timeout: 10
 ```
 
-### 3. Edit Link Protocol
+See `GUIDE-data-entry.md` (Documents section) for the full config schema, the
+`edit://`/`create://` URL scheme, caching semantics, and the Lua document-mode
+API.
 
-Templates can include `edit://` links that rela rewrites to form URLs:
+## Original V1 design notes (historical)
 
-**In template:**
-```jinja2
-### [{{ id }}](edit://component/{{ id }}): {{ title }}
-```
+The initial prototype was a hardcoded render endpoint invoking `mdcomp render`
+with YAML context piped in. That shape shipped with a config-driven
+`DocumentConfig` entry (`command:`) and goldmark conversion, plus `edit://` and
+`create://` URL rewriting to support in-document navigation.
 
-**Rendered markdown:**
-```markdown
-### [NVI-COMP-001](edit://component/NVI-COMP-001): Localization Service
-```
+Success criteria (all met):
 
-**After rewrite:**
-```html
-<a href="/form/component?id=NVI-COMP-001&return=/document/preview?entry=DOC-001">NVI-COMP-001</a>
-```
-
-### 4. Page Template
-
-Simple wrapper with:
-- Navigation header (back link, entry entity info)
-- Rendered content area
-- Live reload script (existing SSE infrastructure)
-- Basic styling for markdown content
-
-### 5. Live Reload
-
-Leverage existing file watcher:
-- Entity/relation changes trigger SSE event
-- Browser reloads document content
-- No additional watch configuration needed for prototype
-
-## Implementation Steps
-
-1. **Add goldmark dependency** for markdown→HTML conversion
-2. **Create document handler** with hardcoded command
-3. **Implement context builder** (serialize view result to YAML)
-4. **Add edit:// link rewriter** (regex replacement)
-5. **Create document page template** (HTML wrapper)
-6. **Wire up route** in router
-7. **Test with mdcomp** on a real project
-
-## Open Questions for Prototype
-
-- [ ] How to handle render command errors? (show error in UI vs log)
-- [ ] How to handle slow render commands? (loading indicator, timeout)
-- [ ] Should we cache rendered output? (probably not for prototype)
-- [ ] How to pass entry ID to the render command? (env var, arg, or context only)
-
-## Future Iterations (Post-Prototype)
-
-After validating the approach:
-
-1. **Configuration** - Move to `data-entry.yaml`:
-   ```yaml
-   documents:
-     - id: technical-design
-       view: document_publish
-       entry_type: document
-       render:
-         command: "mdcomp render publish/templates/to.md.j2"
-         context_format: yaml
-   ```
-
-2. **List integration** - Allow linking from entity lists to document views:
-   ```yaml
-   lists:
-     documents:
-       type: document
-       link_to: document/technical-design
-   ```
-
-3. **Navigation** - Add document links to nav menu
-
-4. **Export** - Download rendered markdown/HTML
-
-5. **Edit modes** - Side panel or modal editing (currently: navigate away)
-
-6. **Template watching** - Watch template files for changes (currently: entities only)
-
-## Success Criteria
-
-- [ ] Can render a document at `/document/preview?entry=<id>`
-- [ ] Render command receives view context as YAML stdin
-- [ ] Markdown output is converted to HTML and displayed
-- [ ] `edit://` links are rewritten to form URLs with return parameter
-- [ ] Page reloads when entities change (via existing SSE)
-- [ ] Errors are handled gracefully (shown in UI or logged)
-
-## Non-Goals (Prototype)
-
-- Configurable documents (hardcoded for now)
-- Multiple document types
-- Caching
-- Export functionality
-- Side panel/modal editing
-- Template file watching
+- Render a document at `/api/v1/_documents/{docName}/{entryID}`.
+- Markdown → HTML via goldmark.
+- `edit://` and `create://` links rewritten to form URLs with return param.
+- Page reloads when entities change (via SSE).
+- Errors handled gracefully (rendered as HTTP 500 with message).

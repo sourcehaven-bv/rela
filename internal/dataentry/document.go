@@ -3,8 +3,10 @@ package dataentry
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"log/slog"
 	"net/url"
 	"os/exec"
@@ -22,22 +24,48 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// docCacheDir is the subdirectory under .rela/ for document cache files.
-const docCacheDir = "documents"
+// documentScriptEngine is the minimum contract documentService needs from
+// script.Engine to run a Lua document renderer. Defined at the consumer
+// side (per CLAUDE.md) so tests can substitute a fake and the engine
+// stays decoupled from the data-entry package.
+type documentScriptEngine interface {
+	ExecuteDocument(path string, deps lua.WriteDeps, stdout io.Writer,
+		documentID, entryID string, timeout time.Duration) error
+}
+
+// documentDeps yields the lua.WriteDeps the script engine needs. The App
+// constructs these from its current metamodel snapshot, so we keep the
+// dependency as a function to avoid stale deps after reload.
+type documentDepsFunc func() lua.WriteDeps
+
+// docCacheSubdir is the subdirectory under .rela/ for document cache files.
+const docCacheSubdir = "documents"
 
 // documentRenderConfig is the internal render configuration — the
 // external config is dataentryconfig.DocumentConfig (YAML), which
 // toDocumentRenderConfig converts.
 type documentRenderConfig struct {
+	// ConfigID is the key under `documents:` in data-entry.yaml. It is
+	// the document identity seen by scripts as rela.document.id, and
+	// participates in the singleflight/cache key so concurrent renders
+	// of different documents against the same entry don't collapse.
+	ConfigID string
 	// Command is the external render command. Placeholders:
 	//   {id}       - entry ID
 	//   {id_lower} - lowercase entry ID
+	// Mutually exclusive with Script.
 	Command string
-	// Timeout is the command execution timeout. Defaults to 30s.
+	// Script is a relative path under scripts/ to a Lua file. When set,
+	// the renderer runs the Lua script via script.Engine.ExecuteDocument
+	// and captures its stdout as markdown. Mutually exclusive with Command.
+	Script string
+	// Timeout is the render timeout. Defaults to 30s. Applies to both
+	// renderers.
 	Timeout time.Duration
 }
 
@@ -51,33 +79,51 @@ type DocumentResult struct {
 	Entities []*entity.Entity
 }
 
-// documentService renders documents by invoking an external command and
-// caches results keyed by an FNV hash of the source entities. It is
-// safe for concurrent use: render requests for the same entry are
-// deduped via singleflight.
+// documentService renders documents by invoking an external command or a
+// Lua script and caches command-renderer results on disk keyed by an FNV
+// hash of the source entities. It is safe for concurrent use: render
+// requests are deduped via singleflight on (entryID, configID) so two
+// documents against the same entry do not collapse onto one render.
+//
+// Disk cache policy: only command: renders read and write .rela/documents/.
+// script: renders bypass disk cache on both sides — Lua's in-process
+// rela.cache.memoize is the caching story for scripts, and reading an old
+// command:-era cache file for a script: request would serve stale HTML.
 type documentService struct {
-	store       store.Store
-	state       state.KV
-	projectRoot string
-	group       singleflight.Group
+	store        store.Store
+	state        state.KV
+	projectRoot  string
+	scriptEngine documentScriptEngine
+	luaDeps      documentDepsFunc
+	group        singleflight.Group
 }
 
-// newDocumentService builds a documentService from the three inputs it
-// needs. All three are retained by reference — the service is not a
-// snapshot.
-func newDocumentService(st store.Store, kv state.KV, projectRoot string) *documentService {
-	return &documentService{store: st, state: kv, projectRoot: projectRoot}
+// newDocumentService builds a documentService. scriptEngine and luaDeps
+// may be nil in tests that only exercise the command: path.
+func newDocumentService(st store.Store, kv state.KV, projectRoot string,
+	engine documentScriptEngine, deps documentDepsFunc) *documentService {
+	return &documentService{
+		store:        st,
+		state:        kv,
+		projectRoot:  projectRoot,
+		scriptEngine: engine,
+		luaDeps:      deps,
+	}
 }
 
 // GetCached returns a cached document if available and still valid.
 // Returns nil if the cache is missing, stale, or on any error.
+//
+// Script renders do NOT populate this cache and callers should not read
+// it for script: docs (see Render); a stale command:-era file at the
+// same path would otherwise shadow the Lua render.
 func (s *documentService) GetCached(entryID string) *DocumentResult {
 	entities, contentHash, err := s.computeDocumentHash(entryID)
 	if err != nil {
 		return nil
 	}
 
-	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheDir, entryID, contentHash)
+	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheSubdir, entryID, contentHash)
 	cachedHTML, _ := s.state.Get(context.Background(), cacheFile)
 	if cachedHTML == nil {
 		return nil
@@ -90,18 +136,24 @@ func (s *documentService) GetCached(entryID string) *DocumentResult {
 	}
 }
 
-// Render renders a document by executing the configured command. Uses
-// singleflight to dedupe concurrent requests. Caches the result to disk.
+// Render renders a document via the configured renderer (command or
+// script). Singleflight dedupes concurrent requests for the same
+// (entryID, ConfigID) pair — renders of the same entry under *different*
+// document configs proceed in parallel. Command renders cache to disk;
+// script renders do not.
 func (s *documentService) Render(entryID string, cfg documentRenderConfig) (*DocumentResult, error) {
 	entities, contentHash, err := s.computeDocumentHash(entryID)
 	if err != nil {
 		return nil, fmt.Errorf("computing document hash: %w", err)
 	}
 
-	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheDir, entryID, contentHash)
+	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheSubdir, entryID, contentHash)
 
-	// Use singleflight to dedupe concurrent render requests for the same entry
-	result, err, _ := s.group.Do(entryID, func() (interface{}, error) {
+	// Singleflight key must include ConfigID: if two documents (different
+	// configs) target the same entry, they are distinct renders and must
+	// not collapse onto one another's HTML (RR-4QSBN).
+	sfKey := entryID + "|" + cfg.ConfigID
+	result, err, _ := s.group.Do(sfKey, func() (interface{}, error) {
 		return s.doRender(entryID, cfg, entities, contentHash, cacheFile)
 	})
 	if err != nil {
@@ -112,15 +164,19 @@ func (s *documentService) Render(entryID string, cfg documentRenderConfig) (*Doc
 	return docResult, nil
 }
 
-// doRender performs the actual rendering work.
+// doRender performs the actual rendering work. Dispatches on Script vs.
+// Command — these are mutually exclusive at config load (see
+// dataentryconfig.validateDocuments) so exactly one branch fires.
 func (s *documentService) doRender(
 	entryID string, cfg documentRenderConfig, entities []*entity.Entity, contentHash, cacheFile string,
 ) (*DocumentResult, error) {
-	command := cfg.Command
-	command = strings.ReplaceAll(command, "{id}", entryID)
-	command = strings.ReplaceAll(command, "{id_lower}", strings.ToLower(entryID))
-
-	markdown, err := s.executeCommand(command, cfg.Timeout)
+	var markdown string
+	var err error
+	if cfg.Script != "" {
+		markdown, err = s.renderScript(entryID, cfg)
+	} else {
+		markdown, err = s.renderCommand(entryID, cfg)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -130,12 +186,15 @@ func (s *documentService) doRender(
 		return nil, fmt.Errorf("markdown conversion: %w", err)
 	}
 
-	// Cache the result to disk. The cache is optional — a failure here is
-	// not fatal — but it must be visible: silent cache rejections previously
-	// hid validation regressions where unsafe IDs caused every render to
-	// re-execute the command.
-	if writeErr := s.state.Put(context.Background(), cacheFile, []byte(htmlContent)); writeErr != nil {
-		slog.Warn("document cache write failed", "error", writeErr)
+	// Disk cache is only populated for command: renders. Lua renders
+	// have their own process-lifetime cache via rela.cache.memoize; the
+	// disk-cache filename is renderer-agnostic (FNV of the entry entity)
+	// so writing script-render output here would make a subsequent
+	// command: run read stale bytes from the wrong renderer.
+	if cfg.Script == "" {
+		if writeErr := s.state.Put(context.Background(), cacheFile, []byte(htmlContent)); writeErr != nil {
+			slog.Warn("document cache write failed", "error", writeErr)
+		}
 	}
 
 	return &DocumentResult{
@@ -143,6 +202,29 @@ func (s *documentService) doRender(
 		ContentHash: contentHash,
 		Entities:    entities,
 	}, nil
+}
+
+// renderCommand invokes the external render command and returns its stdout
+// as markdown. Placeholder substitution happens on the command string.
+func (s *documentService) renderCommand(entryID string, cfg documentRenderConfig) (string, error) {
+	command := cfg.Command
+	command = strings.ReplaceAll(command, "{id}", entryID)
+	command = strings.ReplaceAll(command, "{id_lower}", strings.ToLower(entryID))
+	return s.executeCommand(command, cfg.Timeout)
+}
+
+// renderScript executes a Lua document script and returns its captured
+// stdout as markdown.
+func (s *documentService) renderScript(entryID string, cfg documentRenderConfig) (string, error) {
+	if s.scriptEngine == nil || s.luaDeps == nil {
+		return "", errors.New("script rendering not available (engine or deps not wired)")
+	}
+	var buf bytes.Buffer
+	if err := s.scriptEngine.ExecuteDocument(cfg.Script, s.luaDeps(), &buf,
+		cfg.ConfigID, entryID, cfg.Timeout); err != nil {
+		return "", fmt.Errorf("script render: %w", err)
+	}
+	return buf.String(), nil
 }
 
 // computeDocumentHash computes a content hash for cache validation.
@@ -188,8 +270,18 @@ func hashEntities(entities []*entity.Entity) string {
 	return strconv.FormatUint(h.Sum64(), 16)
 }
 
+// commandDefaultTimeout is the fallback render timeout for shell-command
+// documents when data-entry.yaml omits `timeout:`. Script-backed documents
+// fall back separately inside script.Engine.ExecuteDocument (via
+// lua.DefaultTimeout). Keeping the default per-renderer prevents a zero
+// value from producing an already-expired context.
+const commandDefaultTimeout = 30 * time.Second
+
 // executeCommand runs an external command and returns its stdout.
 func (s *documentService) executeCommand(command string, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = commandDefaultTimeout
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

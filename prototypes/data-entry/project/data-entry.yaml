@@ -19,8 +19,19 @@ styles:
     high: orange
     medium: yellow
     low: green
-# Documents rendered via shell commands
+# Documents: rendered markdown panels shown on entity views.
+# Two renderers available:
+#   - `command:` — shells out to an external program that writes markdown
+#     to stdout (see ticket_summary below).
+#   - `script:` — runs a Lua script in scripts/ and captures its stdout
+#     (see category_overview below). Scripts have access to the full
+#     entity graph and can compose multi-entity documents.
 documents:
+  category_overview:
+    title: "Category Overview"
+    entity_type: category
+    script: docs/category_report.lua
+    timeout: 10
   ticket_summary:
     title: "Ticket Summary"
     entity_type: ticket

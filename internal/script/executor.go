@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -71,6 +72,56 @@ func (e *Engine) ExecuteFile(path string, deps lua.WriteDeps,
 	return e.execute(scriptCode, deps, path, newEntity, oldEntity)
 }
 
+// ExecuteDocument loads and runs a Lua script in document-rendering mode.
+// The script's stdout is captured into the caller-supplied writer; that
+// output is the rendered markdown (the data-entry layer then converts it
+// to HTML and rewrites edit://+create:// links).
+//
+// documentID is the key under documents: in data-entry.yaml (exposed to
+// the script as rela.document.id). entryID is the ID of the entity being
+// rendered (exposed as rela.document.entry_id). timeout overrides the
+// default lua timeout when non-zero.
+//
+// This method exists as a typed seam — intentionally NOT taking variadic
+// lua.Option — so callers cannot inject arbitrary opts (e.g., forge
+// WithOutputDir or WithActionMode). Mirrors the ExecuteAction shape.
+func (e *Engine) ExecuteDocument(
+	path string,
+	deps lua.WriteDeps,
+	stdout io.Writer,
+	documentID string,
+	entryID string,
+	timeout time.Duration,
+) error {
+	scriptCode, err := loadScript(deps.ProjectRoot, path)
+	if err != nil {
+		return err
+	}
+
+	opts := []lua.Option{
+		lua.WithDocumentMode(documentID, entryID),
+		lua.WithCache(e.cache),
+	}
+	if timeout > 0 {
+		opts = append(opts, lua.WithTimeout(timeout))
+	}
+
+	runtime, err := NewWriterRuntime(deps, path, stdout, opts...)
+	if err != nil {
+		return err
+	}
+	defer runtime.Close()
+
+	// NewWriterRuntime receives `path` for per-script secret loading, but
+	// rela.cache.* namespacing is driven by a separate scriptPath field
+	// that RunFile/RunFileContent set. We're invoking RunString, so wire
+	// the path explicitly — otherwise rela.cache.* inside a document
+	// script would hit the inline/eval guard and raise.
+	runtime.SetScriptPath(path)
+
+	return runtime.RunString(scriptCode)
+}
+
 // execute runs Lua code with entity context. scriptPath is used to resolve
 // per-script secrets; pass "" for inline code (no secrets loaded).
 // Timeout is handled by lua.Runtime (default 30s).
@@ -100,6 +151,16 @@ func (e *Engine) execute(code string, deps lua.WriteDeps, scriptPath string,
 	}
 
 	return runtime.RunString(code)
+}
+
+// CheckDocumentScriptExists verifies a document script can be loaded.
+// Used at config-load time (dataentry.NewApp) to fail fast when a
+// data-entry.yaml `documents:` entry points at a missing or malformed
+// script, instead of deferring the error to the first HTTP render.
+// Mirrors CheckActionScriptExists.
+func CheckDocumentScriptExists(projectRoot, scriptPath string) error {
+	_, err := loadScript(projectRoot, scriptPath)
+	return err
 }
 
 // loadScript loads a script from the scripts/ directory using os.OpenRoot

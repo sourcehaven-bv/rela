@@ -528,6 +528,41 @@ end
 | `rela.params` | Action script parameters (table, from data-entry config) |
 | `rela.secrets` | Per-script secrets (table, from `.rela/secrets.yaml`) |
 | `rela.cache` | Process-wide memoization cache namespaced per script (see [Cache](#cache)) |
+| `rela.mode` | Set to `"document"` when rendering a data-entry document; `nil` otherwise (see [Document Mode](#document-mode)) |
+| `rela.document` | Present only in document mode; holds `{id, entry_id}` (see [Document Mode](#document-mode)) |
+
+### Document Mode
+
+When a data-entry document is configured with `script:` (see
+[Documents in the data-entry guide](GUIDE-data-entry.md#documents)), the
+script runs in a specialized mode with extra context exposed:
+
+| Variable                 | Meaning |
+|--------------------------|---------|
+| `rela.mode`              | `"document"` in this context; absent elsewhere |
+| `rela.document.id`       | The key under `documents:` in `data-entry.yaml` |
+| `rela.document.entry_id` | The ID of the entity being rendered |
+
+The script's stdout is captured and used as the rendered document's
+markdown (after goldmark → HTML conversion). Use `print()` to produce
+output.
+
+```lua
+-- scripts/docs/release_notes.lua
+local entry = rela.get_entity(rela.document.entry_id)
+print("# " .. (entry.properties.title or entry.id))
+```
+
+**`rela.output` in document mode** emits a warning line into the
+captured stdout (and thus into the rendered document) instead of
+writing JSON — captured stdout is the document body, so a raw JSON
+payload in the middle of markdown is almost always a mistake.
+
+**Cache policy**: `rela.cache.memoize` is namespaced by the script path,
+not by the document config. Two `documents:` entries that share one
+`.lua` file share a cache namespace — usually what you want (a helper
+script caches work across all its callers). If you need doc-scoped
+keys, include `rela.document.id` in your cache key explicitly.
 
 ### Secrets
 

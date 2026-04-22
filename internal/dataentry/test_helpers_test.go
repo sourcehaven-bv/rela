@@ -128,6 +128,12 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, ws *workspace.Wo
 	app.cfgLoader = ws.Config()
 	app.kv = ws.State()
 	app.startWatching = ws.StartWatching
+	// Wire a minimal documentService for tests that hit the documents
+	// handler. Script engine can be the real one (tests that use script:
+	// configs will need to seed scripts on disk).
+	if app.scriptEngine != nil {
+		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps)
+	}
 }
 
 // reseedStore copies every entity and relation from src into dst.

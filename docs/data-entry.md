@@ -21,6 +21,7 @@ A `data-entry.yaml` file defines:
 - **Navigation** - Sidebar menu entries with optional grouping
 - **Actions** - Quick operations (property mutations or Lua scripts) triggered from lists or the sidebar
 - **Commands** - User-defined scripts triggered from the UI with streamed results
+- **Documents** - Read-only rendered markdown panels attached to entity views, composed via shell commands or Lua scripts
 - **User Defaults** - Per-user default values for properties and relations, configurable via Settings page
 
 The file drives the entire UI without writing any code. The server reads `data-entry.yaml` and
@@ -1783,6 +1784,152 @@ When a dashboard is configured, a validation summary card is automatically appen
 total error and warning counts with a link to the full analysis page.
 
 No configuration is needed — the analysis page is always available in the sidebar.
+
+## Documents
+
+Documents are read-only rendered markdown panels attached to an entity's detail
+view. A document's configuration declares which entity type it applies to and
+how to produce the markdown — either a shell `command:` that writes markdown to
+stdout, or a Lua `script:` that does the same via the embedded runtime.
+Captured markdown is converted to HTML via goldmark, with links using
+`edit://` and `create://` URL schemes rewritten into data-entry form URLs
+(see "Links in rendered documents" below).
+
+The frontend's `DocumentsPanel.vue` shows every document whose `entity_type`
+matches the current entity. SSE live-reload re-renders a document when the
+entity changes (see the "SSE live-reload" caveat below).
+
+### YAML schema
+
+```yaml
+documents:
+  release_notes:
+    title: "Release Notes"         # shown as the panel title
+    entity_type: release           # REQUIRED; renderer runs only for this type
+    script: docs/release_notes.lua # OR command: — exactly one must be set
+    timeout: 15                    # seconds; defaults to 30
+  ticket_summary:
+    title: "Ticket Summary"
+    entity_type: ticket
+    command: "my-renderer {id}"    # {id} / {id_lower} are substituted
+    timeout: 30
+```
+
+Validation is strict: `entity_type:` must be set, and exactly one of
+`command:` or `script:` must be non-empty. Configs with both, or with
+neither, are rejected at startup. For `script:` docs, the referenced file
+is checked for existence at startup too, so typos fail loudly instead of at
+the first HTTP request.
+
+### Shell command renderer (`command:`)
+
+The command runs in a POSIX shell (`sh -c`) with the project root as the
+working directory. The script must write the rendered markdown to stdout.
+Placeholders inside the command string are substituted before execution:
+
+| Placeholder | Expands to |
+|-------------|------------|
+| `{id}`      | The entry entity ID |
+| `{id_lower}`| The ID lowercased |
+
+Command renderer output is cached to disk at
+`.rela/documents/<entry>-<hash>.html` keyed by an FNV hash of the entry
+entity. Subsequent requests for the same entity skip the command and serve
+the cached HTML until the entity changes.
+
+### Lua script renderer (`script:`)
+
+The `script:` field is a path under the project's `scripts/` directory
+(e.g. `docs/release_notes.lua`). The script runs with a writer runtime —
+it can read the full graph, call `ai.chat`, and use `rela.cache.memoize` —
+but anything it writes to stdout (via `print()`) is captured as the
+document's markdown.
+
+When invoked in document mode, the runtime exposes extra context:
+
+| Variable                   | Meaning |
+|----------------------------|---------|
+| `rela.mode`                | Always `"document"` in this context; `nil` elsewhere |
+| `rela.document.id`         | The key under `documents:` in `data-entry.yaml` |
+| `rela.document.entry_id`   | The ID of the entity being rendered |
+
+Example — a document that composes a markdown doc from an entity plus its
+graph neighbours:
+
+```lua
+-- scripts/docs/release_notes.lua
+local entry = rela.get_entity(rela.document.entry_id)
+print("# " .. (entry.properties.title or entry.id))
+print()
+for _, child in ipairs((rela.trace_from(entry.id, 2) or {children = {}}).children) do
+  local e = rela.get_entity(child.id)
+  if e then
+    print("## [" .. e.id .. "](edit://" .. e.type .. "/" .. e.id .. ")")
+    print(e.content or "")
+  end
+end
+```
+
+Lua renders bypass the disk cache. In-process caching is available through
+`rela.cache` (see [Lua Scripting → Cache](GUIDE-lua-scripting.md#cache) for
+the full API). Memoized work is shared across HTTP requests within the
+lifetime of the `rela-server` process. The cache namespace is the script
+path, not the document's config key — shared helper scripts intentionally
+share cache state across all documents that use them; if you need
+doc-scoped keys, include `rela.document.id` in your cache key explicitly.
+
+`rela.output({...})` in document mode emits a warning line into the
+rendered document (captured stdout is the document body, so raw JSON in the
+middle of markdown is almost always a mistake). If you need to output
+data, use `print()`; if you're debugging, a warning line is usually fine.
+A script that calls `rela.output` inside a loop will produce many warning
+lines in the rendered output — that is intentionally loud.
+
+### Links in rendered documents
+
+The goldmark→HTML step rewrites two custom URL schemes into data-entry
+form URLs, so documents can link directly to edit and create forms:
+
+| Scheme                      | Renders as                                           |
+|-----------------------------|------------------------------------------------------|
+| `edit://<type>/<id>`        | `/form/<type>/<id>?return_to=...` (edit an entity)   |
+| `create://<type>`           | `/form/<type>?return_to=...` (new entity)            |
+| `create://<type>?k=v&...`   | `/form/<type>?k=v&...&return_to=...` (with defaults) |
+
+The return URL points back to the entity view that hosts the document, so
+submitting the form returns the user to where they were.
+
+### Caching and live-reload
+
+- **Command renders** are cached on disk (`.rela/documents/<entry>-<hash>.html`).
+  The hash includes only the entry entity, so the cache refreshes when the
+  entry entity changes.
+- **Script renders** are not cached on disk. Use `rela.cache.memoize` inside
+  your script to share work across requests within the same server process.
+- **SSE live-reload** refreshes a document when the entry entity changes.
+  Multi-entity composition (a script that walks 20 related tickets) will
+  only re-render when the **entry** entity changes, not the walked ones.
+  The refresh button in the UI is the escape hatch. A follow-up ticket
+  (TKT-E1FO1) tracks the fix for explicit dependency tracking.
+
+### Security notes
+
+- Document scripts run in the same sandbox as action scripts: no `io`, no
+  `os`, no `debug`; file writes are confined to `output/` via
+  `rela.write_file`. Treat Lua scripts as trusted code.
+- The HTTP handler enforces `entity_type:` on every request: a document
+  configured for `entity_type: release` cannot be rendered against a
+  ticket, even if the caller bypasses the frontend filter.
+- Rendered markdown uses goldmark's `html.WithUnsafe` — the frontend
+  (DOMPurify) is the sanitization boundary. If you add another consumer of
+  the rendered HTML (PDF export, copy-HTML button, etc.), it must add its
+  own sanitization.
+
+### Config hot-reload
+
+Editing `data-entry.yaml` to change a document's `script:` or `command:`
+takes effect on the next request; open document panels pick up the new
+renderer on their next reload.
 
 ## Best Practices
 

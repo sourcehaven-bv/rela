@@ -279,6 +279,19 @@ func NewApp(
 		}
 	}
 
+	// Verify document scripts exist on disk. Shell-command documents are
+	// not checkable this way (the binary may be on PATH at render time
+	// but unavailable now); Lua scripts live in scripts/ under the
+	// project root so existence can be verified upfront.
+	for id, doc := range cfg.Documents {
+		if doc.Script == "" {
+			continue
+		}
+		if err := script.CheckDocumentScriptExists(paths.Root, doc.Script); err != nil {
+			return nil, fmt.Errorf("invalid %s: document %q: %w", ConfigFile, id, err)
+		}
+	}
+
 	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{})
 	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})
 	slog.Info("loaded project", "entities", entCount, "relations", relCount)
@@ -286,6 +299,7 @@ func NewApp(
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(&cfg, meta)
 
+	scriptEngine := script.NewEngine()
 	app := &App{
 		fs:            fs,
 		paths:         paths,
@@ -299,9 +313,12 @@ func NewApp(
 		kv:            kv,
 		startWatching: startWatching,
 		broker:        newEventBroker(),
-		documents:     newDocumentService(st, kv, paths.Root),
-		scriptEngine:  script.NewEngine(),
+		scriptEngine:  scriptEngine,
 	}
+	// documentService needs scriptEngine (for Lua renders) and a closure
+	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
+	// Constructed after app because luaWriteDeps is a method on App.
+	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps)
 
 	userDefaults := app.loadUserDefaults()
 	userPalette, paletteErr := app.loadUserPalette()
