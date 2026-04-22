@@ -105,18 +105,17 @@ test.describe('Relation Cards', () => {
     const updated = 'batch save test reason';
     await rc.editTextInput(card, updated);
 
-    // Still on the server: untouched.
-    const relsResp = await api.rawRequest('GET', `features/${SEED.features.authentication}/relations/blocks`);
-    const rels = (await relsResp.json()) as Array<{ id: string; meta?: Record<string, unknown> }>;
-    const feat003 = rels.find((r) => r.id === SEED.features.exportData);
-    expect(feat003?.meta?.reason).toBe(original);
+    // The pending-edit lives only in the client until Save is clicked. We can't
+    // assert this through the rendered SPA — the SPA is what's holding the
+    // pending change — so query the server directly and confirm it still has
+    // the original value.
+    const before = await api.listRelations('features', SEED.features.authentication, 'blocks');
+    expect(before.find((r) => r.id === SEED.features.exportData)?.meta?.reason).toBe(original);
 
     await rc.saveAndWaitForNavigation();
 
-    const relsResp2 = await api.rawRequest('GET', `features/${SEED.features.authentication}/relations/blocks`);
-    const rels2 = (await relsResp2.json()) as Array<{ id: string; meta?: Record<string, unknown> }>;
-    const feat003After = rels2.find((r) => r.id === SEED.features.exportData);
-    expect(feat003After?.meta?.reason).toBe(updated);
+    const after = await api.listRelations('features', SEED.features.authentication, 'blocks');
+    expect(after.find((r) => r.id === SEED.features.exportData)?.meta?.reason).toBe(updated);
   });
 
   test('removing a relation is only persisted on save', async ({ appPage, api }) => {
@@ -128,15 +127,15 @@ test.describe('Relation Cards', () => {
     const firstId = await rc.getFirstCardEntityId(tagged);
     await rc.clickRemoveFirstCardIn(tagged);
 
-    const relsResp = await api.rawRequest('GET', `features/${SEED.features.authentication}/relations/tagged`);
-    const rels = (await relsResp.json()) as Array<{ id: string }>;
-    expect(rels.some((r) => r.id === firstId)).toBeTruthy();
+    // Server-side assertion for the same reason as the batch-save test above:
+    // the SPA will happily show the card as gone regardless of persistence.
+    const before = await api.listRelations('features', SEED.features.authentication, 'tagged');
+    expect(before.some((r) => r.id === firstId)).toBeTruthy();
 
     await rc.saveAndWaitForNavigation();
 
-    const relsResp2 = await api.rawRequest('GET', `features/${SEED.features.authentication}/relations/tagged`);
-    const rels2 = (await relsResp2.json()) as Array<{ id: string }>;
-    expect(rels2.some((r) => r.id === firstId)).toBeFalsy();
+    const after = await api.listRelations('features', SEED.features.authentication, 'tagged');
+    expect(after.some((r) => r.id === firstId)).toBeFalsy();
   });
 });
 

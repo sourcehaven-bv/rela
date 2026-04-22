@@ -85,6 +85,9 @@ export interface ApiHelpers {
   deleteEntity(plural: string, id: string): Promise<void>;
   listEntities(plural: string, query?: string): Promise<PaginatedResponse>;
   createRelation(fromPlural: string, fromId: string, relation: string, toId: string): Promise<void>;
+  /** Returns the current set of outgoing relation edges of the given type for an entity.
+   *  Each edge exposes `id` (target entity) and `meta` (relation-property values). */
+  listRelations(plural: string, id: string, relation: string): Promise<Array<{ id: string; meta?: Record<string, unknown> }>>;
   /** Returns the markdown body of an entity, or "" if the entity has no body. */
   getContent(plural: string, id: string): Promise<string>;
   rawRequest(method: string, path: string, data?: unknown): Promise<import('@playwright/test').APIResponse>;
@@ -346,6 +349,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       },
       async createRelation(fromPlural, fromId, relation, toId) {
         await call('POST', `${fromPlural}/${fromId}/relations/${relation}`, { id: toId });
+      },
+      async listRelations(plural, id, relation) {
+        const resp = await call('GET', `${plural}/${id}/relations/${relation}`);
+        return (await resp.json()) as Array<{ id: string; meta?: Record<string, unknown> }>;
       },
       async getContent(plural, id) {
         const resp = await call('GET', `${plural}/${id}`);
