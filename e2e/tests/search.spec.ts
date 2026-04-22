@@ -216,25 +216,22 @@ test.describe('Search', () => {
 });
 
 test.describe('Search (create → index → query integration)', () => {
-  // Kept as an e2e test because it exercises the create→index→search pipeline
-  // end-to-end. Pure shape/filter tests live in Go handler unit tests on
-  // internal/dataentry/api_v1.go (handleV1Search).
-  type SearchHit = { id: string; type: string; properties: Record<string, unknown> };
-  interface SearchResultsEnvelope {
-    data?: SearchHit[];
-  }
+  // Exercises the full create → bleve-index → query → render pipeline. The
+  // Go handler unit test in internal/dataentry/api_v1_test.go operates on a
+  // pre-seeded graph, so it doesn't cover the observer wiring that feeds
+  // the index after a real POST; this test does.
 
-  test('newly-created entity appears in search results with properties intact', async ({ api }) => {
+  test('newly-created entity is findable via the search UI', async ({ appPage, api }) => {
     const created = await api.createEntity('features', {
       properties: { title: 'API Search Test Feature', status: 'draft', priority: 'medium' },
     });
     try {
-      const resp = await api.rawRequest('GET', '_search?q=API Search Test');
-      const body = (await resp.json()) as SearchResultsEnvelope;
-      const results = body.data ?? [];
-      const found = results.find((r) => r.id === created.id);
-      expect(found).toBeTruthy();
-      expect(found?.properties.title).toBe('API Search Test Feature');
+      const searchPage = new SearchPage(appPage);
+      await searchPage.navigateToSearch();
+      await searchPage.search('API Search Test');
+
+      await searchPage.expectResultContains('API Search Test Feature');
+      await searchPage.expectResultContains(created.id);
     } finally {
       await api.deleteEntity('features', created.id).catch(() => {});
     }
