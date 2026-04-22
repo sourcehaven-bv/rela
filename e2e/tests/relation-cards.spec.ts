@@ -28,7 +28,7 @@ test.describe('Relation Cards', () => {
     await rc.navigateToEdit('feature', SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
-    await expect(card).toBeVisible({ timeout: 10000 });
+    await expect(card).toBeVisible();
 
     const propLabels = await rc.cardPropertyLabels(card);
     expect(propLabels.some((l) => /Block Reason|Reason/i.test(l))).toBeTruthy();
@@ -40,7 +40,7 @@ test.describe('Relation Cards', () => {
     await rc.navigateToEdit('feature', SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
-    await expect(card).toBeVisible({ timeout: 10000 });
+    await expect(card).toBeVisible();
     expect(await rc.getTextInputValue(card)).toBe('test block');
   });
 
@@ -49,7 +49,7 @@ test.describe('Relation Cards', () => {
     await rc.navigateToEdit('feature', SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
-    await expect(card).toBeVisible({ timeout: 10000 });
+    await expect(card).toBeVisible();
     await rc.editTextInput(card, 'updated block reason');
     expect(await rc.hasAnyUnsavedBadge()).toBeTruthy();
   });
@@ -59,7 +59,7 @@ test.describe('Relation Cards', () => {
     await rc.navigateToEdit('feature', SEED.features.authentication);
 
     const tagged = rc.widgetByLabel('tagged').first();
-    await expect(tagged).toBeVisible({ timeout: 10000 });
+    await expect(tagged).toBeVisible();
     const before = await rc.cardCount(tagged);
     expect(before).toBeGreaterThanOrEqual(1);
 
@@ -79,7 +79,7 @@ test.describe('Relation Cards', () => {
       await rc.navigateToEdit('feature', SEED.features.authentication);
 
       const outgoingBlocks = rc.widgetByLabel('blocks').first();
-      await expect(outgoingBlocks).toBeVisible({ timeout: 10000 });
+      await expect(outgoingBlocks).toBeVisible();
 
       const newCard = await rc.linkTargetByIdWithSearch(
         outgoingBlocks,
@@ -99,7 +99,7 @@ test.describe('Relation Cards', () => {
     await rc.navigateToEdit('feature', SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
-    await expect(card).toBeVisible({ timeout: 10000 });
+    await expect(card).toBeVisible();
 
     const original = await rc.getTextInputValue(card);
     const updated = 'batch save test reason';
@@ -124,7 +124,7 @@ test.describe('Relation Cards', () => {
     await rc.navigateToEdit('feature', SEED.features.authentication);
 
     const tagged = rc.widgetByLabel('tagged').first();
-    await expect(tagged).toBeVisible({ timeout: 10000 });
+    await expect(tagged).toBeVisible();
     const firstId = await rc.getFirstCardEntityId(tagged);
     await rc.clickRemoveFirstCardIn(tagged);
 
@@ -145,7 +145,7 @@ test.describe('Relation card field types', () => {
     const rc = new RelationCardsPage(appPage);
     await rc.navigateToEdit('feature', SEED.features.authentication);
     const blocks = rc.widgetByLabel('blocks').first();
-    await expect(blocks).toBeVisible({ timeout: 10000 });
+    await expect(blocks).toBeVisible();
     await rc.expectDateInputVisibleIn(blocks);
   });
 
@@ -168,7 +168,7 @@ test.describe('Relation cards save flow', () => {
     await rc.navigateToEdit('feature', SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
-    await expect(card).toBeVisible({ timeout: 10000 });
+    await expect(card).toBeVisible();
     await rc.editTextInput(card, 'save-clear-test');
     expect(await rc.hasAnyUnsavedBadge()).toBeTruthy();
 

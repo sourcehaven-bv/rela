@@ -56,7 +56,7 @@ export class AppShellPage extends BasePage {
   }
 
   async expectShortcutsOverlayVisible() {
-    await expect(this.shortcutsOverlay).toBeVisible({ timeout: 5000 });
+    await expect(this.shortcutsOverlay).toBeVisible();
   }
 
   async isGitAvailable(): Promise<boolean> {

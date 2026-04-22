@@ -95,7 +95,7 @@ export class FormPage extends BasePage {
     // unambiguous search key) and click the first match.
     const search = relationSection.locator('input[placeholder^="Search "]').first();
     await search.fill(targetId);
-    await this.page.locator(`.dropdown-item:has-text("${targetId}")`).first().click({ timeout: 5000 });
+    await this.page.locator(`.dropdown-item:has-text("${targetId}")`).first().click();
   }
 
   async submit() {
@@ -182,7 +182,7 @@ export class FormPage extends BasePage {
   }
 
   async expectInlineFormVisible() {
-    await expect(this.page.locator('.inline-form, .modal, dialog')).toBeVisible({ timeout: 5000 });
+    await expect(this.page.locator('.inline-form, .modal, dialog')).toBeVisible();
   }
 
   // --- Markdown body editor (EasyMDE) ---
@@ -213,8 +213,8 @@ export class FormPage extends BasePage {
 
   async expectMarkdownEditorReady() {
     await expect(this.markdownEditorRoot).toBeVisible();
-    await expect(this.markdownToolbar).toBeVisible({ timeout: 10000 });
-    await expect(this.codeMirror).toBeVisible({ timeout: 10000 });
+    await expect(this.markdownToolbar).toBeVisible();
+    await expect(this.codeMirror).toBeVisible();
   }
 
   async typeMarkdownBody(text: string) {

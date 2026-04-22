@@ -12,7 +12,7 @@ export class RelationCardsPage extends BasePage {
   async navigateToEdit(formId: string, entityId: string) {
     await this.navigateTo(`/form/${formId}/${entityId}`);
     await this.waitForSpinnerToDisappear();
-    await expect(this.page.locator('.relation-cards').first()).toBeVisible({ timeout: 10000 });
+    await expect(this.page.locator('.relation-cards').first()).toBeVisible();
   }
 
   get widgets(): Locator {
@@ -59,7 +59,7 @@ export class RelationCardsPage extends BasePage {
   }
 
   async expectUnsavedBadgeOn(widget: Locator) {
-    await expect(widget.locator('.pending-badge')).toBeVisible({ timeout: 3000 });
+    await expect(widget.locator('.pending-badge')).toBeVisible();
   }
 
   async expectNoUnsavedBadgeOn(widget: Locator) {
@@ -95,7 +95,7 @@ export class RelationCardsPage extends BasePage {
     await expect(search).toBeVisible();
     await search.fill(searchText);
     const result = widget.locator('.search-result', { hasText: targetId });
-    await expect(result).toBeVisible({ timeout: 10000 });
+    await expect(result).toBeVisible();
     await result.click();
 
     const meta = widget.locator('.new-meta-fields');
@@ -139,6 +139,6 @@ export class RelationCardsPage extends BasePage {
   }
 
   async expectNoPendingBadges() {
-    await expect(this.page.locator('.pending-badge')).toHaveCount(0, { timeout: 5000 });
+    await expect(this.page.locator('.pending-badge')).toHaveCount(0);
   }
 }

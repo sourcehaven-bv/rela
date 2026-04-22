@@ -10,7 +10,7 @@ test.describe('Keyboard Shortcuts', () => {
     await shell.blurFocus();
     await shell.pressKey('/');
 
-    await expect(appPage).toHaveURL(/\/search/, { timeout: 5000 });
+    await expect(appPage).toHaveURL(/\/search/);
   });
 
   test('g then d navigates to the dashboard', async ({ appPage }) => {
@@ -22,7 +22,7 @@ test.describe('Keyboard Shortcuts', () => {
     await shell.pressKey('g');
     await shell.pressKey('d');
 
-    await expect(appPage).toHaveURL(/\/(dashboard|$)/, { timeout: 5000 });
+    await expect(appPage).toHaveURL(/\/(dashboard|$)/);
   });
 
   test('? opens the keyboard-shortcuts modal', async ({ appPage }) => {
