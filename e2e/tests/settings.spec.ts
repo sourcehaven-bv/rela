@@ -173,7 +173,7 @@ test.describe('Settings', () => {
 
       await settingsPage.navigateToSettings();
 
-      await settingsPage.expectAppInfo('Relation Types', '3'); // blocks, implements, fixes
+      await settingsPage.expectAppInfo('Relation Types', '4'); // blocks, tagged, implements, fixes
     });
 
     test('shows forms count', async ({ appPage }) => {
@@ -191,5 +191,60 @@ test.describe('Settings', () => {
 
       await settingsPage.expectAppInfo('Lists', '3'); // features, bugs, tasks
     });
+  });
+});
+
+test.describe('Settings API', () => {
+  interface SettingsResponse {
+    userDefaults: {
+      defaults: Record<string, string>;
+      relationDefaults: Record<string, string>;
+      overrides: Array<{
+        types: string[];
+        defaults: Record<string, string>;
+        relationDefaults: Record<string, string>;
+      }>;
+    };
+    allProperties: Array<{ name: string; type: string; values?: string[] }>;
+    allRelations: Array<{ name: string; label: string; targetType: string }>;
+    entityTypes: string[];
+  }
+
+  test('GET /api/v1/_settings returns valid data', async ({ api }) => {
+    const resp = await api.rawRequest('GET', '_settings');
+    const data = (await resp.json()) as SettingsResponse;
+    expect(data.userDefaults).toBeDefined();
+    expect(Array.isArray(data.allProperties)).toBeTruthy();
+    expect(Array.isArray(data.allRelations)).toBeTruthy();
+    expect(Array.isArray(data.entityTypes)).toBeTruthy();
+    expect(data.allProperties.length).toBeGreaterThan(0);
+    expect(data.entityTypes.length).toBeGreaterThan(0);
+  });
+
+  test('PUT /api/v1/_settings saves and persists defaults', async ({ api }) => {
+    const body = { defaults: { status: 'draft' }, relationDefaults: {}, overrides: [] };
+    const putResp = await api.rawRequest('PUT', '_settings', body);
+    expect(putResp.ok()).toBeTruthy();
+
+    const getResp = await api.rawRequest('GET', '_settings');
+    const data = (await getResp.json()) as SettingsResponse;
+    expect(data.userDefaults.defaults.status).toBe('draft');
+  });
+
+  test('PUT /api/v1/_settings handles overrides', async ({ api }) => {
+    const body = {
+      defaults: {},
+      relationDefaults: {},
+      overrides: [
+        { types: ['feature'], defaults: { priority: 'high' }, relationDefaults: {} },
+      ],
+    };
+    await api.rawRequest('PUT', '_settings', body);
+
+    const getResp = await api.rawRequest('GET', '_settings');
+    const data = (await getResp.json()) as SettingsResponse;
+    expect(data.userDefaults.overrides).toHaveLength(1);
+    expect(data.userDefaults.overrides[0].types).toContain('feature');
+    expect(data.userDefaults.overrides[0].defaults.priority).toBe('high');
   });
 });

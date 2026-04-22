@@ -367,6 +367,29 @@ relations:
   blocks:
     from: [feature, bug, task]
     to: [feature, bug, task]
+    inverse: blockedBy
+    properties:
+      reason:
+        type: string
+        required: true
+        description: Why this entity blocks the other
+      severity:
+        type: severity
+      resolved_date:
+        type: date
+      impact_score:
+        type: integer
+      is_workaround_available:
+        type: boolean
+  tagged:
+    from: [feature]
+    to: [feature]
+    inverse: tagged_by
+    properties:
+      added_by:
+        type: string
+      added_date:
+        type: date
   implements:
     from: [task]
     to: [feature]
@@ -382,6 +405,49 @@ app:
   name: "E2E Test App"
   description: "Test project for Playwright E2E tests"
 
+# Enable dark mode so the theme toggle renders in the status bar. Palette
+# config is validated strictly; unknown keys raise startup errors.
+palette:
+  base: "#ffffff"
+  surface: "#fafafa"
+  accent: "#0066cc"
+  text: "#111111"
+  dark:
+    base: "#111111"
+    surface: "#222222"
+    accent: "#4da6ff"
+    text: "#eeeeee"
+
+dashboard:
+  title: "Dashboard"
+  description: "Feature/bug overview"
+  cards:
+    - title: "Open Features"
+      query: "type:feature status:draft"
+      display: count
+    - title: "In Progress"
+      query: "type:feature status:in_progress"
+      display: count
+    - title: "By Status"
+      query: "type:feature"
+      display: breakdown
+      group_by: status
+    - title: "By Priority"
+      query: "type:feature"
+      display: breakdown
+      group_by: priority
+    - title: "Critical Issues"
+      query: "type:bug prop:severity=critical"
+      display: table
+      columns:
+        - property: title
+          link: detail
+        - property: status
+      sort:
+        - property: status
+          direction: asc
+      limit: 10
+
 forms:
   feature:
     entity_type: feature
@@ -393,6 +459,40 @@ forms:
       - property: priority
       - property: description
         widget: textarea
+    relations:
+      - relation: tagged
+        widget: cards
+        properties:
+          - property: added_by
+            label: "Added By"
+          - property: added_date
+            label: "Added"
+      - relation: blocks
+        direction: outgoing
+        widget: cards
+        properties:
+          - property: reason
+            label: "Block Reason"
+          - property: severity
+          - property: resolved_date
+            label: "Resolved"
+          - property: impact_score
+            label: "Impact"
+          - property: is_workaround_available
+            label: "Workaround?"
+      - relation: blocks
+        direction: incoming
+        widget: cards
+        properties:
+          - property: reason
+            label: "Block Reason"
+          - property: severity
+          - property: resolved_date
+            label: "Resolved"
+          - property: impact_score
+            label: "Impact"
+          - property: is_workaround_available
+            label: "Workaround?"
 
   bug:
     entity_type: bug
@@ -589,5 +689,28 @@ assignee: Alice
 ---
 
 Write unit tests for auth module.
+`,
+  // Seed a blocks relation with properties so relation-cards widget tests have
+  // something rich to render. FEAT-001 blocks FEAT-003 with reason="test block",
+  // severity=critical.
+  'relations/FEAT-001--blocks--FEAT-003.md': `---
+from: FEAT-001
+relation: blocks
+to: FEAT-003
+reason: test block
+severity: critical
+impact_score: 8
+is_workaround_available: false
+---
+`,
+  // Seed a tagged relation (FEAT-001 tagged -> FEAT-002) so the tagged widget
+  // has an entry to display.
+  'relations/FEAT-001--tagged--FEAT-002.md': `---
+from: FEAT-001
+relation: tagged
+to: FEAT-002
+added_by: e2e-seed
+added_date: "2026-01-15"
+---
 `,
 };

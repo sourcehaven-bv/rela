@@ -2,6 +2,7 @@ import { type Page, type Locator, expect } from '@playwright/test';
 import { BasePage } from './base.page';
 
 export class EntityPage extends BasePage {
+  readonly detailContainer: Locator;
   readonly heading: Locator;
   readonly editButton: Locator;
   readonly deleteButton: Locator;
@@ -9,6 +10,7 @@ export class EntityPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
+    this.detailContainer = page.locator('.entity-detail').first();
     this.heading = page.locator('main h1').first();
     this.editButton = page.locator('a:has-text("Edit"), button:has-text("Edit")').first();
     this.deleteButton = page.locator('button:has-text("Delete")').first();
@@ -52,5 +54,68 @@ export class EntityPage extends BasePage {
   async expectTypeBadge(type: string | RegExp) {
     const matcher = type instanceof RegExp ? type : new RegExp(type, 'i');
     await expect(this.typeBadge.filter({ hasText: matcher }).first()).toBeVisible();
+  }
+
+  async hasEditButton(): Promise<boolean> {
+    return this.editButton.isVisible();
+  }
+
+  async containsText(text: string): Promise<boolean> {
+    return this.page.getByText(text).first().isVisible();
+  }
+
+  /** Check that a property value is rendered inside the entity-detail container
+   *  (scoped to avoid matching nav/sidebar elements). */
+  async hasPropertyValue(value: string): Promise<boolean> {
+    return this.detailContainer.getByText(value, { exact: true }).first().isVisible();
+  }
+
+  /** True if the entity-detail body contains any blocking-relation text. */
+  async hasBlockingRelationsSection(): Promise<boolean> {
+    const text = (await this.detailContainer.textContent()) ?? '';
+    return /block/i.test(text);
+  }
+
+  async detailTextContains(pattern: RegExp | string): Promise<boolean> {
+    const text = (await this.detailContainer.textContent()) ?? '';
+    if (typeof pattern === 'string') return text.toLowerCase().includes(pattern.toLowerCase());
+    return pattern.test(text);
+  }
+
+  // --- checkbox body-content helpers ---
+
+  get contentBody(): Locator {
+    return this.page.locator('.content-body');
+  }
+
+  get checkboxStats(): Locator {
+    return this.page.locator('.cb-stats');
+  }
+
+  async hasCheckboxStats(): Promise<boolean> {
+    return this.checkboxStats.isVisible().catch(() => false);
+  }
+
+  async getCheckboxStatsText(): Promise<string> {
+    return (await this.checkboxStats.textContent()) ?? '';
+  }
+
+  async contentCheckboxCount(): Promise<number> {
+    return this.contentBody.locator('input[type="checkbox"]').count();
+  }
+
+  /** Click the checkbox with data-cb-idx="index" in the content body.
+   *  `force: true` because GFM-rendered checkboxes are disabled by default —
+   *  Vue installs a click handler that toggles via the API regardless. */
+  async clickContentCheckbox(index: number): Promise<void> {
+    await this.contentBody
+      .locator(`input[type="checkbox"][data-cb-idx="${index}"]`)
+      .click({ force: true });
+  }
+
+  async contentCheckboxIsChecked(index: number): Promise<boolean> {
+    return this.contentBody
+      .locator(`input[type="checkbox"][data-cb-idx="${index}"]`)
+      .isChecked();
   }
 }

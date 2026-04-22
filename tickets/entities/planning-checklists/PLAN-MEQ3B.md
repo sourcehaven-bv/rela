@@ -2,7 +2,7 @@
 id: PLAN-MEQ3B
 type: planning-checklist
 title: 'Planning: Consolidate frontend/e2e into /e2e with fixes and CI'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

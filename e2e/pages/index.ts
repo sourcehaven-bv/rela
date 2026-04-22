@@ -6,3 +6,8 @@ export { SearchPage } from './search.page';
 export { SettingsPage } from './settings.page';
 export { ApiClient } from './api.client';
 export { EntityPage } from './entity.page';
+export { AnalyzePage } from './analyze.page';
+export { ConflictsPage } from './conflicts.page';
+export { DashboardPage } from './dashboard.page';
+export { RelationCardsPage } from './relation-cards.page';
+export { AppShellPage } from './app-shell.page';

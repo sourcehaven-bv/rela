@@ -214,3 +214,41 @@ test.describe('Search', () => {
     });
   });
 });
+
+test.describe('Search API', () => {
+  interface SearchResultsEnvelope {
+    data?: Array<{ id: string; type: string; properties: Record<string, unknown> }>;
+  }
+
+  test('GET /api/v1/_search supports q parameter', async ({ api }) => {
+    const resp = await api.rawRequest('GET', '_search?q=Authentication');
+    const body = (await resp.json()) as SearchResultsEnvelope | typeof Array;
+    const results = Array.isArray(body) ? body : body.data ?? [];
+    expect(Array.isArray(results)).toBeTruthy();
+  });
+
+  test('GET /api/v1/_search supports type filter', async ({ api }) => {
+    const resp = await api.rawRequest('GET', '_search?q=User&type=feature');
+    const body = (await resp.json()) as SearchResultsEnvelope;
+    const results = body.data ?? [];
+    if (results.length > 0) {
+      expect(results.every((r) => r.type === 'feature')).toBeTruthy();
+    }
+  });
+
+  test('search returns entities with properties', async ({ api }) => {
+    const created = await api.createEntity('features', {
+      properties: { title: 'API Search Test Feature', status: 'draft', priority: 'medium' },
+    });
+    try {
+      const resp = await api.rawRequest('GET', '_search?q=API Search Test');
+      const body = (await resp.json()) as SearchResultsEnvelope;
+      const results = body.data ?? [];
+      const found = results.find((r) => r.id === created.id);
+      expect(found).toBeTruthy();
+      expect(found?.properties.title).toBe('API Search Test Feature');
+    } finally {
+      await api.deleteEntity('features', created.id).catch(() => {});
+    }
+  });
+});

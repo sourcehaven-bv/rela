@@ -21,13 +21,11 @@ npm run dupes                  # Check for code duplication (jscpd)
 npm run test                   # Run tests in watch mode
 npm run test:run               # Run tests once
 npm run test:run -- src/stores/ui.test.ts  # Run single test file
-
-# E2E Tests (Playwright)
-npm run test:e2e               # Run e2e tests (starts Vite automatically)
-npm run test:e2e:ui            # Run e2e with interactive UI
-npx playwright test e2e/forms.spec.ts     # Run single e2e file
-npx playwright test --debug    # Debug mode with inspector
 ```
+
+E2E tests live in the top-level `/e2e/` directory and run against the built
+`rela-server` binary (which embeds this SPA's production bundle). From the
+repo root, use `just e2e` or `cd e2e && npm test`.
 
 ## Architecture Overview
 
@@ -59,7 +57,6 @@ src/components/   → Reusable UI components
 | `src/components/common/` | Sidebar, StatusBar, Badge, Toast |
 | `src/composables/` | Vue composables: useKeyboardShortcuts, useEvents (SSE), useListKeyboard, useScopeNavigation |
 | `src/types/` | TypeScript interfaces for entities, schema, and config |
-| `e2e/` | Playwright tests with isolated backend instances per test |
 
 ### Key Stores
 
@@ -77,17 +74,6 @@ On entity changes, it calls `entitiesStore.invalidateAll()` to refresh cached da
 
 Routes use dynamic imports for code splitting. Config-driven IDs (e.g., `/list/:id`, `/form/:id`)
 resolve to `data-entry.yaml` configuration from the backend.
-
-## E2E Test Architecture
-
-Each test gets an isolated backend:
-
-1. Fixture copies `prototypes/data-entry/project/` to temp directory
-2. Starts fresh `rela-server` on random port
-3. `page.route()` intercepts `/api/*` requests to the test's backend
-4. Fixture provides `api` helper for direct API calls and `pages` factory for page objects
-
-Page objects are in `e2e/page-objects/` and follow the pattern: navigate to page, provide typed helpers for interactions.
 
 ## Lint Configuration
 
