@@ -49,4 +49,4 @@ status: done
 - [x] All CI checks pass — verified after merge
 - [x] PR URL documented below
 
-**PR:** filled in after `gh pr create` below
+**PR:** https://github.com/sourcehaven-bv/rela/pull/562
