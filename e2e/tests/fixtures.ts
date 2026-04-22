@@ -213,7 +213,11 @@ function createTestProject(): string {
   fs.mkdirSync(path.join(tmpDir, 'entities', 'bugs'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'entities', 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'relations'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'templates', 'entities'), { recursive: true });
   for (const [rel, content] of Object.entries(SEED_ENTITIES)) {
+    fs.writeFileSync(path.join(tmpDir, rel), content);
+  }
+  for (const [rel, content] of Object.entries(SEED_TEMPLATES)) {
     fs.writeFileSync(path.join(tmpDir, rel), content);
   }
   return tmpDir;
@@ -815,5 +819,32 @@ to: FEAT-002
 added_by: e2e-seed
 added_date: "2026-01-15"
 ---
+`,
+};
+
+/**
+ * Feature-entity templates. The Vue form picks these up via GET
+ * /api/v1/_templates/feature and renders one pill per template; clicking a
+ * pill pre-fills the form. Two variants let the template-pill test assert
+ * active-state switching. (The base `feature.md` is picked up as a default.)
+ */
+const SEED_TEMPLATES: Record<string, string> = {
+  'templates/entities/feature.md': `---
+status: draft
+priority: medium
+---
+
+## Summary
+
+Brief description of the feature.
+`,
+  'templates/entities/feature--spike.md': `---
+status: draft
+priority: low
+---
+
+## Spike goal
+
+Timeboxed investigation. Document findings here.
 `,
 };
