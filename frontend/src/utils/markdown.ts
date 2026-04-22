@@ -57,26 +57,46 @@ export function getCheckboxStats(content: string): { checked: number; total: num
 /**
  * Render markdown and then process mermaid diagrams.
  * Call this when the content is mounted in the DOM.
+ *
+ * Handles two source forms:
+ * - `<pre><code class="language-mermaid">…</code></pre>` — what marked.js
+ *   emits for our in-frontend markdown rendering (property views etc.).
+ * - `<pre class="mermaid">…</pre>` — what the rela-server document
+ *   renderer emits (goldmark + htmlutil.ConvertMermaidBlocks).
+ *
+ * Both forms are replaced in place with an SVG diagram (or left as-is
+ * on parse error).
  */
 export async function renderMermaidDiagrams(container: HTMLElement): Promise<void> {
-  const codeBlocks = container.querySelectorAll('pre > code.language-mermaid')
+  type Target = { pre: Element; source: string }
+  const targets: Target[] = []
 
-  for (const codeBlock of codeBlocks) {
+  // Form 1: marked.js-style fenced blocks.
+  for (const codeBlock of container.querySelectorAll('pre > code.language-mermaid')) {
     const pre = codeBlock.parentElement
-    if (!pre) continue
+    if (pre) targets.push({ pre, source: codeBlock.textContent || '' })
+  }
 
-    const code = codeBlock.textContent || ''
+  // Form 2: rela-server's pre-rewritten blocks. Guard against double-matching
+  // Form 1 (which would set class on the code, not the pre).
+  for (const pre of container.querySelectorAll('pre.mermaid')) {
+    // Already covered by Form 1 if it has a code child. It won't, but
+    // being explicit is cheap.
+    if (pre.querySelector('code.language-mermaid')) continue
+    targets.push({ pre, source: pre.textContent || '' })
+  }
+
+  for (const { pre, source } of targets) {
     const id = `mermaid-${++mermaidCounter}`
-
     try {
-      const { svg } = await mermaid.render(id, code)
+      const { svg } = await mermaid.render(id, source)
       const div = document.createElement('div')
       div.className = 'mermaid-diagram'
       div.innerHTML = svg
       pre.replaceWith(div)
     } catch (err) {
       console.error('Mermaid render error:', err)
-      // Leave the code block as-is on error
+      // Leave the block as-is on error.
     }
   }
 }

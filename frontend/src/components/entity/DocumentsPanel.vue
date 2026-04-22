@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, useTemplateRef } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
+import { renderMermaidDiagrams } from '@/utils/markdown'
 import type { DocumentConfig } from '@/types'
 import DOMPurify from 'dompurify'
 
@@ -21,9 +22,20 @@ const docContent = ref<string>('')
 const loading = ref(false)
 const isCached = ref(false)
 const entityIds = ref<string[]>([]) // Entity IDs involved in current document
+const docBody = useTemplateRef<HTMLElement>('docBody')
 
 // Sanitized content for safe rendering
 const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
+
+// Re-run mermaid rendering whenever the doc content is (re-)painted. The
+// rela-server's document renderer emits <pre class="mermaid">…</pre>
+// blocks that need mermaid.js to replace them with SVG.
+watch(sanitizedContent, async () => {
+  await nextTick()
+  if (docBody.value) {
+    await renderMermaidDiagrams(docBody.value)
+  }
+})
 
 // Find documents that apply to this entity type
 const availableDocuments = computed(() => {
@@ -132,7 +144,7 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
-      <div class="document-body" v-html="sanitizedContent" />
+      <div ref="docBody" class="document-body" v-html="sanitizedContent" />
     </div>
 
     <div v-else class="empty-state">

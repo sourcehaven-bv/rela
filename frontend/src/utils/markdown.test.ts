@@ -174,5 +174,29 @@ describe('markdown', () => {
       // Original code block should remain
       expect(container.querySelector('pre code.language-mermaid')).toBeTruthy()
     })
+
+    // The rela-server document renderer emits pre.mermaid (htmlutil
+    // pre-converts language-mermaid blocks). The util must handle both
+    // marked.js's form and this pre-rewritten form.
+    it('finds pre.mermaid blocks from rela document renderer', async () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<pre class="mermaid">graph TD\nA--&gt;B</pre>'
+
+      const mermaid = await import('mermaid')
+      const renderSpy = vi.spyOn(mermaid.default, 'render').mockResolvedValue({
+        svg: '<svg>server-rendered</svg>',
+        diagramType: 'flowchart',
+        bindFunctions: vi.fn(),
+      })
+
+      await renderMermaidDiagrams(container)
+
+      expect(renderSpy).toHaveBeenCalled()
+      // textContent from the pre gets passed to mermaid; HTML entities
+      // have been decoded by the browser before we see them.
+      expect(renderSpy.mock.calls[0][1]).toBe('graph TD\nA-->B')
+      expect(container.querySelector('.mermaid-diagram')).toBeTruthy()
+      expect(container.querySelector('pre.mermaid')).toBeNull()
+    })
   })
 })
