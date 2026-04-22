@@ -40,12 +40,13 @@ to the page object rather than inlining the selector in a spec. See
 | `testProject` | Absolute path to the temp project directory. |
 | `serverBinary` (worker-scoped) | Path to `bin/rela-server`. CI pre-builds it; locally the fixture builds on demand, serialised via a lockfile. |
 
-## Security canary
+## Security canary lives in Go
 
-`tests/origin-security.spec.ts` verifies the Origin allowlist rejects
-missing/mismatched origins and admits the matching one. It uses
-`playwrightRequest.newContext()` to bypass the `api` fixture — do not remove
-or weaken this spec; it is the only coverage of the middleware itself.
+The Origin allowlist middleware is unit-tested in
+`internal/dataentry/middleware_security_test.go` and
+`router_security_test.go` (rejection of cross-origin writes, missing
+Origin/Referer, allowlist extra origin, same-origin happy path). Don't
+add an e2e equivalent — it's pure duplication at a slower layer.
 
 ## Test project
 
