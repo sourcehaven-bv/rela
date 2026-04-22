@@ -5,7 +5,7 @@ title: Refactor document links to app-relative + add Lua router/URL helpers
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Problem
