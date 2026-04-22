@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
+import { renderMermaidDiagrams } from '@/utils/markdown'
 import DOMPurify from 'dompurify'
 
 const props = defineProps<{
@@ -25,6 +26,19 @@ const entityIds = ref<string[]>([])
 
 // Sanitized content for safe rendering
 const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
+
+// Template ref to the rendered body element so we can run mermaid on it.
+const docBody = useTemplateRef<HTMLElement>('docBody')
+
+// Re-run mermaid rendering whenever the doc content is (re-)painted. The
+// rela-server's document renderer emits <pre class="mermaid">…</pre>
+// blocks that need mermaid.js to replace them with SVG.
+watch(sanitizedContent, async () => {
+  await nextTick()
+  if (docBody.value) {
+    await renderMermaidDiagrams(docBody.value)
+  }
+})
 
 // Get document config
 const docConfig = computed(() => schemaStore.documents.get(props.name))
@@ -131,7 +145,7 @@ onUnmounted(() => {
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
-      <div class="document-body" @click="handleContentClick" v-html="sanitizedContent" />
+      <div ref="docBody" class="document-body" @click="handleContentClick" v-html="sanitizedContent" />
     </div>
 
     <div v-else class="empty-state">
