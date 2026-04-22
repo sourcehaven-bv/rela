@@ -35,7 +35,7 @@ export class KanbanPage extends BasePage {
     return column.locator('.kanban-card').count();
   }
 
-  async getColumn(name: string): Locator {
+  getColumn(name: string): Locator {
     return this.columns.filter({ has: this.page.locator('.column-title, .column-header').filter({ hasText: name }) });
   }
 
@@ -76,13 +76,13 @@ export class KanbanPage extends BasePage {
 
   async dragCardToColumn(cardTitle: string, targetColumnName: string) {
     const card = this.cards.filter({ hasText: cardTitle });
-    const targetColumn = await this.getColumn(targetColumnName);
+    const targetColumn = this.getColumn(targetColumnName);
     await this.dragCardToColumnLocator(card, targetColumn.locator('.column-cards'));
   }
 
   async dragCardByIdToColumn(cardId: string, targetColumnName: string) {
     const card = this.cards.filter({ hasText: cardId });
-    const targetColumn = await this.getColumn(targetColumnName);
+    const targetColumn = this.getColumn(targetColumnName);
     await this.dragCardToColumnLocator(card, targetColumn.locator('.column-cards'));
   }
 
@@ -114,23 +114,28 @@ export class KanbanPage extends BasePage {
   }
 
   async expectCardInColumn(cardTitle: string, columnName: string) {
-    const column = await this.getColumn(columnName);
+    const column = this.getColumn(columnName);
     await expect(column.locator('.kanban-card').filter({ hasText: cardTitle })).toBeVisible();
   }
 
   async expectCardIdInColumn(cardId: string, columnName: string) {
-    const column = await this.getColumn(columnName);
+    const column = this.getColumn(columnName);
     await expect(column.locator('.kanban-card').filter({ hasText: cardId })).toBeVisible();
   }
 
   async expectColumnCardCount(columnName: string, count: number) {
-    const column = await this.getColumn(columnName);
+    const column = this.getColumn(columnName);
     const countBadge = column.locator('.column-count');
     await expect(countBadge).toHaveText(String(count));
   }
 
+  async expectColumnCountVisible(columnName: string) {
+    const column = this.getColumn(columnName);
+    await expect(column.locator('.column-count')).toBeVisible();
+  }
+
   async expectEmptyColumn(columnName: string) {
-    const column = await this.getColumn(columnName);
+    const column = this.getColumn(columnName);
     await expect(column.locator('.empty-column')).toBeVisible();
   }
 }

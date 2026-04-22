@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { KanbanPage, FormPage, EntityPage } from '../pages';
+import { KanbanPage, FormPage } from '../pages';
 
 test.describe('Kanban Board', () => {
   test.describe('Display', () => {
@@ -39,11 +39,7 @@ test.describe('Kanban Board', () => {
       const kanbanPage = new KanbanPage(appPage);
 
       await kanbanPage.navigateToKanban('feature-board');
-
-      // Column headers should show count
-      const column = await kanbanPage.getColumn('Approved');
-      const countBadge = column.locator('.column-count');
-      await expect(countBadge).toBeVisible();
+      await kanbanPage.expectColumnCountVisible('Approved');
     });
 
     test('shows create button', async ({ appPage }) => {

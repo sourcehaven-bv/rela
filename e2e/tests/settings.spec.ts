@@ -49,67 +49,31 @@ test.describe('Settings', () => {
       const settingsPage = new SettingsPage(appPage);
 
       await settingsPage.navigateToSettings();
+      await settingsPage.addFirstAvailablePropertyDefault();
 
-      // Add a status default
-      const addSelect = settingsPage.propertyDefaultsCard.locator('select').last();
-      await addSelect.selectOption({ index: 1 }); // Select first available property
-
-      // Should show the new row
-      const rows = settingsPage.propertyDefaultsCard.locator('.settings-row');
-      expect(await rows.count()).toBeGreaterThan(0);
+      expect(await settingsPage.getPropertyDefaultRowCount()).toBeGreaterThan(0);
     });
 
     test('can set property default value', async ({ appPage }) => {
       const settingsPage = new SettingsPage(appPage);
 
       await settingsPage.navigateToSettings();
-
-      // Add a property default
-      const addSelect = settingsPage.propertyDefaultsCard.locator('select').last();
-      const options = await addSelect.locator('option').all();
-
-      // Find a property with values (enum type)
-      let addedPropName = '';
-      for (const option of options) {
-        const value = await option.getAttribute('value');
-        if (value && value !== '') {
-          addedPropName = value;
-          break;
-        }
-      }
-
-      if (addedPropName) {
-        await addSelect.selectOption(addedPropName);
-
-        // Fill or select value
-        const row = settingsPage.propertyDefaultsCard.locator('.settings-row').last();
-        const input = row.locator('input, select').first();
-
-        if (await input.evaluate(el => el.tagName.toLowerCase()) === 'select') {
-          await input.selectOption({ index: 1 });
-        } else {
-          await input.fill('default value');
-        }
-      }
+      await settingsPage.addFirstAvailablePropertyDefault();
+      // Use any non-empty value; the row's input picks whichever control renders
+      // for the property type (text field or enum select).
+      await settingsPage.setLastPropertyDefaultValue('default value');
     });
 
     test('can remove property default', async ({ appPage }) => {
       const settingsPage = new SettingsPage(appPage);
 
       await settingsPage.navigateToSettings();
+      await settingsPage.addFirstAvailablePropertyDefault();
 
-      // Add a property first
-      const addSelect = settingsPage.propertyDefaultsCard.locator('select').last();
-      await addSelect.selectOption({ index: 1 });
+      const initialCount = await settingsPage.getPropertyDefaultRowCount();
+      await settingsPage.removeFirstPropertyDefault();
 
-      const initialCount = await settingsPage.propertyDefaultsCard.locator('.settings-row').count();
-
-      // Remove it
-      const removeBtn = settingsPage.propertyDefaultsCard.locator('.remove-btn').first();
-      await removeBtn.click();
-
-      const newCount = await settingsPage.propertyDefaultsCard.locator('.settings-row').count();
-      expect(newCount).toBe(initialCount - 1);
+      expect(await settingsPage.getPropertyDefaultRowCount()).toBe(initialCount - 1);
     });
   });
 
@@ -209,7 +173,7 @@ test.describe('Settings', () => {
 
       await settingsPage.navigateToSettings();
 
-      await settingsPage.expectAppInfo('Relation Types', '3'); // blocks, implements, fixes
+      await settingsPage.expectAppInfo('Relation Types', '4'); // blocks, tagged, implements, fixes
     });
 
     test('shows forms count', async ({ appPage }) => {
@@ -229,3 +193,8 @@ test.describe('Settings', () => {
     });
   });
 });
+
+/* Settings-API tests (GET/PUT shape and round-trip) belong in Go handler unit
+ * tests on internal/dataentry/handlers_api.go (handleAPISettingsCRUD). They'd
+ * only repeat the handler's own persistence check at a slower layer here.
+ * The Page tests above exercise the rendered Settings view end-to-end. */

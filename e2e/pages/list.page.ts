@@ -152,9 +152,16 @@ export class ListPage extends BasePage {
     await this.waitForSpinnerToDisappear();
   }
 
-  /** Click anywhere in the table to give it keyboard focus. */
+  async filterControlCount(): Promise<number> {
+    return this.filterBar.locator('select').count();
+  }
+
+  /** Wait for rows to be present before we try to issue keyboard commands
+   *  against them. The ListView's keydown handler is attached to `document`,
+   *  so we don't need to focus the table itself. */
   async focusTable() {
-    await this.table.click();
+    const firstRow = this.page.locator('.entity-row, tbody tr').first();
+    await expect(firstRow).toBeVisible();
   }
 
   async pressKey(key: string) {

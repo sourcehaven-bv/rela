@@ -15,8 +15,6 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
     "stress": "tsx stress/cli.ts",
     "coverage:check": "node scripts/coverage-baseline.js check",
     "coverage:generate": "node scripts/coverage-baseline.js generate",
@@ -37,7 +35,6 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@pinia/testing": "^0.1.6",
-    "@playwright/test": "^1.58.2",
     "@testing-library/vue": "^8.0.3",
     "@types/dompurify": "^3.0.5",
     "@types/node": "^25.5.0",

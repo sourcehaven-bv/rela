@@ -111,9 +111,7 @@ test.describe('Search', () => {
       await searchPage.expectFilterActive('Entity Type');
 
       await searchPage.removeFilter('Entity Type');
-
-      // Filter should be removed
-      await expect(searchPage.activeFilters.locator('.filter-chip')).toHaveCount(0);
+      await searchPage.expectNoActiveFilters();
     });
 
     test('can clear all filters', async ({ appPage }) => {
@@ -124,8 +122,7 @@ test.describe('Search', () => {
       await searchPage.addFilter('Entity Type', 'bug');
 
       await searchPage.clearAllFilters();
-
-      await expect(searchPage.activeFilters.locator('.filter-chip')).toHaveCount(0);
+      await searchPage.expectNoActiveFilters();
     });
   });
 
@@ -146,22 +143,16 @@ test.describe('Search', () => {
       const searchPage = new SearchPage(appPage);
 
       await searchPage.navigateToSearch();
-
       await searchPage.search('Authentication');
-
-      const result = searchPage.resultItems.first();
-      await expect(result.locator('.result-type')).toBeVisible();
+      await searchPage.expectFirstResultHasTypeBadge();
     });
 
     test('results show entity ID', async ({ appPage }) => {
       const searchPage = new SearchPage(appPage);
 
       await searchPage.navigateToSearch();
-
       await searchPage.search('Authentication');
-
-      const result = searchPage.resultItems.first();
-      await expect(result.locator('.result-id')).toContainText('FEAT-');
+      await searchPage.expectFirstResultIdContains('FEAT-');
     });
   });
 
@@ -221,5 +212,28 @@ test.describe('Search', () => {
       // Results should be shown
       await searchPage.expectResultContains('Authentication');
     });
+  });
+});
+
+test.describe('Search (create → index → query integration)', () => {
+  // Exercises the full create → bleve-index → query → render pipeline. The
+  // Go handler unit test in internal/dataentry/api_v1_test.go operates on a
+  // pre-seeded graph, so it doesn't cover the observer wiring that feeds
+  // the index after a real POST; this test does.
+
+  test('newly-created entity is findable via the search UI', async ({ appPage, api }) => {
+    const created = await api.createEntity('features', {
+      properties: { title: 'API Search Test Feature', status: 'draft', priority: 'medium' },
+    });
+    try {
+      const searchPage = new SearchPage(appPage);
+      await searchPage.navigateToSearch();
+      await searchPage.search('API Search Test');
+
+      await searchPage.expectResultContains('API Search Test Feature');
+      await searchPage.expectResultContains(created.id);
+    } finally {
+      await api.deleteEntity('features', created.id).catch(() => {});
+    }
   });
 });

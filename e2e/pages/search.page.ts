@@ -52,11 +52,6 @@ export class SearchPage extends BasePage {
     await expect(this.resultItems.first()).toHaveClass(/selected/);
   }
 
-  /** Press Enter globally — used after focusFirstResult to open the selected one. */
-  async openSelectedResult() {
-    await this.page.keyboard.press('Enter');
-  }
-
   /** Navigate to /search with an initial query param. */
   async navigateToSearchWithQuery(query: string) {
     await this.navigateTo(`/search?q=${encodeURIComponent(query)}`);
@@ -132,6 +127,18 @@ export class SearchPage extends BasePage {
 
   async expectFilterActive(filterLabel: string) {
     await expect(this.activeFilters.locator('.filter-chip').filter({ hasText: filterLabel })).toBeVisible();
+  }
+
+  async expectNoActiveFilters() {
+    await expect(this.activeFilters.locator('.filter-chip')).toHaveCount(0);
+  }
+
+  async expectFirstResultHasTypeBadge() {
+    await expect(this.resultItems.first().locator('.result-type')).toBeVisible();
+  }
+
+  async expectFirstResultIdContains(text: string) {
+    await expect(this.resultItems.first().locator('.result-id')).toContainText(text);
   }
 
   // Keyboard navigation
