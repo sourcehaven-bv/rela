@@ -1874,8 +1874,9 @@ for _, child in ipairs((rela.trace_from(entry.id, 2) or {children = {}}).childre
   if e then
     -- rela.url.form_edit builds an edit-form URL; rela.url.detail
     -- would be an alternative that links to the canonical detail page.
+    -- rela.md.link emits [text](url) so we don't hand-concatenate markdown.
     local href = rela.url.form_edit("full_ticket", e)
-    print("## [" .. e.id .. "](" .. href .. ")")
+    print("## " .. rela.md.link(e.id, href))
     print(e.content or "")
   end
 end
@@ -1987,6 +1988,35 @@ Form links get a `return_to` query parameter injected by the document
 link rewriter so submitting the form returns the user to the document.
 `return_to` is reserved — setting it in any helper's query table is
 rejected with a Lua error.
+
+#### Pre-filling a create form
+
+`form_create` accepts three kinds of defaults in its opts table; each
+maps to a query-param convention the create form reads on mount:
+
+| Opts key     | Query form       | What the form does on mount                          |
+|--------------|------------------|------------------------------------------------------|
+| `relations`  | `rel.<name>=<id>` | Adds `<id>` to the named relation's targets          |
+| `properties` | `prop.<name>=<v>` | Sets the property's initial value                    |
+| `query`      | `<k>=<v>`         | Passed through verbatim (use for custom URL params)  |
+
+The form applies these defaults only on initial mount; the user can
+still edit or clear each field before submitting. Multiple values for
+the same relation accumulate (call `form_create` with a list-shaped
+value only if the metamodel permits multi-target for that relation).
+
+```lua
+-- A "+ Add sub-ticket" link that pre-selects the parent and puts the new
+-- ticket straight into the correct category:
+rela.url.form_create("create_ticket", {
+  relations  = {parent = ticket.id, ["belongs-to"] = ticket.properties.category},
+  properties = {priority = "medium", reporter = "actor-me"},
+})
+```
+
+Defaults set via link query string are overlaid on top of the project's
+`.rela/user-defaults.yaml` and metamodel-level defaults; the order is
+covered in the **User defaults** section earlier in this guide.
 
 ### Caching and live-reload
 

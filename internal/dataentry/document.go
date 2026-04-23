@@ -362,16 +362,15 @@ var legacySchemeRegex = regexp.MustCompile(`^(edit|create)://`)
 
 // RewriteDocumentLinks walks all href="..." attributes in rendered HTML and:
 //
-//  1. Appends a return_to query parameter to any href that targets a frontend
-//     route that honors it (today: form-create and form-edit).
+//  1. Appends a return_to query parameter to any href that targets a form
+//     route (/form/<name> or /form/<name>/<entityId>).
 //  2. Emits a stable id="edit-<entity-id>-<n>" / id="create-<form>-<n>" on
 //     each form link so the SPA's document click handler can record a
 //     scroll-back anchor that survives title/content edits.
 //
 // Non-form internal links, external URLs, anchors, and mailto: are left
-// untouched. Unknown internal paths log a warning and pass through. Legacy
-// edit:// / create:// schemes also log a warning — they are no longer
-// rewritten; authors should migrate to app-relative paths.
+// untouched. Legacy edit:// / create:// schemes log a warning — they are
+// no longer rewritten; authors should migrate to app-relative paths.
 //
 // The per-entity counter (<n>) disambiguates multiple links to the same
 // entity within a single rendered document. It increments in document

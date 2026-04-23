@@ -10,12 +10,9 @@ import (
 	glua "github.com/yuin/gopher-lua"
 )
 
-// registerURLModule installs the rela.url submodule. Each known frontend
-// route has a typed helper that returns a string URL. Helpers construct
-// their paths from the known route shapes; there is no round-trip
-// verification step — a typo in a form name is only noticed when the
-// user actually clicks the link, at which point the frontend surfaces a
-// clear "form not found" error.
+// registerURLModule installs the rela.url submodule. Each helper
+// corresponds to one SPA route kind and returns a string URL built from
+// the known shape.
 func (r *Runtime) registerURLModule(rela *glua.LTable) {
 	tbl := r.L.NewTable()
 	// Form routes — split by mode so the author's intent is explicit.

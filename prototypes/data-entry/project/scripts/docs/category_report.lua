@@ -70,7 +70,7 @@ else
   print("|----|-------|--------|----------|----------|")
   for _, t in ipairs(tickets) do
     -- The server appends return_to so submitting the form lands back here.
-    local link = "[" .. t.id .. "](" .. rela.url.form_edit("edit_ticket", t) .. ")"
+    local link = rela.md.link(t.id, rela.url.form_edit("edit_ticket", t))
     print("| " .. link ..
           " | " .. t.title ..
           " | " .. t.status ..

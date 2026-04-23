@@ -578,10 +578,7 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// no script path still behaves safely.
 	r.registerCacheBindings(rela)
 
-	// rela.url submodule (and callable primitive rela.url("/path")) when a
-	// route catalog is wired. Absent by default — runtimes that have no
-	// business building frontend URLs (validation rules, scheduler scripts,
-	// etc.) don't accidentally reference one.
+	// rela.url submodule — typed URL builders for the SPA's routes.
 	r.registerURLModule(rela)
 
 	// Document-mode context: rela.mode + rela.document.{id, entry_id}.

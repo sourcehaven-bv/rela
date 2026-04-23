@@ -130,9 +130,6 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	// Workspace engine runs scheduler/flow/validation — no frontend to
-	// target, so no route catalog. The catalog is wired into
-	// dataentry.NewApp below, scoped to document renders only.
 	ws, wsErr := workspace.New(fs, projCtx, script.NewEngine())
 	if wsErr != nil {
 		d.mu.Lock()
