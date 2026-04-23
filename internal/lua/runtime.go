@@ -578,6 +578,9 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// no script path still behaves safely.
 	r.registerCacheBindings(rela)
 
+	// rela.url submodule — typed URL builders for the SPA's routes.
+	r.registerURLModule(rela)
+
 	// Document-mode context: rela.mode + rela.document.{id, entry_id}.
 	// Only populated when WithDocumentMode was applied. In every other
 	// context rela.mode and rela.document are absent (Lua nil), so a

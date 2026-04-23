@@ -4,7 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
+import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
 import { renderMermaidDiagrams } from '@/utils/markdown'
+import { buildReturnTo } from '@/utils/returnPath'
 import DOMPurify from 'dompurify'
 
 const props = defineProps<{
@@ -55,7 +57,15 @@ async function loadDocument(refresh = false) {
   docContent.value = ''
 
   try {
-    const result = await renderDocument(props.name, props.entityId, refresh)
+    // Pass the current location as return_to so form links inside the
+    // rendered doc redirect back here on submit. Preserve user-meaningful
+    // query state (e.g. ?from=list-id for goBack()) but drop render-only
+    // flags like ?refresh=true that shouldn't round-trip.
+    const returnTo = buildReturnTo(route.fullPath, ['refresh'])
+    const result = await renderDocument(props.name, props.entityId, {
+      refresh,
+      returnTo,
+    })
     docContent.value = result.html
     isCached.value = result.cached
     entityIds.value = result.entity_ids || []
@@ -76,21 +86,10 @@ function goBack() {
   }
 }
 
-// Handle clicks on links inside v-html content to use Vue Router
-function handleContentClick(event: MouseEvent) {
-  const target = event.target as HTMLElement
-  const anchor = target.closest('a')
-  if (!anchor) return
-
-  const href = anchor.getAttribute('href')
-  if (!href) return
-
-  // Only intercept internal links (starting with /)
-  if (href.startsWith('/')) {
-    event.preventDefault()
-    router.push(href)
-  }
-}
+// Click handler for links inside the rendered document: intercepts
+// internal links + enriches return_to with a #<closest-id> fragment so
+// the form redirect scrolls back near where the user clicked.
+const handleContentClick = createDocumentClickHandler(router)
 
 // Handle entity change events via centralized SSE
 function handleEntityChange(data: { id?: string }) {

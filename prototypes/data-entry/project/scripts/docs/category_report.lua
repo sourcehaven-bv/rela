@@ -3,8 +3,8 @@
 -- to it (incoming `belongs-to`) with each ticket's blocks/labels.
 --
 -- This is the Lua equivalent of the `category_report` view, but rendered
--- as a single scrolling markdown doc with clickable `edit://` links.
--- Drive it from data-entry.yaml:
+-- as a single scrolling markdown doc with clickable form links built via
+-- rela.url. Drive it from data-entry.yaml:
 --
 --   documents:
 --     category_overview:
@@ -16,7 +16,9 @@
 --   - `rela.document.entry_id` — the entity being rendered.
 --   - `rela.cache.memoize(...)` — caching a per-category rollup across
 --     HTTP requests within the lifetime of the rela-server process.
---   - `edit://` links rewritten by the data-entry layer into form URLs.
+--   - `rela.url.form_edit/form_create(...)` — app-relative links verified
+--     against the frontend route catalogue; form routes get a return_to
+--     appended automatically.
 
 local entry_id = rela.document.entry_id
 local category = rela.get_entity(entry_id)
@@ -67,9 +69,8 @@ else
   print("| ID | Title | Status | Priority | Assignee |")
   print("|----|-------|--------|----------|----------|")
   for _, t in ipairs(tickets) do
-    -- The edit:// link is rewritten by the data-entry server into a
-    -- form URL that returns here after save.
-    local link = "[" .. t.id .. "](edit://ticket/" .. t.id .. ")"
+    -- The server appends return_to so submitting the form lands back here.
+    local link = rela.md.link(t.id, rela.url.form_edit("edit_ticket", t))
     print("| " .. link ..
           " | " .. t.title ..
           " | " .. t.status ..
@@ -82,4 +83,7 @@ end
 -- Footer: link to the create form for a new ticket in this category.
 print("---")
 print()
-print("[+ New ticket in this category](create://ticket?belongs-to=" .. entry_id .. ")")
+print("[+ New ticket in this category](" ..
+  rela.url.form_create("create_ticket", {
+    relations = {["belongs-to"] = entry_id},
+  }) .. ")")

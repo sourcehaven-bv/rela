@@ -29,6 +29,27 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
+// isFormRoute reports whether the given path targets /form/:id (create)
+// or /form/:id/:entityId (edit). Only form routes honor return_to, so
+// that's the single decision the rewriter needs from the frontend route
+// shape.
+func isFormRoute(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/form/")
+	if !ok || rest == "" {
+		return false
+	}
+	segments := strings.Split(rest, "/")
+	if len(segments) > 2 {
+		return false
+	}
+	for _, s := range segments {
+		if s == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // documentScriptEngine is the minimum contract documentService needs from
 // script.Engine to run a Lua document renderer. Defined at the consumer
 // side (per CLAUDE.md) so tests can substitute a fake and the engine
@@ -330,67 +351,216 @@ func markdownToHTML(markdown string) (string, error) {
 	return result, nil
 }
 
-// customLinkRegex matches edit:// and create:// URLs in href attributes.
-// Format: edit://type/id or create://type or create://type?params
-var customLinkRegex = regexp.MustCompile(`href="(edit|create)://([^"]+)"`)
+// hrefRegex matches href attribute values in rendered HTML. The value is
+// captured raw so downstream logic can distinguish internal, external,
+// anchor-only, and legacy-scheme links.
+var hrefRegex = regexp.MustCompile(`href="([^"]*)"`)
 
-// RewriteDocumentLinks replaces edit:// and create:// URLs with actual form URLs.
-// For edit links, the return URL includes the entity ID as a hash fragment for scroll preservation.
-// For create links, query params are preserved and passed through to the form.
-func RewriteDocumentLinks(htmlContent, returnPath string) string {
-	return customLinkRegex.ReplaceAllStringFunc(htmlContent, func(match string) string {
-		return rewriteDocumentLink(match, returnPath)
+// legacySchemeRegex detects the now-unsupported edit:// and create:// schemes
+// so we can emit a clear warning for users who haven't migrated yet.
+var legacySchemeRegex = regexp.MustCompile(`^(edit|create)://`)
+
+// RewriteDocumentLinks walks all href="..." attributes in rendered HTML and:
+//
+//  1. Appends a return_to query parameter to any href that targets a form
+//     route (/form/<name> or /form/<name>/<entityId>).
+//  2. Emits a stable id="edit-<entity-id>-<n>" / id="create-<form>-<n>" on
+//     each form link so the SPA's document click handler can record a
+//     scroll-back anchor that survives title/content edits.
+//
+// Non-form internal links, external URLs, anchors, and mailto: are left
+// untouched. Legacy edit:// / create:// schemes log a warning — they are
+// no longer rewritten; authors should migrate to app-relative paths.
+//
+// The per-entity counter (<n>) disambiguates multiple links to the same
+// entity within a single rendered document. It increments in document
+// order, so re-renders that produce the same link sequence yield the
+// same ids — scroll-back is stable across re-renders.
+func RewriteDocumentLinks(htmlContent, returnPath string, log *slog.Logger) string {
+	if log == nil {
+		log = slog.Default()
+	}
+	occ := map[string]int{} // scroll-anchor id → next available suffix
+	return hrefRegex.ReplaceAllStringFunc(htmlContent, func(m string) string {
+		parts := hrefRegex.FindStringSubmatch(m)
+		if len(parts) != 2 {
+			return m
+		}
+		return rewriteHref(parts[1], returnPath, log, occ)
 	})
 }
 
-// rewriteDocumentLink rewrites a single edit:// or create:// link match.
-func rewriteDocumentLink(match, returnPath string) string {
-	parts := customLinkRegex.FindStringSubmatch(match)
-	if len(parts) != 3 {
-		return match
+// rewriteHref inspects a single href value and returns the replacement
+// attribute fragment for the enclosing <a>. For form routes this is
+// [id="..." href="..."]; for everything else it's just href="...".
+//
+// occ is a per-render map tracking how many times each anchor-id base
+// has been used, so duplicate entity links get -0, -1, -2 suffixes.
+func rewriteHref(href, returnPath string, log *slog.Logger, occ map[string]int) string {
+	switch {
+	case href == "":
+		return `href=""`
+	case legacySchemeRegex.MatchString(href):
+		log.Warn("document link uses removed scheme; rewrite to app-relative path", "href", href)
+		return fmt.Sprintf(`href="%s"`, href)
+	case !strings.HasPrefix(href, "/"):
+		// External, anchor-only (#foo), mailto:, tel:, relative — not our
+		// concern. Return unchanged.
+		return fmt.Sprintf(`href="%s"`, href)
 	}
 
-	scheme := parts[1]
-	rawURL := scheme + "://" + parts[2]
-
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return match
+	base, existingQuery, fragment := splitHref(href)
+	if !isFormRoute(base) {
+		// Only form routes honor return_to; everything else passes through.
+		return fmt.Sprintf(`href="%s"`, href)
 	}
 
-	entityType := parsed.Host
-	if entityType == "" {
-		return match
+	// Scroll-anchor id — always assigned for edit/create form links so the
+	// click handler can record it as the scroll-back target.
+	anchorID := formAnchorID(base, occ)
+
+	// When returnPath is empty, there's nothing useful to inject; keep
+	// query + fragment untouched but still emit the id so at least the
+	// scroll-back anchor is in place for any later render that supplies
+	// returnPath.
+	if returnPath == "" {
+		out := base
+		if existingQuery != "" {
+			out += "?" + existingQuery
+		}
+		if fragment != "" {
+			out += "#" + fragment
+		}
+		return attrs(anchorID, out)
 	}
 
-	switch scheme {
-	case "edit":
-		return buildEditLink(entityType, parsed.Path, returnPath)
-	case "create":
-		return buildCreateLink(entityType, parsed.RawQuery, returnPath)
-	default:
-		return match
+	// Strip any pre-existing return_to (authors shouldn't set it, but they
+	// can — legacy links or typos). Without this, vue-router parses
+	// duplicate keys as an array and DynamicForm mishandles it.
+	cleanedQuery, dropped := stripQueryKey(existingQuery, "return_to")
+	if dropped {
+		log.Warn("document link sets reserved key return_to; overwriting", "href", href)
 	}
+
+	finalQuery := cleanedQuery
+	if finalQuery != "" {
+		finalQuery += "&"
+	}
+	finalQuery += "return_to=" + url.QueryEscape(returnPath)
+
+	out := base + "?" + finalQuery
+	if fragment != "" {
+		out += "#" + fragment
+	}
+	return attrs(anchorID, out)
 }
 
-// buildEditLink builds a form link for editing an existing entity.
-// The return URL includes the entity ID as a hash fragment for scroll preservation.
-func buildEditLink(entityType, path, returnPath string) string {
-	entityID := strings.TrimPrefix(path, "/")
-	if entityID == "" {
+// attrs stitches id + href into the anchor-attribute fragment hrefRegex
+// replaces. id goes first so a reader's eye catches the scroll target
+// before the URL; HTML attribute order is insignificant to browsers.
+func attrs(id, href string) string {
+	if id == "" {
+		return fmt.Sprintf(`href="%s"`, href)
+	}
+	return fmt.Sprintf(`id="%s" href="%s"`, id, href)
+}
+
+// formAnchorID returns a stable scroll-anchor id for a form-route path,
+// incrementing the per-base counter so duplicate links get distinct ids.
+//
+//	/form/<name>/<entityID>  →  edit-<entityID-lowered>-<n>
+//	/form/<name>             →  create-<name-lowered>-<n>
+//
+// The base lookup is lowercased for case-insensitive stability (entity
+// ids are conventionally uppercase, but a typo "prs-bf-7hn6" in an href
+// should still produce the same id).
+func formAnchorID(base string, occ map[string]int) string {
+	const formPrefix = "/form/"
+	if !strings.HasPrefix(base, formPrefix) {
 		return ""
 	}
-	// Include hash fragment in encoded return value so it's sent to the server.
-	// Without encoding, browsers treat # as a page fragment and don't send it.
-	returnWithHash := returnPath + "#" + strings.ToLower(entityID)
-	return fmt.Sprintf(`href="/form/%s/%s?return_to=%s"`, entityType, entityID, url.QueryEscape(returnWithHash))
+	rest := base[len(formPrefix):]
+	slash := strings.Index(rest, "/")
+	var key string
+	if slash < 0 {
+		// create form: /form/<name>
+		key = "create-" + strings.ToLower(rest)
+	} else {
+		// edit form: /form/<name>/<entity-id>
+		entityID := rest[slash+1:]
+		if entityID == "" {
+			return ""
+		}
+		key = "edit-" + strings.ToLower(entityID)
+	}
+	n := occ[key]
+	occ[key] = n + 1
+	return fmt.Sprintf("%s-%d", key, n)
 }
 
-// buildCreateLink builds a form link for creating a new entity.
-// Query params are preserved and passed through to the form.
-func buildCreateLink(entityType, queryString, returnPath string) string {
-	if queryString != "" {
-		return fmt.Sprintf(`href="/form/%s?%s&return_to=%s"`, entityType, queryString, url.QueryEscape(returnPath))
+// stripQueryKey removes every occurrence of key (and its value) from a raw
+// query string, returning the cleaned query and whether anything was
+// removed. Handles goldmark's HTML-entity-encoded separator (`&amp;`) in
+// addition to the literal `&` so rendered HTML round-trips correctly.
+func stripQueryKey(rawQuery, key string) (string, bool) {
+	if rawQuery == "" {
+		return "", false
 	}
-	return fmt.Sprintf(`href="/form/%s?return_to=%s"`, entityType, url.QueryEscape(returnPath))
+	// Split the query into logical pairs while tracking the separator
+	// (`&` or `&amp;`) that preceded each one, so we can rejoin the
+	// remaining pairs with the same encoding the author used.
+	type pair struct {
+		prevSep string // separator before this pair; "" for the first
+		raw     string // "key" or "key=value"
+	}
+	var pairs []pair
+	s := rawQuery
+	prevSep := ""
+	for s != "" {
+		idx := strings.Index(s, "&")
+		if idx < 0 {
+			pairs = append(pairs, pair{prevSep: prevSep, raw: s})
+			break
+		}
+		pairs = append(pairs, pair{prevSep: prevSep, raw: s[:idx]})
+		if strings.HasPrefix(s[idx:], "&amp;") {
+			prevSep = "&amp;"
+			s = s[idx+len("&amp;"):]
+		} else {
+			prevSep = "&"
+			s = s[idx+1:]
+		}
+	}
+
+	dropped := false
+	prefix := key + "="
+	var out strings.Builder
+	for _, p := range pairs {
+		if p.raw == key || strings.HasPrefix(p.raw, prefix) {
+			dropped = true
+			continue
+		}
+		if out.Len() == 0 {
+			out.WriteString(p.raw)
+		} else {
+			out.WriteString(p.prevSep)
+			out.WriteString(p.raw)
+		}
+	}
+	return out.String(), dropped
+}
+
+// splitHref slices an href into base path, raw query (without '?'), and
+// fragment (without '#'). Missing parts come back as empty strings.
+func splitHref(href string) (base, rawQuery, fragment string) {
+	base = href
+	if i := strings.Index(base, "#"); i >= 0 {
+		fragment = base[i+1:]
+		base = base[:i]
+	}
+	if i := strings.Index(base, "?"); i >= 0 {
+		rawQuery = base[i+1:]
+		base = base[:i]
+	}
+	return base, rawQuery, fragment
 }

@@ -2033,6 +2033,14 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	// Check for refresh param - skip cache if present
 	forceRefresh := r.URL.Query().Get("refresh") == "true"
 
+	// return_to is the URL the caller is currently on. The rewriter uses
+	// it to inject a `return_to` query param into form links so the form
+	// redirects back here after submit. isSafeReturnPath enforces the
+	// open-redirect guard — it rejects protocol-relative (//evil.com),
+	// backslash-tricks (/\evil.com), and any absolute/schemed URLs, and
+	// returns the normalised same-origin path on success.
+	returnPath := isSafeReturnPath(r.URL.Query().Get("return_to"))
+
 	// Try to get cached content (unless refresh requested). Disk cache
 	// is only populated for command: renders (see doRender); skip the
 	// read for script: docs so we don't serve a stale command:-era file
@@ -2040,7 +2048,7 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	if !forceRefresh && docCfg.Script == "" {
 		result := a.documents.GetCached(entityID)
 		if result != nil {
-			html := RewriteDocumentLinks(result.HTML, "")
+			html := RewriteDocumentLinks(result.HTML, returnPath, nil)
 			writeV1JSON(w, http.StatusOK, V1DocumentResponse{
 				HTML:      html,
 				Cached:    true,
@@ -2057,7 +2065,7 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	html := RewriteDocumentLinks(result.HTML, "")
+	html := RewriteDocumentLinks(result.HTML, returnPath, nil)
 	writeV1JSON(w, http.StatusOK, V1DocumentResponse{
 		HTML:      html,
 		Cached:    false,

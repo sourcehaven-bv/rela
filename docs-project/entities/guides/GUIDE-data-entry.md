@@ -1797,9 +1797,11 @@ Documents are read-only rendered markdown panels attached to an entity's detail
 view. A document's configuration declares which entity type it applies to and
 how to produce the markdown — either a shell `command:` that writes markdown to
 stdout, or a Lua `script:` that does the same via the embedded runtime.
-Captured markdown is converted to HTML via goldmark, with links using
-`edit://` and `create://` URL schemes rewritten into data-entry form URLs
-(see "Links in rendered documents" below).
+Captured markdown is converted to HTML via goldmark. Links using
+app-relative paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`)
+get a `return_to` query param appended automatically on form links so the
+user lands back on the document after submitting the form. See "Links in
+rendered documents" below.
 
 The frontend's `DocumentsPanel.vue` shows every document whose `entity_type`
 matches the current entity. SSE live-reload re-renders a document when the
@@ -1870,7 +1872,11 @@ print()
 for _, child in ipairs((rela.trace_from(entry.id, 2) or {children = {}}).children) do
   local e = rela.get_entity(child.id)
   if e then
-    print("## [" .. e.id .. "](edit://" .. e.type .. "/" .. e.id .. ")")
+    -- rela.url.form_edit builds an edit-form URL; rela.url.detail
+    -- would be an alternative that links to the canonical detail page.
+    -- rela.md.link emits [text](url) so we don't hand-concatenate markdown.
+    local href = rela.url.form_edit("full_ticket", e)
+    print("## " .. rela.md.link(e.id, href))
     print(e.content or "")
   end
 end
@@ -1893,17 +1899,124 @@ lines in the rendered output — that is intentionally loud.
 
 ### Links in rendered documents
 
-The goldmark→HTML step rewrites two custom URL schemes into data-entry
-form URLs, so documents can link directly to edit and create forms:
+Documents link to anywhere in the SPA by writing app-relative paths. The
+goldmark→HTML step walks every `href="/..."` attribute and appends a
+`return_to` query param to hrefs targeting a form route (`/form/...`) so
+the user comes back to the document after submitting the form. Non-form
+internal links pass through unchanged.
 
-| Scheme                      | Renders as                                           |
-|-----------------------------|------------------------------------------------------|
-| `edit://<type>/<id>`        | `/form/<type>/<id>?return_to=...` (edit an entity)   |
-| `create://<type>`           | `/form/<type>?return_to=...` (new entity)            |
-| `create://<type>?k=v&...`   | `/form/<type>?k=v&...&return_to=...` (with defaults) |
+| Target                | Write this in markdown                          | Notes                               |
+|-----------------------|-------------------------------------------------|-------------------------------------|
+| Edit an entity        | `[Edit](/form/full_ticket/TKT-001)`             | Adds `return_to=...#tkt-001`        |
+| Create a new entity   | `[New](/form/full_ticket)`                      | Adds `return_to=...`                |
+| Create with defaults  | `[New](/form/full_ticket?prop.status=open)`     | Preserves query + appends `return_to` |
+| Link to entity detail | `[Detail](/entity/ticket/TKT-001)`              | Not a form; no `return_to` added    |
+| Link to a list        | `[All](/list/all_tasks)`                        | Not a form; passthrough             |
+| Link to a kanban      | `[Board](/kanban/sprint)`                       | Not a form; passthrough             |
+| External link         | `[Docs](https://example.com)`                   | Untouched                           |
 
-The return URL points back to the entity view that hosts the document, so
-submitting the form returns the user to where they were.
+The rewriter leaves non-form internal links alone (for now — individual
+route pages don't yet honour `return_to`; that's tracked as a follow-on).
+The legacy `edit://` / `create://` schemes log a warning and pass through
+unchanged so downstream projects notice and migrate.
+
+### Building links from Lua: `rela.url`
+
+Document scripts build URLs via the `rela.url` submodule. Each helper
+corresponds to one route kind the SPA exposes. Helpers are pure string
+builders — a typo in a form name produces a syntactically valid URL; the
+404 surfaces in the SPA when the user clicks.
+
+| Helper | Returns | Typical use |
+|--------|---------|-------------|
+| `rela.url.form_edit(name, entity)` | `/form/<name>/<entity.id>` | Edit-link for an entity, using form `<name>` |
+| `rela.url.form_create(name, {relations, properties, query})` | `/form/<name>?…` | Create-link with pre-filled relations/properties |
+| `rela.url.form_create(name)` | `/form/<name>` | Create-link with no pre-fill |
+| `rela.url.detail(entity)` | `/entity/<entity.type>/<entity.id>` | Canonical entity detail page |
+| `rela.url.list(name, query?)` | `/list/<name>?…` | Link to a configured list |
+| `rela.url.view(name, entity)` | `/view/<name>/<entity.id>` | Custom view for an entity |
+| `rela.url.kanban(name, query?)` | `/kanban/<name>?…` | Kanban board |
+| `rela.url.document(name, entity)` | `/document/<name>/<entity.id>` | Render a different document for an entity |
+| `rela.url.home(query?)` | `/dashboard?…` | App home |
+| `rela.url.search(query?)` | `/search?…` | Full-text search |
+| `rela.url.analyze(query?)` | `/analyze?…` | Graph analysis |
+| `rela.url.settings(query?)` | `/settings?…` | App settings |
+| `rela.url.conflicts(query?)` | `/conflicts?…` | Git conflicts |
+
+Every frontend route has a typed helper. The `query?` parameter on
+non-form helpers is an optional flat table of `{key = value}` pairs —
+no `{query = {...}}` wrapping.
+
+`form_edit` and `form_create` are split (not one overloaded `form(...)`) so
+an author who writes `rela.url.form_create("x", {id = "prefill-x"})` meaning
+"create with a prefilled id property" gets a create form — not silently
+routed to edit mode on the basis of a structural check of the opts table.
+
+`form_create`'s opts table keeps the three-sub-key shape (`relations`,
+`properties`, `query`) because it has three distinct semantics — the
+helper adds the `rel.` and `prop.` prefixes the form expects, and
+`query` is for passthrough.
+
+Examples:
+
+```lua
+local ticket = rela.get_entity("TKT-001")
+
+-- Edit the ticket in the "full_ticket" form.
+rela.url.form_edit("full_ticket", ticket)
+-- → "/form/full_ticket/TKT-001"
+
+-- Create a new ticket pre-filled with relations and properties. Relation
+-- and property names are taken from the metamodel; the helper adds the
+-- "rel." / "prop." prefixes the form expects.
+rela.url.form_create("create_ticket", {
+  relations  = {parent = ticket.id, assignee = "actor-me"},
+  properties = {status = "open", priority = "high"},
+})
+-- → "/form/create_ticket?prop.priority=high&prop.status=open&rel.assignee=actor-me&rel.parent=TKT-001"
+
+-- Canonical detail page — no form choice, always safe.
+rela.url.detail(ticket)
+-- → "/entity/ticket/TKT-001"
+
+-- Singleton with a query param.
+rela.url.search({q = "pseudoniem"})
+-- → "/search?q=pseudoniem"
+```
+
+Form links get a `return_to` query parameter injected by the document
+link rewriter so submitting the form returns the user to the document.
+`return_to` is reserved — setting it in any helper's query table is
+rejected with a Lua error.
+
+#### Pre-filling a create form
+
+`form_create` accepts three kinds of defaults in its opts table; each
+maps to a query-param convention the create form reads on mount:
+
+| Opts key     | Query form       | What the form does on mount                          |
+|--------------|------------------|------------------------------------------------------|
+| `relations`  | `rel.<name>=<id>` | Adds `<id>` to the named relation's targets          |
+| `properties` | `prop.<name>=<v>` | Sets the property's initial value                    |
+| `query`      | `<k>=<v>`         | Passed through verbatim (use for custom URL params)  |
+
+The form applies these defaults only on initial mount; the user can
+still edit or clear each field before submitting. Multiple values for
+the same relation accumulate (call `form_create` with a list-shaped
+value only if the metamodel permits multi-target for that relation).
+
+```lua
+-- A "+ Add sub-ticket" link that pre-selects the parent and puts the new
+-- ticket straight into the correct category:
+rela.url.form_create("create_ticket", {
+  relations  = {parent = ticket.id, ["belongs-to"] = ticket.properties.category},
+  properties = {priority = "medium", reporter = "actor-me"},
+})
+```
+
+Defaults set via link query string are overlaid on top of the project's
+`.rela/user-defaults.yaml` and metamodel-level defaults; the order is
+covered in the **User defaults** section earlier in this guide.
 
 ### Caching and live-reload
 

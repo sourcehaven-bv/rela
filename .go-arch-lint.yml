@@ -129,6 +129,7 @@ deps:
     mayDependOn:
       - app
       - dataentry
+      - lua
       - metamodel
       - project
       - scheduler
@@ -143,6 +144,7 @@ deps:
       - dataentry
       - desktop
       - git
+      - lua
       - metamodel
       - project
       - scheduler

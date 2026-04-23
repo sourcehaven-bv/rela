@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, useTemplateRef } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
+import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
 import { renderMermaidDiagrams } from '@/utils/markdown'
 import type { DocumentConfig } from '@/types'
 import DOMPurify from 'dompurify'
@@ -12,9 +14,16 @@ const props = defineProps<{
   entityId: string
 }>()
 
+const route = useRoute()
+const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { on, off } = useEvents()
+
+// Click handler for links inside the rendered document: intercepts
+// internal links + enriches return_to with a #<closest-id> fragment so
+// the form redirect scrolls back near where the user clicked.
+const handleContentClick = createDocumentClickHandler(router)
 
 // State
 const selectedDoc = ref<string | null>(null)
@@ -49,12 +58,26 @@ const availableDocuments = computed(() => {
   return docs
 })
 
-// Auto-select first document when available
+// Seed selectedDoc from the URL's ?doc= query so form-submit redirects
+// land on the same tab the user was viewing, and bookmarks / shared
+// links preserve panel state. Auto-select the first document otherwise.
 watch(availableDocuments, (docs) => {
-  if (docs.length > 0 && !selectedDoc.value) {
+  if (docs.length === 0) return
+  const fromQuery = typeof route.query.doc === 'string' ? route.query.doc : null
+  if (fromQuery && docs.some((d) => d.name === fromQuery)) {
+    selectedDoc.value = fromQuery
+  } else if (!selectedDoc.value) {
     selectedDoc.value = docs[0].name
   }
 }, { immediate: true })
+
+// Keep ?doc= in sync with the selected tab without pushing history
+// entries — we want Back to leave the entity page, not cycle through
+// tab selections.
+watch(selectedDoc, (name) => {
+  if (!name || route.query.doc === name) return
+  router.replace({ query: { ...route.query, doc: name } }).catch(() => {})
+})
 
 // Load document when selection changes
 watch([selectedDoc, () => props.entityId], async () => {
@@ -70,7 +93,18 @@ async function loadDocument(refresh = false) {
   docContent.value = ''
 
   try {
-    const result = await renderDocument(selectedDoc.value, props.entityId, refresh)
+    // Documents panel is embedded on the entity page; pass that path as
+    // return_to so form links inside the rendered doc redirect back here.
+    // Include the selected doc tab in the return URL so submit brings
+    // the user back to the *same* document, not whichever one auto-
+    // selects first.
+    const returnTo =
+      `/entity/${props.entityType}/${props.entityId}` +
+      `?doc=${encodeURIComponent(selectedDoc.value)}`
+    const result = await renderDocument(selectedDoc.value, props.entityId, {
+      refresh,
+      returnTo,
+    })
     docContent.value = result.html
     isCached.value = result.cached
     entityIds.value = result.entity_ids || []
@@ -144,7 +178,7 @@ function getDocTitle(name: string, config: DocumentConfig): string {
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
-      <div ref="docBody" class="document-body" v-html="sanitizedContent" />
+      <div ref="docBody" class="document-body" @click="handleContentClick" v-html="sanitizedContent" />
     </div>
 
     <div v-else class="empty-state">

@@ -74,8 +74,10 @@ func (e *Engine) ExecuteFile(path string, deps lua.WriteDeps,
 
 // ExecuteDocument loads and runs a Lua script in document-rendering mode.
 // The script's stdout is captured into the caller-supplied writer; that
-// output is the rendered markdown (the data-entry layer then converts it
-// to HTML and rewrites edit://+create:// links).
+// output is the rendered markdown. The data-entry layer then converts it
+// to HTML and rewrites any app-relative /form/... href to append a
+// return_to query param; legacy edit:// / create:// schemes pass through
+// unchanged with a warning.
 //
 // documentID is the key under documents: in data-entry.yaml (exposed to
 // the script as rela.document.id). entryID is the ID of the entity being
