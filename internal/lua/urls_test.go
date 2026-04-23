@@ -53,177 +53,14 @@ func TestURL_notRegisteredWithoutOption(t *testing.T) {
 	var buf bytes.Buffer
 	r := NewWriter(ws.services("/tmp"), &buf)
 	defer r.Close()
-	err := r.RunString(`return rela.url("/dashboard")`)
+	err := r.RunString(`return rela.url.home()`)
 	if err == nil {
 		t.Fatal("expected error — rela.url should not be registered without WithRouteCatalog")
 	}
-	// Absent binding → Lua raises "attempt to call a nil value" (older gopher-lua)
-	// or "attempt to call a non-function object" (current). Either indicates the
-	// binding isn't registered.
-	msg := err.Error()
-	if !strings.Contains(msg, "nil value") && !strings.Contains(msg, "non-function object") {
+	// Absent binding → Lua raises "attempt to index a nil value". No
+	// callable escape hatch anymore; the whole rela.url table is absent.
+	if !strings.Contains(err.Error(), "nil") {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestURL_happyPath(t *testing.T) {
-	cat := newCatalog("/form/full_ticket", "/form/full_ticket/TKT-001", "/dashboard")
-	r := newURLWriter(t, cat)
-
-	cases := []struct {
-		name string
-		code string
-		want string
-	}{
-		{
-			name: "path only",
-			code: `rela.url("/dashboard")`,
-			want: "/dashboard",
-		},
-		{
-			name: "path with params",
-			code: `rela.url("/form/full_ticket", {["prop.status"]="open", q="a b&c"})`,
-			want: "/form/full_ticket?prop.status=open&q=a+b%26c",
-		},
-		{
-			name: "path with edit form",
-			code: `rela.url("/form/full_ticket/TKT-001")`,
-			want: "/form/full_ticket/TKT-001",
-		},
-		{
-			name: "existing query preserved and merged",
-			code: `rela.url("/form/full_ticket?x=1", {y="2"})`,
-			want: "/form/full_ticket?x=1&y=2",
-		},
-		{
-			name: "existing query overridden by param",
-			code: `rela.url("/form/full_ticket?x=old", {x="new"})`,
-			want: "/form/full_ticket?x=new",
-		},
-		{
-			name: "fragment preserved",
-			code: `rela.url("/form/full_ticket/TKT-001#section", {y="2"})`,
-			want: "/form/full_ticket/TKT-001?y=2#section",
-		},
-		{
-			name: "empty params table leaves path unchanged",
-			code: `rela.url("/dashboard", {})`,
-			want: "/dashboard",
-		},
-		{
-			name: "number value stringified",
-			code: `rela.url("/form/full_ticket", {page=3})`,
-			want: "/form/full_ticket?page=3",
-		},
-		{
-			name: "bool value stringified",
-			code: `rela.url("/form/full_ticket", {draft=true})`,
-			want: "/form/full_ticket?draft=true",
-		},
-		{
-			name: "deterministic key order",
-			code: `rela.url("/form/full_ticket", {b="2", a="1", c="3"})`,
-			want: "/form/full_ticket?a=1&b=2&c=3",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := evalString(t, r, tc.code)
-			if got != tc.want {
-				t.Errorf("rela.url returned %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestURL_unknownPathRaises(t *testing.T) {
-	r := newURLWriter(t, newCatalog("/dashboard"))
-	err := r.RunString(`rela.url("/nope/foo")`)
-	if err == nil {
-		t.Fatal("expected error for unknown path")
-	}
-	if !strings.Contains(err.Error(), "unknown frontend route: /nope/foo") {
-		t.Fatalf("error should name the unknown path, got: %v", err)
-	}
-}
-
-func TestURL_typeErrors(t *testing.T) {
-	r := newURLWriter(t, newCatalog("/x"))
-
-	cases := []struct {
-		name    string
-		code    string
-		wantSub string
-	}{
-		{
-			name:    "non-table params arg",
-			code:    `rela.url("/x", "not a table")`,
-			wantSub: "table",
-		},
-		{
-			name:    "function value",
-			code:    `rela.url("/x", {a=function() end})`,
-			wantSub: "param \"a\": value must be string, number, or boolean",
-		},
-		{
-			name:    "nil value",
-			code:    `rela.url("/x", {a=nil, b="ok"})`,
-			wantSub: "", // nil values are dropped by Lua table semantics — no error
-		},
-		{
-			name:    "key with &",
-			code:    `rela.url("/x", {["a&b"]="1"})`,
-			wantSub: "forbidden characters",
-		},
-		{
-			name:    "key with =",
-			code:    `rela.url("/x", {["a=b"]="1"})`,
-			wantSub: "forbidden characters",
-		},
-		{
-			name:    "key with whitespace",
-			code:    `rela.url("/x", {["a b"]="1"})`,
-			wantSub: "forbidden characters",
-		},
-		{
-			name:    "empty key",
-			code:    `rela.url("/x", {[""]="1"})`,
-			wantSub: "empty",
-		},
-		{
-			name:    "reserved key return_to",
-			code:    `rela.url("/x", {return_to="/evil"})`,
-			wantSub: "reserved",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := r.RunString(tc.code)
-			if tc.wantSub == "" {
-				if err != nil {
-					t.Fatalf("expected no error, got: %v", err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tc.wantSub)
-			}
-			if !strings.Contains(err.Error(), tc.wantSub) {
-				t.Fatalf("error %v does not contain %q", err, tc.wantSub)
-			}
-		})
-	}
-}
-
-func TestURL_emptyQueryNoTrailingQuestion(t *testing.T) {
-	r := newURLWriter(t, newCatalog("/x"))
-	got := evalString(t, r, `rela.url("/x")`)
-	if got != "/x" {
-		t.Errorf("got %q, want %q", got, "/x")
-	}
-	got = evalString(t, r, `rela.url("/x", {})`)
-	if got != "/x" {
-		t.Errorf("got %q, want %q", got, "/x")
 	}
 }
 
@@ -241,6 +78,11 @@ func urlHelperCatalog() fakeCatalog {
 		"/view/timeline/TKT-001",
 		"/kanban/sprint",
 		"/document/release_notes/REL-001",
+		"/dashboard",
+		"/search",
+		"/analyze",
+		"/settings",
+		"/conflicts",
 	)
 }
 
@@ -300,16 +142,15 @@ func TestURLFormCreate(t *testing.T) {
 	}
 }
 
-// form_edit — unlike the old form(), doesn't accept a "query" sub-key
-// on the entity table. Authors wanting extra query go through rela.url
-// directly (rela.url(rela.url.form_edit(...), {...})).
-func TestURLFormEdit_noExtraQuerySugar(t *testing.T) {
+// form_edit takes an entity table and extracts the id — any other keys
+// (including "query") are ignored. Authors wanting extra query on an
+// edit URL have no supported shape today; the return_to rewriter is
+// the usual source of form-link query, and extra ad-hoc params on
+// edit URLs have no use case.
+func TestURLFormEdit_ignoresExtraTableKeys(t *testing.T) {
 	r := newURLWriter(t, urlHelperCatalog())
 	got := evalString(t, r,
-		`rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket", query={source="doc"}})`)
-	// Note: no source=doc — form_edit ignores the opts.query sugar that
-	// existed on the old polymorphic form helper. The entity id alone is
-	// what the helper takes from the table.
+		`rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket", source="doc"})`)
 	want := "/form/full_ticket/TKT-001"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -393,7 +234,7 @@ func TestURLList(t *testing.T) {
 	r := newURLWriter(t, urlHelperCatalog())
 	cases := []struct{ code, want string }{
 		{`rela.url.list("all_tasks")`, "/list/all_tasks"},
-		{`rela.url.list("all_tasks", {query = {status = "open"}})`, "/list/all_tasks?status=open"},
+		{`rela.url.list("all_tasks", {status = "open"})`, "/list/all_tasks?status=open"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
@@ -431,12 +272,116 @@ func TestURLDocument(t *testing.T) {
 	}
 }
 
-func TestURLCallable_stillWorks(t *testing.T) {
-	// The rela.url table is itself callable via a __call metamethod, so the
-	// flat primitive keeps working for ad-hoc paths and escape hatches.
+// Singleton-route helpers — one per route in the frontend catalog that
+// has no params. Each takes an optional bare query table.
+func TestURLSingletons(t *testing.T) {
 	r := newURLWriter(t, urlHelperCatalog())
-	got := evalString(t, r, `rela.url("/list/all_tasks")`)
-	if got != "/list/all_tasks" {
-		t.Errorf("got %q", got)
+	cases := []struct{ code, want string }{
+		{`rela.url.home()`, "/dashboard"},
+		{`rela.url.search()`, "/search"},
+		{`rela.url.search({q = "pseudoniem"})`, "/search?q=pseudoniem"},
+		{`rela.url.analyze()`, "/analyze"},
+		{`rela.url.settings()`, "/settings"},
+		{`rela.url.conflicts()`, "/conflicts"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			got := evalString(t, r, tc.code)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Param-validation tests routed through form_create, which uses the
+// same merge path as every non-form helper's bare query. Covers the
+// edge cases the old call-style tests exercised.
+func TestURLParams_validation(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	cases := []struct {
+		name    string
+		code    string
+		wantSub string
+	}{
+		{
+			name:    "non-table opts arg",
+			code:    `rela.url.form_create("full_ticket", "not a table")`,
+			wantSub: "table",
+		},
+		{
+			name:    "reserved key return_to",
+			code:    `rela.url.list("all_tasks", {return_to="/evil"})`,
+			wantSub: "reserved",
+		},
+		{
+			name:    "key with &",
+			code:    `rela.url.list("all_tasks", {["a&b"]="1"})`,
+			wantSub: "forbidden characters",
+		},
+		{
+			name:    "key with =",
+			code:    `rela.url.list("all_tasks", {["a=b"]="1"})`,
+			wantSub: "forbidden characters",
+		},
+		{
+			name:    "empty key",
+			code:    `rela.url.list("all_tasks", {[""]="1"})`,
+			wantSub: "empty",
+		},
+		{
+			name:    "function value",
+			code:    `rela.url.list("all_tasks", {a=function() end})`,
+			wantSub: "value must be string, number, or boolean",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := r.RunString(tc.code)
+			if err == nil {
+				t.Fatalf("expected error containing %q", tc.wantSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("error %v does not contain %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// The form_create "with relations + properties + query" case used the
+// old opts.query wrapper. The bare-query shape is for non-form helpers
+// only; form_create keeps the three-sub-key opts shape because it has
+// genuinely three semantics (rel./prop./passthrough).
+func TestURLFormCreate_queryIsStillSubKey(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	got := evalString(t, r,
+		`rela.url.form_create("full_ticket", {
+			relations = {parent = "TKT-1"},
+			properties = {status = "open"},
+			query = {source = "doc"},
+		})`)
+	want := "/form/full_ticket?prop.status=open&rel.parent=TKT-1&source=doc"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// Bare-query helpers produce deterministic sorted output and handle
+// edge cases (empty table, numeric/bool values, unicode, existing
+// query on path — not applicable here since helper builds its own).
+func TestURLNonFormHelpers_querySemantics(t *testing.T) {
+	r := newURLWriter(t, urlHelperCatalog())
+	cases := []struct{ code, want string }{
+		{`rela.url.list("all_tasks", {})`, "/list/all_tasks"},
+		{`rela.url.list("all_tasks", {b="2", a="1", c="3"})`, "/list/all_tasks?a=1&b=2&c=3"},
+		{`rela.url.list("all_tasks", {page=3, draft=true})`, "/list/all_tasks?draft=true&page=3"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			got := evalString(t, r, tc.code)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

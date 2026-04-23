@@ -18,7 +18,7 @@ func TestWriteRoutesTable_containsAllRoutes(t *testing.T) {
 
 	// Header row.
 	if !strings.Contains(out, "NAME") || !strings.Contains(out, "PATH") ||
-		!strings.Contains(out, "PARAMS") || !strings.Contains(out, "RETURN_TO") ||
+		!strings.Contains(out, "HELPER") || !strings.Contains(out, "RETURN_TO") ||
 		!strings.Contains(out, "NOTES") {
 
 		t.Errorf("table header missing expected columns:\n%s", out)
@@ -34,11 +34,18 @@ func TestWriteRoutesTable_containsAllRoutes(t *testing.T) {
 		}
 	}
 
-	// form-edit should show return_to yes + the lua param names
-	// (form_id, entity_id) so document authors learn the keys they pass
-	// to rela.url.
-	if !strings.Contains(out, "form_id") || !strings.Contains(out, "entity_id") {
-		t.Errorf("expected Lua param names in table, got:\n%s", out)
+	// Every catalog route should map to a named helper in the output;
+	// that mapping is what the subcommand is for. Spot-check a few.
+	for _, helper := range []string{
+		"rela.url.form_edit()",
+		"rela.url.form_create()",
+		"rela.url.detail()",
+		"rela.url.home()",
+		"rela.url.search()",
+	} {
+		if !strings.Contains(out, helper) {
+			t.Errorf("expected helper %q in table, got:\n%s", helper, out)
+		}
 	}
 	if !strings.Contains(out, "yes") {
 		t.Errorf("expected at least one route with return_to yes, got:\n%s", out)

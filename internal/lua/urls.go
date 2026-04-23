@@ -10,69 +10,39 @@ import (
 	glua "github.com/yuin/gopher-lua"
 )
 
-// registerURLModule installs the rela.url submodule. rela.url is itself
-// callable (rela.url("/path", params?)) via a __call metamethod, and also
-// exposes typed helpers for each frontend-route kind: form, detail, list,
-// view, kanban, document. Every helper returns a string URL, verified
-// against the route catalog (so a typo like rela.url.form("nope", e) fails
+// registerURLModule installs the rela.url submodule. Each known frontend
+// route has a typed helper that returns a string URL, verified against
+// the route catalog (a typo like rela.url.form_edit("nope", e) fails
 // loudly at render time instead of a 404 in the browser).
 //
-// The registration is no-op when no catalog is wired — same pattern as
+// The registration is a no-op when no catalog is wired — same pattern as
 // rela.cache — so runtimes outside document renders don't expose rela.url
-// at all.
+// at all. Authors in those contexts who try to build URLs get an
+// "attempt to index a nil value" Lua error, which is clearer than a
+// helper that silently returns an unverified string.
 func (r *Runtime) registerURLModule(rela *glua.LTable) {
 	if r.routes == nil {
 		return
 	}
 
 	tbl := r.L.NewTable()
+	// Form routes — split by mode so the author's intent is explicit.
 	r.L.SetField(tbl, "form_edit", r.L.NewFunction(r.luaURLFormEdit))
 	r.L.SetField(tbl, "form_create", r.L.NewFunction(r.luaURLFormCreate))
+	// Parametrised routes.
 	r.L.SetField(tbl, "detail", r.L.NewFunction(r.luaURLDetail))
 	r.L.SetField(tbl, "list", r.L.NewFunction(r.luaURLList))
 	r.L.SetField(tbl, "view", r.L.NewFunction(r.luaURLView))
 	r.L.SetField(tbl, "kanban", r.L.NewFunction(r.luaURLKanban))
 	r.L.SetField(tbl, "document", r.L.NewFunction(r.luaURLDocument))
-
-	// Make the table callable so rela.url("/any/path", params?) still
-	// works as an escape hatch for routes without a dedicated helper
-	// (e.g. /search) or for paths the author has assembled themselves.
-	mt := r.L.NewTable()
-	r.L.SetField(mt, "__call", r.L.NewFunction(r.luaURLCall))
-	r.L.SetMetatable(tbl, mt)
+	// Singleton routes — no params, optional query.
+	r.L.SetField(tbl, "home", r.L.NewFunction(r.luaURLHome))
+	r.L.SetField(tbl, "search", r.L.NewFunction(r.luaURLSearch))
+	r.L.SetField(tbl, "analyze", r.L.NewFunction(r.luaURLAnalyze))
+	r.L.SetField(tbl, "settings", r.L.NewFunction(r.luaURLSettings))
+	r.L.SetField(tbl, "conflicts", r.L.NewFunction(r.luaURLConflicts))
 
 	r.L.SetField(rela, "url", tbl)
-}
-
-// luaURLCall handles rela.url(path, params?) — the __call path. The first
-// Lua argument is the rela.url table itself (self); the real args start at
-// index 2. We remove the self arg and delegate to the primitive.
-func (r *Runtime) luaURLCall(ls *glua.LState) int {
-	ls.Remove(1)
-	return r.luaURLPath(ls)
-}
-
-// luaURLPath is the catalog-verified primitive: path string + optional
-// params table → URL string. Factored out from the callable wrapper so
-// helpers below can share the query-merge + verification logic.
-//
-//   - path: literal path (e.g. "/form/full_ticket/TKT-001"), may carry an
-//     existing query and/or fragment.
-//   - params: optional table of extra query values. Map keys are strings;
-//     values may be strings, numbers, or booleans. Non-scalar values raise.
-//
-// Unknown paths raise "unknown frontend route: <path>". The returned string
-// carries the original base path, a merged query with deterministic key
-// ordering, and the original fragment.
-func (r *Runtime) luaURLPath(ls *glua.LState) int {
-	rawPath := ls.CheckString(1)
-	out, err := r.buildVerifiedURL(rawPath, optionalTable(ls, 2))
-	if err != nil {
-		ls.RaiseError("%s", err.Error())
-		return 0
-	}
-	ls.Push(glua.LString(out))
-	return 1
 }
 
 // buildVerifiedURL is the engine behind every url helper. It splits the
@@ -174,16 +144,15 @@ func (r *Runtime) luaURLDetail(ls *glua.LState) int {
 	return r.emitURL(ls, "/entity/"+typ+"/"+id, nil)
 }
 
-// luaURLList implements rela.url.list(name, opts?).
-// opts.query is optional extra query params.
+// luaURLList implements rela.url.list(name, query?).
+// query is an optional table of extra query params.
 func (r *Runtime) luaURLList(ls *glua.LState) int {
 	name := ls.CheckString(1)
 	if name == "" {
 		ls.RaiseError("rela.url.list: list name cannot be empty")
 		return 0
 	}
-	extra := optsQuery(ls, 2)
-	return r.emitURL(ls, "/list/"+name, extra)
+	return r.emitURL(ls, "/list/"+name, optionalTable(ls, 2))
 }
 
 // luaURLView implements rela.url.view(name, entity).
@@ -202,15 +171,14 @@ func (r *Runtime) luaURLView(ls *glua.LState) int {
 	return r.emitURL(ls, "/view/"+name+"/"+id, nil)
 }
 
-// luaURLKanban implements rela.url.kanban(name, opts?).
+// luaURLKanban implements rela.url.kanban(name, query?).
 func (r *Runtime) luaURLKanban(ls *glua.LState) int {
 	name := ls.CheckString(1)
 	if name == "" {
 		ls.RaiseError("rela.url.kanban: kanban name cannot be empty")
 		return 0
 	}
-	extra := optsQuery(ls, 2)
-	return r.emitURL(ls, "/kanban/"+name, extra)
+	return r.emitURL(ls, "/kanban/"+name, optionalTable(ls, 2))
 }
 
 // luaURLDocument implements rela.url.document(name, entity).
@@ -227,6 +195,30 @@ func (r *Runtime) luaURLDocument(ls *glua.LState) int {
 		return 0
 	}
 	return r.emitURL(ls, "/document/"+name+"/"+id, nil)
+}
+
+// Singleton routes — no path params. Each takes an optional query table
+// (e.g. rela.url.search({q = "pseudoniem"})). Named "home" because that's
+// how users refer to the dashboard; it maps to /dashboard under the hood.
+
+func (r *Runtime) luaURLHome(ls *glua.LState) int {
+	return r.emitURL(ls, "/dashboard", optionalTable(ls, 1))
+}
+
+func (r *Runtime) luaURLSearch(ls *glua.LState) int {
+	return r.emitURL(ls, "/search", optionalTable(ls, 1))
+}
+
+func (r *Runtime) luaURLAnalyze(ls *glua.LState) int {
+	return r.emitURL(ls, "/analyze", optionalTable(ls, 1))
+}
+
+func (r *Runtime) luaURLSettings(ls *glua.LState) int {
+	return r.emitURL(ls, "/settings", optionalTable(ls, 1))
+}
+
+func (r *Runtime) luaURLConflicts(ls *glua.LState) int {
+	return r.emitURL(ls, "/conflicts", optionalTable(ls, 1))
 }
 
 // -----------------------------------------------------------------------------
@@ -292,16 +284,6 @@ func tableField(t *glua.LTable, key string) *glua.LTable {
 		return tbl
 	}
 	return nil
-}
-
-// optsQuery reads a {query = {...}} field from an options-table argument.
-// Returns nil when the arg is absent, nil, or has no query field.
-func optsQuery(ls *glua.LState, n int) *glua.LTable {
-	opts := optionalTable(ls, n)
-	if opts == nil {
-		return nil
-	}
-	return tableField(opts, "query")
 }
 
 // foldFormOpts builds a Go query map from a form-opts table that may

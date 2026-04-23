@@ -16,8 +16,9 @@
 --   - `rela.document.entry_id` — the entity being rendered.
 --   - `rela.cache.memoize(...)` — caching a per-category rollup across
 --     HTTP requests within the lifetime of the rela-server process.
---   - `rela.url(...)` — app-relative links verified against the frontend
---     route catalogue; form routes get a return_to appended automatically.
+--   - `rela.url.form_edit/form_create(...)` — app-relative links verified
+--     against the frontend route catalogue; form routes get a return_to
+--     appended automatically.
 
 local entry_id = rela.document.entry_id
 local category = rela.get_entity(entry_id)

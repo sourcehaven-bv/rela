@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/Sourcehaven-BV/rela/internal/frontendroutes"
@@ -60,29 +59,52 @@ func writeRoutesJSON(w io.Writer, routes []frontendroutes.Route) error {
 
 func writeRoutesTable(w io.Writer, routes []frontendroutes.Route) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "NAME\tPATH\tPARAMS\tRETURN_TO\tNOTES"); err != nil {
+	if _, err := fmt.Fprintln(tw, "NAME\tPATH\tHELPER\tRETURN_TO\tNOTES"); err != nil {
 		return err
 	}
 	for _, r := range routes {
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			r.Name, r.Path, luaParamList(r.Params), returnToCell(r.AcceptsReturnTo), r.Notes); err != nil {
+			r.Name, r.Path, helperFor(r.Name), returnToCell(r.AcceptsReturnTo), r.Notes); err != nil {
 			return err
 		}
 	}
 	return tw.Flush()
 }
 
-// luaParamList renders the Lua-facing param names for the params column, so
-// document authors see the exact keys they should pass to rela.url.
-func luaParamList(params []frontendroutes.Param) string {
-	if len(params) == 0 {
+// helperFor returns the rela.url.<name>(...) helper a document author
+// should call to build URLs for this route. Kept as a lookup table
+// rather than derived from the route name so the mapping is explicit —
+// form-edit / form-create both map to the "form" route kind but use
+// distinct helpers, and "entity" uses "detail" etc.
+func helperFor(routeName string) string {
+	switch routeName {
+	case "form-create":
+		return "rela.url.form_create()"
+	case "form-edit":
+		return "rela.url.form_edit()"
+	case "entity":
+		return "rela.url.detail()"
+	case "list":
+		return "rela.url.list()"
+	case "view":
+		return "rela.url.view()"
+	case "kanban":
+		return "rela.url.kanban()"
+	case "document":
+		return "rela.url.document()"
+	case "dashboard":
+		return "rela.url.home()"
+	case "search":
+		return "rela.url.search()"
+	case "analyze":
+		return "rela.url.analyze()"
+	case "settings":
+		return "rela.url.settings()"
+	case "conflicts":
+		return "rela.url.conflicts()"
+	default:
 		return "-"
 	}
-	names := make([]string, len(params))
-	for i, p := range params {
-		names[i] = p.Lua
-	}
-	return strings.Join(names, ", ")
 }
 
 func returnToCell(accepts bool) string {

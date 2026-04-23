@@ -1926,16 +1926,29 @@ time instead of a 404 in the browser.
 | `rela.url.form_create(name, {relations, properties, query})` | `/form/<name>?…` | Create-link with pre-filled relations/properties |
 | `rela.url.form_create(name)` | `/form/<name>` | Create-link with no pre-fill |
 | `rela.url.detail(entity)` | `/entity/<entity.type>/<entity.id>` | Canonical entity detail page |
-| `rela.url.list(name, {query?})` | `/list/<name>?…` | Link to a configured list |
+| `rela.url.list(name, query?)` | `/list/<name>?…` | Link to a configured list |
 | `rela.url.view(name, entity)` | `/view/<name>/<entity.id>` | Custom view for an entity |
-| `rela.url.kanban(name, {query?})` | `/kanban/<name>?…` | Kanban board |
+| `rela.url.kanban(name, query?)` | `/kanban/<name>?…` | Kanban board |
 | `rela.url.document(name, entity)` | `/document/<name>/<entity.id>` | Render a different document for an entity |
-| `rela.url(path, params?)` | verbatim path + query | Escape hatch for singletons (`/search`, `/dashboard`) or hand-assembled paths |
+| `rela.url.home(query?)` | `/dashboard?…` | App home |
+| `rela.url.search(query?)` | `/search?…` | Full-text search |
+| `rela.url.analyze(query?)` | `/analyze?…` | Graph analysis |
+| `rela.url.settings(query?)` | `/settings?…` | App settings |
+| `rela.url.conflicts(query?)` | `/conflicts?…` | Git conflicts |
+
+Every frontend route has a typed helper. The `query?` parameter on
+non-form helpers is an optional flat table of `{key = value}` pairs —
+no `{query = {...}}` wrapping.
 
 `form_edit` and `form_create` are split (not one overloaded `form(...)`) so
 an author who writes `rela.url.form_create("x", {id = "prefill-x"})` meaning
 "create with a prefilled id property" gets a create form — not silently
 routed to edit mode on the basis of a structural check of the opts table.
+
+`form_create`'s opts table keeps the three-sub-key shape (`relations`,
+`properties`, `query`) because it has three distinct semantics — the
+helper adds the `rel.` and `prop.` prefixes the form expects, and
+`query` is for passthrough.
 
 Examples:
 
@@ -1959,13 +1972,14 @@ rela.url.form_create("create_ticket", {
 rela.url.detail(ticket)
 -- → "/entity/ticket/TKT-001"
 
--- Escape hatch for singletons without a dedicated helper.
-rela.url("/search")
+-- Singleton with a query param.
+rela.url.search({q = "pseudoniem"})
+-- → "/search?q=pseudoniem"
 ```
 
 Form links get a `return_to` query parameter injected by the document
 link rewriter so submitting the form returns the user to the document.
-`return_to` is reserved — setting it in a `query = { … }` table is
+`return_to` is reserved — setting it in any helper's query table is
 rejected with a Lua error.
 
 The catalogue checks only the path *shape*: `rela.url.form_edit("anything", e)`
@@ -1973,7 +1987,7 @@ passes because `/form/:id/:entityId` matches, even if `anything` isn't a
 real form in your project — form existence is validated when the user
 actually clicks.
 
-Run `rela-server routes` to see every known path and its Lua param names.
+Run `rela-server routes` to see the full catalogue with helper-name mapping.
 
 ### Caching and live-reload
 
