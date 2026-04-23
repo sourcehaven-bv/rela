@@ -154,39 +154,51 @@ func TestRewriteDocumentLinks(t *testing.T) {
 		expected   string
 		wantWarn   string // substring expected in warning log; "" means no warning
 	}{
-		// Form routes: return_to injected verbatim. The frontend click
-		// handler appends the nearest-ancestor #id at click time; the
-		// rewriter no longer synthesizes a #<entity-id> fragment here
-		// because goldmark's auto-ids don't match a predictable pattern.
+		// Form routes: return_to injected verbatim, and a stable id=
+		// attribute is added on the <a> so the SPA's click handler has a
+		// scroll-back anchor that survives title/content edits.
+		//
+		// Edit links → id="edit-<entity-id-lowered>-<counter>".
+		// Create links → id="create-<form-name-lowered>-<counter>".
+		// The counter disambiguates multiple links to the same entity in
+		// one document.
 		{
 			name:       "edit form link with full return path",
 			html:       `<a href="/form/full_ticket/TKT-001">Edit</a>`,
 			returnPath: "/document/preview?entry=DOC-001",
-			expected:   `<a href="/form/full_ticket/TKT-001?return_to=%2Fdocument%2Fpreview%3Fentry%3DDOC-001">Edit</a>`,
+			expected:   `<a id="edit-tkt-001-0" href="/form/full_ticket/TKT-001?return_to=%2Fdocument%2Fpreview%3Fentry%3DDOC-001">Edit</a>`,
 		},
 		{
+			// Different entities get separately-counted suffixes (each -0).
 			name:       "multiple edit form links",
 			html:       `<a href="/form/full_ticket/TKT-001">R1</a> and <a href="/form/full_ticket/TKT-002">R2</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/full_ticket/TKT-001?return_to=%2Fdoc">R1</a> and <a href="/form/full_ticket/TKT-002?return_to=%2Fdoc">R2</a>`,
+			expected:   `<a id="edit-tkt-001-0" href="/form/full_ticket/TKT-001?return_to=%2Fdoc">R1</a> and <a id="edit-tkt-002-0" href="/form/full_ticket/TKT-002?return_to=%2Fdoc">R2</a>`,
+		},
+		{
+			// Same entity linked twice → counter increments.
+			name:       "duplicate edit links to same entity get separate counters",
+			html:       `<a href="/form/full_ticket/TKT-001">First</a> and <a href="/form/full_ticket/TKT-001">Second</a>`,
+			returnPath: "/doc",
+			expected:   `<a id="edit-tkt-001-0" href="/form/full_ticket/TKT-001?return_to=%2Fdoc">First</a> and <a id="edit-tkt-001-1" href="/form/full_ticket/TKT-001?return_to=%2Fdoc">Second</a>`,
 		},
 		{
 			name:       "create form link no query",
 			html:       `<a href="/form/full_ticket">Add</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/full_ticket?return_to=%2Fdoc">Add</a>`,
+			expected:   `<a id="create-full_ticket-0" href="/form/full_ticket?return_to=%2Fdoc">Add</a>`,
 		},
 		{
 			name:       "create form link preserves existing query",
 			html:       `<a href="/form/full_ticket?prop.status=draft&rel.implements=FEAT-001">Add</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/full_ticket?prop.status=draft&rel.implements=FEAT-001&return_to=%2Fdoc">Add</a>`,
+			expected:   `<a id="create-full_ticket-0" href="/form/full_ticket?prop.status=draft&rel.implements=FEAT-001&return_to=%2Fdoc">Add</a>`,
 		},
 		{
 			name:       "form link preserves fragment",
 			html:       `<a href="/form/full_ticket#section">Add</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/full_ticket?return_to=%2Fdoc#section">Add</a>`,
+			expected:   `<a id="create-full_ticket-0" href="/form/full_ticket?return_to=%2Fdoc#section">Add</a>`,
 		},
 
 		// Non-form internal links: unchanged.
@@ -273,7 +285,7 @@ func TestRewriteDocumentLinks(t *testing.T) {
 			name:       "goldmark-encoded ampersand in query preserved",
 			html:       `<a href="/form/full_ticket?prop.status=draft&amp;rel.implements=FEAT-001">Add</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/full_ticket?prop.status=draft&amp;rel.implements=FEAT-001&return_to=%2Fdoc">Add</a>`,
+			expected:   `<a id="create-full_ticket-0" href="/form/full_ticket?prop.status=draft&amp;rel.implements=FEAT-001&return_to=%2Fdoc">Add</a>`,
 		},
 
 		// return_to collision: author-supplied return_to must be
@@ -283,39 +295,38 @@ func TestRewriteDocumentLinks(t *testing.T) {
 			name:       "author-supplied return_to stripped and replaced",
 			html:       `<a href="/form/full_ticket?return_to=/evil">Trick</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/full_ticket?return_to=%2Fdoc">Trick</a>`,
+			expected:   `<a id="create-full_ticket-0" href="/form/full_ticket?return_to=%2Fdoc">Trick</a>`,
 			wantWarn:   "reserved key return_to",
 		},
 		{
 			name:       "author-supplied return_to stripped with other params preserved",
 			html:       `<a href="/form/full_ticket?a=1&return_to=/evil&b=2">Trick</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/full_ticket?a=1&b=2&return_to=%2Fdoc">Trick</a>`,
+			expected:   `<a id="create-full_ticket-0" href="/form/full_ticket?a=1&b=2&return_to=%2Fdoc">Trick</a>`,
 			wantWarn:   "reserved key return_to",
 		},
 		{
 			name:       "author-supplied return_to stripped through goldmark entity",
 			html:       `<a href="/form/full_ticket?a=1&amp;return_to=/evil&amp;b=2">Trick</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/form/full_ticket?a=1&amp;b=2&return_to=%2Fdoc">Trick</a>`,
+			expected:   `<a id="create-full_ticket-0" href="/form/full_ticket?a=1&amp;b=2&return_to=%2Fdoc">Trick</a>`,
 			wantWarn:   "reserved key return_to",
 		},
 
-		// Empty returnPath on non-edit form link: skip return_to entirely.
+		// Empty returnPath: the id= is still emitted (the click handler
+		// will use it as the scroll-back anchor) but the href is left
+		// untouched — nothing to inject without a returnPath.
 		{
-			name:       "empty returnPath skips return_to on create form",
+			name:       "empty returnPath emits id but skips return_to on create form",
 			html:       `<a href="/form/full_ticket?prop.status=open">Add</a>`,
 			returnPath: "",
-			expected:   `<a href="/form/full_ticket?prop.status=open">Add</a>`,
+			expected:   `<a id="create-full_ticket-0" href="/form/full_ticket?prop.status=open">Add</a>`,
 		},
 		{
-			// With no returnPath and no synthesized fragment, the rewriter
-			// has nothing useful to inject on an edit form link either —
-			// pass it through unchanged.
-			name:       "empty returnPath leaves edit form link untouched",
+			name:       "empty returnPath emits id on edit form link",
 			html:       `<a href="/form/full_ticket/TKT-001">Edit</a>`,
 			returnPath: "",
-			expected:   `<a href="/form/full_ticket/TKT-001">Edit</a>`,
+			expected:   `<a id="edit-tkt-001-0" href="/form/full_ticket/TKT-001">Edit</a>`,
 		},
 	}
 

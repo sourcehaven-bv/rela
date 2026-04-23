@@ -6,6 +6,7 @@ import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
 import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
 import { renderMermaidDiagrams } from '@/utils/markdown'
+import { buildReturnTo } from '@/utils/returnPath'
 import DOMPurify from 'dompurify'
 
 const props = defineProps<{
@@ -56,12 +57,14 @@ async function loadDocument(refresh = false) {
   docContent.value = ''
 
   try {
-    // Pass the current full path (including query like ?from=list-id)
-    // as return_to so form links inside the rendered doc redirect back
-    // here on submit and goBack() retains its back-to-list context.
+    // Pass the current location as return_to so form links inside the
+    // rendered doc redirect back here on submit. Preserve user-meaningful
+    // query state (e.g. ?from=list-id for goBack()) but drop render-only
+    // flags like ?refresh=true that shouldn't round-trip.
+    const returnTo = buildReturnTo(route.fullPath, ['refresh'])
     const result = await renderDocument(props.name, props.entityId, {
       refresh,
-      returnTo: route.fullPath,
+      returnTo,
     })
     docContent.value = result.html
     isCached.value = result.cached

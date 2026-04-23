@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isSafeReturnPath, readReturnTo } from './returnPath'
+import { buildReturnTo, isSafeReturnPath, readReturnTo } from './returnPath'
 
 describe('isSafeReturnPath', () => {
   it.each([
@@ -32,6 +32,40 @@ describe('isSafeReturnPath', () => {
     ['number', 42],
   ])('rejects %s', (_name, input) => {
     expect(isSafeReturnPath(input)).toBe('')
+  })
+})
+
+describe('buildReturnTo', () => {
+  it('returns the normalised path unchanged when no drop keys', () => {
+    expect(buildReturnTo('/entity/x/Y?from=list-id')).toBe('/entity/x/Y?from=list-id')
+  })
+
+  it('drops specified query keys', () => {
+    expect(buildReturnTo('/doc/x?refresh=true&from=list-id', ['refresh']))
+      .toBe('/doc/x?from=list-id')
+  })
+
+  it('keeps the path intact when drop key is absent', () => {
+    expect(buildReturnTo('/doc/x?from=list-id', ['refresh']))
+      .toBe('/doc/x?from=list-id')
+  })
+
+  it('drops multiple keys', () => {
+    expect(buildReturnTo('/x?a=1&b=2&c=3', ['a', 'c'])).toBe('/x?b=2')
+  })
+
+  it('always strips the fragment', () => {
+    // The fragment is a scroll target, not part of the page identity;
+    // leaving it in would propagate into every rewritten form link's
+    // return_to on re-render.
+    expect(buildReturnTo('/doc/x#sec')).toBe('/doc/x')
+    expect(buildReturnTo('/doc/x?refresh=true#sec', ['refresh']))
+      .toBe('/doc/x')
+  })
+
+  it('returns empty string on unsafe input', () => {
+    expect(buildReturnTo('//evil.com')).toBe('')
+    expect(buildReturnTo('http://evil.com')).toBe('')
   })
 })
 

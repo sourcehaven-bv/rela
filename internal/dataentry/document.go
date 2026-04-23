@@ -370,32 +370,44 @@ var hrefRegex = regexp.MustCompile(`href="([^"]*)"`)
 // so we can emit a clear warning for users who haven't migrated yet.
 var legacySchemeRegex = regexp.MustCompile(`^(edit|create)://`)
 
-// RewriteDocumentLinks walks all href="..." attributes in rendered HTML and
-// appends a return_to query parameter to any that target a frontend route
-// that honors it (today: form-create and form-edit). Non-form internal
-// links, external URLs, anchors, and mailto: are left untouched.
+// RewriteDocumentLinks walks all href="..." attributes in rendered HTML and:
 //
-// Unknown internal paths (those that don't match any catalog pattern) log
-// a warning and pass through unchanged. Legacy edit:// / create:// schemes
-// also log a warning — they are no longer rewritten; authors should migrate
-// to app-relative paths (e.g. /form/<form_id>/<entity_id>).
+//  1. Appends a return_to query parameter to any href that targets a frontend
+//     route that honors it (today: form-create and form-edit).
+//  2. Emits a stable id="edit-<entity-id>-<n>" / id="create-<form>-<n>" on
+//     each form link so the SPA's document click handler can record a
+//     scroll-back anchor that survives title/content edits.
+//
+// Non-form internal links, external URLs, anchors, and mailto: are left
+// untouched. Unknown internal paths log a warning and pass through. Legacy
+// edit:// / create:// schemes also log a warning — they are no longer
+// rewritten; authors should migrate to app-relative paths.
+//
+// The per-entity counter (<n>) disambiguates multiple links to the same
+// entity within a single rendered document. It increments in document
+// order, so re-renders that produce the same link sequence yield the
+// same ids — scroll-back is stable across re-renders.
 func RewriteDocumentLinks(htmlContent, returnPath string, m routeMatcher, log *slog.Logger) string {
 	if log == nil {
 		log = slog.Default()
 	}
+	occ := map[string]int{} // scroll-anchor id → next available suffix
 	return hrefRegex.ReplaceAllStringFunc(htmlContent, func(match string) string {
 		parts := hrefRegex.FindStringSubmatch(match)
 		if len(parts) != 2 {
 			return match
 		}
-		return rewriteHref(parts[1], returnPath, m, log)
+		return rewriteHref(parts[1], returnPath, m, log, occ)
 	})
 }
 
 // rewriteHref inspects a single href value and returns the replacement
-// href="..." token. It preserves the attribute shell so callers get a
-// syntactically intact HTML fragment back regardless of which branch fires.
-func rewriteHref(href, returnPath string, m routeMatcher, log *slog.Logger) string {
+// attribute fragment for the enclosing <a>. For form routes this is
+// [id="..." href="..."]; for everything else it's just href="...".
+//
+// occ is a per-render map tracking how many times each anchor-id base
+// has been used, so duplicate entity links get -0, -1, -2 suffixes.
+func rewriteHref(href, returnPath string, m routeMatcher, log *slog.Logger, occ map[string]int) string {
 	switch {
 	case href == "":
 		return `href=""`
@@ -418,16 +430,14 @@ func rewriteHref(href, returnPath string, m routeMatcher, log *slog.Logger) stri
 		return fmt.Sprintf(`href="%s"`, href)
 	}
 
-	// Form routes: append return_to verbatim. We deliberately do NOT add
-	// a #<entity-id> suffix here — goldmark's auto-generated heading ids
-	// don't match a predictable pattern (they slugify heading text, which
-	// often includes link URLs), so a fragment we synthesize here rarely
-	// hits a real anchor. The frontend's document click handler appends
-	// the nearest-ancestor element id to return_to at click time, which
-	// always matches whatever goldmark emitted.
-	//
-	// When returnPath is empty, there's nothing useful to inject; leave
-	// the query and fragment alone.
+	// Scroll-anchor id — always assigned for edit/create form links so the
+	// click handler can record it as the scroll-back target.
+	anchorID := formAnchorID(base, occ)
+
+	// When returnPath is empty, there's nothing useful to inject; keep
+	// query + fragment untouched but still emit the id so at least the
+	// scroll-back anchor is in place for any later render that supplies
+	// returnPath.
 	if returnPath == "" {
 		out := base
 		if existingQuery != "" {
@@ -436,7 +446,7 @@ func rewriteHref(href, returnPath string, m routeMatcher, log *slog.Logger) stri
 		if fragment != "" {
 			out += "#" + fragment
 		}
-		return fmt.Sprintf(`href="%s"`, out)
+		return attrs(anchorID, out)
 	}
 
 	// Strip any pre-existing return_to (authors shouldn't set it, but they
@@ -457,7 +467,50 @@ func rewriteHref(href, returnPath string, m routeMatcher, log *slog.Logger) stri
 	if fragment != "" {
 		out += "#" + fragment
 	}
-	return fmt.Sprintf(`href="%s"`, out)
+	return attrs(anchorID, out)
+}
+
+// attrs stitches id + href into the anchor-attribute fragment hrefRegex
+// replaces. id goes first so a reader's eye catches the scroll target
+// before the URL; HTML attribute order is insignificant to browsers.
+func attrs(id, href string) string {
+	if id == "" {
+		return fmt.Sprintf(`href="%s"`, href)
+	}
+	return fmt.Sprintf(`id="%s" href="%s"`, id, href)
+}
+
+// formAnchorID returns a stable scroll-anchor id for a form-route path,
+// incrementing the per-base counter so duplicate links get distinct ids.
+//
+//	/form/<name>/<entityID>  →  edit-<entityID-lowered>-<n>
+//	/form/<name>             →  create-<name-lowered>-<n>
+//
+// The base lookup is lowercased for case-insensitive stability (entity
+// ids are conventionally uppercase, but a typo "prs-bf-7hn6" in an href
+// should still produce the same id).
+func formAnchorID(base string, occ map[string]int) string {
+	const formPrefix = "/form/"
+	if !strings.HasPrefix(base, formPrefix) {
+		return ""
+	}
+	rest := base[len(formPrefix):]
+	slash := strings.Index(rest, "/")
+	var key string
+	if slash < 0 {
+		// create form: /form/<name>
+		key = "create-" + strings.ToLower(rest)
+	} else {
+		// edit form: /form/<name>/<entity-id>
+		entityID := rest[slash+1:]
+		if entityID == "" {
+			return ""
+		}
+		key = "edit-" + strings.ToLower(entityID)
+	}
+	n := occ[key]
+	occ[key] = n + 1
+	return fmt.Sprintf("%s-%d", key, n)
 }
 
 // stripQueryKey removes every occurrence of key (and its value) from a raw

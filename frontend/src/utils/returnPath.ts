@@ -14,6 +14,29 @@
  * on rejection. Callers should treat `""` as "no redirect target."
  */
 /**
+ * buildReturnTo canonicalises a same-origin path for round-tripping.
+ *
+ * Takes a path (typically `route.fullPath`) and an optional list of
+ * query keys to drop — useful for dropping render-only flags like
+ * `refresh=true` that shouldn't survive back to the submit redirect.
+ *
+ * The fragment (#...) is always stripped: it is a scroll target, not
+ * part of the page identity, and leaving it in would cause it to
+ * propagate into every rewritten form link's return_to on re-render.
+ *
+ * Returns the normalised path (via isSafeReturnPath) or the empty string
+ * if the input isn't safe.
+ */
+export function buildReturnTo(path: string, dropKeys: string[] = []): string {
+  const safe = isSafeReturnPath(path)
+  if (!safe) return ''
+  const u = new URL(safe, 'https://placeholder.invalid')
+  u.hash = ''
+  for (const k of dropKeys) u.searchParams.delete(k)
+  return u.pathname + (u.search || '')
+}
+
+/**
  * readReturnTo extracts a safe return_to value from a vue-router query.
  *
  * vue-router gives `route.query` values as `string | string[] | null`

@@ -43,22 +43,28 @@ describe('createDocumentClickHandler', () => {
     expect(router.push).not.toHaveBeenCalled()
   })
 
-  it('appends nearest-ancestor id to return_to as a #fragment', () => {
+  it('appends the anchor\'s id to return_to as a #fragment', () => {
+    // The server emits id="edit-<entity>-<n>" on every form link so the
+    // scroll-back anchor is stable across title edits.
     const router = { push: vi.fn() }
     const handler = createDocumentClickHandler(router as never)
-    // Link is inside <h2 id="biz"> — we expect the handler to rewrite
-    // return_to from /entity to /entity#biz.
     const { evt } = clickInDOM(
-      '<h2 id="biz"><a href="/form/foo?return_to=%2Fentity%2Fticket%2FX">edit</a></h2>',
+      '<h2 id="biz"><a id="edit-prs-bf-7hn6-0" href="/form/bf/PRS-BF-7HN6?return_to=%2Fdoc">edit</a></h2>',
       'a',
     )
 
     handler(evt)
 
-    expect(router.push).toHaveBeenCalledWith('/form/foo?return_to=%2Fentity%2Fticket%2FX%23biz')
+    expect(router.push).toHaveBeenCalledWith(
+      '/form/bf/PRS-BF-7HN6?return_to=%2Fdoc%23edit-prs-bf-7hn6-0',
+    )
   })
 
-  it('does not touch return_to when no element in the doc has an id', () => {
+  it('leaves return_to alone when the anchor has no id', () => {
+    // Non-form links (e.g. /entity/..., /list/...) never have return_to
+    // injected by the server in the first place, so this path rarely
+    // fires in production — but if a return_to is present and the
+    // clicked anchor has no id, we pass through without a fragment.
     const router = { push: vi.fn() }
     const handler = createDocumentClickHandler(router as never)
     const { evt } = clickInDOM(
@@ -71,52 +77,12 @@ describe('createDocumentClickHandler', () => {
     expect(router.push).toHaveBeenCalledWith('/form/foo?return_to=%2Fentity%2Fticket%2FX')
   })
 
-  it('finds preceding heading id when link is in a following sibling', () => {
-    // Table-row case: link is inside <tr>, not inside the <h2>. The
-    // closest-ancestor walk misses the heading, but the preceding-id
-    // walk catches it.
-    const router = { push: vi.fn() }
-    const handler = createDocumentClickHandler(router as never)
-    const { evt } = clickInDOM(
-      `<h2 id="biz">Businessfuncties</h2>
-       <table><tr><td><a href="/form/bf/BF-001?return_to=%2Fentity%2Fapp%2FA">edit</a></td></tr></table>`,
-      'a',
-    )
-
-    handler(evt)
-
-    expect(router.push).toHaveBeenCalledWith(
-      '/form/bf/BF-001?return_to=%2Fentity%2Fapp%2FA%23biz',
-    )
-  })
-
-  it('ignores ids on elements outside the rendered document body', () => {
-    // The app shell has id="app"; the handler must not treat that as
-    // an anchor inside the document. With no in-doc id, return_to is
-    // left unchanged.
-    document.body.innerHTML = `
-      <div id="app">
-        <div class="document-body">
-          <p><a href="/form/foo?return_to=%2Fentity%2Fx">edit</a></p>
-        </div>
-      </div>`
-    const target = document.querySelector('a') as HTMLElement
-    const evt = new MouseEvent('click', { bubbles: true, cancelable: true })
-    Object.defineProperty(evt, 'target', { value: target, writable: false })
-
-    const router = { push: vi.fn() }
-    const handler = createDocumentClickHandler(router as never)
-    handler(evt)
-
-    expect(router.push).toHaveBeenCalledWith('/form/foo?return_to=%2Fentity%2Fx')
-  })
-
   it('leaves return_to alone when it already has a hash', () => {
     const router = { push: vi.fn() }
     const handler = createDocumentClickHandler(router as never)
     // Author-supplied return_to already has #explicit-anchor; don't clobber.
     const { evt } = clickInDOM(
-      '<h2 id="biz"><a href="/form/foo?return_to=%2Fx%23explicit">edit</a></h2>',
+      '<a id="edit-x-0" href="/form/foo?return_to=%2Fx%23explicit">edit</a>',
       'a',
     )
 
