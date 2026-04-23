@@ -1987,8 +1987,6 @@ passes because `/form/:id/:entityId` matches, even if `anything` isn't a
 real form in your project — form existence is validated when the user
 actually clicks.
 
-Run `rela-server routes` to see the full catalogue with helper-name mapping.
-
 ### Caching and live-reload
 
 - **Command renders** are cached on disk (`.rela/documents/<entry>-<hash>.html`).

@@ -37,15 +37,6 @@ func (s *stringSliceFlag) Set(v string) error { *s = append(*s, v); return nil }
 
 // coverage-ignore: main function - entry point
 func main() {
-	// Subcommand dispatch. When rela-server is invoked with a known
-	// subcommand as the first positional arg, delegate to its handler.
-	// Otherwise fall through to the server-startup flow that has always
-	// been the default, so existing `rela-server -project . -port 8080`
-	// invocations keep working.
-	if len(os.Args) > 1 && os.Args[1] == "routes" {
-		os.Exit(runRoutesCmd(os.Args[2:]))
-	}
-
 	projectDir := flag.String("project", ".", "Path to the rela project directory")
 	port := flag.String("port", "8080", "HTTP port to listen on")
 	bind := flag.String("bind", "127.0.0.1",

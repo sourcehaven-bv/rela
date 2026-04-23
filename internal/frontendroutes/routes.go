@@ -1,8 +1,8 @@
 // Package frontendroutes is the Go-side catalog of the data-entry SPA's
 // Vue Router routes. It is the single source of truth consumed by the Lua
-// rela.url helper, the document link rewriter, and the rela-server routes
-// subcommand. A parity test in internal/frontendparity fails CI if the
-// catalog drifts from frontend/src/router/index.ts.
+// rela.url helper and the document link rewriter. A parity test in
+// internal/frontendparity fails CI if the catalog drifts from
+// frontend/src/router/index.ts.
 //
 // The package is stdlib-only and stateless: exported functions operate on
 // a private routes slice. No constructor required.
@@ -18,7 +18,6 @@ type Route struct {
 	Name            string // e.g. "form-edit"
 	Path            string // e.g. "/form/:id/:entityId"
 	AcceptsReturnTo bool   // form routes use return_to for post-submit navigation
-	Notes           string // optional human-readable hint for rela-server routes
 }
 
 // MatchedRoute is returned by Match: the matched Route descriptor.
@@ -28,17 +27,17 @@ type MatchedRoute struct {
 
 var routes = []Route{
 	{Name: "dashboard", Path: "/dashboard"},
-	{Name: "list", Path: "/list/:id", Notes: "id = list id"},
-	{Name: "form-create", Path: "/form/:id", AcceptsReturnTo: true, Notes: "id = form id"},
-	{Name: "form-edit", Path: "/form/:id/:entityId", AcceptsReturnTo: true, Notes: "id = form id; entityId = entity being edited"},
-	{Name: "entity", Path: "/entity/:type/:id", Notes: "type = entity type; id = entity id"},
-	{Name: "view", Path: "/view/:id/:entityId", Notes: "id = view id; entityId = entity being rendered"},
-	{Name: "kanban", Path: "/kanban/:id", Notes: "id = kanban id"},
+	{Name: "list", Path: "/list/:id"},
+	{Name: "form-create", Path: "/form/:id", AcceptsReturnTo: true},
+	{Name: "form-edit", Path: "/form/:id/:entityId", AcceptsReturnTo: true},
+	{Name: "entity", Path: "/entity/:type/:id"},
+	{Name: "view", Path: "/view/:id/:entityId"},
+	{Name: "kanban", Path: "/kanban/:id"},
 	{Name: "search", Path: "/search"},
 	{Name: "analyze", Path: "/analyze"},
 	{Name: "settings", Path: "/settings"},
 	{Name: "conflicts", Path: "/conflicts"},
-	{Name: "document", Path: "/document/:name/:entityId", Notes: "name = document id; entityId = entity being rendered"},
+	{Name: "document", Path: "/document/:name/:entityId"},
 }
 
 // All returns every known route, sorted by name. The returned slice is a
