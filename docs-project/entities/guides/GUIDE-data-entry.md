@@ -1799,9 +1799,9 @@ how to produce the markdown — either a shell `command:` that writes markdown t
 stdout, or a Lua `script:` that does the same via the embedded runtime.
 Captured markdown is converted to HTML via goldmark. Links using
 app-relative paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`)
-resolve against the frontend route catalogue; form links get a `return_to`
-query param appended automatically so the user lands back on the document
-after submitting the form. See "Links in rendered documents" below.
+get a `return_to` query param appended automatically on form links so the
+user lands back on the document after submitting the form. See "Links in
+rendered documents" below.
 
 The frontend's `DocumentsPanel.vue` shows every document whose `entity_type`
 matches the current entity. SSE live-reload re-renders a document when the
@@ -1872,7 +1872,7 @@ print()
 for _, child in ipairs((rela.trace_from(entry.id, 2) or {children = {}}).children) do
   local e = rela.get_entity(child.id)
   if e then
-    -- rela.url.form_edit builds a verified edit-form URL; rela.url.detail
+    -- rela.url.form_edit builds an edit-form URL; rela.url.detail
     -- would be an alternative that links to the canonical detail page.
     local href = rela.url.form_edit("full_ticket", e)
     print("## [" .. e.id .. "](" .. href .. ")")
@@ -1899,10 +1899,10 @@ lines in the rendered output — that is intentionally loud.
 ### Links in rendered documents
 
 Documents link to anywhere in the SPA by writing app-relative paths. The
-goldmark→HTML step walks every `href="/..."` attribute, verifies it against
-the frontend route catalogue, and appends a `return_to` query param to any
-href targeting a form route so the user comes back to the document after
-submitting the form.
+goldmark→HTML step walks every `href="/..."` attribute and appends a
+`return_to` query param to hrefs targeting a form route (`/form/...`) so
+the user comes back to the document after submitting the form. Non-form
+internal links pass through unchanged.
 
 | Target                | Write this in markdown                          | Notes                               |
 |-----------------------|-------------------------------------------------|-------------------------------------|
@@ -1916,15 +1916,15 @@ submitting the form.
 
 The rewriter leaves non-form internal links alone (for now — individual
 route pages don't yet honour `return_to`; that's tracked as a follow-on).
-Unknown internal paths and the legacy `edit://` / `create://` schemes log a
-warning and pass through unchanged so downstream projects notice and migrate.
+The legacy `edit://` / `create://` schemes log a warning and pass through
+unchanged so downstream projects notice and migrate.
 
 ### Building links from Lua: `rela.url`
 
 Document scripts build URLs via the `rela.url` submodule. Each helper
-corresponds to one route kind the SPA exposes; every result is verified
-against the frontend route catalogue so a typo fails loudly at render
-time instead of a 404 in the browser.
+corresponds to one route kind the SPA exposes. Helpers are pure string
+builders — a typo in a form name produces a syntactically valid URL; the
+404 surfaces in the SPA when the user clicks.
 
 | Helper | Returns | Typical use |
 |--------|---------|-------------|
@@ -1987,11 +1987,6 @@ Form links get a `return_to` query parameter injected by the document
 link rewriter so submitting the form returns the user to the document.
 `return_to` is reserved — setting it in any helper's query table is
 rejected with a Lua error.
-
-The catalogue checks only the path *shape*: `rela.url.form_edit("anything", e)`
-passes because `/form/:id/:entityId` matches, even if `anything` isn't a
-real form in your project — form existence is validated when the user
-actually clicks.
 
 ### Caching and live-reload
 

@@ -268,13 +268,14 @@ func TestRewriteDocumentLinks(t *testing.T) {
 			wantWarn:   "removed scheme",
 		},
 
-		// Unknown internal path: warn + passthrough.
+		// Non-form internal path: passthrough without warning — the
+		// rewriter only cares about form routes for return_to + anchor
+		// injection; anything else is left alone.
 		{
-			name:       "unknown internal path warns and passes through",
+			name:       "non-form internal path passes through",
 			html:       `<a href="/nope/foo">Bogus</a>`,
 			returnPath: "/doc",
 			expected:   `<a href="/nope/foo">Bogus</a>`,
-			wantWarn:   "no matching frontend route",
 		},
 
 		// Goldmark emits & as &amp; in href values — rewriter must
@@ -333,7 +334,7 @@ func TestRewriteDocumentLinks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-			result := RewriteDocumentLinks(tt.html, tt.returnPath, matchFrontendRoute, log)
+			result := RewriteDocumentLinks(tt.html, tt.returnPath, log)
 			if result != tt.expected {
 				t.Errorf("RewriteDocumentLinks() =\n%s\nwant:\n%s", result, tt.expected)
 			}

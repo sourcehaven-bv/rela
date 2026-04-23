@@ -79,7 +79,6 @@ components:
 
   # Shared utilities
   errors:           { in: internal/errors }
-  frontendroutes:   { in: internal/frontendroutes }
   htmlutil:         { in: internal/htmlutil }
   natsort:          { in: internal/natsort }
 
@@ -130,7 +129,6 @@ deps:
     mayDependOn:
       - app
       - dataentry
-      - frontendroutes
       - lua
       - metamodel
       - project
@@ -145,7 +143,6 @@ deps:
       - app
       - dataentry
       - desktop
-      - frontendroutes
       - git
       - lua
       - metamodel
@@ -192,7 +189,6 @@ deps:
       - dataentryconfig
       - entitymanager
       - filter
-      - frontendroutes
       - git
       - htmlutil
       - lua

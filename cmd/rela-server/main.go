@@ -23,7 +23,6 @@ import (
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
-	"github.com/Sourcehaven-BV/rela/internal/frontendroutes"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -77,7 +76,6 @@ func main() {
 		ws.FS(), ws.Paths(), ws.Meta(), ws.Store(),
 		ws.EntityManager(), ws.Searcher(),
 		ws.StartWatching,
-		dataentry.WithRouteCatalog(frontendroutes.Has),
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError

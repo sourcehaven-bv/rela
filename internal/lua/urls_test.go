@@ -6,22 +6,12 @@ import (
 	"testing"
 )
 
-// newCatalog builds a RouteHasFunc from an allowlist of paths. Keeps the
-// Lua binding tests isolated from the frontendroutes package.
-func newCatalog(paths ...string) RouteHasFunc {
-	m := make(map[string]bool, len(paths))
-	for _, p := range paths {
-		m[p] = true
-	}
-	return func(path string) bool { return m[path] }
-}
-
-// newURLWriter builds a writer runtime with a supplied route-has func.
-func newURLWriter(t *testing.T, has RouteHasFunc) *Runtime {
+// newURLWriter builds a writer runtime wired with the rela.url bindings.
+func newURLWriter(t *testing.T) *Runtime {
 	t.Helper()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
-	r := NewWriter(ws.services("/tmp"), &buf, WithRouteCatalog(has))
+	r := NewWriter(ws.services("/tmp"), &buf)
 	t.Cleanup(r.Close)
 	return r
 }
@@ -41,46 +31,8 @@ func evalString(t *testing.T, r *Runtime, expr string) string {
 	return s.String()
 }
 
-func TestURL_notRegisteredWithoutOption(t *testing.T) {
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
-	err := r.RunString(`return rela.url.home()`)
-	if err == nil {
-		t.Fatal("expected error — rela.url should not be registered without WithRouteCatalog")
-	}
-	// Absent binding → Lua raises "attempt to index a nil value". No
-	// callable escape hatch anymore; the whole rela.url table is absent.
-	if !strings.Contains(err.Error(), "nil") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// -----------------------------------------------------------------------------
-// rela.url.* typed helpers
-// -----------------------------------------------------------------------------
-
-func urlHelperCatalog() RouteHasFunc {
-	return newCatalog(
-		"/form/full_ticket",
-		"/form/full_ticket/TKT-001",
-		"/form/quick_task",
-		"/entity/ticket/TKT-001",
-		"/list/all_tasks",
-		"/view/timeline/TKT-001",
-		"/kanban/sprint",
-		"/document/release_notes/REL-001",
-		"/dashboard",
-		"/search",
-		"/analyze",
-		"/settings",
-		"/conflicts",
-	)
-}
-
 func TestURLFormEdit(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket"})`)
 	want := "/form/full_ticket/TKT-001"
 	if got != want {
@@ -89,7 +41,7 @@ func TestURLFormEdit(t *testing.T) {
 }
 
 func TestURLFormCreate(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	cases := []struct {
 		name string
 		code string
@@ -141,7 +93,7 @@ func TestURLFormCreate(t *testing.T) {
 // the usual source of form-link query, and extra ad-hoc params on
 // edit URLs have no use case.
 func TestURLFormEdit_ignoresExtraTableKeys(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	got := evalString(t, r,
 		`rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket", source="doc"})`)
 	want := "/form/full_ticket/TKT-001"
@@ -151,7 +103,7 @@ func TestURLFormEdit_ignoresExtraTableKeys(t *testing.T) {
 }
 
 func TestURLForm_errors(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	cases := []struct {
 		name    string
 		code    string
@@ -173,11 +125,6 @@ func TestURLForm_errors(t *testing.T) {
 			wantSub: "cannot be empty",
 		},
 		{
-			name:    "form_create unknown form",
-			code:    `rela.url.form_create("nope")`,
-			wantSub: "unknown frontend route",
-		},
-		{
 			name:    "form_create relation key with prefix",
 			code:    `rela.url.form_create("full_ticket", {relations = {["rel.parent"] = "TKT-1"}})`,
 			wantSub: "forbidden characters",
@@ -197,7 +144,7 @@ func TestURLForm_errors(t *testing.T) {
 }
 
 func TestURLDetail(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.detail({id="TKT-001", type="ticket"})`)
 	want := "/entity/ticket/TKT-001"
 	if got != want {
@@ -206,7 +153,7 @@ func TestURLDetail(t *testing.T) {
 }
 
 func TestURLDetail_requiresFields(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	cases := []string{
 		`rela.url.detail({type="ticket"})`,          // no id
 		`rela.url.detail({id="TKT-001"})`,           // no type
@@ -224,7 +171,7 @@ func TestURLDetail_requiresFields(t *testing.T) {
 }
 
 func TestURLList(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	cases := []struct{ code, want string }{
 		{`rela.url.list("all_tasks")`, "/list/all_tasks"},
 		{`rela.url.list("all_tasks", {status = "open"})`, "/list/all_tasks?status=open"},
@@ -240,7 +187,7 @@ func TestURLList(t *testing.T) {
 }
 
 func TestURLView(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.view("timeline", {id="TKT-001", type="ticket"})`)
 	want := "/view/timeline/TKT-001"
 	if got != want {
@@ -249,7 +196,7 @@ func TestURLView(t *testing.T) {
 }
 
 func TestURLKanban(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.kanban("sprint")`)
 	if got != "/kanban/sprint" {
 		t.Errorf("got %q, want /kanban/sprint", got)
@@ -257,7 +204,7 @@ func TestURLKanban(t *testing.T) {
 }
 
 func TestURLDocument(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.document("release_notes", {id="REL-001", type="release"})`)
 	want := "/document/release_notes/REL-001"
 	if got != want {
@@ -268,7 +215,7 @@ func TestURLDocument(t *testing.T) {
 // Singleton-route helpers — one per route in the frontend catalog that
 // has no params. Each takes an optional bare query table.
 func TestURLSingletons(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	cases := []struct{ code, want string }{
 		{`rela.url.home()`, "/dashboard"},
 		{`rela.url.search()`, "/search"},
@@ -291,7 +238,7 @@ func TestURLSingletons(t *testing.T) {
 // same merge path as every non-form helper's bare query. Covers the
 // edge cases the old call-style tests exercised.
 func TestURLParams_validation(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	cases := []struct {
 		name    string
 		code    string
@@ -346,7 +293,7 @@ func TestURLParams_validation(t *testing.T) {
 // only; form_create keeps the three-sub-key opts shape because it has
 // genuinely three semantics (rel./prop./passthrough).
 func TestURLFormCreate_queryIsStillSubKey(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	got := evalString(t, r,
 		`rela.url.form_create("full_ticket", {
 			relations = {parent = "TKT-1"},
@@ -363,7 +310,7 @@ func TestURLFormCreate_queryIsStillSubKey(t *testing.T) {
 // edge cases (empty table, numeric/bool values, unicode, existing
 // query on path — not applicable here since helper builds its own).
 func TestURLNonFormHelpers_querySemantics(t *testing.T) {
-	r := newURLWriter(t, urlHelperCatalog())
+	r := newURLWriter(t)
 	cases := []struct{ code, want string }{
 		{`rela.url.list("all_tasks", {})`, "/list/all_tasks"},
 		{`rela.url.list("all_tasks", {b="2", a="1", c="3"})`, "/list/all_tasks?a=1&b=2&c=3"},

@@ -32,31 +32,15 @@ const scriptsDir = "scripts"
 //
 // Timeout is handled by lua.Runtime (default 30s, configurable via lua.WithTimeout).
 type Engine struct {
-	cache  *lua.Cache
-	routes lua.RouteHasFunc // nil unless the engine renders documents with rela.url
-}
-
-// EngineOption configures an Engine at construction.
-type EngineOption func(*Engine)
-
-// WithRouteCatalog wires a frontend-route catalog into the engine. When
-// set, ExecuteDocument registers rela.url on its runtimes. Other script
-// execution paths (ExecuteCode, ExecuteFile, ExecuteAction) never see it —
-// they have no frontend to target.
-func WithRouteCatalog(c lua.RouteHasFunc) EngineOption {
-	return func(e *Engine) { e.routes = c }
+	cache *lua.Cache
 }
 
 // NewEngine creates a script engine with a fresh Lua cache. Typically one
 // Engine is constructed per process; callers that create multiple engines
 // (e.g. in tests, or the CLI root + scheduler subcommand) get independent
 // caches, which is intentional — each Engine is a logical cache scope.
-func NewEngine(opts ...EngineOption) *Engine {
-	e := &Engine{cache: lua.NewCache()}
-	for _, opt := range opts {
-		opt(e)
-	}
-	return e
+func NewEngine() *Engine {
+	return &Engine{cache: lua.NewCache()}
 }
 
 // LuaCache exposes the Engine's shared Lua cache so callers that build
@@ -103,11 +87,6 @@ func (e *Engine) ExecuteFile(path string, deps lua.WriteDeps,
 // This method exists as a typed seam — intentionally NOT taking variadic
 // lua.Option — so callers cannot inject arbitrary opts (e.g., forge
 // WithOutputDir or WithActionMode). Mirrors the ExecuteAction shape.
-//
-// rela.url is registered here (and only here) via the engine's route
-// catalog. Other writer runtimes — CLI scripts, scheduler, MCP lua_run,
-// actions, automations — are not wired with a catalog: they have no
-// frontend to target and rela.url would be meaningless there.
 func (e *Engine) ExecuteDocument(
 	path string,
 	deps lua.WriteDeps,
@@ -124,9 +103,6 @@ func (e *Engine) ExecuteDocument(
 	opts := []lua.Option{
 		lua.WithDocumentMode(documentID, entryID),
 		lua.WithCache(e.cache),
-	}
-	if e.routes != nil {
-		opts = append(opts, lua.WithRouteCatalog(e.routes))
 	}
 	if timeout > 0 {
 		opts = append(opts, lua.WithTimeout(timeout))

@@ -11,20 +11,12 @@ import (
 )
 
 // registerURLModule installs the rela.url submodule. Each known frontend
-// route has a typed helper that returns a string URL, verified against
-// the route catalog (a typo like rela.url.form_edit("nope", e) fails
-// loudly at render time instead of a 404 in the browser).
-//
-// The registration is a no-op when no catalog is wired — same pattern as
-// rela.cache — so runtimes outside document renders don't expose rela.url
-// at all. Authors in those contexts who try to build URLs get an
-// "attempt to index a nil value" Lua error, which is clearer than a
-// helper that silently returns an unverified string.
+// route has a typed helper that returns a string URL. Helpers construct
+// their paths from the known route shapes; there is no round-trip
+// verification step — a typo in a form name is only noticed when the
+// user actually clicks the link, at which point the frontend surfaces a
+// clear "form not found" error.
 func (r *Runtime) registerURLModule(rela *glua.LTable) {
-	if r.routes == nil {
-		return
-	}
-
 	tbl := r.L.NewTable()
 	// Form routes — split by mode so the author's intent is explicit.
 	r.L.SetField(tbl, "form_edit", r.L.NewFunction(r.luaURLFormEdit))
@@ -45,16 +37,12 @@ func (r *Runtime) registerURLModule(rela *glua.LTable) {
 	r.L.SetField(rela, "url", tbl)
 }
 
-// buildVerifiedURL is the engine behind every url helper. It splits the
-// raw path, verifies it against the catalog, merges any existing query
-// with the caller-supplied params map, and returns the final string.
-// All Go-side helpers (luaURLForm, luaURLDetail, ...) assemble a raw path
-// and delegate here.
-func (r *Runtime) buildVerifiedURL(rawPath string, extra *glua.LTable) (string, error) {
+// buildURLWithExtra is the engine behind every url helper. It splits the
+// raw path, merges any existing query with the caller-supplied params
+// map, and returns the final string. All Go-side helpers (luaURLForm,
+// luaURLDetail, ...) assemble a raw path and delegate here.
+func (r *Runtime) buildURLWithExtra(rawPath string, extra *glua.LTable) (string, error) {
 	base, existingQuery, fragment := splitPathQueryFragment(rawPath)
-	if !r.routes(base) {
-		return "", fmt.Errorf("unknown frontend route: %s", base)
-	}
 	values, err := existingQueryValues(existingQuery)
 	if err != nil {
 		return "", fmt.Errorf("rela.url: invalid query on path %q: %s", rawPath, err.Error())
@@ -225,11 +213,10 @@ func (r *Runtime) luaURLConflicts(ls *glua.LState) int {
 // Small helpers shared across the typed bindings.
 // -----------------------------------------------------------------------------
 
-// emitURL verifies a helper-built path + optional Lua extra-query table
-// and pushes the resulting URL onto the Lua stack. Raises on verification
-// failure.
+// emitURL builds a URL from a helper-provided path + optional Lua
+// extra-query table and pushes it onto the Lua stack.
 func (r *Runtime) emitURL(ls *glua.LState, path string, extra *glua.LTable) int {
-	out, err := r.buildVerifiedURL(path, extra)
+	out, err := r.buildURLWithExtra(path, extra)
 	if err != nil {
 		ls.RaiseError("%s", err.Error())
 		return 0
@@ -239,13 +226,9 @@ func (r *Runtime) emitURL(ls *glua.LState, path string, extra *glua.LTable) int 
 }
 
 // emitURLFromMap is the same as emitURL but takes a pre-folded Go map —
-// used when a helper has already walked Lua tables (e.g. form's create mode).
+// used when a helper has already walked Lua tables (e.g. form_create).
 func (r *Runtime) emitURLFromMap(ls *glua.LState, path string, query map[string]string) int {
 	base, existingQuery, fragment := splitPathQueryFragment(path)
-	if !r.routes(base) {
-		ls.RaiseError("unknown frontend route: %s", base)
-		return 0
-	}
 	values, err := existingQueryValues(existingQuery)
 	if err != nil {
 		ls.RaiseError("rela.url: invalid query on path %q: %s", path, err.Error())

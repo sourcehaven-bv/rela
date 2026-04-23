@@ -23,23 +23,31 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/frontendroutes"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// matchFrontendRoute adapts frontendroutes.Match to the local matchedRoute
-// shape, exposing only AcceptsReturnTo (what the rewriter actually uses).
-// Satisfies routeMatcherFunc directly — call sites pass it straight into
-// RewriteDocumentLinks.
-func matchFrontendRoute(path string) (matchedRoute, bool) {
-	m, ok := frontendroutes.Match(path)
-	if !ok {
-		return matchedRoute{}, false
+// isFormRoute reports whether the given path targets /form/:id (create)
+// or /form/:id/:entityId (edit). Only form routes honor return_to, so
+// that's the single decision the rewriter needs from the frontend route
+// shape.
+func isFormRoute(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/form/")
+	if !ok || rest == "" {
+		return false
 	}
-	return matchedRoute{AcceptsReturnTo: m.Route.AcceptsReturnTo}, true
+	segments := strings.Split(rest, "/")
+	if len(segments) > 2 {
+		return false
+	}
+	for _, s := range segments {
+		if s == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // documentScriptEngine is the minimum contract documentService needs from
@@ -343,18 +351,6 @@ func markdownToHTML(markdown string) (string, error) {
 	return result, nil
 }
 
-// routeMatcherFunc is the minimum surface RewriteDocumentLinks needs from
-// the frontend route catalog: given a literal path, report whether it
-// matches a known route and whether that route honors return_to. Defined
-// at the call site so this package does not import the catalog package
-// just for its type; the caller passes matchFrontendRoute directly.
-type routeMatcherFunc func(path string) (matchedRoute, bool)
-
-// matchedRoute is the subset of a matched route the rewriter cares about.
-type matchedRoute struct {
-	AcceptsReturnTo bool
-}
-
 // hrefRegex matches href attribute values in rendered HTML. The value is
 // captured raw so downstream logic can distinguish internal, external,
 // anchor-only, and legacy-scheme links.
@@ -381,7 +377,7 @@ var legacySchemeRegex = regexp.MustCompile(`^(edit|create)://`)
 // entity within a single rendered document. It increments in document
 // order, so re-renders that produce the same link sequence yield the
 // same ids — scroll-back is stable across re-renders.
-func RewriteDocumentLinks(htmlContent, returnPath string, match routeMatcherFunc, log *slog.Logger) string {
+func RewriteDocumentLinks(htmlContent, returnPath string, log *slog.Logger) string {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -391,7 +387,7 @@ func RewriteDocumentLinks(htmlContent, returnPath string, match routeMatcherFunc
 		if len(parts) != 2 {
 			return m
 		}
-		return rewriteHref(parts[1], returnPath, match, log, occ)
+		return rewriteHref(parts[1], returnPath, log, occ)
 	})
 }
 
@@ -401,7 +397,7 @@ func RewriteDocumentLinks(htmlContent, returnPath string, match routeMatcherFunc
 //
 // occ is a per-render map tracking how many times each anchor-id base
 // has been used, so duplicate entity links get -0, -1, -2 suffixes.
-func rewriteHref(href, returnPath string, match routeMatcherFunc, log *slog.Logger, occ map[string]int) string {
+func rewriteHref(href, returnPath string, log *slog.Logger, occ map[string]int) string {
 	switch {
 	case href == "":
 		return `href=""`
@@ -415,12 +411,8 @@ func rewriteHref(href, returnPath string, match routeMatcherFunc, log *slog.Logg
 	}
 
 	base, existingQuery, fragment := splitHref(href)
-	route, ok := match(base)
-	if !ok {
-		log.Warn("document link has no matching frontend route", "href", href)
-		return fmt.Sprintf(`href="%s"`, href)
-	}
-	if !route.AcceptsReturnTo {
+	if !isFormRoute(base) {
+		// Only form routes honor return_to; everything else passes through.
 		return fmt.Sprintf(`href="%s"`, href)
 	}
 
