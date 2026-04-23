@@ -6,29 +6,22 @@ import (
 	"testing"
 )
 
-// fakeCatalog is a minimal RouteCatalog for tests — an allowlist of paths
-// that Has reports true for. Keeps the Lua binding tests isolated from the
-// frontendroutes package.
-type fakeCatalog struct {
-	known map[string]bool
-}
-
-func (f fakeCatalog) Has(path string) bool { return f.known[path] }
-
-func newCatalog(paths ...string) fakeCatalog {
+// newCatalog builds a RouteHasFunc from an allowlist of paths. Keeps the
+// Lua binding tests isolated from the frontendroutes package.
+func newCatalog(paths ...string) RouteHasFunc {
 	m := make(map[string]bool, len(paths))
 	for _, p := range paths {
 		m[p] = true
 	}
-	return fakeCatalog{known: m}
+	return func(path string) bool { return m[path] }
 }
 
-// newURLWriter builds a writer runtime with a supplied route catalog.
-func newURLWriter(t *testing.T, cat RouteCatalog) *Runtime {
+// newURLWriter builds a writer runtime with a supplied route-has func.
+func newURLWriter(t *testing.T, has RouteHasFunc) *Runtime {
 	t.Helper()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
-	r := NewWriter(ws.services("/tmp"), &buf, WithRouteCatalog(cat))
+	r := NewWriter(ws.services("/tmp"), &buf, WithRouteCatalog(has))
 	t.Cleanup(r.Close)
 	return r
 }
@@ -68,7 +61,7 @@ func TestURL_notRegisteredWithoutOption(t *testing.T) {
 // rela.url.* typed helpers
 // -----------------------------------------------------------------------------
 
-func urlHelperCatalog() fakeCatalog {
+func urlHelperCatalog() RouteHasFunc {
 	return newCatalog(
 		"/form/full_ticket",
 		"/form/full_ticket/TKT-001",

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -334,7 +333,7 @@ func TestRewriteDocumentLinks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-			result := RewriteDocumentLinks(tt.html, tt.returnPath, routeMatcherFunc(matchFrontendRoute), log)
+			result := RewriteDocumentLinks(tt.html, tt.returnPath, matchFrontendRoute, log)
 			if result != tt.expected {
 				t.Errorf("RewriteDocumentLinks() =\n%s\nwant:\n%s", result, tt.expected)
 			}
@@ -390,24 +389,6 @@ func TestDocumentDiskCache(t *testing.T) {
 
 		if string(data1) != "content1" || string(data2) != "content2" {
 			t.Error("cache files should be independent")
-		}
-	})
-}
-
-func TestDocumentRenderConfig(t *testing.T) {
-	t.Run("default timeout", func(t *testing.T) {
-		cfg := documentRenderConfig{}
-		if cfg.Timeout != 0 {
-			t.Errorf("expected zero timeout for unset, got %v", cfg.Timeout)
-		}
-	})
-
-	t.Run("custom timeout", func(t *testing.T) {
-		cfg := documentRenderConfig{
-			Timeout: 60 * time.Second,
-		}
-		if cfg.Timeout != 60*time.Second {
-			t.Errorf("expected 60s timeout, got %v", cfg.Timeout)
 		}
 	})
 }

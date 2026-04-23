@@ -32,7 +32,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/frontendroutes"
 	"github.com/Sourcehaven-BV/rela/internal/git"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
@@ -147,7 +146,7 @@ func (d *Desktop) LoadProject(dir string) string {
 		fs, projCtx, ws.Meta(), ws.Store(),
 		ws.EntityManager(), ws.Searcher(),
 		ws.StartWatching,
-		dataentry.WithRouteCatalog(lua.RouteCatalogFunc(frontendroutes.Has)),
+		dataentry.WithRouteCatalog(frontendroutes.Has),
 	)
 	if err != nil {
 		d.mu.Lock()

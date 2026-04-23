@@ -79,7 +79,7 @@ type Runtime struct {
 	documentEntry string            // ID of the entity being rendered, exposed as rela.document.entry_id
 	aiProvider    ai.Provider       // nil means AI is not configured
 	cache         cacheStore        // nil means rela.cache.* is not registered
-	routes        RouteCatalog      // nil means rela.url is not registered
+	routes        RouteHasFunc      // nil means rela.url is not registered
 	scriptPath    string            // set by RunFile; empty for RunString/inline
 }
 

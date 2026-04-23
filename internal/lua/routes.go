@@ -1,27 +1,19 @@
 package lua
 
-// RouteCatalog is the minimum surface rela.url needs: verify whether a literal
-// path matches a known frontend-route pattern. Defined at the call site per
-// CLAUDE.md so internal/lua does not import the concrete catalog package.
-//
-// The catalog is stateless config, not a graph capability — it is wired in
-// via WithRouteCatalog rather than on ReadDeps/WriteDeps.
-type RouteCatalog interface {
-	Has(path string) bool
-}
+// RouteHasFunc verifies whether a literal path matches a known
+// frontend-route pattern. It's the minimum surface rela.url needs and
+// the only thing the Lua runtime knows about the route catalog — defined
+// here per CLAUDE.md so internal/lua does not import the concrete
+// catalog package. The actual route catalog (internal/frontendroutes)
+// exports a package-level Has function that satisfies this type.
+type RouteHasFunc func(path string) bool
 
-// RouteCatalogFunc adapts a plain function into a RouteCatalog, so callers
-// can pass frontendroutes.Has directly without defining a wrapper type.
-type RouteCatalogFunc func(path string) bool
-
-// Has satisfies RouteCatalog.
-func (f RouteCatalogFunc) Has(path string) bool { return f(path) }
-
-// WithRouteCatalog wires a route catalog into the runtime so rela.url is
-// registered on the rela table. If unset, rela.url is absent (same pattern
-// as rela.cache), and any call from Lua raises "attempt to call a nil value".
-func WithRouteCatalog(c RouteCatalog) Option {
+// WithRouteCatalog wires a route-has function into the runtime so
+// rela.url is registered on the rela table. If unset, rela.url is absent
+// (same pattern as rela.cache), and any access from Lua raises
+// "attempt to index a nil value".
+func WithRouteCatalog(has RouteHasFunc) Option {
 	return func(r *Runtime) {
-		r.routes = c
+		r.routes = has
 	}
 }

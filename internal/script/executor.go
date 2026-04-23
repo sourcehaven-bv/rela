@@ -33,7 +33,7 @@ const scriptsDir = "scripts"
 // Timeout is handled by lua.Runtime (default 30s, configurable via lua.WithTimeout).
 type Engine struct {
 	cache  *lua.Cache
-	routes lua.RouteCatalog // nil unless the engine renders documents with rela.url
+	routes lua.RouteHasFunc // nil unless the engine renders documents with rela.url
 }
 
 // EngineOption configures an Engine at construction.
@@ -43,7 +43,7 @@ type EngineOption func(*Engine)
 // set, ExecuteDocument registers rela.url on its runtimes. Other script
 // execution paths (ExecuteCode, ExecuteFile, ExecuteAction) never see it —
 // they have no frontend to target.
-func WithRouteCatalog(c lua.RouteCatalog) EngineOption {
+func WithRouteCatalog(c lua.RouteHasFunc) EngineOption {
 	return func(e *Engine) { e.routes = c }
 }
 

@@ -52,7 +52,7 @@ func (r *Runtime) registerURLModule(rela *glua.LTable) {
 // and delegate here.
 func (r *Runtime) buildVerifiedURL(rawPath string, extra *glua.LTable) (string, error) {
 	base, existingQuery, fragment := splitPathQueryFragment(rawPath)
-	if !r.routes.Has(base) {
+	if !r.routes(base) {
 		return "", fmt.Errorf("unknown frontend route: %s", base)
 	}
 	values, err := existingQueryValues(existingQuery)
@@ -242,7 +242,7 @@ func (r *Runtime) emitURL(ls *glua.LState, path string, extra *glua.LTable) int 
 // used when a helper has already walked Lua tables (e.g. form's create mode).
 func (r *Runtime) emitURLFromMap(ls *glua.LState, path string, query map[string]string) int {
 	base, existingQuery, fragment := splitPathQueryFragment(path)
-	if !r.routes.Has(base) {
+	if !r.routes(base) {
 		ls.RaiseError("unknown frontend route: %s", base)
 		return 0
 	}

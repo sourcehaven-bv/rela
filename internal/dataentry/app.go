@@ -220,15 +220,15 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 type AppOption func(*appConfig)
 
 type appConfig struct {
-	routeCatalog lua.RouteCatalog
+	routeCatalog lua.RouteHasFunc
 }
 
 // WithRouteCatalog wires a frontend-route catalog into the app's internal
 // script engine, enabling `rela.url` inside document renders. Pass
-// frontendroutes.Has via lua.RouteCatalogFunc. If unset, document scripts
-// can still run but `rela.url` is absent from the rela table.
-func WithRouteCatalog(c lua.RouteCatalog) AppOption {
-	return func(ac *appConfig) { ac.routeCatalog = c }
+// frontendroutes.Has directly. If unset, document scripts can still run
+// but `rela.url` is absent from the rela table.
+func WithRouteCatalog(has lua.RouteHasFunc) AppOption {
+	return func(ac *appConfig) { ac.routeCatalog = has }
 }
 
 func NewApp(

@@ -155,16 +155,18 @@ function scrollToAnchorWhenReady(hash: string, abort: () => boolean) {
     // Initial jump.
     reScroll()
 
-    // Observe mutations below .document-body (mermaid svg injection,
-    // v-html + DOMPurify passes, lazy-rendered tables). Each mutation
-    // gets a re-scroll. Fall back to an interval tick as a safety net
-    // for cases where layout shifts without a DOM mutation (e.g. web
-    // fonts reflowing). Stop after SETTLE_TIMEOUT_MS or on user action.
+    // Observe mutations below .document-body (v-html + DOMPurify passes,
+    // lazy-rendered tables, image loads). Each mutation triggers a
+    // re-scroll. Mermaid rendering emits a dedicated `rela:mermaid-rendered`
+    // event once all diagrams for a container have been swapped in — we
+    // listen for that directly instead of polling, since mermaid is the
+    // main source of post-mount layout shift. Stop after SETTLE_TIMEOUT_MS
+    // or on user action.
     const container = el.closest('.document-body') || document.body
     const mo = new MutationObserver(reScroll)
     mo.observe(container, { childList: true, subtree: true, characterData: true })
 
-    const poll = window.setInterval(reScroll, 100)
+    container.addEventListener('rela:mermaid-rendered', reScroll)
     const deadline = window.setTimeout(cleanup, SETTLE_TIMEOUT_MS)
     const abortTick = window.setInterval(() => {
       if (abort()) cleanup()
@@ -175,7 +177,7 @@ function scrollToAnchorWhenReady(hash: string, abort: () => boolean) {
 
     function cleanup() {
       mo.disconnect()
-      window.clearInterval(poll)
+      container.removeEventListener('rela:mermaid-rendered', reScroll)
       window.clearTimeout(deadline)
       window.clearInterval(abortTick)
       window.removeEventListener('wheel', onUserScroll)

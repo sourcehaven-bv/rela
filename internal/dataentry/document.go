@@ -30,9 +30,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// matchFrontendRoute adapts frontendroutes.Match to the local routeMatcher
-// interface, exposing only AcceptsReturnTo (what the rewriter actually uses).
-// Call sites wrap it with routeMatcherFunc to satisfy the interface.
+// matchFrontendRoute adapts frontendroutes.Match to the local matchedRoute
+// shape, exposing only AcceptsReturnTo (what the rewriter actually uses).
+// Satisfies routeMatcherFunc directly — call sites pass it straight into
+// RewriteDocumentLinks.
 func matchFrontendRoute(path string) (matchedRoute, bool) {
 	m, ok := frontendroutes.Match(path)
 	if !ok {
@@ -342,24 +343,17 @@ func markdownToHTML(markdown string) (string, error) {
 	return result, nil
 }
 
-// routeMatcher is the minimum surface RewriteDocumentLinks needs from the
-// frontend route catalog: given a literal path, report whether it matches a
-// known route and whether that route honors return_to. Defined at the call
-// site so this package does not import the catalog package just for its
-// type; the caller passes an adapter (see matchFrontendRoute).
-type routeMatcher interface {
-	Match(path string) (matchedRoute, bool)
-}
+// routeMatcherFunc is the minimum surface RewriteDocumentLinks needs from
+// the frontend route catalog: given a literal path, report whether it
+// matches a known route and whether that route honors return_to. Defined
+// at the call site so this package does not import the catalog package
+// just for its type; the caller passes matchFrontendRoute directly.
+type routeMatcherFunc func(path string) (matchedRoute, bool)
 
 // matchedRoute is the subset of a matched route the rewriter cares about.
 type matchedRoute struct {
 	AcceptsReturnTo bool
 }
-
-// routeMatcherFunc adapts a plain function into a routeMatcher.
-type routeMatcherFunc func(path string) (matchedRoute, bool)
-
-func (f routeMatcherFunc) Match(path string) (matchedRoute, bool) { return f(path) }
 
 // hrefRegex matches href attribute values in rendered HTML. The value is
 // captured raw so downstream logic can distinguish internal, external,
@@ -387,17 +381,17 @@ var legacySchemeRegex = regexp.MustCompile(`^(edit|create)://`)
 // entity within a single rendered document. It increments in document
 // order, so re-renders that produce the same link sequence yield the
 // same ids — scroll-back is stable across re-renders.
-func RewriteDocumentLinks(htmlContent, returnPath string, m routeMatcher, log *slog.Logger) string {
+func RewriteDocumentLinks(htmlContent, returnPath string, match routeMatcherFunc, log *slog.Logger) string {
 	if log == nil {
 		log = slog.Default()
 	}
 	occ := map[string]int{} // scroll-anchor id → next available suffix
-	return hrefRegex.ReplaceAllStringFunc(htmlContent, func(match string) string {
-		parts := hrefRegex.FindStringSubmatch(match)
+	return hrefRegex.ReplaceAllStringFunc(htmlContent, func(m string) string {
+		parts := hrefRegex.FindStringSubmatch(m)
 		if len(parts) != 2 {
-			return match
+			return m
 		}
-		return rewriteHref(parts[1], returnPath, m, log, occ)
+		return rewriteHref(parts[1], returnPath, match, log, occ)
 	})
 }
 
@@ -407,7 +401,7 @@ func RewriteDocumentLinks(htmlContent, returnPath string, m routeMatcher, log *s
 //
 // occ is a per-render map tracking how many times each anchor-id base
 // has been used, so duplicate entity links get -0, -1, -2 suffixes.
-func rewriteHref(href, returnPath string, m routeMatcher, log *slog.Logger, occ map[string]int) string {
+func rewriteHref(href, returnPath string, match routeMatcherFunc, log *slog.Logger, occ map[string]int) string {
 	switch {
 	case href == "":
 		return `href=""`
@@ -421,7 +415,7 @@ func rewriteHref(href, returnPath string, m routeMatcher, log *slog.Logger, occ 
 	}
 
 	base, existingQuery, fragment := splitHref(href)
-	route, ok := m.Match(base)
+	route, ok := match(base)
 	if !ok {
 		log.Warn("document link has no matching frontend route", "href", href)
 		return fmt.Sprintf(`href="%s"`, href)
