@@ -679,6 +679,22 @@ func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.Entit
 
 // --- ID generation ---
 
+// customIDNotAllowedError formats a caller-facing error for the case where a
+// custom ID was supplied but the entity type's id_type auto-generates. The
+// message names the type, the id_type, the offending input, and — crucially —
+// tells the caller what to do instead (omit the id; if a prefix is configured,
+// that hints at what the generated ID will look like).
+func customIDNotAllowedError(entityType string, def *metamodel.EntityDef, offendingID string) error {
+	hint := "omit the \"id\" field to auto-generate one"
+	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
+		hint = fmt.Sprintf("omit the \"id\" field to auto-generate one (prefix %q)", prefixes[0])
+	}
+	return fmt.Errorf(
+		"entity type %q uses id_type=%s; custom ID %q not allowed — %s",
+		entityType, def.GetIDType(), offendingID, hint,
+	)
+}
+
 // GenerateID generates the next ID for the given entity type. If prefix is
 // non-empty it is used instead of the default prefix from the metamodel.
 func (w *Workspace) GenerateID(entityType, prefix string) (string, error) {
@@ -739,8 +755,15 @@ type CreateResult struct {
 // CreateEntity generates an ID (unless provided), applies templates and
 // defaults, validates, writes to the store, and runs automation.
 func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entity.Entity, *CreateResult, error) {
-	// Check for duplicates if custom ID provided.
+	// Reject caller-supplied IDs on types that auto-generate. Runs before the
+	// duplicate check so the "wrong id_type" error wins over an incidental
+	// collision — otherwise a caller chasing the duplicate message could keep
+	// picking new IDs without learning they shouldn't be picking one at all.
 	if opts.ID != "" {
+		if def, ok := w.meta.GetEntityDef(entityType); ok && !def.IsManualID() {
+			return nil, nil, customIDNotAllowedError(entityType, def, opts.ID)
+		}
+		// Check for duplicates if custom ID provided.
 		if _, err := w.Store().GetEntity(context.Background(), opts.ID); err == nil {
 			return nil, nil, fmt.Errorf("entity with ID %s already exists", opts.ID)
 		}
@@ -918,6 +941,9 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 		}
 		entityID = id
 	} else {
+		if !entityDef.IsManualID() {
+			return nil, customIDNotAllowedError(entityType, entityDef, entityID)
+		}
 		if err := entity.ValidateID(entityID); err != nil {
 			return nil, err
 		}

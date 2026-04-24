@@ -80,7 +80,7 @@ func toolCreateEntity() mcp.Tool {
 		mcp.WithObject("properties", mcp.Required(),
 			mcp.Description("Property map (e.g. {\"title\": \"...\", \"status\": \"draft\"})")),
 		mcp.WithString("content", mcp.Description("Markdown body content")),
-		mcp.WithString("id", mcp.Description("Custom entity ID (auto-generated if omitted)")),
+		mcp.WithString("id", mcp.Description("Custom entity ID (only valid when the type's id_type is manual; auto-generated otherwise)")),
 	)
 }
 

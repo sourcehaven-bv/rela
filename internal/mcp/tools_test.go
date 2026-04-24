@@ -416,6 +416,30 @@ func TestHandleCreateRelation_MissingFields(t *testing.T) {
 	}
 }
 
+func TestHandleCreateEntity_RejectsCustomIDForShortType(t *testing.T) {
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{
+		"type":       "requirement",
+		"id":         "my-custom-id",
+		"properties": map[string]interface{}{"title": "Nope"},
+	})
+	result, err := s.handleCreateEntity(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Fatal("expected error result for custom ID on short-ID type")
+	}
+	text := getResultText(t, result)
+	// Pin on "custom ID" so the test fails if the message stops naming the
+	// caller's input, rather than just mentioning "short" for unrelated reasons.
+	for _, want := range []string{"requirement", "short", "my-custom-id", "custom ID"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("error text %q missing %q", text, want)
+		}
+	}
+}
+
 func TestHandleDeleteRelation_MissingFields(t *testing.T) {
 	s := makeTestServer(t)
 	// Missing "type".

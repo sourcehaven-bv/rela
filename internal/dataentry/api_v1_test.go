@@ -2244,14 +2244,16 @@ func newTestAppV1(t *testing.T) *App {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
-				Label: "Ticket",
+				Label:    "Ticket",
+				IDPrefix: "TKT-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title":  {Type: "string", Required: true},
 					"status": {Type: "string"},
 				},
 			},
 			"feature": {
-				Label: "Feature",
+				Label:    "Feature",
+				IDPrefix: "FEAT-",
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
@@ -2405,7 +2407,6 @@ func TestV1CreateEntity_SavesRelations(t *testing.T) {
 	})
 
 	body := `{
-		"id": "TKT-CREATE",
 		"properties": {"title":"New","status":"open"},
 		"relations": {"implements": ["FEAT-001","FEAT-002"]}
 	}`
@@ -2416,7 +2417,16 @@ func TestV1CreateEntity_SavesRelations(t *testing.T) {
 		t.Fatalf("POST returned %d: %s", rec.Code, rec.Body.String())
 	}
 
-	got := implementsTargets(app, "TKT-CREATE")
+	// The ticket was auto-assigned a short ID; read it from the response body.
+	var created V1Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode response: %v; body: %s", err, rec.Body.String())
+	}
+	if created.ID == "" {
+		t.Fatalf("response body missing id: %s", rec.Body.String())
+	}
+
+	got := implementsTargets(app, created.ID)
 	if !got["FEAT-001"] || !got["FEAT-002"] || len(got) != 2 {
 		t.Fatalf("after create: outgoing implements edges = %v, want FEAT-001+FEAT-002", got)
 	}
