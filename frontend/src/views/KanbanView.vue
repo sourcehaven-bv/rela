@@ -5,6 +5,8 @@ import { useSchemaStore, useEntitiesStore } from '@/stores'
 import { listEntities, updateEntity } from '@/api'
 import type { Entity, KanbanConfig } from '@/types'
 import Badge from '@/components/common/Badge.vue'
+import BackButton from '@/components/common/BackButton.vue'
+import { useBackTarget } from '@/composables/useBackTarget'
 
 const props = defineProps<{
   id: string
@@ -13,6 +15,9 @@ const props = defineProps<{
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
+
+// Back affordance — renders when ?return_to= or ?from= is present.
+const backTarget = useBackTarget()
 
 // State
 const loading = ref(true)
@@ -308,6 +313,7 @@ watch(() => entitiesStore.cacheVersion, () => {
 <template>
   <div class="kanban-view">
     <header class="page-header">
+      <BackButton v-if="backTarget" :target="backTarget" />
       <h1>{{ kanbanConfig?.title || props.id }}</h1>
       <div class="header-actions">
         <button v-if="kanbanConfig?.create_form" class="btn btn-primary" @click="createNew">

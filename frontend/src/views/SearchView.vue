@@ -4,11 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { searchEntities } from '@/api'
 import { useSchemaStore } from '@/stores'
 import { parseFilterQueryParams } from '@/utils/filters'
+import { useBackTarget } from '@/composables/useBackTarget'
+import BackButton from '@/components/common/BackButton.vue'
 import type { Entity, PropertyDef } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
 const schemaStore = useSchemaStore()
+const backTarget = useBackTarget()
 
 // Types
 interface ActiveFilter {
@@ -456,6 +459,7 @@ watch(
 <template>
   <div class="search-view">
     <header class="search-header">
+      <BackButton v-if="backTarget" :target="backTarget" />
       <h1>Search</h1>
       <button
         type="button"

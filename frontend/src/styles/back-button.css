@@ -1,0 +1,69 @@
+/* Shared styles for the scope-nav bar's Back button and the standalone
+ * BackButton component used on views without scope navigation. Lives here
+ * (rather than in each component's <style scoped>) so both call sites
+ * stay visually identical without class-name duplication.
+ *
+ * The `.scope-nav-btn` class is load-bearing — it is what the existing
+ * scope-nav bar on EntityDetail / CustomView renders, and the BackButton
+ * component reuses it unchanged. See TKT-JIEKC for the unification.
+ */
+
+.scope-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-color);
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+
+.scope-nav-btn:hover:not(.disabled) {
+  filter: brightness(0.95);
+  border-color: var(--accent-color);
+}
+
+.scope-nav-btn.disabled {
+  color: var(--muted-text);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.scope-nav-btn kbd {
+  padding: 2px 5px;
+  font-size: 10px;
+  background: var(--border-color);
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+/* Mobile — scale the button for touch targets and switch to a borderless
+ * link-style. Matches the mobile styles that used to live in
+ * EntityDetail.vue's scoped block before TKT-JIEKC lifted them here. */
+@media (max-width: 768px) {
+  .scope-nav-btn {
+    padding: 8px 12px;
+    font-size: 14px;
+    min-height: 36px;
+    background: none;
+    border: none;
+    color: var(--accent-color);
+    font-weight: 500;
+  }
+
+  .scope-nav-btn:hover:not(.disabled) {
+    filter: none;
+    border-color: transparent;
+    opacity: 0.7;
+  }
+
+  .scope-nav-btn.disabled {
+    color: var(--border-color);
+    opacity: 0.4;
+  }
+}

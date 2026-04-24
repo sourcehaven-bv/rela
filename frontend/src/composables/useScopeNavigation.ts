@@ -5,7 +5,6 @@ import { toApiOperator, parseFilterQueryParams, filterStateToApiParams } from '@
 import type { ListParams } from '@/types'
 
 export interface ScopeNav {
-  backUrl: string
   prevId: string | null
   nextId: string | null
   current: number
@@ -82,7 +81,6 @@ export function useScopeNavigation(entityType: () => string, entityId: () => str
       }
 
       scopeNav.value = {
-        backUrl: `/list/${fromListId}`,
         prevId: currentIndex > 0 ? ids[currentIndex - 1] : null,
         nextId: currentIndex < ids.length - 1 ? ids[currentIndex + 1] : null,
         current: currentIndex + 1,
@@ -107,16 +105,9 @@ export function useScopeNavigation(entityType: () => string, entityId: () => str
     })
   }
 
-  function goBack() {
-    if (scopeNav.value) {
-      router.push(scopeNav.value.backUrl)
-    }
-  }
-
   return {
     scopeNav,
     loadScopeNav,
     navigateScope,
-    goBack,
   }
 }

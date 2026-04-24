@@ -5,8 +5,10 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
 import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
+import { useBackTarget } from '@/composables/useBackTarget'
 import { renderMermaidDiagrams } from '@/utils/markdown'
 import { buildReturnTo } from '@/utils/returnPath'
+import BackButton from '@/components/common/BackButton.vue'
 import DOMPurify from 'dompurify'
 
 const props = defineProps<{
@@ -49,8 +51,9 @@ const docTitle = computed(() => {
   return props.name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
 })
 
-// Navigation from list context
-const fromList = computed(() => route.query.from as string | undefined)
+// Back affordance — follows return_to > from precedence. See TKT-JIEKC.
+// Renders no button when neither is present (e.g. deep-linked arrival).
+const backTarget = useBackTarget()
 
 async function loadDocument(refresh = false) {
   loading.value = true
@@ -59,8 +62,8 @@ async function loadDocument(refresh = false) {
   try {
     // Pass the current location as return_to so form links inside the
     // rendered doc redirect back here on submit. Preserve user-meaningful
-    // query state (e.g. ?from=list-id for goBack()) but drop render-only
-    // flags like ?refresh=true that shouldn't round-trip.
+    // query state but drop render-only flags like ?refresh=true that
+    // shouldn't round-trip.
     const returnTo = buildReturnTo(route.fullPath, ['refresh'])
     const result = await renderDocument(props.name, props.entityId, {
       refresh,
@@ -75,14 +78,6 @@ async function loadDocument(refresh = false) {
     entityIds.value = []
   } finally {
     loading.value = false
-  }
-}
-
-function goBack() {
-  if (fromList.value) {
-    router.push(`/list/${fromList.value}`)
-  } else {
-    router.back()
   }
 }
 
@@ -120,9 +115,7 @@ onUnmounted(() => {
   <div class="document-view">
     <header class="page-header">
       <div class="header-left">
-        <button class="btn btn-secondary" @click="goBack">
-          Back <kbd>Esc</kbd>
-        </button>
+        <BackButton v-if="backTarget" :target="backTarget" />
       </div>
       <h1>{{ docTitle }}: {{ entityId }}</h1>
       <div class="header-right">

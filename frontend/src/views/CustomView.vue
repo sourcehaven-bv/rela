@@ -3,6 +3,8 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSchemaStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
+import { useBackTarget } from '@/composables/useBackTarget'
+import BackButton from '@/components/common/BackButton.vue'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView } from '@/api'
 import type { ViewResponse } from '@/api'
@@ -23,12 +25,14 @@ const props = defineProps<{
 const router = useRouter()
 const schemaStore = useSchemaStore()
 
-// Scope navigation
+// Scope navigation (prev/next within a list) and back affordance
+// (return_to/from precedence). See EntityDetail for the same pairing.
 const entryType = computed(() => viewData.value?.entry?.type || '')
-const { scopeNav, loadScopeNav, navigateScope, goBack } = useScopeNavigation(
+const { scopeNav, loadScopeNav, navigateScope } = useScopeNavigation(
   () => entryType.value,
   () => props.entityId
 )
+const backTarget = useBackTarget()
 
 // Keyboard shortcuts
 function handleKeydown(e: KeyboardEvent) {
@@ -46,10 +50,10 @@ function handleKeydown(e: KeyboardEvent) {
     e.preventDefault()
     navigateScope('next')
   }
-  // Escape to go back
-  if (e.key === 'Escape' && scopeNav.value) {
+  // Escape to go back — uses back-target precedence (return_to > from).
+  if (e.key === 'Escape' && backTarget.value) {
     e.preventDefault()
-    goBack()
+    router.push(backTarget.value.to)
   }
 }
 
@@ -203,29 +207,30 @@ onMounted(() => loadView())
 
     <!-- View content -->
     <template v-else-if="viewData">
-      <!-- Scope Navigation Bar -->
-      <div v-if="scopeNav" class="scope-nav">
-        <router-link :to="scopeNav.backUrl" class="scope-nav-btn">
-          Back <kbd>Esc</kbd>
-        </router-link>
-        <button
-          v-if="scopeNav.prevId"
-          class="scope-nav-btn"
-          @click="navigateScope('prev')"
-        >
-          ← Prev <kbd>P</kbd>
-        </button>
-        <span v-else class="scope-nav-btn disabled">← Prev</span>
-        <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
-        <span class="scope-nav-label">{{ scopeNav.label }}</span>
-        <button
-          v-if="scopeNav.nextId"
-          class="scope-nav-btn"
-          @click="navigateScope('next')"
-        >
-          Next → <kbd>N</kbd>
-        </button>
-        <span v-else class="scope-nav-btn disabled">Next →</span>
+      <!-- Back affordance + optional scope (prev/next) navigation. Same
+           pattern as EntityDetail — see TKT-JIEKC. -->
+      <div v-if="backTarget || scopeNav" class="scope-nav">
+        <BackButton v-if="backTarget" :target="backTarget" />
+        <template v-if="scopeNav">
+          <button
+            v-if="scopeNav.prevId"
+            class="scope-nav-btn"
+            @click="navigateScope('prev')"
+          >
+            ← Prev <kbd>P</kbd>
+          </button>
+          <span v-else class="scope-nav-btn disabled">← Prev</span>
+          <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
+          <span class="scope-nav-label">{{ scopeNav.label }}</span>
+          <button
+            v-if="scopeNav.nextId"
+            class="scope-nav-btn"
+            @click="navigateScope('next')"
+          >
+            Next → <kbd>N</kbd>
+          </button>
+          <span v-else class="scope-nav-btn disabled">Next →</span>
+        </template>
       </div>
 
       <!-- Header -->
@@ -594,46 +599,14 @@ onMounted(() => loadView())
   margin-left: 4px;
 }
 
-/* Scope Navigation Bar */
+/* Scope Navigation Bar
+ * .scope-nav-btn styles live in src/styles/back-button.css — see
+ * TKT-JIEKC. The bar layout (.scope-nav) + progress/label stay here. */
 .scope-nav {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 20px;
-}
-
-.scope-nav-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--text-color);
-  cursor: pointer;
-  text-decoration: none;
-  transition: all 0.15s;
-}
-
-.scope-nav-btn:hover:not(.disabled) {
-  filter: brightness(0.95);
-  border-color: var(--accent-color);
-}
-
-.scope-nav-btn.disabled {
-  color: var(--muted-text);
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.scope-nav-btn kbd {
-  padding: 2px 5px;
-  font-size: 10px;
-  background: var(--border-color);
-  border-radius: 3px;
-  font-family: monospace;
 }
 
 .scope-nav-progress {

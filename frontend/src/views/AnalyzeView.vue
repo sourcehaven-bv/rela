@@ -4,9 +4,12 @@ import { useRouter } from 'vue-router'
 import { analyze } from '@/api'
 import type { AnalyzeResult, AnalyzeIssue } from '@/types'
 import { useSchemaStore } from '@/stores'
+import { useBackTarget } from '@/composables/useBackTarget'
+import BackButton from '@/components/common/BackButton.vue'
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
+const backTarget = useBackTarget()
 
 // Check type definitions with descriptions (matching v1)
 const CHECK_TYPES = [
@@ -118,6 +121,7 @@ onMounted(() => {
 <template>
   <div class="analyze-view">
     <header class="page-header">
+      <BackButton v-if="backTarget" :target="backTarget" />
       <div>
         <h1>Analysis</h1>
         <p class="subtitle">Validation checks across all entities and relations</p>
