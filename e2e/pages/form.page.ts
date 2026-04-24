@@ -247,4 +247,21 @@ export class FormPage extends BasePage {
   async expectTemplatePillActive(index: number) {
     await expect(this.templatePills.nth(index)).toHaveClass(/active/);
   }
+
+  // --- Relation picker (non-cards widget) ---
+
+  /** Locate a non-cards relation picker by its rendered section label. The
+   *  picker renders as `.form-field.relation-picker` with the label at the
+   *  top; we filter on the label text. */
+  relationPickerByLabel(label: string): Locator {
+    return this.page
+      .locator('.form-field.relation-picker', { hasText: label })
+      .first();
+  }
+
+  /** A selected-entity tile inside a relation picker. The tile renders the
+   *  entity's title (via `getEntityLabel`), so callers pass the title text. */
+  pickerTileByText(picker: Locator, text: string): Locator {
+    return picker.locator('.selected-entity', { hasText: text });
+  }
 }

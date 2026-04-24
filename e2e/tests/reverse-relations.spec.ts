@@ -1,5 +1,5 @@
 import { test, expect, SEED } from './fixtures';
-import { RelationCardsPage } from '../pages';
+import { RelationCardsPage, FormPage } from '../pages';
 
 /**
  * Reverse (incoming) relation tests.
@@ -108,10 +108,10 @@ test.describe('Reverse relations', () => {
     // UI must show the linked task as a selected-entity tile inside the
     // "Implemented by" widget. The picker renders entity type + title in the
     // tile (no ID), so assert on the seeded TASK-001 title.
-    await appPage.goto(`${new URL(appPage.url()).origin}/form/feature/${SEED.features.authentication}`);
-    const picker = appPage.locator('.form-field', { hasText: 'Implemented by' }).first();
+    const form = new FormPage(appPage);
+    await form.navigateToEditForm('feature', SEED.features.authentication);
+    const picker = form.relationPickerByLabel('Implemented by');
     await expect(picker).toBeVisible();
-    const tile = picker.locator('.selected-entity', { hasText: 'Write unit tests' });
-    await expect(tile).toBeVisible();
+    await expect(form.pickerTileByText(picker, 'Write unit tests')).toBeVisible();
   });
 });
