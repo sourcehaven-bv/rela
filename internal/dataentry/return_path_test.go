@@ -18,8 +18,10 @@ func TestIsSafeReturnPath(t *testing.T) {
 		// Open-redirect payloads — all must return "".
 		{name: "protocol-relative", in: "//evil.com/pwn", want: ""},
 		{name: "backslash literal", in: `/\evil.com`, want: ""},
-		{name: "percent-encoded backslash", in: "/%5Cevil.com", want: ""},
-		{name: "percent-encoded slash", in: "/%2Fevil.com", want: ""},
+		{name: "percent-encoded backslash upper", in: "/%5Cevil.com", want: ""},
+		{name: "percent-encoded backslash lower", in: "/%5cevil.com", want: ""},
+		{name: "percent-encoded slash upper", in: "/%2Fevil.com", want: ""},
+		{name: "percent-encoded slash lower", in: "/%2fevil.com", want: ""},
 		{name: "http scheme", in: "http://evil.com", want: ""},
 		{name: "https scheme", in: "https://evil.com", want: ""},
 		{name: "mailto", in: "mailto:evil@evil.com", want: ""},

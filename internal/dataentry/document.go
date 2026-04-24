@@ -351,31 +351,55 @@ func markdownToHTML(markdown string) (string, error) {
 	return result, nil
 }
 
-// hrefRegex matches href attribute values in rendered HTML. The value is
-// captured raw so downstream logic can distinguish internal, external,
-// anchor-only, and legacy-scheme links.
-var hrefRegex = regexp.MustCompile(`href="([^"]*)"`)
+// hrefRegex matches an href attribute in rendered HTML, optionally preceded
+// by an id="..." (which the rewriter itself may have emitted on a previous
+// pass — see the idempotency contract). Capturing the preceding id lets the
+// replacement rewrite the whole tag prefix as a unit and avoid emitting
+// duplicate id attributes on re-runs.
+//
+// Groups: (1) the whole preceding `id="..." ` (may be ""); (2) the href
+// value.
+var hrefRegex = regexp.MustCompile(`(id="[^"]*" )?href="([^"]*)"`)
 
 // legacySchemeRegex detects the now-unsupported edit:// and create:// schemes
 // so we can emit a clear warning for users who haven't migrated yet.
 var legacySchemeRegex = regexp.MustCompile(`^(edit|create)://`)
 
-// RewriteDocumentLinks walks all href="..." attributes in rendered HTML and:
+// RewriteDocumentLinks walks all href="..." attributes in rendered HTML and
+// rewrites internal links so the SPA can offer a back affordance.
 //
-//  1. Appends a return_to query parameter to any href that targets a form
-//     route (/form/<name> or /form/<name>/<entityId>).
-//  2. Emits a stable id="edit-<entity-id>-<n>" / id="create-<form>-<n>" on
-//     each form link so the SPA's document click handler can record a
-//     scroll-back anchor that survives title/content edits.
+// The rewriter runs AFTER the document-render cache (see
+// documentService.GetCached / Render in this package, and the call sites in
+// api_v1.go). It never writes to the cache. This is load-bearing: the cache
+// file is keyed on the entry entity's content hash and must NOT contain any
+// `return_to=` tokens, so that two viewers requesting the same entry under
+// different return_to values each get their own value rewritten in. Do not
+// move this step into doRender.
 //
-// Non-form internal links, external URLs, anchors, and mailto: are left
-// untouched. Legacy edit:// / create:// schemes log a warning — they are
-// no longer rewritten; authors should migrate to app-relative paths.
+// Behavior, by path class × returnPath presence:
 //
-// The per-entity counter (<n>) disambiguates multiple links to the same
-// entity within a single rendered document. It increments in document
-// order, so re-renders that produce the same link sequence yield the
-// same ids — scroll-back is stable across re-renders.
+//	| Path class                 | returnPath == ""              | returnPath != ""                      |
+//	|----------------------------|-------------------------------|---------------------------------------|
+//	| Form (/form/<id>[/...])    | strip return_to; emit id      | strip return_to; emit id; inject ours |
+//	| Non-form internal (/...)   | strip return_to; pass through | strip return_to; inject ours          |
+//	| External / mailto / anchor | passthrough unchanged         | passthrough unchanged                 |
+//	| Legacy edit:// / create:// | log warning; passthrough      | log warning; passthrough              |
+//
+// Author-supplied `return_to` values on internal links are always stripped,
+// whether or not we have a replacement: the rewriter is the single source of
+// truth for the key on emitted HTML.
+//
+// Form routes additionally get a stable id="edit-<entityID>-<n>" or
+// id="create-<form>-<n>" attribute so the SPA's document click handler can
+// record a scroll-back anchor that survives title/content edits. The per-base
+// counter (<n>) disambiguates multiple links to the same target within a
+// single rendered document and is stable across re-renders that produce the
+// same link sequence.
+//
+// The rewriter is idempotent: applying it twice with the same returnPath
+// produces the same bytes as one pass. Applying it twice with different
+// returnPaths yields the last one injected (the first is stripped, then the
+// second is injected).
 func RewriteDocumentLinks(htmlContent, returnPath string, log *slog.Logger) string {
 	if log == nil {
 		log = slog.Default()
@@ -383,19 +407,24 @@ func RewriteDocumentLinks(htmlContent, returnPath string, log *slog.Logger) stri
 	occ := map[string]int{} // scroll-anchor id → next available suffix
 	return hrefRegex.ReplaceAllStringFunc(htmlContent, func(m string) string {
 		parts := hrefRegex.FindStringSubmatch(m)
-		if len(parts) != 2 {
+		if len(parts) != 3 {
 			return m
 		}
-		return rewriteHref(parts[1], returnPath, log, occ)
+		// parts[1] is the pre-existing id="..." prefix (may be ""); we
+		// intentionally discard it. The rewriter owns the scroll-anchor id
+		// on form routes, and a pre-existing id on a non-form link was
+		// planted by a prior pass — in either case the outgoing id is
+		// whatever rewriteHref decides to emit for this link.
+		return rewriteHref(parts[2], returnPath, log, occ)
 	})
 }
 
 // rewriteHref inspects a single href value and returns the replacement
 // attribute fragment for the enclosing <a>. For form routes this is
-// [id="..." href="..."]; for everything else it's just href="...".
+// [id="..." href="..."]; for other internal routes it's just href="...".
 //
 // occ is a per-render map tracking how many times each anchor-id base
-// has been used, so duplicate entity links get -0, -1, -2 suffixes.
+// has been used, so duplicate form links get -0, -1, -2 suffixes.
 func rewriteHref(href, returnPath string, log *slog.Logger, occ map[string]int) string {
 	switch {
 	case href == "":
@@ -410,45 +439,40 @@ func rewriteHref(href, returnPath string, log *slog.Logger, occ map[string]int) 
 	}
 
 	base, existingQuery, fragment := splitHref(href)
-	if !isFormRoute(base) {
-		// Only form routes honor return_to; everything else passes through.
-		return fmt.Sprintf(`href="%s"`, href)
-	}
 
-	// Scroll-anchor id — always assigned for edit/create form links so the
-	// click handler can record it as the scroll-back target.
-	anchorID := formAnchorID(base, occ)
-
-	// When returnPath is empty, there's nothing useful to inject; keep
-	// query + fragment untouched but still emit the id so at least the
-	// scroll-back anchor is in place for any later render that supplies
-	// returnPath.
-	if returnPath == "" {
-		out := base
-		if existingQuery != "" {
-			out += "?" + existingQuery
-		}
-		if fragment != "" {
-			out += "#" + fragment
-		}
-		return attrs(anchorID, out)
-	}
-
-	// Strip any pre-existing return_to (authors shouldn't set it, but they
-	// can — legacy links or typos). Without this, vue-router parses
-	// duplicate keys as an array and DynamicForm mishandles it.
+	// Strip any pre-existing return_to on every internal path (form or
+	// non-form). The rewriter is the single source of truth for this key,
+	// so author-planted values are always discarded — this keeps vue-router
+	// from parsing duplicates as arrays and prevents hostile values from
+	// leaking into the user's URL bar.
 	cleanedQuery, dropped := stripQueryKey(existingQuery, "return_to")
 	if dropped {
 		log.Warn("document link sets reserved key return_to; overwriting", "href", href)
 	}
 
-	finalQuery := cleanedQuery
-	if finalQuery != "" {
-		finalQuery += "&"
+	// Form routes get a scroll-anchor id unconditionally so the click
+	// handler has a stable target even when returnPath is empty.
+	var anchorID string
+	if isFormRoute(base) {
+		anchorID = formAnchorID(base, occ)
 	}
-	finalQuery += "return_to=" + url.QueryEscape(returnPath)
 
-	out := base + "?" + finalQuery
+	// Inject return_to only when we have one to inject. An empty returnPath
+	// means "the rewriter ran but no caller context was supplied" — the
+	// stripped href, plus the form anchor id if applicable, is the final
+	// output.
+	finalQuery := cleanedQuery
+	if returnPath != "" {
+		if finalQuery != "" {
+			finalQuery += "&"
+		}
+		finalQuery += "return_to=" + url.QueryEscape(returnPath)
+	}
+
+	out := base
+	if finalQuery != "" {
+		out += "?" + finalQuery
+	}
 	if fragment != "" {
 		out += "#" + fragment
 	}

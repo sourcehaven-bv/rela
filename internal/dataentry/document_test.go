@@ -200,30 +200,36 @@ func TestRewriteDocumentLinks(t *testing.T) {
 			expected:   `<a id="create-full_ticket-0" href="/form/full_ticket?return_to=%2Fdoc#section">Add</a>`,
 		},
 
-		// Non-form internal links: unchanged.
+		// Non-form internal links: get return_to but NO anchor id.
 		{
-			name:       "list link unchanged",
+			name:       "list link gets return_to",
 			html:       `<a href="/list/all_tasks">List</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/list/all_tasks">List</a>`,
+			expected:   `<a href="/list/all_tasks?return_to=%2Fdoc">List</a>`,
 		},
 		{
-			name:       "entity detail unchanged",
+			name:       "entity detail gets return_to",
 			html:       `<a href="/entity/ticket/TKT-001">Detail</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/entity/ticket/TKT-001">Detail</a>`,
+			expected:   `<a href="/entity/ticket/TKT-001?return_to=%2Fdoc">Detail</a>`,
 		},
 		{
-			name:       "search with query unchanged",
+			name:       "search preserves existing query and appends return_to",
 			html:       `<a href="/search?q=foo">Search</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/search?q=foo">Search</a>`,
+			expected:   `<a href="/search?q=foo&return_to=%2Fdoc">Search</a>`,
 		},
 		{
-			name:       "kanban unchanged",
+			name:       "kanban gets return_to",
 			html:       `<a href="/kanban/sprint">Kanban</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/kanban/sprint">Kanban</a>`,
+			expected:   `<a href="/kanban/sprint?return_to=%2Fdoc">Kanban</a>`,
+		},
+		{
+			name:       "non-form link preserves fragment",
+			html:       `<a href="/entity/ticket/TKT-001#notes">Detail</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/entity/ticket/TKT-001?return_to=%2Fdoc#notes">Detail</a>`,
 		},
 
 		// External / anchor / mailto: unchanged.
@@ -268,14 +274,47 @@ func TestRewriteDocumentLinks(t *testing.T) {
 			wantWarn:   "removed scheme",
 		},
 
-		// Non-form internal path: passthrough without warning — the
-		// rewriter only cares about form routes for return_to + anchor
-		// injection; anything else is left alone.
+		// Unknown internal paths get return_to too (the rewriter doesn't
+		// try to validate against a route catalog any more). Silent
+		// passthrough — no warning.
 		{
-			name:       "non-form internal path passes through",
+			name:       "unknown internal path gets return_to",
 			html:       `<a href="/nope/foo">Bogus</a>`,
 			returnPath: "/doc",
-			expected:   `<a href="/nope/foo">Bogus</a>`,
+			expected:   `<a href="/nope/foo?return_to=%2Fdoc">Bogus</a>`,
+		},
+
+		// Non-form internal link with author-planted return_to: strip,
+		// re-inject, warn. Same as form-route case — rewriter owns the key.
+		{
+			name:       "non-form author-supplied return_to stripped and replaced",
+			html:       `<a href="/list/all?return_to=/evil">Trick</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/list/all?return_to=%2Fdoc">Trick</a>`,
+			wantWarn:   "reserved key return_to",
+		},
+		{
+			name:       "non-form author-supplied return_to stripped with params preserved",
+			html:       `<a href="/list/all?a=1&return_to=/evil&b=2">Trick</a>`,
+			returnPath: "/doc",
+			expected:   `<a href="/list/all?a=1&b=2&return_to=%2Fdoc">Trick</a>`,
+			wantWarn:   "reserved key return_to",
+		},
+
+		// Empty returnPath on non-form link: strip author-supplied
+		// return_to without replacement (single-source-of-truth rule).
+		{
+			name:       "empty returnPath strips non-form return_to without replacement",
+			html:       `<a href="/list/all?a=1&return_to=/evil">Trick</a>`,
+			returnPath: "",
+			expected:   `<a href="/list/all?a=1">Trick</a>`,
+			wantWarn:   "reserved key return_to",
+		},
+		{
+			name:       "empty returnPath leaves clean non-form link untouched",
+			html:       `<a href="/entity/ticket/TKT-001">Detail</a>`,
+			returnPath: "",
+			expected:   `<a href="/entity/ticket/TKT-001">Detail</a>`,
 		},
 
 		// Goldmark emits & as &amp; in href values — rewriter must
@@ -346,6 +385,51 @@ func TestRewriteDocumentLinks(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRewriteDocumentLinks_Idempotent verifies the rewriter converges on
+// rewritten HTML: applying it twice with the same returnPath yields the
+// same output as a single pass, and applying it with a second, different
+// returnPath strips the first and injects the second. See TKT-JIEKC AC10.
+func TestRewriteDocumentLinks_Idempotent(t *testing.T) {
+	// Sample HTML covering the interesting path classes: a form route, a
+	// non-form internal route, an external link, and a pre-existing
+	// fragment.
+	in := strings.Join([]string{
+		`<a href="/form/full_ticket/TKT-001">Edit</a>`,
+		`<a href="/entity/ticket/TKT-001#notes">Detail</a>`,
+		`<a href="/list/all_tasks">List</a>`,
+		`<a href="https://example.com">External</a>`,
+	}, " ")
+	log := slog.New(slog.DiscardHandler)
+
+	t.Run("same returnPath converges", func(t *testing.T) {
+		first := RewriteDocumentLinks(in, "/doc", log)
+		second := RewriteDocumentLinks(first, "/doc", log)
+		if first != second {
+			t.Errorf("expected byte-equal after second pass\nfirst:  %s\nsecond: %s", first, second)
+		}
+	})
+
+	t.Run("different returnPath replaces", func(t *testing.T) {
+		first := RewriteDocumentLinks(in, "/doc/A", log)
+		second := RewriteDocumentLinks(first, "/doc/B", log)
+		if strings.Contains(second, "%2FA") && !strings.Contains(second, "%2FdocB") {
+			// %2FA is the encoding of /A; presence of that token means
+			// the first returnPath survived the re-rewrite.
+			t.Errorf("first returnPath %%2FA leaked into second pass: %s", second)
+		}
+		if !strings.Contains(second, "%2Fdoc%2FB") {
+			t.Errorf("expected second returnPath /doc/B (encoded %%2Fdoc%%2FB) in output: %s", second)
+		}
+		// And only once per link (not two return_to's on the same href).
+		occ := strings.Count(second, "return_to=")
+		if occ != 3 {
+			// Form link + detail link + list link = 3 return_to injections.
+			// External is never rewritten.
+			t.Errorf("expected 3 return_to= occurrences, got %d: %s", occ, second)
+		}
+	})
 }
 
 func TestDocumentDiskCache(t *testing.T) {
