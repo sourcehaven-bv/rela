@@ -83,12 +83,12 @@ func (r *Runtime) registerHTTPModule() {
 // Returns (response_table, nil) on success, (nil, err_table) on failure.
 func (r *Runtime) luaHTTPRequest(ls *lua.LState) int {
 	opts := ls.CheckTable(1)
-	method, reqURL, headers, body, timeout, err := parseHTTPRequestOpts(opts)
+	parsed, err := parseHTTPRequestOpts(opts)
 	if err != nil {
 		ls.RaiseError("http.request: %s", err.Error())
 		return 0
 	}
-	return r.doHTTPRequest(ls, method, reqURL, headers, body, timeout)
+	return r.doHTTPRequest(ls, parsed.method, parsed.url, parsed.headers, parsed.body, parsed.timeout)
 }
 
 // luaHTTPGet implements http.get(url, opts?) -> (response, nil) | (nil, err).
@@ -210,36 +210,48 @@ func httpContext(r *Runtime) context.Context {
 	return context.Background()
 }
 
+// httpRequestOpts is the parsed form of the opts table passed to http.request.
+type httpRequestOpts struct {
+	method  string
+	url     *url.URL
+	headers map[string]string
+	body    string
+	timeout time.Duration
+}
+
 // parseHTTPRequestOpts extracts fields from the opts table for http.request().
-func parseHTTPRequestOpts(opts *lua.LTable) (string, *url.URL, map[string]string, string, time.Duration, error) {
+func parseHTTPRequestOpts(opts *lua.LTable) (httpRequestOpts, error) {
+	var out httpRequestOpts
+
 	// url (required)
 	urlVal := opts.RawGetString("url")
 	urlStr, ok := urlVal.(lua.LString)
 	if !ok || urlStr == "" {
-		return "", nil, nil, "", 0, errors.New("url must be a non-empty string")
+		return out, errors.New("url must be a non-empty string")
 	}
 
 	reqURL, err := validateURL(string(urlStr))
 	if err != nil {
-		return "", nil, nil, "", 0, err
+		return out, err
 	}
+	out.url = reqURL
 
 	// method (optional, default GET)
-	method := "GET"
+	out.method = http.MethodGet
 	if v := opts.RawGetString("method"); v != lua.LNil {
 		s, ok := v.(lua.LString)
 		if !ok {
-			return "", nil, nil, "", 0, errors.New("method must be a string")
+			return out, errors.New("method must be a string")
 		}
-		method = strings.ToUpper(string(s))
+		out.method = strings.ToUpper(string(s))
 	}
 
 	// headers (optional)
-	headers := make(map[string]string)
+	out.headers = make(map[string]string)
 	if v := opts.RawGetString("headers"); v != lua.LNil {
 		tbl, ok := v.(*lua.LTable)
 		if !ok {
-			return "", nil, nil, "", 0, errors.New("headers must be a table")
+			return out, errors.New("headers must be a table")
 		}
 		var headerErr error
 		tbl.ForEach(func(k, v lua.LValue) {
@@ -256,37 +268,35 @@ func parseHTTPRequestOpts(opts *lua.LTable) (string, *url.URL, map[string]string
 				headerErr = fmt.Errorf("header value for %q must be a string, got %s", string(ks), v.Type().String())
 				return
 			}
-			headers[string(ks)] = string(vs)
+			out.headers[string(ks)] = string(vs)
 		})
 		if headerErr != nil {
-			return "", nil, nil, "", 0, headerErr
+			return out, headerErr
 		}
 	}
 
 	// body (optional)
-	var body string
 	if v := opts.RawGetString("body"); v != lua.LNil {
 		s, ok := v.(lua.LString)
 		if !ok {
-			return "", nil, nil, "", 0, errors.New("body must be a string")
+			return out, errors.New("body must be a string")
 		}
-		body = string(s)
+		out.body = string(s)
 	}
 
 	// timeout (optional, seconds)
-	var timeout time.Duration
 	if v := opts.RawGetString("timeout"); v != lua.LNil {
 		n, ok := v.(lua.LNumber)
 		if !ok {
-			return "", nil, nil, "", 0, errors.New("timeout must be a number")
+			return out, errors.New("timeout must be a number")
 		}
 		if n <= 0 {
-			return "", nil, nil, "", 0, errors.New("timeout must be positive")
+			return out, errors.New("timeout must be positive")
 		}
-		timeout = time.Duration(float64(n) * float64(time.Second))
+		out.timeout = time.Duration(float64(n) * float64(time.Second))
 	}
 
-	return method, reqURL, headers, body, timeout, nil
+	return out, nil
 }
 
 // parseConvenienceOpts extracts headers and timeout from the optional

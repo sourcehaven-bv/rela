@@ -39,12 +39,12 @@ func TestLuaHTTP_GlobalRegistered(t *testing.T) {
 
 func TestLuaHTTP_RequestGetSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" {
+		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Custom", "test-value")
-		w.WriteHeader(200)
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"result":"ok"}`))
 	}))
 	t.Cleanup(server.Close)
@@ -73,7 +73,7 @@ func TestLuaHTTP_RequestPostWithBody(t *testing.T) {
 		receivedContentType = r.Header.Get("Content-Type")
 		body, _ := io.ReadAll(r.Body)
 		receivedBody = string(body)
-		w.WriteHeader(201)
+		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte("created"))
 	}))
 	t.Cleanup(server.Close)
@@ -288,7 +288,7 @@ func TestLuaHTTP_ResponseBodyTooLarge(t *testing.T) {
 
 func TestLuaHTTP_EmptyResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(server.Close)
 
@@ -306,7 +306,7 @@ func TestLuaHTTP_EmptyResponseBody(t *testing.T) {
 func TestLuaHTTP_RedirectNotFollowed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", "http://example.com/other")
-		w.WriteHeader(302)
+		w.WriteHeader(http.StatusFound)
 	}))
 	t.Cleanup(server.Close)
 
@@ -323,7 +323,7 @@ func TestLuaHTTP_RedirectNotFollowed(t *testing.T) {
 
 func TestLuaHTTP_NonSuccessStatusReturnsResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(404)
+		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("not found"))
 	}))
 	t.Cleanup(server.Close)
@@ -600,7 +600,7 @@ func TestLuaHTTP_ErrorTableShape(t *testing.T) {
 
 func TestLuaHTTP_FullAPIFlow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
+		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
 		if r.Header.Get("Content-Type") != "application/json" {
