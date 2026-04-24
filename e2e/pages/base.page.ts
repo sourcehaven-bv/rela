@@ -33,7 +33,9 @@ export class BasePage {
   async clickBack() {
     const startUrl = this.page.url();
     await this.backButton.click();
-    await this.page.waitForURL((url) => url !== startUrl);
+    // waitForURL's predicate receives a URL object; compare via href so
+    // the equality check is against the same string format as page.url().
+    await this.page.waitForURL((url) => url.href !== startUrl);
   }
 
   async navigateTo(path: string) {

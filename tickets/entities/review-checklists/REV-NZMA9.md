@@ -2,7 +2,7 @@
 id: REV-NZMA9
 type: review-checklist
 title: 'Review: Honor return_to as a back affordance on non-form screens'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -76,8 +76,8 @@ single-file doc touch).
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (after fixing one e2e-typecheck URL-vs-string comparison caught by CI)
+- [x] PR URL documented below
 
-**PR:** <!-- populated after /pr -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/567
