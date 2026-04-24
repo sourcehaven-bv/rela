@@ -30,21 +30,21 @@ entities:
   feature:
     label: Feature
     id_prefix: "FEAT-"
-    id_type: sequential
+    id_type: manual
     color: "#E8F5E9"
     properties:
       title: {type: string, required: true}
   ticket:
     label: Ticket
     id_prefix: "TKT-"
-    id_type: sequential
+    id_type: manual
     color: "#FFFDE7"
     properties:
       title: {type: string, required: true}
   review-response:
     label: Review response
     id_prefix: "RR-"
-    id_type: sequential
+    id_type: manual
     color: "#FFEBEE"
     properties:
       title: {type: string, required: true}
