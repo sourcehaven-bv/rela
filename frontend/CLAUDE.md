@@ -54,8 +54,9 @@ src/components/   → Reusable UI components
 | `src/views/` | Route-level components: Dashboard, List, Form, Entity, Kanban, Graph, Search, Settings |
 | `src/components/forms/` | Form widgets: DynamicForm, FieldRenderer, RelationPicker, MarkdownEditor, SidePanel |
 | `src/components/lists/` | EntityList, FilterBar, Pagination |
-| `src/components/common/` | Sidebar, StatusBar, Badge, Toast |
-| `src/composables/` | Vue composables: useKeyboardShortcuts, useEvents (SSE), useListKeyboard, useScopeNavigation |
+| `src/components/common/` | Sidebar, StatusBar, Badge, Toast, BackButton |
+| `src/composables/` | Vue composables: useKeyboardShortcuts, useEvents (SSE), useListKeyboard, useScopeNavigation, useBackTarget |
+| `src/styles/` | Shared CSS loaded from `main.ts` (e.g. `back-button.css` for the `.scope-nav-btn` class reused across EntityDetail, CustomView, and standalone BackButton) |
 | `src/types/` | TypeScript interfaces for entities, schema, and config |
 
 ### Key Stores
