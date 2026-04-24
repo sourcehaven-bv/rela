@@ -486,7 +486,16 @@ func luaJSONDecode(ls *lua.LState) int {
 }
 
 // goValueToLua converts a Go value (from json.Unmarshal) to a Lua value.
+// Recursion is capped at maxLuaConvertDepth to prevent stack-overflow DoS
+// from a server returning deeply nested JSON.
 func goValueToLua(ls *lua.LState, val interface{}) lua.LValue {
+	return goValueToLuaSafe(ls, val, 0)
+}
+
+func goValueToLuaSafe(ls *lua.LState, val interface{}, depth int) lua.LValue {
+	if depth >= maxLuaConvertDepth {
+		return lua.LString(maxDepthSentinel)
+	}
 	switch v := val.(type) {
 	case nil:
 		return lua.LNil
@@ -499,13 +508,13 @@ func goValueToLua(ls *lua.LState, val interface{}) lua.LValue {
 	case []interface{}:
 		tbl := ls.NewTable()
 		for i, item := range v {
-			tbl.RawSetInt(i+1, goValueToLua(ls, item))
+			tbl.RawSetInt(i+1, goValueToLuaSafe(ls, item, depth+1))
 		}
 		return tbl
 	case map[string]interface{}:
 		tbl := ls.NewTable()
 		for key, item := range v {
-			tbl.RawSetString(key, goValueToLua(ls, item))
+			tbl.RawSetString(key, goValueToLuaSafe(ls, item, depth+1))
 		}
 		return tbl
 	default:

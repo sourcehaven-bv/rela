@@ -606,6 +606,16 @@ HTTP functions follow the same `(nil, err_table)` convention as `ai.chat`:
 
 Programming errors (missing URL, wrong argument types) raise Lua errors.
 
+#### JSON conversion limits
+
+- **Empty tables encode as objects (`{}`), not arrays (`[]`).** Lua has no
+  way to mark an empty table as array-shaped. If you need a JSON empty array,
+  build the body server-side or include a placeholder element.
+- **Cycles and deep nesting are bounded.** Self-referential or extremely
+  deep tables (depth > 64) are not encoded recursively — the offending
+  branch is replaced with the string `<cycle>` or `<max-depth>`. The same
+  cap applies when decoding deeply nested server responses.
+
 #### Redirects
 
 HTTP redirects are **not** followed automatically. The 3xx response is returned directly so

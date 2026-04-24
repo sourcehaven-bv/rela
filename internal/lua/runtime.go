@@ -820,6 +820,26 @@ func GoToLuaValue(ls *lua.LState, v interface{}) lua.LValue {
 
 // luaValueToGo converts a Lua value to a Go value.
 func luaValueToGo(lv lua.LValue) interface{} {
+	return luaValueToGoSafe(lv, 0, nil)
+}
+
+// maxArraySize is the maximum size for arrays converted from Lua tables.
+const maxArraySize = 100000
+
+// maxLuaConvertDepth caps recursion when converting Lua values to Go. Beyond
+// this depth a sentinel string is substituted to prevent stack-overflow DoS
+// from a script that builds (accidentally or maliciously) a very deep table.
+const maxLuaConvertDepth = 64
+
+// Sentinels substituted into the output when conversion can't proceed safely.
+// They are visible to callers (e.g. JSON encoding produces them as strings)
+// rather than silently dropping data.
+const (
+	cycleSentinel    = "<cycle>"
+	maxDepthSentinel = "<max-depth>"
+)
+
+func luaValueToGoSafe(lv lua.LValue, depth int, seen map[*lua.LTable]struct{}) interface{} {
 	switch v := lv.(type) {
 	case lua.LBool:
 		return bool(v)
@@ -828,7 +848,7 @@ func luaValueToGo(lv lua.LValue) interface{} {
 	case lua.LString:
 		return string(v)
 	case *lua.LTable:
-		return luaTableToGo(v)
+		return luaTableToGoSafe(v, depth, seen)
 	case *lua.LNilType:
 		return nil
 	default:
@@ -836,11 +856,25 @@ func luaValueToGo(lv lua.LValue) interface{} {
 	}
 }
 
-// maxArraySize is the maximum size for arrays converted from Lua tables.
-const maxArraySize = 100000
-
-// luaTableToGo converts a Lua table to a Go map or slice.
+// luaTableToGo converts a Lua table to a Go map or slice. Cycles are replaced
+// with the cycleSentinel string and recursion is capped at maxLuaConvertDepth.
 func luaTableToGo(t *lua.LTable) interface{} {
+	return luaTableToGoSafe(t, 0, nil)
+}
+
+func luaTableToGoSafe(t *lua.LTable, depth int, seen map[*lua.LTable]struct{}) interface{} {
+	if depth >= maxLuaConvertDepth {
+		return maxDepthSentinel
+	}
+	if seen == nil {
+		seen = make(map[*lua.LTable]struct{})
+	}
+	if _, ok := seen[t]; ok {
+		return cycleSentinel
+	}
+	seen[t] = struct{}{}
+	defer delete(seen, t)
+
 	// Check if it's an array (sequential positive integer keys starting at 1)
 	isArray := true
 	maxN := 0
@@ -867,7 +901,7 @@ func luaTableToGo(t *lua.LTable) interface{} {
 			if kn, ok := k.(lua.LNumber); ok {
 				idx := int(kn) - 1
 				if idx >= 0 && idx < maxN {
-					arr[idx] = luaValueToGo(v)
+					arr[idx] = luaValueToGoSafe(v, depth+1, seen)
 				}
 			}
 		})
@@ -886,7 +920,7 @@ func luaTableToGo(t *lua.LTable) interface{} {
 		default:
 			key = k.String()
 		}
-		m[key] = luaValueToGo(v)
+		m[key] = luaValueToGoSafe(v, depth+1, seen)
 	})
 	return m
 }

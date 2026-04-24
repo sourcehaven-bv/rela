@@ -505,6 +505,74 @@ func TestLuaHTTP_JSONDecodeInvalidReturnsError(t *testing.T) {
 	}
 }
 
+// TestLuaHTTP_JSONEncodeEmptyTableIsObject codifies a known limitation: an
+// empty Lua table {} encodes as a JSON object {}, not an array []. Lua has no
+// way to mark "this empty table is intended as an array." Scripts needing an
+// empty array should construct it server-side or send a non-empty placeholder.
+func TestLuaHTTP_JSONEncodeEmptyTableIsObject(t *testing.T) {
+	rt := newHTTPRuntime(t)
+	if err := rt.RunString(`
+		local s, err = http.json_encode({})
+		assert(err == nil, "err = " .. tostring(err))
+		assert(s == "{}", "expected empty object, got " .. tostring(s))
+	`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+}
+
+func TestLuaHTTP_JSONEncodeCycleSubstitutesSentinel(t *testing.T) {
+	rt := newHTTPRuntime(t)
+	if err := rt.RunString(`
+		local t = {}
+		t.self = t
+		local s, err = http.json_encode(t)
+		assert(err == nil, "err should be nil, got " .. tostring(err))
+		-- json.Marshal escapes < as <, so check for the escaped form too.
+		assert(string.find(s, "cycle", 1, true), "encoded JSON should contain cycle sentinel, got " .. s)
+	`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+}
+
+func TestLuaHTTP_JSONEncodeDeepTableSubstitutesSentinel(t *testing.T) {
+	rt := newHTTPRuntime(t)
+	if err := rt.RunString(`
+		-- Build a table 100 levels deep (cap is 64).
+		local t = {}
+		local cur = t
+		for i = 1, 100 do
+			cur.next = {}
+			cur = cur.next
+		end
+		local s, err = http.json_encode(t)
+		assert(err == nil, "err should be nil, got " .. tostring(err))
+		assert(string.find(s, "max-depth", 1, true), "encoded JSON should contain max-depth sentinel, got " .. s)
+	`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+}
+
+func TestLuaHTTP_JSONDecodeDeepResponseSubstitutesSentinel(t *testing.T) {
+	rt := newHTTPRuntime(t)
+	// Build a deeply-nested JSON string: {"n":{"n":{"n":...}}} 100 levels deep.
+	deep := strings.Repeat(`{"n":`, 100) + `null` + strings.Repeat(`}`, 100)
+	if err := rt.RunString(`
+		local t, err = http.json_decode([[` + deep + `]])
+		assert(err == nil, "err should be nil, got " .. tostring(err))
+		-- Walk down until we hit the sentinel string instead of a table.
+		local cur = t
+		local depth = 0
+		while type(cur) == "table" do
+			cur = cur.n
+			depth = depth + 1
+			if depth > 200 then error("exceeded walk limit") end
+		end
+		assert(cur == "<max-depth>", "expected sentinel at max depth, got " .. tostring(cur))
+	`); err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+}
+
 func TestLuaHTTP_JSONEncodeNoArgs(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`http.json_encode()`)
