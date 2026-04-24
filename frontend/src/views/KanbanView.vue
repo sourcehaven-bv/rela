@@ -313,8 +313,10 @@ watch(() => entitiesStore.cacheVersion, () => {
 <template>
   <div class="kanban-view">
     <header class="page-header">
-      <BackButton v-if="backTarget" :target="backTarget" />
-      <h1>{{ kanbanConfig?.title || props.id }}</h1>
+      <div class="header-left">
+        <BackButton v-if="backTarget" :target="backTarget" />
+        <h1>{{ kanbanConfig?.title || props.id }}</h1>
+      </div>
       <div class="header-actions">
         <button v-if="kanbanConfig?.create_form" class="btn btn-primary" @click="createNew">
           + New
@@ -477,6 +479,12 @@ watch(() => entitiesStore.cacheVersion, () => {
 
 .page-header h1 {
   margin: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .header-actions {

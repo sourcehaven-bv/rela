@@ -23,7 +23,11 @@ const label = computed(() => {
 </script>
 
 <template>
-  <router-link :to="target.to" class="scope-nav-btn">
+  <router-link
+    :to="target.to"
+    class="scope-nav-btn"
+    data-testid="back-button"
+  >
     {{ label }}
   </router-link>
 </template>

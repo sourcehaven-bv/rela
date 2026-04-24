@@ -10,6 +10,7 @@ import { fetchView } from '@/api'
 import type { ViewResponse } from '@/api'
 import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
+import { isAnyModalOpen } from '@/composables/modalStack'
 import { renderMarkdown } from '@/utils/markdown'
 import Badge from '@/components/common/Badge.vue'
 import LinkExistingModal from '@/components/forms/LinkExistingModal.vue'
@@ -37,6 +38,10 @@ const backTarget = useBackTarget()
 // Keyboard shortcuts
 function handleKeydown(e: KeyboardEvent) {
   if (isInputFocused()) return
+  // Don't handle shortcuts while any modal is open — the modal owns
+  // Escape, and our Back/Edit handlers must not fire while a
+  // LinkExistingModal or similar has the foreground.
+  if (isAnyModalOpen()) return
   if (e.key === 'e' || e.key === 'E') {
     e.preventDefault()
     editEntry()

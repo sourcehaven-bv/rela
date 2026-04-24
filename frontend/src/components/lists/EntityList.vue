@@ -455,8 +455,10 @@ onMounted(() => {
 <template>
   <div v-if="listConfig" class="entity-list">
     <header class="list-header">
-      <BackButton v-if="backTarget" :target="backTarget" />
-      <h1>{{ listConfig.title || listConfig.entity }}</h1>
+      <div class="header-left">
+        <BackButton v-if="backTarget" :target="backTarget" />
+        <h1>{{ listConfig.title || listConfig.entity }}</h1>
+      </div>
       <router-link
         v-if="listConfig.create_form"
         :to="`/form/${listConfig.create_form}`"
@@ -706,6 +708,12 @@ onMounted(() => {
 
 .list-header h1 {
   margin: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .btn {

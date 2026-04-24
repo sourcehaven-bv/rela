@@ -351,15 +351,29 @@ func markdownToHTML(markdown string) (string, error) {
 	return result, nil
 }
 
-// hrefRegex matches an href attribute in rendered HTML, optionally preceded
-// by an id="..." (which the rewriter itself may have emitted on a previous
-// pass — see the idempotency contract). Capturing the preceding id lets the
-// replacement rewrite the whole tag prefix as a unit and avoid emitting
-// duplicate id attributes on re-runs.
+// anchorStartTagRegex matches the opening `<a ...>` tag so rewriteHref can
+// process all its attributes as a unit. Matching the whole tag (rather than
+// just the href="...") lets the rewriter:
 //
-// Groups: (1) the whole preceding `id="..." ` (may be ""); (2) the href
-// value.
-var hrefRegex = regexp.MustCompile(`(id="[^"]*" )?href="([^"]*)"`)
+//  1. Discover attributes in any order (goldmark always emits href first,
+//     but authors or future pipelines may not).
+//  2. Be idempotent on its own output: both the pre-existing `id="..."`
+//     the rewriter planted on a prior pass AND any author-planted `id=`
+//     get stripped before we (possibly) emit a fresh one. Without this,
+//     rewriting `<a id="old" href="...">` twice produces two `id`
+//     attributes.
+//
+// Group 1 is the raw attribute segment between "<a " and ">". We
+// deliberately don't parse further here; attribute parsing lives in
+// rewriteAnchorAttrs.
+var anchorStartTagRegex = regexp.MustCompile(`<a\s+([^>]*)>`)
+
+// attrRegex matches a single HTML attribute inside an anchor start tag.
+// Accepts double-quoted, single-quoted, and unquoted values. Groups:
+// (1) name; (2) double-quoted value (may be empty); (3) single-quoted
+// value; (4) unquoted value. Exactly one of (2)/(3)/(4) matches per
+// attribute; boolean attributes (no value) match (1) alone.
+var attrRegex = regexp.MustCompile(`([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>` + "`" + `]+)))?`)
 
 // legacySchemeRegex detects the now-unsupported edit:// and create:// schemes
 // so we can emit a clear warning for users who haven't migrated yet.
@@ -405,37 +419,162 @@ func RewriteDocumentLinks(htmlContent, returnPath string, log *slog.Logger) stri
 		log = slog.Default()
 	}
 	occ := map[string]int{} // scroll-anchor id → next available suffix
-	return hrefRegex.ReplaceAllStringFunc(htmlContent, func(m string) string {
-		parts := hrefRegex.FindStringSubmatch(m)
-		if len(parts) != 3 {
-			return m
+	return anchorStartTagRegex.ReplaceAllStringFunc(htmlContent, func(tag string) string {
+		m := anchorStartTagRegex.FindStringSubmatch(tag)
+		if len(m) != 2 {
+			return tag
 		}
-		// parts[1] is the pre-existing id="..." prefix (may be ""); we
-		// intentionally discard it. The rewriter owns the scroll-anchor id
-		// on form routes, and a pre-existing id on a non-form link was
-		// planted by a prior pass — in either case the outgoing id is
-		// whatever rewriteHref decides to emit for this link.
-		return rewriteHref(parts[2], returnPath, log, occ)
+		return rewriteAnchorTag(m[1], returnPath, log, occ)
 	})
 }
 
-// rewriteHref inspects a single href value and returns the replacement
-// attribute fragment for the enclosing <a>. For form routes this is
-// [id="..." href="..."]; for other internal routes it's just href="...".
+// rewriteAnchorTag consumes the inside of an `<a …>` start tag (the part
+// between `<a ` and `>`), rewrites the href per the decision table, and
+// returns a re-serialized start tag. Attribute order, spacing, and quote
+// style are normalised on output — browsers don't care about any of those.
+//
+// Behavior:
+//   - Any `href="..."`/`href='...'`/`href=...` is located in the attribute
+//     list. If absent, the tag is returned unchanged.
+//   - Any pre-existing `id` attribute is dropped unconditionally. The
+//     rewriter owns `id` on form routes (the scroll-anchor for the click
+//     handler); on non-form routes no id is emitted. Dropping pre-existing
+//     ids is what keeps the rewriter idempotent on its own output.
+//   - All other attributes are preserved, in the order they appeared.
+func rewriteAnchorTag(attrs, returnPath string, log *slog.Logger, occ map[string]int) string {
+	parsed := parseAttrs(attrs)
+	var href string
+	hrefIdx := -1
+	var out []parsedAttr
+	for _, a := range parsed {
+		name := strings.ToLower(a.name)
+		if name == "id" {
+			// Always drop pre-existing id; the rewriter owns it (see
+			// docstring).
+			continue
+		}
+		if name == "href" {
+			href = a.value
+			hrefIdx = len(out)
+		}
+		out = append(out, a)
+	}
+	// No href → leave the tag alone; the enclosing regex already
+	// matched, but there's nothing to rewrite.
+	if hrefIdx < 0 {
+		return `<a ` + serialiseAttrs(parsed) + `>`
+	}
+
+	newHref, anchorID, ok := rewriteHref(href, returnPath, log, occ)
+	if !ok {
+		// External / mailto / anchor / legacy scheme — return the tag
+		// with its attributes intact (we stripped pre-existing id
+		// above, which is fine: it wasn't ours to preserve).
+		return `<a ` + serialiseAttrs(out) + `>`
+	}
+
+	// Replace href value with rewritten one; prepend a fresh id when
+	// the decision table called for one.
+	out[hrefIdx].value = newHref
+	out[hrefIdx].quoted = true
+	if anchorID != "" {
+		out = append([]parsedAttr{{name: "id", value: anchorID, quoted: true}}, out...)
+	}
+	return `<a ` + serialiseAttrs(out) + `>`
+}
+
+// parsedAttr is a single attribute on an HTML start tag, with enough
+// metadata to round-trip reasonably faithfully.
+type parsedAttr struct {
+	name   string
+	value  string
+	quoted bool // true when value was parsed from a quoted literal or is being (re)serialized
+	raw    string
+}
+
+// parseAttrs splits an anchor's attribute blob into ordered parsedAttr
+// records. Boolean attributes (no value) and all quote styles are
+// accepted; unknown junk is skipped. Attribute name case is preserved
+// (callers that need case-insensitive lookup lower-case it themselves).
+func parseAttrs(s string) []parsedAttr {
+	matches := attrRegex.FindAllStringSubmatchIndex(s, -1)
+	out := make([]parsedAttr, 0, len(matches))
+	for _, m := range matches {
+		get := func(i int) string {
+			start, end := m[2*i], m[2*i+1]
+			if start < 0 {
+				return ""
+			}
+			return s[start:end]
+		}
+		name := get(1)
+		if name == "" {
+			continue
+		}
+		a := parsedAttr{name: name, raw: s[m[0]:m[1]]}
+		// Group indices in m[]: 2*k = start, 2*k+1 = end. A missing
+		// group has start == -1. A present-but-empty group (e.g. `""`)
+		// has start == end and both >= 0 — distinguish these from
+		// boolean attributes (no = sign at all).
+		switch {
+		case m[4] >= 0: // double-quoted, possibly empty
+			a.value = get(2)
+			a.quoted = true
+		case m[6] >= 0: // single-quoted, possibly empty
+			a.value = get(3)
+			a.quoted = true
+		case m[8] >= 0: // unquoted, never empty by regex definition
+			a.value = get(4)
+			a.quoted = true
+		default:
+			// boolean attribute (no = sign) — value stays "",
+			// quoted stays false.
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// serialiseAttrs renders parsedAttrs back into an HTML attribute blob
+// with a single space between attributes and double-quoted values.
+// Boolean attributes (quoted=false) are emitted as bare names.
+func serialiseAttrs(as []parsedAttr) string {
+	var b strings.Builder
+	for i, a := range as {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(a.name)
+		if a.quoted {
+			b.WriteString(`="`)
+			b.WriteString(a.value)
+			b.WriteByte('"')
+		}
+	}
+	return b.String()
+}
+
+// rewriteHref inspects a single href value and returns the rewritten
+// href, the scroll-anchor id (empty for non-form paths), and ok=true
+// when the rewriter took ownership of the href. When ok=false, the
+// caller should leave href intact — the link is external, a bare
+// fragment, mailto:, or a legacy scheme we only warn about.
 //
 // occ is a per-render map tracking how many times each anchor-id base
 // has been used, so duplicate form links get -0, -1, -2 suffixes.
-func rewriteHref(href, returnPath string, log *slog.Logger, occ map[string]int) string {
+func rewriteHref(
+	href, returnPath string, log *slog.Logger, occ map[string]int,
+) (newHref, anchorID string, ok bool) {
 	switch {
 	case href == "":
-		return `href=""`
+		return "", "", false
 	case legacySchemeRegex.MatchString(href):
 		log.Warn("document link uses removed scheme; rewrite to app-relative path", "href", href)
-		return fmt.Sprintf(`href="%s"`, href)
+		return "", "", false
 	case !strings.HasPrefix(href, "/"):
 		// External, anchor-only (#foo), mailto:, tel:, relative — not our
-		// concern. Return unchanged.
-		return fmt.Sprintf(`href="%s"`, href)
+		// concern.
+		return "", "", false
 	}
 
 	base, existingQuery, fragment := splitHref(href)
@@ -452,7 +591,6 @@ func rewriteHref(href, returnPath string, log *slog.Logger, occ map[string]int) 
 
 	// Form routes get a scroll-anchor id unconditionally so the click
 	// handler has a stable target even when returnPath is empty.
-	var anchorID string
 	if isFormRoute(base) {
 		anchorID = formAnchorID(base, occ)
 	}
@@ -476,17 +614,7 @@ func rewriteHref(href, returnPath string, log *slog.Logger, occ map[string]int) 
 	if fragment != "" {
 		out += "#" + fragment
 	}
-	return attrs(anchorID, out)
-}
-
-// attrs stitches id + href into the anchor-attribute fragment hrefRegex
-// replaces. id goes first so a reader's eye catches the scroll target
-// before the URL; HTML attribute order is insignificant to browsers.
-func attrs(id, href string) string {
-	if id == "" {
-		return fmt.Sprintf(`href="%s"`, href)
-	}
-	return fmt.Sprintf(`id="%s" href="%s"`, id, href)
+	return out, anchorID, true
 }
 
 // formAnchorID returns a stable scroll-anchor id for a form-route path,

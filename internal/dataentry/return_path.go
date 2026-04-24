@@ -32,11 +32,8 @@ func isSafeReturnPath(s string) string {
 	if strings.HasPrefix(s, "//") || strings.HasPrefix(s, `/\`) {
 		return ""
 	}
-	if len(s) >= 4 {
-		switch strings.ToLower(s[:4]) {
-		case "/%5c", "/%2f":
-			return ""
-		}
+	if len(s) >= 4 && (strings.EqualFold(s[:4], "/%5C") || strings.EqualFold(s[:4], "/%2F")) {
+		return ""
 	}
 	u, err := url.Parse(s)
 	if err != nil {

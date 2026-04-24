@@ -121,10 +121,12 @@ onMounted(() => {
 <template>
   <div class="analyze-view">
     <header class="page-header">
-      <BackButton v-if="backTarget" :target="backTarget" />
-      <div>
-        <h1>Analysis</h1>
-        <p class="subtitle">Validation checks across all entities and relations</p>
+      <div class="header-left">
+        <BackButton v-if="backTarget" :target="backTarget" />
+        <div>
+          <h1>Analysis</h1>
+          <p class="subtitle">Validation checks across all entities and relations</p>
+        </div>
       </div>
       <button class="btn btn-secondary" :disabled="loading" @click="loadAnalysis">
         {{ loading ? 'Refreshing...' : 'Refresh' }}
@@ -225,6 +227,12 @@ onMounted(() => {
 
 .page-header h1 {
   margin: 0 0 4px;
+}
+
+.header-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
 }
 
 .subtitle {
