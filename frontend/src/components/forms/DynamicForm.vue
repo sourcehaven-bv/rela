@@ -424,6 +424,24 @@ function updateRelationCards(relation: string, state: RelationCardState) {
   checkDirty()
 }
 
+// Bridge incoming-direction RelationPicker changes into the same pending-
+// changes map that RelationCards uses so savePendingRelationCards reconciles
+// them through the direction-aware create/delete path. Keyed with the
+// `-incoming` suffix that the save loop already understands. Pickers have
+// no editable relation-properties so `updated` is always empty.
+function updateIncomingPicker(
+  relation: string,
+  state: { added: Array<{ targetId: string }>; removed: string[] },
+) {
+  pendingCardChanges.value.set(`${relation}-incoming`, {
+    entries: [],
+    added: state.added,
+    removed: state.removed,
+    updated: [],
+  })
+  checkDirty()
+}
+
 async function savePendingRelationCards() {
   const entity = formConfig.value!.entity
   const entityId = props.entityId!
@@ -583,10 +601,13 @@ onBeforeRouteLeave((_to, _from, next) => {
                 />
                 <RelationPicker
                   v-else-if="field.relation"
+                  :key="`picker-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
                   :field="field"
                   :entity-type="formConfig.entity"
+                  :entity-id="entityId"
                   :value="relations[field.relation] || []"
                   @update="updateRelation(field.relation!, $event)"
+                  @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"
                 />
               </template>
             </div>
@@ -614,10 +635,13 @@ onBeforeRouteLeave((_to, _from, next) => {
             />
             <RelationPicker
               v-else-if="field.relation"
+              :key="`picker-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
               :field="field"
               :entity-type="formConfig.entity"
+              :entity-id="entityId"
               :value="relations[field.relation] || []"
               @update="updateRelation(field.relation!, $event)"
+              @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"
             />
           </template>
         </div>

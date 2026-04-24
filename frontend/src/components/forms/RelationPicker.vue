@@ -2,17 +2,29 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
+import { getEntityRelations } from '@/api'
 import type { FormFieldOrRelation, Entity } from '@/types'
 import InlineCreateModal from './InlineCreateModal.vue'
+
+// Reverse-relation diff payload. Mirrors RelationCardState (without the
+// `updated` channel — pickers don't edit relation properties) so DynamicForm
+// can route incoming-picker changes through its existing direction-aware
+// save reconciler.
+export interface RelationPickerIncomingState {
+  added: Array<{ targetId: string }>
+  removed: string[]
+}
 
 const props = defineProps<{
   field: FormFieldOrRelation
   entityType: string
+  entityId?: string
   value: string[]
 }>()
 
 const emit = defineEmits<{
   update: [value: string[]]
+  'incoming-changed': [payload: RelationPickerIncomingState]
 }>()
 
 const schemaStore = useSchemaStore()
@@ -26,6 +38,14 @@ const showDropdown = ref(false)
 const showCreateModal = ref(false)
 const createTargetType = ref('')
 
+// For direction: incoming, the picker manages its own value list. The
+// parent's `:value` prop is sourced from `entity.relations`, which the
+// backend only populates with outgoing edges, so it's never useful for
+// reverse pickers. `incomingOriginal` is the snapshot for diff-on-save.
+const isIncoming = computed(() => props.field.direction === 'incoming')
+const incomingValue = ref<string[]>([])
+const incomingOriginal = ref<string[]>([])
+
 // Computed
 const relationType = computed(() => {
   if (!props.field.relation) return undefined
@@ -34,30 +54,36 @@ const relationType = computed(() => {
 
 const targetTypes = computed(() => {
   if (!relationType.value) return []
-  return relationType.value.to
+  // Incoming pickers select sources that link AT us, so candidates come
+  // from the relation's `from:` set instead of `to:`.
+  return isIncoming.value ? relationType.value.from : relationType.value.to
 })
 
 const label = computed(() => props.field.label || props.field.relation || '')
 const help = computed(() => props.field.help || relationType.value?.description || '')
 
 const isMulti = computed(() => {
-  // Check cardinality constraints
+  // For incoming, cardinality is bounded by `max_incoming` (how many sources
+  // may point at us), not `max_outgoing`.
   if (!relationType.value) return true
-  return relationType.value.max_outgoing !== 1
+  const limit = isIncoming.value ? relationType.value.max_incoming : relationType.value.max_outgoing
+  return limit !== 1
 })
 
+const effectiveValue = computed(() => (isIncoming.value ? incomingValue.value : props.value))
+
 const selectedEntities = computed(() => {
-  return candidates.value.filter((c) => props.value.includes(c.id))
+  return candidates.value.filter((c) => effectiveValue.value.includes(c.id))
 })
 
 const filteredCandidates = computed(() => {
   if (!searchQuery.value) {
-    return candidates.value.filter((c) => !props.value.includes(c.id))
+    return candidates.value.filter((c) => !effectiveValue.value.includes(c.id))
   }
   const query = searchQuery.value.toLowerCase()
   return candidates.value.filter(
     (c) =>
-      !props.value.includes(c.id) &&
+      !effectiveValue.value.includes(c.id) &&
       (c.id.toLowerCase().includes(query) ||
         String(c.properties.title || '').toLowerCase().includes(query))
   )
@@ -83,8 +109,41 @@ async function loadCandidates() {
   }
 }
 
+async function loadIncomingValue() {
+  if (!isIncoming.value || !props.entityId || !props.field.relation) return
+  try {
+    const edges = await getEntityRelations(
+      props.entityType,
+      props.entityId,
+      props.field.relation,
+      'incoming',
+    )
+    const ids = edges.map((e) => e.id)
+    incomingValue.value = ids
+    incomingOriginal.value = [...ids]
+  } catch (err) {
+    if (isCancelledFetch(err)) return
+    console.error('Failed to load incoming relations:', err)
+  }
+}
+
+function emitIncomingDiff() {
+  const original = new Set(incomingOriginal.value)
+  const current = new Set(incomingValue.value)
+  const added = incomingValue.value
+    .filter((id) => !original.has(id))
+    .map((id) => ({ targetId: id }))
+  const removed = incomingOriginal.value.filter((id) => !current.has(id))
+  emit('incoming-changed', { added, removed })
+}
+
 function selectEntity(entity: Entity) {
-  if (isMulti.value) {
+  if (isIncoming.value) {
+    incomingValue.value = isMulti.value
+      ? [...incomingValue.value, entity.id]
+      : [entity.id]
+    emitIncomingDiff()
+  } else if (isMulti.value) {
     emit('update', [...props.value, entity.id])
   } else {
     emit('update', [entity.id])
@@ -94,7 +153,12 @@ function selectEntity(entity: Entity) {
 }
 
 function removeEntity(entityId: string) {
-  emit('update', props.value.filter((id) => id !== entityId))
+  if (isIncoming.value) {
+    incomingValue.value = incomingValue.value.filter((id) => id !== entityId)
+    emitIncomingDiff()
+  } else {
+    emit('update', props.value.filter((id) => id !== entityId))
+  }
 }
 
 function getEntityLabel(entity: Entity): string {
@@ -110,16 +174,13 @@ function openCreateModal(targetType: string) {
 function handleEntityCreated(entity: Entity) {
   // Add to candidates and select it
   candidates.value.push(entity)
-  if (isMulti.value) {
-    emit('update', [...props.value, entity.id])
-  } else {
-    emit('update', [entity.id])
-  }
+  selectEntity(entity)
 }
 
 // Lifecycle
-onMounted(() => {
-  loadCandidates()
+onMounted(async () => {
+  await loadCandidates()
+  await loadIncomingValue()
 })
 
 // Close dropdown when clicking outside
