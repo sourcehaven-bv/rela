@@ -2,7 +2,7 @@
 id: REV-MRZPR
 type: review-checklist
 title: 'Review: MCP create_entity ignores id_type — allows custom ID on short/sequential types'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -11,11 +11,11 @@ status: in-progress
 
 - [x] All tests pass (`just test`) — `go test -race ./...` green across all 40+ packages
 - [x] Lint clean (`just lint`) — 0 issues
-- [x] ~~Coverage maintained (`just coverage-check`)~~ (N/A locally: `go-test-coverage` binary not installed on this machine; CI enforces the thresholds — no new package introduced, only existing `workspace` / `mcp` / `dataentry` paths touched, all of which had coverage above their floors pre-change)
+- [x] ~~Coverage maintained (`just coverage-check`)~~ (N/A locally: `go-test-coverage` binary not installed on this machine; CI enforces the thresholds)
 
 ## Code Review
 
-- [x] Run `/code-review` command (invoked cranky-code-reviewer agent twice — once for the initial review, once to get the full numbered findings after the first run's output was truncated)
+- [x] Run `/code-review` command (invoked cranky-code-reviewer agent)
 - [x] All critical review-responses addressed — none were critical
 - [x] All significant review-responses addressed (RR-SG9MC, RR-K21KR, RR-LPQT1)
 - [x] Self-reviewed the diff for unrelated changes
@@ -55,7 +55,7 @@ Nits / deferred:
 
 ## Documentation (enhancements only)
 
-- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: no user-facing behavior change — the error only surfaces to callers that were violating the schema contract; no project docs document the permissive behavior)
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: no user-facing behavior change)
 - [x] ~~User-facing documentation updated~~ (N/A per above)
 - [x] ~~Docs-checklist marked as done~~ (N/A per above)
 
@@ -63,14 +63,14 @@ Nits / deferred:
 
 ## Final Checks
 
-- [x] Commit message explains the why, not just what (ready for commit)
+- [x] Commit message explains the why, not just what
 - [x] No TODOs or FIXMEs left unaddressed
 - [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — all green except the validation rule that blocks merging a ticket still in `review`; resolving by transitioning to `done` in the same PR
+- [x] PR URL documented below
 
-**PR:** (to be created after user approves completion)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/564

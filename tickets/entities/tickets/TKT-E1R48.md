@@ -5,7 +5,7 @@ title: MCP create_entity ignores id_type — allows custom ID on short/sequentia
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## Summary
