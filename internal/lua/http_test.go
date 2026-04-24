@@ -2,9 +2,11 @@ package lua
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -252,6 +254,41 @@ func TestLuaHTTP_TimeoutError(t *testing.T) {
 		assert(err.kind == "timeout", "kind = " .. tostring(err.kind))
 	`); err != nil {
 		t.Fatalf("RunString: %v", err)
+	}
+}
+
+// TestClassifyHTTPError_Canceled verifies that context.Canceled (the error
+// surfaced when the runtime's parent context is canceled mid-request) is
+// classified as kind="canceled" rather than "timeout" or "network".
+//
+// This is a unit test of the classifier rather than an end-to-end
+// RunString test because the Lua runtime itself short-circuits with a
+// Lua-level "context canceled" error on the next opcode after the parent
+// context is canceled, which prevents a script from observing the
+// err_table. The real shutdown path still produces a canceled err_table
+// via this classifier; scripts that want to observe it would need to
+// return before the next opcode (not a realistic scenario).
+func TestClassifyHTTPError_Canceled(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"direct context.Canceled", context.Canceled, "canceled"},
+		{"wrapped context.Canceled", &url.Error{Op: "Get", URL: "http://x", Err: context.Canceled}, "canceled"},
+		{"direct context.DeadlineExceeded", context.DeadlineExceeded, "timeout"},
+		{"wrapped deadline exceeded", &url.Error{Op: "Get", URL: "http://x", Err: context.DeadlineExceeded}, "timeout"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyHTTPError(tc.err)
+			if got == nil {
+				t.Fatal("classifyHTTPError returned nil")
+			}
+			if got.Kind != tc.want {
+				t.Errorf("Kind = %q, want %q", got.Kind, tc.want)
+			}
+		})
 	}
 }
 
