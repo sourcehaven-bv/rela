@@ -658,9 +658,29 @@ func TestLuaHTTP_ErrorTableShape(t *testing.T) {
 		assert(type(err.kind) == "string", "kind should be string")
 		assert(type(err.status) == "number", "status should be number")
 		assert(type(err.message) == "string", "message should be string")
+		assert(type(err.retry_after) == "number", "retry_after should be number")
 		assert(type(err.details) == "string", "details should be string")
+		-- details exposes the unwrapped cause, so it should be non-empty for
+		-- network errors (where an underlying net.Error is wrapped).
+		assert(#err.details > 0, "details should be non-empty for network error")
 	`); err != nil {
 		t.Fatalf("RunString: %v", err)
+	}
+}
+
+func TestLuaHTTP_InvalidMethodRaises(t *testing.T) {
+	rt := newHTTPRuntime(t)
+	err := rt.RunString(`http.request({url = "http://127.0.0.1:1", method = "GET HACK"})`)
+	if err == nil {
+		t.Fatal("expected Lua error for method with whitespace")
+	}
+}
+
+func TestLuaHTTP_ConvenienceTimeoutZeroRaises(t *testing.T) {
+	rt := newHTTPRuntime(t)
+	err := rt.RunString(`http.get("http://127.0.0.1:1", {timeout = 0})`)
+	if err == nil {
+		t.Fatal("expected Lua error for timeout=0 on convenience method")
 	}
 }
 

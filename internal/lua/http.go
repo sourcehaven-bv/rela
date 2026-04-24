@@ -7,13 +7,17 @@
 //	programming error         -> RaiseError
 //
 // The error table has stable fields: kind (string), status (number),
-// message (string), details (string). Scripts branch on err.kind.
+// message (string), retry_after (number, always 0 for http), details
+// (string, unwrapped cause). Scripts branch on err.kind. The shape mirrors
+// ai.Error so scripts switching between ai.chat and http.request see the
+// same layout.
 //
 // Error kinds:
 //   - timeout:      request exceeded deadline
 //   - canceled:     request was canceled (e.g., runtime shutting down)
-//   - network:      DNS, connection refused, TLS, etc.
-//   - bad_response: response body too large or unreadable
+//   - network:      DNS, connection refused, TLS, read error, etc.
+//   - bad_response: response body exceeded the 10 MiB cap, or json_decode
+//     received invalid JSON
 //
 // JSON helpers use the same convention split: json_encode raises on wrong
 // arg types (programming error); json_decode returns (nil, err_table) for
@@ -178,7 +182,6 @@ func (r *Runtime) doHTTPRequest(
 
 	httpReq, err := http.NewRequestWithContext(ctx, method, reqURL.String(), bodyReader)
 	if err != nil {
-		// Should not happen — URL and method are pre-validated.
 		ls.RaiseError("http.request: %s", err.Error())
 		return 0
 	}
@@ -244,6 +247,9 @@ func parseHTTPRequestOpts(opts *lua.LTable) (httpRequestOpts, error) {
 			return out, errors.New("method must be a string")
 		}
 		out.method = strings.ToUpper(string(s))
+		if err := validateHTTPMethod(out.method); err != nil {
+			return out, err
+		}
 	}
 
 	// headers (optional)
@@ -338,9 +344,11 @@ func parseConvenienceOpts(ls *lua.LState, pos int) (map[string]string, time.Dura
 			ls.RaiseError("timeout must be a number, got %s", v.Type().String())
 			return headers, timeout
 		}
-		if n > 0 {
-			timeout = time.Duration(float64(n) * float64(time.Second))
+		if n <= 0 {
+			ls.RaiseError("timeout must be positive")
+			return headers, timeout
 		}
+		timeout = time.Duration(float64(n) * float64(time.Second))
 	}
 
 	return headers, timeout
@@ -366,12 +374,38 @@ func validateURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
+// validateHTTPMethod rejects methods that http.NewRequest would reject later
+// (anything containing invalid characters or whitespace). The method is
+// assumed already-uppercased.
+func validateHTTPMethod(m string) error {
+	if m == "" {
+		return errors.New("method must not be empty")
+	}
+	// RFC 7230 token: 1*tchar, tchar = ALPHA / DIGIT / "!#$%&'*+-.^_`|~"
+	for i := 0; i < len(m); i++ {
+		c := m[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+			// ok
+		case c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' ||
+			c == '*' || c == '+' || c == '-' || c == '.' || c == '^' || c == '_' ||
+			c == '`' || c == '|' || c == '~':
+			// ok
+		default:
+			return fmt.Errorf("method contains invalid character %q", c)
+		}
+	}
+	return nil
+}
+
 // httpError represents an HTTP-level error surfaced to Lua scripts.
+// The Cause field is surfaced to scripts as err.details (matching the ai
+// module's shape), letting scripts inspect low-level transport errors.
 type httpError struct {
 	Kind    string
 	Status  int
 	Message string
-	Details string
+	Cause   error
 }
 
 // classifyHTTPError converts a net/http client error into an httpError.
@@ -382,18 +416,21 @@ func classifyHTTPError(err error) *httpError {
 	msg := err.Error()
 
 	if errors.Is(err, context.DeadlineExceeded) {
-		return &httpError{Kind: "timeout", Message: msg, Details: msg}
+		return &httpError{Kind: "timeout", Message: msg, Cause: err}
 	}
 	if errors.Is(err, context.Canceled) {
-		return &httpError{Kind: "canceled", Message: msg, Details: msg}
+		return &httpError{Kind: "canceled", Message: msg, Cause: err}
 	}
 
+	// Client-level timeout (http.Client.Timeout) surfaces as a *url.Error
+	// whose Timeout() is true but does not wrap context.DeadlineExceeded.
+	// Keep this branch distinct from the errors.Is check above.
 	var nerr net.Error
 	if errors.As(err, &nerr) && nerr.Timeout() {
-		return &httpError{Kind: "timeout", Message: msg, Details: msg}
+		return &httpError{Kind: "timeout", Message: msg, Cause: err}
 	}
 
-	return &httpError{Kind: "network", Message: msg, Details: msg}
+	return &httpError{Kind: "network", Message: msg, Cause: err}
 }
 
 // errHTTPBodyTooLarge is returned when the response exceeds httpMaxResponseBytes.
@@ -407,27 +444,37 @@ func readHTTPBody(r io.Reader) ([]byte, *httpError) {
 		return nil, &httpError{
 			Kind:    "network",
 			Message: "reading response body: " + err.Error(),
-			Details: err.Error(),
+			Cause:   err,
 		}
 	}
 	if int64(len(body)) > httpMaxResponseBytes {
 		return nil, &httpError{
 			Kind:    "bad_response",
 			Message: errHTTPBodyTooLarge.Error(),
-			Details: errHTTPBodyTooLarge.Error(),
+			Cause:   errHTTPBodyTooLarge,
 		}
 	}
 	return body, nil
 }
 
-// pushHTTPError pushes (nil, err_table) onto the Lua stack.
+// pushHTTPError pushes (nil, err_table) onto the Lua stack. The table has
+// the same fields as ai.Error surfaces: kind, status, message, retry_after,
+// details. `retry_after` is always 0 for HTTP errors (no HTTP path currently
+// populates a Retry-After). `details` exposes the wrapped underlying error
+// (if any) so scripts can inspect low-level transport errors (TLS cert,
+// DNS record, etc.) without parsing the top-level Message.
 func pushHTTPError(ls *lua.LState, e *httpError) int {
 	ls.Push(lua.LNil)
 	tbl := ls.NewTable()
 	tbl.RawSetString("kind", lua.LString(e.Kind))
 	tbl.RawSetString("status", lua.LNumber(e.Status))
 	tbl.RawSetString("message", lua.LString(e.Message))
-	tbl.RawSetString("details", lua.LString(e.Details))
+	tbl.RawSetString("retry_after", lua.LNumber(0))
+	if e.Cause != nil {
+		tbl.RawSetString("details", lua.LString(e.Cause.Error()))
+	} else {
+		tbl.RawSetString("details", lua.LString(""))
+	}
 	ls.Push(tbl)
 	return 2
 }
@@ -477,7 +524,7 @@ func luaJSONDecode(ls *lua.LState) int {
 		return pushHTTPError(ls, &httpError{
 			Kind:    "bad_response",
 			Message: "json_decode: " + err.Error(),
-			Details: err.Error(),
+			Cause:   err,
 		})
 	}
 	ls.Push(goValueToLua(ls, goVal))

@@ -856,12 +856,9 @@ func luaValueToGoSafe(lv lua.LValue, depth int, seen map[*lua.LTable]struct{}) i
 	}
 }
 
-// luaTableToGo converts a Lua table to a Go map or slice. Cycles are replaced
-// with the cycleSentinel string and recursion is capped at maxLuaConvertDepth.
-func luaTableToGo(t *lua.LTable) interface{} {
-	return luaTableToGoSafe(t, 0, nil)
-}
-
+// luaTableToGoSafe converts a Lua table to a Go map or slice. Cycles are
+// replaced with the cycleSentinel string and recursion is capped at
+// maxLuaConvertDepth.
 func luaTableToGoSafe(t *lua.LTable, depth int, seen map[*lua.LTable]struct{}) interface{} {
 	if depth >= maxLuaConvertDepth {
 		return maxDepthSentinel

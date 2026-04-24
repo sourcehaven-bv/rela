@@ -599,18 +599,26 @@ JSON arrays. Tables with any string keys encode as JSON objects.
 
 #### Error Handling
 
-HTTP functions follow the same `(nil, err_table)` convention as `ai.chat`:
+HTTP functions follow the same `(nil, err_table)` convention as `ai.chat`.
+The error table has the same fields as `ai.chat` returns:
+
+| Field | Type | Notes |
+|---|---|---|
+| `kind` | string | One of `timeout`, `canceled`, `network`, `bad_response` |
+| `status` | number | HTTP status when available, `0` otherwise |
+| `message` | string | Human-readable summary |
+| `retry_after` | number | Always `0` for HTTP errors (populated by `ai` on rate limits) |
+| `details` | string | Unwrapped transport error (TLS cert, DNS record, etc.) when present |
 
 | `err.kind` | When |
 |---|---|
 | `timeout` | Request exceeded deadline |
 | `canceled` | Request was canceled (runtime shutting down) |
-| `network` | DNS failure, connection refused, TLS error |
-| `bad_response` | Response body exceeded 10 MiB limit |
+| `network` | DNS failure, connection refused, TLS error, body read error |
+| `bad_response` | Response body exceeded 10 MiB limit, or invalid JSON in `json_decode` |
 
-`http.json_decode` returns `(nil, err_table)` with `kind = "bad_response"` for invalid JSON.
-
-Programming errors (missing URL, wrong argument types) raise Lua errors.
+Programming errors (missing URL, wrong argument types, invalid HTTP method,
+non-positive timeout) raise Lua errors.
 
 #### JSON conversion limits
 
