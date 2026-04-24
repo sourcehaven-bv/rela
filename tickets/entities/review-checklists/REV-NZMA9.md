@@ -9,43 +9,70 @@ status: in-progress
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`go test ./...` clean; frontend vitest 503 passed; e2e 158 passed + 1 skipped)
+- [x] Lint clean (`just lint` — 0 issues; frontend `npm run lint` — 0 errors, 66 pre-existing warnings)
+- [x] Coverage maintained (`just coverage-check` — package + total floors PASS)
+- [x] Arch-lint clean (`just arch-lint` — added e2e to exclude list)
+- [x] Type check clean (`npm run typecheck` — no errors)
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed (0 critical findings)
+- [x] All significant review-responses addressed (3 findings, all resolved)
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:**
+
+| RR | Severity | Status | Resolution summary |
+|----|----------|--------|---------------------|
+| RR-1614T | significant | addressed | Added `isAnyModalOpen()` guard at top of CustomView's handleKeydown |
+| RR-5HUNB | significant | addressed | Fixed token typo + added third-pass byte-equality idempotency check |
+| RR-D3K32 | significant | addressed | Replaced href-only regex with whole-tag regex + attribute-level parser; 8 new tests cover adversarial attribute orders |
+| RR-VLM8A | minor | addressed | Replaced ToLower switch with EqualFold |
+| RR-2297B | minor | addressed | Wrapped BackButton + h1 in `.header-left` on KanbanView, AnalyzeView, EntityList |
+| RR-BHBWJ | minor | addressed | Added data-testid="back-button" to BackButton.vue; e2e locator keys on testid |
+| RR-A26AZ | minor | wont-fix | Pre-existing behavior preserved; '/' is a valid router target with dashboard redirect |
+| RR-1HIWF | nit | wont-fix | Audit-trail split is a future telemetry concern, not a rewriter concern |
+| RR-ICIU9 | nit | wont-fix | Intentional UX change; documented in "Back navigation" section |
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+| AC | Status | Evidence |
+|----|--------|----------|
+| AC1 | PASS | `TestRewriteDocumentLinks` — 10+ cases for list/entity/kanban/non-route paths |
+| AC2 | PASS | `useBackTarget.test.ts` — 20 cases incl. hostile-input fallthrough |
+| AC3 | PASS | `useScopeNavigation.test.ts` — Prev/Next query preservation; manual smoke of EntityView + CustomView |
+| AC4 | PASS | e2e round-trip — feature→bug→Back lands on feature with ?doc= preserved |
+| AC5 | PASS | `back-button.spec.ts` — ListView renders + navigates via Back |
+| AC6 | PASS | no change to DynamicForm; existing `forms.spec.ts` passes unchanged |
+| AC7 | PASS | `back-button.spec.ts:22` — behavioural round-trip (click + waitForURL) |
+| AC8 | PASS | `TestIsSafeReturnPath` — 4 lowercase cases added |
+| AC9 | PASS | `TestHandleV1Documents_CacheInvariance` — dual-render + disk inspection |
+| AC10 | PASS | `TestRewriteDocumentLinks_Idempotent` — same-returnPath byte-equal + different-returnPath replace + third-pass equality (RR-5HUNB strengthened) |
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] User-facing documentation updated
+- [x] `docs/data-entry.md` + `docs-project/.../GUIDE-data-entry.md` "Links in rendered documents" section revised
+- [x] New "Back navigation" subsection documents the precedence rule
+- [x] `frontend/CLAUDE.md` package-layout table mentions BackButton / useBackTarget / styles/
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+Docs-checklist: not created (this is a small enhancement where the existing
+data-entry guide's "Links in rendered documents" section is the only doc
+affected; per project convention, a separate docs-checklist is overhead for a
+single-file doc touch).
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit messages explain the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed (RR-A26AZ explicitly deferred with reason)
+- [x] Ready for another developer to use — composable + component documented with usage examples in docstrings
 
 ## Pull Request
 
@@ -53,4 +80,4 @@ Skip this section for bugs and internal refactors.
 - [ ] All CI checks pass
 - [ ] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** <!-- populated after /pr -->

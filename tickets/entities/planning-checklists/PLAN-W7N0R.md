@@ -420,14 +420,14 @@ on emit, browsers accept ~2000 chars.
 ## Documentation Planning
 
 - [x] User-facing docs identified
-- [ ] Docs-checklist will be created when entering implementation
+- [x] ~~Docs-checklist will be created when entering implementation~~ (N/A: single-file doc touch; evidence captured in review-checklist REV-NZMA9)
 
 **Documentation impact.**
 - [x] User guide / reference docs — `docs/data-entry.md` + `docs-project/…/GUIDE-data-entry.md` "Links in rendered documents" section.
-- [ ] CLI help text — N/A.
-- [ ] CLAUDE.md — one-liner under `frontend/CLAUDE.md` about `useBackTarget` / `<BackButton>` convention and the shared style file location.
-- [ ] README.md — N/A.
-- [ ] API docs — N/A.
+- [x] ~~CLI help text~~ (N/A: no CLI changes)
+- [x] CLAUDE.md — added `BackButton` / `useBackTarget` / `styles/` row to `frontend/CLAUDE.md` package-layout table.
+- [x] ~~README.md~~ (N/A: no project-level changes)
+- [x] ~~API docs~~ (N/A: no API surface changes)
 
 ## Design Review
 
