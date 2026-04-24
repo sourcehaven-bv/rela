@@ -63,4 +63,4 @@ Docs added to `docs-project/entities/guides/GUIDE-lua-scripting.md`
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** To be filled after `gh pr create`.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/565
