@@ -217,10 +217,14 @@ function createTestProject(): string {
   fs.mkdirSync(path.join(tmpDir, 'entities', 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'relations'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'templates', 'entities'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'scripts', 'docs'), { recursive: true });
   for (const [rel, content] of Object.entries(SEED_ENTITIES)) {
     fs.writeFileSync(path.join(tmpDir, rel), content);
   }
   for (const [rel, content] of Object.entries(SEED_TEMPLATES)) {
+    fs.writeFileSync(path.join(tmpDir, rel), content);
+  }
+  for (const [rel, content] of Object.entries(SEED_DOCS)) {
     fs.writeFileSync(path.join(tmpDir, rel), content);
   }
   return tmpDir;
@@ -701,6 +705,12 @@ kanbans:
     create_form: bug
     edit_form: bug
 
+documents:
+  feature-overview:
+    title: "Feature Overview"
+    entity_type: feature
+    script: docs/feature_overview.lua
+
 navigation:
   - label: "Dashboard"
     dashboard: true
@@ -723,6 +733,21 @@ navigation:
   - label: "Conflicts"
     conflicts: true
 `;
+
+/** Document script rendered by rela-server when visiting
+ *  /entity/feature/FEAT-001?doc=feature-overview. Emits a single link to
+ *  a bug detail page — the rewriter will append ?return_to=<current url>
+ *  so clicking the link lands on EntityView with a Back button. */
+const SEED_DOCS: Record<string, string> = {
+  'scripts/docs/feature_overview.lua': `-- Minimal doc for e2e round-trip testing.
+local id = rela.document.entry_id
+print("# " .. id)
+print()
+-- Link to a non-form internal route. The rewriter appends return_to on
+-- these after TKT-JIEKC, so the landing EntityView renders a Back button.
+print("[See bug BUG-001](" .. rela.url.detail({id = "BUG-001", type = "bug"}) .. ")")
+`,
+};
 
 const SEED_ENTITIES: Record<string, string> = {
   'entities/features/FEAT-001.md': `---
