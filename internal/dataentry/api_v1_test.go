@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func TestV1SchemaEndpoint(t *testing.T) {
@@ -2321,6 +2322,138 @@ func TestV1EntityRelationsWrongType(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
+}
+
+// newReverseRelationsTestApp builds an app whose `blocks` relation has both
+// an `Inverse` (so grouped responses key incoming edges under "blockedBy")
+// and a `reason` property (so the per-edge response includes meta).
+// newTestAppV1's `blocks` is intentionally bare; it is shared by many tests
+// and we don't want to perturb their assertions.
+func newReverseRelationsTestApp(t *testing.T) *App {
+	t.Helper()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket":  {Label: "Ticket", Properties: map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}}},
+			"feature": {Label: "Feature", Properties: map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"blocks": {
+				Label:   "blocks",
+				From:    []string{"feature"},
+				To:      []string{"feature"},
+				Inverse: &metamodel.InverseDef{ID: "blockedBy"},
+				Properties: map[string]metamodel.PropertyDef{
+					"reason": {Type: "string"},
+				},
+			},
+		},
+	}
+	cfg := &dataentryconfig.Config{
+		App:        dataentryconfig.AppConfig{Name: "Reverse Test", Description: "x"},
+		Forms:      map[string]dataentryconfig.Form{},
+		Lists:      map[string]dataentryconfig.List{},
+		Views:      map[string]dataentryconfig.ViewConfig{},
+		Kanbans:    map[string]dataentryconfig.Kanban{},
+		Navigation: []dataentryconfig.NavigationEntry{},
+	}
+	return newAppFromParts(cfg, meta, newFixture())
+}
+
+// seedBlocksReverseFixture seeds FEAT-001 --blocks--> FEAT-003 with a
+// `reason` property, the canonical reverse-relation regression scenario.
+func seedBlocksReverseFixture(t *testing.T, app *App) (sourceID, targetID string) {
+	t.Helper()
+	sourceID, targetID = "FEAT-001", "FEAT-003"
+	seedEntity(app, &entity.Entity{ID: sourceID, Type: "feature", Properties: map[string]interface{}{"title": "source"}})
+	seedEntity(app, &entity.Entity{ID: targetID, Type: "feature", Properties: map[string]interface{}{"title": "target"}})
+	if _, err := app.store.CreateRelation(
+		t.Context(),
+		sourceID, "blocks", targetID,
+		&store.RelationData{Properties: map[string]interface{}{"reason": "test block"}},
+	); err != nil {
+		t.Fatalf("seed blocks relation: %v", err)
+	}
+	return sourceID, targetID
+}
+
+// TestV1GetRelationType_IncomingReturnsEdgeWithMeta covers the
+// `GET /api/v1/{plural}/{id}/relations/{relType}?direction=incoming`
+// contract that the data-entry SPA's reverse widgets depend on. Was an
+// e2e-level test; moved to Go because the assertion is purely on the
+// JSON shape produced by handleV1GetRelationType.
+func TestV1GetRelationType_IncomingReturnsEdgeWithMeta(t *testing.T) {
+	app := newReverseRelationsTestApp(t)
+	sourceID, targetID := seedBlocksReverseFixture(t, app)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/features/"+targetID+"/relations/blocks?direction=incoming", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1GetRelationType(rec, req, "feature", targetID, "blocks")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var edges []map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &edges); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 incoming edge, got %d: %s", len(edges), rec.Body.String())
+	}
+	if got := edges[0]["id"]; got != sourceID {
+		t.Errorf("incoming edge peer = %v, want %s", got, sourceID)
+	}
+	meta, ok := edges[0]["meta"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected meta object on edge, got %T: %v", edges[0]["meta"], edges[0])
+	}
+	if meta["reason"] != "test block" {
+		t.Errorf("meta.reason = %v, want %q", meta["reason"], "test block")
+	}
+}
+
+// TestV1EntityRelations_GroupsIncomingUnderInverseName covers the contract
+// that the grouped relations endpoint surfaces incoming edges under the
+// relation's configured `inverse:` name (e.g. `blocks` → `blockedBy`).
+// Was an e2e-level test; moved to Go because the SPA only consumes this
+// JSON shape, it doesn't render it directly.
+func TestV1EntityRelations_GroupsIncomingUnderInverseName(t *testing.T) {
+	app := newReverseRelationsTestApp(t)
+	sourceID, targetID := seedBlocksReverseFixture(t, app)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/features/"+targetID+"/relations", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1EntityRelations(rec, req, "feature", targetID)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var grouped map[string][]map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &grouped); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	blockedBy, ok := grouped["blockedBy"]
+	if !ok {
+		t.Fatalf("expected key %q in response, got keys: %v", "blockedBy", keysOf(grouped))
+	}
+	if len(blockedBy) != 1 {
+		t.Fatalf("expected 1 blockedBy entry, got %d", len(blockedBy))
+	}
+	if got := blockedBy[0]["id"]; got != sourceID {
+		t.Errorf("blockedBy[0].id = %v, want %s", got, sourceID)
+	}
+	if got := blockedBy[0]["direction"]; got != "incoming" {
+		t.Errorf("blockedBy[0].direction = %v, want %q", got, "incoming")
+	}
+}
+
+func keysOf(m map[string][]map[string]interface{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func TestV1DeleteEntityNotFound(t *testing.T) {

@@ -20,28 +20,11 @@ import { RelationCardsPage, FormPage } from '../pages';
  */
 
 test.describe('Reverse relations', () => {
-  test('backend returns incoming blocks edge for FEAT-003', async ({ api }) => {
-    const resp = await api.rawRequest(
-      'GET',
-      `features/${SEED.features.exportData}/relations/blocks?direction=incoming`,
-    );
-    expect(resp.ok()).toBeTruthy();
-    const edges = (await resp.json()) as Array<{ id: string; meta?: Record<string, unknown> }>;
-    expect(edges.map((e) => e.id)).toContain(SEED.features.authentication);
-    const edge = edges.find((e) => e.id === SEED.features.authentication);
-    expect(edge?.meta?.reason).toBe('test block');
-  });
-
-  test('backend grouped relations response labels incoming under inverse name', async ({ api }) => {
-    // GET /api/v1/{plural}/{id}/relations groups edges by type; incoming
-    // edges surface under the relation's configured inverse (`blockedBy`).
-    const resp = await api.rawRequest('GET', `features/${SEED.features.exportData}/relations`);
-    expect(resp.ok()).toBeTruthy();
-    const grouped = (await resp.json()) as Record<string, Array<{ id: string; direction: string }>>;
-    const blockedBy = grouped['blockedBy'] ?? [];
-    expect(blockedBy.map((e) => e.id)).toContain(SEED.features.authentication);
-    expect(blockedBy.every((e) => e.direction === 'incoming')).toBeTruthy();
-  });
+  // Backend-contract tests for the relations endpoints (response shape with
+  // direction:incoming, grouping under the inverse name) live in Go:
+  // internal/dataentry/api_v1_test.go::TestV1GetRelationType_IncomingReturnsEdgeWithMeta
+  // and TestV1EntityRelations_GroupsIncomingUnderInverseName. The specs
+  // below cover only what requires a real browser.
 
   test('cards widget renders incoming blocks card for FEAT-003 (from FEAT-001)', async ({ appPage }) => {
     const rc = new RelationCardsPage(appPage);
@@ -90,24 +73,14 @@ test.describe('Reverse relations', () => {
     expect(edge?.meta?.reason).toBe(updated);
   });
 
-  test('non-cards picker lists linked source entities with direction: incoming', async ({ appPage, api }) => {
+  test('non-cards picker lists linked source entities with direction: incoming', async ({ appPage }) => {
     // The 'implements' relation goes task -> feature. On the FEAT-001 form
     // we configure a non-cards widget with direction: incoming labelled
     // "Implemented by". TASK-001 implements FEAT-001 in the seed, so the
     // widget must render TASK-001 as a linked entity.
     //
-    // Backend contract check first.
-    const resp = await api.rawRequest(
-      'GET',
-      `features/${SEED.features.authentication}/relations/implements?direction=incoming`,
-    );
-    expect(resp.ok()).toBeTruthy();
-    const edges = (await resp.json()) as Array<{ id: string }>;
-    expect(edges.map((e) => e.id)).toContain(SEED.tasks.writeUnitTests);
-
-    // UI must show the linked task as a selected-entity tile inside the
-    // "Implemented by" widget. The picker renders entity type + title in the
-    // tile (no ID), so assert on the seeded TASK-001 title.
+    // Backend contract is covered by the Go test referenced above; here we
+    // only verify that the SPA renders the reverse-direction picker value.
     const form = new FormPage(appPage);
     await form.navigateToEditForm('feature', SEED.features.authentication);
     const picker = form.relationPickerByLabel('Implemented by');
