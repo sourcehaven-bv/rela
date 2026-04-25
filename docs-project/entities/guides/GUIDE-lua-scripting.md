@@ -518,6 +518,130 @@ if err then
 end
 ```
 
+### HTTP Functions
+
+The `http` module provides an HTTP client for calling external APIs. No
+configuration is needed — unlike `ai.*`, the module works out of the box.
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `http.request(opts)` | Full request: url/method/headers/body/timeout | (response, nil) or (nil, err_table) |
+| `http.get(url, opts?)` | GET convenience | (response, nil) or (nil, err_table) |
+| `http.post(url, body, opts?)` | POST convenience | (response, nil) or (nil, err_table) |
+| `http.put(url, body, opts?)` | PUT convenience | (response, nil) or (nil, err_table) |
+| `http.patch(url, body, opts?)` | PATCH convenience | (response, nil) or (nil, err_table) |
+| `http.delete(url, opts?)` | DELETE convenience | (response, nil) or (nil, err_table) |
+
+For request/response bodies, use `rela.json.encode` / `rela.json.decode` —
+see [JSON Functions](#json-functions).
+
+#### http.request
+
+```lua
+local resp, err = http.request({
+  url     = "https://api.example.com/data",
+  method  = "POST",                          -- optional, default GET
+  headers = {["Content-Type"] = "application/json"},
+  body    = rela.json.encode({key = "value"}),
+  timeout = 10,                              -- optional, seconds
+})
+```
+
+#### Response Shape
+
+`resp` is a table:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status_code` | number | HTTP status (200, 404, etc.) |
+| `status` | string | Status line ("200 OK") |
+| `headers` | table | Lowercase keys, first-value-wins for multi-value headers |
+| `body` | string | Response body (capped at 10 MiB) |
+
+#### Convenience Methods
+
+```lua
+local resp, err = http.get("https://api.example.com/users")
+local resp, err = http.post(
+    "https://api.example.com/items",
+    rela.json.encode({name = "new item"}),
+    {headers = {["Content-Type"] = "application/json"}}
+)
+```
+
+#### Error Handling
+
+HTTP functions follow the same `(nil, err_table)` convention as `ai.chat`.
+The error table mirrors `ai.chat`'s shape (minus `status`, which always
+absent on http errors — non-2xx responses come back as a normal response
+table with `status_code` populated):
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `kind` | string | One of `timeout`, `canceled`, `network`, `bad_response` |
+| `message` | string | Human-readable summary |
+| `retry_after` | number | Always `0` for HTTP errors (populated by `ai` on rate limits) |
+| `details` | string | Unwrapped transport error (TLS cert, DNS record, etc.) when present |
+
+| `err.kind` | When |
+|---|---|
+| `timeout` | Request or body read exceeded the deadline |
+| `canceled` | Request was canceled (runtime shutting down) |
+| `network` | DNS failure, connection refused, TLS error, generic body read error |
+| `bad_response` | Response body exceeded the 10 MiB cap |
+
+Programming errors (missing URL, URL with userinfo, wrong argument types,
+invalid HTTP method, non-positive timeout) raise Lua errors.
+
+#### Redirects
+
+HTTP redirects are **not** followed automatically. The 3xx response is
+returned directly so scripts can inspect the `Location` header and
+follow redirects explicitly if needed.
+
+#### Security
+
+`http.*` is a new threat surface: a Lua script can make arbitrary
+outbound requests using the user's machine. There is no SSRF protection
+(the localhost / private-IP range is reachable). URLs containing
+embedded credentials (`http://user:pass@host/`) are rejected — set the
+`Authorization` header explicitly. Treat Lua scripts as trusted code.
+
+### JSON Functions
+
+The `rela.json` module provides JSON encode/decode helpers, usable in any
+script (HTTP request bodies, flow scripts, document renderers, ad-hoc
+transforms).
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.json.encode(value)` | Lua value → JSON string | string (raises on bad input) |
+| `rela.json.decode(string)` | JSON string → Lua value | (value, nil) or (nil, err_table) |
+
+```lua
+local json_str = rela.json.encode({name = "test", items = {1, 2, 3}})
+local data, err = rela.json.decode('{"name":"test","count":42}')
+```
+
+**Array vs object encoding:** Tables with only consecutive integer keys
+starting at 1 encode as JSON arrays. Tables with any string keys encode
+as JSON objects.
+
+`rela.json.decode` returns `(nil, err_table)` with `kind="bad_response"`
+for invalid JSON — the same shape `http.*` produces — so existing
+error-handling branches work unchanged.
+
+#### JSON Conversion Limits
+
+- **Empty tables encode as objects (`{}`), not arrays (`[]`).** Lua has
+  no way to mark an empty table as array-shaped. If you need a JSON empty
+  array, build the body server-side or include a placeholder element.
+- **Cyclic tables** are encoded with the offending branch replaced by the
+  string `"<cyclic reference>"` rather than crashing the runtime.
+- **Decoded JSON deeper than 64 levels** is truncated with the sentinel
+  string `"<max-depth>"` to prevent stack overflow from a hostile
+  response.
+
 ### Context
 
 | Variable | Description |
@@ -1032,8 +1156,12 @@ The Lua runtime is sandboxed for security:
 
 When `.rela/ai.yaml` is configured, scripts can make HTTP requests to the configured
 AI provider via `ai.chat`, `ai.complete`, and `ai.embed`. This means scripts can send
-entity content to an external service. **Treat Lua scripts as trusted code** — don't
-run scripts from untrusted sources.
+entity content to an external service.
+
+The `http.*` module additionally lets scripts make arbitrary HTTP(S)
+requests to any reachable URL. There is no SSRF filter — localhost and
+private-network IPs are reachable. **Treat Lua scripts as trusted code** —
+don't run scripts from untrusted sources.
 
 API keys are never logged or included in error messages.
 

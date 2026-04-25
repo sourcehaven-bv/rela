@@ -502,6 +502,9 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 	// Top-level ai.* module (always registered; functions return a
 	// typed not_configured error when no provider is wired).
 	r.registerAIModule()
+
+	// Top-level http.* module (always registered; no configuration needed).
+	r.registerHTTPModule()
 }
 
 // registerReadBindings installs read-only bindings on the rela table: entity
@@ -537,6 +540,9 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 
 	// Markdown AST and generation helpers module (rela.md.*)
 	r.registerMarkdownModule(rela)
+
+	// JSON encode/decode helpers module (rela.json.*)
+	r.registerJSONModule(rela)
 }
 
 // registerWriteBindings installs mutation bindings on the rela table.
