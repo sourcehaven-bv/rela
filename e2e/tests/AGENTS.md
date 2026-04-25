@@ -13,6 +13,8 @@ Specs in `tests/**/*.spec.ts` **must not** call these Playwright APIs directly:
 - `*.getByRole/Text/TestId/Label/Placeholder/Title/AltText(...)`
 - `*.waitForTimeout(...)`
 - `request.fetch(...)`
+- `api.rawRequest(...)` (and `api['rawRequest'](...)`) — see "API-only
+  assertions belong in Go" below.
 
 These live in page objects under `../pages/` or the `api` fixture. Violations
 are a compile-level eslint error (`no-restricted-syntax`, configured in
@@ -39,6 +41,22 @@ to the page object rather than inlining the selector in a spec. See
 | `api` | HTTP helpers that auto-inject the matching `Origin` header. |
 | `testProject` | Absolute path to the temp project directory. |
 | `serverBinary` (worker-scoped) | Path to `bin/rela-server`. CI pre-builds it; locally the fixture builds on demand, serialised via a lockfile. |
+
+## API-only assertions belong in Go
+
+`api.rawRequest(...)` is the un-typed escape hatch on the `api` fixture. The
+typed helpers (`createEntity`, `getEntity`, `listRelations`, `updateEntity`,
+`getContent`) cover the seed-and-verify flows that UI tests legitimately
+need. If you reach for `rawRequest` in a spec, you are testing HTTP-shape
+behavior — that belongs in a Go integration test alongside the handler
+(`internal/dataentry/`), not in Playwright, where each assertion costs you
+a browser launch.
+
+eslint rejects `api.rawRequest(...)` and `api['rawRequest'](...)` anywhere in
+`tests/**/*.spec.ts` (same scope as the `request.fetch` ban). The fixture
+itself is exempt because `tests/fixtures.ts` is in the relax block. If a
+new seed-or-verify pattern actually needs a fresh endpoint, add a typed
+helper to the `api` fixture rather than reaching for `rawRequest`.
 
 ## Security canary lives in Go
 
