@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -73,11 +74,15 @@ func setupTestWorkspace(t *testing.T) *Workspace {
 }
 
 // mustCreate is a test helper that creates an entity, fatally failing on error.
-func mustCreate(t *testing.T, ws *Workspace, entityType string, opts CreateOptions) {
+// Returns the created entity so tests can reference its generated ID without
+// hardcoding it.
+func mustCreate(t *testing.T, ws *Workspace, entityType string, opts CreateOptions) *entitypkg.Entity {
 	t.Helper()
-	if _, _, err := ws.createEntity(entityType, opts); err != nil {
+	e, _, err := ws.createEntity(entityType, opts)
+	if err != nil {
 		t.Fatalf("mustCreate(%s): %v", entityType, err)
 	}
+	return e
 }
 
 // --- Constructor tests ---
@@ -181,7 +186,6 @@ func TestGenerateID_Sequential(t *testing.T) {
 
 	// Create an existing entity so the next ID is REQ-002.
 	mustCreate(t, ws, "requirement", CreateOptions{
-		ID:         "REQ-001",
 		Properties: map[string]interface{}{"title": "Existing"},
 	})
 
@@ -314,36 +318,117 @@ func TestCreateEntity(t *testing.T) {
 func TestCreateEntity_WithCustomID(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	entity, _, err := ws.createEntity("requirement", CreateOptions{
-		ID:         "REQ-042",
-		Properties: map[string]interface{}{"title": "Custom ID"},
+	entity, _, err := ws.createEntity("stakeholder", CreateOptions{
+		ID:         "alice",
+		Properties: map[string]interface{}{"name": "Alice"},
 	})
 	if err != nil {
 		t.Fatalf("CreateEntity() error = %v", err)
 	}
-	if entity.ID != "REQ-042" {
-		t.Errorf("entity.ID = %q, want REQ-042", entity.ID)
+	if entity.ID != "alice" {
+		t.Errorf("entity.ID = %q, want alice", entity.ID)
 	}
 }
 
 func TestCreateEntity_DuplicateID(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, _, err := ws.createEntity("requirement", CreateOptions{
-		ID:         "REQ-001",
-		Properties: map[string]interface{}{"title": "First"},
+	_, _, err := ws.createEntity("stakeholder", CreateOptions{
+		ID:         "alice",
+		Properties: map[string]interface{}{"name": "Alice"},
 	})
 	if err != nil {
 		t.Fatalf("first create error = %v", err)
 	}
 
-	_, _, err = ws.createEntity("requirement", CreateOptions{
-		ID:         "REQ-001",
-		Properties: map[string]interface{}{"title": "Duplicate"},
+	_, _, err = ws.createEntity("stakeholder", CreateOptions{
+		ID:         "alice",
+		Properties: map[string]interface{}{"name": "Duplicate"},
 	})
 	if err == nil {
 		t.Error("expected error for duplicate ID")
 	}
+}
+
+func TestCreateEntity_CustomIDRejectedForSequential(t *testing.T) {
+	ws := setupTestWorkspace(t)
+
+	_, _, err := ws.createEntity("requirement", CreateOptions{
+		ID:         "REQ-042",
+		Properties: map[string]interface{}{"title": "Should Not Be Allowed"},
+	})
+	if err == nil {
+		t.Fatal("expected error for custom ID on sequential type")
+	}
+	msg := err.Error()
+	// Assert the message names the type, the id_type, the offending id, and
+	// "custom ID" so any future refactor that loses one of these fails here.
+	for _, want := range []string{"requirement", "sequential", "REQ-042", "custom ID"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+
+	// Verify no entity of any kind was persisted — a regression that silently
+	// substituted a generated ID would not surface if we only checked REQ-042.
+	if _, ok := ws.GetEntity("REQ-042"); ok {
+		t.Error("entity was persisted despite rejection")
+	}
+	if n := countEntities(t, ws); n != 0 {
+		t.Errorf("store has %d entities after rejection, want 0", n)
+	}
+}
+
+func TestCreateEntity_CustomIDRejectedForShort(t *testing.T) {
+	shortMetamodel := `version: "1.0"
+entities:
+  ticket:
+    label: Ticket
+    plural: tickets
+    id_prefix: "TKT-"
+    id_type: short
+    properties:
+      title:
+        type: string
+        required: true
+relations: {}
+`
+	ws := setupWorkspaceWithMetamodel(t, shortMetamodel)
+
+	_, _, err := ws.createEntity("ticket", CreateOptions{
+		ID:         "my-custom-id",
+		Properties: map[string]interface{}{"title": "Should Not Be Allowed"},
+	})
+	if err == nil {
+		t.Fatal("expected error for custom ID on short type")
+	}
+	msg := err.Error()
+	for _, want := range []string{"ticket", "short", "my-custom-id", "custom ID"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+
+	// Verify no entity was persisted (symmetric with the sequential case).
+	if _, ok := ws.GetEntity("my-custom-id"); ok {
+		t.Error("entity was persisted despite rejection")
+	}
+	if n := countEntities(t, ws); n != 0 {
+		t.Errorf("store has %d entities after rejection, want 0", n)
+	}
+}
+
+// countEntities returns the number of entities in the workspace's store.
+func countEntities(t *testing.T, ws *Workspace) int {
+	t.Helper()
+	n := 0
+	for _, err := range ws.Store().ListEntities(context.Background(), store.EntityQuery{}) {
+		if err != nil {
+			t.Fatalf("ListEntities: %v", err)
+		}
+		n++
+	}
+	return n
 }
 
 func TestCreateEntity_ValidationError(t *testing.T) {
@@ -426,21 +511,21 @@ func TestUpdateEntity(t *testing.T) {
 func TestDeleteEntity_NoCascade_NoRelations(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	_, _, err := ws.createEntity("requirement", CreateOptions{
+	req, _, err := ws.createEntity("requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "To Delete"},
 	})
 	if err != nil {
 		t.Fatalf("create error = %v", err)
 	}
 
-	result, err := ws.deleteEntity("requirement", "REQ-001", false)
+	result, err := ws.deleteEntity("requirement", req.ID, false)
 	if err != nil {
 		t.Fatalf("DeleteEntity() error = %v", err)
 	}
 	if result.RelationsDeleted != 0 {
 		t.Errorf("relations deleted = %d, want 0", result.RelationsDeleted)
 	}
-	if _, ok := ws.GetEntity("REQ-001"); ok {
+	if _, ok := ws.GetEntity(req.ID); ok {
 		t.Error("entity still present after delete")
 	}
 }
@@ -448,28 +533,26 @@ func TestDeleteEntity_NoCascade_NoRelations(t *testing.T) {
 func TestDeleteEntity_CascadeRelations(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	mustCreate(t, ws, "requirement", CreateOptions{
-		ID:         "REQ-001",
+	req := mustCreate(t, ws, "requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Req"},
 	})
-	mustCreate(t, ws, "decision", CreateOptions{
-		ID:         "DEC-001",
+	dec := mustCreate(t, ws, "decision", CreateOptions{
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
 
-	_, err := ws.createRelation("DEC-001", "addresses", "REQ-001")
+	_, err := ws.createRelation(dec.ID, "addresses", req.ID)
 	if err != nil {
 		t.Fatalf("CreateRelation error = %v", err)
 	}
 
 	// Delete without cascade should fail.
-	_, err = ws.deleteEntity("requirement", "REQ-001", false)
+	_, err = ws.deleteEntity("requirement", req.ID, false)
 	if !errors.Is(err, ErrHasRelations) {
 		t.Errorf("expected ErrHasRelations, got %v", err)
 	}
 
 	// Delete with cascade should work.
-	result, err := ws.deleteEntity("requirement", "REQ-001", true)
+	result, err := ws.deleteEntity("requirement", req.ID, true)
 	if err != nil {
 		t.Fatalf("cascade delete error = %v", err)
 	}
@@ -492,26 +575,22 @@ func TestDeleteEntity_NotFound(t *testing.T) {
 func TestCreateRelation(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	reqID := "REQ-001"
-	decID := "DEC-001"
-	mustCreate(t, ws, "requirement", CreateOptions{
-		ID:         reqID,
+	req := mustCreate(t, ws, "requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Req"},
 	})
-	mustCreate(t, ws, "decision", CreateOptions{
-		ID:         decID,
+	dec := mustCreate(t, ws, "decision", CreateOptions{
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
 
-	rel, err := ws.createRelation(decID, "addresses", reqID)
+	rel, err := ws.createRelation(dec.ID, "addresses", req.ID)
 	if err != nil {
 		t.Fatalf("CreateRelation() error = %v", err)
 	}
-	if rel.From != decID || rel.Type != "addresses" || rel.To != reqID {
+	if rel.From != dec.ID || rel.Type != "addresses" || rel.To != req.ID {
 		t.Errorf("unexpected relation: %+v", rel)
 	}
 
-	if _, ok := ws.GetRelation("DEC-001", "addresses", "REQ-001"); !ok {
+	if _, ok := ws.GetRelation(dec.ID, "addresses", req.ID); !ok {
 		t.Error("relation not found after create")
 	}
 }
@@ -519,17 +598,15 @@ func TestCreateRelation(t *testing.T) {
 func TestCreateRelation_Duplicate(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	mustCreate(t, ws, "requirement", CreateOptions{
-		ID:         "REQ-001",
+	req := mustCreate(t, ws, "requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Req"},
 	})
-	mustCreate(t, ws, "decision", CreateOptions{
-		ID:         "DEC-001",
+	dec := mustCreate(t, ws, "decision", CreateOptions{
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
 
-	_, _ = ws.createRelation("DEC-001", "addresses", "REQ-001")
-	_, err := ws.createRelation("DEC-001", "addresses", "REQ-001")
+	_, _ = ws.createRelation(dec.ID, "addresses", req.ID)
+	_, err := ws.createRelation(dec.ID, "addresses", req.ID)
 	if err == nil {
 		t.Error("expected error for duplicate relation")
 	}
@@ -549,22 +626,20 @@ func TestCreateRelation_MissingEndpoint(t *testing.T) {
 func TestDeleteRelation(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	mustCreate(t, ws, "requirement", CreateOptions{
-		ID:         "REQ-001",
+	req := mustCreate(t, ws, "requirement", CreateOptions{
 		Properties: map[string]interface{}{"title": "Req"},
 	})
-	mustCreate(t, ws, "decision", CreateOptions{
-		ID:         "DEC-001",
+	dec := mustCreate(t, ws, "decision", CreateOptions{
 		Properties: map[string]interface{}{"title": "Dec"},
 	})
-	_, _ = ws.createRelation("DEC-001", "addresses", "REQ-001")
+	_, _ = ws.createRelation(dec.ID, "addresses", req.ID)
 
-	err := ws.deleteRelation("DEC-001", "addresses", "REQ-001")
+	err := ws.deleteRelation(dec.ID, "addresses", req.ID)
 	if err != nil {
 		t.Fatalf("DeleteRelation() error = %v", err)
 	}
 
-	if _, ok := ws.GetRelation("DEC-001", "addresses", "REQ-001"); ok {
+	if _, ok := ws.GetRelation(dec.ID, "addresses", req.ID); ok {
 		t.Error("relation still present after delete")
 	}
 }
