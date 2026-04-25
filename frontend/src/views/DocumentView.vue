@@ -55,6 +55,27 @@ const docTitle = computed(() => {
 // Renders no button when neither is present (e.g. deep-linked arrival).
 const backTarget = useBackTarget()
 
+// Edit button config (opt-in per document via the `edit:` block in
+// data-entry.yaml). Absent = no button. Server-side validation guarantees
+// `form` references a real form and `label` is non-empty when the block
+// is present.
+const editConfig = computed(() => docConfig.value?.edit)
+
+// editEntity navigates to the configured edit form for this entity. Unlike
+// EntityDetail.vue's edit button (which relies on router.back() because the
+// user got there via SPA navigation), DocumentView is deep-linkable, so we
+// must thread `return_to` through the form so submit lands back here.
+// Caller-side: the button is gated `v-if="editConfig"`, so editConfig.value
+// is non-null when this fires.
+function editEntity() {
+  const cfg = editConfig.value!
+  const returnTo = buildReturnTo(route.fullPath, ['refresh'])
+  router.push({
+    path: `/form/${cfg.form}/${props.entityId}`,
+    query: returnTo ? { return_to: returnTo } : {},
+  })
+}
+
 async function loadDocument(refresh = false) {
   loading.value = true
   docContent.value = ''
@@ -120,6 +141,13 @@ onUnmounted(() => {
       <h1>{{ docTitle }}: {{ entityId }}</h1>
       <div class="header-right">
         <button
+          v-if="editConfig"
+          class="btn btn-secondary"
+          @click="editEntity"
+        >
+          {{ editConfig.label }}
+        </button>
+        <button
           class="btn btn-secondary"
           :disabled="loading"
           @click="loadDocument(true)"
@@ -175,6 +203,45 @@ onUnmounted(() => {
 .header-right {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Below ~768px the 3-column flex layout collapses ungracefully (the title
+ * wraps over 3 lines and the action buttons sit on the left under "Back").
+ * Use flex-wrap + order to put title on its own row, then Back on the
+ * left of the next row and Edit / Refresh on the right. */
+@media (max-width: 768px) {
+  .page-header {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 8px;
+  }
+
+  /* Title takes the whole first row. */
+  .page-header h1 {
+    flex-basis: 100%;
+    order: 0;
+    font-size: 20px;
+    text-align: left;
+    line-height: 1.3;
+  }
+
+  .header-left {
+    order: 1;
+    min-width: 0;
+  }
+
+  .header-right {
+    order: 2;
+    flex: 1;
+    min-width: 0;
+    justify-content: flex-end;
+  }
+
+  /* Esc has no meaning on a touch device. */
+  .header-left kbd {
+    display: none;
+  }
 }
 
 .btn {

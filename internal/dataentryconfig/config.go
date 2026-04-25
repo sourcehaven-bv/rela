@@ -460,4 +460,23 @@ type DocumentConfig struct {
 	// Timeout is the render timeout in seconds. Defaults to 30. Applies
 	// to both Command and Script renderers.
 	Timeout int `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	// Edit, when set, exposes an Edit button in the standalone document view
+	// header that navigates to the named form for the document's entity.
+	// Absent = no button. Validated against cfg.Forms at config-load time.
+	//
+	// YAML caveat: a bare `edit:` line with no subkeys deserialises to nil
+	// (not &DocumentEdit{}), so the no-button case includes both "field
+	// omitted" and "field present but empty". Authors who want validation
+	// to flag a stub block must write `edit: {}` explicitly.
+	Edit *DocumentEdit `yaml:"edit,omitempty" json:"edit,omitempty"`
+}
+
+// DocumentEdit configures the Edit button on the standalone document view.
+// Both fields are required when the parent block is present.
+type DocumentEdit struct {
+	// Form is the form ID to navigate to. Must reference an existing form.
+	Form string `yaml:"form" json:"form"`
+	// Label is the visible button text. Author-controlled to disambiguate
+	// multi-entity docs (e.g. "Edit release", "Open ticket").
+	Label string `yaml:"label" json:"label"`
 }

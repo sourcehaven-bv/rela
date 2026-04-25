@@ -898,6 +898,9 @@ func TestValidateConfig_ViewSectionUsesPreviousCollectAs(t *testing.T) {
 func TestValidateConfig_Documents(t *testing.T) {
 	meta := testMetamodel()
 
+	// A minimal valid form so doc.edit.form references resolve.
+	editForm := Form{EntityType: "ticket", Title: "Edit Requirement", Mode: "edit"}
+
 	cases := []struct {
 		name    string
 		doc     DocumentConfig
@@ -905,22 +908,22 @@ func TestValidateConfig_Documents(t *testing.T) {
 	}{
 		{
 			name:    "only command is valid",
-			doc:     DocumentConfig{Command: "render.sh", EntityType: "requirement"},
+			doc:     DocumentConfig{Command: "render.sh", EntityType: "ticket"},
 			wantErr: "",
 		},
 		{
 			name:    "only script is valid",
-			doc:     DocumentConfig{Script: "docs/render.lua", EntityType: "requirement"},
+			doc:     DocumentConfig{Script: "docs/render.lua", EntityType: "ticket"},
 			wantErr: "",
 		},
 		{
 			name:    "both command and script is an error",
-			doc:     DocumentConfig{Command: "render.sh", Script: "docs/render.lua", EntityType: "requirement"},
+			doc:     DocumentConfig{Command: "render.sh", Script: "docs/render.lua", EntityType: "ticket"},
 			wantErr: "mutually exclusive",
 		},
 		{
 			name:    "neither command nor script is an error",
-			doc:     DocumentConfig{EntityType: "requirement"},
+			doc:     DocumentConfig{EntityType: "ticket"},
 			wantErr: "one of command or script must be set",
 		},
 		{
@@ -933,11 +936,59 @@ func TestValidateConfig_Documents(t *testing.T) {
 			doc:     DocumentConfig{Script: "docs/render.lua"},
 			wantErr: "entity_type is required",
 		},
+		{
+			name: "edit block with valid form and label",
+			doc: DocumentConfig{
+				Command:    "render.sh",
+				EntityType: "ticket",
+				Edit:       &DocumentEdit{Form: "edit_req", Label: "Edit requirement"},
+			},
+			wantErr: "",
+		},
+		{
+			name: "edit.form references unknown form",
+			doc: DocumentConfig{
+				Command:    "render.sh",
+				EntityType: "ticket",
+				Edit:       &DocumentEdit{Form: "bogus", Label: "Edit"},
+			},
+			wantErr: `edit.form references unknown form "bogus"`,
+		},
+		{
+			name: "edit.form empty when edit block is set",
+			doc: DocumentConfig{
+				Command:    "render.sh",
+				EntityType: "ticket",
+				Edit:       &DocumentEdit{Form: "", Label: "Edit"},
+			},
+			wantErr: "edit.form is required when edit is set",
+		},
+		{
+			name: "edit.label empty when edit block is set",
+			doc: DocumentConfig{
+				Command:    "render.sh",
+				EntityType: "ticket",
+				Edit:       &DocumentEdit{Form: "edit_req", Label: ""},
+			},
+			wantErr: "edit.label is required when edit is set",
+		},
+		{
+			name: "edit block with script renderer",
+			doc: DocumentConfig{
+				Script:     "docs/render.lua",
+				EntityType: "ticket",
+				Edit:       &DocumentEdit{Form: "edit_req", Label: "Edit"},
+			},
+			wantErr: "",
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &Config{Documents: map[string]DocumentConfig{"spec": tc.doc}}
+			cfg := &Config{
+				Documents: map[string]DocumentConfig{"spec": tc.doc},
+				Forms:     map[string]Form{"edit_req": editForm},
+			}
 			err := ValidateConfig(nil, cfg, meta)
 			if tc.wantErr == "" {
 				if err != nil {
@@ -952,6 +1003,56 @@ func TestValidateConfig_Documents(t *testing.T) {
 				t.Errorf("expected error to contain %q, got: %s", tc.wantErr, err.Error())
 			}
 		})
+	}
+}
+
+// TestValidateConfig_DocumentsEditBothEmpty pins the contract that an empty
+// DocumentEdit produces both error messages. The independent if-branches in
+// validateDocuments are correct only if both fire for `Edit: &DocumentEdit{}`.
+func TestValidateConfig_DocumentsEditBothEmpty(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Documents: map[string]DocumentConfig{
+			"spec": {
+				Command:    "render.sh",
+				EntityType: "ticket",
+				Edit:       &DocumentEdit{}, // both fields empty
+			},
+		},
+	}
+	err := ValidateConfig(nil, cfg, meta)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "edit.form is required when edit is set") {
+		t.Errorf("expected edit.form error, got: %s", msg)
+	}
+	if !strings.Contains(msg, "edit.label is required when edit is set") {
+		t.Errorf("expected edit.label error, got: %s", msg)
+	}
+}
+
+// TestValidateConfig_DocumentsEditFormSuggestion verifies the typo-suggestion
+// path matches list.edit_form's user-facing wording.
+func TestValidateConfig_DocumentsEditFormSuggestion(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Documents: map[string]DocumentConfig{
+			"spec": {
+				Command:    "render.sh",
+				EntityType: "ticket",
+				Edit:       &DocumentEdit{Form: "EDIT_TICKET", Label: "Edit"},
+			},
+		},
+		Forms: map[string]Form{"edit_ticket": {EntityType: "ticket", Title: "Edit"}},
+	}
+	err := ValidateConfig(nil, cfg, meta)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), `did you mean "edit_ticket"`) {
+		t.Errorf("expected typo suggestion, got: %s", err.Error())
 	}
 }
 

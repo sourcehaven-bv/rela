@@ -605,6 +605,21 @@ forms:
         direction: incoming
         label: "Implemented by"
 
+  # feature_edit pins mode: edit explicitly so the document-edit-button spec's
+  # "save returns to doc" test isn't load-bearing on the shared feature form's
+  # mode-inference behaviour. Used only by documents.feature_summary.
+  feature_edit:
+    entity_type: feature
+    title: "Edit Feature"
+    mode: edit
+    body: true
+    fields:
+      - property: title
+      - property: status
+      - property: priority
+      - property: description
+        widget: textarea
+
   bug:
     entity_type: bug
     title: "Bug"
@@ -717,6 +732,21 @@ documents:
     title: "Feature Overview"
     entity_type: feature
     script: docs/feature_overview.lua
+  # feature_summary and feature_readonly are wired in for the
+  # document-edit-button spec. feature_summary opts into the new edit:
+  # block; feature_readonly deliberately doesn't, so we can assert the
+  # button is gated on edit being present.
+  feature_summary:
+    title: "Feature Summary"
+    entity_type: feature
+    command: "printf '# Summary for %s\\n\\nDocument body.' {id}"
+    edit:
+      form: feature_edit
+      label: "Edit feature"
+  feature_readonly:
+    title: "Feature Readonly"
+    entity_type: feature
+    command: "printf '# Read-only view of %s' {id}"
 
 navigation:
   - label: "Dashboard"

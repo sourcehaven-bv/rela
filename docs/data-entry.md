@@ -1893,6 +1893,13 @@ The frontend's `DocumentsPanel.vue` shows every document whose `entity_type`
 matches the current entity. SSE live-reload re-renders a document when the
 entity changes (see the "SSE live-reload" caveat below).
 
+A document is also reachable on its own page at
+`/document/<name>/<entity_id>` (used by `rela.url.document` links and direct
+deep-links). On that page the header shows Back and Refresh by default; add
+an `edit:` block to the doc config to also expose an Edit button that takes
+the user to a configured form, with a `return_to` query param so saving
+returns to the document.
+
 ### YAML schema
 
 ```yaml
@@ -1902,6 +1909,9 @@ documents:
     entity_type: release           # REQUIRED; renderer runs only for this type
     script: docs/release_notes.lua # OR command: — exactly one must be set
     timeout: 15                    # seconds; defaults to 30
+    edit:                          # optional; renders an Edit button on the
+      form: edit_release           # standalone /document/... page
+      label: "Edit release"
   ticket_summary:
     title: "Ticket Summary"
     entity_type: ticket
@@ -1913,7 +1923,11 @@ Validation is strict: `entity_type:` must be set, and exactly one of
 `command:` or `script:` must be non-empty. Configs with both, or with
 neither, are rejected at startup. For `script:` docs, the referenced file
 is checked for existence at startup too, so typos fail loudly instead of at
-the first HTTP request.
+the first HTTP request. When an `edit:` block is present, both `form:` and
+`label:` are required and `form:` must reference a known form ID. Note that a
+bare `edit:` line with no subkeys is treated as "field absent" (no button, no
+validation error); to catch a stub block write `edit: {}` instead so the
+required-field checks fire.
 
 ### Shell command renderer (`command:`)
 
