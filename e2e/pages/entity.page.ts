@@ -7,6 +7,10 @@ export class EntityPage extends BasePage {
   readonly editButton: Locator;
   readonly deleteButton: Locator;
   readonly typeBadge: Locator;
+  /** Rendered document body inside the documents panel (if any). */
+  readonly documentBody: Locator;
+  /** Document panel tab selector (only rendered when >1 doc applies). */
+  readonly documentSelector: Locator;
 
   constructor(page: Page) {
     super(page);
@@ -15,6 +19,34 @@ export class EntityPage extends BasePage {
     this.editButton = page.locator('a:has-text("Edit"), button:has-text("Edit")').first();
     this.deleteButton = page.locator('button:has-text("Delete")').first();
     this.typeBadge = page.locator('.entity-type-badge');
+    this.documentBody = page.locator('.document-body').first();
+    this.documentSelector = page.locator('.documents-panel .doc-select');
+  }
+
+  /** Wait for the documents panel to render (the body becomes visible
+   *  once the server responds with HTML). If the entity has no
+   *  applicable docs, this waits in vain — callers should only invoke
+   *  when the fixture configures a doc for this entity type. */
+  async waitForDocumentBody() {
+    await expect(this.documentBody).toBeVisible({ timeout: 10_000 });
+  }
+
+  /** Force the documents-panel tab selection when the entity has
+   *  multiple applicable docs. No-op when the selector isn't rendered. */
+  async selectDocument(name: string) {
+    if (await this.documentSelector.isVisible({ timeout: 500 }).catch(() => false)) {
+      await this.documentSelector.selectOption(name);
+    }
+  }
+
+  /** Click a link inside the rendered document body by its visible text. */
+  async clickDocumentLink(text: string) {
+    await this.documentBody.locator(`a:has-text("${text}")`).first().click();
+  }
+
+  /** Assert the document body contains the given text. */
+  async expectDocumentBodyContains(text: string) {
+    await expect(this.documentBody).toContainText(text);
   }
 
   async navigateToEntity(entityType: string, id: string) {

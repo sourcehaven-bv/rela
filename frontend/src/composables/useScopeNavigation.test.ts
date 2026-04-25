@@ -98,7 +98,6 @@ describe('useScopeNavigation', () => {
       await loadScopeNav()
 
       expect(scopeNav.value).toEqual({
-        backUrl: '/list/tasks',
         prevId: 'TASK-001',
         nextId: 'TASK-003',
         current: 2,
@@ -351,34 +350,41 @@ describe('useScopeNavigation', () => {
     })
   })
 
-  describe('goBack', () => {
-    it('navigates to back URL', async () => {
-      mockRouteQuery.value = { from: 'tasks' }
+  describe('navigateScope preserves query params', () => {
+    // TKT-JIEKC RR-97NAZ: navigating through a list via Prev/Next must
+    // preserve other query params — crucially `return_to`, so the Back
+    // button still points at the original source across in-list
+    // navigation. The composable achieves this by passing `query:
+    // route.query` (all keys) through to router.push; this test pins
+    // the behaviour so a future 'clean up query on nav' commit doesn't
+    // silently break it.
+    it('preserves return_to and other query keys on prev/next push', async () => {
+      mockRouteQuery.value = {
+        from: 'tasks',
+        return_to: '/document/release_notes/REL-1',
+        sort: '-priority',
+      }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
       mockEntitiesStore.fetchList.mockResolvedValue({
-        data: [{ id: 'TASK-001' }],
+        data: [{ id: 'TASK-001' }, { id: 'TASK-002' }],
       })
 
-      const { loadScopeNav, goBack } = useScopeNavigation(
+      const { loadScopeNav, navigateScope } = useScopeNavigation(
         () => 'task',
         () => 'TASK-001'
       )
 
       await loadScopeNav()
-      goBack()
+      navigateScope('next')
 
-      expect(mockPush).toHaveBeenCalledWith('/list/tasks')
-    })
-
-    it('does nothing when no scopeNav', () => {
-      const { goBack } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
-
-      goBack()
-
-      expect(mockPush).not.toHaveBeenCalled()
+      expect(mockPush).toHaveBeenCalledWith({
+        path: '/entity/task/TASK-002',
+        query: {
+          from: 'tasks',
+          return_to: '/document/release_notes/REL-1',
+          sort: '-priority',
+        },
+      })
     })
   })
 })

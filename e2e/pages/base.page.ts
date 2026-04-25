@@ -4,11 +4,38 @@ export class BasePage {
   readonly page: Page;
   readonly sidebar: Locator;
   readonly toastContainer: Locator;
+  /** The Back button rendered by <BackButton>. See TKT-JIEKC. A view
+   *  only renders this when the URL carries a safe ?return_to= or
+   *  ?from=<list-id>; otherwise the locator matches nothing. Keys on
+   *  data-testid so the locator doesn't accidentally miss a button
+   *  whose label was derived from a list title (e.g. "← All Tickets"
+   *  with no literal "Back" in the text). */
+  readonly backButton: Locator;
 
   constructor(page: Page) {
     this.page = page;
     this.sidebar = page.locator('.sidebar, nav');
     this.toastContainer = page.locator('.toast, [role="alert"]');
+    this.backButton = page.locator('[data-testid="back-button"]').first();
+  }
+
+  /** Assert the Back button is visible. */
+  async expectBackButtonVisible() {
+    await expect(this.backButton).toBeVisible();
+  }
+
+  /** Assert no Back button is rendered. */
+  async expectNoBackButton() {
+    await expect(this.page.locator('[data-testid="back-button"]')).toHaveCount(0);
+  }
+
+  /** Click the Back button and wait for navigation to leave the current URL. */
+  async clickBack() {
+    const startUrl = this.page.url();
+    await this.backButton.click();
+    // waitForURL's predicate receives a URL object; compare via href so
+    // the equality check is against the same string format as page.url().
+    await this.page.waitForURL((url) => url.href !== startUrl);
   }
 
   async navigateTo(path: string) {

@@ -1952,24 +1952,52 @@ lines in the rendered output — that is intentionally loud.
 
 Documents link to anywhere in the SPA by writing app-relative paths. The
 goldmark→HTML step walks every `href="/..."` attribute and appends a
-`return_to` query param to hrefs targeting a form route (`/form/...`) so
-the user comes back to the document after submitting the form. Non-form
-internal links pass through unchanged.
+`return_to` query param. Every screen reachable from a document link
+(entity detail, list, kanban, view, custom view, another document,
+search, analyze) surfaces a "← Back" affordance — see
+[Back navigation](#back-navigation) below.
 
 | Target                | Write this in markdown                          | Notes                               |
 |-----------------------|-------------------------------------------------|-------------------------------------|
-| Edit an entity        | `[Edit](/form/full_ticket/TKT-001)`             | Adds `return_to=...#tkt-001`        |
-| Create a new entity   | `[New](/form/full_ticket)`                      | Adds `return_to=...`                |
+| Edit an entity        | `[Edit](/form/full_ticket/TKT-001)`             | Adds `return_to=...`; stable `id="edit-tkt-001-<n>"` on the link for scroll-back |
+| Create a new entity   | `[New](/form/full_ticket)`                      | Adds `return_to=...`; stable `id="create-full_ticket-<n>"` |
 | Create with defaults  | `[New](/form/full_ticket?prop.status=open)`     | Preserves query + appends `return_to` |
-| Link to entity detail | `[Detail](/entity/ticket/TKT-001)`              | Not a form; no `return_to` added    |
-| Link to a list        | `[All](/list/all_tasks)`                        | Not a form; passthrough             |
-| Link to a kanban      | `[Board](/kanban/sprint)`                       | Not a form; passthrough             |
+| Link to entity detail | `[Detail](/entity/ticket/TKT-001)`              | Adds `return_to=...` — EntityView renders a Back button |
+| Link to a list        | `[All](/list/all_tasks)`                        | Adds `return_to=...` — ListView renders a Back button |
+| Link to a kanban      | `[Board](/kanban/sprint)`                       | Adds `return_to=...` — KanbanView renders a Back button |
 | External link         | `[Docs](https://example.com)`                   | Untouched                           |
 
-The rewriter leaves non-form internal links alone (for now — individual
-route pages don't yet honour `return_to`; that's tracked as a follow-on).
-The legacy `edit://` / `create://` schemes log a warning and pass through
-unchanged so downstream projects notice and migrate.
+The rewriter is the single source of truth for `return_to` on emitted
+HTML: any author-supplied `return_to` on an internal link is stripped
+(with a warning) and replaced with one the server controls. The legacy
+`edit://` / `create://` schemes log a warning and pass through unchanged
+so downstream projects notice and migrate. Cached document renders
+(`.rela/documents/<entry>-<hash>.html`) are `return_to`-free; the
+rewrite happens after the cache read, so two viewers of the same entry
+under different `return_to` values each get their own value rewritten
+in.
+
+### Back navigation
+
+A view rendered from a document link shows a Back button that returns
+the user to the source document. The button follows a simple
+precedence:
+
+1. `?return_to=<path>` — set by the rewriter. Validated by the
+   open-redirect guard both server-side and client-side; unsafe values
+   (protocol-relative `//evil.com`, percent-encoded separators,
+   schemed URLs) are rejected silently.
+2. `?from=<list-id>` — legacy affordance used by EntityView's scope
+   navigation (Prev/Next through a list). When present, the Back
+   button points to `/list/<id>` and is labelled `← <list title>` if
+   the list is configured.
+3. Neither — no Back button renders. The user navigated in directly
+   (sidebar, bookmark), not from a back-able context.
+
+Scope navigation (Prev/Next through a list) is independent of the Back
+mechanism: if a user arrives at an entity via `?from=tasks&return_to=/doc`,
+Back follows `return_to` (the document) while Prev/Next still walks the
+`tasks` list and preserves `return_to` across in-list navigation.
 
 ### Building links from Lua: `rela.url`
 

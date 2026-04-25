@@ -8,6 +8,7 @@ exclude:
   - internal/testutil
   - internal/store/storetest
   - frontend
+  - e2e
   - .claude
 
 excludeFiles:

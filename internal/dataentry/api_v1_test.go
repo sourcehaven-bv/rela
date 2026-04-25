@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	url2 "net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +14,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -2920,6 +2925,91 @@ func TestHandleV1Documents_EntityTypeMatch(t *testing.T) {
 	// care about here is that the handler got past the type check.
 	if rec.Code == http.StatusBadRequest && strings.Contains(rec.Body.String(), "entity_type") {
 		t.Errorf("unexpected type-mismatch 400 for matching types: %s", rec.Body.String())
+	}
+}
+
+// TestHandleV1Documents_CacheInvariance verifies TKT-JIEKC AC9: the
+// on-disk command-mode cache never contains `return_to=` tokens, and
+// different callers supplying different return_to values each get their
+// own value rewritten in. The rewriter runs post-cache in
+// handleV1Documents (not inside doRender) — this test pins that
+// invariant so a future "push rewriter into doRender" refactor fails
+// loudly instead of poisoning cache files shared across users.
+func TestHandleV1Documents_CacheInvariance(t *testing.T) {
+	app := newTestAppV1(t)
+	// bindRepo rewires the app to a real filesystem-backed workspace so
+	// documentService's cache writes actually land on disk (the default
+	// nopState used by newTestAppV1 silently drops writes, which would
+	// make this test vacuously pass).
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, project.CacheDir)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "entities", "tickets"), 0o755); err != nil {
+		t.Fatalf("mkdir entities: %v", err)
+	}
+	bindRepoWithFS(
+		app,
+		storage.NewSafeFS(storage.NewOsFS()),
+		&project.Context{Root: root, CacheDir: cacheDir},
+	)
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "cache test"},
+	})
+	// Command emits a minimal markdown link that the rewriter will
+	// append return_to to. Anchor shape matches what goldmark produces.
+	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
+		"cache-test": {
+			EntityType: "ticket",
+			Command:    `echo '[Detail](/entity/ticket/TKT-001)'`,
+		},
+	}
+
+	render := func(returnTo string) string {
+		url := "/api/v1/_documents/cache-test/TKT-001"
+		if returnTo != "" {
+			url += "?return_to=" + url2.QueryEscape(returnTo)
+		}
+		req := httptest.NewRequest(http.MethodGet, url, http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1Documents(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("render returnTo=%q: status %d body %s", returnTo, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	// First render with return_to=/A. Response must contain the
+	// URL-encoded /A token.
+	respA := render("/A")
+	if !strings.Contains(respA, "return_to=%2FA") {
+		t.Errorf("first render missing return_to=/A token: %s", respA)
+	}
+
+	// Second render with return_to=/B. Must contain /B, must NOT
+	// contain /A — the cache did not bake in the first caller's value.
+	respB := render("/B")
+	if !strings.Contains(respB, "return_to=%2FB") {
+		t.Errorf("second render missing return_to=/B token: %s", respB)
+	}
+	if strings.Contains(respB, "return_to=%2FA") {
+		t.Errorf("second render leaked first caller's return_to=/A: %s", respB)
+	}
+
+	// Disk cache invariant: the cached HTML for this entry must contain
+	// no `return_to=` token. Read it via documentService.GetCached,
+	// which reconstructs the cache file path from the entry's content
+	// hash and reads the underlying bytes verbatim.
+	cached := app.documents.GetCached("TKT-001")
+	if cached == nil {
+		t.Fatalf("expected cache file for TKT-001 to exist after two renders")
+	}
+	if strings.Contains(cached.HTML, "return_to") {
+		t.Errorf("cache file contains return_to token — rewriter leaked into cache:\n%s",
+			cached.HTML)
 	}
 }
 

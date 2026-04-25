@@ -13,7 +13,9 @@ import type { Entity, ListMeta, ListParams, FilterState, ActionConfig } from '@/
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import Badge from '@/components/common/Badge.vue'
+import BackButton from '@/components/common/BackButton.vue'
 import ConfirmModal from '@/components/ui/ConfirmModal.vue'
+import { useBackTarget } from '@/composables/useBackTarget'
 
 const props = defineProps<{
   listId: string
@@ -24,6 +26,9 @@ const router = useRouter()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
+
+// Back affordance — renders when ?return_to= or ?from= is present. See TKT-JIEKC.
+const backTarget = useBackTarget()
 
 // Responsive: detect mobile for card vs table layout
 const mobileQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 768px)') : null
@@ -450,7 +455,10 @@ onMounted(() => {
 <template>
   <div v-if="listConfig" class="entity-list">
     <header class="list-header">
-      <h1>{{ listConfig.title || listConfig.entity }}</h1>
+      <div class="header-left">
+        <BackButton v-if="backTarget" :target="backTarget" />
+        <h1>{{ listConfig.title || listConfig.entity }}</h1>
+      </div>
       <router-link
         v-if="listConfig.create_form"
         :to="`/form/${listConfig.create_form}`"
@@ -700,6 +708,12 @@ onMounted(() => {
 
 .list-header h1 {
   margin: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .btn {

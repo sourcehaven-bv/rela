@@ -26,7 +26,13 @@ func isSafeReturnPath(s string) string {
 	// Reject protocol-relative and backslash-tricks up front. url.Parse
 	// happily accepts "//evil.com" and reports an empty scheme but sets
 	// Host — but we want to reject before the parser normalises anything.
-	if strings.HasPrefix(s, "//") || strings.HasPrefix(s, `/\`) || strings.HasPrefix(s, `/%5C`) || strings.HasPrefix(s, `/%2F`) {
+	// Percent-encoded separators are matched case-insensitively (both
+	// /%5C and /%5c; both /%2F and /%2f) so the guard mirrors the
+	// browser's normalisation and the client-side isSafeReturnPath.
+	if strings.HasPrefix(s, "//") || strings.HasPrefix(s, `/\`) {
+		return ""
+	}
+	if len(s) >= 4 && (strings.EqualFold(s[:4], "/%5C") || strings.EqualFold(s[:4], "/%2F")) {
 		return ""
 	}
 	u, err := url.Parse(s)

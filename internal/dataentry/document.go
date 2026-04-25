@@ -351,118 +351,270 @@ func markdownToHTML(markdown string) (string, error) {
 	return result, nil
 }
 
-// hrefRegex matches href attribute values in rendered HTML. The value is
-// captured raw so downstream logic can distinguish internal, external,
-// anchor-only, and legacy-scheme links.
-var hrefRegex = regexp.MustCompile(`href="([^"]*)"`)
+// anchorStartTagRegex matches the opening `<a ...>` tag so rewriteHref can
+// process all its attributes as a unit. Matching the whole tag (rather than
+// just the href="...") lets the rewriter:
+//
+//  1. Discover attributes in any order (goldmark always emits href first,
+//     but authors or future pipelines may not).
+//  2. Be idempotent on its own output: both the pre-existing `id="..."`
+//     the rewriter planted on a prior pass AND any author-planted `id=`
+//     get stripped before we (possibly) emit a fresh one. Without this,
+//     rewriting `<a id="old" href="...">` twice produces two `id`
+//     attributes.
+//
+// Group 1 is the raw attribute segment between "<a " and ">". We
+// deliberately don't parse further here; attribute parsing lives in
+// rewriteAnchorAttrs.
+var anchorStartTagRegex = regexp.MustCompile(`<a\s+([^>]*)>`)
+
+// attrRegex matches a single HTML attribute inside an anchor start tag.
+// Accepts double-quoted, single-quoted, and unquoted values. Groups:
+// (1) name; (2) double-quoted value (may be empty); (3) single-quoted
+// value; (4) unquoted value. Exactly one of (2)/(3)/(4) matches per
+// attribute; boolean attributes (no value) match (1) alone.
+var attrRegex = regexp.MustCompile(`([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>` + "`" + `]+)))?`)
 
 // legacySchemeRegex detects the now-unsupported edit:// and create:// schemes
 // so we can emit a clear warning for users who haven't migrated yet.
 var legacySchemeRegex = regexp.MustCompile(`^(edit|create)://`)
 
-// RewriteDocumentLinks walks all href="..." attributes in rendered HTML and:
+// RewriteDocumentLinks walks all href="..." attributes in rendered HTML and
+// rewrites internal links so the SPA can offer a back affordance.
 //
-//  1. Appends a return_to query parameter to any href that targets a form
-//     route (/form/<name> or /form/<name>/<entityId>).
-//  2. Emits a stable id="edit-<entity-id>-<n>" / id="create-<form>-<n>" on
-//     each form link so the SPA's document click handler can record a
-//     scroll-back anchor that survives title/content edits.
+// The rewriter runs AFTER the document-render cache (see
+// documentService.GetCached / Render in this package, and the call sites in
+// api_v1.go). It never writes to the cache. This is load-bearing: the cache
+// file is keyed on the entry entity's content hash and must NOT contain any
+// `return_to=` tokens, so that two viewers requesting the same entry under
+// different return_to values each get their own value rewritten in. Do not
+// move this step into doRender.
 //
-// Non-form internal links, external URLs, anchors, and mailto: are left
-// untouched. Legacy edit:// / create:// schemes log a warning — they are
-// no longer rewritten; authors should migrate to app-relative paths.
+// Behavior, by path class × returnPath presence:
 //
-// The per-entity counter (<n>) disambiguates multiple links to the same
-// entity within a single rendered document. It increments in document
-// order, so re-renders that produce the same link sequence yield the
-// same ids — scroll-back is stable across re-renders.
+//	| Path class                 | returnPath == ""              | returnPath != ""                      |
+//	|----------------------------|-------------------------------|---------------------------------------|
+//	| Form (/form/<id>[/...])    | strip return_to; emit id      | strip return_to; emit id; inject ours |
+//	| Non-form internal (/...)   | strip return_to; pass through | strip return_to; inject ours          |
+//	| External / mailto / anchor | passthrough unchanged         | passthrough unchanged                 |
+//	| Legacy edit:// / create:// | log warning; passthrough      | log warning; passthrough              |
+//
+// Author-supplied `return_to` values on internal links are always stripped,
+// whether or not we have a replacement: the rewriter is the single source of
+// truth for the key on emitted HTML.
+//
+// Form routes additionally get a stable id="edit-<entityID>-<n>" or
+// id="create-<form>-<n>" attribute so the SPA's document click handler can
+// record a scroll-back anchor that survives title/content edits. The per-base
+// counter (<n>) disambiguates multiple links to the same target within a
+// single rendered document and is stable across re-renders that produce the
+// same link sequence.
+//
+// The rewriter is idempotent: applying it twice with the same returnPath
+// produces the same bytes as one pass. Applying it twice with different
+// returnPaths yields the last one injected (the first is stripped, then the
+// second is injected).
 func RewriteDocumentLinks(htmlContent, returnPath string, log *slog.Logger) string {
 	if log == nil {
 		log = slog.Default()
 	}
 	occ := map[string]int{} // scroll-anchor id → next available suffix
-	return hrefRegex.ReplaceAllStringFunc(htmlContent, func(m string) string {
-		parts := hrefRegex.FindStringSubmatch(m)
-		if len(parts) != 2 {
-			return m
+	return anchorStartTagRegex.ReplaceAllStringFunc(htmlContent, func(tag string) string {
+		m := anchorStartTagRegex.FindStringSubmatch(tag)
+		if len(m) != 2 {
+			return tag
 		}
-		return rewriteHref(parts[1], returnPath, log, occ)
+		return rewriteAnchorTag(m[1], returnPath, log, occ)
 	})
 }
 
-// rewriteHref inspects a single href value and returns the replacement
-// attribute fragment for the enclosing <a>. For form routes this is
-// [id="..." href="..."]; for everything else it's just href="...".
+// rewriteAnchorTag consumes the inside of an `<a …>` start tag (the part
+// between `<a ` and `>`), rewrites the href per the decision table, and
+// returns a re-serialized start tag. Attribute order, spacing, and quote
+// style are normalised on output — browsers don't care about any of those.
+//
+// Behavior:
+//   - Any `href="..."`/`href='...'`/`href=...` is located in the attribute
+//     list. If absent, the tag is returned unchanged.
+//   - Any pre-existing `id` attribute is dropped unconditionally. The
+//     rewriter owns `id` on form routes (the scroll-anchor for the click
+//     handler); on non-form routes no id is emitted. Dropping pre-existing
+//     ids is what keeps the rewriter idempotent on its own output.
+//   - All other attributes are preserved, in the order they appeared.
+func rewriteAnchorTag(attrs, returnPath string, log *slog.Logger, occ map[string]int) string {
+	parsed := parseAttrs(attrs)
+	var href string
+	hrefIdx := -1
+	var out []parsedAttr
+	for _, a := range parsed {
+		name := strings.ToLower(a.name)
+		if name == "id" {
+			// Always drop pre-existing id; the rewriter owns it (see
+			// docstring).
+			continue
+		}
+		if name == "href" {
+			href = a.value
+			hrefIdx = len(out)
+		}
+		out = append(out, a)
+	}
+	// No href → leave the tag alone; the enclosing regex already
+	// matched, but there's nothing to rewrite.
+	if hrefIdx < 0 {
+		return `<a ` + serialiseAttrs(parsed) + `>`
+	}
+
+	newHref, anchorID, ok := rewriteHref(href, returnPath, log, occ)
+	if !ok {
+		// External / mailto / anchor / legacy scheme — return the tag
+		// with its attributes intact (we stripped pre-existing id
+		// above, which is fine: it wasn't ours to preserve).
+		return `<a ` + serialiseAttrs(out) + `>`
+	}
+
+	// Replace href value with rewritten one; prepend a fresh id when
+	// the decision table called for one.
+	out[hrefIdx].value = newHref
+	out[hrefIdx].quoted = true
+	if anchorID != "" {
+		out = append([]parsedAttr{{name: "id", value: anchorID, quoted: true}}, out...)
+	}
+	return `<a ` + serialiseAttrs(out) + `>`
+}
+
+// parsedAttr is a single attribute on an HTML start tag, with enough
+// metadata to round-trip reasonably faithfully.
+type parsedAttr struct {
+	name   string
+	value  string
+	quoted bool // true when value was parsed from a quoted literal or is being (re)serialized
+	raw    string
+}
+
+// parseAttrs splits an anchor's attribute blob into ordered parsedAttr
+// records. Boolean attributes (no value) and all quote styles are
+// accepted; unknown junk is skipped. Attribute name case is preserved
+// (callers that need case-insensitive lookup lower-case it themselves).
+func parseAttrs(s string) []parsedAttr {
+	matches := attrRegex.FindAllStringSubmatchIndex(s, -1)
+	out := make([]parsedAttr, 0, len(matches))
+	for _, m := range matches {
+		get := func(i int) string {
+			start, end := m[2*i], m[2*i+1]
+			if start < 0 {
+				return ""
+			}
+			return s[start:end]
+		}
+		name := get(1)
+		if name == "" {
+			continue
+		}
+		a := parsedAttr{name: name, raw: s[m[0]:m[1]]}
+		// Group indices in m[]: 2*k = start, 2*k+1 = end. A missing
+		// group has start == -1. A present-but-empty group (e.g. `""`)
+		// has start == end and both >= 0 — distinguish these from
+		// boolean attributes (no = sign at all).
+		switch {
+		case m[4] >= 0: // double-quoted, possibly empty
+			a.value = get(2)
+			a.quoted = true
+		case m[6] >= 0: // single-quoted, possibly empty
+			a.value = get(3)
+			a.quoted = true
+		case m[8] >= 0: // unquoted, never empty by regex definition
+			a.value = get(4)
+			a.quoted = true
+		default:
+			// boolean attribute (no = sign) — value stays "",
+			// quoted stays false.
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// serialiseAttrs renders parsedAttrs back into an HTML attribute blob
+// with a single space between attributes and double-quoted values.
+// Boolean attributes (quoted=false) are emitted as bare names.
+func serialiseAttrs(as []parsedAttr) string {
+	var b strings.Builder
+	for i, a := range as {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(a.name)
+		if a.quoted {
+			b.WriteString(`="`)
+			b.WriteString(a.value)
+			b.WriteByte('"')
+		}
+	}
+	return b.String()
+}
+
+// rewriteHref inspects a single href value and returns the rewritten
+// href, the scroll-anchor id (empty for non-form paths), and ok=true
+// when the rewriter took ownership of the href. When ok=false, the
+// caller should leave href intact — the link is external, a bare
+// fragment, mailto:, or a legacy scheme we only warn about.
 //
 // occ is a per-render map tracking how many times each anchor-id base
-// has been used, so duplicate entity links get -0, -1, -2 suffixes.
-func rewriteHref(href, returnPath string, log *slog.Logger, occ map[string]int) string {
+// has been used, so duplicate form links get -0, -1, -2 suffixes.
+func rewriteHref(
+	href, returnPath string, log *slog.Logger, occ map[string]int,
+) (newHref, anchorID string, ok bool) {
 	switch {
 	case href == "":
-		return `href=""`
+		return "", "", false
 	case legacySchemeRegex.MatchString(href):
 		log.Warn("document link uses removed scheme; rewrite to app-relative path", "href", href)
-		return fmt.Sprintf(`href="%s"`, href)
+		return "", "", false
 	case !strings.HasPrefix(href, "/"):
 		// External, anchor-only (#foo), mailto:, tel:, relative — not our
-		// concern. Return unchanged.
-		return fmt.Sprintf(`href="%s"`, href)
+		// concern.
+		return "", "", false
 	}
 
 	base, existingQuery, fragment := splitHref(href)
-	if !isFormRoute(base) {
-		// Only form routes honor return_to; everything else passes through.
-		return fmt.Sprintf(`href="%s"`, href)
-	}
 
-	// Scroll-anchor id — always assigned for edit/create form links so the
-	// click handler can record it as the scroll-back target.
-	anchorID := formAnchorID(base, occ)
-
-	// When returnPath is empty, there's nothing useful to inject; keep
-	// query + fragment untouched but still emit the id so at least the
-	// scroll-back anchor is in place for any later render that supplies
-	// returnPath.
-	if returnPath == "" {
-		out := base
-		if existingQuery != "" {
-			out += "?" + existingQuery
-		}
-		if fragment != "" {
-			out += "#" + fragment
-		}
-		return attrs(anchorID, out)
-	}
-
-	// Strip any pre-existing return_to (authors shouldn't set it, but they
-	// can — legacy links or typos). Without this, vue-router parses
-	// duplicate keys as an array and DynamicForm mishandles it.
+	// Strip any pre-existing return_to on every internal path (form or
+	// non-form). The rewriter is the single source of truth for this key,
+	// so author-planted values are always discarded — this keeps vue-router
+	// from parsing duplicates as arrays and prevents hostile values from
+	// leaking into the user's URL bar.
 	cleanedQuery, dropped := stripQueryKey(existingQuery, "return_to")
 	if dropped {
 		log.Warn("document link sets reserved key return_to; overwriting", "href", href)
 	}
 
-	finalQuery := cleanedQuery
-	if finalQuery != "" {
-		finalQuery += "&"
+	// Form routes get a scroll-anchor id unconditionally so the click
+	// handler has a stable target even when returnPath is empty.
+	if isFormRoute(base) {
+		anchorID = formAnchorID(base, occ)
 	}
-	finalQuery += "return_to=" + url.QueryEscape(returnPath)
 
-	out := base + "?" + finalQuery
+	// Inject return_to only when we have one to inject. An empty returnPath
+	// means "the rewriter ran but no caller context was supplied" — the
+	// stripped href, plus the form anchor id if applicable, is the final
+	// output.
+	finalQuery := cleanedQuery
+	if returnPath != "" {
+		if finalQuery != "" {
+			finalQuery += "&"
+		}
+		finalQuery += "return_to=" + url.QueryEscape(returnPath)
+	}
+
+	out := base
+	if finalQuery != "" {
+		out += "?" + finalQuery
+	}
 	if fragment != "" {
 		out += "#" + fragment
 	}
-	return attrs(anchorID, out)
-}
-
-// attrs stitches id + href into the anchor-attribute fragment hrefRegex
-// replaces. id goes first so a reader's eye catches the scroll target
-// before the URL; HTML attribute order is insignificant to browsers.
-func attrs(id, href string) string {
-	if id == "" {
-		return fmt.Sprintf(`href="%s"`, href)
-	}
-	return fmt.Sprintf(`id="%s" href="%s"`, id, href)
+	return out, anchorID, true
 }
 
 // formAnchorID returns a stable scroll-anchor id for a form-route path,

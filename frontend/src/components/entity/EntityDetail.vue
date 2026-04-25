@@ -3,6 +3,8 @@ import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch, nextTick
 import { useRouter } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
+import { useBackTarget } from '@/composables/useBackTarget'
+import BackButton from '@/components/common/BackButton.vue'
 import { isCancelledFetch } from '@/composables/usePageData'
 import type { Entity, Command } from '@/types'
 import { getEditFormId } from '@/types'
@@ -25,11 +27,15 @@ const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
 
-// Scope navigation
-const { scopeNav, loadScopeNav, navigateScope, goBack } = useScopeNavigation(
+// Scope navigation (prev/next within a list) and generic back affordance
+// (return_to / from precedence). Kept as two parallel concerns: scope-nav
+// walks a list; backTarget answers "where do I go back to." When both
+// exist the user gets both affordances in the same bar.
+const { scopeNav, loadScopeNav, navigateScope } = useScopeNavigation(
   () => props.entityType,
   () => props.entityId
 )
+const backTarget = useBackTarget()
 
 // Command modal ref
 const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
@@ -61,10 +67,11 @@ function handleKeydown(e: KeyboardEvent) {
     e.preventDefault()
     navigateScope('next')
   }
-  // Escape to go back
-  if (e.key === 'Escape' && scopeNav.value) {
+  // Escape to go back. Uses the back-target precedence (return_to > from);
+  // no-op when neither is present.
+  if (e.key === 'Escape' && backTarget.value) {
     e.preventDefault()
-    goBack()
+    router.push(backTarget.value.to)
   }
 }
 
@@ -240,11 +247,11 @@ async function deleteEntity() {
 
 // Determine where to navigate after deleting this entity.
 // Priority:
-//   1. The list we came from (scope navigation)
+//   1. The back target for this view (return_to > from precedence)
 //   2. A list configured for this entity type
 //   3. The dashboard
 function backTargetAfterDelete(): string {
-  if (scopeNav.value?.backUrl) return scopeNav.value.backUrl
+  if (backTarget.value) return backTarget.value.to
   const listId = schemaStore.findListIdForEntityType(props.entityType)
   if (listId) return `/list/${listId}`
   return '/'
@@ -357,29 +364,32 @@ onMounted(() => loadEntity())
     </div>
 
     <template v-else-if="entity">
-      <!-- Scope Navigation Bar -->
-      <div v-if="scopeNav" class="scope-nav">
-        <router-link :to="scopeNav.backUrl" class="scope-nav-btn">
-          Back <kbd>Esc</kbd>
-        </router-link>
-        <button
-          v-if="scopeNav.prevId"
-          class="scope-nav-btn"
-          @click="navigateScope('prev')"
-        >
-          ← Prev <kbd>P</kbd>
-        </button>
-        <span v-else class="scope-nav-btn disabled">← Prev</span>
-        <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
-        <span class="scope-nav-label">{{ scopeNav.label }}</span>
-        <button
-          v-if="scopeNav.nextId"
-          class="scope-nav-btn"
-          @click="navigateScope('next')"
-        >
-          Next → <kbd>N</kbd>
-        </button>
-        <span v-else class="scope-nav-btn disabled">Next →</span>
+      <!-- Back affordance + optional scope (prev/next) navigation. The bar
+           renders when either a back target exists (?return_to or ?from)
+           or the user is in a list-scoped context (?from drives scopeNav).
+           Both can be present simultaneously. -->
+      <div v-if="backTarget || scopeNav" class="scope-nav">
+        <BackButton v-if="backTarget" :target="backTarget" />
+        <template v-if="scopeNav">
+          <button
+            v-if="scopeNav.prevId"
+            class="scope-nav-btn"
+            @click="navigateScope('prev')"
+          >
+            ← Prev <kbd>P</kbd>
+          </button>
+          <span v-else class="scope-nav-btn disabled">← Prev</span>
+          <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
+          <span class="scope-nav-label">{{ scopeNav.label }}</span>
+          <button
+            v-if="scopeNav.nextId"
+            class="scope-nav-btn"
+            @click="navigateScope('next')"
+          >
+            Next → <kbd>N</kbd>
+          </button>
+          <span v-else class="scope-nav-btn disabled">Next →</span>
+        </template>
       </div>
 
       <header class="detail-header">
@@ -675,46 +685,14 @@ onMounted(() => loadEntity())
   filter: brightness(1.1);
 }
 
-/* Scope Navigation Bar */
+/* Scope Navigation Bar
+ * .scope-nav-btn styles live in src/styles/back-button.css — see
+ * TKT-JIEKC. The bar layout (.scope-nav) + progress/label stay here. */
 .scope-nav {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 20px;
-}
-
-.scope-nav-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--text-color);
-  cursor: pointer;
-  text-decoration: none;
-  transition: all 0.15s;
-}
-
-.scope-nav-btn:hover:not(.disabled) {
-  filter: brightness(0.95);
-  border-color: var(--accent-color);
-}
-
-.scope-nav-btn.disabled {
-  color: var(--muted-text);
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.scope-nav-btn kbd {
-  padding: 2px 5px;
-  font-size: 10px;
-  background: var(--border-color);
-  border-radius: 3px;
-  font-family: monospace;
 }
 
 .scope-nav-progress {
@@ -810,26 +788,7 @@ onMounted(() => loadEntity())
     text-align: center;
   }
 
-  .scope-nav-btn {
-    padding: 8px 12px;
-    font-size: 14px;
-    min-height: 36px;
-    background: none;
-    border: none;
-    color: var(--accent-color);
-    font-weight: 500;
-  }
-
-  .scope-nav-btn:hover:not(.disabled) {
-    filter: none;
-    border-color: transparent;
-    opacity: 0.7;
-  }
-
-  .scope-nav-btn.disabled {
-    color: var(--border-color);
-    opacity: 0.4;
-  }
+  /* .scope-nav-btn mobile overrides live in src/styles/back-button.css. */
 
   .detail-header {
     flex-direction: column;
