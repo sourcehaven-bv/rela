@@ -31,11 +31,15 @@ function seedCandidates(entities: Entity[]) {
   })
 }
 
-function entity(id: string, title?: unknown): Entity {
+// The server populates `_title` via metamodel.DisplayTitle: the configured
+// display property's value if set, otherwise the entity id. The picker should
+// render `${_title} (${id})` only when those differ.
+function entity(id: string, displayTitle?: string): Entity {
   return {
     id,
     type: 'ticket',
-    properties: title === undefined ? {} : { title: title as string },
+    properties: {},
+    _title: displayTitle ?? id,
   }
 }
 
@@ -56,7 +60,7 @@ describe('RelationPicker — entity label rendering', () => {
     setActivePinia(createPinia())
   })
 
-  it('selected chip shows "Title (ID)" when entity has a title', async () => {
+  it('selected chip shows "<display title> (<id>)" when _title differs from id', async () => {
     const e = entity('TKT-001', 'Fix login bug')
     const wrapper = await mountPicker([e.id], [e])
 
@@ -66,7 +70,7 @@ describe('RelationPicker — entity label rendering', () => {
     wrapper.unmount()
   })
 
-  it('selected chip shows id alone when title is missing', async () => {
+  it('selected chip shows id alone when _title equals id (no display property set)', async () => {
     const e = entity('TKT-002')
     const wrapper = await mountPicker([e.id], [e])
 
@@ -76,38 +80,23 @@ describe('RelationPicker — entity label rendering', () => {
     wrapper.unmount()
   })
 
-  it('selected chip shows id alone when title is empty / whitespace', async () => {
-    const blank = entity('TKT-003', '')
-    const ws = entity('TKT-004', '   ')
-    const wrapper = await mountPicker([blank.id, ws.id], [blank, ws])
-
-    const chips = wrapper.findAll('.selected-entity .entity-label')
-    expect(chips.map((c) => c.text())).toEqual(['TKT-003', 'TKT-004'])
-    wrapper.unmount()
-  })
-
-  it('selected chip shows id alone when title is non-string (does not stringify object)', async () => {
-    // Entity.properties is Record<string, unknown>; guard against object-typed
-    // values that would otherwise render as "[object Object]".
-    const e: Entity = {
-      id: 'TKT-005',
-      type: 'ticket',
-      properties: { title: { unexpected: 'shape' } },
-    }
+  it('selected chip shows id alone when _title is missing from the response', async () => {
+    // Defensive: server should always populate _title, but if it does not we
+    // must not render "undefined (id)".
+    const e: Entity = { id: 'TKT-003', type: 'ticket', properties: {} }
     const wrapper = await mountPicker([e.id], [e])
 
     const chip = wrapper.find('.selected-entity .entity-label')
-    expect(chip.text()).toBe('TKT-005')
-    expect(chip.text()).not.toContain('object')
+    expect(chip.text()).toBe('TKT-003')
+    expect(chip.text()).not.toContain('undefined')
     wrapper.unmount()
   })
 
-  it('dropdown items use the same "Title (ID)" / "ID" format', async () => {
+  it('dropdown items use the same "<display title> (<id>)" / "<id>" format', async () => {
     const titled = entity('TKT-100', 'Has a title')
     const untitled = entity('TKT-101')
     const wrapper = await mountPicker([], [titled, untitled])
 
-    // Open the dropdown by focusing the search input.
     const search = wrapper.find('input[role="combobox"]')
     await search.trigger('focus')
     await flushPromises()
@@ -116,6 +105,22 @@ describe('RelationPicker — entity label rendering', () => {
     const texts = items.map((i) => i.text())
     expect(texts).toContain('Has a title (TKT-100)')
     expect(texts).toContain('TKT-101')
+    wrapper.unmount()
+  })
+
+  it('dropdown search filters on _title (display name), not just id', async () => {
+    const a = entity('TKT-200', 'Alpha feature')
+    const b = entity('TKT-201', 'Beta feature')
+    const wrapper = await mountPicker([], [a, b])
+
+    const search = wrapper.find('input[role="combobox"]')
+    await search.setValue('alpha')
+    await flushPromises()
+
+    const items = wrapper.findAll('.dropdown-item .entity-label')
+    const texts = items.map((i) => i.text())
+    expect(texts).toContain('Alpha feature (TKT-200)')
+    expect(texts).not.toContain('Beta feature (TKT-201)')
     wrapper.unmount()
   })
 })

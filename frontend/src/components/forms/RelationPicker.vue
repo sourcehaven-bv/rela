@@ -59,7 +59,7 @@ const filteredCandidates = computed(() => {
     (c) =>
       !props.value.includes(c.id) &&
       (c.id.toLowerCase().includes(query) ||
-        String(c.properties.title || '').toLowerCase().includes(query))
+        (c._title ?? '').toLowerCase().includes(query))
   )
 })
 
@@ -98,9 +98,12 @@ function removeEntity(entityId: string) {
 }
 
 function formatEntityLabel(entity: Entity): string {
-  const raw = entity.properties.title
-  const title = typeof raw === 'string' ? raw.trim() : ''
-  return title ? `${title} (${entity.id})` : entity.id
+  // _title is the metamodel-aware display title from the API, falling back to id
+  // when the entity type has no display property set. Matches EntityDetail.vue.
+  if (entity._title && entity._title !== entity.id) {
+    return `${entity._title} (${entity.id})`
+  }
+  return entity.id
 }
 
 function openCreateModal(targetType: string) {
