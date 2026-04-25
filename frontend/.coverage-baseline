@@ -1,4 +1,5 @@
 src/composables/modalStack.ts;59;59
+src/composables/useBackTarget.ts;53;53
 src/composables/useDocumentClicks.ts;61;61
 src/composables/useEvents.ts;146;146
 src/composables/useKeyboardShortcuts.ts;123;123
@@ -6,7 +7,7 @@ src/composables/useListActions.ts;139;64
 src/composables/useListKeyboard.ts;157;147
 src/composables/useListSelection.ts;39;29
 src/composables/usePageData.ts;106;69
-src/composables/useScopeNavigation.ts;122;122
+src/composables/useScopeNavigation.ts;113;113
 src/composables/useUrlFilterSync.ts;86;86
 src/stores/entities.ts;204;204
 src/stores/git.ts;92;92
