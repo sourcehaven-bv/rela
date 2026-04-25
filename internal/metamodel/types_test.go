@@ -395,7 +395,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 			def: EntityDef{
 				DisplayProperty: "version",
 				Properties: map[string]PropertyDef{
-					"version": {Type: "number"},
+					"version": {Type: PropertyTypeInteger},
 				},
 			},
 			properties: map[string]interface{}{"version": 42},

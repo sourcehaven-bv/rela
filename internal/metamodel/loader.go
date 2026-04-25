@@ -316,30 +316,67 @@ func validateEntitySemantics(m *Metamodel) []string {
 }
 
 // validateDisplayProperty enforces the contract on EntityDef.DisplayProperty:
-// when set, the value must reference a defined property and must not have
-// leading or trailing whitespace. Empty (omitted, null, or "") is allowed —
-// GetPrimaryProperty falls back to the autoderivation in that case.
+// when set, the value must (a) have no leading/trailing whitespace,
+// (b) reference a defined property on the entity, (c) not be list-typed,
+// and (d) be of a scalar type that renders meaningfully as a display
+// name (string, integer, boolean, enum). Empty (omitted, null, or "")
+// is allowed — GetPrimaryProperty falls back to the autoderivation.
 //
-// The whitespace check is explicit (rather than relying on the
-// validateEntityStructure key-trim invariant) so the diagnostic is honest:
-// "has whitespace" vs "is not a defined property" are different fixes for
-// the author. See review-response RR-HDAX8.
+// Errors accumulate so the author sees every problem in one load
+// (matches the validator's accumulating style). Both the whitespace
+// and the missing-property diagnostics list the available property
+// names so the fix is obvious.
+//
+// Type restriction rationale: date/file/rrule values surface in YAML
+// frontmatter as time.Time / structured shapes that don't have a
+// useful default string rendering ("2026-04-25 00:00:00 +0000 UTC" is
+// rarely what an author wants). list-typed properties render lists
+// like "[a b c]" or "[]". Restrict at load time so the runtime
+// fallback in DisplayTitle stays simple. See review-responses RR-AVOMV,
+// RR-IG4JJ, RR-MPE9Y, RR-KTWG9.
 func validateDisplayProperty(entityName string, def EntityDef) []string {
 	dp := def.DisplayProperty
 	if dp == "" {
 		return nil
 	}
+
+	available := strings.Join(sortedKeys(def.Properties), ", ")
+
+	var errs []string
 	if dp != strings.TrimSpace(dp) {
-		return []string{fmt.Sprintf(
-			"entity %q: display_property %q has leading or trailing whitespace",
-			entityName, dp)}
+		errs = append(errs, fmt.Sprintf(
+			"entity %q: display_property %q has leading or trailing whitespace (have: %s)",
+			entityName, dp, available))
+		// Don't continue with property-existence/type checks on a
+		// value whose user-meant form we can't be sure of.
+		return errs
 	}
-	if _, ok := def.Properties[dp]; !ok {
-		return []string{fmt.Sprintf(
+
+	prop, ok := def.Properties[dp]
+	if !ok {
+		errs = append(errs, fmt.Sprintf(
 			"entity %q: display_property %q is not a defined property (have: %s)",
-			entityName, dp, strings.Join(sortedKeys(def.Properties), ", "))}
+			entityName, dp, available))
+		return errs
 	}
-	return nil
+
+	if prop.List {
+		errs = append(errs, fmt.Sprintf(
+			"entity %q: display_property %q is list-typed; lists cannot render as a display name",
+			entityName, dp))
+	}
+
+	// Allow string (default), integer, boolean, enum, custom enum-like
+	// types defined elsewhere. Reject the structured types whose default
+	// rendering is unhelpful.
+	switch prop.Type {
+	case PropertyTypeDate, PropertyTypeFile, PropertyTypeRrule:
+		errs = append(errs, fmt.Sprintf(
+			"entity %q: display_property %q has type %q; only string, integer, boolean, or enum types render as display names",
+			entityName, dp, prop.Type))
+	}
+
+	return errs
 }
 
 // validateDefaultSort checks default_sort entries for an entity definition.

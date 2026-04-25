@@ -244,6 +244,47 @@ and form select options.
 
 **Available colors:** `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `gray`.
 
+## Display names
+
+Every entity's display name — the human-readable string shown in
+lists, cards, side-panel breadcrumbs, related-entity links, and
+search results — comes from the entity type's *primary property*.
+Set it with `display_property` in `metamodel.yaml`:
+
+```yaml
+# metamodel.yaml
+entities:
+  applicatie:
+    label: Applicatie
+    display_property: naam
+    properties:
+      naam:
+        type: string
+        required: true
+```
+
+Without `display_property`, rela auto-derives one from
+`title` / `name` / `label` (then any required string property,
+alphabetical). That's brittle for non-English schemas — pin it
+explicitly. See [GUIDE-metamodel.md → Display
+name](metamodel.md#display-name) for the metamodel-side rules
+(allowed types, validation diagnostics).
+
+Where the display name shows up in the data-entry app:
+
+- **List columns**: a column with `link: detail` renders the entity's
+  display name as the link text.
+- **Cards**: card titles (in `display: cards` sections, kanban cards,
+  related-entity widgets).
+- **Breadcrumbs**: the side panel and form headers show the display
+  name above the ID.
+- **Related-entity links**: every relation widget that renders linked
+  entities uses the display name as link text.
+- **Search results**: each result row shows the display name first.
+
+When the display value is empty, missing, or `nil`, the UI falls
+back to the entity ID — never an empty string.
+
 ## Forms
 
 Forms define the UI for creating and editing entities. Each form is a named entry under `forms:`.

@@ -3,6 +3,7 @@ package metamodel
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1472,7 +1473,8 @@ entities:
 // TestParse_DisplayPropertyWhitespace verifies the explicit whitespace
 // check (RR-HDAX8): leading/trailing whitespace produces a dedicated
 // diagnostic distinct from the missing-property error, so authors get
-// a useful fix.
+// a useful fix. The diagnostic also lists the available property names
+// (RR-MPE9Y) so the author can fix a co-occurring typo in one round.
 func TestParse_DisplayPropertyWhitespace(t *testing.T) {
 	yaml := `version: "1.0"
 entities:
@@ -1487,8 +1489,11 @@ entities:
 `
 	_, err := Parse([]byte(yaml))
 	assertError(t, err)
-	if !strings.Contains(err.Error(), "whitespace") {
-		t.Errorf("error should mention whitespace: %v", err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "whitespace", "titel"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q (RR-MPE9Y / RR-KFQD4): %v", want, err)
+		}
 	}
 }
 
@@ -1565,6 +1570,130 @@ entities:
 	assertEqual(t, def.GetPrimaryProperty(), "status")
 }
 
+// TestParse_DisplayPropertyList rejects a list-typed display_property at
+// load time so authors don't end up with display names like "[a b c]".
+// RR-AVOMV.
+func TestParse_DisplayPropertyList(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: tags
+    properties:
+      titel:
+        type: string
+        required: true
+      tags:
+        type: string
+        list: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "tags", "list"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
+// TestParse_DisplayPropertyDateRejected rejects date-typed properties:
+// time.Time stringifies to "2026-04-25 00:00:00 +0000 UTC" which is
+// almost never what an author wants for a display name. RR-IG4JJ.
+func TestParse_DisplayPropertyDateRejected(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: created_at
+    properties:
+      titel:
+        type: string
+        required: true
+      created_at:
+        type: date
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "created_at", "date"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
+// TestParse_DisplayPropertyFileRejected rejects file-typed properties.
+// RR-IG4JJ.
+func TestParse_DisplayPropertyFileRejected(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: attachment
+    properties:
+      titel:
+        type: string
+        required: true
+      attachment:
+        type: file
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), "file") {
+		t.Errorf("error should mention the file type: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyRruleRejected rejects rrule-typed properties.
+// RR-IG4JJ.
+func TestParse_DisplayPropertyRruleRejected(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  schedule:
+    label: Schedule
+    id_prefix: "SCH-"
+    display_property: cadence
+    properties:
+      titel:
+        type: string
+        required: true
+      cadence:
+        type: rrule
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), "rrule") {
+		t.Errorf("error should mention the rrule type: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyIntegerOK accepts an integer-typed display
+// property — it stringifies via fmt.Sprintf("%v", val) at runtime.
+// RR-IG4JJ pins down the allowed types alongside string/enum/boolean.
+func TestParse_DisplayPropertyIntegerOK(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    display_property: number
+    properties:
+      titel:
+        type: string
+        required: true
+      number:
+        type: integer
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	def := m.Entities["ticket"]
+	assertEqual(t, def.DisplayProperty, "number")
+}
+
 // TestParse_DisplayPropertyAcrossIncludes verifies that display_property
 // validation runs on the merged metamodel when an entity is defined in
 // an included file. RR-GO9T7.
@@ -1607,55 +1736,50 @@ entities:
 
 // TestLoad_AllShippedMetamodels guards against typos in dogfood and
 // fixture metamodels once display_property gets adopted in any of them.
-// Globs every metamodel.yaml under the repo root and asserts each one
-// loads without error. RR-G175B.
+// Globs every shipped metamodel under the repo root and asserts each
+// one loads without error. RR-G175B / RR-XMJX1 / RR-MT7J7 / RR-YN32Y.
+//
+// "Shipped metamodel" means any file matching `*metamodel*.yaml` —
+// that includes the dogfood `tickets/metamodel.yaml`, the docs-project
+// metamodel, every prototype's `metamodel.yaml`, and named variants
+// like `prototypes/data-entry/catalog-metamodel.yaml`. Negative-case
+// fixture metamodels under `testdata/` and `fixtures/` are excluded.
 //
 // New metamodels get covered automatically the moment they land on
-// disk; nothing to keep in sync. Currently catches the dogfood
-// `tickets/metamodel.yaml`, the docs-project metamodel, and any
-// project under prototypes/ that ships a metamodel.
+// disk; nothing to keep in sync.
 func TestLoad_AllShippedMetamodels(t *testing.T) {
-	// repoRoot resolves up from this package's location at test time.
-	// internal/metamodel → repo root is "../..".
-	cwd, err := os.Getwd()
-	assertNoError(t, err)
-	repoRoot := filepath.Clean(filepath.Join(cwd, "..", ".."))
+	repoRoot := findRepoRoot(t)
 
-	// Walk for metamodel.yaml under in-repo directories. Skip:
-	//   - .ignored/ (scratch space, intentionally not validated)
-	//   - any path containing "fixtures" or "/test/" (intentionally
-	//     malformed metamodels under metamodel/*_test.go fixtures
-	//     would also be picked up otherwise)
-	//   - node_modules and other vendor-y dirs
+	skipDirs := map[string]bool{
+		"node_modules":  true,
+		".git":          true,
+		".ignored":      true,
+		"test-fixtures": true,
+		"testdata":      true,
+		"fixtures":      true,
+	}
+
 	var paths []string
-	err = filepath.Walk(repoRoot, func(path string, info os.FileInfo, walkErr error) error {
+	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			// Skip unreadable paths rather than abort the whole walk;
-			// surface so the test author can see something went wrong
-			// without failing on transient FS hiccups (e.g. a
-			// just-deleted entry).
+			// d may be nil here. Per filepath.WalkDir docs, returning
+			// SkipDir from a *file* callback skips remaining files in
+			// the parent directory — not what we want for a transient
+			// FS hiccup. Log and continue.
 			t.Logf("walk: skipping %s: %v", path, walkErr)
-			return filepath.SkipDir
-		}
-		if info.IsDir() {
-			name := info.Name()
-			skipDirs := map[string]bool{
-				"node_modules":  true,
-				".git":          true,
-				".ignored":      true,
-				"test-fixtures": true,
-				"testdata":      true,
-			}
-			if skipDirs[name] {
+			if d != nil && d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if info.Name() != "metamodel.yaml" {
+		if d.IsDir() {
+			if skipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		// Skip any test-fixture metamodels that exist for negative cases.
-		if strings.Contains(path, "/fixtures/") || strings.Contains(path, "/testdata/") {
+		name := d.Name()
+		if !strings.HasSuffix(name, ".yaml") || !strings.Contains(name, "metamodel") {
 			return nil
 		}
 		paths = append(paths, path)
@@ -1664,7 +1788,8 @@ func TestLoad_AllShippedMetamodels(t *testing.T) {
 	assertNoError(t, err)
 
 	if len(paths) == 0 {
-		t.Skip("no metamodel.yaml files found under repo root")
+		t.Fatalf("expected to find at least one shipped metamodel under %s; "+
+			"if this test is no longer rooted in the repo, fix findRepoRoot", repoRoot)
 	}
 
 	for _, p := range paths {
@@ -1674,5 +1799,27 @@ func TestLoad_AllShippedMetamodels(t *testing.T) {
 				t.Errorf("Load(%s) failed: %v", p, err)
 			}
 		})
+	}
+}
+
+// findRepoRoot walks up from the test's working directory until it
+// finds a directory containing go.mod, then returns it. Fails the test
+// if go.mod is never found — indicates the package was moved without
+// updating this helper. Replaces the previous "../.." dead reckoning,
+// which would silently produce a wrong root if the package ever moved.
+func findRepoRoot(t *testing.T) string {
+	t.Helper()
+	cwd, err := os.Getwd()
+	assertNoError(t, err)
+	dir := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("findRepoRoot: walked up from %s to root without finding go.mod", cwd)
+		}
+		dir = parent
 	}
 }

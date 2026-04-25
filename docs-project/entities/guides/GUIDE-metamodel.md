@@ -251,18 +251,19 @@ Each entity type defines:
 | `default_sort` | Default sort order for list views                         |
 | `color`        | Fill color for graph visualizations (hex or named)        |
 | `border_color` | Border color for graph visualizations                     |
-| `display_property` | Property whose value renders as the entity's display name in lists, cards, links, and breadcrumbs. Overrides the auto-derivation (which checks `title`/`name`/`label`, then any required string property in alphabetical order, falling back to the entity ID). When set, validated at load time: must reference a defined property, no leading or trailing whitespace. |
+| `display_property` | Property whose value names the entity. See [Display name](#display-name) below. |
 
 ### Display name
 
-Without `display_property`, rela picks the property that renders as the
-entity's display name automatically: it checks `title`, `name`, `label`
-in that order (when each is a required string property), then falls
-back to any required string property (alphabetical), then to the entity
-ID. That works for English schemas but is brittle for non-English ones —
-the priority list never matches Dutch `naam` or `titel`, so the
-fallback runs, and the choice silently flips if a second required
-string property is added.
+Every entity type has a *primary property* — the property whose value
+is the entity's display name. When unset, rela picks one
+automatically: it checks `title`, `name`, `label` in that order (when
+each is a required string property), then falls back to any required
+string property (alphabetical), then to the entity ID. That works for
+English schemas but is brittle for non-English ones — the priority
+list never matches Dutch `naam` or `titel`, so the fallback runs, and
+the choice silently flips if a second required string property is
+added later.
 
 Set `display_property` explicitly to make the choice load-bearing:
 
@@ -277,15 +278,25 @@ entities:
         required: true
 ```
 
-The named property does not have to be a required string — non-string
-values (numbers, booleans, enum values stored as typed values) are
-stringified at render time, falling back to the ID only when the value
-is empty or `nil`. This makes `display_property: status` viable for
-entities where the status enum is the most useful headline.
+**Allowed types.** The named property must be `string`, `integer`,
+`boolean`, or `enum` (custom enum-like types are accepted). `date`,
+`file`, `rrule`, and list-typed (`list: true`) properties are
+rejected at metamodel-load time — their default rendering produces
+strings nobody designed as a display name (e.g. `"2026-04-25 00:00:00
++0000 UTC"`, `"[a b c]"`).
 
-A typo or whitespace mistake fails metamodel-load with a clear
-diagnostic naming the entity, the offending value, and the available
-properties — rather than silently rendering every entity as its ID.
+**Runtime behavior.** Non-string values (integers, booleans, enum
+values) are stringified via `fmt.Sprintf("%v", val)`. The display
+falls back to the entity ID when the value is empty, missing, or
+`nil`.
+
+**Validation.** A typo, whitespace mistake, list-typed reference, or
+disallowed type fails metamodel-load with a diagnostic naming the
+entity, the offending value, and the available properties.
+
+How the data-entry app surfaces the display name across lists, cards,
+breadcrumbs, and related-entity links is documented in
+[GUIDE-data-entry.md → Display names](data-entry.md#display-names).
 
 ### ID Types
 
