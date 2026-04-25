@@ -5,7 +5,7 @@ title: Lint rule to flag pure-API test patterns in e2e specs
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## Problem

@@ -2,7 +2,7 @@
 id: REV-1ZENG
 type: review-checklist
 title: 'Review: Lint rule to flag pure-API test patterns in e2e specs'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -59,7 +59,7 @@ status: in-progress
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] All CI checks pass (15/16 green; final "Rela Tickets" gate flips green once this checklist + the ticket are marked done — that's why this update lives in the same PR)
+- [x] PR URL documented below
 
-**PR:** <!-- to be filled -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/568
