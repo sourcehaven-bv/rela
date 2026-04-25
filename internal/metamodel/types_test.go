@@ -234,6 +234,42 @@ func TestEntityDef_GetPrimaryProperty(t *testing.T) {
 			def:  EntityDef{},
 			want: "",
 		},
+		// TKT-RT3Y3: explicit display_property overrides the priority list.
+		{
+			name: "explicit display_property overrides priority",
+			def: EntityDef{
+				DisplayProperty: "naam",
+				Properties: map[string]PropertyDef{
+					"title": {Type: "string", Required: true}, // would normally win
+					"naam":  {Type: "string", Required: true},
+				},
+			},
+			want: "naam",
+		},
+		{
+			name: "explicit display_property is returned verbatim even when not required string",
+			def: EntityDef{
+				// Author trusts intent; load-time validation only checks
+				// existence. A non-required, non-string property is fine
+				// here — DisplayTitle will stringify the value.
+				DisplayProperty: "status",
+				Properties: map[string]PropertyDef{
+					"title":  {Type: "string", Required: true},
+					"status": {Type: "status"},
+				},
+			},
+			want: "status",
+		},
+		{
+			name: "empty display_property falls through to priority list",
+			def: EntityDef{
+				DisplayProperty: "",
+				Properties: map[string]PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
+			},
+			want: "title",
+		},
 	}
 
 	for _, tt := range tests {
@@ -283,6 +319,130 @@ func TestGetPrimaryPropertyDeterministic(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("GetPrimaryProperty() = %q, expected one of %v", first, validProps)
+	}
+}
+
+// TestEntityDef_DisplayTitle covers the runtime side of TKT-RT3Y3:
+// (a) string values render verbatim,
+// (b) non-string values stringify via fmt.Sprintf("%v", ...) so an
+//
+//	explicit display_property pointing at an enum/number/bool actually
+//	shows the value,
+//
+// (c) missing, nil, and empty-after-stringification fall back to the ID,
+// (d) the explicit display_property override drives all of the above.
+func TestEntityDef_DisplayTitle(t *testing.T) {
+	tests := []struct {
+		name       string
+		def        EntityDef
+		properties map[string]interface{}
+		want       string
+	}{
+		{
+			name: "string title returned verbatim",
+			def: EntityDef{
+				Properties: map[string]PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
+			},
+			properties: map[string]interface{}{"title": "Hello"},
+			want:       "Hello",
+		},
+		{
+			name: "empty string title falls back to ID",
+			def: EntityDef{
+				Properties: map[string]PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
+			},
+			properties: map[string]interface{}{"title": ""},
+			want:       "ENT-001",
+		},
+		{
+			name: "missing title falls back to ID",
+			def: EntityDef{
+				Properties: map[string]PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
+			},
+			properties: map[string]interface{}{},
+			want:       "ENT-001",
+		},
+		{
+			name: "no primary property → ID",
+			def: EntityDef{
+				Properties: map[string]PropertyDef{
+					"status": {Type: "status", Required: true},
+				},
+			},
+			properties: map[string]interface{}{"status": "open"},
+			want:       "ENT-001",
+		},
+		// TKT-RT3Y3: explicit display_property pointed at non-string field.
+		{
+			name: "display_property targets enum value (string-typed)",
+			def: EntityDef{
+				DisplayProperty: "status",
+				Properties: map[string]PropertyDef{
+					"status": {Type: "status"},
+				},
+			},
+			properties: map[string]interface{}{"status": "open"},
+			want:       "open",
+		},
+		{
+			name: "display_property targets numeric value — stringified",
+			def: EntityDef{
+				DisplayProperty: "version",
+				Properties: map[string]PropertyDef{
+					"version": {Type: PropertyTypeInteger},
+				},
+			},
+			properties: map[string]interface{}{"version": 42},
+			want:       "42",
+		},
+		{
+			name: "display_property targets boolean value — stringified",
+			def: EntityDef{
+				DisplayProperty: "active",
+				Properties: map[string]PropertyDef{
+					"active": {Type: "boolean"},
+				},
+			},
+			properties: map[string]interface{}{"active": true},
+			want:       "true",
+		},
+		{
+			name: "display_property points at nil-valued field → ID",
+			def: EntityDef{
+				DisplayProperty: "status",
+				Properties: map[string]PropertyDef{
+					"status": {Type: "status"},
+				},
+			},
+			properties: map[string]interface{}{"status": nil},
+			want:       "ENT-001",
+		},
+		{
+			name: "display_property property absent on entity → ID",
+			def: EntityDef{
+				DisplayProperty: "naam",
+				Properties: map[string]PropertyDef{
+					"naam": {Type: "string", Required: true},
+				},
+			},
+			properties: map[string]interface{}{"other": "foo"},
+			want:       "ENT-001",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.def.DisplayTitle("ENT-001", tt.properties)
+			if got != tt.want {
+				t.Errorf("DisplayTitle() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

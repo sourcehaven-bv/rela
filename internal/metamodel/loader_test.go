@@ -3,6 +3,7 @@ package metamodel
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1410,5 +1411,415 @@ entities:
 		if order[i] != prop {
 			t.Errorf("property order[%d]: expected %q, got %q", i, prop, order[i])
 		}
+	}
+}
+
+// ----------------------------------------------------------------------
+// TKT-RT3Y3: display_property field on entity-type definitions.
+// ----------------------------------------------------------------------
+
+// TestParse_DisplayPropertySucceeds verifies a metamodel with an
+// explicit, well-formed display_property loads cleanly and the field
+// round-trips onto the parsed EntityDef.
+func TestParse_DisplayPropertySucceeds(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: titel
+    properties:
+      titel:
+        type: string
+        required: true
+      doctype:
+        type: string
+        required: true
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	assertEqual(t, m.Entities["document"].DisplayProperty, "titel")
+}
+
+// TestParse_DisplayPropertyMissing verifies the load-time existence
+// check (RR-9CW5N motivation): pointing at a property that isn't
+// declared on the entity must error with a diagnostic listing the
+// available properties.
+func TestParse_DisplayPropertyMissing(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: nonexistent
+    properties:
+      titel:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), `display_property "nonexistent"`) {
+		t.Errorf("error should name the offending property: %v", err)
+	}
+	if !strings.Contains(err.Error(), "titel") {
+		t.Errorf("error should list available properties (titel): %v", err)
+	}
+	if !strings.Contains(err.Error(), `entity "document"`) {
+		t.Errorf("error should name the entity: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyWhitespace verifies the explicit whitespace
+// check (RR-HDAX8): leading/trailing whitespace produces a dedicated
+// diagnostic distinct from the missing-property error, so authors get
+// a useful fix. The diagnostic also lists the available property names
+// (RR-MPE9Y) so the author can fix a co-occurring typo in one round.
+func TestParse_DisplayPropertyWhitespace(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: " titel "
+    properties:
+      titel:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "whitespace", "titel"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q (RR-MPE9Y / RR-KFQD4): %v", want, err)
+		}
+	}
+}
+
+// TestParse_DisplayPropertyYAMLNull verifies that an explicit YAML null
+// (display_property:) is treated as unset — no error, GetPrimaryProperty
+// falls through to the autoderivation. RR-HP5IE.
+func TestParse_DisplayPropertyYAMLNull(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property:
+    properties:
+      titel:
+        type: string
+        required: true
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	def := m.Entities["document"]
+	assertEqual(t, def.DisplayProperty, "")
+	// autoderivation: titel is the only required string property.
+	assertEqual(t, def.GetPrimaryProperty(), "titel")
+}
+
+// TestParse_DisplayPropertyCaseSensitive verifies that case-mismatched
+// references fail validation. The Go map lookup is case-sensitive; this
+// test pins the behavior so a future "helpful" fuzzy-match refactor
+// doesn't silently change semantics. RR-GO9T7.
+func TestParse_DisplayPropertyCaseSensitive(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: TITEL
+    properties:
+      titel:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), `"TITEL"`) {
+		t.Errorf("error should reflect the case-mismatched name: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyEnumOK verifies that pointing display_property
+// at a non-required, non-string property is accepted at load time —
+// the runtime stringifies the value via DisplayTitle. RR-9CW5N.
+func TestParse_DisplayPropertyEnumOK(t *testing.T) {
+	yaml := `version: "1.0"
+types:
+  ticket_status:
+    values: [open, closed]
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    display_property: status
+    properties:
+      titel:
+        type: string
+        required: true
+      status:
+        type: ticket_status
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	def := m.Entities["ticket"]
+	assertEqual(t, def.DisplayProperty, "status")
+	assertEqual(t, def.GetPrimaryProperty(), "status")
+}
+
+// TestParse_DisplayPropertyList rejects a list-typed display_property at
+// load time so authors don't end up with display names like "[a b c]".
+// RR-AVOMV.
+func TestParse_DisplayPropertyList(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: tags
+    properties:
+      titel:
+        type: string
+        required: true
+      tags:
+        type: string
+        list: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "tags", "list"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
+// TestParse_DisplayPropertyDateRejected rejects date-typed properties:
+// time.Time stringifies to "2026-04-25 00:00:00 +0000 UTC" which is
+// almost never what an author wants for a display name. RR-IG4JJ.
+func TestParse_DisplayPropertyDateRejected(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: created_at
+    properties:
+      titel:
+        type: string
+        required: true
+      created_at:
+        type: date
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "created_at", "date"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
+// TestParse_DisplayPropertyFileRejected rejects file-typed properties.
+// RR-IG4JJ.
+func TestParse_DisplayPropertyFileRejected(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: attachment
+    properties:
+      titel:
+        type: string
+        required: true
+      attachment:
+        type: file
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), "file") {
+		t.Errorf("error should mention the file type: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyRruleRejected rejects rrule-typed properties.
+// RR-IG4JJ.
+func TestParse_DisplayPropertyRruleRejected(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  schedule:
+    label: Schedule
+    id_prefix: "SCH-"
+    display_property: cadence
+    properties:
+      titel:
+        type: string
+        required: true
+      cadence:
+        type: rrule
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), "rrule") {
+		t.Errorf("error should mention the rrule type: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyIntegerOK accepts an integer-typed display
+// property — it stringifies via fmt.Sprintf("%v", val) at runtime.
+// RR-IG4JJ pins down the allowed types alongside string/enum/boolean.
+func TestParse_DisplayPropertyIntegerOK(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    display_property: number
+    properties:
+      titel:
+        type: string
+        required: true
+      number:
+        type: integer
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	def := m.Entities["ticket"]
+	assertEqual(t, def.DisplayProperty, "number")
+}
+
+// TestParse_DisplayPropertyAcrossIncludes verifies that display_property
+// validation runs on the merged metamodel when an entity is defined in
+// an included file. RR-GO9T7.
+func TestParse_DisplayPropertyAcrossIncludes(t *testing.T) {
+	tmpDir := t.TempDir()
+	parentPath := filepath.Join(tmpDir, "metamodel.yaml")
+	childPath := filepath.Join(tmpDir, "child.yaml")
+
+	parentYAML := `version: "1.0"
+includes:
+  - child.yaml
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    properties:
+      titel:
+        type: string
+        required: true
+`
+	childYAML := `entities:
+  applicatie:
+    label: Applicatie
+    id_prefix: "APP-"
+    display_property: naam
+    properties:
+      naam:
+        type: string
+        required: true
+`
+	createFile(t, parentPath, parentYAML)
+	createFile(t, childPath, childYAML)
+
+	m, _, err := Load(parentPath, testMetaFS)
+	assertNoError(t, err)
+	def := m.Entities["applicatie"]
+	assertEqual(t, def.DisplayProperty, "naam")
+	assertEqual(t, def.GetPrimaryProperty(), "naam")
+}
+
+// TestLoad_AllShippedMetamodels guards against typos in dogfood and
+// fixture metamodels once display_property gets adopted in any of them.
+// Globs every shipped metamodel under the repo root and asserts each
+// one loads without error. RR-G175B / RR-XMJX1 / RR-MT7J7 / RR-YN32Y.
+//
+// "Shipped metamodel" means any file matching `*metamodel*.yaml` —
+// that includes the dogfood `tickets/metamodel.yaml`, the docs-project
+// metamodel, every prototype's `metamodel.yaml`, and named variants
+// like `prototypes/data-entry/catalog-metamodel.yaml`. Negative-case
+// fixture metamodels under `testdata/` and `fixtures/` are excluded.
+//
+// New metamodels get covered automatically the moment they land on
+// disk; nothing to keep in sync.
+func TestLoad_AllShippedMetamodels(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+
+	skipDirs := map[string]bool{
+		"node_modules":  true,
+		".git":          true,
+		".ignored":      true,
+		"test-fixtures": true,
+		"testdata":      true,
+		"fixtures":      true,
+	}
+
+	var paths []string
+	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// d may be nil here. Per filepath.WalkDir docs, returning
+			// SkipDir from a *file* callback skips remaining files in
+			// the parent directory — not what we want for a transient
+			// FS hiccup. Log and continue.
+			t.Logf("walk: skipping %s: %v", path, walkErr)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			if skipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasSuffix(name, ".yaml") || !strings.Contains(name, "metamodel") {
+			return nil
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	assertNoError(t, err)
+
+	if len(paths) == 0 {
+		t.Fatalf("expected to find at least one shipped metamodel under %s; "+
+			"if this test is no longer rooted in the repo, fix findRepoRoot", repoRoot)
+	}
+
+	for _, p := range paths {
+		t.Run(strings.TrimPrefix(p, repoRoot+"/"), func(t *testing.T) {
+			_, _, err := Load(p, testMetaFS)
+			if err != nil {
+				t.Errorf("Load(%s) failed: %v", p, err)
+			}
+		})
+	}
+}
+
+// findRepoRoot walks up from the test's working directory until it
+// finds a directory containing go.mod, then returns it. Fails the test
+// if go.mod is never found — indicates the package was moved without
+// updating this helper. Replaces the previous "../.." dead reckoning,
+// which would silently produce a wrong root if the package ever moved.
+func findRepoRoot(t *testing.T) string {
+	t.Helper()
+	cwd, err := os.Getwd()
+	assertNoError(t, err)
+	dir := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("findRepoRoot: walked up from %s to root without finding go.mod", cwd)
+		}
+		dir = parent
 	}
 }
