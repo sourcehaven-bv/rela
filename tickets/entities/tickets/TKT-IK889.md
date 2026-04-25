@@ -5,7 +5,7 @@ title: Codify architectural learnings in CLAUDE.md
 kind: docs
 priority: medium
 effort: xs
-status: review
+status: done
 ---
 
 ## Problem
