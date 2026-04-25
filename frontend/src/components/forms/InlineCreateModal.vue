@@ -3,6 +3,7 @@ import { ref, computed, toRef, watch } from 'vue'
 import { useSchemaStore } from '@/stores'
 import { createEntity } from '@/api'
 import { useModalStack } from '@/composables/modalStack'
+import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import type { Entity, PropertyDef } from '@/types'
 
 const props = defineProps<{
@@ -22,14 +23,12 @@ useModalStack(toRef(props, 'show'))
 const loading = ref(false)
 const error = ref<string | null>(null)
 const formData = ref<Record<string, string | boolean>>({})
-const manualId = ref('')
 
 // Computed
 const entityTypeDef = computed(() => schemaStore.getEntityType(props.entityType))
 
-const requiresManualId = computed(() => {
-  return entityTypeDef.value?.id_type === 'manual'
-})
+const idControls = useEntityIDControls(entityTypeDef, 'create')
+const { showManualIDInput, showPrefixPicker, prefixOptions, manualId, selectedPrefix } = idControls
 
 const fields = computed(() => {
   if (!entityTypeDef.value) return []
@@ -48,7 +47,7 @@ watch(() => props.show, (show) => {
   if (show) {
     error.value = null
     formData.value = {}
-    manualId.value = ''
+    idControls.reset()
 
     // Initialize with defaults
     for (const field of fields.value) {
@@ -117,16 +116,21 @@ async function handleSubmit() {
       }
     }
 
-    const payload: { id?: string; properties: Record<string, unknown> } = { properties }
-    if (requiresManualId.value && manualId.value) {
-      payload.id = manualId.value
+    const payload: { id?: string; prefix?: string; properties: Record<string, unknown> } = {
+      properties,
+      ...idControls.buildPayloadFields(),
     }
 
     const entity = await createEntity(props.entityType, payload)
     emit('created', entity)
     emit('close')
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to create entity'
+    if (err && typeof err === 'object' && ('detail' in err || 'title' in err)) {
+      const problem = err as { detail?: string; title?: string }
+      error.value = problem.detail || problem.title || 'Failed to create entity'
+    } else {
+      error.value = err instanceof Error ? err.message : 'Failed to create entity'
+    }
   } finally {
     loading.value = false
   }
@@ -153,7 +157,7 @@ function handleClose() {
             <div v-if="error" class="error-message">{{ error }}</div>
 
             <!-- Manual ID field -->
-            <div v-if="requiresManualId" class="form-field">
+            <div v-if="showManualIDInput" class="form-field">
               <label>
                 ID
                 <span class="required">*</span>
@@ -164,6 +168,17 @@ function handleClose() {
                 required
                 placeholder="Unique ID..."
               />
+            </div>
+
+            <!-- Prefix picker (multi-prefix types) -->
+            <div v-if="showPrefixPicker" class="form-field">
+              <label>
+                Prefix
+                <span class="required">*</span>
+              </label>
+              <select v-model="selectedPrefix" required>
+                <option v-for="p in prefixOptions" :key="p" :value="p">{{ p }}</option>
+              </select>
             </div>
 
             <!-- Dynamic fields from entity type -->

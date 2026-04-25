@@ -20,6 +20,7 @@ export interface EntityActions {
 
 export interface CreateEntity {
   id?: string
+  prefix?: string
   properties: Record<string, unknown>
   content?: string
   relations?: Record<string, string[]>

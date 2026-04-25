@@ -286,6 +286,63 @@ func TestHandleAPIEntities(t *testing.T) {
 	})
 }
 
+// TestHandleAPICreateEntity_IDValidation pins down the legacy /api/entities
+// POST validation behavior so it can't silently drift away from the v1
+// handler. Mirrors validateCreateIDOpts but at the HTTP boundary, since the
+// legacy path used to silently honor `id` for any entity type. (RR-…)
+func TestHandleAPICreateEntity_IDValidation(t *testing.T) {
+	app, _ := testAppInstance()
+
+	t.Run("rejects id for non-manual type with 422", func(t *testing.T) {
+		body := `{"type":"ticket","id":"TKT-CUSTOM","properties":{"title":"x"}}`
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/entities", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		app.handleAPICreateEntity(w, r)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "id not accepted") {
+			t.Errorf("expected 'id not accepted' in body, got: %s", w.Body.String())
+		}
+	})
+
+	t.Run("rejects unknown prefix for non-manual type with 422", func(t *testing.T) {
+		body := `{"type":"ticket","prefix":"XYZ-","properties":{"title":"x"}}`
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/entities", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		app.handleAPICreateEntity(w, r)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "is not valid") {
+			t.Errorf("expected 'is not valid' in body, got: %s", w.Body.String())
+		}
+	})
+
+	t.Run("trims whitespace before validating", func(t *testing.T) {
+		body := `{"type":"ticket","id":"  TKT-X  ","properties":{"title":"x"}}`
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/entities", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		app.handleAPICreateEntity(w, r)
+
+		// After trim, "TKT-X" is rejected because ticket is non-manual.
+		// The point of this test is that whitespace doesn't change the
+		// rejection — pre-trim it would also reject, but with a misleading
+		// error referencing the leading-space form.
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), `  TKT-X  `) {
+			t.Errorf("error message should not echo the untrimmed input: %s", w.Body.String())
+		}
+	})
+}
+
 func TestHandleAPIEntity(t *testing.T) {
 	app, _ := testAppInstance()
 

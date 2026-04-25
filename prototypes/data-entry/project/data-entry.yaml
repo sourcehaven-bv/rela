@@ -210,6 +210,31 @@ forms:
       - property: name
         label: "Label Name"
         placeholder: "e.g., bug, enhancement, urgent"
+  create_tag:
+    entity_type: tag
+    title: "New Tag"
+    description: "Create a tag with a manual ID"
+    fields:
+      - property: name
+        label: "Tag Name"
+  create_decision:
+    entity_type: decision
+    title: "New Decision"
+    description: "Record a design decision (DEC-) or architecture decision record (ADR-)"
+    fields:
+      - property: title
+  create_module:
+    entity_type: module
+    title: "New Module"
+    description: "Create a module with a manual ID. IDs must start with MOD-."
+    fields:
+      - property: name
+  create_specification:
+    entity_type: specification
+    title: "New Specification"
+    description: "Create a spec with a manual ID. IDs must start with RFC- or SPEC-."
+    fields:
+      - property: name
 actions:
   resolve-ticket:
     label: "Resolve"

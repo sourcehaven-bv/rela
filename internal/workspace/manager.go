@@ -30,6 +30,7 @@ func (m *wsEntityManager) CreateEntity(
 
 	createOpts := CreateOptions{
 		ID:         opts.ID,
+		Prefix:     opts.Prefix,
 		Properties: e.Properties,
 		Content:    e.Content,
 	}

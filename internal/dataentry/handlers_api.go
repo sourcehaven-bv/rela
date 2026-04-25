@@ -336,7 +336,8 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 
 // APICreateEntityRequest is the request body for creating an entity.
 type APICreateEntityRequest struct {
-	ID         string                 `json:"id,omitempty"` // Optional, auto-generated if empty
+	ID         string                 `json:"id,omitempty"`     // Optional, auto-generated unless type uses manual IDs
+	Prefix     string                 `json:"prefix,omitempty"` // Optional prefix override for multi-prefix types
 	Type       string                 `json:"type"`
 	Properties map[string]interface{} `json:"properties"`
 	Content    string                 `json:"content,omitempty"`
@@ -377,13 +378,27 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
+	entityDef, defOK := a.State().Meta.Entities[req.Type]
+	if !defOK {
+		writeJSONError(w, http.StatusBadRequest, "unknown entity type: "+req.Type)
+		return
+	}
+	req.ID = strings.TrimSpace(req.ID)
+	req.Prefix = strings.TrimSpace(req.Prefix)
+	// Use 422 — body parsed cleanly but failed a semantic rule. Matches the
+	// v1 handler's choice and the new validateCreateIDOpts contract.
+	if msg := validateCreateIDOpts(&entityDef, req.ID, req.Prefix); msg != "" {
+		writeJSONError(w, http.StatusUnprocessableEntity, msg)
+		return
+	}
+
 	newEntity := &entity.Entity{
 		ID:         req.ID,
 		Type:       req.Type,
 		Properties: req.Properties,
 		Content:    req.Content,
 	}
-	result, err := a.entityManager.CreateEntity(r.Context(), newEntity, entitymanager.CreateOptions{ID: req.ID})
+	result, err := a.entityManager.CreateEntity(r.Context(), newEntity, entitymanager.CreateOptions{ID: req.ID, Prefix: req.Prefix})
 	if err != nil {
 		var valErr *workspace.ValidationError
 		if errors.As(err, &valErr) {

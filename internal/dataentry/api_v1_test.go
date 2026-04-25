@@ -3032,3 +3032,321 @@ func TestHandleV1Documents_EntityNotFound(t *testing.T) {
 		t.Errorf("expected 404 for missing entity, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// newPrefixTestApp builds an app whose schema includes a multi-prefix type, a
+// manual-ID type, and a single-prefix short-ID type for TKT-E7NNM tests.
+// Wires in an in-memory FS so the create path can load (absent) entity templates.
+func newPrefixTestApp(t *testing.T) *App {
+	t.Helper()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Label:    "Ticket",
+				IDType:   "short",
+				IDPrefix: "TKT-",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
+			},
+			"decision": {
+				Label:      "Decision",
+				IDType:     "short",
+				IDPrefixes: []string{"DEC-", "ADR-"},
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
+			},
+			"category": {
+				Label:  "Category",
+				IDType: "manual",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
+			},
+		},
+	}
+	cfg := &dataentryconfig.Config{
+		App:        dataentryconfig.AppConfig{Name: "Test App"},
+		Forms:      make(map[string]dataentryconfig.Form),
+		Lists:      make(map[string]dataentryconfig.List),
+		Views:      make(map[string]dataentryconfig.ViewConfig),
+		Kanbans:    make(map[string]dataentryconfig.Kanban),
+		Navigation: []dataentryconfig.NavigationEntry{},
+	}
+	app := newAppFromParts(cfg, meta, newFixture())
+	fs := storage.NewMemFS()
+	ctx := &project.Context{
+		Root:                 "/project",
+		CacheDir:             "/project/.rela",
+		EntitiesDir:          "/project/entities",
+		RelationsDir:         "/project/relations",
+		TemplatesDir:         "/project/templates",
+		EntityTemplatesDir:   "/project/templates/entities",
+		RelationTemplatesDir: "/project/templates/relations",
+	}
+	_ = fs.MkdirAll(ctx.EntitiesDir, 0o755)
+	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
+	_ = fs.MkdirAll(ctx.EntityTemplatesDir, 0o755)
+	_ = fs.MkdirAll(ctx.RelationTemplatesDir, 0o755)
+	bindRepoWithFS(app, fs, ctx)
+	app.broker = newEventBroker()
+	return app
+}
+
+// newManualPrefixedTestApp builds an app whose schema includes a manual-ID type
+// that declares a required prefix (TAG-), used to test prefix enforcement on
+// manual IDs.
+func newManualPrefixedTestApp(t *testing.T) *App {
+	t.Helper()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"tag": {
+				Label:    "Tag",
+				IDType:   "manual",
+				IDPrefix: "TAG-",
+				Properties: map[string]metamodel.PropertyDef{
+					"name": {Type: "string", Required: true},
+				},
+			},
+		},
+	}
+	cfg := &dataentryconfig.Config{
+		App:        dataentryconfig.AppConfig{Name: "Test App"},
+		Forms:      make(map[string]dataentryconfig.Form),
+		Lists:      make(map[string]dataentryconfig.List),
+		Views:      make(map[string]dataentryconfig.ViewConfig),
+		Kanbans:    make(map[string]dataentryconfig.Kanban),
+		Navigation: []dataentryconfig.NavigationEntry{},
+	}
+	app := newAppFromParts(cfg, meta, newFixture())
+	fs := storage.NewMemFS()
+	ctx := &project.Context{
+		Root:                 "/project",
+		CacheDir:             "/project/.rela",
+		EntitiesDir:          "/project/entities",
+		RelationsDir:         "/project/relations",
+		TemplatesDir:         "/project/templates",
+		EntityTemplatesDir:   "/project/templates/entities",
+		RelationTemplatesDir: "/project/templates/relations",
+	}
+	_ = fs.MkdirAll(ctx.EntitiesDir, 0o755)
+	_ = fs.MkdirAll(ctx.RelationsDir, 0o755)
+	_ = fs.MkdirAll(ctx.EntityTemplatesDir, 0o755)
+	_ = fs.MkdirAll(ctx.RelationTemplatesDir, 0o755)
+	bindRepoWithFS(app, fs, ctx)
+	app.broker = newEventBroker()
+	return app
+}
+
+func TestV1Schema_MultiPrefix(t *testing.T) {
+	app := newPrefixTestApp(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Schema(rec, req)
+
+	var schema V1Schema
+	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	dec, ok := schema.Entities["decision"]
+	if !ok {
+		t.Fatalf("decision entity missing from schema")
+	}
+	want := []string{"DEC-", "ADR-"}
+	if len(dec.IDPrefixes) != len(want) {
+		t.Fatalf("IDPrefixes = %v, want %v", dec.IDPrefixes, want)
+	}
+	for i, p := range want {
+		if dec.IDPrefixes[i] != p {
+			t.Errorf("IDPrefixes[%d] = %q, want %q", i, dec.IDPrefixes[i], p)
+		}
+	}
+}
+
+func TestV1Schema_SinglePrefix_Compat(t *testing.T) {
+	app := newPrefixTestApp(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Schema(rec, req)
+
+	var schema V1Schema
+	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	tkt, ok := schema.Entities["ticket"]
+	if !ok {
+		t.Fatalf("ticket entity missing from schema")
+	}
+	if tkt.IDPrefix != "TKT-" {
+		t.Errorf("IDPrefix = %q, want %q", tkt.IDPrefix, "TKT-")
+	}
+	if len(tkt.IDPrefixes) != 1 || tkt.IDPrefixes[0] != "TKT-" {
+		t.Errorf("IDPrefixes = %v, want [TKT-]", tkt.IDPrefixes)
+	}
+}
+
+func postCreate(t *testing.T, app *App, plural, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/"+plural, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	typeName := strings.TrimSuffix(plural, "s")
+	app.handleV1CreateEntity(rec, req, typeName, plural)
+	return rec
+}
+
+func TestV1CreateEntity_PrefixOverride(t *testing.T) {
+	app := newPrefixTestApp(t)
+
+	rec := postCreate(t, app, "decisions", `{"prefix":"ADR-","properties":{"title":"use Redis"}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got V1Entity
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.HasPrefix(got.ID, "ADR-") {
+		t.Errorf("ID = %q, want prefix ADR-", got.ID)
+	}
+}
+
+func TestV1CreateEntity_EmptyPrefixUsesFirst(t *testing.T) {
+	app := newPrefixTestApp(t)
+
+	rec := postCreate(t, app, "decisions", `{"properties":{"title":"use Postgres"}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got V1Entity
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.HasPrefix(got.ID, "DEC-") {
+		t.Errorf("ID = %q, want first prefix DEC-", got.ID)
+	}
+}
+
+func TestV1CreateEntity_UnknownPrefix(t *testing.T) {
+	app := newPrefixTestApp(t)
+
+	rec := postCreate(t, app, "decisions", `{"prefix":"XXX-","properties":{"title":"x"}}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "XXX-") {
+		t.Errorf("body does not mention rejected prefix: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "DEC-") {
+		t.Errorf("body does not list allowed prefixes: %s", rec.Body.String())
+	}
+}
+
+func TestV1CreateEntity_IDRejectedForNonManual(t *testing.T) {
+	app := newPrefixTestApp(t)
+
+	rec := postCreate(t, app, "tickets", `{"id":"TKT-HACKED","properties":{"title":"x"}}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "non-manual") {
+		t.Errorf("expected 'non-manual' in error, got: %s", rec.Body.String())
+	}
+}
+
+func TestV1CreateEntity_ManualTypeRejectsPrefix(t *testing.T) {
+	app := newPrefixTestApp(t)
+
+	rec := postCreate(t, app, "categorys", `{"id":"books","prefix":"CAT-","properties":{"title":"Books"}}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "prefix not applicable") {
+		t.Errorf("expected 'prefix not applicable' in error, got: %s", rec.Body.String())
+	}
+}
+
+func TestV1CreateEntity_ManualAcceptsID(t *testing.T) {
+	app := newPrefixTestApp(t)
+
+	rec := postCreate(t, app, "categorys", `{"id":"books","properties":{"title":"Books"}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got V1Entity
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ID != "books" {
+		t.Errorf("ID = %q, want books", got.ID)
+	}
+}
+
+// Manual-ID types with declared prefixes must reject IDs outside the allowlist.
+func TestV1CreateEntity_ManualWithPrefix_RejectsBareID(t *testing.T) {
+	app := newManualPrefixedTestApp(t)
+
+	rec := postCreate(t, app, "tags", `{"id":"books","properties":{"name":"Books"}}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "must start with") {
+		t.Errorf("expected 'must start with' in error, got: %s", rec.Body.String())
+	}
+}
+
+func TestV1CreateEntity_ManualWithPrefix_AcceptsPrefixedID(t *testing.T) {
+	app := newManualPrefixedTestApp(t)
+
+	rec := postCreate(t, app, "tags", `{"id":"TAG-books","properties":{"name":"Books"}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestValidateCreateIDOpts(t *testing.T) {
+	short := &metamodel.EntityDef{IDType: "short", IDPrefixes: []string{"DEC-", "ADR-"}}
+	manual := &metamodel.EntityDef{IDType: "manual"}
+	manualPrefixed := &metamodel.EntityDef{IDType: "manual", IDPrefix: "TAG-"}
+	manualMulti := &metamodel.EntityDef{IDType: "manual", IDPrefixes: []string{"A-", "B-"}}
+
+	tests := []struct {
+		name    string
+		def     *metamodel.EntityDef
+		id      string
+		prefix  string
+		wantErr string
+	}{
+		{"short, no id/prefix", short, "", "", ""},
+		{"short, valid prefix", short, "", "ADR-", ""},
+		{"short, id set", short, "DEC-X", "", "id not accepted"},
+		{"short, unknown prefix", short, "", "X-", "not valid"},
+		{"manual, id only", manual, "custom", "", ""},
+		{"manual, prefix set", manual, "custom", "X-", "prefix not applicable"},
+		{"manual prefixed, matching id", manualPrefixed, "TAG-books", "", ""},
+		{"manual prefixed, missing prefix", manualPrefixed, "books", "", "must start with"},
+		{"manual prefixed, wrong prefix", manualPrefixed, "CAT-books", "", "must start with"},
+		{"manual multi, matches A-", manualMulti, "A-foo", "", ""},
+		{"manual multi, matches B-", manualMulti, "B-foo", "", ""},
+		{"manual multi, no match", manualMulti, "C-foo", "", "must start with"},
+		// Coverage gaps closed per code-review #10.
+		{"short, both id and prefix set — id rejection wins", short, "DEC-X", "DEC-", "id not accepted"},
+		{"manual prefixed, id matches AND prefix also set", manualPrefixed, "TAG-x", "TAG-", "prefix not applicable"},
+		{"manual prefixed, bare prefix as id", manualPrefixed, "TAG-", "", "must start with"},
+		{"manual prefixed, whitespace-only id treated as empty", manualPrefixed, "   ", "", ""},
+		{"short, whitespace prefix treated as empty", short, "", "  ", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := validateCreateIDOpts(tt.def, tt.id, tt.prefix)
+			if tt.wantErr == "" && got != "" {
+				t.Errorf("got error %q, want none", got)
+			}
+			if tt.wantErr != "" && !strings.Contains(got, tt.wantErr) {
+				t.Errorf("got error %q, want containing %q", got, tt.wantErr)
+			}
+		})
+	}
+}
