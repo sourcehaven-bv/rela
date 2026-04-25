@@ -525,8 +525,9 @@ configuration is needed — unlike `ai.*`, the module works out of the box.
 | `http.put(url, body, opts?)` | PUT convenience | (response, nil) or (nil, err_table) |
 | `http.patch(url, body, opts?)` | PATCH convenience | (response, nil) or (nil, err_table) |
 | `http.delete(url, opts?)` | DELETE convenience | (response, nil) or (nil, err_table) |
-| `http.json_encode(value)` | Lua value → JSON string | string (raises on bad input) |
-| `http.json_decode(string)` | JSON string → Lua value | (value, nil) or (nil, err_table) |
+
+JSON encode/decode helpers are exposed as `rela.json.*` (see [JSON Functions](#json-functions))
+because they are useful outside HTTP too.
 
 #### http.request
 
@@ -535,7 +536,7 @@ local resp, err = http.request({
   url     = "https://api.example.com/data",
   method  = "POST",                          -- optional, default GET
   headers = {["Content-Type"] = "application/json"},
-  body    = http.json_encode({key = "value"}),
+  body    = rela.json.encode({key = "value"}),
   timeout = 10,                              -- optional, seconds
 })
 ```
@@ -557,55 +558,34 @@ local resp, err = http.request({
 local resp, err = http.get("https://api.example.com/users")
 local resp, err = http.post(
     "https://api.example.com/items",
-    http.json_encode({name = "new item"}),
+    rela.json.encode({name = "new item"}),
     {headers = {["Content-Type"] = "application/json"}}
 )
 ```
 
-#### JSON Helpers
-
-```lua
-local json_str = http.json_encode({name = "test", items = {1, 2, 3}})
-local data, err = http.json_decode('{"name":"test","count":42}')
-```
-
-**Array vs object encoding:** Tables with only consecutive integer keys
-starting at 1 encode as JSON arrays. Tables with any string keys encode
-as JSON objects.
-
 #### Error Handling
 
 HTTP functions follow the same `(nil, err_table)` convention as `ai.chat`.
-The error table mirrors `ai.chat`'s shape:
+The error table mirrors `ai.chat`'s shape (minus `status`, which always
+absent on http errors — non-2xx responses come back as a normal response
+table with `status_code` populated):
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `kind` | string | One of `timeout`, `canceled`, `network`, `bad_response` |
-| `status` | number | HTTP status when available, `0` otherwise |
 | `message` | string | Human-readable summary |
 | `retry_after` | number | Always `0` for HTTP errors (populated by `ai` on rate limits) |
 | `details` | string | Unwrapped transport error (TLS cert, DNS record, etc.) when present |
 
 | `err.kind` | When |
 |---|---|
-| `timeout` | Request exceeded deadline |
+| `timeout` | Request or body read exceeded the deadline |
 | `canceled` | Request was canceled (runtime shutting down) |
-| `network` | DNS failure, connection refused, TLS error, body read error |
-| `bad_response` | Response body exceeded 10 MiB limit, or invalid JSON in `json_decode` |
+| `network` | DNS failure, connection refused, TLS error, generic body read error |
+| `bad_response` | Response body exceeded the 10 MiB cap |
 
-Programming errors (missing URL, wrong argument types, invalid HTTP
-method, non-positive timeout) raise Lua errors.
-
-#### JSON Conversion Limits
-
-- **Empty tables encode as objects (`{}`), not arrays (`[]`).** Lua has
-  no way to mark an empty table as array-shaped. If you need a JSON empty
-  array, build the body server-side or include a placeholder element.
-- **Cyclic tables** are encoded with the offending branch replaced by the
-  string `"<cyclic reference>"` rather than crashing the runtime.
-- **Decoded JSON deeper than 64 levels** is truncated with the sentinel
-  string `"<max-depth>"` to prevent stack overflow from a hostile
-  response.
+Programming errors (missing URL, URL with userinfo, wrong argument types,
+invalid HTTP method, non-positive timeout) raise Lua errors.
 
 #### Redirects
 
@@ -617,8 +597,44 @@ follow redirects explicitly if needed.
 
 `http.*` is a new threat surface: a Lua script can make arbitrary
 outbound requests using the user's machine. There is no SSRF protection
-(the localhost / private-IP range is reachable). Treat Lua scripts as
-trusted code.
+(the localhost / private-IP range is reachable). URLs containing
+embedded credentials (`http://user:pass@host/`) are rejected — set the
+`Authorization` header explicitly. Treat Lua scripts as trusted code.
+
+### JSON Functions
+
+The `rela.json` module provides JSON encode/decode helpers. They live
+under `rela` rather than `http` because JSON is useful in flow scripts,
+document renderers, and ad-hoc transformations as often as in API calls.
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.json.encode(value)` | Lua value → JSON string | string (raises on bad input) |
+| `rela.json.decode(string)` | JSON string → Lua value | (value, nil) or (nil, err_table) |
+
+```lua
+local json_str = rela.json.encode({name = "test", items = {1, 2, 3}})
+local data, err = rela.json.decode('{"name":"test","count":42}')
+```
+
+**Array vs object encoding:** Tables with only consecutive integer keys
+starting at 1 encode as JSON arrays. Tables with any string keys encode
+as JSON objects.
+
+`rela.json.decode` returns `(nil, err_table)` with `kind="bad_response"`
+for invalid JSON — the same shape `http.*` produces — so existing
+error-handling branches work unchanged.
+
+#### JSON Conversion Limits
+
+- **Empty tables encode as objects (`{}`), not arrays (`[]`).** Lua has
+  no way to mark an empty table as array-shaped. If you need a JSON empty
+  array, build the body server-side or include a placeholder element.
+- **Cyclic tables** are encoded with the offending branch replaced by the
+  string `"<cyclic reference>"` rather than crashing the runtime.
+- **Decoded JSON deeper than 64 levels** is truncated with the sentinel
+  string `"<max-depth>"` to prevent stack overflow from a hostile
+  response.
 
 ### Context
 
