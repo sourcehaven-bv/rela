@@ -7,25 +7,21 @@
 //	programming error         -> RaiseError
 //
 // The error table mirrors ai.Error so scripts switching between ai.chat
-// and http.request see the same shape: kind (string), status (number),
-// message (string), retry_after (number, always 0 for http), details
-// (string, unwrapped cause when present). Scripts branch on err.kind.
+// and http.request see the same shape: kind (string), message (string),
+// retry_after (number, always 0 for http), details (string, unwrapped
+// cause when present). Scripts branch on err.kind.
 //
 // Error kinds:
 //   - timeout:      request exceeded deadline
 //   - canceled:     request was canceled (e.g., runtime shutting down)
 //   - network:      DNS, connection refused, TLS, read error, etc.
-//   - bad_response: response body exceeded the 10 MiB cap, or
-//     json_decode received invalid JSON
+//   - bad_response: response body exceeded the 10 MiB cap
 //
-// JSON helpers use the same convention split: json_encode raises on wrong
-// arg types (programming error); json_decode returns (nil, err_table) for
-// invalid JSON (expected runtime failure from external data).
+// JSON encode/decode helpers live separately under rela.json (see json.go).
 package lua
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -45,25 +41,33 @@ const httpMaxResponseBytes = 10 * 1024 * 1024 // 10 MiB
 // script does not specify a per-request timeout.
 const httpDefaultTimeout = 30 * time.Second
 
-// jsonMaxDecodeDepth caps recursion when converting decoded JSON back into
-// Lua values. Past this depth a sentinel string is substituted to prevent
-// stack-overflow DoS from a server returning deeply nested JSON. Encoded
-// Lua tables are protected by luaValueToGo's existing cycle detection;
-// the cap here covers the asymmetric Go-to-Lua direction.
-const jsonMaxDecodeDepth = 64
-
-// jsonMaxDepthSentinel is what goValueToLua substitutes when a decoded JSON
-// branch is deeper than jsonMaxDecodeDepth. Visible to the script so the
-// truncation surfaces (rather than silently dropping data).
-const jsonMaxDepthSentinel = "<max-depth>"
-
 // newHTTPClient creates the shared HTTP client used by the http module.
 // Redirect following is disabled so scripts handle redirects explicitly.
+//
+// The Transport is explicitly bounded rather than reusing
+// http.DefaultTransport: rela's scheduler and MCP server are
+// long-running processes, and a script that fans out to many distinct
+// hosts would otherwise grow idle connections without bound.
+// MaxResponseHeaderBytes also caps header memory before the 10 MiB body
+// cap fires, defending against a hostile server returning thousands of
+// huge headers.
 func newHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: httpDefaultTimeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			Proxy:                  http.ProxyFromEnvironment,
+			MaxIdleConns:           100,
+			MaxIdleConnsPerHost:    10,
+			MaxConnsPerHost:        50,
+			IdleConnTimeout:        90 * time.Second,
+			TLSHandshakeTimeout:    10 * time.Second,
+			ExpectContinueTimeout:  1 * time.Second,
+			ResponseHeaderTimeout:  30 * time.Second,
+			MaxResponseHeaderBytes: 1 << 20, // 1 MiB
+			ForceAttemptHTTP2:      true,
 		},
 	}
 }
@@ -75,8 +79,9 @@ func newHTTPClient() *http.Client {
 // scheduler ticks, MCP tool calls).
 var httpClient = newHTTPClient()
 
-// registerHTTPModule installs the top-level `http` global with request,
-// convenience, and JSON functions.
+// registerHTTPModule installs the top-level `http` global with `request`
+// plus the per-method convenience functions (get, post, put, patch, delete).
+// JSON helpers live separately under rela.json (see json.go).
 func (r *Runtime) registerHTTPModule() {
 	tbl := r.L.NewTable()
 	r.L.SetField(tbl, "request", r.L.NewFunction(r.luaHTTPRequest))
@@ -85,8 +90,6 @@ func (r *Runtime) registerHTTPModule() {
 	r.L.SetField(tbl, "put", r.L.NewFunction(r.luaHTTPPut))
 	r.L.SetField(tbl, "patch", r.L.NewFunction(r.luaHTTPPatch))
 	r.L.SetField(tbl, "delete", r.L.NewFunction(r.luaHTTPDelete))
-	r.L.SetField(tbl, "json_encode", r.L.NewFunction(luaJSONEncode))
-	r.L.SetField(tbl, "json_decode", r.L.NewFunction(luaJSONDecode))
 	r.L.SetGlobal("http", tbl)
 }
 
@@ -106,77 +109,69 @@ func (r *Runtime) luaHTTPRequest(ls *lua.LState) int {
 		ls.RaiseError("http.request: %s", err.Error())
 		return 0
 	}
-	return r.doHTTPRequest(ls, parsed.method, parsed.url, parsed.headers, parsed.body, parsed.timeout)
+	return r.doHTTPRequest(ls, "http.request", parsed.method, parsed.url, parsed.headers, parsed.body, parsed.timeout)
 }
 
 // luaHTTPGet implements http.get(url, opts?) -> (response, nil) | (nil, err).
 func (r *Runtime) luaHTTPGet(ls *lua.LState) int {
-	rawURL := ls.CheckString(1)
-	headers, timeout := parseConvenienceOpts(ls, 2)
-	reqURL, err := validateURL(rawURL)
-	if err != nil {
-		ls.RaiseError("http.get: %s", err.Error())
-		return 0
-	}
-	return r.doHTTPRequest(ls, http.MethodGet, reqURL, headers, "", timeout)
+	return r.luaHTTPSimple(ls, "http.get", http.MethodGet, false)
 }
 
 // luaHTTPPost implements http.post(url, body, opts?) -> (response, nil) | (nil, err).
 func (r *Runtime) luaHTTPPost(ls *lua.LState) int {
-	rawURL := ls.CheckString(1)
-	body := ls.OptString(2, "")
-	headers, timeout := parseConvenienceOpts(ls, 3)
-	reqURL, err := validateURL(rawURL)
-	if err != nil {
-		ls.RaiseError("http.post: %s", err.Error())
-		return 0
-	}
-	return r.doHTTPRequest(ls, http.MethodPost, reqURL, headers, body, timeout)
+	return r.luaHTTPSimple(ls, "http.post", http.MethodPost, true)
 }
 
 // luaHTTPPut implements http.put(url, body, opts?) -> (response, nil) | (nil, err).
 func (r *Runtime) luaHTTPPut(ls *lua.LState) int {
-	rawURL := ls.CheckString(1)
-	body := ls.OptString(2, "")
-	headers, timeout := parseConvenienceOpts(ls, 3)
-	reqURL, err := validateURL(rawURL)
-	if err != nil {
-		ls.RaiseError("http.put: %s", err.Error())
-		return 0
-	}
-	return r.doHTTPRequest(ls, http.MethodPut, reqURL, headers, body, timeout)
+	return r.luaHTTPSimple(ls, "http.put", http.MethodPut, true)
 }
 
 // luaHTTPPatch implements http.patch(url, body, opts?) -> (response, nil) | (nil, err).
 func (r *Runtime) luaHTTPPatch(ls *lua.LState) int {
-	rawURL := ls.CheckString(1)
-	body := ls.OptString(2, "")
-	headers, timeout := parseConvenienceOpts(ls, 3)
-	reqURL, err := validateURL(rawURL)
-	if err != nil {
-		ls.RaiseError("http.patch: %s", err.Error())
-		return 0
-	}
-	return r.doHTTPRequest(ls, http.MethodPatch, reqURL, headers, body, timeout)
+	return r.luaHTTPSimple(ls, "http.patch", http.MethodPatch, true)
 }
 
 // luaHTTPDelete implements http.delete(url, opts?) -> (response, nil) | (nil, err).
 func (r *Runtime) luaHTTPDelete(ls *lua.LState) int {
+	return r.luaHTTPSimple(ls, "http.delete", http.MethodDelete, false)
+}
+
+// luaHTTPSimple implements the convenience-method shape:
+// - position 1: URL string
+// - position 2 (when withBody): body string
+// - last position: optional opts table {headers, timeout}
+//
+// fnName ("http.get", etc.) is used as the prefix on raised errors so
+// scripts see the entry-point name in error messages, not "http.request".
+func (r *Runtime) luaHTTPSimple(ls *lua.LState, fnName, method string, withBody bool) int {
 	rawURL := ls.CheckString(1)
-	headers, timeout := parseConvenienceOpts(ls, 2)
-	reqURL, err := validateURL(rawURL)
+	body := ""
+	optsPos := 2
+	if withBody {
+		body = ls.OptString(2, "")
+		optsPos = 3
+	}
+	headers, timeout, err := parseConvenienceOpts(ls, optsPos)
 	if err != nil {
-		ls.RaiseError("http.delete: %s", err.Error())
+		ls.RaiseError("%s: %s", fnName, err.Error())
 		return 0
 	}
-	return r.doHTTPRequest(ls, http.MethodDelete, reqURL, headers, "", timeout)
+	reqURL, err := validateURL(rawURL)
+	if err != nil {
+		ls.RaiseError("%s: %s", fnName, err.Error())
+		return 0
+	}
+	return r.doHTTPRequest(ls, fnName, method, reqURL, headers, body, timeout)
 }
 
 // doHTTPRequest performs the actual HTTP request and pushes the result
 // onto the Lua stack. Returns the number of values pushed (always 2).
+// fnName is used as the prefix on raised errors so scripts see the
+// entry-point name (e.g. "http.get") rather than always "http.request".
 func (r *Runtime) doHTTPRequest(
 	ls *lua.LState,
-	method string,
+	fnName, method string,
 	reqURL *url.URL,
 	headers map[string]string,
 	body string,
@@ -196,7 +191,7 @@ func (r *Runtime) doHTTPRequest(
 
 	httpReq, err := http.NewRequestWithContext(ctx, method, reqURL.String(), bodyReader)
 	if err != nil {
-		ls.RaiseError("http.request: %s", err.Error())
+		ls.RaiseError("%s: %s", fnName, err.Error())
 		return 0
 	}
 
@@ -320,52 +315,57 @@ func parseHTTPRequestOpts(opts *lua.LTable) (httpRequestOpts, error) {
 }
 
 // parseConvenienceOpts extracts headers and timeout from the optional
-// opts table used by convenience methods (get, post, etc.).
-// Raises on type mismatches (consistent with parseHTTPRequestOpts).
-func parseConvenienceOpts(ls *lua.LState, pos int) (map[string]string, time.Duration) {
+// opts table used by convenience methods (get, post, etc.). Returns an
+// error rather than raising so the caller can prefix the function name
+// (http.get / http.post / ...) — matches parseHTTPRequestOpts.
+func parseConvenienceOpts(ls *lua.LState, pos int) (map[string]string, time.Duration, error) {
 	headers := make(map[string]string)
 	var timeout time.Duration
 
 	optsTbl := ls.OptTable(pos, nil)
 	if optsTbl == nil {
-		return headers, timeout
+		return headers, timeout, nil
 	}
 
 	if v := optsTbl.RawGetString("headers"); v != lua.LNil {
 		tbl, ok := v.(*lua.LTable)
 		if !ok {
-			ls.RaiseError("headers must be a table, got %s", v.Type().String())
-			return headers, timeout
+			return nil, 0, fmt.Errorf("headers must be a table, got %s", v.Type().String())
 		}
+		var headerErr error
 		tbl.ForEach(func(k, v lua.LValue) {
+			if headerErr != nil {
+				return
+			}
 			ks, kok := k.(lua.LString)
 			if !kok {
-				ls.RaiseError("header key must be a string, got %s", k.Type().String())
+				headerErr = fmt.Errorf("header key must be a string, got %s", k.Type().String())
 				return
 			}
 			vs, vok := v.(lua.LString)
 			if !vok {
-				ls.RaiseError("header value for %q must be a string, got %s", string(ks), v.Type().String())
+				headerErr = fmt.Errorf("header value for %q must be a string, got %s", string(ks), v.Type().String())
 				return
 			}
 			headers[string(ks)] = string(vs)
 		})
+		if headerErr != nil {
+			return nil, 0, headerErr
+		}
 	}
 
 	if v := optsTbl.RawGetString("timeout"); v != lua.LNil {
 		n, ok := v.(lua.LNumber)
 		if !ok {
-			ls.RaiseError("timeout must be a number, got %s", v.Type().String())
-			return headers, timeout
+			return nil, 0, fmt.Errorf("timeout must be a number, got %s", v.Type().String())
 		}
 		if n <= 0 {
-			ls.RaiseError("timeout must be positive")
-			return headers, timeout
+			return nil, 0, errors.New("timeout must be positive")
 		}
 		timeout = time.Duration(float64(n) * float64(time.Second))
 	}
 
-	return headers, timeout
+	return headers, timeout, nil
 }
 
 // validateURL parses and validates a URL for HTTP requests.
@@ -384,6 +384,13 @@ func validateURL(raw string) (*url.URL, error) {
 	}
 	if u.Host == "" {
 		return nil, errors.New("URL must have a host")
+	}
+	// Reject userinfo (http://user:pass@host/...) — accepting it would
+	// silently send Basic Auth and any logging of the URL would leak the
+	// credentials. Scripts that need Basic Auth should set the
+	// Authorization header explicitly.
+	if u.User != nil {
+		return nil, errors.New("URL must not contain userinfo; set the Authorization header instead")
 	}
 	return u, nil
 }
@@ -415,9 +422,12 @@ func validateHTTPMethod(m string) error {
 // httpError represents an HTTP-level error surfaced to Lua scripts.
 // The Cause field is surfaced to scripts as err.details (matching the ai
 // module's shape), letting scripts inspect low-level transport errors.
+//
+// There is no Status field: HTTP-level errors arise from the transport
+// (no response received) or the body (capped). A non-2xx response is not
+// an error — it returns a normal response with status_code populated.
 type httpError struct {
 	Kind    string
-	Status  int
 	Message string
 	Cause   error
 }
@@ -451,15 +461,18 @@ func classifyHTTPError(err error) *httpError {
 var errHTTPBodyTooLarge = errors.New("response body exceeded 10 MiB limit")
 
 // readHTTPBody reads up to httpMaxResponseBytes from the response body.
+// Read errors are routed through classifyHTTPError so a mid-stream
+// context.DeadlineExceeded surfaces as kind="timeout" rather than
+// silently bucketing all read failures as "network".
 func readHTTPBody(r io.Reader) ([]byte, *httpError) {
 	limited := io.LimitReader(r, httpMaxResponseBytes+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, &httpError{
-			Kind:    "network",
-			Message: "reading response body: " + err.Error(),
-			Cause:   err,
-		}
+		classified := classifyHTTPError(err)
+		// Prefix message so the operator can tell the failure happened
+		// during body read rather than connect/handshake.
+		classified.Message = "reading response body: " + classified.Message
+		return nil, classified
 	}
 	if int64(len(body)) > httpMaxResponseBytes {
 		return nil, &httpError{
@@ -471,17 +484,17 @@ func readHTTPBody(r io.Reader) ([]byte, *httpError) {
 	return body, nil
 }
 
-// pushHTTPError pushes (nil, err_table) onto the Lua stack. The table has
-// the same fields as ai.Error surfaces: kind, status, message, retry_after,
-// details. `retry_after` is always 0 for HTTP errors (no HTTP path currently
-// populates a Retry-After). `details` exposes the wrapped underlying error
-// (if any) so scripts can inspect low-level transport errors (TLS cert,
-// DNS record, etc.) without parsing the top-level Message.
+// pushHTTPError pushes (nil, err_table) onto the Lua stack. Fields:
+// kind (string), message (string), retry_after (number, always 0 for
+// http — present for ai-shape parity), details (string, unwrapped cause
+// when present). status is intentionally absent: HTTP-level errors carry
+// no status code (transport failed before a response, or the body was
+// over the cap). A non-2xx response is returned as a normal response
+// table with status_code populated, not as an error.
 func pushHTTPError(ls *lua.LState, e *httpError) int {
 	ls.Push(lua.LNil)
 	tbl := ls.NewTable()
 	tbl.RawSetString("kind", lua.LString(e.Kind))
-	tbl.RawSetString("status", lua.LNumber(e.Status))
 	tbl.RawSetString("message", lua.LString(e.Message))
 	tbl.RawSetString("retry_after", lua.LNumber(0))
 	if e.Cause != nil {
@@ -513,74 +526,4 @@ func pushHTTPResponse(ls *lua.LState, resp *http.Response, body []byte) int {
 	ls.Push(tbl)
 	ls.Push(lua.LNil)
 	return 2
-}
-
-// luaJSONEncode implements http.json_encode(value) -> string.
-// Raises on wrong arg type or encoding failure. Self-referential tables
-// are handled by luaValueToGo's existing cycle detection — the offending
-// branch encodes as the string "<cyclic reference>" rather than crashing.
-func luaJSONEncode(ls *lua.LState) int {
-	val := ls.CheckAny(1)
-	goVal := luaValueToGo(val)
-	data, err := json.Marshal(goVal)
-	if err != nil {
-		ls.RaiseError("http.json_encode: %s", err.Error())
-		return 0
-	}
-	ls.Push(lua.LString(string(data)))
-	return 1
-}
-
-// luaJSONDecode implements http.json_decode(string) -> (value, nil) | (nil, err_table).
-// Wrong arg type raises; invalid JSON returns (nil, err_table).
-func luaJSONDecode(ls *lua.LState) int {
-	str := ls.CheckString(1)
-	var goVal interface{}
-	if err := json.Unmarshal([]byte(str), &goVal); err != nil {
-		return pushHTTPError(ls, &httpError{
-			Kind:    "bad_response",
-			Message: "json_decode: " + err.Error(),
-			Cause:   err,
-		})
-	}
-	ls.Push(goValueToLua(ls, goVal))
-	ls.Push(lua.LNil)
-	return 2
-}
-
-// goValueToLua converts a Go value (from json.Unmarshal) to a Lua value.
-// Recursion is capped at jsonMaxDecodeDepth to prevent stack-overflow DoS
-// from a server returning deeply nested JSON.
-func goValueToLua(ls *lua.LState, val interface{}) lua.LValue {
-	return goValueToLuaSafe(ls, val, 0)
-}
-
-func goValueToLuaSafe(ls *lua.LState, val interface{}, depth int) lua.LValue {
-	if depth >= jsonMaxDecodeDepth {
-		return lua.LString(jsonMaxDepthSentinel)
-	}
-	switch v := val.(type) {
-	case nil:
-		return lua.LNil
-	case bool:
-		return lua.LBool(v)
-	case float64:
-		return lua.LNumber(v)
-	case string:
-		return lua.LString(v)
-	case []interface{}:
-		tbl := ls.NewTable()
-		for i, item := range v {
-			tbl.RawSetInt(i+1, goValueToLuaSafe(ls, item, depth+1))
-		}
-		return tbl
-	case map[string]interface{}:
-		tbl := ls.NewTable()
-		for key, item := range v {
-			tbl.RawSetString(key, goValueToLuaSafe(ls, item, depth+1))
-		}
-		return tbl
-	default:
-		return lua.LString(fmt.Sprintf("%v", v))
-	}
 }

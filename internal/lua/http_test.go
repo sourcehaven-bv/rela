@@ -32,8 +32,8 @@ func TestLuaHTTP_GlobalRegistered(t *testing.T) {
 		assert(type(http.put) == "function", "http.put must be a function")
 		assert(type(http.patch) == "function", "http.patch must be a function")
 		assert(type(http.delete) == "function", "http.delete must be a function")
-		assert(type(http.json_encode) == "function", "http.json_encode must be a function")
-		assert(type(http.json_decode) == "function", "http.json_decode must be a function")
+		assert(type(rela.json.encode) == "function", "rela.json.encode must be a function")
+		assert(type(rela.json.decode) == "function", "rela.json.decode must be a function")
 	`); err != nil {
 		t.Fatalf("RunString: %v", err)
 	}
@@ -432,10 +432,10 @@ func TestLuaHTTP_GetNoArgs(t *testing.T) {
 func TestLuaHTTP_JSONEncodeTable(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
-		local s = http.json_encode({name = "test", value = 42})
+		local s = rela.json.encode({name = "test", value = 42})
 		assert(type(s) == "string", "should return string")
 		-- Decode to verify (round-trip)
-		local t, err = http.json_decode(s)
+		local t, err = rela.json.decode(s)
 		assert(err == nil)
 		assert(t.name == "test")
 		assert(t.value == 42)
@@ -447,7 +447,7 @@ func TestLuaHTTP_JSONEncodeTable(t *testing.T) {
 func TestLuaHTTP_JSONEncodeArray(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
-		local s = http.json_encode({"a", "b", "c"})
+		local s = rela.json.encode({"a", "b", "c"})
 		assert(s == '["a","b","c"]', "got: " .. s)
 	`); err != nil {
 		t.Fatalf("RunString: %v", err)
@@ -457,8 +457,8 @@ func TestLuaHTTP_JSONEncodeArray(t *testing.T) {
 func TestLuaHTTP_JSONEncodeNested(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
-		local s = http.json_encode({items = {"x", "y"}, count = 2})
-		local t, err = http.json_decode(s)
+		local s = rela.json.encode({items = {"x", "y"}, count = 2})
+		local t, err = rela.json.decode(s)
 		assert(err == nil)
 		assert(t.count == 2)
 		assert(t.items[1] == "x")
@@ -471,10 +471,10 @@ func TestLuaHTTP_JSONEncodeNested(t *testing.T) {
 func TestLuaHTTP_JSONEncodePrimitives(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
-		assert(http.json_encode("hello") == '"hello"')
-		assert(http.json_encode(42) == '42')
-		assert(http.json_encode(true) == 'true')
-		assert(http.json_encode(false) == 'false')
+		assert(rela.json.encode("hello") == '"hello"')
+		assert(rela.json.encode(42) == '42')
+		assert(rela.json.encode(true) == 'true')
+		assert(rela.json.encode(false) == 'false')
 	`); err != nil {
 		t.Fatalf("RunString: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestLuaHTTP_JSONEncodePrimitives(t *testing.T) {
 func TestLuaHTTP_JSONDecodeObject(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
-		local t, err = http.json_decode('{"name":"test","value":42,"active":true}')
+		local t, err = rela.json.decode('{"name":"test","value":42,"active":true}')
 		assert(err == nil)
 		assert(t.name == "test")
 		assert(t.value == 42)
@@ -496,7 +496,7 @@ func TestLuaHTTP_JSONDecodeObject(t *testing.T) {
 func TestLuaHTTP_JSONDecodeArray(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
-		local t, err = http.json_decode('[1, 2, 3]')
+		local t, err = rela.json.decode('[1, 2, 3]')
 		assert(err == nil)
 		assert(t[1] == 1)
 		assert(t[2] == 2)
@@ -509,7 +509,7 @@ func TestLuaHTTP_JSONDecodeArray(t *testing.T) {
 func TestLuaHTTP_JSONDecodeNested(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
-		local t, err = http.json_decode('{"items":[{"id":1},{"id":2}]}')
+		local t, err = rela.json.decode('{"items":[{"id":1},{"id":2}]}')
 		assert(err == nil)
 		assert(t.items[1].id == 1)
 		assert(t.items[2].id == 2)
@@ -521,7 +521,7 @@ func TestLuaHTTP_JSONDecodeNested(t *testing.T) {
 func TestLuaHTTP_JSONDecodeNull(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
-		local t, err = http.json_decode('{"key":null}')
+		local t, err = rela.json.decode('{"key":null}')
 		assert(err == nil)
 		assert(t.key == nil)
 	`); err != nil {
@@ -532,11 +532,11 @@ func TestLuaHTTP_JSONDecodeNull(t *testing.T) {
 func TestLuaHTTP_JSONDecodeInvalidReturnsError(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
-		local result, err = http.json_decode("not valid json")
+		local result, err = rela.json.decode("not valid json")
 		assert(result == nil, "result should be nil for invalid JSON")
 		assert(type(err) == "table", "err should be a table")
 		assert(err.kind == "bad_response", "kind = " .. tostring(err.kind))
-		assert(string.find(err.message, "json_decode"), "message should mention json_decode")
+		assert(string.find(err.message, "json.decode", 1, true), "message should mention json.decode")
 	`); err != nil {
 		t.Fatalf("RunString: %v", err)
 	}
@@ -549,7 +549,7 @@ func TestLuaHTTP_JSONDecodeInvalidReturnsError(t *testing.T) {
 func TestLuaHTTP_JSONEncodeEmptyTableIsObject(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
-		local s, err = http.json_encode({})
+		local s, err = rela.json.encode({})
 		assert(err == nil, "err = " .. tostring(err))
 		assert(s == "{}", "expected empty object, got " .. tostring(s))
 	`); err != nil {
@@ -562,7 +562,7 @@ func TestLuaHTTP_JSONEncodeCycleSubstitutesSentinel(t *testing.T) {
 	if err := rt.RunString(`
 		local t = {}
 		t.self = t
-		local s, err = http.json_encode(t)
+		local s, err = rela.json.encode(t)
 		assert(err == nil, "err should be nil, got " .. tostring(err))
 		-- luaValueToGo's cycle marker is "<cyclic reference>". json.Marshal
 		-- HTML-escapes < and >, so check for the un-escaped substring.
@@ -573,7 +573,7 @@ func TestLuaHTTP_JSONEncodeCycleSubstitutesSentinel(t *testing.T) {
 }
 
 // TestLuaHTTP_JSONEncodeDeepTableDoesNotCrash exercises a moderately deep
-// (200 levels) acyclic table to confirm http.json_encode handles it without
+// (200 levels) acyclic table to confirm rela.json.encode handles it without
 // stack overflow. luaValueToGo on this branch has cycle detection but no
 // depth cap, so very deep trees encode in full — what matters here is that
 // we don't crash. (The decode side, where input comes from the network and
@@ -587,7 +587,7 @@ func TestLuaHTTP_JSONEncodeDeepTableDoesNotCrash(t *testing.T) {
 			cur.next = {}
 			cur = cur.next
 		end
-		local s, err = http.json_encode(t)
+		local s, err = rela.json.encode(t)
 		assert(err == nil, "err should be nil, got " .. tostring(err))
 		assert(type(s) == "string", "encoded result should be a string")
 		assert(#s > 0, "encoded result should be non-empty")
@@ -601,7 +601,7 @@ func TestLuaHTTP_JSONDecodeDeepResponseSubstitutesSentinel(t *testing.T) {
 	// Build a deeply-nested JSON string: {"n":{"n":{"n":...}}} 100 levels deep.
 	deep := strings.Repeat(`{"n":`, 100) + `null` + strings.Repeat(`}`, 100)
 	if err := rt.RunString(`
-		local t, err = http.json_decode([[` + deep + `]])
+		local t, err = rela.json.decode([[` + deep + `]])
 		assert(err == nil, "err should be nil, got " .. tostring(err))
 		-- Walk down until we hit the sentinel string instead of a table.
 		local cur = t
@@ -619,7 +619,7 @@ func TestLuaHTTP_JSONDecodeDeepResponseSubstitutesSentinel(t *testing.T) {
 
 func TestLuaHTTP_JSONEncodeNoArgs(t *testing.T) {
 	rt := newHTTPRuntime(t)
-	err := rt.RunString(`http.json_encode()`)
+	err := rt.RunString(`rela.json.encode()`)
 	if err == nil {
 		t.Fatal("expected Lua error for missing argument")
 	}
@@ -627,7 +627,7 @@ func TestLuaHTTP_JSONEncodeNoArgs(t *testing.T) {
 
 func TestLuaHTTP_JSONDecodeWrongType(t *testing.T) {
 	rt := newHTTPRuntime(t)
-	err := rt.RunString(`http.json_decode({})`)
+	err := rt.RunString(`rela.json.decode({})`)
 	if err == nil {
 		t.Fatal("expected Lua error for wrong type")
 	}
@@ -700,10 +700,13 @@ func TestLuaHTTP_ErrorTableShape(t *testing.T) {
 		assert(resp == nil)
 		assert(type(err) == "table")
 		assert(type(err.kind) == "string", "kind should be string")
-		assert(type(err.status) == "number", "status should be number")
 		assert(type(err.message) == "string", "message should be string")
 		assert(type(err.retry_after) == "number", "retry_after should be number")
 		assert(type(err.details) == "string", "details should be string")
+		-- status is intentionally absent on http errors (transport-level
+		-- failures carry no HTTP status code; non-2xx responses come back
+		-- as a normal response table with status_code populated).
+		assert(err.status == nil, "status should be absent on http errors")
 		-- details exposes the unwrapped cause, so it should be non-empty for
 		-- network errors (where an underlying net.Error is wrapped).
 		assert(#err.details > 0, "details should be non-empty for network error")
@@ -725,6 +728,34 @@ func TestLuaHTTP_ConvenienceTimeoutZeroRaises(t *testing.T) {
 	err := rt.RunString(`http.get("http://127.0.0.1:1", {timeout = 0})`)
 	if err == nil {
 		t.Fatal("expected Lua error for timeout=0 on convenience method")
+	}
+}
+
+// TestLuaHTTP_UserinfoInURLRejected guards against silently sending Basic
+// Auth credentials embedded in the URL. Scripts that need Basic Auth
+// should set the Authorization header explicitly.
+func TestLuaHTTP_UserinfoInURLRejected(t *testing.T) {
+	rt := newHTTPRuntime(t)
+	err := rt.RunString(`http.get("http://user:pass@example.com/")`)
+	if err == nil {
+		t.Fatal("expected Lua error for URL with userinfo")
+	}
+	if !strings.Contains(err.Error(), "userinfo") {
+		t.Errorf("error should mention userinfo, got: %v", err)
+	}
+}
+
+// TestLuaHTTP_ConvenienceErrorPrefix asserts that errors raised from the
+// convenience methods carry the entry-point name (http.get / http.post /
+// etc.) rather than always "http.request:".
+func TestLuaHTTP_ConvenienceErrorPrefix(t *testing.T) {
+	rt := newHTTPRuntime(t)
+	err := rt.RunString(`http.delete("not a url")`)
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+	if !strings.Contains(err.Error(), "http.delete") {
+		t.Errorf("error should be prefixed with http.delete, got: %v", err)
 	}
 }
 
@@ -750,7 +781,7 @@ func TestLuaHTTP_FullAPIFlow(t *testing.T) {
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		-- Build request
-		local payload = http.json_encode({query = "SELECT * FROM items"})
+		local payload = rela.json.encode({query = "SELECT * FROM items"})
 
 		-- Make request
 		local resp, err = http.post("` + server.URL + `/api", payload, {
@@ -760,7 +791,7 @@ func TestLuaHTTP_FullAPIFlow(t *testing.T) {
 		assert(resp.status_code == 200)
 
 		-- Parse response
-		local data, jerr = http.json_decode(resp.body)
+		local data, jerr = rela.json.decode(resp.body)
 		assert(jerr == nil, "decode failed")
 		assert(data.data.items[1].id == 1)
 		assert(data.data.items[1].name == "first")

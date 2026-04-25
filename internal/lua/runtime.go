@@ -540,6 +540,9 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 
 	// Markdown AST and generation helpers module (rela.md.*)
 	r.registerMarkdownModule(rela)
+
+	// JSON encode/decode helpers module (rela.json.*)
+	r.registerJSONModule(rela)
 }
 
 // registerWriteBindings installs mutation bindings on the rela table.
