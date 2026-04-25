@@ -532,8 +532,8 @@ configuration is needed — unlike `ai.*`, the module works out of the box.
 | `http.patch(url, body, opts?)` | PATCH convenience | (response, nil) or (nil, err_table) |
 | `http.delete(url, opts?)` | DELETE convenience | (response, nil) or (nil, err_table) |
 
-JSON encode/decode helpers are exposed as `rela.json.*` (see [JSON Functions](#json-functions))
-because they are useful outside HTTP too.
+For request/response bodies, use `rela.json.encode` / `rela.json.decode` —
+see [JSON Functions](#json-functions).
 
 #### http.request
 
@@ -609,9 +609,9 @@ embedded credentials (`http://user:pass@host/`) are rejected — set the
 
 ### JSON Functions
 
-The `rela.json` module provides JSON encode/decode helpers. They live
-under `rela` rather than `http` because JSON is useful in flow scripts,
-document renderers, and ad-hoc transformations as often as in API calls.
+The `rela.json` module provides JSON encode/decode helpers, usable in any
+script (HTTP request bodies, flow scripts, document renderers, ad-hoc
+transforms).
 
 | Function | Description | Returns |
 |----------|-------------|---------|
