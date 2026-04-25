@@ -16,6 +16,29 @@
   `store.Store`, `tracer.Tracer`, `search.Searcher`,
   `entitymanager.EntityManager`. The old `repo` and `tx` layers are gone
   — do not reintroduce equivalents.
+- **Capture state once per operation.** Call `ws.Snapshot()` (or the
+  equivalent `appState.Load()`) at the top of every handler, command, MCP
+  tool, or observer; reuse the returned value for every read in that
+  operation. Do not call `ws.Graph()` / `ws.Meta()` repeatedly — multiple
+  loads against the underlying `atomic.Pointer` can observe different
+  snapshots if a reload lands between them.
+- **Don't leak storage or parsing types via return values.** A function
+  that returns `*markdown.Document`, `*graph.Graph`, `interface{}`, or any
+  type whose package the caller wouldn't otherwise need pulls the
+  implementation into every consumer. Return value types or
+  domain-package DTOs (`entity.Entity`, `entity.Relation`, `tracer.Result`).
+  If you reach for `interface{}` plus a type assertion as a back-channel,
+  define a typed dependency instead.
+- **Split state-publish from write-serialize.** Use `atomic.Pointer[State]`
+  for publishing a new state snapshot (no reader lock, no torn reads) and
+  a separate `sync.Mutex` for serializing writers. Do not combine both
+  responsibilities into a single `sync.RWMutex` — the lock-upgrade dance
+  (`RUnlock → Lock → defer(Unlock → RLock)`) is the symptom, not the fix.
+- **Constructors reject nil required fields.** A `New*` function with
+  required collaborators returns `error` and validates them up front.
+  Never substitute a no-op or sentinel implementation silently — that
+  defers the failure to a downstream symptom that is much harder to
+  diagnose.
 - **Boundaries are enforced.** `just arch-lint` checks package import
   rules; run it before PR.
 
