@@ -97,8 +97,10 @@ function removeEntity(entityId: string) {
   emit('update', props.value.filter((id) => id !== entityId))
 }
 
-function getEntityLabel(entity: Entity): string {
-  return String(entity.properties.title || entity.id)
+function formatEntityLabel(entity: Entity): string {
+  const raw = entity.properties.title
+  const title = typeof raw === 'string' ? raw.trim() : ''
+  return title ? `${title} (${entity.id})` : entity.id
 }
 
 function openCreateModal(targetType: string) {
@@ -158,7 +160,7 @@ onBeforeUnmount(() => {
         class="selected-entity"
       >
         <span class="entity-type">{{ entity.type }}</span>
-        <span class="entity-label">{{ getEntityLabel(entity) }}</span>
+        <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
         <button type="button" class="remove-btn" @click="removeEntity(entity.id)">
           &times;
         </button>
@@ -193,8 +195,7 @@ onBeforeUnmount(() => {
           @click="selectEntity(entity)"
         >
           <span class="entity-type">{{ entity.type }}</span>
-          <span class="entity-id">{{ entity.id }}</span>
-          <span class="entity-label">{{ getEntityLabel(entity) }}</span>
+          <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
         </div>
         <div v-if="filteredCandidates.length > 10" class="dropdown-more">
           +{{ filteredCandidates.length - 10 }} more...
@@ -342,12 +343,6 @@ onBeforeUnmount(() => {
   background: var(--border-color);
   padding: 2px 4px;
   border-radius: 2px;
-}
-
-.dropdown-item .entity-id {
-  font-family: monospace;
-  font-size: 12px;
-  color: var(--muted-text);
 }
 
 .dropdown-item .entity-label {
