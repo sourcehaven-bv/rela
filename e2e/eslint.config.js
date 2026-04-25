@@ -57,6 +57,30 @@ module.exports = tseslint.config(
             'Do not call request.fetch directly in specs — use the `api` fixture so the Origin header is set consistently. ' +
             'If you specifically want to test missing-Origin rejection, use a dedicated origin-security spec that bypasses `api`.',
         },
+        {
+          // Bans `api.rawRequest(...)` from spec files. The typed helpers
+          // (createEntity, getEntity, listRelations, updateEntity, …) cover
+          // legitimate seed and verification needs. rawRequest is the un-typed
+          // escape hatch — reaching for it in spec code means you're testing
+          // HTTP API shape, which belongs in a Go integration test under
+          // internal/dataentry/. Same scope as the `request.fetch` ban above:
+          // anywhere in a spec, not just inside `test(...)` bodies. The
+          // fixture itself is exempted via the `tests/fixtures.ts` relax block.
+          selector:
+            "CallExpression[callee.object.name='api'][callee.property.name='rawRequest']",
+          message:
+            'Do not call api.rawRequest in spec code — that is HTTP-shape testing, which belongs in a Go integration test under internal/dataentry/. ' +
+            'For UI tests use the typed api helpers (createEntity, getEntity, listRelations, updateEntity) for seed and verify.',
+        },
+        {
+          // Same ban for bracket-access — `api['rawRequest'](...)` — so the
+          // dotted form isn't trivially circumvented.
+          selector:
+            "CallExpression[callee.object.name='api'][callee.computed=true][callee.property.value='rawRequest']",
+          message:
+            "Do not call api['rawRequest'] in spec code — that is HTTP-shape testing, which belongs in a Go integration test under internal/dataentry/. " +
+            'For UI tests use the typed api helpers (createEntity, getEntity, listRelations, updateEntity) for seed and verify.',
+        },
       ],
     },
   },

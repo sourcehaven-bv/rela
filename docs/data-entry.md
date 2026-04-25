@@ -363,6 +363,41 @@ the UI uses `cards`. Otherwise, cardinality determines `select` vs `multi-select
 the relation picker. Clicking it opens a modal with the referenced form, and the newly created
 entity is automatically linked.
 
+### Reverse (incoming) Relations
+
+Relation types are directional in the metamodel: `implements` goes from `task` to `feature`.
+Often you want to show the *inbound* side on the opposite entity's form — on the feature form,
+"which tasks implement me?". Use `direction: incoming` to render a reverse widget:
+
+```yaml
+forms:
+  feature:
+    entity_type: feature
+    relations:
+      # Show tasks that implement this feature (incoming 'implements' edges).
+      - relation: implements
+        direction: incoming
+        label: "Implemented by"
+```
+
+When `direction: incoming` is set:
+
+- The widget reads edges via `GET /api/v1/{plural}/{id}/relations/{relType}?direction=incoming`.
+- The target-type list comes from the relation's `from:`, not `to:`.
+- Cardinality (single vs. multi) honors the relation's `max_incoming` instead of `max_outgoing`.
+- Saving a new link writes the edge as `(peer) → {relType} → (current entity)`; the backend
+  swaps from/to so the on-disk relation file stays canonical.
+- Grouped responses from `GET /api/v1/{plural}/{id}/relations` surface incoming edges under
+  the relation's `inverse:` name (see [metamodel.md](metamodel.md#inverse-relations)), e.g.
+  `blocks` → `blockedBy`.
+
+All form widgets (`select`, `multi-select`, `search`, `cards`) honor `direction: incoming`.
+
+**Label collision:** The widget's section heading defaults to `label || relation`. If you
+put two widgets with the same relation and no `label:` next to each other (one outgoing, one
+incoming), they'll both render as "blocks". Always set an explicit `label:` on reverse
+widgets — e.g. `"Blocked by"`.
+
 ### Relation Properties
 
 When a relation type has `properties` defined in the metamodel, the `cards` widget is automatically
@@ -487,12 +522,28 @@ lists:
 
 ### Column Options
 
-| Field      | Type   | Description                                    |
-| ---------- | ------ | ---------------------------------------------- |
-| `property` | string | Property name to display                       |
-| `label`    | string | Column header (defaults to property name)      |
-| `sortable` | bool   | Column can be sorted by clicking the header    |
-| `link`     | bool   | Cell value links to the entity's detail page   |
+A column shows either a property value or the comma-separated titles of an entity's related
+entities — set exactly one of `property` or `relation`.
+
+| Field       | Type   | Description                                                                 |
+| ----------- | ------ | --------------------------------------------------------------------------- |
+| `property`  | string | Property name to display                                                    |
+| `relation`  | string | Relation type whose targets are shown comma-separated                       |
+| `direction` | string | Relation columns only: `"outgoing"` (default) or `"incoming"` for reverse   |
+| `label`     | string | Column header (defaults to property / relation name)                        |
+| `sortable`  | bool   | Column can be sorted by clicking the header                                 |
+| `link`      | bool   | Cell value links to the entity's detail page                                |
+
+**Reverse relation column example** — on a feature list, show which tasks implement each row:
+
+```yaml
+columns:
+  - property: title
+    link: true
+  - relation: implements
+    direction: incoming
+    label: "Implemented by"
+```
 
 ### Static Filters
 

@@ -538,6 +538,11 @@ inverse:
   label: "is addressed by" # Custom label
 ```
 
+The inverse ID is also the key under which incoming edges are grouped in the data-entry
+API's `GET /api/v1/{plural}/{id}/relations` response, and it's what surfaces in the help
+modal's "Incoming relations" section. See [data-entry.md → Reverse Relations](data-entry.md#reverse-incoming-relations)
+for how form widgets and list columns opt into reverse direction with `direction: incoming`.
+
 ### Cardinality Constraints
 
 Use cardinality to enforce rules:

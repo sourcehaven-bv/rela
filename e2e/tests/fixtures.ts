@@ -597,6 +597,13 @@ forms:
             label: "Impact"
           - property: is_workaround_available
             label: "Workaround?"
+      # Non-cards reverse relation: 'implements' is task -> feature, so on
+      # the feature form it must be rendered incoming. Used by
+      # reverse-relations.spec.ts to exercise RelationPicker with
+      # direction: incoming.
+      - relation: implements
+        direction: incoming
+        label: "Implemented by"
 
   bug:
     entity_type: bug
@@ -850,6 +857,15 @@ relation: tagged
 to: FEAT-002
 added_by: e2e-seed
 added_date: "2026-01-15"
+---
+`,
+  // TASK-001 implements FEAT-001 — used by reverse-relations.spec.ts to
+  // verify that a non-cards relation widget with direction: incoming lists
+  // the linked task(s) on the feature form.
+  'relations/TASK-001--implements--FEAT-001.md': `---
+from: TASK-001
+relation: implements
+to: FEAT-001
 ---
 `,
 };
