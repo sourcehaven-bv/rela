@@ -991,6 +991,27 @@ func validateDocuments(cfg *Config) []string {
 			errs = append(errs, fmt.Sprintf(
 				"document %q: one of command or script must be set", docID))
 		}
+
+		if doc.Edit != nil {
+			if doc.Edit.Form == "" {
+				errs = append(errs, fmt.Sprintf(
+					"document %q: edit.form is required when edit is set", docID))
+			} else if _, ok := cfg.Forms[doc.Edit.Form]; !ok {
+				if suggestion := suggestForm(doc.Edit.Form, cfg); suggestion != "" {
+					errs = append(errs, fmt.Sprintf(
+						"document %q: edit.form references unknown form %q (did you mean %q?)",
+						docID, doc.Edit.Form, suggestion))
+				} else {
+					errs = append(errs, fmt.Sprintf(
+						"document %q: edit.form references unknown form %q",
+						docID, doc.Edit.Form))
+				}
+			}
+			if doc.Edit.Label == "" {
+				errs = append(errs, fmt.Sprintf(
+					"document %q: edit.label is required when edit is set", docID))
+			}
+		}
 	}
 
 	return errs

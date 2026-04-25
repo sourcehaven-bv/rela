@@ -717,6 +717,27 @@ documents:
     title: "Feature Overview"
     entity_type: feature
     script: docs/feature_overview.lua
+  # feature_summary and feature_readonly are wired in for the
+  # document-edit-button spec. feature_summary opts into the new edit:
+  # block; feature_readonly deliberately doesn't, so we can assert the
+  # button is gated on edit being present.
+  feature_summary:
+    title: "Feature Summary"
+    entity_type: feature
+    command: "printf '# Summary for %s\\n\\nDocument body.' {id}"
+    edit:
+      # Reusing the shared 'feature' form rather than adding a dedicated
+      # edit-mode form: adding feature_edit would shift the form count
+      # asserted in settings.spec.ts and the URL pattern asserted in
+      # entity-detail.spec.ts (which expects getEditFormId to return
+      # 'feature'). The shared form serves both create and edit because
+      # DynamicForm flips on entityId presence.
+      form: feature
+      label: "Edit feature"
+  feature_readonly:
+    title: "Feature Readonly"
+    entity_type: feature
+    command: "printf '# Read-only view of %s' {id}"
 
 navigation:
   - label: "Dashboard"

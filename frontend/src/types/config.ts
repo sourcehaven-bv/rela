@@ -276,6 +276,14 @@ export interface DocumentConfig {
   entity_type?: string // Entity type this document applies to (for frontend filtering)
   command: string
   timeout?: number
+  edit?: DocumentEdit
+}
+
+// DocumentEdit configures the Edit button on the standalone document view.
+// Both fields are required when the parent block is present (validated server-side).
+export interface DocumentEdit {
+  form: string
+  label: string
 }
 
 // Response from document render API

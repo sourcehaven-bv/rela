@@ -52,6 +52,21 @@ export class FormPage extends BasePage {
     await this.waitForSpinnerToDisappear();
   }
 
+  /** Wait for the URL to be the edit form for the given form/entity. Used
+   *  when navigation is triggered by another page (e.g. Edit button on the
+   *  document view). */
+  async expectAtFormUrl(formId: string, entityId: string) {
+    await this.page.waitForURL(new RegExp(`/form/${formId}/${entityId}`), { timeout: 10000 });
+    await this.waitForSpinnerToDisappear();
+  }
+
+  /** Decoded value of the `return_to` query param on the current URL, or
+   *  null if absent. Useful for asserting on the form's return target
+   *  without coupling to URL-encoding details (RR-BS0O4). */
+  readReturnTo(): string | null {
+    return new URL(this.page.url()).searchParams.get('return_to');
+  }
+
   async fillField(name: string, value: string) {
     const field = this.page.locator(`#field-${name}`);
     await field.fill(value);
