@@ -5,7 +5,7 @@ title: Pre-push hook runs arch-lint, build, lint locally
 kind: chore
 priority: medium
 effort: xs
-status: review
+status: done
 ---
 
 ## Problem
