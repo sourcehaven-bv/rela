@@ -85,7 +85,7 @@ const filteredCandidates = computed(() => {
     (c) =>
       !effectiveValue.value.includes(c.id) &&
       (c.id.toLowerCase().includes(query) ||
-        String(c.properties.title || '').toLowerCase().includes(query))
+        (c._title ?? '').toLowerCase().includes(query))
   )
 })
 
@@ -161,8 +161,13 @@ function removeEntity(entityId: string) {
   }
 }
 
-function getEntityLabel(entity: Entity): string {
-  return String(entity.properties.title || entity.id)
+function formatEntityLabel(entity: Entity): string {
+  // _title is the metamodel-aware display title from the API, falling back to id
+  // when the entity type has no display property set. Matches EntityDetail.vue.
+  if (entity._title && entity._title !== entity.id) {
+    return `${entity._title} (${entity.id})`
+  }
+  return entity.id
 }
 
 function openCreateModal(targetType: string) {
@@ -219,7 +224,7 @@ onBeforeUnmount(() => {
         class="selected-entity"
       >
         <span class="entity-type">{{ entity.type }}</span>
-        <span class="entity-label">{{ getEntityLabel(entity) }}</span>
+        <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
         <button type="button" class="remove-btn" @click="removeEntity(entity.id)">
           &times;
         </button>
@@ -254,8 +259,7 @@ onBeforeUnmount(() => {
           @click="selectEntity(entity)"
         >
           <span class="entity-type">{{ entity.type }}</span>
-          <span class="entity-id">{{ entity.id }}</span>
-          <span class="entity-label">{{ getEntityLabel(entity) }}</span>
+          <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
         </div>
         <div v-if="filteredCandidates.length > 10" class="dropdown-more">
           +{{ filteredCandidates.length - 10 }} more...
@@ -403,12 +407,6 @@ onBeforeUnmount(() => {
   background: var(--border-color);
   padding: 2px 4px;
   border-radius: 2px;
-}
-
-.dropdown-item .entity-id {
-  font-family: monospace;
-  font-size: 12px;
-  color: var(--muted-text);
 }
 
 .dropdown-item .entity-label {
