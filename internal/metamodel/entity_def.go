@@ -1,5 +1,7 @@
 package metamodel
 
+import "fmt"
+
 // GetPlural returns the plural label for an entity type
 func (e *EntityDef) GetPlural() string {
 	if e.LabelPlural != "" {
@@ -53,11 +55,25 @@ func (e *EntityDef) GetDefaultStatus(m *Metamodel) string {
 	return "draft"
 }
 
-// GetPrimaryProperty returns the name of the primary required string property.
-// This is typically "title" or "name" - the first required string property found.
-// Returns empty string if no suitable property exists.
+// GetPrimaryProperty returns the name of the primary property used as
+// the entity's display name.
+//
+// Resolution order:
+//
+//  1. Explicit `display_property` set on the entity definition. The
+//     name is returned verbatim — load-time validation already
+//     guaranteed it references a defined property.
+//  2. The first match in the priority list `title`/`name`/`label`,
+//     when defined as a required string.
+//  3. Any required string property (alphabetical for determinism).
+//  4. Empty string when no candidate exists.
 func (e *EntityDef) GetPrimaryProperty() string {
-	// Check common names first in priority order
+	// (1) Author-declared override wins.
+	if e.DisplayProperty != "" {
+		return e.DisplayProperty
+	}
+
+	// (2) Priority list of conventional names.
 	priorityNames := []string{"title", "name", "label"}
 	for _, name := range priorityNames {
 		if prop, ok := e.Properties[name]; ok {
@@ -67,7 +83,8 @@ func (e *EntityDef) GetPrimaryProperty() string {
 		}
 	}
 
-	// Fall back to finding any required string property (sorted for determinism)
+	// (3) Fall back to finding any required string property
+	// (sorted for determinism).
 	var candidates []string
 	for name, prop := range e.Properties {
 		if prop.Required && (prop.Type == PropertyTypeString || prop.Type == "") {
@@ -75,7 +92,6 @@ func (e *EntityDef) GetPrimaryProperty() string {
 		}
 	}
 	if len(candidates) > 0 {
-		// Sort for deterministic behavior
 		for i := 1; i < len(candidates); i++ {
 			for j := i; j > 0 && candidates[j] < candidates[j-1]; j-- {
 				candidates[j], candidates[j-1] = candidates[j-1], candidates[j]
@@ -87,15 +103,40 @@ func (e *EntityDef) GetPrimaryProperty() string {
 	return ""
 }
 
-// DisplayTitle returns the display title for an entity using this entity type's primary property.
-// Falls back to entity ID if no primary property value is set.
+// DisplayTitle returns the display title for an entity using its
+// type's primary property. Behavior:
+//
+//   - String value: returned verbatim (the common case).
+//   - Non-string value (number, boolean, enum stored as a typed value):
+//     stringified via fmt.Sprintf("%v", val) so an explicit
+//     display_property: status (an enum) shows the value and not the
+//     ID. nil values fall through to the ID — `%v` on nil yields
+//     "<nil>" which would be a worse display name than the ID.
+//   - Missing or empty-after-stringification: falls back to the ID.
+//
+// The non-string stringification is what makes the explicit
+// display_property override pay off for enum-typed fields. See
+// review-response RR-9CW5N.
 func (e *EntityDef) DisplayTitle(id string, properties map[string]interface{}) string {
-	if primary := e.GetPrimaryProperty(); primary != "" {
-		if val, ok := properties[primary]; ok {
-			if s, ok := val.(string); ok && s != "" {
-				return s
-			}
+	primary := e.GetPrimaryProperty()
+	if primary == "" {
+		return id
+	}
+	val, ok := properties[primary]
+	if !ok {
+		return id
+	}
+	if s, ok := val.(string); ok {
+		if s != "" {
+			return s
 		}
+		return id
+	}
+	if val == nil {
+		return id
+	}
+	if s := fmt.Sprintf("%v", val); s != "" {
+		return s
 	}
 	return id
 }

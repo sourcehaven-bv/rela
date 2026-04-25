@@ -1412,3 +1412,267 @@ entities:
 		}
 	}
 }
+
+// ----------------------------------------------------------------------
+// TKT-RT3Y3: display_property field on entity-type definitions.
+// ----------------------------------------------------------------------
+
+// TestParse_DisplayPropertySucceeds verifies a metamodel with an
+// explicit, well-formed display_property loads cleanly and the field
+// round-trips onto the parsed EntityDef.
+func TestParse_DisplayPropertySucceeds(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: titel
+    properties:
+      titel:
+        type: string
+        required: true
+      doctype:
+        type: string
+        required: true
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	assertEqual(t, m.Entities["document"].DisplayProperty, "titel")
+}
+
+// TestParse_DisplayPropertyMissing verifies the load-time existence
+// check (RR-9CW5N motivation): pointing at a property that isn't
+// declared on the entity must error with a diagnostic listing the
+// available properties.
+func TestParse_DisplayPropertyMissing(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: nonexistent
+    properties:
+      titel:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), `display_property "nonexistent"`) {
+		t.Errorf("error should name the offending property: %v", err)
+	}
+	if !strings.Contains(err.Error(), "titel") {
+		t.Errorf("error should list available properties (titel): %v", err)
+	}
+	if !strings.Contains(err.Error(), `entity "document"`) {
+		t.Errorf("error should name the entity: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyWhitespace verifies the explicit whitespace
+// check (RR-HDAX8): leading/trailing whitespace produces a dedicated
+// diagnostic distinct from the missing-property error, so authors get
+// a useful fix.
+func TestParse_DisplayPropertyWhitespace(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: " titel "
+    properties:
+      titel:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), "whitespace") {
+		t.Errorf("error should mention whitespace: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyYAMLNull verifies that an explicit YAML null
+// (display_property:) is treated as unset — no error, GetPrimaryProperty
+// falls through to the autoderivation. RR-HP5IE.
+func TestParse_DisplayPropertyYAMLNull(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property:
+    properties:
+      titel:
+        type: string
+        required: true
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	def := m.Entities["document"]
+	assertEqual(t, def.DisplayProperty, "")
+	// autoderivation: titel is the only required string property.
+	assertEqual(t, def.GetPrimaryProperty(), "titel")
+}
+
+// TestParse_DisplayPropertyCaseSensitive verifies that case-mismatched
+// references fail validation. The Go map lookup is case-sensitive; this
+// test pins the behavior so a future "helpful" fuzzy-match refactor
+// doesn't silently change semantics. RR-GO9T7.
+func TestParse_DisplayPropertyCaseSensitive(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    display_property: TITEL
+    properties:
+      titel:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), `"TITEL"`) {
+		t.Errorf("error should reflect the case-mismatched name: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyEnumOK verifies that pointing display_property
+// at a non-required, non-string property is accepted at load time —
+// the runtime stringifies the value via DisplayTitle. RR-9CW5N.
+func TestParse_DisplayPropertyEnumOK(t *testing.T) {
+	yaml := `version: "1.0"
+types:
+  ticket_status:
+    values: [open, closed]
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    display_property: status
+    properties:
+      titel:
+        type: string
+        required: true
+      status:
+        type: ticket_status
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	def := m.Entities["ticket"]
+	assertEqual(t, def.DisplayProperty, "status")
+	assertEqual(t, def.GetPrimaryProperty(), "status")
+}
+
+// TestParse_DisplayPropertyAcrossIncludes verifies that display_property
+// validation runs on the merged metamodel when an entity is defined in
+// an included file. RR-GO9T7.
+func TestParse_DisplayPropertyAcrossIncludes(t *testing.T) {
+	tmpDir := t.TempDir()
+	parentPath := filepath.Join(tmpDir, "metamodel.yaml")
+	childPath := filepath.Join(tmpDir, "child.yaml")
+
+	parentYAML := `version: "1.0"
+includes:
+  - child.yaml
+entities:
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    properties:
+      titel:
+        type: string
+        required: true
+`
+	childYAML := `entities:
+  applicatie:
+    label: Applicatie
+    id_prefix: "APP-"
+    display_property: naam
+    properties:
+      naam:
+        type: string
+        required: true
+`
+	createFile(t, parentPath, parentYAML)
+	createFile(t, childPath, childYAML)
+
+	m, _, err := Load(parentPath, testMetaFS)
+	assertNoError(t, err)
+	def := m.Entities["applicatie"]
+	assertEqual(t, def.DisplayProperty, "naam")
+	assertEqual(t, def.GetPrimaryProperty(), "naam")
+}
+
+// TestLoad_AllShippedMetamodels guards against typos in dogfood and
+// fixture metamodels once display_property gets adopted in any of them.
+// Globs every metamodel.yaml under the repo root and asserts each one
+// loads without error. RR-G175B.
+//
+// New metamodels get covered automatically the moment they land on
+// disk; nothing to keep in sync. Currently catches the dogfood
+// `tickets/metamodel.yaml`, the docs-project metamodel, and any
+// project under prototypes/ that ships a metamodel.
+func TestLoad_AllShippedMetamodels(t *testing.T) {
+	// repoRoot resolves up from this package's location at test time.
+	// internal/metamodel → repo root is "../..".
+	cwd, err := os.Getwd()
+	assertNoError(t, err)
+	repoRoot := filepath.Clean(filepath.Join(cwd, "..", ".."))
+
+	// Walk for metamodel.yaml under in-repo directories. Skip:
+	//   - .ignored/ (scratch space, intentionally not validated)
+	//   - any path containing "fixtures" or "/test/" (intentionally
+	//     malformed metamodels under metamodel/*_test.go fixtures
+	//     would also be picked up otherwise)
+	//   - node_modules and other vendor-y dirs
+	var paths []string
+	err = filepath.Walk(repoRoot, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			// Skip unreadable paths rather than abort the whole walk;
+			// surface so the test author can see something went wrong
+			// without failing on transient FS hiccups (e.g. a
+			// just-deleted entry).
+			t.Logf("walk: skipping %s: %v", path, walkErr)
+			return filepath.SkipDir
+		}
+		if info.IsDir() {
+			name := info.Name()
+			skipDirs := map[string]bool{
+				"node_modules":  true,
+				".git":          true,
+				".ignored":      true,
+				"test-fixtures": true,
+				"testdata":      true,
+			}
+			if skipDirs[name] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Name() != "metamodel.yaml" {
+			return nil
+		}
+		// Skip any test-fixture metamodels that exist for negative cases.
+		if strings.Contains(path, "/fixtures/") || strings.Contains(path, "/testdata/") {
+			return nil
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	assertNoError(t, err)
+
+	if len(paths) == 0 {
+		t.Skip("no metamodel.yaml files found under repo root")
+	}
+
+	for _, p := range paths {
+		t.Run(strings.TrimPrefix(p, repoRoot+"/"), func(t *testing.T) {
+			_, _, err := Load(p, testMetaFS)
+			if err != nil {
+				t.Errorf("Load(%s) failed: %v", p, err)
+			}
+		})
+	}
+}

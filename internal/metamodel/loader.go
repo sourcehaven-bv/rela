@@ -308,9 +308,38 @@ func validateEntitySemantics(m *Metamodel) []string {
 		errs = append(errs, validatePropertyDefs(fmt.Sprintf("entity %q", name), def.Properties, m, nil)...)
 
 		errs = append(errs, validateDefaultSort(name, def)...)
+
+		errs = append(errs, validateDisplayProperty(name, def)...)
 	}
 
 	return errs
+}
+
+// validateDisplayProperty enforces the contract on EntityDef.DisplayProperty:
+// when set, the value must reference a defined property and must not have
+// leading or trailing whitespace. Empty (omitted, null, or "") is allowed —
+// GetPrimaryProperty falls back to the autoderivation in that case.
+//
+// The whitespace check is explicit (rather than relying on the
+// validateEntityStructure key-trim invariant) so the diagnostic is honest:
+// "has whitespace" vs "is not a defined property" are different fixes for
+// the author. See review-response RR-HDAX8.
+func validateDisplayProperty(entityName string, def EntityDef) []string {
+	dp := def.DisplayProperty
+	if dp == "" {
+		return nil
+	}
+	if dp != strings.TrimSpace(dp) {
+		return []string{fmt.Sprintf(
+			"entity %q: display_property %q has leading or trailing whitespace",
+			entityName, dp)}
+	}
+	if _, ok := def.Properties[dp]; !ok {
+		return []string{fmt.Sprintf(
+			"entity %q: display_property %q is not a defined property (have: %s)",
+			entityName, dp, strings.Join(sortedKeys(def.Properties), ", "))}
+	}
+	return nil
 }
 
 // validateDefaultSort checks default_sort entries for an entity definition.

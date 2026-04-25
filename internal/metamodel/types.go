@@ -124,6 +124,13 @@ type EntityDef struct {
 	DefaultSort   []SortSpec             `yaml:"default_sort,omitempty"` // Default sort order for this entity type
 	Color         string                 `yaml:"color,omitempty"`
 	BorderColor   string                 `yaml:"border_color,omitempty"`
+	// DisplayProperty names the property whose value renders as the
+	// human-readable display name in lists, cards, link text, etc.
+	// When empty, GetPrimaryProperty() falls back to the autoderivation
+	// (priority list title/name/label, then alphabetical fallback).
+	// Validated at metamodel-load time: must reference a defined
+	// property and must not have leading/trailing whitespace.
+	DisplayProperty string `yaml:"display_property,omitempty"`
 }
 
 // PropertyDefs implements PropertySchema for EntityDef.
