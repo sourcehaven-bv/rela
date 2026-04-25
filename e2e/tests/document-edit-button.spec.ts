@@ -15,7 +15,7 @@ import { DocumentPage, FormPage } from '../pages';
 const DOC_WITH_EDIT = 'feature_summary';
 const DOC_NO_EDIT = 'feature_readonly';
 const FEATURE_ID = 'FEAT-001';
-const EDIT_FORM = 'feature_edit';
+const EDIT_FORM = 'feature';
 const EDIT_LABEL = 'Edit feature';
 
 test.describe('Document view: Edit button', () => {

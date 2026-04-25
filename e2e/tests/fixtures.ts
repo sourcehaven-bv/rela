@@ -605,21 +605,6 @@ forms:
         direction: incoming
         label: "Implemented by"
 
-  # feature_edit pins mode: edit explicitly so the document-edit-button spec's
-  # "save returns to doc" test isn't load-bearing on the shared feature form's
-  # mode-inference behaviour. Used only by documents.feature_summary.
-  feature_edit:
-    entity_type: feature
-    title: "Edit Feature"
-    mode: edit
-    body: true
-    fields:
-      - property: title
-      - property: status
-      - property: priority
-      - property: description
-        widget: textarea
-
   bug:
     entity_type: bug
     title: "Bug"
@@ -741,7 +726,13 @@ documents:
     entity_type: feature
     command: "printf '# Summary for %s\\n\\nDocument body.' {id}"
     edit:
-      form: feature_edit
+      # Reusing the shared 'feature' form rather than adding a dedicated
+      # edit-mode form: adding feature_edit would shift the form count
+      # asserted in settings.spec.ts and the URL pattern asserted in
+      # entity-detail.spec.ts (which expects getEditFormId to return
+      # 'feature'). The shared form serves both create and edit because
+      # DynamicForm flips on entityId presence.
+      form: feature
       label: "Edit feature"
   feature_readonly:
     title: "Feature Readonly"
