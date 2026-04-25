@@ -5,7 +5,7 @@ title: Add display_property to entity-type metamodel
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## Problem
