@@ -1,13 +1,20 @@
 #!/bin/bash
-# Pre-push hook: verify generated docs are up to date and rela tickets exist.
+# Pre-push hook: verify generated docs are up to date, rela tickets exist, and
+# Go-relevant changes pass arch-lint / build / lint locally.
 #
 # This runs:
 # 1. Docs check if doc sources changed
 # 2. Rela tickets check if code changed (requires bug/feature/ticket entity)
+# 3. Local Go checks (arch-lint, build, lint) if Go-relevant files changed
+#
+# The Go checks aggregate across all refs being pushed, so they run at most
+# once per push. Skipped entirely for pushes that touch only docs/tickets.
 
 set -e
 
-# Read push info from stdin (format: local_ref local_sha remote_ref remote_sha)
+ANY_GO_CHANGED=""
+ANY_DOCS_CHANGED=""
+
 while read -r local_ref local_sha remote_ref remote_sha; do
     # Skip branch deletions
     if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
@@ -25,8 +32,13 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     # Check if docs changed
     DOCS_CHANGED=$(git diff --name-only "$BASE_REF"..."$local_sha" 2>/dev/null | grep -E '^(docs-project/|docs/templates/)' || true)
     if [ -n "$DOCS_CHANGED" ]; then
-        echo "🔍 pre-push: doc sources changed, verifying generated output..."
-        just docs-check
+        ANY_DOCS_CHANGED=1
+    fi
+
+    # Check if Go-relevant files changed (used to gate the Go checks below)
+    GO_RELEVANT=$(git diff --name-only "$BASE_REF"..."$local_sha" 2>/dev/null | grep -E '\.go$|^go\.(mod|sum)$|^\.go-arch-lint\.yml$|^\.golangci\.yml$' || true)
+    if [ -n "$GO_RELEVANT" ]; then
+        ANY_GO_CHANGED=1
     fi
 
     # Check if code changed (excluding tickets directory)
@@ -56,5 +68,29 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         echo "✅ pre-push: Found ticket(s): $(echo "$ADDED_ENTITIES" | xargs basename -a | tr '\n' ' ')"
     fi
 done
+
+if [ -n "$ANY_DOCS_CHANGED" ]; then
+    echo "🔍 pre-push: doc sources changed, verifying generated output..."
+    just docs-check
+fi
+
+if [ -n "$ANY_GO_CHANGED" ]; then
+    echo "🔍 pre-push: Go-relevant files changed, running local checks..."
+    if ! just arch-lint; then
+        echo ""
+        echo "❌ pre-push: 'just arch-lint' failed. Fix architecture violations or rerun locally."
+        exit 1
+    fi
+    if ! just build; then
+        echo ""
+        echo "❌ pre-push: 'just build' failed. Fix compile errors before pushing."
+        exit 1
+    fi
+    if ! just lint; then
+        echo ""
+        echo "❌ pre-push: 'just lint' failed. Run 'just lint-fix' or fix manually."
+        exit 1
+    fi
+fi
 
 echo "✅ pre-push: All checks passed!"
