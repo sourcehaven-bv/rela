@@ -266,7 +266,7 @@ jobs:
 
   rela-tickets:
     name: Rela Tickets
-    if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'chore/')
+    if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'chore/') && !startsWith(github.head_ref, 'dependabot/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
