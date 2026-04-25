@@ -1,11 +1,11 @@
 import { test, expect } from './fixtures';
-import { DocumentPage } from '../pages';
+import { DocumentPage, FormPage } from '../pages';
 
 /**
  * E2E for the Edit button on the standalone document view (TKT-9QNHN).
  *
  * Two docs in the fixture:
- *   - feature_summary  -> has edit: { form: feature, label: "Edit feature" }
+ *   - feature_summary  -> has edit: { form: feature_edit, label: "Edit feature" }
  *   - feature_readonly -> no edit block (button must NOT render)
  */
 
@@ -32,14 +32,14 @@ test.describe('Document view: Edit button', () => {
     const doc = new DocumentPage(appPage);
     await doc.navigateToDocument(DOC_WITH_EDIT, FEATURE_ID);
 
+    const form = new FormPage(appPage);
     await doc.editButton(EDIT_LABEL).click();
-    await appPage.waitForURL(new RegExp(`/form/${EDIT_FORM}/${FEATURE_ID}`), { timeout: 10000 });
+    await form.expectAtFormUrl(EDIT_FORM, FEATURE_ID);
 
     // Parse return_to via URLSearchParams rather than asserting on the exact
     // percent-encoded form, so the test isn't coupled to encoding rules
     // (RR-BS0O4).
-    const formURL = new URL(appPage.url());
-    const returnTo = formURL.searchParams.get('return_to');
+    const returnTo = form.readReturnTo();
     expect(returnTo).toBe(`/document/${DOC_WITH_EDIT}/${FEATURE_ID}`);
   });
 
@@ -47,18 +47,14 @@ test.describe('Document view: Edit button', () => {
     const doc = new DocumentPage(appPage);
     await doc.navigateToDocument(DOC_WITH_EDIT, FEATURE_ID);
 
+    const form = new FormPage(appPage);
     await doc.editButton(EDIT_LABEL).click();
-    await appPage.waitForURL(new RegExp(`/form/${EDIT_FORM}/${FEATURE_ID}`), { timeout: 10000 });
+    await form.expectAtFormUrl(EDIT_FORM, FEATURE_ID);
 
     // Submit the form unchanged. Edit mode allows a no-op save.
-    const saveResponse = appPage.waitForResponse(
-      (r) => r.url().includes(`/api/v1/features/${FEATURE_ID}`) && r.request().method() === 'PATCH',
-    );
-    await appPage.locator('button[type="submit"]').first().click();
-    await saveResponse;
+    await form.saveAndWaitForPatch('features', FEATURE_ID);
 
-    await appPage.waitForURL(new RegExp(`/document/${DOC_WITH_EDIT}/${FEATURE_ID}`), { timeout: 10000 });
-    await expect(appPage.locator('.document-body')).toBeVisible({ timeout: 15000 });
+    await doc.expectAtDocumentUrl(DOC_WITH_EDIT, FEATURE_ID);
   });
 
   test('no Edit button when edit block is absent', async ({ appPage }) => {
@@ -71,7 +67,7 @@ test.describe('Document view: Edit button', () => {
     // Refresh remains. (Back is absent on a deep-linked load — TKT-JIEKC's
     // BackButton only renders when return_to/from is present; not what
     // we're testing here.)
-    await expect(appPage.getByRole('button', { name: 'Refresh' })).toBeVisible();
+    await expect(doc.refreshButton).toBeVisible();
   });
 
   test('mobile viewport: title stacks above the action row, edit + refresh visible', async ({ appPage }) => {
@@ -84,14 +80,11 @@ test.describe('Document view: Edit button', () => {
     const doc = new DocumentPage(appPage);
     await doc.navigateToDocument(DOC_WITH_EDIT, FEATURE_ID);
 
-    const h1 = appPage.locator('.page-header h1');
-    const headerRight = appPage.locator('.page-header .header-right');
+    await expect(doc.title).toBeVisible();
+    await expect(doc.headerRight).toBeVisible();
 
-    await expect(h1).toBeVisible();
-    await expect(headerRight).toBeVisible();
-
-    const titleBox = await h1.boundingBox();
-    const rightBox = await headerRight.boundingBox();
+    const titleBox = await doc.title.boundingBox();
+    const rightBox = await doc.headerRight.boundingBox();
     if (!titleBox || !rightBox) {
       throw new Error('header bounding boxes unavailable');
     }
@@ -102,6 +95,6 @@ test.describe('Document view: Edit button', () => {
 
     // Both action buttons remain tappable on the action row.
     await expect(doc.editButton(EDIT_LABEL)).toBeVisible();
-    await expect(headerRight.getByRole('button', { name: 'Refresh' })).toBeVisible();
+    await expect(doc.refreshButton).toBeVisible();
   });
 });
