@@ -383,42 +383,19 @@ func TestLuaValidation_ContractErrorReturnNumber(t *testing.T) {
 	}
 }
 
-// TestLuaValidation_ContractErrorMissingMessageField covers AC7
-// (case 2): a violation table lacking the `message` field surfaces
-// as a contract error.
-func TestLuaValidation_ContractErrorMissingMessageField(t *testing.T) {
+// TestLuaValidation_ContractErrorArrayElementMissingMessage covers
+// AC7 (case 2): a violation table whose array elements lack the
+// `message` field surfaces as a contract error. The non-array
+// "table with severity but no message" shape is intentionally
+// not tested here; that pre-existing gap is tracked separately
+// (PLAN-KAK2R, out of scope).
+func TestLuaValidation_ContractErrorArrayElementMissingMessage(t *testing.T) {
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
-		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "missing-message",
-				EntityType: "ticket",
-				// Has a key, so parseLuaReturnValue treats it as single
-				// violation, then notices the missing 'message' field.
-				Lua: `return { severity = "error" }`,
-			},
-		},
-	}
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
 	}
-	svc := New(meta, ws.services(t.TempDir()))
-	result := svc.Check(context.Background(), entities, nil)
 
-	// A table with non-numeric keys but no "message" field is parsed
-	// as an empty array, producing zero violations and no error —
-	// the contract-error path covers the "message field is the only
-	// hint and it's empty/missing" case. Force that case via a
-	// numeric-key table whose item lacks 'message'.
-	if len(result.ScriptErrors) != 0 {
-		t.Logf("non-message table treated as empty array (no ScriptError): %v", result.ScriptErrors)
-	}
-
-	// Now exercise the array-element missing-message path.
-	meta2 := &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
 		},
@@ -430,14 +407,14 @@ func TestLuaValidation_ContractErrorMissingMessageField(t *testing.T) {
 			},
 		},
 	}
-	svc2 := New(meta2, ws.services(t.TempDir()))
-	result2 := svc2.Check(context.Background(), entities, nil)
+	svc := New(meta, ws.services(t.TempDir()))
+	result := svc.Check(context.Background(), entities, nil)
 
-	if len(result2.ScriptErrors) != 1 {
-		t.Fatalf("got %d ScriptErrors, want 1", len(result2.ScriptErrors))
+	if len(result.ScriptErrors) != 1 {
+		t.Fatalf("got %d ScriptErrors, want 1", len(result.ScriptErrors))
 	}
-	if !strings.Contains(result2.ScriptErrors[0].LuaMessage, "missing 'message' field") {
+	if !strings.Contains(result.ScriptErrors[0].LuaMessage, "missing 'message' field") {
 		t.Errorf("LuaMessage = %q, want to mention 'missing 'message' field'",
-			result2.ScriptErrors[0].LuaMessage)
+			result.ScriptErrors[0].LuaMessage)
 	}
 }
