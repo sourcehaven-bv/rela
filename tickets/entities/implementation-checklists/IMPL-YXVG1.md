@@ -2,7 +2,7 @@
 id: IMPL-YXVG1
 type: implementation-checklist
 title: 'Implementation: Surface Lua errors from validation rules'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

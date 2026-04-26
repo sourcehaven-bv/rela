@@ -5,7 +5,7 @@ title: Surface Lua errors from validation rules
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 Validation rules in `internal/validation/lua.go` currently swallow Lua compile
