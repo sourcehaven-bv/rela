@@ -20,7 +20,7 @@ export interface ScriptError {
 }
 
 export interface ScriptIdentity {
-  surface: 'action' | 'document' | 'automation' | 'lua_run' | 'lua_eval'
+  surface: 'action' | 'document' | 'automation' | 'lua_run' | 'lua_eval' | 'validation'
   path: string
   entity_id?: string
   args?: Record<string, unknown>
