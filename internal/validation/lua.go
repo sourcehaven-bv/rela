@@ -73,17 +73,20 @@ func (s *Service) buildLuaRuleContext(
 	if code == "" {
 		return nil, nil
 	}
-	// ctx is the parent context threaded from the caller; it becomes
-	// the source of timeout/cancellation when wired through Runtime
-	// options in commit 5. For now we keep the historical
-	// context.WithTimeout block at the call site.
-	_ = ctx
-
 	// Reader runtime: read-only bindings; no mutation, no AI.
 	// AI is intentionally absent — an AI-powered rule would call out on
 	// every entity in every analyze run with no quota or kill switch
 	// (see PLAN-KAK2R Scope-out / TKT-LR5YC).
-	opts := []lua.Option{}
+	//
+	// Timeout and parent ctx are passed via runtime options so
+	// applyTimeout() (called inside RunValidationString before each
+	// Load) derives a 5s budget rooted at ctx; canceling ctx
+	// interrupts an in-flight rule and the timeout fires within ~5s
+	// for runaway scripts.
+	opts := []lua.Option{
+		lua.WithTimeout(validationTimeout),
+		lua.WithContext(ctx),
+	}
 	if s.cache != nil {
 		opts = append(opts, lua.WithCache(s.cache))
 	}
@@ -137,14 +140,9 @@ func (s *Service) validateLuaWithRuntime(
 	// doesn't expose the previous iteration's entity to this rule.
 	ls.SetGlobal("entity", lua.EntityToTable(ls, ent))
 
-	// Apply the existing per-call timeout. Commit 5 will replace this
-	// with WithTimeout/WithContext on the runtime so the parent ctx
-	// flows through.
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), validationTimeout)
-	defer cancel()
-	ls.SetContext(timeoutCtx)
-	defer ls.RemoveContext()
-
+	// Timeout + ctx are wired via WithTimeout/WithContext on the
+	// runtime; applyTimeout (inside RunValidationString) derives a
+	// fresh 5s budget per entity rooted at the parent ctx.
 	ret, err := luaCtx.runtime.RunValidationString(luaCtx.code, luaCtx.envelopePath)
 	if err != nil {
 		return nil, lua.BuildScriptError(lua.BuildInput{
