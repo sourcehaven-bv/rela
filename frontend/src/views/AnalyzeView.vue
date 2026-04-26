@@ -4,11 +4,13 @@ import { useRouter } from 'vue-router'
 import { analyze } from '@/api'
 import type { AnalyzeResult, AnalyzeIssue } from '@/types'
 import { useSchemaStore } from '@/stores'
+import { useScriptErrorStore } from '@/stores/scriptError'
 import { useBackTarget } from '@/composables/useBackTarget'
 import BackButton from '@/components/common/BackButton.vue'
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
+const scriptErrorStore = useScriptErrorStore()
 const backTarget = useBackTarget()
 
 // Check type definitions with descriptions (matching v1)
@@ -108,8 +110,23 @@ function getEntityTypeLabel(type: string): string {
   return def?.label || type
 }
 
-function navigateToEntity(issue: AnalyzeIssue) {
-  router.push(`/entity/${issue.entityType}/${issue.entityId}`)
+// An issue is clickable if it has a structured Lua-failure envelope
+// (opens ScriptErrorDialog) or a real entity (navigates). LoadError
+// rows have neither and stay inert.
+function isClickable(issue: AnalyzeIssue): boolean {
+  if (issue.scriptError) return true
+  return Boolean(issue.entityId && issue.entityType)
+}
+
+function onIssueClick(issue: AnalyzeIssue, ev: Event) {
+  if (issue.scriptError) {
+    const trigger = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : null
+    scriptErrorStore.show(issue.scriptError, trigger)
+    return
+  }
+  if (issue.entityId && issue.entityType) {
+    router.push(`/entity/${issue.entityType}/${issue.entityId}`)
+  }
 }
 
 // Lifecycle
@@ -184,10 +201,14 @@ onMounted(() => {
               </thead>
               <tbody>
                 <tr
-                  v-for="issue in getFilteredIssuesForCheck(checkType.key)"
-                  :key="`${issue.entityType}-${issue.entityId}`"
+                  v-for="(issue, idx) in getFilteredIssuesForCheck(checkType.key)"
+                  :key="`${checkType.key}-${idx}-${issue.entityType}-${issue.entityId}`"
                   class="issue-row"
-                  @click="navigateToEntity(issue)"
+                  :class="{ clickable: isClickable(issue) }"
+                  :tabindex="isClickable(issue) ? 0 : -1"
+                  @click="onIssueClick(issue, $event)"
+                  @keydown.enter="onIssueClick(issue, $event)"
+                  @keydown.space.prevent="onIssueClick(issue, $event)"
                 >
                   <td class="entity-cell">
                     <span class="entity-title">{{ getEntityTitle(issue) }}</span>
@@ -400,12 +421,17 @@ onMounted(() => {
 }
 
 .issue-row {
-  cursor: pointer;
   transition: background 0.15s;
 }
 
-.issue-row:hover {
+.issue-row.clickable {
+  cursor: pointer;
+}
+
+.issue-row.clickable:hover,
+.issue-row.clickable:focus-visible {
   background: var(--hover-bg);
+  outline: none;
 }
 
 .issue-row:last-child td {
