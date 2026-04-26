@@ -119,9 +119,15 @@ type EntityToCreate struct {
 
 // LuaToExecute specifies Lua code to be executed by the workspace layer.
 // Either Code or FilePath is set, not both.
+//
+// AutomationName carries the name of the automation that produced this
+// action so that error envelopes can identify *which* inline `lua: |`
+// block failed (`automation:<name>`) when there is no FilePath to use
+// as the identity.
 type LuaToExecute struct {
-	Code     string // Inline Lua code (safe values already interpolated)
-	FilePath string // Path to script file in scripts/ directory
+	Code           string // Inline Lua code (safe values already interpolated)
+	FilePath       string // Path to script file in scripts/ directory
+	AutomationName string // Name of the originating automation
 }
 
 // Result represents the outcome of running automations.

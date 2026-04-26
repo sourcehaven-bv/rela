@@ -80,6 +80,11 @@ type Runtime struct {
 	aiProvider    ai.Provider       // nil means AI is not configured
 	cache         cacheStore        // nil means rela.cache.* is not registered
 	scriptPath    string            // set by RunFile; empty for RunString/inline
+
+	// errorFrames holds typed stack frames captured by the PCall message
+	// handler on the most recent failed run. Read via ErrorFrames() after
+	// PCall returns an error. Reset before every PCall.
+	errorFrames []StackFrame
 }
 
 // cacheStore is the minimal contract the Lua cache bindings need from
@@ -313,6 +318,62 @@ func openSafeLibraries(ls *lua.LState) {
 // RunFile executes a Lua script file with arguments.
 // Shebang lines (starting with #!) are automatically stripped.
 //
+// ErrorFrames returns the typed Lua stack frames captured by the message
+// handler on the most recent failed Run call. Empty for a successful run,
+// or for failures (compile errors, Go-side errors) where no PCall ran.
+//
+// Frames are ordered innermost-first: frame[0] is where the error was
+// raised; frame[len-1] is the main chunk.
+func (r *Runtime) ErrorFrames() []StackFrame {
+	return r.errorFrames
+}
+
+// pcallWithCapture runs r.L.PCall(0, MultRet, ...) with a message handler
+// that walks the live Lua stack via GetStack/GetInfo and stores typed
+// frames on the runtime. This sidesteps regex-parsing the Object/StackTrace
+// strings: we get real line numbers, function names, and source paths
+// straight from gopher-lua's debug API.
+//
+// See https://github.com/yuin/gopher-lua/issues/46 for the rationale.
+func (r *Runtime) pcallWithCapture() error {
+	r.errorFrames = nil
+	handler := r.L.NewFunction(func(L *lua.LState) int {
+		r.errorFrames = collectStackFrames(L)
+		// Pass the original error object (arg #1) through unchanged so
+		// gopher-lua wraps it into ApiError as usual.
+		L.Push(L.Get(1))
+		return 1
+	})
+	return r.L.PCall(0, lua.MultRet, handler)
+}
+
+// collectStackFrames walks the live Lua stack and returns user-visible
+// frames (skipping built-in [G] frames with no source). Capped at
+// maxStackFrames; safe to call from a message handler.
+func collectStackFrames(ls *lua.LState) []StackFrame {
+	var frames []StackFrame
+	for level := range maxStackFrames {
+		dbg, ok := ls.GetStack(level)
+		if !ok {
+			break
+		}
+		if _, err := ls.GetInfo("Slunf", dbg, lua.LNil); err != nil {
+			break
+		}
+		// Skip built-in/C frames — they have no source and a CurrentLine
+		// of -1. The user only cares about their own Lua code.
+		if dbg.Source == "" || dbg.CurrentLine <= 0 {
+			continue
+		}
+		frames = append(frames, StackFrame{
+			Path: dbg.Source,
+			Line: dbg.CurrentLine,
+			Func: dbg.Name,
+		})
+	}
+	return frames
+}
+
 // RunFile sets the runtime's scriptPath (via filepath.Clean(path)) so
 // the rela.cache.* bindings can namespace entries by script. Callers
 // using RunString/inline code do not get this identity and any
@@ -361,14 +422,20 @@ func (r *Runtime) RunFileContent(path string, content []byte, args []string) err
 	}
 
 	r.L.Push(fn)
-	return r.L.PCall(0, lua.MultRet, nil)
+	return r.pcallWithCapture()
 }
 
 // RunString executes Lua code from a string.
 // Shebang lines (starting with #!) are automatically stripped.
 func (r *Runtime) RunString(code string) error {
 	r.applyTimeout()
-	return r.L.DoString(stripShebang(code))
+	cleaned := stripShebang(code)
+	fn, err := r.L.LoadString(cleaned)
+	if err != nil {
+		return err
+	}
+	r.L.Push(fn)
+	return r.pcallWithCapture()
 }
 
 // ErrNoReturnValue is returned by RunActionString when the script did not
@@ -390,7 +457,7 @@ func (r *Runtime) RunActionString(code, name string) (interface{}, error) {
 	// Record stack depth before so we can detect if the script returned anything
 	topBefore := r.L.GetTop()
 	r.L.Push(fn)
-	if pcallErr := r.L.PCall(0, lua.MultRet, nil); pcallErr != nil {
+	if pcallErr := r.pcallWithCapture(); pcallErr != nil {
 		return nil, pcallErr
 	}
 	topAfter := r.L.GetTop()

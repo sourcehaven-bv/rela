@@ -1590,13 +1590,17 @@ automations:
 
 	foundLuaError := false
 	for _, errMsg := range result.AutomationErrors {
-		if strings.Contains(errMsg, "script execution error") && strings.Contains(errMsg, "intentional test error") {
+		// New envelope shape: "<path>:<line>: <message>" where path is
+		// "automation:<automation-name>" for inline `lua: |` blocks.
+		if strings.Contains(errMsg, "automation:lua-error") &&
+			strings.Contains(errMsg, "intentional test error") {
+
 			foundLuaError = true
 			break
 		}
 	}
 	if !foundLuaError {
-		t.Errorf("expected script error message, got: %v", result.AutomationErrors)
+		t.Errorf("expected automation script error, got: %v", result.AutomationErrors)
 	}
 }
 

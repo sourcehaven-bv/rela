@@ -1,6 +1,7 @@
 package script
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
 func TestParseActionResponse_Nil(t *testing.T) {
@@ -125,7 +127,7 @@ func TestExecuteAction_PathTraversal(t *testing.T) {
 	engine := NewEngine()
 	deps := testWriteDeps("/project")
 
-	_, err := engine.ExecuteAction("../etc/passwd", deps, nil, nil, time.Second)
+	_, err := engine.ExecuteAction("../etc/passwd", deps, nil, nil, time.Second, "")
 	if err == nil {
 		t.Fatal("expected error for path traversal")
 	}
@@ -135,7 +137,7 @@ func TestExecuteAction_WrongExtension(t *testing.T) {
 	engine := NewEngine()
 	deps := testWriteDeps("/project")
 
-	_, err := engine.ExecuteAction("script.txt", deps, nil, nil, time.Second)
+	_, err := engine.ExecuteAction("script.txt", deps, nil, nil, time.Second, "")
 	if err == nil {
 		t.Fatal("expected error for wrong extension")
 	}
@@ -164,7 +166,7 @@ func TestExecuteAction_RealFile(t *testing.T) {
 	engine := NewEngine()
 	deps := testWriteDeps(tmpDir)
 
-	resp, err := engine.ExecuteAction("test.lua", deps, nil, nil, 5*time.Second)
+	resp, err := engine.ExecuteAction("test.lua", deps, nil, nil, 5*time.Second, "")
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
@@ -192,7 +194,7 @@ func TestExecuteAction_WithTriggerEntity(t *testing.T) {
 	deps := testWriteDeps(tmpDir)
 	ent := &entity.Entity{ID: "T-42", Type: "ticket"}
 
-	resp, err := engine.ExecuteAction("ent.lua", deps, ent, nil, 5*time.Second)
+	resp, err := engine.ExecuteAction("ent.lua", deps, ent, nil, 5*time.Second, "")
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
@@ -218,7 +220,7 @@ func TestExecuteAction_WithParams(t *testing.T) {
 	deps := testWriteDeps(tmpDir)
 	params := map[string]string{"greeting": "hello"}
 
-	resp, err := engine.ExecuteAction("params.lua", deps, nil, params, 5*time.Second)
+	resp, err := engine.ExecuteAction("params.lua", deps, nil, params, 5*time.Second, "")
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
@@ -234,7 +236,8 @@ func TestExecuteAction_ScriptError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scriptContent := `error("kaboom")`
+	scriptContent := `print("before")
+error("kaboom")`
 	scriptPath := filepath.Join(actionsDir, "boom.lua")
 	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
 		t.Fatal(err)
@@ -242,13 +245,48 @@ func TestExecuteAction_ScriptError(t *testing.T) {
 
 	engine := NewEngine()
 	deps := testWriteDeps(tmpDir)
+	ent := &entity.Entity{ID: "T-99", Type: "ticket"}
 
-	_, err := engine.ExecuteAction("boom.lua", deps, nil, nil, 5*time.Second)
+	_, err := engine.ExecuteAction("boom.lua", deps, ent,
+		map[string]string{"greeting": "hi", "password": "leak"}, 5*time.Second, "corr-test")
 	if err == nil {
 		t.Fatal("expected error from script")
 	}
-	if !strings.Contains(err.Error(), "kaboom") {
-		t.Errorf("expected error to mention kaboom, got %v", err)
+
+	var se *lua.ScriptError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected *lua.ScriptError, got %T: %v", err, err)
+	}
+
+	if se.Surface != lua.SurfaceAction {
+		t.Errorf("Surface=%q, want %q", se.Surface, lua.SurfaceAction)
+	}
+	if se.Path != "actions/boom.lua" {
+		t.Errorf("Path=%q, want actions/boom.lua", se.Path)
+	}
+	if se.EntityID != ent.ID {
+		t.Errorf("EntityID=%q, want %q", se.EntityID, ent.ID)
+	}
+	if !strings.Contains(se.LuaMessage, "kaboom") {
+		t.Errorf("LuaMessage=%q, want contains kaboom", se.LuaMessage)
+	}
+	if se.LuaLine != 2 {
+		t.Errorf("LuaLine=%d, want 2", se.LuaLine)
+	}
+	if se.Args["greeting"] != "hi" {
+		t.Errorf("Args[greeting]=%v, want hi", se.Args["greeting"])
+	}
+	if se.Args["password"] != "<redacted>" {
+		t.Errorf("Args[password]=%v, want redacted", se.Args["password"])
+	}
+	if !strings.Contains(se.CapturedOutput, "before") {
+		t.Errorf("CapturedOutput=%q, want contains 'before'", se.CapturedOutput)
+	}
+	if len(se.Source) == 0 {
+		t.Error("Source is empty; expected slice around line 2")
+	}
+	if se.CorrelationID != "corr-test" {
+		t.Errorf("CorrelationID=%q, want corr-test", se.CorrelationID)
 	}
 }
 

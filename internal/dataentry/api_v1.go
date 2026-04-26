@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -2126,6 +2128,15 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	// Render the document
 	result, err := a.documents.Render(entityID, renderCfg)
 	if err != nil {
+		var se *lua.ScriptError
+		if errors.As(err, &se) {
+			correlationID := newCorrelationID()
+			slog.Warn("document render failed",
+				"document", docName, "entity", entityID,
+				"correlation", correlationID, "error", err)
+			writeV1ScriptError(w, se, a.allowFullScriptDetail(r), correlationID)
+			return
+		}
 		writeV1Error(w, r, http.StatusInternalServerError, "render_failed", "Document rendering failed", err.Error())
 		return
 	}

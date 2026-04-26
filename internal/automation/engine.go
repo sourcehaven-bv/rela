@@ -121,7 +121,7 @@ func (e *Engine) Process(event Event) *Result {
 
 		// Execute actions
 		for _, action := range auto.Do {
-			e.executeAction(action, event, result)
+			e.executeAction(action, event, result, auto.Name)
 		}
 
 		// Evaluate validations
@@ -230,7 +230,7 @@ func (e *Engine) matchesWhenConditions(trigger Trigger, entity *entity.Entity) b
 }
 
 // executeAction performs an action and updates the result.
-func (e *Engine) executeAction(action Action, event Event, result *Result) {
+func (e *Engine) executeAction(action Action, event Event, result *Result, automationName string) {
 	if action.Set != "" {
 		value := e.interpolate(action.Value, event)
 		result.PropertiesSet[action.Set] = value
@@ -286,7 +286,8 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 		// Entity properties are accessed via Lua globals, NOT interpolated into code
 		code := e.interpolateSafeOnly(action.Lua, event)
 		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
-			Code: code,
+			Code:           code,
+			AutomationName: automationName,
 		})
 	}
 
@@ -294,7 +295,8 @@ func (e *Engine) executeAction(action Action, event Event, result *Result) {
 		// Path validation is handled by the script package at execution time.
 		// This keeps validation centralized and consistent across all script execution paths.
 		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
-			FilePath: action.LuaFile,
+			FilePath:       action.LuaFile,
+			AutomationName: automationName,
 		})
 	}
 }

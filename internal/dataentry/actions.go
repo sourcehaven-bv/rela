@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
 // actionIDRegex defines the allowed format for action IDs at request time.
@@ -100,9 +102,17 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	// across action invocations. Constructing a fresh engine per
 	// request would reset the cache each time and defeat memoization.
 	resp, err := a.scriptEngine.ExecuteAction(action.Script, a.luaWriteDeps(),
-		ent, action.Params, actionTimeout)
+		ent, action.Params, actionTimeout, correlationID)
 	if err != nil {
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
+		var se *lua.ScriptError
+		if errors.As(err, &se) {
+			writeV1ScriptError(w, se, a.allowFullScriptDetail(r), correlationID)
+			return
+		}
+		// Non-Lua failure (script-not-found, contract failure from
+		// parseActionResponse, redirect validation, etc.) — keep the
+		// existing minimal-detail shape.
 		writeV1JSON(w, http.StatusInternalServerError, V1ActionResponse{
 			Error:         "action_failed",
 			Message:       "Action failed",

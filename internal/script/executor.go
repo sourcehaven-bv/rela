@@ -114,14 +114,51 @@ func (e *Engine) ExecuteDocument(
 	}
 	defer runtime.Close()
 
-	// NewWriterRuntime receives `path` for per-script secret loading, but
-	// rela.cache.* namespacing is driven by a separate scriptPath field
-	// that RunFile/RunFileContent set. We're invoking RunString, so wire
-	// the path explicitly — otherwise rela.cache.* inside a document
-	// script would hit the inline/eval guard and raise.
-	runtime.SetScriptPath(path)
+	// RunFileContent (not RunString) so gopher-lua receives the script
+	// path as the chunkname — that lands in the message handler's frame
+	// captures and lets ScriptError.Source populate from the right file.
+	// Doubles as the rela.cache.* namespace, so SetScriptPath is no
+	// longer needed alongside it.
+	if runErr := runtime.RunFileContent(path, []byte(scriptCode), nil); runErr != nil {
+		return wrapScriptError(lua.SurfaceDocument, scriptsDir, path, entryID,
+			runtime.ErrorFrames(), nil, runErr, deps.ProjectRoot)
+	}
+	return nil
+}
 
-	return runtime.RunString(scriptCode)
+// wrapScriptError builds a *lua.ScriptError from a runtime failure.
+// Captured output is left for the caller to attach via AttachCapturedOutput
+// when they own the buffer (e.g. the document renderer).
+//
+// For inline / synthetic paths (containing '<' or empty), no prefix is
+// applied — the path is used as-is for envelope display, and the source
+// FS is left out since there's nothing on disk to slice.
+func wrapScriptError(surface lua.Surface, subdir, scriptPath, entityID string,
+	frames []lua.StackFrame, capturedOutput []byte, runErr error,
+	projectRoot string) error {
+	envelopePath := scriptPath
+	useSourceFS := false
+	if scriptPath != "" && !strings.ContainsAny(scriptPath, "<>") {
+		envelopePath = filepath.ToSlash(filepath.Join(subdir, scriptPath))
+		useSourceFS = true
+		for i := range frames {
+			if frames[i].Path == scriptPath {
+				frames[i].Path = envelopePath
+			}
+		}
+	}
+	in := lua.BuildInput{
+		Surface:        surface,
+		Path:           envelopePath,
+		EntityID:       entityID,
+		Frames:         frames,
+		CapturedOutput: capturedOutput,
+		Err:            runErr,
+	}
+	if useSourceFS {
+		in.SourceFS = os.DirFS(projectRoot)
+	}
+	return lua.BuildScriptError(in)
 }
 
 // execute runs Lua code with entity context. scriptPath is used to resolve
@@ -145,14 +182,35 @@ func (e *Engine) execute(code string, deps lua.WriteDeps, scriptPath string,
 	runtime.SetScriptPath(scriptPath)
 
 	ls := runtime.LState()
+	entityID := ""
 	if newEntity != nil {
 		ls.SetGlobal("entity", lua.EntityToTable(ls, newEntity))
+		entityID = newEntity.ID
 	}
 	if oldEntity != nil {
 		ls.SetGlobal("old_entity", lua.EntityToTable(ls, oldEntity))
+		if entityID == "" {
+			entityID = oldEntity.ID
+		}
 	}
 
-	return runtime.RunString(code)
+	if runErr := runtime.RunString(code); runErr != nil {
+		// Surface tag is "automation" — this seam is invoked from the
+		// automation engine (workspace) for both inline `lua: |` blocks
+		// and `script:` files. Captured stdout is omitted: automations
+		// are not a UI surface and operators rarely use print() there.
+		path := scriptPath
+		if path == "" {
+			// Inline automation block — give it an identity stable enough
+			// for the envelope to disambiguate. The automation name
+			// would be better but isn't plumbed here; defer until the
+			// automation engine wraps with that context.
+			path = "<inline>"
+		}
+		return wrapScriptError(lua.SurfaceAutomation, scriptsDir, path, entityID,
+			runtime.ErrorFrames(), nil, runErr, deps.ProjectRoot)
+	}
+	return nil
 }
 
 // CheckDocumentScriptExists verifies a document script can be loaded.
