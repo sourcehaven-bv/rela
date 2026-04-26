@@ -271,23 +271,29 @@ func (s *Service) checkEntityAgainstRule(
 		}
 	}
 
-	// Check Lua validation rules
+	// Check Lua validation rules. A Lua failure (scriptErr) is
+	// surfaced but does NOT suppress the content check that follows,
+	// so a rule defining both `lua:` and `content:` still flags
+	// content violations even when the Lua portion errored. Lua
+	// violations short-circuit content, matching pre-change
+	// behavior where the rule reported once per entity.
+	var out entityResult
 	if luaCtx != nil {
 		luaViolations, scriptErr := s.runLuaForEntity(e, rule, luaCtx)
 		if scriptErr != nil {
-			return entityResult{ScriptErrors: []*lua.ScriptError{scriptErr}}
-		}
-		if len(luaViolations) > 0 {
-			return entityResult{Violations: luaViolations}
+			out.ScriptErrors = append(out.ScriptErrors, scriptErr)
+		} else if len(luaViolations) > 0 {
+			out.Violations = append(out.Violations, luaViolations...)
+			return out
 		}
 	}
 
 	// Check content rules
 	if rule.Content != nil && !CheckContentRule(e.Content, rule.Content) {
-		return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
+		out.Violations = append(out.Violations, newViolation(rule, e, rule.Description))
 	}
 
-	return entityResult{}
+	return out
 }
 
 // newViolation constructs a Violation tagged with the rule's metadata.

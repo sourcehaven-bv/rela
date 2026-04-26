@@ -273,6 +273,50 @@ func TestLuaValidation_LoadErrorWhenFileMissing(t *testing.T) {
 	}
 }
 
+// TestLuaValidation_LuaErrorDoesNotSuppressContentCheck covers
+// RR-Q7C9Y: when a rule defines both `lua:` and `content:` and the
+// Lua portion errors, the content check still runs so the operator
+// sees both the ScriptError and any content violation.
+func TestLuaValidation_LuaErrorDoesNotSuppressContentCheck(t *testing.T) {
+	ws := newMockWorkspace()
+	rule := metamodel.ValidationRule{
+		Name:       "broken-lua-with-content-check",
+		EntityType: "ticket",
+		Lua:        `error("boom")`,
+		Content: &metamodel.ContentRule{
+			RequiredHeaders: []metamodel.HeaderCheck{
+				{Header: "## Required"},
+			},
+		},
+		Severity: "error",
+	}
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+		},
+		Validations: []metamodel.ValidationRule{rule},
+	}
+	entities := []*entity.Entity{
+		// No "## Required" header in content => content check fails.
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}, Content: "no header here"},
+	}
+
+	svc := New(meta, ws.services(t.TempDir()))
+	result := svc.Check(context.Background(), entities, nil)
+
+	if len(result.ScriptErrors) != 1 {
+		t.Fatalf("got %d ScriptErrors, want 1", len(result.ScriptErrors))
+	}
+	if len(result.Violations) != 1 {
+		t.Fatalf("got %d violations, want 1 (content check must still run when Lua errors)",
+			len(result.Violations))
+	}
+	if result.Violations[0].RuleName != rule.Name {
+		t.Errorf("violation.RuleName = %q, want %q",
+			result.Violations[0].RuleName, rule.Name)
+	}
+}
+
 // TestLuaValidation_ContractErrorReturnNumber covers AC7 (case 1):
 // a Lua rule returning a non-table value produces a synthesized
 // *lua.ScriptError with no LuaLine and an explanatory message.
