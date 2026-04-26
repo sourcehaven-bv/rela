@@ -314,6 +314,14 @@ func (w *Workspace) countIncomingByType(entityID, relName string) int {
 // ValidationViolation is re-exported from the validation package.
 type ValidationViolation = validation.Violation
 
+// ValidationResult is re-exported from the validation package so CLI
+// and dataentry consumers don't need to import internal/validation
+// directly.
+type ValidationResult = validation.Result
+
+// ValidationLoadError is re-exported alongside ValidationResult.
+type ValidationLoadError = validation.LoadError
+
 // newValidationService creates a validation service wired to the workspace's
 // read-only lua deps. ProjectRoot comes from the deps bundle. The shared
 // Lua cache is wired so rela.cache.* inside validation rules is functional
@@ -323,7 +331,7 @@ func (w *Workspace) newValidationService() *validation.Service {
 }
 
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.
-func (w *Workspace) RunValidations(ctx context.Context, opts AnalyzeOptions) []ValidationViolation {
+func (w *Workspace) RunValidations(ctx context.Context, opts AnalyzeOptions) ValidationResult {
 	return w.newValidationService().Check(ctx, collectEntities(w.Store(), store.EntityQuery{}), opts.Scope)
 }
 
@@ -334,7 +342,7 @@ func (w *Workspace) RunValidationsFiltered(
 	ctx context.Context,
 	opts AnalyzeOptions,
 	filters []ValidationFilter,
-) []ValidationViolation {
+) ValidationResult {
 	svc := w.newValidationService()
 
 	// Build set of rule names to run based on filters
@@ -403,8 +411,8 @@ func (w *Workspace) AnalyzeAll(ctx context.Context, opts AnalyzeOptions) *Analys
 	}
 
 	// Count validation issues by severity
-	violations := w.RunValidations(ctx, opts)
-	summary.ValidationErrors, summary.ValidationWarnings = validation.CountBySeverity(violations)
+	result := w.RunValidations(ctx, opts)
+	summary.ValidationErrors, summary.ValidationWarnings = validation.CountBySeverity(result.Violations)
 
 	return summary
 }

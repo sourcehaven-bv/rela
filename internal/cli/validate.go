@@ -281,12 +281,13 @@ func runValidationsCheck(
 		fmt.Println("\nRunning custom validations...")
 	}
 
-	var violations []workspace.ValidationViolation
+	var result workspace.ValidationResult
 	if len(filters) > 0 {
-		violations = checkWs.RunValidationsFiltered(ctx, opts, filters)
+		result = checkWs.RunValidationsFiltered(ctx, opts, filters)
 	} else {
-		violations = checkWs.RunValidations(ctx, opts)
+		result = checkWs.RunValidations(ctx, opts)
 	}
+	violations := result.Violations
 
 	errorCount, warningCount := workspace.CountValidationsBySeverity(violations)
 	if len(violations) == 0 {

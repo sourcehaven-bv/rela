@@ -120,7 +120,7 @@ func TestLuaValidation_SingleViolation(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 1 {
 		t.Fatalf("got %d violations, want 1", len(violations))
@@ -176,7 +176,7 @@ func TestLuaValidation_MultipleViolations(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 2 {
 		t.Fatalf("got %d violations, want 2", len(violations))
@@ -221,7 +221,7 @@ func TestLuaValidation_SeverityOverride(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 1 {
 		t.Fatalf("got %d violations, want 1", len(violations))
@@ -252,7 +252,7 @@ func TestLuaValidation_SeverityDefault(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 1 {
 		t.Fatalf("got %d violations, want 1", len(violations))
@@ -327,7 +327,7 @@ func TestLuaValidation_ReturnValues(t *testing.T) {
 			}
 
 			svc := New(meta, ws.services(t.TempDir()))
-			violations := svc.Check(context.Background(), entities, nil)
+			violations := svc.Check(context.Background(), entities, nil).Violations
 
 			gotPass := len(violations) == 0
 			if gotPass != tt.wantPass {
@@ -389,7 +389,7 @@ func TestLuaValidation_EntityContext(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 0 {
 		t.Errorf("got %d violations, want 0 (entity context should work): %v", len(violations), violations)
@@ -426,7 +426,7 @@ func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 0 {
 		t.Errorf("got %d violations, want 0 (cross-entity lookup should work)", len(violations))
@@ -462,7 +462,7 @@ func TestLuaValidation_MutationsBlocked(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 0 {
 		t.Errorf("got %d violations, want 0 (mutations should be blocked)", len(violations))
@@ -508,7 +508,7 @@ func TestLuaValidation_CombinedWithWhenThen(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	// Should have 2 violations: TKT-002 (then fails) and TKT-003 (lua fails)
 	if len(violations) != 2 {
@@ -547,7 +547,7 @@ func TestLuaValidation_SyntaxError(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	// Syntax error should fail open (no violation)
 	if len(violations) != 0 {
@@ -575,7 +575,7 @@ func TestLuaValidation_RuntimeError(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	// Runtime error should fail open (no violation)
 	if len(violations) != 0 {
@@ -627,7 +627,7 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(tmpDir))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 1 {
 		t.Fatalf("got %d violations, want 1", len(violations))
@@ -668,7 +668,7 @@ func TestLuaValidation_ScriptFileNotFound(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(tmpDir))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	// Missing script should fail open (no violation)
 	if len(violations) != 0 {
@@ -720,7 +720,7 @@ func TestLuaValidation_CrossEntityValidation(t *testing.T) {
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 0 {
 		t.Errorf("got %d violations, want 0", len(violations))
@@ -749,7 +749,7 @@ func TestLuaValidation_Timeout(t *testing.T) {
 
 	// Should complete within reasonable time (timeout kicks in)
 	svc := New(meta, ws.services(t.TempDir()))
-	violations := svc.Check(context.Background(), entities, nil)
+	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	// Timeout should fail open (no violation, rule skipped due to error)
 	if len(violations) != 0 {
@@ -828,7 +828,7 @@ func TestLuaValidation_PathTraversal(t *testing.T) {
 			}
 
 			svc := New(meta, ws.services(tmpDir))
-			violations := svc.Check(context.Background(), entities, nil)
+			violations := svc.Check(context.Background(), entities, nil).Violations
 
 			// If rule should be skipped, expect 0 violations (fail open)
 			// If valid script, expect 0 violations (script returns nil)

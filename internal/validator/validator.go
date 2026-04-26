@@ -64,9 +64,9 @@ func (v *GenericValidator) CheckRule(ctx context.Context, rule metamodel.Validat
 		return nil, err
 	}
 
-	violations := v.svc.CheckRule(ctx, rule, candidates, nil)
-	ids := make([]string, 0, len(violations))
-	for _, vi := range violations {
+	result := v.svc.CheckRule(ctx, rule, candidates, nil)
+	ids := make([]string, 0, len(result.Violations))
+	for _, vi := range result.Violations {
 		ids = append(ids, vi.EntityID)
 	}
 	return ids, nil
@@ -80,8 +80,8 @@ func (v *GenericValidator) CheckAll(ctx context.Context) ([]Violation, error) {
 	}
 
 	raw := v.svc.Check(ctx, candidates, nil)
-	out := make([]Violation, 0, len(raw))
-	for _, r := range raw {
+	out := make([]Violation, 0, len(raw.Violations))
+	for _, r := range raw.Violations {
 		out = append(out, Violation{
 			RuleName:    r.RuleName,
 			Description: r.Description,

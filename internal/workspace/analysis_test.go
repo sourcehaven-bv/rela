@@ -223,7 +223,7 @@ func TestRunValidations(t *testing.T) {
 	})
 	ws := NewForTest(meta, WithTestStore(s))
 
-	violations := ws.RunValidations(context.Background(), AnalyzeOptions{})
+	violations := ws.RunValidations(context.Background(), AnalyzeOptions{}).Violations
 	if len(violations) != 1 {
 		t.Fatalf("got %d violations, want 1", len(violations))
 	}
@@ -274,13 +274,17 @@ func TestRunValidationsFiltered(t *testing.T) {
 	ws := NewForTest(meta, WithTestStore(s))
 
 	// Filter by rule name.
-	violations := ws.RunValidationsFiltered(context.Background(), AnalyzeOptions{}, []ValidationFilter{{RuleName: "ticket-rule"}})
+	violations := ws.RunValidationsFiltered(
+		context.Background(), AnalyzeOptions{}, []ValidationFilter{{RuleName: "ticket-rule"}},
+	).Violations
 	if len(violations) != 1 || violations[0].RuleName != "ticket-rule" {
 		t.Errorf("rule-name filter: got %#v, want one ticket-rule violation", violations)
 	}
 
 	// Filter by entity type.
-	violations = ws.RunValidationsFiltered(context.Background(), AnalyzeOptions{}, []ValidationFilter{{EntityType: "bug"}})
+	violations = ws.RunValidationsFiltered(
+		context.Background(), AnalyzeOptions{}, []ValidationFilter{{EntityType: "bug"}},
+	).Violations
 	if len(violations) != 1 || violations[0].RuleName != "bug-rule" {
 		t.Errorf("entity-type filter: got %#v, want one bug-rule violation", violations)
 	}

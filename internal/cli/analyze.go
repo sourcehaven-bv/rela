@@ -395,7 +395,8 @@ func runValidations(ctx context.Context, opts workspace.AnalyzeOptions) error {
 		return nil
 	}
 
-	violations := ws.RunValidations(ctx, opts)
+	result := ws.RunValidations(ctx, opts)
+	violations := result.Violations
 
 	// Count by severity
 	errorCount, warningCount := 0, 0

@@ -21,6 +21,41 @@ type Violation struct {
 	EntityTitle string
 }
 
+// Result aggregates the outputs of a validation pass: rule findings,
+// Lua failures, and load-time failures. The three slices are
+// semantically distinct:
+//
+//   - Violations: rule ran successfully and found a problem with an
+//     entity.
+//   - ScriptErrors: a Lua rule failed to run (compile, runtime,
+//     timeout, or contract violation like wrong return type) — the
+//     rule did NOT report on entities.
+//   - LoadErrors: a `lua_file:` rule's script could not be opened
+//     (config-level failure, no Lua VM ever ran).
+//
+// Splitting these prevents the CLI from conflating "entity violated
+// rule" (a finding) with "rule did not run" (an environment problem).
+type Result struct {
+	Violations   []Violation
+	ScriptErrors []*lua.ScriptError
+	LoadErrors   []LoadError
+}
+
+// LoadError records a `lua_file:` rule whose script could not be
+// loaded. Message is already sanitized by loadLuaScript (no system
+// paths leaked).
+type LoadError struct {
+	RuleName string
+	Message  string
+}
+
+// HasErrors reports whether any rule failed to execute (Lua failure
+// or script-load failure). Unrelated to whether Violations were
+// found — a clean run with violations still has HasErrors() == false.
+func (r Result) HasErrors() bool {
+	return len(r.ScriptErrors) > 0 || len(r.LoadErrors) > 0
+}
+
 // Service validates entities against custom metamodel rules.
 type Service struct {
 	deps  lua.ReadDeps
@@ -57,7 +92,7 @@ func (s *Service) Rules() []metamodel.ValidationRule {
 // ctx is propagated into Lua execution: canceling it interrupts an
 // in-flight rule. Pass cmd.Context() (cobra) or r.Context() (HTTP) for
 // real cancellation; tests use context.Background.
-func (s *Service) Check(ctx context.Context, entities []*entity.Entity, scope map[string]bool) []Violation {
+func (s *Service) Check(ctx context.Context, entities []*entity.Entity, scope map[string]bool) Result {
 	return s.CheckRules(ctx, entities, scope, nil)
 }
 
@@ -68,8 +103,8 @@ func (s *Service) CheckRules(
 	ctx context.Context,
 	entities []*entity.Entity,
 	scope, ruleNames map[string]bool,
-) []Violation {
-	var violations []Violation
+) Result {
+	var result Result
 
 	for _, rule := range s.deps.Meta.Validations {
 		// Skip rules not in the filter set (if filter is specified)
@@ -77,11 +112,13 @@ func (s *Service) CheckRules(
 			continue
 		}
 
-		ruleViolations := s.CheckRule(ctx, rule, entities, scope)
-		violations = append(violations, ruleViolations...)
+		ruleResult := s.CheckRule(ctx, rule, entities, scope)
+		result.Violations = append(result.Violations, ruleResult.Violations...)
+		result.ScriptErrors = append(result.ScriptErrors, ruleResult.ScriptErrors...)
+		result.LoadErrors = append(result.LoadErrors, ruleResult.LoadErrors...)
 	}
 
-	return violations
+	return result
 }
 
 // CountBySeverity returns counts of errors and warnings from violations.
@@ -102,27 +139,27 @@ func (s *Service) CheckRule(
 	rule metamodel.ValidationRule,
 	entities []*entity.Entity,
 	scope map[string]bool,
-) []Violation {
+) Result {
 	// Parse filters
 	whenFilters, err := filter.ParseAll(rule.When)
 	if err != nil {
-		return nil
+		return Result{}
 	}
 	thenFilters, err := filter.ParseAll(rule.Then)
 	if err != nil {
-		return nil
+		return Result{}
 	}
 
 	// Filter candidates
 	candidates := s.filterCandidates(entities, scope, rule.EntityType)
 
 	// Check each candidate
-	var violations []Violation
+	var result Result
 	for _, e := range candidates {
 		entityViolations := s.checkEntityAgainstRule(ctx, e, rule, whenFilters, thenFilters)
-		violations = append(violations, entityViolations...)
+		result.Violations = append(result.Violations, entityViolations...)
 	}
-	return violations
+	return result
 }
 
 // filterCandidates filters entities by scope and entity type.
