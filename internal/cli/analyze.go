@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -447,16 +448,39 @@ func runValidations(ctx context.Context, opts workspace.AnalyzeOptions) error {
 		}
 	}
 
-	if errorCount == 0 && warningCount == 0 {
+	// Render script and load errors as separate sections after the
+	// per-rule violation list so operators see "rule didn't run"
+	// problems distinctly from "rule found a violation."
+	renderValidationErrors(result.ScriptErrors, result.LoadErrors)
+
+	if errorCount == 0 && warningCount == 0 && !result.HasErrors() {
 		out.WriteSuccess("All %d validation rules passed", len(rules))
 		return nil
 	}
 	if errorCount > 0 {
 		out.WriteError("Found %d errors, %d warnings across %d rules", errorCount, warningCount, len(rules))
-	} else {
+	} else if warningCount > 0 {
 		out.WriteWarning("Found %d warnings across %d rules", warningCount, len(rules))
 	}
 	return nil
+}
+
+// renderValidationErrors writes script-error and load-error blocks to
+// the global `out` writer. Empty slices render nothing — the caller
+// still owns the success / summary line.
+func renderValidationErrors(scriptErrors []*lua.ScriptError, loadErrors []workspace.ValidationLoadError) {
+	if len(scriptErrors) > 0 {
+		out.WriteError("Validation script errors (%d):", len(scriptErrors))
+		for _, se := range scriptErrors {
+			out.WriteMessage("%s", formatScriptError(se))
+		}
+	}
+	if len(loadErrors) > 0 {
+		out.WriteError("Validation load errors (%d):", len(loadErrors))
+		for _, le := range loadErrors {
+			out.WriteMessage("  %s: %s", le.RuleName, le.Message)
+		}
+	}
 }
 
 var analyzeAllCmd = &cobra.Command{

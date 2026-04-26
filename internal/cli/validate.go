@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -290,7 +291,7 @@ func runValidationsCheck(
 	violations := result.Violations
 
 	errorCount, warningCount := workspace.CountValidationsBySeverity(violations)
-	if len(violations) == 0 {
+	if len(violations) == 0 && !result.HasErrors() {
 		if !quiet && checkOut.Format != output.FormatJSON {
 			checkOut.WriteSuccess("All validation rules passed")
 		}
@@ -299,7 +300,7 @@ func runValidationsCheck(
 
 	if checkOut.Format == output.FormatJSON {
 		status := "warning"
-		if errorCount > 0 {
+		if errorCount > 0 || result.HasErrors() {
 			status = "error"
 		}
 		_ = checkOut.WriteAnalysisResult(output.AnalysisResult{
@@ -309,10 +310,35 @@ func runValidationsCheck(
 			Details: violations,
 		})
 	} else {
-		outputValidationViolations(checkOut, violations, errorCount, warningCount)
+		if len(violations) > 0 {
+			outputValidationViolations(checkOut, violations, errorCount, warningCount)
+		}
+		renderValidationErrorsTo(checkOut, result.ScriptErrors, result.LoadErrors)
 	}
 
-	return errorCount > 0
+	return errorCount > 0 || result.HasErrors()
+}
+
+// renderValidationErrorsTo is the writer-explicit counterpart of
+// renderValidationErrors: validate.go uses a per-call output.Writer
+// (checkOut) rather than the package-global out.
+func renderValidationErrorsTo(
+	checkOut *output.Writer,
+	scriptErrors []*lua.ScriptError,
+	loadErrors []workspace.ValidationLoadError,
+) {
+	if len(scriptErrors) > 0 {
+		checkOut.WriteError("Validation script errors (%d):", len(scriptErrors))
+		for _, se := range scriptErrors {
+			checkOut.WriteMessage("%s", formatScriptError(se))
+		}
+	}
+	if len(loadErrors) > 0 {
+		checkOut.WriteError("Validation load errors (%d):", len(loadErrors))
+		for _, le := range loadErrors {
+			checkOut.WriteMessage("  %s: %s", le.RuleName, le.Message)
+		}
+	}
 }
 
 // outputValidationViolations prints validation violations grouped by rule.
