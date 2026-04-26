@@ -476,6 +476,44 @@ func (r *Runtime) RunActionString(code, name string) (interface{}, error) {
 	return luaValueToGo(ret), nil
 }
 
+// RunValidationString compiles `code` with `chunkname` as the chunk
+// identity, runs it via the message-handler PCall, and returns the
+// script's first return value as a raw gopher-lua LValue (LNil when
+// the script returned nothing).
+//
+// Differs from RunActionString in that the return value is NOT
+// converted via luaValueToGo — callers (validation rules) need direct
+// access to *lua.LTable to walk return shapes that mix arrays and
+// keyed entries (e.g. {message = ..., severity = ...}).
+//
+// The chunkname becomes the Path on each captured StackFrame, so a
+// caller that uses chunkname == its envelope path gets matching frames
+// without rewriting them. applyTimeout is invoked first so any
+// WithTimeout / WithContext options on the runtime are honored.
+func (r *Runtime) RunValidationString(code, chunkname string) (lua.LValue, error) {
+	r.applyTimeout()
+
+	fn, err := r.L.Load(strings.NewReader(code), chunkname)
+	if err != nil {
+		return nil, err
+	}
+
+	topBefore := r.L.GetTop()
+	r.L.Push(fn)
+	if pcallErr := r.pcallWithCapture(); pcallErr != nil {
+		return nil, pcallErr
+	}
+	topAfter := r.L.GetTop()
+
+	if topAfter <= topBefore {
+		return lua.LNil, nil
+	}
+
+	ret := r.L.Get(topBefore + 1)
+	r.L.SetTop(topBefore)
+	return ret, nil
+}
+
 // applyTimeout sets the execution timeout on the Lua state.
 // Must be called before executing any Lua code.
 //
