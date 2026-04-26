@@ -38,7 +38,7 @@ type LuaViolation struct {
 type luaRuleContext struct {
 	runtime      *lua.Runtime
 	code         string // already-loaded script source
-	envelopePath string // "validations/<rule-name>" or "validations/<file>"
+	envelopePath string // "validation:<rule-name>" or "validations/<file>"
 	sourceFS     fs.FS  // os.DirFS(projectRoot) for lua_file rules; nil for inline
 }
 
@@ -55,7 +55,12 @@ func (s *Service) buildLuaRuleContext(
 	rule metamodel.ValidationRule,
 ) (*luaRuleContext, *LoadError) {
 	code := rule.Lua
-	envelopePath := "validations/" + rule.Name
+	// Inline rules use "validation:<rule-name>" (colon, no slash) so their
+	// chunkname / cache namespace cannot collide with a real script at
+	// validations/<rule-name>.lua. File-backed rules keep the
+	// "validations/<file>" form so frame paths line up with the on-disk
+	// path used by source-slice rendering.
+	envelopePath := "validation:" + rule.Name
 	var sourceFS fs.FS
 	if code == "" && rule.LuaFile != "" {
 		loaded, err := s.loadLuaScript(rule.LuaFile)

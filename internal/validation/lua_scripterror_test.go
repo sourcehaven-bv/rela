@@ -47,7 +47,7 @@ func TestLuaValidation_InlineCompileErrorSurfacesAsScriptError(t *testing.T) {
 	if se.Surface != lua.SurfaceValidation {
 		t.Errorf("surface = %q, want %q", se.Surface, lua.SurfaceValidation)
 	}
-	wantPath := "validations/" + rule.Name
+	wantPath := "validation:" + rule.Name
 	if se.Path != wantPath {
 		t.Errorf("path = %q, want %q", se.Path, wantPath)
 	}
@@ -56,6 +56,46 @@ func TestLuaValidation_InlineCompileErrorSurfacesAsScriptError(t *testing.T) {
 	}
 	if !result.HasErrors() {
 		t.Error("HasErrors = false, want true")
+	}
+}
+
+// TestLuaValidation_InlineRuleUsesDistinctCacheNamespace covers
+// RR-TEGZP: inline rules use "validation:<name>" (colon) so their
+// chunkname / cache namespace cannot collide with a real script
+// living at validations/<name>.lua. The Path on a captured frame
+// must match the envelope so source-slice resolution still aligns.
+func TestLuaValidation_InlineRuleUsesDistinctCacheNamespace(t *testing.T) {
+	ws := newMockWorkspace()
+	rule := metamodel.ValidationRule{
+		Name:       "shared-name.lua",
+		EntityType: "ticket",
+		Lua:        `local x = nil; return x.field`,
+	}
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+		},
+		Validations: []metamodel.ValidationRule{rule},
+	}
+	entities := []*entity.Entity{
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+	}
+	svc := New(meta, ws.services(t.TempDir()))
+	result := svc.Check(context.Background(), entities, nil)
+
+	if len(result.ScriptErrors) != 1 {
+		t.Fatalf("got %d ScriptErrors, want 1", len(result.ScriptErrors))
+	}
+	se := result.ScriptErrors[0]
+	wantPath := "validation:" + rule.Name
+	if se.Path != wantPath {
+		t.Errorf("Path = %q, want %q (inline rules use colon prefix to avoid collision with validations/<file>)",
+			se.Path, wantPath)
+	}
+	// Captured frame must reference the same chunkname so any
+	// downstream source-slice resolution stays consistent.
+	if se.LuaLine == 0 {
+		t.Error("LuaLine = 0; expected runtime error to capture a frame")
 	}
 }
 
