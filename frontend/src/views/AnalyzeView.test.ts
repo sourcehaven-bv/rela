@@ -141,4 +141,21 @@ describe('AnalyzeView click discrimination', () => {
     expect(rows[1].classes()).toContain('clickable')
     expect(rows[2].classes()).not.toContain('clickable')
   })
+
+  it('renders an em-dash when entity cell or type cell is empty (preserves row separators)', async () => {
+    const wrapper = await mountWith([
+      makeIssue({
+        title: 'broken-rule',
+        message: 'Validation script failed',
+        scriptError: makeScriptError(),
+      }),
+    ])
+
+    const row = wrapper.find('.issue-row')
+    // Entity cell falls back to em-dash element instead of empty <span>s.
+    const empties = row.findAll('.entity-empty')
+    expect(empties.length).toBeGreaterThanOrEqual(1)
+    // The em-dash character should be present.
+    expect(row.text()).toContain('—')
+  })
 })

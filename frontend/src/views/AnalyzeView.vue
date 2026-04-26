@@ -211,11 +211,17 @@ onMounted(() => {
                   @keydown.space.prevent="onIssueClick(issue, $event)"
                 >
                   <td class="entity-cell">
-                    <span class="entity-title">{{ getEntityTitle(issue) }}</span>
-                    <span class="entity-id">{{ issue.entityId }}</span>
+                    <template v-if="issue.entityId">
+                      <span class="entity-title">{{ getEntityTitle(issue) }}</span>
+                      <span class="entity-id">{{ issue.entityId }}</span>
+                    </template>
+                    <template v-else>
+                      <span class="entity-empty">&mdash;</span>
+                    </template>
                   </td>
                   <td>
-                    <span class="type-badge">{{ getEntityTypeLabel(issue.entityType) }}</span>
+                    <span v-if="issue.entityType" class="type-badge">{{ getEntityTypeLabel(issue.entityType) }}</span>
+                    <span v-else class="entity-empty">&mdash;</span>
                   </td>
                   <td class="message-cell">{{ issue.message }}</td>
                   <td>
@@ -455,6 +461,11 @@ onMounted(() => {
   color: var(--muted-text);
 }
 
+.entity-empty {
+  color: var(--muted-text);
+  font-size: 14px;
+}
+
 .type-badge {
   display: inline-block;
   padding: 4px 8px;
@@ -468,6 +479,8 @@ onMounted(() => {
 
 .message-cell {
   color: var(--text-color);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .severity-badge {
