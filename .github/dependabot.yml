@@ -17,9 +17,15 @@ updates:
         patterns:
           - "github.com/charmbracelet/*"
           - "github.com/muesli/*"
+        update-types:
+          - "minor"
+          - "patch"
       golang-org:
         patterns:
           - "golang.org/x/*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "deps"
 
@@ -46,6 +52,10 @@ updates:
     cooldown:
       default-days: 7
       semver-major-days: 14
+    # Groups bundle minor+patch only. Majors fall out as individual PRs
+    # so a single breaking upgrade can't block the safe ones in its group.
+    # Auto-merge is unconditional on green CI, so each PR (group or
+    # singleton) merges itself the moment its checks pass.
     groups:
       vue-ecosystem:
         patterns:
@@ -55,6 +65,9 @@ updates:
           - "@vitejs/*"
           - "pinia"
           - "@pinia/*"
+        update-types:
+          - "minor"
+          - "patch"
       build-tooling:
         patterns:
           - "vite"
@@ -63,6 +76,9 @@ updates:
           - "typescript-*"
           - "tsx"
           - "vue-tsc"
+        update-types:
+          - "minor"
+          - "patch"
       lint-and-format:
         patterns:
           - "eslint"
@@ -71,6 +87,9 @@ updates:
           - "prettier"
           - "prettier-*"
           - "jscpd"
+        update-types:
+          - "minor"
+          - "patch"
       testing:
         patterns:
           - "vitest"
@@ -79,6 +98,9 @@ updates:
           - "happy-dom"
           - "fast-check"
           - "@playwright/*"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "deps(frontend)"
 
@@ -94,5 +116,8 @@ updates:
         patterns:
           - "@playwright/*"
           - "playwright"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "deps(e2e)"
