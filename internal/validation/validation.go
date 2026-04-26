@@ -107,6 +107,12 @@ func (s *Service) CheckRules(
 	var result Result
 
 	for _, rule := range s.deps.Meta.Validations {
+		// Bail out early on parent ctx cancellation so we don't
+		// construct N more runtimes that would all fail-fast on the
+		// already-dead context. Cheap: ctx.Err() is a single load.
+		if ctx.Err() != nil {
+			break
+		}
 		// Skip rules not in the filter set (if filter is specified)
 		if ruleNames != nil && !ruleNames[rule.Name] {
 			continue

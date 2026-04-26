@@ -112,15 +112,19 @@ func TestLuaValidation_FileRuntimeErrorIncludesSourceSlice(t *testing.T) {
 	}
 
 	scriptName := "broken.lua"
+	// Use distinctive header/footer markers so the source-slice
+	// assertion below can confirm the runtime opened the right file
+	// (a regression that pointed at a different file but happened to
+	// expose 'x.field' would otherwise pass).
 	scriptContent := "" +
-		"-- header\n" +
-		"-- header\n" +
-		"-- header\n" +
+		"-- HEADER-ALPHA\n" +
+		"-- HEADER-BETA\n" +
+		"-- HEADER-GAMMA\n" +
 		"local x = nil\n" +
 		"return x.field\n" +
-		"-- footer\n" +
-		"-- footer\n" +
-		"-- footer\n"
+		"-- FOOTER-DELTA\n" +
+		"-- FOOTER-EPSILON\n" +
+		"-- FOOTER-ZETA\n"
 	if err := os.WriteFile(filepath.Join(validationsDir, scriptName), []byte(scriptContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +164,11 @@ func TestLuaValidation_FileRuntimeErrorIncludesSourceSlice(t *testing.T) {
 	if len(se.Source) == 0 {
 		t.Fatal("Source is empty; want lines around the failing line")
 	}
+	// 3 above + failing line + 3 below = 7 lines for the failure on
+	// line 5 of an 8-line file.
+	if len(se.Source) != 7 {
+		t.Errorf("len(Source) = %d, want 7 (3 above + failing + 3 below)", len(se.Source))
+	}
 	// At least one source line should be the failing line, marked as highlighted.
 	var foundHighlighted bool
 	for _, sl := range se.Source {
@@ -172,6 +181,28 @@ func TestLuaValidation_FileRuntimeErrorIncludesSourceSlice(t *testing.T) {
 	}
 	if !foundHighlighted {
 		t.Error("no highlighted line found in Source")
+	}
+	// Confirm the slice was read from the right file: at least one
+	// header marker and at least one footer marker should appear in
+	// the surrounding context. A regression that opened the wrong
+	// file but happened to find an 'x.field' line would lack these.
+	wantHeader := false
+	wantFooter := false
+	for _, sl := range se.Source {
+		if strings.Contains(sl.Text, "HEADER-") {
+			wantHeader = true
+		}
+		if strings.Contains(sl.Text, "FOOTER-") {
+			wantFooter = true
+		}
+	}
+	if !wantHeader {
+		t.Errorf("source slice did not include any HEADER- markers from %s; got: %+v",
+			scriptName, se.Source)
+	}
+	if !wantFooter {
+		t.Errorf("source slice did not include any FOOTER- markers from %s; got: %+v",
+			scriptName, se.Source)
 	}
 }
 

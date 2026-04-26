@@ -2642,8 +2642,10 @@ func TestRunValidationString_HonorsTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
+	// 100ms ctx + small budget for goroutine scheduling. Loose
+	// "5 seconds" bounds let real regressions slip through.
 	if elapsed > 500*time.Millisecond {
-		t.Fatalf("busy loop ran for %v; expected context to interrupt within 500ms", elapsed)
+		t.Fatalf("busy loop ran for %v; expected context to interrupt well within 500ms", elapsed)
 	}
 }
 
