@@ -384,13 +384,15 @@ func CountValidationsBySeverity(violations []ValidationViolation) (errors, warni
 
 // AnalysisSummary contains counts from all analysis types.
 type AnalysisSummary struct {
-	Orphans            int
-	Duplicates         int
-	Gaps               int
-	Cardinality        int
-	PropertyErrors     int
-	ValidationErrors   int
-	ValidationWarnings int
+	Orphans                int
+	Duplicates             int
+	Gaps                   int
+	Cardinality            int
+	PropertyErrors         int
+	ValidationErrors       int
+	ValidationWarnings     int
+	ValidationScriptErrors int // rules that failed to run (compile, runtime, timeout, contract)
+	ValidationLoadErrors   int // lua_file: rules whose script could not be opened
 }
 
 // AnalyzeAll runs all analyses and returns a summary of counts.
@@ -413,6 +415,8 @@ func (w *Workspace) AnalyzeAll(ctx context.Context, opts AnalyzeOptions) *Analys
 	// Count validation issues by severity
 	result := w.RunValidations(ctx, opts)
 	summary.ValidationErrors, summary.ValidationWarnings = validation.CountBySeverity(result.Violations)
+	summary.ValidationScriptErrors = len(result.ScriptErrors)
+	summary.ValidationLoadErrors = len(result.LoadErrors)
 
 	return summary
 }

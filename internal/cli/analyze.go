@@ -2,7 +2,7 @@ package cli
 
 import (
 	"context"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -12,8 +12,10 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -384,68 +386,89 @@ Example metamodel configuration:
 func runValidations(ctx context.Context, opts workspace.AnalyzeOptions) error {
 	rules := meta.Validations
 	if len(rules) == 0 {
-		if out.Format == "json" {
-			return out.WriteAnalysisResult(output.AnalysisResult{
-				Status:  "success",
-				Message: "No custom validation rules defined in metamodel",
-				Count:   0,
-				Details: []interface{}{},
-			})
-		}
-		out.WriteSuccess("No custom validation rules defined in metamodel")
-		return nil
+		return writeNoValidationRules()
 	}
 
 	result := ws.RunValidations(ctx, opts)
-	violations := result.Violations
-
-	// Count by severity
-	errorCount, warningCount := 0, 0
-	for _, v := range violations {
-		if v.Severity == "error" {
-			errorCount++
-		} else {
-			warningCount++
-		}
-	}
+	errorCount, warningCount := countValidationViolationsBySeverity(result.Violations)
 
 	if out.Format == "json" {
-		status := "success"
-		message := fmt.Sprintf("All %d validation rules passed", len(rules))
-		if errorCount > 0 {
-			status = "error"
-			message = fmt.Sprintf("Found %d errors, %d warnings across %d rules",
-				errorCount, warningCount, len(rules))
-		} else if warningCount > 0 {
-			status = "warning"
-			message = fmt.Sprintf("Found %d warnings across %d rules", warningCount, len(rules))
-		}
+		return writeValidationsJSON(rules, result, errorCount, warningCount)
+	}
+	return writeValidationsText(rules, result, errorCount, warningCount)
+}
+
+// writeNoValidationRules emits the no-rules notice in the active output format.
+func writeNoValidationRules() error {
+	if out.Format == "json" {
 		return out.WriteAnalysisResult(output.AnalysisResult{
-			Status:  status,
-			Message: message,
-			Count:   errorCount + warningCount,
-			Details: violations,
+			Status:  "success",
+			Message: "No custom validation rules defined in metamodel",
+			Count:   0,
+			Details: []interface{}{},
 		})
 	}
+	out.WriteSuccess("No custom validation rules defined in metamodel")
+	return nil
+}
 
-	// Group violations by rule for text output
-	ruleViolations := make(map[string][]workspace.ValidationViolation)
+// countValidationViolationsBySeverity tallies error vs. warning violations.
+func countValidationViolationsBySeverity(violations []workspace.ValidationViolation) (errors, warnings int) {
 	for _, v := range violations {
+		if v.Severity == "error" {
+			errors++
+		} else {
+			warnings++
+		}
+	}
+	return errors, warnings
+}
+
+// writeValidationsJSON emits the JSON envelope and bubbles a non-zero exit when
+// any rule failed to run or any error-severity violation was found.
+func writeValidationsJSON(
+	rules []metamodel.ValidationRule,
+	result workspace.ValidationResult,
+	errorCount, warningCount int,
+) error {
+	status := "success"
+	message := fmt.Sprintf("All %d validation rules passed", len(rules))
+	if errorCount > 0 || result.HasErrors() {
+		status = "error"
+		message = fmt.Sprintf("Found %d errors, %d warnings across %d rules",
+			errorCount, warningCount, len(rules))
+	} else if warningCount > 0 {
+		status = "warning"
+		message = fmt.Sprintf("Found %d warnings across %d rules", warningCount, len(rules))
+	}
+	if jsonErr := out.WriteAnalysisResult(output.AnalysisResult{
+		Status:  status,
+		Message: message,
+		Count:   errorCount + warningCount,
+		Details: result.Violations,
+	}); jsonErr != nil {
+		return jsonErr
+	}
+	if errorCount > 0 || result.HasErrors() {
+		return errors.NewExitError(1)
+	}
+	return nil
+}
+
+// writeValidationsText emits the per-rule violation listing followed by
+// script/load error blocks and a final summary line. Returns a non-zero exit
+// when any error-severity violation was found or any rule failed to run.
+func writeValidationsText(
+	rules []metamodel.ValidationRule,
+	result workspace.ValidationResult,
+	errorCount, warningCount int,
+) error {
+	ruleViolations := make(map[string][]workspace.ValidationViolation)
+	for _, v := range result.Violations {
 		ruleViolations[v.RuleName] = append(ruleViolations[v.RuleName], v)
 	}
-
 	for _, rule := range rules {
-		vs := ruleViolations[rule.Name]
-		if len(vs) > 0 {
-			if rule.GetSeverity() == "error" {
-				out.WriteError("%s (%d):", rule.Description, len(vs))
-			} else {
-				out.WriteWarning("%s (%d):", rule.Description, len(vs))
-			}
-			for _, v := range vs {
-				out.WriteMessage("  %s: %s", v.EntityID, v.EntityTitle)
-			}
-		}
+		writeRuleViolations(rule, ruleViolations[rule.Name])
 	}
 
 	// Render script and load errors as separate sections after the
@@ -453,16 +476,41 @@ func runValidations(ctx context.Context, opts workspace.AnalyzeOptions) error {
 	// problems distinctly from "rule found a violation."
 	renderValidationErrors(result.ScriptErrors, result.LoadErrors)
 
-	if errorCount == 0 && warningCount == 0 && !result.HasErrors() {
-		out.WriteSuccess("All %d validation rules passed", len(rules))
-		return nil
-	}
-	if errorCount > 0 {
-		out.WriteError("Found %d errors, %d warnings across %d rules", errorCount, warningCount, len(rules))
-	} else if warningCount > 0 {
-		out.WriteWarning("Found %d warnings across %d rules", warningCount, len(rules))
+	writeValidationsSummary(len(rules), errorCount, warningCount, result.HasErrors())
+
+	if errorCount > 0 || result.HasErrors() {
+		return errors.NewExitError(1)
 	}
 	return nil
+}
+
+// writeRuleViolations renders the per-rule heading and entity list.
+func writeRuleViolations(rule metamodel.ValidationRule, vs []workspace.ValidationViolation) {
+	if len(vs) == 0 {
+		return
+	}
+	if rule.GetSeverity() == "error" {
+		out.WriteError("%s (%d):", rule.Description, len(vs))
+	} else {
+		out.WriteWarning("%s (%d):", rule.Description, len(vs))
+	}
+	for _, v := range vs {
+		out.WriteMessage("  %s: %s", v.EntityID, v.EntityTitle)
+	}
+}
+
+// writeValidationsSummary emits the trailing success/error/warning line.
+func writeValidationsSummary(ruleCount, errorCount, warningCount int, hasErrors bool) {
+	if errorCount == 0 && warningCount == 0 && !hasErrors {
+		out.WriteSuccess("All %d validation rules passed", ruleCount)
+		return
+	}
+	if errorCount > 0 {
+		out.WriteError("Found %d errors, %d warnings across %d rules",
+			errorCount, warningCount, ruleCount)
+	} else if warningCount > 0 {
+		out.WriteWarning("Found %d warnings across %d rules", warningCount, ruleCount)
+	}
 }
 
 // renderValidationErrors writes script-error and load-error blocks to
@@ -498,30 +546,35 @@ var analyzeAllCmd = &cobra.Command{
 		// Handle JSON output format
 		if out.Format == "json" {
 			type allAnalysisSummary struct {
-				Orphans            int `json:"orphans"`
-				Cardinality        int `json:"cardinality"`
-				Duplicates         int `json:"duplicates"`
-				Gaps               int `json:"gaps"`
-				Properties         int `json:"properties"`
-				ValidationErrors   int `json:"validation_errors"`
-				ValidationWarnings int `json:"validation_warnings"`
+				Orphans                int `json:"orphans"`
+				Cardinality            int `json:"cardinality"`
+				Duplicates             int `json:"duplicates"`
+				Gaps                   int `json:"gaps"`
+				Properties             int `json:"properties"`
+				ValidationErrors       int `json:"validation_errors"`
+				ValidationWarnings     int `json:"validation_warnings"`
+				ValidationScriptErrors int `json:"validation_script_errors"`
+				ValidationLoadErrors   int `json:"validation_load_errors"`
 			}
 
 			jsonSummary := allAnalysisSummary{
-				Orphans:            summary.Orphans,
-				Cardinality:        summary.Cardinality,
-				Duplicates:         summary.Duplicates,
-				Gaps:               summary.Gaps,
-				Properties:         summary.PropertyErrors,
-				ValidationErrors:   summary.ValidationErrors,
-				ValidationWarnings: summary.ValidationWarnings,
+				Orphans:                summary.Orphans,
+				Cardinality:            summary.Cardinality,
+				Duplicates:             summary.Duplicates,
+				Gaps:                   summary.Gaps,
+				Properties:             summary.PropertyErrors,
+				ValidationErrors:       summary.ValidationErrors,
+				ValidationWarnings:     summary.ValidationWarnings,
+				ValidationScriptErrors: summary.ValidationScriptErrors,
+				ValidationLoadErrors:   summary.ValidationLoadErrors,
 			}
 
+			validationFailures := summary.ValidationScriptErrors + summary.ValidationLoadErrors
 			totalIssues := summary.Orphans + summary.Cardinality + summary.Duplicates +
-				summary.Gaps + summary.PropertyErrors + summary.ValidationErrors
+				summary.Gaps + summary.PropertyErrors + summary.ValidationErrors + validationFailures
 			status := "success"
 			message := "All analyses passed"
-			if summary.ValidationErrors > 0 || summary.PropertyErrors > 0 {
+			if summary.ValidationErrors > 0 || summary.PropertyErrors > 0 || validationFailures > 0 {
 				status = "error"
 				message = fmt.Sprintf("Found %d issues requiring attention", totalIssues)
 			} else if totalIssues > 0 || summary.ValidationWarnings > 0 {
@@ -548,6 +601,14 @@ var analyzeAllCmd = &cobra.Command{
 		if len(meta.Validations) > 0 {
 			summaryItems = append(summaryItems, fmt.Sprintf("Validation Errors: %d", summary.ValidationErrors))
 			summaryItems = append(summaryItems, fmt.Sprintf("Validation Warnings: %d", summary.ValidationWarnings))
+			if summary.ValidationScriptErrors > 0 {
+				summaryItems = append(summaryItems,
+					fmt.Sprintf("Validation Script Errors: %d", summary.ValidationScriptErrors))
+			}
+			if summary.ValidationLoadErrors > 0 {
+				summaryItems = append(summaryItems,
+					fmt.Sprintf("Validation Load Errors: %d", summary.ValidationLoadErrors))
+			}
 		}
 		out.WriteSummaryBox(summaryItems)
 		out.WriteMessage("")
@@ -620,7 +681,7 @@ Examples:
   rela analyze schema --cleanup --dry-run  # Preview cleanup changes`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if schemaThreshold < 0 {
-			return errors.New("--threshold must be non-negative")
+			return stderrors.New("--threshold must be non-negative")
 		}
 
 		// Load optional config files
