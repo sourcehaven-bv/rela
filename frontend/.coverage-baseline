@@ -14,8 +14,10 @@ src/stores/entities.ts;204;204
 src/stores/git.ts;92;92
 src/stores/index.ts;4;4
 src/stores/schema.ts;169;166
+src/stores/scriptError.ts;33;33
 src/stores/ui.ts;150;150
 src/types/config.ts;303;303
+src/types/scriptError.ts;53;0
 src/utils/dom.ts;14;14
 src/utils/filters.ts;213;213
 src/utils/format.ts;114;103
