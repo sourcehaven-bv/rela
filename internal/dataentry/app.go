@@ -116,11 +116,6 @@ type App struct {
 	// whole point of having a cache in a long-lived server.
 	scriptEngine *script.Engine
 
-	// scriptErrorPolicy controls how much detail script-failure responses
-	// expose. Default zero-value: loopback callers get full detail, all
-	// others get a degraded envelope (message + line + correlation id only).
-	scriptErrorPolicy ScriptErrorPolicy
-
 	// state holds the current reloadable snapshot. Readers: a.State().
 	// Writers: onReload rebuilds and publishes a new state after file
 	// changes. Initial state is published in NewApp.

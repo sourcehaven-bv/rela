@@ -1000,6 +1000,12 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 }
 
 // automationSideEffects holds entities and relations created by automation.
+//
+// Errors is intentionally []string rather than []error: today no consumer
+// branches on the underlying type; UpdateResult.AutomationErrors is read
+// only as text by the API layer. Promote to []error (preserving
+// *lua.ScriptError) when a future surface needs typed access — at which
+// point formatAutomationError's stringification goes away.
 type automationSideEffects struct {
 	RelationsCreated []*entity.Relation
 	EntitiesCreated  []*entity.Entity

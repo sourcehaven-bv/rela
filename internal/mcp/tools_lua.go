@@ -179,7 +179,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 // projectRoot is "" for lua_eval (no script source on disk to slice);
 // otherwise the source FS is rooted there so the envelope can include
 // ±N lines around the failing line.
-func luaScriptErrorResult(surface, envelopePath, projectRoot string,
+func luaScriptErrorResult(surface lua.Surface, envelopePath, projectRoot string,
 	frames []lua.StackFrame, capturedOutput []byte, runErr error) *mcp.CallToolResult {
 	in := lua.BuildInput{
 		Surface:        surface,

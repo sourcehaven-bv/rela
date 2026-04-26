@@ -122,6 +122,22 @@ func (s *security) requireLocalHost(next http.Handler) http.Handler {
 	})
 }
 
+// AllowFullScriptDetail reports whether the caller of r should receive the
+// rich script-error envelope (source slice, full stack, captured print()
+// output). Returns true only for loopback peers. Behind a reverse proxy
+// this fails closed (the proxy IP is non-loopback) — the right default
+// since the data-entry server has no auth layer; rich envelopes would
+// otherwise leak script source and captured print() output across the
+// LAN. Intentionally does not honor X-Forwarded-For; any future
+// proxy-aware middleware must keep this gate honest.
+func (s *security) AllowFullScriptDetail(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return isLoopback(host)
+}
+
 // requireSameOrigin rejects sensitive requests whose Origin (or Referer fallback)
 // is not in the allowlist. Applies to every HTTP method on the configured
 // sensitive paths, because some endpoints (notably /api/command/) accept GET

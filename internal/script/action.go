@@ -44,12 +44,17 @@ var validMessageTypes = map[string]bool{
 //
 // triggerEntity is optional — nil when the action is invoked without entity
 // context. When non-nil it is exposed to the Lua script as the `entity` global.
+//
+// correlationID is stamped onto any *lua.ScriptError this returns so the
+// HTTP response and the slog log line stay matched up. Callers without
+// a correlation context (CLI, scheduler) may pass "".
 func (e *Engine) ExecuteAction(
 	scriptPath string,
 	deps lua.WriteDeps,
 	triggerEntity *entity.Entity,
 	params map[string]string,
 	timeout time.Duration,
+	correlationID string,
 ) (*ActionResponse, error) {
 	scriptCode, err := loadActionScript(deps.ProjectRoot, scriptPath)
 	if err != nil {
@@ -105,6 +110,7 @@ func (e *Engine) ExecuteAction(
 			Frames:         frames,
 			CapturedOutput: output.Bytes(),
 			Err:            err,
+			CorrelationID:  correlationID,
 			SourceFS:       os.DirFS(deps.ProjectRoot),
 		})
 	}

@@ -102,15 +102,12 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	// across action invocations. Constructing a fresh engine per
 	// request would reset the cache each time and defeat memoization.
 	resp, err := a.scriptEngine.ExecuteAction(action.Script, a.luaWriteDeps(),
-		ent, action.Params, actionTimeout)
+		ent, action.Params, actionTimeout, correlationID)
 	if err != nil {
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
-			// Tag the envelope with the correlation id so logs can be
-			// matched up with the response the user actually saw.
-			se.CorrelationID = correlationID
-			writeV1ScriptError(w, r, se, a.scriptErrorPolicy)
+			writeV1ScriptError(w, se, a.allowFullScriptDetail(r))
 			return
 		}
 		// Non-Lua failure (script-not-found, contract failure from

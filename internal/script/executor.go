@@ -127,13 +127,13 @@ func (e *Engine) ExecuteDocument(
 }
 
 // wrapScriptError builds a *lua.ScriptError from a runtime failure.
-// Captured output is left for the caller to attach via WithCapturedOutput
+// Captured output is left for the caller to attach via AttachCapturedOutput
 // when they own the buffer (e.g. the document renderer).
 //
 // For inline / synthetic paths (containing '<' or empty), no prefix is
 // applied — the path is used as-is for envelope display, and the source
 // FS is left out since there's nothing on disk to slice.
-func wrapScriptError(surface, subdir, scriptPath, entityID string,
+func wrapScriptError(surface lua.Surface, subdir, scriptPath, entityID string,
 	frames []lua.StackFrame, capturedOutput []byte, runErr error,
 	projectRoot string) error {
 	envelopePath := scriptPath

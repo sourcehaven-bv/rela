@@ -40,6 +40,13 @@ func newActionTestApp(t *testing.T, scripts map[string]string) *App {
 	app := newTestAppV1(t)
 	bindRepo(app, tmpDir)
 
+	// Wire security so allowFullScriptDetail works against r.RemoteAddr.
+	// Tests that want loopback callers set req.RemoteAddr = "127.0.0.1:..."
+	// explicitly; the default httptest "192.0.2.1:1234" is non-loopback.
+	if err := app.SetSecurityConfig(SecurityConfig{BindAddress: "127.0.0.1:8080"}); err != nil {
+		t.Fatalf("SetSecurityConfig: %v", err)
+	}
+
 	return app
 }
 

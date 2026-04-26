@@ -248,7 +248,7 @@ func (s *documentService) renderScript(entryID string, cfg documentRenderConfig)
 		// up unchanged so the HTTP layer can branch via errors.As.
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
-			return "", se.WithCapturedOutput(buf.Bytes())
+			return "", se.AttachCapturedOutput(buf.Bytes())
 		}
 		return "", fmt.Errorf("script render: %w", err)
 	}

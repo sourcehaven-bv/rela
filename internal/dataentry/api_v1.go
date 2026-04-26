@@ -2065,7 +2065,7 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
-			writeV1ScriptError(w, r, se, a.scriptErrorPolicy)
+			writeV1ScriptError(w, se, a.allowFullScriptDetail(r))
 			return
 		}
 		writeV1Error(w, r, http.StatusInternalServerError, "render_failed", "Document rendering failed", err.Error())

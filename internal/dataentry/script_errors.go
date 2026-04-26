@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -12,8 +11,13 @@ import (
 // failure. The HTTP layer always returns this with status 422 so the
 // frontend can branch on `error == "script_error"`. Every field except
 // `correlation_id`, `script.path`, and `lua.message` is loopback-gated:
-// non-loopback callers receive a degraded shape unless the operator has
-// explicitly opted in to full detail (see ScriptErrorPolicy).
+// non-loopback callers receive a degraded shape (see
+// security.AllowFullScriptDetail).
+//
+// JSON tags on lua.ScriptError are advisory: each consumer owns its
+// wire shape. Data-entry uses this envelope; MCP marshals lua.ScriptError
+// directly. Adding a field to lua.ScriptError requires deciding whether
+// to mirror it here or let it surface only over MCP.
 type ScriptErrorEnvelope struct {
 	Error          string           `json:"error"`
 	CorrelationID  string           `json:"correlation_id,omitempty"`
@@ -42,47 +46,31 @@ type ScriptErrorLua struct {
 	Line    int    `json:"line,omitempty"`
 }
 
-// ScriptErrorPolicy decides how much detail crosses the wire. The
-// constructor honors both the request peer (loopback callers always
-// get full detail) and an operator opt-in for non-loopback peers.
-//
-// Off-by-default for non-loopback because the data-entry server has no
-// auth layer; rich envelopes would otherwise leak script source and
-// captured print() output across the LAN.
-type ScriptErrorPolicy struct {
-	// AlwaysFullDetail bypasses the loopback check. Set to true via
-	// data-entry.yaml when the operator knows the deployment is safe.
-	AlwaysFullDetail bool
-}
-
-// allowFullDetail reports whether the caller of r should receive the
-// rich envelope (source slice, full stack, captured output).
-//
-// The decision is intentionally based on r.RemoteAddr only — no
-// X-Forwarded-For honoring. Behind a reverse proxy this fails closed
-// (proxy IP is non-loopback → degraded shape), which is the right
-// default since the data-entry server has no auth layer. Anyone adding
-// proxy-aware middleware later must keep this gate honest.
-func (p ScriptErrorPolicy) allowFullDetail(r *http.Request) bool {
-	if p.AlwaysFullDetail {
-		return true
+// allowFullScriptDetail asks the App's security layer whether r is
+// trusted enough for the rich envelope. Defaults to false when no
+// security has been wired (unit tests that bypass NewRouter), which
+// keeps tests honest about exercising the gate.
+func (a *App) allowFullScriptDetail(r *http.Request) bool {
+	if a.security == nil {
+		return false
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	return isLoopback(host)
+	return a.security.AllowFullScriptDetail(r)
 }
 
 // writeV1ScriptError renders a *lua.ScriptError as the structured
 // envelope. Always 422: the request was understood, the user-supplied
 // script was the problem.
-func writeV1ScriptError(w http.ResponseWriter, r *http.Request, se *lua.ScriptError, policy ScriptErrorPolicy) {
+//
+// fullDetail decides whether the gated fields (Source, Stack,
+// CapturedOutput) cross the wire. The caller obtains it from
+// security.AllowFullScriptDetail so the loopback decision lives next
+// to the rest of the host-trust policy.
+func writeV1ScriptError(w http.ResponseWriter, se *lua.ScriptError, fullDetail bool) {
 	env := ScriptErrorEnvelope{
 		Error:         "script_error",
 		CorrelationID: se.CorrelationID,
 		Script: ScriptIdentity{
-			Surface:  se.Surface,
+			Surface:  string(se.Surface),
 			Path:     se.Path,
 			EntityID: se.EntityID,
 			Args:     se.Args,
@@ -92,7 +80,7 @@ func writeV1ScriptError(w http.ResponseWriter, r *http.Request, se *lua.ScriptEr
 			Line:    se.LuaLine,
 		},
 	}
-	if policy.allowFullDetail(r) {
+	if fullDetail {
 		env.Source = se.Source
 		env.Stack = se.Stack
 		env.CapturedOutput = se.CapturedOutput

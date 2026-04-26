@@ -22,7 +22,7 @@ import (
 // action, document render, automation, MCP lua_run/lua_eval) wraps its
 // failures in *ScriptError so HTTP and MCP handlers can branch on the type.
 type ScriptError struct {
-	Surface        string         `json:"surface"`
+	Surface        Surface        `json:"surface"`
 	Path           string         `json:"path"`
 	EntityID       string         `json:"entity_id,omitempty"`
 	Args           map[string]any `json:"args,omitempty"`
@@ -33,6 +33,13 @@ type ScriptError struct {
 	CapturedOutput string         `json:"captured_output,omitempty"`
 	CorrelationID  string         `json:"correlation_id,omitempty"`
 }
+
+// Surface identifies which Lua execution path produced an error.
+// Closed enum: every legitimate value is one of the Surface* constants.
+// Defined as a typed string so callers writing `switch se.Surface { ... }`
+// get exhaustiveness analysis from go/analysis-driven linters and so the
+// JSON wire shape stays a plain string.
+type Surface string
 
 // StackFrame is one entry in a Lua stack trace.
 type StackFrame struct {
@@ -51,17 +58,17 @@ type SourceLine struct {
 
 // Surface constants used in ScriptError.Surface.
 const (
-	SurfaceAction     = "action"
-	SurfaceDocument   = "document"
-	SurfaceAutomation = "automation"
-	SurfaceLuaRun     = "lua_run"
-	SurfaceLuaEval    = "lua_eval"
+	SurfaceAction     Surface = "action"
+	SurfaceDocument   Surface = "document"
+	SurfaceAutomation Surface = "automation"
+	SurfaceLuaRun     Surface = "lua_run"
+	SurfaceLuaEval    Surface = "lua_eval"
 )
 
 // BuildInput aggregates the inputs to BuildScriptError. Callers fill in only
 // the fields they have; unset fields are omitted from the resulting envelope.
 type BuildInput struct {
-	Surface        string
+	Surface        Surface
 	Path           string
 	EntityID       string
 	Args           map[string]any
@@ -142,12 +149,12 @@ func BuildScriptError(in BuildInput) *ScriptError {
 	return se
 }
 
-// WithCapturedOutput attaches captured stdout to an existing ScriptError
+// AttachCapturedOutput attaches captured stdout to an existing ScriptError
 // and returns the receiver. Used by callers that own the print() buffer
 // outside the engine that produced the error (notably the data-entry
 // document renderer, which extracts the *ScriptError via errors.As and
 // then attaches the bytes it captured before the script failed).
-func (e *ScriptError) WithCapturedOutput(b []byte) *ScriptError {
+func (e *ScriptError) AttachCapturedOutput(b []byte) *ScriptError {
 	if e == nil || len(b) == 0 {
 		return e
 	}
@@ -170,8 +177,12 @@ func trimFrames(in []StackFrame) []StackFrame {
 	return out
 }
 
-// Error implements the error interface so *ScriptError can flow through
-// existing Go error plumbing.
+// Error renders the failure as "<path>:<line>: <message>", deliberately
+// matching gopher-lua's stock format so log lines are pasteable into
+// editor "go to file:line" affordances. This format is also what the
+// workspace automation layer flattens into its []string error slice
+// (see internal/workspace.formatAutomationError) — changing the layout
+// here changes what those log lines look like.
 func (e *ScriptError) Error() string {
 	if e == nil {
 		return ""
