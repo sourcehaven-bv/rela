@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
 	"os"
@@ -120,7 +121,7 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Run requested checks
-	checkErrors, err := runValidationChecks(checkWs, out, result.Metamodel)
+	checkErrors, err := runValidationChecks(cmd.Context(), checkWs, out, result.Metamodel)
 	if err != nil {
 		return err
 	}
@@ -141,6 +142,7 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 
 // runValidationChecks runs the requested validation checks and returns true if errors were found.
 func runValidationChecks(
+	ctx context.Context,
 	checkWs *workspace.Workspace,
 	checkOut *output.Writer,
 	meta workspace.MetamodelAccessor,
@@ -167,7 +169,7 @@ func runValidationChecks(
 	}
 
 	if checks.validations {
-		if runValidationsCheck(checkWs, checkOut, opts, checks.validationFilters) {
+		if runValidationsCheck(ctx, checkWs, checkOut, opts, checks.validationFilters) {
 			hasErrors = true
 		}
 	}
@@ -269,6 +271,7 @@ func runPropertiesCheck(checkWs *workspace.Workspace, checkOut *output.Writer, o
 
 // runValidationsCheck runs custom validation rules. Returns true if errors found.
 func runValidationsCheck(
+	ctx context.Context,
 	checkWs *workspace.Workspace,
 	checkOut *output.Writer,
 	opts workspace.AnalyzeOptions,
@@ -280,9 +283,9 @@ func runValidationsCheck(
 
 	var violations []workspace.ValidationViolation
 	if len(filters) > 0 {
-		violations = checkWs.RunValidationsFiltered(opts, filters)
+		violations = checkWs.RunValidationsFiltered(ctx, opts, filters)
 	} else {
-		violations = checkWs.RunValidations(opts)
+		violations = checkWs.RunValidations(ctx, opts)
 	}
 
 	errorCount, warningCount := workspace.CountValidationsBySeverity(violations)

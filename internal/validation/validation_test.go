@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -65,7 +66,7 @@ func TestCheck(t *testing.T) {
 	svc := New(meta, lua.ReadDeps{})
 
 	t.Run("finds violations", func(t *testing.T) {
-		violations := svc.Check(entities, nil)
+		violations := svc.Check(context.Background(), entities, nil)
 		if len(violations) != 1 {
 			t.Errorf("got %d violations, want 1", len(violations))
 		}
@@ -77,7 +78,7 @@ func TestCheck(t *testing.T) {
 	t.Run("scope filters violations", func(t *testing.T) {
 		// Only check TKT-001 (valid) and TKT-003 (not matching when)
 		scope := map[string]bool{"TKT-001": true, "TKT-003": true}
-		violations := svc.Check(entities, scope)
+		violations := svc.Check(context.Background(), entities, scope)
 		if len(violations) != 0 {
 			t.Errorf("got %d violations, want 0", len(violations))
 		}
@@ -85,7 +86,7 @@ func TestCheck(t *testing.T) {
 
 	t.Run("scope includes violation", func(t *testing.T) {
 		scope := map[string]bool{"TKT-002": true}
-		violations := svc.Check(entities, scope)
+		violations := svc.Check(context.Background(), entities, scope)
 		if len(violations) != 1 {
 			t.Errorf("got %d violations, want 1", len(violations))
 		}
@@ -123,7 +124,7 @@ func TestCheckWarnings(t *testing.T) {
 	}
 
 	svc := New(meta, lua.ReadDeps{})
-	violations := svc.Check(entities, nil)
+	violations := svc.Check(context.Background(), entities, nil)
 
 	if len(violations) != 1 {
 		t.Fatalf("got %d violations, want 1", len(violations))
@@ -170,7 +171,7 @@ func TestNoRules(t *testing.T) {
 	meta := &metamodel.Metamodel{}
 
 	svc := New(meta, lua.ReadDeps{})
-	violations := svc.Check([]*entity.Entity{{ID: "X", Type: "x"}}, nil)
+	violations := svc.Check(context.Background(), []*entity.Entity{{ID: "X", Type: "x"}}, nil)
 
 	if len(violations) != 0 {
 		t.Errorf("got %d violations, want 0", len(violations))
@@ -201,7 +202,7 @@ func TestAllEntityTypes(t *testing.T) {
 	}
 
 	svc := New(meta, lua.ReadDeps{})
-	violations := svc.Check(entities, nil)
+	violations := svc.Check(context.Background(), entities, nil)
 
 	if len(violations) != 1 {
 		t.Errorf("got %d violations, want 1", len(violations))

@@ -375,12 +375,12 @@ Example metamodel configuration:
 		if err != nil {
 			return err
 		}
-		return runValidations(*opts)
+		return runValidations(cmd.Context(), *opts)
 	},
 }
 
 // runValidations executes custom validation rules.
-func runValidations(opts workspace.AnalyzeOptions) error {
+func runValidations(ctx context.Context, opts workspace.AnalyzeOptions) error {
 	rules := meta.Validations
 	if len(rules) == 0 {
 		if out.Format == "json" {
@@ -395,7 +395,7 @@ func runValidations(opts workspace.AnalyzeOptions) error {
 		return nil
 	}
 
-	violations := ws.RunValidations(opts)
+	violations := ws.RunValidations(ctx, opts)
 
 	// Count by severity
 	errorCount, warningCount := 0, 0
@@ -468,7 +468,7 @@ var analyzeAllCmd = &cobra.Command{
 		}
 
 		// Get summary from workspace
-		summary := ws.AnalyzeAll(*opts)
+		summary := ws.AnalyzeAll(cmd.Context(), *opts)
 
 		// Handle JSON output format
 		if out.Format == "json" {
@@ -561,7 +561,7 @@ var analyzeAllCmd = &cobra.Command{
 		if len(meta.Validations) > 0 {
 			out.WriteMessage("")
 			out.WriteSectionHeader("Custom Validations")
-			if err := runValidations(*opts); err != nil {
+			if err := runValidations(cmd.Context(), *opts); err != nil {
 				errs = append(errs, fmt.Errorf("custom validations: %w", err))
 			}
 		}

@@ -184,7 +184,7 @@ func TestAnalyzeAll(t *testing.T) {
 	})
 	ws := NewForTest(meta, WithTestStore(s))
 
-	summary := ws.AnalyzeAll(AnalyzeOptions{})
+	summary := ws.AnalyzeAll(context.Background(), AnalyzeOptions{})
 	if summary.Orphans != 1 {
 		t.Errorf("Orphans = %d, want 1", summary.Orphans)
 	}
@@ -223,7 +223,7 @@ func TestRunValidations(t *testing.T) {
 	})
 	ws := NewForTest(meta, WithTestStore(s))
 
-	violations := ws.RunValidations(AnalyzeOptions{})
+	violations := ws.RunValidations(context.Background(), AnalyzeOptions{})
 	if len(violations) != 1 {
 		t.Fatalf("got %d violations, want 1", len(violations))
 	}
@@ -274,13 +274,13 @@ func TestRunValidationsFiltered(t *testing.T) {
 	ws := NewForTest(meta, WithTestStore(s))
 
 	// Filter by rule name.
-	violations := ws.RunValidationsFiltered(AnalyzeOptions{}, []ValidationFilter{{RuleName: "ticket-rule"}})
+	violations := ws.RunValidationsFiltered(context.Background(), AnalyzeOptions{}, []ValidationFilter{{RuleName: "ticket-rule"}})
 	if len(violations) != 1 || violations[0].RuleName != "ticket-rule" {
 		t.Errorf("rule-name filter: got %#v, want one ticket-rule violation", violations)
 	}
 
 	// Filter by entity type.
-	violations = ws.RunValidationsFiltered(AnalyzeOptions{}, []ValidationFilter{{EntityType: "bug"}})
+	violations = ws.RunValidationsFiltered(context.Background(), AnalyzeOptions{}, []ValidationFilter{{EntityType: "bug"}})
 	if len(violations) != 1 || violations[0].RuleName != "bug-rule" {
 		t.Errorf("entity-type filter: got %#v, want one bug-rule violation", violations)
 	}

@@ -60,9 +60,14 @@ type LuaViolation struct {
 // Errors are logged but do not propagate - validation fails open to avoid
 // blocking the entire validation run due to a single broken rule.
 func (s *Service) validateLua(
+	ctx context.Context,
 	ent *entity.Entity,
 	rule metamodel.ValidationRule,
 ) []LuaViolation {
+	// ctx will become the source of timeout/cancellation in commit 5.
+	// For this commit it threads through to keep the signature stable
+	// while leaving the existing context.WithTimeout block in place.
+	_ = ctx
 	code := rule.Lua
 	if code == "" && rule.LuaFile != "" {
 		var err error
