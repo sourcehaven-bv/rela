@@ -134,6 +134,12 @@ func CountBySeverity(violations []Violation) (errors, warnings int) {
 }
 
 // CheckRule checks a single rule against entities.
+//
+// Lua is hoisted to one runtime per rule (not per (rule, entity)) so
+// module-local Lua memoization persists across entities and the
+// rule's `*lua.Cache` namespace is reused. The runtime is constructed
+// at most once per CheckRule invocation; rules without Lua never
+// build one.
 func (s *Service) CheckRule(
 	ctx context.Context,
 	rule metamodel.ValidationRule,
@@ -153,11 +159,26 @@ func (s *Service) CheckRule(
 	// Filter candidates
 	candidates := s.filterCandidates(entities, scope, rule.EntityType)
 
-	// Check each candidate
+	// If the rule uses Lua, build a single runtime and reuse it across
+	// every entity. luaCtx is nil when the rule has no Lua at all.
+	var luaCtx *luaRuleContext
 	var result Result
+	if rule.Lua != "" || rule.LuaFile != "" {
+		built, loadErr := s.buildLuaRuleContext(ctx, rule)
+		if loadErr != nil {
+			result.LoadErrors = append(result.LoadErrors, *loadErr)
+			// Lua won't run for this rule; non-Lua checks still apply
+			// (when/then/content) so candidates are still iterated below.
+		} else if built != nil {
+			luaCtx = built
+			defer luaCtx.runtime.Close()
+		}
+	}
+
 	for _, e := range candidates {
-		entityViolations := s.checkEntityAgainstRule(ctx, e, rule, whenFilters, thenFilters)
-		result.Violations = append(result.Violations, entityViolations...)
+		entityResult := s.checkEntityAgainstRule(e, rule, whenFilters, thenFilters, luaCtx)
+		result.Violations = append(result.Violations, entityResult.Violations...)
+		result.ScriptErrors = append(result.ScriptErrors, entityResult.ScriptErrors...)
 	}
 	return result
 }
@@ -182,17 +203,27 @@ func (s *Service) filterCandidates(
 	return candidates
 }
 
+// entityResult is the per-entity outcome of CheckRule. It carries
+// Violations and ScriptErrors but never LoadErrors (those are
+// per-rule, hoisted out of the entity loop).
+type entityResult struct {
+	Violations   []Violation
+	ScriptErrors []*lua.ScriptError
+}
+
 // checkEntityAgainstRule checks if an entity violates the given rule.
-// Returns violations found, or empty slice if entity passes.
+// luaCtx, when non-nil, supplies the per-rule runtime + envelope path
+// for Lua execution; passing nil disables the Lua path even when the
+// rule defines lua/lua_file (used when the script failed to load).
 func (s *Service) checkEntityAgainstRule(
-	ctx context.Context,
 	e *entity.Entity,
 	rule metamodel.ValidationRule,
 	whenFilters, thenFilters []*filter.Filter,
-) []Violation {
+	luaCtx *luaRuleContext,
+) entityResult {
 	entityDef, ok := s.deps.Meta.GetEntityDef(e.Type)
 	if !ok {
-		return nil
+		return entityResult{}
 	}
 
 	rec := filter.Record{ID: e.ID, Type: e.Type, Properties: e.Properties}
@@ -201,7 +232,7 @@ func (s *Service) checkEntityAgainstRule(
 	if len(whenFilters) > 0 {
 		matches, err := filter.MatchAll(rec, whenFilters, entityDef, s.deps.Meta)
 		if err != nil || !matches {
-			return nil
+			return entityResult{}
 		}
 	}
 
@@ -209,58 +240,65 @@ func (s *Service) checkEntityAgainstRule(
 	if len(thenFilters) > 0 {
 		satisfies, err := filter.MatchAll(rec, thenFilters, entityDef, s.deps.Meta)
 		if err != nil || !satisfies {
-			return []Violation{{
-				RuleName:    rule.Name,
-				Description: rule.Description,
-				Severity:    rule.GetSeverity(),
-				EntityID:    e.ID,
-				EntityTitle: e.Title(),
-			}}
+			return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
 		}
 	}
 
 	// Check Lua validation rules
-	if rule.Lua != "" || rule.LuaFile != "" {
-		luaViolations := s.runLuaValidation(ctx, e, rule)
+	if luaCtx != nil {
+		luaViolations, scriptErr := s.runLuaForEntity(e, rule, luaCtx)
+		if scriptErr != nil {
+			return entityResult{ScriptErrors: []*lua.ScriptError{scriptErr}}
+		}
 		if len(luaViolations) > 0 {
-			return luaViolations
+			return entityResult{Violations: luaViolations}
 		}
 	}
 
 	// Check content rules
 	if rule.Content != nil && !CheckContentRule(e.Content, rule.Content) {
-		return []Violation{{
-			RuleName:    rule.Name,
-			Description: rule.Description,
-			Severity:    rule.GetSeverity(),
-			EntityID:    e.ID,
-			EntityTitle: e.Title(),
-		}}
+		return entityResult{Violations: []Violation{newViolation(rule, e, rule.Description)}}
 	}
 
-	return nil
+	return entityResult{}
 }
 
-// runLuaValidation runs Lua validation and returns violations.
-// Returns empty slice if validation passes or Lua is not configured.
-func (s *Service) runLuaValidation(
-	ctx context.Context, e *entity.Entity, rule metamodel.ValidationRule,
-) []Violation {
-	luaViolations := s.validateLua(ctx, e, rule)
-	if len(luaViolations) == 0 {
-		return nil
+// newViolation constructs a Violation tagged with the rule's metadata.
+// description overrides rule.Description for Lua-sourced violations
+// (which carry their own custom messages).
+func newViolation(rule metamodel.ValidationRule, e *entity.Entity, description string) Violation {
+	return Violation{
+		RuleName:    rule.Name,
+		Description: description,
+		Severity:    rule.GetSeverity(),
+		EntityID:    e.ID,
+		EntityTitle: e.Title(),
 	}
+}
 
-	// Convert LuaViolations to Violations
+// runLuaForEntity runs the per-rule Lua against a single entity, using
+// the runtime built once in CheckRule. Returns the violations parsed
+// from the Lua return value, or a *lua.ScriptError if the Lua failed
+// (compile, runtime, timeout, contract violation).
+func (s *Service) runLuaForEntity(
+	e *entity.Entity, rule metamodel.ValidationRule, luaCtx *luaRuleContext,
+) ([]Violation, *lua.ScriptError) {
+	luaViolations, scriptErr := s.validateLuaWithRuntime(e, rule, luaCtx)
+	if scriptErr != nil {
+		return nil, scriptErr
+	}
+	if len(luaViolations) == 0 {
+		return nil, nil
+	}
 	violations := make([]Violation, len(luaViolations))
 	for i, lv := range luaViolations {
 		violations[i] = Violation{
 			RuleName:    rule.Name,
-			Description: lv.Message, // Use Lua's custom message
+			Description: lv.Message,
 			Severity:    lv.Severity,
 			EntityID:    e.ID,
 			EntityTitle: e.Title(),
 		}
 	}
-	return violations
+	return violations, nil
 }

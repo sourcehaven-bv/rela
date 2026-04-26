@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,177 +31,218 @@ type LuaViolation struct {
 	Severity string // "error" or "warning" (optional, defaults to rule's severity)
 }
 
-// validateLua runs Lua validation for an entity and returns any violations.
+// luaRuleContext carries the per-rule Lua state built once in
+// CheckRule and reused across every entity that hits the rule's Lua
+// branch. The runtime is owned by CheckRule and Closed via defer
+// there; this struct just holds the references the entity loop needs.
+type luaRuleContext struct {
+	runtime      *lua.Runtime
+	code         string // already-loaded script source
+	envelopePath string // "validations/<rule-name>" or "validations/<file>"
+	sourceFS     fs.FS  // os.DirFS(projectRoot) for lua_file rules; nil for inline
+}
+
+// buildLuaRuleContext loads the rule's Lua source and constructs the
+// per-rule runtime. Returns:
 //
-// Validation rules run against a reader runtime that cannot mutate the graph.
-// Mutation bindings are not registered on the Lua side; attempting
-// rela.create_entity etc. from a validation rule raises a Lua "attempt to call
-// a nil value" error from the VM.
-//
-// Lua scripts should return:
-//   - nil (or no return): validation passes
-//   - table with "message" field: single violation
-//   - array of tables: multiple violations
-//
-// Each violation table can have:
-//   - message (string, required): the error message
-//   - severity (string, optional): "error" or "warning", defaults to rule's severity
-//
-// Example Lua returns:
-//
-//	return nil  -- pass
-//	return { message = "Field is required" }  -- single violation
-//	return { message = "Field is required", severity = "warning" }  -- with severity
-//	return {
-//	  { message = "Missing owner" },
-//	  { message = "Invalid status", severity = "error" }
-//	}  -- multiple violations
-//
-// Errors are logged but do not propagate - validation fails open to avoid
-// blocking the entire validation run due to a single broken rule.
-func (s *Service) validateLua(
+//   - (ctx, nil): runtime is ready; caller must Close it.
+//   - (nil, *LoadError): script-load failure (lua_file: missing,
+//     traversal-rejected, etc.); rule is skipped, surfaces as
+//     LoadError in the Result.
+//   - (nil, nil): rule has no Lua at all (caller shouldn't have asked).
+func (s *Service) buildLuaRuleContext(
 	ctx context.Context,
-	ent *entity.Entity,
 	rule metamodel.ValidationRule,
-) []LuaViolation {
-	// ctx will become the source of timeout/cancellation in commit 5.
-	// For this commit it threads through to keep the signature stable
-	// while leaving the existing context.WithTimeout block in place.
-	_ = ctx
+) (*luaRuleContext, *LoadError) {
 	code := rule.Lua
+	envelopePath := "validations/" + rule.Name
+	var sourceFS fs.FS
 	if code == "" && rule.LuaFile != "" {
-		var err error
-		code, err = s.loadLuaScript(rule.LuaFile)
+		loaded, err := s.loadLuaScript(rule.LuaFile)
 		if err != nil {
-			slog.Warn("validation rule failed to load script", "rule", rule.Name, "error", err)
-			return nil // fail open - skip rule on load error
+			return nil, &LoadError{RuleName: rule.Name, Message: err.Error()}
+		}
+		code = loaded
+		envelopePath = "validations/" + filepath.ToSlash(rule.LuaFile)
+		// Source slice context is read from project root; readSourceSlice
+		// then opens "validations/<file>" relative to that root.
+		if s.deps.ProjectRoot != "" {
+			sourceFS = os.DirFS(s.deps.ProjectRoot)
 		}
 	}
-
 	if code == "" {
-		return nil // no Lua validation
+		return nil, nil
 	}
+	// ctx is the parent context threaded from the caller; it becomes
+	// the source of timeout/cancellation when wired through Runtime
+	// options in commit 5. For now we keep the historical
+	// context.WithTimeout block at the call site.
+	_ = ctx
 
-	// Create reader runtime with discarded stdout.
-	//
-	// The reader runtime has no mutation bindings registered — a
-	// validation rule calling rela.create_entity hits a Lua "attempt to
-	// call a nil value" error rather than executing.
-	//
-	// AI is intentionally NOT wired into validation rules: an AI-powered
-	// rule would call out to a provider on every entity on every analyze
-	// run, with no quota or kill switch. The 5s validation timeout would
-	// also silently clip slow calls. AI-in-validations is tracked as a
-	// follow-up that needs its own design (cost guardrails, opt-in
-	// per rule, longer per-rule budget).
-	// Build the reader runtime. A shared cache is passed when wired so
-	// validation rules can memoize expensive lookups (e.g. an AI
-	// verdict) across entities within a single analyze pass.
-	// A stable pseudo-path per rule is set as the script path so the
-	// rule's cache entries are namespaced to itself — different rules
-	// calling rela.cache with the same user key don't collide.
-	var opts []lua.Option
+	// Reader runtime: read-only bindings; no mutation, no AI.
+	// AI is intentionally absent — an AI-powered rule would call out on
+	// every entity in every analyze run with no quota or kill switch
+	// (see PLAN-KAK2R Scope-out / TKT-LR5YC).
+	opts := []lua.Option{}
 	if s.cache != nil {
 		opts = append(opts, lua.WithCache(s.cache))
 	}
 	runtime := lua.NewReader(s.deps, io.Discard, opts...)
-	defer runtime.Close()
 
-	// Set arguments if provided
 	if len(rule.LuaArgs) > 0 {
 		runtime.SetArgs(rule.LuaArgs)
 	}
+	// The script-path doubles as the rela.cache.* namespace; using the
+	// envelope path keeps the namespace stable per rule (validations/
+	// prefixed) without colliding with real script files.
+	runtime.SetScriptPath(envelopePath)
 
-	// Pseudo script path: "validations/<rule-name>". Stable per rule,
-	// distinct from any real script so cache hits group by rule.
-	runtime.SetScriptPath("validations/" + rule.Name)
+	return &luaRuleContext{
+		runtime:      runtime,
+		code:         code,
+		envelopePath: envelopePath,
+		sourceFS:     sourceFS,
+	}, nil
+}
 
-	// Inject entity as global
-	ls := runtime.LState()
+// validateLuaWithRuntime executes the rule's Lua against ent using the
+// runtime owned by luaCtx. Returns LuaViolations parsed from the rule's
+// return value, or a *lua.ScriptError when Lua fails (compile, runtime,
+// timeout, contract violation).
+//
+// Validation rules run against a reader runtime that cannot mutate the
+// graph; mutation bindings are not registered, so rela.create_entity et
+// al raise "attempt to call a nil value" from the VM.
+//
+// Expected return shapes from the script:
+//
+//   - nil (or no return): validation passes.
+//   - table with "message" field: single violation.
+//   - array of tables: multiple violations.
+//
+// Each violation table:
+//   - message (string, required)
+//   - severity (string, optional): "error"|"warning", defaults to rule
+//
+// Anything else surfaces as a synthesized *lua.ScriptError so the
+// operator running rela analyze sees a structured envelope rather than
+// a silent skip.
+func (s *Service) validateLuaWithRuntime(
+	ent *entity.Entity,
+	rule metamodel.ValidationRule,
+	luaCtx *luaRuleContext,
+) ([]LuaViolation, *lua.ScriptError) {
+	ls := luaCtx.runtime.LState()
+	// Reset the entity global per entity so a long-lived runtime
+	// doesn't expose the previous iteration's entity to this rule.
 	ls.SetGlobal("entity", lua.EntityToTable(ls, ent))
 
-	// Compile the code into a function
-	fn, err := ls.LoadString(code)
-	if err != nil {
-		slog.Warn("validation rule Lua compile error", "rule", rule.Name, "error", err)
-		return nil // fail open - skip rule on compile error
-	}
-
-	// Set execution timeout to prevent infinite loops
-	ctx, cancel := context.WithTimeout(context.Background(), validationTimeout)
+	// Apply the existing per-call timeout. Commit 5 will replace this
+	// with WithTimeout/WithContext on the runtime so the parent ctx
+	// flows through.
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), validationTimeout)
 	defer cancel()
-	ls.SetContext(ctx)
+	ls.SetContext(timeoutCtx)
+	defer ls.RemoveContext()
 
-	// Push the function and call it with 0 args, expecting 1 return value
-	ls.Push(fn)
-	if err := ls.PCall(0, 1, nil); err != nil {
-		slog.Warn("validation rule Lua runtime error", "rule", rule.Name, "error", err)
-		return nil // fail open - skip rule on runtime error
+	ret, err := luaCtx.runtime.RunValidationString(luaCtx.code, luaCtx.envelopePath)
+	if err != nil {
+		return nil, lua.BuildScriptError(lua.BuildInput{
+			Surface:  lua.SurfaceValidation,
+			Path:     luaCtx.envelopePath,
+			EntityID: ent.ID,
+			Err:      err,
+			Frames:   luaCtx.runtime.ErrorFrames(),
+			SourceFS: luaCtx.sourceFS,
+		})
 	}
 
-	// Get return value from stack
-	ret := ls.Get(-1)
-	ls.Pop(1)
-
-	return parseLuaReturnValue(ret, rule)
+	violations, contractErr := parseLuaReturnValue(ret, rule, luaCtx.envelopePath, ent.ID)
+	if contractErr != nil {
+		return nil, contractErr
+	}
+	return violations, nil
 }
 
 // parseLuaReturnValue interprets the Lua return value as violations.
+// On contract violations (non-table, missing message field) it
+// synthesizes a *lua.ScriptError so the operator sees a structured
+// envelope rather than a silent skip.
 func parseLuaReturnValue(
 	ret golua.LValue,
 	rule metamodel.ValidationRule,
-) []LuaViolation {
+	envelopePath, entityID string,
+) ([]LuaViolation, *lua.ScriptError) {
 	// nil = pass
 	if ret == golua.LNil {
-		return nil
+		return nil, nil
 	}
 
 	// Must be a table
 	tbl, ok := ret.(*golua.LTable)
 	if !ok {
-		slog.Warn("validation rule must return nil or table",
-			"rule", rule.Name, "got", ret.Type().String())
-		return nil // fail open
+		return nil, contractError(envelopePath, entityID,
+			"validation rule must return nil or table, got "+ret.Type().String())
 	}
 
 	// Check if it's a single violation (has "message" key) or array of violations
 	if msg := tbl.RawGetString("message"); msg != golua.LNil {
 		// Single violation
-		v := luaTableToViolation(tbl, rule)
-		if v == nil {
-			return nil
+		v, err := luaTableToViolation(tbl, rule, envelopePath, entityID)
+		if err != nil {
+			return nil, err
 		}
-		return []LuaViolation{*v}
+		return []LuaViolation{*v}, nil
 	}
 
-	// Array of violations - iterate numeric keys
+	// Array of violations - iterate numeric keys. We collect contract
+	// errors separately so the first malformed item surfaces; valid
+	// preceding items are discarded (the rule's return is malformed
+	// regardless of which item tripped).
 	var violations []LuaViolation
+	var firstErr *lua.ScriptError
 	tbl.ForEach(func(key, value golua.LValue) {
+		if firstErr != nil {
+			return
+		}
 		// Only process numeric keys (array elements)
 		if _, ok := key.(golua.LNumber); !ok {
 			return
 		}
-		if itemTbl, ok := value.(*golua.LTable); ok {
-			if v := luaTableToViolation(itemTbl, rule); v != nil {
-				violations = append(violations, *v)
-			}
+		itemTbl, ok := value.(*golua.LTable)
+		if !ok {
+			firstErr = contractError(envelopePath, entityID,
+				"validation rule array element must be a table, got "+value.Type().String())
+			return
 		}
+		v, err := luaTableToViolation(itemTbl, rule, envelopePath, entityID)
+		if err != nil {
+			firstErr = err
+			return
+		}
+		violations = append(violations, *v)
 	})
+	if firstErr != nil {
+		return nil, firstErr
+	}
 
-	return violations
+	return violations, nil
 }
 
-// luaTableToViolation converts a Lua table to a LuaViolation.
+// luaTableToViolation converts a Lua table to a LuaViolation. A
+// missing or empty `message` field is a contract violation rendered
+// as *lua.ScriptError.
 func luaTableToViolation(
 	tbl *golua.LTable,
 	rule metamodel.ValidationRule,
-) *LuaViolation {
+	envelopePath, entityID string,
+) (*LuaViolation, *lua.ScriptError) {
 	// Message is required
 	msgVal := tbl.RawGetString("message")
 	msg, ok := msgVal.(golua.LString)
 	if !ok || msg == "" {
-		slog.Warn("validation rule violation table missing 'message' field", "rule", rule.Name)
-		return nil
+		return nil, contractError(envelopePath, entityID,
+			"validation rule violation table missing 'message' field")
 	}
 
 	// Severity is optional, defaults to rule's severity
@@ -218,6 +259,18 @@ func luaTableToViolation(
 	return &LuaViolation{
 		Message:  string(msg),
 		Severity: severity,
+	}, nil
+}
+
+// contractError synthesizes a *lua.ScriptError for a return-shape
+// contract violation. No frames or LuaLine — the rule ran fine, it
+// just returned the wrong shape.
+func contractError(envelopePath, entityID, message string) *lua.ScriptError {
+	return &lua.ScriptError{
+		Surface:    lua.SurfaceValidation,
+		Path:       envelopePath,
+		EntityID:   entityID,
+		LuaMessage: message,
 	}
 }
 
