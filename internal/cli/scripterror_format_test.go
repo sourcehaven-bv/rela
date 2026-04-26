@@ -66,6 +66,42 @@ func TestFormatScriptError_RendersSourceSliceWithHighlight(t *testing.T) {
 	}
 }
 
+func TestFormatScriptError_CollapsesMultiLineHeadline(t *testing.T) {
+	se := &lua.ScriptError{
+		Surface:    lua.SurfaceValidation,
+		Path:       "validations/foo",
+		LuaMessage: "context deadline exceeded\nat 5s\nin loop",
+	}
+	got := formatScriptError(se)
+
+	if strings.Contains(got, "\n") {
+		t.Errorf("got embedded newline in headline: %q", got)
+	}
+	if !strings.Contains(got, "context deadline exceeded at 5s in loop") {
+		t.Errorf("expected newlines collapsed to spaces; got: %q", got)
+	}
+	if len(got) > scriptErrorMessageMaxLen+5 {
+		t.Errorf("got len %d, want at most %d", len(got), scriptErrorMessageMaxLen+5)
+	}
+}
+
+func TestFormatScriptError_CollapsesMultiLineThenTruncates(t *testing.T) {
+	long := strings.Repeat("a\n", scriptErrorMessageMaxLen)
+	se := &lua.ScriptError{
+		Surface:    lua.SurfaceValidation,
+		Path:       "validations/foo",
+		LuaMessage: long,
+	}
+	got := formatScriptError(se)
+
+	if strings.Contains(got, "\n") {
+		t.Errorf("got embedded newline after collapse: %q", got)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("expected truncation marker; got: %q", got[len(got)-10:])
+	}
+}
+
 func TestFormatScriptError_TruncatesVeryLongHeadline(t *testing.T) {
 	long := strings.Repeat("a", scriptErrorMessageMaxLen+50)
 	se := &lua.ScriptError{

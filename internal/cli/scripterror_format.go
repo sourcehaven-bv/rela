@@ -37,7 +37,7 @@ func formatScriptError(se *lua.ScriptError) string {
 		return ""
 	}
 	var b strings.Builder
-	headline := se.Error()
+	headline := collapseHeadline(se.Error())
 	if len(headline) > scriptErrorMessageMaxLen {
 		headline = headline[:scriptErrorMessageMaxLen] + "..."
 	}
@@ -51,4 +51,21 @@ func formatScriptError(se *lua.ScriptError) string {
 		fmt.Fprintf(&b, "  %s%4d | %s", marker, line.N, line.Text)
 	}
 	return b.String()
+}
+
+// collapseHeadline replaces newlines with spaces and collapses runs
+// of whitespace so a multi-line LuaMessage (wrapped
+// context.DeadlineExceeded, multi-line errors) renders as a single
+// headline above the source slice rather than ragged multi-line
+// output before the slice begins.
+func collapseHeadline(s string) string {
+	if !strings.ContainsAny(s, "\n\r") {
+		return s
+	}
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	// Collapse runs of whitespace introduced by the replacement so
+	// the result reads as one normalized line.
+	return strings.Join(strings.Fields(s), " ")
 }
