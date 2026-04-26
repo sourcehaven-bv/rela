@@ -47,8 +47,17 @@ as failing.
 
 ## Fix
 
-Remove the job-level `if:`. Add a first step `Decide whether ticket gate applies`
-that sets `steps.gate.outputs.applies` based on the original conditions, and gate
-all subsequent steps with `if: steps.gate.outputs.applies == 'true'`. The job now
-always runs and always reports `success`; when the gate does not apply, only the
-decision step runs (and prints why).
+1. **Workflow change**: remove the job-level `if:` on `rela-tickets`. Add a first
+   step `Decide whether ticket gate applies` that sets
+   `steps.gate.outputs.applies`, and gate all subsequent steps with
+   `if: steps.gate.outputs.applies == 'true'`. The job always runs and always
+   reports `success`; when the gate does not apply, only the decision step runs.
+2. **Dependabot rework** (so the auto-merge path stays clean and so we drop a
+   workaround that hid this bug for trusted GitHub Actions while leaving npm/Go
+   stuck): move the supply-chain soak from PR-age (the deleted
+   `dependabot-deferred-merge.yml` cron) to publication-age via
+   `cooldown:` in `.github/dependabot.yml`. Simplify
+   `dependabot-auto-merge.yml` to a single immediate `gh pr merge --auto --squash`
+   for every Dependabot PR. Cooldown values: 7d default for npm (14d major),
+   3d for Go modules (7d major), 7d for third-party Actions (trusted-org Actions
+   excluded).
