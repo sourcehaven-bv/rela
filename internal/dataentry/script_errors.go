@@ -65,10 +65,20 @@ func (a *App) allowFullScriptDetail(r *http.Request) bool {
 // CapturedOutput) cross the wire. The caller obtains it from
 // security.AllowFullScriptDetail so the loopback decision lives next
 // to the rest of the host-trust policy.
-func writeV1ScriptError(w http.ResponseWriter, se *lua.ScriptError, fullDetail bool) {
+//
+// correlationID is the per-request id used in the matching slog line.
+// It overrides whatever the engine stamped on the *ScriptError —
+// important because singleflight may hand the same *ScriptError to
+// multiple requests, and each one needs its own id in the response.
+// Pass "" to fall back to se.CorrelationID.
+func writeV1ScriptError(w http.ResponseWriter, se *lua.ScriptError, fullDetail bool, correlationID string) {
+	corrID := correlationID
+	if corrID == "" {
+		corrID = se.CorrelationID
+	}
 	env := ScriptErrorEnvelope{
 		Error:         "script_error",
-		CorrelationID: se.CorrelationID,
+		CorrelationID: corrID,
 		Script: ScriptIdentity{
 			Surface:  string(se.Surface),
 			Path:     se.Path,

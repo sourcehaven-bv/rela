@@ -1225,6 +1225,20 @@ func (w *Workspace) executeLuaActions(
 		}
 
 		if err != nil {
+			// Automations have no incoming HTTP request to correlate
+			// against, so the slog line uses the automation name +
+			// triggering entity id as the natural identity. Operators
+			// grep on those rather than a per-request hex.
+			triggerID := ""
+			if newEntity != nil {
+				triggerID = newEntity.ID
+			} else if oldEntity != nil {
+				triggerID = oldEntity.ID
+			}
+			slog.Warn("automation script failed",
+				"automation", action.AutomationName,
+				"entity", triggerID,
+				"error", err)
 			effects.Errors = append(effects.Errors, formatAutomationError(action, err))
 		}
 	}

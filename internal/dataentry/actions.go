@@ -107,7 +107,7 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
-			writeV1ScriptError(w, se, a.allowFullScriptDetail(r))
+			writeV1ScriptError(w, se, a.allowFullScriptDetail(r), correlationID)
 			return
 		}
 		// Non-Lua failure (script-not-found, contract failure from
