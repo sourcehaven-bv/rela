@@ -1068,15 +1068,26 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 		ByCheck:  make(map[string]int),
 	}
 
+	// Loopback gate: same policy as action / document surfaces.
+	// Non-loopback callers get a degraded envelope on script-error
+	// issues (no source slice, no stack, no captured output).
+	fullDetail := a.allowFullScriptDetail(r)
+
 	for _, section := range analysisResult.Sections {
 		for _, issue := range section.Issues {
-			result.Issues = append(result.Issues, APIIssue{
+			api := APIIssue{
 				EntityID:   issue.EntityID,
 				EntityType: issue.EntityType,
+				Title:      issue.Title,
 				Message:    issue.Message,
 				Severity:   issue.Severity,
 				CheckType:  section.Name,
-			})
+			}
+			if issue.ScriptError != nil {
+				env := buildScriptErrorEnvelope(issue.ScriptError, fullDetail, "")
+				api.ScriptError = &env
+			}
+			result.Issues = append(result.Issues, api)
 			result.ByCheck[section.Name]++
 		}
 	}

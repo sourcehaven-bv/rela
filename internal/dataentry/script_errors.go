@@ -57,21 +57,21 @@ func (a *App) allowFullScriptDetail(r *http.Request) bool {
 	return a.security.AllowFullScriptDetail(r)
 }
 
-// writeV1ScriptError renders a *lua.ScriptError as the structured
-// envelope. Always 422: the request was understood, the user-supplied
-// script was the problem.
+// buildScriptErrorEnvelope renders a *lua.ScriptError as the structured
+// wire envelope. Shared by the action surface (writeV1ScriptError) and
+// the analyze surface (which embeds the envelope inside an AnalysisIssue
+// instead of returning it as the top-level body).
 //
 // fullDetail decides whether the gated fields (Source, Stack,
 // CapturedOutput) cross the wire. The caller obtains it from
 // security.AllowFullScriptDetail so the loopback decision lives next
 // to the rest of the host-trust policy.
 //
-// correlationID is the per-request id used in the matching slog line.
-// It overrides whatever the engine stamped on the *ScriptError —
-// important because singleflight may hand the same *ScriptError to
-// multiple requests, and each one needs its own id in the response.
-// Pass "" to fall back to se.CorrelationID.
-func writeV1ScriptError(w http.ResponseWriter, se *lua.ScriptError, fullDetail bool, correlationID string) {
+// correlationID overrides whatever the engine stamped on the
+// *ScriptError — important because singleflight may hand the same
+// *ScriptError to multiple requests, and each one needs its own id in
+// the response. Pass "" to fall back to se.CorrelationID.
+func buildScriptErrorEnvelope(se *lua.ScriptError, fullDetail bool, correlationID string) ScriptErrorEnvelope {
 	corrID := correlationID
 	if corrID == "" {
 		corrID = se.CorrelationID
@@ -95,6 +95,16 @@ func writeV1ScriptError(w http.ResponseWriter, se *lua.ScriptError, fullDetail b
 		env.Stack = se.Stack
 		env.CapturedOutput = se.CapturedOutput
 	}
+	return env
+}
+
+// writeV1ScriptError renders a *lua.ScriptError as the structured
+// envelope. Always 422: the request was understood, the user-supplied
+// script was the problem.
+//
+// See buildScriptErrorEnvelope for the gating + correlation-id rules.
+func writeV1ScriptError(w http.ResponseWriter, se *lua.ScriptError, fullDetail bool, correlationID string) {
+	env := buildScriptErrorEnvelope(se, fullDetail, correlationID)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.WriteHeader(http.StatusUnprocessableEntity)

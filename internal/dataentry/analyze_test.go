@@ -360,6 +360,12 @@ func TestAnalyzeValidations_SurfacesScriptError(t *testing.T) {
 		}
 		if issue.Title == "broken-rule" || strings.Contains(issue.Message, "Validation script failed") {
 			foundScriptError = true
+			// The structured *lua.ScriptError must be attached so
+			// the data-entry frontend can open ScriptErrorDialog
+			// instead of just rendering the flat Message string.
+			if issue.ScriptError == nil {
+				t.Errorf("expected ScriptError to be populated on script-error issue; got nil")
+			}
 		}
 	}
 	if !foundScriptError {
@@ -403,6 +409,12 @@ func TestAnalyzeValidations_SurfacesLoadError(t *testing.T) {
 	}
 	if !foundLoadError {
 		t.Errorf("expected an issue tagged with rule name 'missing-script'; got %+v", section.Issues)
+	}
+	// Load failures are not Lua failures — no envelope for them.
+	for _, issue := range section.Issues {
+		if issue.Title == "missing-script" && issue.ScriptError != nil {
+			t.Errorf("LoadError issue should not have a ScriptError envelope; got %+v", issue.ScriptError)
+		}
 	}
 }
 

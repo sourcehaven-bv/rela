@@ -19,6 +19,15 @@ type AnalysisIssue struct {
 	Title      string
 	Message    string
 	Severity   string // "error" or "warning"
+
+	// ScriptError carries the raw *lua.ScriptError for validation
+	// rules whose Lua script failed. Non-nil only on script-error
+	// rows; the HTTP handler converts it to a wire envelope using
+	// the per-request loopback gate, so the structured detail
+	// (path, source slice, stack) reaches the frontend's existing
+	// ScriptErrorDialog rather than a flat string.
+	// LoadErrors do NOT get a ScriptError — they're not Lua failures.
+	ScriptError *lua.ScriptError
 }
 
 // AnalysisSection groups issues by analysis category.
@@ -440,11 +449,12 @@ func (a *App) analyzeValidations() AnalysisSection {
 		// operator needs to see.
 		for _, se := range full.ScriptErrors {
 			section.Issues = append(section.Issues, AnalysisIssue{
-				EntityID:   se.EntityID,
-				EntityType: "",
-				Title:      rule.Name,
-				Message:    "Validation script failed: " + scriptErrorSummary(se),
-				Severity:   "error",
+				EntityID:    se.EntityID,
+				EntityType:  "",
+				Title:       rule.Name,
+				Message:     "Validation script failed: " + scriptErrorSummary(se),
+				Severity:    "error",
+				ScriptError: se,
 			})
 		}
 		for _, le := range full.LoadErrors {

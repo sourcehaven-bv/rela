@@ -81,9 +81,18 @@ type APIAnalysisResult struct {
 type APIIssue struct {
 	EntityID   string `json:"entityId"`
 	EntityType string `json:"entityType"`
+	Title      string `json:"title,omitempty"`
 	Message    string `json:"message"`
 	Severity   string `json:"severity"` // "error" or "warning"
 	CheckType  string `json:"checkType"`
+
+	// ScriptError carries the structured Lua-failure envelope for
+	// validation script-error rows. Absent (omitempty) on every
+	// other row. The frontend uses presence as the discriminator:
+	// rows with scriptError open the ScriptErrorDialog instead of
+	// navigating to an entity. Same loopback gating as the
+	// action-surface envelope (security.AllowFullScriptDetail).
+	ScriptError *ScriptErrorEnvelope `json:"scriptError,omitempty"`
 }
 
 // handleAPIEntitiesCRUD routes /api/entities requests based on HTTP method.
