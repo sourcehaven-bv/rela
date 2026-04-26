@@ -18,6 +18,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
+// contractErrorSourceContext is the number of lines of context above and
+// below line 1 that contractError() includes when populating Source from
+// the rule's inline Lua text. Matches the default in internal/lua so the
+// modal renders the same shape for all validation surfaces.
+const contractErrorSourceContext = 3
+
 // validationsDir is the directory where validation script files must be located.
 const validationsDir = "validations"
 
@@ -77,6 +83,14 @@ func (s *Service) buildLuaRuleContext(
 	}
 	if code == "" {
 		return nil, nil
+	}
+	// Inline rules have no on-disk script, so wrap the rule's Lua text in
+	// a single-file fs.FS keyed on envelopePath. BuildScriptError opens
+	// SourceFS by the deepest user frame's Path (or se.Path) — both equal
+	// envelopePath here — so the modal gets a populated source slice for
+	// inline rules just like file-backed ones.
+	if sourceFS == nil {
+		sourceFS = inlineSourceFS(envelopePath, code)
 	}
 	// Reader runtime: read-only bindings; no mutation, no AI.
 	// AI is intentionally absent — an AI-powered rule would call out on
@@ -160,7 +174,7 @@ func (s *Service) validateLuaWithRuntime(
 		})
 	}
 
-	violations, contractErr := parseLuaReturnValue(ret, rule, luaCtx.envelopePath, ent.ID)
+	violations, contractErr := parseLuaReturnValue(ret, rule, luaCtx.envelopePath, luaCtx.code, ent.ID)
 	if contractErr != nil {
 		return nil, contractErr
 	}
@@ -170,11 +184,13 @@ func (s *Service) validateLuaWithRuntime(
 // parseLuaReturnValue interprets the Lua return value as violations.
 // On contract violations (non-table, missing message field) it
 // synthesizes a *lua.ScriptError so the operator sees a structured
-// envelope rather than a silent skip.
+// envelope rather than a silent skip. code is the rule's Lua source
+// (inline or file-loaded) and is forwarded to contractError so the
+// ScriptError envelope can carry a populated Source slice.
 func parseLuaReturnValue(
 	ret golua.LValue,
 	rule metamodel.ValidationRule,
-	envelopePath, entityID string,
+	envelopePath, code, entityID string,
 ) ([]LuaViolation, *lua.ScriptError) {
 	// nil = pass
 	if ret == golua.LNil {
@@ -184,14 +200,14 @@ func parseLuaReturnValue(
 	// Must be a table
 	tbl, ok := ret.(*golua.LTable)
 	if !ok {
-		return nil, contractError(envelopePath, entityID,
+		return nil, contractError(envelopePath, entityID, code,
 			"validation rule must return nil or table, got "+ret.Type().String())
 	}
 
 	// Check if it's a single violation (has "message" key) or array of violations
 	if msg := tbl.RawGetString("message"); msg != golua.LNil {
 		// Single violation
-		v, err := luaTableToViolation(tbl, rule, envelopePath, entityID)
+		v, err := luaTableToViolation(tbl, rule, envelopePath, code, entityID)
 		if err != nil {
 			return nil, err
 		}
@@ -214,11 +230,11 @@ func parseLuaReturnValue(
 		}
 		itemTbl, ok := value.(*golua.LTable)
 		if !ok {
-			firstErr = contractError(envelopePath, entityID,
+			firstErr = contractError(envelopePath, entityID, code,
 				"validation rule array element must be a table, got "+value.Type().String())
 			return
 		}
-		v, err := luaTableToViolation(itemTbl, rule, envelopePath, entityID)
+		v, err := luaTableToViolation(itemTbl, rule, envelopePath, code, entityID)
 		if err != nil {
 			firstErr = err
 			return
@@ -238,13 +254,13 @@ func parseLuaReturnValue(
 func luaTableToViolation(
 	tbl *golua.LTable,
 	rule metamodel.ValidationRule,
-	envelopePath, entityID string,
+	envelopePath, code, entityID string,
 ) (*LuaViolation, *lua.ScriptError) {
 	// Message is required
 	msgVal := tbl.RawGetString("message")
 	msg, ok := msgVal.(golua.LString)
 	if !ok || msg == "" {
-		return nil, contractError(envelopePath, entityID,
+		return nil, contractError(envelopePath, entityID, code,
 			"validation rule violation table missing 'message' field")
 	}
 
@@ -266,15 +282,128 @@ func luaTableToViolation(
 }
 
 // contractError synthesizes a *lua.ScriptError for a return-shape
-// contract violation. No frames or LuaLine — the rule ran fine, it
-// just returned the wrong shape.
-func contractError(envelopePath, entityID, message string) *lua.ScriptError {
-	return &lua.ScriptError{
+// contract violation. The rule ran fine — it just returned the wrong
+// shape — so there's no captured frame; we default LuaLine to 1 and
+// render the rule's source so the modal still shows the script body
+// the operator needs to see.
+//
+// code is the rule's Lua source (inline `lua:` text or the loaded
+// `lua_file:` content). When empty, Source is left nil and the modal
+// falls back to the bare message bar.
+func contractError(envelopePath, entityID, code, message string) *lua.ScriptError {
+	se := &lua.ScriptError{
 		Surface:    lua.SurfaceValidation,
 		Path:       envelopePath,
 		EntityID:   entityID,
 		LuaMessage: message,
 	}
+	if code != "" {
+		se.LuaLine = 1
+		se.Source = sourceLinesAround(code, 1, contractErrorSourceContext)
+	}
+	return se
+}
+
+// inlineSourceFS returns a single-entry fs.FS that serves the given
+// inline Lua text under name. readSourceSlice in internal/lua opens
+// SourceFS by the deepest user frame's Path (or the BuildInput.Path);
+// for inline rules both equal envelopePath, so the returned FS just
+// has to map that exact key to the rule's text.
+//
+// Kept as a hand-rolled fs.FS (rather than testing/fstest.MapFS) so we
+// don't pull the testing scaffolding into a non-test production path.
+func inlineSourceFS(name, code string) fs.FS {
+	return inlineFS{name: name, data: []byte(code)}
+}
+
+// inlineFS is a single-file fs.FS used by validation surfaces to
+// expose an inline Lua rule's body for source-slice rendering.
+type inlineFS struct {
+	name string
+	data []byte
+}
+
+func (m inlineFS) Open(name string) (fs.File, error) {
+	if name != m.name {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+	}
+	return &inlineFile{name: m.name, data: m.data}, nil
+}
+
+// inlineFileMode is the fs.FileMode reported by inlineFile.Mode(). The
+// file content is fixed by the metamodel — read-only for everyone.
+const inlineFileMode fs.FileMode = 0o444
+
+// inlineFile is the fs.File handle returned by inlineFS.Open. It also
+// satisfies the fs.FileInfo it returns from Stat, so callers (notably
+// readSourceSlice via fs.Stat) get a non-zero Size that's compared
+// against maxSourceFileSize.
+type inlineFile struct {
+	name   string
+	data   []byte
+	offset int
+	closed bool
+}
+
+func (f *inlineFile) Stat() (fs.FileInfo, error) { return f, nil }
+
+func (f *inlineFile) Read(p []byte) (int, error) {
+	if f.closed {
+		return 0, fs.ErrClosed
+	}
+	if f.offset >= len(f.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, f.data[f.offset:])
+	f.offset += n
+	return n, nil
+}
+
+func (f *inlineFile) Close() error {
+	f.closed = true
+	return nil
+}
+
+func (f *inlineFile) Name() string       { return f.name }
+func (f *inlineFile) Size() int64        { return int64(len(f.data)) }
+func (f *inlineFile) Mode() fs.FileMode  { return inlineFileMode }
+func (f *inlineFile) ModTime() time.Time { return time.Time{} }
+func (f *inlineFile) IsDir() bool        { return false }
+func (f *inlineFile) Sys() any           { return nil }
+
+// sourceLinesAround returns ±context lines of code around the given
+// 1-indexed failingLine, mirroring readSourceSlice in internal/lua so
+// inline contract errors render identically to file-backed runtime
+// errors. Returns nil when code is empty or failingLine is out of
+// range.
+func sourceLinesAround(code string, failingLine, context int) []lua.SourceLine {
+	if code == "" || failingLine <= 0 {
+		return nil
+	}
+	lines := strings.Split(code, "\n")
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	if failingLine > len(lines) {
+		return nil
+	}
+	from := failingLine - context
+	if from < 1 {
+		from = 1
+	}
+	to := failingLine + context
+	if to > len(lines) {
+		to = len(lines)
+	}
+	out := make([]lua.SourceLine, 0, to-from+1)
+	for n := from; n <= to; n++ {
+		out = append(out, lua.SourceLine{
+			N:         n,
+			Text:      lines[n-1],
+			Highlight: n == failingLine,
+		})
+	}
+	return out
 }
 
 // loadLuaScript loads a Lua script from the validations/ directory.

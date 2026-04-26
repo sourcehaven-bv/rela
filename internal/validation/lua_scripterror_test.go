@@ -15,13 +15,16 @@ import (
 // TestLuaValidation_InlineCompileErrorSurfacesAsScriptError covers AC1:
 // a syntactically broken `lua:` block produces a *lua.ScriptError with
 // Surface=validation, Path=validations/<rule-name>, non-empty
-// LuaMessage, and renders cleanly via Error().
+// LuaMessage, and renders cleanly via Error(). The envelope's Source
+// field is populated from the rule's inline Lua text so the modal can
+// show the offending line — same render as file-backed rules.
 func TestLuaValidation_InlineCompileErrorSurfacesAsScriptError(t *testing.T) {
 	ws := newMockWorkspace()
+	const ruleLua = `if oops invalid`
 	rule := metamodel.ValidationRule{
 		Name:       "syntax-error",
 		EntityType: "ticket",
-		Lua:        `if oops invalid`,
+		Lua:        ruleLua,
 	}
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -56,6 +59,78 @@ func TestLuaValidation_InlineCompileErrorSurfacesAsScriptError(t *testing.T) {
 	}
 	if !result.HasErrors() {
 		t.Error("HasErrors = false, want true")
+	}
+	if len(se.Source) == 0 {
+		t.Fatal("Source is empty; want the rule's inline Lua text rendered in the source slice")
+	}
+	var sawRuleText bool
+	for _, sl := range se.Source {
+		if strings.Contains(sl.Text, "if oops invalid") {
+			sawRuleText = true
+		}
+	}
+	if !sawRuleText {
+		t.Errorf("Source slice did not include the rule's inline Lua text; got %+v", se.Source)
+	}
+}
+
+// TestLuaValidation_InlineRuntimeErrorIncludesSourceSlice covers the
+// inline-runtime branch of TKT-KXLWA: a runtime error in a `lua:` block
+// (no `lua_file:`) populates Source with the failing line highlighted,
+// just like a file-backed rule. Without this, the modal degenerates to
+// a bare message bar even though the rule body is right there in the
+// metamodel.
+func TestLuaValidation_InlineRuntimeErrorIncludesSourceSlice(t *testing.T) {
+	ws := newMockWorkspace()
+	// Multi-line so we can verify the failing line is highlighted and
+	// surrounding context lines are present. `return` must be the last
+	// statement in a Lua block (a trailing `local c = 3` would itself
+	// be a syntax error), so we put the failure mid-block via a local
+	// indirection that triggers at runtime.
+	const ruleLua = "local a = 1\n" +
+		"local b = 2\n" +
+		"local x = nil\n" +
+		"local q = x.field\n" +
+		"return nil\n"
+	rule := metamodel.ValidationRule{
+		Name:       "runtime-error",
+		EntityType: "ticket",
+		Lua:        ruleLua,
+	}
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+		},
+		Validations: []metamodel.ValidationRule{rule},
+	}
+	entities := []*entity.Entity{
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+	}
+
+	svc := New(meta, ws.services(t.TempDir()))
+	result := svc.Check(context.Background(), entities, nil)
+
+	if len(result.ScriptErrors) != 1 {
+		t.Fatalf("got %d ScriptErrors, want 1", len(result.ScriptErrors))
+	}
+	se := result.ScriptErrors[0]
+	if se.LuaLine == 0 {
+		t.Fatal("LuaLine = 0; want the runtime error's captured frame line")
+	}
+	if len(se.Source) == 0 {
+		t.Fatal("Source is empty; want the rule's inline Lua rendered around the failing line")
+	}
+	var foundHighlightedFailingLine bool
+	for _, sl := range se.Source {
+		if sl.Highlight {
+			foundHighlightedFailingLine = true
+			if !strings.Contains(sl.Text, "q = x.field") {
+				t.Errorf("highlighted line text = %q, want it to contain 'q = x.field'", sl.Text)
+			}
+		}
+	}
+	if !foundHighlightedFailingLine {
+		t.Errorf("no highlighted line in Source; got %+v", se.Source)
 	}
 }
 
@@ -350,9 +425,14 @@ func TestLuaValidation_LuaErrorDoesNotSuppressContentCheck(t *testing.T) {
 
 // TestLuaValidation_ContractErrorReturnNumber covers AC7 (case 1):
 // a Lua rule returning a non-table value produces a synthesized
-// *lua.ScriptError with no LuaLine and an explanatory message.
+// *lua.ScriptError. There's no captured frame to point at — the
+// rule ran cleanly, it just returned the wrong shape — so we
+// default LuaLine to 1 and populate Source from the rule's inline
+// text. That gives the operator something to look at in the modal
+// instead of a bare message bar.
 func TestLuaValidation_ContractErrorReturnNumber(t *testing.T) {
 	ws := newMockWorkspace()
+	const ruleLua = `return 42`
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
@@ -361,7 +441,7 @@ func TestLuaValidation_ContractErrorReturnNumber(t *testing.T) {
 			{
 				Name:       "returns-number",
 				EntityType: "ticket",
-				Lua:        `return 42`,
+				Lua:        ruleLua,
 			},
 		},
 	}
@@ -378,8 +458,23 @@ func TestLuaValidation_ContractErrorReturnNumber(t *testing.T) {
 	if !strings.Contains(se.LuaMessage, "must return nil or table") {
 		t.Errorf("LuaMessage = %q, want to mention 'must return nil or table'", se.LuaMessage)
 	}
-	if se.LuaLine != 0 {
-		t.Errorf("LuaLine = %d, want 0 (contract errors have no frame)", se.LuaLine)
+	if se.LuaLine != 1 {
+		t.Errorf("LuaLine = %d, want 1 (contract errors default to line 1 so the modal renders the script body)", se.LuaLine)
+	}
+	if len(se.Source) == 0 {
+		t.Fatal("Source is empty; want the rule's inline Lua so the modal can render the script body")
+	}
+	var foundReturn42 bool
+	for _, sl := range se.Source {
+		if strings.Contains(sl.Text, "return 42") {
+			foundReturn42 = true
+			if !sl.Highlight {
+				t.Error("expected the 'return 42' line to be highlighted")
+			}
+		}
+	}
+	if !foundReturn42 {
+		t.Errorf("Source did not include the rule's 'return 42' line; got %+v", se.Source)
 	}
 }
 
