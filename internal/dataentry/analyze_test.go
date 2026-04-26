@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -322,6 +323,86 @@ func TestAnalyzeValidations(t *testing.T) {
 	}
 	if section.Issues[0].Severity != "error" {
 		t.Errorf("expected severity 'error', got %q", section.Issues[0].Severity)
+	}
+}
+
+// TestAnalyzeValidations_SurfacesScriptError covers RR-MG0LG: a Lua
+// rule that fails to compile must appear as an error issue in the
+// analyze view rather than vanishing silently. The data-entry web
+// surface uses CheckRuleFull so ScriptErrors and LoadErrors no
+// longer disappear on the way through GenericValidator.
+func TestAnalyzeValidations_SurfacesScriptError(t *testing.T) {
+	g := newFixture()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:       "broken-rule",
+				EntityType: "ticket",
+				Lua:        `if oops invalid`,
+			},
+		},
+	}
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+
+	app := newTestApp(g, meta)
+	section := app.analyzeValidations()
+
+	if len(section.Issues) == 0 {
+		t.Fatal("expected the script error to surface as an analysis issue, got 0 issues")
+	}
+	var foundScriptError bool
+	for _, issue := range section.Issues {
+		if issue.Severity != "error" {
+			continue
+		}
+		if issue.Title == "broken-rule" || strings.Contains(issue.Message, "Validation script failed") {
+			foundScriptError = true
+		}
+	}
+	if !foundScriptError {
+		t.Errorf("expected an issue tagged with the broken rule; got %+v", section.Issues)
+	}
+}
+
+// TestAnalyzeValidations_SurfacesLoadError covers RR-MG0LG for the
+// load-error path: a `lua_file:` rule whose script does not exist
+// must appear as an error issue rather than silently dropping.
+func TestAnalyzeValidations_SurfacesLoadError(t *testing.T) {
+	g := newFixture()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:       "missing-script",
+				EntityType: "ticket",
+				LuaFile:    "no-such-file.lua",
+			},
+		},
+	}
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+
+	app := newTestApp(g, meta)
+	section := app.analyzeValidations()
+
+	if len(section.Issues) == 0 {
+		t.Fatal("expected the load error to surface as an analysis issue, got 0 issues")
+	}
+	var foundLoadError bool
+	for _, issue := range section.Issues {
+		if issue.Severity == "error" && issue.Title == "missing-script" {
+			foundLoadError = true
+			if !strings.Contains(issue.Message, "load failed") {
+				t.Errorf("expected message to mention load failed, got %q", issue.Message)
+			}
+		}
+	}
+	if !foundLoadError {
+		t.Errorf("expected an issue tagged with rule name 'missing-script'; got %+v", section.Issues)
 	}
 }
 
