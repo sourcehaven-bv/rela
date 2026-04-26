@@ -1,5 +1,10 @@
 name: Dependabot Auto-Merge
 
+# Soak protection lives in .github/dependabot.yml via `cooldown:` — by the
+# time a PR opens here, the dep version has already been published long
+# enough to catch retractions, advisories, and compromised releases. So we
+# approve and enable auto-merge unconditionally for every Dependabot PR.
+
 on: pull_request_target
 
 permissions:
@@ -23,97 +28,10 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Fetch Dependabot metadata
-        id: metadata
-        uses: dependabot/fetch-metadata@v3
-        with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-
-      # Go toolchain updates (go itself) — merge immediately after CI
-      - name: Auto-merge Go toolchain updates
-        if: steps.metadata.outputs.dependency-names == 'go' && steps.metadata.outputs.package-ecosystem == 'gomod'
+      - name: Approve and enable auto-merge
         run: |
           gh pr review --approve "$PR_URL"
           gh pr merge --auto --squash "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-
-      # GitHub Actions — check if all updated actions are from trusted orgs
-      - name: Check if Actions are from trusted orgs
-        id: trusted
-        if: steps.metadata.outputs.package-ecosystem == 'github_actions'
-        run: |
-          TRUSTED_ORGS="actions/ dependabot/ github/"
-          DEPS="${{ steps.metadata.outputs.dependency-names }}"
-
-          all_trusted=true
-          IFS=',' read -ra deps <<< "$DEPS"
-          for dep in "${deps[@]}"; do
-            dep=$(echo "$dep" | xargs)  # trim whitespace
-            trusted=false
-            for org in $TRUSTED_ORGS; do
-              if [[ "$dep" == ${org}* ]]; then
-                trusted=true
-                break
-              fi
-            done
-            if [ "$trusted" = false ]; then
-              echo "Untrusted action: $dep"
-              all_trusted=false
-            fi
-          done
-
-          echo "all_trusted=$all_trusted" >> "$GITHUB_OUTPUT"
-
-      # Trusted GitHub Actions (actions/*, dependabot/*, github/*) — merge immediately
-      - name: Auto-merge trusted GitHub Actions updates
-        if: >-
-          steps.metadata.outputs.package-ecosystem == 'github_actions'
-          && steps.trusted.outputs.all_trusted == 'true'
-        run: |
-          gh pr review --approve "$PR_URL"
-          gh pr merge --auto --squash "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-
-      # Third-party GitHub Actions — defer 7 days
-      - name: Approve third-party Actions updates (merge deferred 7 days)
-        if: >-
-          steps.metadata.outputs.package-ecosystem == 'github_actions'
-          && steps.trusted.outputs.all_trusted == 'false'
-        run: |
-          gh pr review --approve "$PR_URL" \
-            --body "Auto-approved. Merge deferred 7 days from PR creation for supply chain safety."
-          gh pr edit "$PR_URL" --add-label "dependabot-deferred"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-
-      # Go package updates — defer 7 days
-      - name: Approve package updates (merge deferred 7 days)
-        if: >-
-          steps.metadata.outputs.package-ecosystem == 'gomod'
-          && steps.metadata.outputs.dependency-names != 'go'
-        run: |
-          gh pr review --approve "$PR_URL" \
-            --body "Auto-approved. Merge deferred 7 days from PR creation for supply chain safety."
-          gh pr edit "$PR_URL" --add-label "dependabot-deferred"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-
-      # npm updates (frontend/, e2e/) — defer 7 days for supply-chain safety.
-      # npm packages have more maintainers and higher churn than Go modules,
-      # so the 7-day soak window catches post-publish retractions / malicious
-      # versions before merge. Same pattern as Go packages above.
-      - name: Approve npm updates (merge deferred 7 days)
-        if: steps.metadata.outputs.package-ecosystem == 'npm_and_yarn'
-        run: |
-          gh pr review --approve "$PR_URL" \
-            --body "Auto-approved. Merge deferred 7 days from PR creation for supply chain safety."
-          gh pr edit "$PR_URL" --add-label "dependabot-deferred"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

@@ -266,22 +266,40 @@ jobs:
 
   rela-tickets:
     name: Rela Tickets
-    if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'chore/') && !startsWith(github.head_ref, 'dependabot/')
     runs-on: ubuntu-latest
     steps:
+      - name: Decide whether ticket gate applies
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [[ "$EVENT_NAME" != "pull_request" ]] \
+             || [[ "$HEAD_REF" == chore/* ]] \
+             || [[ "$HEAD_REF" == dependabot/* ]]; then
+            echo "applies=false" >> "$GITHUB_OUTPUT"
+            echo "Ticket gate does not apply for $EVENT_NAME / $HEAD_REF; reporting success."
+          else
+            echo "applies=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.applies == 'true'
         with:
           fetch-depth: 0
 
       - name: Set up Go
+        if: steps.gate.outputs.applies == 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
 
       - name: Build rela
+        if: steps.gate.outputs.applies == 'true'
         run: go build -o bin/rela ./cmd/rela
 
       - name: Check for new or modified bug/feature/ticket entity
+        if: steps.gate.outputs.applies == 'true'
         run: |
           set -euo pipefail
           BASE_REF="${{ github.event.pull_request.base.sha }}"
@@ -308,6 +326,7 @@ jobs:
           echo "$CHANGED_ENTITIES"
 
       - name: Run rela validate
+        if: steps.gate.outputs.applies == 'true'
         run: |
           set -euo pipefail
           cd tickets
