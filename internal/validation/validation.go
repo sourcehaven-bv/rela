@@ -163,7 +163,8 @@ func (s *Service) CheckRule(
 	// every entity. luaCtx is nil when the rule has no Lua at all.
 	var luaCtx *luaRuleContext
 	var result Result
-	if rule.Lua != "" || rule.LuaFile != "" {
+	hasLua := rule.Lua != "" || rule.LuaFile != ""
+	if hasLua {
 		built, loadErr := s.buildLuaRuleContext(ctx, rule)
 		if loadErr != nil {
 			result.LoadErrors = append(result.LoadErrors, *loadErr)
@@ -171,14 +172,40 @@ func (s *Service) CheckRule(
 			// (when/then/content) so candidates are still iterated below.
 		} else if built != nil {
 			luaCtx = built
-			defer luaCtx.runtime.Close()
 		}
 	}
+	// Close the active runtime (if any) on exit. Reassigned below when
+	// the runtime is rebuilt after a ScriptError to flush any partial
+	// state (half-built coroutines, leaked locals) the rule may have
+	// left behind.
+	defer func() {
+		if luaCtx != nil {
+			luaCtx.runtime.Close()
+		}
+	}()
 
 	for _, e := range candidates {
 		entityResult := s.checkEntityAgainstRule(e, rule, whenFilters, thenFilters, luaCtx)
 		result.Violations = append(result.Violations, entityResult.Violations...)
 		result.ScriptErrors = append(result.ScriptErrors, entityResult.ScriptErrors...)
+
+		// If Lua errored on this entity, the runtime may be in an
+		// undefined state (partial coroutines, half-mutated globals).
+		// Close it and rebuild a fresh one for the next entity so the
+		// next rule invocation cannot observe leaked state. Cost is
+		// bounded — only paid when errors actually occur.
+		if hasLua && luaCtx != nil && len(entityResult.ScriptErrors) > 0 {
+			luaCtx.runtime.Close()
+			luaCtx = nil
+			rebuilt, loadErr := s.buildLuaRuleContext(ctx, rule)
+			if loadErr != nil {
+				// Script vanished mid-iteration — surface as LoadError
+				// and skip Lua for remaining entities.
+				result.LoadErrors = append(result.LoadErrors, *loadErr)
+			} else if rebuilt != nil {
+				luaCtx = rebuilt
+			}
+		}
 	}
 	return result
 }
