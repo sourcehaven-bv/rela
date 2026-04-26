@@ -493,14 +493,23 @@ func (r *Runtime) RunActionString(code, name string) (interface{}, error) {
 func (r *Runtime) RunValidationString(code, chunkname string) (lua.LValue, error) {
 	r.applyTimeout()
 
-	fn, err := r.L.Load(strings.NewReader(code), chunkname)
+	cleaned := stripShebang(code)
+	topBefore := r.L.GetTop()
+	fn, err := r.L.Load(strings.NewReader(cleaned), chunkname)
 	if err != nil {
+		// Compile failures don't push anything, but be defensive so a
+		// long-lived per-rule runtime can't accumulate orphaned LValues
+		// across N entities (gopher-lua's stack ceiling is ~256).
+		r.L.SetTop(topBefore)
 		return nil, err
 	}
 
-	topBefore := r.L.GetTop()
 	r.L.Push(fn)
 	if pcallErr := r.pcallWithCapture(); pcallErr != nil {
+		// PCall leaves the error message on the stack; reset to topBefore
+		// so callers can invoke RunValidationString in a tight loop without
+		// leaking stack slots per failed entity.
+		r.L.SetTop(topBefore)
 		return nil, pcallErr
 	}
 	topAfter := r.L.GetTop()

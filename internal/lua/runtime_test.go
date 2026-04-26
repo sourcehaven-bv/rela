@@ -2642,7 +2642,52 @@ func TestRunValidationString_HonorsTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
-	if elapsed > 5*time.Second {
-		t.Fatalf("busy loop ran for %v; expected context to interrupt quickly", elapsed)
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("busy loop ran for %v; expected context to interrupt within 500ms", elapsed)
+	}
+}
+
+// TestRunValidationString_ErrorPathDoesNotLeakStack asserts that
+// RunValidationString resets the Lua stack after a PCall failure so
+// repeatedly invoking it (e.g. one always-erroring rule across N
+// entities) does not accumulate orphaned LValues toward gopher-lua's
+// ~256-slot stack ceiling.
+func TestRunValidationString_ErrorPathDoesNotLeakStack(t *testing.T) {
+	ws := newMockWorkspace(t)
+	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
+	defer r.Close()
+
+	initialTop := r.L.GetTop()
+	for i := range 100 {
+		_, err := r.RunValidationString(`error("boom")`, "validations/leaky")
+		if err == nil {
+			t.Fatalf("iteration %d: expected error, got nil", i)
+		}
+	}
+	if got := r.L.GetTop(); got != initialTop {
+		t.Errorf("stack top after 100 erroring runs = %d, want %d (stack must not grow)",
+			got, initialTop)
+	}
+}
+
+// TestRunValidationString_StripsShebang asserts the shebang stripping
+// behavior matches sibling Run* methods so a script copied from the
+// CLI surface (where shebangs are common) still parses correctly when
+// dropped into a validation rule.
+func TestRunValidationString_StripsShebang(t *testing.T) {
+	ws := newMockWorkspace(t)
+	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
+	defer r.Close()
+
+	ret, err := r.RunValidationString("#!/usr/bin/env lua\nreturn 42", "validations/shebang")
+	if err != nil {
+		t.Fatalf("RunValidationString: %v", err)
+	}
+	num, ok := ret.(glua.LNumber)
+	if !ok {
+		t.Fatalf("expected LNumber, got %T", ret)
+	}
+	if num != 42 {
+		t.Errorf("got %v, want 42", num)
 	}
 }
