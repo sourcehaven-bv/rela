@@ -5,6 +5,7 @@ import { useKeyboardShortcuts, shortcutsModalOpen, useEvents } from '@/composabl
 import Sidebar from '@/components/common/Sidebar.vue'
 import StatusBar from '@/components/common/StatusBar.vue'
 import Toast from '@/components/common/Toast.vue'
+import ScriptErrorDialog from '@/components/common/ScriptErrorDialog.vue'
 import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal.vue'
 
 const schemaStore = useSchemaStore()
@@ -99,6 +100,7 @@ watch(
     </main>
     <StatusBar />
     <Toast />
+    <ScriptErrorDialog />
     <KeyboardShortcutsModal
       :open="shortcutsModalOpen"
       @close="shortcutsModalOpen = false"

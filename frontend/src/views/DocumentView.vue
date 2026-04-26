@@ -2,12 +2,14 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
+import { useScriptErrorStore } from '@/stores/scriptError'
 import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
 import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { renderMermaidDiagrams } from '@/utils/markdown'
 import { buildReturnTo } from '@/utils/returnPath'
+import { isScriptError } from '@/types/scriptError'
 import BackButton from '@/components/common/BackButton.vue'
 import DOMPurify from 'dompurify'
 
@@ -20,6 +22,7 @@ const route = useRoute()
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const scriptErrorStore = useScriptErrorStore()
 const { on, off } = useEvents()
 
 // State
@@ -72,8 +75,12 @@ async function loadDocument(refresh = false) {
     docContent.value = result.html
     isCached.value = result.cached
     entityIds.value = result.entity_ids || []
-  } catch {
-    uiStore.error('Failed to render document')
+  } catch (err: unknown) {
+    if (isScriptError(err)) {
+      scriptErrorStore.show(err)
+    } else {
+      uiStore.error('Failed to render document')
+    }
     docContent.value = ''
     entityIds.value = []
   } finally {

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -140,32 +141,91 @@ func TestHandleV1Action_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestHandleV1Action_ScriptError(t *testing.T) {
+func TestHandleV1Action_ScriptError_DegradedForNonLoopback(t *testing.T) {
 	app := newActionTestApp(t, map[string]string{
-		"boom.lua": `error("kaboom")`,
+		"boom.lua": `print("before")
+error("kaboom")`,
+	})
+	app.Cfg().Actions = map[string]dataentryconfig.Action{
+		"boom": {Script: "boom.lua"},
+	}
+
+	// Default httptest.NewRequest sets RemoteAddr to 192.0.2.1 (TEST-NET-1,
+	// non-loopback), so the response should omit source/captured/stack.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/_action/boom", http.NoBody)
+	rec := httptest.NewRecorder()
+
+	callAction(app, req, rec)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var env ScriptErrorEnvelope
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if env.Error != "script_error" {
+		t.Errorf("Error=%q, want script_error", env.Error)
+	}
+	if env.CorrelationID == "" {
+		t.Error("missing correlation_id")
+	}
+	if env.Script.Surface != "action" {
+		t.Errorf("Script.Surface=%q, want action", env.Script.Surface)
+	}
+	if env.Script.Path != "actions/boom.lua" {
+		t.Errorf("Script.Path=%q, want actions/boom.lua", env.Script.Path)
+	}
+	if env.Lua.Line != 2 {
+		t.Errorf("Lua.Line=%d, want 2", env.Lua.Line)
+	}
+	if !strings.Contains(env.Lua.Message, "kaboom") {
+		t.Errorf("Lua.Message=%q, want contains kaboom", env.Lua.Message)
+	}
+	// Degraded shape: gated fields must be absent.
+	if len(env.Source) != 0 {
+		t.Errorf("non-loopback caller got source slice: %+v", env.Source)
+	}
+	if len(env.Stack) != 0 {
+		t.Errorf("non-loopback caller got stack: %+v", env.Stack)
+	}
+	if env.CapturedOutput != "" {
+		t.Errorf("non-loopback caller got captured output: %q", env.CapturedOutput)
+	}
+}
+
+func TestHandleV1Action_ScriptError_FullForLoopback(t *testing.T) {
+	app := newActionTestApp(t, map[string]string{
+		"boom.lua": `print("before")
+error("kaboom")`,
 	})
 	app.Cfg().Actions = map[string]dataentryconfig.Action{
 		"boom": {Script: "boom.lua"},
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_action/boom", http.NoBody)
+	req.RemoteAddr = "127.0.0.1:54321"
 	rec := httptest.NewRecorder()
 
 	callAction(app, req, rec)
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d", rec.Code)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var resp V1ActionResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+	var env ScriptErrorEnvelope
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
-	if resp.Error != "action_failed" {
-		t.Errorf("expected error=action_failed, got %q", resp.Error)
+	if len(env.Source) == 0 {
+		t.Error("loopback caller missing source slice")
 	}
-	if resp.CorrelationID == "" {
-		t.Error("expected correlation_id, got empty")
+	if len(env.Stack) == 0 {
+		t.Error("loopback caller missing stack")
+	}
+	if !strings.Contains(env.CapturedOutput, "before") {
+		t.Errorf("CapturedOutput=%q, want contains 'before'", env.CapturedOutput)
 	}
 }
 

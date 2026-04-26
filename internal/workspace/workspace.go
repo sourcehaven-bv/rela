@@ -1219,10 +1219,30 @@ func (w *Workspace) executeLuaActions(
 		}
 
 		if err != nil {
-			effects.Errors = append(effects.Errors,
-				"script execution error: "+err.Error())
+			effects.Errors = append(effects.Errors, formatAutomationError(action, err))
 		}
 	}
+}
+
+// formatAutomationError renders an automation Lua failure as a single
+// string for the existing []string Errors slice. For Lua failures the
+// engine has already wrapped err in *lua.ScriptError; we add the
+// automation identity (the engine doesn't know it) and use the typed
+// fields so the message includes a concrete script-or-automation name.
+//
+// Inline `lua: |` blocks have no FilePath, so the engine sees scriptPath
+// as "" and tags the envelope with "<inline>". We override that here
+// once we know the automation name.
+func formatAutomationError(action automation.LuaToExecute, err error) string {
+	var se *lua.ScriptError
+	if errors.As(err, &se) {
+		if action.FilePath == "" && action.AutomationName != "" {
+			se.Path = "automation:" + action.AutomationName
+			// Re-render Error() output reflects the new Path.
+		}
+		return se.Error()
+	}
+	return "script execution error: " + err.Error()
 }
 
 // handleIfExists checks if_exists behavior for entity creation.

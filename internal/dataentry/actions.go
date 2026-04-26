@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
 // actionIDRegex defines the allowed format for action IDs at request time.
@@ -103,6 +105,17 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		ent, action.Params, actionTimeout)
 	if err != nil {
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
+		var se *lua.ScriptError
+		if errors.As(err, &se) {
+			// Tag the envelope with the correlation id so logs can be
+			// matched up with the response the user actually saw.
+			se.CorrelationID = correlationID
+			writeV1ScriptError(w, r, se, a.scriptErrorPolicy)
+			return
+		}
+		// Non-Lua failure (script-not-found, contract failure from
+		// parseActionResponse, redirect validation, etc.) — keep the
+		// existing minimal-detail shape.
 		writeV1JSON(w, http.StatusInternalServerError, V1ActionResponse{
 			Error:         "action_failed",
 			Message:       "Action failed",

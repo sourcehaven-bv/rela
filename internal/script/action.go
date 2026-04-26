@@ -83,10 +83,54 @@ func (e *Engine) ExecuteAction(
 		return &ActionResponse{}, nil
 	}
 	if err != nil {
-		return nil, err
+		// Path in the envelope is project-relative (e.g.,
+		// "actions/foo.lua") for display; SourceFS is rooted at the
+		// project so readSourceSlice can resolve that same path.
+		// Lua's chunkname (used as scriptPath here) is the bare filename;
+		// gopher-lua reports it back via the message handler as the
+		// frame's Source. Re-prefix with actionsDir so frame paths line
+		// up with the SourceFS root and the displayed Path.
+		envelopePath := filepath.ToSlash(filepath.Join(actionsDir, scriptPath))
+		frames := runtime.ErrorFrames()
+		for i := range frames {
+			if frames[i].Path == scriptPath {
+				frames[i].Path = envelopePath
+			}
+		}
+		return nil, lua.BuildScriptError(lua.BuildInput{
+			Surface:        lua.SurfaceAction,
+			Path:           envelopePath,
+			EntityID:       triggerEntityID(triggerEntity),
+			Args:           stringMapToAny(params),
+			Frames:         frames,
+			CapturedOutput: output.Bytes(),
+			Err:            err,
+			SourceFS:       os.DirFS(deps.ProjectRoot),
+		})
 	}
 
 	return parseActionResponse(ret)
+}
+
+func triggerEntityID(e *entity.Entity) string {
+	if e == nil {
+		return ""
+	}
+	return e.ID
+}
+
+// stringMapToAny adapts the action's static params (always string→string)
+// to the redactor's input type (map[string]any). Returns nil for empty
+// maps so the envelope omits the Args field rather than emitting "{}".
+func stringMapToAny(m map[string]string) map[string]any {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // loadActionScript loads a script from the project's actions/ directory using

@@ -243,6 +243,13 @@ func (s *documentService) renderScript(entryID string, cfg documentRenderConfig)
 	var buf bytes.Buffer
 	if err := s.scriptEngine.ExecuteDocument(cfg.Script, s.luaDeps(), &buf,
 		cfg.ConfigID, entryID, cfg.Timeout); err != nil {
+		// On a Lua failure the engine returns *lua.ScriptError; attach
+		// the print() output we captured before it threw, then bubble
+		// up unchanged so the HTTP layer can branch via errors.As.
+		var se *lua.ScriptError
+		if errors.As(err, &se) {
+			return "", se.WithCapturedOutput(buf.Bytes())
+		}
 		return "", fmt.Errorf("script render: %w", err)
 	}
 	return buf.String(), nil

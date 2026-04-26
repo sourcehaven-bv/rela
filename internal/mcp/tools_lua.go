@@ -4,6 +4,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -74,7 +75,12 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	// raises "not available in inline/eval contexts" so sessions can't
 	// accidentally share a nameless namespace.
 	if err := runtime.RunString(code); err != nil {
-		return mcp.NewToolResultError("Lua error: " + err.Error()), nil
+		// output stays empty here: print() in non-document/non-action
+		// runtimes writes to os.Stdout (see lua/runtime.go:256), which
+		// is the right thing for MCP — operators want their print()
+		// landing in the terminal where they invoked the tool.
+		return luaScriptErrorResult(lua.SurfaceLuaEval, "<inline>", "",
+			runtime.ErrorFrames(), nil, err), nil
 	}
 
 	result := output.String()
@@ -151,7 +157,10 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// them through RunFileContent keeps that while sharing all the
 	// downstream invariants.
 	if err := runtime.RunFileContent(path, scriptContent, args); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Lua error in %s: %s", path, err.Error())), nil
+		// See note above: print() bypasses `output` for MCP runs.
+		return luaScriptErrorResult(lua.SurfaceLuaRun,
+			filepath.ToSlash(filepath.Join(scriptsDir, path)), projectRoot,
+			runtime.ErrorFrames(), nil, err), nil
 	}
 
 	result := output.String()
@@ -160,6 +169,42 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	return mcp.NewToolResultText(result), nil
+}
+
+// luaScriptErrorResult builds an MCP CallToolResult carrying a JSON-
+// encoded ScriptError envelope as the error message. We use
+// NewToolResultError (not NewToolResultText) so the result's IsError
+// flag stays true — clients keying off that flag still see the failure.
+//
+// projectRoot is "" for lua_eval (no script source on disk to slice);
+// otherwise the source FS is rooted there so the envelope can include
+// ±N lines around the failing line.
+func luaScriptErrorResult(surface, envelopePath, projectRoot string,
+	frames []lua.StackFrame, capturedOutput []byte, runErr error) *mcp.CallToolResult {
+	in := lua.BuildInput{
+		Surface:        surface,
+		Path:           envelopePath,
+		Frames:         frames,
+		CapturedOutput: capturedOutput,
+		Err:            runErr,
+	}
+	if projectRoot != "" {
+		in.SourceFS = os.DirFS(projectRoot)
+		// Frames coming from gopher-lua use the bare filename as Source;
+		// re-prefix matching frames so they line up with envelopePath.
+		bareName := strings.TrimPrefix(envelopePath, scriptsDir+"/")
+		for i := range in.Frames {
+			if in.Frames[i].Path == bareName {
+				in.Frames[i].Path = envelopePath
+			}
+		}
+	}
+	se := lua.BuildScriptError(in)
+	body, err := json.Marshal(se)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Lua error: %v (also failed to marshal envelope: %v)", se.Error(), err))
+	}
+	return mcp.NewToolResultError(string(body))
 }
 
 func (s *Server) handleLuaList(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {

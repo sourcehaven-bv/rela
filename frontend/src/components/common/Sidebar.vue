@@ -2,13 +2,16 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore, useGitStore } from '@/stores'
+import { useScriptErrorStore } from '@/stores/scriptError'
 import { getSidebar, runAction } from '@/api'
 import { isCancelledFetch } from '@/composables/usePageData'
+import { isScriptError } from '@/types/scriptError'
 import type { SidebarGroup, SidebarItem } from '@/types'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const gitStore = useGitStore()
+const scriptErrorStore = useScriptErrorStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -85,9 +88,12 @@ function getIconEmoji(icon?: string): string {
   }
 }
 
-async function handleAction(item: SidebarItem) {
+async function handleAction(item: SidebarItem, ev?: Event) {
   if (!item.action) return
   if (actionInFlight.value.has(item.action)) return
+
+  const triggerEl =
+    ev && ev.currentTarget instanceof HTMLElement ? ev.currentTarget : null
 
   actionInFlight.value.add(item.action)
   try {
@@ -100,13 +106,17 @@ async function handleAction(item: SidebarItem) {
       router.push(response.redirect)
     }
   } catch (err: unknown) {
-    let msg = 'Action failed'
-    const e = err as { response?: { data?: { correlation_id?: string } } }
-    const corrID = e?.response?.data?.correlation_id
-    if (corrID) {
-      msg = `Action failed (ref: ${corrID})`
+    if (isScriptError(err)) {
+      scriptErrorStore.show(err, triggerEl)
+    } else {
+      let msg = 'Action failed'
+      const e = err as { response?: { data?: { correlation_id?: string } }; correlation_id?: string }
+      const corrID = e?.response?.data?.correlation_id ?? e?.correlation_id
+      if (corrID) {
+        msg = `Action failed (ref: ${corrID})`
+      }
+      uiStore.error(msg)
     }
-    uiStore.error(msg)
   } finally {
     actionInFlight.value.delete(item.action)
   }
@@ -152,7 +162,7 @@ async function handleAction(item: SidebarItem) {
               class="nav-item nav-action"
               :aria-label="item.label"
               :disabled="actionInFlight.has(item.action)"
-              @click="handleAction(item)"
+              @click="handleAction(item, $event)"
             >
               <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
               <span class="nav-label">{{ item.label }}</span>
@@ -177,7 +187,7 @@ async function handleAction(item: SidebarItem) {
               class="nav-item nav-action"
               :aria-label="item.label"
               :disabled="actionInFlight.has(item.action)"
-              @click="handleAction(item)"
+              @click="handleAction(item, $event)"
             >
               <span class="nav-icon">{{ getIconEmoji(item.icon) }}</span>
               <span class="nav-label">{{ item.label }}</span>

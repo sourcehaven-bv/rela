@@ -30,12 +30,19 @@ class ApiClient {
 
     this.client.interceptors.response.use(
       (response) => response,
-      (error: AxiosError<ProblemDetail>) => {
-        if (error.response?.data?.type) {
-          return Promise.reject(error.response.data)
+      (error: AxiosError<ProblemDetail | { error?: string }>) => {
+        const data = error.response?.data
+        // Script-failure envelope (HTTP 422 from Lua surfaces) is shaped
+        // like { error: "script_error", ... }. Pass it through as-is so
+        // catch handlers can recognise and route it to <ScriptErrorPanel>.
+        if (data && typeof data === 'object' && 'error' in data && data.error === 'script_error') {
+          return Promise.reject(data)
+        }
+        if (data && typeof data === 'object' && 'type' in data && data.type) {
+          return Promise.reject(data)
         }
         return Promise.reject(error)
-      }
+      },
     )
   }
 
