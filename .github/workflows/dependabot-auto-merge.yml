@@ -22,7 +22,7 @@ jobs:
       # "require approving review" rule, so the App token future-proofs
       # against that being enabled later.
       - name: Generate app token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         id: app-token
         with:
           app-id: ${{ secrets.APP_ID }}
