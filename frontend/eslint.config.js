@@ -3,6 +3,7 @@ import tseslint from 'typescript-eslint'
 import pluginVue from 'eslint-plugin-vue'
 import vueParser from 'vue-eslint-parser'
 import prettier from 'eslint-config-prettier'
+import globals from 'globals'
 
 export default tseslint.config(
   // Base JS rules
@@ -20,6 +21,17 @@ export default tseslint.config(
   // Global ignores
   {
     ignores: ['dist/**', 'node_modules/**', '*.d.ts'],
+  },
+
+  // Browser globals for app source (document, console, HTMLElement, etc.)
+  // Applied to .vue and .ts files except config files (which get Node globals).
+  {
+    files: ['**/*.vue', '**/*.ts', '**/*.tsx'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+    },
   },
 
   // Vue file configuration
@@ -124,12 +136,12 @@ export default tseslint.config(
     },
   },
 
-  // Config files
+  // Config files - Node environment (vite.config.js etc.)
   {
     files: ['*.config.js', '*.config.ts'],
     languageOptions: {
       globals: {
-        process: 'readonly',
+        ...globals.node,
       },
     },
     rules: {
