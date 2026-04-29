@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   formatValue,
   formatCellValue,
+  formatDate,
   getCellValue,
   isEnumProperty,
   isEnumPropertyDef,
@@ -19,9 +20,10 @@ describe('format', () => {
       expect(formatValue(undefined)).toBe('-')
     })
 
-    it('formats date type correctly', () => {
+    it('formats date type with short month name and exact day', () => {
       const result = formatValue('2024-01-15', 'date')
-      expect(result).toMatch(/\d+/)
+      expect(result).toMatch(/15/)
+      expect(result).toMatch(/2024/)
     })
 
     it('returns dash for invalid date', () => {
@@ -76,13 +78,14 @@ describe('format', () => {
       expect(formatCellValue(['x', 'y'], 'tags', mockEntityType)).toBe('x, y')
     })
 
-    it('formats date property correctly', () => {
+    it('formats date property with short month name and exact day', () => {
       const result = formatCellValue('2024-01-15', 'created_at', mockEntityType)
-      expect(result).toMatch(/\d+/)
+      expect(result).toMatch(/15/)
+      expect(result).toMatch(/2024/)
     })
 
-    it('returns dash for invalid date property', () => {
-      expect(formatCellValue('invalid', 'created_at', mockEntityType)).toBe('-')
+    it('returns empty string for invalid date property (matches cell-empty sentinel)', () => {
+      expect(formatCellValue('invalid', 'created_at', mockEntityType)).toBe('')
     })
 
     it('formats boolean property as Yes/No', () => {
@@ -222,6 +225,37 @@ describe('format', () => {
 
     it('returns empty array for empty input array', () => {
       expect(asArray([])).toEqual([])
+    })
+  })
+
+  describe('formatDate', () => {
+    it('formats YYYY-MM-DD as e.g. "Jan 15, 2024" in en-US', () => {
+      expect(formatDate('2024-01-15', 'en-US')).toBe('Jan 15, 2024')
+    })
+
+    it('formats YYYY-MM-DD as e.g. "15 Jan 2024" in en-GB', () => {
+      expect(formatDate('2024-01-15', 'en-GB')).toBe('15 Jan 2024')
+    })
+
+    it('preserves day-of-month regardless of host timezone', () => {
+      // Date-only strings must render in local time so a user in UTC-12
+      // does not see the previous day. Constructing via parseDate's
+      // component-wise path avoids the UTC-midnight pitfall of
+      // `new Date('2024-01-15')`.
+      expect(formatDate('2024-01-15', 'en-US')).toContain('15')
+      expect(formatDate('2024-12-31', 'en-US')).toContain('31')
+    })
+
+    it('returns null for invalid input', () => {
+      expect(formatDate('not-a-date')).toBeNull()
+      expect(formatDate('')).toBeNull()
+      expect(formatDate('2024-13-45')).toBeNull()
+    })
+
+    it('uses host locale when none provided', () => {
+      const result = formatDate('2024-01-15')
+      expect(typeof result).toBe('string')
+      expect(result).toMatch(/2024/)
     })
   })
 })
