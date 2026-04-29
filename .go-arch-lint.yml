@@ -102,7 +102,10 @@ vendors:
   rrulego:     { in: github.com/teambition/rrule-go }
   mcpgo:       { in: github.com/mark3labs/mcp-go/** }
   wails:       { in: github.com/wailsapp/wails/** }
-  tablewriter: { in: github.com/olekukonko/tablewriter }
+  tablewriter:
+    in:
+      - github.com/olekukonko/tablewriter
+      - github.com/olekukonko/tablewriter/**
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
   singleflight: { in: golang.org/x/sync/singleflight }

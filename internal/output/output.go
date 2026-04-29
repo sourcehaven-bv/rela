@@ -9,6 +9,8 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/renderer"
+	"github.com/olekukonko/tablewriter/tw"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
@@ -79,12 +81,8 @@ func (w *Writer) WriteEntitiesWithSummary(entities []*entity.Entity) error {
 }
 
 func (w *Writer) writeEntitiesTable(entities []*entity.Entity, showSummary bool) error {
-	table := tablewriter.NewWriter(w.Out)
-	table.SetHeader([]string{"ID", "Type", "Title", "Status"})
-	table.SetBorder(false)
-	table.SetColumnSeparator(" ")
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table := newBorderlessTable(w.Out)
+	table.Header("ID", "Type", "Title", "Status")
 
 	// Track status counts for summary
 	statusCounts := make(map[string]int)
@@ -93,15 +91,19 @@ func (w *Writer) writeEntitiesTable(entities []*entity.Entity, showSummary bool)
 		status := e.GetString("status")
 		statusCounts[status]++
 		statusDisplay := colorizeStatus(status, w.NoColor)
-		table.Append([]string{
+		if err := table.Append([]string{
 			e.ID,
 			e.Type,
 			truncate(e.Title(), tableTitleMaxLen),
 			statusDisplay,
-		})
+		}); err != nil {
+			return err
+		}
 	}
 
-	table.Render()
+	if err := table.Render(); err != nil {
+		return err
+	}
 
 	// Write footer summary if requested
 	if showSummary && len(entities) > 0 {
@@ -218,19 +220,42 @@ func (w *Writer) WriteRelations(relations []*entity.Relation) error {
 		return w.writeJSON(relations)
 	}
 
-	table := tablewriter.NewWriter(w.Out)
-	table.SetHeader([]string{"From", "Relation", "To"})
-	table.SetBorder(false)
-	table.SetColumnSeparator(" ")
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table := newBorderlessTable(w.Out)
+	table.Header("From", "Relation", "To")
 
 	for _, r := range relations {
-		table.Append([]string{r.From, r.Type, r.To})
+		if err := table.Append([]string{r.From, r.Type, r.To}); err != nil {
+			return err
+		}
 	}
 
-	table.Render()
-	return nil
+	return table.Render()
+}
+
+func newBorderlessTable(w io.Writer) *tablewriter.Table {
+	rendition := tw.Rendition{
+		Borders: tw.BorderNone,
+		Symbols: tw.NewSymbols(tw.StyleNone),
+		Settings: tw.Settings{
+			Separators: tw.Separators{
+				ShowHeader:     tw.Off,
+				ShowFooter:     tw.Off,
+				BetweenRows:    tw.Off,
+				BetweenColumns: tw.Off,
+			},
+			Lines: tw.Lines{
+				ShowTop:        tw.Off,
+				ShowBottom:     tw.Off,
+				ShowHeaderLine: tw.Off,
+				ShowFooterLine: tw.Off,
+			},
+		},
+	}
+	return tablewriter.NewTable(w,
+		tablewriter.WithRenderer(renderer.NewBlueprint(rendition)),
+		tablewriter.WithHeaderAlignment(tw.AlignLeft),
+		tablewriter.WithRowAlignment(tw.AlignLeft),
+	)
 }
 
 // WriteTrace outputs a trace result as a tree
