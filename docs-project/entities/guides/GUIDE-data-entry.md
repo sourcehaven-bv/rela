@@ -1338,10 +1338,15 @@ actions:
 | `description` | string | Optional description                                            |
 | `set`         | map    | Property key-value pairs to set on the entity (mutually exclusive with `script`) |
 | `script`      | string | Lua script path, relative to the `actions/` directory (mutually exclusive with `set`) |
-| `params`      | map    | Key-value parameters passed to the script                       |
+| `params`      | map    | Static key-value parameters from config, exposed as `rela.params` (values must be strings — quote them in YAML) |
 | `confirm`     | bool   | Show a confirmation dialog before executing (default: `false`)  |
 
 Each action must have either `set` or `script`, not both.
+
+`params` is **static config**, not runtime context: the values come from
+`data-entry.yaml` and are the same for every invocation. The selected
+entity (for list actions) is exposed separately via the `entity` global —
+see [Lua Action Scripts](#lua-action-scripts).
 
 ### Using Actions in Lists
 
@@ -1380,14 +1385,29 @@ to that path. If it returns a `message`, a toast notification is shown.
 
 Action scripts live in the `actions/` directory at the project root. They have full access
 to the rela Lua API (entity CRUD, graph queries, AI). A script can optionally return a table
-to control the UI response:
+to control the UI response.
+
+#### Inputs available to the script
+
+| Source        | Where           | Populated when                                                              |
+| ------------- | --------------- | --------------------------------------------------------------------------- |
+| Static config | `rela.params`   | Always — values from the action's `params:` map in `data-entry.yaml`        |
+| Selected row  | `entity` global | Only when invoked from a list against a selected row (one call per entity). The table has `id`, `type`, `properties`, `content`, `mod_time`, plus `prop(name, default)` and `strip_prefix()` methods |
+
+When invoked from a navigation sidebar button, no entity is selected — the
+`entity` global is `nil`. Always nil-check it.
 
 ```lua
 -- actions/validate-ticket.lua
-local entity_id = rela.params["entity_id"]
-local entity_type = rela.params["entity_type"]
+-- Selected row from the list (nil for sidebar/nav invocations).
+if entity == nil then
+    return { message = "Select a ticket first", message_type = "warning" }
+end
 
--- ... perform validation ...
+-- Static parameter from data-entry.yaml — values are always strings.
+local strict = rela.params.strict == "true"
+
+-- ... perform validation against entity.id, entity.properties, ... ...
 
 return {
     message = "Validation passed",
@@ -1396,8 +1416,10 @@ return {
 }
 ```
 
-Scripts have a 5-second execution timeout. Returning nothing (or `nil`) produces a silent
-success response.
+Scripts have a 5-second execution timeout (tighter than the default Lua
+timeout because the action handler holds a global write lock for the
+duration — concurrent mutations and other actions wait). Returning
+nothing (or `nil`) produces a silent success response.
 
 ### Reserved Keyboard Shortcuts
 
