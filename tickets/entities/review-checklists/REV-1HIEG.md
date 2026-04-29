@@ -71,8 +71,8 @@ Skip this section for bugs and internal refactors.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** <!-- to be filled after running /pr -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/627 (merged as 09feb12)
