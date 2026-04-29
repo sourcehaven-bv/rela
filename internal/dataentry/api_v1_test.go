@@ -1,7 +1,10 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	url2 "net/url"
@@ -15,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -373,6 +377,275 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 	if ids["TKT-003"] {
 		t.Errorf("TKT-003 (superseded) should have been filtered out")
 	}
+}
+
+// fakeSearcher returns the configured ids for any non-empty Text query.
+// `gotTypes` records the q.Types it received so tests can assert that
+// freeTextIDsForType pins the search to the list's type rather than letting
+// a stray `type:` token in the query escape that scope.
+//
+// `err`, when non-nil, is yielded once instead of hits — used to test the
+// handler's error-surface path.
+type fakeSearcher struct {
+	hits     []search.Hit
+	err      error
+	gotTypes []string
+}
+
+func (f *fakeSearcher) Search(_ context.Context, q search.Query) iter.Seq2[search.Hit, error] {
+	f.gotTypes = q.Types
+	return func(yield func(search.Hit, error) bool) {
+		if q.Text == "" {
+			return
+		}
+		if f.err != nil {
+			yield(search.Hit{}, f.err)
+			return
+		}
+		for _, h := range f.hits {
+			if !yield(h, nil) {
+				return
+			}
+		}
+	}
+}
+
+func TestV1ListEntitiesSearchQuery(t *testing.T) {
+	t.Run("empty q is a no-op", func(t *testing.T) {
+		app := newTestAppV1(t)
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "B"}})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=", http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d", rec.Code)
+		}
+		var resp V1ListResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Data) != 2 {
+			t.Fatalf("expected 2 entities (q empty = no filter), got %d", len(resp.Data))
+		}
+	})
+
+	t.Run("q intersects with the typed list and preserves list sort", func(t *testing.T) {
+		app := newTestAppV1(t)
+		// B-titled ticket is hit by search; A-titled ticket is not. With sort=title
+		// ascending the result is just the B ticket — and absence of A confirms the
+		// intersection happens before sort/paginate.
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "B Ticket"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "A Ticket"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-003", Type: "ticket", Properties: map[string]interface{}{"title": "C Ticket"}})
+		// Searcher returns TKT-001 and TKT-003 only. List sort must reorder them
+		// (C → 003) — proving Bleve ranking is discarded.
+		app.searcher = &fakeSearcher{hits: []search.Hit{
+			{ID: "TKT-001", Type: "ticket"},
+			{ID: "TKT-003", Type: "ticket"},
+		}}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&sort=title", http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d", rec.Code)
+		}
+		var resp V1ListResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Data) != 2 {
+			t.Fatalf("expected 2 hits, got %d", len(resp.Data))
+		}
+		// TKT-001 (B Ticket) must come before TKT-003 (C Ticket).
+		if resp.Data[0].ID != "TKT-001" || resp.Data[1].ID != "TKT-003" {
+			t.Errorf("expected list-sorted [TKT-001, TKT-003], got [%s, %s]",
+				resp.Data[0].ID, resp.Data[1].ID)
+		}
+	})
+
+	t.Run("q with no matching ids returns empty page", func(t *testing.T) {
+		app := newTestAppV1(t)
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
+		app.searcher = &fakeSearcher{hits: nil}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=needle", http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		var resp V1ListResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Data) != 0 {
+			t.Fatalf("expected empty result, got %d", len(resp.Data))
+		}
+		if resp.Meta.Total != 0 {
+			t.Errorf("expected total 0, got %d", resp.Meta.Total)
+		}
+	})
+
+	t.Run("q AND-combines with property filter", func(t *testing.T) {
+		app := newTestAppV1(t)
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A", "status": "open"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "B", "status": "closed"}})
+		// Searcher hits both; the filter must still narrow to "open".
+		app.searcher = &fakeSearcher{hits: []search.Hit{
+			{ID: "TKT-001", Type: "ticket"},
+			{ID: "TKT-002", Type: "ticket"},
+		}}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&filter[status]=open", http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		var resp V1ListResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Data) != 1 || resp.Data[0].ID != "TKT-001" {
+			t.Fatalf("expected only TKT-001, got %v", responseIDs(resp))
+		}
+	})
+
+	t.Run("whitespace-only q is treated as empty", func(t *testing.T) {
+		app := newTestAppV1(t)
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
+		// Force a fakeSearcher that would return zero hits if invoked, so the
+		// test can prove the searcher was never called.
+		fake := &fakeSearcher{hits: nil}
+		app.searcher = fake
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=%20%20", http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		var resp V1ListResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Data) != 1 {
+			t.Fatalf("expected 1 entity (whitespace q is no-op), got %d", len(resp.Data))
+		}
+		// Confirm we never reached the searcher — gotTypes is set on every
+		// Search call, so its zero value proves we short-circuited.
+		if fake.gotTypes != nil {
+			t.Errorf("searcher should not be called for whitespace q, got types %v", fake.gotTypes)
+		}
+	})
+
+	t.Run("prop-only q without free-text words is ignored on the list endpoint", func(t *testing.T) {
+		// `q=type:foo` and `q=prop:status=done` parse to a SearchQuery with
+		// no free-text words. Per the helper's contract, that's treated as
+		// "no free-text filter" — the list still uses the typed list and
+		// any URL filter[*] params, but the searcher is not invoked. This
+		// test pins that behavior so a future change to also intersect on
+		// prop-only queries doesn't slip through silently.
+		app := newTestAppV1(t)
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "B"}})
+		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-999", Type: "ticket"}}}
+		app.searcher = fake
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=type%3Afoo", http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		var resp V1ListResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Data) != 2 {
+			t.Errorf("expected 2 (full list, search not invoked), got %d", len(resp.Data))
+		}
+		if fake.gotTypes != nil {
+			t.Errorf("searcher should not be called for prop-only q, got types %v", fake.gotTypes)
+		}
+	})
+
+	t.Run("searcher pins type to the list type, ignoring stray type: in q", func(t *testing.T) {
+		app := newTestAppV1(t)
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "Hit"}})
+		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-001", Type: "ticket"}}}
+		app.searcher = fake
+
+		// Query says `type:feature` but we're listing tickets — the helper
+		// must overwrite the type to the list's type.
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=type%3Afeature+hit", http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+
+		if len(fake.gotTypes) != 1 || fake.gotTypes[0] != "ticket" {
+			t.Errorf("expected searcher to receive Types=[ticket], got %v", fake.gotTypes)
+		}
+	})
+
+	t.Run("searcher error surfaces as 500", func(t *testing.T) {
+		app := newTestAppV1(t)
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
+		app.searcher = &fakeSearcher{err: errors.New("index unavailable")}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=anything", http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected status 500 on searcher error, got %d (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("q + pagination: total reflects post-q count, page slice is from filtered set", func(t *testing.T) {
+		app := newTestAppV1(t)
+		// 12 tickets; searcher matches 7 of them (TKT-001..TKT-007).
+		hits := make([]search.Hit, 0)
+		for i := 1; i <= 12; i++ {
+			id := "TKT-" + padInt(i)
+			seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]interface{}{"title": "T " + padInt(i)}})
+			if i <= 7 {
+				hits = append(hits, search.Hit{ID: id, Type: "ticket"})
+			}
+		}
+		app.searcher = &fakeSearcher{hits: hits}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=hit&page=2&per_page=3", http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		var resp V1ListResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Meta.Total != 7 {
+			t.Errorf("expected total=7 (post-q count), got %d", resp.Meta.Total)
+		}
+		if resp.Meta.Page != 2 || resp.Meta.PerPage != 3 {
+			t.Errorf("expected page=2 per_page=3, got page=%d per_page=%d", resp.Meta.Page, resp.Meta.PerPage)
+		}
+		// Page 2 of 7 hits with per_page=3 → indices [3..5] → TKT-004, 005, 006.
+		if got := responseIDs(resp); len(got) != 3 || got[0] != "TKT-004" || got[2] != "TKT-006" {
+			t.Errorf("expected page-2 slice [TKT-004, TKT-005, TKT-006], got %v", got)
+		}
+	})
+
+	t.Run("quoted phrase in q is forwarded to the searcher", func(t *testing.T) {
+		app := newTestAppV1(t)
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "Hit"}})
+		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-001", Type: "ticket"}}}
+		app.searcher = fake
+
+		req := httptest.NewRequest(http.MethodGet, `/api/v1/tickets?q=%22exact+phrase%22`, http.NoBody)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		// We don't assert the precise q.Text shape (parser-dependent), only
+		// that the searcher was reached with a non-empty types pin.
+		if fake.gotTypes == nil {
+			t.Errorf("searcher should be called for quoted phrase q")
+		}
+	})
+}
+
+func responseIDs(r V1ListResponse) []string {
+	out := make([]string, 0, len(r.Data))
+	for _, e := range r.Data {
+		out = append(out, e.ID)
+	}
+	return out
 }
 
 func TestV1Sorting(t *testing.T) {

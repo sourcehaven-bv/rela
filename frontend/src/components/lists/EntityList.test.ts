@@ -8,13 +8,15 @@ import { _resetModalStack } from '@/composables/modalStack'
 import type { Entity } from '@/types'
 
 // Router stubs — EntityList reads both `useRouter` (for open/edit/create
-// navigation) and `useRoute` (for URL-filter sync). The delete flow we are
-// testing doesn't push routes, so minimal stubs suffice.
+// navigation) and `useRoute` (for URL-filter sync). The delete flow uses a
+// minimal stub; the search-flow tests below mutate `mockRoute.query` to
+// simulate `?q=` deep-links and assert that the composable reflects them.
 const routerPush = vi.fn()
 const routerReplace = vi.fn()
+const mockRoute = { query: {} as Record<string, string>, path: '/list/tickets-list', name: 'list' }
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: routerPush, replace: routerReplace }),
-  useRoute: () => ({ query: {}, path: '/list/tickets-list', name: 'list' }),
+  useRoute: () => mockRoute,
 }))
 
 // Integration test for the delete-flow wiring:
@@ -68,6 +70,8 @@ describe('EntityList delete integration', () => {
     setActivePinia(createPinia())
     _resetModalStack()
     routerPush.mockClear()
+    routerReplace.mockClear()
+    mockRoute.query = {}
   })
 
   afterEach(() => {
@@ -205,6 +209,125 @@ describe('EntityList delete integration', () => {
     // Confirm button is re-enabled after the failure.
     expect(modalButtons()[1].disabled).toBe(false)
     consoleSpy.mockRestore()
+    wrapper.unmount()
+  })
+})
+
+describe('EntityList search integration', () => {
+  const listId = 'tickets-list'
+  const entityType = 'ticket'
+
+  function seedSchema() {
+    const schemaStore = useSchemaStore()
+    schemaStore.lists.set(listId, {
+      id: listId,
+      title: 'Tickets',
+      entity: entityType,
+      columns: [{ property: 'title', label: 'Title' }],
+    } as never)
+    schemaStore.entityTypes.set(entityType, {
+      name: entityType,
+      label: 'Ticket',
+      properties: { title: { type: 'string', values: null } },
+    } as never)
+  }
+
+  function fakeFetchList() {
+    const entitiesStore = useEntitiesStore()
+    const fetchList = vi.fn().mockResolvedValue({
+      data: [],
+      meta: { total: 0, page: 1, per_page: 25, has_more: false },
+      included: {},
+    })
+    entitiesStore.fetchList = fetchList
+    return fetchList
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    _resetModalStack()
+    routerPush.mockClear()
+    routerReplace.mockClear()
+    mockRoute.query = {}
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    document.body.innerHTML = ''
+    _resetModalStack()
+  })
+
+  it('AC3: hydrates the search box from ?q= in the URL', async () => {
+    seedSchema()
+    fakeFetchList()
+    mockRoute.query = { q: 'foo' }
+
+    const wrapper = mount(EntityList, { props: { listId }, attachTo: document.body })
+    await flushPromises()
+
+    const input = wrapper.find<HTMLInputElement>('.search-box input[type="search"]')
+    expect(input.element.value).toBe('foo')
+    wrapper.unmount()
+  })
+
+  it('AC2: typing fires exactly one fetch after the debounce window', async () => {
+    seedSchema()
+    const fetchList = fakeFetchList()
+    const wrapper = mount(EntityList, { props: { listId }, attachTo: document.body })
+    await flushPromises()
+
+    // Initial mount fetch already happened.
+    const initialCallCount = fetchList.mock.calls.length
+
+    const input = wrapper.find<HTMLInputElement>('.search-box input[type="search"]')
+    // Type three characters in quick succession.
+    for (const ch of ['T', 'TK', 'TKT']) {
+      input.element.value = ch
+      await input.trigger('input')
+    }
+
+    // No fetch yet — still inside the debounce window.
+    expect(fetchList.mock.calls.length).toBe(initialCallCount)
+
+    // Advance past the debounce.
+    await vi.advanceTimersByTimeAsync(300)
+    await flushPromises()
+
+    // Exactly one extra fetch fired, with q="TKT" in the params.
+    expect(fetchList.mock.calls.length).toBe(initialCallCount + 1)
+    const lastCall = fetchList.mock.calls[fetchList.mock.calls.length - 1]
+    expect(lastCall[1]).toMatchObject({ q: 'TKT' })
+
+    wrapper.unmount()
+  })
+
+  it('AC4: clearing the search restores the unfiltered list and removes q from URL', async () => {
+    seedSchema()
+    const fetchList = fakeFetchList()
+    mockRoute.query = { q: 'foo' }
+
+    const wrapper = mount(EntityList, { props: { listId }, attachTo: document.body })
+    await flushPromises()
+
+    // Sanity: initial fetch carries q=foo.
+    const before = fetchList.mock.calls[fetchList.mock.calls.length - 1]
+    expect(before[1]).toMatchObject({ q: 'foo' })
+
+    // Click the SearchBox clear button.
+    await wrapper.find('.search-box .clear-btn').trigger('click')
+    await flushPromises()
+
+    // Router was asked to drop `q` from the query.
+    expect(routerReplace).toHaveBeenCalled()
+    const lastReplace = routerReplace.mock.calls[routerReplace.mock.calls.length - 1][0]
+    expect(lastReplace.query.q).toBeUndefined()
+
+    // Subsequent fetch goes out without q.
+    await flushPromises()
+    const after = fetchList.mock.calls[fetchList.mock.calls.length - 1]
+    expect(after[1].q).toBeUndefined()
+
     wrapper.unmount()
   })
 })

@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -225,6 +226,23 @@ func NewApp(
 	searcher search.Searcher,
 	startWatching func(workspace.WatchOptions) error,
 ) (*App, error) {
+	// Reject nil required collaborators up front rather than letting a
+	// downstream handler panic on the first request that exercises them.
+	// fs and paths can also be nil in tests that take a different code path
+	// (newAppFromParts wires them post-construction), so they're checked
+	// only when they participate in the construction below.
+	if meta == nil {
+		return nil, errors.New("dataentry.NewApp: meta is required")
+	}
+	if st == nil {
+		return nil, errors.New("dataentry.NewApp: store is required")
+	}
+	if em == nil {
+		return nil, errors.New("dataentry.NewApp: entityManager is required")
+	}
+	if searcher == nil {
+		return nil, errors.New("dataentry.NewApp: searcher is required")
+	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
 	kvRoot, err := storage.NewRootedFS(fs, paths.CacheDir)

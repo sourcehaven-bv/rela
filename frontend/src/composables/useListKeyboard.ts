@@ -15,6 +15,8 @@ interface UseListKeyboardOptions {
   onNextPage?: () => void
   hasPrevPage?: Ref<boolean>
   hasNextPage?: Ref<boolean>
+  onFocusSearch?: () => void
+  onOpenFilter?: () => void
 }
 
 /**
@@ -133,6 +135,20 @@ export function useListKeyboard(options: UseListKeyboardOptions) {
         if (options.onNextPage && options.hasNextPage?.value) {
           e.preventDefault()
           options.onNextPage()
+        }
+        break
+
+      case '/':
+        if (options.onFocusSearch) {
+          e.preventDefault()
+          options.onFocusSearch()
+        }
+        break
+
+      case 'f':
+        if (options.onOpenFilter) {
+          e.preventDefault()
+          options.onOpenFilter()
         }
         break
     }
