@@ -25,13 +25,12 @@ export function formatValue(value: unknown, type?: string): string {
   if (type === 'rrule' && typeof value === 'string' && value) {
     try {
       // Handle both "FREQ=..." and "DTSTART:... RRULE:FREQ=..." formats
-      const str = String(value)
-      const rrulePart = str.includes('RRULE:')
-        ? str.substring(str.indexOf('RRULE:'))
-        : `RRULE:${str}`
+      const rrulePart = value.includes('RRULE:')
+        ? value.substring(value.indexOf('RRULE:'))
+        : `RRULE:${value}`
       return RRule.fromString(rrulePart).toText()
     } catch {
-      return String(value)
+      return value
     }
   }
 
@@ -50,11 +49,9 @@ export function formatCellValue(
   property: string | undefined,
   entityType?: EntityType
 ): string {
+  // Cells render empty for null/undefined (vs '-' in formatValue) so blank
+  // table cells stay visually quiet; do not delegate this branch to formatValue.
   if (value === null || value === undefined) return ''
-
-  if (Array.isArray(value)) {
-    return value.join(', ')
-  }
 
   if (property && entityType) {
     const propDef = entityType.properties[property]
@@ -66,6 +63,14 @@ export function formatCellValue(
     if (propDef?.type === 'boolean') {
       return value ? 'Yes' : 'No'
     }
+    if (propDef?.type === 'rrule') {
+      const single = Array.isArray(value) ? value[0] : value
+      return formatValue(single, 'rrule')
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return value.join(', ')
   }
 
   return String(value)

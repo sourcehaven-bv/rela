@@ -61,6 +61,7 @@ describe('format', () => {
         created_at: { type: 'date' },
         is_active: { type: 'boolean' },
         title: { type: 'string' },
+        schedule: { type: 'rrule' },
       },
     }
 
@@ -96,6 +97,36 @@ describe('format', () => {
 
     it('converts values to string without property', () => {
       expect(formatCellValue('text', undefined, mockEntityType)).toBe('text')
+    })
+
+    describe('rrule property', () => {
+      const cases: Array<[string, string]> = [
+        ['bare', 'FREQ=DAILY'],
+        ['with RRULE: prefix', 'RRULE:FREQ=DAILY'],
+        ['with DTSTART and RRULE', 'DTSTART:20240101T000000Z\nRRULE:FREQ=DAILY'],
+        ['malformed', 'NOT_A_RULE'],
+      ]
+
+      it.each(cases)('matches formatValue parity: %s', (_label, input) => {
+        expect(formatCellValue(input, 'schedule', mockEntityType)).toBe(
+          formatValue(input, 'rrule'),
+        )
+      })
+
+      it('formats rrule wrapped in a single-element array', () => {
+        const input = 'FREQ=DAILY'
+        expect(formatCellValue([input], 'schedule', mockEntityType)).toBe(
+          formatValue(input, 'rrule'),
+        )
+      })
+
+      it('returns empty string for null', () => {
+        expect(formatCellValue(null, 'schedule', mockEntityType)).toBe('')
+      })
+
+      it('returns empty string for empty string', () => {
+        expect(formatCellValue('', 'schedule', mockEntityType)).toBe('')
+      })
     })
   })
 
