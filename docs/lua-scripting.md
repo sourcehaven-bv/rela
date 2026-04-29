@@ -643,7 +643,7 @@ error-handling branches work unchanged.
 | `rela.project_root` | Absolute path to project root |
 | `rela.args` | Script arguments (table) |
 | `rela.today` | Current date as "YYYY-MM-DD" |
-| `rela.params` | Action script parameters (table, from data-entry config) |
+| `rela.params` | Action script parameters (table, static string-valued map from data-entry config) |
 | `rela.secrets` | Per-script secrets (table, from `.rela/secrets.yaml`) |
 | `rela.cache` | Process-wide memoization cache namespaced per script (see [Cache](#cache)) |
 | `rela.mode` | Set to `"document"` when rendering a data-entry document; `nil` otherwise (see [Document Mode](#document-mode)) |
