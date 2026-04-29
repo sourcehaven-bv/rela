@@ -3,11 +3,13 @@
     "target": "ES2020",
     "module": "commonjs",
     "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
     "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"]
   },
   "include": ["tests/**/*.ts", "pages/**/*.ts"],
   "exclude": ["node_modules", "test-results", "playwright-report"]
