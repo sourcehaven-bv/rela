@@ -2029,6 +2029,140 @@ func TestV1AnalyzeWithIssues(t *testing.T) {
 	_ = result
 }
 
+// newAnalyzeScriptErrorApp builds an App with one inline-Lua validation
+// rule that fails to compile, so handleV1Analyze produces a script-error
+// issue. Wires SecurityConfig so allowFullScriptDetail can branch on
+// req.RemoteAddr (loopback vs. non-loopback) — same shape used by
+// the action-surface tests.
+func newAnalyzeScriptErrorApp(t *testing.T) *App {
+	t.Helper()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Label:    "Ticket",
+				IDPrefix: "TKT-",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string"},
+				},
+			},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:       "broken-rule",
+				EntityType: "ticket",
+				Lua:        `if oops invalid`,
+			},
+		},
+	}
+	cfg := &dataentryconfig.Config{
+		App: dataentryconfig.AppConfig{Name: "Test"},
+	}
+	app := newAppFromParts(cfg, meta, newFixture())
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "x"},
+	})
+	if err := app.SetSecurityConfig(SecurityConfig{BindAddress: "127.0.0.1:8080"}); err != nil {
+		t.Fatalf("SetSecurityConfig: %v", err)
+	}
+	return app
+}
+
+// findIssueWithScriptError returns the first APIIssue carrying a
+// non-nil ScriptError envelope; nil if none.
+func findIssueWithScriptError(issues []APIIssue) *APIIssue {
+	for i := range issues {
+		if issues[i].ScriptError != nil {
+			return &issues[i]
+		}
+	}
+	return nil
+}
+
+// TestV1Analyze_ScriptErrorEnvelope_NonLoopback verifies that a broken
+// Lua validation rule produces an issue with a populated ScriptError
+// envelope on the wire, but with the gated detail (Source, Stack,
+// CapturedOutput) absent for non-loopback callers — same shape as
+// writeV1ScriptError.
+func TestV1Analyze_ScriptErrorEnvelope_NonLoopback(t *testing.T) {
+	app := newAnalyzeScriptErrorApp(t)
+
+	// Default httptest RemoteAddr is 192.0.2.1 (TEST-NET-1, non-loopback).
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
+	rec := httptest.NewRecorder()
+
+	app.handleV1Analyze(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result APIAnalysisResult
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	hit := findIssueWithScriptError(result.Issues)
+	if hit == nil {
+		t.Fatalf("expected at least one issue with ScriptError envelope; got %+v", result.Issues)
+	}
+	if hit.ScriptError.Error != "script_error" {
+		t.Errorf("ScriptError.Error=%q, want script_error", hit.ScriptError.Error)
+	}
+	if hit.ScriptError.Lua.Message == "" {
+		t.Errorf("ScriptError.Lua.Message is empty; want non-empty failure message")
+	}
+	// Degraded shape for non-loopback callers.
+	if len(hit.ScriptError.Source) != 0 {
+		t.Errorf("non-loopback caller got source slice: %+v", hit.ScriptError.Source)
+	}
+	if len(hit.ScriptError.Stack) != 0 {
+		t.Errorf("non-loopback caller got stack: %+v", hit.ScriptError.Stack)
+	}
+	if hit.ScriptError.CapturedOutput != "" {
+		t.Errorf("non-loopback caller got captured output: %q", hit.ScriptError.CapturedOutput)
+	}
+}
+
+// TestV1Analyze_ScriptErrorEnvelope_Loopback verifies that loopback
+// callers receive the full envelope (source slice present when the
+// failure has a parsable line). Inline-Lua compile failures don't
+// produce a source slice (no file to read), but Lua.Line and
+// Lua.Message are always populated, so we assert on those.
+func TestV1Analyze_ScriptErrorEnvelope_Loopback(t *testing.T) {
+	app := newAnalyzeScriptErrorApp(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
+	req.RemoteAddr = "127.0.0.1:54321"
+	rec := httptest.NewRecorder()
+
+	app.handleV1Analyze(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result APIAnalysisResult
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	hit := findIssueWithScriptError(result.Issues)
+	if hit == nil {
+		t.Fatalf("expected at least one issue with ScriptError envelope; got %+v", result.Issues)
+	}
+	if hit.ScriptError.Lua.Message == "" {
+		t.Error("ScriptError.Lua.Message is empty; want non-empty")
+	}
+	// Other issues (e.g., orphan warnings) must NOT carry an envelope.
+	for _, issue := range result.Issues {
+		if issue.CheckType != "Validations" && issue.ScriptError != nil {
+			t.Errorf("non-validation issue %q has unexpected ScriptError envelope", issue.CheckType)
+		}
+	}
+}
+
 func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 	app := newTestAppV1(t)
 

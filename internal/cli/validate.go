@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
@@ -120,7 +122,7 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Run requested checks
-	checkErrors, err := runValidationChecks(checkWs, out, result.Metamodel)
+	checkErrors, err := runValidationChecks(cmd.Context(), checkWs, out, result.Metamodel)
 	if err != nil {
 		return err
 	}
@@ -141,6 +143,7 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 
 // runValidationChecks runs the requested validation checks and returns true if errors were found.
 func runValidationChecks(
+	ctx context.Context,
 	checkWs *workspace.Workspace,
 	checkOut *output.Writer,
 	meta workspace.MetamodelAccessor,
@@ -167,7 +170,7 @@ func runValidationChecks(
 	}
 
 	if checks.validations {
-		if runValidationsCheck(checkWs, checkOut, opts, checks.validationFilters) {
+		if runValidationsCheck(ctx, checkWs, checkOut, opts, checks.validationFilters) {
 			hasErrors = true
 		}
 	}
@@ -269,6 +272,7 @@ func runPropertiesCheck(checkWs *workspace.Workspace, checkOut *output.Writer, o
 
 // runValidationsCheck runs custom validation rules. Returns true if errors found.
 func runValidationsCheck(
+	ctx context.Context,
 	checkWs *workspace.Workspace,
 	checkOut *output.Writer,
 	opts workspace.AnalyzeOptions,
@@ -278,15 +282,16 @@ func runValidationsCheck(
 		fmt.Println("\nRunning custom validations...")
 	}
 
-	var violations []workspace.ValidationViolation
+	var result workspace.ValidationResult
 	if len(filters) > 0 {
-		violations = checkWs.RunValidationsFiltered(opts, filters)
+		result = checkWs.RunValidationsFiltered(ctx, opts, filters)
 	} else {
-		violations = checkWs.RunValidations(opts)
+		result = checkWs.RunValidations(ctx, opts)
 	}
+	violations := result.Violations
 
 	errorCount, warningCount := workspace.CountValidationsBySeverity(violations)
-	if len(violations) == 0 {
+	if len(violations) == 0 && !result.HasErrors() {
 		if !quiet && checkOut.Format != output.FormatJSON {
 			checkOut.WriteSuccess("All validation rules passed")
 		}
@@ -295,7 +300,7 @@ func runValidationsCheck(
 
 	if checkOut.Format == output.FormatJSON {
 		status := "warning"
-		if errorCount > 0 {
+		if errorCount > 0 || result.HasErrors() {
 			status = "error"
 		}
 		_ = checkOut.WriteAnalysisResult(output.AnalysisResult{
@@ -305,10 +310,35 @@ func runValidationsCheck(
 			Details: violations,
 		})
 	} else {
-		outputValidationViolations(checkOut, violations, errorCount, warningCount)
+		if len(violations) > 0 {
+			outputValidationViolations(checkOut, violations, errorCount, warningCount)
+		}
+		renderValidationErrorsTo(checkOut, result.ScriptErrors, result.LoadErrors)
 	}
 
-	return errorCount > 0
+	return errorCount > 0 || result.HasErrors()
+}
+
+// renderValidationErrorsTo is the writer-explicit counterpart of
+// renderValidationErrors: validate.go uses a per-call output.Writer
+// (checkOut) rather than the package-global out.
+func renderValidationErrorsTo(
+	checkOut *output.Writer,
+	scriptErrors []*lua.ScriptError,
+	loadErrors []workspace.ValidationLoadError,
+) {
+	if len(scriptErrors) > 0 {
+		checkOut.WriteError("Validation script errors (%d):", len(scriptErrors))
+		for _, se := range scriptErrors {
+			checkOut.WriteMessage("%s", formatScriptError(se))
+		}
+	}
+	if len(loadErrors) > 0 {
+		checkOut.WriteError("Validation load errors (%d):", len(loadErrors))
+		for _, le := range loadErrors {
+			checkOut.WriteMessage("  %s: %s", le.RuleName, le.Message)
+		}
+	}
 }
 
 // outputValidationViolations prints validation violations grouped by rule.

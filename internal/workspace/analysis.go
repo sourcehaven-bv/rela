@@ -314,6 +314,14 @@ func (w *Workspace) countIncomingByType(entityID, relName string) int {
 // ValidationViolation is re-exported from the validation package.
 type ValidationViolation = validation.Violation
 
+// ValidationResult is re-exported from the validation package so CLI
+// and dataentry consumers don't need to import internal/validation
+// directly.
+type ValidationResult = validation.Result
+
+// ValidationLoadError is re-exported alongside ValidationResult.
+type ValidationLoadError = validation.LoadError
+
 // newValidationService creates a validation service wired to the workspace's
 // read-only lua deps. ProjectRoot comes from the deps bundle. The shared
 // Lua cache is wired so rela.cache.* inside validation rules is functional
@@ -323,14 +331,18 @@ func (w *Workspace) newValidationService() *validation.Service {
 }
 
 // RunValidations executes all custom validation rules from the metamodel, filtered by scope.
-func (w *Workspace) RunValidations(opts AnalyzeOptions) []ValidationViolation {
-	return w.newValidationService().Check(collectEntities(w.Store(), store.EntityQuery{}), opts.Scope)
+func (w *Workspace) RunValidations(ctx context.Context, opts AnalyzeOptions) ValidationResult {
+	return w.newValidationService().Check(ctx, collectEntities(w.Store(), store.EntityQuery{}), opts.Scope)
 }
 
 // RunValidationsFiltered executes custom validation rules matching the given filters.
 // Multiple filters are combined with OR (union of matching rules).
 // If a filter has both RuleName and EntityType empty, all rules match.
-func (w *Workspace) RunValidationsFiltered(opts AnalyzeOptions, filters []ValidationFilter) []ValidationViolation {
+func (w *Workspace) RunValidationsFiltered(
+	ctx context.Context,
+	opts AnalyzeOptions,
+	filters []ValidationFilter,
+) ValidationResult {
 	svc := w.newValidationService()
 
 	// Build set of rule names to run based on filters
@@ -344,7 +356,7 @@ func (w *Workspace) RunValidationsFiltered(opts AnalyzeOptions, filters []Valida
 	}
 
 	// Run only matching rules
-	return svc.CheckRules(collectEntities(w.Store(), store.EntityQuery{}), opts.Scope, ruleNames)
+	return svc.CheckRules(ctx, collectEntities(w.Store(), store.EntityQuery{}), opts.Scope, ruleNames)
 }
 
 // matchesFilter returns true if the rule matches the filter criteria.
@@ -372,17 +384,19 @@ func CountValidationsBySeverity(violations []ValidationViolation) (errors, warni
 
 // AnalysisSummary contains counts from all analysis types.
 type AnalysisSummary struct {
-	Orphans            int
-	Duplicates         int
-	Gaps               int
-	Cardinality        int
-	PropertyErrors     int
-	ValidationErrors   int
-	ValidationWarnings int
+	Orphans                int
+	Duplicates             int
+	Gaps                   int
+	Cardinality            int
+	PropertyErrors         int
+	ValidationErrors       int
+	ValidationWarnings     int
+	ValidationScriptErrors int // rules that failed to run (compile, runtime, timeout, contract)
+	ValidationLoadErrors   int // lua_file: rules whose script could not be opened
 }
 
 // AnalyzeAll runs all analyses and returns a summary of counts.
-func (w *Workspace) AnalyzeAll(opts AnalyzeOptions) *AnalysisSummary {
+func (w *Workspace) AnalyzeAll(ctx context.Context, opts AnalyzeOptions) *AnalysisSummary {
 	summary := &AnalysisSummary{
 		Orphans:     len(w.FindOrphansWithScope(opts)),
 		Duplicates:  len(w.FindDuplicates(opts)),
@@ -399,8 +413,10 @@ func (w *Workspace) AnalyzeAll(opts AnalyzeOptions) *AnalysisSummary {
 	}
 
 	// Count validation issues by severity
-	violations := w.RunValidations(opts)
-	summary.ValidationErrors, summary.ValidationWarnings = validation.CountBySeverity(violations)
+	result := w.RunValidations(ctx, opts)
+	summary.ValidationErrors, summary.ValidationWarnings = validation.CountBySeverity(result.Violations)
+	summary.ValidationScriptErrors = len(result.ScriptErrors)
+	summary.ValidationLoadErrors = len(result.LoadErrors)
 
 	return summary
 }

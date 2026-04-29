@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	glua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -2533,5 +2536,160 @@ func TestDocumentMode_OutputIsWarning(t *testing.T) {
 	}
 	if strings.Contains(out, `"foo"`) {
 		t.Errorf("expected JSON payload to be dropped in document mode, got %q", out)
+	}
+}
+
+// TestRunValidationString_ReturnsLTable confirms the raw LValue is
+// returned (not converted to a Go map), so callers can branch on
+// LTable vs LNil and walk the table directly.
+func TestRunValidationString_ReturnsLTable(t *testing.T) {
+	ws := newMockWorkspace(t)
+	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
+	defer r.Close()
+
+	chunkname := "validations/return-table"
+	ret, err := r.RunValidationString(`return { message = "hi" }`, chunkname)
+	if err != nil {
+		t.Fatalf("RunValidationString: %v", err)
+	}
+	tbl, ok := ret.(*glua.LTable)
+	if !ok {
+		t.Fatalf("expected *glua.LTable, got %T", ret)
+	}
+	msg := tbl.RawGetString("message")
+	if s, ok := msg.(glua.LString); !ok || string(s) != "hi" {
+		t.Errorf("message = %v, want LString \"hi\"", msg)
+	}
+}
+
+// TestRunValidationString_NoReturnIsNil documents that a script that
+// doesn't return anything yields LNil (not Go nil) so callers can
+// type-switch uniformly.
+func TestRunValidationString_NoReturnIsNil(t *testing.T) {
+	ws := newMockWorkspace(t)
+	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
+	defer r.Close()
+
+	ret, err := r.RunValidationString(`local x = 1`, "validations/noret")
+	if err != nil {
+		t.Fatalf("RunValidationString: %v", err)
+	}
+	if ret != glua.LNil {
+		t.Errorf("expected LNil for no return, got %v", ret)
+	}
+}
+
+// TestRunValidationString_RuntimeErrorCapturesFrames asserts that a
+// runtime failure populates ErrorFrames with the chunkname as the
+// frame Path — which is what the validation surface relies on for
+// envelope-path/source-slice resolution.
+func TestRunValidationString_RuntimeErrorCapturesFrames(t *testing.T) {
+	ws := newMockWorkspace(t)
+	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
+	defer r.Close()
+
+	chunkname := "validations/runtime-err"
+	_, err := r.RunValidationString(`local x = nil; return x.field`, chunkname)
+	if err == nil {
+		t.Fatal("expected runtime error, got nil")
+	}
+	frames := r.ErrorFrames()
+	if len(frames) == 0 {
+		t.Fatal("expected captured frames, got none")
+	}
+	if frames[0].Path != chunkname {
+		t.Errorf("frame path = %q, want %q", frames[0].Path, chunkname)
+	}
+	if frames[0].Line == 0 {
+		t.Errorf("frame line = 0, want non-zero")
+	}
+}
+
+// TestRunValidationString_CompileErrorReturnsError checks that a
+// syntactically-broken chunk returns an error before PCall — frames
+// will be empty (nothing ran) and the error is the gopher-lua
+// compile error.
+func TestRunValidationString_CompileErrorReturnsError(t *testing.T) {
+	ws := newMockWorkspace(t)
+	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
+	defer r.Close()
+
+	_, err := r.RunValidationString(`if oops invalid`, "validations/compile-err")
+	if err == nil {
+		t.Fatal("expected compile error, got nil")
+	}
+	// Compile failures have no PCall stack capture.
+	if frames := r.ErrorFrames(); len(frames) != 0 {
+		t.Errorf("expected empty frames for compile error, got %d", len(frames))
+	}
+}
+
+// TestRunValidationString_HonorsTimeout verifies WithTimeout / WithContext
+// flow through applyTimeout the same way as RunString / RunActionString:
+// a busy loop is cancelled by the deadline rather than running forever.
+func TestRunValidationString_HonorsTimeout(t *testing.T) {
+	ws := newMockWorkspace(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard, WithContext(ctx))
+	defer r.Close()
+
+	start := time.Now()
+	_, err := r.RunValidationString(`while true do end`, "validations/busy")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	// 100ms ctx + small budget for goroutine scheduling. Loose
+	// "5 seconds" bounds let real regressions slip through.
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("busy loop ran for %v; expected context to interrupt well within 500ms", elapsed)
+	}
+}
+
+// TestRunValidationString_ErrorPathDoesNotLeakStack asserts that
+// RunValidationString resets the Lua stack after a PCall failure so
+// repeatedly invoking it (e.g. one always-erroring rule across N
+// entities) does not accumulate orphaned LValues toward gopher-lua's
+// ~256-slot stack ceiling.
+func TestRunValidationString_ErrorPathDoesNotLeakStack(t *testing.T) {
+	ws := newMockWorkspace(t)
+	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
+	defer r.Close()
+
+	initialTop := r.L.GetTop()
+	for i := range 100 {
+		_, err := r.RunValidationString(`error("boom")`, "validations/leaky")
+		if err == nil {
+			t.Fatalf("iteration %d: expected error, got nil", i)
+		}
+	}
+	if got := r.L.GetTop(); got != initialTop {
+		t.Errorf("stack top after 100 erroring runs = %d, want %d (stack must not grow)",
+			got, initialTop)
+	}
+}
+
+// TestRunValidationString_StripsShebang asserts the shebang stripping
+// behavior matches sibling Run* methods so a script copied from the
+// CLI surface (where shebangs are common) still parses correctly when
+// dropped into a validation rule.
+func TestRunValidationString_StripsShebang(t *testing.T) {
+	ws := newMockWorkspace(t)
+	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
+	defer r.Close()
+
+	ret, err := r.RunValidationString("#!/usr/bin/env lua\nreturn 42", "validations/shebang")
+	if err != nil {
+		t.Fatalf("RunValidationString: %v", err)
+	}
+	num, ok := ret.(glua.LNumber)
+	if !ok {
+		t.Fatalf("expected LNumber, got %T", ret)
+	}
+	if num != 42 {
+		t.Errorf("got %v, want 42", num)
 	}
 }

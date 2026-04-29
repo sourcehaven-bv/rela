@@ -1,4 +1,5 @@
 import type { SortSpec } from './schema'
+import type { ScriptError } from './scriptError'
 
 export interface ResolvedPalette {
   light: Record<string, string>
@@ -224,9 +225,17 @@ export interface DashboardCard {
 export interface AnalyzeIssue {
   entityId: string
   entityType: string
+  /** Optional headline shown when the row has no entity (e.g. validation rule name). */
+  title?: string
   message: string
   severity: 'error' | 'warning'
   checkType: string
+  /**
+   * Present only on validation script-error rows. Carries the same
+   * envelope as the action surface so the UI can branch: rows with
+   * scriptError open ScriptErrorDialog instead of navigating.
+   */
+  scriptError?: ScriptError
 }
 
 export interface AnalyzeResult {

@@ -21,6 +21,8 @@ const surfaceLabel = computed((): string => {
       return 'Lua Run'
     case 'lua_eval':
       return 'Lua Eval'
+    case 'validation':
+      return 'Validation'
     default:
       return props.error.script.surface
   }

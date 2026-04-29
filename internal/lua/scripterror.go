@@ -63,6 +63,7 @@ const (
 	SurfaceAutomation Surface = "automation"
 	SurfaceLuaRun     Surface = "lua_run"
 	SurfaceLuaEval    Surface = "lua_eval"
+	SurfaceValidation Surface = "validation"
 )
 
 // BuildInput aggregates the inputs to BuildScriptError. Callers fill in only

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -140,7 +141,7 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 
 	validateChecks = []string{"cardinality"}
 
-	hasErrors, err := runValidationChecks(ws, out, meta)
+	hasErrors, err := runValidationChecks(context.Background(), ws, out, meta)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

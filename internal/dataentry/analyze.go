@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -18,6 +19,15 @@ type AnalysisIssue struct {
 	Title      string
 	Message    string
 	Severity   string // "error" or "warning"
+
+	// ScriptError carries the raw *lua.ScriptError for validation
+	// rules whose Lua script failed. Non-nil only on script-error
+	// rows; the HTTP handler converts it to a wire envelope using
+	// the per-request loopback gate, so the structured detail
+	// (path, source slice, stack) reaches the frontend's existing
+	// ScriptErrorDialog rather than a flat string.
+	// LoadErrors do NOT get a ScriptError — they're not Lua failures.
+	ScriptError *lua.ScriptError
 }
 
 // AnalysisSection groups issues by analysis category.
@@ -396,6 +406,12 @@ func (a *App) analyzeProperties() AnalysisSection {
 }
 
 // analyzeValidations runs custom validation rules from the metamodel.
+//
+// The browser surface uses CheckRuleFull so Lua-script failures
+// (compile, runtime, timeout, contract) and load failures
+// (lua_file: missing, traversal-rejected) appear as error issues
+// alongside per-entity violations. Without this, broken Lua rules
+// would vanish silently from the data-entry analyze view.
 func (a *App) analyzeValidations() AnalysisSection {
 	s := a.State()
 	section := AnalysisSection{
@@ -408,12 +424,12 @@ func (a *App) analyzeValidations() AnalysisSection {
 	validator := a.validator
 
 	for _, rule := range s.Meta.Validations {
-		ids, err := validator.CheckRule(ctx, rule)
+		full, err := validator.CheckRuleFull(ctx, rule)
 		if err != nil {
 			continue
 		}
 		severity := rule.GetSeverity()
-		for _, id := range ids {
+		for _, id := range full.Violations {
 			e, err := st.GetEntity(ctx, id)
 			if err != nil {
 				continue
@@ -426,9 +442,48 @@ func (a *App) analyzeValidations() AnalysisSection {
 				Severity:   severity,
 			})
 		}
+		// Surface Lua failures and load failures so the UI shows
+		// "rule did not run" rather than silently dropping them.
+		// These are always error severity — a broken rule is not a
+		// warning condition, it's a config-level problem the
+		// operator needs to see.
+		for _, se := range full.ScriptErrors {
+			section.Issues = append(section.Issues, AnalysisIssue{
+				EntityID:    se.EntityID,
+				EntityType:  "",
+				Title:       rule.Name,
+				Message:     "Validation script failed: " + scriptErrorSummary(se),
+				Severity:    "error",
+				ScriptError: se,
+			})
+		}
+		for _, le := range full.LoadErrors {
+			section.Issues = append(section.Issues, AnalysisIssue{
+				Title:    le.RuleName,
+				Message:  "Validation script load failed: " + le.Message,
+				Severity: "error",
+			})
+		}
 	}
 
 	return section
+}
+
+// scriptErrorSummary builds a single-line summary for the AnalysisIssue
+// Message field. The full structured envelope (path, line, source slice)
+// is kept on the lua.ScriptError; the browser surface today displays only
+// flat strings, so we collapse to a one-liner.
+func scriptErrorSummary(se *lua.ScriptError) string {
+	if se == nil {
+		return ""
+	}
+	msg := se.Error()
+	// Replace newlines so a multi-line wrapped error renders as a
+	// single AnalysisIssue.Message rather than corrupting the JSON
+	// shape consumers expect.
+	msg = strings.ReplaceAll(msg, "\n", " ")
+	msg = strings.ReplaceAll(msg, "\r", " ")
+	return strings.Join(strings.Fields(msg), " ")
 }
 
 func sortStoreEntitiesByID(entities []*entity.Entity) {
