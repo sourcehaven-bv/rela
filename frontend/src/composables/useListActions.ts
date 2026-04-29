@@ -1,8 +1,10 @@
 import { ref, onMounted, onBeforeUnmount, computed, type Ref } from 'vue'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
+import { useScriptErrorStore } from '@/stores/scriptError'
 import { updateEntity } from '@/api/entities'
 import { runAction } from '@/api/actions'
 import { isInputFocused } from '@/utils/dom'
+import { isScriptError } from '@/types/scriptError'
 import { isAnyModalOpen } from './modalStack'
 import type { ActionConfig, Entity } from '@/types'
 
@@ -14,7 +16,11 @@ interface UseListActionsOptions {
   selectedIds: Ref<Set<string>>
   entities: Ref<Entity[]>
   onClearSelection: () => void
-  onRequestConfirm: (action: ActionConfig, actionId: string) => void
+  onRequestConfirm: (
+    action: ActionConfig,
+    actionId: string,
+    triggerEl: HTMLElement | null,
+  ) => void
   onComplete: () => void
 }
 
@@ -27,6 +33,7 @@ export function useListActions(options: UseListActionsOptions) {
   const schemaStore = useSchemaStore()
   const entitiesStore = useEntitiesStore()
   const uiStore = useUIStore()
+  const scriptErrorStore = useScriptErrorStore()
   const processing = ref(false)
 
   const resolvedActions = computed(() => {
@@ -46,7 +53,11 @@ export function useListActions(options: UseListActionsOptions) {
     return value.replace(/\{\{today\}\}/g, new Date().toISOString().slice(0, 10))
   }
 
-  async function executeAction(actionId: string, action: ActionConfig) {
+  async function executeAction(
+    actionId: string,
+    action: ActionConfig,
+    triggerEl?: HTMLElement | null,
+  ) {
     const ids = Array.from(options.selectedIds.value)
     if (ids.length === 0) return
 
@@ -73,6 +84,18 @@ export function useListActions(options: UseListActionsOptions) {
 
     processing.value = false
 
+    // Surface the first script-error rejection in the shared dialog so the
+    // user gets file:line, source snippet, stack and correlation ID. Other
+    // rejections (script or otherwise) are still summarised in the toast
+    // below; viewing more than one error is a follow-up.
+    const firstScriptError = results
+      .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+      .map((r) => r.reason)
+      .find(isScriptError)
+    if (firstScriptError) {
+      scriptErrorStore.show(firstScriptError, triggerEl ?? null)
+    }
+
     if (errorCount > 0) {
       uiStore.error(`${action.label}: ${errorCount} failed, ${successCount} succeeded`)
     } else {
@@ -96,14 +119,30 @@ export function useListActions(options: UseListActionsOptions) {
     }
   }
 
-  function triggerAction(actionId: string, action: ActionConfig) {
+  // Resolve a ScriptError focus-restore target from any of the kinds the
+  // call sites have lying around (a captured DOM node, a click event, a
+  // keydown event, or nothing). Centralised so the instanceof narrowing
+  // lives in exactly one place.
+  function resolveTriggerEl(source: Event | HTMLElement | null | undefined): HTMLElement | null {
+    if (!source) return null
+    if (source instanceof HTMLElement) return source
+    const candidate = (source as Event).currentTarget ?? (source as Event).target
+    return candidate instanceof HTMLElement ? candidate : null
+  }
+
+  function triggerAction(
+    actionId: string,
+    action: ActionConfig,
+    source?: Event | HTMLElement | null,
+  ) {
     if (options.selectedIds.value.size === 0) return
     if (processing.value) return
 
+    const triggerEl = resolveTriggerEl(source)
     if (action.confirm) {
-      options.onRequestConfirm(action, actionId)
+      options.onRequestConfirm(action, actionId, triggerEl)
     } else {
-      executeAction(actionId, action)
+      executeAction(actionId, action, triggerEl)
     }
   }
 
@@ -116,7 +155,7 @@ export function useListActions(options: UseListActionsOptions) {
     for (const { id, config } of resolvedActions.value) {
       if (config.key === e.key) {
         e.preventDefault()
-        triggerAction(id, config)
+        triggerAction(id, config, e)
         return
       }
     }
