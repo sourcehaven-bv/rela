@@ -5,6 +5,40 @@
 import { RRule } from 'rrule'
 import type { PropertyDef, EntityType } from '@/types'
 
+export const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+}
+
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
+
+// Parse a date-only YYYY-MM-DD string in local time so that
+// `2024-01-15` renders as Jan 15 in every timezone, not Jan 14
+// in zones west of UTC. Other formats (ISO datetime, etc.) fall
+// through to the standard Date constructor.
+function parseDate(value: string): Date {
+  const m = DATE_ONLY_RE.exec(value)
+  if (m) {
+    const y = Number(m[1])
+    const mo = Number(m[2])
+    const d = Number(m[3])
+    const date = new Date(y, mo - 1, d)
+    // Reject overflow (e.g. 2024-13-45 silently rolls into 2025).
+    if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) {
+      return new Date(NaN)
+    }
+    return date
+  }
+  return new Date(value)
+}
+
+export function formatDate(value: string, locale?: string): string | null {
+  const date = parseDate(value)
+  if (isNaN(date.getTime())) return null
+  return date.toLocaleDateString(locale, DATE_FORMAT_OPTIONS)
+}
+
 /**
  * Format a value based on its type for display
  */
@@ -13,9 +47,7 @@ export function formatValue(value: unknown, type?: string): string {
   if (Array.isArray(value) && value.length === 0) return '-'
 
   if (type === 'date' && typeof value === 'string') {
-    const date = new Date(value)
-    if (isNaN(date.getTime())) return '-'
-    return date.toLocaleDateString()
+    return formatDate(value) ?? '-'
   }
 
   if (type === 'boolean') {
@@ -56,9 +88,7 @@ export function formatCellValue(
   if (property && entityType) {
     const propDef = entityType.properties[property]
     if (propDef?.type === 'date' && typeof value === 'string') {
-      const date = new Date(value)
-      if (isNaN(date.getTime())) return '-'
-      return date.toLocaleDateString()
+      return formatDate(value) ?? ''
     }
     if (propDef?.type === 'boolean') {
       return value ? 'Yes' : 'No'
