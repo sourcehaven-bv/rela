@@ -190,7 +190,7 @@ function buildIfMissing(binaryPath: string, target: string): string {
       if (code !== 'EEXIST') throw e;
       if (fs.existsSync(binaryPath)) return binaryPath;
       if (Date.now() - start > 300_000) {
-        throw new Error(`Build lock ${lockPath} held > 5 min; something is stuck.`);
+        throw new Error(`Build lock ${lockPath} held > 5 min; something is stuck.`, { cause: e });
       }
       // busy-wait 250ms; builds take seconds
       const end = Date.now() + 250;
