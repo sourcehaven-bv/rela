@@ -225,23 +225,6 @@ deps:
     @echo "Downloading dependencies..."
     go mod download
 
-# ── Vendor ──
-
-# Vendor JS/CSS dependencies (commit the results)
-vendor-js:
-    @echo "Vendoring JS/CSS dependencies..."
-    @mkdir -p internal/dataentry/static
-    curl -sfL -o internal/dataentry/static/htmx.min.js         "https://unpkg.com/htmx.org@2.0.4"
-    curl -sfL -o internal/dataentry/static/easymde.min.js      "https://unpkg.com/easymde@2.18.0/dist/easymde.min.js"
-    curl -sfL -o internal/dataentry/static/easymde.min.css     "https://unpkg.com/easymde@2.18.0/dist/easymde.min.css"
-    curl -sfL -o internal/dataentry/static/slimselect.min.js   "https://unpkg.com/slim-select@2.9.2/dist/slimselect.min.js"
-    curl -sfL -o internal/dataentry/static/slimselect.css      "https://unpkg.com/slim-select@2.9.2/dist/slimselect.css"
-    curl -sfL -o internal/dataentry/static/tagify.min.js       "https://unpkg.com/@yaireo/tagify@4.31.3/dist/tagify.min.js"
-    curl -sfL -o internal/dataentry/static/tagify.css          "https://unpkg.com/@yaireo/tagify@4.31.3/dist/tagify.css"
-    curl -sfL -o internal/dataentry/static/cytoscape.min.js    "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"
-    curl -sfL -o internal/dataentry/static/mermaid.min.js      "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
-    @echo "Done! Review changes with 'git diff' and commit."
-
 # ── Icons ──
 
 # Source SVG and output directories
