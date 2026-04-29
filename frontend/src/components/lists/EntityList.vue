@@ -48,7 +48,7 @@ const deleting = ref(false)
 // Selection and actions
 const { selectedIds, toggle: toggleSelection, clear: clearActionSelection, isSelected, selectAll } = useListSelection()
 const hasSelection = computed(() => selectedIds.value.size > 0)
-const pendingAction = ref<{ id: string; config: ActionConfig } | null>(null)
+const pendingAction = ref<{ id: string; config: ActionConfig; triggerEl: HTMLElement | null } | null>(null)
 
 const listIdRef = computed(() => props.listId)
 
@@ -57,8 +57,8 @@ const { resolvedActions, processing: actionProcessing, executeAction, triggerAct
   selectedIds,
   entities,
   onClearSelection: () => clearActionSelection(),
-  onRequestConfirm: (action, actionId) => {
-    pendingAction.value = { id: actionId, config: action }
+  onRequestConfirm: (action, actionId, triggerEl) => {
+    pendingAction.value = { id: actionId, config: action, triggerEl }
   },
   onComplete: () => scheduleFetch(),
 })
@@ -568,7 +568,7 @@ onMounted(() => {
                 :key="id"
                 class="action-header-btn"
                 :disabled="actionProcessing"
-                @click="triggerAction(id, config)"
+                @click="(e) => triggerAction(id, config, e)"
               >
                 <kbd>{{ config.key }}</kbd>
                 {{ config.label }}
@@ -681,7 +681,7 @@ onMounted(() => {
       :title="`${pendingAction?.config.label}?`"
       :confirm-label="pendingAction?.config.label || 'Confirm'"
       :busy="actionProcessing"
-      @confirm="() => { if (pendingAction) { executeAction(pendingAction.id, pendingAction.config); pendingAction = null } }"
+      @confirm="() => { if (pendingAction) { executeAction(pendingAction.id, pendingAction.config, pendingAction.triggerEl); pendingAction = null } }"
       @cancel="pendingAction = null"
     >
       Apply <strong>{{ pendingAction?.config.label }}</strong> to {{ selectedIds.size }} selected entities?

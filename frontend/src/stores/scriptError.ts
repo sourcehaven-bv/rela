@@ -23,10 +23,15 @@ export const useScriptErrorStore = defineStore('scriptError', () => {
 
   function dismiss(): void {
     current.value = null
-    if (triggeringEl.value) {
+    // List actions can detach the trigger before dismiss runs (the
+    // optimistic row-removal in useListActions.executeAction unmounts
+    // the action header alongside the focused row). Calling .focus() on
+    // a detached node silently no-ops and focus falls to <body>; the
+    // contains() check makes that explicit.
+    if (triggeringEl.value && document.contains(triggeringEl.value)) {
       triggeringEl.value.focus()
-      triggeringEl.value = null
     }
+    triggeringEl.value = null
   }
 
   return { current, show, dismiss }
