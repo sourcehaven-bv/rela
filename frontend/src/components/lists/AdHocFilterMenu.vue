@@ -351,7 +351,11 @@ defineExpose({ open: openMenu, close })
 .filter-menu {
   position: absolute;
   top: 100%;
-  left: 0;
+  /* The button typically sits at the right edge of the toolbar (after a
+     wide search box), so anchoring the menu's right edge to the button
+     keeps a 280px-wide dropdown inside the viewport. Anchoring left would
+     push the menu past the right edge and force horizontal scroll. */
+  right: 0;
   margin-top: 4px;
   min-width: 280px;
   background: var(--card-bg);
