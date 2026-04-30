@@ -1,5 +1,6 @@
 src/composables/modalStack.ts;59;59
 src/composables/useBackTarget.ts;53;53
+src/composables/useConfirm.ts;218;218
 src/composables/useDocumentClicks.ts;61;61
 src/composables/useEntityIDControls.ts;85;85
 src/composables/useEvents.ts;146;146
