@@ -3,13 +3,13 @@ src/composables/useBackTarget.ts;53;53
 src/composables/useDocumentClicks.ts;61;61
 src/composables/useEntityIDControls.ts;85;85
 src/composables/useEvents.ts;146;146
-src/composables/useKeyboardShortcuts.ts;123;123
+src/composables/useKeyboardShortcuts.ts;130;130
 src/composables/useListActions.ts;178;157
-src/composables/useListKeyboard.ts;157;147
+src/composables/useListKeyboard.ts;173;153
 src/composables/useListSelection.ts;39;29
 src/composables/usePageData.ts;106;69
 src/composables/useScopeNavigation.ts;113;113
-src/composables/useUrlFilterSync.ts;86;86
+src/composables/useUrlFilterSync.ts;120;117
 src/stores/entities.ts;204;204
 src/stores/git.ts;92;92
 src/stores/index.ts;4;4
