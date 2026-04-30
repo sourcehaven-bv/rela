@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import type { Command } from '@/types'
 import { useModalStack } from '@/composables/modalStack'
+import { useConfirm } from '@/composables/useConfirm'
 
 const props = defineProps<{
   entityId: string
@@ -19,9 +20,16 @@ const running = ref(false)
 const output = ref<Array<{ type: 'text' | 'file'; text?: string; path?: string; label?: string }>>([])
 const success = ref<boolean | null>(null)
 
+const { confirm } = useConfirm()
+
 async function runCommand(cmd: Command) {
-  if (cmd.confirm && !confirm(cmd.confirm)) {
-    return
+  if (cmd.confirm) {
+    const ok = await confirm({
+      title: `${cmd.label}?`,
+      message: cmd.confirm,
+      confirmLabel: cmd.label,
+    })
+    if (!ok) return
   }
 
   activeCommand.value = cmd

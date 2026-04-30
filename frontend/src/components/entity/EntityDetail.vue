@@ -15,7 +15,7 @@ import { getCommands, toggleCheckbox } from '@/api'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
-import ConfirmModal from '@/components/ui/ConfirmModal.vue'
+import { useConfirm, withConfirmError } from '@/composables/useConfirm'
 
 const props = defineProps<{
   entityType: string
@@ -56,7 +56,7 @@ function handleKeydown(e: KeyboardEvent) {
   // preventDefault stops the browser back-nav side effect of Backspace.
   if ((e.key === 'Delete' || e.key === 'Backspace') && entity.value) {
     e.preventDefault()
-    showDeleteConfirm.value = true
+    void requestDelete()
   }
   // Scope navigation: p/n for prev/next
   if (e.key === 'p' && scopeNav.value?.prevId) {
@@ -91,9 +91,8 @@ onBeforeUnmount(() => {
 // State
 const entity = ref<Entity | null>(null)
 const loading = ref(true)
-const deleting = ref(false)
-const showDeleteConfirm = ref(false)
 const showOverflowMenu = ref(false)
+const { confirm } = useConfirm()
 
 function closeOverflow() { showOverflowMenu.value = false }
 watch(showOverflowMenu, (open) => {
@@ -226,23 +225,25 @@ function editEntity() {
   }
 }
 
-async function deleteEntity() {
+async function requestDelete() {
   if (!entity.value) return
-
-  deleting.value = true
-  try {
-    await entitiesStore.remove(props.entityType, props.entityId)
-    uiStore.success('Entity deleted successfully')
-    // Close modal only on success. On error the modal stays open (with busy
-    // cleared) so the user keeps context and can retry or cancel.
-    showDeleteConfirm.value = false
-    router.push(backTargetAfterDelete())
-  } catch (err) {
-    uiStore.error('Failed to delete entity')
-    console.error(err)
-  } finally {
-    deleting.value = false
-  }
+  // useConfirm runs onConfirm with the modal in busy state; resolves true on
+  // success (and only then), keeps the modal open with busy cleared if
+  // onConfirm throws so the user can retry or cancel.
+  const ok = await confirm({
+    title: 'Delete Entity?',
+    message: `Are you sure you want to delete '${props.entityId}'? This action cannot be undone.`,
+    confirmLabel: 'Delete',
+    danger: true,
+    onConfirm: withConfirmError(
+      () => entitiesStore.remove(props.entityType, props.entityId),
+      'Failed to delete entity',
+      uiStore,
+    ),
+  })
+  if (!ok) return
+  uiStore.success('Entity deleted successfully')
+  router.push(backTargetAfterDelete())
 }
 
 // Determine where to navigate after deleting this entity.
@@ -410,7 +411,7 @@ onMounted(() => loadEntity())
           <button v-if="editFormId" class="btn btn-secondary" @click="editEntity">
             Edit <kbd>E</kbd>
           </button>
-          <button class="btn btn-danger" @click="showDeleteConfirm = true">
+          <button class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
           </button>
         </div>
@@ -420,7 +421,7 @@ onMounted(() => loadEntity())
           <button v-if="editFormId" class="btn btn-secondary" @click="editEntity">
             Edit
           </button>
-          <button class="btn btn-danger mobile-delete-btn" aria-label="Delete" @click="showDeleteConfirm = true">
+          <button class="btn btn-danger mobile-delete-btn" aria-label="Delete" @click="requestDelete">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="3 6 5 6 21 6"/>
               <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
@@ -485,20 +486,6 @@ onMounted(() => loadEntity())
         </h2>
         <div ref="contentRef" class="content-body" v-html="renderedContent"/>
       </section>
-
-      <!-- Delete Confirmation Modal -->
-      <ConfirmModal
-        :open="showDeleteConfirm"
-        title="Delete Entity?"
-        confirm-label="Delete"
-        :busy="deleting"
-        danger
-        @confirm="deleteEntity"
-        @cancel="showDeleteConfirm = false"
-      >
-        Are you sure you want to delete <strong>{{ entity.id }}</strong>?
-        This action cannot be undone.
-      </ConfirmModal>
 
       <!-- Command Execution Modal -->
       <CommandModal ref="commandModalRef" :entity-id="entityId" />

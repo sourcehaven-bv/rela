@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent, h } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import EntityList from './EntityList.vue'
+import ConfirmModal from '@/components/ui/ConfirmModal.vue'
 import { useSchemaStore } from '@/stores/schema'
 import { useEntitiesStore } from '@/stores/entities'
 import { _resetModalStack } from '@/composables/modalStack'
+import { useConfirmHost, _resetConfirmForTest } from '@/composables/useConfirm'
 import type { Entity } from '@/types'
 
 // Router stubs — EntityList reads both `useRouter` (for open/edit/create
@@ -20,11 +23,11 @@ vi.mock('vue-router', () => ({
 }))
 
 // Integration test for the delete-flow wiring:
-//   onDelete (from useListKeyboard) → pendingDelete → ConfirmModal render
-//   → confirmDelete → entitiesStore.remove
-// This is the seam the reviewer flagged: unit tests for useListKeyboard and
-// ConfirmModal individually do not prove that EntityList assembles them
-// correctly.
+//   delete-button click / Delete keydown / Backspace keydown
+//   → useConfirm.confirm() with onConfirm: entitiesStore.remove
+//   → singleton ConfirmModal renders
+//   → user confirms → remove fires; user cancels → it does not.
+// Mounted alongside a useConfirmHost-bound ConfirmModal to mirror App.vue.
 
 describe('EntityList delete integration', () => {
   const listId = 'tickets-list'
@@ -69,6 +72,7 @@ describe('EntityList delete integration', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     _resetModalStack()
+    _resetConfirmForTest()
     routerPush.mockClear()
     routerReplace.mockClear()
     mockRoute.query = {}
@@ -77,12 +81,39 @@ describe('EntityList delete integration', () => {
   afterEach(() => {
     document.body.innerHTML = ''
     _resetModalStack()
+    _resetConfirmForTest()
+  })
+
+  // Mount EntityList alongside the global ConfirmModal host so the singleton
+  // confirm composable resolves to a rendered modal — the way App.vue wires it.
+  const Host = defineComponent({
+    props: { listId: { type: String, required: true } },
+    setup(props) {
+      const { state, onConfirmEvent, onCancelEvent } = useConfirmHost()
+      return () => [
+        h(EntityList, { listId: props.listId }),
+        h(ConfirmModal, {
+          open: state.open,
+          title: state.title,
+          message: state.message,
+          confirmLabel: state.confirmLabel,
+          cancelLabel: state.cancelLabel,
+          busy: state.busy,
+          danger: state.danger,
+          // Swallow rethrown onConfirm errors here — the composable
+          // signals "stay open" by throwing; the modal callback isn't a
+          // place to surface them. The original caller has already toasted.
+          onConfirm: () => { onConfirmEvent().catch(() => {}) },
+          onCancel: () => { onCancelEvent() },
+        }),
+      ]
+    },
   })
 
   async function mountList(entities: Entity[]) {
     seedSchema()
     seedEntities(entities)
-    const wrapper = mount(EntityList, {
+    const wrapper = mount(Host, {
       props: { listId },
       attachTo: document.body,
     })
