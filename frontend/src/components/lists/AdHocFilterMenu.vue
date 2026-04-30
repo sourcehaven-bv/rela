@@ -329,12 +329,19 @@ defineExpose({ open: openMenu, close })
 <style scoped>
 .adhoc-filter-menu {
   position: relative;
+  /* Match the height of any sibling input/button when the parent is a flex
+     container with align-items: stretch (SearchView's .search-input-row,
+     EntityList's .search-row). Both consumers expect the +Filter button to
+     line up with the search input next to it. */
+  display: flex;
+  align-self: stretch;
 }
 
 .filter-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  height: 100%;
 }
 
 .filter-btn kbd {
