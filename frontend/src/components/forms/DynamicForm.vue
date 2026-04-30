@@ -5,6 +5,7 @@ import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
+import { useConfirm } from '@/composables/useConfirm'
 import type { PropertyDef, FormFieldOrRelation, Template } from '@/types'
 import { getTemplates, createRelation, updateRelationProperties, deleteRelation } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
@@ -25,6 +26,7 @@ const route = useRoute()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
+const { confirm } = useConfirm()
 
 // Link params for auto-linking after create (from custom views / side panels)
 interface LinkParams {
@@ -508,7 +510,9 @@ function getPropertyDef(property: string): PropertyDef | undefined {
   return entityType.value?.properties[property]
 }
 
-// Warn before browser close
+// Warn before browser tab close / hard reload / external navigation. Browsers
+// require this to be the native dialog — they ignore custom UI here — so this
+// stays as-is even though the in-app navigation guard below uses ConfirmModal.
 function handleBeforeUnload(e: BeforeUnloadEvent) {
   if (dirty.value) {
     e.preventDefault()
@@ -549,15 +553,24 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)
 })
 
-onBeforeRouteLeave((_to, _from, next) => {
-  if (dirty.value) {
-    const answer = window.confirm('You have unsaved changes. Are you sure you want to leave?')
-    if (!answer) {
-      next(false)
-      return
-    }
-  }
-  next()
+// Returning a promise from the guard preserves the original navigation's
+// push/replace semantics and popstate cursor — `next(false) + router.push(...)`
+// would corrupt history for back/forward and any internal `router.replace`.
+//
+// dirty.value=false is set before returning ok. This is safe in this app
+// because there are no global beforeResolve guards that could cancel the
+// navigation downstream — if one were added, the assignment should move into
+// a router.afterEach hook gated on success.
+onBeforeRouteLeave(async () => {
+  if (!dirty.value) return true
+  const ok = await confirm({
+    title: 'Unsaved changes',
+    message: 'You have unsaved changes. Are you sure you want to leave?',
+    confirmLabel: 'Leave',
+    danger: true,
+  })
+  if (ok) dirty.value = false
+  return ok
 })
 </script>
 

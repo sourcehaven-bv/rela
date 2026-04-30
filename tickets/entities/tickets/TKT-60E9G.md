@@ -4,8 +4,8 @@ type: ticket
 title: Replace remaining window.confirm() calls in data-entry UI with ConfirmModal
 kind: refactor
 priority: low
-effort: xs
-status: backlog
+effort: s
+status: done
 ---
 
 ## Problem

@@ -9,15 +9,15 @@ import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
-import type { Entity, ListMeta, ListParams, FilterState, ActionConfig } from '@/types'
+import type { Entity, ListMeta, ListParams, FilterState } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
 import AdHocFilterMenu from './AdHocFilterMenu.vue'
 import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
-import ConfirmModal from '@/components/ui/ConfirmModal.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
+import { useConfirm, withConfirmError } from '@/composables/useConfirm'
 
 const props = defineProps<{
   listId: string
@@ -28,6 +28,7 @@ const router = useRouter()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
+const { confirm } = useConfirm()
 
 // Back affordance — renders when ?return_to= or ?from= is present. See TKT-JIEKC.
 const backTarget = useBackTarget()
@@ -44,13 +45,10 @@ const entities = ref<Entity[]>([])
 const meta = ref<ListMeta>({ total: 0, page: 1, per_page: 25, has_more: false })
 const loading = ref(true)
 const includedEntities = ref<Record<string, Entity>>({})
-const pendingDelete = ref<Entity | null>(null)
-const deleting = ref(false)
 
 // Selection and actions
 const { selectedIds, toggle: toggleSelection, clear: clearActionSelection, isSelected, selectAll } = useListSelection()
 const hasSelection = computed(() => selectedIds.value.size > 0)
-const pendingAction = ref<{ id: string; config: ActionConfig; triggerEl: HTMLElement | null } | null>(null)
 
 const listIdRef = computed(() => props.listId)
 
@@ -60,10 +58,29 @@ const { resolvedActions, processing: actionProcessing, executeAction, triggerAct
   entities,
   onClearSelection: () => clearActionSelection(),
   onRequestConfirm: (action, actionId, triggerEl) => {
-    pendingAction.value = { id: actionId, config: action, triggerEl }
+    void requestActionConfirm(action, actionId, triggerEl)
   },
   onComplete: () => scheduleFetch(),
 })
+
+// Bulk action confirm. We don't pass executeAction as onConfirm because it
+// uses Promise.allSettled internally and never throws — partial failures
+// surface via uiStore.error and the script-error dialog. Wrapping it in
+// onConfirm would silently report success even when 100% of writes failed.
+// Instead: confirm-then-fire-and-forget. The action toasts its own results.
+async function requestActionConfirm(
+  action: import('@/types').ActionConfig,
+  actionId: string,
+  triggerEl: HTMLElement | null,
+) {
+  const ok = await confirm({
+    title: `${action.label}?`,
+    message: `Apply ${action.label} to ${selectedIds.value.size} selected entities?`,
+    confirmLabel: action.label,
+  })
+  if (!ok) return
+  void executeAction(actionId, action, triggerEl)
+}
 
 // Static (config-pinned) filter properties — used by useUrlFilterSync to
 // reject URL filters that would silently override the list's intended scope.
@@ -117,7 +134,7 @@ const { selectedIndex, clearSelection } = useListKeyboard({
   },
   onDelete: (index) => {
     const entity = entities.value[index]
-    if (entity) pendingDelete.value = entity
+    if (entity) void requestDelete(entity)
   },
   onSelect: (index) => {
     const entity = entities.value[index]
@@ -460,30 +477,24 @@ function getFormattedCellValue(entity: Entity, column: { property?: string; rela
 
 function handleDelete(entity: Entity, event: Event) {
   event.stopPropagation()
-  pendingDelete.value = entity
+  void requestDelete(entity)
 }
 
-async function confirmDelete() {
-  const entity = pendingDelete.value
-  if (!entity) return
-
-  deleting.value = true
-  try {
-    await entitiesStore.remove(entity.type, entity.id)
-    uiStore.success(`Deleted ${entity.id}`)
-    pendingDelete.value = null
-    scheduleFetch()
-  } catch (err) {
-    uiStore.error('Failed to delete entity')
-    console.error(err)
-  } finally {
-    deleting.value = false
-  }
-}
-
-function cancelDelete() {
-  if (deleting.value) return
-  pendingDelete.value = null
+async function requestDelete(entity: Entity) {
+  const ok = await confirm({
+    title: 'Delete Entity?',
+    message: `Are you sure you want to delete '${entity.id}'? This action cannot be undone.`,
+    confirmLabel: 'Delete',
+    danger: true,
+    onConfirm: withConfirmError(
+      () => entitiesStore.remove(entity.type, entity.id),
+      'Failed to delete entity',
+      uiStore,
+    ),
+  })
+  if (!ok) return
+  uiStore.success(`Deleted ${entity.id}`)
+  scheduleFetch()
 }
 
 // Watchers — all three converge on scheduleFetch(), which coalesces into a
@@ -783,30 +794,6 @@ onMounted(() => {
         @page-change="handlePageChange"
       />
     </div>
-
-    <ConfirmModal
-      :open="pendingDelete !== null"
-      title="Delete Entity?"
-      confirm-label="Delete"
-      :busy="deleting"
-      danger
-      @confirm="confirmDelete"
-      @cancel="cancelDelete"
-    >
-      Are you sure you want to delete <strong>{{ pendingDelete?.id }}</strong>?
-      This action cannot be undone.
-    </ConfirmModal>
-
-    <ConfirmModal
-      :open="pendingAction !== null"
-      :title="`${pendingAction?.config.label}?`"
-      :confirm-label="pendingAction?.config.label || 'Confirm'"
-      :busy="actionProcessing"
-      @confirm="() => { if (pendingAction) { executeAction(pendingAction.id, pendingAction.config, pendingAction.triggerEl); pendingAction = null } }"
-      @cancel="pendingAction = null"
-    >
-      Apply <strong>{{ pendingAction?.config.label }}</strong> to {{ selectedIds.size }} selected entities?
-    </ConfirmModal>
   </div>
 
   <div v-else class="error-state">

@@ -2,11 +2,13 @@
 import { onMounted, ref, watch } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useKeyboardShortcuts, shortcutsModalOpen, useEvents } from '@/composables'
+import { useConfirmHost } from '@/composables/useConfirm'
 import Sidebar from '@/components/common/Sidebar.vue'
 import StatusBar from '@/components/common/StatusBar.vue'
 import Toast from '@/components/common/Toast.vue'
 import ScriptErrorDialog from '@/components/common/ScriptErrorDialog.vue'
 import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal.vue'
+import ConfirmModal from '@/components/ui/ConfirmModal.vue'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
@@ -18,6 +20,16 @@ useKeyboardShortcuts()
 
 // Initialize SSE connection for real-time updates
 useEvents()
+
+// Single global confirm modal — driven by useConfirm() from anywhere.
+const { state: confirmState, onConfirmEvent, onCancelEvent } = useConfirmHost()
+
+// useConfirmHost re-throws errors from onConfirm callbacks so the modal stays
+// open with busy cleared (caller has already surfaced the error via toast).
+// Don't let those become unhandled-rejection warnings at the modal boundary.
+function handleConfirm() {
+  onConfirmEvent().catch(() => {})
+}
 
 onMounted(async () => {
   try {
@@ -106,6 +118,22 @@ watch(
       @close="shortcutsModalOpen = false"
     />
   </div>
+
+  <!-- Mounted unconditionally (outside the loading/error/loaded branches) so
+       any caller of useConfirm() resolves to a rendered modal even during
+       schema loading or on the error screen. Without this hoist, callers
+       would deadlock on a forever-pending promise. -->
+  <ConfirmModal
+    :open="confirmState.open"
+    :title="confirmState.title"
+    :message="confirmState.message"
+    :confirm-label="confirmState.confirmLabel"
+    :cancel-label="confirmState.cancelLabel"
+    :busy="confirmState.busy"
+    :danger="confirmState.danger"
+    @confirm="handleConfirm"
+    @cancel="onCancelEvent"
+  />
 </template>
 
 <style>
